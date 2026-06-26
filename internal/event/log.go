@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -87,14 +88,20 @@ func (l *Log) LastSeq() int {
 func (l *Log) Record(actor string, t Type, data map[string]any) Event {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.closed {
+		// Don't burn a sequence number on a closed log; the event isn't recorded.
+		return Event{Actor: actor, Type: t, Data: data}
+	}
 	l.seq++
 	ev := Event{Seq: l.seq, TS: time.Now(), Actor: actor, Type: t, Data: data}
-	if l.closed {
-		return ev
-	}
 	if line, err := json.Marshal(ev); err == nil {
-		l.f.Write(append(line, '\n'))
-		l.f.Sync()
+		if _, werr := l.f.Write(append(line, '\n')); werr != nil {
+			// The log is the source of truth; surface a failed append rather than
+			// silently diverging from the in-memory/subscriber view.
+			log.Printf("ycc: event log append failed (%s, seq %d): %v", l.path, ev.Seq, werr)
+		} else {
+			l.f.Sync()
+		}
 	}
 	l.events = append(l.events, ev)
 	l.cond.Broadcast()

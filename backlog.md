@@ -12,3 +12,5 @@
 | [0006](backlog/0006-home-menu-modes-tui.md) | Home menu, spec/backlog/feature/bug modes, TUI (M4) | done | 4 | 0005 |
 | [0007](backlog/0007-remote-sync.md) | Remote session sync + phone-facing surface (M5) | todo | 5 | 0006 |
 | [0008](backlog/0008-reviewer-sandboxing.md) | Sandbox reviewer bash to prevent workspace mutation | blocked | 6 | 0005 |
+| [0009](backlog/0009-session-lifecycle-interrupt.md) | Session lifecycle — Interrupt RPC and stop/GC | todo | 3 | 0003 |
+| [0010](backlog/0010-context-window-management.md) | Context-window management for long sessions | todo | 3 | 0002 |

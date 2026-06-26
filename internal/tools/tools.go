@@ -45,10 +45,18 @@ func New() *Registry {
 }
 
 // Add registers one or more tools. A later tool with the same name replaces an
-// earlier one.
+// earlier one in both the lookup map and the ordered slice (so APIDefs and
+// Dispatch stay consistent).
 func (r *Registry) Add(ts ...*gollama.Tool) {
 	for _, t := range ts {
-		if _, exists := r.byName[t.Name]; !exists {
+		if _, exists := r.byName[t.Name]; exists {
+			for i, ex := range r.tools {
+				if ex.Name == t.Name {
+					r.tools[i] = t
+					break
+				}
+			}
+		} else {
 			r.tools = append(r.tools, t)
 		}
 		r.byName[t.Name] = t
@@ -160,8 +168,12 @@ type Workspace struct {
 
 // resolve cleans a user-supplied path and confines it to the workspace. Absolute
 // paths (the Claude-Code convention) are accepted when they fall within the
-// workspace root; relative paths are joined to the root. Either way a path that
-// escapes the workspace is rejected.
+// workspace root; relative paths are joined to the root.
+//
+// Confinement is best-effort and TEXTUAL: it rejects "../" escapes but does NOT
+// resolve symlinks, so a symlink already inside the workspace that points outside
+// it would not be caught here. Hard isolation (incl. symlinks) is the job of the
+// sandboxing work (task 0008); agents also have unrestricted Bash regardless.
 func (w *Workspace) resolve(p string) (string, error) {
 	if p == "" {
 		p = "."

@@ -13,18 +13,20 @@ import (
 //     and the agent is told to proceed on its own judgement.
 //   - interactive / judgement: ask_user emits a question and blocks until the user
 //     answers (via SendInput or AnswerQuestion) or the session is cancelled.
+//
+// Each pending question gets a fresh single-use channel held under the mutex, so
+// an answer can never be buffered across questions or silently dropped.
 type interaction struct {
 	level   string
 	emitter *event.Emitter
-	answer  chan string
 
 	mu          sync.Mutex
-	pending     bool
+	waiting     chan string // non-nil only while a question is pending
 	assumptions []string
 }
 
 func newInteraction(level string, emitter *event.Emitter) *interaction {
-	return &interaction{level: level, emitter: emitter, answer: make(chan string, 1)}
+	return &interaction{level: level, emitter: emitter}
 }
 
 // Ask implements orchestrator.Asker.
@@ -39,38 +41,42 @@ func (in *interaction) Ask(ctx context.Context, question string, _ []string) (st
 		return ans, nil
 	}
 
+	ch := make(chan string, 1)
 	in.mu.Lock()
-	in.pending = true
+	in.waiting = ch
 	in.mu.Unlock()
-	in.emitter.Emit(event.QuestionAsked, map[string]any{"question": question})
+	// Stop pointing at this channel when we leave, whatever the outcome.
+	defer func() {
+		in.mu.Lock()
+		if in.waiting == ch {
+			in.waiting = nil
+		}
+		in.mu.Unlock()
+	}()
 
+	in.emitter.Emit(event.QuestionAsked, map[string]any{"question": question})
 	select {
-	case ans := <-in.answer:
-		in.clearPending()
+	case ans := <-ch:
 		in.emitter.Emit(event.QuestionAnswered, map[string]any{"answer": ans})
 		return ans, nil
 	case <-ctx.Done():
-		in.clearPending()
 		return "", ctx.Err()
 	}
 }
 
-// Answer delivers a user answer to a pending question, returning true if one was
-// pending and accepted.
+// Answer delivers a user answer to the pending question, returning true if one
+// was pending and accepted. It claims the pending channel under the lock so a
+// duplicate or racing answer can't double-deliver.
 func (in *interaction) Answer(text string) bool {
 	in.mu.Lock()
-	if !in.pending {
-		in.mu.Unlock()
-		return false
-	}
-	in.pending = false
+	ch := in.waiting
+	in.waiting = nil
 	in.mu.Unlock()
-	select {
-	case in.answer <- text:
-		return true
-	default:
+	if ch == nil {
 		return false
 	}
+	ch <- text // buffered(1), single sender, single use: never blocks
+	return true
 }
 
 // Assumptions returns the questions auto-answered in autonomous mode.
@@ -78,10 +84,4 @@ func (in *interaction) Assumptions() []string {
 	in.mu.Lock()
 	defer in.mu.Unlock()
 	return append([]string(nil), in.assumptions...)
-}
-
-func (in *interaction) clearPending() {
-	in.mu.Lock()
-	in.pending = false
-	in.mu.Unlock()
 }

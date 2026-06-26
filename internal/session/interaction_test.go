@@ -65,6 +65,58 @@ func TestInteractiveBlocksUntilAnswer(t *testing.T) {
 	}
 }
 
+// Regression: an answer arriving after a question is cancelled must not be
+// buffered and silently consumed by the NEXT question.
+func TestNoStaleAnswerAcrossQuestions(t *testing.T) {
+	in := newInteraction("interactive", discardEmitter())
+
+	// Q1: ask, wait until pending, then cancel it.
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { in.Ask(ctx, "q1", nil); close(done) }()
+	waitPending(t, in)
+	cancel()
+	<-done
+
+	// A late answer to the cancelled question is rejected, not stashed.
+	if in.Answer("late") {
+		t.Fatal("answer to a cancelled question should be rejected")
+	}
+
+	// Q2 must block for its own answer, not pick up a stale one.
+	got := make(chan string, 1)
+	go func() { a, _ := in.Ask(context.Background(), "q2", nil); got <- a }()
+	select {
+	case a := <-got:
+		t.Fatalf("q2 returned without being answered (stale): %q", a)
+	case <-time.After(100 * time.Millisecond):
+	}
+	waitPending(t, in)
+	if !in.Answer("real") {
+		t.Fatal("answering q2 failed")
+	}
+	if a := <-got; a != "real" {
+		t.Fatalf("q2 got %q, want real", a)
+	}
+}
+
+func waitPending(t *testing.T, in *interaction) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		in.mu.Lock()
+		pending := in.waiting != nil
+		in.mu.Unlock()
+		if pending {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("question never became pending")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
 // A cancelled context unblocks a pending ask_user with an error.
 func TestInteractiveContextCancel(t *testing.T) {
 	in := newInteraction("judgement", discardEmitter())

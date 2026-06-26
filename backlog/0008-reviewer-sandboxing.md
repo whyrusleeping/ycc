@@ -25,6 +25,8 @@ non-mutation is prompt-enforced only.
 - [ ] reviewer bash cannot write to or delete from the workspace
 - [ ] read-only inspection (git diff, cat, grep, ls) still works
 - [ ] mechanism documented; degrades gracefully if unavailable
+- [ ] symlink-aware path confinement in tools.Workspace.resolve (review 2026-06-26 #5:
+      the current check is textual; a symlink inside the workspace pointing out isn't caught)
 
 ## Work log
 

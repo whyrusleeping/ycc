@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 
 	"connectrpc.com/connect"
@@ -18,7 +19,10 @@ type authInterceptor struct{ token string }
 func NewAuthInterceptor(token string) connect.Interceptor { return authInterceptor{token: token} }
 
 func (a authInterceptor) ok(auth string) bool {
-	return a.token == "" || auth == "Bearer "+a.token
+	if a.token == "" {
+		return true
+	}
+	return subtle.ConstantTimeCompare([]byte(auth), []byte("Bearer "+a.token)) == 1
 }
 
 func (a authInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
