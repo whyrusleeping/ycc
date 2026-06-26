@@ -22,6 +22,8 @@ import (
 
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 	"github.com/whyrusleeping/ycc/proto/ycc/v1/yccv1connect"
+
+	"github.com/whyrusleeping/ycc/internal/clientconfig"
 )
 
 type state int
@@ -69,6 +71,18 @@ type model struct {
 	err   error
 	ready bool
 	w, h  int
+
+	// settings overlay (spec §18.2): modal over both menu and session, opened by
+	// Esc. It exposes interaction level, per-role model config, UI prefs, and Quit.
+	overlay      bool
+	ovCursor     int
+	models       []*v1.ModelInfo // populated from ListModels
+	level        string          // current interaction level (session)
+	roleCoord    string          // logical model driving the coordinator
+	roleImpl     string          // logical model for the implementer
+	roleReviewrs []string        // logical models for reviewers (multi-select)
+	reviewerSub  int             // rotating sub-index for toggling reviewer membership
+	prefs        clientconfig.Prefs
 }
 
 // Run starts the TUI against the daemon client.
@@ -79,6 +93,7 @@ func Run(ctx context.Context, client yccv1connect.SessionServiceClient, workspac
 }
 
 func initialModel(ctx context.Context, client yccv1connect.SessionServiceClient, workspace string) model {
+	prefs := clientconfig.Load()
 	prompt := textinput.New()
 	prompt.Placeholder = "what should the agent do? (optional for 'work')"
 	prompt.Focus()
@@ -94,19 +109,21 @@ func initialModel(ctx context.Context, client yccv1connect.SessionServiceClient,
 		client: client, ctx: ctx, workspace: workspace,
 		state: stateMenu, prompt: prompt, input: input,
 		events: make(chan *v1.Event, 256), status: "starting",
-		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1, follow: true,
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1, follow: prefs.Follow,
+		prefs: prefs, level: "judgement",
 	}
 }
 
 // --- messages ---
 
 type modesMsg struct{ modes []*v1.Mode }
+type modelsMsg struct{ models []*v1.ModelInfo }
 type startedMsg struct{ id, mode string }
 type evMsg struct{ ev *v1.Event }
 type streamClosedMsg struct{}
 type errMsg struct{ err error }
 
-func (m model) Init() tea.Cmd { return m.fetchModes }
+func (m model) Init() tea.Cmd { return tea.Batch(m.fetchModes, m.fetchModels) }
 
 func (m model) fetchModes() tea.Msg {
 	resp, err := m.client.ListModes(m.ctx, connect.NewRequest(&v1.ListModesRequest{}))
@@ -114,6 +131,14 @@ func (m model) fetchModes() tea.Msg {
 		return errMsg{err}
 	}
 	return modesMsg{resp.Msg.Modes}
+}
+
+func (m model) fetchModels() tea.Msg {
+	resp, err := m.client.ListModels(m.ctx, connect.NewRequest(&v1.ListModelsRequest{}))
+	if err != nil {
+		return nil // models are optional for the overlay; don't surface as a fatal error
+	}
+	return modelsMsg{resp.Msg.Models}
 }
 
 func (m model) startSession(mode, prompt string) tea.Cmd {
@@ -178,6 +203,36 @@ func (m model) answerQuestion(optIdx int, text string) tea.Cmd {
 	}
 }
 
+// setLevel issues SetInteractionLevel for the current session (spec §18.2).
+func (m model) setLevel(level string) tea.Cmd {
+	return func() tea.Msg {
+		if m.sessionID == "" {
+			return nil
+		}
+		if _, err := m.client.SetInteractionLevel(m.ctx, connect.NewRequest(&v1.SetInteractionLevelRequest{
+			SessionId: m.sessionID, Level: level,
+		})); err != nil {
+			return errMsg{err}
+		}
+		return nil
+	}
+}
+
+// setRoleConfig issues SetRoleConfig for the current session (spec §18.2).
+func (m model) setRoleConfig(coord, impl string, reviewers []string) tea.Cmd {
+	return func() tea.Msg {
+		if m.sessionID == "" {
+			return nil
+		}
+		if _, err := m.client.SetRoleConfig(m.ctx, connect.NewRequest(&v1.SetRoleConfigRequest{
+			SessionId: m.sessionID, Coordinator: coord, Implementer: impl, Reviewers: reviewers,
+		})); err != nil {
+			return errMsg{err}
+		}
+		return nil
+	}
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -202,6 +257,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case modesMsg:
 		m.modes = msg.modes
 		return m, nil
+	case modelsMsg:
+		m.models = msg.models
+		return m, nil
 	case errMsg:
 		m.err = msg.err
 		return m, nil
@@ -217,16 +275,38 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitEvent(m.events)
 	}
 
+	// The settings overlay (Esc) is modal over BOTH the menu and a session.
+	if m.overlay {
+		return m.updateOverlay(msg)
+	}
+	if key, ok := msg.(tea.KeyMsg); ok && key.String() == "esc" {
+		// Esc opens the overlay rather than leaving the session (spec §18.2).
+		m.openOverlay()
+		return m, nil
+	}
+
 	if m.state == stateMenu {
 		return m.updateMenu(msg)
 	}
 	return m.updateSession(msg)
 }
 
+// openOverlay enters the modal settings overlay, seeding role defaults from the
+// configured models when this is a fresh session.
+func (m *model) openOverlay() {
+	m.overlay = true
+	m.ovCursor = 0
+	if m.roleCoord == "" && len(m.models) > 0 {
+		m.roleCoord = m.models[0].Name
+		m.roleImpl = m.models[0].Name
+		m.roleReviewrs = []string{m.models[0].Name}
+	}
+}
+
 func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyMsg); ok {
 		switch key.String() {
-		case "ctrl+c", "esc":
+		case "ctrl+c":
 			return m, tea.Quit
 		case "up":
 			if m.cursor > 0 {
@@ -299,18 +379,12 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pickerOpts = nil
 				m.follow = true
 				return m, m.answerQuestion(idx, "")
-			case "esc":
-				m.state = stateMenu
-				return m, nil
 			}
 			return m, nil
 		}
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
-		case "esc":
-			m.state = stateMenu
-			return m, nil
 		case "up":
 			m.moveSelection(-1)
 			return m, nil
@@ -352,6 +426,232 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var icmd tea.Cmd
 	m.input, icmd = m.input.Update(msg)
 	return m, icmd
+}
+
+// --- settings overlay (spec §18.2) ---
+
+// overlay rows (indices into the navigable list).
+const (
+	ovLevel = iota
+	ovCoord
+	ovImpl
+	ovReviewers
+	ovTheme
+	ovFollow
+	ovApplyRoles
+	ovBackHome
+	ovQuit
+	ovCount
+)
+
+var (
+	levels = []string{"interactive", "judgement", "autonomous"}
+	themes = []string{"dark", "light"}
+)
+
+func (m model) updateOverlay(msg tea.Msg) (tea.Model, tea.Cmd) {
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch key.String() {
+	case "esc":
+		// Esc closes the overlay without leaving the session (spec §18.2).
+		m.overlay = false
+		return m, nil
+	case "ctrl+c":
+		return m, tea.Quit
+	case "up":
+		if m.ovCursor > 0 {
+			m.ovCursor--
+		}
+		return m, nil
+	case "down":
+		if m.ovCursor < ovCount-1 {
+			m.ovCursor++
+		}
+		return m, nil
+	case "left":
+		return m.overlayAdjust(-1)
+	case "right":
+		return m.overlayAdjust(1)
+	case " ", "space":
+		if m.ovCursor == ovReviewers {
+			m.toggleReviewer()
+		}
+		return m, nil
+	case "enter":
+		return m.overlayActivate()
+	}
+	return m, nil
+}
+
+// overlayAdjust cycles the value under the cursor (left/right).
+func (m model) overlayAdjust(d int) (tea.Model, tea.Cmd) {
+	switch m.ovCursor {
+	case ovLevel:
+		m.level = cycle(levels, m.level, d)
+		return m, m.setLevel(m.level)
+	case ovCoord:
+		m.roleCoord = cycleModel(m.models, m.roleCoord, d)
+		return m, nil
+	case ovImpl:
+		m.roleImpl = cycleModel(m.models, m.roleImpl, d)
+		return m, nil
+	case ovTheme:
+		m.prefs.Theme = cycle(themes, m.prefs.Theme, d)
+		clientconfig.Save(m.prefs)
+		return m, nil
+	case ovFollow:
+		m.prefs.Follow = !m.prefs.Follow
+		m.follow = m.prefs.Follow
+		clientconfig.Save(m.prefs)
+		return m, nil
+	}
+	return m, nil
+}
+
+// overlayActivate runs the action under the cursor (enter).
+func (m model) overlayActivate() (tea.Model, tea.Cmd) {
+	switch m.ovCursor {
+	case ovReviewers:
+		m.toggleReviewer()
+		return m, nil
+	case ovApplyRoles:
+		// Commit per-role assignment; reviewers must be non-empty to apply.
+		revs := m.roleReviewrs
+		if len(revs) == 0 && len(m.models) > 0 {
+			revs = []string{m.models[0].Name}
+			m.roleReviewrs = revs
+		}
+		m.overlay = false
+		return m, m.setRoleConfig(m.roleCoord, m.roleImpl, revs)
+	case ovBackHome:
+		// Explicit, intentional exit from the session (spec §18.2).
+		m.overlay = false
+		m.state = stateMenu
+		return m, nil
+	case ovQuit:
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+// toggleReviewer flips the reviewers row's multi-select membership. Each
+// space/enter toggles inclusion of one model, advancing a rotating sub-index so
+// repeated presses walk through every configured model in turn.
+func (m *model) toggleReviewer() {
+	if len(m.models) == 0 {
+		return
+	}
+	// Rotate a hidden sub-index across the model list, toggling membership.
+	name := m.models[m.reviewerSub].Name
+	if m.contains(name) {
+		m.roleReviewrs = remove(m.roleReviewrs, name)
+	} else {
+		m.roleReviewrs = append(m.roleReviewrs, name)
+	}
+	m.reviewerSub = (m.reviewerSub + 1) % len(m.models)
+}
+
+func (m model) contains(name string) bool {
+	for _, r := range m.roleReviewrs {
+		if r == name {
+			return true
+		}
+	}
+	return false
+}
+
+func remove(s []string, name string) []string {
+	out := s[:0]
+	for _, v := range s {
+		if v != name {
+			out = append(out, v)
+		}
+	}
+	return append([]string(nil), out...)
+}
+
+func cycle(vals []string, cur string, d int) string {
+	idx := 0
+	for i, v := range vals {
+		if v == cur {
+			idx = i
+			break
+		}
+	}
+	idx = (idx + d + len(vals)) % len(vals)
+	return vals[idx]
+}
+
+func cycleModel(models []*v1.ModelInfo, cur string, d int) string {
+	if len(models) == 0 {
+		return cur
+	}
+	idx := 0
+	for i, mm := range models {
+		if mm.Name == cur {
+			idx = i
+			break
+		}
+	}
+	idx = (idx + d + len(models)) % len(models)
+	return models[idx].Name
+}
+
+func (m model) overlayView() string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render(" settings ") + "\n\n")
+	rows := []struct{ label, val string }{
+		{"interaction level", m.level},
+		{"coordinator model", m.roleCoord},
+		{"implementer model", m.roleImpl},
+		{"reviewers", strings.Join(m.roleReviewrs, ", ")},
+		{"theme", m.prefs.Theme},
+		{"follow / auto-scroll", boolStr(m.prefs.Follow)},
+		{"apply role config", ""},
+		{"back to home menu", ""},
+		{"quit", ""},
+	}
+	for i, r := range rows {
+		cursor := "  "
+		label := fmt.Sprintf("%-22s", r.label)
+		if i == m.ovCursor {
+			cursor = selStyle.Render("▸ ")
+			label = selStyle.Render(label)
+		}
+		val := r.val
+		if i == ovReviewers && len(m.models) > 0 {
+			val = m.reviewerSummary()
+		}
+		b.WriteString("  " + cursor + label + dimStyle.Render(val) + "\n")
+	}
+	help := "  ↑/↓ move · ←/→ change · space toggle reviewer · enter activate · esc close"
+	b.WriteString("\n" + dimStyle.Render(help))
+	if m.sessionID == "" {
+		b.WriteString("\n" + dimStyle.Render("  (no active session: level/role changes apply only within a session)"))
+	}
+	return b.String()
+}
+
+func (m model) reviewerSummary() string {
+	var parts []string
+	for _, mm := range m.models {
+		mark := "[ ]"
+		if m.contains(mm.Name) {
+			mark = "[x]"
+		}
+		parts = append(parts, mark+" "+mm.Name)
+	}
+	return strings.Join(parts, "  ")
+}
+
+func boolStr(b bool) string {
+	if b {
+		return "on"
+	}
+	return "off"
 }
 
 func (m *model) moveSelection(d int) {
@@ -409,6 +709,24 @@ func (m *model) appendEvent(ev *v1.Event) {
 	case "mode_changed":
 		m.mode = dataField(ev, "to")
 		m.status = "running"
+	case "session_started":
+		if lvl := dataField(ev, "interaction_level"); lvl != "" {
+			m.level = lvl
+		}
+	case "interaction_level_changed":
+		if to := dataField(ev, "to"); to != "" {
+			m.level = to
+		}
+	case "role_config_changed":
+		if c := dataField(ev, "coordinator"); c != "" {
+			m.roleCoord = c
+		}
+		if i := dataField(ev, "implementer"); i != "" {
+			m.roleImpl = i
+		}
+		if rv := dataList(ev, "reviewers"); len(rv) > 0 {
+			m.roleReviewrs = rv
+		}
 	}
 	if m.follow {
 		m.selected = len(m.evs) - 1
@@ -482,6 +800,9 @@ func (m model) View() string {
 	if m.err != nil {
 		return fmt.Sprintf("\n  error: %v\n\n  (ctrl+c to quit)\n", m.err)
 	}
+	if m.overlay {
+		return m.overlayView()
+	}
 	if m.state == stateMenu {
 		return m.menuView()
 	}
@@ -504,7 +825,7 @@ func (m model) menuView() string {
 		b.WriteString("  " + cursor + label + "\n")
 	}
 	b.WriteString("\n  " + m.prompt.View() + "\n")
-	b.WriteString("\n" + dimStyle.Render("  ↑/↓ choose mode · type a prompt · enter start · esc quit"))
+	b.WriteString("\n" + dimStyle.Render("  ↑/↓ choose mode · type a prompt · enter start · esc settings"))
 	return b.String()
 }
 
@@ -519,10 +840,10 @@ func (m model) sessionView() string {
 		body = m.vp.View()
 	}
 	if m.picking {
-		help := dimStyle.Render(" ↑↓ choose · enter select · esc menu")
+		help := dimStyle.Render(" ↑↓ choose · enter select · esc settings")
 		return top + "\n" + body + "\n" + m.pickerView() + "\n" + help
 	}
-	help := dimStyle.Render(" enter send/expand · ↑↓ select · click expand · pgup/pgdn scroll · esc menu")
+	help := dimStyle.Render(" enter send/expand · ↑↓ select · click expand · pgup/pgdn scroll · esc settings")
 	return top + "\n" + body + "\n " + m.input.View() + "\n" + help
 }
 

@@ -8,6 +8,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"sort"
 
 	"github.com/pelletier/go-toml/v2"
 	"github.com/whyrusleeping/gollama"
@@ -92,9 +93,38 @@ func NewRegistry(cfg *Config) *Registry { return &Registry{cfg: cfg} }
 func (r *Registry) MaxTokens() int { return r.cfg.MaxTokens }
 
 // CoordinatorName / ImplementerName / ReviewerNames expose the role assignments.
-func (r *Registry) CoordinatorName() string  { return r.cfg.Roles.Coordinator }
-func (r *Registry) ImplementerName() string  { return r.cfg.Roles.Implementer }
-func (r *Registry) ReviewerNames() []string  { return r.cfg.Roles.Reviewers }
+func (r *Registry) CoordinatorName() string { return r.cfg.Roles.Coordinator }
+func (r *Registry) ImplementerName() string { return r.cfg.Roles.Implementer }
+func (r *Registry) ReviewerNames() []string { return r.cfg.Roles.Reviewers }
+
+// ModelInfo describes a configured logical model for enumeration (ListModels).
+type ModelInfo struct {
+	Name    string
+	Backend string
+	Model   string
+}
+
+// Has reports whether a logical model name is configured.
+func (r *Registry) Has(name string) bool {
+	_, ok := r.cfg.Models[name]
+	return ok
+}
+
+// Models returns the configured logical models sorted by name so the settings
+// overlay can populate the per-role pickers (spec §13, §18.2).
+func (r *Registry) Models() []ModelInfo {
+	names := make([]string, 0, len(r.cfg.Models))
+	for name := range r.cfg.Models {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]ModelInfo, 0, len(names))
+	for _, name := range names {
+		m := r.cfg.Models[name]
+		out = append(out, ModelInfo{Name: name, Backend: m.Backend, Model: m.Model})
+	}
+	return out
+}
 
 // Build constructs a fresh backend client and returns it with its model id. A new
 // client per call avoids shared-state races across concurrent subagents.

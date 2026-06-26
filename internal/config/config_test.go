@@ -63,6 +63,34 @@ func TestLoadAndRegistry(t *testing.T) {
 	}
 }
 
+func TestModelsEnumeratesSorted(t *testing.T) {
+	cfg := &Config{
+		Models: map[string]Model{
+			"claude": {Backend: "anthropic", Model: "claude-opus-4-8"},
+			"local":  {Backend: "ollama", Model: "qwen2.5-coder"},
+			"gpt":    {Backend: "openai", Model: "gpt-5.5"},
+		},
+		Roles: Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"}},
+	}
+	reg := NewRegistry(cfg)
+	got := reg.Models()
+	if len(got) != 3 {
+		t.Fatalf("Models() len = %d", len(got))
+	}
+	want := []string{"claude", "gpt", "local"} // sorted by name
+	for i, m := range got {
+		if m.Name != want[i] {
+			t.Fatalf("Models()[%d].Name = %q, want %q", i, m.Name, want[i])
+		}
+	}
+	if got[0].Backend != "anthropic" || got[0].Model != "claude-opus-4-8" {
+		t.Fatalf("claude info = %+v", got[0])
+	}
+	if !reg.Has("gpt") || reg.Has("nope") {
+		t.Fatal("Has() wrong")
+	}
+}
+
 func TestValidateRejectsUnknownModel(t *testing.T) {
 	cfg := &Config{
 		Models: map[string]Model{"a": {Backend: "anthropic"}},

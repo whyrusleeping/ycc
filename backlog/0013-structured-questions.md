@@ -1,7 +1,7 @@
 ---
 id: "0013"
 title: Structured interactive ask_user questions (option pickers)
-status: in_progress
+status: done
 priority: 2
 created: "2026-06-26"
 updated: "2026-06-26"
@@ -35,4 +35,6 @@ events, and answer RPC need to surface them end-to-end. See spec §18.3 and §8.
 - 2026-06-26 review (claude): accept — The change implements structured interactive ask_user questions end-to-end and satisfies all acceptance criteria. The tool schema exposes an optional `options` array (StrArrProp), `question_asked` eve
 …[truncated]
 - 2026-06-26 revision: Removed the out-of-scope work and confirmed the build remains green.  ## Cleanup performed - Deleted `backlog/0018-save-rerun-plans.md` (via `git rm`) — it was an unrelated backlog task not part of 
+…[truncated]
+- 2026-06-26 decision: accept — commit 0e36d4c: feat: structured ask_user with option pickers (0013)  Add optional `options` to the ask_user tool schema, propagate them through question_asked events, and let AnswerQuestion accept a chosen option in
 …[truncated]

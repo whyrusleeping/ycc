@@ -42,6 +42,8 @@ type Session struct {
 	emitter   *event.Emitter
 	loop      *engine.Loop
 	inter     *interaction
+	deps      *orchestrator.Deps
+	reg       *config.Registry
 	prompt    string
 	buildLoop func(mode, prompt string) (*engine.Loop, error)
 
@@ -49,8 +51,11 @@ type Session struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 
-	mu     sync.Mutex
-	status event.Status
+	mu          sync.Mutex
+	status      event.Status
+	coordinator string   // logical model name driving the coordinator
+	implementer string   // logical model name for the implementer role
+	reviewers   []string // logical model names for the reviewer role
 }
 
 // Log exposes the session's event log for subscription.
@@ -66,6 +71,25 @@ func (s *Session) Status() event.Status {
 func (s *Session) setStatus(st event.Status) {
 	s.mu.Lock()
 	s.status = st
+	s.mu.Unlock()
+}
+
+// Level returns the session's current interaction level (guarded read).
+func (s *Session) Level() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.InteractionLevel
+}
+
+func (s *Session) currentLoop() *engine.Loop {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.loop
+}
+
+func (s *Session) setLoop(l *engine.Loop) {
+	s.mu.Lock()
+	s.loop = l
 	s.mu.Unlock()
 }
 
@@ -107,17 +131,118 @@ func (s *Session) Stop() {
 	s.log.Close()
 }
 
+// SetInteractionLevel changes the session's interaction level mid-flight. It
+// takes effect at the next gate (the next ask_user) and is recorded in the
+// event log so other subscribers see it (spec §11, §18.2).
+func (s *Session) SetInteractionLevel(level string) error {
+	switch level {
+	case "interactive", "judgement", "autonomous":
+	default:
+		return fmt.Errorf("unknown interaction level %q", level)
+	}
+	s.mu.Lock()
+	from := s.InteractionLevel
+	s.InteractionLevel = level
+	s.mu.Unlock()
+	s.inter.SetLevel(level)
+	s.emitter.Emit(event.InteractionLevelChanged, map[string]any{"from": from, "to": level})
+	return nil
+}
+
+// SetRoleConfig reassigns per-role logical models mid-session and rebuilds the
+// relevant gollama clients so the next coordinator turn / next spawned subagent
+// uses the new assignment (spec §13, §18.2). Empty coordinator/implementer leaves
+// that role unchanged; an empty reviewers slice leaves reviewers unchanged.
+func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []string) error {
+	s.mu.Lock()
+	newCoord, newImpl, newRevs := s.coordinator, s.implementer, s.reviewers
+	s.mu.Unlock()
+
+	if coordinator != "" {
+		if !s.reg.Has(coordinator) {
+			return fmt.Errorf("unknown model %q", coordinator)
+		}
+		newCoord = coordinator
+	}
+	if implementer != "" {
+		if !s.reg.Has(implementer) {
+			return fmt.Errorf("unknown model %q", implementer)
+		}
+		newImpl = implementer
+	}
+	if len(reviewers) > 0 {
+		for _, name := range reviewers {
+			if !s.reg.Has(name) {
+				return fmt.Errorf("unknown model %q", name)
+			}
+		}
+		newRevs = append([]string(nil), reviewers...)
+	}
+
+	// Rebuild the implementer / reviewer specs so the next spawn uses the new
+	// backends (the running subagents keep their context until then).
+	implSpec, err := s.agentSpec(newImpl)
+	if err != nil {
+		return err
+	}
+	var revSpecs []orchestrator.AgentSpec
+	for _, name := range newRevs {
+		rs, err := s.agentSpec(name)
+		if err != nil {
+			return err
+		}
+		revSpecs = append(revSpecs, rs)
+	}
+	s.deps.SetImplementer(implSpec)
+	s.deps.SetReviewers(revSpecs)
+
+	// Swap the live coordinator loop's backend so its next turn uses the new
+	// model while preserving its conversation history.
+	client, model, err := s.reg.Build(newCoord)
+	if err != nil {
+		return fmt.Errorf("build coordinator backend: %w", err)
+	}
+	s.currentLoop().SetBackend(client, model)
+
+	s.mu.Lock()
+	s.coordinator, s.implementer, s.reviewers = newCoord, newImpl, newRevs
+	s.mu.Unlock()
+
+	s.emitter.Emit(event.RoleConfigChanged, map[string]any{
+		"coordinator": newCoord,
+		"implementer": newImpl,
+		"reviewers":   newRevs,
+	})
+	return nil
+}
+
+// agentSpec builds an orchestrator.AgentSpec for a logical model name.
+func (s *Session) agentSpec(name string) (orchestrator.AgentSpec, error) {
+	_, model, err := s.reg.Build(name)
+	if err != nil {
+		return orchestrator.AgentSpec{}, fmt.Errorf("build backend %q: %w", name, err)
+	}
+	return orchestrator.AgentSpec{
+		Name:  name,
+		Model: model,
+		NewClient: func() engine.Turner {
+			c, _, _ := s.reg.Build(name)
+			return c
+		},
+	}, nil
+}
+
 func (s *Session) run() {
 	s.emitter.Emit(event.SessionStarted, map[string]any{
 		"workspace":         s.Workspace,
 		"mode":              s.Mode,
-		"interaction_level": s.InteractionLevel,
+		"interaction_level": s.Level(),
 	})
 	s.emitter.EmitAs("user", event.UserInput, map[string]any{"text": s.prompt})
 
 	for {
 		s.setStatus(event.StatusRunning)
-		res, err := s.loop.Run(s.ctx)
+		res, err := s.currentLoop().Run(s.ctx)
 		if s.ctx.Err() != nil {
 			return
 		}
@@ -129,7 +254,7 @@ func (s *Session) run() {
 			if next, berr := s.buildLoop(res.NextMode, modeTransitionPrompt(res.NextMode)); berr == nil {
 				s.emitter.Emit(event.ModeChanged, map[string]any{"from": s.Mode, "to": res.NextMode})
 				s.Mode = res.NextMode
-				s.loop = next
+				s.setLoop(next)
 				continue // run the new mode's loop immediately
 			} else {
 				s.emitter.Emit(event.SessionError, map[string]any{"msg": "mode switch failed: " + berr.Error()})
@@ -142,7 +267,7 @@ func (s *Session) run() {
 		select {
 		case text := <-s.inputCh:
 			s.emitter.EmitAs("user", event.UserInput, map[string]any{"text": text})
-			s.loop.Post(text)
+			s.currentLoop().Post(text)
 		case <-s.ctx.Done():
 			return
 		}
@@ -249,12 +374,15 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("prepare git workspace: %w", err)
 	}
-	implSpec, err := m.agentSpec(m.reg.ImplementerName())
+	coordName := m.reg.CoordinatorName()
+	implName := m.reg.ImplementerName()
+	reviewerNames := append([]string(nil), m.reg.ReviewerNames()...)
+	implSpec, err := m.agentSpec(implName)
 	if err != nil {
 		return nil, err
 	}
 	var reviewers []orchestrator.AgentSpec
-	for _, name := range m.reg.ReviewerNames() {
+	for _, name := range reviewerNames {
 		rs, err := m.agentSpec(name)
 		if err != nil {
 			return nil, err
@@ -272,22 +400,6 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 		MaxTok:      m.reg.MaxTokens(),
 	}
 
-	// buildLoop assembles the agent loop for a mode; reused on mode transitions.
-	buildLoop := func(mode, prompt string) (*engine.Loop, error) {
-		reg, sys := orchestrator.BuildMode(mode, deps, level)
-		client, model, err := m.reg.Build(m.reg.CoordinatorName())
-		if err != nil {
-			return nil, fmt.Errorf("build coordinator backend: %w", err)
-		}
-		loop := &engine.Loop{Client: client, Model: model, System: sys, Tools: reg, Emitter: emitter, MaxTok: m.reg.MaxTokens()}
-		loop.Seed(prompt)
-		return loop, nil
-	}
-	loop, err := buildLoop(mode, prompt)
-	if err != nil {
-		return nil, err
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{
 		ID:               id,
@@ -296,15 +408,40 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 		InteractionLevel: level,
 		log:              log,
 		emitter:          emitter,
-		loop:             loop,
 		inter:            inter,
+		deps:             deps,
+		reg:              m.reg,
 		prompt:           prompt,
-		buildLoop:        buildLoop,
 		inputCh:          make(chan string, 64),
 		ctx:              ctx,
 		cancel:           cancel,
 		status:           event.StatusRunning,
+		coordinator:      coordName,
+		implementer:      implName,
+		reviewers:        reviewerNames,
 	}
+
+	// buildLoop assembles the agent loop for a mode; reused on mode transitions.
+	// It reads the session's current coordinator assignment so a mid-session
+	// role-config change drives the next coordinator loop (spec §18.2).
+	s.buildLoop = func(mode, prompt string) (*engine.Loop, error) {
+		reg, sys := orchestrator.BuildMode(mode, deps, s.inter.Level())
+		s.mu.Lock()
+		coord := s.coordinator
+		s.mu.Unlock()
+		client, model, err := m.reg.Build(coord)
+		if err != nil {
+			return nil, fmt.Errorf("build coordinator backend: %w", err)
+		}
+		loop := &engine.Loop{Client: client, Model: model, System: sys, Tools: reg, Emitter: emitter, MaxTok: m.reg.MaxTokens()}
+		loop.Seed(prompt)
+		return loop, nil
+	}
+	loop, err := s.buildLoop(mode, prompt)
+	if err != nil {
+		return nil, err
+	}
+	s.loop = loop
 
 	m.mu.Lock()
 	m.sessions[id] = s
@@ -349,6 +486,9 @@ func (m *Manager) List() []*Session {
 	}
 	return out
 }
+
+// Models returns the configured logical models for the settings overlay pickers.
+func (m *Manager) Models() []config.ModelInfo { return m.reg.Models() }
 
 func newID() (string, error) {
 	b := make([]byte, 8)

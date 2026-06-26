@@ -61,6 +61,34 @@ type reviewerHandle struct {
 	loop *engine.Loop
 }
 
+// SetImplementer swaps the implementer spec used by future spawn_implementer
+// calls (mid-session role-config change, spec §18.2). The currently-running
+// implementer keeps its context until the next fresh spawn.
+func (d *Deps) SetImplementer(spec AgentSpec) {
+	d.mu.Lock()
+	d.Implementer = spec
+	d.mu.Unlock()
+}
+
+// SetReviewers swaps the reviewer specs used by the next spawn_reviewers call.
+func (d *Deps) SetReviewers(specs []AgentSpec) {
+	d.mu.Lock()
+	d.Reviewers = specs
+	d.mu.Unlock()
+}
+
+func (d *Deps) implementer() AgentSpec {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.Implementer
+}
+
+func (d *Deps) reviewerSpecs() []AgentSpec {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]AgentSpec(nil), d.Reviewers...)
+}
+
 // CoordinatorSystem returns the coordinator's system prompt for an interaction level.
 func CoordinatorSystem(level string) string {
 	return coordinatorSystem + "\n\n" + levelGuidance(level)
@@ -170,13 +198,14 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 			}
 			reg := tools.New()
 			reg.Add(tools.Worker(&tools.Workspace{Root: d.Workspace})...)
-			loop := d.newLoop(d.Implementer, implementerSystem+"\n\n"+workspaceNote(d.Workspace), reg, "implementer")
+			impl := d.implementer()
+			loop := d.newLoop(impl, implementerSystem+"\n\n"+workspaceNote(d.Workspace), reg, "implementer")
 			loop.Seed(implementerPrompt(t, plan))
 			d.mu.Lock()
 			d.impl = loop
 			d.mu.Unlock()
 
-			d.Emitter.Emit(event.SubagentSpawned, map[string]any{"role": "implementer", "model": d.Implementer.Model})
+			d.Emitter.Emit(event.SubagentSpawned, map[string]any{"role": "implementer", "model": impl.Model})
 			res, err := loop.Run(ctx)
 			if err != nil {
 				d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "implementer", "error": err.Error()})
@@ -208,7 +237,7 @@ func sendToImplementer(d *Deps) *gollama.Tool {
 				return tools.ErrResult("send_to_implementer: no implementer yet; call spawn_implementer first"), nil
 			}
 			loop.Post(revisePrompt(instr))
-			d.Emitter.Emit(event.SubagentSpawned, map[string]any{"role": "implementer", "model": d.Implementer.Model, "revise": true})
+			d.Emitter.Emit(event.SubagentSpawned, map[string]any{"role": "implementer", "model": d.implementer().Model, "revise": true})
 			res, err := loop.Run(ctx)
 			if err != nil {
 				d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "implementer", "error": err.Error()})
@@ -233,9 +262,10 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 			if err != nil {
 				return tools.ErrResult("spawn_reviewers: %v", err), nil
 			}
+			specs := d.reviewerSpecs()
 			d.mu.Lock()
 			d.reviewers = nil
-			for _, spec := range d.Reviewers {
+			for _, spec := range specs {
 				reg := tools.New()
 				reg.Add(tools.Reviewer(&tools.Workspace{Root: d.Workspace})...)
 				loop := d.newLoop(spec, reviewerSystem+"\n\n"+workspaceNote(d.Workspace), reg, "reviewer:"+spec.Name)

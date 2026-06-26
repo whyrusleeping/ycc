@@ -1,12 +1,17 @@
 ---
 id: "0012"
 title: Settings overlay (esc) with mid-session interaction level + per-role model config
-status: todo
+status: in_progress
 priority: 2
-created: 2026-06-26
-updated: 2026-06-26
-depends_on: ["0006"]
-spec_refs: ["Client UI (TUI)", "Interaction levels", "RPC protocol", "Backends & model registry"]
+created: "2026-06-26"
+updated: "2026-06-26"
+depends_on:
+    - "0006"
+spec_refs:
+    - Client UI (TUI)
+    - Interaction levels
+    - RPC protocol
+    - Backends & model registry
 ---
 
 ## Description
@@ -29,3 +34,11 @@ which configured model drives each role for the session. See spec §18.2.
 - [ ] UI prefs (theme, follow toggle) are client-only and persist in local client config
 
 ## Work log
+- 2026-06-26 plan: Implement a modal settings overlay (Esc) in the TUI plus the backing RPCs and session-state plumbing for mid-session interaction-level and per-role model configuration.  1. Proto (proto/*.proto): add 
+…[truncated]
+- 2026-06-26 review (claude): accept — The change fully and correctly satisfies the task. All three new RPCs (ListModels, SetInteractionLevel, SetRoleConfig) are defined in proto, generated, and implemented server-side. Esc now opens a mod
+…[truncated]
+- 2026-06-26 revision: Addressed the two minor review nits (no other changes):  1. **Cleaned up the garbled `toggleReviewer` doc comment** (internal/tui/tui.go) so it accurately describes the multi-select toggle behavior: e
+…[truncated]
+- 2026-06-26 review (claude): accept — The revision addresses my prior findings. The garbled toggleReviewer doc comment is now clear and accurately describes the rotating multi-select behavior; a new mutex-guarded Session.Level() accessor 
+…[truncated]

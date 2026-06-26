@@ -30,9 +30,27 @@ func newInteraction(level string, emitter *event.Emitter) *interaction {
 	return &interaction{level: level, emitter: emitter}
 }
 
+// SetLevel updates the interaction level. It takes effect at the next Ask gate;
+// a question already blocked is unaffected (spec §11, §18.2).
+func (in *interaction) SetLevel(level string) {
+	in.mu.Lock()
+	in.level = level
+	in.mu.Unlock()
+}
+
+// Level returns the current interaction level.
+func (in *interaction) Level() string {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	return in.level
+}
+
 // Ask implements orchestrator.Asker.
 func (in *interaction) Ask(ctx context.Context, question string, options []string) (string, error) {
-	if in.level == "autonomous" {
+	in.mu.Lock()
+	level := in.level
+	in.mu.Unlock()
+	if level == "autonomous" {
 		const ans = "You are in autonomous mode and no human is available. Proceed using your best judgement."
 		in.emitter.Emit(event.QuestionAsked, askData(question, options, true))
 		in.mu.Lock()

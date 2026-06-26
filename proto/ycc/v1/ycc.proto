@@ -60,6 +60,35 @@ message SessionInfo {
 }
 message ListSessionsResponse { repeated SessionInfo sessions = 1; }
 
+// ListModels enumerates the configured logical models (spec §13) so the settings
+// overlay can populate the per-role pickers.
+message ListModelsRequest {}
+message ModelInfo {
+  string name = 1;    // logical name (e.g. "claude", "gpt")
+  string backend = 2; // anthropic | openai | ollama | ...
+  string model = 3;   // backend model id
+}
+message ListModelsResponse { repeated ModelInfo models = 1; }
+
+// SetInteractionLevel changes a session's interaction level mid-flight (spec §11,
+// §18.2). It takes effect at the next gate and is recorded in the event log.
+message SetInteractionLevelRequest {
+  string session_id = 1;
+  string level = 2; // interactive | judgement | autonomous
+}
+message SetInteractionLevelResponse {}
+
+// SetRoleConfig reassigns per-role logical models mid-session (spec §13, §18.2).
+// Empty coordinator/implementer leaves that role unchanged; an empty reviewers
+// list leaves reviewers unchanged.
+message SetRoleConfigRequest {
+  string session_id = 1;
+  string coordinator = 2;
+  string implementer = 3;
+  repeated string reviewers = 4;
+}
+message SetRoleConfigResponse {}
+
 // SessionService is the daemon's RPC surface (spec §12). M1 implements the core
 // four; mode/question RPCs arrive in later milestones.
 service SessionService {
@@ -69,4 +98,10 @@ service SessionService {
   rpc Subscribe(SubscribeRequest) returns (stream Event);
   rpc SendInput(SendInputRequest) returns (SendInputResponse);
   rpc AnswerQuestion(AnswerQuestionRequest) returns (AnswerQuestionResponse);
+
+  // Settings overlay (spec §18.2): enumerate models and change a session's
+  // interaction level / per-role model assignment mid-flight.
+  rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
+  rpc SetInteractionLevel(SetInteractionLevelRequest) returns (SetInteractionLevelResponse);
+  rpc SetRoleConfig(SetRoleConfigRequest) returns (SetRoleConfigResponse);
 }

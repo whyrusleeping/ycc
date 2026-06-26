@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/event"
@@ -30,7 +31,24 @@ type Loop struct {
 	MaxTurns int // 0 => default
 	MaxTok   int // per-turn max tokens; 0 => backend default
 
+	mu      sync.Mutex // guards Client/Model swaps mid-loop (settings overlay, §18.2)
 	history []gollama.Message
+}
+
+// SetBackend swaps the loop's backend client and model id while preserving the
+// conversation history, so a mid-session role-config change takes effect on the
+// next turn (spec §18.2). Safe to call concurrently with Run.
+func (l *Loop) SetBackend(client Turner, model string) {
+	l.mu.Lock()
+	l.Client = client
+	l.Model = model
+	l.mu.Unlock()
+}
+
+func (l *Loop) backend() (Turner, string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.Client, l.Model
 }
 
 const defaultMaxTurns = 40
@@ -65,8 +83,9 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			return nil, err
 		}
 
+		client, modelID := l.backend()
 		opts := gollama.RequestOptions{
-			Model:    l.Model,
+			Model:    modelID,
 			System:   l.System,
 			Messages: l.history,
 			Tools:    l.Tools.APIDefs(),
@@ -75,7 +94,7 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			opts.Options = &gollama.Options{MaxTokens: l.MaxTok}
 		}
 
-		resp, err := l.Client.Turn(opts)
+		resp, err := client.Turn(opts)
 		if err != nil {
 			l.Emitter.Emit(event.SessionError, map[string]any{"msg": err.Error()})
 			return nil, fmt.Errorf("turn %d: %w", turn, err)

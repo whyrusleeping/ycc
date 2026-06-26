@@ -738,6 +738,345 @@ func (x *ListSessionsResponse) GetSessions() []*SessionInfo {
 	return nil
 }
 
+// ListModels enumerates the configured logical models (spec §13) so the settings
+// overlay can populate the per-role pickers.
+type ListModelsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListModelsRequest) Reset() {
+	*x = ListModelsRequest{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListModelsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListModelsRequest) ProtoMessage() {}
+
+func (x *ListModelsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListModelsRequest.ProtoReflect.Descriptor instead.
+func (*ListModelsRequest) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{14}
+}
+
+type ModelInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`       // logical name (e.g. "claude", "gpt")
+	Backend       string                 `protobuf:"bytes,2,opt,name=backend,proto3" json:"backend,omitempty"` // anthropic | openai | ollama | ...
+	Model         string                 `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`     // backend model id
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ModelInfo) Reset() {
+	*x = ModelInfo{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ModelInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ModelInfo) ProtoMessage() {}
+
+func (x *ModelInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ModelInfo.ProtoReflect.Descriptor instead.
+func (*ModelInfo) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *ModelInfo) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ModelInfo) GetBackend() string {
+	if x != nil {
+		return x.Backend
+	}
+	return ""
+}
+
+func (x *ModelInfo) GetModel() string {
+	if x != nil {
+		return x.Model
+	}
+	return ""
+}
+
+type ListModelsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Models        []*ModelInfo           `protobuf:"bytes,1,rep,name=models,proto3" json:"models,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListModelsResponse) Reset() {
+	*x = ListModelsResponse{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListModelsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListModelsResponse) ProtoMessage() {}
+
+func (x *ListModelsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListModelsResponse.ProtoReflect.Descriptor instead.
+func (*ListModelsResponse) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *ListModelsResponse) GetModels() []*ModelInfo {
+	if x != nil {
+		return x.Models
+	}
+	return nil
+}
+
+// SetInteractionLevel changes a session's interaction level mid-flight (spec §11,
+// §18.2). It takes effect at the next gate and is recorded in the event log.
+type SetInteractionLevelRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Level         string                 `protobuf:"bytes,2,opt,name=level,proto3" json:"level,omitempty"` // interactive | judgement | autonomous
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetInteractionLevelRequest) Reset() {
+	*x = SetInteractionLevelRequest{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetInteractionLevelRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetInteractionLevelRequest) ProtoMessage() {}
+
+func (x *SetInteractionLevelRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetInteractionLevelRequest.ProtoReflect.Descriptor instead.
+func (*SetInteractionLevelRequest) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *SetInteractionLevelRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *SetInteractionLevelRequest) GetLevel() string {
+	if x != nil {
+		return x.Level
+	}
+	return ""
+}
+
+type SetInteractionLevelResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetInteractionLevelResponse) Reset() {
+	*x = SetInteractionLevelResponse{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetInteractionLevelResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetInteractionLevelResponse) ProtoMessage() {}
+
+func (x *SetInteractionLevelResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetInteractionLevelResponse.ProtoReflect.Descriptor instead.
+func (*SetInteractionLevelResponse) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{18}
+}
+
+// SetRoleConfig reassigns per-role logical models mid-session (spec §13, §18.2).
+// Empty coordinator/implementer leaves that role unchanged; an empty reviewers
+// list leaves reviewers unchanged.
+type SetRoleConfigRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Coordinator   string                 `protobuf:"bytes,2,opt,name=coordinator,proto3" json:"coordinator,omitempty"`
+	Implementer   string                 `protobuf:"bytes,3,opt,name=implementer,proto3" json:"implementer,omitempty"`
+	Reviewers     []string               `protobuf:"bytes,4,rep,name=reviewers,proto3" json:"reviewers,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetRoleConfigRequest) Reset() {
+	*x = SetRoleConfigRequest{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetRoleConfigRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetRoleConfigRequest) ProtoMessage() {}
+
+func (x *SetRoleConfigRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetRoleConfigRequest.ProtoReflect.Descriptor instead.
+func (*SetRoleConfigRequest) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *SetRoleConfigRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *SetRoleConfigRequest) GetCoordinator() string {
+	if x != nil {
+		return x.Coordinator
+	}
+	return ""
+}
+
+func (x *SetRoleConfigRequest) GetImplementer() string {
+	if x != nil {
+		return x.Implementer
+	}
+	return ""
+}
+
+func (x *SetRoleConfigRequest) GetReviewers() []string {
+	if x != nil {
+		return x.Reviewers
+	}
+	return nil
+}
+
+type SetRoleConfigResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetRoleConfigResponse) Reset() {
+	*x = SetRoleConfigResponse{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetRoleConfigResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetRoleConfigResponse) ProtoMessage() {}
+
+func (x *SetRoleConfigResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetRoleConfigResponse.ProtoReflect.Descriptor instead.
+func (*SetRoleConfigResponse) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{20}
+}
+
 var File_ycc_v1_ycc_proto protoreflect.FileDescriptor
 
 const file_ycc_v1_ycc_proto_rawDesc = "" +
@@ -787,14 +1126,37 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x06status\x18\x03 \x01(\tR\x06status\x12\x1c\n" +
 	"\tworkspace\x18\x04 \x01(\tR\tworkspace\"G\n" +
 	"\x14ListSessionsResponse\x12/\n" +
-	"\bsessions\x18\x01 \x03(\v2\x13.ycc.v1.SessionInfoR\bsessions2\xb3\x03\n" +
+	"\bsessions\x18\x01 \x03(\v2\x13.ycc.v1.SessionInfoR\bsessions\"\x13\n" +
+	"\x11ListModelsRequest\"O\n" +
+	"\tModelInfo\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
+	"\abackend\x18\x02 \x01(\tR\abackend\x12\x14\n" +
+	"\x05model\x18\x03 \x01(\tR\x05model\"?\n" +
+	"\x12ListModelsResponse\x12)\n" +
+	"\x06models\x18\x01 \x03(\v2\x11.ycc.v1.ModelInfoR\x06models\"Q\n" +
+	"\x1aSetInteractionLevelRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x14\n" +
+	"\x05level\x18\x02 \x01(\tR\x05level\"\x1d\n" +
+	"\x1bSetInteractionLevelResponse\"\x97\x01\n" +
+	"\x14SetRoleConfigRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12 \n" +
+	"\vcoordinator\x18\x02 \x01(\tR\vcoordinator\x12 \n" +
+	"\vimplementer\x18\x03 \x01(\tR\vimplementer\x12\x1c\n" +
+	"\treviewers\x18\x04 \x03(\tR\treviewers\"\x17\n" +
+	"\x15SetRoleConfigResponse2\xa6\x05\n" +
 	"\x0eSessionService\x12@\n" +
 	"\tListModes\x12\x18.ycc.v1.ListModesRequest\x1a\x19.ycc.v1.ListModesResponse\x12I\n" +
 	"\fStartSession\x12\x1b.ycc.v1.StartSessionRequest\x1a\x1c.ycc.v1.StartSessionResponse\x12I\n" +
 	"\fListSessions\x12\x1b.ycc.v1.ListSessionsRequest\x1a\x1c.ycc.v1.ListSessionsResponse\x126\n" +
 	"\tSubscribe\x12\x18.ycc.v1.SubscribeRequest\x1a\r.ycc.v1.Event0\x01\x12@\n" +
 	"\tSendInput\x12\x18.ycc.v1.SendInputRequest\x1a\x19.ycc.v1.SendInputResponse\x12O\n" +
-	"\x0eAnswerQuestion\x12\x1d.ycc.v1.AnswerQuestionRequest\x1a\x1e.ycc.v1.AnswerQuestionResponseB1Z/github.com/whyrusleeping/ycc/proto/ycc/v1;yccv1b\x06proto3"
+	"\x0eAnswerQuestion\x12\x1d.ycc.v1.AnswerQuestionRequest\x1a\x1e.ycc.v1.AnswerQuestionResponse\x12C\n" +
+	"\n" +
+	"ListModels\x12\x19.ycc.v1.ListModelsRequest\x1a\x1a.ycc.v1.ListModelsResponse\x12^\n" +
+	"\x13SetInteractionLevel\x12\".ycc.v1.SetInteractionLevelRequest\x1a#.ycc.v1.SetInteractionLevelResponse\x12L\n" +
+	"\rSetRoleConfig\x12\x1c.ycc.v1.SetRoleConfigRequest\x1a\x1d.ycc.v1.SetRoleConfigResponseB1Z/github.com/whyrusleeping/ycc/proto/ycc/v1;yccv1b\x06proto3"
 
 var (
 	file_ycc_v1_ycc_proto_rawDescOnce sync.Once
@@ -808,43 +1170,57 @@ func file_ycc_v1_ycc_proto_rawDescGZIP() []byte {
 	return file_ycc_v1_ycc_proto_rawDescData
 }
 
-var file_ycc_v1_ycc_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_ycc_v1_ycc_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
 var file_ycc_v1_ycc_proto_goTypes = []any{
-	(*Event)(nil),                  // 0: ycc.v1.Event
-	(*StartSessionRequest)(nil),    // 1: ycc.v1.StartSessionRequest
-	(*StartSessionResponse)(nil),   // 2: ycc.v1.StartSessionResponse
-	(*SubscribeRequest)(nil),       // 3: ycc.v1.SubscribeRequest
-	(*SendInputRequest)(nil),       // 4: ycc.v1.SendInputRequest
-	(*SendInputResponse)(nil),      // 5: ycc.v1.SendInputResponse
-	(*AnswerQuestionRequest)(nil),  // 6: ycc.v1.AnswerQuestionRequest
-	(*AnswerQuestionResponse)(nil), // 7: ycc.v1.AnswerQuestionResponse
-	(*ListModesRequest)(nil),       // 8: ycc.v1.ListModesRequest
-	(*Mode)(nil),                   // 9: ycc.v1.Mode
-	(*ListModesResponse)(nil),      // 10: ycc.v1.ListModesResponse
-	(*ListSessionsRequest)(nil),    // 11: ycc.v1.ListSessionsRequest
-	(*SessionInfo)(nil),            // 12: ycc.v1.SessionInfo
-	(*ListSessionsResponse)(nil),   // 13: ycc.v1.ListSessionsResponse
+	(*Event)(nil),                       // 0: ycc.v1.Event
+	(*StartSessionRequest)(nil),         // 1: ycc.v1.StartSessionRequest
+	(*StartSessionResponse)(nil),        // 2: ycc.v1.StartSessionResponse
+	(*SubscribeRequest)(nil),            // 3: ycc.v1.SubscribeRequest
+	(*SendInputRequest)(nil),            // 4: ycc.v1.SendInputRequest
+	(*SendInputResponse)(nil),           // 5: ycc.v1.SendInputResponse
+	(*AnswerQuestionRequest)(nil),       // 6: ycc.v1.AnswerQuestionRequest
+	(*AnswerQuestionResponse)(nil),      // 7: ycc.v1.AnswerQuestionResponse
+	(*ListModesRequest)(nil),            // 8: ycc.v1.ListModesRequest
+	(*Mode)(nil),                        // 9: ycc.v1.Mode
+	(*ListModesResponse)(nil),           // 10: ycc.v1.ListModesResponse
+	(*ListSessionsRequest)(nil),         // 11: ycc.v1.ListSessionsRequest
+	(*SessionInfo)(nil),                 // 12: ycc.v1.SessionInfo
+	(*ListSessionsResponse)(nil),        // 13: ycc.v1.ListSessionsResponse
+	(*ListModelsRequest)(nil),           // 14: ycc.v1.ListModelsRequest
+	(*ModelInfo)(nil),                   // 15: ycc.v1.ModelInfo
+	(*ListModelsResponse)(nil),          // 16: ycc.v1.ListModelsResponse
+	(*SetInteractionLevelRequest)(nil),  // 17: ycc.v1.SetInteractionLevelRequest
+	(*SetInteractionLevelResponse)(nil), // 18: ycc.v1.SetInteractionLevelResponse
+	(*SetRoleConfigRequest)(nil),        // 19: ycc.v1.SetRoleConfigRequest
+	(*SetRoleConfigResponse)(nil),       // 20: ycc.v1.SetRoleConfigResponse
 }
 var file_ycc_v1_ycc_proto_depIdxs = []int32{
 	9,  // 0: ycc.v1.ListModesResponse.modes:type_name -> ycc.v1.Mode
 	12, // 1: ycc.v1.ListSessionsResponse.sessions:type_name -> ycc.v1.SessionInfo
-	8,  // 2: ycc.v1.SessionService.ListModes:input_type -> ycc.v1.ListModesRequest
-	1,  // 3: ycc.v1.SessionService.StartSession:input_type -> ycc.v1.StartSessionRequest
-	11, // 4: ycc.v1.SessionService.ListSessions:input_type -> ycc.v1.ListSessionsRequest
-	3,  // 5: ycc.v1.SessionService.Subscribe:input_type -> ycc.v1.SubscribeRequest
-	4,  // 6: ycc.v1.SessionService.SendInput:input_type -> ycc.v1.SendInputRequest
-	6,  // 7: ycc.v1.SessionService.AnswerQuestion:input_type -> ycc.v1.AnswerQuestionRequest
-	10, // 8: ycc.v1.SessionService.ListModes:output_type -> ycc.v1.ListModesResponse
-	2,  // 9: ycc.v1.SessionService.StartSession:output_type -> ycc.v1.StartSessionResponse
-	13, // 10: ycc.v1.SessionService.ListSessions:output_type -> ycc.v1.ListSessionsResponse
-	0,  // 11: ycc.v1.SessionService.Subscribe:output_type -> ycc.v1.Event
-	5,  // 12: ycc.v1.SessionService.SendInput:output_type -> ycc.v1.SendInputResponse
-	7,  // 13: ycc.v1.SessionService.AnswerQuestion:output_type -> ycc.v1.AnswerQuestionResponse
-	8,  // [8:14] is the sub-list for method output_type
-	2,  // [2:8] is the sub-list for method input_type
-	2,  // [2:2] is the sub-list for extension type_name
-	2,  // [2:2] is the sub-list for extension extendee
-	0,  // [0:2] is the sub-list for field type_name
+	15, // 2: ycc.v1.ListModelsResponse.models:type_name -> ycc.v1.ModelInfo
+	8,  // 3: ycc.v1.SessionService.ListModes:input_type -> ycc.v1.ListModesRequest
+	1,  // 4: ycc.v1.SessionService.StartSession:input_type -> ycc.v1.StartSessionRequest
+	11, // 5: ycc.v1.SessionService.ListSessions:input_type -> ycc.v1.ListSessionsRequest
+	3,  // 6: ycc.v1.SessionService.Subscribe:input_type -> ycc.v1.SubscribeRequest
+	4,  // 7: ycc.v1.SessionService.SendInput:input_type -> ycc.v1.SendInputRequest
+	6,  // 8: ycc.v1.SessionService.AnswerQuestion:input_type -> ycc.v1.AnswerQuestionRequest
+	14, // 9: ycc.v1.SessionService.ListModels:input_type -> ycc.v1.ListModelsRequest
+	17, // 10: ycc.v1.SessionService.SetInteractionLevel:input_type -> ycc.v1.SetInteractionLevelRequest
+	19, // 11: ycc.v1.SessionService.SetRoleConfig:input_type -> ycc.v1.SetRoleConfigRequest
+	10, // 12: ycc.v1.SessionService.ListModes:output_type -> ycc.v1.ListModesResponse
+	2,  // 13: ycc.v1.SessionService.StartSession:output_type -> ycc.v1.StartSessionResponse
+	13, // 14: ycc.v1.SessionService.ListSessions:output_type -> ycc.v1.ListSessionsResponse
+	0,  // 15: ycc.v1.SessionService.Subscribe:output_type -> ycc.v1.Event
+	5,  // 16: ycc.v1.SessionService.SendInput:output_type -> ycc.v1.SendInputResponse
+	7,  // 17: ycc.v1.SessionService.AnswerQuestion:output_type -> ycc.v1.AnswerQuestionResponse
+	16, // 18: ycc.v1.SessionService.ListModels:output_type -> ycc.v1.ListModelsResponse
+	18, // 19: ycc.v1.SessionService.SetInteractionLevel:output_type -> ycc.v1.SetInteractionLevelResponse
+	20, // 20: ycc.v1.SessionService.SetRoleConfig:output_type -> ycc.v1.SetRoleConfigResponse
+	12, // [12:21] is the sub-list for method output_type
+	3,  // [3:12] is the sub-list for method input_type
+	3,  // [3:3] is the sub-list for extension type_name
+	3,  // [3:3] is the sub-list for extension extendee
+	0,  // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_ycc_v1_ycc_proto_init() }
@@ -858,7 +1234,7 @@ func file_ycc_v1_ycc_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ycc_v1_ycc_proto_rawDesc), len(file_ycc_v1_ycc_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   14,
+			NumMessages:   21,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -51,6 +51,15 @@ const (
 	// SessionServiceAnswerQuestionProcedure is the fully-qualified name of the SessionService's
 	// AnswerQuestion RPC.
 	SessionServiceAnswerQuestionProcedure = "/ycc.v1.SessionService/AnswerQuestion"
+	// SessionServiceListModelsProcedure is the fully-qualified name of the SessionService's ListModels
+	// RPC.
+	SessionServiceListModelsProcedure = "/ycc.v1.SessionService/ListModels"
+	// SessionServiceSetInteractionLevelProcedure is the fully-qualified name of the SessionService's
+	// SetInteractionLevel RPC.
+	SessionServiceSetInteractionLevelProcedure = "/ycc.v1.SessionService/SetInteractionLevel"
+	// SessionServiceSetRoleConfigProcedure is the fully-qualified name of the SessionService's
+	// SetRoleConfig RPC.
+	SessionServiceSetRoleConfigProcedure = "/ycc.v1.SessionService/SetRoleConfig"
 )
 
 // SessionServiceClient is a client for the ycc.v1.SessionService service.
@@ -61,6 +70,11 @@ type SessionServiceClient interface {
 	Subscribe(context.Context, *connect.Request[v1.SubscribeRequest]) (*connect.ServerStreamForClient[v1.Event], error)
 	SendInput(context.Context, *connect.Request[v1.SendInputRequest]) (*connect.Response[v1.SendInputResponse], error)
 	AnswerQuestion(context.Context, *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error)
+	// Settings overlay (spec §18.2): enumerate models and change a session's
+	// interaction level / per-role model assignment mid-flight.
+	ListModels(context.Context, *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error)
+	SetInteractionLevel(context.Context, *connect.Request[v1.SetInteractionLevelRequest]) (*connect.Response[v1.SetInteractionLevelResponse], error)
+	SetRoleConfig(context.Context, *connect.Request[v1.SetRoleConfigRequest]) (*connect.Response[v1.SetRoleConfigResponse], error)
 }
 
 // NewSessionServiceClient constructs a client for the ycc.v1.SessionService service. By default, it
@@ -110,17 +124,38 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("AnswerQuestion")),
 			connect.WithClientOptions(opts...),
 		),
+		listModels: connect.NewClient[v1.ListModelsRequest, v1.ListModelsResponse](
+			httpClient,
+			baseURL+SessionServiceListModelsProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("ListModels")),
+			connect.WithClientOptions(opts...),
+		),
+		setInteractionLevel: connect.NewClient[v1.SetInteractionLevelRequest, v1.SetInteractionLevelResponse](
+			httpClient,
+			baseURL+SessionServiceSetInteractionLevelProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("SetInteractionLevel")),
+			connect.WithClientOptions(opts...),
+		),
+		setRoleConfig: connect.NewClient[v1.SetRoleConfigRequest, v1.SetRoleConfigResponse](
+			httpClient,
+			baseURL+SessionServiceSetRoleConfigProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("SetRoleConfig")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // sessionServiceClient implements SessionServiceClient.
 type sessionServiceClient struct {
-	listModes      *connect.Client[v1.ListModesRequest, v1.ListModesResponse]
-	startSession   *connect.Client[v1.StartSessionRequest, v1.StartSessionResponse]
-	listSessions   *connect.Client[v1.ListSessionsRequest, v1.ListSessionsResponse]
-	subscribe      *connect.Client[v1.SubscribeRequest, v1.Event]
-	sendInput      *connect.Client[v1.SendInputRequest, v1.SendInputResponse]
-	answerQuestion *connect.Client[v1.AnswerQuestionRequest, v1.AnswerQuestionResponse]
+	listModes           *connect.Client[v1.ListModesRequest, v1.ListModesResponse]
+	startSession        *connect.Client[v1.StartSessionRequest, v1.StartSessionResponse]
+	listSessions        *connect.Client[v1.ListSessionsRequest, v1.ListSessionsResponse]
+	subscribe           *connect.Client[v1.SubscribeRequest, v1.Event]
+	sendInput           *connect.Client[v1.SendInputRequest, v1.SendInputResponse]
+	answerQuestion      *connect.Client[v1.AnswerQuestionRequest, v1.AnswerQuestionResponse]
+	listModels          *connect.Client[v1.ListModelsRequest, v1.ListModelsResponse]
+	setInteractionLevel *connect.Client[v1.SetInteractionLevelRequest, v1.SetInteractionLevelResponse]
+	setRoleConfig       *connect.Client[v1.SetRoleConfigRequest, v1.SetRoleConfigResponse]
 }
 
 // ListModes calls ycc.v1.SessionService.ListModes.
@@ -153,6 +188,21 @@ func (c *sessionServiceClient) AnswerQuestion(ctx context.Context, req *connect.
 	return c.answerQuestion.CallUnary(ctx, req)
 }
 
+// ListModels calls ycc.v1.SessionService.ListModels.
+func (c *sessionServiceClient) ListModels(ctx context.Context, req *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error) {
+	return c.listModels.CallUnary(ctx, req)
+}
+
+// SetInteractionLevel calls ycc.v1.SessionService.SetInteractionLevel.
+func (c *sessionServiceClient) SetInteractionLevel(ctx context.Context, req *connect.Request[v1.SetInteractionLevelRequest]) (*connect.Response[v1.SetInteractionLevelResponse], error) {
+	return c.setInteractionLevel.CallUnary(ctx, req)
+}
+
+// SetRoleConfig calls ycc.v1.SessionService.SetRoleConfig.
+func (c *sessionServiceClient) SetRoleConfig(ctx context.Context, req *connect.Request[v1.SetRoleConfigRequest]) (*connect.Response[v1.SetRoleConfigResponse], error) {
+	return c.setRoleConfig.CallUnary(ctx, req)
+}
+
 // SessionServiceHandler is an implementation of the ycc.v1.SessionService service.
 type SessionServiceHandler interface {
 	ListModes(context.Context, *connect.Request[v1.ListModesRequest]) (*connect.Response[v1.ListModesResponse], error)
@@ -161,6 +211,11 @@ type SessionServiceHandler interface {
 	Subscribe(context.Context, *connect.Request[v1.SubscribeRequest], *connect.ServerStream[v1.Event]) error
 	SendInput(context.Context, *connect.Request[v1.SendInputRequest]) (*connect.Response[v1.SendInputResponse], error)
 	AnswerQuestion(context.Context, *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error)
+	// Settings overlay (spec §18.2): enumerate models and change a session's
+	// interaction level / per-role model assignment mid-flight.
+	ListModels(context.Context, *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error)
+	SetInteractionLevel(context.Context, *connect.Request[v1.SetInteractionLevelRequest]) (*connect.Response[v1.SetInteractionLevelResponse], error)
+	SetRoleConfig(context.Context, *connect.Request[v1.SetRoleConfigRequest]) (*connect.Response[v1.SetRoleConfigResponse], error)
 }
 
 // NewSessionServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -206,6 +261,24 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("AnswerQuestion")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceListModelsHandler := connect.NewUnaryHandler(
+		SessionServiceListModelsProcedure,
+		svc.ListModels,
+		connect.WithSchema(sessionServiceMethods.ByName("ListModels")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceSetInteractionLevelHandler := connect.NewUnaryHandler(
+		SessionServiceSetInteractionLevelProcedure,
+		svc.SetInteractionLevel,
+		connect.WithSchema(sessionServiceMethods.ByName("SetInteractionLevel")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceSetRoleConfigHandler := connect.NewUnaryHandler(
+		SessionServiceSetRoleConfigProcedure,
+		svc.SetRoleConfig,
+		connect.WithSchema(sessionServiceMethods.ByName("SetRoleConfig")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/ycc.v1.SessionService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case SessionServiceListModesProcedure:
@@ -220,6 +293,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceSendInputHandler.ServeHTTP(w, r)
 		case SessionServiceAnswerQuestionProcedure:
 			sessionServiceAnswerQuestionHandler.ServeHTTP(w, r)
+		case SessionServiceListModelsProcedure:
+			sessionServiceListModelsHandler.ServeHTTP(w, r)
+		case SessionServiceSetInteractionLevelProcedure:
+			sessionServiceSetInteractionLevelHandler.ServeHTTP(w, r)
+		case SessionServiceSetRoleConfigProcedure:
+			sessionServiceSetRoleConfigHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -251,4 +330,16 @@ func (UnimplementedSessionServiceHandler) SendInput(context.Context, *connect.Re
 
 func (UnimplementedSessionServiceHandler) AnswerQuestion(context.Context, *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.AnswerQuestion is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) ListModels(context.Context, *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ListModels is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) SetInteractionLevel(context.Context, *connect.Request[v1.SetInteractionLevelRequest]) (*connect.Response[v1.SetInteractionLevelResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.SetInteractionLevel is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) SetRoleConfig(context.Context, *connect.Request[v1.SetRoleConfigRequest]) (*connect.Response[v1.SetRoleConfigResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.SetRoleConfig is not implemented"))
 }

@@ -36,6 +36,9 @@ const (
 	CommitMade       Type = "commit_made"
 	QuestionAsked    Type = "question_asked"
 	QuestionAnswered Type = "question_answered"
+	// Settings overlay (spec §18.2): mid-session config changes recorded in the log.
+	InteractionLevelChanged Type = "interaction_level_changed"
+	RoleConfigChanged       Type = "role_config_changed"
 )
 
 // Event is a single entry in a session's log.

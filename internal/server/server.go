@@ -113,6 +113,40 @@ func (s *Server) AnswerQuestion(_ context.Context, req *connect.Request[v1.Answe
 	return connect.NewResponse(&v1.AnswerQuestionResponse{}), nil
 }
 
+// ListModels enumerates the configured logical models for the settings overlay
+// pickers (spec §13, §18.2).
+func (s *Server) ListModels(_ context.Context, _ *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error) {
+	var models []*v1.ModelInfo
+	for _, m := range s.mgr.Models() {
+		models = append(models, &v1.ModelInfo{Name: m.Name, Backend: m.Backend, Model: m.Model})
+	}
+	return connect.NewResponse(&v1.ListModelsResponse{Models: models}), nil
+}
+
+// SetInteractionLevel changes a session's interaction level mid-flight (spec §11).
+func (s *Server) SetInteractionLevel(_ context.Context, req *connect.Request[v1.SetInteractionLevelRequest]) (*connect.Response[v1.SetInteractionLevelResponse], error) {
+	sess, ok := s.mgr.Get(req.Msg.SessionId)
+	if !ok {
+		return nil, connect.NewError(connect.CodeNotFound, errNoSession)
+	}
+	if err := sess.SetInteractionLevel(req.Msg.Level); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	return connect.NewResponse(&v1.SetInteractionLevelResponse{}), nil
+}
+
+// SetRoleConfig reassigns per-role logical models mid-session (spec §13, §18.2).
+func (s *Server) SetRoleConfig(_ context.Context, req *connect.Request[v1.SetRoleConfigRequest]) (*connect.Response[v1.SetRoleConfigResponse], error) {
+	sess, ok := s.mgr.Get(req.Msg.SessionId)
+	if !ok {
+		return nil, connect.NewError(connect.CodeNotFound, errNoSession)
+	}
+	if err := sess.SetRoleConfig(req.Msg.Coordinator, req.Msg.Implementer, req.Msg.Reviewers); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	return connect.NewResponse(&v1.SetRoleConfigResponse{}), nil
+}
+
 func toProto(ev event.Event) *v1.Event {
 	var dataJSON string
 	if len(ev.Data) > 0 {
