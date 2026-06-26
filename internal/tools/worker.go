@@ -117,6 +117,9 @@ func writeFile(ws *Workspace) *gollama.Tool {
 			if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
 				return errResult("Write: %v", err), nil
 			}
+			if ws.OnWrite != nil {
+				ws.OnWrite(abs)
+			}
 			return okResult(fmt.Sprintf("wrote %d bytes to %s", len(content), fp)), nil
 		},
 	}
@@ -167,6 +170,9 @@ func editFile(ws *Workspace) *gollama.Tool {
 			updated := strings.Replace(string(data), oldStr, newStr, reps)
 			if err := os.WriteFile(abs, []byte(updated), 0o644); err != nil {
 				return errResult("Edit: %v", err), nil
+			}
+			if ws.OnWrite != nil {
+				ws.OnWrite(abs)
 			}
 			return okResult(fmt.Sprintf("edited %s (%d replacement(s))", fp, count)), nil
 		},

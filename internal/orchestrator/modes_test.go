@@ -1,11 +1,13 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"strings"
 	"testing"
 
+	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/docs"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/tools"
@@ -38,15 +40,25 @@ func TestBuildModeToolsets(t *testing.T) {
 	d := depsFor(t)
 	// feature mode must expose switch_to_work; spec mode must not.
 	featureReg, _ := BuildMode("feature", d, "judgement")
-	if !hasTool(featureReg, "switch_to_work") || !hasTool(featureReg, "update_spec") {
-		t.Fatal("feature mode missing switch_to_work/update_spec")
+	if !hasTool(featureReg, "switch_to_work") {
+		t.Fatal("feature mode missing switch_to_work")
 	}
 	specReg, _ := BuildMode("spec", d, "judgement")
 	if hasTool(specReg, "switch_to_work") {
 		t.Fatal("spec mode should not have switch_to_work")
 	}
-	if !hasTool(specReg, "update_spec") {
-		t.Fatal("spec mode missing update_spec")
+	// spec.md is edited directly: authoring modes carry Read/Edit/Write, not a
+	// dedicated spec tool.
+	for _, mode := range []string{"spec", "feature", "bug"} {
+		reg, _ := BuildMode(mode, d, "judgement")
+		for _, tool := range []string{"Read", "Edit", "Write"} {
+			if !hasTool(reg, tool) {
+				t.Fatalf("%s mode missing %s", mode, tool)
+			}
+		}
+		if hasTool(reg, "update_spec") || hasTool(reg, "read_spec") {
+			t.Fatalf("%s mode should not have the removed read_spec/update_spec tools", mode)
+		}
 	}
 }
 
@@ -58,7 +70,7 @@ func TestSwitchToWorkSignalsModeChange(t *testing.T) {
 	}
 }
 
-func TestCreateTaskAndUpdateSpec(t *testing.T) {
+func TestCreateTask(t *testing.T) {
 	d := depsFor(t)
 	ctx := context.Background()
 
@@ -73,13 +85,36 @@ func TestCreateTaskAndUpdateSpec(t *testing.T) {
 	if len(tasks) != 1 || tasks[0].Title != "Wire the TUI" || tasks[0].Priority != 2 {
 		t.Fatalf("task not created correctly: %+v", tasks)
 	}
+}
 
-	if _, err := updateSpec(d).Call(ctx, map[string]any{"section": "Goals", "content": "ship it"}); err != nil {
-		t.Fatal(err)
+// Writing spec.md through an authoring mode's Write tool persists the file and
+// emits a doc_updated event via the Workspace OnWrite hook.
+func TestSpecEditEmitsDocUpdated(t *testing.T) {
+	ws := t.TempDir()
+	var buf bytes.Buffer
+	d := &Deps{
+		Workspace: ws,
+		Docs:      docs.NewStore(ws),
+		Emitter:   event.NewEmitter(event.NewStdoutRecorder(&buf), "coordinator"),
+		Asker:     noopAsker{},
+	}
+	reg, _ := BuildMode("spec", d, "judgement")
+
+	res := reg.Dispatch(context.Background(), gollama.ToolCall{
+		Function: gollama.ToolCallFunction{
+			Name:      "Write",
+			Arguments: `{"file_path":"spec.md","content":"# Spec\n\n## Goals\nship it\n"}`,
+		},
+	})
+	if res.IsError {
+		t.Fatalf("Write spec.md: %s", res.Content)
 	}
 	body, _ := d.Docs.ReadSpec()
 	if !strings.Contains(body, "## Goals") || !strings.Contains(body, "ship it") {
-		t.Fatalf("spec not updated:\n%s", body)
+		t.Fatalf("spec not written:\n%s", body)
+	}
+	if !strings.Contains(buf.String(), string(event.DocUpdated)) {
+		t.Fatalf("expected a %s event, got events:\n%s", event.DocUpdated, buf.String())
 	}
 }
 

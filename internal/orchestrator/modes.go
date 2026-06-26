@@ -29,26 +29,36 @@ func Modes() []ModeInfo {
 
 // BuildMode returns the tool registry and system prompt for a session mode. The
 // "work" mode is the full coordinator (CoordinatorTools); the others are lighter
-// authoring/intake coordinators that read the workspace and edit the docs.
+// authoring/intake coordinators. spec.md and code are plain files: the authoring
+// modes read them with Read and edit them with Edit/Write — there is no dedicated
+// spec tool. An OnWrite hook surfaces an edit to spec.md as a doc_updated event.
 func BuildMode(mode string, d *Deps, level string) (*tools.Registry, string) {
-	ws := &tools.Workspace{Root: d.Workspace}
+	specPath := d.Docs.SpecPath()
+	ws := &tools.Workspace{
+		Root: d.Workspace,
+		OnWrite: func(path string) {
+			if path == specPath {
+				d.Emitter.Emit(event.DocUpdated, map[string]any{"doc": "spec"})
+			}
+		},
+	}
 	reg := tools.New()
 	switch mode {
 	case "chat":
 		reg.Add(tools.Editing(ws)...)
-		reg.Add(readSpec(d), listBacklog(d), getTask(d), askUser(d))
+		reg.Add(listBacklog(d), getTask(d), askUser(d))
 		return reg, sys(chatModeSystem, level, d.Workspace)
 	case "spec":
-		reg.Add(tools.Inspect(ws)...)
-		reg.Add(readSpec(d), updateSpec(d), askUser(d), tools.Finish())
+		reg.Add(tools.Editing(ws)...)
+		reg.Add(askUser(d), tools.Finish())
 		return reg, sys(specModeSystem, level, d.Workspace)
 	case "backlog":
 		reg.Add(tools.Inspect(ws)...)
-		reg.Add(readSpec(d), listBacklog(d), getTask(d), createTask(d), updateTask(d), askUser(d), tools.Finish())
+		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d), askUser(d), tools.Finish())
 		return reg, sys(backlogModeSystem, level, d.Workspace)
 	case "feature", "bug":
-		reg.Add(tools.Inspect(ws)...)
-		reg.Add(readSpec(d), listBacklog(d), getTask(d), proposePlan(d), createTask(d), updateSpec(d), switchToWork(), askUser(d), tools.Finish())
+		reg.Add(tools.Editing(ws)...)
+		reg.Add(listBacklog(d), getTask(d), proposePlan(d), createTask(d), switchToWork(), askUser(d), tools.Finish())
 		base := featureModeSystem
 		if mode == "bug" {
 			base = bugModeSystem
@@ -68,45 +78,6 @@ func workspaceNote(root string) string {
 
 func sys(base, level, root string) string {
 	return base + "\n\n" + toolingHint + "\n" + workspaceNote(root) + "\n\n" + levelGuidance(level)
-}
-
-func readSpec(d *Deps) *gollama.Tool {
-	return &gollama.Tool{
-		Name:        "read_spec",
-		Description: "Read the current spec.md document.",
-		Params:      tools.Obj(map[string]any{}),
-		Call: func(ctx context.Context, _ any) (*gollama.ToolResult, error) {
-			body, err := d.Docs.ReadSpec()
-			if err != nil {
-				return tools.ErrResult("read_spec: %v", err), nil
-			}
-			if body == "" {
-				return tools.OkResult("(spec.md is empty or does not exist yet)"), nil
-			}
-			return tools.OkResult(body), nil
-		},
-	}
-}
-
-func updateSpec(d *Deps) *gollama.Tool {
-	return &gollama.Tool{
-		Name: "update_spec",
-		Description: "Create or replace a named '## ' section of spec.md. Provide the section title and its full " +
-			"new markdown content. Edits are section-scoped, so update one section at a time.",
-		Params: tools.Obj(map[string]any{
-			"section": tools.StrProp("the '## ' section title, e.g. 'Architecture'"),
-			"content": tools.StrProp("the full markdown content for that section"),
-		}, "section", "content"),
-		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
-			section, _ := tools.GetString(params, "section")
-			content, _ := tools.GetString(params, "content")
-			if err := d.Docs.UpdateSpecSection(section, content); err != nil {
-				return tools.ErrResult("update_spec: %v", err), nil
-			}
-			d.Emitter.Emit(event.DocUpdated, map[string]any{"doc": "spec", "section": section})
-			return tools.OkResult("updated spec section: " + section), nil
-		},
-	}
 }
 
 func createTask(d *Deps) *gollama.Tool {

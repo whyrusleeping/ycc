@@ -36,6 +36,9 @@ specially, or replacing git. We lean on git for history and diffs.
 
 - **Workspace** — a git repository on the workspace machine that `ycc` operates on.
   Holds `spec.md`, the `backlog/`, and the code.
+- **Project** — a named workspace a persistent daemon manages. A persistent daemon
+  holds a registry of projects (name → path) so a client can list them and pick one to
+  work in; a one-shot daemon has exactly one implicit project — the current directory.
 - **Session** — one continuous unit of interaction, identified by an id, backed by an
   **append-only event log**. A session has a *mode* and an *interaction level*.
 - **Event log** — the source of truth for a session. Every model turn, tool call,
@@ -90,6 +93,39 @@ they render an event stream and send commands. The TUI is just the first client.
   without a gRPC stack.
 - Supports server-streaming, which is exactly what an event subscription needs.
 - Commands are simple unary RPCs.
+
+### 3.1 Daemon lifecycle & projects
+
+Persistence is **opt-in**. The daemon runs in one of two lifecycles:
+
+- **One-shot (the default `ycc`).** When no daemon is requested and none is already
+  running locally, `ycc` starts the daemon **in-process** on an ephemeral loopback
+  address and ties it to the client's lifetime — closing `ycc` tears it down. The
+  current directory is the single project and the client skips the project picker.
+  Closing the client therefore ends any in-flight agent work; that is the trade.
+- **Persistent (`ycc daemon`).** An explicitly-started, long-lived, **multi-project**
+  daemon at a well-known local address. It survives client exits, so autonomous
+  sessions keep running. `ycc --background` is a convenience that spawns one (detached)
+  and attaches the TUI to it.
+
+Resolution for plain `ycc` (no `-addr`, no `daemon` subcommand):
+1. If a persistent local daemon answers at the well-known address, **attach** to it and
+   show the project picker.
+2. Otherwise run **one-shot** in-process on the current directory.
+
+`ycc -addr <url>` always attaches to the given (persistent/remote) daemon and shows the
+picker.
+
+A persistent daemon manages **multiple projects**. The registry (name → path) is durable
+state in the daemon's state dir (e.g. `~/.local/state/ycc/projects.json`). Projects are
+registered explicitly (`ycc project add <path>` / `AddProject`) **and** auto-registered
+when a session starts in a not-yet-known workspace. Clients `ListProjects`, pick one,
+then drive the existing mode/session flow scoped to that project. Sessions and their
+event logs still live under each project's own `<workspace>/.ycc/` (§5.1, §14).
+
+This supersedes the earlier "always auto-start a detached daemon that persists after
+exit" decision: that default orphaned daemons serving a stale binary and capturing a
+stale environment. Persistence now happens only when explicitly requested.
 
 ## 4. Process & data-flow model
 
@@ -252,6 +288,8 @@ round can reuse them (`re-review` sends the new diff into the existing reviewer 
 
 ## 8. Tools
 
+## 8. Tools
+
 **Worker tools** (implementer; read/write the workspace):
 `read_file`, `write_file`, `edit_file`, `list_dir`, `grep`, `glob`, `bash`,
 `finish_implementation(report)`.
@@ -263,6 +301,13 @@ round can reuse them (`re-review` sends the new diff into the existing reviewer 
 `re_review()` (reuses reviewer ctx), `commit(message)`, `ask_user(question, options?)`,
 `propose_plan(plan)`, `finish()`.
 
+`ask_user(question, options?)` is the structured-question control tool. The optional
+`options` parameter is a list of suggested answers; when present, the client renders a
+selectable picker (Claude-Code style) with an "other…" escape to free text. When
+absent, the user answers with free (multiline) text. See §18.3 for the UI side. The
+`Asker.Ask(ctx, question, options)` interface already carries `options` end-to-end;
+exposing it on the tool schema + answering by option is the remaining wiring.
+
 Tools are gollama `Tool` values (`Params` is JSON schema, `Call` does the work + emits
 events). Worker and orchestration tools are the same kind of object.
 
@@ -270,15 +315,17 @@ events). Worker and orchestration tools are the same kind of object.
 
 Each mode = a coordinator system prompt + a tool subset + a state machine.
 
-- **`spec`** — collaboratively author/maintain `spec.md`. Tools: read-only workspace +
-  `update_spec`, `ask_user`. Output: an updated, committed spec.
+- **`spec`** — collaboratively author/maintain `spec.md`. Tools: the editing set
+  (`Read`/`Write`/`Edit`/`Bash`) + `ask_user`. `spec.md` is a plain file edited directly
+  with `Edit`/`Write` — there is no dedicated spec tool; a write to it emits `doc_updated`.
+  Output: an updated, committed spec.
 - **`backlog`** — turn the spec into tasks. Tools: read spec + `create_task`,
   `update_task`, `ask_user`. Output: new/updated task files + regenerated index.
 - **`work`** — the core loop (see §10). Pick/accept a task, plan, implement, review
   (multi-model), iterate, commit, update backlog.
 - **`feature`** / **`bug`** — understand codebase + spec, propose a plan, on acceptance
-  update spec (if needed) + backlog, then optionally flow into `work` *in the same
-  session* or hand back to the home menu.
+  edit `spec.md` directly (if needed) + update backlog, then optionally flow into `work`
+  *in the same session* or hand back to the home menu.
 
 Transitions are explicit (`StartSession` picks the initial mode; `feature`/`bug` can
 `mode_changed → work`). The home menu is a client concern: it lists modes and calls
@@ -308,6 +355,8 @@ coordinator reasons from the durable docs, not from stale conversation.
 
 ## 11. Interaction levels
 
+## 11. Interaction levels
+
 One policy value, enforced at the `ask_user` gate and baked into the coordinator prompt:
 
 - **`interactive`** — ask freely; confirm the plan, surface meaningful choices.
@@ -319,26 +368,63 @@ One policy value, enforced at the `ask_user` gate and baked into the coordinator
 The gate lives in the loop: in `autonomous`, an `ask_user` call is converted into a
 logged assumption + auto-answer ("proceed") rather than a suspend.
 
+The level is chosen at `StartSession` and can be **changed mid-session** from the
+client's settings overlay (§18.2) via `SetInteractionLevel(sessionID, level)`. The
+daemon updates the live policy used by the next gate check and emits an event so the
+change is recorded in the log and visible to other subscribers. Raising autonomy
+(e.g. interactive → autonomous) takes effect immediately; lowering it means the *next*
+decision point will pause for the user.
+
+## 12. RPC protocol (Connect)
+
 ## 12. RPC protocol (Connect)
 
 Service sketch (`proto/ycc/v1/ycc.proto`):
 
 ```proto
-service Ycc {
+service SessionService {
   rpc ListModes(ListModesRequest) returns (ListModesResponse);          // home menu
   rpc StartSession(StartSessionRequest) returns (StartSessionResponse);
   rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
   rpc Subscribe(SubscribeRequest) returns (stream Event);               // server-stream
   rpc SendInput(SendInputRequest) returns (SendInputResponse);          // prod the agent
   rpc AnswerQuestion(AnswerQuestionRequest) returns (AnswerQuestionResponse);
-  rpc ChooseMode(ChooseModeRequest) returns (ChooseModeResponse);       // mode switch
-  rpc Interrupt(InterruptRequest) returns (InterruptResponse);          // pause/stop
+  rpc Interrupt(InterruptRequest) returns (InterruptResponse);          // pause/stop (task 0009)
+
+  // Projects — persistent multi-project daemon (§3.1).
+  rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
+  rpc AddProject(AddProjectRequest) returns (AddProjectResponse);
+
+  // Settings overlay (§18.2) — change session config mid-flight.
+  rpc ListModels(ListModelsRequest) returns (ListModelsResponse);       // available logical models
+  rpc SetInteractionLevel(SetInteractionLevelRequest) returns (SetInteractionLevelResponse);
+  rpc SetRoleConfig(SetRoleConfigRequest) returns (SetRoleConfigResponse);
 }
 ```
+
+Notable message shapes for the settings + structured-question work:
+
+- `ProjectInfo { string name; string path }`; `ListProjectsResponse { repeated ProjectInfo
+  projects }`; `AddProjectRequest { string path; string name }` (§3.1). `StartSessionRequest`
+  gains an optional `project` (name) that resolves to a workspace — an unknown workspace is
+  auto-registered. `ListSessionsRequest` may carry a `project` filter.
+- `AnswerQuestionRequest { session_id; oneof answer { string text; int32 option_index } }`
+  — answer a structured question by chosen option or free text. `question_asked` events
+  gain a `repeated string options` field so the client can render the picker.
+- `SetInteractionLevelRequest { session_id; string level }` (§11).
+- `SetRoleConfigRequest { session_id; string coordinator; string implementer;
+  repeated string reviewers }` — per-role model assignment by logical model name (§13).
+  Empty fields leave that role unchanged.
+- `ListModelsResponse { repeated ModelInfo models }` where `ModelInfo` carries the
+  logical name + backend + model id, so the client can populate the role pickers.
 
 `Subscribe` takes a `from_seq` so a reconnecting client replays from an offset. Auth: a
 bearer token (config/env), TLS for non-loopback. The TUI talks to the loopback daemon;
 remote clients dial in over TLS.
+
+(Mode switching is currently **agent-driven** via the `switch_to_work` control tool +
+`StartSession` from the home menu rather than a client `ChooseMode` RPC; revisit if
+client-driven mode switching is wanted.)
 
 ## 13. Backends & model registry
 
@@ -364,6 +450,9 @@ logical name. Reviewer fan-out iterates `roles.reviewers`.
 - Per-session JSONL event log is the unit of persistence and of sync.
 - `.ycc/` holds sessions, snapshots, and config; the `spec.md` + `backlog/` live in the
   repo proper (committed with code).
+- A persistent daemon's **project registry** (name → path) is durable state in the
+  daemon's state dir (`~/.local/state/ycc/projects.json`), separate from each project's
+  per-workspace `.ycc/`. One-shot daemons keep no registry (one implicit project = cwd).
 - Remote sync (later milestone): the daemon can push/pull session logs to a remote
   endpoint so another machine's daemon — or a phone app — can observe and prod. Because
   the log is append-only and seq-numbered, sync is "ship events after seq N" + conflict
@@ -374,11 +463,13 @@ logical name. Reviewer fan-out iterates `roles.reviewers`.
 ## 15. Package layout
 
 **Single binary.** There is one `ycc` binary that is client, TUI, and daemon.
-`ycc` (no subcommand) launches the TUI and, for local use, auto-starts a detached
-background daemon (which persists after `ycc` exits, so sessions keep running and can
-be prodded later); `ycc daemon` runs the service explicitly (for the workspace machine
-/ remote); `ycc -addr <url>` attaches to a remote daemon. Sessions bind to the current
-directory by default, so one daemon serves many workspaces.
+`ycc` (no subcommand) attaches to a persistent local daemon if one is already running,
+otherwise launches the TUI over an **in-process, ephemeral** daemon bound to the current
+directory and torn down when `ycc` exits (§3.1). `ycc daemon` runs an explicit,
+persistent, **multi-project** service (for the workspace machine / remote); `ycc -addr
+<url>` attaches to a remote one; `ycc --background` spawns a detached persistent daemon
+and attaches. Persistence is opt-in — the default no longer leaves a daemon running
+after exit.
 
 ```
 ycc/
@@ -394,26 +485,34 @@ ycc/
     event/           # event types, JSONL store, reducer/projection
     session/         # session lifecycle + state
     server/          # connect handlers, auth
-    daemon/          # serve the service + local auto-start + client dialing
+    daemon/          # serve + lifecycle (one-shot in-process vs persistent) + project registry + client dialing
     tui/             # Bubble Tea home menu + session view
     git/             # diff/commit helpers
 ```
 
 ## 16. Build plan / milestones
 
+## 16. Build plan / milestones
+
 - **M0 — Engine spike.** gollama `Turn` dispatch + the agent loop + worker tools
   (read/write/edit/bash/grep/glob). One agent does a real task end-to-end. Events to
-  stdout. *Proves the atom.*
+  stdout. *Proves the atom.* — **done**
 - **M1 — Daemon + event log + one client.** `yccd` with session mgr, JSONL event store,
   Connect `StartSession`/`Subscribe`/`SendInput`, and a minimal `ycc` client that
-  subscribes and prods. *Proves the client/server seam.*
+  subscribes and prods. *Proves the client/server seam.* — **done**
 - **M2 — `work` happy path.** Coordinator + `spawn_implementer` + a single reviewer +
-  commit + structured backlog read/write. N=1, no revise loop.
+  commit + structured backlog read/write. N=1, no revise loop. — **done**
 - **M3 — Multi-model review + revise loop + interaction levels.** Reviewer fan-out
   across Claude/GPT/GLM/local, `send_to_implementer`/`re_review`, the three autonomy
-  gates.
-- **M4 — Home menu + `spec`/`backlog`/`feature`/`bug` modes + TUI.**
+  gates. — **done**
+- **M4 — Home menu + `spec`/`backlog`/`feature`/`bug` modes + TUI.** — **done**
 - **M5 — Remote sync** (push/pull session logs; phone-facing HTTP/JSON surface).
+- **M6 — Interactive UX polish.** Multiline `textarea` input (Enter sends, Shift+Enter
+  newline), the **settings overlay** (esc; mid-session interaction level + per-role
+  model configuration + UI prefs + intentional "back to home menu"), and
+  **structured `ask_user` questions** (option pickers). New RPCs: `ListModels`,
+  `SetInteractionLevel`, `SetRoleConfig`; `AnswerQuestion`/`question_asked` extended for
+  options. See §18.
 
 ## 17. Open questions
 
@@ -429,3 +528,70 @@ ycc/
 - **Session GC / retention** of `.ycc/sessions`.
 - **Secrets:** keep API keys in env only, or a daemon-side keyring?
 ```
+
+## 18. Client UI (TUI)
+
+## 18. Client UI (TUI)
+
+The Bubble Tea client (`internal/tui`, spec §15) is the primary local surface. It has
+two top-level states today — **home menu** and **session view** — plus a modal
+**settings overlay**. This section captures the interaction model.
+
+### 18.1 Session input — multiline
+
+The session input is a **`textarea`** (not single-line `textinput`). It grows
+vertically as the user types and wraps long lines.
+
+- **Enter** sends the buffer (prod / answer) and clears it.
+- **Shift+Enter** inserts a newline.
+- The textarea height is bounded (a few rows); beyond that it scrolls internally so it
+  never crowds out the event stream.
+
+The home-menu prompt can stay single-line (one-shot kickoff prompt) but the same
+multiline rules are fine there too.
+
+### 18.2 Settings overlay (esc — "video-game style")
+
+**Esc** opens a modal settings overlay over whatever state the client is in. The
+overlay is a small navigable menu; it does **not** immediately leave the session.
+Leaving a session is now an explicit, intentional menu choice ("Back to home menu") so
+the user can't fat-finger their way out of a running session.
+
+Overlay contents:
+
+- **Interaction level** — `interactive | judgement | autonomous`, changeable
+  **mid-session** (see §11). Selecting a value issues `SetInteractionLevel(sessionID,
+  level)`; the daemon updates the live policy and emits an event so the change is in the
+  log (and reflected in any other subscribed client).
+- **Model / role configuration** — the headline feature. Per-role model selection:
+  - **coordinator** — pick one model
+  - **implementer** — pick one model
+  - **reviewers** — pick *one or more* models (multi-select; reviewer fan-out, §13)
+  - Choices are drawn from the configured logical models (§13). Changes apply to the
+    current session (and optionally persist to config). Issued via
+    `SetRoleConfig(sessionID, roles)`; the daemon rebuilds the relevant gollama clients
+    so the next coordinator turn / next spawned subagent uses the new assignment.
+- **UI preferences** — theme/style, follow/auto-scroll toggle, and similar client-only
+  prefs. These never touch the daemon; they live in client state (and a small local
+  client config).
+- **Back to home menu** — leaves the session view (replaces the old "esc = back to
+  menu" reflex).
+- **Quit** — exit the client.
+
+Esc closes the overlay (back to wherever you were) when no destructive choice is made.
+
+### 18.3 Structured interactive questions (Claude-Code style)
+
+When the coordinator calls `ask_user`, it may supply **options** in addition to the
+free-text question (the `Asker.Ask(ctx, question, options)` interface and `ask_user`'s
+`options?` param already anticipate this — see §8). The client renders these as a
+**selectable list** (arrow-key/number navigable) rather than only a free-text box:
+
+- If `options` are present: a highlighted picker with the listed choices, plus an
+  "other…" affordance that drops into the multiline textarea for a free-text answer.
+- If `options` are absent: the plain multiline textarea.
+
+Wire path: `question_asked` events carry the options; `AnswerQuestion` carries either a
+chosen option (index/value) or free text. This gives the agent the same crisp,
+low-friction Q&A loop a good interactive coding assistant has, instead of forcing every
+clarification into prose.

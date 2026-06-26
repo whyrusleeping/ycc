@@ -164,6 +164,10 @@ func okResult(content string) *gollama.ToolResult {
 // Workspace confines tool file operations to a root directory.
 type Workspace struct {
 	Root string
+	// OnWrite, if set, is invoked with the resolved absolute path after a
+	// successful Write or Edit. Callers use it to surface document updates
+	// (e.g. an edit to spec.md) as events; it must not block.
+	OnWrite func(path string)
 }
 
 // resolve cleans a user-supplied path and confines it to the workspace. Absolute
