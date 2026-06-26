@@ -1,65 +1,102 @@
-// Command ycc is the thin client for the yccd daemon (M1). It can start a
-// session and stream its events, attach to an existing session (optionally
-// replaying from a seq offset), list sessions, and send follow-up input typed on
-// stdin. The rich TUI is a later milestone; this proves the client/server seam.
+// Command ycc is the single ycc entrypoint: client, TUI, and daemon in one
+// binary. With no subcommand it launches the interactive TUI; for local use it
+// auto-starts a background daemon (which persists after ycc exits), or attaches
+// to a remote one with -addr.
 //
-//	ycc start "add a hello.txt that says hi"      # start + stream; type to prod
-//	ycc attach s_abc123 --from 0                  # re-attach, replay from start
-//	ycc list
+//	ycc                                  # TUI home menu (auto-starts a local daemon)
+//	ycc start "add a hello.txt"          # start a session, stream it; type to prod
+//	ycc attach s_abc123 --from 0         # re-attach, replay from a seq offset
+//	ycc list | ycc modes
+//	ycc -addr https://host:8787 -token T # attach to a remote daemon
+//	ycc daemon -addr 0.0.0.0:8787 -token T -tls-cert c.pem -tls-key k.pem
 package main
 
 import (
 	"bufio"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"net"
-	"net/http"
 	"os"
 	"strings"
 
 	"connectrpc.com/connect"
-	"golang.org/x/net/http2"
 
+	"github.com/whyrusleeping/ycc/internal/daemon"
+	"github.com/whyrusleeping/ycc/internal/tui"
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 	"github.com/whyrusleeping/ycc/proto/ycc/v1/yccv1connect"
 )
 
 func main() {
+	// The daemon subcommand runs the service itself (used by `ycc daemon` and by
+	// the auto-start path); it has its own flags.
+	if len(os.Args) > 1 && os.Args[1] == "daemon" {
+		runDaemon(os.Args[2:])
+		return
+	}
+
 	// Global flags precede the subcommand; subcommand-specific flags follow it.
 	global := flag.NewFlagSet("ycc", flag.ExitOnError)
-	addr := global.String("addr", "http://127.0.0.1:8787", "daemon base URL (http:// uses cleartext h2c)")
-	token := global.String("token", os.Getenv("YCC_TOKEN"), "bearer token")
+	addr := global.String("addr", "", "remote daemon URL to attach to (default: auto-managed local daemon)")
+	token := global.String("token", os.Getenv("YCC_TOKEN"), "bearer token (for -addr)")
+	workspace := global.String("workspace", "", "workspace for new sessions (default: current directory)")
+	configPath := global.String("config", "", "TOML model config for the auto-started local daemon")
 	global.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: ycc [-addr URL] [-token T] <start|attach|list> [args]")
+		fmt.Fprintln(os.Stderr, "usage: ycc [-addr URL] [-token T] [<start|attach|list|modes|daemon>] [args]")
+		fmt.Fprintln(os.Stderr, "  with no subcommand, launches the interactive TUI (home menu)")
 		global.PrintDefaults()
 	}
 	global.Parse(os.Args[1:])
 
-	args := global.Args()
-	if len(args) == 0 {
-		global.Usage()
-		os.Exit(2)
+	// Sessions bind to the current directory unless overridden, so one daemon can
+	// serve many workspaces.
+	ws := *workspace
+	if ws == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			ws = cwd
+		}
 	}
 
-	client := yccv1connect.NewSessionServiceClient(httpClient(*addr), *addr, connect.WithInterceptors(bearer(*token)))
+	// Resolve the daemon to talk to: a remote via -addr, or an auto-managed local one.
+	target, tok := *addr, *token
+	if target == "" {
+		if err := daemon.EnsureLocalDaemon(ws, *configPath); err != nil {
+			fatal("%v", err)
+		}
+		target, tok = daemon.LocalAddr, ""
+	}
+
+	client := daemon.DialClient(target, tok)
 	ctx := context.Background()
+
+	args := global.Args()
+	if len(args) == 0 {
+		if err := tui.Run(ctx, client, ws); err != nil {
+			fatal("tui: %v", err)
+		}
+		return
+	}
 
 	switch args[0] {
 	case "start":
-		// Positional (task) comes first; flags follow it, so parse args after it.
-		if len(args) < 2 {
-			fatal("usage: ycc start \"<task>\" [--workspace DIR]")
+		// The task is an optional leading positional (omit it for work mode to let
+		// the coordinator pick from the backlog); flags may follow it.
+		task := ""
+		rest := args[1:]
+		if len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
+			task, rest = rest[0], rest[1:]
 		}
-		task := args[1]
 		fs := flag.NewFlagSet("start", flag.ExitOnError)
-		workspace := fs.String("workspace", "", "workspace dir (default: daemon's default)")
-		fs.Parse(args[2:])
+		workspace := fs.String("workspace", ws, "workspace dir (default: current directory)")
+		mode := fs.String("mode", "", "session mode (default: work)")
+		level := fs.String("level", "", "interaction level: interactive | judgement | autonomous")
+		fs.Parse(rest)
 		resp, err := client.StartSession(ctx, connect.NewRequest(&v1.StartSessionRequest{
-			Workspace: *workspace,
-			Prompt:    task,
+			Workspace:        *workspace,
+			Mode:             *mode,
+			InteractionLevel: *level,
+			Prompt:           task,
 		}))
 		if err != nil {
 			fatal("StartSession: %v", err)
@@ -80,6 +117,15 @@ func main() {
 		fs.Parse(args[2:])
 		go readStdinInto(ctx, client, id)
 		stream(ctx, client, id, *fromSeq)
+
+	case "modes":
+		resp, err := client.ListModes(ctx, connect.NewRequest(&v1.ListModesRequest{}))
+		if err != nil {
+			fatal("ListModes: %v", err)
+		}
+		for _, mode := range resp.Msg.Modes {
+			fmt.Printf("%-9s %s\n", mode.Name, mode.Description)
+		}
 
 	case "list":
 		resp, err := client.ListSessions(ctx, connect.NewRequest(&v1.ListSessionsRequest{}))
@@ -164,49 +210,30 @@ func truncate(s string, n int) string {
 	return s[:n] + "…"
 }
 
-// httpClient returns an HTTP client suitable for the daemon URL: an h2c
-// (cleartext HTTP/2) transport for http:// URLs, or the default TLS-capable
-// client for https://.
-func httpClient(addr string) *http.Client {
-	if strings.HasPrefix(addr, "https://") {
-		return http.DefaultClient
+// runDaemon parses daemon flags and serves until killed. Used by `ycc daemon`
+// and by the local auto-start path.
+func runDaemon(argv []string) {
+	fs := flag.NewFlagSet("ycc daemon", flag.ExitOnError)
+	addr := fs.String("addr", "127.0.0.1:8787", "address to listen on")
+	workspace := fs.String("workspace", ".", "default workspace for sessions that don't specify one")
+	configPath := fs.String("config", "", "TOML config file (models + roles)")
+	model := fs.String("model", "claude-opus-4-8", "fallback model id (when no -config)")
+	baseURL := fs.String("base-url", "https://api.anthropic.com", "fallback API base URL (when no -config)")
+	keyEnv := fs.String("key-env", "ANTHROPIC_API_KEY", "fallback API key env var (when no -config)")
+	maxTok := fs.Int("max-tokens", 8192, "fallback max tokens per turn (when no -config)")
+	token := fs.String("token", os.Getenv("YCC_TOKEN"), "bearer token clients must present (empty disables auth)")
+	tlsCert := fs.String("tls-cert", "", "TLS certificate file (enables HTTPS)")
+	tlsKey := fs.String("tls-key", "", "TLS key file")
+	fs.Parse(argv)
+
+	err := daemon.Serve(daemon.Options{
+		Addr: *addr, Workspace: *workspace, ConfigPath: *configPath,
+		Model: *model, BaseURL: *baseURL, KeyEnv: *keyEnv, MaxTokens: *maxTok,
+		Token: *token, TLSCert: *tlsCert, TLSKey: *tlsKey,
+	})
+	if err != nil {
+		fatal("daemon: %v", err)
 	}
-	return &http.Client{
-		Transport: &http2.Transport{
-			AllowHTTP: true,
-			DialTLSContext: func(ctx context.Context, network, a string, _ *tls.Config) (net.Conn, error) {
-				return (&net.Dialer{}).DialContext(ctx, network, a)
-			},
-		},
-	}
-}
-
-// bearer adds the Authorization header to unary and streaming requests.
-func bearer(token string) connect.Interceptor { return bearerInterceptor{token} }
-
-type bearerInterceptor struct{ token string }
-
-func (b bearerInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
-	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
-		if b.token != "" {
-			req.Header().Set("Authorization", "Bearer "+b.token)
-		}
-		return next(ctx, req)
-	}
-}
-
-func (b bearerInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
-	return func(ctx context.Context, spec connect.Spec) connect.StreamingClientConn {
-		conn := next(ctx, spec)
-		if b.token != "" {
-			conn.RequestHeader().Set("Authorization", "Bearer "+b.token)
-		}
-		return conn
-	}
-}
-
-func (b bearerInterceptor) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
-	return next
 }
 
 func fatal(format string, args ...any) {

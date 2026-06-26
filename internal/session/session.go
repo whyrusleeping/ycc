@@ -1,9 +1,9 @@
 // Package session manages the lifecycle of a daemon session: it binds an event
 // log, an emitter, and an agent loop, runs the agent in a goroutine, and accepts
-// follow-up input ("prods") between turns (spec §4, §5).
+// follow-up input ("prods") and question answers between/within turns (spec §4).
 //
-// M1 runs a single worker agent per session (the coordinator modes arrive in
-// later milestones); the value proven here is the daemon/client seam.
+// The session's mode selects the agent: "work" runs the orchestrator coordinator
+// (which delegates to subagents); anything else runs a single worker agent.
 package session
 
 import (
@@ -12,29 +12,16 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 
+	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/docs"
 	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/git"
 	"github.com/whyrusleeping/ycc/internal/orchestrator"
-	"github.com/whyrusleeping/ycc/internal/tools"
 )
-
-const workerSystemPrompt = `You are an autonomous coding agent working inside a single workspace directory.
-
-You complete the user's task using the provided tools to read, search, and modify
-files and to run shell commands. Inspect the workspace before changing it, make the
-smallest change that satisfies the task, and verify your work when feasible.
-
-When the current task is complete, call the finish tool with a concise report. The
-session stays open afterward: the user may send follow-up instructions, which you
-should then carry out.`
-
-// ClientFactory builds a fresh backend client for a session. A factory (rather
-// than a shared client) avoids data races on per-client state across sessions.
-type ClientFactory func() engine.Turner
 
 // Config parameterizes a new session.
 type Config struct {
@@ -51,10 +38,12 @@ type Session struct {
 	Mode             string
 	InteractionLevel string
 
-	log     *event.Log
-	emitter *event.Emitter
-	loop    *engine.Loop
-	prompt  string
+	log       *event.Log
+	emitter   *event.Emitter
+	loop      *engine.Loop
+	inter     *interaction
+	prompt    string
+	buildLoop func(mode, prompt string) (*engine.Loop, error)
 
 	inputCh chan string
 	ctx     context.Context
@@ -80,15 +69,27 @@ func (s *Session) setStatus(st event.Status) {
 	s.mu.Unlock()
 }
 
-// SendInput queues a follow-up instruction for the agent. It is consumed when
-// the agent next becomes idle. Returns an error if the input buffer is full.
+// SendInput delivers user text. If the agent is currently blocked on a question,
+// the text answers it; otherwise it is queued as a follow-up prod for when the
+// agent next goes idle.
 func (s *Session) SendInput(text string) error {
+	if s.inter.Answer(text) {
+		return nil
+	}
 	select {
 	case s.inputCh <- text:
 		return nil
 	default:
 		return fmt.Errorf("session %s input buffer full", s.ID)
 	}
+}
+
+// Answer responds to a pending question. Errors if none is pending.
+func (s *Session) Answer(text string) error {
+	if !s.inter.Answer(text) {
+		return fmt.Errorf("session %s has no pending question", s.ID)
+	}
+	return nil
 }
 
 // Stop cancels the session's agent loop and closes its log.
@@ -114,9 +115,19 @@ func (s *Session) run() {
 		if err != nil {
 			s.setStatus(event.StatusError)
 			s.emitter.Emit(event.SessionError, map[string]any{"msg": err.Error()})
+		} else if res.NextMode != "" && res.NextMode != s.Mode {
+			// A control tool requested a mode transition within this session.
+			if next, berr := s.buildLoop(res.NextMode, modeTransitionPrompt(res.NextMode)); berr == nil {
+				s.emitter.Emit(event.ModeChanged, map[string]any{"from": s.Mode, "to": res.NextMode})
+				s.Mode = res.NextMode
+				s.loop = next
+				continue // run the new mode's loop immediately
+			} else {
+				s.emitter.Emit(event.SessionError, map[string]any{"msg": "mode switch failed: " + berr.Error()})
+			}
 		} else {
 			s.setStatus(event.StatusIdle)
-			s.emitter.Emit(event.SessionIdle, map[string]any{"report": res.Report})
+			s.emitter.Emit(event.SessionIdle, map[string]any{"report": s.withAssumptions(res.Report)})
 		}
 
 		select {
@@ -129,26 +140,61 @@ func (s *Session) run() {
 	}
 }
 
-// Manager owns the set of live sessions and the backend configuration used to
-// build their agent loops.
+// defaultPrompt is the starting instruction for a mode when the user gives none.
+func defaultPrompt(mode string) string {
+	switch mode {
+	case "chat":
+		return "Briefly introduce yourself as the ycc assistant and ask what I'd like to work on."
+	case "spec":
+		return "Review spec.md against the current codebase and propose improvements; ask me what to focus on if it helps."
+	case "backlog":
+		return "Review the spec and the existing backlog, and propose tasks to add or update."
+	case "feature":
+		return "I'd like to add a feature. Ask me what it should do before planning."
+	case "bug":
+		return "There's a bug to look into. Ask me for the details before investigating."
+	default: // work
+		return "Work on the backlog: choose the next ready task (one whose dependencies are all done) and complete it."
+	}
+}
+
+func modeTransitionPrompt(mode string) string {
+	if mode == "work" {
+		return "You are now in work mode. Begin working the backlog: pick the task that was just prepared (or the next ready task) and drive it to completion."
+	}
+	return "You are now in " + mode + " mode."
+}
+
+// withAssumptions appends any assumptions recorded by autonomous-mode ask_user
+// calls to the final report (spec §11).
+func (s *Session) withAssumptions(report string) string {
+	as := s.inter.Assumptions()
+	if len(as) == 0 {
+		return report
+	}
+	var b []byte
+	b = append(b, report...)
+	b = append(b, "\n\nAssumptions made without consulting the user (autonomous mode):\n"...)
+	for _, a := range as {
+		b = append(b, "- "+a+"\n"...)
+	}
+	return string(b)
+}
+
+// Manager owns the set of live sessions and the backend registry used to build
+// their agent loops.
 type Manager struct {
 	mu               sync.Mutex
 	sessions         map[string]*Session
-	newClient        ClientFactory
-	model            string
-	maxTok           int
+	reg              *config.Registry
 	defaultWorkspace string
 }
 
-// NewManager creates a session manager. newClient builds a backend per session;
-// model and maxTok configure the agent loop; defaultWorkspace is used when a
-// StartSession request leaves the workspace empty.
-func NewManager(newClient ClientFactory, model string, maxTok int, defaultWorkspace string) *Manager {
+// NewManager creates a session manager backed by the given model registry.
+func NewManager(reg *config.Registry, defaultWorkspace string) *Manager {
 	return &Manager{
 		sessions:         map[string]*Session{},
-		newClient:        newClient,
-		model:            model,
-		maxTok:           maxTok,
+		reg:              reg,
 		defaultWorkspace: defaultWorkspace,
 	}
 }
@@ -171,58 +217,67 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 	if level == "" {
 		level = "judgement"
 	}
+	// The prompt is optional: an empty one (e.g. "work" mode with no suggested
+	// task) gets a sensible per-mode default so the agent has a starting point.
+	prompt := strings.TrimSpace(cfg.Prompt)
+	if prompt == "" {
+		prompt = defaultPrompt(mode)
+	}
 
 	id, err := newID()
 	if err != nil {
 		return nil, err
 	}
-
 	logPath := filepath.Join(absWS, ".ycc", "sessions", id, "events.jsonl")
 	log, err := event.OpenLog(logPath)
 	if err != nil {
 		return nil, fmt.Errorf("open event log: %w", err)
 	}
 
-	// The mode selects the agent: "work" runs the orchestrator coordinator (which
-	// delegates to subagents); anything else runs a single worker agent.
-	var (
-		reg     *tools.Registry
-		sys     string
-		emitter *event.Emitter
-	)
-	if mode == "work" {
-		repo, err := git.Open(absWS)
+	emitter := event.NewEmitter(log, "coordinator")
+	inter := newInteraction(level, emitter)
+	repo, err := git.Open(absWS)
+	if err != nil {
+		return nil, fmt.Errorf("prepare git workspace: %w", err)
+	}
+	implSpec, err := m.agentSpec(m.reg.ImplementerName())
+	if err != nil {
+		return nil, err
+	}
+	var reviewers []orchestrator.AgentSpec
+	for _, name := range m.reg.ReviewerNames() {
+		rs, err := m.agentSpec(name)
 		if err != nil {
-			return nil, fmt.Errorf("prepare git workspace: %w", err)
+			return nil, err
 		}
-		emitter = event.NewEmitter(log, "coordinator")
-		reg = orchestrator.CoordinatorTools(&orchestrator.Deps{
-			Workspace:     absWS,
-			Docs:          docs.NewStore(absWS),
-			Repo:          repo,
-			Emitter:       emitter,
-			NewClient:     func() engine.Turner { return m.newClient() },
-			Model:         m.model,
-			ReviewerModel: "claude",
-			MaxTok:        m.maxTok,
-		})
-		sys = orchestrator.CoordinatorSystem()
-	} else {
-		emitter = event.NewEmitter(log, "agent")
-		reg = tools.New()
-		reg.Add(tools.Worker(&tools.Workspace{Root: absWS})...)
-		sys = workerSystemPrompt
+		reviewers = append(reviewers, rs)
+	}
+	deps := &orchestrator.Deps{
+		Workspace:   absWS,
+		Docs:        docs.NewStore(absWS),
+		Repo:        repo,
+		Emitter:     emitter,
+		Implementer: implSpec,
+		Reviewers:   reviewers,
+		Asker:       inter,
+		MaxTok:      m.reg.MaxTokens(),
 	}
 
-	loop := &engine.Loop{
-		Client:  m.newClient(),
-		Model:   m.model,
-		System:  sys,
-		Tools:   reg,
-		Emitter: emitter,
-		MaxTok:  m.maxTok,
+	// buildLoop assembles the agent loop for a mode; reused on mode transitions.
+	buildLoop := func(mode, prompt string) (*engine.Loop, error) {
+		reg, sys := orchestrator.BuildMode(mode, deps, level)
+		client, model, err := m.reg.Build(m.reg.CoordinatorName())
+		if err != nil {
+			return nil, fmt.Errorf("build coordinator backend: %w", err)
+		}
+		loop := &engine.Loop{Client: client, Model: model, System: sys, Tools: reg, Emitter: emitter, MaxTok: m.reg.MaxTokens()}
+		loop.Seed(prompt)
+		return loop, nil
 	}
-	loop.Seed(cfg.Prompt)
+	loop, err := buildLoop(mode, prompt)
+	if err != nil {
+		return nil, err
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{
@@ -233,7 +288,9 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 		log:              log,
 		emitter:          emitter,
 		loop:             loop,
-		prompt:           cfg.Prompt,
+		inter:            inter,
+		prompt:           prompt,
+		buildLoop:        buildLoop,
 		inputCh:          make(chan string, 64),
 		ctx:              ctx,
 		cancel:           cancel,
@@ -246,6 +303,23 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 
 	go s.run()
 	return s, nil
+}
+
+// agentSpec builds an orchestrator.AgentSpec for a logical model name, validating
+// that it resolves now so the per-spawn closures can assume success.
+func (m *Manager) agentSpec(name string) (orchestrator.AgentSpec, error) {
+	_, model, err := m.reg.Build(name)
+	if err != nil {
+		return orchestrator.AgentSpec{}, fmt.Errorf("build backend %q: %w", name, err)
+	}
+	return orchestrator.AgentSpec{
+		Name:  name,
+		Model: model,
+		NewClient: func() engine.Turner {
+			c, _, _ := m.reg.Build(name)
+			return c
+		},
+	}, nil
 }
 
 // Get returns a session by id.

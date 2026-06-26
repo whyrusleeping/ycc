@@ -59,7 +59,7 @@ Daemon + clients, from day one.
 ```
  ┌────────────────────────── workspace machine ──────────────────────────┐
  │                                                                        │
- │   ┌───────────────────────────  yccd (daemon)  ─────────────────────┐  │
+ │   ┌──────────────────────  ycc daemon (service)  ───────────────────┐  │
  │   │                                                                  │  │
  │   │   session mgr ── event log store ── reducer/projection          │  │
  │   │        │                                                         │  │
@@ -373,24 +373,30 @@ logical name. Reviewer fan-out iterates `roles.reviewers`.
 
 ## 15. Package layout
 
+**Single binary.** There is one `ycc` binary that is client, TUI, and daemon.
+`ycc` (no subcommand) launches the TUI and, for local use, auto-starts a detached
+background daemon (which persists after `ycc` exits, so sessions keep running and can
+be prodded later); `ycc daemon` runs the service explicitly (for the workspace machine
+/ remote); `ycc -addr <url>` attaches to a remote daemon. Sessions bind to the current
+directory by default, so one daemon serves many workspaces.
+
 ```
 ycc/
   cmd/
-    yccd/            # the daemon
-    ycc/             # TUI/CLI client
+    ycc/             # the single binary: client + TUI + `ycc daemon`
   proto/ycc/v1/      # .proto + generated (connect)
   internal/
     engine/          # agent loop, control-tool handling
-    orchestrator/    # mode coordinators + the work() flow
-    subagent/        # implementer / reviewer spawning + fan-out
+    orchestrator/    # mode coordinators + the work() flow + subagent spawning
     tools/           # worker + coordinator tool implementations
-    backend/         # model registry, gollama client wiring, unified Turn
+    config/          # model/role config + registry (gollama client wiring)
     docs/            # spec + backlog (structured) read/write/render
     event/           # event types, JSONL store, reducer/projection
     session/         # session lifecycle + state
     server/          # connect handlers, auth
-  api/               # shared client-facing types (mirrors proto where handy)
-  config/            # config loading (models, roles, auth)
+    daemon/          # serve the service + local auto-start + client dialing
+    tui/             # Bubble Tea home menu + session view
+    git/             # diff/commit helpers
 ```
 
 ## 16. Build plan / milestones

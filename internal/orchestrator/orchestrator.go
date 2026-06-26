@@ -1,11 +1,11 @@
 // Package orchestrator implements the work-mode coordinator (spec §9, §10): an
 // agent that reads the structured backlog, plans, and delegates real work to
 // subagents (an implementer and one or more reviewers), then commits accepted
-// work and updates the backlog. The coordinator never edits code itself — its
-// tools spawn subagent loops and orchestrate them.
+// work and updates the backlog. The coordinator never edits code itself.
 //
-// M2 implements the happy path: pick a task, plan, implement, review once, and
-// commit on accept. The revise loop and multi-model review arrive in M3 (0005).
+// M3 adds: multi-model reviewer fan-out (concurrent, with a barrier), a revise
+// loop that REUSES subagent contexts (send_to_implementer / re_review), and the
+// three interaction levels gating ask_user.
 package orchestrator
 
 import (
@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/docs"
@@ -24,30 +25,68 @@ import (
 
 const maxDiffChars = 16000
 
-// Deps is everything the coordinator tools need to orchestrate a work session.
-type Deps struct {
-	Workspace     string
-	Docs          *docs.Store
-	Repo          *git.Repo
-	Emitter       *event.Emitter // coordinator emitter (actor "coordinator")
-	NewClient     func() engine.Turner
-	Model         string
-	ReviewerModel string // logical label for the single M2 reviewer (e.g. "claude")
-	MaxTok        int
+// AgentSpec describes how to build a subagent's backend.
+type AgentSpec struct {
+	Name      string // logical name, used as the actor label "reviewer:<name>"
+	NewClient func() engine.Turner
+	Model     string
 }
 
-// CoordinatorSystem returns the coordinator's system prompt.
-func CoordinatorSystem() string { return coordinatorSystem }
+// Asker lets the coordinator ask the user a question, subject to the session's
+// interaction level. Implemented by the session.
+type Asker interface {
+	Ask(ctx context.Context, question string, options []string) (string, error)
+}
+
+// Deps is everything the coordinator tools need to orchestrate a work session.
+// It also holds the live subagent handles so the revise loop can reuse their
+// conversation contexts across rounds.
+type Deps struct {
+	Workspace   string
+	Docs        *docs.Store
+	Repo        *git.Repo
+	Emitter     *event.Emitter // coordinator emitter (actor "coordinator")
+	Implementer AgentSpec
+	Reviewers   []AgentSpec
+	Asker       Asker
+	MaxTok      int
+
+	mu        sync.Mutex
+	impl      *engine.Loop
+	reviewers []*reviewerHandle
+}
+
+type reviewerHandle struct {
+	name string
+	loop *engine.Loop
+}
+
+// CoordinatorSystem returns the coordinator's system prompt for an interaction level.
+func CoordinatorSystem(level string) string {
+	return coordinatorSystem + "\n\n" + levelGuidance(level)
+}
 
 // CoordinatorTools returns the coordinator's tool registry.
 func CoordinatorTools(d *Deps) *tools.Registry {
 	reg := tools.New()
 	reg.Add(
 		listBacklog(d), getTask(d), proposePlan(d),
-		spawnImplementer(d), spawnReviewer(d),
-		commitTool(d), updateTask(d), tools.Finish(),
+		spawnImplementer(d), spawnReviewers(d),
+		sendToImplementer(d), reReview(d),
+		askUser(d), commitTool(d), updateTask(d), tools.Finish(),
 	)
 	return reg
+}
+
+func (d *Deps) newLoop(spec AgentSpec, system string, reg *tools.Registry, actor string) *engine.Loop {
+	return &engine.Loop{
+		Client:  spec.NewClient(),
+		Model:   spec.Model,
+		System:  system,
+		Tools:   reg,
+		Emitter: d.Emitter.With(actor),
+		MaxTok:  d.MaxTok,
+	}
 }
 
 func listBacklog(d *Deps) *gollama.Tool {
@@ -116,7 +155,8 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "spawn_implementer",
 		Description: "Delegate implementation of a task to a coding subagent. It edits the workspace and returns a " +
-			"report plus the staged diff of its changes. Provide the task id and your plan.",
+			"report plus the staged diff. Provide the task id and your plan. Call once per task; use " +
+			"send_to_implementer for follow-up revisions.",
 		Params: tools.Obj(map[string]any{
 			"task_id": tools.StrProp("task id"),
 			"plan":    tools.StrProp("the plan the implementer should follow"),
@@ -128,76 +168,124 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 			if err != nil {
 				return tools.ErrResult("spawn_implementer: %v", err), nil
 			}
-
 			reg := tools.New()
 			reg.Add(tools.Worker(&tools.Workspace{Root: d.Workspace})...)
-			loop := &engine.Loop{
-				Client:  d.NewClient(),
-				Model:   d.Model,
-				System:  implementerSystem,
-				Tools:   reg,
-				Emitter: d.Emitter.With("implementer"),
-				MaxTok:  d.MaxTok,
-			}
+			loop := d.newLoop(d.Implementer, implementerSystem+"\n\n"+workspaceNote(d.Workspace), reg, "implementer")
 			loop.Seed(implementerPrompt(t, plan))
+			d.mu.Lock()
+			d.impl = loop
+			d.mu.Unlock()
 
-			d.Emitter.Emit(event.SubagentSpawned, map[string]any{"role": "implementer", "model": d.Model})
+			d.Emitter.Emit(event.SubagentSpawned, map[string]any{"role": "implementer", "model": d.Implementer.Model})
 			res, err := loop.Run(ctx)
 			if err != nil {
 				d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "implementer", "error": err.Error()})
 				return tools.ErrResult("implementer failed: %v", err), nil
 			}
-			diff, _ := d.Repo.Diff()
 			d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "implementer"})
 			d.Docs.AppendWorkLog(id, "implementer report: "+oneLine(res.Report))
-
-			out := "IMPLEMENTER REPORT:\n" + res.Report + "\n\n=== STAGED DIFF ===\n" + truncate(diff, maxDiffChars)
-			if strings.TrimSpace(diff) == "" {
-				out += "(no changes were made to the workspace)"
-			}
-			return tools.OkResult(out), nil
+			return tools.OkResult(reportWithDiff(d, res.Report)), nil
 		},
 	}
 }
 
-func spawnReviewer(d *Deps) *gollama.Tool {
+func sendToImplementer(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
-		Name: "spawn_reviewer",
-		Description: "Get an independent review of the implementer's changes for a task. The reviewer inspects the " +
-			"diff and workspace and returns a verdict (accept/revise), a summary, and findings.",
+		Name: "send_to_implementer",
+		Description: "Send revision instructions to the EXISTING implementer (it keeps its context from before). " +
+			"Use this to address review findings. Returns its report and the updated staged diff.",
+		Params: tools.Obj(map[string]any{
+			"task_id":      tools.StrProp("task id"),
+			"instructions": tools.StrProp("clear, consolidated instructions for what to change"),
+		}, "task_id", "instructions"),
+		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
+			id, _ := tools.GetString(params, "task_id")
+			instr, _ := tools.GetString(params, "instructions")
+			d.mu.Lock()
+			loop := d.impl
+			d.mu.Unlock()
+			if loop == nil {
+				return tools.ErrResult("send_to_implementer: no implementer yet; call spawn_implementer first"), nil
+			}
+			loop.Post(revisePrompt(instr))
+			d.Emitter.Emit(event.SubagentSpawned, map[string]any{"role": "implementer", "model": d.Implementer.Model, "revise": true})
+			res, err := loop.Run(ctx)
+			if err != nil {
+				d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "implementer", "error": err.Error()})
+				return tools.ErrResult("implementer failed: %v", err), nil
+			}
+			d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "implementer"})
+			d.Docs.AppendWorkLog(id, "revision: "+oneLine(res.Report))
+			return tools.OkResult(reportWithDiff(d, res.Report)), nil
+		},
+	}
+}
+
+func spawnReviewers(d *Deps) *gollama.Tool {
+	return &gollama.Tool{
+		Name: "spawn_reviewers",
+		Description: "Get independent reviews of the implementer's changes from ALL configured reviewers " +
+			"(possibly different models), running concurrently. Returns each verdict (accept/revise) and findings.",
 		Params: tools.Obj(map[string]any{"task_id": tools.StrProp("task id")}, "task_id"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			id, _ := tools.GetString(params, "task_id")
 			t, err := d.Docs.Get(id)
 			if err != nil {
-				return tools.ErrResult("spawn_reviewer: %v", err), nil
+				return tools.ErrResult("spawn_reviewers: %v", err), nil
 			}
-
-			reg := tools.New()
-			reg.Add(tools.Reviewer(&tools.Workspace{Root: d.Workspace})...)
-			loop := &engine.Loop{
-				Client:  d.NewClient(),
-				Model:   d.Model,
-				System:  reviewerSystem,
-				Tools:   reg,
-				Emitter: d.Emitter.With("reviewer:" + d.ReviewerModel),
-				MaxTok:  d.MaxTok,
+			d.mu.Lock()
+			d.reviewers = nil
+			for _, spec := range d.Reviewers {
+				reg := tools.New()
+				reg.Add(tools.Reviewer(&tools.Workspace{Root: d.Workspace})...)
+				loop := d.newLoop(spec, reviewerSystem+"\n\n"+workspaceNote(d.Workspace), reg, "reviewer:"+spec.Name)
+				loop.Seed(reviewerPrompt(t))
+				d.reviewers = append(d.reviewers, &reviewerHandle{name: spec.Name, loop: loop})
 			}
-			loop.Seed(reviewerPrompt(t))
+			handles := d.reviewers
+			d.mu.Unlock()
+			results := runReviewers(ctx, d, handles, id)
+			return tools.OkResult(aggregateReviews(results)), nil
+		},
+	}
+}
 
-			d.Emitter.Emit(event.SubagentSpawned, map[string]any{"role": "reviewer", "model": d.ReviewerModel})
-			res, err := loop.Run(ctx)
+func reReview(d *Deps) *gollama.Tool {
+	return &gollama.Tool{
+		Name: "re_review",
+		Description: "Ask the SAME reviewers (keeping their context) to re-review after a revision. Run this after " +
+			"send_to_implementer. Returns updated verdicts.",
+		Params: tools.Obj(map[string]any{"task_id": tools.StrProp("task id")}, "task_id"),
+		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
+			id, _ := tools.GetString(params, "task_id")
+			d.mu.Lock()
+			handles := d.reviewers
+			d.mu.Unlock()
+			if len(handles) == 0 {
+				return tools.ErrResult("re_review: no reviewers yet; call spawn_reviewers first"), nil
+			}
+			for _, h := range handles {
+				h.loop.Post(reReviewPrompt)
+			}
+			results := runReviewers(ctx, d, handles, id)
+			return tools.OkResult(aggregateReviews(results)), nil
+		},
+	}
+}
+
+func askUser(d *Deps) *gollama.Tool {
+	return &gollama.Tool{
+		Name: "ask_user",
+		Description: "Ask the user a question and get their answer. Use only as your interaction level permits. " +
+			"In autonomous mode no human answers; you will be told to proceed on your own judgement.",
+		Params: tools.Obj(map[string]any{"question": tools.StrProp("the question for the user")}, "question"),
+		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
+			q, _ := tools.GetString(params, "question")
+			ans, err := d.Asker.Ask(ctx, q, nil)
 			if err != nil {
-				d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "reviewer", "error": err.Error()})
-				return tools.ErrResult("reviewer failed: %v", err), nil
+				return tools.ErrResult("ask_user: %v", err), nil
 			}
-			rv := parseReview(res.Report)
-			d.Emitter.Emit(event.ReviewSubmitted, map[string]any{
-				"model": d.ReviewerModel, "verdict": rv.Verdict, "summary": rv.Summary, "findings": len(rv.Findings),
-			})
-			d.Docs.AppendWorkLog(id, fmt.Sprintf("review (%s): %s — %s", d.ReviewerModel, rv.Verdict, oneLine(rv.Summary)))
-			d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "reviewer"})
-			return tools.OkResult(rv.render(d.ReviewerModel)), nil
+			return tools.OkResult(ans), nil
 		},
 	}
 }
@@ -246,7 +334,47 @@ func updateTask(d *Deps) *gollama.Tool {
 	}
 }
 
-// --- review parsing ---
+// runReviewers runs each reviewer's loop concurrently and waits for all (barrier),
+// emitting events and recording each verdict in the work log.
+func runReviewers(ctx context.Context, d *Deps, handles []*reviewerHandle, taskID string) []reviewResult {
+	results := make([]reviewResult, len(handles))
+	var wg sync.WaitGroup
+	for i, h := range handles {
+		wg.Add(1)
+		go func(i int, h *reviewerHandle) {
+			defer wg.Done()
+			d.Emitter.Emit(event.SubagentSpawned, map[string]any{"role": "reviewer", "model": h.name})
+			res, err := h.loop.Run(ctx)
+			rv := review{Verdict: "unknown"}
+			if err != nil {
+				rv.Summary = "reviewer error: " + err.Error()
+			} else {
+				rv = parseReview(res.Report)
+			}
+			d.Emitter.Emit(event.ReviewSubmitted, map[string]any{
+				"model": h.name, "verdict": rv.Verdict, "summary": rv.Summary, "findings": len(rv.Findings),
+			})
+			d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "reviewer", "model": h.name})
+			results[i] = reviewResult{name: h.name, rv: rv}
+		}(i, h)
+	}
+	wg.Wait()
+	for _, r := range results {
+		d.Docs.AppendWorkLog(taskID, fmt.Sprintf("review (%s): %s — %s", r.name, r.rv.Verdict, oneLine(r.rv.Summary)))
+	}
+	return results
+}
+
+func reportWithDiff(d *Deps, report string) string {
+	diff, _ := d.Repo.Diff()
+	out := "IMPLEMENTER REPORT:\n" + report + "\n\n=== STAGED DIFF ===\n" + truncate(diff, maxDiffChars)
+	if strings.TrimSpace(diff) == "" {
+		out += "(no changes in the workspace)"
+	}
+	return out
+}
+
+// --- review parsing & aggregation ---
 
 type finding struct {
 	Severity string `json:"severity"`
@@ -259,6 +387,11 @@ type review struct {
 	Findings []finding `json:"findings"`
 }
 
+type reviewResult struct {
+	name string
+	rv   review
+}
+
 // parseReview decodes a submit_review payload, tolerating a reviewer that yielded
 // plain text instead of calling the tool.
 func parseReview(report string) review {
@@ -269,11 +402,25 @@ func parseReview(report string) review {
 	return review{Verdict: "unknown", Summary: strings.TrimSpace(report)}
 }
 
-func (rv review) render(model string) string {
+func aggregateReviews(results []reviewResult) string {
+	accepts := 0
+	for _, r := range results {
+		if r.rv.Verdict == "accept" {
+			accepts++
+		}
+	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "REVIEW by %s\nverdict: %s\nsummary: %s\n", model, rv.Verdict, rv.Summary)
-	for _, f := range rv.Findings {
-		fmt.Fprintf(&b, "- [%s] %s\n", f.Severity, f.Message)
+	fmt.Fprintf(&b, "REVIEW SUMMARY: %d/%d reviewers accept\n\n", accepts, len(results))
+	for _, r := range results {
+		fmt.Fprintf(&b, "--- %s: %s ---\n%s\n", r.name, r.rv.Verdict, r.rv.Summary)
+		for _, f := range r.rv.Findings {
+			fmt.Fprintf(&b, "  - [%s] %s\n", f.Severity, f.Message)
+		}
+	}
+	if accepts == len(results) {
+		b.WriteString("\nAll reviewers accept — you may commit.")
+	} else {
+		b.WriteString("\nNot all reviewers accept — consolidate the findings and send_to_implementer, then re_review.")
 	}
 	return b.String()
 }
@@ -284,8 +431,7 @@ func renderTask(t *docs.Task) string {
 }
 
 func oneLine(s string) string {
-	s = strings.TrimSpace(strings.ReplaceAll(s, "\n", " "))
-	return truncate(s, 200)
+	return truncate(strings.TrimSpace(strings.ReplaceAll(s, "\n", " ")), 200)
 }
 
 func truncate(s string, n int) string {

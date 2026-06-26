@@ -82,7 +82,7 @@ func TestLoopYieldsOnNoToolCalls(t *testing.T) {
 // until a control tool stops it.
 func TestLoopFeedsResultsAndContinues(t *testing.T) {
 	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{
-		assistantToolCall("write_file", `{"path":"a.txt","content":"hi"}`),
+		assistantToolCall("Write", `{"file_path":"a.txt","content":"hi"}`),
 		assistantToolCall("finish", `{"report":"wrote a.txt"}`),
 	}}
 	loop := newLoop(t, turner)
@@ -110,7 +110,7 @@ func TestLoopFeedsResultsAndContinues(t *testing.T) {
 func TestLoopMaxTurns(t *testing.T) {
 	loopForever := make([]*gollama.ResponseMessageGenerate, 10)
 	for i := range loopForever {
-		loopForever[i] = assistantToolCall("list_dir", `{"path":"."}`)
+		loopForever[i] = assistantToolCall("Bash", `{"command":"echo hi"}`)
 	}
 	turner := &scriptedTurner{responses: loopForever}
 	loop := newLoop(t, turner)

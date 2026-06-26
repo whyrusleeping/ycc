@@ -10,6 +10,7 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/whyrusleeping/ycc/internal/event"
+	"github.com/whyrusleeping/ycc/internal/orchestrator"
 	"github.com/whyrusleeping/ycc/internal/session"
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 	"github.com/whyrusleeping/ycc/proto/ycc/v1/yccv1connect"
@@ -24,12 +25,18 @@ type Server struct {
 // New returns a Server backed by mgr.
 func New(mgr *session.Manager) *Server { return &Server{mgr: mgr} }
 
+// ListModes returns the selectable session modes for the home menu.
+func (s *Server) ListModes(_ context.Context, _ *connect.Request[v1.ListModesRequest]) (*connect.Response[v1.ListModesResponse], error) {
+	var modes []*v1.Mode
+	for _, m := range orchestrator.Modes() {
+		modes = append(modes, &v1.Mode{Name: m.Name, Title: m.Title, Description: m.Description})
+	}
+	return connect.NewResponse(&v1.ListModesResponse{Modes: modes}), nil
+}
+
 // StartSession creates and launches a new session.
 func (s *Server) StartSession(_ context.Context, req *connect.Request[v1.StartSessionRequest]) (*connect.Response[v1.StartSessionResponse], error) {
 	m := req.Msg
-	if m.Prompt == "" {
-		return nil, connect.NewError(connect.CodeInvalidArgument, errEmptyPrompt)
-	}
 	sess, err := s.mgr.Start(session.Config{
 		Workspace:        m.Workspace,
 		Mode:             m.Mode,
@@ -81,7 +88,8 @@ func (s *Server) Subscribe(ctx context.Context, req *connect.Request[v1.Subscrib
 	}
 }
 
-// SendInput queues a follow-up instruction for the session's agent.
+// SendInput delivers user text: it answers a pending question if one is open,
+// otherwise queues a follow-up instruction for the session's agent.
 func (s *Server) SendInput(_ context.Context, req *connect.Request[v1.SendInputRequest]) (*connect.Response[v1.SendInputResponse], error) {
 	sess, ok := s.mgr.Get(req.Msg.SessionId)
 	if !ok {
@@ -91,6 +99,18 @@ func (s *Server) SendInput(_ context.Context, req *connect.Request[v1.SendInputR
 		return nil, connect.NewError(connect.CodeResourceExhausted, err)
 	}
 	return connect.NewResponse(&v1.SendInputResponse{}), nil
+}
+
+// AnswerQuestion responds to a question the coordinator asked via ask_user.
+func (s *Server) AnswerQuestion(_ context.Context, req *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error) {
+	sess, ok := s.mgr.Get(req.Msg.SessionId)
+	if !ok {
+		return nil, connect.NewError(connect.CodeNotFound, errNoSession)
+	}
+	if err := sess.Answer(req.Msg.Text); err != nil {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	return connect.NewResponse(&v1.AnswerQuestionResponse{}), nil
 }
 
 func toProto(ev event.Event) *v1.Event {

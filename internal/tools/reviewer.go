@@ -7,14 +7,20 @@ import (
 	"github.com/whyrusleeping/gollama"
 )
 
-// Reviewer returns the tool set for a review subagent: the read/inspect tools
-// (so it can read files and run `git diff`, grep, etc.) plus submit_review, a
-// control tool that ends the review with a structured verdict. Reviewers are
-// prompted not to modify the workspace; hard enforcement is deferred (task 0008).
+// Inspect returns the read/inspect tools: Read and Bash. Bash covers searching
+// (ripgrep), listing, and running builds/tests, so reviewers and the authoring
+// modes (spec/backlog/feature/bug) can understand a workspace without an explicit
+// write/edit tool.
+func Inspect(ws *Workspace) []*gollama.Tool {
+	return []*gollama.Tool{readFile(ws), bash(ws)}
+}
+
+// Reviewer returns the tool set for a review subagent: the inspect tools plus
+// submit_review, a control tool that ends the review with a structured verdict.
+// Reviewers are prompted not to modify the workspace; hard enforcement is
+// deferred (task 0008).
 func Reviewer(ws *Workspace) []*gollama.Tool {
-	return []*gollama.Tool{
-		readFile(ws), listDir(ws), grep(ws), glob(ws), bash(ws), submitReview(),
-	}
+	return append(Inspect(ws), submitReview())
 }
 
 // submitReview is a control tool. It serializes the reviewer's structured verdict

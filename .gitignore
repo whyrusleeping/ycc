@@ -2,10 +2,12 @@
 ant-key
 *.pem
 
-# build artifacts
-/yccd
+# build artifacts (build to /tmp, not the source tree)
 /ycc
+/yccd
 /ycc-spike
+/cmd/**/ycc
+/cmd/**/yccd
 
 # session state + scratch
 .ycc/

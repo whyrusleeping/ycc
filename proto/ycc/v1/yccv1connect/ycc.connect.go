@@ -33,6 +33,9 @@ const (
 // reflection-formatted method names, remove the leading slash and convert the remaining slash to a
 // period.
 const (
+	// SessionServiceListModesProcedure is the fully-qualified name of the SessionService's ListModes
+	// RPC.
+	SessionServiceListModesProcedure = "/ycc.v1.SessionService/ListModes"
 	// SessionServiceStartSessionProcedure is the fully-qualified name of the SessionService's
 	// StartSession RPC.
 	SessionServiceStartSessionProcedure = "/ycc.v1.SessionService/StartSession"
@@ -45,14 +48,19 @@ const (
 	// SessionServiceSendInputProcedure is the fully-qualified name of the SessionService's SendInput
 	// RPC.
 	SessionServiceSendInputProcedure = "/ycc.v1.SessionService/SendInput"
+	// SessionServiceAnswerQuestionProcedure is the fully-qualified name of the SessionService's
+	// AnswerQuestion RPC.
+	SessionServiceAnswerQuestionProcedure = "/ycc.v1.SessionService/AnswerQuestion"
 )
 
 // SessionServiceClient is a client for the ycc.v1.SessionService service.
 type SessionServiceClient interface {
+	ListModes(context.Context, *connect.Request[v1.ListModesRequest]) (*connect.Response[v1.ListModesResponse], error)
 	StartSession(context.Context, *connect.Request[v1.StartSessionRequest]) (*connect.Response[v1.StartSessionResponse], error)
 	ListSessions(context.Context, *connect.Request[v1.ListSessionsRequest]) (*connect.Response[v1.ListSessionsResponse], error)
 	Subscribe(context.Context, *connect.Request[v1.SubscribeRequest]) (*connect.ServerStreamForClient[v1.Event], error)
 	SendInput(context.Context, *connect.Request[v1.SendInputRequest]) (*connect.Response[v1.SendInputResponse], error)
+	AnswerQuestion(context.Context, *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error)
 }
 
 // NewSessionServiceClient constructs a client for the ycc.v1.SessionService service. By default, it
@@ -66,6 +74,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 	baseURL = strings.TrimRight(baseURL, "/")
 	sessionServiceMethods := v1.File_ycc_v1_ycc_proto.Services().ByName("SessionService").Methods()
 	return &sessionServiceClient{
+		listModes: connect.NewClient[v1.ListModesRequest, v1.ListModesResponse](
+			httpClient,
+			baseURL+SessionServiceListModesProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("ListModes")),
+			connect.WithClientOptions(opts...),
+		),
 		startSession: connect.NewClient[v1.StartSessionRequest, v1.StartSessionResponse](
 			httpClient,
 			baseURL+SessionServiceStartSessionProcedure,
@@ -90,15 +104,28 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("SendInput")),
 			connect.WithClientOptions(opts...),
 		),
+		answerQuestion: connect.NewClient[v1.AnswerQuestionRequest, v1.AnswerQuestionResponse](
+			httpClient,
+			baseURL+SessionServiceAnswerQuestionProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("AnswerQuestion")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // sessionServiceClient implements SessionServiceClient.
 type sessionServiceClient struct {
-	startSession *connect.Client[v1.StartSessionRequest, v1.StartSessionResponse]
-	listSessions *connect.Client[v1.ListSessionsRequest, v1.ListSessionsResponse]
-	subscribe    *connect.Client[v1.SubscribeRequest, v1.Event]
-	sendInput    *connect.Client[v1.SendInputRequest, v1.SendInputResponse]
+	listModes      *connect.Client[v1.ListModesRequest, v1.ListModesResponse]
+	startSession   *connect.Client[v1.StartSessionRequest, v1.StartSessionResponse]
+	listSessions   *connect.Client[v1.ListSessionsRequest, v1.ListSessionsResponse]
+	subscribe      *connect.Client[v1.SubscribeRequest, v1.Event]
+	sendInput      *connect.Client[v1.SendInputRequest, v1.SendInputResponse]
+	answerQuestion *connect.Client[v1.AnswerQuestionRequest, v1.AnswerQuestionResponse]
+}
+
+// ListModes calls ycc.v1.SessionService.ListModes.
+func (c *sessionServiceClient) ListModes(ctx context.Context, req *connect.Request[v1.ListModesRequest]) (*connect.Response[v1.ListModesResponse], error) {
+	return c.listModes.CallUnary(ctx, req)
 }
 
 // StartSession calls ycc.v1.SessionService.StartSession.
@@ -121,12 +148,19 @@ func (c *sessionServiceClient) SendInput(ctx context.Context, req *connect.Reque
 	return c.sendInput.CallUnary(ctx, req)
 }
 
+// AnswerQuestion calls ycc.v1.SessionService.AnswerQuestion.
+func (c *sessionServiceClient) AnswerQuestion(ctx context.Context, req *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error) {
+	return c.answerQuestion.CallUnary(ctx, req)
+}
+
 // SessionServiceHandler is an implementation of the ycc.v1.SessionService service.
 type SessionServiceHandler interface {
+	ListModes(context.Context, *connect.Request[v1.ListModesRequest]) (*connect.Response[v1.ListModesResponse], error)
 	StartSession(context.Context, *connect.Request[v1.StartSessionRequest]) (*connect.Response[v1.StartSessionResponse], error)
 	ListSessions(context.Context, *connect.Request[v1.ListSessionsRequest]) (*connect.Response[v1.ListSessionsResponse], error)
 	Subscribe(context.Context, *connect.Request[v1.SubscribeRequest], *connect.ServerStream[v1.Event]) error
 	SendInput(context.Context, *connect.Request[v1.SendInputRequest]) (*connect.Response[v1.SendInputResponse], error)
+	AnswerQuestion(context.Context, *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error)
 }
 
 // NewSessionServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -136,6 +170,12 @@ type SessionServiceHandler interface {
 // and JSON codecs. They also support gzip compression.
 func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
 	sessionServiceMethods := v1.File_ycc_v1_ycc_proto.Services().ByName("SessionService").Methods()
+	sessionServiceListModesHandler := connect.NewUnaryHandler(
+		SessionServiceListModesProcedure,
+		svc.ListModes,
+		connect.WithSchema(sessionServiceMethods.ByName("ListModes")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sessionServiceStartSessionHandler := connect.NewUnaryHandler(
 		SessionServiceStartSessionProcedure,
 		svc.StartSession,
@@ -160,8 +200,16 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("SendInput")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceAnswerQuestionHandler := connect.NewUnaryHandler(
+		SessionServiceAnswerQuestionProcedure,
+		svc.AnswerQuestion,
+		connect.WithSchema(sessionServiceMethods.ByName("AnswerQuestion")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/ycc.v1.SessionService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case SessionServiceListModesProcedure:
+			sessionServiceListModesHandler.ServeHTTP(w, r)
 		case SessionServiceStartSessionProcedure:
 			sessionServiceStartSessionHandler.ServeHTTP(w, r)
 		case SessionServiceListSessionsProcedure:
@@ -170,6 +218,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceSubscribeHandler.ServeHTTP(w, r)
 		case SessionServiceSendInputProcedure:
 			sessionServiceSendInputHandler.ServeHTTP(w, r)
+		case SessionServiceAnswerQuestionProcedure:
+			sessionServiceAnswerQuestionHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -178,6 +228,10 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 
 // UnimplementedSessionServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedSessionServiceHandler struct{}
+
+func (UnimplementedSessionServiceHandler) ListModes(context.Context, *connect.Request[v1.ListModesRequest]) (*connect.Response[v1.ListModesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ListModes is not implemented"))
+}
 
 func (UnimplementedSessionServiceHandler) StartSession(context.Context, *connect.Request[v1.StartSessionRequest]) (*connect.Response[v1.StartSessionResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.StartSession is not implemented"))
@@ -193,4 +247,8 @@ func (UnimplementedSessionServiceHandler) Subscribe(context.Context, *connect.Re
 
 func (UnimplementedSessionServiceHandler) SendInput(context.Context, *connect.Request[v1.SendInputRequest]) (*connect.Response[v1.SendInputResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.SendInput is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) AnswerQuestion(context.Context, *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.AnswerQuestion is not implemented"))
 }

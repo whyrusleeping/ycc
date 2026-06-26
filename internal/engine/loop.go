@@ -37,8 +37,9 @@ const defaultMaxTurns = 40
 
 // Result is the outcome of a completed loop.
 type Result struct {
-	Report string // final report (from a control tool) or last assistant text
-	Turns  int
+	Report   string // final report (from a control tool) or last assistant text
+	Turns    int
+	NextMode string // if set, a control tool requested a transition to this mode
 }
 
 // Seed appends an initial user message (the task prompt) before Run.
@@ -118,7 +119,7 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 				if report == "" {
 					report = msg.Content
 				}
-				return &Result{Report: report, Turns: turn}, nil
+				return &Result{Report: report, Turns: turn, NextMode: ctrl.Mode}, nil
 			}
 		}
 	}

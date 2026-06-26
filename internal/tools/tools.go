@@ -14,10 +14,12 @@ import (
 )
 
 // Control is an out-of-band signal a control tool returns to the agent loop via
-// gollama.ToolResult.Structured. Stop ends the loop; Report is the final message.
+// gollama.ToolResult.Structured. Stop ends the loop; Report is the final message;
+// Mode, if set, requests the session transition to that mode after the loop ends.
 type Control struct {
 	Stop   bool
 	Report string
+	Mode   string
 }
 
 // ControlOf returns the *Control carried by a tool result, or nil.
@@ -120,6 +122,29 @@ func getString(params any, key string) (string, bool) {
 	return s, ok && s != ""
 }
 
+// getInt pulls an integer argument (JSON numbers arrive as float64), or def.
+func getInt(params any, key string, def int) int {
+	if m, ok := params.(map[string]any); ok {
+		switch v := m[key].(type) {
+		case float64:
+			return int(v)
+		case int:
+			return v
+		}
+	}
+	return def
+}
+
+// getBool pulls a boolean argument, or def.
+func getBool(params any, key string, def bool) bool {
+	if m, ok := params.(map[string]any); ok {
+		if b, ok := m[key].(bool); ok {
+			return b
+		}
+	}
+	return def
+}
+
 func errResult(format string, args ...any) *gollama.ToolResult {
 	return &gollama.ToolResult{Content: fmt.Sprintf(format, args...), IsError: true}
 }
@@ -133,19 +158,26 @@ type Workspace struct {
 	Root string
 }
 
-// resolve cleans and joins a user-supplied path against the root, rejecting any
-// path that would escape the workspace.
-func (w *Workspace) resolve(rel string) (string, error) {
-	if rel == "" {
-		rel = "."
+// resolve cleans a user-supplied path and confines it to the workspace. Absolute
+// paths (the Claude-Code convention) are accepted when they fall within the
+// workspace root; relative paths are joined to the root. Either way a path that
+// escapes the workspace is rejected.
+func (w *Workspace) resolve(p string) (string, error) {
+	if p == "" {
+		p = "."
 	}
-	clean := filepath.Clean(filepath.Join(w.Root, rel))
+	var clean string
+	if filepath.IsAbs(p) {
+		clean = filepath.Clean(p)
+	} else {
+		clean = filepath.Clean(filepath.Join(w.Root, p))
+	}
 	relToRoot, err := filepath.Rel(w.Root, clean)
 	if err != nil {
-		return "", fmt.Errorf("invalid path %q", rel)
+		return "", fmt.Errorf("invalid path %q", p)
 	}
 	if relToRoot == ".." || strings.HasPrefix(relToRoot, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path %q escapes the workspace", rel)
+		return "", fmt.Errorf("path %q is outside the workspace", p)
 	}
 	return clean, nil
 }

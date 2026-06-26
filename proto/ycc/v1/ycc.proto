@@ -34,6 +34,20 @@ message SendInputRequest {
 }
 message SendInputResponse {}
 
+message AnswerQuestionRequest {
+  string session_id = 1;
+  string text = 2;
+}
+message AnswerQuestionResponse {}
+
+message ListModesRequest {}
+message Mode {
+  string name = 1;
+  string title = 2;
+  string description = 3;
+}
+message ListModesResponse { repeated Mode modes = 1; }
+
 message ListSessionsRequest {}
 message SessionInfo {
   string session_id = 1;
@@ -46,8 +60,10 @@ message ListSessionsResponse { repeated SessionInfo sessions = 1; }
 // SessionService is the daemon's RPC surface (spec §12). M1 implements the core
 // four; mode/question RPCs arrive in later milestones.
 service SessionService {
+  rpc ListModes(ListModesRequest) returns (ListModesResponse);
   rpc StartSession(StartSessionRequest) returns (StartSessionResponse);
   rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
   rpc Subscribe(SubscribeRequest) returns (stream Event);
   rpc SendInput(SendInputRequest) returns (SendInputResponse);
+  rpc AnswerQuestion(AnswerQuestionRequest) returns (AnswerQuestionResponse);
 }

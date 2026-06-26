@@ -19,6 +19,7 @@ type Type string
 
 const (
 	SessionStarted   Type = "session_started"
+	ModeChanged      Type = "mode_changed"
 	UserInput        Type = "user_input"
 	ModelTurn        Type = "model_turn"
 	ToolCall         Type = "tool_call"
@@ -33,6 +34,8 @@ const (
 	DecisionMade     Type = "decision_made"
 	DocUpdated       Type = "doc_updated"
 	CommitMade       Type = "commit_made"
+	QuestionAsked    Type = "question_asked"
+	QuestionAnswered Type = "question_answered"
 )
 
 // Event is a single entry in a session's log.

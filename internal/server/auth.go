@@ -7,10 +7,7 @@ import (
 	"connectrpc.com/connect"
 )
 
-var (
-	errEmptyPrompt = errors.New("prompt is required")
-	errNoSession   = errors.New("no such session")
-)
+var errNoSession = errors.New("no such session")
 
 // authInterceptor enforces "Authorization: Bearer <token>" on every RPC,
 // including streaming handlers (so Subscribe is guarded too). An empty token
