@@ -1,0 +1,11 @@
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+  except:
+    - RPC_RESPONSE_STANDARD_NAME # Subscribe streams Event (also our persisted type)
+breaking:
+  use:
+    - FILE

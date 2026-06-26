@@ -1,0 +1,12 @@
+# secrets — never commit
+ant-key
+*.pem
+
+# build artifacts
+/yccd
+/ycc
+/ycc-spike
+
+# session state + scratch
+.ycc/
+scratch/
