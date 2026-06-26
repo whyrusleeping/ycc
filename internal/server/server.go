@@ -107,7 +107,7 @@ func (s *Server) AnswerQuestion(_ context.Context, req *connect.Request[v1.Answe
 	if !ok {
 		return nil, connect.NewError(connect.CodeNotFound, errNoSession)
 	}
-	if err := sess.Answer(req.Msg.Text); err != nil {
+	if err := sess.AnswerOption(int(req.Msg.OptionIndex), req.Msg.Text); err != nil {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
 	}
 	return connect.NewResponse(&v1.AnswerQuestionResponse{}), nil

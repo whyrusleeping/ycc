@@ -92,6 +92,15 @@ func (s *Session) Answer(text string) error {
 	return nil
 }
 
+// AnswerOption responds to a pending question with a chosen option (resolved by
+// index when idx >= 0 and in range) or free text. Errors if none is pending.
+func (s *Session) AnswerOption(idx int, text string) error {
+	if !s.inter.AnswerOption(idx, text) {
+		return fmt.Errorf("session %s has no pending question", s.ID)
+	}
+	return nil
+}
+
 // Stop cancels the session's agent loop and closes its log.
 func (s *Session) Stop() {
 	s.cancel()

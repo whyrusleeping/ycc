@@ -353,9 +353,12 @@ func (*SendInputResponse) Descriptor() ([]byte, []int) {
 }
 
 type AnswerQuestionRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Text          string                 `protobuf:"bytes,2,opt,name=text,proto3" json:"text,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SessionId string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Text      string                 `protobuf:"bytes,2,opt,name=text,proto3" json:"text,omitempty"`
+	// option_index selects a suggested option from the question's options list
+	// (0-based) when >= 0; otherwise text is taken as a free-text answer.
+	OptionIndex   int32 `protobuf:"varint,3,opt,name=option_index,json=optionIndex,proto3" json:"option_index,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -402,6 +405,13 @@ func (x *AnswerQuestionRequest) GetText() string {
 		return x.Text
 	}
 	return ""
+}
+
+func (x *AnswerQuestionRequest) GetOptionIndex() int32 {
+	if x != nil {
+		return x.OptionIndex
+	}
+	return 0
 }
 
 type AnswerQuestionResponse struct {
@@ -755,11 +765,12 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
 	"\x04text\x18\x02 \x01(\tR\x04text\"\x13\n" +
-	"\x11SendInputResponse\"J\n" +
+	"\x11SendInputResponse\"m\n" +
 	"\x15AnswerQuestionRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
-	"\x04text\x18\x02 \x01(\tR\x04text\"\x18\n" +
+	"\x04text\x18\x02 \x01(\tR\x04text\x12!\n" +
+	"\foption_index\x18\x03 \x01(\x05R\voptionIndex\"\x18\n" +
 	"\x16AnswerQuestionResponse\"\x12\n" +
 	"\x10ListModesRequest\"R\n" +
 	"\x04Mode\x12\x12\n" +

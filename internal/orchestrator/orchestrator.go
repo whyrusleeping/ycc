@@ -277,11 +277,17 @@ func askUser(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "ask_user",
 		Description: "Ask the user a question and get their answer. Use only as your interaction level permits. " +
-			"In autonomous mode no human answers; you will be told to proceed on your own judgement.",
-		Params: tools.Obj(map[string]any{"question": tools.StrProp("the question for the user")}, "question"),
+			"In autonomous mode no human answers; you will be told to proceed on your own judgement. " +
+			"For multiple-choice clarifications, supply `options` (a short list of suggested answers); the " +
+			"client renders them as a picker so the user can choose crisply, and may still type free text.",
+		Params: tools.Obj(map[string]any{
+			"question": tools.StrProp("the question for the user"),
+			"options":  tools.StrArrProp("optional suggested answers to offer as selectable choices"),
+		}, "question"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			q, _ := tools.GetString(params, "question")
-			ans, err := d.Asker.Ask(ctx, q, nil)
+			opts := tools.GetStringSlice(params, "options")
+			ans, err := d.Asker.Ask(ctx, q, opts)
 			if err != nil {
 				return tools.ErrResult("ask_user: %v", err), nil
 			}

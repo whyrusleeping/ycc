@@ -16,7 +16,7 @@
 | [0010](backlog/0010-context-window-management.md) | Context-window management for long sessions | todo | 3 | 0002 |
 | [0011](backlog/0011-multiline-input.md) | Multiline session input (textarea) | todo | 3 | 0006 |
 | [0012](backlog/0012-settings-overlay.md) | Settings overlay (esc) with mid-session interaction level + per-role model config | todo | 2 | 0006 |
-| [0013](backlog/0013-structured-questions.md) | Structured interactive ask_user questions (option pickers) | todo | 2 | 0006 |
+| [0013](backlog/0013-structured-questions.md) | Structured interactive ask_user questions (option pickers) | in_progress | 2 | 0006 |
 | [0014](backlog/0014-daemon-lifecycle-oneshot.md) | Daemon lifecycle — one-shot in-process default, opt-in persistence | done | 2 | 0003 |
 | [0015](backlog/0015-multi-project-registry.md) | Multi-project daemon — project registry, RPCs, and TUI picker | todo | 2 | 0014, 0006 |
 | [0016](backlog/0016-quick-add-backlog-mid-session.md) | Quick-add backlog items mid-session (TUI capture overlay) | todo | 3 | 0006 |

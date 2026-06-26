@@ -96,8 +96,22 @@ func Obj(props map[string]any, required ...string) gollama.ToolFunctionParams {
 // StrProp builds a {"type":"string","description":...} schema entry.
 func StrProp(desc string) map[string]any { return strProp(desc) }
 
+// StrArrProp builds a {"type":"array","items":{"type":"string"},...} schema
+// entry for an optional list-of-strings argument.
+func StrArrProp(desc string) map[string]any {
+	return map[string]any{
+		"type":        "array",
+		"description": desc,
+		"items":       map[string]any{"type": "string"},
+	}
+}
+
 // GetString pulls a required string argument; ok is false if missing/empty.
 func GetString(params any, key string) (string, bool) { return getString(params, key) }
+
+// GetStringSlice pulls a list-of-strings argument, ignoring non-string entries.
+// Returns nil when the argument is absent.
+func GetStringSlice(params any, key string) []string { return getStringSlice(params, key) }
 
 // ErrResult builds an error tool result (visible to the model).
 func ErrResult(format string, args ...any) *gollama.ToolResult { return errResult(format, args...) }
@@ -128,6 +142,26 @@ func getString(params any, key string) (string, bool) {
 	}
 	s, ok := m[key].(string)
 	return s, ok && s != ""
+}
+
+// getStringSlice pulls a list-of-strings argument, dropping non-string and empty
+// entries. Returns nil when absent or not an array.
+func getStringSlice(params any, key string) []string {
+	m, ok := params.(map[string]any)
+	if !ok {
+		return nil
+	}
+	raw, ok := m[key].([]any)
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, v := range raw {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // getInt pulls an integer argument (JSON numbers arrive as float64), or def.

@@ -60,6 +60,12 @@ type model struct {
 	pending string
 	status  string
 
+	// picker state: when the pending question carries options, the footer shows
+	// a navigable list instead of the textinput until the user picks "other…".
+	pickerOpts   []string // suggested answers ("" sentinel handled separately)
+	pickerCursor int      // index into pickerOpts; len(pickerOpts) == "other…"
+	picking      bool     // true while the picker (not the textarea) has focus
+
 	err   error
 	ready bool
 	w, h  int
@@ -151,6 +157,21 @@ func waitEvent(ch chan *v1.Event) tea.Cmd {
 func (m model) sendInput(text string) tea.Cmd {
 	return func() tea.Msg {
 		if _, err := m.client.SendInput(m.ctx, connect.NewRequest(&v1.SendInputRequest{SessionId: m.sessionID, Text: text})); err != nil {
+			return errMsg{err}
+		}
+		return nil
+	}
+}
+
+// answerQuestion sends a structured answer to a pending question: optIdx >= 0
+// selects a suggested option (resolved to its text on the daemon), otherwise
+// optIdx is -1 and text is taken as free text.
+func (m model) answerQuestion(optIdx int, text string) tea.Cmd {
+	return func() tea.Msg {
+		_, err := m.client.AnswerQuestion(m.ctx, connect.NewRequest(&v1.AnswerQuestionRequest{
+			SessionId: m.sessionID, Text: text, OptionIndex: int32(optIdx),
+		}))
+		if err != nil {
 			return errMsg{err}
 		}
 		return nil
@@ -249,6 +270,41 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// When a question with options is pending, the footer is a picker that
+		// owns ↑/↓/enter until the user chooses "other…" to free-type.
+		if m.picking {
+			switch msg.String() {
+			case "ctrl+c":
+				return m, tea.Quit
+			case "up":
+				if m.pickerCursor > 0 {
+					m.pickerCursor--
+				}
+				return m, nil
+			case "down":
+				if m.pickerCursor < len(m.pickerOpts) {
+					m.pickerCursor++
+				}
+				return m, nil
+			case "enter":
+				if m.pickerCursor >= len(m.pickerOpts) {
+					// "other…": drop into the free-text textarea.
+					m.picking = false
+					m.input.Focus()
+					return m, nil
+				}
+				idx := m.pickerCursor
+				m.picking = false
+				m.pending = ""
+				m.pickerOpts = nil
+				m.follow = true
+				return m, m.answerQuestion(idx, "")
+			case "esc":
+				m.state = stateMenu
+				return m, nil
+			}
+			return m, nil
+		}
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
@@ -279,10 +335,19 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.input.SetValue("")
-			m.pending = ""
+			// If a question is pending, answer it as free text (option_index -1);
+			// otherwise it's a prod handled by SendInput.
+			if m.pending != "" {
+				m.pending = ""
+				m.follow = true
+				return m, m.answerQuestion(-1, text)
+			}
 			m.follow = true
 			return m, m.sendInput(text)
 		}
+	}
+	if m.picking {
+		return m, nil
 	}
 	var icmd tea.Cmd
 	m.input, icmd = m.input.Update(msg)
@@ -324,9 +389,19 @@ func (m *model) appendEvent(ev *v1.Event) {
 	case "question_asked":
 		m.pending = dataField(ev, "question")
 		m.status = "waiting for your answer"
+		m.pickerOpts = dataList(ev, "options")
+		if len(m.pickerOpts) > 0 {
+			m.picking = true
+			m.pickerCursor = 0
+			m.input.Blur()
+		} else {
+			m.picking = false
+		}
 	case "question_answered":
 		m.pending = ""
 		m.status = "running"
+		m.pickerOpts = nil
+		m.picking = false
 	case "session_idle":
 		m.status = "idle"
 	case "session_error":
@@ -443,8 +518,32 @@ func (m model) sessionView() string {
 	if m.ready {
 		body = m.vp.View()
 	}
+	if m.picking {
+		help := dimStyle.Render(" ↑↓ choose · enter select · esc menu")
+		return top + "\n" + body + "\n" + m.pickerView() + "\n" + help
+	}
 	help := dimStyle.Render(" enter send/expand · ↑↓ select · click expand · pgup/pgdn scroll · esc menu")
 	return top + "\n" + body + "\n " + m.input.View() + "\n" + help
+}
+
+// pickerView renders the navigable list of suggested answers plus an "other…"
+// escape into the free-text textarea.
+func (m model) pickerView() string {
+	var b strings.Builder
+	if m.pending != "" {
+		b.WriteString(" " + askStyle.Render(" ? ") + " " + oneLine(m.pending, m.w-6) + "\n")
+	}
+	rows := append(append([]string(nil), m.pickerOpts...), "other…")
+	for i, opt := range rows {
+		cursor := "  "
+		label := opt
+		if i == m.pickerCursor {
+			cursor = selStyle.Render("▸ ")
+			label = selStyle.Render(opt)
+		}
+		b.WriteString("  " + cursor + label + "\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // --- per-event rendering ---
@@ -697,6 +796,29 @@ func dataField(ev *v1.Event, key string) string {
 		return fmt.Sprintf("%g", v)
 	}
 	return ""
+}
+
+// dataList pulls a list-of-strings field from an event's data JSON, dropping
+// non-string and empty entries. Returns nil when absent.
+func dataList(ev *v1.Event, key string) []string {
+	if ev.DataJson == "" {
+		return nil
+	}
+	var mp map[string]any
+	if json.Unmarshal([]byte(ev.DataJson), &mp) != nil {
+		return nil
+	}
+	raw, ok := mp[key].([]any)
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, v := range raw {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func firstField(ev *v1.Event, keys ...string) string {

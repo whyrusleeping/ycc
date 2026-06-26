@@ -37,6 +37,9 @@ message SendInputResponse {}
 message AnswerQuestionRequest {
   string session_id = 1;
   string text = 2;
+  // option_index selects a suggested option from the question's options list
+  // (0-based) when >= 0; otherwise text is taken as a free-text answer.
+  int32 option_index = 3;
 }
 message AnswerQuestionResponse {}
 

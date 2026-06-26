@@ -22,6 +22,7 @@ type interaction struct {
 
 	mu          sync.Mutex
 	waiting     chan string // non-nil only while a question is pending
+	options     []string    // suggested answers for the pending question, if any
 	assumptions []string
 }
 
@@ -30,10 +31,10 @@ func newInteraction(level string, emitter *event.Emitter) *interaction {
 }
 
 // Ask implements orchestrator.Asker.
-func (in *interaction) Ask(ctx context.Context, question string, _ []string) (string, error) {
+func (in *interaction) Ask(ctx context.Context, question string, options []string) (string, error) {
 	if in.level == "autonomous" {
 		const ans = "You are in autonomous mode and no human is available. Proceed using your best judgement."
-		in.emitter.Emit(event.QuestionAsked, map[string]any{"question": question, "auto": true})
+		in.emitter.Emit(event.QuestionAsked, askData(question, options, true))
 		in.mu.Lock()
 		in.assumptions = append(in.assumptions, question)
 		in.mu.Unlock()
@@ -44,17 +45,19 @@ func (in *interaction) Ask(ctx context.Context, question string, _ []string) (st
 	ch := make(chan string, 1)
 	in.mu.Lock()
 	in.waiting = ch
+	in.options = options
 	in.mu.Unlock()
 	// Stop pointing at this channel when we leave, whatever the outcome.
 	defer func() {
 		in.mu.Lock()
 		if in.waiting == ch {
 			in.waiting = nil
+			in.options = nil
 		}
 		in.mu.Unlock()
 	}()
 
-	in.emitter.Emit(event.QuestionAsked, map[string]any{"question": question})
+	in.emitter.Emit(event.QuestionAsked, askData(question, options, false))
 	select {
 	case ans := <-ch:
 		in.emitter.Emit(event.QuestionAnswered, map[string]any{"answer": ans})
@@ -64,6 +67,18 @@ func (in *interaction) Ask(ctx context.Context, question string, _ []string) (st
 	}
 }
 
+// askData builds the question_asked payload, including options when offered.
+func askData(question string, options []string, auto bool) map[string]any {
+	d := map[string]any{"question": question}
+	if auto {
+		d["auto"] = true
+	}
+	if len(options) > 0 {
+		d["options"] = options
+	}
+	return d
+}
+
 // Answer delivers a user answer to the pending question, returning true if one
 // was pending and accepted. It claims the pending channel under the lock so a
 // duplicate or racing answer can't double-deliver.
@@ -71,11 +86,34 @@ func (in *interaction) Answer(text string) bool {
 	in.mu.Lock()
 	ch := in.waiting
 	in.waiting = nil
+	in.options = nil
 	in.mu.Unlock()
 	if ch == nil {
 		return false
 	}
 	ch <- text // buffered(1), single sender, single use: never blocks
+	return true
+}
+
+// AnswerOption resolves a chosen option for the pending question. If idx is a
+// valid index into the pending options, that option's text is delivered;
+// otherwise text is delivered as free text. Returns true if a question was
+// pending and answered.
+func (in *interaction) AnswerOption(idx int, text string) bool {
+	in.mu.Lock()
+	ch := in.waiting
+	opts := in.options
+	if ch == nil {
+		in.mu.Unlock()
+		return false
+	}
+	in.waiting = nil
+	in.options = nil
+	in.mu.Unlock()
+	if idx >= 0 && idx < len(opts) {
+		text = opts[idx]
+	}
+	ch <- text
 	return true
 }
 

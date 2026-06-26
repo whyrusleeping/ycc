@@ -79,7 +79,9 @@ yourself, and read the codebase the same way (Read for files, Bash with ripgrep 
 do NOT 'cat' files). Apply focused changes directly: Edit for targeted, one-section-at-a-time
 replacements, or Write to lay down a new or fully rewritten spec. Keep the spec true to the
 project: if the code and spec disagree, surface it. Ask the user (ask_user) when intent is
-unclear, as your interaction level allows. Call finish when the spec reflects the agreed state.`
+unclear, as your interaction level allows. When a clarification has a small set of likely
+answers, pass them as ask_user 'options' so the user can pick crisply instead of typing prose.
+Call finish when the spec reflects the agreed state.`
 
 const backlogModeSystem = `You turn the spec into a concrete backlog. Read the spec (Read spec.md at the workspace
 root) and the existing backlog (list_backlog / get_task) so you don't duplicate work.
@@ -110,7 +112,9 @@ func levelGuidance(level string) string {
 	switch level {
 	case "interactive":
 		return `INTERACTION LEVEL: interactive. Use ask_user freely — confirm the chosen task and
-plan before implementing, and ask whenever a decision is significant or you are unsure.`
+plan before implementing, and ask whenever a decision is significant or you are unsure. When a
+question has a small set of likely answers, supply them via ask_user ` + "`options`" + ` so the
+user gets a clean multiple-choice picker.`
 	case "autonomous":
 		return `INTERACTION LEVEL: autonomous. Do NOT ask the user anything; make every decision
 yourself. (ask_user will not reach a human.) Note any significant assumptions in your

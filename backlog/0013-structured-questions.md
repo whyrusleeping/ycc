@@ -1,12 +1,16 @@
 ---
 id: "0013"
 title: Structured interactive ask_user questions (option pickers)
-status: todo
+status: in_progress
 priority: 2
-created: 2026-06-26
-updated: 2026-06-26
-depends_on: ["0006"]
-spec_refs: ["Client UI (TUI)", "Tools", "RPC protocol"]
+created: "2026-06-26"
+updated: "2026-06-26"
+depends_on:
+    - "0006"
+spec_refs:
+    - Client UI (TUI)
+    - Tools
+    - RPC protocol
 ---
 
 ## Description
@@ -24,3 +28,11 @@ events, and answer RPC need to surface them end-to-end. See spec §18.3 and §8.
 - [ ] coordinator prompt nudges using options for crisp choices
 
 ## Work log
+- 2026-06-26 plan: Implement structured ask_user with option pickers end-to-end:  1. Tool schema: extend the `ask_user` tool definition to expose an optional `options` array (list of suggested string answers) alongside 
+…[truncated]
+- 2026-06-26 revision: Implemented structured interactive `ask_user` questions (option pickers) end-to-end. All code compiles, `go test ./...` passes, and proto was regenerated with `buf generate`.  ## Changes by file  - **
+…[truncated]
+- 2026-06-26 review (claude): accept — The change implements structured interactive ask_user questions end-to-end and satisfies all acceptance criteria. The tool schema exposes an optional `options` array (StrArrProp), `question_asked` eve
+…[truncated]
+- 2026-06-26 revision: Removed the out-of-scope work and confirmed the build remains green.  ## Cleanup performed - Deleted `backlog/0018-save-rerun-plans.md` (via `git rm`) — it was an unrelated backlog task not part of 
+…[truncated]

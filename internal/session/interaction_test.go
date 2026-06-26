@@ -137,3 +137,39 @@ func TestInteractiveContextCancel(t *testing.T) {
 		t.Fatal("Ask did not return on cancel")
 	}
 }
+
+// AnswerOption resolves a valid index to the offered option's text, and passes
+// other indices/free text through unchanged.
+func TestAnswerOptionResolvesIndex(t *testing.T) {
+	opts := []string{"postgres", "sqlite", "mysql"}
+
+	// Index selection resolves to the option text.
+	in := newInteraction("interactive", discardEmitter())
+	got := make(chan string, 1)
+	go func() { a, _ := in.Ask(context.Background(), "db?", opts); got <- a }()
+	deadline := time.Now().Add(2 * time.Second)
+	for !in.AnswerOption(1, "ignored") {
+		if time.Now().After(deadline) {
+			t.Fatal("question never went pending")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if a := <-got; a != "sqlite" {
+		t.Fatalf("index answer = %q, want sqlite", a)
+	}
+
+	// Negative index is treated as free text.
+	in2 := newInteraction("interactive", discardEmitter())
+	got2 := make(chan string, 1)
+	go func() { a, _ := in2.Ask(context.Background(), "db?", opts); got2 <- a }()
+	deadline = time.Now().Add(2 * time.Second)
+	for !in2.AnswerOption(-1, "cockroachdb") {
+		if time.Now().After(deadline) {
+			t.Fatal("question never went pending")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if a := <-got2; a != "cockroachdb" {
+		t.Fatalf("free-text answer = %q, want cockroachdb", a)
+	}
+}
