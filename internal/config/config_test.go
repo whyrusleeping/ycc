@@ -8,6 +8,7 @@ import (
 
 const sample = `
 max_tokens = 4096
+max_turns = 250
 
 [models.claude]
 backend = "anthropic"
@@ -43,6 +44,12 @@ func TestLoadAndRegistry(t *testing.T) {
 	}
 	if cfg.MaxTokens != 4096 {
 		t.Fatalf("max_tokens = %d", cfg.MaxTokens)
+	}
+	if cfg.MaxTurns != 250 {
+		t.Fatalf("max_turns = %d", cfg.MaxTurns)
+	}
+	if NewRegistry(cfg).MaxTurns() != 250 {
+		t.Fatalf("registry MaxTurns = %d", NewRegistry(cfg).MaxTurns())
 	}
 	if len(cfg.Roles.Reviewers) != 3 {
 		t.Fatalf("reviewers = %v", cfg.Roles.Reviewers)

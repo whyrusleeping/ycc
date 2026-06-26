@@ -21,3 +21,4 @@
 | [0015](backlog/0015-multi-project-registry.md) | Multi-project daemon — project registry, RPCs, and TUI picker | todo | 2 | 0014, 0006 |
 | [0016](backlog/0016-quick-add-backlog-mid-session.md) | Quick-add backlog items mid-session (TUI capture overlay) | todo | 3 | 0006 |
 | [0017](backlog/0017-tool-call-syntax-highlighting.md) | Smarter language inference for tool-call syntax highlighting | todo | 3 | 0006 |
+| [0018](backlog/0018-implementer-turn-limit.md) | Remove / raise / make-configurable the implementer turn limit | in_progress | 2 | 0002 |

@@ -35,6 +35,14 @@ type Config struct {
 	Models    map[string]Model `toml:"models"`
 	Roles     Roles            `toml:"roles"`
 	MaxTokens int              `toml:"max_tokens"`
+	// MaxTurns caps the number of tool-call turns in a single engine Run as a
+	// runaway/cost backstop. 0 means "use the engine's high default" (see
+	// engine.defaultMaxTurns). It sits beside max_tokens in the config.
+	//
+	// Note (task 0010): raising this lets a run accumulate more context, so a
+	// very high value can trade a turn-limit abort for a context-window-limit
+	// abort until context-window management (0010) lands.
+	MaxTurns int `toml:"max_turns"`
 }
 
 // Load reads and validates a TOML config file.
@@ -91,6 +99,10 @@ func NewRegistry(cfg *Config) *Registry { return &Registry{cfg: cfg} }
 
 // MaxTokens returns the configured per-turn token cap (0 if unset).
 func (r *Registry) MaxTokens() int { return r.cfg.MaxTokens }
+
+// MaxTurns returns the configured per-Run tool-call turn cap (0 if unset, in
+// which case the engine applies its high default backstop).
+func (r *Registry) MaxTurns() int { return r.cfg.MaxTurns }
 
 // CoordinatorName / ImplementerName / ReviewerNames expose the role assignments.
 func (r *Registry) CoordinatorName() string { return r.cfg.Roles.Coordinator }

@@ -51,7 +51,24 @@ func (l *Loop) backend() (Turner, string) {
 	return l.Client, l.Model
 }
 
-const defaultMaxTurns = 40
+// defaultMaxTurns is the per-Run backstop applied when Loop.MaxTurns is unset
+// (0). It is deliberately high (200) so that normal multi-step work — the
+// implementer's read → edit → build → test → fix cycles across several files —
+// is not guillotined mid-task. It is NOT removed entirely: it remains as a
+// runaway/cost guard so a model stuck in a degenerate infinite tool-call loop
+// can't burn tokens forever.
+//
+// The cap is per Run, not cumulative: each Run starts its turn counter at 1
+// (see Run below), so a send_to_implementer revise round that calls Run again on
+// the same Loop gets a fresh budget rather than inheriting the previous round's
+// turn count.
+//
+// Interaction with task 0010 (context-window management): raising the turn cap
+// means more turns accumulate more conversation history. Until 0010 lands,
+// a high turn cap can trade a turn-limit abort for a context-window-limit abort
+// on a very long run. The turn cap is the runaway backstop; context budgeting is
+// 0010's concern.
+const defaultMaxTurns = 200
 
 // Result is the outcome of a completed loop.
 type Result struct {
@@ -78,6 +95,8 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		maxTurns = defaultMaxTurns
 	}
 
+	// turn resets to 1 on every Run, so MaxTurns is a per-Run budget rather
+	// than a cumulative one across revise rounds (see defaultMaxTurns).
 	for turn := 1; turn <= maxTurns; turn++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err

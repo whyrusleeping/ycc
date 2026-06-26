@@ -50,6 +50,7 @@ type Deps struct {
 	Reviewers   []AgentSpec
 	Asker       Asker
 	MaxTok      int
+	MaxTurns    int // per-Run tool-call turn cap; 0 => engine default backstop
 
 	mu        sync.Mutex
 	impl      *engine.Loop
@@ -108,12 +109,13 @@ func CoordinatorTools(d *Deps) *tools.Registry {
 
 func (d *Deps) newLoop(spec AgentSpec, system string, reg *tools.Registry, actor string) *engine.Loop {
 	return &engine.Loop{
-		Client:  spec.NewClient(),
-		Model:   spec.Model,
-		System:  system,
-		Tools:   reg,
-		Emitter: d.Emitter.With(actor),
-		MaxTok:  d.MaxTok,
+		Client:   spec.NewClient(),
+		Model:    spec.Model,
+		System:   system,
+		Tools:    reg,
+		Emitter:  d.Emitter.With(actor),
+		MaxTok:   d.MaxTok,
+		MaxTurns: d.MaxTurns,
 	}
 }
 

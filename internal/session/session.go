@@ -398,6 +398,7 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 		Reviewers:   reviewers,
 		Asker:       inter,
 		MaxTok:      m.reg.MaxTokens(),
+		MaxTurns:    m.reg.MaxTurns(),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -433,7 +434,7 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 		if err != nil {
 			return nil, fmt.Errorf("build coordinator backend: %w", err)
 		}
-		loop := &engine.Loop{Client: client, Model: model, System: sys, Tools: reg, Emitter: emitter, MaxTok: m.reg.MaxTokens()}
+		loop := &engine.Loop{Client: client, Model: model, System: sys, Tools: reg, Emitter: emitter, MaxTok: m.reg.MaxTokens(), MaxTurns: m.reg.MaxTurns()}
 		loop.Seed(prompt)
 		return loop, nil
 	}

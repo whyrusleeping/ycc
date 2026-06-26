@@ -120,3 +120,50 @@ func TestLoopMaxTurns(t *testing.T) {
 		t.Fatal("expected max-turns error, got nil")
 	}
 }
+
+// The default backstop is high (well above the old 40) but still finite, so a
+// degenerate infinite tool-call loop is eventually stopped.
+func TestLoopDefaultMaxTurnsBackstop(t *testing.T) {
+	if defaultMaxTurns < 100 {
+		t.Fatalf("defaultMaxTurns = %d, want a high default (>=100)", defaultMaxTurns)
+	}
+	loopForever := make([]*gollama.ResponseMessageGenerate, defaultMaxTurns+5)
+	for i := range loopForever {
+		loopForever[i] = assistantToolCall("Bash", `{"command":"echo hi"}`)
+	}
+	turner := &scriptedTurner{responses: loopForever}
+	loop := newLoop(t, turner) // MaxTurns unset => default backstop
+	res, err := loop.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected max-turns error from default backstop, got nil")
+	}
+	if res.Turns != defaultMaxTurns {
+		t.Fatalf("turns = %d, want default backstop %d", res.Turns, defaultMaxTurns)
+	}
+}
+
+// MaxTurns is a per-Run budget, not cumulative: a second Run on the same loop
+// (as send_to_implementer does for a revise round) gets a fresh turn count.
+func TestLoopMaxTurnsResetsPerRun(t *testing.T) {
+	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{
+		// Run #1: two turns then finish.
+		assistantToolCall("Bash", `{"command":"echo a"}`),
+		assistantText("done round one"),
+		// Run #2: two turns then finish — would exceed a cumulative cap of 3.
+		assistantToolCall("Bash", `{"command":"echo b"}`),
+		assistantText("done round two"),
+	}}
+	loop := newLoop(t, turner)
+	loop.MaxTurns = 3
+	if _, err := loop.Run(context.Background()); err != nil {
+		t.Fatalf("run 1: %v", err)
+	}
+	loop.Post("revise please")
+	res, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("run 2: %v (cap should reset per Run)", err)
+	}
+	if res.Report != "done round two" {
+		t.Fatalf("report = %q", res.Report)
+	}
+}

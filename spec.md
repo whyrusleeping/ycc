@@ -440,10 +440,22 @@ A config file maps logical names → gollama clients:
 coordinator = "claude"
 implementer = "claude"
 reviewers   = ["claude", "gpt", "glm"]   # multi-model review
+
+max_tokens  = 8192   # per-turn output token cap (0 => backend default)
+max_turns   = 200    # per-Run tool-call turn cap; runaway/cost backstop (0 => engine default, 200)
 ```
 
 The registry hands the engine a configured gollama `Client` + model string for any
 logical name. Reviewer fan-out iterates `roles.reviewers`.
+
+`max_turns` bounds how many tool-call turns a single engine `Run` may take. It is a
+**runaway backstop**, not a normal stopping condition: the high default (200) keeps the
+implementer's read → edit → build → test → fix cycles from being cut off mid-task while
+still stopping a degenerate infinite tool-call loop. The cap is **per `Run`**, so each
+`send_to_implementer` revise round gets a fresh budget rather than accumulating across
+rounds. Interaction with context-window management (§ task 0010): a higher turn cap lets a
+run accumulate more conversation history, so until context budgeting lands a very high
+`max_turns` can trade a turn-limit abort for a context-window-limit abort on long runs.
 
 ## 14. Persistence & remote sync
 
