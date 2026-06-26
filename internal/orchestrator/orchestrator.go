@@ -36,6 +36,11 @@ type AgentSpec struct {
 // interaction level. Implemented by the session.
 type Asker interface {
 	Ask(ctx context.Context, question string, options []string) (string, error)
+	// Confirm asks the user a yes/no question for a high-impact, hard-to-reverse
+	// action (e.g. starting the work pipeline). Unlike Ask, it requires a real
+	// human answer even in autonomous mode: when no human is available it returns
+	// (false, nil) so the action is declined rather than silently taken (spec §9, §11).
+	Confirm(ctx context.Context, question string) (bool, error)
 }
 
 // Deps is everything the coordinator tools need to orchestrate a work session.

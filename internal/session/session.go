@@ -250,8 +250,15 @@ func (s *Session) run() {
 			s.setStatus(event.StatusError)
 			s.emitter.Emit(event.SessionError, map[string]any{"msg": err.Error()})
 		} else if res.NextMode != "" && res.NextMode != s.Mode {
-			// A control tool requested a mode transition within this session.
-			if next, berr := s.buildLoop(res.NextMode, modeTransitionPrompt(res.NextMode)); berr == nil {
+			// A control tool requested a mode transition within this session. A
+			// carried prompt (e.g. the pm → work hand-off) seeds the new loop
+			// verbatim so it carries the target task + planning context; otherwise
+			// fall back to a generic per-mode transition prompt.
+			seed := res.NextPrompt
+			if seed == "" {
+				seed = modeTransitionPrompt(res.NextMode)
+			}
+			if next, berr := s.buildLoop(res.NextMode, seed); berr == nil {
 				s.emitter.Emit(event.ModeChanged, map[string]any{"from": s.Mode, "to": res.NextMode})
 				s.Mode = res.NextMode
 				s.setLoop(next)
@@ -279,14 +286,8 @@ func defaultPrompt(mode string) string {
 	switch mode {
 	case "chat":
 		return "Briefly introduce yourself as the ycc assistant and ask what I'd like to work on."
-	case "spec":
-		return "Review spec.md against the current codebase and propose improvements; ask me what to focus on if it helps."
-	case "backlog":
-		return "Review the spec and the existing backlog, and propose tasks to add or update."
-	case "feature":
-		return "I'd like to add a feature. Ask me what it should do before planning."
-	case "bug":
-		return "There's a bug to look into. Ask me for the details before investigating."
+	case "pm":
+		return "Review spec.md and the existing backlog against the current codebase, and ask me what I'd like to plan, document, or groom."
 	default: // work
 		return "Work on the backlog: choose the next ready task (one whose dependencies are all done) and complete it."
 	}
@@ -294,7 +295,7 @@ func defaultPrompt(mode string) string {
 
 func modeTransitionPrompt(mode string) string {
 	if mode == "work" {
-		return "You are now in work mode. Begin working the backlog: pick the task that was just prepared (or the next ready task) and drive it to completion."
+		return "You are now in work mode. Begin working the backlog: pick the next ready task (one whose dependencies are all done) and drive it to completion."
 	}
 	return "You are now in " + mode + " mode."
 }

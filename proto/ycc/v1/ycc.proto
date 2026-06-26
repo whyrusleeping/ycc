@@ -49,7 +49,20 @@ message Mode {
   string title = 2;
   string description = 3;
 }
-message ListModesResponse { repeated Mode modes = 1; }
+// Preset is a home-menu entry that starts a session in `mode` with a tailored
+// `opening_prompt`. The pm mode exposes the old spec/backlog/feature/bug framings
+// this way — one mode, four opening prompts (spec §9).
+message Preset {
+  string name = 1;        // menu key, distinct from the mode
+  string title = 2;
+  string description = 3;
+  string mode = 4;        // session mode to start (e.g. "pm")
+  string opening_prompt = 5; // verbatim first prompt seeded into the session
+}
+message ListModesResponse {
+  repeated Mode modes = 1;
+  repeated Preset presets = 2;
+}
 
 message ListSessionsRequest {}
 message SessionInfo {

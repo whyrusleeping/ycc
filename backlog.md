@@ -23,4 +23,4 @@
 | [0017](backlog/0017-tool-call-syntax-highlighting.md) | Smarter language inference for tool-call syntax highlighting | todo | 3 | 0006 |
 | [0018](backlog/0018-implementer-turn-limit.md) | Remove / raise / make-configurable the implementer turn limit | done | 2 | 0002 |
 | [0020](backlog/0020-save-rerun-plans.md) | Persist and re-run coordinator / testing plans (plan library) | todo | 3 | 0004 |
-| [0021](backlog/0021-collapse-modes-into-pm.md) | Collapse spec/backlog/feature/bug into a single `pm` (project manager) mode | todo | 2 | 0006 |
+| [0021](backlog/0021-collapse-modes-into-pm.md) | Collapse spec/backlog/feature/bug into a single `pm` (project manager) mode | in_progress | 2 | 0006 |

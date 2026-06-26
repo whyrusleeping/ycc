@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"strings"
 	"sync"
 
 	"github.com/whyrusleeping/ycc/internal/event"
@@ -82,6 +83,54 @@ func (in *interaction) Ask(ctx context.Context, question string, options []strin
 		return ans, nil
 	case <-ctx.Done():
 		return "", ctx.Err()
+	}
+}
+
+// Confirm asks a yes/no question for a high-impact, hard-to-reverse action. Unlike
+// Ask, it does NOT auto-answer in autonomous mode: starting the work pipeline is
+// hard to reverse, so it always seeks a real human answer. When no human is
+// available (the session is cancelled before answering), it returns (false, nil)
+// so the action is declined rather than silently taken (spec §9, §11).
+func (in *interaction) Confirm(ctx context.Context, question string) (bool, error) {
+	const (
+		yes = "Yes"
+		no  = "No"
+	)
+	opts := []string{yes, no}
+
+	ch := make(chan string, 1)
+	in.mu.Lock()
+	in.waiting = ch
+	in.options = opts
+	in.mu.Unlock()
+	defer func() {
+		in.mu.Lock()
+		if in.waiting == ch {
+			in.waiting = nil
+			in.options = nil
+		}
+		in.mu.Unlock()
+	}()
+
+	in.emitter.Emit(event.QuestionAsked, askData(question, opts, false))
+	select {
+	case ans := <-ch:
+		ok := isAffirmative(ans)
+		in.emitter.Emit(event.QuestionAnswered, map[string]any{"answer": ans, "confirmed": ok})
+		return ok, nil
+	case <-ctx.Done():
+		// Session cancelled / no human available: decline rather than proceed.
+		return false, nil
+	}
+}
+
+// isAffirmative reports whether a confirmation answer means "yes".
+func isAffirmative(ans string) bool {
+	switch strings.ToLower(strings.TrimSpace(ans)) {
+	case "yes", "y", "ok", "okay", "approve", "approved", "confirm", "confirmed", "go", "proceed", "sure":
+		return true
+	default:
+		return false
 	}
 }
 

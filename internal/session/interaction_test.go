@@ -100,6 +100,57 @@ func TestNoStaleAnswerAcrossQuestions(t *testing.T) {
 	}
 }
 
+// Confirm requires a real human answer even in autonomous mode (it does not
+// auto-answer). When no human is available (the context is cancelled), it declines
+// — returning (false, nil) — so a high-impact action is not silently taken.
+func TestConfirmDeclinesWhenNoHuman(t *testing.T) {
+	in := newInteraction("autonomous", discardEmitter())
+	ctx, cancel := context.WithCancel(context.Background())
+	type res struct {
+		ok  bool
+		err error
+	}
+	done := make(chan res, 1)
+	go func() {
+		ok, err := in.Confirm(ctx, "start work?")
+		done <- res{ok, err}
+	}()
+	waitPending(t, in) // Confirm blocks even in autonomous, so a question goes pending
+	cancel()
+	select {
+	case r := <-done:
+		if r.err != nil || r.ok {
+			t.Fatalf("Confirm after cancel = (%v, %v), want (false, nil)", r.ok, r.err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Confirm did not return after cancel")
+	}
+	// A confirmation gate is not an autonomous assumption.
+	if len(in.Assumptions()) != 0 {
+		t.Fatalf("Confirm should not record an assumption: %v", in.Assumptions())
+	}
+}
+
+// Confirm resolves to true only for an affirmative answer.
+func TestConfirmAffirmative(t *testing.T) {
+	in := newInteraction("interactive", discardEmitter())
+	done := make(chan bool, 1)
+	go func() {
+		ok, _ := in.Confirm(context.Background(), "proceed?")
+		done <- ok
+	}()
+	waitPending(t, in)
+	in.Answer("yes")
+	select {
+	case ok := <-done:
+		if !ok {
+			t.Fatal("Confirm(\"yes\") = false, want true")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Confirm did not return")
+	}
+}
+
 func waitPending(t *testing.T, in *interaction) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)

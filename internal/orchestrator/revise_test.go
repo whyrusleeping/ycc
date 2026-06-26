@@ -45,6 +45,7 @@ func text(s string) *gollama.ResponseMessageGenerate {
 type noopAsker struct{}
 
 func (noopAsker) Ask(context.Context, string, []string) (string, error) { return "ok", nil }
+func (noopAsker) Confirm(context.Context, string) (bool, error)         { return true, nil }
 
 // TestReviseLoop exercises the full M3 revise cycle deterministically: the
 // implementer ships a buggy Add (a-b), the reviewer says "revise", the

@@ -1,7 +1,7 @@
 ---
 id: "0021"
 title: Collapse spec/backlog/feature/bug into a single `pm` (project manager) mode
-status: todo
+status: in_progress
 priority: 2
 created: "2026-06-26"
 updated: "2026-06-26"
@@ -62,3 +62,27 @@ Open questions:
 - [ ] spec §9 reflects the implemented design; `go test ./...` green
 
 ## Work log
+- Collapsed `spec`/`backlog`/`feature`/`bug` into a single `pm` mode; `chat` and `work`
+  remain (`Modes()`, `BuildMode` in internal/orchestrator/modes.go). `pm` tools:
+  Read/Write/Edit/Bash, list_backlog/get_task/create_task/update_task, propose_plan,
+  switch_to_work, ask_user, finish — no spawn_*/commit. Added `pmModeSystem` prompt with a
+  soft "no code edits" boundary.
+- Preserved the four framings as opening-prompt presets (`Presets()` + new `Preset` proto
+  message and `ListModes` presets field); the TUI home menu lists modes + presets and seeds a
+  preset's opening prompt when the user types nothing.
+- Made `switch_to_work` deliberate: it takes `task_id`+`plan`, requires a `Confirm` approval
+  (real human answer even in autonomous — declines if none), and carries a verbatim work
+  hand-off prompt naming THAT task into the work session. Added `Control.Prompt` /
+  `Result.NextPrompt` plumbing; the work transition prompt no longer says "or the next ready
+  task".
+- Added `Asker.Confirm` (orchestrator) + `interaction.Confirm` (session) with tests; updated
+  modes_test/revise_test; updated spec §9 (already described target) and §11 (confirmation-gate
+  exception). `go test ./...` green.
+- 2026-06-26 implementer report: Collapsed `spec`/`backlog`/`feature`/`bug` into a single `pm` mode; `chat` and `work` remain. All acceptance criteria met; `go test ./...` green.  ## What changed  **Modes (internal/orchestrator/modes
+…[truncated]
+- 2026-06-26 plan: Collapse spec/backlog/feature/bug modes into a single `pm` mode; keep `chat` and `work`.  1. Modes(): return three modes — pm (planning/intake/docs, no implementation), chat, work. Remove spec/backl
+…[truncated]
+- 2026-06-26 review (claude): accept — The change cleanly collapses spec/backlog/feature/bug into a single `pm` mode while keeping `chat` and `work`, matching spec §9. `pm` has the prescribed toolset (Read/Write/Edit/Bash, backlog tools, 
+…[truncated]
+- 2026-06-26 revision: Added `switch_to_work` to the pm tool enumeration in spec.md §9 (line 324–326), so the listed tools — Read/Write/Edit/Bash, list_backlog/get_task/create_task/update_task, propose_plan, switch_to_
+…[truncated]

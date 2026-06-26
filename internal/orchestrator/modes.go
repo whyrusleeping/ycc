@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/event"
@@ -15,23 +17,45 @@ type ModeInfo struct {
 	Description string
 }
 
-// Modes returns the selectable session modes (spec §9).
+// Modes returns the selectable session modes (spec §9). There are three: pm
+// (planning / intake / docs, no implementation), chat (freeform, can edit code),
+// and work (the orchestrated implementation pipeline). The home menu additionally
+// offers opening-prompt presets that drop into pm (see Presets).
 func Modes() []ModeInfo {
 	return []ModeInfo{
+		{"pm", "Project manager", "Plan, document, and groom the backlog — spec.md, tasks, plans. No implementation."},
 		{"chat", "Chat", "Open-ended conversation and coding — no fixed workflow."},
 		{"work", "Work on backlog", "Pick a backlog task, implement it, review it across models, and commit."},
-		{"spec", "Author spec", "Collaboratively write and maintain spec.md."},
-		{"backlog", "Build backlog", "Turn the spec into concrete backlog tasks."},
-		{"feature", "New feature", "Understand the codebase, propose a plan, update spec + backlog, then optionally start work."},
-		{"bug", "Bug report", "Investigate a bug, propose a fix plan, update the backlog, then optionally start work."},
+	}
+}
+
+// Preset is a home-menu entry that opens a pm session with a tailored opening
+// prompt — preserving the old spec/backlog/feature/bug framings as one mode with
+// different first prompts (spec §9).
+type Preset struct {
+	Name        string // menu key (distinct from the mode)
+	Title       string
+	Description string
+	Mode        string // always "pm" today
+	Prompt      string // verbatim opening prompt seeded into the pm session
+}
+
+// Presets returns the opening-prompt presets the home menu offers under pm.
+func Presets() []Preset {
+	return []Preset{
+		{"feature", "New feature", "Explore the codebase, then propose a plan and backlog tasks.", "pm", featurePresetPrompt},
+		{"bug", "Bug report", "Reproduce and localize a bug, then propose a fix plan.", "pm", bugPresetPrompt},
+		{"spec", "Author spec", "Collaboratively write and maintain spec.md.", "pm", specPresetPrompt},
+		{"backlog", "Build backlog", "Turn the spec into concrete backlog tasks.", "pm", backlogPresetPrompt},
 	}
 }
 
 // BuildMode returns the tool registry and system prompt for a session mode. The
-// "work" mode is the full coordinator (CoordinatorTools); the others are lighter
-// authoring/intake coordinators. spec.md and code are plain files: the authoring
-// modes read them with Read and edit them with Edit/Write — there is no dedicated
-// spec tool. An OnWrite hook surfaces an edit to spec.md as a doc_updated event.
+// "work" mode is the full coordinator (CoordinatorTools); "pm" is the planning /
+// intake / docs coordinator (no implementation); "chat" is the freeform assistant.
+// spec.md and code are plain files: pm/chat read them with Read and edit them with
+// Edit/Write — there is no dedicated spec tool. An OnWrite hook surfaces an edit to
+// spec.md as a doc_updated event.
 func BuildMode(mode string, d *Deps, level string) (*tools.Registry, string) {
 	specPath := d.Docs.SpecPath()
 	ws := &tools.Workspace{
@@ -48,22 +72,13 @@ func BuildMode(mode string, d *Deps, level string) (*tools.Registry, string) {
 		reg.Add(tools.Editing(ws)...)
 		reg.Add(listBacklog(d), getTask(d), askUser(d))
 		return reg, sys(chatModeSystem, level, d.Workspace)
-	case "spec":
+	case "pm":
+		// pm maintains spec.md (a plain file) so it keeps Write/Edit, but it does
+		// no implementation: no spawn_* / commit, and the prompt enforces a soft
+		// "no code edits" boundary (hard enforcement is future work).
 		reg.Add(tools.Editing(ws)...)
-		reg.Add(askUser(d), tools.Finish())
-		return reg, sys(specModeSystem, level, d.Workspace)
-	case "backlog":
-		reg.Add(tools.Inspect(ws)...)
-		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d), askUser(d), tools.Finish())
-		return reg, sys(backlogModeSystem, level, d.Workspace)
-	case "feature", "bug":
-		reg.Add(tools.Editing(ws)...)
-		reg.Add(listBacklog(d), getTask(d), proposePlan(d), createTask(d), switchToWork(), askUser(d), tools.Finish())
-		base := featureModeSystem
-		if mode == "bug" {
-			base = bugModeSystem
-		}
-		return reg, sys(base, level, d.Workspace)
+		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d), proposePlan(d), switchToWork(d), askUser(d), tools.Finish())
+		return reg, sys(pmModeSystem, level, d.Workspace)
 	default: // work
 		return CoordinatorTools(d), CoordinatorSystem(level) + "\n\n" + workspaceNote(d.Workspace)
 	}
@@ -110,19 +125,61 @@ func createTask(d *Deps) *gollama.Tool {
 	}
 }
 
-func switchToWork() *gollama.Tool {
+// switchToWork is pm's DELIBERATE hand-off to the work pipeline (spec §9). It is
+// never automatic: it requires explicit interactive user approval, and it carries
+// the specific target task id + planning context into the work session so the
+// coordinator implements THAT task rather than re-picking "the next ready task".
+//
+// Starting an implementation pipeline is high-impact and hard to reverse, so the
+// approval gate is a REAL confirmation even in autonomous mode (where ask_user
+// normally auto-answers) — if no human is available, the hand-off is declined and
+// pm stays put rather than silently launching work.
+func switchToWork(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "switch_to_work",
-		Description: "Transition this session into work mode to begin implementing the backlog. Call only after the " +
-			"plan is agreed and the backlog has been updated. This starts a fresh coordinator on the backlog.",
-		Params: tools.Obj(map[string]any{}),
-		Call: func(ctx context.Context, _ any) (*gollama.ToolResult, error) {
+		Description: "Hand this session off to the work pipeline to IMPLEMENT one specific task. Call only after " +
+			"the plan is agreed and recorded (propose_plan) and the task exists in the backlog. Requires explicit " +
+			"user approval; you must pass the exact target task_id and a plan summary, which are carried into the " +
+			"work session so it implements THAT task (it will not re-pick a different one). If the user declines, " +
+			"stay in pm mode.",
+		Params: tools.Obj(map[string]any{
+			"task_id": tools.StrProp("the exact backlog task id to implement, e.g. 0021"),
+			"plan":    tools.StrProp("a concise summary of the agreed plan / planning context to carry into the work session"),
+		}, "task_id", "plan"),
+		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
+			id, _ := tools.GetString(params, "task_id")
+			plan, _ := tools.GetString(params, "plan")
+			if strings.TrimSpace(id) == "" {
+				return tools.ErrResult("switch_to_work: a target task_id is required"), nil
+			}
+			// Deliberate hand-off: get explicit approval. Confirm forces a real
+			// human answer even in autonomous mode (it does not auto-answer).
+			ok, err := d.Asker.Confirm(ctx, fmt.Sprintf(
+				"Start the implementation pipeline now for task %s? This launches the work coordinator to implement it.", id))
+			if err != nil {
+				return tools.ErrResult("switch_to_work: %v", err), nil
+			}
+			if !ok {
+				return tools.OkResult("User declined to start work; staying in pm mode."), nil
+			}
 			return &gollama.ToolResult{
-				Content:    "transitioning to work mode",
-				Structured: &tools.Control{Stop: true, Mode: "work", Report: "Plan recorded and backlog updated; switching to work mode."},
+				Content:    "transitioning to work mode for task " + id,
+				Structured: &tools.Control{Stop: true, Mode: "work", Report: "Plan agreed for task " + id + "; switching to work mode.", Prompt: workHandoffPrompt(id, plan)},
 			}, nil
 		},
 	}
+}
+
+// workHandoffPrompt seeds the work coordinator with the carried task + plan so it
+// implements THAT task verbatim instead of re-picking the next ready one.
+func workHandoffPrompt(taskID, plan string) string {
+	p := "You are now in work mode, handed off from planning (pm). Implement task " + taskID +
+		" specifically — do NOT pick a different or \"next ready\" task. Read it with get_task, set it " +
+		"in_progress, and drive it to a reviewed, committed state following the usual work flow."
+	if strings.TrimSpace(plan) != "" {
+		p += "\n\nPlanning context carried from pm (refine as needed):\n" + plan
+	}
+	return p
 }
 
 func getInt(params any, key string, def int) int {

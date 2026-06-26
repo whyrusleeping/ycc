@@ -40,10 +40,10 @@ type model struct {
 	ctx       context.Context
 	workspace string
 
-	state  state
-	modes  []*v1.Mode
-	cursor int
-	prompt textinput.Model
+	state   state
+	entries []menuEntry // modes + presets, in menu order
+	cursor  int
+	prompt  textinput.Model
 
 	sessionID string
 	mode      string
@@ -116,7 +116,20 @@ func initialModel(ctx context.Context, client yccv1connect.SessionServiceClient,
 
 // --- messages ---
 
-type modesMsg struct{ modes []*v1.Mode }
+type modesMsg struct {
+	modes   []*v1.Mode
+	presets []*v1.Preset
+}
+
+// menuEntry is a single home-menu row: either a mode (openingPrompt empty) or a
+// preset (openingPrompt set). Selecting it starts a session in `mode`; for a
+// preset the openingPrompt seeds the session when the user typed nothing.
+type menuEntry struct {
+	label         string
+	description   string
+	mode          string
+	openingPrompt string
+}
 type modelsMsg struct{ models []*v1.ModelInfo }
 type startedMsg struct{ id, mode string }
 type evMsg struct{ ev *v1.Event }
@@ -130,7 +143,7 @@ func (m model) fetchModes() tea.Msg {
 	if err != nil {
 		return errMsg{err}
 	}
-	return modesMsg{resp.Msg.Modes}
+	return modesMsg{modes: resp.Msg.Modes, presets: resp.Msg.Presets}
 }
 
 func (m model) fetchModels() tea.Msg {
@@ -255,7 +268,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case modesMsg:
-		m.modes = msg.modes
+		m.entries = m.entries[:0]
+		for _, md := range msg.modes {
+			m.entries = append(m.entries, menuEntry{label: md.Name, description: md.Description, mode: md.Name})
+		}
+		for _, p := range msg.presets {
+			m.entries = append(m.entries, menuEntry{label: p.Name, description: p.Description, mode: p.Mode, openingPrompt: p.OpeningPrompt})
+		}
 		return m, nil
 	case modelsMsg:
 		m.models = msg.models
@@ -314,15 +333,21 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "down":
-			if m.cursor < len(m.modes)-1 {
+			if m.cursor < len(m.entries)-1 {
 				m.cursor++
 			}
 			return m, nil
 		case "enter":
-			if len(m.modes) == 0 {
+			if len(m.entries) == 0 {
 				return m, nil
 			}
-			return m, m.startSession(m.modes[m.cursor].Name, m.prompt.Value())
+			e := m.entries[m.cursor]
+			// A typed prompt always wins; otherwise a preset seeds its opening prompt.
+			prompt := m.prompt.Value()
+			if strings.TrimSpace(prompt) == "" {
+				prompt = e.openingPrompt
+			}
+			return m, m.startSession(e.mode, prompt)
 		}
 	}
 	var cmd tea.Cmd
@@ -812,15 +837,15 @@ func (m model) View() string {
 func (m model) menuView() string {
 	var b strings.Builder
 	b.WriteString(titleStyle.Render(" ycc — home ") + "\n\n")
-	if len(m.modes) == 0 {
+	if len(m.entries) == 0 {
 		b.WriteString("  loading modes…\n")
 	}
-	for i, mode := range m.modes {
+	for i, e := range m.entries {
 		cursor := "  "
-		label := fmt.Sprintf("%-9s %s", mode.Name, dimStyle.Render(mode.Description))
+		label := fmt.Sprintf("%-9s %s", e.label, dimStyle.Render(e.description))
 		if i == m.cursor {
 			cursor = selStyle.Render("▸ ")
-			label = selStyle.Render(fmt.Sprintf("%-9s ", mode.Name)) + dimStyle.Render(mode.Description)
+			label = selStyle.Render(fmt.Sprintf("%-9s ", e.label)) + dimStyle.Render(e.description)
 		}
 		b.WriteString("  " + cursor + label + "\n")
 	}

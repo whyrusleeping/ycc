@@ -322,8 +322,8 @@ Each mode = a coordinator system prompt + a tool subset + a state machine. There
   code. That boundary is *soft* (prompt-enforced): `pm` holds `Read`/`Write`/`Edit`/`Bash`
   so it can maintain `spec.md`, and is told not to touch code; a hard boundary (path
   scoping / isolation) is future work. Tools: `Read`/`Write`/`Edit`/`Bash`,
-  `list_backlog`/`get_task`/`create_task`/`update_task`, `propose_plan`, `ask_user`,
-  `finish`. This **replaces** the former `spec`, `backlog`, `feature`, and `bug` modes —
+  `list_backlog`/`get_task`/`create_task`/`update_task`, `propose_plan`, `switch_to_work`,
+  `ask_user`, `finish`. This **replaces** the former `spec`, `backlog`, `feature`, and `bug` modes —
   they were one capability set under four prompt framings. The home menu keeps those
   framings as **opening-prompt presets** that drop into `pm` ("New feature" → explore then
   propose; "Bug report" → reproduce then localize; "Author spec"; "Build backlog"), so the
@@ -381,6 +381,12 @@ One policy value, enforced at the `ask_user` gate and baked into the coordinator
 
 The gate lives in the loop: in `autonomous`, an `ask_user` call is converted into a
 logged assumption + auto-answer ("proceed") rather than a suspend.
+
+**Exception — confirmation gates.** A high-impact, hard-to-reverse action exposes a
+`Confirm` gate (yes/no) rather than `ask_user`. Starting the `pm` → `work` implementation
+pipeline is one: its `switch_to_work` confirmation seeks a *real human answer even in
+`autonomous`* (it does not auto-answer), and if no human is available the action is
+**declined** and the session stays put rather than silently launching work.
 
 The level is chosen at `StartSession` and can be **changed mid-session** from the
 client's settings overlay (§18.2) via `SetInteractionLevel(sessionID, level)`. The

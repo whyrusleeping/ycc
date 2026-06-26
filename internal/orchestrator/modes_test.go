@@ -29,44 +29,87 @@ func TestModesListed(t *testing.T) {
 	for _, m := range Modes() {
 		names[m.Name] = true
 	}
-	for _, want := range []string{"chat", "work", "spec", "backlog", "feature", "bug"} {
+	// Exactly three modes: pm, chat, work — the former spec/backlog/feature/bug
+	// modes were collapsed into pm.
+	for _, want := range []string{"pm", "chat", "work"} {
 		if !names[want] {
 			t.Fatalf("mode %q missing from Modes()", want)
+		}
+	}
+	for _, gone := range []string{"spec", "backlog", "feature", "bug"} {
+		if names[gone] {
+			t.Fatalf("mode %q should have been removed (collapsed into pm)", gone)
+		}
+	}
+}
+
+func TestPresetsOpenPM(t *testing.T) {
+	want := map[string]bool{"feature": false, "bug": false, "spec": false, "backlog": false}
+	for _, p := range Presets() {
+		if _, ok := want[p.Name]; !ok {
+			t.Fatalf("unexpected preset %q", p.Name)
+		}
+		want[p.Name] = true
+		if p.Mode != "pm" {
+			t.Fatalf("preset %q opens mode %q, want pm", p.Name, p.Mode)
+		}
+		if strings.TrimSpace(p.Prompt) == "" {
+			t.Fatalf("preset %q has no opening prompt", p.Name)
+		}
+	}
+	for name, seen := range want {
+		if !seen {
+			t.Fatalf("preset %q missing", name)
 		}
 	}
 }
 
 func TestBuildModeToolsets(t *testing.T) {
 	d := depsFor(t)
-	// feature mode must expose switch_to_work; spec mode must not.
-	featureReg, _ := BuildMode("feature", d, "judgement")
-	if !hasTool(featureReg, "switch_to_work") {
-		t.Fatal("feature mode missing switch_to_work")
-	}
-	specReg, _ := BuildMode("spec", d, "judgement")
-	if hasTool(specReg, "switch_to_work") {
-		t.Fatal("spec mode should not have switch_to_work")
-	}
-	// spec.md is edited directly: authoring modes carry Read/Edit/Write, not a
-	// dedicated spec tool.
-	for _, mode := range []string{"spec", "feature", "bug"} {
-		reg, _ := BuildMode(mode, d, "judgement")
-		for _, tool := range []string{"Read", "Edit", "Write"} {
-			if !hasTool(reg, tool) {
-				t.Fatalf("%s mode missing %s", mode, tool)
-			}
+	// pm exposes planning/docs/backlog tools and switch_to_work, but NO
+	// implementation tools (no spawn_implementer / commit).
+	pmReg, _ := BuildMode("pm", d, "judgement")
+	for _, want := range []string{"Read", "Edit", "Write", "Bash", "list_backlog", "get_task", "create_task", "update_task", "propose_plan", "switch_to_work", "ask_user", "finish"} {
+		if !hasTool(pmReg, want) {
+			t.Fatalf("pm mode missing %s", want)
 		}
-		if hasTool(reg, "update_spec") || hasTool(reg, "read_spec") {
-			t.Fatalf("%s mode should not have the removed read_spec/update_spec tools", mode)
+	}
+	for _, gone := range []string{"spawn_implementer", "spawn_reviewers", "commit"} {
+		if hasTool(pmReg, gone) {
+			t.Fatalf("pm mode should not have %s (no implementation)", gone)
+		}
+	}
+	// The removed authoring modes no longer build.
+	for _, mode := range []string{"spec", "backlog", "feature", "bug"} {
+		reg, _ := BuildMode(mode, d, "judgement")
+		// Unknown modes fall through to the work coordinator; assert they are not
+		// silently still distinct authoring modes by checking they carry the work
+		// pipeline (spawn_implementer).
+		if !hasTool(reg, "spawn_implementer") {
+			t.Fatalf("removed mode %q should fall through to work coordinator", mode)
 		}
 	}
 }
 
-func TestSwitchToWorkSignalsModeChange(t *testing.T) {
-	res, _ := switchToWork().Call(context.Background(), map[string]any{})
+func TestSwitchToWorkSignalsModeChangeWithTask(t *testing.T) {
+	d := depsFor(t)
+	res, _ := switchToWork(d).Call(context.Background(), map[string]any{"task_id": "0021", "plan": "do the thing"})
 	ctrl := tools.ControlOf(res)
 	if ctrl == nil || !ctrl.Stop || ctrl.Mode != "work" {
 		t.Fatalf("switch_to_work control = %+v", ctrl)
+	}
+	// The carried prompt must name the specific task so work implements THAT task.
+	if !strings.Contains(ctrl.Prompt, "0021") {
+		t.Fatalf("switch_to_work prompt does not carry the target task: %q", ctrl.Prompt)
+	}
+}
+
+func TestSwitchToWorkRequiresApproval(t *testing.T) {
+	d := depsFor(t)
+	d.Asker = declineAsker{}
+	res, _ := switchToWork(d).Call(context.Background(), map[string]any{"task_id": "0021", "plan": "p"})
+	if ctrl := tools.ControlOf(res); ctrl != nil && ctrl.Mode == "work" {
+		t.Fatal("switch_to_work transitioned despite the user declining approval")
 	}
 }
 
@@ -98,7 +141,7 @@ func TestSpecEditEmitsDocUpdated(t *testing.T) {
 		Emitter:   event.NewEmitter(event.NewStdoutRecorder(&buf), "coordinator"),
 		Asker:     noopAsker{},
 	}
-	reg, _ := BuildMode("spec", d, "judgement")
+	reg, _ := BuildMode("pm", d, "judgement")
 
 	res := reg.Dispatch(context.Background(), gollama.ToolCall{
 		Function: gollama.ToolCallFunction{
@@ -126,3 +169,10 @@ func hasTool(reg *tools.Registry, name string) bool {
 	}
 	return false
 }
+
+// declineAsker rejects every confirmation, simulating a user who declines (or no
+// human being available in autonomous mode).
+type declineAsker struct{}
+
+func (declineAsker) Ask(context.Context, string, []string) (string, error) { return "ok", nil }
+func (declineAsker) Confirm(context.Context, string) (bool, error)         { return false, nil }

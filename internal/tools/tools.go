@@ -15,11 +15,15 @@ import (
 
 // Control is an out-of-band signal a control tool returns to the agent loop via
 // gollama.ToolResult.Structured. Stop ends the loop; Report is the final message;
-// Mode, if set, requests the session transition to that mode after the loop ends.
+// Mode, if set, requests the session transition to that mode after the loop ends;
+// Prompt, if set, is the verbatim seed prompt for the new mode's loop (used by the
+// pm → work hand-off to carry the target task + planning context instead of letting
+// the work coordinator re-pick a task).
 type Control struct {
 	Stop   bool
 	Report string
 	Mode   string
+	Prompt string
 }
 
 // ControlOf returns the *Control carried by a tool result, or nil.
