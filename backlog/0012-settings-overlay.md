@@ -42,3 +42,9 @@ which configured model drives each role for the session. See spec §18.2.
 …[truncated]
 - 2026-06-26 review (claude): accept — The revision addresses my prior findings. The garbled toggleReviewer doc comment is now clear and accurately describes the rotating multi-select behavior; a new mutex-guarded Session.Level() accessor 
 …[truncated]
+- 2026-06-26 plan: Task 0012 was already implemented and twice reviewed with "accept" verdicts (settings overlay + ListModels/SetInteractionLevel/SetRoleConfig RPCs + per-role model config + client UI prefs), but it rem
+…[truncated]
+- 2026-06-26 implementer report: Task 0012 (Settings overlay with mid-session interaction level + per-role model config) was already implemented and committed as cdfbc2a. I verified the full implementation is present and coherent:  *
+…[truncated]
+- 2026-06-26 review (claude): accept — The change fully satisfies Task 0012. Commit cdfbc2a adds the three new RPCs (ListModels, SetInteractionLevel, SetRoleConfig) in the proto, generated connect/pb code, and server handlers. Esc now open
+…[truncated]
