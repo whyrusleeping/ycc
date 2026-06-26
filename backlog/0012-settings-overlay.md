@@ -1,7 +1,7 @@
 ---
 id: "0012"
 title: Settings overlay (esc) with mid-session interaction level + per-role model config
-status: in_progress
+status: done
 priority: 2
 created: "2026-06-26"
 updated: "2026-06-26"
@@ -47,4 +47,6 @@ which configured model drives each role for the session. See spec §18.2.
 - 2026-06-26 implementer report: Task 0012 (Settings overlay with mid-session interaction level + per-role model config) was already implemented and committed as cdfbc2a. I verified the full implementation is present and coherent:  *
 …[truncated]
 - 2026-06-26 review (claude): accept — The change fully satisfies Task 0012. Commit cdfbc2a adds the three new RPCs (ListModels, SetInteractionLevel, SetRoleConfig) in the proto, generated connect/pb code, and server handlers. Esc now open
+…[truncated]
+- 2026-06-26 decision: accept — commit 6ddf2cf: docs(0012): record resume verification of settings overlay task  Implementation (settings overlay, ListModels/SetInteractionLevel/SetRoleConfig RPCs, per-role model config, client UI prefs) was previo
 …[truncated]
