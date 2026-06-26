@@ -11,11 +11,13 @@
 | [0005](backlog/0005-multimodel-review-revise-levels.md) | Multi-model review, revise loop, interaction levels (M3) | done | 3 | 0004 |
 | [0006](backlog/0006-home-menu-modes-tui.md) | Home menu, spec/backlog/feature/bug modes, TUI (M4) | done | 4 | 0005 |
 | [0007](backlog/0007-remote-sync.md) | Remote session sync + phone-facing surface (M5) | todo | 5 | 0006 |
-| [0008](backlog/0008-reviewer-sandboxing.md) | Sandbox reviewer bash to prevent workspace mutation | blocked | 6 | 0005 |
+| [0008](backlog/0008-reviewer-sandboxing.md) | Sandbox reviewer bash to prevent workspace mutation | todo | 6 | 0005 |
 | [0009](backlog/0009-session-lifecycle-interrupt.md) | Session lifecycle — Interrupt RPC and stop/GC | todo | 3 | 0003 |
 | [0010](backlog/0010-context-window-management.md) | Context-window management for long sessions | todo | 3 | 0002 |
 | [0011](backlog/0011-multiline-input.md) | Multiline session input (textarea) | todo | 3 | 0006 |
 | [0012](backlog/0012-settings-overlay.md) | Settings overlay (esc) with mid-session interaction level + per-role model config | todo | 2 | 0006 |
 | [0013](backlog/0013-structured-questions.md) | Structured interactive ask_user questions (option pickers) | todo | 2 | 0006 |
-| [0014](backlog/0014-daemon-lifecycle-oneshot.md) | Daemon lifecycle — one-shot in-process default, opt-in persistence | todo | 2 | 0003 |
+| [0014](backlog/0014-daemon-lifecycle-oneshot.md) | Daemon lifecycle — one-shot in-process default, opt-in persistence | done | 2 | 0003 |
 | [0015](backlog/0015-multi-project-registry.md) | Multi-project daemon — project registry, RPCs, and TUI picker | todo | 2 | 0014, 0006 |
+| [0016](backlog/0016-quick-add-backlog-mid-session.md) | Quick-add backlog items mid-session (TUI capture overlay) | todo | 3 | 0006 |
+| [0017](backlog/0017-tool-call-syntax-highlighting.md) | Smarter language inference for tool-call syntax highlighting | todo | 3 | 0006 |

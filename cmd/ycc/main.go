@@ -1,9 +1,14 @@
 // Command ycc is the single ycc entrypoint: client, TUI, and daemon in one
-// binary. With no subcommand it launches the interactive TUI; for local use it
-// auto-starts a background daemon (which persists after ycc exits), or attaches
-// to a remote one with -addr.
+// binary. With no subcommand it launches the interactive TUI. Persistence is
+// opt-in: plain `ycc` attaches to a persistent local daemon if one is already
+// running, otherwise it starts the daemon in-process on an ephemeral loopback
+// address tied to this process and torn down on exit (closing it ends in-flight
+// agent work). `ycc daemon` is the explicit, persistent, foreground service;
+// `ycc --background` spawns a detached persistent daemon and attaches; `-addr`
+// attaches to a remote/explicit daemon.
 //
-//	ycc                                  # TUI home menu (auto-starts a local daemon)
+//	ycc                                  # TUI home menu (one-shot in-process daemon)
+//	ycc --background                     # spawn a detached persistent daemon and attach
 //	ycc start "add a hello.txt"          # start a session, stream it; type to prod
 //	ycc attach s_abc123 --from 0         # re-attach, replay from a seq offset
 //	ycc list | ycc modes
@@ -18,7 +23,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"connectrpc.com/connect"
 
@@ -29,8 +36,8 @@ import (
 )
 
 func main() {
-	// The daemon subcommand runs the service itself (used by `ycc daemon` and by
-	// the auto-start path); it has its own flags.
+	// The daemon subcommand runs the explicit, persistent service; it has its
+	// own flags.
 	if len(os.Args) > 1 && os.Args[1] == "daemon" {
 		runDaemon(os.Args[2:])
 		return
@@ -38,13 +45,16 @@ func main() {
 
 	// Global flags precede the subcommand; subcommand-specific flags follow it.
 	global := flag.NewFlagSet("ycc", flag.ExitOnError)
-	addr := global.String("addr", "", "remote daemon URL to attach to (default: auto-managed local daemon)")
+	addr := global.String("addr", "", "remote/explicit daemon URL to attach to")
 	token := global.String("token", os.Getenv("YCC_TOKEN"), "bearer token (for -addr)")
 	workspace := global.String("workspace", "", "workspace for new sessions (default: current directory)")
-	configPath := global.String("config", "", "TOML model config for the auto-started local daemon")
+	configPath := global.String("config", "", "TOML model config for the local daemon")
+	background := global.Bool("background", false, "spawn a detached persistent daemon and attach (opt-in persistence)")
 	global.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: ycc [-addr URL] [-token T] [<start|attach|list|modes|daemon>] [args]")
+		fmt.Fprintln(os.Stderr, "usage: ycc [-addr URL] [-token T] [--background] [<start|attach|list|modes|daemon>] [args]")
 		fmt.Fprintln(os.Stderr, "  with no subcommand, launches the interactive TUI (home menu)")
+		fmt.Fprintln(os.Stderr, "  by default the daemon runs in-process and is torn down on exit (no persistence)")
+		fmt.Fprintln(os.Stderr, "  use `ycc daemon` or `ycc --background` for a persistent daemon")
 		global.PrintDefaults()
 	}
 	global.Parse(os.Args[1:])
@@ -58,14 +68,13 @@ func main() {
 		}
 	}
 
-	// Resolve the daemon to talk to: a remote via -addr, or an auto-managed local one.
-	target, tok := *addr, *token
-	if target == "" {
-		if err := daemon.EnsureLocalDaemon(ws, *configPath); err != nil {
-			fatal("%v", err)
-		}
-		target, tok = daemon.LocalAddr, ""
-	}
+	// Resolve the daemon to talk to and obtain a teardown hook for any one-shot
+	// in-process daemon we start.
+	target, tok, shutdown := resolveDaemon(*addr, *token, *background, ws, *configPath)
+	defer shutdown()
+	// Tear the one-shot daemon down on ctrl-c / SIGTERM too — a defer alone won't
+	// fire when the process is signalled. (A panic still runs the defer.)
+	installSignalShutdown(shutdown)
 
 	client := daemon.DialClient(target, tok)
 	ctx := context.Background()
@@ -145,6 +154,64 @@ func main() {
 	}
 }
 
+// resolveDaemon decides which daemon the client should talk to and returns its
+// base URL, bearer token, and a teardown func (a no-op for everything except a
+// one-shot in-process daemon, which the caller must shut down on exit).
+//
+//   - -addr:        attach to the explicit/remote daemon.
+//   - --background: spawn (if needed) a detached persistent daemon and attach.
+//   - default:      attach to a persistent local daemon if one is already
+//     running, else start the daemon in-process on an ephemeral
+//     address tied to this process (no persistence).
+func resolveDaemon(addr, token string, background bool, ws, configPath string) (target, tok string, shutdown func()) {
+	noop := func() {}
+
+	if addr != "" {
+		return addr, token, noop
+	}
+
+	if background {
+		if err := daemon.EnsureBackgroundDaemon(ws, configPath); err != nil {
+			fatal("%v", err)
+		}
+		return daemon.LocalAddr, "", noop
+	}
+
+	// Attach to an already-running persistent local daemon if present.
+	if daemon.Reachable(daemon.LocalAddr, "") {
+		return daemon.LocalAddr, "", noop
+	}
+
+	// Otherwise: one-shot in-process daemon on an ephemeral loopback address,
+	// torn down when this process exits.
+	if configPath == "" {
+		configPath = daemon.DiscoverConfig(ws)
+	}
+	ip, err := daemon.StartInProcess(daemon.Options{
+		Addr: "127.0.0.1:0", Workspace: ws, ConfigPath: configPath,
+		Model: "claude-opus-4-8", BaseURL: "https://api.anthropic.com",
+		KeyEnv: "ANTHROPIC_API_KEY", MaxTokens: 8192,
+	})
+	if err != nil {
+		fatal("start in-process daemon: %v", err)
+	}
+	fmt.Fprintln(os.Stderr, "ycc: running one-shot in-process daemon (no persistence); closing ycc ends in-flight work.")
+	fmt.Fprintln(os.Stderr, "ycc: use `ycc daemon` or `ycc --background` to keep work running after exit.")
+	return ip.Addr, "", func() { _ = ip.Shutdown() }
+}
+
+// installSignalShutdown runs the teardown hook on SIGINT/SIGTERM so a one-shot
+// in-process daemon never survives a ctrl-c. After teardown it exits.
+func installSignalShutdown(shutdown func()) {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-ch
+		shutdown()
+		os.Exit(130)
+	}()
+}
+
 func stream(ctx context.Context, client yccv1connect.SessionServiceClient, id string, from int64) {
 	s, err := client.Subscribe(ctx, connect.NewRequest(&v1.SubscribeRequest{SessionId: id, FromSeq: from}))
 	if err != nil {
@@ -210,8 +277,8 @@ func truncate(s string, n int) string {
 	return s[:n] + "…"
 }
 
-// runDaemon parses daemon flags and serves until killed. Used by `ycc daemon`
-// and by the local auto-start path.
+// runDaemon parses daemon flags and serves until killed. This is the explicit,
+// persistent, foreground service (`ycc daemon`).
 func runDaemon(argv []string) {
 	fs := flag.NewFlagSet("ycc daemon", flag.ExitOnError)
 	addr := fs.String("addr", "127.0.0.1:8787", "address to listen on")

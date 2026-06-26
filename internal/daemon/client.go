@@ -37,10 +37,12 @@ func Reachable(addr, token string) bool {
 	return err == nil
 }
 
-// EnsureLocalDaemon makes sure a local daemon is running on LocalAddr, spawning a
-// detached `ycc daemon` (which survives this process) if none is reachable. It
-// returns once the daemon answers. configPath is auto-discovered when empty.
-func EnsureLocalDaemon(workspace, configPath string) error {
+// EnsureBackgroundDaemon makes sure a persistent local daemon is running on
+// LocalAddr, spawning a detached `ycc daemon` (which survives this process) if
+// none is reachable. It returns once the daemon answers. This is the opt-in
+// persistence path used by `ycc --background`; configPath is auto-discovered
+// when empty.
+func EnsureBackgroundDaemon(workspace, configPath string) error {
 	if Reachable(LocalAddr, "") {
 		return nil
 	}
@@ -49,7 +51,7 @@ func EnsureLocalDaemon(workspace, configPath string) error {
 		return fmt.Errorf("locate ycc binary: %w", err)
 	}
 	if configPath == "" {
-		configPath = discoverConfig(workspace)
+		configPath = DiscoverConfig(workspace)
 	}
 	// The spawned daemon inherits this process's environment (including the API
 	// key). Warn if it looks like the agent won't be able to reach a model — the
@@ -88,8 +90,8 @@ func EnsureLocalDaemon(workspace, configPath string) error {
 	return fmt.Errorf("local daemon did not become ready; see %s", logPath)
 }
 
-// discoverConfig looks for a ycc.toml in the workspace, then the user config dir.
-func discoverConfig(workspace string) string {
+// DiscoverConfig looks for a ycc.toml in the workspace, then the user config dir.
+func DiscoverConfig(workspace string) string {
 	candidates := []string{}
 	if workspace != "" {
 		candidates = append(candidates, filepath.Join(workspace, "ycc.toml"))
