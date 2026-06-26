@@ -70,7 +70,8 @@ func BuildMode(mode string, d *Deps, level string) (*tools.Registry, string) {
 }
 
 const toolingHint = "Use the Read tool to view files, Edit/Write to change them, and Bash with " +
-	"ripgrep (`rg 'pattern'`) to search. All tools run in the workspace root."
+	"ripgrep (`rg 'pattern'`) to search. Every Bash command runs in a fresh shell already rooted at " +
+	"the workspace (state does not carry between calls), so just run commands — there is no need to 'cd'."
 
 func workspaceNote(root string) string {
 	return "Workspace root: " + root + " — Read/Write/Edit accept absolute paths within it (or paths relative to it)."

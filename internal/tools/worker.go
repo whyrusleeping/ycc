@@ -182,9 +182,11 @@ func editFile(ws *Workspace) *gollama.Tool {
 func bash(ws *Workspace) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "Bash",
-		Description: "Run a shell command in the workspace root and return its combined stdout+stderr (truncated if " +
-			"large). Use this to explore and inspect: search with ripgrep (`rg 'pattern'`, `rg --files -g '*.go'`), " +
-			"list with `ls`, and run builds/tests. Prefer the Read tool over `cat` for viewing files. Times out after 2 minutes.",
+		Description: "Run a shell command and return its combined stdout+stderr (truncated if large). Each call runs " +
+			"in a fresh shell already rooted at the workspace, and shell state (including the working directory) does " +
+			"NOT persist between calls — so there is never a need to `cd`; just run the command. Use this to explore " +
+			"and inspect: search with ripgrep (`rg 'pattern'`, `rg --files -g '*.go'`), list with `ls`, and run " +
+			"builds/tests. Prefer the Read tool over `cat` for viewing files. Times out after 2 minutes.",
 		Params: obj(map[string]any{"command": strProp("shell command to execute via 'sh -c'")}, "command"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			cmdStr, ok := getString(params, "command")
