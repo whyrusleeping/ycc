@@ -1,7 +1,7 @@
 ---
 id: "0018"
 title: Remove / raise / make-configurable the implementer turn limit
-status: in_progress
+status: done
 priority: 2
 created: "2026-06-26"
 updated: "2026-06-26"
@@ -60,4 +60,6 @@ Design notes / open questions:
 - 2026-06-26 revision: Trimmed the staged changeset to ONLY the 0018 turn-limit work, removing scope leakage that had crept in from other tasks (0012/0019).  **Reverted out-of-scope changes:** - `backlog/0012-settings-overl
 …[truncated]
 - 2026-06-26 review (claude): accept — The revision cleanly addresses the prior scope-leakage finding: the staged changeset is now scoped to task 0018 only — backlog.md adds just the 0018 row, spec.md adds only the max_turns config knob 
+…[truncated]
+- 2026-06-26 decision: accept — commit cb865bc: feat: configurable max_turns with high default backstop (0018)  Raise the engine per-Run turn cap from 40 to 200 and make it configurable via a new global `max_turns` TOML knob, plumbed config -> Regi
 …[truncated]

@@ -313,23 +313,37 @@ events). Worker and orchestration tools are the same kind of object.
 
 ## 9. Modes (the home menu)
 
-Each mode = a coordinator system prompt + a tool subset + a state machine.
+Each mode = a coordinator system prompt + a tool subset + a state machine. There are three:
 
-- **`spec`** — collaboratively author/maintain `spec.md`. Tools: the editing set
-  (`Read`/`Write`/`Edit`/`Bash`) + `ask_user`. `spec.md` is a plain file edited directly
-  with `Edit`/`Write` — there is no dedicated spec tool; a write to it emits `doc_updated`.
-  Output: an updated, committed spec.
-- **`backlog`** — turn the spec into tasks. Tools: read spec + `create_task`,
-  `update_task`, `ask_user`. Output: new/updated task files + regenerated index.
-- **`work`** — the core loop (see §10). Pick/accept a task, plan, implement, review
-  (multi-model), iterate, commit, update backlog.
-- **`feature`** / **`bug`** — understand codebase + spec, propose a plan, on acceptance
-  edit `spec.md` directly (if needed) + update backlog, then optionally flow into `work`
-  *in the same session* or hand back to the home menu.
+- **`pm` (project manager)** — the single planning / intake / docs mode. Talk to it about
+  the project: iterate `spec.md`, groom the backlog (`create_task` / `update_task`),
+  investigate a feature or bug, and record plans (`propose_plan`). It does **no
+  implementation** — it edits the *docs* (spec is a plain file; backlog tasks) but not the
+  code. That boundary is *soft* (prompt-enforced): `pm` holds `Read`/`Write`/`Edit`/`Bash`
+  so it can maintain `spec.md`, and is told not to touch code; a hard boundary (path
+  scoping / isolation) is future work. Tools: `Read`/`Write`/`Edit`/`Bash`,
+  `list_backlog`/`get_task`/`create_task`/`update_task`, `propose_plan`, `ask_user`,
+  `finish`. This **replaces** the former `spec`, `backlog`, `feature`, and `bug` modes —
+  they were one capability set under four prompt framings. The home menu keeps those
+  framings as **opening-prompt presets** that drop into `pm` ("New feature" → explore then
+  propose; "Bug report" → reproduce then localize; "Author spec"; "Build backlog"), so the
+  affordances survive without four modes.
+- **`chat`** — open-ended assistant that *can* edit code directly, with no fixed workflow.
+  Kept as the freeform "just do it" counterpart to `pm`'s "just plan it."
+- **`work`** — the orchestrated implementation pipeline (§10): pick/accept a task, plan,
+  spawn implementer, multi-model review, revise, commit, update backlog.
 
-Transitions are explicit (`StartSession` picks the initial mode; `feature`/`bug` can
-`mode_changed → work`). The home menu is a client concern: it lists modes and calls
-`StartSession`.
+**Hand-off `pm` → `work`.** `pm` may offer `switch_to_work`, but it is *deliberate*, never
+automatic: (1) it requires explicit interactive **user approval** before transitioning, and
+(2) it carries the planning **context plus the specific target task** into the `work`
+session, so the coordinator implements *that* task rather than re-picking "the next ready
+task." (The old `feature`/`bug` `switch_to_work` spun up a fresh coordinator that was free
+to wander to an unrelated task — that is the behaviour this fixes.) Authoring plans in `pm`
+pays off only if those plans are durably retained and tracked (see task 0020).
+
+Transitions are explicit: `StartSession` picks the initial mode; `pm` can `mode_changed →
+work` via the approved, context-carrying `switch_to_work`. The home menu is a client
+concern: it lists the modes (plus the `pm` presets) and calls `StartSession`.
 
 ## 10. The `work` orchestration (in detail)
 
