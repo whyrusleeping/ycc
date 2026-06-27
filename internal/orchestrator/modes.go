@@ -81,7 +81,7 @@ func BuildMode(mode string, d *Deps, level string) (*tools.Registry, string) {
 		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d), proposePlan(d), switchToWork(d), askUser(d), tools.Finish())
 		return reg, sys(pmModeSystem, level, d.Workspace)
 	default: // work
-		return CoordinatorTools(d), CoordinatorSystem(level) + "\n\n" + workspaceNote(d.Workspace)
+		return CoordinatorTools(d, ws), CoordinatorSystem(level) + "\n\n" + workspaceNote(d.Workspace)
 	}
 }
 

@@ -76,6 +76,41 @@ func TestAppendWorkLog(t *testing.T) {
 	}
 }
 
+func TestBlockingDeps(t *testing.T) {
+	tasks := []*Task{
+		{ID: "0001", Status: StatusDone},
+		{ID: "0002", Status: StatusInProgress},
+		{ID: "0003", Status: StatusTodo, DependsOn: []string{"0001"}},         // ready: only dep is done
+		{ID: "0004", Status: StatusTodo, DependsOn: []string{"0001", "0002"}}, // blocked by 0002
+		{ID: "0005", Status: StatusTodo},                                      // ready: no deps
+		{ID: "0006", Status: StatusTodo, DependsOn: []string{"1"}},            // non-normalized dep id "1" -> 0001 (done) -> ready
+		{ID: "0007", Status: StatusTodo, DependsOn: []string{"9999"}},         // dep names a missing task -> blocking
+	}
+	byID := StatusByID(tasks)
+	cases := map[string][]string{
+		"0003": nil,
+		"0004": {"0002"},
+		"0005": nil,
+		"0006": nil,
+		"0007": {"9999"},
+	}
+	for id, want := range cases {
+		got := BlockingDeps(byID2task(tasks, id), byID)
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Fatalf("BlockingDeps(%s) = %v, want %v", id, got, want)
+		}
+	}
+}
+
+func byID2task(tasks []*Task, id string) *Task {
+	for _, t := range tasks {
+		if t.ID == id {
+			return t
+		}
+	}
+	return nil
+}
+
 func TestRenderIndex(t *testing.T) {
 	ws := t.TempDir()
 	s := NewStore(ws)

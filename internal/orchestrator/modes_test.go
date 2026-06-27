@@ -91,6 +91,42 @@ func TestBuildModeToolsets(t *testing.T) {
 	}
 }
 
+func TestWorkCoordinatorHasFileAndPipelineTools(t *testing.T) {
+	d := depsFor(t)
+	reg, _ := BuildMode("work", d, "judgement")
+	// The work coordinator can inspect/edit the workspace directly...
+	for _, want := range []string{"Read", "Write", "Edit", "Bash"} {
+		if !hasTool(reg, want) {
+			t.Fatalf("work coordinator missing file tool %s", want)
+		}
+	}
+	// ...while still driving the implementation pipeline.
+	for _, want := range []string{"spawn_implementer", "spawn_reviewers", "commit", "list_backlog"} {
+		if !hasTool(reg, want) {
+			t.Fatalf("work coordinator missing pipeline tool %s", want)
+		}
+	}
+}
+
+func TestListBacklogReadiness(t *testing.T) {
+	d := depsFor(t)
+	a, _ := d.Docs.Create("alpha", "", 1, nil, nil) // 0001, no deps -> READY
+	d.Docs.Update(a.ID, func(tk *docs.Task) { tk.Status = docs.StatusDone })
+	d.Docs.Create("beta", "", 1, []string{a.ID}, nil)    // 0002 dep on done 0001 -> READY
+	d.Docs.Create("gamma", "", 1, []string{"0002"}, nil) // 0003 dep on todo 0002 -> blocked
+	res, _ := listBacklog(d).Call(context.Background(), map[string]any{})
+	out := res.Content
+	if !strings.Contains(out, "0002") || !strings.Contains(out, "[READY]") {
+		t.Fatalf("expected 0002 marked READY:\n%s", out)
+	}
+	if !strings.Contains(out, "[blocked by 0002]") {
+		t.Fatalf("expected 0003 blocked by 0002:\n%s", out)
+	}
+	if !strings.Contains(out, "Ready to start (all deps done): 0002") {
+		t.Fatalf("expected ready summary listing 0002:\n%s", out)
+	}
+}
+
 func TestSwitchToWorkSignalsModeChangeWithTask(t *testing.T) {
 	d := depsFor(t)
 	res, _ := switchToWork(d).Call(context.Background(), map[string]any{"task_id": "0021", "plan": "do the thing"})

@@ -127,9 +127,13 @@ func CoordinatorSystem(level string) string {
 	return coordinatorSystem + "\n\n" + levelGuidance(level)
 }
 
-// CoordinatorTools returns the coordinator's tool registry.
-func CoordinatorTools(d *Deps) *tools.Registry {
+// CoordinatorTools returns the coordinator's tool registry. The coordinator gets
+// the Editing set (Read/Write/Edit/Bash) so it can inspect the workspace and review
+// diffs first-hand — and could make a tiny touch-up — but the prompt steers it to
+// delegate real implementation to the implementer subagent.
+func CoordinatorTools(d *Deps, ws *tools.Workspace) *tools.Registry {
 	reg := tools.New()
+	reg.Add(tools.Editing(ws)...)
 	reg.Add(
 		listBacklog(d), getTask(d), proposePlan(d),
 		spawnImplementer(d), spawnReviewers(d),
@@ -158,17 +162,21 @@ func (d *Deps) newLoop(spec AgentSpec, system string, reg *tools.Registry, actor
 
 func listBacklog(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
-		Name:        "list_backlog",
-		Description: "List backlog tasks with id, status, priority, title, and dependencies. Completed (done) tasks are hidden unless include_done is true.",
-		Params:      tools.Obj(map[string]any{"include_done": tools.BoolProp("include completed (done) tasks in the output (default false)")}),
+		Name: "list_backlog",
+		Description: "List backlog tasks with id, status, priority, title, and dependencies. Each open todo/blocked " +
+			"task is annotated [READY] when all of its dependencies are done, or [blocked by <ids>] otherwise, and a " +
+			"trailing summary lists the ids that are ready to start. Completed (done) tasks are hidden unless include_done is true.",
+		Params: tools.Obj(map[string]any{"include_done": tools.BoolProp("include completed (done) tasks in the output (default false)")}),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			ts, err := d.Docs.List()
 			if err != nil {
 				return tools.ErrResult("list_backlog: %v", err), nil
 			}
 			includeDone := tools.GetBool(params, "include_done", false)
+			byID := docs.StatusByID(ts) // built from the full list so deps on hidden done tasks still resolve
 			var b strings.Builder
 			hidden := 0
+			var ready []string
 			for _, t := range ts {
 				if t.Status == docs.StatusDone && !includeDone {
 					hidden++
@@ -178,7 +186,17 @@ func listBacklog(d *Deps) *gollama.Tool {
 				if dep == "" {
 					dep = "-"
 				}
-				fmt.Fprintf(&b, "%s [%s] p%d  %s  (deps: %s)\n", t.ID, t.Status, t.Priority, t.Title, dep)
+				// Readiness only applies to not-yet-started tasks; in_progress/in_review/done are already past the gate.
+				mark := ""
+				if t.Status == docs.StatusTodo || t.Status == docs.StatusBlocked {
+					if blocking := docs.BlockingDeps(t, byID); len(blocking) > 0 {
+						mark = "  [blocked by " + strings.Join(blocking, ",") + "]"
+					} else {
+						mark = "  [READY]"
+						ready = append(ready, t.ID)
+					}
+				}
+				fmt.Fprintf(&b, "%s [%s] p%d  %s  (deps: %s)%s\n", t.ID, t.Status, t.Priority, t.Title, dep, mark)
 			}
 			if b.Len() == 0 {
 				if hidden > 0 {
@@ -186,8 +204,13 @@ func listBacklog(d *Deps) *gollama.Tool {
 				}
 				return tools.OkResult("(backlog is empty)"), nil
 			}
+			if len(ready) > 0 {
+				fmt.Fprintf(&b, "\nReady to start (all deps done): %s\n", strings.Join(ready, ", "))
+			} else {
+				fmt.Fprintf(&b, "\n(no tasks are ready to start — open tasks are blocked, in progress, or in review)\n")
+			}
 			if hidden > 0 {
-				fmt.Fprintf(&b, "\n(%d done task(s) hidden — pass include_done=true to show them)\n", hidden)
+				fmt.Fprintf(&b, "(%d done task(s) hidden — pass include_done=true to show them)\n", hidden)
 			}
 			return tools.OkResult(b.String()), nil
 		},

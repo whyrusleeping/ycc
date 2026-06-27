@@ -83,6 +83,29 @@ func (s *Store) List() ([]*Task, error) {
 	return tasks, nil
 }
 
+// StatusByID indexes tasks by their (normalized) id for dependency lookups.
+func StatusByID(tasks []*Task) map[string]Status {
+	m := make(map[string]Status, len(tasks))
+	for _, t := range tasks {
+		m[t.ID] = t.Status
+	}
+	return m
+}
+
+// BlockingDeps returns the ids of t's dependencies that are not yet done,
+// according to byID (build it with StatusByID). A dependency id missing from
+// byID is treated as blocking — it names a task that does not exist. The result
+// is nil when every dependency is done, i.e. t is ready to start.
+func BlockingDeps(t *Task, byID map[string]Status) []string {
+	var blocking []string
+	for _, dep := range t.DependsOn {
+		if byID[normalizeID(dep)] != StatusDone {
+			blocking = append(blocking, dep)
+		}
+	}
+	return blocking
+}
+
 // Get returns the task with the given id.
 func (s *Store) Get(id string) (*Task, error) {
 	id = normalizeID(id)
