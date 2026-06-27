@@ -742,9 +742,6 @@ func (m model) taskDetailView(t *v1.TaskDetail) string {
 // overlay rows (indices into the navigable list).
 const (
 	ovLevel = iota
-	ovThinkCoord
-	ovThinkImpl
-	ovThinkRev
 	ovCoord
 	ovImpl
 	ovReviewers
@@ -792,6 +789,10 @@ func (m model) updateOverlay(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.overlayAdjust(-1)
 	case "right":
 		return m.overlayAdjust(1)
+	case "+", "=":
+		return m.overlayAdjustThinking(1)
+	case "-", "_":
+		return m.overlayAdjustThinking(-1)
 	case " ", "space":
 		if m.ovCursor == ovReviewers {
 			m.toggleReviewer()
@@ -809,15 +810,6 @@ func (m model) overlayAdjust(d int) (tea.Model, tea.Cmd) {
 	case ovLevel:
 		m.level = cycle(levels, m.level, d)
 		return m, m.setLevel(m.level)
-	case ovThinkCoord:
-		m.thinkLevels["coordinator"] = cycle(thinkLevels, m.thinkLevels["coordinator"], d)
-		return m, m.setThinking("coordinator", m.thinkLevels["coordinator"])
-	case ovThinkImpl:
-		m.thinkLevels["implementer"] = cycle(thinkLevels, m.thinkLevels["implementer"], d)
-		return m, m.setThinking("implementer", m.thinkLevels["implementer"])
-	case ovThinkRev:
-		m.thinkLevels["reviewers"] = cycle(thinkLevels, m.thinkLevels["reviewers"], d)
-		return m, m.setThinking("reviewers", m.thinkLevels["reviewers"])
 	case ovCoord:
 		m.roleCoord = cycleModel(m.models, m.roleCoord, d)
 		return m, nil
@@ -835,6 +827,25 @@ func (m model) overlayAdjust(d int) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+// overlayAdjustThinking cycles the per-role thinking level under the cursor
+// (+/-). The thinking level lives inline on each role's row (e.g. "claude opus
+// (xhigh)") rather than as a separate menu entry.
+func (m model) overlayAdjustThinking(d int) (tea.Model, tea.Cmd) {
+	var role string
+	switch m.ovCursor {
+	case ovCoord:
+		role = "coordinator"
+	case ovImpl:
+		role = "implementer"
+	case ovReviewers:
+		role = "reviewers"
+	default:
+		return m, nil
+	}
+	m.thinkLevels[role] = cycle(thinkLevels, m.thinkLevels[role], d)
+	return m, m.setThinking(role, m.thinkLevels[role])
 }
 
 // overlayActivate runs the action under the cursor (enter).
@@ -931,11 +942,8 @@ func (m model) overlayView() string {
 	b.WriteString(titleStyle.Render(" settings ") + "\n\n")
 	rows := []struct{ label, val string }{
 		{"interaction level", m.level},
-		{"coordinator thinking", m.thinkLevels["coordinator"]},
-		{"implementer thinking", m.thinkLevels["implementer"]},
-		{"reviewers thinking", m.thinkLevels["reviewers"]},
-		{"coordinator model", m.roleCoord},
-		{"implementer model", m.roleImpl},
+		{"coordinator model", m.roleCoord + " (" + m.thinkLevels["coordinator"] + ")"},
+		{"implementer model", m.roleImpl + " (" + m.thinkLevels["implementer"] + ")"},
 		{"reviewers", strings.Join(m.roleReviewrs, ", ")},
 		{"theme", m.prefs.Theme},
 		{"follow / auto-scroll", boolStr(m.prefs.Follow)},
@@ -952,11 +960,11 @@ func (m model) overlayView() string {
 		}
 		val := r.val
 		if i == ovReviewers && len(m.models) > 0 {
-			val = m.reviewerSummary()
+			val = "(" + m.thinkLevels["reviewers"] + ")  " + m.reviewerSummary()
 		}
 		b.WriteString("  " + cursor + label + dimStyle.Render(val) + "\n")
 	}
-	help := "  ↑/↓ move · ←/→ change · space toggle reviewer · enter activate · esc close"
+	help := "  ↑/↓ move · ←/→ change · +/- thinking · space toggle reviewer · enter activate · esc close"
 	b.WriteString("\n" + dimStyle.Render(help))
 	if m.sessionID == "" {
 		b.WriteString("\n" + dimStyle.Render("  (no active session: level/role changes apply only within a session)"))

@@ -1,7 +1,7 @@
 ---
 id: "0037"
 title: Review & land leftover settings-overlay thinking-UI rework (inline +/- thinking)
-status: todo
+status: in_progress
 priority: 3
 created: "2026-06-27"
 updated: "2026-06-27"
