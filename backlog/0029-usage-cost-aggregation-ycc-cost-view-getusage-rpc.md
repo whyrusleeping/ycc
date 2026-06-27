@@ -1,10 +1,10 @@
 ---
 id: "0029"
 title: Usage/cost aggregation + ycc cost view, GetUsage RPC, work-log summary
-status: todo
+status: in_progress
 priority: 2
 created: "2026-06-26"
-updated: "2026-06-26"
+updated: "2026-06-27"
 depends_on:
     - "0026"
     - "0027"
@@ -42,3 +42,13 @@ backlog task over time" (spec §20.3, §20.5). Joins per-turn usage (0026) + tas
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-27 plan: Build usage aggregation, `ycc cost`, GetUsage RPC, and a per-task work-log summary. Pricing lives in the daemon (config), so the daemon aggregates+prices and clients render.  1. **`internal/usage` pac
+…[truncated]
+- 2026-06-27 implementer report: Implemented usage/cost aggregation, `ycc cost`, the GetUsage RPC, and a per-task work-log summary (spec §20.3/§20.5, §6.2).  What changed: - **internal/usage/usage.go** (new): pure, testable aggreg
+…[truncated]
+- 2026-06-27 review (claude): accept — The change fully satisfies the task. It adds a pure, testable `internal/usage` aggregator (Scan/ReduceEvents/Aggregate) that recomputes the breakdown from session events.jsonl (source of truth, no sep
+…[truncated]
+- 2026-06-27 revision: The requested GetUsage error-mapping refinement was already implemented in my previous revision and is confirmed present:  - internal/session/session.go: exported sentinel `var ErrUnknownProject = err
+…[truncated]
+- 2026-06-27 review (claude): accept — The revision correctly addresses the prior error-mapping nit by introducing the exported sentinel session.ErrUnknownProject and mapping it to connect.CodeInvalidArgument in GetUsage while routing scan
+…[truncated]

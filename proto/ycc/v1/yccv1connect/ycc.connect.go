@@ -77,6 +77,8 @@ const (
 	SessionServiceListBacklogProcedure = "/ycc.v1.SessionService/ListBacklog"
 	// SessionServiceGetTaskProcedure is the fully-qualified name of the SessionService's GetTask RPC.
 	SessionServiceGetTaskProcedure = "/ycc.v1.SessionService/GetTask"
+	// SessionServiceGetUsageProcedure is the fully-qualified name of the SessionService's GetUsage RPC.
+	SessionServiceGetUsageProcedure = "/ycc.v1.SessionService/GetUsage"
 )
 
 // SessionServiceClient is a client for the ycc.v1.SessionService service.
@@ -100,6 +102,9 @@ type SessionServiceClient interface {
 	// Backlog browser (spec §18.5): read-only access to the durable backlog.
 	ListBacklog(context.Context, *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error)
 	GetTask(context.Context, *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error)
+	// Usage/cost breakdown (spec §20): aggregated, priced token usage by task ×
+	// model × day so clients can render the cost breakdown.
+	GetUsage(context.Context, *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error)
 }
 
 // NewSessionServiceClient constructs a client for the ycc.v1.SessionService service. By default, it
@@ -203,6 +208,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("GetTask")),
 			connect.WithClientOptions(opts...),
 		),
+		getUsage: connect.NewClient[v1.GetUsageRequest, v1.GetUsageResponse](
+			httpClient,
+			baseURL+SessionServiceGetUsageProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("GetUsage")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -223,6 +234,7 @@ type sessionServiceClient struct {
 	setThinking         *connect.Client[v1.SetThinkingRequest, v1.SetThinkingResponse]
 	listBacklog         *connect.Client[v1.ListBacklogRequest, v1.ListBacklogResponse]
 	getTask             *connect.Client[v1.GetTaskRequest, v1.GetTaskResponse]
+	getUsage            *connect.Client[v1.GetUsageRequest, v1.GetUsageResponse]
 }
 
 // ListModes calls ycc.v1.SessionService.ListModes.
@@ -300,6 +312,11 @@ func (c *sessionServiceClient) GetTask(ctx context.Context, req *connect.Request
 	return c.getTask.CallUnary(ctx, req)
 }
 
+// GetUsage calls ycc.v1.SessionService.GetUsage.
+func (c *sessionServiceClient) GetUsage(ctx context.Context, req *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error) {
+	return c.getUsage.CallUnary(ctx, req)
+}
+
 // SessionServiceHandler is an implementation of the ycc.v1.SessionService service.
 type SessionServiceHandler interface {
 	ListModes(context.Context, *connect.Request[v1.ListModesRequest]) (*connect.Response[v1.ListModesResponse], error)
@@ -321,6 +338,9 @@ type SessionServiceHandler interface {
 	// Backlog browser (spec §18.5): read-only access to the durable backlog.
 	ListBacklog(context.Context, *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error)
 	GetTask(context.Context, *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error)
+	// Usage/cost breakdown (spec §20): aggregated, priced token usage by task ×
+	// model × day so clients can render the cost breakdown.
+	GetUsage(context.Context, *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error)
 }
 
 // NewSessionServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -420,6 +440,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("GetTask")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceGetUsageHandler := connect.NewUnaryHandler(
+		SessionServiceGetUsageProcedure,
+		svc.GetUsage,
+		connect.WithSchema(sessionServiceMethods.ByName("GetUsage")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/ycc.v1.SessionService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case SessionServiceListModesProcedure:
@@ -452,6 +478,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceListBacklogHandler.ServeHTTP(w, r)
 		case SessionServiceGetTaskProcedure:
 			sessionServiceGetTaskHandler.ServeHTTP(w, r)
+		case SessionServiceGetUsageProcedure:
+			sessionServiceGetUsageHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -519,4 +547,8 @@ func (UnimplementedSessionServiceHandler) ListBacklog(context.Context, *connect.
 
 func (UnimplementedSessionServiceHandler) GetTask(context.Context, *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetTask is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) GetUsage(context.Context, *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetUsage is not implemented"))
 }

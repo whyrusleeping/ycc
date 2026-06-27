@@ -12,6 +12,7 @@
 //	ycc start "add a hello.txt"          # start a session, stream it; type to prod
 //	ycc attach s_abc123 --from 0         # re-attach, replay from a seq offset
 //	ycc list | ycc modes
+//	ycc cost --by task --since 2026-06-01  # usage/cost breakdown by backlog task
 //	ycc -addr https://host:8787 -token T # attach to a remote daemon
 //	ycc daemon -addr 0.0.0.0:8787 -token T -tls-cert c.pem -tls-key k.pem
 package main
@@ -27,6 +28,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"text/tabwriter"
 
 	"connectrpc.com/connect"
 
@@ -53,7 +55,7 @@ func main() {
 	configPath := global.String("config", "", "TOML model config for the local daemon")
 	background := global.Bool("background", false, "spawn a detached persistent daemon and attach (opt-in persistence)")
 	global.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: ycc [-addr URL] [-token T] [--background] [<start|attach|list|modes|daemon>] [args]")
+		fmt.Fprintln(os.Stderr, "usage: ycc [-addr URL] [-token T] [--background] [<start|attach|list|modes|cost|daemon>] [args]")
 		fmt.Fprintln(os.Stderr, "  with no subcommand, launches the interactive TUI (home menu)")
 		fmt.Fprintln(os.Stderr, "  by default the daemon runs in-process and is torn down on exit (no persistence)")
 		fmt.Fprintln(os.Stderr, "  use `ycc daemon` or `ycc --background` for a persistent daemon")
@@ -169,6 +171,9 @@ func main() {
 
 	case "project", "projects":
 		runProject(ctx, client, args[1:])
+
+	case "cost":
+		runCost(ctx, client, args[1:])
 
 	default:
 		fatal("unknown command %q", args[0])
@@ -380,6 +385,136 @@ func runProject(ctx context.Context, client yccv1connect.SessionServiceClient, a
 }
 
 func filepathAbs(p string) (string, error) { return filepath.Abs(p) }
+
+// runCost renders the usage/cost breakdown (spec §20.3, §20.5) returned by the
+// daemon's GetUsage RPC. By default it groups by backlog task; -by selects other
+// dimensions (comma-separated: task,model,session,day) and -since/-until bound an
+// inclusive date range.
+func runCost(ctx context.Context, client yccv1connect.SessionServiceClient, args []string) {
+	fs := flag.NewFlagSet("cost", flag.ExitOnError)
+	project := fs.String("project", "", "registered project name (default: daemon default workspace)")
+	by := fs.String("by", "task", "group by, comma-separated: task,model,session,day")
+	since := fs.String("since", "", "include usage on/after this day (YYYY-MM-DD)")
+	until := fs.String("until", "", "include usage on/before this day (YYYY-MM-DD)")
+	fs.Parse(args)
+
+	var groupBy []string
+	for _, g := range strings.Split(*by, ",") {
+		if g = strings.TrimSpace(g); g != "" {
+			groupBy = append(groupBy, g)
+		}
+	}
+	resp, err := client.GetUsage(ctx, connect.NewRequest(&v1.GetUsageRequest{
+		Project: *project, GroupBy: groupBy, Since: *since, Until: *until,
+	}))
+	if err != nil {
+		fatal("GetUsage: %v", err)
+	}
+	if len(groupBy) == 0 {
+		groupBy = []string{"task"}
+	}
+	if resp.Msg.Workspace != "" {
+		fmt.Printf("usage breakdown for %s\n", resp.Msg.Workspace)
+	}
+	if len(resp.Msg.Rows) == 0 {
+		fmt.Println("(no usage recorded)")
+		return
+	}
+
+	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+	header := make([]string, 0, len(groupBy)+5)
+	for _, d := range groupBy {
+		header = append(header, costTitle(d))
+	}
+	header = append(header, "Input", "Output", "Cache", "Total", "Cost")
+	fmt.Fprintln(tw, strings.Join(header, "\t"))
+
+	partial := false
+	for _, r := range resp.Msg.Rows {
+		fmt.Fprintln(tw, costRowLine(r, groupBy))
+		if r.PriceStatus == "partial" {
+			partial = true
+		}
+	}
+	total := resp.Msg.Total
+	if total != nil {
+		cells := make([]string, len(groupBy))
+		cells[0] = "TOTAL"
+		cache := total.CacheRead + total.CacheWrite
+		cells = append(cells, commas(total.Input), commas(total.Output), commas(cache), commas(total.Total), costCell(total))
+		fmt.Fprintln(tw, strings.Join(cells, "\t"))
+		if total.PriceStatus == "partial" {
+			partial = true
+		}
+	}
+	tw.Flush()
+	if partial {
+		fmt.Println("* partial pricing (some models unpriced)")
+	}
+}
+
+func costRowLine(r *v1.UsageRow, groupBy []string) string {
+	cells := make([]string, 0, len(groupBy)+5)
+	for _, d := range groupBy {
+		v := ""
+		switch d {
+		case "task":
+			if v = r.Task; v == "" {
+				v = "(unattributed)"
+			}
+		case "model":
+			if v = r.Model; v == "" {
+				v = "(unknown)"
+			}
+		case "session":
+			v = r.Session
+		case "day":
+			v = r.Day
+		}
+		cells = append(cells, v)
+	}
+	cache := r.CacheRead + r.CacheWrite
+	cells = append(cells, commas(r.Input), commas(r.Output), commas(cache), commas(r.Total), costCell(r))
+	return strings.Join(cells, "\t")
+}
+
+func costCell(r *v1.UsageRow) string {
+	switch r.PriceStatus {
+	case "unpriced":
+		return "—"
+	case "partial":
+		return fmt.Sprintf("$%.4f*", r.Cost)
+	default:
+		return fmt.Sprintf("$%.4f", r.Cost)
+	}
+}
+
+func costTitle(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// commas formats an int64 with thousands separators for cost tables.
+func commas(n int64) string {
+	s := fmt.Sprintf("%d", n)
+	neg := strings.HasPrefix(s, "-")
+	if neg {
+		s = s[1:]
+	}
+	var out []byte
+	for i := 0; i < len(s); i++ {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			out = append(out, ',')
+		}
+		out = append(out, s[i])
+	}
+	if neg {
+		return "-" + string(out)
+	}
+	return string(out)
+}
 
 func fatal(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "error: "+format+"\n", args...)

@@ -1,7 +1,7 @@
 ---
 id: "0028"
 title: Per-model pricing config + cost computation
-status: in_progress
+status: done
 priority: 3
 created: "2026-06-26"
 updated: "2026-06-27"
@@ -40,4 +40,6 @@ be updated as vendor prices change without touching the event log.
 - 2026-06-27 implementer report: Implemented per-model pricing config + cost computation (spec §20.4) in internal/config.  Changes: - internal/config/config.go:   - Added four optional pricing fields to `Model` as `*float64` (so uns
 …[truncated]
 - 2026-06-27 review (claude): accept — The change fully satisfies the task. The Model struct gains four optional pricing fields (price_input/output/cache_read/cache_write) as *float64 with omitempty TOML keys, so unset is distinguishable f
+…[truncated]
+- 2026-06-27 decision: accept — commit 4891f5d: Add per-model pricing config + cost computation (spec §20.4)  Add optional price_input/price_output/price_cache_read/price_cache_write fields to Model (as *float64 so unset is distinct from 0 and rou
 …[truncated]

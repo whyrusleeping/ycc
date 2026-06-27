@@ -6,6 +6,8 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"time"
 
 	"connectrpc.com/connect"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/orchestrator"
 	"github.com/whyrusleeping/ycc/internal/session"
+	"github.com/whyrusleeping/ycc/internal/usage"
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 	"github.com/whyrusleeping/ycc/proto/ycc/v1/yccv1connect"
 )
@@ -241,6 +244,63 @@ func (s *Server) GetTask(_ context.Context, req *connect.Request[v1.GetTaskReque
 		DependsOn: t.DependsOn, SpecRefs: t.SpecRefs, Created: t.Created, Updated: t.Updated,
 		Body: t.Body, Ready: len(blocking) == 0, BlockedBy: blocking,
 	}}), nil
+}
+
+// GetUsage returns the aggregated, priced usage/cost breakdown for a project's
+// workspace (spec §20.3, §20.5) so non-CLI clients can render it.
+func (s *Server) GetUsage(_ context.Context, req *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error) {
+	var groupBy []usage.Dim
+	for _, g := range req.Msg.GroupBy {
+		d, err := usage.ParseDim(g)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
+		groupBy = append(groupBy, d)
+	}
+	opts := usage.Options{GroupBy: groupBy}
+	if req.Msg.Since != "" {
+		t, err := time.Parse("2006-01-02", req.Msg.Since)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
+		opts.Since = t
+	}
+	if req.Msg.Until != "" {
+		t, err := time.Parse("2006-01-02", req.Msg.Until)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
+		opts.Until = t
+	}
+	res, err := s.mgr.UsageReport(req.Msg.Project, opts)
+	if err != nil {
+		// An unknown project is client input; a scan/IO failure is internal.
+		if errors.Is(err, session.ErrUnknownProject) {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	out := &v1.GetUsageResponse{Workspace: res.Workspace, Total: usageRowToProto(res.Total)}
+	for _, r := range res.Rows {
+		out.Rows = append(out.Rows, usageRowToProto(r))
+	}
+	return connect.NewResponse(out), nil
+}
+
+func usageRowToProto(r usage.Row) *v1.UsageRow {
+	return &v1.UsageRow{
+		Task:        r.Task,
+		Model:       r.Model,
+		Session:     r.Session,
+		Day:         r.Day,
+		Input:       int64(r.Tokens.Input),
+		Output:      int64(r.Tokens.Output),
+		CacheRead:   int64(r.Tokens.CacheRead),
+		CacheWrite:  int64(r.Tokens.CacheWrite),
+		Total:       int64(r.Tokens.Total),
+		Cost:        r.Cost,
+		PriceStatus: string(r.Status),
+	}
 }
 
 func toProto(ev event.Event) *v1.Event {

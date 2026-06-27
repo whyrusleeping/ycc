@@ -169,6 +169,35 @@ message TaskDetail {
 }
 message GetTaskResponse { TaskDetail task = 1; }
 
+// Usage/cost breakdown (spec §20.3, §20.5): the daemon scans a workspace's
+// session event logs, joins per-turn usage with task focus and per-model
+// pricing, and returns a structured breakdown grouped by task × model × day so
+// non-CLI clients (TUI/phone) can render it identically to `ycc cost`.
+message GetUsageRequest {
+  string project = 1;           // optional registered project; empty => daemon default workspace
+  repeated string group_by = 2; // task | model | session | day (default: task)
+  string since = 3;             // YYYY-MM-DD inclusive, optional
+  string until = 4;             // YYYY-MM-DD inclusive, optional
+}
+message UsageRow {
+  string task = 1;
+  string model = 2;
+  string session = 3;
+  string day = 4;
+  int64 input = 5;
+  int64 output = 6;
+  int64 cache_read = 7;
+  int64 cache_write = 8;
+  int64 total = 9;
+  double cost = 10;
+  string price_status = 11; // priced | unpriced | partial
+}
+message GetUsageResponse {
+  repeated UsageRow rows = 1;
+  UsageRow total = 2;
+  string workspace = 3;
+}
+
 // SessionService is the daemon's RPC surface (spec §12). M1 implements the core
 // four; mode/question RPCs arrive in later milestones.
 service SessionService {
@@ -194,4 +223,8 @@ service SessionService {
   // Backlog browser (spec §18.5): read-only access to the durable backlog.
   rpc ListBacklog(ListBacklogRequest) returns (ListBacklogResponse);
   rpc GetTask(GetTaskRequest) returns (GetTaskResponse);
+
+  // Usage/cost breakdown (spec §20): aggregated, priced token usage by task ×
+  // model × day so clients can render the cost breakdown.
+  rpc GetUsage(GetUsageRequest) returns (GetUsageResponse);
 }

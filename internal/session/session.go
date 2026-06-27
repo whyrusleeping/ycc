@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/git"
 	"github.com/whyrusleeping/ycc/internal/orchestrator"
 	"github.com/whyrusleeping/ycc/internal/project"
+	"github.com/whyrusleeping/ycc/internal/usage"
 )
 
 // Config parameterizes a new session.
@@ -65,6 +67,10 @@ type Session struct {
 	// "use the per-role config then per-model config"; any of
 	// off/low/medium/high/xhigh/max forces that level on the role until changed.
 	thinkLevels map[string]string
+	// usageSummarized tracks tasks whose usage/cost summary has already been
+	// appended to the work log this session, so each accrues at most one summary
+	// line even across repeated idle cycles (spec §6.2, §20.5).
+	usageSummarized map[string]bool
 }
 
 // Role name constants used to key per-role thinking overrides and resolution.
@@ -403,6 +409,7 @@ func (s *Session) run() {
 		} else {
 			s.setStatus(event.StatusIdle)
 			s.emitter.Emit(event.SessionIdle, map[string]any{"report": s.withAssumptions(res.Report)})
+			s.summarizeUsage()
 		}
 
 		select {
@@ -447,6 +454,54 @@ func (s *Session) withAssumptions(report string) string {
 		b = append(b, "- "+a+"\n"...)
 	}
 	return string(b)
+}
+
+// summarizeUsage appends a one-line usage/cost summary for the session's focused
+// task to that task's work log when a work-mode session goes idle (spec §6.2,
+// §20.5), so per-task cost accrues in the backlog across sessions. It is
+// idempotent per task within a session: at most one line per focused task.
+func (s *Session) summarizeUsage() {
+	if s.Mode != "work" {
+		return
+	}
+	events := s.log.Snapshot()
+	task := event.Reduce(events).FocusTask
+	if task == "" {
+		return
+	}
+	s.mu.Lock()
+	if s.usageSummarized == nil {
+		s.usageSummarized = map[string]bool{}
+	}
+	already := s.usageSummarized[task]
+	s.mu.Unlock()
+	if already {
+		return
+	}
+
+	entries := usage.ReduceEvents(s.ID, events)
+	res := usage.Aggregate(entries, s.reg, usage.Options{GroupBy: []usage.Dim{usage.DimTask}})
+	var row usage.Row
+	found := false
+	for _, r := range res.Rows {
+		if r.Task == task {
+			row, found = r, true
+			break
+		}
+	}
+	if !found || row.Tokens.Total == 0 {
+		return
+	}
+
+	if s.deps != nil && s.deps.Docs != nil {
+		if _, err := s.deps.Docs.AppendWorkLog(task, usage.FormatWorkLogLine(row)); err != nil {
+			s.emitter.Emit(event.Narration, map[string]any{"msg": "usage summary work-log append failed: " + err.Error()})
+			return
+		}
+	}
+	s.mu.Lock()
+	s.usageSummarized[task] = true
+	s.mu.Unlock()
 }
 
 // Manager owns the set of live sessions and the backend registry used to build
@@ -586,6 +641,7 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 		implementer:      implName,
 		reviewers:        reviewerNames,
 		thinkLevels:      map[string]string{},
+		usageSummarized:  map[string]bool{},
 	}
 
 	// buildLoop assembles the agent loop for a mode; reused on mode transitions.
@@ -719,6 +775,36 @@ func (m *Manager) Backlog(project string) (*docs.Store, error) {
 		return nil, fmt.Errorf("resolve workspace: %w", err)
 	}
 	return docs.NewStore(absWS), nil
+}
+
+// ErrUnknownProject indicates a project name did not resolve to a registered
+// workspace. It is a client-input error (distinct from IO/scan failures) so RPC
+// handlers can map it to an invalid-argument code rather than internal.
+var ErrUnknownProject = errors.New("unknown project")
+
+// UsageReport scans the given project's workspace (empty => the daemon default
+// workspace) for session event logs and returns the aggregated, priced usage
+// breakdown (spec §20.3, §20.5). Pricing comes from the daemon's model registry.
+func (m *Manager) UsageReport(project string, opts usage.Options) (*usage.Result, error) {
+	ws := m.defaultWorkspace
+	if project != "" {
+		p, ok := m.projects.Resolve(project)
+		if !ok {
+			return nil, fmt.Errorf("%w %q", ErrUnknownProject, project)
+		}
+		ws = p
+	}
+	absWS, err := filepath.Abs(ws)
+	if err != nil {
+		return nil, fmt.Errorf("resolve workspace: %w", err)
+	}
+	entries, err := usage.Scan(absWS)
+	if err != nil {
+		return nil, err
+	}
+	res := usage.Aggregate(entries, m.reg, opts)
+	res.Workspace = absWS
+	return &res, nil
 }
 
 func newID() (string, error) {

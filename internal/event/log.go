@@ -83,6 +83,16 @@ func (l *Log) LastSeq() int {
 	return l.events[len(l.events)-1].Seq
 }
 
+// Snapshot returns a copy of the log's events so callers can reduce/project over
+// them without racing the writer.
+func (l *Log) Snapshot() []Event {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := make([]Event, len(l.events))
+	copy(out, l.events)
+	return out
+}
+
 // Record assigns the next seq, persists, and broadcasts the event. It is the
 // session's single sequence authority and satisfies Recorder.
 func (l *Log) Record(actor string, t Type, data map[string]any) Event {
