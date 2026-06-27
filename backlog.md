@@ -38,5 +38,5 @@
 | [0033](backlog/0033-durable-session-index-listsessionhistory-rpc.md) | Durable session index + ListSessionHistory RPC | todo | 3 | — |
 | [0034](backlog/0034-reopen-resume-a-persisted-session-reconstruct-loop.md) | Reopen/resume a persisted session (reconstruct loop history) | todo | 3 | 0033 |
 | [0035](backlog/0035-tui-session-browser-list-transcript-reopen-shared.md) | TUI session browser (list, transcript, reopen) + shared list+detail modal | todo | 3 | 0033, 0034, 0031 |
-| [0036](backlog/0036-per-role-thinking-level-independent-reasoning-per.md) | Per-role thinking level (independent reasoning per agent) | in_progress | 3 | — |
-| [0037](backlog/0037-review-land-leftover-settings-overlay-thinking-ui.md) | Review & land leftover settings-overlay thinking-UI rework (inline +/- thinking) | in_progress | 3 | — |
+| [0036](backlog/0036-per-role-thinking-level-independent-reasoning-per.md) | Per-role thinking level (independent reasoning per agent) | done | 3 | — |
+| [0037](backlog/0037-review-land-leftover-settings-overlay-thinking-ui.md) | Review & land leftover settings-overlay thinking-UI rework (inline +/- thinking) | done | 3 | — |

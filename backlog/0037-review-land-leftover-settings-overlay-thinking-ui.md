@@ -1,7 +1,7 @@
 ---
 id: "0037"
 title: Review & land leftover settings-overlay thinking-UI rework (inline +/- thinking)
-status: in_progress
+status: done
 priority: 3
 created: "2026-06-27"
 updated: "2026-06-27"
@@ -36,3 +36,5 @@ entangled with this leftover diff. Finalize 0036's status as part of landing thi
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-27 decision: accept — commit 0db488c: Settings overlay: inline per-role thinking level with +/- keys (§18.2)  Land the leftover tui.go rework: remove the separate coordinator/implementer/ reviewer thinking rows and render the thinking le
+…[truncated]

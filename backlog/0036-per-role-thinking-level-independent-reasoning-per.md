@@ -1,7 +1,7 @@
 ---
 id: "0036"
 title: Per-role thinking level (independent reasoning per agent)
-status: in_progress
+status: done
 priority: 3
 created: "2026-06-27"
 updated: "2026-06-27"
