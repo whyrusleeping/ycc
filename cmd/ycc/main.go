@@ -31,6 +31,7 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/whyrusleeping/ycc/internal/daemon"
+	"github.com/whyrusleeping/ycc/internal/setup"
 	"github.com/whyrusleeping/ycc/internal/tui"
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 	"github.com/whyrusleeping/ycc/proto/ycc/v1/yccv1connect"
@@ -69,6 +70,18 @@ func main() {
 		}
 	}
 
+	// First-run setup wizard (spec §19.1): when launching the TUI with no
+	// usable model configuration and no fallback env key, guide the user through
+	// configuring providers + roles and write ~/.config/ycc/ycc.toml, then feed
+	// that path into daemon resolution. Skipping leaves *configPath empty and the
+	// prior fallback/keyless behaviour is preserved.
+	args := global.Args()
+	if len(args) == 0 && *addr == "" && !*background && *configPath == "" && setup.NeedsSetup(ws) {
+		if p, err := setup.Run(ws); err == nil && p != "" {
+			*configPath = p
+		}
+	}
+
 	// Resolve the daemon to talk to and obtain a teardown hook for any one-shot
 	// in-process daemon we start.
 	target, tok, persistent, shutdown := resolveDaemon(*addr, *token, *background, ws, *configPath)
@@ -80,7 +93,6 @@ func main() {
 	client := daemon.DialClient(target, tok)
 	ctx := context.Background()
 
-	args := global.Args()
 	if len(args) == 0 {
 		// A persistent/remote daemon is multi-project: show the picker first. A
 		// one-shot in-process daemon has a single implicit project (cwd) and skips

@@ -1,10 +1,10 @@
 ---
 id: "0023"
 title: First-run setup wizard — configure model providers & roles (write ycc.toml)
-status: todo
+status: done
 priority: 2
 created: "2026-06-26"
-updated: "2026-06-26"
+updated: "2026-06-27"
 depends_on:
     - "0022"
 spec_refs:
@@ -64,3 +64,13 @@ mutates; re-running setup can be offered from that overlay later (not required h
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-27 plan: Create a self-contained first-run setup wizard in a new package `internal/setup`, invoked from cmd/ycc/main.go on the TUI path before daemon resolution.  1. New package `internal/setup` (setup.go):   
+…[truncated]
+- 2026-06-27 implementer report: Implemented the first-run setup wizard (spec §19.1) as a new self-contained package `internal/setup`, wired into the TUI startup path.  ## Changes  **New `internal/setup/setup.go`** (logic, pure/test
+…[truncated]
+- 2026-06-27 review (claude): revise — The first-run setup wizard for task 0023 is implemented correctly and completely: the new internal/setup package provides NeedsSetup (DiscoverConfig=="" && ANTHROPIC_API_KEY=="", consistent with the a
+…[truncated]
+- 2026-06-27 review (claude): accept — The implementer resolved the prior major scope-hygiene finding: the unrelated settings-overlay thinking-UI rework in internal/tui/tui.go is now unstaged and excluded from the commit, task 0036's statu
+…[truncated]
+- 2026-06-27 decision: accept — commit 701e1e4: First-run setup wizard: configure providers & roles, write ycc.toml (§19.1)  Add internal/setup: a Bubble Tea first-run wizard that, when ycc launches the TUI with no discoverable config and no fallb
+…[truncated]
