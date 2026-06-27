@@ -78,3 +78,5 @@ backlog already exist).
 …[truncated]
 - 2026-06-26 review (claude): accept — The revision resolves the prior nit by adding a combined selected+prominent rendering case so the ★ '(recommended)' treatment appears even when onboarding is the default-selected row. All acceptance
 …[truncated]
+- 2026-06-26 decision: accept — commit bf1d37e: Per-project onboarding: greenfield/brownfield pm preset + un-onboarded home-menu prominence  Add an "onboard" pm preset (front of Presets()) with onboardPresetPrompt that has the agent detect greenfie
+…[truncated]
