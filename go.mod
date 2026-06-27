@@ -2,8 +2,6 @@ module github.com/whyrusleeping/ycc
 
 go 1.26.1
 
-replace github.com/whyrusleeping/gollama => ../gollama
-
 require (
 	connectrpc.com/connect v1.20.0
 	github.com/charmbracelet/bubbles v1.0.0
@@ -11,7 +9,7 @@ require (
 	github.com/charmbracelet/glamour v1.0.0
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/pelletier/go-toml/v2 v2.0.1
-	github.com/whyrusleeping/gollama v0.0.0-00010101000000-000000000000
+	github.com/whyrusleeping/gollama v0.0.0-20260627031324-1b50b06e41fe
 	golang.org/x/net v0.56.0
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
