@@ -1,7 +1,7 @@
 ---
 id: "0015"
 title: Multi-project daemon — project registry, RPCs, and TUI picker
-status: in_progress
+status: done
 priority: 2
 created: "2026-06-26"
 updated: "2026-06-26"
@@ -50,4 +50,6 @@ Scope:
 - 2026-06-26 implementer report: Implemented a first-class multi-project registry for the ycc daemon, with RPCs, CLI, and a TUI project picker.  ## What changed  **New package `internal/project`** (`registry.go` + tests) - `Registry`
 …[truncated]
 - 2026-06-26 review (claude): accept — The change fully implements the multi-project daemon registry. A new `internal/project` package provides a concurrency-safe, persistent registry (atomic tmp+rename writes to ~/.local/state/ycc/project
+…[truncated]
+- 2026-06-26 decision: accept — commit c3bcbc9: Multi-project daemon: project registry, RPCs, CLI, and TUI picker  Add internal/project registry (persistent name->path in daemon state dir), wire into session.Manager with auto-register + named-proje
 …[truncated]

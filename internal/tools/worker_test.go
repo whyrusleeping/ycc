@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/whyrusleeping/gollama"
 )
@@ -104,6 +105,34 @@ func TestBash(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "out.txt")); err != nil {
 		t.Fatalf("bash ran outside workspace root: %v", err)
+	}
+}
+
+// TestBashSurvivesEscapedGrandchild guards the hang where a command's grandchild
+// escapes the process group via setsid and inherits the tool's stdout pipe, so
+// CombinedOutput's read never reaches EOF and blocks long past the shell's exit
+// (golang/go#23019). The shell returns immediately; the backgrounded setsid sleep
+// keeps the pipe's write end open. With WaitDelay the dispatch must return
+// promptly anyway rather than waiting out the grandchild.
+func TestBashSurvivesEscapedGrandchild(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits for the bash tool's WaitDelay")
+	}
+	reg := workerReg(t.TempDir())
+	done := make(chan *gollama.ToolResult, 1)
+	go func() {
+		// `setsid sleep 30 &` runs sleep in a new session (so the timeout's
+		// process-group kill can't reach it) while inheriting the tool's stdout
+		// pipe; the shell exits right after `echo`.
+		done <- dispatch(t, reg, "Bash", `{"command":"setsid sleep 30 & echo started"}`)
+	}()
+	select {
+	case res := <-done:
+		if res.IsError || !strings.Contains(res.Content, "started") {
+			t.Fatalf("bash = %q (err=%v)", res.Content, res.IsError)
+		}
+	case <-time.After(25 * time.Second):
+		t.Fatal("Bash dispatch hung on a grandchild holding the output pipe open")
 	}
 }
 
