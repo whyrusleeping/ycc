@@ -15,10 +15,12 @@ type scriptedTurner struct {
 	responses []*gollama.ResponseMessageGenerate
 	calls     int
 	lastMsgs  []gollama.Message
+	lastOpts  gollama.RequestOptions
 }
 
 func (s *scriptedTurner) Turn(opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
 	s.lastMsgs = opts.Messages
+	s.lastOpts = opts
 	r := s.responses[s.calls]
 	s.calls++
 	return r, nil
@@ -103,6 +105,92 @@ func TestLoopFeedsResultsAndContinues(t *testing.T) {
 	}
 	if !sawToolResult {
 		t.Fatal("tool result was not fed back into context")
+	}
+}
+
+// captureRecorder records emitted events in memory for assertions.
+type captureRecorder struct{ evs []event.Event }
+
+func (c *captureRecorder) Record(actor string, t event.Type, data map[string]any) event.Event {
+	ev := event.Event{Seq: len(c.evs) + 1, Actor: actor, Type: t, Data: data}
+	c.evs = append(c.evs, ev)
+	return ev
+}
+
+// The engine carries the loop's per-model reasoning settings into every request.
+func TestLoopSetsThinkingOptions(t *testing.T) {
+	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{assistantText("hi")}}
+	loop := newLoop(t, turner)
+	loop.Thinking = "adaptive"
+	loop.Effort = "high"
+	loop.ThinkingDisplay = "summarized"
+	if _, err := loop.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if turner.lastOpts.Thinking != "adaptive" || turner.lastOpts.Effort != "high" || turner.lastOpts.ThinkingDisplay != "summarized" {
+		t.Fatalf("opts thinking=%q effort=%q display=%q", turner.lastOpts.Thinking, turner.lastOpts.Effort, turner.lastOpts.ThinkingDisplay)
+	}
+}
+
+// SetBackend updates the reasoning settings used by the next turn.
+func TestLoopSetBackendUpdatesThinking(t *testing.T) {
+	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{assistantText("hi")}}
+	loop := newLoop(t, turner) // starts with no thinking
+	loop.SetBackend(turner, "test2", Thinking{Thinking: "adaptive", Effort: "max", ThinkingDisplay: "summarized"})
+	if _, err := loop.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if turner.lastOpts.Model != "test2" || turner.lastOpts.Effort != "max" {
+		t.Fatalf("opts model=%q effort=%q", turner.lastOpts.Model, turner.lastOpts.Effort)
+	}
+}
+
+// A turn that returns a reasoning summary emits a dedicated thinking event
+// before the model_turn event.
+func TestLoopEmitsThinkingEvent(t *testing.T) {
+	resp := assistantText("the answer")
+	resp.Choices[0].Message.Thinking = "let me reason about this"
+	resp.Choices[0].Message.ThinkingBlocks = []gollama.ThinkingBlock{{Thinking: "let me reason about this", Signature: "sig"}}
+	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{resp}}
+	rec := &captureRecorder{}
+	loop := newLoop(t, turner)
+	loop.Emitter = event.NewEmitter(rec, "agent")
+	if _, err := loop.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	var thinkIdx, turnIdx = -1, -1
+	for i, ev := range rec.evs {
+		switch ev.Type {
+		case event.Thinking:
+			thinkIdx = i
+			if got, _ := ev.Data["text"].(string); got != "let me reason about this" {
+				t.Fatalf("thinking text = %q", got)
+			}
+		case event.ModelTurn:
+			turnIdx = i
+		}
+	}
+	if thinkIdx < 0 {
+		t.Fatal("no thinking event emitted")
+	}
+	if turnIdx >= 0 && thinkIdx > turnIdx {
+		t.Fatal("thinking event should precede model_turn")
+	}
+}
+
+// No thinking event is emitted when the turn has no reasoning summary.
+func TestLoopNoThinkingEventWhenEmpty(t *testing.T) {
+	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{assistantText("plain")}}
+	rec := &captureRecorder{}
+	loop := newLoop(t, turner)
+	loop.Emitter = event.NewEmitter(rec, "agent")
+	if _, err := loop.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for _, ev := range rec.evs {
+		if ev.Type == event.Thinking {
+			t.Fatal("unexpected thinking event for empty reasoning")
+		}
 	}
 }
 

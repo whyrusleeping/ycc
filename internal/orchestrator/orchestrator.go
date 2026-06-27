@@ -30,6 +30,12 @@ type AgentSpec struct {
 	Name      string // logical name, used as the actor label "reviewer:<name>"
 	NewClient func() engine.Turner
 	Model     string
+	// Thinking carries the per-model reasoning settings (Anthropic extended
+	// thinking / effort) so spawned subagents reason like the coordinator does
+	// (spec §7, §13). Zero value means reasoning is off for this model.
+	Thinking        string
+	Effort          string
+	ThinkingDisplay string
 }
 
 // Asker lets the coordinator ask the user a question, subject to the session's
@@ -114,13 +120,16 @@ func CoordinatorTools(d *Deps) *tools.Registry {
 
 func (d *Deps) newLoop(spec AgentSpec, system string, reg *tools.Registry, actor string) *engine.Loop {
 	return &engine.Loop{
-		Client:   spec.NewClient(),
-		Model:    spec.Model,
-		System:   system,
-		Tools:    reg,
-		Emitter:  d.Emitter.With(actor),
-		MaxTok:   d.MaxTok,
-		MaxTurns: d.MaxTurns,
+		Client:          spec.NewClient(),
+		Model:           spec.Model,
+		System:          system,
+		Tools:           reg,
+		Emitter:         d.Emitter.With(actor),
+		MaxTok:          d.MaxTok,
+		MaxTurns:        d.MaxTurns,
+		Thinking:        spec.Thinking,
+		Effort:          spec.Effort,
+		ThinkingDisplay: spec.ThinkingDisplay,
 	}
 }
 

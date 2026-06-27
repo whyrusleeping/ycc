@@ -21,6 +21,57 @@ type Model struct {
 	BaseURL string `toml:"base_url"`
 	Model   string `toml:"model"`
 	KeyEnv  string `toml:"key_env"`
+
+	// Thinking / Effort / ThinkingDisplay control Anthropic extended/adaptive
+	// reasoning per-model (spec §7, §13). They are honored by the anthropic
+	// backend and ignored harmlessly by others. When unset, sensible
+	// reasoning-on defaults apply (see ResolveThinking) — this is an agentic
+	// coding harness, so reasoning is desired by default. Set thinking = "off"
+	// (or "") to disable thinking for a model.
+	Thinking        string `toml:"thinking"`         // "adaptive" | "off" | ""
+	Effort          string `toml:"effort"`           // "low" | "medium" | "high" | "xhigh" | "max"
+	ThinkingDisplay string `toml:"thinking_display"` // "summarized" | "omitted"
+}
+
+// Thinking carries the resolved per-model reasoning settings the engine plumbs
+// into gollama.RequestOptions. An empty Thinking field means reasoning is off
+// (Effort/ThinkingDisplay are then irrelevant to the request).
+type Thinking struct {
+	Thinking        string
+	Effort          string
+	ThinkingDisplay string
+}
+
+// Default reasoning settings applied when a model leaves them unset. This is an
+// agentic coding harness, so reasoning-on is the desired default.
+const (
+	defaultThinking        = "adaptive"
+	defaultEffort          = "high"
+	defaultThinkingDisplay = "summarized"
+)
+
+// ResolveThinking fills in defaults for unset fields and normalizes the
+// "off"/disabled cases. A model that does not opt out gets adaptive thinking at
+// high effort with summarized display; thinking = "off" (or "none"/"disabled")
+// turns reasoning off entirely (empty Thinking on the returned struct).
+func (m Model) ResolveThinking() Thinking {
+	think := m.Thinking
+	if think == "" {
+		think = defaultThinking
+	}
+	switch think {
+	case "off", "none", "disabled", "false":
+		return Thinking{} // reasoning disabled
+	}
+	effort := m.Effort
+	if effort == "" {
+		effort = defaultEffort
+	}
+	display := m.ThinkingDisplay
+	if display == "" {
+		display = defaultThinkingDisplay
+	}
+	return Thinking{Thinking: think, Effort: effort, ThinkingDisplay: display}
 }
 
 // Roles assigns logical model names to workflow roles.
@@ -67,7 +118,12 @@ func Load(path string) (*Config, error) {
 func DefaultAnthropic(baseURL, model, keyEnv string, maxTokens int) *Config {
 	return &Config{
 		Models: map[string]Model{
-			"claude": {Backend: "anthropic", BaseURL: baseURL, Model: model, KeyEnv: keyEnv},
+			"claude": {
+				Backend: "anthropic", BaseURL: baseURL, Model: model, KeyEnv: keyEnv,
+				// Carry the reasoning-on defaults explicitly so the no-config
+				// single-backend path gets adaptive thinking + high effort too.
+				Thinking: defaultThinking, Effort: defaultEffort, ThinkingDisplay: defaultThinkingDisplay,
+			},
 		},
 		Roles:     Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"}},
 		MaxTokens: maxTokens,
@@ -114,6 +170,17 @@ type ModelInfo struct {
 	Name    string
 	Backend string
 	Model   string
+}
+
+// ThinkingFor returns the resolved reasoning settings for a logical model name,
+// applying defaults for unset fields. Unknown names return the package defaults
+// so callers always get reasoning-on behaviour.
+func (r *Registry) ThinkingFor(name string) Thinking {
+	m, ok := r.cfg.Models[name]
+	if !ok {
+		return Model{}.ResolveThinking()
+	}
+	return m.ResolveThinking()
 }
 
 // Has reports whether a logical model name is configured.

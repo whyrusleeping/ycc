@@ -202,7 +202,10 @@ func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []str
 	if err != nil {
 		return fmt.Errorf("build coordinator backend: %w", err)
 	}
-	s.currentLoop().SetBackend(client, model)
+	th := s.reg.ThinkingFor(newCoord)
+	s.currentLoop().SetBackend(client, model, engine.Thinking{
+		Thinking: th.Thinking, Effort: th.Effort, ThinkingDisplay: th.ThinkingDisplay,
+	})
 
 	s.mu.Lock()
 	s.coordinator, s.implementer, s.reviewers = newCoord, newImpl, newRevs
@@ -222,6 +225,7 @@ func (s *Session) agentSpec(name string) (orchestrator.AgentSpec, error) {
 	if err != nil {
 		return orchestrator.AgentSpec{}, fmt.Errorf("build backend %q: %w", name, err)
 	}
+	th := s.reg.ThinkingFor(name)
 	return orchestrator.AgentSpec{
 		Name:  name,
 		Model: model,
@@ -229,6 +233,9 @@ func (s *Session) agentSpec(name string) (orchestrator.AgentSpec, error) {
 			c, _, _ := s.reg.Build(name)
 			return c
 		},
+		Thinking:        th.Thinking,
+		Effort:          th.Effort,
+		ThinkingDisplay: th.ThinkingDisplay,
 	}, nil
 }
 
@@ -435,7 +442,12 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 		if err != nil {
 			return nil, fmt.Errorf("build coordinator backend: %w", err)
 		}
-		loop := &engine.Loop{Client: client, Model: model, System: sys, Tools: reg, Emitter: emitter, MaxTok: m.reg.MaxTokens(), MaxTurns: m.reg.MaxTurns()}
+		th := m.reg.ThinkingFor(coord)
+		loop := &engine.Loop{
+			Client: client, Model: model, System: sys, Tools: reg, Emitter: emitter,
+			MaxTok: m.reg.MaxTokens(), MaxTurns: m.reg.MaxTurns(),
+			Thinking: th.Thinking, Effort: th.Effort, ThinkingDisplay: th.ThinkingDisplay,
+		}
 		loop.Seed(prompt)
 		return loop, nil
 	}
@@ -460,6 +472,7 @@ func (m *Manager) agentSpec(name string) (orchestrator.AgentSpec, error) {
 	if err != nil {
 		return orchestrator.AgentSpec{}, fmt.Errorf("build backend %q: %w", name, err)
 	}
+	th := m.reg.ThinkingFor(name)
 	return orchestrator.AgentSpec{
 		Name:  name,
 		Model: model,
@@ -467,6 +480,9 @@ func (m *Manager) agentSpec(name string) (orchestrator.AgentSpec, error) {
 			c, _, _ := m.reg.Build(name)
 			return c
 		},
+		Thinking:        th.Thinking,
+		Effort:          th.Effort,
+		ThinkingDisplay: th.ThinkingDisplay,
 	}, nil
 }
 

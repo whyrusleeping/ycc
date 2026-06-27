@@ -286,6 +286,19 @@ the coordinator's perspective (it awaits a structured report) but reviewers fan 
 **concurrently** (goroutines + a barrier). Reviewer contexts are *retained* so a revise
 round can reuse them (`re-review` sends the new diff into the existing reviewer history).
 
+### 7.4 Reasoning (extended/adaptive thinking + effort)
+
+Every agent's request carries per-model reasoning settings (Anthropic extended/adaptive
+thinking). The engine `Loop` holds `Thinking` / `Effort` / `ThinkingDisplay` fields beside
+`MaxTok` and sets them on the `gollama.RequestOptions` for every turn; these reach the
+coordinator loop, the implementer, and each reviewer, resolved from the role's model in the
+registry (`ThinkingFor`, §13). `Thinking=""` disables reasoning; `"adaptive"` enables it;
+`Effort` (`low`..`max`) tunes depth/spend; `ThinkingDisplay="summarized"` opts into reasoning
+summaries. The provider's reasoning blocks round-trip automatically because the engine
+appends the returned assistant `Message` (which carries `ThinkingBlocks`) to history. When a
+turn returns a reasoning summary, the loop emits a dedicated `thinking` event (before the
+`model_turn`) for the UI (§18). Non-Anthropic backends ignore these fields.
+
 ## 8. Tools
 
 ## 8. Tools
@@ -451,7 +464,9 @@ client-driven mode switching is wanted.)
 A config file maps logical names → gollama clients:
 
 ```toml
-[models.claude]   backend="anthropic" base_url="…" model="claude-opus-4-8" key_env="ANTHROPIC_API_KEY"
+[models.claude]
+backend = "anthropic"  base_url = "…"  model = "claude-opus-4-8"  key_env = "ANTHROPIC_API_KEY"
+thinking = "adaptive"  effort = "high"  thinking_display = "summarized"   # reasoning (see §7.4)
 [models.gpt]      backend="openai"    base_url="…" model="gpt-5.5"          key_env="OPENAI_API_KEY"
 [models.glm]      backend="openai"    base_url="https://…/glm" model="glm-4.6" key_env="GLM_API_KEY"
 [models.local]    backend="ollama"    base_url="http://localhost:11434" model="…"
@@ -467,6 +482,16 @@ max_turns   = 200    # per-Run tool-call turn cap; runaway/cost backstop (0 => e
 
 The registry hands the engine a configured gollama `Client` + model string for any
 logical name. Reviewer fan-out iterates `roles.reviewers`.
+
+**Per-model reasoning** (`thinking` / `effort` / `thinking_display`) is configured on each
+`[models.X]` block and resolved by the registry (`ThinkingFor(name)`), paralleling
+`max_tokens` / `MaxTokens()`. These map to Anthropic extended/adaptive thinking + effort
+(see §7.4); they are honored by the anthropic backend and ignored harmlessly by others.
+**Defaults are reasoning-on** (`thinking="adaptive"`, `effort="high"`,
+`thinking_display="summarized"`) — this is an agentic coding harness, so reasoning is
+desired by default, including on the no-config single-backend path. Set `thinking="off"`
+(or `""`) on a model to disable reasoning. The resolved settings are applied per **role/model**
+to every agent: coordinator, implementer, and each reviewer.
 
 `max_turns` bounds how many tool-call turns a single engine `Run` may take. It is a
 **runaway backstop**, not a normal stopping condition: the high default (200) keeps the
@@ -627,6 +652,16 @@ Wire path: `question_asked` events carry the options; `AnswerQuestion` carries e
 chosen option (index/value) or free text. This gives the agent the same crisp,
 low-friction Q&A loop a good interactive coding assistant has, instead of forcing every
 clarification into prose.
+
+### 18.4 Reasoning (thinking) in the event stream
+
+When a model turn returns a reasoning summary, the engine emits a `thinking` event (§7.4)
+carrying the summary text. The TUI renders it like any other stream event — **collapsed by
+default** with a one-line `(reasoning) …` preview, click/Enter to expand — so the agent's
+"inner voice" is available without cluttering the stream. The expanded body is shown
+**dimmed + italic** to read distinctly from the model's actual response. Empty summaries
+produce no event. (The provider reasoning blocks themselves round-trip in conversation
+history automatically and are not re-displayed.)
 
 ## 19. Onboarding flows
 

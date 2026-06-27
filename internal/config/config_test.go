@@ -15,12 +15,15 @@ backend = "anthropic"
 base_url = "https://api.anthropic.com"
 model = "claude-opus-4-8"
 key_env = "ANTHROPIC_API_KEY"
+effort = "max"
+thinking_display = "summarized"
 
 [models.haiku]
 backend = "anthropic"
 base_url = "https://api.anthropic.com"
 model = "claude-haiku-4-5"
 key_env = "ANTHROPIC_API_KEY"
+thinking = "off"
 
 [models.local]
 backend = "ollama"
@@ -67,6 +70,51 @@ func TestLoadAndRegistry(t *testing.T) {
 	// anthropic backend builds and returns the right model id.
 	if _, model, err := reg.Build("haiku"); err != nil || model != "claude-haiku-4-5" {
 		t.Fatalf("build haiku: %v model=%s", err, model)
+	}
+}
+
+func TestThinkingParsingAndDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ycc.toml")
+	if err := os.WriteFile(path, []byte(sample), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := NewRegistry(cfg)
+
+	// claude: thinking unset -> default "adaptive"; effort explicitly "max";
+	// display explicitly "summarized".
+	c := reg.ThinkingFor("claude")
+	if c.Thinking != "adaptive" || c.Effort != "max" || c.ThinkingDisplay != "summarized" {
+		t.Fatalf("claude thinking = %+v", c)
+	}
+
+	// haiku: thinking = "off" disables reasoning entirely (zero value).
+	h := reg.ThinkingFor("haiku")
+	if h.Thinking != "" || h.Effort != "" || h.ThinkingDisplay != "" {
+		t.Fatalf("haiku thinking should be disabled, got %+v", h)
+	}
+
+	// local: nothing set -> full reasoning-on defaults.
+	l := reg.ThinkingFor("local")
+	if l.Thinking != "adaptive" || l.Effort != "high" || l.ThinkingDisplay != "summarized" {
+		t.Fatalf("local thinking defaults = %+v", l)
+	}
+
+	// Unknown name falls back to defaults rather than empty.
+	u := reg.ThinkingFor("nope")
+	if u.Thinking != "adaptive" || u.Effort != "high" {
+		t.Fatalf("unknown thinking defaults = %+v", u)
+	}
+}
+
+func TestDefaultAnthropicCarriesThinking(t *testing.T) {
+	cfg := DefaultAnthropic("https://api.anthropic.com", "claude-opus-4-8", "ANTHROPIC_API_KEY", 8192)
+	th := NewRegistry(cfg).ThinkingFor("claude")
+	if th.Thinking != "adaptive" || th.Effort != "high" || th.ThinkingDisplay != "summarized" {
+		t.Fatalf("default anthropic thinking = %+v", th)
 	}
 }
 

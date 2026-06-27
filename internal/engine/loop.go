@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/whyrusleeping/gollama"
@@ -31,24 +32,45 @@ type Loop struct {
 	MaxTurns int // 0 => default
 	MaxTok   int // per-turn max tokens; 0 => backend default
 
+	// Anthropic extended/adaptive reasoning (spec §7, §13). Thinking == ""
+	// disables reasoning; "adaptive" enables it. Effort tunes depth/spend
+	// ("low".."max"); ThinkingDisplay ("summarized") opts into reasoning
+	// summaries. Honored by the anthropic backend, ignored by others.
+	Thinking        string
+	Effort          string
+	ThinkingDisplay string
+
 	mu      sync.Mutex // guards Client/Model swaps mid-loop (settings overlay, §18.2)
 	history []gollama.Message
 }
 
-// SetBackend swaps the loop's backend client and model id while preserving the
-// conversation history, so a mid-session role-config change takes effect on the
-// next turn (spec §18.2). Safe to call concurrently with Run.
-func (l *Loop) SetBackend(client Turner, model string) {
+// SetBackend swaps the loop's backend client, model id, and per-model reasoning
+// settings while preserving the conversation history, so a mid-session
+// role-config change takes effect on the next turn (spec §18.2). Safe to call
+// concurrently with Run.
+func (l *Loop) SetBackend(client Turner, model string, think Thinking) {
 	l.mu.Lock()
 	l.Client = client
 	l.Model = model
+	l.Thinking = think.Thinking
+	l.Effort = think.Effort
+	l.ThinkingDisplay = think.ThinkingDisplay
 	l.mu.Unlock()
 }
 
-func (l *Loop) backend() (Turner, string) {
+// Thinking carries per-model reasoning settings for SetBackend so a coordinator
+// model swap also updates effort/thinking. It mirrors config.Thinking but lives
+// here to avoid an engine→config import cycle.
+type Thinking struct {
+	Thinking        string
+	Effort          string
+	ThinkingDisplay string
+}
+
+func (l *Loop) backend() (Turner, string, Thinking) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.Client, l.Model
+	return l.Client, l.Model, Thinking{Thinking: l.Thinking, Effort: l.Effort, ThinkingDisplay: l.ThinkingDisplay}
 }
 
 // defaultMaxTurns is the per-Run backstop applied when Loop.MaxTurns is unset
@@ -103,12 +125,15 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			return nil, err
 		}
 
-		client, modelID := l.backend()
+		client, modelID, think := l.backend()
 		opts := gollama.RequestOptions{
-			Model:    modelID,
-			System:   l.System,
-			Messages: l.history,
-			Tools:    l.Tools.APIDefs(),
+			Model:           modelID,
+			System:          l.System,
+			Messages:        l.history,
+			Tools:           l.Tools.APIDefs(),
+			Thinking:        think.Thinking,
+			Effort:          think.Effort,
+			ThinkingDisplay: think.ThinkingDisplay,
 		}
 		if l.MaxTok > 0 {
 			opts.Options = &gollama.Options{MaxTokens: l.MaxTok}
@@ -123,6 +148,17 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			return nil, errors.New("model returned no choices")
 		}
 		msg := resp.Choices[0].Message
+
+		// Surface the model's reasoning summary (if any) as its own event so the
+		// TUI can show it distinctly, collapsed by default (spec §18). The
+		// ThinkingBlocks themselves round-trip via the appended assistant
+		// message; this event is purely for display.
+		if strings.TrimSpace(msg.Thinking) != "" {
+			l.Emitter.Emit(event.Thinking, map[string]any{
+				"text":   msg.Thinking,
+				"blocks": len(msg.ThinkingBlocks),
+			})
+		}
 
 		l.Emitter.Emit(event.ModelTurn, map[string]any{
 			"text":       msg.Content,

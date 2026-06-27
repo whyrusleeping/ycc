@@ -86,4 +86,27 @@ func TestAutoExpand(t *testing.T) {
 	if autoExpand("tool_call") {
 		t.Fatal("tool_call should not auto-expand")
 	}
+	// Thinking events should stay collapsed by default so they don't clutter.
+	if autoExpand("thinking") {
+		t.Fatal("thinking should not auto-expand")
+	}
+}
+
+// A thinking event renders a one-line "(reasoning)" detail and an expandable
+// body carrying the reasoning summary.
+func TestThinkingRendering(t *testing.T) {
+	ev := &v1.Event{Type: "thinking", DataJson: `{"text":"first I will read the file","blocks":1}`}
+	if d := detailLine(ev); !strings.Contains(d, "reasoning") || !strings.Contains(d, "read the file") {
+		t.Fatalf("detailLine = %q", d)
+	}
+	m := &model{w: 80}
+	body := m.renderBody(ev)
+	if !strings.Contains(body, "read the file") {
+		t.Fatalf("renderBody = %q", body)
+	}
+	// An empty reasoning summary produces no body (nothing to expand).
+	empty := &v1.Event{Type: "thinking", DataJson: `{"text":""}`}
+	if b := m.renderBody(empty); strings.TrimSpace(b) != "" {
+		t.Fatalf("empty thinking body = %q", b)
+	}
 }

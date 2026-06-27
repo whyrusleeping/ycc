@@ -18,10 +18,13 @@ import (
 type Type string
 
 const (
-	SessionStarted   Type = "session_started"
-	ModeChanged      Type = "mode_changed"
-	UserInput        Type = "user_input"
-	ModelTurn        Type = "model_turn"
+	SessionStarted Type = "session_started"
+	ModeChanged    Type = "mode_changed"
+	UserInput      Type = "user_input"
+	ModelTurn      Type = "model_turn"
+	// Thinking carries a model's reasoning summary for a turn (spec §7, §18).
+	// Emitted before the corresponding ModelTurn when non-empty.
+	Thinking         Type = "thinking"
 	ToolCall         Type = "tool_call"
 	ToolResult       Type = "tool_result"
 	SessionIdle      Type = "session_idle"

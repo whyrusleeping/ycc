@@ -955,6 +955,14 @@ func (m *model) renderBody(ev *v1.Event) string {
 			return ""
 		}
 		return indentLines(m.markdown(txt), "  ")
+	case "thinking":
+		// Render the reasoning summary dimmed + italic so it reads as the
+		// model's "inner voice", distinct from its actual response (spec §18).
+		txt := dataField(ev, "text")
+		if txt == "" {
+			return ""
+		}
+		return indentLines(thinkStyle.Render(txt), bodyBar)
 	case "tool_call":
 		return indentLines(prettyArgs(dataField(ev, "args")), bodyBar)
 	case "tool_result":
@@ -1071,6 +1079,7 @@ var (
 	selStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("213"))
 	selBarStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("213"))
 	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	thinkStyle    = lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color("245"))
 	typeStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
 	askStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("11"))
 	errStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
@@ -1107,6 +1116,8 @@ func detailLine(ev *v1.Event) string {
 		return oneLine(dataField(ev, "result"), 90)
 	case "model_turn":
 		return oneLine(dataField(ev, "text"), 120)
+	case "thinking":
+		return dimStyle.Render("(reasoning) " + oneLine(dataField(ev, "text"), 110))
 	case "user_input":
 		return "› " + oneLine(dataField(ev, "text"), 120)
 	case "question_asked":
