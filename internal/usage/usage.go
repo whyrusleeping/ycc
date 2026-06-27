@@ -432,7 +432,7 @@ func Render(w io.Writer, res Result, groupBy []Dim) {
 	for _, d := range groupBy {
 		header = append(header, title(string(d)))
 	}
-	header = append(header, "Input", "Output", "Cache", "Total", "Cost")
+	header = append(header, "Input", "Output", "Cache R", "Cache W", "Total", "Cost")
 	fmt.Fprintln(tw, strings.Join(header, "\t"))
 
 	partial := res.Total.Status == StatusPartial
@@ -448,10 +448,10 @@ func Render(w io.Writer, res Result, groupBy []Dim) {
 	for i := 1; i < len(totalCells); i++ {
 		totalCells[i] = ""
 	}
-	cache := res.Total.Tokens.CacheRead + res.Total.Tokens.CacheWrite
 	totalCells = append(totalCells,
 		commas(res.Total.Tokens.Input), commas(res.Total.Tokens.Output),
-		commas(cache), commas(res.Total.Tokens.Total), costCell(res.Total))
+		commas(res.Total.Tokens.CacheRead), commas(res.Total.Tokens.CacheWrite),
+		commas(res.Total.Tokens.Total), costCell(res.Total))
 	fmt.Fprintln(tw, strings.Join(totalCells, "\t"))
 	tw.Flush()
 	if partial {
@@ -481,10 +481,10 @@ func rowLine(r Row, groupBy []Dim) string {
 		}
 		cells = append(cells, v)
 	}
-	cache := r.Tokens.CacheRead + r.Tokens.CacheWrite
 	cells = append(cells,
 		commas(r.Tokens.Input), commas(r.Tokens.Output),
-		commas(cache), commas(r.Tokens.Total), costCell(r))
+		commas(r.Tokens.CacheRead), commas(r.Tokens.CacheWrite),
+		commas(r.Tokens.Total), costCell(r))
 	return strings.Join(cells, "\t")
 }
 

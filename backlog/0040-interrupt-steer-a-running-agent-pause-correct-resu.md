@@ -1,7 +1,7 @@
 ---
 id: "0040"
 title: Interrupt & steer a running agent (pause / correct / resume)
-status: in_progress
+status: done
 priority: 2
 created: "2026-06-27"
 updated: "2026-06-27"
@@ -94,3 +94,6 @@ to the checkpoint. Baseline (pause only at the next checkpoint) is acceptable fo
 …[truncated]
 - 2026-06-27 review (claude): accept — The revision resolves both prior findings. SendInput while paused now only buffers corrections (drained in order by an explicit Resume) rather than auto-resuming, eliminating the race; TestSteerPauseC
 …[truncated]
+- 2026-06-27 decision: accept — commit 5792ca8: Interrupt & steer a running agent (pause / correct / resume) — §18.7  Add a graceful pause-to-steer for a running session, distinct from a hard Stop: - engine: Loop gains a Steer hook (Checkpoint) 
+…[truncated]
+- 2026-06-27 usage: 49,961 tok (in 170, out 49,791, cache_r 5,565,434, cache_w 175,274) · cost n/a (unpriced)
