@@ -1,7 +1,7 @@
 ---
 id: "0022"
 title: config.Save — write ycc.toml from a Config
-status: in_progress
+status: done
 priority: 2
 created: "2026-06-26"
 updated: "2026-06-26"
@@ -44,4 +44,6 @@ This is a small, self-contained enabler that the wizard (and a future settings-o
 - 2026-06-26 implementer report: Implemented `config.Save(path string, c *Config) error` in `internal/config/config.go`.  Changes: - Added `Save` which: returns an error for a nil config; calls `c.validate()` first and returns its er
 …[truncated]
 - 2026-06-26 review (claude): accept — The change adds config.Save cleanly mirroring Load: nil guard, validate() before any write, toml.Marshal, MkdirAll for parent dirs, and 0644 file write. It satisfies all acceptance criteria — round-
+…[truncated]
+- 2026-06-26 decision: accept — commit 63392fc: config: add Save to write ycc.toml from a Config  Add config.Save(path, *Config): validates before writing, creates parent dirs, marshals to TOML round-tripping with Load, and persists key_env referen
 …[truncated]

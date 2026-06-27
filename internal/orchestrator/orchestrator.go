@@ -136,23 +136,35 @@ func (d *Deps) newLoop(spec AgentSpec, system string, reg *tools.Registry, actor
 func listBacklog(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name:        "list_backlog",
-		Description: "List all backlog tasks with id, status, priority, title, and dependencies.",
-		Params:      tools.Obj(map[string]any{}),
-		Call: func(ctx context.Context, _ any) (*gollama.ToolResult, error) {
+		Description: "List backlog tasks with id, status, priority, title, and dependencies. Completed (done) tasks are hidden unless include_done is true.",
+		Params:      tools.Obj(map[string]any{"include_done": tools.BoolProp("include completed (done) tasks in the output (default false)")}),
+		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			ts, err := d.Docs.List()
 			if err != nil {
 				return tools.ErrResult("list_backlog: %v", err), nil
 			}
-			if len(ts) == 0 {
-				return tools.OkResult("(backlog is empty)"), nil
-			}
+			includeDone := tools.GetBool(params, "include_done", false)
 			var b strings.Builder
+			hidden := 0
 			for _, t := range ts {
+				if t.Status == docs.StatusDone && !includeDone {
+					hidden++
+					continue
+				}
 				dep := strings.Join(t.DependsOn, ",")
 				if dep == "" {
 					dep = "-"
 				}
 				fmt.Fprintf(&b, "%s [%s] p%d  %s  (deps: %s)\n", t.ID, t.Status, t.Priority, t.Title, dep)
+			}
+			if b.Len() == 0 {
+				if hidden > 0 {
+					return tools.OkResult(fmt.Sprintf("(no open tasks; %d done task(s) hidden — pass include_done=true to show them)", hidden)), nil
+				}
+				return tools.OkResult("(backlog is empty)"), nil
+			}
+			if hidden > 0 {
+				fmt.Fprintf(&b, "\n(%d done task(s) hidden — pass include_done=true to show them)\n", hidden)
 			}
 			return tools.OkResult(b.String()), nil
 		},

@@ -100,6 +100,11 @@ func Obj(props map[string]any, required ...string) gollama.ToolFunctionParams {
 // StrProp builds a {"type":"string","description":...} schema entry.
 func StrProp(desc string) map[string]any { return strProp(desc) }
 
+// BoolProp builds a {"type":"boolean","description":...} schema entry.
+func BoolProp(desc string) map[string]any {
+	return map[string]any{"type": "boolean", "description": desc}
+}
+
 // StrArrProp builds a {"type":"array","items":{"type":"string"},...} schema
 // entry for an optional list-of-strings argument.
 func StrArrProp(desc string) map[string]any {
@@ -116,6 +121,9 @@ func GetString(params any, key string) (string, bool) { return getString(params,
 // GetStringSlice pulls a list-of-strings argument, ignoring non-string entries.
 // Returns nil when the argument is absent.
 func GetStringSlice(params any, key string) []string { return getStringSlice(params, key) }
+
+// GetBool pulls a boolean argument, returning def when absent or not a boolean.
+func GetBool(params any, key string, def bool) bool { return getBool(params, key, def) }
 
 // ErrResult builds an error tool result (visible to the model).
 func ErrResult(format string, args ...any) *gollama.ToolResult { return errResult(format, args...) }
