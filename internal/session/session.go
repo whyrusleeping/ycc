@@ -60,11 +60,19 @@ type Session struct {
 	coordinator string   // logical model name driving the coordinator
 	implementer string   // logical model name for the implementer role
 	reviewers   []string // logical model names for the reviewer role
-	// thinkLevel is a session-wide reasoning override (spec §18.2). "" means
-	// "use each model's per-config thinking"; any of off/low/medium/high/xhigh/max
-	// forces that level on every agent in the session until changed.
-	thinkLevel string
+	// thinkLevels holds per-role reasoning overrides (spec §7.4, §18.2) keyed by
+	// roleCoordinator/roleImplementer/roleReviewers. An empty/missing entry means
+	// "use the per-role config then per-model config"; any of
+	// off/low/medium/high/xhigh/max forces that level on the role until changed.
+	thinkLevels map[string]string
 }
+
+// Role name constants used to key per-role thinking overrides and resolution.
+const (
+	roleCoordinator = config.RoleCoordinator
+	roleImplementer = config.RoleImplementer
+	roleReviewers   = config.RoleReviewers
+)
 
 // Log exposes the session's event log for subscription.
 func (s *Session) Log() *event.Log { return s.log }
@@ -193,13 +201,13 @@ func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []str
 
 	// Rebuild the implementer / reviewer specs so the next spawn uses the new
 	// backends (the running subagents keep their context until then).
-	implSpec, err := s.agentSpec(newImpl)
+	implSpec, err := s.agentSpec(roleImplementer, newImpl)
 	if err != nil {
 		return err
 	}
 	var revSpecs []orchestrator.AgentSpec
 	for _, name := range newRevs {
-		rs, err := s.agentSpec(name)
+		rs, err := s.agentSpec(roleReviewers, name)
 		if err != nil {
 			return err
 		}
@@ -214,7 +222,7 @@ func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []str
 	if err != nil {
 		return fmt.Errorf("build coordinator backend: %w", err)
 	}
-	s.currentLoop().SetBackend(client, model, newCoord, s.reg.BackendFor(newCoord), s.thinkingFor(newCoord))
+	s.currentLoop().SetBackend(client, model, newCoord, s.reg.BackendFor(newCoord), s.thinkingFor(roleCoordinator, newCoord))
 
 	s.mu.Lock()
 	s.coordinator, s.implementer, s.reviewers = newCoord, newImpl, newRevs
@@ -228,44 +236,78 @@ func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []str
 	return nil
 }
 
-// SetThinking sets a session-wide reasoning override that applies to every agent
-// (coordinator + spawned implementer/reviewers). It updates the live coordinator
-// loop and rebuilds the implementer/reviewer specs so the next spawn uses it; the
-// change is recorded in the event log (spec §18.2). Mirrors SetRoleConfig.
-func (s *Session) SetThinking(level string) error {
+// SetThinking sets a per-role reasoning override (spec §7.4, §18.2). An empty
+// role updates all three roles (back-compat / "all"); a specific role
+// ("coordinator"|"implementer"|"reviewers") updates just that one. It updates the
+// live coordinator loop and rebuilds the implementer/reviewer specs as relevant so
+// the next spawn uses it; the change is recorded in the event log with the role.
+func (s *Session) SetThinking(role, level string) error {
 	if _, ok := thinkingForLevel(level); !ok {
 		return fmt.Errorf("unknown thinking level %q", level)
 	}
+	switch role {
+	case "", roleCoordinator, roleImplementer, roleReviewers:
+	default:
+		return fmt.Errorf("unknown thinking role %q", role)
+	}
+
+	// Determine the affected roles (empty => all three).
+	affected := map[string]bool{}
+	if role == "" {
+		affected[roleCoordinator] = true
+		affected[roleImplementer] = true
+		affected[roleReviewers] = true
+	} else {
+		affected[role] = true
+	}
 
 	s.mu.Lock()
-	from := s.thinkLevel
-	s.thinkLevel = level
+	if s.thinkLevels == nil {
+		s.thinkLevels = map[string]string{}
+	}
+	from := ""
+	if role == "" {
+		from = s.thinkLevels[roleCoordinator]
+	} else {
+		from = s.thinkLevels[role]
+	}
+	for r := range affected {
+		s.thinkLevels[r] = level
+	}
 	impl, revs := s.implementer, append([]string(nil), s.reviewers...)
+	coord := s.coordinator
 	s.mu.Unlock()
 
-	// Rebuild the implementer / reviewer specs so the next spawn uses the new
-	// thinking level (running subagents keep their settings until then).
-	implSpec, err := s.agentSpec(impl)
-	if err != nil {
-		return err
-	}
-	var revSpecs []orchestrator.AgentSpec
-	for _, name := range revs {
-		rs, err := s.agentSpec(name)
+	// Rebuild the implementer spec so the next spawn uses the new thinking level.
+	if affected[roleImplementer] {
+		implSpec, err := s.agentSpec(roleImplementer, impl)
 		if err != nil {
 			return err
 		}
-		revSpecs = append(revSpecs, rs)
+		s.deps.SetImplementer(implSpec)
 	}
-	s.deps.SetImplementer(implSpec)
-	s.deps.SetReviewers(revSpecs)
+	if affected[roleReviewers] {
+		var revSpecs []orchestrator.AgentSpec
+		for _, name := range revs {
+			rs, err := s.agentSpec(roleReviewers, name)
+			if err != nil {
+				return err
+			}
+			revSpecs = append(revSpecs, rs)
+		}
+		s.deps.SetReviewers(revSpecs)
+	}
+	if affected[roleCoordinator] {
+		// Update the live coordinator loop's reasoning settings for its next turn
+		// (its conversation history is preserved).
+		s.currentLoop().SetThinking(s.thinkingFor(roleCoordinator, coord))
+	}
 
-	// Update the live coordinator loop's reasoning settings for its next turn
-	// (its conversation history is preserved).
-	th, _ := thinkingForLevel(level)
-	s.currentLoop().SetThinking(th)
-
-	s.emitter.Emit(event.ThinkingLevelChanged, map[string]any{"from": from, "to": level})
+	emittedRole := role
+	if emittedRole == "" {
+		emittedRole = "all"
+	}
+	s.emitter.Emit(event.ThinkingLevelChanged, map[string]any{"role": emittedRole, "from": from, "to": level})
 	return nil
 }
 
@@ -283,27 +325,33 @@ func thinkingForLevel(level string) (engine.Thinking, bool) {
 	}
 }
 
-// thinkingFor resolves the reasoning settings for a logical model name, honoring
-// the session-wide override when set; otherwise it converts the per-model config.
-func (s *Session) thinkingFor(name string) engine.Thinking {
+// thinkingFor resolves the reasoning settings for a role/model pair applying the
+// documented precedence (spec §7.4): per-role session override → per-role config
+// → per-model config → package defaults.
+func (s *Session) thinkingFor(role, name string) engine.Thinking {
 	s.mu.Lock()
-	level := s.thinkLevel
+	level := s.thinkLevels[role]
 	s.mu.Unlock()
 	if level != "" {
 		th, _ := thinkingForLevel(level)
 		return th
 	}
+	if lvl, ok := s.reg.RoleThinking(role); ok {
+		if th, ok := thinkingForLevel(lvl); ok {
+			return th
+		}
+	}
 	th := s.reg.ThinkingFor(name)
 	return engine.Thinking{Thinking: th.Thinking, Effort: th.Effort, ThinkingDisplay: th.ThinkingDisplay}
 }
 
-// agentSpec builds an orchestrator.AgentSpec for a logical model name.
-func (s *Session) agentSpec(name string) (orchestrator.AgentSpec, error) {
+// agentSpec builds an orchestrator.AgentSpec for a logical model name in a role.
+func (s *Session) agentSpec(role, name string) (orchestrator.AgentSpec, error) {
 	_, model, err := s.reg.Build(name)
 	if err != nil {
 		return orchestrator.AgentSpec{}, fmt.Errorf("build backend %q: %w", name, err)
 	}
-	th := s.thinkingFor(name)
+	th := s.thinkingFor(role, name)
 	return orchestrator.AgentSpec{
 		Name:    name,
 		Model:   model,
@@ -494,13 +542,13 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 	coordName := m.reg.CoordinatorName()
 	implName := m.reg.ImplementerName()
 	reviewerNames := append([]string(nil), m.reg.ReviewerNames()...)
-	implSpec, err := m.agentSpec(implName)
+	implSpec, err := m.agentSpec(roleImplementer, implName)
 	if err != nil {
 		return nil, err
 	}
 	var reviewers []orchestrator.AgentSpec
 	for _, name := range reviewerNames {
-		rs, err := m.agentSpec(name)
+		rs, err := m.agentSpec(roleReviewers, name)
 		if err != nil {
 			return nil, err
 		}
@@ -537,6 +585,7 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 		coordinator:      coordName,
 		implementer:      implName,
 		reviewers:        reviewerNames,
+		thinkLevels:      map[string]string{},
 	}
 
 	// buildLoop assembles the agent loop for a mode; reused on mode transitions.
@@ -551,7 +600,7 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 		if err != nil {
 			return nil, fmt.Errorf("build coordinator backend: %w", err)
 		}
-		th := s.thinkingFor(coord)
+		th := s.thinkingFor(roleCoordinator, coord)
 		loop := &engine.Loop{
 			Client: client, Model: model, ModelName: coord, Backend: m.reg.BackendFor(coord),
 			System: sys, Tools: reg, Emitter: emitter,
@@ -575,14 +624,16 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 	return s, nil
 }
 
-// agentSpec builds an orchestrator.AgentSpec for a logical model name, validating
-// that it resolves now so the per-spawn closures can assume success.
-func (m *Manager) agentSpec(name string) (orchestrator.AgentSpec, error) {
+// agentSpec builds an orchestrator.AgentSpec for a logical model name in a role,
+// validating that it resolves now so the per-spawn closures can assume success. It
+// honors the per-role thinking config (per-role config → per-model config →
+// defaults); session-level overrides are layered on later via Session.SetThinking.
+func (m *Manager) agentSpec(role, name string) (orchestrator.AgentSpec, error) {
 	_, model, err := m.reg.Build(name)
 	if err != nil {
 		return orchestrator.AgentSpec{}, fmt.Errorf("build backend %q: %w", name, err)
 	}
-	th := m.reg.ThinkingFor(name)
+	th := m.thinkingFor(role, name)
 	return orchestrator.AgentSpec{
 		Name:    name,
 		Model:   model,
@@ -595,6 +646,18 @@ func (m *Manager) agentSpec(name string) (orchestrator.AgentSpec, error) {
 		Effort:          th.Effort,
 		ThinkingDisplay: th.ThinkingDisplay,
 	}, nil
+}
+
+// thinkingFor resolves reasoning settings for a role/model pair at startup,
+// applying per-role config → per-model config → defaults (the session-level
+// override layer applies once the session is live).
+func (m *Manager) thinkingFor(role, name string) config.Thinking {
+	if lvl, ok := m.reg.RoleThinking(role); ok {
+		if th, ok := thinkingForLevel(lvl); ok {
+			return config.Thinking{Thinking: th.Thinking, Effort: th.Effort, ThinkingDisplay: th.ThinkingDisplay}
+		}
+	}
+	return m.reg.ThinkingFor(name)
 }
 
 // Get returns a session by id.

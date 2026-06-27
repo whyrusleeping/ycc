@@ -89,7 +89,7 @@ type model struct {
 	ovCursor     int
 	models       []*v1.ModelInfo // populated from ListModels
 	level        string          // current interaction level (session)
-	thinkLevel   string          // current session-wide thinking level (off|low|…|max)
+	thinkLevels  map[string]string // per-role thinking levels (coordinator|implementer|reviewers)
 	roleCoord    string          // logical model driving the coordinator
 	roleImpl     string          // logical model for the implementer
 	roleReviewrs []string        // logical models for reviewers (multi-select)
@@ -136,7 +136,8 @@ func initialModel(ctx context.Context, client yccv1connect.SessionServiceClient,
 		state:      initState, prompt: prompt, input: input,
 		events: make(chan *v1.Event, 256), status: "starting",
 		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1, follow: prefs.Follow,
-		prefs: prefs, level: "judgement", thinkLevel: "high",
+		prefs: prefs, level: "judgement",
+		thinkLevels: map[string]string{"coordinator": "high", "implementer": "high", "reviewers": "high"},
 	}
 }
 
@@ -286,14 +287,15 @@ func (m model) setLevel(level string) tea.Cmd {
 	}
 }
 
-// setThinking issues SetThinking for the current session (spec §18.2).
-func (m model) setThinking(level string) tea.Cmd {
+// setThinking issues SetThinking for the current session per role (spec §7.4,
+// §18.2). An empty role updates all roles.
+func (m model) setThinking(role, level string) tea.Cmd {
 	return func() tea.Msg {
 		if m.sessionID == "" {
 			return nil
 		}
 		if _, err := m.client.SetThinking(m.ctx, connect.NewRequest(&v1.SetThinkingRequest{
-			SessionId: m.sessionID, Level: level,
+			SessionId: m.sessionID, Level: level, Role: role,
 		})); err != nil {
 			return errMsg{err}
 		}
@@ -740,7 +742,9 @@ func (m model) taskDetailView(t *v1.TaskDetail) string {
 // overlay rows (indices into the navigable list).
 const (
 	ovLevel = iota
-	ovThinking
+	ovThinkCoord
+	ovThinkImpl
+	ovThinkRev
 	ovCoord
 	ovImpl
 	ovReviewers
@@ -805,9 +809,15 @@ func (m model) overlayAdjust(d int) (tea.Model, tea.Cmd) {
 	case ovLevel:
 		m.level = cycle(levels, m.level, d)
 		return m, m.setLevel(m.level)
-	case ovThinking:
-		m.thinkLevel = cycle(thinkLevels, m.thinkLevel, d)
-		return m, m.setThinking(m.thinkLevel)
+	case ovThinkCoord:
+		m.thinkLevels["coordinator"] = cycle(thinkLevels, m.thinkLevels["coordinator"], d)
+		return m, m.setThinking("coordinator", m.thinkLevels["coordinator"])
+	case ovThinkImpl:
+		m.thinkLevels["implementer"] = cycle(thinkLevels, m.thinkLevels["implementer"], d)
+		return m, m.setThinking("implementer", m.thinkLevels["implementer"])
+	case ovThinkRev:
+		m.thinkLevels["reviewers"] = cycle(thinkLevels, m.thinkLevels["reviewers"], d)
+		return m, m.setThinking("reviewers", m.thinkLevels["reviewers"])
 	case ovCoord:
 		m.roleCoord = cycleModel(m.models, m.roleCoord, d)
 		return m, nil
@@ -921,7 +931,9 @@ func (m model) overlayView() string {
 	b.WriteString(titleStyle.Render(" settings ") + "\n\n")
 	rows := []struct{ label, val string }{
 		{"interaction level", m.level},
-		{"thinking level", m.thinkLevel},
+		{"coordinator thinking", m.thinkLevels["coordinator"]},
+		{"implementer thinking", m.thinkLevels["implementer"]},
+		{"reviewers thinking", m.thinkLevels["reviewers"]},
 		{"coordinator model", m.roleCoord},
 		{"implementer model", m.roleImpl},
 		{"reviewers", strings.Join(m.roleReviewrs, ", ")},
@@ -1036,7 +1048,14 @@ func (m *model) appendEvent(ev *v1.Event) {
 		}
 	case "thinking_level_changed":
 		if to := dataField(ev, "to"); to != "" {
-			m.thinkLevel = to
+			role := dataField(ev, "role")
+			if role == "" || role == "all" {
+				m.thinkLevels["coordinator"] = to
+				m.thinkLevels["implementer"] = to
+				m.thinkLevels["reviewers"] = to
+			} else {
+				m.thinkLevels[role] = to
+			}
 		}
 	case "role_config_changed":
 		if c := dataField(ev, "coordinator"); c != "" {

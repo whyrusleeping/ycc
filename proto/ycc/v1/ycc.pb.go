@@ -1492,14 +1492,15 @@ func (*SetRoleConfigResponse) Descriptor() ([]byte, []int) {
 	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{28}
 }
 
-// SetThinking changes a session-wide thinking/effort level mid-session (spec
-// §18.2). The override applies to every agent in the session (coordinator +
-// spawned subagents) and takes precedence over the per-model config until
-// changed. Levels: off | low | medium | high | xhigh | max.
+// SetThinking changes a thinking/effort level mid-session (spec §7.4, §18.2). The
+// override applies per role (empty role = all roles) and takes precedence over the
+// per-role config then per-model config until changed. Levels: off | low | medium
+// | high | xhigh | max.
 type SetThinkingRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	Level         string                 `protobuf:"bytes,2,opt,name=level,proto3" json:"level,omitempty"` // off | low | medium | high | xhigh | max
+	Role          string                 `protobuf:"bytes,3,opt,name=role,proto3" json:"role,omitempty"`   // empty = all roles; coordinator | implementer | reviewers
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1544,6 +1545,13 @@ func (x *SetThinkingRequest) GetSessionId() string {
 func (x *SetThinkingRequest) GetLevel() string {
 	if x != nil {
 		return x.Level
+	}
+	return ""
+}
+
+func (x *SetThinkingRequest) GetRole() string {
+	if x != nil {
+		return x.Role
 	}
 	return ""
 }
@@ -2078,11 +2086,12 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\vcoordinator\x18\x02 \x01(\tR\vcoordinator\x12 \n" +
 	"\vimplementer\x18\x03 \x01(\tR\vimplementer\x12\x1c\n" +
 	"\treviewers\x18\x04 \x03(\tR\treviewers\"\x17\n" +
-	"\x15SetRoleConfigResponse\"I\n" +
+	"\x15SetRoleConfigResponse\"]\n" +
 	"\x12SetThinkingRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x14\n" +
-	"\x05level\x18\x02 \x01(\tR\x05level\"\x15\n" +
+	"\x05level\x18\x02 \x01(\tR\x05level\x12\x12\n" +
+	"\x04role\x18\x03 \x01(\tR\x04role\"\x15\n" +
 	"\x13SetThinkingResponse\".\n" +
 	"\x12ListBacklogRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\"\xc2\x01\n" +

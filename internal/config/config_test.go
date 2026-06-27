@@ -214,6 +214,59 @@ func TestSaveRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRoleThinkingRoundTripAndValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ycc.toml")
+	orig := &Config{
+		Models: map[string]Model{
+			"claude": {Backend: "anthropic", BaseURL: "u", Model: "m", KeyEnv: "K"},
+		},
+		Roles: Roles{
+			Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"},
+			Thinking: RoleThinking{Coordinator: "xhigh", Implementer: "low", Reviewers: "high"},
+		},
+	}
+	if err := Save(path, orig); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !reflect.DeepEqual(got, orig) {
+		t.Fatalf("round-trip mismatch:\n got=%+v\nwant=%+v", got, orig)
+	}
+
+	// Registry exposes per-role overrides; unset roles report ok=false.
+	reg := NewRegistry(got)
+	if lvl, ok := reg.RoleThinking(RoleCoordinator); !ok || lvl != "xhigh" {
+		t.Fatalf("RoleThinking(coordinator) = %q,%v", lvl, ok)
+	}
+	if lvl, ok := reg.RoleThinking(RoleImplementer); !ok || lvl != "low" {
+		t.Fatalf("RoleThinking(implementer) = %q,%v", lvl, ok)
+	}
+
+	// An unset role falls back (ok=false).
+	noOverride := NewRegistry(&Config{
+		Models: map[string]Model{"claude": {Backend: "anthropic", BaseURL: "u", Model: "m"}},
+		Roles:  Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"}},
+	})
+	if lvl, ok := noOverride.RoleThinking(RoleReviewers); ok || lvl != "" {
+		t.Fatalf("unset RoleThinking(reviewers) = %q,%v, want \"\",false", lvl, ok)
+	}
+
+	// Invalid per-role level is rejected.
+	bad := &Config{
+		Models: map[string]Model{"claude": {Backend: "anthropic", BaseURL: "u", Model: "m"}},
+		Roles: Roles{
+			Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"},
+			Thinking: RoleThinking{Coordinator: "bogus"},
+		},
+	}
+	if err := bad.validate(); err == nil {
+		t.Fatal("expected validation error for invalid per-role thinking level")
+	}
+}
+
 func TestSaveRejectsInvalidConfigWithoutWriting(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ycc.toml")
 

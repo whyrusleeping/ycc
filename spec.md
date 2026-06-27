@@ -288,11 +288,12 @@ round can reuse them (`re-review` sends the new diff into the existing reviewer 
 
 ### 7.4 Reasoning (extended/adaptive thinking + effort)
 
-Every agent's request carries per-model reasoning settings (Anthropic extended/adaptive
+Every agent's request carries reasoning settings (Anthropic extended/adaptive
 thinking). The engine `Loop` holds `Thinking` / `Effort` / `ThinkingDisplay` fields beside
 `MaxTok` and sets them on the `gollama.RequestOptions` for every turn; these reach the
-coordinator loop, the implementer, and each reviewer, resolved from the role's model in the
-registry (`ThinkingFor`, §13). `Thinking=""` disables reasoning; `"adaptive"` enables it;
+coordinator loop, the implementer, and each reviewer, resolved **per role** (not just per
+model) so the coordinator, implementer, and reviewers can each reason at a different depth
+even when they share a backend (§13). `Thinking=""` disables reasoning; `"adaptive"` enables it;
 `Effort` (`low`..`max`) tunes depth/spend; `ThinkingDisplay="summarized"` opts into reasoning
 summaries. The provider's reasoning blocks round-trip automatically because the engine
 appends the returned assistant `Message` (which carries `ThinkingBlocks`) to history. When a
@@ -442,7 +443,7 @@ service SessionService {
   rpc ListModels(ListModelsRequest) returns (ListModelsResponse);       // available logical models
   rpc SetInteractionLevel(SetInteractionLevelRequest) returns (SetInteractionLevelResponse);
   rpc SetRoleConfig(SetRoleConfigRequest) returns (SetRoleConfigResponse);
-  rpc SetThinking(SetThinkingRequest) returns (SetThinkingResponse);    // session-wide reasoning level
+  rpc SetThinking(SetThinkingRequest) returns (SetThinkingResponse);    // per-role reasoning level
 }
 ```
 
@@ -460,11 +461,13 @@ Notable message shapes for the settings + structured-question work:
 - `SetRoleConfigRequest { session_id; string coordinator; string implementer;
   repeated string reviewers }` — per-role model assignment by logical model name (§13).
   Empty fields leave that role unchanged.
-- `SetThinkingRequest { session_id; string level }` — a session-wide reasoning level
-  (`off | low | medium | high | xhigh | max`) applied to every agent (coordinator +
-  spawned subagents), overriding each model's per-config thinking until changed (§13).
-  `off` disables reasoning; any effort level maps to adaptive thinking at that effort
-  with summarized display.
+- `SetThinkingRequest { session_id; string role; string level }` — set a reasoning level
+  (`off | low | medium | high | xhigh | max`) for one **role** (`coordinator | implementer |
+  reviewers`); an empty `role` applies the level to **every** role at once. The override takes
+  precedence over that role's config thinking until changed (§13). `off` disables reasoning;
+  any effort level maps to adaptive thinking at that effort with summarized display. (The
+  prior shape was session-wide with no `role` — adding `role` makes thinking independently
+  configurable per agent.)
 - `ListModelsResponse { repeated ModelInfo models }` where `ModelInfo` carries the
   logical name + backend + model id, so the client can populate the role pickers.
 
@@ -493,6 +496,11 @@ coordinator = "claude"
 implementer = "claude"
 reviewers   = ["claude", "gpt", "glm"]   # multi-model review
 
+[roles.thinking]               # optional per-role reasoning override (see below)
+coordinator = "xhigh"          # off | low | medium | high | xhigh | max
+implementer = "low"
+reviewers   = "high"           # one level for the whole reviewer fan-out
+
 max_tokens  = 8192   # per-turn output token cap (0 => backend default)
 max_turns   = 200    # per-Run tool-call turn cap; runaway/cost backstop (0 => engine default, 200)
 ```
@@ -507,8 +515,24 @@ logical name. Reviewer fan-out iterates `roles.reviewers`.
 **Defaults are reasoning-on** (`thinking="adaptive"`, `effort="high"`,
 `thinking_display="summarized"`) — this is an agentic coding harness, so reasoning is
 desired by default, including on the no-config single-backend path. Set `thinking="off"`
-(or `""`) on a model to disable reasoning. The resolved settings are applied per **role/model**
-to every agent: coordinator, implementer, and each reviewer.
+(or `""`) on a model to disable reasoning.
+
+**Per-role reasoning** lets each agent reason at a different depth even when roles share a
+backend (e.g. coordinator `xhigh`, implementer `low`, reviewers `high`). An optional
+`[roles.thinking]` sub-table assigns a single-knob level (`off | low | medium | high | xhigh
+| max`) per role; `reviewers` takes one level applied to the whole fan-out. The same levels
+are settable mid-session per role via `SetThinking(role, level)` (§12, §18.2). Reasoning for
+an agent is resolved with this precedence (highest wins):
+
+1. **per-role session override** (settings overlay / `SetThinking`),
+2. **per-role config** (`[roles.thinking]`),
+3. **per-model config** (`[models.X]` thinking/effort/display),
+4. **package defaults** (adaptive / high / summarized).
+
+A level maps to adaptive thinking at that effort with summarized display; `off` disables
+reasoning. The resolved settings are applied per **role** to every agent: coordinator,
+implementer, and each reviewer (a reviewer resolves its model fallback independently, but the
+`reviewers` role override/config applies to all reviewers uniformly).
 
 `max_turns` bounds how many tool-call turns a single engine `Run` may take. It is a
 **runaway backstop**, not a normal stopping condition: the high default (200) keeps the
@@ -638,13 +662,14 @@ Overlay contents:
   level)`; the daemon updates the live policy and emits an event so the change is in the
   log (and reflected in any other subscribed client).
 - **Thinking level** — `off | low | medium | high | xhigh | max`, changeable
-  **mid-session**. A session-wide reasoning override that applies to **every** agent
-  (coordinator + spawned implementer/reviewers), taking precedence over each model's
-  per-config thinking (§13) until changed. Selecting a value issues
-  `SetThinking(sessionID, level)`; the daemon updates the live coordinator loop and
-  rebuilds the implementer/reviewer specs so the next spawn uses it, then emits a
-  `thinking_level_changed` event. `off` disables reasoning; any effort level maps to
-  adaptive thinking at that effort with summarized display.
+  **mid-session**, set **per role** (coordinator / implementer / reviewers). Each role has
+  its own reasoning override that applies to that agent (and the reviewer fan-out for
+  `reviewers`), taking precedence over that role's config thinking (§13) until changed.
+  Selecting a value issues `SetThinking(sessionID, role, level)`; the daemon updates the live
+  coordinator loop (when the coordinator role changes) and rebuilds the implementer/reviewer
+  specs so the next spawn uses it, then emits a `thinking_level_changed` event carrying the
+  role. `off` disables reasoning; any effort level maps to adaptive thinking at that effort
+  with summarized display.
 - **Model / role configuration** — the headline feature. Per-role model selection:
   - **coordinator** — pick one model
   - **implementer** — pick one model
@@ -708,6 +733,53 @@ This needs the backlog exposed to clients over RPC. The daemon gains read RPCs �
 `ListBacklog` (summary rows) and `GetTask` (full task) — backed by `docs.Store`
 (`List`/`Get`); the TUI renders the list + detail views by calling them. Because clients
 are thin event/RPC consumers (§5), the same surface is reusable by the future phone client.
+
+### 18.6 Session history browser & reopen
+
+Every session is already durable: its event log is the source of truth on disk at
+`<workspace>/.ycc/sessions/<id>/events.jsonl` (§5.1). But today a client can only see
+*live, in-memory* sessions (`ListSessions` reflects the manager's map). Once the daemon
+restarts or an idle session is GC'd (§ task 0009), the on-disk logs are orphaned: nothing
+lists them, nothing lets the human re-read a finished session, and the promised "the
+session persists and can be **resumed or re-entered**" (§4.5) is unimplemented. This
+section closes that gap.
+
+**Durable session index.** The daemon can enumerate *all* sessions for a project —
+live and persisted — by scanning `.ycc/sessions/*/events.jsonl` and reducing each log to
+a summary (`event.Reduce`, §5/§20.3): id, mode, status (running/idle/error), started-at
+and last-activity timestamps, focused task(s), a short title (derived from the first user
+prompt / kickoff), and — once usage lands (§20) — token/cost totals. Live sessions in the
+manager's map take precedence over their on-disk snapshot so a running session shows live
+status. A new read RPC (`ListSessionHistory`, project-scoped) returns these summary rows;
+the existing `ListSessions` continues to mean "live only".
+
+**Browser UI.** A **session browser** is a modal list+detail view, opened from the home
+menu or settings overlay exactly like the backlog browser (§18.5). The list shows the
+summary rows (most-recent first); selecting one drills into a **read-only transcript** —
+the reduced/replayed event stream rendered with the same components the live session view
+uses, so reasoning, tool calls, and results display identically. From a selected session
+the human can **Reopen** it.
+
+**Reopen / re-enter (resume = replay).** Reopening a persisted session re-instantiates its
+coordinator on the *existing* log rather than starting a fresh one: the daemon loads the
+log, reconstructs the agent loop's conversation `history` from the events (model turns
+with their thinking/tool-call content, tool results, and user inputs — the same data the
+live loop appends, §7), restores mode and focus from the projection, and registers it in
+the manager so `Subscribe`/`SendInput`/`AnswerQuestion` work again. New activity appends to
+the same `events.jsonl` — one continuous log. This depends on the event log capturing
+enough to rebuild model history losslessly; where it does not yet, that is a bug to fix
+(the log is meant to be the whole state, §5.1). Reopen is exposed as a `ResumeSession`
+(a.k.a. reopen) RPC and interacts with session lifecycle/GC (§ task 0009) and
+context-window management (§ task 0010), since a resumed long session may need budgeting
+before its first new turn.
+
+**Shared modal "browser" surface.** The settings overlay (§18.2), backlog browser
+(§18.5), this session browser, and the cost view (§20.5, task 0029) are all the same
+shape: a modal, navigable list with a drill-in detail pane, opened over the home menu or a
+session and dismissed with Esc. These should share one reusable TUI component (a generic
+list+detail modal) plus a small "browsers" menu that routes to backlog / sessions / cost,
+rather than each re-implementing navigation. The same read RPCs back the future phone
+client (§5).
 
 ## 19. Onboarding flows
 
@@ -885,7 +957,9 @@ vendor prices change without touching the event log.
   the multiple sessions that may touch it.
 - **Project rollup.** A `GetUsage` RPC + a `ycc cost` CLI view render the cross-session
   breakdown by task / model / time from the aggregator (§20.3). This is the "detailed cost
-  breakdown by backlog task over time" surface.
+  breakdown by backlog task over time" surface. In the TUI this cost view is a modal that
+  shares the generic list+detail "browser" surface with the session history browser
+  (§18.6) and the backlog browser (§18.5).
 
 Relation to §10 task 0010 (context-window management): that task surfaces *context size*
 to avoid window overflow; this section tracks *spend*. They share the per-turn usage signal

@@ -1,7 +1,7 @@
 ---
 id: "0030"
 title: Let the work coordinator create backlog tasks (split + follow-on work)
-status: in_progress
+status: done
 priority: 2
 created: "2026-06-26"
 updated: "2026-06-27"
@@ -56,4 +56,6 @@ both a capability gap and a spec/code drift.
 - 2026-06-27 implementer report: Wired `create_task` into the work coordinator.  Changes: 1. internal/orchestrator/orchestrator.go — added `createTask(d)` to the `CoordinatorTools` registry, next to `updateTask(d)`. 2. internal/orc
 …[truncated]
 - 2026-06-27 review (claude): accept — The change correctly wires create_task into the work coordinator's CoordinatorTools registry, extends the coordinatorSystem prompt with well-balanced split vs. follow-on guidance that explicitly disco
+…[truncated]
+- 2026-06-27 decision: accept — commit a510484: Let work coordinator create backlog tasks (split + follow-on)  Wire create_task into CoordinatorTools and add prompt guidance for splitting oversized tasks and capturing follow-on work without scope-c
 …[truncated]

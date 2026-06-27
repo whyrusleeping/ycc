@@ -123,13 +123,14 @@ message SetRoleConfigRequest {
 }
 message SetRoleConfigResponse {}
 
-// SetThinking changes a session-wide thinking/effort level mid-session (spec
-// §18.2). The override applies to every agent in the session (coordinator +
-// spawned subagents) and takes precedence over the per-model config until
-// changed. Levels: off | low | medium | high | xhigh | max.
+// SetThinking changes a thinking/effort level mid-session (spec §7.4, §18.2). The
+// override applies per role (empty role = all roles) and takes precedence over the
+// per-role config then per-model config until changed. Levels: off | low | medium
+// | high | xhigh | max.
 message SetThinkingRequest {
   string session_id = 1;
   string level = 2; // off | low | medium | high | xhigh | max
+  string role = 3;  // empty = all roles; coordinator | implementer | reviewers
 }
 message SetThinkingResponse {}
 

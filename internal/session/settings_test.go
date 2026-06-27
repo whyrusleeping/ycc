@@ -169,7 +169,7 @@ func TestThinkingForLevel(t *testing.T) {
 func TestSetThinkingUpdatesLoopAndSpecs(t *testing.T) {
 	s, buf := newTestSession(t)
 
-	if err := s.SetThinking("low"); err != nil {
+	if err := s.SetThinking("", "low"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -186,7 +186,7 @@ func TestSetThinkingUpdatesLoopAndSpecs(t *testing.T) {
 		t.Fatalf("reviewer specs not overridden: %+v", s.deps.Reviewers)
 	}
 	// thinkingFor honors the override regardless of model name.
-	if th := s.thinkingFor("a"); th.Effort != "low" {
+	if th := s.thinkingFor(roleCoordinator, "a"); th.Effort != "low" {
 		t.Fatalf("thinkingFor override = %+v", th)
 	}
 	if !logHas(buf, string(event.ThinkingLevelChanged)) {
@@ -194,7 +194,7 @@ func TestSetThinkingUpdatesLoopAndSpecs(t *testing.T) {
 	}
 
 	// "off" disables reasoning across the live loop + specs.
-	if err := s.SetThinking("off"); err != nil {
+	if err := s.SetThinking("", "off"); err != nil {
 		t.Fatal(err)
 	}
 	if s.loop.Thinking != "" || s.loop.Effort != "" || s.loop.ThinkingDisplay != "" {
@@ -205,7 +205,7 @@ func TestSetThinkingUpdatesLoopAndSpecs(t *testing.T) {
 	}
 
 	// Unknown level rejected, override unchanged.
-	if err := s.SetThinking("bogus"); err == nil {
+	if err := s.SetThinking("", "bogus"); err == nil {
 		t.Fatal("expected error for unknown thinking level")
 	}
 }
@@ -230,7 +230,7 @@ func TestSetThinkingHonoredByModeSwitchBuildLoop(t *testing.T) {
 		if err != nil {
 			return nil, err
 		}
-		th := s.thinkingFor(coord)
+		th := s.thinkingFor(roleCoordinator, coord)
 		loop := &engine.Loop{
 			Client: client, Model: model, System: sys, Tools: reg, Emitter: s.emitter,
 			Thinking: th.Thinking, Effort: th.Effort, ThinkingDisplay: th.ThinkingDisplay,
@@ -250,7 +250,7 @@ func TestSetThinkingHonoredByModeSwitchBuildLoop(t *testing.T) {
 	}
 
 	// Set a non-default override, then drive a mode switch.
-	if err := s.SetThinking("max"); err != nil {
+	if err := s.SetThinking("", "max"); err != nil {
 		t.Fatal(err)
 	}
 	next, err := s.buildLoop("work", "go")
@@ -260,5 +260,50 @@ func TestSetThinkingHonoredByModeSwitchBuildLoop(t *testing.T) {
 	if next.Thinking != "adaptive" || next.Effort != "max" || next.ThinkingDisplay != "summarized" {
 		t.Fatalf("mode-switch loop did not honor override: thinking=%q effort=%q display=%q",
 			next.Thinking, next.Effort, next.ThinkingDisplay)
+	}
+}
+
+// Two roles can share the same logical model yet resolve to different reasoning
+// via per-role config ([roles.thinking]) — and a per-role session override wins
+// over that. This exercises the documented precedence: per-role override >
+// per-role config > per-model config > defaults.
+func TestThinkingPerRoleResolution(t *testing.T) {
+	cfg := &config.Config{
+		Models: map[string]config.Model{
+			// One model shared by every role, with a per-model default effort.
+			"shared": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "m", Effort: "medium"},
+		},
+		Roles: config.Roles{
+			Coordinator: "shared", Implementer: "shared", Reviewers: []string{"shared"},
+			// Per-role config differentiates roles that share a model.
+			Thinking: config.RoleThinking{Coordinator: "xhigh", Implementer: "low"},
+		},
+	}
+	if err := config.Save(t.TempDir()+"/c.toml", cfg); err != nil {
+		t.Fatalf("config invalid: %v", err)
+	}
+	reg := config.NewRegistry(cfg)
+	s := &Session{reg: reg, thinkLevels: map[string]string{}}
+
+	// per-role config: coordinator xhigh, implementer low.
+	if th := s.thinkingFor(roleCoordinator, "shared"); th.Effort != "xhigh" {
+		t.Fatalf("coordinator per-role config = %+v, want xhigh", th)
+	}
+	if th := s.thinkingFor(roleImplementer, "shared"); th.Effort != "low" {
+		t.Fatalf("implementer per-role config = %+v, want low", th)
+	}
+	// reviewers has no per-role config -> falls back to per-model (medium).
+	if th := s.thinkingFor(roleReviewers, "shared"); th.Effort != "medium" {
+		t.Fatalf("reviewers fallback to per-model = %+v, want medium", th)
+	}
+
+	// per-role session override wins over per-role config (implementer -> max),
+	// without affecting the coordinator.
+	s.thinkLevels[roleImplementer] = "max"
+	if th := s.thinkingFor(roleImplementer, "shared"); th.Effort != "max" {
+		t.Fatalf("implementer override = %+v, want max", th)
+	}
+	if th := s.thinkingFor(roleCoordinator, "shared"); th.Effort != "xhigh" {
+		t.Fatalf("coordinator unchanged = %+v, want xhigh", th)
 	}
 }

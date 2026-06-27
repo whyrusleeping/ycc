@@ -75,11 +75,41 @@ func (m Model) ResolveThinking() Thinking {
 	return Thinking{Thinking: think, Effort: effort, ThinkingDisplay: display}
 }
 
+// RoleThinking carries an optional per-role reasoning override (spec §7.4, §13,
+// §18.2). Each field is a single-knob level (off|low|medium|high|xhigh|max); an
+// empty field means "unset" and falls back to the per-model config then package
+// defaults. The reviewers level applies uniformly to the whole reviewer fan-out.
+type RoleThinking struct {
+	Coordinator string `toml:"coordinator,omitempty"`
+	Implementer string `toml:"implementer,omitempty"`
+	Reviewers   string `toml:"reviewers,omitempty"`
+}
+
 // Roles assigns logical model names to workflow roles.
 type Roles struct {
 	Coordinator string   `toml:"coordinator"`
 	Implementer string   `toml:"implementer"`
 	Reviewers   []string `toml:"reviewers"`
+	// Thinking optionally overrides the reasoning level per role, layered above
+	// the per-model config (spec §7.4). Unset roles fall back to per-model.
+	Thinking RoleThinking `toml:"thinking,omitempty"`
+}
+
+// Role name constants for per-role lookups.
+const (
+	RoleCoordinator = "coordinator"
+	RoleImplementer = "implementer"
+	RoleReviewers   = "reviewers"
+)
+
+// validThinkingLevel reports whether s is an allowed single-knob thinking level.
+func validThinkingLevel(s string) bool {
+	switch s {
+	case "off", "low", "medium", "high", "xhigh", "max":
+		return true
+	default:
+		return false
+	}
 }
 
 // Config is the whole ycc configuration.
@@ -170,6 +200,15 @@ func (c *Config) validate() error {
 			return fmt.Errorf("role references unknown model %q", name)
 		}
 	}
+	for role, lvl := range map[string]string{
+		RoleCoordinator: c.Roles.Thinking.Coordinator,
+		RoleImplementer: c.Roles.Thinking.Implementer,
+		RoleReviewers:   c.Roles.Thinking.Reviewers,
+	} {
+		if lvl != "" && !validThinkingLevel(lvl) {
+			return fmt.Errorf("roles.thinking.%s: unknown thinking level %q", role, lvl)
+		}
+	}
 	return nil
 }
 
@@ -192,6 +231,25 @@ func (r *Registry) MaxTurns() int { return r.cfg.MaxTurns }
 func (r *Registry) CoordinatorName() string { return r.cfg.Roles.Coordinator }
 func (r *Registry) ImplementerName() string { return r.cfg.Roles.Implementer }
 func (r *Registry) ReviewerNames() []string { return r.cfg.Roles.Reviewers }
+
+// RoleThinking returns the configured per-role thinking level for a role
+// ("coordinator"|"implementer"|"reviewers"). ok is false when the role has no
+// per-role override configured (so callers fall back to per-model config).
+func (r *Registry) RoleThinking(role string) (string, bool) {
+	var lvl string
+	switch role {
+	case RoleCoordinator:
+		lvl = r.cfg.Roles.Thinking.Coordinator
+	case RoleImplementer:
+		lvl = r.cfg.Roles.Thinking.Implementer
+	case RoleReviewers:
+		lvl = r.cfg.Roles.Thinking.Reviewers
+	}
+	if lvl == "" {
+		return "", false
+	}
+	return lvl, true
+}
 
 // ModelInfo describes a configured logical model for enumeration (ListModels).
 type ModelInfo struct {
