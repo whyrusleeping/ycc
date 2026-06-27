@@ -39,8 +39,8 @@ func TestLogPersistAndReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	emit(t, l,1, SessionStarted)
-	emit(t, l,2, ModelTurn)
+	emit(t, l, 1, SessionStarted)
+	emit(t, l, 2, ModelTurn)
 	if l.LastSeq() != 2 {
 		t.Fatalf("LastSeq = %d, want 2", l.LastSeq())
 	}
@@ -66,7 +66,7 @@ func TestSubscribeReplayFromOffset(t *testing.T) {
 	}
 	defer l.Close()
 	for i := 1; i <= 5; i++ {
-		emit(t, l,i, ModelTurn)
+		emit(t, l, i, ModelTurn)
 	}
 
 	ch, cancel := l.Subscribe(3) // want seq 4,5 replayed
@@ -77,7 +77,7 @@ func TestSubscribeReplayFromOffset(t *testing.T) {
 	}
 
 	// Live event arrives after subscription.
-	emit(t, l,6, ToolCall)
+	emit(t, l, 6, ToolCall)
 	live := collect(t, ch, 1)
 	if live[0].Seq != 6 {
 		t.Fatalf("live seq = %d, want 6", live[0].Seq)
@@ -92,7 +92,7 @@ func TestSubscribeFromZero(t *testing.T) {
 	}
 	defer l.Close()
 	for i := 1; i <= 3; i++ {
-		emit(t, l,i, ModelTurn)
+		emit(t, l, i, ModelTurn)
 	}
 	ch, cancel := l.Subscribe(0)
 	defer cancel()
@@ -122,5 +122,36 @@ func TestReduce(t *testing.T) {
 	}
 	if p.Status != StatusIdle || p.LastReport != "done" || p.LastSeq != 6 {
 		t.Fatalf("status/report/lastseq = %q/%q/%d", p.Status, p.LastReport, p.LastSeq)
+	}
+}
+
+// The projection attributes each model_turn to the task in focus at the time:
+// turns before any task_focus are "unattributed" (empty key); a later focus moves
+// attribution to the new task (spec §20.2).
+func TestReduceAttributesTurnsToFocusedTask(t *testing.T) {
+	events := []Event{
+		{Seq: 1, Type: SessionStarted, Data: map[string]any{"mode": "work"}},
+		{Seq: 2, Type: ModelTurn}, // before any focus -> unattributed
+		{Seq: 3, Type: TaskFocus, Data: map[string]any{"task": "0007"}},
+		{Seq: 4, Type: ModelTurn}, // -> 0007
+		{Seq: 5, Type: ModelTurn}, // -> 0007
+		{Seq: 6, Type: TaskFocus, Data: map[string]any{"task": "0008"}},
+		{Seq: 7, Type: ModelTurn}, // -> 0008
+	}
+	p := Reduce(events)
+	if p.FocusTask != "0008" {
+		t.Fatalf("FocusTask = %q, want 0008", p.FocusTask)
+	}
+	if p.Turns != 4 {
+		t.Fatalf("Turns = %d, want 4", p.Turns)
+	}
+	if p.TurnsByTask[""] != 1 {
+		t.Fatalf("unattributed turns = %d, want 1", p.TurnsByTask[""])
+	}
+	if p.TurnsByTask["0007"] != 2 {
+		t.Fatalf("0007 turns = %d, want 2", p.TurnsByTask["0007"])
+	}
+	if p.TurnsByTask["0008"] != 1 {
+		t.Fatalf("0008 turns = %d, want 1", p.TurnsByTask["0008"])
 	}
 }

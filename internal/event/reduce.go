@@ -22,11 +22,17 @@ type Projection struct {
 	LastReport       string
 	LastError        string
 	LastSeq          int
+	// FocusTask is the backlog task the session is currently working on, set by
+	// the most recent task_focus event ("" before any focus). TurnsByTask counts
+	// model_turns attributed to each focused task (spec §20.2); the empty-string
+	// key holds turns that occurred before any focus ("unattributed").
+	FocusTask   string
+	TurnsByTask map[string]int
 }
 
 // Reduce folds an event slice into a Projection.
 func Reduce(events []Event) Projection {
-	var p Projection
+	p := Projection{TurnsByTask: map[string]int{}}
 	for _, ev := range events {
 		p.LastSeq = ev.Seq
 		switch ev.Type {
@@ -35,8 +41,11 @@ func Reduce(events []Event) Projection {
 			p.Mode = str(ev.Data, "mode")
 			p.InteractionLevel = str(ev.Data, "interaction_level")
 			p.Workspace = str(ev.Data, "workspace")
+		case TaskFocus:
+			p.FocusTask = str(ev.Data, "task")
 		case ModelTurn:
 			p.Turns++
+			p.TurnsByTask[p.FocusTask]++
 		case ToolCall:
 			p.ToolCalls++
 		case SessionIdle:

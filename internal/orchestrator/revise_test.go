@@ -42,6 +42,48 @@ func text(s string) *gollama.ResponseMessageGenerate {
 	return &gollama.ResponseMessageGenerate{Choices: []gollama.GenChoice{{Message: gollama.Message{Role: "assistant", Content: s}}}}
 }
 
+// Delegating a task to the implementer establishes focus on it (spec §20.2), and
+// dedupes against a focus already set (e.g. by an earlier update_task→in_progress
+// or the pm hand-off) so the same task isn't recorded twice.
+func TestSpawnImplementerEmitsTaskFocus(t *testing.T) {
+	ws := t.TempDir()
+	repo, err := git.Open(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := docs.NewStore(ws)
+	if _, err := store.Create("a task", "## Work log\n", 1, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	rec := &captureRec{}
+	implTurner := &scripted{resp: []*gollama.ResponseMessageGenerate{
+		call("finish", `{"report":"done"}`),
+		call("finish", `{"report":"done again"}`),
+	}}
+	d := &Deps{
+		Workspace:   ws,
+		Docs:        store,
+		Repo:        repo,
+		Emitter:     event.NewEmitter(rec, "coordinator"),
+		Implementer: AgentSpec{Name: "impl", Model: "m", NewClient: func() engine.Turner { return implTurner }},
+		Asker:       noopAsker{},
+	}
+	ctx := context.Background()
+	if _, err := spawnImplementer(d).Call(ctx, map[string]any{"task_id": "0001", "plan": "go"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := rec.focusTasks(); len(got) != 1 || got[0] != "0001" {
+		t.Fatalf("focus events = %v, want [0001]", got)
+	}
+	// Already focused → no duplicate.
+	if _, err := spawnImplementer(d).Call(ctx, map[string]any{"task_id": "0001", "plan": "again"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := rec.focusTasks(); len(got) != 1 {
+		t.Fatalf("spawn re-emitted focus for the same task: %v", got)
+	}
+}
+
 type noopAsker struct{}
 
 func (noopAsker) Ask(context.Context, string, []string) (string, error) { return "ok", nil }

@@ -163,6 +163,10 @@ func switchToWork(d *Deps) *gollama.Tool {
 			if !ok {
 				return tools.OkResult("User declined to start work; staying in pm mode."), nil
 			}
+			// The hand-off carries the explicit target task; record focus now so the
+			// work session is durably linked to it for cost attribution (spec §20.2).
+			// The work coordinator dedupes when it later accepts the same task.
+			d.emitFocus(id)
 			return &gollama.ToolResult{
 				Content:    "transitioning to work mode for task " + id,
 				Structured: &tools.Control{Stop: true, Mode: "work", Report: "Plan agreed for task " + id + "; switching to work mode.", Prompt: workHandoffPrompt(id, plan)},

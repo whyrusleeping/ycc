@@ -39,6 +39,11 @@ const (
 	CommitMade       Type = "commit_made"
 	QuestionAsked    Type = "question_asked"
 	QuestionAnswered Type = "question_answered"
+	// TaskFocus durably links a session to the backlog task it is working on so
+	// usage can be attributed "by backlog task" (spec §20.2). Emitted when focus
+	// is established (data: { task: "0007" }); subsequent model_turns are
+	// attributed to the most recent focus by the projection.
+	TaskFocus Type = "task_focus"
 	// Settings overlay (spec §18.2): mid-session config changes recorded in the log.
 	InteractionLevelChanged Type = "interaction_level_changed"
 	RoleConfigChanged       Type = "role_config_changed"
@@ -147,7 +152,7 @@ func Render(ev Event) string {
 			fmt.Fprintf(&b, " (%d tok)", tok)
 		}
 	default:
-		for _, k := range []string{"text", "report", "msg", "plan", "summary", "role", "sha"} {
+		for _, k := range []string{"text", "report", "msg", "plan", "summary", "role", "sha", "task"} {
 			if v, ok := ev.Data[k].(string); ok && v != "" {
 				fmt.Fprintf(&b, " %s", truncate(v, 200))
 				break

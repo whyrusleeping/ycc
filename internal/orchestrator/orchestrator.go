@@ -67,6 +67,26 @@ type Deps struct {
 	mu        sync.Mutex
 	impl      *engine.Loop
 	reviewers []*reviewerHandle
+	focus     string // backlog task currently in focus (spec §20.2); guarded by mu
+}
+
+// emitFocus records a task_focus event when the session's active focus moves to a
+// new task (spec §20.2), durably linking the session to the task so usage can be
+// attributed by backlog task. It dedupes: re-focusing the already-focused task is
+// a no-op, so the log isn't littered with duplicate focus events for one task.
+func (d *Deps) emitFocus(taskID string) {
+	id := strings.TrimSpace(taskID)
+	if id == "" {
+		return
+	}
+	d.mu.Lock()
+	if d.focus == id {
+		d.mu.Unlock()
+		return
+	}
+	d.focus = id
+	d.mu.Unlock()
+	d.Emitter.Emit(event.TaskFocus, map[string]any{"task": id})
 }
 
 type reviewerHandle struct {
@@ -227,6 +247,8 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 			if err != nil {
 				return tools.ErrResult("spawn_implementer: %v", err), nil
 			}
+			// Delegating a task is an unambiguous focus signal (spec §20.2).
+			d.emitFocus(id)
 			reg := tools.New()
 			reg.Add(tools.Worker(&tools.Workspace{Root: d.Workspace})...)
 			impl := d.implementer()
@@ -393,6 +415,11 @@ func updateTask(d *Deps) *gollama.Tool {
 			status, _ := tools.GetString(params, "status")
 			if _, err := d.Docs.Update(id, func(t *docs.Task) { t.Status = docs.Status(status) }); err != nil {
 				return tools.ErrResult("update_task: %v", err), nil
+			}
+			// Moving a task in_progress is the coordinator accepting it: record the
+			// session→task focus for cost attribution (spec §20.2).
+			if status == "in_progress" {
+				d.emitFocus(id)
 			}
 			d.Docs.RenderIndex()
 			d.Emitter.Emit(event.DocUpdated, map[string]any{"task": id, "status": status})

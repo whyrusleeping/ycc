@@ -176,3 +176,87 @@ type declineAsker struct{}
 
 func (declineAsker) Ask(context.Context, string, []string) (string, error) { return "ok", nil }
 func (declineAsker) Confirm(context.Context, string) (bool, error)         { return false, nil }
+
+// captureRec records every event in memory so tests can assert on emission.
+type captureRec struct{ events []event.Event }
+
+func (r *captureRec) Record(actor string, t event.Type, data map[string]any) event.Event {
+	ev := event.Event{Seq: len(r.events) + 1, Actor: actor, Type: t, Data: data}
+	r.events = append(r.events, ev)
+	return ev
+}
+
+func (r *captureRec) focusTasks() []string {
+	var out []string
+	for _, ev := range r.events {
+		if ev.Type == event.TaskFocus {
+			out = append(out, ev.Data["task"].(string))
+		}
+	}
+	return out
+}
+
+// The pm→work hand-off records a task_focus for the explicit target task so the
+// session is durably linked to it (spec §20.2).
+func TestSwitchToWorkEmitsTaskFocus(t *testing.T) {
+	rec := &captureRec{}
+	d := depsFor(t)
+	d.Emitter = event.NewEmitter(rec, "coordinator")
+
+	if _, err := switchToWork(d).Call(context.Background(), map[string]any{"task_id": "0021", "plan": "p"}); err != nil {
+		t.Fatalf("switch_to_work: %v", err)
+	}
+	if got := rec.focusTasks(); len(got) != 1 || got[0] != "0021" {
+		t.Fatalf("focus events = %v, want [0021]", got)
+	}
+}
+
+// A declined hand-off must not record focus (work never starts).
+func TestSwitchToWorkDeclinedEmitsNoFocus(t *testing.T) {
+	rec := &captureRec{}
+	d := depsFor(t)
+	d.Emitter = event.NewEmitter(rec, "coordinator")
+	d.Asker = declineAsker{}
+
+	if _, err := switchToWork(d).Call(context.Background(), map[string]any{"task_id": "0021", "plan": "p"}); err != nil {
+		t.Fatalf("switch_to_work: %v", err)
+	}
+	if got := rec.focusTasks(); len(got) != 0 {
+		t.Fatalf("declined hand-off emitted focus events %v", got)
+	}
+}
+
+// The work coordinator records focus when it accepts a task (update_task→
+// in_progress), and dedupes: re-focusing the same task is a no-op, focusing a new
+// task emits again. Other status changes don't establish focus.
+func TestUpdateTaskInProgressEmitsFocusWithDedupe(t *testing.T) {
+	rec := &captureRec{}
+	d := depsFor(t)
+	d.Emitter = event.NewEmitter(rec, "coordinator")
+	ctx := context.Background()
+
+	a, err := d.Docs.Create("task a", "", 3, nil, nil)
+	if err != nil {
+		t.Fatalf("create a: %v", err)
+	}
+	b, err := d.Docs.Create("task b", "", 3, nil, nil)
+	if err != nil {
+		t.Fatalf("create b: %v", err)
+	}
+
+	call := func(id, status string) {
+		if _, err := updateTask(d).Call(ctx, map[string]any{"task_id": id, "status": status}); err != nil {
+			t.Fatalf("update_task %s %s: %v", id, status, err)
+		}
+	}
+	call(a.ID, "in_progress") // focus a
+	call(a.ID, "in_progress") // dedupe: still a, no new event
+	call(a.ID, "in_review")   // non-pickup status: no focus
+	call(b.ID, "in_progress") // focus b
+
+	want := []string{a.ID, b.ID}
+	got := rec.focusTasks()
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("focus events = %v, want %v", got, want)
+	}
+}

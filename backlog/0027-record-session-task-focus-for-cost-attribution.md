@@ -1,7 +1,7 @@
 ---
 id: "0027"
 title: Record session→task focus for cost attribution
-status: todo
+status: in_progress
 priority: 2
 created: "2026-06-26"
 updated: "2026-06-26"
@@ -38,3 +38,13 @@ kickoff prompt — nothing in the durable event log records it.
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-26 plan: Implement durable session→task focus attribution (spec §20.2).  1. Event type: In `internal/event`, add a new `task_focus` event type with payload `{ task: "0007" }`. Mirror the existing event-type
+…[truncated]
+- 2026-06-26 implementer report: Implemented durable session→task focus attribution for cost grouping (spec §20.2).  Changes: - internal/event/event.go: added new `TaskFocus` event type (`task_focus`, `data: { task: "0007" }`), do
+…[truncated]
+- 2026-06-26 review (claude): accept — The change fully satisfies the task. It adds a new `task_focus` event type (`data: { task }`) in internal/event, emits focus on the pm→work hand-off (switch_to_work), on coordinator task pickup (upd
+…[truncated]
+- 2026-06-26 revision: Addressed the reviewer nit on Render().  Changes: - internal/event/event.go: added "task" to the Render() default-case key list so task_focus events surface their task id in the terse human-facing lin
+…[truncated]
+- 2026-06-26 review (claude): accept — The revision addresses the prior nit: Render now includes "task" in its key list so task_focus events display the focused task id in the terse stream, with a dedicated test (TestRenderTaskFocus). The 
+…[truncated]

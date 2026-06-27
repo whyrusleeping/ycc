@@ -1,7 +1,7 @@
 ---
 id: "0026"
 title: Capture per-turn token usage on model_turn events
-status: in_progress
+status: done
 priority: 2
 created: "2026-06-26"
 updated: "2026-06-26"
@@ -50,4 +50,6 @@ attributable per role and per model.
 - 2026-06-26 implementer report: Implemented per-turn token usage + model identity capture on `model_turn` events (Task 0026).  Changes: - `internal/event/event.go`: Added a typed `Usage` struct (Input/Output/CacheRead/CacheWrite/Tot
 …[truncated]
 - 2026-06-26 review (claude): accept — The change fully satisfies Task 0026. The engine Loop now carries logical ModelName and Backend identity (set for coordinator role names, subagent AgentSpec.Name, and the spike), SetBackend updates th
+…[truncated]
+- 2026-06-26 decision: accept — commit 1c05f12: Capture per-turn token usage and model identity on model_turn events  Add logical ModelName/Backend to engine Loop (updated on SetBackend swaps), emit typed event.Usage (input/output/cache_read/cache_
 …[truncated]
