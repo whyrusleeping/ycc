@@ -764,3 +764,97 @@ project" entry can route to the right behaviour; the prompt encodes both branche
 establishes the initial spec slice + backlog conventions, whereas `feature` assumes those
 already exist. Keeping it a distinct, prominently-surfaced preset is what makes onboarding
 discoverable.
+
+## 20. Token usage & cost accounting
+
+ycc tracks token usage on every model turn and rolls it up into **cost breakdowns by
+backlog task over time**. The design follows the spec's core principle (§5): the event
+log is the source of truth, and usage/cost are **projections** over it — no separate
+ledger to keep in sync.
+
+### 20.1 Capture (per turn)
+
+gollama's `Turn` already returns a `Usage` struct (prompt, completion, total, plus
+`CacheCreationInputTokens` / `CacheReadInputTokens` and `PromptTokensDetails.CachedTokens`).
+The engine currently discards it. Instead, every `model_turn` event carries a `usage`
+object **and the model identity** that produced it:
+
+```jsonc
+{ "type": "model_turn",
+  "actor": "reviewer:gpt",          // role is already the actor (§5.2)
+  "data": {
+    "text": "…", "tool_calls": 1,
+    "model_name": "gpt",            // logical name (§13)
+    "backend": "openai", "model_id": "gpt-5.5",
+    "usage": { "input": 1820, "output": 412, "cache_read": 1536,
+               "cache_write": 0, "total": 2232 }
+  } }
+```
+
+So the engine `Loop` must know its **logical model name** (not only the resolved model
+id) — added beside `Model`, set from the role's `AgentSpec.Name` for subagents and the
+coordinator's role name. The actor already distinguishes coordinator / implementer /
+reviewer:<name>, so usage is attributable per **role and per model** with no extra
+plumbing. Empty/zero usage (e.g. backends that don't report it) records zeros and is
+harmless.
+
+### 20.2 Attribution to a backlog task (session → task focus)
+
+A `work` session is essentially "do one task," but today nothing **durably** records
+*which* task a session worked on (the task lives only in the kickoff prompt). To attribute
+cost by task we record the linkage as an event: a new `task_focus` event
+(`data: { task: "0007" }`) is emitted when the focus is established —
+
+- carried in by the `pm → work` hand-off (`switch_to_work` already knows the target task),
+  and/or
+- emitted by the `work` coordinator when it picks/accepts a task (it already calls
+  `update_task`→`in_progress` and `spawn_implementer(task_id=…)`).
+
+A session may touch more than one task; attribution uses the **active focus** at the time
+of each `model_turn` (turns before any focus are attributed to "unattributed"). The
+projection (§20.3) folds usage into the currently-focused task. This keeps task linkage
+in the log (replayable, syncable) rather than as out-of-band session metadata.
+
+### 20.3 Aggregation & projection
+
+The usage projection (an extension of `event.Reduce`, §5) folds a session's `model_turn`
+usage into totals **by model and by focused task**. A cross-session aggregator
+(`internal/usage`) scans a workspace's `.ycc/sessions/*/events.jsonl`, reduces each, and
+produces a breakdown grouped by **task × model × time** (e.g. per-day buckets), plus
+per-session and project totals. Because raw events are the source, the breakdown is
+always recomputable and never drifts.
+
+### 20.4 Pricing & cost
+
+Each `[models.X]` config block (§13) gains optional **pricing** in US dollars per
+million tokens, since rates differ by model and by token class:
+
+```toml
+[models.claude]
+# … existing fields …
+price_input        = 3.00   # $/Mtok for fresh input
+price_output       = 15.00  # $/Mtok for output
+price_cache_read   = 0.30   # $/Mtok for cache-read (cheaper) input
+price_cache_write  = 3.75   # $/Mtok for cache-creation input
+```
+
+Cost for a turn = Σ(tokens_class × rate_class). The registry exposes pricing per logical
+model; the aggregator joins usage with pricing to produce dollar costs. Models with **no
+pricing configured report token counts only** (cost shown as "—"), so the feature degrades
+gracefully and never invents numbers. Pricing is config, not code, so it can be updated as
+vendor prices change without touching the event log.
+
+### 20.5 Surfacing
+
+- **Per-session, live.** The usage projection feeds the session view / `SessionIdle` so a
+  running session shows accumulated tokens (and cost when priced).
+- **By task, durable.** On `work` completion, a one-line **usage/cost summary** is appended
+  to the task's work log (§6.2), so the cost of a task accrues in the backlog itself across
+  the multiple sessions that may touch it.
+- **Project rollup.** A `GetUsage` RPC + a `ycc cost` CLI view render the cross-session
+  breakdown by task / model / time from the aggregator (§20.3). This is the "detailed cost
+  breakdown by backlog task over time" surface.
+
+Relation to §10 task 0010 (context-window management): that task surfaces *context size*
+to avoid window overflow; this section tracks *spend*. They share the per-turn usage signal
+but answer different questions.

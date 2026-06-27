@@ -66,6 +66,10 @@ func main() {
 		if *bearer {
 			client.SetBearerToken(key)
 		} else {
+			// Non-bearer => native Anthropic transport. Pin it explicitly so
+			// prompt caching (cache_control breakpoints) works even when the
+			// base URL doesn't match gollama's "anthropic.com" auto-detection.
+			client.SetAnthropicMode(true)
 			client.SetAPIKey(key)
 		}
 	} else if *keyEnv != "" {

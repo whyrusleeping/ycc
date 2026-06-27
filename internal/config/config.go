@@ -247,6 +247,13 @@ func (r *Registry) Build(name string) (engine.Turner, string, error) {
 	}
 	switch m.Backend {
 	case "anthropic":
+		// Pin the native Anthropic transport explicitly rather than relying on
+		// gollama's URL auto-detection (which only matches "anthropic.com").
+		// This guarantees the Anthropic /messages path — and with it the
+		// automatic cache_control: ephemeral breakpoints (system prompt, last
+		// tool definition, recent messages) that drive prompt caching — is used
+		// even when the model routes through a proxy/gateway on a custom domain.
+		c.SetAnthropicMode(true)
 		if key != "" {
 			c.SetAPIKey(key)
 		}

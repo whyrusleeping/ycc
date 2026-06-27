@@ -469,7 +469,7 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
 			var cmd tea.Cmd
 			m.vp, cmd = m.vp.Update(msg)
-			m.follow = false
+			m.follow = m.vp.AtBottom()
 			return m, cmd
 		}
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
@@ -526,11 +526,11 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "pgup":
 			m.vp.HalfPageUp()
-			m.follow = false
+			m.follow = m.vp.AtBottom()
 			return m, nil
 		case "pgdown":
 			m.vp.HalfPageDown()
-			m.follow = false
+			m.follow = m.vp.AtBottom()
 			return m, nil
 		case "enter":
 			text := strings.TrimSpace(m.input.Value())
