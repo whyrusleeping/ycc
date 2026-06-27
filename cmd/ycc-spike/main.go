@@ -85,13 +85,15 @@ func main() {
 	reg.Add(tools.Worker(&tools.Workspace{Root: absDir})...)
 
 	loop := &engine.Loop{
-		Client:   client,
-		Model:    *model,
-		System:   systemPrompt,
-		Tools:    reg,
-		Emitter:  emitter,
-		MaxTurns: *maxTurns,
-		MaxTok:   *maxTok,
+		Client:    client,
+		Model:     *model,
+		ModelName: *model,
+		Backend:   client.Backend().String(),
+		System:    systemPrompt,
+		Tools:     reg,
+		Emitter:   emitter,
+		MaxTurns:  *maxTurns,
+		MaxTok:    *maxTok,
 	}
 	loop.Seed(task)
 

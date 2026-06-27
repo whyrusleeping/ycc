@@ -210,7 +210,7 @@ func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []str
 	if err != nil {
 		return fmt.Errorf("build coordinator backend: %w", err)
 	}
-	s.currentLoop().SetBackend(client, model, s.thinkingFor(newCoord))
+	s.currentLoop().SetBackend(client, model, newCoord, s.reg.BackendFor(newCoord), s.thinkingFor(newCoord))
 
 	s.mu.Lock()
 	s.coordinator, s.implementer, s.reviewers = newCoord, newImpl, newRevs
@@ -301,8 +301,9 @@ func (s *Session) agentSpec(name string) (orchestrator.AgentSpec, error) {
 	}
 	th := s.thinkingFor(name)
 	return orchestrator.AgentSpec{
-		Name:  name,
-		Model: model,
+		Name:    name,
+		Model:   model,
+		Backend: s.reg.BackendFor(name),
 		NewClient: func() engine.Turner {
 			c, _, _ := s.reg.Build(name)
 			return c
@@ -549,7 +550,8 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 		}
 		th := s.thinkingFor(coord)
 		loop := &engine.Loop{
-			Client: client, Model: model, System: sys, Tools: reg, Emitter: emitter,
+			Client: client, Model: model, ModelName: coord, Backend: m.reg.BackendFor(coord),
+			System: sys, Tools: reg, Emitter: emitter,
 			MaxTok: m.reg.MaxTokens(), MaxTurns: m.reg.MaxTurns(),
 			Thinking: th.Thinking, Effort: th.Effort, ThinkingDisplay: th.ThinkingDisplay,
 		}
@@ -579,8 +581,9 @@ func (m *Manager) agentSpec(name string) (orchestrator.AgentSpec, error) {
 	}
 	th := m.reg.ThinkingFor(name)
 	return orchestrator.AgentSpec{
-		Name:  name,
-		Model: model,
+		Name:    name,
+		Model:   model,
+		Backend: m.reg.BackendFor(name),
 		NewClient: func() engine.Turner {
 			c, _, _ := m.reg.Build(name)
 			return c

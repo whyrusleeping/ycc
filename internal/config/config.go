@@ -217,6 +217,16 @@ func (r *Registry) Has(name string) bool {
 	return ok
 }
 
+// BackendFor returns the logical backend family ("anthropic", "openai", ...) for
+// a configured model name, or "" if unknown. Used to label per-turn usage events
+// (spec §20.1) with the backend that produced them.
+func (r *Registry) BackendFor(name string) string {
+	if m, ok := r.cfg.Models[name]; ok {
+		return m.Backend
+	}
+	return ""
+}
+
 // Models returns the configured logical models sorted by name so the settings
 // overlay can populate the per-role pickers (spec §13, §18.2).
 func (r *Registry) Models() []ModelInfo {

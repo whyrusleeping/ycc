@@ -45,6 +45,21 @@ const (
 	ThinkingLevelChanged    Type = "thinking_level_changed"
 )
 
+// Usage is the per-turn token accounting attached to a model_turn event's data
+// (spec §20.1, cost tracking). It is the source of truth for usage in the JSONL
+// log: every field serializes (zeros for backends that don't report usage), so a
+// turn always carries a complete, attributable breakdown. Input/Output are the
+// prompt/completion tokens; CacheRead/CacheWrite are the prompt-cache read and
+// creation tokens (Anthropic cache_* / OpenAI prompt_tokens_details); Total is
+// the backend-reported total.
+type Usage struct {
+	Input      int `json:"input"`
+	Output     int `json:"output"`
+	CacheRead  int `json:"cache_read"`
+	CacheWrite int `json:"cache_write"`
+	Total      int `json:"total"`
+}
+
 // Event is a single entry in a session's log.
 type Event struct {
 	Seq   int            `json:"seq"`
@@ -128,6 +143,9 @@ func Render(ev Event) string {
 		if txt, ok := ev.Data["text"].(string); ok && txt != "" {
 			fmt.Fprintf(&b, " %s", truncate(txt, 200))
 		}
+		if tok := usageTotal(ev.Data["usage"]); tok > 0 {
+			fmt.Fprintf(&b, " (%d tok)", tok)
+		}
 	default:
 		for _, k := range []string{"text", "report", "msg", "plan", "summary", "role", "sha"} {
 			if v, ok := ev.Data[k].(string); ok && v != "" {
@@ -137,6 +155,29 @@ func Render(ev Event) string {
 		}
 	}
 	return b.String()
+}
+
+// usageTotal extracts the total token count from a model_turn event's "usage"
+// field for terse rendering. It accepts both a freshly-emitted Usage value and a
+// JSONL-decoded map (where numbers come back as float64), returning 0 when usage
+// is absent or unparsable so rendering degrades gracefully.
+func usageTotal(v any) int {
+	switch u := v.(type) {
+	case Usage:
+		return u.Total
+	case *Usage:
+		if u != nil {
+			return u.Total
+		}
+	case map[string]any:
+		switch t := u["total"].(type) {
+		case float64:
+			return int(t)
+		case int:
+			return t
+		}
+	}
+	return 0
 }
 
 func truncate(s string, n int) string {

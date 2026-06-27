@@ -30,6 +30,7 @@ type AgentSpec struct {
 	Name      string // logical name, used as the actor label "reviewer:<name>"
 	NewClient func() engine.Turner
 	Model     string
+	Backend   string // logical backend family (e.g. "anthropic"); labels usage events
 	// Thinking carries the per-model reasoning settings (Anthropic extended
 	// thinking / effort) so spawned subagents reason like the coordinator does
 	// (spec §7, §13). Zero value means reasoning is off for this model.
@@ -122,6 +123,8 @@ func (d *Deps) newLoop(spec AgentSpec, system string, reg *tools.Registry, actor
 	return &engine.Loop{
 		Client:          spec.NewClient(),
 		Model:           spec.Model,
+		ModelName:       spec.Name,
+		Backend:         spec.Backend,
 		System:          system,
 		Tools:           reg,
 		Emitter:         d.Emitter.With(actor),

@@ -136,12 +136,15 @@ func TestLoopSetsThinkingOptions(t *testing.T) {
 func TestLoopSetBackendUpdatesThinking(t *testing.T) {
 	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{assistantText("hi")}}
 	loop := newLoop(t, turner) // starts with no thinking
-	loop.SetBackend(turner, "test2", Thinking{Thinking: "adaptive", Effort: "max", ThinkingDisplay: "summarized"})
+	loop.SetBackend(turner, "test2", "claude", "anthropic", Thinking{Thinking: "adaptive", Effort: "max", ThinkingDisplay: "summarized"})
 	if _, err := loop.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if turner.lastOpts.Model != "test2" || turner.lastOpts.Effort != "max" {
 		t.Fatalf("opts model=%q effort=%q", turner.lastOpts.Model, turner.lastOpts.Effort)
+	}
+	if loop.ModelName != "claude" || loop.Backend != "anthropic" {
+		t.Fatalf("SetBackend identity model_name=%q backend=%q", loop.ModelName, loop.Backend)
 	}
 }
 
@@ -190,6 +193,72 @@ func TestLoopNoThinkingEventWhenEmpty(t *testing.T) {
 	for _, ev := range rec.evs {
 		if ev.Type == event.Thinking {
 			t.Fatal("unexpected thinking event for empty reasoning")
+		}
+	}
+}
+
+// model_turn events carry per-turn token usage and model identity sourced from
+// resp.Usage and the loop's model labelling (spec §20.1).
+func TestLoopModelTurnCarriesUsage(t *testing.T) {
+	resp := assistantText("answered")
+	resp.Usage = gollama.Usage{
+		PromptTokens:             100,
+		CompletionTokens:         20,
+		TotalTokens:              120,
+		CacheReadInputTokens:     30,
+		CacheCreationInputTokens: 10,
+	}
+	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{resp}}
+	rec := &captureRecorder{}
+	loop := newLoop(t, turner)
+	loop.ModelName = "claude"
+	loop.Backend = "anthropic"
+	loop.Emitter = event.NewEmitter(rec, "agent")
+	if _, err := loop.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	var found bool
+	for _, ev := range rec.evs {
+		if ev.Type != event.ModelTurn {
+			continue
+		}
+		found = true
+		if ev.Data["model_name"] != "claude" || ev.Data["backend"] != "anthropic" || ev.Data["model_id"] != "test" {
+			t.Fatalf("identity = name=%v backend=%v id=%v", ev.Data["model_name"], ev.Data["backend"], ev.Data["model_id"])
+		}
+		u, ok := ev.Data["usage"].(event.Usage)
+		if !ok {
+			t.Fatalf("usage type = %T, want event.Usage", ev.Data["usage"])
+		}
+		want := event.Usage{Input: 100, Output: 20, CacheRead: 30, CacheWrite: 10, Total: 120}
+		if u != want {
+			t.Fatalf("usage = %+v, want %+v", u, want)
+		}
+	}
+	if !found {
+		t.Fatal("no model_turn event emitted")
+	}
+}
+
+// Backends that don't report usage record zeros without error.
+func TestLoopModelTurnZeroUsage(t *testing.T) {
+	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{assistantText("plain")}}
+	rec := &captureRecorder{}
+	loop := newLoop(t, turner)
+	loop.Emitter = event.NewEmitter(rec, "agent")
+	if _, err := loop.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for _, ev := range rec.evs {
+		if ev.Type != event.ModelTurn {
+			continue
+		}
+		u, ok := ev.Data["usage"].(event.Usage)
+		if !ok {
+			t.Fatalf("usage type = %T, want event.Usage", ev.Data["usage"])
+		}
+		if (u != event.Usage{}) {
+			t.Fatalf("usage = %+v, want all zeros", u)
 		}
 	}
 }

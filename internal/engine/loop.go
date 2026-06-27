@@ -24,13 +24,19 @@ type Turner interface {
 
 // Loop drives one agent (coordinator or subagent) over a backend.
 type Loop struct {
-	Client   Turner
-	Model    string
-	System   string
-	Tools    *tools.Registry
-	Emitter  *event.Emitter
-	MaxTurns int // 0 => default
-	MaxTok   int // per-turn max tokens; 0 => backend default
+	Client Turner
+	Model  string // resolved backend model id (e.g. "claude-sonnet-4-...")
+	// ModelName is the logical model name per spec §13 (e.g. "claude", "gpt"),
+	// recorded on model_turn events so per-turn usage is attributable per model
+	// independent of the resolved id. Backend is the logical backend family
+	// (e.g. "anthropic", "openai"). Both are display/accounting metadata only.
+	ModelName string
+	Backend   string
+	System    string
+	Tools     *tools.Registry
+	Emitter   *event.Emitter
+	MaxTurns  int // 0 => default
+	MaxTok    int // per-turn max tokens; 0 => backend default
 
 	// Anthropic extended/adaptive reasoning (spec §7, §13). Thinking == ""
 	// disables reasoning; "adaptive" enables it. Effort tunes depth/spend
@@ -44,14 +50,16 @@ type Loop struct {
 	history []gollama.Message
 }
 
-// SetBackend swaps the loop's backend client, model id, and per-model reasoning
-// settings while preserving the conversation history, so a mid-session
-// role-config change takes effect on the next turn (spec §18.2). Safe to call
-// concurrently with Run.
-func (l *Loop) SetBackend(client Turner, model string, think Thinking) {
+// SetBackend swaps the loop's backend client, model id, logical model identity,
+// and per-model reasoning settings while preserving the conversation history, so
+// a mid-session role-config change takes effect on the next turn (spec §18.2).
+// Safe to call concurrently with Run.
+func (l *Loop) SetBackend(client Turner, model, modelName, backend string, think Thinking) {
 	l.mu.Lock()
 	l.Client = client
 	l.Model = model
+	l.ModelName = modelName
+	l.Backend = backend
 	l.Thinking = think.Thinking
 	l.Effort = think.Effort
 	l.ThinkingDisplay = think.ThinkingDisplay
@@ -79,10 +87,18 @@ type Thinking struct {
 	ThinkingDisplay string
 }
 
-func (l *Loop) backend() (Turner, string, Thinking) {
+// modelIdentity is the loop's current model labelling for usage attribution.
+type modelIdentity struct {
+	ID      string // resolved backend model id
+	Name    string // logical model name (§13)
+	Backend string // logical backend family
+}
+
+func (l *Loop) backend() (Turner, string, modelIdentity, Thinking) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.Client, l.Model, Thinking{Thinking: l.Thinking, Effort: l.Effort, ThinkingDisplay: l.ThinkingDisplay}
+	id := modelIdentity{ID: l.Model, Name: l.ModelName, Backend: l.Backend}
+	return l.Client, l.Model, id, Thinking{Thinking: l.Thinking, Effort: l.Effort, ThinkingDisplay: l.ThinkingDisplay}
 }
 
 // defaultMaxTurns is the per-Run backstop applied when Loop.MaxTurns is unset
@@ -137,7 +153,7 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			return nil, err
 		}
 
-		client, modelID, think := l.backend()
+		client, modelID, ident, think := l.backend()
 		opts := gollama.RequestOptions{
 			Model:           modelID,
 			System:          l.System,
@@ -172,9 +188,22 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			})
 		}
 
+		// Capture per-turn token usage (spec §20.1). resp.Usage is zero-valued for
+		// backends that don't report it, so usage records zeros without error.
+		u := resp.Usage
 		l.Emitter.Emit(event.ModelTurn, map[string]any{
 			"text":       msg.Content,
 			"tool_calls": len(msg.ToolCalls),
+			"model_name": ident.Name,
+			"backend":    ident.Backend,
+			"model_id":   ident.ID,
+			"usage": event.Usage{
+				Input:      u.PromptTokens,
+				Output:     u.CompletionTokens,
+				CacheRead:  u.GetCachedTokens(),
+				CacheWrite: u.CacheCreationInputTokens,
+				Total:      u.TotalTokens,
+			},
 		})
 		// Record the assistant turn (text + tool_use) so context carries forward.
 		l.history = append(l.history, msg)
