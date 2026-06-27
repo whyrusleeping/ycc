@@ -133,6 +133,41 @@ message SetThinkingRequest {
 }
 message SetThinkingResponse {}
 
+// Backlog browser (spec §18.5): read-only RPCs that expose the durable backlog
+// (internal/docs Store) so clients can list and inspect tasks independent of any
+// agent session.
+message ListBacklogRequest {
+  string project = 1; // optional registered project; empty => daemon default workspace
+}
+message BacklogTaskSummary {
+  string id = 1;
+  string title = 2;
+  string status = 3;
+  int32 priority = 4;
+  repeated string depends_on = 5;
+  bool ready = 6;              // true when no dependency is blocking
+  repeated string blocked_by = 7; // ids of not-yet-done dependencies
+}
+message ListBacklogResponse { repeated BacklogTaskSummary tasks = 1; }
+message GetTaskRequest {
+  string project = 1; // optional registered project; empty => daemon default workspace
+  string id = 2;
+}
+message TaskDetail {
+  string id = 1;
+  string title = 2;
+  string status = 3;
+  int32 priority = 4;
+  repeated string depends_on = 5;
+  repeated string spec_refs = 6;
+  string created = 7;
+  string updated = 8;
+  string body = 9; // markdown: description, acceptance criteria, work log
+  bool ready = 10;
+  repeated string blocked_by = 11;
+}
+message GetTaskResponse { TaskDetail task = 1; }
+
 // SessionService is the daemon's RPC surface (spec §12). M1 implements the core
 // four; mode/question RPCs arrive in later milestones.
 service SessionService {
@@ -154,4 +189,8 @@ service SessionService {
   rpc SetInteractionLevel(SetInteractionLevelRequest) returns (SetInteractionLevelResponse);
   rpc SetRoleConfig(SetRoleConfigRequest) returns (SetRoleConfigResponse);
   rpc SetThinking(SetThinkingRequest) returns (SetThinkingResponse);
+
+  // Backlog browser (spec §18.5): read-only access to the durable backlog.
+  rpc ListBacklog(ListBacklogRequest) returns (ListBacklogResponse);
+  rpc GetTask(GetTaskRequest) returns (GetTaskResponse);
 }

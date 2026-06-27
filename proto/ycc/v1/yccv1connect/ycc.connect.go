@@ -72,6 +72,11 @@ const (
 	// SessionServiceSetThinkingProcedure is the fully-qualified name of the SessionService's
 	// SetThinking RPC.
 	SessionServiceSetThinkingProcedure = "/ycc.v1.SessionService/SetThinking"
+	// SessionServiceListBacklogProcedure is the fully-qualified name of the SessionService's
+	// ListBacklog RPC.
+	SessionServiceListBacklogProcedure = "/ycc.v1.SessionService/ListBacklog"
+	// SessionServiceGetTaskProcedure is the fully-qualified name of the SessionService's GetTask RPC.
+	SessionServiceGetTaskProcedure = "/ycc.v1.SessionService/GetTask"
 )
 
 // SessionServiceClient is a client for the ycc.v1.SessionService service.
@@ -92,6 +97,9 @@ type SessionServiceClient interface {
 	SetInteractionLevel(context.Context, *connect.Request[v1.SetInteractionLevelRequest]) (*connect.Response[v1.SetInteractionLevelResponse], error)
 	SetRoleConfig(context.Context, *connect.Request[v1.SetRoleConfigRequest]) (*connect.Response[v1.SetRoleConfigResponse], error)
 	SetThinking(context.Context, *connect.Request[v1.SetThinkingRequest]) (*connect.Response[v1.SetThinkingResponse], error)
+	// Backlog browser (spec §18.5): read-only access to the durable backlog.
+	ListBacklog(context.Context, *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error)
+	GetTask(context.Context, *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error)
 }
 
 // NewSessionServiceClient constructs a client for the ycc.v1.SessionService service. By default, it
@@ -183,6 +191,18 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("SetThinking")),
 			connect.WithClientOptions(opts...),
 		),
+		listBacklog: connect.NewClient[v1.ListBacklogRequest, v1.ListBacklogResponse](
+			httpClient,
+			baseURL+SessionServiceListBacklogProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("ListBacklog")),
+			connect.WithClientOptions(opts...),
+		),
+		getTask: connect.NewClient[v1.GetTaskRequest, v1.GetTaskResponse](
+			httpClient,
+			baseURL+SessionServiceGetTaskProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("GetTask")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -201,6 +221,8 @@ type sessionServiceClient struct {
 	setInteractionLevel *connect.Client[v1.SetInteractionLevelRequest, v1.SetInteractionLevelResponse]
 	setRoleConfig       *connect.Client[v1.SetRoleConfigRequest, v1.SetRoleConfigResponse]
 	setThinking         *connect.Client[v1.SetThinkingRequest, v1.SetThinkingResponse]
+	listBacklog         *connect.Client[v1.ListBacklogRequest, v1.ListBacklogResponse]
+	getTask             *connect.Client[v1.GetTaskRequest, v1.GetTaskResponse]
 }
 
 // ListModes calls ycc.v1.SessionService.ListModes.
@@ -268,6 +290,16 @@ func (c *sessionServiceClient) SetThinking(ctx context.Context, req *connect.Req
 	return c.setThinking.CallUnary(ctx, req)
 }
 
+// ListBacklog calls ycc.v1.SessionService.ListBacklog.
+func (c *sessionServiceClient) ListBacklog(ctx context.Context, req *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error) {
+	return c.listBacklog.CallUnary(ctx, req)
+}
+
+// GetTask calls ycc.v1.SessionService.GetTask.
+func (c *sessionServiceClient) GetTask(ctx context.Context, req *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error) {
+	return c.getTask.CallUnary(ctx, req)
+}
+
 // SessionServiceHandler is an implementation of the ycc.v1.SessionService service.
 type SessionServiceHandler interface {
 	ListModes(context.Context, *connect.Request[v1.ListModesRequest]) (*connect.Response[v1.ListModesResponse], error)
@@ -286,6 +318,9 @@ type SessionServiceHandler interface {
 	SetInteractionLevel(context.Context, *connect.Request[v1.SetInteractionLevelRequest]) (*connect.Response[v1.SetInteractionLevelResponse], error)
 	SetRoleConfig(context.Context, *connect.Request[v1.SetRoleConfigRequest]) (*connect.Response[v1.SetRoleConfigResponse], error)
 	SetThinking(context.Context, *connect.Request[v1.SetThinkingRequest]) (*connect.Response[v1.SetThinkingResponse], error)
+	// Backlog browser (spec §18.5): read-only access to the durable backlog.
+	ListBacklog(context.Context, *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error)
+	GetTask(context.Context, *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error)
 }
 
 // NewSessionServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -373,6 +408,18 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("SetThinking")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceListBacklogHandler := connect.NewUnaryHandler(
+		SessionServiceListBacklogProcedure,
+		svc.ListBacklog,
+		connect.WithSchema(sessionServiceMethods.ByName("ListBacklog")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceGetTaskHandler := connect.NewUnaryHandler(
+		SessionServiceGetTaskProcedure,
+		svc.GetTask,
+		connect.WithSchema(sessionServiceMethods.ByName("GetTask")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/ycc.v1.SessionService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case SessionServiceListModesProcedure:
@@ -401,6 +448,10 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceSetRoleConfigHandler.ServeHTTP(w, r)
 		case SessionServiceSetThinkingProcedure:
 			sessionServiceSetThinkingHandler.ServeHTTP(w, r)
+		case SessionServiceListBacklogProcedure:
+			sessionServiceListBacklogHandler.ServeHTTP(w, r)
+		case SessionServiceGetTaskProcedure:
+			sessionServiceGetTaskHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -460,4 +511,12 @@ func (UnimplementedSessionServiceHandler) SetRoleConfig(context.Context, *connec
 
 func (UnimplementedSessionServiceHandler) SetThinking(context.Context, *connect.Request[v1.SetThinkingRequest]) (*connect.Response[v1.SetThinkingResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.SetThinking is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) ListBacklog(context.Context, *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ListBacklog is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) GetTask(context.Context, *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetTask is not implemented"))
 }

@@ -9,6 +9,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/whyrusleeping/ycc/internal/docs"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/orchestrator"
 	"github.com/whyrusleeping/ycc/internal/session"
@@ -194,6 +195,51 @@ func (s *Server) SetThinking(_ context.Context, req *connect.Request[v1.SetThink
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	return connect.NewResponse(&v1.SetThinkingResponse{}), nil
+}
+
+// ListBacklog returns summary rows for the backlog, with per-task readiness
+// derived from dependency status (spec §18.5). Read-only.
+func (s *Server) ListBacklog(_ context.Context, req *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error) {
+	store, err := s.mgr.Backlog(req.Msg.Project)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	tasks, err := store.List()
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	byID := docs.StatusByID(tasks)
+	var out []*v1.BacklogTaskSummary
+	for _, t := range tasks {
+		blocking := docs.BlockingDeps(t, byID)
+		out = append(out, &v1.BacklogTaskSummary{
+			Id: t.ID, Title: t.Title, Status: string(t.Status), Priority: int32(t.Priority),
+			DependsOn: t.DependsOn, Ready: len(blocking) == 0, BlockedBy: blocking,
+		})
+	}
+	return connect.NewResponse(&v1.ListBacklogResponse{Tasks: out}), nil
+}
+
+// GetTask returns one task's full detail for the backlog browser (spec §18.5).
+func (s *Server) GetTask(_ context.Context, req *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error) {
+	store, err := s.mgr.Backlog(req.Msg.Project)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	t, err := store.Get(req.Msg.Id)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeNotFound, err)
+	}
+	tasks, err := store.List()
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	blocking := docs.BlockingDeps(t, docs.StatusByID(tasks))
+	return connect.NewResponse(&v1.GetTaskResponse{Task: &v1.TaskDetail{
+		Id: t.ID, Title: t.Title, Status: string(t.Status), Priority: int32(t.Priority),
+		DependsOn: t.DependsOn, SpecRefs: t.SpecRefs, Created: t.Created, Updated: t.Updated,
+		Body: t.Body, Ready: len(blocking) == 0, BlockedBy: blocking,
+	}}), nil
 }
 
 func toProto(ev event.Event) *v1.Event {

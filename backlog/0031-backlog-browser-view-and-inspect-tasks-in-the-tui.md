@@ -1,10 +1,10 @@
 ---
 id: "0031"
 title: Backlog browser — view and inspect tasks in the TUI (ListBacklog/GetTask RPCs)
-status: todo
+status: in_progress
 priority: 3
 created: "2026-06-26"
-updated: "2026-06-26"
+updated: "2026-06-27"
 depends_on:
     - "0006"
 spec_refs:
@@ -50,3 +50,9 @@ it. See spec §18.5.
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-27 plan: Add a read-only backlog browser: ListBacklog + GetTask RPCs and a modal TUI view.  1. Proto (proto/ycc/v1/ycc.proto) + regenerate with `buf generate`:    - ListBacklogRequest{ string project } / Backl
+…[truncated]
+- 2026-06-27 implementer report: Implemented the read-only backlog browser (spec §18.5).  ## Proto (proto/ycc/v1/ycc.proto, regenerated with `buf generate`) - Added messages: ListBacklogRequest, BacklogTaskSummary, ListBacklogRespon
+…[truncated]
+- 2026-06-27 review (claude): accept — Task 0031 is satisfied. The change adds read-only ListBacklog and GetTask RPCs (proto + regenerated pb.go/connect.go), implements them on internal/server backed by docs.Store using the existing Status
+…[truncated]

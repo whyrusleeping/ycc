@@ -7,6 +7,7 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/whyrusleeping/ycc/internal/config"
+	"github.com/whyrusleeping/ycc/internal/docs"
 	"github.com/whyrusleeping/ycc/internal/session"
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 )
@@ -73,5 +74,68 @@ func TestProjectRPCs(t *testing.T) {
 		t.Fatal("AddProject with empty path: expected error")
 	} else if got := connect.CodeOf(err); got != connect.CodeInvalidArgument {
 		t.Fatalf("code = %v, want InvalidArgument", got)
+	}
+}
+
+// TestBacklogRPCs exercises the read-only backlog browser surface (spec §18.5):
+// ListBacklog projects summary rows with readiness, GetTask returns a task's full
+// detail (with blocking deps), and an unknown id is a NotFound error.
+func TestBacklogRPCs(t *testing.T) {
+	reg := config.NewRegistry(&config.Config{
+		Models: map[string]config.Model{"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"}},
+		Roles:  config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
+	})
+	ws := t.TempDir()
+	store := docs.NewStore(ws)
+	a, err := store.Create("First task", "", 1, nil, nil)
+	if err != nil {
+		t.Fatalf("Create first: %v", err)
+	}
+	b, err := store.Create("Second task", "", 2, []string{a.ID}, nil)
+	if err != nil {
+		t.Fatalf("Create second: %v", err)
+	}
+
+	srv := New(session.NewManager(reg, ws))
+	ctx := context.Background()
+
+	list, err := srv.ListBacklog(ctx, connect.NewRequest(&v1.ListBacklogRequest{}))
+	if err != nil {
+		t.Fatalf("ListBacklog: %v", err)
+	}
+	if len(list.Msg.Tasks) != 2 {
+		t.Fatalf("ListBacklog = %d tasks, want 2", len(list.Msg.Tasks))
+	}
+	first := list.Msg.Tasks[0]
+	if first.GetId() != a.ID || !first.GetReady() || len(first.GetBlockedBy()) != 0 {
+		t.Fatalf("first task = %+v, want ready with no blockers", first)
+	}
+	second := list.Msg.Tasks[1]
+	if second.GetId() != b.ID || second.GetReady() {
+		t.Fatalf("second task = %+v, want not ready", second)
+	}
+	if len(second.GetBlockedBy()) != 1 || second.GetBlockedBy()[0] != a.ID {
+		t.Fatalf("second blocked_by = %v, want [%s]", second.GetBlockedBy(), a.ID)
+	}
+
+	det, err := srv.GetTask(ctx, connect.NewRequest(&v1.GetTaskRequest{Id: b.ID}))
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	td := det.Msg.Task
+	if td.GetTitle() != "Second task" || td.GetBody() == "" {
+		t.Fatalf("GetTask detail = %+v, want title+body populated", td)
+	}
+	if len(td.GetDependsOn()) != 1 || td.GetDependsOn()[0] != a.ID {
+		t.Fatalf("GetTask depends_on = %v, want [%s]", td.GetDependsOn(), a.ID)
+	}
+	if len(td.GetBlockedBy()) != 1 || td.GetBlockedBy()[0] != a.ID {
+		t.Fatalf("GetTask blocked_by = %v, want [%s]", td.GetBlockedBy(), a.ID)
+	}
+
+	if _, err := srv.GetTask(ctx, connect.NewRequest(&v1.GetTaskRequest{Id: "9999"})); err == nil {
+		t.Fatal("GetTask with bogus id: expected error")
+	} else if got := connect.CodeOf(err); got != connect.CodeNotFound {
+		t.Fatalf("code = %v, want NotFound", got)
 	}
 }

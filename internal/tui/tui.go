@@ -95,6 +95,13 @@ type model struct {
 	roleReviewrs []string        // logical models for reviewers (multi-select)
 	reviewerSub  int             // rotating sub-index for toggling reviewer membership
 	prefs        clientconfig.Prefs
+
+	// backlog browser (spec §18.5): modal over menu/session, opened with ctrl+b.
+	// Read-only: lists tasks, drills into one task's full detail.
+	backlog       bool
+	backlogTasks  []*v1.BacklogTaskSummary
+	backlogCursor int
+	backlogDetail *v1.TaskDetail // nil => list view; set => detail view
 }
 
 // Run starts the TUI against the daemon client. showPicker selects the initial
@@ -156,6 +163,8 @@ type startedMsg struct{ id, mode string }
 type evMsg struct{ ev *v1.Event }
 type streamClosedMsg struct{}
 type errMsg struct{ err error }
+type backlogMsg struct{ tasks []*v1.BacklogTaskSummary }
+type taskDetailMsg struct{ task *v1.TaskDetail }
 
 func (m model) Init() tea.Cmd {
 	cmds := []tea.Cmd{m.fetchModes, m.fetchModels}
@@ -307,6 +316,26 @@ func (m model) setRoleConfig(coord, impl string, reviewers []string) tea.Cmd {
 	}
 }
 
+// fetchBacklog loads the backlog summary rows for the backlog browser (spec §18.5).
+func (m model) fetchBacklog() tea.Msg {
+	resp, err := m.client.ListBacklog(m.ctx, connect.NewRequest(&v1.ListBacklogRequest{Project: m.project}))
+	if err != nil {
+		return errMsg{err}
+	}
+	return backlogMsg{resp.Msg.Tasks}
+}
+
+// fetchTask loads one task's full detail for the backlog browser (spec §18.5).
+func (m model) fetchTask(id string) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := m.client.GetTask(m.ctx, connect.NewRequest(&v1.GetTaskRequest{Project: m.project, Id: id}))
+		if err != nil {
+			return errMsg{err}
+		}
+		return taskDetailMsg{resp.Msg.Task}
+	}
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -373,12 +402,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case evMsg:
 		m.appendEvent(msg.ev)
 		return m, waitEvent(m.events)
+	case backlogMsg:
+		m.backlogTasks = msg.tasks
+		if m.backlogCursor >= len(m.backlogTasks) {
+			m.backlogCursor = 0
+		}
+		return m, nil
+	case taskDetailMsg:
+		m.backlogDetail = msg.task
+		return m, nil
 	}
 
 	// The project picker (spec §3.1) is shown first when attached to a
 	// persistent/remote daemon; it owns input until a project is chosen.
 	if m.state == statePicker {
 		return m.updatePicker(msg)
+	}
+
+	// The backlog browser (ctrl+b) is modal over both the menu and a session
+	// (spec §18.5).
+	if m.backlog {
+		return m.updateBacklog(msg)
 	}
 
 	// The settings overlay (Esc) is modal over BOTH the menu and a session.
@@ -452,6 +496,10 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch key.String() {
 		case "ctrl+c":
 			return m, tea.Quit
+		case "ctrl+b":
+			// Open the read-only backlog browser (spec §18.5).
+			m.backlog, m.backlogCursor, m.backlogDetail = true, 0, nil
+			return m, m.fetchBacklog
 		case "up":
 			if m.cursor > 0 {
 				m.cursor--
@@ -535,6 +583,10 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
+		case "ctrl+b":
+			// Open the read-only backlog browser (spec §18.5).
+			m.backlog, m.backlogCursor, m.backlogDetail = true, 0, nil
+			return m, m.fetchBacklog
 		case "up":
 			m.moveSelection(-1)
 			return m, nil
@@ -576,6 +628,111 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var icmd tea.Cmd
 	m.input, icmd = m.input.Update(msg)
 	return m, icmd
+}
+
+// --- backlog browser (spec §18.5) ---
+
+// updateBacklog handles the modal backlog browser: a task list with drill-down
+// into a single task's read-only detail.
+func (m model) updateBacklog(msg tea.Msg) (tea.Model, tea.Cmd) {
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	if m.backlogDetail != nil {
+		// Detail view: back returns to the list.
+		switch key.String() {
+		case "ctrl+c", "q":
+			return m, tea.Quit
+		case "esc", "backspace", "left":
+			m.backlogDetail = nil
+		}
+		return m, nil
+	}
+	// List view.
+	switch key.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc", "q":
+		m.backlog = false
+		return m, nil
+	case "up":
+		if m.backlogCursor > 0 {
+			m.backlogCursor--
+		}
+		return m, nil
+	case "down":
+		if m.backlogCursor < len(m.backlogTasks)-1 {
+			m.backlogCursor++
+		}
+		return m, nil
+	case "enter":
+		if len(m.backlogTasks) > 0 {
+			return m, m.fetchTask(m.backlogTasks[m.backlogCursor].Id)
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+// backlogView renders the modal backlog browser (list or detail).
+func (m model) backlogView() string {
+	if m.backlogDetail != nil {
+		return m.taskDetailView(m.backlogDetail)
+	}
+	var b strings.Builder
+	b.WriteString(titleStyle.Render(" ycc — backlog ") + "\n\n")
+	if len(m.backlogTasks) == 0 {
+		b.WriteString("  " + dimStyle.Render("(no backlog tasks)") + "\n")
+	}
+	for i, t := range m.backlogTasks {
+		cursor := "  "
+		row := fmt.Sprintf("%-5s %-12s p%d  %s", t.Id, t.Status, t.Priority, t.Title)
+		var tag string
+		if t.Status != "done" {
+			if t.Ready {
+				tag = " " + dimStyle.Render("[ready]")
+			} else {
+				tag = " " + dimStyle.Render("[blocked by "+strings.Join(t.BlockedBy, ", ")+"]")
+			}
+		}
+		if i == m.backlogCursor {
+			cursor = selStyle.Render("▸ ")
+			row = selStyle.Render(row)
+		}
+		b.WriteString("  " + cursor + row + tag + "\n")
+	}
+	b.WriteString("\n" + dimStyle.Render("  ↑/↓ select · enter inspect · esc close"))
+	return b.String()
+}
+
+// taskDetailView renders a single task's full, read-only detail (spec §18.5).
+func (m model) taskDetailView(t *v1.TaskDetail) string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render(" "+t.Id+" — "+t.Title+" ") + "\n\n")
+	readiness := "ready"
+	if t.Status == "done" {
+		readiness = "done"
+	} else if !t.Ready {
+		readiness = "blocked by " + strings.Join(t.BlockedBy, ", ")
+	}
+	meta := fmt.Sprintf("status:%s · p%d · %s", t.Status, t.Priority, readiness)
+	if len(t.DependsOn) > 0 {
+		meta += " · deps: " + strings.Join(t.DependsOn, ", ")
+	}
+	if len(t.SpecRefs) > 0 {
+		meta += " · spec: " + strings.Join(t.SpecRefs, ", ")
+	}
+	b.WriteString("  " + dimStyle.Render(meta) + "\n\n")
+	body := t.Body
+	if m.glam != nil {
+		if out, err := m.glam.Render(body); err == nil {
+			body = strings.Trim(out, "\n")
+		}
+	}
+	b.WriteString(indentLines(body, "  "))
+	b.WriteString("\n\n" + dimStyle.Render("  esc/← back · ctrl+c quit"))
+	return b.String()
 }
 
 // --- settings overlay (spec §18.2) ---
@@ -964,6 +1121,9 @@ func (m model) View() string {
 	if m.err != nil {
 		return fmt.Sprintf("\n  error: %v\n\n  (ctrl+c to quit)\n", m.err)
 	}
+	if m.backlog {
+		return m.backlogView()
+	}
 	if m.overlay {
 		return m.overlayView()
 	}
@@ -1024,7 +1184,7 @@ func (m model) menuView() string {
 		b.WriteString("  " + cursor + label + "\n")
 	}
 	b.WriteString("\n  " + m.prompt.View() + "\n")
-	b.WriteString("\n" + dimStyle.Render("  ↑/↓ choose mode · type a prompt · enter start · esc settings"))
+	b.WriteString("\n" + dimStyle.Render("  ↑/↓ choose mode · type a prompt · enter start · esc settings · ctrl+b backlog"))
 	return b.String()
 }
 
@@ -1112,7 +1272,7 @@ func (m model) sessionView() string {
 		help := dimStyle.Render(" ↑↓ choose · enter select · esc settings")
 		return top + "\n" + body + "\n" + m.pickerView() + "\n" + help
 	}
-	help := dimStyle.Render(" enter send/expand · ↑↓ select · click expand · pgup/pgdn scroll · esc settings")
+	help := dimStyle.Render(" enter send/expand · ↑↓ select · click expand · pgup/pgdn scroll · esc settings · ctrl+b backlog")
 	return top + "\n" + body + "\n " + m.input.View() + "\n" + help
 }
 

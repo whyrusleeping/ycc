@@ -1584,6 +1584,409 @@ func (*SetThinkingResponse) Descriptor() ([]byte, []int) {
 	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{30}
 }
 
+// Backlog browser (spec §18.5): read-only RPCs that expose the durable backlog
+// (internal/docs Store) so clients can list and inspect tasks independent of any
+// agent session.
+type ListBacklogRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"` // optional registered project; empty => daemon default workspace
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListBacklogRequest) Reset() {
+	*x = ListBacklogRequest{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListBacklogRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListBacklogRequest) ProtoMessage() {}
+
+func (x *ListBacklogRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListBacklogRequest.ProtoReflect.Descriptor instead.
+func (*ListBacklogRequest) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *ListBacklogRequest) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+type BacklogTaskSummary struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Title         string                 `protobuf:"bytes,2,opt,name=title,proto3" json:"title,omitempty"`
+	Status        string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
+	Priority      int32                  `protobuf:"varint,4,opt,name=priority,proto3" json:"priority,omitempty"`
+	DependsOn     []string               `protobuf:"bytes,5,rep,name=depends_on,json=dependsOn,proto3" json:"depends_on,omitempty"`
+	Ready         bool                   `protobuf:"varint,6,opt,name=ready,proto3" json:"ready,omitempty"`                         // true when no dependency is blocking
+	BlockedBy     []string               `protobuf:"bytes,7,rep,name=blocked_by,json=blockedBy,proto3" json:"blocked_by,omitempty"` // ids of not-yet-done dependencies
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BacklogTaskSummary) Reset() {
+	*x = BacklogTaskSummary{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BacklogTaskSummary) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BacklogTaskSummary) ProtoMessage() {}
+
+func (x *BacklogTaskSummary) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BacklogTaskSummary.ProtoReflect.Descriptor instead.
+func (*BacklogTaskSummary) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *BacklogTaskSummary) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *BacklogTaskSummary) GetTitle() string {
+	if x != nil {
+		return x.Title
+	}
+	return ""
+}
+
+func (x *BacklogTaskSummary) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *BacklogTaskSummary) GetPriority() int32 {
+	if x != nil {
+		return x.Priority
+	}
+	return 0
+}
+
+func (x *BacklogTaskSummary) GetDependsOn() []string {
+	if x != nil {
+		return x.DependsOn
+	}
+	return nil
+}
+
+func (x *BacklogTaskSummary) GetReady() bool {
+	if x != nil {
+		return x.Ready
+	}
+	return false
+}
+
+func (x *BacklogTaskSummary) GetBlockedBy() []string {
+	if x != nil {
+		return x.BlockedBy
+	}
+	return nil
+}
+
+type ListBacklogResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Tasks         []*BacklogTaskSummary  `protobuf:"bytes,1,rep,name=tasks,proto3" json:"tasks,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListBacklogResponse) Reset() {
+	*x = ListBacklogResponse{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListBacklogResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListBacklogResponse) ProtoMessage() {}
+
+func (x *ListBacklogResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListBacklogResponse.ProtoReflect.Descriptor instead.
+func (*ListBacklogResponse) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *ListBacklogResponse) GetTasks() []*BacklogTaskSummary {
+	if x != nil {
+		return x.Tasks
+	}
+	return nil
+}
+
+type GetTaskRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"` // optional registered project; empty => daemon default workspace
+	Id            string                 `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetTaskRequest) Reset() {
+	*x = GetTaskRequest{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetTaskRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetTaskRequest) ProtoMessage() {}
+
+func (x *GetTaskRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetTaskRequest.ProtoReflect.Descriptor instead.
+func (*GetTaskRequest) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *GetTaskRequest) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *GetTaskRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+type TaskDetail struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Title         string                 `protobuf:"bytes,2,opt,name=title,proto3" json:"title,omitempty"`
+	Status        string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
+	Priority      int32                  `protobuf:"varint,4,opt,name=priority,proto3" json:"priority,omitempty"`
+	DependsOn     []string               `protobuf:"bytes,5,rep,name=depends_on,json=dependsOn,proto3" json:"depends_on,omitempty"`
+	SpecRefs      []string               `protobuf:"bytes,6,rep,name=spec_refs,json=specRefs,proto3" json:"spec_refs,omitempty"`
+	Created       string                 `protobuf:"bytes,7,opt,name=created,proto3" json:"created,omitempty"`
+	Updated       string                 `protobuf:"bytes,8,opt,name=updated,proto3" json:"updated,omitempty"`
+	Body          string                 `protobuf:"bytes,9,opt,name=body,proto3" json:"body,omitempty"` // markdown: description, acceptance criteria, work log
+	Ready         bool                   `protobuf:"varint,10,opt,name=ready,proto3" json:"ready,omitempty"`
+	BlockedBy     []string               `protobuf:"bytes,11,rep,name=blocked_by,json=blockedBy,proto3" json:"blocked_by,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TaskDetail) Reset() {
+	*x = TaskDetail{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaskDetail) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaskDetail) ProtoMessage() {}
+
+func (x *TaskDetail) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaskDetail.ProtoReflect.Descriptor instead.
+func (*TaskDetail) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *TaskDetail) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *TaskDetail) GetTitle() string {
+	if x != nil {
+		return x.Title
+	}
+	return ""
+}
+
+func (x *TaskDetail) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *TaskDetail) GetPriority() int32 {
+	if x != nil {
+		return x.Priority
+	}
+	return 0
+}
+
+func (x *TaskDetail) GetDependsOn() []string {
+	if x != nil {
+		return x.DependsOn
+	}
+	return nil
+}
+
+func (x *TaskDetail) GetSpecRefs() []string {
+	if x != nil {
+		return x.SpecRefs
+	}
+	return nil
+}
+
+func (x *TaskDetail) GetCreated() string {
+	if x != nil {
+		return x.Created
+	}
+	return ""
+}
+
+func (x *TaskDetail) GetUpdated() string {
+	if x != nil {
+		return x.Updated
+	}
+	return ""
+}
+
+func (x *TaskDetail) GetBody() string {
+	if x != nil {
+		return x.Body
+	}
+	return ""
+}
+
+func (x *TaskDetail) GetReady() bool {
+	if x != nil {
+		return x.Ready
+	}
+	return false
+}
+
+func (x *TaskDetail) GetBlockedBy() []string {
+	if x != nil {
+		return x.BlockedBy
+	}
+	return nil
+}
+
+type GetTaskResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Task          *TaskDetail            `protobuf:"bytes,1,opt,name=task,proto3" json:"task,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetTaskResponse) Reset() {
+	*x = GetTaskResponse{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetTaskResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetTaskResponse) ProtoMessage() {}
+
+func (x *GetTaskResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetTaskResponse.ProtoReflect.Descriptor instead.
+func (*GetTaskResponse) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *GetTaskResponse) GetTask() *TaskDetail {
+	if x != nil {
+		return x.Task
+	}
+	return nil
+}
+
 var File_ycc_v1_ycc_proto protoreflect.FileDescriptor
 
 const file_ycc_v1_ycc_proto_rawDesc = "" +
@@ -1680,7 +2083,42 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x14\n" +
 	"\x05level\x18\x02 \x01(\tR\x05level\"\x15\n" +
-	"\x13SetThinkingResponse2\xcc\a\n" +
+	"\x13SetThinkingResponse\".\n" +
+	"\x12ListBacklogRequest\x12\x18\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\"\xc2\x01\n" +
+	"\x12BacklogTaskSummary\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
+	"\x05title\x18\x02 \x01(\tR\x05title\x12\x16\n" +
+	"\x06status\x18\x03 \x01(\tR\x06status\x12\x1a\n" +
+	"\bpriority\x18\x04 \x01(\x05R\bpriority\x12\x1d\n" +
+	"\n" +
+	"depends_on\x18\x05 \x03(\tR\tdependsOn\x12\x14\n" +
+	"\x05ready\x18\x06 \x01(\bR\x05ready\x12\x1d\n" +
+	"\n" +
+	"blocked_by\x18\a \x03(\tR\tblockedBy\"G\n" +
+	"\x13ListBacklogResponse\x120\n" +
+	"\x05tasks\x18\x01 \x03(\v2\x1a.ycc.v1.BacklogTaskSummaryR\x05tasks\":\n" +
+	"\x0eGetTaskRequest\x12\x18\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\x12\x0e\n" +
+	"\x02id\x18\x02 \x01(\tR\x02id\"\x9f\x02\n" +
+	"\n" +
+	"TaskDetail\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
+	"\x05title\x18\x02 \x01(\tR\x05title\x12\x16\n" +
+	"\x06status\x18\x03 \x01(\tR\x06status\x12\x1a\n" +
+	"\bpriority\x18\x04 \x01(\x05R\bpriority\x12\x1d\n" +
+	"\n" +
+	"depends_on\x18\x05 \x03(\tR\tdependsOn\x12\x1b\n" +
+	"\tspec_refs\x18\x06 \x03(\tR\bspecRefs\x12\x18\n" +
+	"\acreated\x18\a \x01(\tR\acreated\x12\x18\n" +
+	"\aupdated\x18\b \x01(\tR\aupdated\x12\x12\n" +
+	"\x04body\x18\t \x01(\tR\x04body\x12\x14\n" +
+	"\x05ready\x18\n" +
+	" \x01(\bR\x05ready\x12\x1d\n" +
+	"\n" +
+	"blocked_by\x18\v \x03(\tR\tblockedBy\"9\n" +
+	"\x0fGetTaskResponse\x12&\n" +
+	"\x04task\x18\x01 \x01(\v2\x12.ycc.v1.TaskDetailR\x04task2\xd0\b\n" +
 	"\x0eSessionService\x12@\n" +
 	"\tListModes\x12\x18.ycc.v1.ListModesRequest\x1a\x19.ycc.v1.ListModesResponse\x12I\n" +
 	"\fStartSession\x12\x1b.ycc.v1.StartSessionRequest\x1a\x1c.ycc.v1.StartSessionResponse\x12I\n" +
@@ -1696,7 +2134,9 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"ListModels\x12\x19.ycc.v1.ListModelsRequest\x1a\x1a.ycc.v1.ListModelsResponse\x12^\n" +
 	"\x13SetInteractionLevel\x12\".ycc.v1.SetInteractionLevelRequest\x1a#.ycc.v1.SetInteractionLevelResponse\x12L\n" +
 	"\rSetRoleConfig\x12\x1c.ycc.v1.SetRoleConfigRequest\x1a\x1d.ycc.v1.SetRoleConfigResponse\x12F\n" +
-	"\vSetThinking\x12\x1a.ycc.v1.SetThinkingRequest\x1a\x1b.ycc.v1.SetThinkingResponseB1Z/github.com/whyrusleeping/ycc/proto/ycc/v1;yccv1b\x06proto3"
+	"\vSetThinking\x12\x1a.ycc.v1.SetThinkingRequest\x1a\x1b.ycc.v1.SetThinkingResponse\x12F\n" +
+	"\vListBacklog\x12\x1a.ycc.v1.ListBacklogRequest\x1a\x1b.ycc.v1.ListBacklogResponse\x12:\n" +
+	"\aGetTask\x12\x16.ycc.v1.GetTaskRequest\x1a\x17.ycc.v1.GetTaskResponseB1Z/github.com/whyrusleeping/ycc/proto/ycc/v1;yccv1b\x06proto3"
 
 var (
 	file_ycc_v1_ycc_proto_rawDescOnce sync.Once
@@ -1710,7 +2150,7 @@ func file_ycc_v1_ycc_proto_rawDescGZIP() []byte {
 	return file_ycc_v1_ycc_proto_rawDescData
 }
 
-var file_ycc_v1_ycc_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
+var file_ycc_v1_ycc_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
 var file_ycc_v1_ycc_proto_goTypes = []any{
 	(*Event)(nil),                       // 0: ycc.v1.Event
 	(*StartSessionRequest)(nil),         // 1: ycc.v1.StartSessionRequest
@@ -1743,6 +2183,12 @@ var file_ycc_v1_ycc_proto_goTypes = []any{
 	(*SetRoleConfigResponse)(nil),       // 28: ycc.v1.SetRoleConfigResponse
 	(*SetThinkingRequest)(nil),          // 29: ycc.v1.SetThinkingRequest
 	(*SetThinkingResponse)(nil),         // 30: ycc.v1.SetThinkingResponse
+	(*ListBacklogRequest)(nil),          // 31: ycc.v1.ListBacklogRequest
+	(*BacklogTaskSummary)(nil),          // 32: ycc.v1.BacklogTaskSummary
+	(*ListBacklogResponse)(nil),         // 33: ycc.v1.ListBacklogResponse
+	(*GetTaskRequest)(nil),              // 34: ycc.v1.GetTaskRequest
+	(*TaskDetail)(nil),                  // 35: ycc.v1.TaskDetail
+	(*GetTaskResponse)(nil),             // 36: ycc.v1.GetTaskResponse
 }
 var file_ycc_v1_ycc_proto_depIdxs = []int32{
 	3,  // 0: ycc.v1.ListProjectsResponse.projects:type_name -> ycc.v1.ProjectInfo
@@ -1751,37 +2197,43 @@ var file_ycc_v1_ycc_proto_depIdxs = []int32{
 	17, // 3: ycc.v1.ListModesResponse.presets:type_name -> ycc.v1.Preset
 	20, // 4: ycc.v1.ListSessionsResponse.sessions:type_name -> ycc.v1.SessionInfo
 	23, // 5: ycc.v1.ListModelsResponse.models:type_name -> ycc.v1.ModelInfo
-	15, // 6: ycc.v1.SessionService.ListModes:input_type -> ycc.v1.ListModesRequest
-	1,  // 7: ycc.v1.SessionService.StartSession:input_type -> ycc.v1.StartSessionRequest
-	19, // 8: ycc.v1.SessionService.ListSessions:input_type -> ycc.v1.ListSessionsRequest
-	10, // 9: ycc.v1.SessionService.Subscribe:input_type -> ycc.v1.SubscribeRequest
-	11, // 10: ycc.v1.SessionService.SendInput:input_type -> ycc.v1.SendInputRequest
-	13, // 11: ycc.v1.SessionService.AnswerQuestion:input_type -> ycc.v1.AnswerQuestionRequest
-	4,  // 12: ycc.v1.SessionService.ListProjects:input_type -> ycc.v1.ListProjectsRequest
-	6,  // 13: ycc.v1.SessionService.AddProject:input_type -> ycc.v1.AddProjectRequest
-	8,  // 14: ycc.v1.SessionService.RemoveProject:input_type -> ycc.v1.RemoveProjectRequest
-	22, // 15: ycc.v1.SessionService.ListModels:input_type -> ycc.v1.ListModelsRequest
-	25, // 16: ycc.v1.SessionService.SetInteractionLevel:input_type -> ycc.v1.SetInteractionLevelRequest
-	27, // 17: ycc.v1.SessionService.SetRoleConfig:input_type -> ycc.v1.SetRoleConfigRequest
-	29, // 18: ycc.v1.SessionService.SetThinking:input_type -> ycc.v1.SetThinkingRequest
-	18, // 19: ycc.v1.SessionService.ListModes:output_type -> ycc.v1.ListModesResponse
-	2,  // 20: ycc.v1.SessionService.StartSession:output_type -> ycc.v1.StartSessionResponse
-	21, // 21: ycc.v1.SessionService.ListSessions:output_type -> ycc.v1.ListSessionsResponse
-	0,  // 22: ycc.v1.SessionService.Subscribe:output_type -> ycc.v1.Event
-	12, // 23: ycc.v1.SessionService.SendInput:output_type -> ycc.v1.SendInputResponse
-	14, // 24: ycc.v1.SessionService.AnswerQuestion:output_type -> ycc.v1.AnswerQuestionResponse
-	5,  // 25: ycc.v1.SessionService.ListProjects:output_type -> ycc.v1.ListProjectsResponse
-	7,  // 26: ycc.v1.SessionService.AddProject:output_type -> ycc.v1.AddProjectResponse
-	9,  // 27: ycc.v1.SessionService.RemoveProject:output_type -> ycc.v1.RemoveProjectResponse
-	24, // 28: ycc.v1.SessionService.ListModels:output_type -> ycc.v1.ListModelsResponse
-	26, // 29: ycc.v1.SessionService.SetInteractionLevel:output_type -> ycc.v1.SetInteractionLevelResponse
-	28, // 30: ycc.v1.SessionService.SetRoleConfig:output_type -> ycc.v1.SetRoleConfigResponse
-	30, // 31: ycc.v1.SessionService.SetThinking:output_type -> ycc.v1.SetThinkingResponse
-	19, // [19:32] is the sub-list for method output_type
-	6,  // [6:19] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	32, // 6: ycc.v1.ListBacklogResponse.tasks:type_name -> ycc.v1.BacklogTaskSummary
+	35, // 7: ycc.v1.GetTaskResponse.task:type_name -> ycc.v1.TaskDetail
+	15, // 8: ycc.v1.SessionService.ListModes:input_type -> ycc.v1.ListModesRequest
+	1,  // 9: ycc.v1.SessionService.StartSession:input_type -> ycc.v1.StartSessionRequest
+	19, // 10: ycc.v1.SessionService.ListSessions:input_type -> ycc.v1.ListSessionsRequest
+	10, // 11: ycc.v1.SessionService.Subscribe:input_type -> ycc.v1.SubscribeRequest
+	11, // 12: ycc.v1.SessionService.SendInput:input_type -> ycc.v1.SendInputRequest
+	13, // 13: ycc.v1.SessionService.AnswerQuestion:input_type -> ycc.v1.AnswerQuestionRequest
+	4,  // 14: ycc.v1.SessionService.ListProjects:input_type -> ycc.v1.ListProjectsRequest
+	6,  // 15: ycc.v1.SessionService.AddProject:input_type -> ycc.v1.AddProjectRequest
+	8,  // 16: ycc.v1.SessionService.RemoveProject:input_type -> ycc.v1.RemoveProjectRequest
+	22, // 17: ycc.v1.SessionService.ListModels:input_type -> ycc.v1.ListModelsRequest
+	25, // 18: ycc.v1.SessionService.SetInteractionLevel:input_type -> ycc.v1.SetInteractionLevelRequest
+	27, // 19: ycc.v1.SessionService.SetRoleConfig:input_type -> ycc.v1.SetRoleConfigRequest
+	29, // 20: ycc.v1.SessionService.SetThinking:input_type -> ycc.v1.SetThinkingRequest
+	31, // 21: ycc.v1.SessionService.ListBacklog:input_type -> ycc.v1.ListBacklogRequest
+	34, // 22: ycc.v1.SessionService.GetTask:input_type -> ycc.v1.GetTaskRequest
+	18, // 23: ycc.v1.SessionService.ListModes:output_type -> ycc.v1.ListModesResponse
+	2,  // 24: ycc.v1.SessionService.StartSession:output_type -> ycc.v1.StartSessionResponse
+	21, // 25: ycc.v1.SessionService.ListSessions:output_type -> ycc.v1.ListSessionsResponse
+	0,  // 26: ycc.v1.SessionService.Subscribe:output_type -> ycc.v1.Event
+	12, // 27: ycc.v1.SessionService.SendInput:output_type -> ycc.v1.SendInputResponse
+	14, // 28: ycc.v1.SessionService.AnswerQuestion:output_type -> ycc.v1.AnswerQuestionResponse
+	5,  // 29: ycc.v1.SessionService.ListProjects:output_type -> ycc.v1.ListProjectsResponse
+	7,  // 30: ycc.v1.SessionService.AddProject:output_type -> ycc.v1.AddProjectResponse
+	9,  // 31: ycc.v1.SessionService.RemoveProject:output_type -> ycc.v1.RemoveProjectResponse
+	24, // 32: ycc.v1.SessionService.ListModels:output_type -> ycc.v1.ListModelsResponse
+	26, // 33: ycc.v1.SessionService.SetInteractionLevel:output_type -> ycc.v1.SetInteractionLevelResponse
+	28, // 34: ycc.v1.SessionService.SetRoleConfig:output_type -> ycc.v1.SetRoleConfigResponse
+	30, // 35: ycc.v1.SessionService.SetThinking:output_type -> ycc.v1.SetThinkingResponse
+	33, // 36: ycc.v1.SessionService.ListBacklog:output_type -> ycc.v1.ListBacklogResponse
+	36, // 37: ycc.v1.SessionService.GetTask:output_type -> ycc.v1.GetTaskResponse
+	23, // [23:38] is the sub-list for method output_type
+	8,  // [8:23] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_ycc_v1_ycc_proto_init() }
@@ -1795,7 +2247,7 @@ func file_ycc_v1_ycc_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ycc_v1_ycc_proto_rawDesc), len(file_ycc_v1_ycc_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   31,
+			NumMessages:   37,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -73,3 +73,5 @@ Notes:
 …[truncated]
 - 2026-06-27 review (claude): accept — The fix correctly emits the user_input echo at the moment the prod is accepted (the successful `case s.inputCh <- text:` branch) and removes the emit from the run-loop select, so the event is recorded
 …[truncated]
+- 2026-06-27 decision: accept — commit 1dbd68b: Fix: emit user_input echo on enqueue so follow-up messages display immediately  Move the user_input echo from the session run loop's dequeue point into SendInput's successful enqueue branch, so a foll
+…[truncated]

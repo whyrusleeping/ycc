@@ -640,6 +640,24 @@ func (m *Manager) ListByProject(name string) []*Session {
 // Models returns the configured logical models for the settings overlay pickers.
 func (m *Manager) Models() []config.ModelInfo { return m.reg.Models() }
 
+// Backlog returns a docs.Store for the given project's workspace (empty => the
+// daemon default workspace). Used by the read-only backlog RPCs (spec §18.5).
+func (m *Manager) Backlog(project string) (*docs.Store, error) {
+	ws := m.defaultWorkspace
+	if project != "" {
+		p, ok := m.projects.Resolve(project)
+		if !ok {
+			return nil, fmt.Errorf("unknown project %q", project)
+		}
+		ws = p
+	}
+	absWS, err := filepath.Abs(ws)
+	if err != nil {
+		return nil, fmt.Errorf("resolve workspace: %w", err)
+	}
+	return docs.NewStore(absWS), nil
+}
+
 func newID() (string, error) {
 	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
