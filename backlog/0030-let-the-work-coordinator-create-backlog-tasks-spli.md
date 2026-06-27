@@ -1,10 +1,10 @@
 ---
 id: "0030"
 title: Let the work coordinator create backlog tasks (split + follow-on work)
-status: todo
+status: in_progress
 priority: 2
 created: "2026-06-26"
-updated: "2026-06-26"
+updated: "2026-06-27"
 depends_on: []
 spec_refs: []
 ---
@@ -50,4 +50,10 @@ both a capability gap and a spec/code drift.
 
 ## Work log
 - 2026-06-26 plan: 1. In `internal/orchestrator/orchestrator.go`, add `createTask(d)` to the `CoordinatorTools` registry (the function already exists and is used by pm). Place it near `updateTask(d)`. 2. In `internal/or
+…[truncated]
+- 2026-06-27 plan: Wire create_task into the work coordinator. Spec §8 and §10 already document the split/follow-on capability, so no spec changes are needed (verify they remain accurate).  1. internal/orchestrator/or
+…[truncated]
+- 2026-06-27 implementer report: Wired `create_task` into the work coordinator.  Changes: 1. internal/orchestrator/orchestrator.go — added `createTask(d)` to the `CoordinatorTools` registry, next to `updateTask(d)`. 2. internal/orc
+…[truncated]
+- 2026-06-27 review (claude): accept — The change correctly wires create_task into the work coordinator's CoordinatorTools registry, extends the coordinatorSystem prompt with well-balanced split vs. follow-on guidance that explicitly disco
 …[truncated]

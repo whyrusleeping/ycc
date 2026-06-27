@@ -112,7 +112,7 @@ func TestWorkCoordinatorHasFileAndPipelineTools(t *testing.T) {
 		}
 	}
 	// ...while still driving the implementation pipeline.
-	for _, want := range []string{"spawn_implementer", "spawn_reviewers", "commit", "list_backlog"} {
+	for _, want := range []string{"spawn_implementer", "spawn_reviewers", "commit", "list_backlog", "create_task"} {
 		if !hasTool(reg, want) {
 			t.Fatalf("work coordinator missing pipeline tool %s", want)
 		}

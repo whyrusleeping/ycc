@@ -38,7 +38,16 @@ shows accepted reviews and the change is in place), do NOT spawn an implementer 
 from scratch — confirm the acceptance criteria are met, call commit to capture anything still
 uncommitted (it is fine if there is nothing to commit), update_task "done", and finish. If a
 task is only partially done, resume from where it left off rather than starting over. Spend
-effort where it is actually needed, and keep moving.`
+effort where it is actually needed, and keep moving.
+
+Keep the active task focused — don't let its scope balloon. You may use create_task to grow
+the backlog in two cases: (a) splitting, when a task turns out too big, break the
+remaining/secondary scope into new, well-scoped tasks (use depends_on the current one when
+appropriate) instead of cramming it into one commit; and (b) follow-on work, when you notice
+worthwhile follow-up while implementing (refactors, hardening, missing tests, latent bugs),
+capture it as new backlog tasks rather than dropping it or expanding this task. Give new tasks
+clear titles and acceptance criteria. This is a mechanism to keep the current task tight, not
+an invitation to scope-creep it — the session still drives ONE task to a committed state.`
 
 const implementerSystem = `You are an autonomous coding agent. The coordinator assigns you one task with a plan.
 Use Read/Edit/Write to view and change files and Bash to search and run commands.
