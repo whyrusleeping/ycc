@@ -23,4 +23,7 @@
 | [0017](backlog/0017-tool-call-syntax-highlighting.md) | Smarter language inference for tool-call syntax highlighting | todo | 3 | 0006 |
 | [0018](backlog/0018-implementer-turn-limit.md) | Remove / raise / make-configurable the implementer turn limit | done | 2 | 0002 |
 | [0020](backlog/0020-save-rerun-plans.md) | Persist and re-run coordinator / testing plans (plan library) | todo | 3 | 0004 |
-| [0021](backlog/0021-collapse-modes-into-pm.md) | Collapse spec/backlog/feature/bug into a single `pm` (project manager) mode | in_progress | 2 | 0006 |
+| [0021](backlog/0021-collapse-modes-into-pm.md) | Collapse spec/backlog/feature/bug into a single `pm` (project manager) mode | done | 2 | 0006 |
+| [0022](backlog/0022-config-save-write-ycc-toml-from-a-config.md) | config.Save — write ycc.toml from a Config | todo | 2 | — |
+| [0023](backlog/0023-first-run-setup-wizard-configure-model-providers-r.md) | First-run setup wizard — configure model providers & roles (write ycc.toml) | todo | 2 | 0022 |
+| [0024](backlog/0024-per-project-onboarding-greenfield-full-spec-vs-bro.md) | Per-project onboarding — greenfield (full spec) vs brownfield (scoped) pm presets | todo | 2 | — |

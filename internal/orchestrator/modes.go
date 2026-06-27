@@ -17,15 +17,16 @@ type ModeInfo struct {
 	Description string
 }
 
-// Modes returns the selectable session modes (spec §9). There are three: pm
-// (planning / intake / docs, no implementation), chat (freeform, can edit code),
-// and work (the orchestrated implementation pipeline). The home menu additionally
-// offers opening-prompt presets that drop into pm (see Presets).
+// Modes returns the selectable session modes (spec §9). There are three: chat
+// (freeform, can edit code — the default first option), work (the orchestrated
+// implementation pipeline), and pm (planning / intake / docs, no implementation).
+// The home menu additionally offers opening-prompt presets that drop into pm (see
+// Presets).
 func Modes() []ModeInfo {
 	return []ModeInfo{
-		{"pm", "Project manager", "Plan, document, and groom the backlog — spec.md, tasks, plans. No implementation."},
 		{"chat", "Chat", "Open-ended conversation and coding — no fixed workflow."},
 		{"work", "Work on backlog", "Pick a backlog task, implement it, review it across models, and commit."},
+		{"pm", "Project manager", "Plan, document, and groom the backlog — spec.md, tasks, plans. No implementation."},
 	}
 }
 

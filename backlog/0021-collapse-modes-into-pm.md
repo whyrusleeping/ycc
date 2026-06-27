@@ -1,7 +1,7 @@
 ---
 id: "0021"
 title: Collapse spec/backlog/feature/bug into a single `pm` (project manager) mode
-status: in_progress
+status: done
 priority: 2
 created: "2026-06-26"
 updated: "2026-06-26"
@@ -85,4 +85,6 @@ Open questions:
 - 2026-06-26 review (claude): accept — The change cleanly collapses spec/backlog/feature/bug into a single `pm` mode while keeping `chat` and `work`, matching spec §9. `pm` has the prescribed toolset (Read/Write/Edit/Bash, backlog tools, 
 …[truncated]
 - 2026-06-26 revision: Added `switch_to_work` to the pm tool enumeration in spec.md §9 (line 324–326), so the listed tools — Read/Write/Edit/Bash, list_backlog/get_task/create_task/update_task, propose_plan, switch_to_
+…[truncated]
+- 2026-06-26 decision: accept — commit 0414bd1: Collapse spec/backlog/feature/bug modes into a single `pm` mode  - Modes() now returns three: pm (planning/intake/docs, no implementation),   chat, work. pm toolset: Read/Write/Edit/Bash, backlog tool
 …[truncated]

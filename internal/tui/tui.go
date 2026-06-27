@@ -489,11 +489,15 @@ func (m model) updateOverlay(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "up":
 		if m.ovCursor > 0 {
 			m.ovCursor--
+		} else {
+			m.ovCursor = ovCount - 1
 		}
 		return m, nil
 	case "down":
 		if m.ovCursor < ovCount-1 {
 			m.ovCursor++
+		} else {
+			m.ovCursor = 0
 		}
 		return m, nil
 	case "left":

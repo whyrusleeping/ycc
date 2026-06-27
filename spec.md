@@ -627,3 +627,91 @@ Wire path: `question_asked` events carry the options; `AnswerQuestion` carries e
 chosen option (index/value) or free text. This gives the agent the same crisp,
 low-friction Q&A loop a good interactive coding assistant has, instead of forcing every
 clarification into prose.
+
+## 19. Onboarding flows
+
+ycc has two onboarding moments. They are independent and triggered by different signals:
+the **first-run** flow runs once per machine/user and configures *which models ycc talks
+to*; the **per-project** flow runs the first time work begins in a given workspace and
+configures *what ycc should know about that project* (its `spec.md` + backlog).
+
+### 19.1 First-run setup (global — model providers & roles)
+
+**Trigger.** The very first time a user runs `ycc` with **no usable model configuration**:
+no `ycc.toml` is discoverable (`DiscoverConfig` returns "" — §`internal/daemon`) *and* no
+fallback env key is set, so the daemon would otherwise fall back to a keyless Anthropic
+config that 401s on the first turn (§13). Rather than failing the first session, the client
+runs a guided setup.
+
+**Where it runs.** This is a **client/TUI wizard, not an agent flow** — it must work before
+any working model exists, and it is a structured form, not a conversation. It writes a
+`ycc.toml` to the user config dir (`~/.config/ycc/ycc.toml`, via `os.UserConfigDir()`), the
+second `DiscoverConfig` candidate, so every later run finds it.
+
+**What it collects.**
+1. **One or more model providers.** For each: a logical name (e.g. `claude`, `gpt`,
+   `local`), a backend (`anthropic` | `openai` | `ollama` — the backends `config.Build`
+   already supports), a base URL (sensible default per backend), a model id, and an API key.
+   Keys are stored as a `key_env` reference (the var name) following the spec's
+   "keys in env only" lean (§17 open question), *not* inlined into the TOML; the wizard can
+   also offer to note which env vars must be exported. At least one provider is required.
+2. **Role assignments** (§13): pick the `coordinator`, `implementer`, and one-or-more
+   `reviewers` from the configured logical models. With a single provider, all three default
+   to it (mirroring `DefaultAnthropic`) and the user can accept without choosing.
+
+**Output.** A valid `config.Config` written as TOML. This requires a new `config.Save(path,
+*Config)` (the package currently only `Load`s). After writing, the wizard hands the path to
+the daemon resolution path (§3.1) exactly as a discovered config would be, so the first real
+session uses it. Re-running setup later is available from the settings overlay (§18.2,
+"Model / role configuration") — that overlay already edits role assignments live; first-run
+setup is the bootstrap that creates the file those edits then mutate.
+
+**Skipping.** If a usable config or env key already exists, first-run setup does not trigger;
+plain `ycc` proceeds straight to the home menu. The wizard is also skippable on purpose (the
+user may prefer to hand-author `ycc.toml`), in which case ycc proceeds with whatever fallback
+exists and surfaces the existing keyless-401 warning.
+
+### 19.2 Per-project onboarding (agent — scope spec & backlog)
+
+**Trigger.** The first time a session begins in a workspace that has **not been onboarded**.
+The signal is the absence of project docs: no `spec.md` at the workspace root (or a trivially
+empty one) and no `backlog/`. The client detects this when a project is opened/selected and
+offers the appropriate onboarding entry prominently in the home menu (it remains available as
+a preset thereafter, since "onboard later" is valid).
+
+This flow is **agent-driven**, and it is a `pm`-mode flow (planning/intake/docs — §9), so it
+slots in as two new **pm presets** (opening-prompt + first message), alongside the existing
+`feature` / `bug` / `spec` / `backlog` presets. The agent itself distinguishes new vs.
+existing:
+
+**New project (empty / greenfield).** Signal: the workspace is essentially empty of code
+(e.g. no source files / no meaningful git history) in addition to lacking docs. The agent
+runs a **full scoping** conversation: elicit the project's purpose, scope, constraints, and
+shape; author an initial `spec.md` (the canonical sections — Vision, Goals, Architecture,
+Components, Constraints, Open Questions — §6.1); and seed a starter backlog of well-scoped
+tasks. This is the "spec the whole thing" path.
+
+**Existing project (brownfield).** Signal: the workspace already has substantial code but no
+ycc docs. Specing the *entire* existing codebase up front is wasteful and rarely what the
+user wants. Instead the agent runs a **scoped intake**:
+1. Ask the user **what they want to work on** (a feature, an area to refactor, a class of
+   bugs, etc.) — the entry point, not a whole-project audit.
+2. Explore **only the parts of the codebase relevant to that work** (Read + ripgrep),
+   reading enough to understand the slice in question.
+3. Write **only the spec slices that the work touches** — author/extend just the relevant
+   `spec.md` section(s) (e.g. one Component + the Goals it serves), explicitly *not* a
+   from-scratch full spec. Note in the spec that it is partial/seeded-as-needed.
+4. Create the backlog tasks for the requested work, with a concrete plan (`propose_plan`),
+   so the user can hand one to `work` (`switch_to_work`) immediately.
+
+The guiding principle for brownfield: **spec the work, not the repo.** Coverage grows
+incrementally as more work is done, rather than requiring a big-bang documentation effort
+before ycc is useful. The agent should make the new-vs-existing determination itself from the
+workspace contents (and may confirm with the user when ambiguous), so a single "Onboard this
+project" entry can route to the right behaviour; the prompt encodes both branches.
+
+**Relation to existing presets.** The brownfield path overlaps the `feature` preset (explore
+→ propose) but differs in intent: it is the *first* time ycc sees the project and it also
+establishes the initial spec slice + backlog conventions, whereas `feature` assumes those
+already exist. Keeping it a distinct, prominently-surfaced preset is what makes onboarding
+discoverable.
