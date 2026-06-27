@@ -11,10 +11,32 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
+
+// dirLocks serializes backlog mutations per directory. A work session and a
+// capture agent (task 0016) use SEPARATE Store instances over the same backlog
+// dir, so a per-instance mutex would not serialize them; a package-level
+// registry of per-directory locks does. This keeps the generated index from
+// being regenerated from a half-written set of task files.
+var (
+	dirLocksMu sync.Mutex
+	dirLocks   = map[string]*sync.Mutex{}
+)
+
+func lockFor(dir string) *sync.Mutex {
+	dirLocksMu.Lock()
+	defer dirLocksMu.Unlock()
+	l := dirLocks[dir]
+	if l == nil {
+		l = &sync.Mutex{}
+		dirLocks[dir] = l
+	}
+	return l
+}
 
 // Status is a task's lifecycle state.
 type Status string
@@ -47,11 +69,18 @@ type Task struct {
 // Store is the backlog directory accessor.
 type Store struct {
 	dir string // <workspace>/backlog
+	// mu serializes mutations (and index regeneration) for this backlog dir. It is
+	// shared across all Store instances for the same dir via lockFor, so concurrent
+	// sessions (e.g. a work session and a quick-add capture agent, task 0016)
+	// serialize their writes. It is NON-reentrant: public methods acquire it once
+	// and delegate to lock-free *Locked helpers to avoid self-deadlock.
+	mu *sync.Mutex
 }
 
 // NewStore returns a Store for the backlog under workspaceRoot.
 func NewStore(workspaceRoot string) *Store {
-	return &Store{dir: filepath.Join(workspaceRoot, "backlog")}
+	dir := filepath.Clean(filepath.Join(workspaceRoot, "backlog"))
+	return &Store{dir: dir, mu: lockFor(dir)}
 }
 
 // Dir returns the backlog directory path.
@@ -59,6 +88,12 @@ func (s *Store) Dir() string { return s.dir }
 
 // List returns all tasks sorted by id. Files without YAML frontmatter are skipped.
 func (s *Store) List() ([]*Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.listLocked()
+}
+
+func (s *Store) listLocked() ([]*Task, error) {
 	entries, err := os.ReadDir(s.dir)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -108,8 +143,14 @@ func BlockingDeps(t *Task, byID map[string]Status) []string {
 
 // Get returns the task with the given id.
 func (s *Store) Get(id string) (*Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.getLocked(id)
+}
+
+func (s *Store) getLocked(id string) (*Task, error) {
 	id = normalizeID(id)
-	tasks, err := s.List()
+	tasks, err := s.listLocked()
 	if err != nil {
 		return nil, err
 	}
@@ -123,6 +164,12 @@ func (s *Store) Get(id string) (*Task, error) {
 
 // Create writes a new task file, assigning the next id and a slug from the title.
 func (s *Store) Create(title, body string, priority int, dependsOn, specRefs []string) (*Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.createLocked(title, body, priority, dependsOn, specRefs)
+}
+
+func (s *Store) createLocked(title, body string, priority int, dependsOn, specRefs []string) (*Task, error) {
 	if strings.TrimSpace(title) == "" {
 		return nil, fmt.Errorf("title is required")
 	}
@@ -149,7 +196,13 @@ func (s *Store) Create(title, body string, priority int, dependsOn, specRefs []s
 
 // Update loads a task, applies mut, bumps Updated, and writes it back.
 func (s *Store) Update(id string, mut func(*Task)) (*Task, error) {
-	t, err := s.Get(id)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.updateLocked(id, mut)
+}
+
+func (s *Store) updateLocked(id string, mut func(*Task)) (*Task, error) {
+	t, err := s.getLocked(id)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +216,11 @@ func (s *Store) Update(id string, mut func(*Task)) (*Task, error) {
 
 // AppendWorkLog appends a dated bullet under the task's "## Work log" section.
 func (s *Store) AppendWorkLog(id, line string) (*Task, error) {
-	return s.Update(id, func(t *Task) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Delegate to the lock-free helper (NOT the exported Update, which would
+	// re-lock the non-reentrant mutex and deadlock).
+	return s.updateLocked(id, func(t *Task) {
 		t.Body = ensureWorkLog(t.Body)
 		if !strings.HasSuffix(t.Body, "\n") {
 			t.Body += "\n"
@@ -174,7 +231,13 @@ func (s *Store) AppendWorkLog(id, line string) (*Task, error) {
 
 // RenderIndex regenerates backlog.md (in the workspace root) from the task files.
 func (s *Store) RenderIndex() error {
-	tasks, err := s.List()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.renderIndexLocked()
+}
+
+func (s *Store) renderIndexLocked() error {
+	tasks, err := s.listLocked()
 	if err != nil {
 		return err
 	}
@@ -194,7 +257,7 @@ func (s *Store) RenderIndex() error {
 }
 
 func (s *Store) nextID() (string, error) {
-	tasks, err := s.List()
+	tasks, err := s.listLocked()
 	if err != nil {
 		return "", err
 	}

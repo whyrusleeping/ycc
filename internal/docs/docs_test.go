@@ -1,9 +1,11 @@
 package docs
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -129,5 +131,48 @@ func TestRenderIndex(t *testing.T) {
 	}
 	if !strings.Contains(idx, "backlog/0002-beta.md") {
 		t.Fatalf("index link wrong:\n%s", idx)
+	}
+}
+
+// TestConcurrentCreateSerializes launches many goroutines that each Create a task
+// and regenerate the index on the same Store. The per-directory lock must
+// serialize them so ids are unique and sequential and the index never renders
+// from a half-written state. Run with -race to catch data races.
+func TestConcurrentCreateSerializes(t *testing.T) {
+	ws := t.TempDir()
+	s := NewStore(ws)
+
+	const n = 30
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if _, err := s.Create(fmt.Sprintf("task %d", i), "", 3, nil, nil); err != nil {
+				t.Errorf("create: %v", err)
+				return
+			}
+			if err := s.RenderIndex(); err != nil {
+				t.Errorf("render: %v", err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	tasks, err := s.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != n {
+		t.Fatalf("got %d tasks, want %d (duplicate or lost ids)", len(tasks), n)
+	}
+	for i, task := range tasks {
+		want := fmt.Sprintf("%04d", i+1)
+		if task.ID != want {
+			t.Fatalf("task %d has id %q, want %q (ids not unique/sequential)", i, task.ID, want)
+		}
+	}
+	if err := s.RenderIndex(); err != nil {
+		t.Fatalf("final render: %v", err)
 	}
 }

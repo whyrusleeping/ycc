@@ -2158,6 +2158,140 @@ func (x *GetTaskResponse) GetTask() *TaskDetail {
 	return nil
 }
 
+// Quick-add backlog capture (spec §18.2, task 0016): a TUI overlay lets the user
+// quick-add a backlog item mid-session WITHOUT disturbing the running session.
+// The daemon runs a lightweight, off-stream capture agent that turns the
+// description into a structured task via create_task. The agent may ask ONE
+// clarifying question; the client carries it back via prior_question/prior_answer
+// so the second call creates the task without asking again.
+type CaptureBacklogItemRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`                                  // optional registered project; empty => daemon default workspace
+	Description   string                 `protobuf:"bytes,2,opt,name=description,proto3" json:"description,omitempty"`                          // the user's natural-language description
+	PriorQuestion string                 `protobuf:"bytes,3,opt,name=prior_question,json=priorQuestion,proto3" json:"prior_question,omitempty"` // the clarifying question the agent asked previously (if any)
+	PriorAnswer   string                 `protobuf:"bytes,4,opt,name=prior_answer,json=priorAnswer,proto3" json:"prior_answer,omitempty"`       // the user's answer to that question
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CaptureBacklogItemRequest) Reset() {
+	*x = CaptureBacklogItemRequest{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CaptureBacklogItemRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CaptureBacklogItemRequest) ProtoMessage() {}
+
+func (x *CaptureBacklogItemRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CaptureBacklogItemRequest.ProtoReflect.Descriptor instead.
+func (*CaptureBacklogItemRequest) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *CaptureBacklogItemRequest) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *CaptureBacklogItemRequest) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *CaptureBacklogItemRequest) GetPriorQuestion() string {
+	if x != nil {
+		return x.PriorQuestion
+	}
+	return ""
+}
+
+func (x *CaptureBacklogItemRequest) GetPriorAnswer() string {
+	if x != nil {
+		return x.PriorAnswer
+	}
+	return ""
+}
+
+type CaptureBacklogItemResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"` // set when a task was created
+	Title         string                 `protobuf:"bytes,2,opt,name=title,proto3" json:"title,omitempty"`                 // the created task's title
+	Question      string                 `protobuf:"bytes,3,opt,name=question,proto3" json:"question,omitempty"`           // set when the agent asks ONE clarifying question instead
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CaptureBacklogItemResponse) Reset() {
+	*x = CaptureBacklogItemResponse{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CaptureBacklogItemResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CaptureBacklogItemResponse) ProtoMessage() {}
+
+func (x *CaptureBacklogItemResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CaptureBacklogItemResponse.ProtoReflect.Descriptor instead.
+func (*CaptureBacklogItemResponse) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{42}
+}
+
+func (x *CaptureBacklogItemResponse) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *CaptureBacklogItemResponse) GetTitle() string {
+	if x != nil {
+		return x.Title
+	}
+	return ""
+}
+
+func (x *CaptureBacklogItemResponse) GetQuestion() string {
+	if x != nil {
+		return x.Question
+	}
+	return ""
+}
+
 // Usage/cost breakdown (spec §20.3, §20.5): the daemon scans a workspace's
 // session event logs, joins per-turn usage with task focus and per-model
 // pricing, and returns a structured breakdown grouped by task × model × day so
@@ -2174,7 +2308,7 @@ type GetUsageRequest struct {
 
 func (x *GetUsageRequest) Reset() {
 	*x = GetUsageRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[41]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2186,7 +2320,7 @@ func (x *GetUsageRequest) String() string {
 func (*GetUsageRequest) ProtoMessage() {}
 
 func (x *GetUsageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[41]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2199,7 +2333,7 @@ func (x *GetUsageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetUsageRequest.ProtoReflect.Descriptor instead.
 func (*GetUsageRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{41}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *GetUsageRequest) GetProject() string {
@@ -2249,7 +2383,7 @@ type UsageRow struct {
 
 func (x *UsageRow) Reset() {
 	*x = UsageRow{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[42]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2261,7 +2395,7 @@ func (x *UsageRow) String() string {
 func (*UsageRow) ProtoMessage() {}
 
 func (x *UsageRow) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[42]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2274,7 +2408,7 @@ func (x *UsageRow) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UsageRow.ProtoReflect.Descriptor instead.
 func (*UsageRow) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{42}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *UsageRow) GetTask() string {
@@ -2365,7 +2499,7 @@ type GetUsageResponse struct {
 
 func (x *GetUsageResponse) Reset() {
 	*x = GetUsageResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[43]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2377,7 +2511,7 @@ func (x *GetUsageResponse) String() string {
 func (*GetUsageResponse) ProtoMessage() {}
 
 func (x *GetUsageResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[43]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2390,7 +2524,7 @@ func (x *GetUsageResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetUsageResponse.ProtoReflect.Descriptor instead.
 func (*GetUsageResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{43}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *GetUsageResponse) GetRows() []*UsageRow {
@@ -2554,7 +2688,16 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\n" +
 	"blocked_by\x18\v \x03(\tR\tblockedBy\"9\n" +
 	"\x0fGetTaskResponse\x12&\n" +
-	"\x04task\x18\x01 \x01(\v2\x12.ycc.v1.TaskDetailR\x04task\"r\n" +
+	"\x04task\x18\x01 \x01(\v2\x12.ycc.v1.TaskDetailR\x04task\"\xa1\x01\n" +
+	"\x19CaptureBacklogItemRequest\x12\x18\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\x12 \n" +
+	"\vdescription\x18\x02 \x01(\tR\vdescription\x12%\n" +
+	"\x0eprior_question\x18\x03 \x01(\tR\rpriorQuestion\x12!\n" +
+	"\fprior_answer\x18\x04 \x01(\tR\vpriorAnswer\"g\n" +
+	"\x1aCaptureBacklogItemResponse\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x14\n" +
+	"\x05title\x18\x02 \x01(\tR\x05title\x12\x1a\n" +
+	"\bquestion\x18\x03 \x01(\tR\bquestion\"r\n" +
 	"\x0fGetUsageRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12\x19\n" +
 	"\bgroup_by\x18\x02 \x03(\tR\agroupBy\x12\x14\n" +
@@ -2578,7 +2721,7 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x10GetUsageResponse\x12$\n" +
 	"\x04rows\x18\x01 \x03(\v2\x10.ycc.v1.UsageRowR\x04rows\x12&\n" +
 	"\x05total\x18\x02 \x01(\v2\x10.ycc.v1.UsageRowR\x05total\x12\x1c\n" +
-	"\tworkspace\x18\x03 \x01(\tR\tworkspace2\x8a\n" +
+	"\tworkspace\x18\x03 \x01(\tR\tworkspace2\xe7\n" +
 	"\n" +
 	"\x0eSessionService\x12@\n" +
 	"\tListModes\x12\x18.ycc.v1.ListModesRequest\x1a\x19.ycc.v1.ListModesResponse\x12I\n" +
@@ -2599,7 +2742,8 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\rSetRoleConfig\x12\x1c.ycc.v1.SetRoleConfigRequest\x1a\x1d.ycc.v1.SetRoleConfigResponse\x12F\n" +
 	"\vSetThinking\x12\x1a.ycc.v1.SetThinkingRequest\x1a\x1b.ycc.v1.SetThinkingResponse\x12F\n" +
 	"\vListBacklog\x12\x1a.ycc.v1.ListBacklogRequest\x1a\x1b.ycc.v1.ListBacklogResponse\x12:\n" +
-	"\aGetTask\x12\x16.ycc.v1.GetTaskRequest\x1a\x17.ycc.v1.GetTaskResponse\x12=\n" +
+	"\aGetTask\x12\x16.ycc.v1.GetTaskRequest\x1a\x17.ycc.v1.GetTaskResponse\x12[\n" +
+	"\x12CaptureBacklogItem\x12!.ycc.v1.CaptureBacklogItemRequest\x1a\".ycc.v1.CaptureBacklogItemResponse\x12=\n" +
 	"\bGetUsage\x12\x17.ycc.v1.GetUsageRequest\x1a\x18.ycc.v1.GetUsageResponseB1Z/github.com/whyrusleeping/ycc/proto/ycc/v1;yccv1b\x06proto3"
 
 var (
@@ -2614,7 +2758,7 @@ func file_ycc_v1_ycc_proto_rawDescGZIP() []byte {
 	return file_ycc_v1_ycc_proto_rawDescData
 }
 
-var file_ycc_v1_ycc_proto_msgTypes = make([]protoimpl.MessageInfo, 44)
+var file_ycc_v1_ycc_proto_msgTypes = make([]protoimpl.MessageInfo, 46)
 var file_ycc_v1_ycc_proto_goTypes = []any{
 	(*Event)(nil),                       // 0: ycc.v1.Event
 	(*StartSessionRequest)(nil),         // 1: ycc.v1.StartSessionRequest
@@ -2657,9 +2801,11 @@ var file_ycc_v1_ycc_proto_goTypes = []any{
 	(*GetTaskRequest)(nil),              // 38: ycc.v1.GetTaskRequest
 	(*TaskDetail)(nil),                  // 39: ycc.v1.TaskDetail
 	(*GetTaskResponse)(nil),             // 40: ycc.v1.GetTaskResponse
-	(*GetUsageRequest)(nil),             // 41: ycc.v1.GetUsageRequest
-	(*UsageRow)(nil),                    // 42: ycc.v1.UsageRow
-	(*GetUsageResponse)(nil),            // 43: ycc.v1.GetUsageResponse
+	(*CaptureBacklogItemRequest)(nil),   // 41: ycc.v1.CaptureBacklogItemRequest
+	(*CaptureBacklogItemResponse)(nil),  // 42: ycc.v1.CaptureBacklogItemResponse
+	(*GetUsageRequest)(nil),             // 43: ycc.v1.GetUsageRequest
+	(*UsageRow)(nil),                    // 44: ycc.v1.UsageRow
+	(*GetUsageResponse)(nil),            // 45: ycc.v1.GetUsageResponse
 }
 var file_ycc_v1_ycc_proto_depIdxs = []int32{
 	3,  // 0: ycc.v1.ListProjectsResponse.projects:type_name -> ycc.v1.ProjectInfo
@@ -2670,8 +2816,8 @@ var file_ycc_v1_ycc_proto_depIdxs = []int32{
 	27, // 5: ycc.v1.ListModelsResponse.models:type_name -> ycc.v1.ModelInfo
 	36, // 6: ycc.v1.ListBacklogResponse.tasks:type_name -> ycc.v1.BacklogTaskSummary
 	39, // 7: ycc.v1.GetTaskResponse.task:type_name -> ycc.v1.TaskDetail
-	42, // 8: ycc.v1.GetUsageResponse.rows:type_name -> ycc.v1.UsageRow
-	42, // 9: ycc.v1.GetUsageResponse.total:type_name -> ycc.v1.UsageRow
+	44, // 8: ycc.v1.GetUsageResponse.rows:type_name -> ycc.v1.UsageRow
+	44, // 9: ycc.v1.GetUsageResponse.total:type_name -> ycc.v1.UsageRow
 	19, // 10: ycc.v1.SessionService.ListModes:input_type -> ycc.v1.ListModesRequest
 	1,  // 11: ycc.v1.SessionService.StartSession:input_type -> ycc.v1.StartSessionRequest
 	23, // 12: ycc.v1.SessionService.ListSessions:input_type -> ycc.v1.ListSessionsRequest
@@ -2689,27 +2835,29 @@ var file_ycc_v1_ycc_proto_depIdxs = []int32{
 	33, // 24: ycc.v1.SessionService.SetThinking:input_type -> ycc.v1.SetThinkingRequest
 	35, // 25: ycc.v1.SessionService.ListBacklog:input_type -> ycc.v1.ListBacklogRequest
 	38, // 26: ycc.v1.SessionService.GetTask:input_type -> ycc.v1.GetTaskRequest
-	41, // 27: ycc.v1.SessionService.GetUsage:input_type -> ycc.v1.GetUsageRequest
-	22, // 28: ycc.v1.SessionService.ListModes:output_type -> ycc.v1.ListModesResponse
-	2,  // 29: ycc.v1.SessionService.StartSession:output_type -> ycc.v1.StartSessionResponse
-	25, // 30: ycc.v1.SessionService.ListSessions:output_type -> ycc.v1.ListSessionsResponse
-	0,  // 31: ycc.v1.SessionService.Subscribe:output_type -> ycc.v1.Event
-	12, // 32: ycc.v1.SessionService.SendInput:output_type -> ycc.v1.SendInputResponse
-	14, // 33: ycc.v1.SessionService.AnswerQuestion:output_type -> ycc.v1.AnswerQuestionResponse
-	16, // 34: ycc.v1.SessionService.Interrupt:output_type -> ycc.v1.InterruptResponse
-	18, // 35: ycc.v1.SessionService.Resume:output_type -> ycc.v1.ResumeResponse
-	5,  // 36: ycc.v1.SessionService.ListProjects:output_type -> ycc.v1.ListProjectsResponse
-	7,  // 37: ycc.v1.SessionService.AddProject:output_type -> ycc.v1.AddProjectResponse
-	9,  // 38: ycc.v1.SessionService.RemoveProject:output_type -> ycc.v1.RemoveProjectResponse
-	28, // 39: ycc.v1.SessionService.ListModels:output_type -> ycc.v1.ListModelsResponse
-	30, // 40: ycc.v1.SessionService.SetInteractionLevel:output_type -> ycc.v1.SetInteractionLevelResponse
-	32, // 41: ycc.v1.SessionService.SetRoleConfig:output_type -> ycc.v1.SetRoleConfigResponse
-	34, // 42: ycc.v1.SessionService.SetThinking:output_type -> ycc.v1.SetThinkingResponse
-	37, // 43: ycc.v1.SessionService.ListBacklog:output_type -> ycc.v1.ListBacklogResponse
-	40, // 44: ycc.v1.SessionService.GetTask:output_type -> ycc.v1.GetTaskResponse
-	43, // 45: ycc.v1.SessionService.GetUsage:output_type -> ycc.v1.GetUsageResponse
-	28, // [28:46] is the sub-list for method output_type
-	10, // [10:28] is the sub-list for method input_type
+	41, // 27: ycc.v1.SessionService.CaptureBacklogItem:input_type -> ycc.v1.CaptureBacklogItemRequest
+	43, // 28: ycc.v1.SessionService.GetUsage:input_type -> ycc.v1.GetUsageRequest
+	22, // 29: ycc.v1.SessionService.ListModes:output_type -> ycc.v1.ListModesResponse
+	2,  // 30: ycc.v1.SessionService.StartSession:output_type -> ycc.v1.StartSessionResponse
+	25, // 31: ycc.v1.SessionService.ListSessions:output_type -> ycc.v1.ListSessionsResponse
+	0,  // 32: ycc.v1.SessionService.Subscribe:output_type -> ycc.v1.Event
+	12, // 33: ycc.v1.SessionService.SendInput:output_type -> ycc.v1.SendInputResponse
+	14, // 34: ycc.v1.SessionService.AnswerQuestion:output_type -> ycc.v1.AnswerQuestionResponse
+	16, // 35: ycc.v1.SessionService.Interrupt:output_type -> ycc.v1.InterruptResponse
+	18, // 36: ycc.v1.SessionService.Resume:output_type -> ycc.v1.ResumeResponse
+	5,  // 37: ycc.v1.SessionService.ListProjects:output_type -> ycc.v1.ListProjectsResponse
+	7,  // 38: ycc.v1.SessionService.AddProject:output_type -> ycc.v1.AddProjectResponse
+	9,  // 39: ycc.v1.SessionService.RemoveProject:output_type -> ycc.v1.RemoveProjectResponse
+	28, // 40: ycc.v1.SessionService.ListModels:output_type -> ycc.v1.ListModelsResponse
+	30, // 41: ycc.v1.SessionService.SetInteractionLevel:output_type -> ycc.v1.SetInteractionLevelResponse
+	32, // 42: ycc.v1.SessionService.SetRoleConfig:output_type -> ycc.v1.SetRoleConfigResponse
+	34, // 43: ycc.v1.SessionService.SetThinking:output_type -> ycc.v1.SetThinkingResponse
+	37, // 44: ycc.v1.SessionService.ListBacklog:output_type -> ycc.v1.ListBacklogResponse
+	40, // 45: ycc.v1.SessionService.GetTask:output_type -> ycc.v1.GetTaskResponse
+	42, // 46: ycc.v1.SessionService.CaptureBacklogItem:output_type -> ycc.v1.CaptureBacklogItemResponse
+	45, // 47: ycc.v1.SessionService.GetUsage:output_type -> ycc.v1.GetUsageResponse
+	29, // [29:48] is the sub-list for method output_type
+	10, // [10:29] is the sub-list for method input_type
 	10, // [10:10] is the sub-list for extension type_name
 	10, // [10:10] is the sub-list for extension extendee
 	0,  // [0:10] is the sub-list for field type_name
@@ -2726,7 +2874,7 @@ func file_ycc_v1_ycc_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ycc_v1_ycc_proto_rawDesc), len(file_ycc_v1_ycc_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   44,
+			NumMessages:   46,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

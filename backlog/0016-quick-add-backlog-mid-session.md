@@ -1,10 +1,10 @@
 ---
 id: "0016"
 title: Quick-add backlog items mid-session (TUI capture overlay)
-status: todo
+status: in_progress
 priority: 3
 created: "2026-06-26"
-updated: "2026-06-26"
+updated: "2026-06-27"
 depends_on:
     - "0006"
 spec_refs:
@@ -42,3 +42,9 @@ Design notes:
       current project)
 
 ## Work log
+- 2026-06-27 plan: Add a "quick-add backlog item" capture overlay that runs a lightweight capture agent server-side without disturbing the running session, plus concurrency-safe backlog writes.  1) docs.Store concurrenc
+…[truncated]
+- 2026-06-27 implementer report: Implemented task 0016 (quick-add backlog items mid-session) end-to-end.  1) docs.Store concurrency-safe writes (internal/docs/docs.go) - Added a package-level registry of per-directory `*sync.Mutex` (
+…[truncated]
+- 2026-06-27 review (claude): accept — The change fully implements task 0016. A new CaptureBacklogItem RPC runs a lightweight, off-stream capture agent (RunCapture in internal/orchestrator/capture.go) scoped to a project, using a trimmed r
+…[truncated]

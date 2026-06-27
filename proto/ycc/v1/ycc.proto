@@ -177,6 +177,24 @@ message TaskDetail {
 }
 message GetTaskResponse { TaskDetail task = 1; }
 
+// Quick-add backlog capture (spec §18.2, task 0016): a TUI overlay lets the user
+// quick-add a backlog item mid-session WITHOUT disturbing the running session.
+// The daemon runs a lightweight, off-stream capture agent that turns the
+// description into a structured task via create_task. The agent may ask ONE
+// clarifying question; the client carries it back via prior_question/prior_answer
+// so the second call creates the task without asking again.
+message CaptureBacklogItemRequest {
+  string project = 1;        // optional registered project; empty => daemon default workspace
+  string description = 2;    // the user's natural-language description
+  string prior_question = 3; // the clarifying question the agent asked previously (if any)
+  string prior_answer = 4;   // the user's answer to that question
+}
+message CaptureBacklogItemResponse {
+  string task_id = 1;  // set when a task was created
+  string title = 2;    // the created task's title
+  string question = 3; // set when the agent asks ONE clarifying question instead
+}
+
 // Usage/cost breakdown (spec §20.3, §20.5): the daemon scans a workspace's
 // session event logs, joins per-turn usage with task focus and per-model
 // pricing, and returns a structured breakdown grouped by task × model × day so
@@ -237,6 +255,12 @@ service SessionService {
   // Backlog browser (spec §18.5): read-only access to the durable backlog.
   rpc ListBacklog(ListBacklogRequest) returns (ListBacklogResponse);
   rpc GetTask(GetTaskRequest) returns (GetTaskResponse);
+
+  // Quick-add backlog capture (spec §18.2, task 0016): run a lightweight,
+  // off-stream capture agent that turns a natural-language description into a
+  // backlog task without disturbing the running session. May ask ONE clarifying
+  // question, carried back via prior_question/prior_answer.
+  rpc CaptureBacklogItem(CaptureBacklogItemRequest) returns (CaptureBacklogItemResponse);
 
   // Usage/cost breakdown (spec §20): aggregated, priced token usage by task ×
   // model × day so clients can render the cost breakdown.

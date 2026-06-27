@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/docs"
@@ -878,6 +879,50 @@ func (m *Manager) Backlog(project string) (*docs.Store, error) {
 		return nil, fmt.Errorf("resolve workspace: %w", err)
 	}
 	return docs.NewStore(absWS), nil
+}
+
+// CaptureBacklogItem runs the lightweight, off-stream "quick-add backlog item"
+// capture agent for a project (task 0016, spec §18.2): it turns a natural-language
+// description into a structured backlog task without disturbing any running
+// session. The agent may ask ONE clarifying question (returned via Question);
+// the client re-invokes with priorQuestion/priorAnswer so it creates the task.
+// project empty => the daemon default workspace; backlog writes are serialized
+// in docs.Store so a concurrent work session can't corrupt the index.
+func (m *Manager) CaptureBacklogItem(project, description, priorQuestion, priorAnswer string) (orchestrator.CaptureResult, error) {
+	if strings.TrimSpace(description) == "" {
+		return orchestrator.CaptureResult{}, fmt.Errorf("description is required")
+	}
+	ws := m.defaultWorkspace
+	if project != "" {
+		p, ok := m.projects.Resolve(project)
+		if !ok {
+			return orchestrator.CaptureResult{}, fmt.Errorf("%w %q", ErrUnknownProject, project)
+		}
+		ws = p
+	}
+	absWS, err := filepath.Abs(ws)
+	if err != nil {
+		return orchestrator.CaptureResult{}, fmt.Errorf("resolve workspace: %w", err)
+	}
+	store := docs.NewStore(absWS)
+	coord := m.reg.CoordinatorName()
+	client, model, err := m.reg.Build(coord)
+	if err != nil {
+		return orchestrator.CaptureResult{}, fmt.Errorf("build capture backend: %w", err)
+	}
+	cd := orchestrator.CaptureDeps{
+		Workspace: absWS,
+		Docs:      store,
+		Client:    client,
+		Model:     model,
+		ModelName: coord,
+		Backend:   m.reg.BackendFor(coord),
+		Thinking:  engine.Thinking{}, // reasoning OFF for a fast capture
+		MaxTok:    m.reg.MaxTokens(),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	return orchestrator.RunCapture(ctx, cd, description, priorQuestion, priorAnswer)
 }
 
 // ErrUnknownProject indicates a project name did not resolve to a registered

@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -270,6 +272,26 @@ func (s *Server) GetTask(_ context.Context, req *connect.Request[v1.GetTaskReque
 		DependsOn: t.DependsOn, SpecRefs: t.SpecRefs, Created: t.Created, Updated: t.Updated,
 		Body: t.Body, Ready: len(blocking) == 0, BlockedBy: blocking,
 	}}), nil
+}
+
+// CaptureBacklogItem runs the lightweight, off-stream quick-add capture agent to
+// turn a natural-language description into a backlog task without disturbing any
+// running session (spec §18.2, task 0016). It may return a single clarifying
+// question instead of a task id.
+func (s *Server) CaptureBacklogItem(_ context.Context, req *connect.Request[v1.CaptureBacklogItemRequest]) (*connect.Response[v1.CaptureBacklogItemResponse], error) {
+	if strings.TrimSpace(req.Msg.Description) == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("description is required"))
+	}
+	res, err := s.mgr.CaptureBacklogItem(req.Msg.Project, req.Msg.Description, req.Msg.PriorQuestion, req.Msg.PriorAnswer)
+	if err != nil {
+		if errors.Is(err, session.ErrUnknownProject) {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&v1.CaptureBacklogItemResponse{
+		TaskId: res.TaskID, Title: res.Title, Question: res.Question,
+	}), nil
 }
 
 // GetUsage returns the aggregated, priced usage/cost breakdown for a project's

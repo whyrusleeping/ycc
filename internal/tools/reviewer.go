@@ -15,6 +15,14 @@ func Inspect(ws *Workspace) []*gollama.Tool {
 	return []*gollama.Tool{readFile(ws), bash(ws)}
 }
 
+// ReadOnly returns a minimal read-only tool set: just the file Read tool (no
+// shell, no edits). Used by the quick-add backlog capture agent (task 0016),
+// which should be able to ground a new task in existing files without the power
+// to run commands or mutate the workspace.
+func ReadOnly(ws *Workspace) []*gollama.Tool {
+	return []*gollama.Tool{readFile(ws)}
+}
+
 // Reviewer returns the tool set for a review subagent: the inspect tools plus
 // submit_review, a control tool that ends the review with a structured verdict.
 // Reviewers are prompted not to modify the workspace; hard enforcement is

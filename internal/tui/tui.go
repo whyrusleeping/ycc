@@ -103,6 +103,17 @@ type model struct {
 	backlogTasks  []*v1.BacklogTaskSummary
 	backlogCursor int
 	backlogDetail *v1.TaskDetail // nil => list view; set => detail view
+
+	// quick-add backlog capture overlay (spec §18.2, task 0016): modal over
+	// menu/session, opened with ctrl+n. It runs a lightweight, off-stream capture
+	// agent server-side so the running session is undisturbed.
+	capture         bool
+	captureInput    textinput.Model
+	captureStage    int    // 0 describe · 1 answer clarification · 2 created (dismiss)
+	captureQuestion string // the agent's clarifying question (stage 1)
+	captureDesc     string // the original description (carried into stage 1)
+	captureMsg      string // status/result/error line
+	captureBusy     bool   // a CaptureBacklogItem RPC is in flight
 }
 
 // Run starts the TUI against the daemon client. showPicker selects the initial
@@ -127,6 +138,11 @@ func initialModel(ctx context.Context, client yccv1connect.SessionServiceClient,
 	input.CharLimit = 8000
 	input.Width = 60
 
+	captureInput := textinput.New()
+	captureInput.Placeholder = "describe a new backlog item…"
+	captureInput.CharLimit = 8000
+	captureInput.Width = 60
+
 	initState := stateMenu
 	if showPicker {
 		initState = statePicker
@@ -135,7 +151,8 @@ func initialModel(ctx context.Context, client yccv1connect.SessionServiceClient,
 		client: client, ctx: ctx, workspace: workspace,
 		showPicker: showPicker,
 		state:      initState, prompt: prompt, input: input,
-		events: make(chan *v1.Event, 256), status: "starting",
+		captureInput: captureInput,
+		events:       make(chan *v1.Event, 256), status: "starting",
 		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1, follow: prefs.Follow,
 		prefs: prefs, level: "judgement",
 		thinkLevels: map[string]string{"coordinator": "high", "implementer": "high", "reviewers": "high"},
@@ -167,6 +184,13 @@ type streamClosedMsg struct{}
 type errMsg struct{ err error }
 type backlogMsg struct{ tasks []*v1.BacklogTaskSummary }
 type taskDetailMsg struct{ task *v1.TaskDetail }
+
+// captureResultMsg carries the outcome of a CaptureBacklogItem RPC (task 0016):
+// a created task (taskID/title) or a single clarifying question, or an error.
+type captureResultMsg struct {
+	taskID, title, question string
+	err                     error
+}
 
 func (m model) Init() tea.Cmd {
 	cmds := []tea.Cmd{m.fetchModes, m.fetchModels}
@@ -382,6 +406,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.prompt.Width = msg.Width - 4
 		m.input.Width = msg.Width - 4
+		m.captureInput.Width = msg.Width - 4
 		m.makeRenderer()
 		m.bodyCache = map[int]string{} // re-render bodies at the new width
 		m.rebuild()
@@ -441,12 +466,39 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case taskDetailMsg:
 		m.backlogDetail = msg.task
 		return m, nil
+	case captureResultMsg:
+		m.captureBusy = false
+		if msg.err != nil {
+			m.captureMsg = "error: " + msg.err.Error()
+			return m, nil
+		}
+		if msg.taskID != "" {
+			m.captureStage = 2
+			m.captureMsg = "created " + msg.taskID + ": " + msg.title
+			return m, nil
+		}
+		if msg.question != "" {
+			m.captureStage = 1
+			m.captureQuestion = msg.question
+			m.captureInput.SetValue("")
+			m.captureInput.Focus()
+			return m, nil
+		}
+		m.captureMsg = "(no result)"
+		return m, nil
 	}
 
 	// The project picker (spec §3.1) is shown first when attached to a
 	// persistent/remote daemon; it owns input until a project is chosen.
 	if m.state == statePicker {
 		return m.updatePicker(msg)
+	}
+
+	// The quick-add backlog capture overlay (ctrl+n) is modal over both the menu
+	// and a session (spec §18.2, task 0016). It runs entirely server-side so the
+	// session keeps streaming behind it.
+	if m.capture {
+		return m.updateCapture(msg)
 	}
 
 	// The backlog browser (ctrl+b) is modal over both the menu and a session
@@ -521,11 +573,28 @@ func (m model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// openCapture enters the quick-add backlog capture overlay (task 0016), resetting
+// it to the "describe" stage with a focused, empty input.
+func (m *model) openCapture() {
+	m.capture = true
+	m.captureStage = 0
+	m.captureQuestion = ""
+	m.captureDesc = ""
+	m.captureMsg = ""
+	m.captureBusy = false
+	m.captureInput.SetValue("")
+	m.captureInput.Focus()
+}
+
 func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyMsg); ok {
 		switch key.String() {
 		case "ctrl+c":
 			return m, tea.Quit
+		case "ctrl+n":
+			// Quick-add a backlog item (spec §18.2, task 0016).
+			m.openCapture()
+			return m, nil
 		case "ctrl+b":
 			// Open the read-only backlog browser (spec §18.5).
 			m.backlog, m.backlogCursor, m.backlogDetail = true, 0, nil
@@ -613,6 +682,10 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
+		case "ctrl+n":
+			// Quick-add a backlog item without pausing the session (task 0016).
+			m.openCapture()
+			return m, nil
 		case "ctrl+b":
 			// Open the read-only backlog browser (spec §18.5).
 			m.backlog, m.backlogCursor, m.backlogDetail = true, 0, nil
@@ -674,6 +747,102 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var icmd tea.Cmd
 	m.input, icmd = m.input.Update(msg)
 	return m, icmd
+}
+
+// --- quick-add backlog capture overlay (spec §18.2, task 0016) ---
+
+// updateCapture handles the modal quick-add overlay: describe an item, optionally
+// answer one clarifying question, then see the created task id. The capture runs
+// server-side (a separate off-stream agent), so the main session keeps streaming
+// behind the overlay — opening or using it never pauses the running session.
+func (m model) updateCapture(msg tea.Msg) (tea.Model, tea.Cmd) {
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		var c tea.Cmd
+		m.captureInput, c = m.captureInput.Update(msg)
+		return m, c
+	}
+	switch key.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.capture = false
+		return m, nil
+	case "enter":
+		if m.captureBusy {
+			return m, nil
+		}
+		if m.captureStage == 2 {
+			// Dismiss after a successful creation.
+			m.capture = false
+			return m, nil
+		}
+		val := strings.TrimSpace(m.captureInput.Value())
+		if val == "" {
+			return m, nil
+		}
+		if m.captureStage == 0 {
+			m.captureDesc = val
+			m.captureBusy = true
+			m.captureMsg = ""
+			m.captureInput.SetValue("")
+			return m, m.captureSubmit(m.captureDesc, "", "")
+		}
+		// Stage 1: answering the agent's clarifying question.
+		m.captureBusy = true
+		m.captureMsg = ""
+		ans := val
+		m.captureInput.SetValue("")
+		return m, m.captureSubmit(m.captureDesc, m.captureQuestion, ans)
+	default:
+		var c tea.Cmd
+		m.captureInput, c = m.captureInput.Update(msg)
+		return m, c
+	}
+}
+
+// captureSubmit issues the CaptureBacklogItem RPC, scoped to the current project,
+// returning a captureResultMsg. It does not touch the session stream.
+func (m model) captureSubmit(desc, q, a string) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := m.client.CaptureBacklogItem(m.ctx, connect.NewRequest(&v1.CaptureBacklogItemRequest{
+			Project: m.project, Description: desc, PriorQuestion: q, PriorAnswer: a,
+		}))
+		if err != nil {
+			return captureResultMsg{err: err}
+		}
+		return captureResultMsg{taskID: resp.Msg.TaskId, title: resp.Msg.Title, question: resp.Msg.Question}
+	}
+}
+
+// captureView renders the quick-add backlog capture overlay.
+func (m model) captureView() string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render(" capture backlog item ") + "\n\n")
+	switch m.captureStage {
+	case 0:
+		b.WriteString("  Describe a new backlog item:\n\n")
+		b.WriteString("  " + m.captureInput.View() + "\n")
+	case 1:
+		b.WriteString("  " + selStyle.Render("The capture agent asks:") + "\n")
+		b.WriteString("  " + m.captureQuestion + "\n\n")
+		b.WriteString("  Your answer:\n\n")
+		b.WriteString("  " + m.captureInput.View() + "\n")
+	case 2:
+		b.WriteString("  " + selStyle.Render(m.captureMsg) + "\n")
+	}
+	if m.captureBusy {
+		b.WriteString("\n" + dimStyle.Render("  capturing…"))
+	} else if strings.HasPrefix(m.captureMsg, "error:") {
+		b.WriteString("\n  " + selStyle.Render(m.captureMsg))
+	}
+	hint := "  enter submit · esc cancel"
+	if m.captureStage == 2 {
+		hint = "  enter/esc close"
+	}
+	b.WriteString("\n\n" + dimStyle.Render(hint))
+	b.WriteString("\n" + dimStyle.Render("  (the running session keeps going — capture is off-stream)"))
+	return b.String()
 }
 
 // --- backlog browser (spec §18.5) ---
@@ -1198,6 +1367,9 @@ func (m model) View() string {
 	if m.err != nil {
 		return fmt.Sprintf("\n  error: %v\n\n  (ctrl+c to quit)\n", m.err)
 	}
+	if m.capture {
+		return m.captureView()
+	}
 	if m.backlog {
 		return m.backlogView()
 	}
@@ -1261,7 +1433,7 @@ func (m model) menuView() string {
 		b.WriteString("  " + cursor + label + "\n")
 	}
 	b.WriteString("\n  " + m.prompt.View() + "\n")
-	b.WriteString("\n" + dimStyle.Render("  ↑/↓ choose mode · type a prompt · enter start · esc settings · ctrl+b backlog"))
+	b.WriteString("\n" + dimStyle.Render("  ↑/↓ choose mode · type a prompt · enter start · esc settings · ctrl+b backlog · ctrl+n new task"))
 	return b.String()
 }
 
@@ -1353,7 +1525,7 @@ func (m model) sessionView() string {
 		help := dimStyle.Render(" ⏸ paused — type a correction + enter to steer · enter to resume · esc settings")
 		return top + "\n" + body + "\n " + m.input.View() + "\n" + help
 	}
-	help := dimStyle.Render(" enter send/expand · ↑↓ select · click expand · pgup/pgdn scroll · ctrl+i interrupt · esc settings · ctrl+b backlog")
+	help := dimStyle.Render(" enter send/expand · ↑↓ select · click expand · pgup/pgdn scroll · ctrl+i interrupt · esc settings · ctrl+b backlog · ctrl+n new task")
 	return top + "\n" + body + "\n " + m.input.View() + "\n" + help
 }
 
