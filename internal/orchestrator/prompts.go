@@ -138,6 +138,34 @@ const backlogPresetPrompt = `Let's build the backlog from the spec. Read spec.md
 	`(clear title, description, acceptance criteria, sensible priority, dependencies). Use update_task to adjust ` +
 	`existing items. Finish when the backlog reflects the spec.`
 
+// onboardPresetPrompt drives FIRST-TIME per-project onboarding (spec §19.2): this
+// workspace has no ycc docs yet, so help the user establish spec.md and a backlog.
+// Greenfield (empty repo) and brownfield (substantial code, no docs) are handled
+// very differently — the agent decides which from the workspace itself.
+const onboardPresetPrompt = `This is the FIRST-TIME ONBOARDING for this project: the workspace has no ycc docs yet ` +
+	`(no spec.md, or only an empty one, and no backlog tasks). Your job is to help me establish the project's ` +
+	`spec.md and backlog. Two very different situations — decide which from the workspace ITSELF, then proceed:
+
+First, determine GREENFIELD vs BROWNFIELD by inspecting the workspace (Read + Bash with ripgrep: look for ` +
+	"source files and meaningful git history versus an essentially empty repo). If it's ambiguous, ask me to confirm " +
+	`before committing to a branch.
+
+GREENFIELD (essentially empty repo — "spec the whole thing"): run a full scoping conversation. Ask me about the ` +
+	`project's purpose, scope, constraints, and the shape of the system. Then author an initial spec.md (Write it at ` +
+	`the workspace root) with the canonical sections — Vision, Goals, Architecture, Components, Constraints, and Open ` +
+	`Questions. Finally seed a STARTER BACKLOG of well-scoped tasks with create_task (clear title, description, ` +
+	`acceptance criteria, sensible priority and dependencies).
+
+BROWNFIELD (substantial existing code, but no docs — "spec the work, not the repo"): do a SCOPED intake; do NOT ` +
+	`try to spec the whole repository. (1) Ask me what I want to work on first. (2) Explore ONLY the code relevant to ` +
+	`that work (Read + ripgrep). (3) Write ONLY the spec slice(s) that this work touches — author or extend just the ` +
+	`relevant section(s) of spec.md, and note in the spec that it is PARTIAL / seeded as needed (coverage grows ` +
+	`incrementally). (4) Create the backlog task(s) for the requested work with create_task and record a concrete plan ` +
+	`with propose_plan, then offer to hand a task to the work pipeline via switch_to_work.
+
+Guiding principle: spec the work, not the repo — coverage grows incrementally. Use ask_user when intent is unclear; ` +
+	`finish when the docs and backlog reflect the agreed state.`
+
 func levelGuidance(level string) string {
 	switch level {
 	case "interactive":

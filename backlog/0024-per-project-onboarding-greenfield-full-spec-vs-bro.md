@@ -1,7 +1,7 @@
 ---
 id: "0024"
 title: Per-project onboarding — greenfield (full spec) vs brownfield (scoped) pm presets
-status: todo
+status: done
 priority: 2
 created: "2026-06-26"
 updated: "2026-06-26"
@@ -68,3 +68,13 @@ backlog already exist).
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-26 plan: Two parts: an orchestrator pm preset/prompt, and client-side un-onboarded detection + prominence in the TUI home menu.  1) Orchestrator (internal/orchestrator):    - modes.go Presets(): add a single n
+…[truncated]
+- 2026-06-26 implementer report: Implemented per-project onboarding (spec §19.2).  PART 1 — Orchestrator: - internal/orchestrator/modes.go: added a new "onboard" preset at the FRONT of Presets() ({"onboard", "Onboard this project"
+…[truncated]
+- 2026-06-26 review (claude): accept — The change fully satisfies the task. It adds an `onboard` pm preset (front of `Presets()`) with a well-crafted `onboardPresetPrompt` that detects greenfield vs brownfield, instructs full-spec authorin
+…[truncated]
+- 2026-06-26 revision: Addressed the review polish: in menuView() I split the prominent handling so prominence is visible even when the prominent entry is the selected row. Added a new switch case `i == m.cursor && e.promin
+…[truncated]
+- 2026-06-26 review (claude): accept — The revision resolves the prior nit by adding a combined selected+prominent rendering case so the ★ '(recommended)' treatment appears even when onboarding is the default-selected row. All acceptance
+…[truncated]

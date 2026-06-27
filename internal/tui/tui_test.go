@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -130,5 +132,54 @@ func TestThinkingRendering(t *testing.T) {
 	empty := &v1.Event{Type: "thinking", DataJson: `{"text":""}`}
 	if b := m.renderBody(empty); strings.TrimSpace(b) != "" {
 		t.Fatalf("empty thinking body = %q", b)
+	}
+}
+
+// needsOnboarding flags an un-onboarded workspace (no real spec.md + no backlog
+// tasks) so the home menu can surface onboarding prominently (spec §19.2).
+func TestNeedsOnboarding(t *testing.T) {
+	t.Run("fresh empty dir", func(t *testing.T) {
+		if !needsOnboarding(t.TempDir()) {
+			t.Fatal("empty workspace should need onboarding")
+		}
+	})
+	t.Run("non-trivial spec", func(t *testing.T) {
+		ws := t.TempDir()
+		writeFile(t, ws, "spec.md", "# Spec\n\n## Goals\nship it\n")
+		if needsOnboarding(ws) {
+			t.Fatal("workspace with a real spec should not need onboarding")
+		}
+	})
+	t.Run("backlog task but no spec", func(t *testing.T) {
+		ws := t.TempDir()
+		writeFile(t, ws, "backlog/0001-foo.md", "# task\n")
+		if needsOnboarding(ws) {
+			t.Fatal("workspace with a backlog task should not need onboarding")
+		}
+	})
+	t.Run("trivially empty spec, no backlog", func(t *testing.T) {
+		ws := t.TempDir()
+		writeFile(t, ws, "spec.md", "# Spec\n")
+		if !needsOnboarding(ws) {
+			t.Fatal("trivially-empty spec + no backlog should need onboarding")
+		}
+	})
+	t.Run("only generated index, no tasks", func(t *testing.T) {
+		ws := t.TempDir()
+		writeFile(t, ws, "backlog/backlog.md", "# Backlog\n")
+		if !needsOnboarding(ws) {
+			t.Fatal("generated backlog index without tasks should still need onboarding")
+		}
+	})
+}
+
+func writeFile(t *testing.T, dir, rel, content string) {
+	t.Helper()
+	p := filepath.Join(dir, rel)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

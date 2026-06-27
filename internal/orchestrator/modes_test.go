@@ -44,7 +44,7 @@ func TestModesListed(t *testing.T) {
 }
 
 func TestPresetsOpenPM(t *testing.T) {
-	want := map[string]bool{"feature": false, "bug": false, "spec": false, "backlog": false}
+	want := map[string]bool{"onboard": false, "feature": false, "bug": false, "spec": false, "backlog": false}
 	for _, p := range Presets() {
 		if _, ok := want[p.Name]; !ok {
 			t.Fatalf("unexpected preset %q", p.Name)
@@ -60,6 +60,17 @@ func TestPresetsOpenPM(t *testing.T) {
 	for name, seen := range want {
 		if !seen {
 			t.Fatalf("preset %q missing", name)
+		}
+	}
+}
+
+// The onboarding prompt must steer the agent to detect both greenfield and
+// brownfield situations from the workspace.
+func TestOnboardPromptCoversBothBranches(t *testing.T) {
+	lower := strings.ToLower(onboardPresetPrompt)
+	for _, want := range []string{"greenfield", "brownfield"} {
+		if !strings.Contains(lower, want) {
+			t.Fatalf("onboardPresetPrompt does not mention %q", want)
 		}
 	}
 }

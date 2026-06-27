@@ -44,6 +44,7 @@ type Preset struct {
 // Presets returns the opening-prompt presets the home menu offers under pm.
 func Presets() []Preset {
 	return []Preset{
+		{"onboard", "Onboard this project", "Establish spec.md + backlog — greenfield (full spec) or brownfield (scoped to your work).", "pm", onboardPresetPrompt},
 		{"feature", "New feature", "Explore the codebase, then propose a plan and backlog tasks.", "pm", featurePresetPrompt},
 		{"bug", "Bug report", "Reproduce and localize a bug, then propose a fix plan.", "pm", bugPresetPrompt},
 		{"spec", "Author spec", "Collaboratively write and maintain spec.md.", "pm", specPresetPrompt},

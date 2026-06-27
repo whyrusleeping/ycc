@@ -1,7 +1,7 @@
 ---
 id: "0027"
 title: Record session→task focus for cost attribution
-status: in_progress
+status: done
 priority: 2
 created: "2026-06-26"
 updated: "2026-06-26"
@@ -47,4 +47,6 @@ kickoff prompt — nothing in the durable event log records it.
 - 2026-06-26 revision: Addressed the reviewer nit on Render().  Changes: - internal/event/event.go: added "task" to the Render() default-case key list so task_focus events surface their task id in the terse human-facing lin
 …[truncated]
 - 2026-06-26 review (claude): accept — The revision addresses the prior nit: Render now includes "task" in its key list so task_focus events display the focused task id in the terse stream, with a dedicated test (TestRenderTaskFocus). The 
+…[truncated]
+- 2026-06-26 decision: accept — commit 6426920: Record session→task focus for cost attribution  Add task_focus event type linking a session to the backlog task it works on. Emit focus on the pm→work hand-off, update_task→in_progress, and spaw
 …[truncated]

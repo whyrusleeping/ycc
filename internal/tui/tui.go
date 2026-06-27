@@ -9,6 +9,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -146,6 +148,7 @@ type menuEntry struct {
 	description   string
 	mode          string
 	openingPrompt string
+	prominent     bool // surfaced at the top (e.g. onboarding on an un-onboarded workspace)
 }
 type modelsMsg struct{ models []*v1.ModelInfo }
 type projectsMsg struct{ projects []*v1.ProjectInfo }
@@ -332,6 +335,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		for _, p := range msg.presets {
 			m.entries = append(m.entries, menuEntry{label: p.Name, description: p.Description, mode: p.Mode, openingPrompt: p.OpeningPrompt})
+		}
+		// When the workspace looks un-onboarded, surface the onboarding entry
+		// prominently at the top of the menu (spec §19.2). It stays a normal
+		// preset otherwise ("onboard later" is valid).
+		if needsOnboarding(m.workspace) {
+			for i := range m.entries {
+				if m.entries[i].label == "onboard" {
+					e := m.entries[i]
+					e.prominent = true
+					m.entries = append(m.entries[:i], m.entries[i+1:]...)
+					m.entries = append([]menuEntry{e}, m.entries...)
+					break
+				}
+			}
 		}
 		return m, nil
 	case modelsMsg:
@@ -989,15 +1006,96 @@ func (m model) menuView() string {
 	for i, e := range m.entries {
 		cursor := "  "
 		label := fmt.Sprintf("%-9s %s", e.label, dimStyle.Render(e.description))
-		if i == m.cursor {
+		switch {
+		case i == m.cursor && e.prominent:
+			// Selected AND recommended: keep the selection treatment but still
+			// surface the ★ marker and "(recommended)" hint so onboarding reads
+			// as recommended even when it's the default-selected row.
+			cursor = selStyle.Render("▸ ")
+			label = selStyle.Render("★ "+fmt.Sprintf("%-7s ", e.label)) + dimStyle.Render(e.description+"  (recommended)")
+		case i == m.cursor:
 			cursor = selStyle.Render("▸ ")
 			label = selStyle.Render(fmt.Sprintf("%-9s ", e.label)) + dimStyle.Render(e.description)
+		case e.prominent:
+			// Surface a recommended entry (e.g. onboarding on an un-onboarded
+			// workspace) so it stands out without stealing the cursor highlight.
+			label = recoStyle.Render("★ "+fmt.Sprintf("%-7s ", e.label)) + dimStyle.Render(e.description+"  (recommended)")
 		}
 		b.WriteString("  " + cursor + label + "\n")
 	}
 	b.WriteString("\n  " + m.prompt.View() + "\n")
 	b.WriteString("\n" + dimStyle.Render("  ↑/↓ choose mode · type a prompt · enter start · esc settings"))
 	return b.String()
+}
+
+// needsOnboarding reports whether a workspace looks un-onboarded (spec §19.2): it
+// has no real spec.md AND no backlog tasks. It is conservative — on any unexpected
+// read error it returns false so onboarding is not surfaced spuriously.
+func needsOnboarding(workspace string) bool {
+	if strings.TrimSpace(workspace) == "" {
+		return false
+	}
+	return specIsEmpty(workspace) && !hasBacklogTasks(workspace)
+}
+
+// specIsEmpty reports whether spec.md is missing or trivially empty (only blank
+// lines and markdown headings, no real content).
+func specIsEmpty(workspace string) bool {
+	data, err := os.ReadFile(filepath.Join(workspace, "spec.md"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return true
+		}
+		return false // unexpected error: treat as not-empty (don't surface onboarding)
+	}
+	for _, ln := range strings.Split(string(data), "\n") {
+		ln = strings.TrimSpace(ln)
+		if ln == "" || strings.HasPrefix(ln, "#") {
+			continue
+		}
+		return false // real content
+	}
+	return true
+}
+
+// hasBacklogTasks reports whether backlog/ exists and contains at least one task
+// file matching the NNNN-*.md pattern (the generated backlog.md index doesn't
+// count).
+func hasBacklogTasks(workspace string) bool {
+	entries, err := os.ReadDir(filepath.Join(workspace, "backlog"))
+	if err != nil {
+		return false // missing dir (or unreadable): no tasks
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(name, ".md") {
+			continue
+		}
+		stem := strings.TrimSuffix(name, ".md")
+		dash := strings.IndexByte(stem, '-')
+		if dash <= 0 {
+			continue
+		}
+		if isAllDigits(stem[:dash]) {
+			return true
+		}
+	}
+	return false
+}
+
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (m model) sessionView() string {
@@ -1219,6 +1317,7 @@ var (
 	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15")).Background(lipgloss.Color("63")).Padding(0, 1)
 	headerStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15")).Background(lipgloss.Color("238")).Padding(0, 1)
 	selStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("213"))
+	recoStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220"))
 	selBarStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("213"))
 	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	thinkStyle    = lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color("245"))
