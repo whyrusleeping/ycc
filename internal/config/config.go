@@ -8,6 +8,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 
 	"github.com/pelletier/go-toml/v2"
@@ -110,6 +111,33 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 	return &c, nil
+}
+
+// Save validates c and writes it to path as TOML that Load reads back to an equal
+// *Config. Parent directories are created as needed. Keys are persisted as
+// key_env references only (the Model struct has no inline-secret field), so no
+// secret values are ever written. An invalid config is rejected before anything
+// is written, so we never persist a config Load would reject.
+func Save(path string, c *Config) error {
+	if c == nil {
+		return fmt.Errorf("config: cannot Save nil config")
+	}
+	if err := c.validate(); err != nil {
+		return err
+	}
+	data, err := toml.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	if dir := filepath.Dir(path); dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("create config dir %s: %w", dir, err)
+		}
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
 }
 
 // DefaultAnthropic returns a single-backend config (one logical model "claude"

@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -163,5 +165,79 @@ func TestDefaultAnthropic(t *testing.T) {
 	}
 	if len(cfg.Roles.Reviewers) != 1 {
 		t.Fatalf("default reviewers = %v", cfg.Roles.Reviewers)
+	}
+}
+
+func TestSaveRoundTrip(t *testing.T) {
+	// A nested, not-yet-existing directory exercises MkdirAll.
+	path := filepath.Join(t.TempDir(), "nested", "deeper", "ycc.toml")
+	orig := &Config{
+		Models: map[string]Model{
+			"claude": {
+				Backend: "anthropic", BaseURL: "https://api.anthropic.com",
+				Model: "claude-opus-4-8", KeyEnv: "ANTHROPIC_API_KEY",
+				Effort: "max", ThinkingDisplay: "summarized",
+			},
+			"haiku": {
+				Backend: "anthropic", BaseURL: "https://api.anthropic.com",
+				Model: "claude-haiku-4-5", KeyEnv: "ANTHROPIC_API_KEY",
+				Thinking: "off",
+			},
+			"local": {
+				Backend: "ollama", BaseURL: "http://localhost:11434/v1",
+				Model: "qwen2.5-coder",
+			},
+		},
+		Roles:     Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude", "haiku", "local"}},
+		MaxTokens: 4096,
+		MaxTurns:  250,
+	}
+	if err := Save(path, orig); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Never persist inline secret values — only key_env references.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "key_env"; !strings.Contains(string(data), want) {
+		t.Fatalf("saved config missing %q reference:\n%s", want, data)
+	}
+
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load back: %v", err)
+	}
+	if !reflect.DeepEqual(got, orig) {
+		t.Fatalf("round-trip mismatch:\n got=%+v\nwant=%+v", got, orig)
+	}
+}
+
+func TestSaveRejectsInvalidConfigWithoutWriting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ycc.toml")
+
+	// Role references an unknown model.
+	bad := &Config{
+		Models: map[string]Model{"a": {Backend: "anthropic"}},
+		Roles:  Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"missing"}},
+	}
+	if err := Save(path, bad); err == nil {
+		t.Fatal("expected Save to reject config with unknown reviewer model")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("Save wrote a file for an invalid config (err=%v)", err)
+	}
+
+	// Empty reviewers list is also invalid.
+	bad2 := &Config{
+		Models: map[string]Model{"a": {Backend: "anthropic"}},
+		Roles:  Roles{Coordinator: "a", Implementer: "a"},
+	}
+	if err := Save(path, bad2); err == nil {
+		t.Fatal("expected Save to reject config with empty reviewers")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("Save wrote a file for an invalid config (err=%v)", err)
 	}
 }
