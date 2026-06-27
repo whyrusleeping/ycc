@@ -1,7 +1,7 @@
 ---
 id: "0029"
 title: Usage/cost aggregation + ycc cost view, GetUsage RPC, work-log summary
-status: in_progress
+status: done
 priority: 2
 created: "2026-06-26"
 updated: "2026-06-27"
@@ -51,4 +51,6 @@ backlog task over time" (spec §20.3, §20.5). Joins per-turn usage (0026) + tas
 - 2026-06-27 revision: The requested GetUsage error-mapping refinement was already implemented in my previous revision and is confirmed present:  - internal/session/session.go: exported sentinel `var ErrUnknownProject = err
 …[truncated]
 - 2026-06-27 review (claude): accept — The revision correctly addresses the prior error-mapping nit by introducing the exported sentinel session.ErrUnknownProject and mapping it to connect.CodeInvalidArgument in GetUsage while routing scan
+…[truncated]
+- 2026-06-27 decision: accept — commit 7464e66: Add usage/cost aggregation, ycc cost view, GetUsage RPC, and work-log summary  Introduce internal/usage: scan a workspace's .ycc/sessions/*/events.jsonl, reduce each (attributing model_turns to the mo
 …[truncated]

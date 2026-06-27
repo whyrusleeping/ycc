@@ -62,6 +62,14 @@ message AnswerQuestionRequest {
 }
 message AnswerQuestionResponse {}
 
+// Interrupt requests a graceful pause-to-steer of a running session (spec
+// §18.7): it pauses at the next safe checkpoint without aborting a tool.
+message InterruptRequest { string session_id = 1; }
+message InterruptResponse {}
+// Resume continues a paused session (optionally after SendInput corrections).
+message ResumeRequest { string session_id = 1; }
+message ResumeResponse {}
+
 message ListModesRequest {}
 message Mode {
   string name = 1;
@@ -207,6 +215,12 @@ service SessionService {
   rpc Subscribe(SubscribeRequest) returns (stream Event);
   rpc SendInput(SendInputRequest) returns (SendInputResponse);
   rpc AnswerQuestion(AnswerQuestionRequest) returns (AnswerQuestionResponse);
+
+  // Interrupt & steer (spec §18.7): gracefully pause a running session at its
+  // next safe checkpoint, then continue the same loop (optionally after a
+  // steered SendInput correction). Distinct from the hard Stop/terminate.
+  rpc Interrupt(InterruptRequest) returns (InterruptResponse);
+  rpc Resume(ResumeRequest) returns (ResumeResponse);
 
   // Projects — persistent multi-project daemon (spec §3.1).
   rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);

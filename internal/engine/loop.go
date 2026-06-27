@@ -22,6 +22,15 @@ type Turner interface {
 	Turn(gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error)
 }
 
+// Steer lets a session pause and steer a running loop at safe checkpoints
+// (spec §18.7). Checkpoint is consulted between turns and after each tool
+// result. When a pause is pending it blocks until resume (or ctx
+// cancellation, returned as a normal stop) and returns any correction
+// messages to append before the next turn. A nil Steer is a cheap no-op.
+type Steer interface {
+	Checkpoint(ctx context.Context) ([]string, error)
+}
+
 // Loop drives one agent (coordinator or subagent) over a backend.
 type Loop struct {
 	Client Turner
@@ -46,8 +55,31 @@ type Loop struct {
 	Effort          string
 	ThinkingDisplay string
 
+	// Steer, when set, is consulted at safe checkpoints (top of each turn and
+	// after each tool result) so a session can pause and steer the running loop
+	// (spec §18.7). Nil ⇒ a cheap no-op; the hot loop is unaffected.
+	Steer Steer
+
 	mu      sync.Mutex // guards Client/Model swaps mid-loop (settings overlay, §18.2)
 	history []gollama.Message
+}
+
+// steerCheckpoint consults the Steer hook (if any). It blocks while a pause is
+// pending, appends any returned correction messages to the conversation before
+// the next turn, and returns ctx cancellation as a normal stop. A nil Steer is
+// a no-op.
+func (l *Loop) steerCheckpoint(ctx context.Context) error {
+	if l.Steer == nil {
+		return nil
+	}
+	msgs, err := l.Steer.Checkpoint(ctx)
+	if err != nil {
+		return err
+	}
+	for _, m := range msgs {
+		l.Post(m)
+	}
+	return nil
 }
 
 // SetBackend swaps the loop's backend client, model id, logical model identity,
@@ -153,6 +185,11 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			return nil, err
 		}
 
+		// Safe checkpoint between turns: pause-to-steer if requested (spec §18.7).
+		if err := l.steerCheckpoint(ctx); err != nil {
+			return nil, err
+		}
+
 		client, modelID, ident, think := l.backend()
 		opts := gollama.RequestOptions{
 			Model:           modelID,
@@ -236,6 +273,12 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 					report = msg.Content
 				}
 				return &Result{Report: report, Turns: turn, NextMode: ctrl.Mode, NextPrompt: ctrl.Prompt}, nil
+			}
+
+			// Safe checkpoint after a tool result: pause-to-steer if requested
+			// (spec §18.7). A steered correction lands before the next turn.
+			if err := l.steerCheckpoint(ctx); err != nil {
+				return nil, err
 			}
 		}
 	}

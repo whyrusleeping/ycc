@@ -71,6 +71,18 @@ type Session struct {
 	// appended to the work log this session, so each accrues at most one summary
 	// line even across repeated idle cycles (spec §6.2, §20.5).
 	usageSummarized map[string]bool
+
+	// Interrupt & steer state (spec §18.7), guarded by a dedicated mutex so it
+	// never contends with the s.mu hot paths. pauseReq is set by Interrupt and
+	// consumed at the next checkpoint; paused is true while a checkpoint blocks;
+	// resumeReq wakes it (Resume or a steered correction); corrections buffers
+	// steered-in user messages to inject on resume; resumeCh is closed to wake.
+	steerMu     sync.Mutex
+	pauseReq    bool
+	paused      bool
+	resumeReq   bool
+	corrections []string
+	resumeCh    chan struct{}
 }
 
 // Role name constants used to key per-role thinking overrides and resolution.
@@ -122,6 +134,18 @@ func (s *Session) SendInput(text string) error {
 	if s.inter.Answer(text) {
 		return nil
 	}
+	// If the running loop is paused (or pausing) at a steer checkpoint, buffer the
+	// text as a correction (and echo it); the loop drains all buffered corrections
+	// in order only on an explicit Resume, so multiple sends land deterministically
+	// (§18.7). It does NOT auto-resume here.
+	s.steerMu.Lock()
+	if s.paused || s.pauseReq {
+		s.corrections = append(s.corrections, text)
+		s.steerMu.Unlock()
+		s.emitter.EmitAs("user", event.UserInput, map[string]any{"text": text})
+		return nil
+	}
+	s.steerMu.Unlock()
 	select {
 	case s.inputCh <- text:
 		// Emit the echo at the moment the prod is accepted so the TUI can
@@ -155,6 +179,84 @@ func (s *Session) AnswerOption(idx int, text string) error {
 func (s *Session) Stop() {
 	s.cancel()
 	s.log.Close()
+}
+
+// Checkpoint implements engine.Steer (spec §18.7). At a safe checkpoint the
+// loop calls it: if no pause is pending it returns immediately (cheap no-op);
+// otherwise it marks the session paused, emits interrupted, and blocks until a
+// Resume or a steered SendInput wakes it (or ctx is cancelled, returned as a
+// normal stop). It returns any steered-in corrections, in order, to append.
+func (s *Session) Checkpoint(ctx context.Context) ([]string, error) {
+	s.steerMu.Lock()
+	if !s.pauseReq {
+		s.steerMu.Unlock()
+		return nil, nil // cheap no-op fast path
+	}
+	s.pauseReq = false
+	s.paused = true
+	s.steerMu.Unlock()
+
+	s.setStatus(event.StatusPaused)
+	s.emitter.Emit(event.Interrupted, map[string]any{})
+
+	s.steerMu.Lock()
+	for !s.resumeReq {
+		s.resumeCh = make(chan struct{})
+		ch := s.resumeCh
+		s.steerMu.Unlock()
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			s.steerMu.Lock()
+			s.paused = false
+			s.resumeCh = nil
+			s.steerMu.Unlock()
+			return nil, ctx.Err()
+		}
+		s.steerMu.Lock()
+	}
+	corr := s.corrections
+	s.corrections = nil
+	s.resumeReq = false
+	s.paused = false
+	s.resumeCh = nil
+	s.steerMu.Unlock()
+
+	s.setStatus(event.StatusRunning)
+	s.emitter.Emit(event.Resumed, map[string]any{})
+	return corr, nil
+}
+
+// signalResumeLocked wakes a blocked Checkpoint. Call only while holding steerMu.
+func (s *Session) signalResumeLocked() {
+	s.resumeReq = true
+	if s.resumeCh != nil {
+		close(s.resumeCh)
+		s.resumeCh = nil
+	}
+}
+
+// Interrupt requests a graceful pause: the running loop stops at its next safe
+// checkpoint (between turns / after a tool result) without aborting a tool
+// mid-run (spec §18.7). Resume or a steered SendInput continues it.
+func (s *Session) Interrupt() error {
+	s.steerMu.Lock()
+	s.pauseReq = true
+	s.steerMu.Unlock()
+	return nil
+}
+
+// Resume continues a paused loop with no correction (spec §18.7). It cancels a
+// not-yet-effective pause request, and is a no-op if nothing is paused.
+func (s *Session) Resume() error {
+	s.steerMu.Lock()
+	if s.paused {
+		s.signalResumeLocked()
+	} else {
+		s.pauseReq = false
+	}
+	s.steerMu.Unlock()
+	return nil
 }
 
 // SetInteractionLevel changes the session's interaction level mid-flight. It
@@ -663,6 +765,7 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 			MaxTok: m.reg.MaxTokens(), MaxTurns: m.reg.MaxTurns(),
 			Thinking: th.Thinking, Effort: th.Effort, ThinkingDisplay: th.ThinkingDisplay,
 		}
+		loop.Steer = s
 		loop.Seed(prompt)
 		return loop, nil
 	}

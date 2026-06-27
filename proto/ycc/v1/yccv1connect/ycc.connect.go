@@ -51,6 +51,11 @@ const (
 	// SessionServiceAnswerQuestionProcedure is the fully-qualified name of the SessionService's
 	// AnswerQuestion RPC.
 	SessionServiceAnswerQuestionProcedure = "/ycc.v1.SessionService/AnswerQuestion"
+	// SessionServiceInterruptProcedure is the fully-qualified name of the SessionService's Interrupt
+	// RPC.
+	SessionServiceInterruptProcedure = "/ycc.v1.SessionService/Interrupt"
+	// SessionServiceResumeProcedure is the fully-qualified name of the SessionService's Resume RPC.
+	SessionServiceResumeProcedure = "/ycc.v1.SessionService/Resume"
 	// SessionServiceListProjectsProcedure is the fully-qualified name of the SessionService's
 	// ListProjects RPC.
 	SessionServiceListProjectsProcedure = "/ycc.v1.SessionService/ListProjects"
@@ -89,6 +94,11 @@ type SessionServiceClient interface {
 	Subscribe(context.Context, *connect.Request[v1.SubscribeRequest]) (*connect.ServerStreamForClient[v1.Event], error)
 	SendInput(context.Context, *connect.Request[v1.SendInputRequest]) (*connect.Response[v1.SendInputResponse], error)
 	AnswerQuestion(context.Context, *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error)
+	// Interrupt & steer (spec §18.7): gracefully pause a running session at its
+	// next safe checkpoint, then continue the same loop (optionally after a
+	// steered SendInput correction). Distinct from the hard Stop/terminate.
+	Interrupt(context.Context, *connect.Request[v1.InterruptRequest]) (*connect.Response[v1.InterruptResponse], error)
+	Resume(context.Context, *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error)
 	// Projects — persistent multi-project daemon (spec §3.1).
 	ListProjects(context.Context, *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error)
 	AddProject(context.Context, *connect.Request[v1.AddProjectRequest]) (*connect.Response[v1.AddProjectResponse], error)
@@ -152,6 +162,18 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			httpClient,
 			baseURL+SessionServiceAnswerQuestionProcedure,
 			connect.WithSchema(sessionServiceMethods.ByName("AnswerQuestion")),
+			connect.WithClientOptions(opts...),
+		),
+		interrupt: connect.NewClient[v1.InterruptRequest, v1.InterruptResponse](
+			httpClient,
+			baseURL+SessionServiceInterruptProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("Interrupt")),
+			connect.WithClientOptions(opts...),
+		),
+		resume: connect.NewClient[v1.ResumeRequest, v1.ResumeResponse](
+			httpClient,
+			baseURL+SessionServiceResumeProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("Resume")),
 			connect.WithClientOptions(opts...),
 		),
 		listProjects: connect.NewClient[v1.ListProjectsRequest, v1.ListProjectsResponse](
@@ -225,6 +247,8 @@ type sessionServiceClient struct {
 	subscribe           *connect.Client[v1.SubscribeRequest, v1.Event]
 	sendInput           *connect.Client[v1.SendInputRequest, v1.SendInputResponse]
 	answerQuestion      *connect.Client[v1.AnswerQuestionRequest, v1.AnswerQuestionResponse]
+	interrupt           *connect.Client[v1.InterruptRequest, v1.InterruptResponse]
+	resume              *connect.Client[v1.ResumeRequest, v1.ResumeResponse]
 	listProjects        *connect.Client[v1.ListProjectsRequest, v1.ListProjectsResponse]
 	addProject          *connect.Client[v1.AddProjectRequest, v1.AddProjectResponse]
 	removeProject       *connect.Client[v1.RemoveProjectRequest, v1.RemoveProjectResponse]
@@ -265,6 +289,16 @@ func (c *sessionServiceClient) SendInput(ctx context.Context, req *connect.Reque
 // AnswerQuestion calls ycc.v1.SessionService.AnswerQuestion.
 func (c *sessionServiceClient) AnswerQuestion(ctx context.Context, req *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error) {
 	return c.answerQuestion.CallUnary(ctx, req)
+}
+
+// Interrupt calls ycc.v1.SessionService.Interrupt.
+func (c *sessionServiceClient) Interrupt(ctx context.Context, req *connect.Request[v1.InterruptRequest]) (*connect.Response[v1.InterruptResponse], error) {
+	return c.interrupt.CallUnary(ctx, req)
+}
+
+// Resume calls ycc.v1.SessionService.Resume.
+func (c *sessionServiceClient) Resume(ctx context.Context, req *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error) {
+	return c.resume.CallUnary(ctx, req)
 }
 
 // ListProjects calls ycc.v1.SessionService.ListProjects.
@@ -325,6 +359,11 @@ type SessionServiceHandler interface {
 	Subscribe(context.Context, *connect.Request[v1.SubscribeRequest], *connect.ServerStream[v1.Event]) error
 	SendInput(context.Context, *connect.Request[v1.SendInputRequest]) (*connect.Response[v1.SendInputResponse], error)
 	AnswerQuestion(context.Context, *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error)
+	// Interrupt & steer (spec §18.7): gracefully pause a running session at its
+	// next safe checkpoint, then continue the same loop (optionally after a
+	// steered SendInput correction). Distinct from the hard Stop/terminate.
+	Interrupt(context.Context, *connect.Request[v1.InterruptRequest]) (*connect.Response[v1.InterruptResponse], error)
+	Resume(context.Context, *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error)
 	// Projects — persistent multi-project daemon (spec §3.1).
 	ListProjects(context.Context, *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error)
 	AddProject(context.Context, *connect.Request[v1.AddProjectRequest]) (*connect.Response[v1.AddProjectResponse], error)
@@ -384,6 +423,18 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		SessionServiceAnswerQuestionProcedure,
 		svc.AnswerQuestion,
 		connect.WithSchema(sessionServiceMethods.ByName("AnswerQuestion")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceInterruptHandler := connect.NewUnaryHandler(
+		SessionServiceInterruptProcedure,
+		svc.Interrupt,
+		connect.WithSchema(sessionServiceMethods.ByName("Interrupt")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceResumeHandler := connect.NewUnaryHandler(
+		SessionServiceResumeProcedure,
+		svc.Resume,
+		connect.WithSchema(sessionServiceMethods.ByName("Resume")),
 		connect.WithHandlerOptions(opts...),
 	)
 	sessionServiceListProjectsHandler := connect.NewUnaryHandler(
@@ -460,6 +511,10 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceSendInputHandler.ServeHTTP(w, r)
 		case SessionServiceAnswerQuestionProcedure:
 			sessionServiceAnswerQuestionHandler.ServeHTTP(w, r)
+		case SessionServiceInterruptProcedure:
+			sessionServiceInterruptHandler.ServeHTTP(w, r)
+		case SessionServiceResumeProcedure:
+			sessionServiceResumeHandler.ServeHTTP(w, r)
 		case SessionServiceListProjectsProcedure:
 			sessionServiceListProjectsHandler.ServeHTTP(w, r)
 		case SessionServiceAddProjectProcedure:
@@ -511,6 +566,14 @@ func (UnimplementedSessionServiceHandler) SendInput(context.Context, *connect.Re
 
 func (UnimplementedSessionServiceHandler) AnswerQuestion(context.Context, *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.AnswerQuestion is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) Interrupt(context.Context, *connect.Request[v1.InterruptRequest]) (*connect.Response[v1.InterruptResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.Interrupt is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) Resume(context.Context, *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.Resume is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) ListProjects(context.Context, *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error) {

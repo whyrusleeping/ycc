@@ -72,6 +72,7 @@ type model struct {
 	glam    *glamour.TermRenderer
 	pending string
 	status  string
+	paused  bool // session is paused-to-steer (spec §18.7)
 
 	// picker state: when the pending question carries options, the footer shows
 	// a navigable list instead of the textinput until the user picks "other…".
@@ -87,13 +88,13 @@ type model struct {
 	// Esc. It exposes interaction level, per-role model config, UI prefs, and Quit.
 	overlay      bool
 	ovCursor     int
-	models       []*v1.ModelInfo // populated from ListModels
-	level        string          // current interaction level (session)
+	models       []*v1.ModelInfo   // populated from ListModels
+	level        string            // current interaction level (session)
 	thinkLevels  map[string]string // per-role thinking levels (coordinator|implementer|reviewers)
-	roleCoord    string          // logical model driving the coordinator
-	roleImpl     string          // logical model for the implementer
-	roleReviewrs []string        // logical models for reviewers (multi-select)
-	reviewerSub  int             // rotating sub-index for toggling reviewer membership
+	roleCoord    string            // logical model driving the coordinator
+	roleImpl     string            // logical model for the implementer
+	roleReviewrs []string          // logical models for reviewers (multi-select)
+	reviewerSub  int               // rotating sub-index for toggling reviewer membership
 	prefs        clientconfig.Prefs
 
 	// backlog browser (spec §18.5): modal over menu/session, opened with ctrl+b.
@@ -251,6 +252,33 @@ func waitEvent(ch chan *v1.Event) tea.Cmd {
 func (m model) sendInput(text string) tea.Cmd {
 	return func() tea.Msg {
 		if _, err := m.client.SendInput(m.ctx, connect.NewRequest(&v1.SendInputRequest{SessionId: m.sessionID, Text: text})); err != nil {
+			return errMsg{err}
+		}
+		return nil
+	}
+}
+
+// interrupt gracefully pauses the running session at its next safe checkpoint
+// (spec §18.7) so the user can steer or resume.
+func (m model) interrupt() tea.Cmd {
+	return func() tea.Msg {
+		if m.sessionID == "" {
+			return nil
+		}
+		if _, err := m.client.Interrupt(m.ctx, connect.NewRequest(&v1.InterruptRequest{SessionId: m.sessionID})); err != nil {
+			return errMsg{err}
+		}
+		return nil
+	}
+}
+
+// resume continues a paused session unchanged (spec §18.7).
+func (m model) resume() tea.Cmd {
+	return func() tea.Msg {
+		if m.sessionID == "" {
+			return nil
+		}
+		if _, err := m.client.Resume(m.ctx, connect.NewRequest(&v1.ResumeRequest{SessionId: m.sessionID})); err != nil {
 			return errMsg{err}
 		}
 		return nil
@@ -589,6 +617,12 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Open the read-only backlog browser (spec §18.5).
 			m.backlog, m.backlogCursor, m.backlogDetail = true, 0, nil
 			return m, m.fetchBacklog
+		case "ctrl+i":
+			// Gracefully interrupt the running agent to steer it (spec §18.7).
+			if !m.paused {
+				return m, m.interrupt()
+			}
+			return m, nil
 		case "up":
 			m.moveSelection(-1)
 			return m, nil
@@ -606,6 +640,10 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			text := strings.TrimSpace(m.input.Value())
 			if text == "" {
+				// While paused, an empty Enter resumes the agent unchanged (§18.7).
+				if m.paused {
+					return m, m.resume()
+				}
 				// Empty input: Enter expands/collapses the selected turn.
 				if m.selected >= 0 {
 					m.toggle(m.selected)
@@ -613,6 +651,12 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.input.SetValue("")
+			// While paused, a non-empty Enter steers: send the correction AND
+			// resume so the agent continues with it (spec §18.7).
+			if m.paused {
+				m.follow = true
+				return m, tea.Sequence(m.sendInput(text), m.resume())
+			}
 			// If a question is pending, answer it as free text (option_index -1);
 			// otherwise it's a prod handled by SendInput.
 			if m.pending != "" {
@@ -1043,6 +1087,12 @@ func (m *model) appendEvent(ev *v1.Event) {
 		m.status = "idle"
 	case "session_error":
 		m.status = "error"
+	case "interrupted":
+		m.status = "paused"
+		m.paused = true
+	case "resumed":
+		m.status = "running"
+		m.paused = false
 	case "mode_changed":
 		m.mode = dataField(ev, "to")
 		m.status = "running"
@@ -1299,7 +1349,11 @@ func (m model) sessionView() string {
 		help := dimStyle.Render(" ↑↓ choose · enter select · esc settings")
 		return top + "\n" + body + "\n" + m.pickerView() + "\n" + help
 	}
-	help := dimStyle.Render(" enter send/expand · ↑↓ select · click expand · pgup/pgdn scroll · esc settings · ctrl+b backlog")
+	if m.paused {
+		help := dimStyle.Render(" ⏸ paused — type a correction + enter to steer · enter to resume · esc settings")
+		return top + "\n" + body + "\n " + m.input.View() + "\n" + help
+	}
+	help := dimStyle.Render(" enter send/expand · ↑↓ select · click expand · pgup/pgdn scroll · ctrl+i interrupt · esc settings · ctrl+b backlog")
 	return top + "\n" + body + "\n " + m.input.View() + "\n" + help
 }
 

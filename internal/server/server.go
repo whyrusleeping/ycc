@@ -142,6 +142,32 @@ func (s *Server) SendInput(_ context.Context, req *connect.Request[v1.SendInputR
 	return connect.NewResponse(&v1.SendInputResponse{}), nil
 }
 
+// Interrupt requests a graceful pause-to-steer of a running session (spec
+// §18.7): it pauses at the next safe checkpoint without aborting a tool.
+func (s *Server) Interrupt(_ context.Context, req *connect.Request[v1.InterruptRequest]) (*connect.Response[v1.InterruptResponse], error) {
+	sess, ok := s.mgr.Get(req.Msg.SessionId)
+	if !ok {
+		return nil, connect.NewError(connect.CodeNotFound, errNoSession)
+	}
+	if err := sess.Interrupt(); err != nil {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	return connect.NewResponse(&v1.InterruptResponse{}), nil
+}
+
+// Resume continues a paused session (optionally after SendInput corrections),
+// continuing the same loop/conversation (spec §18.7).
+func (s *Server) Resume(_ context.Context, req *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error) {
+	sess, ok := s.mgr.Get(req.Msg.SessionId)
+	if !ok {
+		return nil, connect.NewError(connect.CodeNotFound, errNoSession)
+	}
+	if err := sess.Resume(); err != nil {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	return connect.NewResponse(&v1.ResumeResponse{}), nil
+}
+
 // AnswerQuestion responds to a question the coordinator asked via ask_user.
 func (s *Server) AnswerQuestion(_ context.Context, req *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error) {
 	sess, ok := s.mgr.Get(req.Msg.SessionId)

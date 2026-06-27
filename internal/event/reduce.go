@@ -7,6 +7,9 @@ const (
 	StatusRunning Status = "running"
 	StatusIdle    Status = "idle"
 	StatusError   Status = "error"
+	// StatusPaused is a running session gracefully paused at a steer checkpoint
+	// (spec §18.7); a Resume (or steered SendInput) returns it to running.
+	StatusPaused Status = "paused"
 )
 
 // Projection is the reduced view of a session's event log (spec §5: UI state is
@@ -56,6 +59,10 @@ func Reduce(events []Event) Projection {
 		case SessionError:
 			p.Status = StatusError
 			p.LastError = str(ev.Data, "msg")
+		case Interrupted:
+			p.Status = StatusPaused
+		case Resumed:
+			p.Status = StatusRunning
 		}
 	}
 	return p

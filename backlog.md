@@ -31,7 +31,7 @@
 | [0026](backlog/0026-capture-per-turn-token-usage-on-model-turn-events.md) | Capture per-turn token usage on model_turn events | done | 2 | 0002 |
 | [0027](backlog/0027-record-session-task-focus-for-cost-attribution.md) | Record session→task focus for cost attribution | done | 2 | 0004 |
 | [0028](backlog/0028-per-model-pricing-config-cost-computation.md) | Per-model pricing config + cost computation | done | 3 | — |
-| [0029](backlog/0029-usage-cost-aggregation-ycc-cost-view-getusage-rpc.md) | Usage/cost aggregation + ycc cost view, GetUsage RPC, work-log summary | in_progress | 2 | 0026, 0027, 0028 |
+| [0029](backlog/0029-usage-cost-aggregation-ycc-cost-view-getusage-rpc.md) | Usage/cost aggregation + ycc cost view, GetUsage RPC, work-log summary | done | 2 | 0026, 0027, 0028 |
 | [0030](backlog/0030-let-the-work-coordinator-create-backlog-tasks-spli.md) | Let the work coordinator create backlog tasks (split + follow-on work) | done | 2 | — |
 | [0031](backlog/0031-backlog-browser-view-and-inspect-tasks-in-the-tui.md) | Backlog browser — view and inspect tasks in the TUI (ListBacklog/GetTask RPCs) | done | 3 | 0006 |
 | [0032](backlog/0032-bug-follow-up-user-message-not-displayed-until-age.md) | Bug: follow-up user message not displayed until agent's next response (user_input echo emitted on dequeue, not on send) | done | 2 | — |
@@ -41,3 +41,7 @@
 | [0036](backlog/0036-per-role-thinking-level-independent-reasoning-per.md) | Per-role thinking level (independent reasoning per agent) | done | 3 | — |
 | [0037](backlog/0037-review-land-leftover-settings-overlay-thinking-ui.md) | Review & land leftover settings-overlay thinking-UI rework (inline +/- thinking) | done | 3 | — |
 | [0038](backlog/0038-per-task-work-log-usage-summary-for-all-tasks-work.md) | Per-task work-log usage summary for all tasks worked in a session (not just current focus) | todo | 3 | 0029 |
+| [0039](backlog/0039-tui-cost-view-browse-usage-cost-breakdown-via-getu.md) | TUI cost view — browse usage/cost breakdown via GetUsage (shared browser modal) | todo | 3 | 0029, 0035 |
+| [0040](backlog/0040-interrupt-steer-a-running-agent-pause-correct-resu.md) | Interrupt & steer a running agent (pause / correct / resume) | in_progress | 2 | — |
+| [0041](backlog/0041-manage-model-backends-from-the-settings-overlay-li.md) | Manage model backends from the settings overlay (live add/edit/remove, persisted) | todo | 2 | — |
+| [0042](backlog/0042-select-different-model-ids-sharing-one-provider-s.md) | Select different model ids sharing one provider's credentials (opus/sonnet/haiku) | todo | 2 | 0041 |

@@ -177,6 +177,7 @@ Event `type`s (initial set):
 | `tool_call` / `tool_result` | a tool was invoked / returned |
 | `subagent_spawned` / `subagent_finished` | with role + model + child session ref |
 | `question_asked` / `question_answered` | the `ask_user` flow |
+| `interrupted` / `resumed` | agent paused to steer / continued (§18.7) |
 | `plan_proposed` / `plan_accepted` | coordinator plan checkpoints |
 | `review_submitted` | one reviewer's findings |
 | `decision_made` | accept / revise, with rationale |
@@ -432,7 +433,9 @@ service SessionService {
   rpc Subscribe(SubscribeRequest) returns (stream Event);               // server-stream
   rpc SendInput(SendInputRequest) returns (SendInputResponse);          // prod the agent
   rpc AnswerQuestion(AnswerQuestionRequest) returns (AnswerQuestionResponse);
-  rpc Interrupt(InterruptRequest) returns (InterruptResponse);          // pause/stop (task 0009)
+  rpc Interrupt(InterruptRequest) returns (InterruptResponse);          // pause a running agent to steer (§18.7, task 0040)
+  rpc Resume(ResumeRequest) returns (ResumeResponse);                   // continue after a pause, unchanged (§18.7, task 0040)
+  rpc Stop(StopRequest) returns (StopResponse);                         // terminate a session (task 0009)
 
   // Projects — persistent multi-project daemon (§3.1).
   rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
@@ -441,6 +444,8 @@ service SessionService {
 
   // Settings overlay (§18.2) — change session config mid-flight.
   rpc ListModels(ListModelsRequest) returns (ListModelsResponse);       // available logical models
+  rpc UpsertModel(UpsertModelRequest) returns (UpsertModelResponse);    // add/edit a model backend (§18.2, task 0041)
+  rpc RemoveModel(RemoveModelRequest) returns (RemoveModelResponse);    // delete a model backend (§18.2, task 0041)
   rpc SetInteractionLevel(SetInteractionLevelRequest) returns (SetInteractionLevelResponse);
   rpc SetRoleConfig(SetRoleConfigRequest) returns (SetRoleConfigResponse);
   rpc SetThinking(SetThinkingRequest) returns (SetThinkingResponse);    // per-role reasoning level
@@ -469,7 +474,20 @@ Notable message shapes for the settings + structured-question work:
   prior shape was session-wide with no `role` — adding `role` makes thinking independently
   configurable per agent.)
 - `ListModelsResponse { repeated ModelInfo models }` where `ModelInfo` carries the
-  logical name + backend + model id, so the client can populate the role pickers.
+  logical name + backend + model id, so the client can populate the role pickers. For
+  *editing* backends the client needs the full record: a `ModelConfig` message mirrors a
+  `[models.X]` block (name, backend, base_url, model, key_env, thinking/effort/display,
+  pricing) and is returned by an extended `ListModels` (or a `GetModelConfig`).
+  `UpsertModelRequest { ModelConfig model; bool persist }` adds or replaces a logical model
+  by name; `RemoveModelRequest { string name; bool persist }` deletes one. With
+  `persist=true` the daemon writes the change back to `ycc.toml` via `config.Save` (§19.1)
+  so it survives restart; otherwise it edits only the live session/daemon config. The
+  daemon rebuilds backends on the next `Build`, so changes take effect without a restart
+  (§13, §18.2, task 0041).
+- `InterruptRequest { session_id }` / `ResumeRequest { session_id }` — pause a running
+  agent at the next safe checkpoint, then continue (§18.7). A correction is steered in by
+  `SendInput` while paused; `Resume` continues with no change. `Interrupt` is a *graceful
+  pause to steer*, distinct from `Stop` (terminate, task 0009).
 
 `Subscribe` takes a `from_seq` so a reconnecting client replays from an offset. Auth: a
 bearer token (config/env), TLS for non-loopback. The TUI talks to the loopback daemon;
@@ -507,6 +525,19 @@ max_turns   = 200    # per-Run tool-call turn cap; runaway/cost backstop (0 => e
 
 The registry hands the engine a configured gollama `Client` + model string for any
 logical name. Reviewer fan-out iterates `roles.reviewers`.
+
+**Logical model = credentials/endpoint + model id.** A `[models.X]` block bundles a
+backend's *credentials/endpoint* (`backend`, `base_url`, `key_env`) with a specific
+*model id* (`model`). These are conceptually separable: several logical models may share
+one backend's credentials/endpoint while pointing at **different model ids** — e.g.
+`claude-opus`, `claude-sonnet`, and `claude-haiku` all using the same `anthropic` backend,
+`base_url`, and `ANTHROPIC_API_KEY`, differing only in `model` (and possibly pricing). This
+is how "the same backing token, a different model" is expressed: define sibling logical
+models that reuse the credential. The TUI's backend manager (§18.2) makes this ergonomic by
+letting the user **duplicate** an existing model and change only the name + model id, rather
+than re-entering credentials; the underlying config stays the flat per-logical-model map (a
+dedicated `[providers.X]` credential table that models reference is a possible future
+normalization, not required for this).
 
 **Per-model reasoning** (`thinking` / `effort` / `thinking_display`) is configured on each
 `[models.X]` block and resolved by the registry (`ThinkingFor(name)`), paralleling
@@ -678,6 +709,19 @@ Overlay contents:
     current session (and optionally persist to config). Issued via
     `SetRoleConfig(sessionID, roles)`; the daemon rebuilds the relevant gollama clients
     so the next coordinator turn / next spawned subagent uses the new assignment.
+- **Model backends (add / edit / remove)** — beyond *choosing* among configured models,
+  the overlay can **manage the model backends themselves**, so the user can configure
+  everything about a provider from the TUI without hand-editing `ycc.toml` or re-running
+  first-run setup (§19.1). A backend manager screen lists the configured logical models and
+  lets the user **add** a new one (logical name, backend `anthropic|openai|ollama`, base URL,
+  model id, `key_env`, optional pricing + thinking), **edit** an existing one, **duplicate**
+  one (clone its credentials/endpoint and change only the name + model id — the ergonomic
+  path to "the same anthropic token, but sonnet/haiku", §13), and **remove** one. This
+  reuses the first-run wizard's provider form (task 0023). Edits issue
+  `UpsertModel` / `RemoveModel` (§12); the daemon updates the live config (so the next
+  `Build` uses it) and, when the user opts to persist, writes `ycc.toml` via `config.Save`.
+  A removed or renamed model still referenced by a role is rejected (validation) so the
+  session never points at a missing backend.
 - **UI preferences** — theme/style, follow/auto-scroll toggle, and similar client-only
   prefs. These never touch the daemon; they live in client state (and a small local
   client config).
@@ -780,6 +824,60 @@ session and dismissed with Esc. These should share one reusable TUI component (a
 list+detail modal) plus a small "browsers" menu that routes to backlog / sessions / cost,
 rather than each re-implementing navigation. The same read RPCs back the future phone
 client (§5).
+
+### 18.7 Interrupt & steer (pause / correct / resume)
+
+A running agent should be **interruptible** so the human can grab its attention and either
+*let it carry on* or *correct it before it acts further* — the same affordance a good pair
+of hands gives you when you say "wait, hold on." This is distinct from a hard **Stop**
+(terminate the session, task 0009): interrupt is a *graceful pause to steer*, after which
+the agent keeps going on the **same** loop and conversation.
+
+**Why it's needed.** Today `SendInput` only reaches the agent *between* `Run` calls (when
+the session is idle); while a turn or tool-call sequence is in flight, the text sits buffered
+in `inputCh` and is not seen until the run completes. So a user watching the agent head down
+the wrong path has no way to redirect it mid-flight — they can only wait it out, then correct,
+after the wrong work is already done.
+
+**Model (graceful pause at a safe checkpoint).**
+1. **Interrupt.** The client calls `Interrupt(session_id)`. The session marks a pause request
+   and the engine `Loop` honors it at the next **safe checkpoint** — between turns and after
+   each tool result (it does not abort a tool mid-write). The loop emits an `interrupted`
+   event and the session status becomes `paused`; the loop blocks, holding its place.
+2. **Choose.** While paused the human either:
+   - **Resume** (`Resume(session_id)`) — continue exactly as before, *as if nothing happened*;
+     or
+   - **Correct** (`SendInput(session_id, text)`) — the text is appended to the loop's
+     conversation as a user message and the loop resumes, so the agent's *next* turn sees the
+     correction "before it moves on." Multiple messages before resuming all land in order.
+3. **Resume.** The loop drains any steered-in messages, emits a `resumed` event, returns the
+   status to `running`, and continues the same `Run` from where it paused.
+
+**Engine seam.** The `Loop` gains a `Steer` hook checked at each checkpoint
+(`Checkpoint(ctx) ([]string, error)`): if a pause is pending it blocks until resume (or
+`ctx` cancellation, which propagates as a normal stop), then returns any correction messages
+to `Post` into history before the next turn. The session implements `Steer`, coordinating the
+pause flag, a resume signal, and the buffered corrections; `SendInput`/`Resume` while paused
+feed it. When not paused, `Checkpoint` is a cheap no-op, so the hot loop is unaffected.
+
+*Optional immediacy (enhancement).* For responsiveness during a long in-flight **model turn**,
+the turn may run under a child context that `Interrupt` cancels, discarding that turn's output
+(wasted tokens, no history append) and dropping straight to the checkpoint. The baseline
+(pause at the next checkpoint without aborting in-flight work) is acceptable for a first cut;
+checkpoints between tool calls already make the common "agent is grinding through tool calls"
+case feel responsive.
+
+**TUI.** A key in the session view (e.g. `ctrl+i`, or `esc` → "Interrupt agent" in the
+settings overlay) issues `Interrupt`. The paused state is shown distinctly ("⏸ paused — type a
+correction and Enter to steer, or Resume to continue"); Enter on a non-empty buffer steers,
+an explicit Resume action (empty buffer / a key) continues. Because state lives in the event
+log (`interrupted` / `resumed` events), any subscribed client — including a future phone
+client — sees and can drive the pause.
+
+**Relation to `ask_user` and Stop.** When the agent is *blocked on a question* it is already
+suspended at a clean point (§4, interaction layer); steer-interrupt targets the *running*
+case. Hard termination is the separate `Stop` RPC (task 0009); naming is split so `Interrupt`
+= pause-to-steer and `Stop` = terminate.
 
 ## 19. Onboarding flows
 
