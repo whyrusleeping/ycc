@@ -30,7 +30,7 @@
 | [0025](backlog/0025-thinking-levels-other-models.md) | Verify thinking levels (effort) across backends as models are added | todo | 3 | 0005 |
 | [0026](backlog/0026-capture-per-turn-token-usage-on-model-turn-events.md) | Capture per-turn token usage on model_turn events | done | 2 | 0002 |
 | [0027](backlog/0027-record-session-task-focus-for-cost-attribution.md) | Record session→task focus for cost attribution | done | 2 | 0004 |
-| [0028](backlog/0028-per-model-pricing-config-cost-computation.md) | Per-model pricing config + cost computation | todo | 3 | — |
+| [0028](backlog/0028-per-model-pricing-config-cost-computation.md) | Per-model pricing config + cost computation | in_progress | 3 | — |
 | [0029](backlog/0029-usage-cost-aggregation-ycc-cost-view-getusage-rpc.md) | Usage/cost aggregation + ycc cost view, GetUsage RPC, work-log summary | todo | 2 | 0026, 0027, 0028 |
 | [0030](backlog/0030-let-the-work-coordinator-create-backlog-tasks-spli.md) | Let the work coordinator create backlog tasks (split + follow-on work) | done | 2 | — |
 | [0031](backlog/0031-backlog-browser-view-and-inspect-tasks-in-the-tui.md) | Backlog browser — view and inspect tasks in the TUI (ListBacklog/GetTask RPCs) | done | 3 | 0006 |

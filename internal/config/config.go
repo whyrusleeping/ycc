@@ -14,6 +14,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/engine"
+	"github.com/whyrusleeping/ycc/internal/event"
 )
 
 // Model describes one logical backend.
@@ -32,6 +33,70 @@ type Model struct {
 	Thinking        string `toml:"thinking"`         // "adaptive" | "off" | ""
 	Effort          string `toml:"effort"`           // "low" | "medium" | "high" | "xhigh" | "max"
 	ThinkingDisplay string `toml:"thinking_display"` // "summarized" | "omitted"
+
+	// Optional per-model pricing in US dollars per million tokens (spec §20.4),
+	// split by token class so cache reads/writes can be priced separately from
+	// fresh input/output. Each is a pointer so an unset price is distinguishable
+	// from an explicit 0.0 (and round-trips through config.Save). Pricing lives
+	// in config — not code — so it can track vendor price changes without
+	// touching the event log. When none are set the model is "unpriced" and cost
+	// is reported as unknown rather than invented as 0.
+	PriceInput      *float64 `toml:"price_input,omitempty"`
+	PriceOutput     *float64 `toml:"price_output,omitempty"`
+	PriceCacheRead  *float64 `toml:"price_cache_read,omitempty"`
+	PriceCacheWrite *float64 `toml:"price_cache_write,omitempty"`
+}
+
+// Pricing holds the resolved per-token-class rates for a model in US dollars per
+// million tokens (spec §20.4). Configured reports whether ANY rate was set; when
+// false the model is unpriced and Cost returns priced=false so callers display
+// cost as unknown ("—") rather than 0.
+type Pricing struct {
+	Input      float64 // $/Mtok fresh input
+	Output     float64 // $/Mtok output
+	CacheRead  float64 // $/Mtok cache read
+	CacheWrite float64 // $/Mtok cache write
+	Configured bool
+}
+
+// Pricing resolves the model's pricing fields into a Pricing value. Configured
+// is true if at least one of the four rate fields is set; unset (nil) fields
+// leave the corresponding rate at 0.
+func (m Model) Pricing() Pricing {
+	var p Pricing
+	if m.PriceInput != nil {
+		p.Input = *m.PriceInput
+		p.Configured = true
+	}
+	if m.PriceOutput != nil {
+		p.Output = *m.PriceOutput
+		p.Configured = true
+	}
+	if m.PriceCacheRead != nil {
+		p.CacheRead = *m.PriceCacheRead
+		p.Configured = true
+	}
+	if m.PriceCacheWrite != nil {
+		p.CacheWrite = *m.PriceCacheWrite
+		p.Configured = true
+	}
+	return p
+}
+
+// Cost returns the dollar cost of a usage breakdown under this pricing, and
+// whether it could be priced. cost = Σ(tokens_class × rate_class) / 1e6 (rates
+// are $/Mtok). When pricing is not configured, priced is false and callers
+// should display cost as unknown ("—") rather than 0 — the feature must never
+// invent numbers (spec §20.4).
+func (p Pricing) Cost(u event.Usage) (cost float64, priced bool) {
+	if !p.Configured {
+		return 0, false
+	}
+	cost = (float64(u.Input)*p.Input +
+		float64(u.Output)*p.Output +
+		float64(u.CacheRead)*p.CacheRead +
+		float64(u.CacheWrite)*p.CacheWrite) / 1e6
+	return cost, true
 }
 
 // Thinking carries the resolved per-model reasoning settings the engine plumbs
@@ -267,6 +332,17 @@ func (r *Registry) ThinkingFor(name string) Thinking {
 		return Model{}.ResolveThinking()
 	}
 	return m.ResolveThinking()
+}
+
+// PricingFor returns the resolved pricing for a logical model name (spec §20.4).
+// An unknown name returns the zero (unconfigured) Pricing, so cost is reported
+// as unknown rather than invented.
+func (r *Registry) PricingFor(name string) Pricing {
+	m, ok := r.cfg.Models[name]
+	if !ok {
+		return Pricing{}
+	}
+	return m.Pricing()
 }
 
 // Has reports whether a logical model name is configured.

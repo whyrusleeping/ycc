@@ -1,10 +1,10 @@
 ---
 id: "0028"
 title: Per-model pricing config + cost computation
-status: todo
+status: in_progress
 priority: 3
 created: "2026-06-26"
-updated: "2026-06-26"
+updated: "2026-06-27"
 depends_on: []
 spec_refs:
     - Token usage & cost accounting
@@ -35,3 +35,9 @@ be updated as vendor prices change without touching the event log.
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-27 plan: Add optional per-model pricing to config and a cost helper (spec §20.4).  1. internal/config/config.go:    - Add four optional pricing fields to the `Model` struct as `*float64` (pointer so      unse
+…[truncated]
+- 2026-06-27 implementer report: Implemented per-model pricing config + cost computation (spec §20.4) in internal/config.  Changes: - internal/config/config.go:   - Added four optional pricing fields to `Model` as `*float64` (so uns
+…[truncated]
+- 2026-06-27 review (claude): accept — The change fully satisfies the task. The Model struct gains four optional pricing fields (price_input/output/cache_read/cache_write) as *float64 with omitempty TOML keys, so unset is distinguishable f
+…[truncated]
