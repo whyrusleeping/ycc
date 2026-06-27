@@ -60,6 +60,9 @@ const (
 	// SessionServiceSetRoleConfigProcedure is the fully-qualified name of the SessionService's
 	// SetRoleConfig RPC.
 	SessionServiceSetRoleConfigProcedure = "/ycc.v1.SessionService/SetRoleConfig"
+	// SessionServiceSetThinkingProcedure is the fully-qualified name of the SessionService's
+	// SetThinking RPC.
+	SessionServiceSetThinkingProcedure = "/ycc.v1.SessionService/SetThinking"
 )
 
 // SessionServiceClient is a client for the ycc.v1.SessionService service.
@@ -75,6 +78,7 @@ type SessionServiceClient interface {
 	ListModels(context.Context, *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error)
 	SetInteractionLevel(context.Context, *connect.Request[v1.SetInteractionLevelRequest]) (*connect.Response[v1.SetInteractionLevelResponse], error)
 	SetRoleConfig(context.Context, *connect.Request[v1.SetRoleConfigRequest]) (*connect.Response[v1.SetRoleConfigResponse], error)
+	SetThinking(context.Context, *connect.Request[v1.SetThinkingRequest]) (*connect.Response[v1.SetThinkingResponse], error)
 }
 
 // NewSessionServiceClient constructs a client for the ycc.v1.SessionService service. By default, it
@@ -142,6 +146,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("SetRoleConfig")),
 			connect.WithClientOptions(opts...),
 		),
+		setThinking: connect.NewClient[v1.SetThinkingRequest, v1.SetThinkingResponse](
+			httpClient,
+			baseURL+SessionServiceSetThinkingProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("SetThinking")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -156,6 +166,7 @@ type sessionServiceClient struct {
 	listModels          *connect.Client[v1.ListModelsRequest, v1.ListModelsResponse]
 	setInteractionLevel *connect.Client[v1.SetInteractionLevelRequest, v1.SetInteractionLevelResponse]
 	setRoleConfig       *connect.Client[v1.SetRoleConfigRequest, v1.SetRoleConfigResponse]
+	setThinking         *connect.Client[v1.SetThinkingRequest, v1.SetThinkingResponse]
 }
 
 // ListModes calls ycc.v1.SessionService.ListModes.
@@ -203,6 +214,11 @@ func (c *sessionServiceClient) SetRoleConfig(ctx context.Context, req *connect.R
 	return c.setRoleConfig.CallUnary(ctx, req)
 }
 
+// SetThinking calls ycc.v1.SessionService.SetThinking.
+func (c *sessionServiceClient) SetThinking(ctx context.Context, req *connect.Request[v1.SetThinkingRequest]) (*connect.Response[v1.SetThinkingResponse], error) {
+	return c.setThinking.CallUnary(ctx, req)
+}
+
 // SessionServiceHandler is an implementation of the ycc.v1.SessionService service.
 type SessionServiceHandler interface {
 	ListModes(context.Context, *connect.Request[v1.ListModesRequest]) (*connect.Response[v1.ListModesResponse], error)
@@ -216,6 +232,7 @@ type SessionServiceHandler interface {
 	ListModels(context.Context, *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error)
 	SetInteractionLevel(context.Context, *connect.Request[v1.SetInteractionLevelRequest]) (*connect.Response[v1.SetInteractionLevelResponse], error)
 	SetRoleConfig(context.Context, *connect.Request[v1.SetRoleConfigRequest]) (*connect.Response[v1.SetRoleConfigResponse], error)
+	SetThinking(context.Context, *connect.Request[v1.SetThinkingRequest]) (*connect.Response[v1.SetThinkingResponse], error)
 }
 
 // NewSessionServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -279,6 +296,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("SetRoleConfig")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceSetThinkingHandler := connect.NewUnaryHandler(
+		SessionServiceSetThinkingProcedure,
+		svc.SetThinking,
+		connect.WithSchema(sessionServiceMethods.ByName("SetThinking")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/ycc.v1.SessionService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case SessionServiceListModesProcedure:
@@ -299,6 +322,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceSetInteractionLevelHandler.ServeHTTP(w, r)
 		case SessionServiceSetRoleConfigProcedure:
 			sessionServiceSetRoleConfigHandler.ServeHTTP(w, r)
+		case SessionServiceSetThinkingProcedure:
+			sessionServiceSetThinkingHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -342,4 +367,8 @@ func (UnimplementedSessionServiceHandler) SetInteractionLevel(context.Context, *
 
 func (UnimplementedSessionServiceHandler) SetRoleConfig(context.Context, *connect.Request[v1.SetRoleConfigRequest]) (*connect.Response[v1.SetRoleConfigResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.SetRoleConfig is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) SetThinking(context.Context, *connect.Request[v1.SetThinkingRequest]) (*connect.Response[v1.SetThinkingResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.SetThinking is not implemented"))
 }

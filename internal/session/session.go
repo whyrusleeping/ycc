@@ -56,6 +56,10 @@ type Session struct {
 	coordinator string   // logical model name driving the coordinator
 	implementer string   // logical model name for the implementer role
 	reviewers   []string // logical model names for the reviewer role
+	// thinkLevel is a session-wide reasoning override (spec §18.2). "" means
+	// "use each model's per-config thinking"; any of off/low/medium/high/xhigh/max
+	// forces that level on every agent in the session until changed.
+	thinkLevel string
 }
 
 // Log exposes the session's event log for subscription.
@@ -202,10 +206,7 @@ func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []str
 	if err != nil {
 		return fmt.Errorf("build coordinator backend: %w", err)
 	}
-	th := s.reg.ThinkingFor(newCoord)
-	s.currentLoop().SetBackend(client, model, engine.Thinking{
-		Thinking: th.Thinking, Effort: th.Effort, ThinkingDisplay: th.ThinkingDisplay,
-	})
+	s.currentLoop().SetBackend(client, model, s.thinkingFor(newCoord))
 
 	s.mu.Lock()
 	s.coordinator, s.implementer, s.reviewers = newCoord, newImpl, newRevs
@@ -219,13 +220,82 @@ func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []str
 	return nil
 }
 
+// SetThinking sets a session-wide reasoning override that applies to every agent
+// (coordinator + spawned implementer/reviewers). It updates the live coordinator
+// loop and rebuilds the implementer/reviewer specs so the next spawn uses it; the
+// change is recorded in the event log (spec §18.2). Mirrors SetRoleConfig.
+func (s *Session) SetThinking(level string) error {
+	if _, ok := thinkingForLevel(level); !ok {
+		return fmt.Errorf("unknown thinking level %q", level)
+	}
+
+	s.mu.Lock()
+	from := s.thinkLevel
+	s.thinkLevel = level
+	impl, revs := s.implementer, append([]string(nil), s.reviewers...)
+	s.mu.Unlock()
+
+	// Rebuild the implementer / reviewer specs so the next spawn uses the new
+	// thinking level (running subagents keep their settings until then).
+	implSpec, err := s.agentSpec(impl)
+	if err != nil {
+		return err
+	}
+	var revSpecs []orchestrator.AgentSpec
+	for _, name := range revs {
+		rs, err := s.agentSpec(name)
+		if err != nil {
+			return err
+		}
+		revSpecs = append(revSpecs, rs)
+	}
+	s.deps.SetImplementer(implSpec)
+	s.deps.SetReviewers(revSpecs)
+
+	// Update the live coordinator loop's reasoning settings for its next turn
+	// (its conversation history is preserved).
+	th, _ := thinkingForLevel(level)
+	s.currentLoop().SetThinking(th)
+
+	s.emitter.Emit(event.ThinkingLevelChanged, map[string]any{"from": from, "to": level})
+	return nil
+}
+
+// thinkingForLevel maps a session thinking level to engine.Thinking. "off"
+// disables reasoning entirely; any effort level enables adaptive thinking at that
+// effort with summarized display. The bool reports whether the level is valid.
+func thinkingForLevel(level string) (engine.Thinking, bool) {
+	switch level {
+	case "off":
+		return engine.Thinking{}, true
+	case "low", "medium", "high", "xhigh", "max":
+		return engine.Thinking{Thinking: "adaptive", Effort: level, ThinkingDisplay: "summarized"}, true
+	default:
+		return engine.Thinking{}, false
+	}
+}
+
+// thinkingFor resolves the reasoning settings for a logical model name, honoring
+// the session-wide override when set; otherwise it converts the per-model config.
+func (s *Session) thinkingFor(name string) engine.Thinking {
+	s.mu.Lock()
+	level := s.thinkLevel
+	s.mu.Unlock()
+	if level != "" {
+		th, _ := thinkingForLevel(level)
+		return th
+	}
+	th := s.reg.ThinkingFor(name)
+	return engine.Thinking{Thinking: th.Thinking, Effort: th.Effort, ThinkingDisplay: th.ThinkingDisplay}
+}
+
 // agentSpec builds an orchestrator.AgentSpec for a logical model name.
 func (s *Session) agentSpec(name string) (orchestrator.AgentSpec, error) {
 	_, model, err := s.reg.Build(name)
 	if err != nil {
 		return orchestrator.AgentSpec{}, fmt.Errorf("build backend %q: %w", name, err)
 	}
-	th := s.reg.ThinkingFor(name)
+	th := s.thinkingFor(name)
 	return orchestrator.AgentSpec{
 		Name:  name,
 		Model: model,
@@ -442,7 +512,7 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 		if err != nil {
 			return nil, fmt.Errorf("build coordinator backend: %w", err)
 		}
-		th := m.reg.ThinkingFor(coord)
+		th := s.thinkingFor(coord)
 		loop := &engine.Loop{
 			Client: client, Model: model, System: sys, Tools: reg, Emitter: emitter,
 			MaxTok: m.reg.MaxTokens(), MaxTurns: m.reg.MaxTurns(),

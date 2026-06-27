@@ -58,6 +58,18 @@ func (l *Loop) SetBackend(client Turner, model string, think Thinking) {
 	l.mu.Unlock()
 }
 
+// SetThinking swaps only the loop's reasoning settings (thinking/effort/display)
+// while preserving the backend client, model id, and conversation history, so a
+// mid-session thinking-level change takes effect on the next turn (spec §18.2).
+// Safe to call concurrently with Run.
+func (l *Loop) SetThinking(think Thinking) {
+	l.mu.Lock()
+	l.Thinking = think.Thinking
+	l.Effort = think.Effort
+	l.ThinkingDisplay = think.ThinkingDisplay
+	l.mu.Unlock()
+}
+
 // Thinking carries per-model reasoning settings for SetBackend so a coordinator
 // model swap also updates effort/thinking. It mirrors config.Thinking but lives
 // here to avoid an engine→config import cycle.

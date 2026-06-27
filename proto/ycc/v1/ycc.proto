@@ -102,6 +102,16 @@ message SetRoleConfigRequest {
 }
 message SetRoleConfigResponse {}
 
+// SetThinking changes a session-wide thinking/effort level mid-session (spec
+// §18.2). The override applies to every agent in the session (coordinator +
+// spawned subagents) and takes precedence over the per-model config until
+// changed. Levels: off | low | medium | high | xhigh | max.
+message SetThinkingRequest {
+  string session_id = 1;
+  string level = 2; // off | low | medium | high | xhigh | max
+}
+message SetThinkingResponse {}
+
 // SessionService is the daemon's RPC surface (spec §12). M1 implements the core
 // four; mode/question RPCs arrive in later milestones.
 service SessionService {
@@ -117,4 +127,5 @@ service SessionService {
   rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
   rpc SetInteractionLevel(SetInteractionLevelRequest) returns (SetInteractionLevelResponse);
   rpc SetRoleConfig(SetRoleConfigRequest) returns (SetRoleConfigResponse);
+  rpc SetThinking(SetThinkingRequest) returns (SetThinkingResponse);
 }

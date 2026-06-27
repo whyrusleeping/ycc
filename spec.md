@@ -432,6 +432,7 @@ service SessionService {
   rpc ListModels(ListModelsRequest) returns (ListModelsResponse);       // available logical models
   rpc SetInteractionLevel(SetInteractionLevelRequest) returns (SetInteractionLevelResponse);
   rpc SetRoleConfig(SetRoleConfigRequest) returns (SetRoleConfigResponse);
+  rpc SetThinking(SetThinkingRequest) returns (SetThinkingResponse);    // session-wide reasoning level
 }
 ```
 
@@ -448,6 +449,11 @@ Notable message shapes for the settings + structured-question work:
 - `SetRoleConfigRequest { session_id; string coordinator; string implementer;
   repeated string reviewers }` — per-role model assignment by logical model name (§13).
   Empty fields leave that role unchanged.
+- `SetThinkingRequest { session_id; string level }` — a session-wide reasoning level
+  (`off | low | medium | high | xhigh | max`) applied to every agent (coordinator +
+  spawned subagents), overriding each model's per-config thinking until changed (§13).
+  `off` disables reasoning; any effort level maps to adaptive thinking at that effort
+  with summarized display.
 - `ListModelsResponse { repeated ModelInfo models }` where `ModelInfo` carries the
   logical name + backend + model id, so the client can populate the role pickers.
 
@@ -620,6 +626,14 @@ Overlay contents:
   **mid-session** (see §11). Selecting a value issues `SetInteractionLevel(sessionID,
   level)`; the daemon updates the live policy and emits an event so the change is in the
   log (and reflected in any other subscribed client).
+- **Thinking level** — `off | low | medium | high | xhigh | max`, changeable
+  **mid-session**. A session-wide reasoning override that applies to **every** agent
+  (coordinator + spawned implementer/reviewers), taking precedence over each model's
+  per-config thinking (§13) until changed. Selecting a value issues
+  `SetThinking(sessionID, level)`; the daemon updates the live coordinator loop and
+  rebuilds the implementer/reviewer specs so the next spawn uses it, then emits a
+  `thinking_level_changed` event. `off` disables reasoning; any effort level maps to
+  adaptive thinking at that effort with summarized display.
 - **Model / role configuration** — the headline feature. Per-role model selection:
   - **coordinator** — pick one model
   - **implementer** — pick one model

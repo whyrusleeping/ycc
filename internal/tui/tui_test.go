@@ -92,6 +92,28 @@ func TestAutoExpand(t *testing.T) {
 	}
 }
 
+// cycle walks the thinking-level list in both directions and wraps around at the
+// ends — the behavior the overlay's ←/→ keys rely on.
+func TestCycleThinkLevels(t *testing.T) {
+	if got := cycle(thinkLevels, "high", 1); got != "xhigh" {
+		t.Fatalf("high +1 = %q, want xhigh", got)
+	}
+	if got := cycle(thinkLevels, "high", -1); got != "medium" {
+		t.Fatalf("high -1 = %q, want medium", got)
+	}
+	if got := cycle(thinkLevels, "max", 1); got != "off" {
+		t.Fatalf("max +1 = %q, want off (wrap)", got)
+	}
+	if got := cycle(thinkLevels, "off", -1); got != "max" {
+		t.Fatalf("off -1 = %q, want max (wrap)", got)
+	}
+	// thinkLevels covers exactly the levels the session layer accepts.
+	want := []string{"off", "low", "medium", "high", "xhigh", "max"}
+	if strings.Join(thinkLevels, ",") != strings.Join(want, ",") {
+		t.Fatalf("thinkLevels = %v, want %v", thinkLevels, want)
+	}
+}
+
 // A thinking event renders a one-line "(reasoning)" detail and an expandable
 // body carrying the reasoning summary.
 func TestThinkingRendering(t *testing.T) {

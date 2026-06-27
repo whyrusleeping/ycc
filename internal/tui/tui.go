@@ -78,6 +78,7 @@ type model struct {
 	ovCursor     int
 	models       []*v1.ModelInfo // populated from ListModels
 	level        string          // current interaction level (session)
+	thinkLevel   string          // current session-wide thinking level (off|low|…|max)
 	roleCoord    string          // logical model driving the coordinator
 	roleImpl     string          // logical model for the implementer
 	roleReviewrs []string        // logical models for reviewers (multi-select)
@@ -110,7 +111,7 @@ func initialModel(ctx context.Context, client yccv1connect.SessionServiceClient,
 		state: stateMenu, prompt: prompt, input: input,
 		events: make(chan *v1.Event, 256), status: "starting",
 		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1, follow: prefs.Follow,
-		prefs: prefs, level: "judgement",
+		prefs: prefs, level: "judgement", thinkLevel: "high",
 	}
 }
 
@@ -223,6 +224,21 @@ func (m model) setLevel(level string) tea.Cmd {
 			return nil
 		}
 		if _, err := m.client.SetInteractionLevel(m.ctx, connect.NewRequest(&v1.SetInteractionLevelRequest{
+			SessionId: m.sessionID, Level: level,
+		})); err != nil {
+			return errMsg{err}
+		}
+		return nil
+	}
+}
+
+// setThinking issues SetThinking for the current session (spec §18.2).
+func (m model) setThinking(level string) tea.Cmd {
+	return func() tea.Msg {
+		if m.sessionID == "" {
+			return nil
+		}
+		if _, err := m.client.SetThinking(m.ctx, connect.NewRequest(&v1.SetThinkingRequest{
 			SessionId: m.sessionID, Level: level,
 		})); err != nil {
 			return errMsg{err}
@@ -458,6 +474,7 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 // overlay rows (indices into the navigable list).
 const (
 	ovLevel = iota
+	ovThinking
 	ovCoord
 	ovImpl
 	ovReviewers
@@ -470,8 +487,9 @@ const (
 )
 
 var (
-	levels = []string{"interactive", "judgement", "autonomous"}
-	themes = []string{"dark", "light"}
+	levels      = []string{"interactive", "judgement", "autonomous"}
+	thinkLevels = []string{"off", "low", "medium", "high", "xhigh", "max"}
+	themes      = []string{"dark", "light"}
 )
 
 func (m model) updateOverlay(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -521,6 +539,9 @@ func (m model) overlayAdjust(d int) (tea.Model, tea.Cmd) {
 	case ovLevel:
 		m.level = cycle(levels, m.level, d)
 		return m, m.setLevel(m.level)
+	case ovThinking:
+		m.thinkLevel = cycle(thinkLevels, m.thinkLevel, d)
+		return m, m.setThinking(m.thinkLevel)
 	case ovCoord:
 		m.roleCoord = cycleModel(m.models, m.roleCoord, d)
 		return m, nil
@@ -634,6 +655,7 @@ func (m model) overlayView() string {
 	b.WriteString(titleStyle.Render(" settings ") + "\n\n")
 	rows := []struct{ label, val string }{
 		{"interaction level", m.level},
+		{"thinking level", m.thinkLevel},
 		{"coordinator model", m.roleCoord},
 		{"implementer model", m.roleImpl},
 		{"reviewers", strings.Join(m.roleReviewrs, ", ")},
@@ -745,6 +767,10 @@ func (m *model) appendEvent(ev *v1.Event) {
 	case "interaction_level_changed":
 		if to := dataField(ev, "to"); to != "" {
 			m.level = to
+		}
+	case "thinking_level_changed":
+		if to := dataField(ev, "to"); to != "" {
+			m.thinkLevel = to
 		}
 	case "role_config_changed":
 		if c := dataField(ev, "coordinator"); c != "" {

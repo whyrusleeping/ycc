@@ -152,6 +152,18 @@ func (s *Server) SetRoleConfig(_ context.Context, req *connect.Request[v1.SetRol
 	return connect.NewResponse(&v1.SetRoleConfigResponse{}), nil
 }
 
+// SetThinking changes a session-wide thinking/effort level mid-session (spec §18.2).
+func (s *Server) SetThinking(_ context.Context, req *connect.Request[v1.SetThinkingRequest]) (*connect.Response[v1.SetThinkingResponse], error) {
+	sess, ok := s.mgr.Get(req.Msg.SessionId)
+	if !ok {
+		return nil, connect.NewError(connect.CodeNotFound, errNoSession)
+	}
+	if err := sess.SetThinking(req.Msg.Level); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	return connect.NewResponse(&v1.SetThinkingResponse{}), nil
+}
+
 func toProto(ev event.Event) *v1.Event {
 	var dataJSON string
 	if len(ev.Data) > 0 {

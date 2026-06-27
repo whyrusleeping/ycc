@@ -42,6 +42,7 @@ const (
 	// Settings overlay (spec §18.2): mid-session config changes recorded in the log.
 	InteractionLevelChanged Type = "interaction_level_changed"
 	RoleConfigChanged       Type = "role_config_changed"
+	ThinkingLevelChanged    Type = "thinking_level_changed"
 )
 
 // Event is a single entry in a session's log.
