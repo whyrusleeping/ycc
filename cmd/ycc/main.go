@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -70,7 +71,7 @@ func main() {
 
 	// Resolve the daemon to talk to and obtain a teardown hook for any one-shot
 	// in-process daemon we start.
-	target, tok, shutdown := resolveDaemon(*addr, *token, *background, ws, *configPath)
+	target, tok, persistent, shutdown := resolveDaemon(*addr, *token, *background, ws, *configPath)
 	defer shutdown()
 	// Tear the one-shot daemon down on ctrl-c / SIGTERM too — a defer alone won't
 	// fire when the process is signalled. (A panic still runs the defer.)
@@ -81,7 +82,10 @@ func main() {
 
 	args := global.Args()
 	if len(args) == 0 {
-		if err := tui.Run(ctx, client, ws); err != nil {
+		// A persistent/remote daemon is multi-project: show the picker first. A
+		// one-shot in-process daemon has a single implicit project (cwd) and skips
+		// it (spec §3.1).
+		if err := tui.Run(ctx, client, ws, persistent); err != nil {
 			fatal("tui: %v", err)
 		}
 		return
@@ -98,11 +102,13 @@ func main() {
 		}
 		fs := flag.NewFlagSet("start", flag.ExitOnError)
 		workspace := fs.String("workspace", ws, "workspace dir (default: current directory)")
+		project := fs.String("project", "", "registered project name (overrides -workspace)")
 		mode := fs.String("mode", "", "session mode (default: work)")
 		level := fs.String("level", "", "interaction level: interactive | judgement | autonomous")
 		fs.Parse(rest)
 		resp, err := client.StartSession(ctx, connect.NewRequest(&v1.StartSessionRequest{
 			Workspace:        *workspace,
+			Project:          *project,
 			Mode:             *mode,
 			InteractionLevel: *level,
 			Prompt:           task,
@@ -149,37 +155,41 @@ func main() {
 			fmt.Printf("%s  %-8s %-8s %s\n", s.SessionId, s.Mode, s.Status, s.Workspace)
 		}
 
+	case "project", "projects":
+		runProject(ctx, client, args[1:])
+
 	default:
 		fatal("unknown command %q", args[0])
 	}
 }
 
 // resolveDaemon decides which daemon the client should talk to and returns its
-// base URL, bearer token, and a teardown func (a no-op for everything except a
-// one-shot in-process daemon, which the caller must shut down on exit).
+// base URL, bearer token, whether it is a persistent/remote (multi-project)
+// daemon, and a teardown func (a no-op for everything except a one-shot
+// in-process daemon, which the caller must shut down on exit).
 //
 //   - -addr:        attach to the explicit/remote daemon.
 //   - --background: spawn (if needed) a detached persistent daemon and attach.
 //   - default:      attach to a persistent local daemon if one is already
 //     running, else start the daemon in-process on an ephemeral
 //     address tied to this process (no persistence).
-func resolveDaemon(addr, token string, background bool, ws, configPath string) (target, tok string, shutdown func()) {
+func resolveDaemon(addr, token string, background bool, ws, configPath string) (target, tok string, persistent bool, shutdown func()) {
 	noop := func() {}
 
 	if addr != "" {
-		return addr, token, noop
+		return addr, token, true, noop
 	}
 
 	if background {
 		if err := daemon.EnsureBackgroundDaemon(ws, configPath); err != nil {
 			fatal("%v", err)
 		}
-		return daemon.LocalAddr, "", noop
+		return daemon.LocalAddr, "", true, noop
 	}
 
 	// Attach to an already-running persistent local daemon if present.
 	if daemon.Reachable(daemon.LocalAddr, "") {
-		return daemon.LocalAddr, "", noop
+		return daemon.LocalAddr, "", true, noop
 	}
 
 	// Otherwise: one-shot in-process daemon on an ephemeral loopback address,
@@ -197,7 +207,7 @@ func resolveDaemon(addr, token string, background bool, ws, configPath string) (
 	}
 	fmt.Fprintln(os.Stderr, "ycc: running one-shot in-process daemon (no persistence); closing ycc ends in-flight work.")
 	fmt.Fprintln(os.Stderr, "ycc: use `ycc daemon` or `ycc --background` to keep work running after exit.")
-	return ip.Addr, "", func() { _ = ip.Shutdown() }
+	return ip.Addr, "", false, func() { _ = ip.Shutdown() }
 }
 
 // installSignalShutdown runs the teardown hook on SIGINT/SIGTERM so a one-shot
@@ -296,12 +306,68 @@ func runDaemon(argv []string) {
 	err := daemon.Serve(daemon.Options{
 		Addr: *addr, Workspace: *workspace, ConfigPath: *configPath,
 		Model: *model, BaseURL: *baseURL, KeyEnv: *keyEnv, MaxTokens: *maxTok,
-		Token: *token, TLSCert: *tlsCert, TLSKey: *tlsKey,
+		Token: *token, TLSCert: *tlsCert, TLSKey: *tlsKey, Persist: true,
 	})
 	if err != nil {
 		fatal("daemon: %v", err)
 	}
 }
+
+// runProject implements `ycc project <add|list|remove>` against the daemon's
+// project registry (spec §3.1).
+func runProject(ctx context.Context, client yccv1connect.SessionServiceClient, args []string) {
+	sub := "list"
+	if len(args) > 0 {
+		sub, args = args[0], args[1:]
+	}
+	switch sub {
+	case "add":
+		// Positional path comes first; flags follow it.
+		if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+			fatal("usage: ycc project add <path> [--name N]")
+		}
+		path, rest := args[0], args[1:]
+		fs := flag.NewFlagSet("project add", flag.ExitOnError)
+		name := fs.String("name", "", "project name (default: directory basename)")
+		fs.Parse(rest)
+		if abs, err := filepathAbs(path); err == nil {
+			path = abs
+		}
+		resp, err := client.AddProject(ctx, connect.NewRequest(&v1.AddProjectRequest{Path: path, Name: *name}))
+		if err != nil {
+			fatal("AddProject: %v", err)
+		}
+		p := resp.Msg.Project
+		fmt.Printf("registered %s  %s\n", p.Name, p.Path)
+
+	case "remove", "rm":
+		if len(args) == 0 {
+			fatal("usage: ycc project remove <name>")
+		}
+		if _, err := client.RemoveProject(ctx, connect.NewRequest(&v1.RemoveProjectRequest{Name: args[0]})); err != nil {
+			fatal("RemoveProject: %v", err)
+		}
+		fmt.Printf("removed %s\n", args[0])
+
+	case "list":
+		resp, err := client.ListProjects(ctx, connect.NewRequest(&v1.ListProjectsRequest{}))
+		if err != nil {
+			fatal("ListProjects: %v", err)
+		}
+		if len(resp.Msg.Projects) == 0 {
+			fmt.Println("(no projects)")
+			return
+		}
+		for _, p := range resp.Msg.Projects {
+			fmt.Printf("%-20s %s\n", p.Name, p.Path)
+		}
+
+	default:
+		fatal("usage: ycc project <add|list|remove>")
+	}
+}
+
+func filepathAbs(p string) (string, error) { return filepath.Abs(p) }
 
 func fatal(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "error: "+format+"\n", args...)

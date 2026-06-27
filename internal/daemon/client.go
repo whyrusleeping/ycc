@@ -72,8 +72,21 @@ func EnsureBackgroundDaemon(workspace, configPath string) error {
 	cmd := exec.Command(self, args...)
 	cmd.Env = os.Environ()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // detach: survive ycc exit
+	// A detached daemon must NOT inherit our std{in,out,err}. If we were spawned
+	// from inside a shell pipeline (e.g. an agent running `ycc ... | tail`), an
+	// inherited pipe's write end stays open for the daemon's whole life, so the
+	// reader never sees EOF and the pipeline wedges forever. Redirect stdin from
+	// /dev/null and stdout/stderr to the daemon log, falling back to /dev/null —
+	// never leaving them nil (which would inherit ours).
+	devnull, _ := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if devnull != nil {
+		defer devnull.Close()
+		cmd.Stdin = devnull
+		cmd.Stdout, cmd.Stderr = devnull, devnull
+	}
 	logPath := daemonLogPath()
 	if f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+		defer f.Close()
 		cmd.Stdout, cmd.Stderr = f, f
 	}
 	if err := cmd.Start(); err != nil {

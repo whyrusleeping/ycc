@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/whyrusleeping/gollama"
@@ -197,6 +198,21 @@ func bash(ws *Workspace) *gollama.Tool {
 			defer cancel()
 			cmd := exec.CommandContext(cctx, "sh", "-c", cmdStr)
 			cmd.Dir = ws.Root
+			// Run the command in its own process group so a timeout kills the whole
+			// tree (the shell plus every pipeline child), not just the direct `sh`
+			// child — exec's default cancel only signals the leader, leaving
+			// grandchildren alive.
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			cmd.Cancel = func() error {
+				// Negative pid => signal the entire process group.
+				return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			}
+			// A grandchild that escapes the kill (e.g. a daemon that calls setsid)
+			// can inherit and hold the output pipe open, so CombinedOutput's read
+			// never reaches EOF and blocks forever despite the timeout
+			// (golang/go#23019). WaitDelay bounds that wait: once the process has
+			// exited, Wait force-closes the pipe after this delay and returns.
+			cmd.WaitDelay = 10 * time.Second
 			out, err := cmd.CombinedOutput()
 			if len(out) > maxBashBytes {
 				out = append(out[:maxBashBytes], []byte("\n…[truncated]")...)

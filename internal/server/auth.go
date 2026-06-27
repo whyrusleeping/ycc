@@ -9,6 +9,7 @@ import (
 )
 
 var errNoSession = errors.New("no such session")
+var errNoPath = errors.New("project path is required")
 
 // authInterceptor enforces "Authorization: Bearer <token>" on every RPC,
 // including streaming handlers (so Subscribe is guarded too). An empty token

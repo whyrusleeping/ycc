@@ -21,6 +21,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/git"
 	"github.com/whyrusleeping/ycc/internal/orchestrator"
+	"github.com/whyrusleeping/ycc/internal/project"
 )
 
 // Config parameterizes a new session.
@@ -29,6 +30,9 @@ type Config struct {
 	Mode             string
 	InteractionLevel string
 	Prompt           string
+	// Project, when set, names a registered project whose workspace is used,
+	// overriding Workspace (spec §3.1).
+	Project string
 }
 
 // Session is one running agent conversation backed by a persistent event log.
@@ -400,26 +404,57 @@ type Manager struct {
 	sessions         map[string]*Session
 	reg              *config.Registry
 	defaultWorkspace string
+	projects         *project.Registry
 }
 
-// NewManager creates a session manager backed by the given model registry.
+// NewManager creates a session manager backed by the given model registry. It
+// starts with an in-memory project registry; call SetProjects to back it with a
+// persistent one (spec §3.1).
 func NewManager(reg *config.Registry, defaultWorkspace string) *Manager {
 	return &Manager{
 		sessions:         map[string]*Session{},
 		reg:              reg,
 		defaultWorkspace: defaultWorkspace,
+		projects:         project.NewMemory(),
 	}
 }
+
+// SetProjects backs the manager with a (persistent) project registry.
+func (m *Manager) SetProjects(p *project.Registry) { m.projects = p }
+
+// Projects returns the registered projects (name + path) for ListProjects.
+func (m *Manager) Projects() []project.Project { return m.projects.List() }
+
+// AddProject registers a workspace under an optional name (spec §3.1).
+func (m *Manager) AddProject(path, name string) (project.Project, error) {
+	return m.projects.Add(path, name)
+}
+
+// RemoveProject deregisters a project by name.
+func (m *Manager) RemoveProject(name string) error { return m.projects.Remove(name) }
 
 // Start creates, persists, and launches a new session.
 func (m *Manager) Start(cfg Config) (*Session, error) {
 	ws := cfg.Workspace
+	// A named project resolves to its registered workspace, overriding ws.
+	if cfg.Project != "" {
+		p, ok := m.projects.Resolve(cfg.Project)
+		if !ok {
+			return nil, fmt.Errorf("unknown project %q", cfg.Project)
+		}
+		ws = p
+	}
 	if ws == "" {
 		ws = m.defaultWorkspace
 	}
 	absWS, err := filepath.Abs(ws)
 	if err != nil {
 		return nil, fmt.Errorf("resolve workspace: %w", err)
+	}
+	// Auto-register a not-yet-known workspace so it becomes a first-class,
+	// listable project (spec §3.1).
+	if _, err := m.projects.EnsureWorkspace(absWS); err != nil {
+		return nil, fmt.Errorf("register project: %w", err)
 	}
 	mode := cfg.Mode
 	if mode == "" {
@@ -571,6 +606,27 @@ func (m *Manager) List() []*Session {
 	out := make([]*Session, 0, len(m.sessions))
 	for _, s := range m.sessions {
 		out = append(out, s)
+	}
+	return out
+}
+
+// ListByProject returns live sessions whose workspace is the named project's
+// workspace. An empty name returns all sessions; an unknown name returns none.
+func (m *Manager) ListByProject(name string) []*Session {
+	if name == "" {
+		return m.List()
+	}
+	ws, ok := m.projects.Resolve(name)
+	if !ok {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]*Session, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		if s.Workspace == ws {
+			out = append(out, s)
+		}
 	}
 	return out
 }

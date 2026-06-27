@@ -51,6 +51,15 @@ const (
 	// SessionServiceAnswerQuestionProcedure is the fully-qualified name of the SessionService's
 	// AnswerQuestion RPC.
 	SessionServiceAnswerQuestionProcedure = "/ycc.v1.SessionService/AnswerQuestion"
+	// SessionServiceListProjectsProcedure is the fully-qualified name of the SessionService's
+	// ListProjects RPC.
+	SessionServiceListProjectsProcedure = "/ycc.v1.SessionService/ListProjects"
+	// SessionServiceAddProjectProcedure is the fully-qualified name of the SessionService's AddProject
+	// RPC.
+	SessionServiceAddProjectProcedure = "/ycc.v1.SessionService/AddProject"
+	// SessionServiceRemoveProjectProcedure is the fully-qualified name of the SessionService's
+	// RemoveProject RPC.
+	SessionServiceRemoveProjectProcedure = "/ycc.v1.SessionService/RemoveProject"
 	// SessionServiceListModelsProcedure is the fully-qualified name of the SessionService's ListModels
 	// RPC.
 	SessionServiceListModelsProcedure = "/ycc.v1.SessionService/ListModels"
@@ -73,6 +82,10 @@ type SessionServiceClient interface {
 	Subscribe(context.Context, *connect.Request[v1.SubscribeRequest]) (*connect.ServerStreamForClient[v1.Event], error)
 	SendInput(context.Context, *connect.Request[v1.SendInputRequest]) (*connect.Response[v1.SendInputResponse], error)
 	AnswerQuestion(context.Context, *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error)
+	// Projects — persistent multi-project daemon (spec §3.1).
+	ListProjects(context.Context, *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error)
+	AddProject(context.Context, *connect.Request[v1.AddProjectRequest]) (*connect.Response[v1.AddProjectResponse], error)
+	RemoveProject(context.Context, *connect.Request[v1.RemoveProjectRequest]) (*connect.Response[v1.RemoveProjectResponse], error)
 	// Settings overlay (spec §18.2): enumerate models and change a session's
 	// interaction level / per-role model assignment mid-flight.
 	ListModels(context.Context, *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error)
@@ -128,6 +141,24 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("AnswerQuestion")),
 			connect.WithClientOptions(opts...),
 		),
+		listProjects: connect.NewClient[v1.ListProjectsRequest, v1.ListProjectsResponse](
+			httpClient,
+			baseURL+SessionServiceListProjectsProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("ListProjects")),
+			connect.WithClientOptions(opts...),
+		),
+		addProject: connect.NewClient[v1.AddProjectRequest, v1.AddProjectResponse](
+			httpClient,
+			baseURL+SessionServiceAddProjectProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("AddProject")),
+			connect.WithClientOptions(opts...),
+		),
+		removeProject: connect.NewClient[v1.RemoveProjectRequest, v1.RemoveProjectResponse](
+			httpClient,
+			baseURL+SessionServiceRemoveProjectProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("RemoveProject")),
+			connect.WithClientOptions(opts...),
+		),
 		listModels: connect.NewClient[v1.ListModelsRequest, v1.ListModelsResponse](
 			httpClient,
 			baseURL+SessionServiceListModelsProcedure,
@@ -163,6 +194,9 @@ type sessionServiceClient struct {
 	subscribe           *connect.Client[v1.SubscribeRequest, v1.Event]
 	sendInput           *connect.Client[v1.SendInputRequest, v1.SendInputResponse]
 	answerQuestion      *connect.Client[v1.AnswerQuestionRequest, v1.AnswerQuestionResponse]
+	listProjects        *connect.Client[v1.ListProjectsRequest, v1.ListProjectsResponse]
+	addProject          *connect.Client[v1.AddProjectRequest, v1.AddProjectResponse]
+	removeProject       *connect.Client[v1.RemoveProjectRequest, v1.RemoveProjectResponse]
 	listModels          *connect.Client[v1.ListModelsRequest, v1.ListModelsResponse]
 	setInteractionLevel *connect.Client[v1.SetInteractionLevelRequest, v1.SetInteractionLevelResponse]
 	setRoleConfig       *connect.Client[v1.SetRoleConfigRequest, v1.SetRoleConfigResponse]
@@ -199,6 +233,21 @@ func (c *sessionServiceClient) AnswerQuestion(ctx context.Context, req *connect.
 	return c.answerQuestion.CallUnary(ctx, req)
 }
 
+// ListProjects calls ycc.v1.SessionService.ListProjects.
+func (c *sessionServiceClient) ListProjects(ctx context.Context, req *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error) {
+	return c.listProjects.CallUnary(ctx, req)
+}
+
+// AddProject calls ycc.v1.SessionService.AddProject.
+func (c *sessionServiceClient) AddProject(ctx context.Context, req *connect.Request[v1.AddProjectRequest]) (*connect.Response[v1.AddProjectResponse], error) {
+	return c.addProject.CallUnary(ctx, req)
+}
+
+// RemoveProject calls ycc.v1.SessionService.RemoveProject.
+func (c *sessionServiceClient) RemoveProject(ctx context.Context, req *connect.Request[v1.RemoveProjectRequest]) (*connect.Response[v1.RemoveProjectResponse], error) {
+	return c.removeProject.CallUnary(ctx, req)
+}
+
 // ListModels calls ycc.v1.SessionService.ListModels.
 func (c *sessionServiceClient) ListModels(ctx context.Context, req *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error) {
 	return c.listModels.CallUnary(ctx, req)
@@ -227,6 +276,10 @@ type SessionServiceHandler interface {
 	Subscribe(context.Context, *connect.Request[v1.SubscribeRequest], *connect.ServerStream[v1.Event]) error
 	SendInput(context.Context, *connect.Request[v1.SendInputRequest]) (*connect.Response[v1.SendInputResponse], error)
 	AnswerQuestion(context.Context, *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error)
+	// Projects — persistent multi-project daemon (spec §3.1).
+	ListProjects(context.Context, *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error)
+	AddProject(context.Context, *connect.Request[v1.AddProjectRequest]) (*connect.Response[v1.AddProjectResponse], error)
+	RemoveProject(context.Context, *connect.Request[v1.RemoveProjectRequest]) (*connect.Response[v1.RemoveProjectResponse], error)
 	// Settings overlay (spec §18.2): enumerate models and change a session's
 	// interaction level / per-role model assignment mid-flight.
 	ListModels(context.Context, *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error)
@@ -278,6 +331,24 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("AnswerQuestion")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceListProjectsHandler := connect.NewUnaryHandler(
+		SessionServiceListProjectsProcedure,
+		svc.ListProjects,
+		connect.WithSchema(sessionServiceMethods.ByName("ListProjects")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceAddProjectHandler := connect.NewUnaryHandler(
+		SessionServiceAddProjectProcedure,
+		svc.AddProject,
+		connect.WithSchema(sessionServiceMethods.ByName("AddProject")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceRemoveProjectHandler := connect.NewUnaryHandler(
+		SessionServiceRemoveProjectProcedure,
+		svc.RemoveProject,
+		connect.WithSchema(sessionServiceMethods.ByName("RemoveProject")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sessionServiceListModelsHandler := connect.NewUnaryHandler(
 		SessionServiceListModelsProcedure,
 		svc.ListModels,
@@ -316,6 +387,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceSendInputHandler.ServeHTTP(w, r)
 		case SessionServiceAnswerQuestionProcedure:
 			sessionServiceAnswerQuestionHandler.ServeHTTP(w, r)
+		case SessionServiceListProjectsProcedure:
+			sessionServiceListProjectsHandler.ServeHTTP(w, r)
+		case SessionServiceAddProjectProcedure:
+			sessionServiceAddProjectHandler.ServeHTTP(w, r)
+		case SessionServiceRemoveProjectProcedure:
+			sessionServiceRemoveProjectHandler.ServeHTTP(w, r)
 		case SessionServiceListModelsProcedure:
 			sessionServiceListModelsHandler.ServeHTTP(w, r)
 		case SessionServiceSetInteractionLevelProcedure:
@@ -355,6 +432,18 @@ func (UnimplementedSessionServiceHandler) SendInput(context.Context, *connect.Re
 
 func (UnimplementedSessionServiceHandler) AnswerQuestion(context.Context, *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.AnswerQuestion is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) ListProjects(context.Context, *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ListProjects is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) AddProject(context.Context, *connect.Request[v1.AddProjectRequest]) (*connect.Response[v1.AddProjectResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.AddProject is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) RemoveProject(context.Context, *connect.Request[v1.RemoveProjectRequest]) (*connect.Response[v1.RemoveProjectResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.RemoveProject is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) ListModels(context.Context, *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error) {

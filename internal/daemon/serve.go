@@ -18,6 +18,7 @@ import (
 	"golang.org/x/net/http2/h2c"
 
 	"github.com/whyrusleeping/ycc/internal/config"
+	"github.com/whyrusleeping/ycc/internal/project"
 	"github.com/whyrusleeping/ycc/internal/server"
 	"github.com/whyrusleeping/ycc/internal/session"
 	"github.com/whyrusleeping/ycc/proto/ycc/v1/yccv1connect"
@@ -35,6 +36,10 @@ type Options struct {
 	Token      string
 	TLSCert    string
 	TLSKey     string
+	// Persist enables the durable project registry in the daemon state dir
+	// (spec §3.1). The one-shot in-process path leaves this false: cwd is the
+	// single implicit project and nothing is written to the state dir.
+	Persist bool
 }
 
 // buildHandler constructs the session manager and Connect HTTP handler from
@@ -56,6 +61,16 @@ func buildHandler(o Options) (http.Handler, error) {
 	}
 
 	mgr := session.NewManager(config.NewRegistry(cfg), o.Workspace)
+	// A persistent daemon backs its project registry with durable state so the
+	// project list survives restarts (spec §3.1). The one-shot in-process path
+	// keeps the default in-memory registry (cwd is the single implicit project).
+	if o.Persist {
+		reg, err := project.Open(project.StateFile())
+		if err != nil {
+			return nil, fmt.Errorf("load project registry: %w", err)
+		}
+		mgr.SetProjects(reg)
+	}
 	srv := server.New(mgr)
 
 	mux := http.NewServeMux()

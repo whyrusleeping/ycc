@@ -29,7 +29,8 @@ import (
 type state int
 
 const (
-	stateMenu state = iota
+	statePicker state = iota
+	stateMenu
 	stateSession
 )
 
@@ -39,6 +40,14 @@ type model struct {
 	client    yccv1connect.SessionServiceClient
 	ctx       context.Context
 	workspace string
+
+	// project scoping (spec §3.1). When attached to a persistent/remote daemon
+	// the picker selects a project; one-shot leaves these empty (cwd is the
+	// single implicit project) and skips the picker.
+	showPicker bool
+	project    string            // selected project name ("" => use workspace)
+	projects   []*v1.ProjectInfo // registered projects for the picker
+	projectCur int               // cursor in the project picker
 
 	state   state
 	entries []menuEntry // modes + presets, in menu order
@@ -86,14 +95,16 @@ type model struct {
 	prefs        clientconfig.Prefs
 }
 
-// Run starts the TUI against the daemon client.
-func Run(ctx context.Context, client yccv1connect.SessionServiceClient, workspace string) error {
-	p := tea.NewProgram(initialModel(ctx, client, workspace), tea.WithAltScreen(), tea.WithMouseCellMotion())
+// Run starts the TUI against the daemon client. showPicker selects the initial
+// project-picker screen (persistent/remote daemon); a one-shot daemon passes
+// false so the cwd is the single implicit project (spec §3.1).
+func Run(ctx context.Context, client yccv1connect.SessionServiceClient, workspace string, showPicker bool) error {
+	p := tea.NewProgram(initialModel(ctx, client, workspace, showPicker), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := p.Run()
 	return err
 }
 
-func initialModel(ctx context.Context, client yccv1connect.SessionServiceClient, workspace string) model {
+func initialModel(ctx context.Context, client yccv1connect.SessionServiceClient, workspace string, showPicker bool) model {
 	prefs := clientconfig.Load()
 	prompt := textinput.New()
 	prompt.Placeholder = "what should the agent do? (optional for 'work')"
@@ -106,9 +117,14 @@ func initialModel(ctx context.Context, client yccv1connect.SessionServiceClient,
 	input.CharLimit = 8000
 	input.Width = 60
 
+	initState := stateMenu
+	if showPicker {
+		initState = statePicker
+	}
 	return model{
 		client: client, ctx: ctx, workspace: workspace,
-		state: stateMenu, prompt: prompt, input: input,
+		showPicker: showPicker,
+		state:      initState, prompt: prompt, input: input,
 		events: make(chan *v1.Event, 256), status: "starting",
 		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1, follow: prefs.Follow,
 		prefs: prefs, level: "judgement", thinkLevel: "high",
@@ -132,12 +148,27 @@ type menuEntry struct {
 	openingPrompt string
 }
 type modelsMsg struct{ models []*v1.ModelInfo }
+type projectsMsg struct{ projects []*v1.ProjectInfo }
 type startedMsg struct{ id, mode string }
 type evMsg struct{ ev *v1.Event }
 type streamClosedMsg struct{}
 type errMsg struct{ err error }
 
-func (m model) Init() tea.Cmd { return tea.Batch(m.fetchModes, m.fetchModels) }
+func (m model) Init() tea.Cmd {
+	cmds := []tea.Cmd{m.fetchModes, m.fetchModels}
+	if m.showPicker {
+		cmds = append(cmds, m.fetchProjects)
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m model) fetchProjects() tea.Msg {
+	resp, err := m.client.ListProjects(m.ctx, connect.NewRequest(&v1.ListProjectsRequest{}))
+	if err != nil {
+		return errMsg{err}
+	}
+	return projectsMsg{resp.Msg.Projects}
+}
 
 func (m model) fetchModes() tea.Msg {
 	resp, err := m.client.ListModes(m.ctx, connect.NewRequest(&v1.ListModesRequest{}))
@@ -158,12 +189,23 @@ func (m model) fetchModels() tea.Msg {
 func (m model) startSession(mode, prompt string) tea.Cmd {
 	return func() tea.Msg {
 		resp, err := m.client.StartSession(m.ctx, connect.NewRequest(&v1.StartSessionRequest{
-			Mode: mode, Prompt: prompt, Workspace: m.workspace,
+			Mode: mode, Prompt: prompt, Workspace: m.workspace, Project: m.project,
 		}))
 		if err != nil {
 			return errMsg{err}
 		}
 		return startedMsg{id: resp.Msg.SessionId, mode: mode}
+	}
+}
+
+// addProject registers the current workspace as a project and refreshes the
+// picker list (spec §3.1).
+func (m model) addProject(path string) tea.Cmd {
+	return func() tea.Msg {
+		if _, err := m.client.AddProject(m.ctx, connect.NewRequest(&v1.AddProjectRequest{Path: path})); err != nil {
+			return errMsg{err}
+		}
+		return m.fetchProjects()
 	}
 }
 
@@ -295,6 +337,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case modelsMsg:
 		m.models = msg.models
 		return m, nil
+	case projectsMsg:
+		m.projects = msg.projects
+		if m.projectCur >= len(m.projects) {
+			m.projectCur = 0
+		}
+		return m, nil
 	case errMsg:
 		m.err = msg.err
 		return m, nil
@@ -308,6 +356,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case evMsg:
 		m.appendEvent(msg.ev)
 		return m, waitEvent(m.events)
+	}
+
+	// The project picker (spec §3.1) is shown first when attached to a
+	// persistent/remote daemon; it owns input until a project is chosen.
+	if m.state == statePicker {
+		return m.updatePicker(msg)
 	}
 
 	// The settings overlay (Esc) is modal over BOTH the menu and a session.
@@ -336,6 +390,44 @@ func (m *model) openOverlay() {
 		m.roleImpl = m.models[0].Name
 		m.roleReviewrs = []string{m.models[0].Name}
 	}
+}
+
+// updatePicker handles the project-picker screen (spec §3.1): navigate the list
+// of registered projects, Enter scopes the session UI to one, `a` registers the
+// current workspace as a new project.
+func (m model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch key.String() {
+	case "ctrl+c", "q":
+		return m, tea.Quit
+	case "up":
+		if m.projectCur > 0 {
+			m.projectCur--
+		}
+		return m, nil
+	case "down":
+		if m.projectCur < len(m.projects)-1 {
+			m.projectCur++
+		}
+		return m, nil
+	case "a":
+		// Register the current workspace, then refresh the list.
+		return m, m.addProject(m.workspace)
+	case "enter":
+		if len(m.projects) == 0 {
+			// Nothing registered yet: register the cwd and continue once listed.
+			return m, m.addProject(m.workspace)
+		}
+		p := m.projects[m.projectCur]
+		m.project = p.Name
+		m.workspace = p.Path
+		m.state = stateMenu
+		return m, nil
+	}
+	return m, nil
 }
 
 func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -858,10 +950,34 @@ func (m model) View() string {
 	if m.overlay {
 		return m.overlayView()
 	}
+	if m.state == statePicker {
+		return m.pickerScreenView()
+	}
 	if m.state == stateMenu {
 		return m.menuView()
 	}
 	return m.sessionView()
+}
+
+// pickerScreenView renders the project picker (spec §3.1).
+func (m model) pickerScreenView() string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render(" ycc — projects ") + "\n\n")
+	if len(m.projects) == 0 {
+		b.WriteString("  " + dimStyle.Render("no projects registered yet") + "\n")
+	}
+	for i, p := range m.projects {
+		cursor := "  "
+		label := fmt.Sprintf("%-20s %s", p.Name, dimStyle.Render(p.Path))
+		if i == m.projectCur {
+			cursor = selStyle.Render("▸ ")
+			label = selStyle.Render(fmt.Sprintf("%-20s ", p.Name)) + dimStyle.Render(p.Path)
+		}
+		b.WriteString("  " + cursor + label + "\n")
+	}
+	b.WriteString("\n" + dimStyle.Render("  ↑/↓ choose · enter open · a add current dir · q quit"))
+	b.WriteString("\n" + dimStyle.Render("  cwd: "+m.workspace))
+	return b.String()
 }
 
 func (m model) menuView() string {

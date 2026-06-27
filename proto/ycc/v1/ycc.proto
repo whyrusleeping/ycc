@@ -20,8 +20,27 @@ message StartSessionRequest {
   string mode = 2; // e.g. "work"; M1 runs a single worker agent
   string interaction_level = 3; // interactive | judgement | autonomous
   string prompt = 4; // initial task prompt
+  // project is an optional registered project name; when set it resolves to that
+  // project's workspace (overriding `workspace`). Spec §3.1.
+  string project = 5;
 }
 message StartSessionResponse { string session_id = 1; }
+
+// Projects — persistent multi-project daemon (spec §3.1). A project is a named
+// workspace; the daemon's registry maps name -> path in its state dir.
+message ProjectInfo {
+  string name = 1;
+  string path = 2;
+}
+message ListProjectsRequest {}
+message ListProjectsResponse { repeated ProjectInfo projects = 1; }
+message AddProjectRequest {
+  string path = 1; // workspace dir to register
+  string name = 2; // optional; derived from the dir basename when empty
+}
+message AddProjectResponse { ProjectInfo project = 1; }
+message RemoveProjectRequest { string name = 1; }
+message RemoveProjectResponse {}
 
 message SubscribeRequest {
   string session_id = 1;
@@ -64,7 +83,9 @@ message ListModesResponse {
   repeated Preset presets = 2;
 }
 
-message ListSessionsRequest {}
+message ListSessionsRequest {
+  string project = 1; // optional: filter to sessions in this project's workspace
+}
 message SessionInfo {
   string session_id = 1;
   string mode = 2;
@@ -121,6 +142,11 @@ service SessionService {
   rpc Subscribe(SubscribeRequest) returns (stream Event);
   rpc SendInput(SendInputRequest) returns (SendInputResponse);
   rpc AnswerQuestion(AnswerQuestionRequest) returns (AnswerQuestionResponse);
+
+  // Projects — persistent multi-project daemon (spec §3.1).
+  rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
+  rpc AddProject(AddProjectRequest) returns (AddProjectResponse);
+  rpc RemoveProject(RemoveProjectRequest) returns (RemoveProjectResponse);
 
   // Settings overlay (spec §18.2): enumerate models and change a session's
   // interaction level / per-role model assignment mid-flight.

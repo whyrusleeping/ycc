@@ -47,6 +47,7 @@ func (s *Server) StartSession(_ context.Context, req *connect.Request[v1.StartSe
 		Mode:             m.Mode,
 		InteractionLevel: m.InteractionLevel,
 		Prompt:           m.Prompt,
+		Project:          m.Project,
 	})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
@@ -54,10 +55,41 @@ func (s *Server) StartSession(_ context.Context, req *connect.Request[v1.StartSe
 	return connect.NewResponse(&v1.StartSessionResponse{SessionId: sess.ID}), nil
 }
 
-// ListSessions returns all live sessions and their current status.
-func (s *Server) ListSessions(_ context.Context, _ *connect.Request[v1.ListSessionsRequest]) (*connect.Response[v1.ListSessionsResponse], error) {
+// ListProjects returns the registered projects (name + path) for the picker
+// (spec §3.1).
+func (s *Server) ListProjects(_ context.Context, _ *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error) {
+	var projs []*v1.ProjectInfo
+	for _, p := range s.mgr.Projects() {
+		projs = append(projs, &v1.ProjectInfo{Name: p.Name, Path: p.Path})
+	}
+	return connect.NewResponse(&v1.ListProjectsResponse{Projects: projs}), nil
+}
+
+// AddProject registers a workspace under an optional name (spec §3.1).
+func (s *Server) AddProject(_ context.Context, req *connect.Request[v1.AddProjectRequest]) (*connect.Response[v1.AddProjectResponse], error) {
+	if req.Msg.Path == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errNoPath)
+	}
+	p, err := s.mgr.AddProject(req.Msg.Path, req.Msg.Name)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&v1.AddProjectResponse{Project: &v1.ProjectInfo{Name: p.Name, Path: p.Path}}), nil
+}
+
+// RemoveProject deregisters a project by name (spec §3.1).
+func (s *Server) RemoveProject(_ context.Context, req *connect.Request[v1.RemoveProjectRequest]) (*connect.Response[v1.RemoveProjectResponse], error) {
+	if err := s.mgr.RemoveProject(req.Msg.Name); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&v1.RemoveProjectResponse{}), nil
+}
+
+// ListSessions returns all live sessions and their current status, optionally
+// filtered to a single project (spec §3.1).
+func (s *Server) ListSessions(_ context.Context, req *connect.Request[v1.ListSessionsRequest]) (*connect.Response[v1.ListSessionsResponse], error) {
 	var infos []*v1.SessionInfo
-	for _, sess := range s.mgr.List() {
+	for _, sess := range s.mgr.ListByProject(req.Msg.Project) {
 		infos = append(infos, &v1.SessionInfo{
 			SessionId: sess.ID,
 			Mode:      sess.Mode,

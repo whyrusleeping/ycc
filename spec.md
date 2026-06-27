@@ -410,8 +410,6 @@ decision point will pause for the user.
 
 ## 12. RPC protocol (Connect)
 
-## 12. RPC protocol (Connect)
-
 Service sketch (`proto/ycc/v1/ycc.proto`):
 
 ```proto
@@ -427,6 +425,7 @@ service SessionService {
   // Projects — persistent multi-project daemon (§3.1).
   rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
   rpc AddProject(AddProjectRequest) returns (AddProjectResponse);
+  rpc RemoveProject(RemoveProjectRequest) returns (RemoveProjectResponse);
 
   // Settings overlay (§18.2) — change session config mid-flight.
   rpc ListModels(ListModelsRequest) returns (ListModelsResponse);       // available logical models
@@ -439,9 +438,10 @@ service SessionService {
 Notable message shapes for the settings + structured-question work:
 
 - `ProjectInfo { string name; string path }`; `ListProjectsResponse { repeated ProjectInfo
-  projects }`; `AddProjectRequest { string path; string name }` (§3.1). `StartSessionRequest`
-  gains an optional `project` (name) that resolves to a workspace — an unknown workspace is
-  auto-registered. `ListSessionsRequest` may carry a `project` filter.
+  projects }`; `AddProjectRequest { string path; string name }` →
+  `AddProjectResponse { ProjectInfo project }`; `RemoveProjectRequest { string name }` (§3.1).
+  `StartSessionRequest` gains an optional `project` (name) that resolves to a workspace — an
+  unknown workspace is auto-registered. `ListSessionsRequest` may carry a `project` filter.
 - `AnswerQuestionRequest { session_id; oneof answer { string text; int32 option_index } }`
   — answer a structured question by chosen option or free text. `question_asked` events
   gain a `repeated string options` field so the client can render the picker.
