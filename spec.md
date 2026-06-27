@@ -380,6 +380,17 @@ coordinator (FRESH context, mode=work)
 Fresh context in step 0 is important: each `work` session starts clean so the
 coordinator reasons from the durable docs, not from stale conversation.
 
+A `work` session drives **one** task to a committed state, but the coordinator may
+**grow the backlog** while doing so via `create_task` (the same tool `pm` uses):
+- **Split** — if the task is too big, break out the scope that doesn't belong in this
+  commit into new tasks (optionally `depends_on` the current one) rather than cramming
+  everything into one change.
+- **Follow-on** — capture worthwhile follow-up it discovers (refactors, hardening,
+  tests, latent bugs) as new tasks instead of dropping it or expanding the active task's
+  scope.
+This keeps the active task focused; new tasks get clear titles, acceptance criteria, and
+appropriate dependencies. It is the mechanism, not an invitation to scope-creep.
+
 ## 11. Interaction levels
 
 ## 11. Interaction levels
@@ -676,6 +687,27 @@ default** with a one-line `(reasoning) …` preview, click/Enter to expand — s
 **dimmed + italic** to read distinctly from the model's actual response. Empty summaries
 produce no event. (The provider reasoning blocks themselves round-trip in conversation
 history automatically and are not re-displayed.)
+
+### 18.5 Backlog browser
+
+The backlog is durable project state (§6), but until now a client could only see it
+indirectly through the agent. A **backlog browser** lets the human open and inspect the
+backlog directly from the TUI — independent of any session.
+
+- **Open.** A key/menu entry opens a modal backlog view (over the home menu or a session,
+  like the settings overlay). It lists tasks with id, status, priority, title, and a
+  readiness/blocked annotation (the same data `list_backlog` projects).
+- **Inspect.** Selecting a task drills into its full detail — description, acceptance
+  criteria, dependencies, and work log — rendered read-only.
+- **Filtering/sorting** (status, priority, ready-only) is a nice-to-have, not required for
+  a first cut.
+- **Read-only first.** The browser only *views*; mutation (quick-add, status changes) is
+  separate work — see the capture overlay (task 0016).
+
+This needs the backlog exposed to clients over RPC. The daemon gains read RPCs —
+`ListBacklog` (summary rows) and `GetTask` (full task) — backed by `docs.Store`
+(`List`/`Get`); the TUI renders the list + detail views by calling them. Because clients
+are thin event/RPC consumers (§5), the same surface is reusable by the future phone client.
 
 ## 19. Onboarding flows
 

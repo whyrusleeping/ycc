@@ -110,6 +110,10 @@ func (s *Session) SendInput(text string) error {
 	}
 	select {
 	case s.inputCh <- text:
+		// Emit the echo at the moment the prod is accepted so the TUI can
+		// display it immediately, rather than waiting for the run loop to
+		// dequeue it (which only happens after the current/next agent turn).
+		s.emitter.EmitAs("user", event.UserInput, map[string]any{"text": text})
 		return nil
 	default:
 		return fmt.Errorf("session %s input buffer full", s.ID)
@@ -355,7 +359,6 @@ func (s *Session) run() {
 
 		select {
 		case text := <-s.inputCh:
-			s.emitter.EmitAs("user", event.UserInput, map[string]any{"text": text})
 			s.currentLoop().Post(text)
 		case <-s.ctx.Done():
 			return
