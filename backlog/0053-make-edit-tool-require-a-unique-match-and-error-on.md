@@ -1,7 +1,7 @@
 ---
 id: "0053"
 title: Make edit tool require a unique match and error on multiple matches
-status: todo
+status: in_progress
 priority: 3
 created: "2026-06-28"
 updated: "2026-06-28"
@@ -29,3 +29,10 @@ Change the edit tool to enforce a single, unique match:
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-28 plan: Modify `editFile` in internal/tools/worker.go to require a unique match: - Remove the `replace_all` param from the tool schema and the `replaceAll` read. - Update the Description to state old_string m
+…[truncated]
+- 2026-06-28 implementer report: Made the Edit tool require a unique match in internal/tools/worker.go (editFile):  - Removed the `replace_all` param from the Params schema and dropped the `replaceAll := getBool(...)` read. Left the 
+…[truncated]
+- 2026-06-28 review tier: single-opus — reviewers: Claude
+- 2026-06-28 review (Claude): accept — The Edit tool now requires a unique match: the replace_all param and replaceAll read were removed, the description updated, multi-match now errors with a message guiding the caller to add context, zer
+…[truncated]

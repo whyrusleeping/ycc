@@ -67,24 +67,37 @@ func TestReadOffsetLimit(t *testing.T) {
 	}
 }
 
-func TestEditReplaceAll(t *testing.T) {
+func TestEditUniqueMatch(t *testing.T) {
 	root := t.TempDir()
 	reg := workerReg(root)
 	dispatch(t, reg, "Write", `{"file_path":"a.txt","content":"x x x"}`)
 
-	// Without replace_all, a non-unique old_string is an error.
+	// A non-unique old_string is an error and must not modify the file.
 	res := dispatch(t, reg, "Edit", `{"file_path":"a.txt","old_string":"x","new_string":"y"}`)
-	if !res.IsError || !strings.Contains(res.Content, "not unique") {
+	if !res.IsError || !strings.Contains(res.Content, "not unique") || !strings.Contains(res.Content, "found 3 matches") {
 		t.Fatalf("expected non-unique error, got %q (err=%v)", res.Content, res.IsError)
 	}
-	// With replace_all, every occurrence is replaced.
-	res = dispatch(t, reg, "Edit", `{"file_path":"a.txt","old_string":"x","new_string":"y","replace_all":true}`)
-	if res.IsError {
-		t.Fatalf("replace_all Edit: %s", res.Content)
+	if !strings.Contains(res.Content, "context") {
+		t.Fatalf("multi-match error should guide to add context, got %q", res.Content)
 	}
-	got, _ := os.ReadFile(filepath.Join(root, "a.txt"))
-	if string(got) != "y y y" {
-		t.Fatalf("after replace_all = %q", got)
+	if got, _ := os.ReadFile(filepath.Join(root, "a.txt")); string(got) != "x x x" {
+		t.Fatalf("file should be unchanged after multi-match error, got %q", got)
+	}
+
+	// A zero-match old_string returns a clear not-found error.
+	res = dispatch(t, reg, "Edit", `{"file_path":"a.txt","old_string":"zzz","new_string":"y"}`)
+	if !res.IsError || !strings.Contains(res.Content, "not found") {
+		t.Fatalf("expected not-found error, got %q (err=%v)", res.Content, res.IsError)
+	}
+
+	// A unique old_string succeeds and applies the replacement.
+	dispatch(t, reg, "Write", `{"file_path":"b.txt","content":"foo bar baz"}`)
+	res = dispatch(t, reg, "Edit", `{"file_path":"b.txt","old_string":"bar","new_string":"qux"}`)
+	if res.IsError {
+		t.Fatalf("unique Edit: %s", res.Content)
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, "b.txt")); string(got) != "foo qux baz" {
+		t.Fatalf("after unique Edit = %q", got)
 	}
 }
 

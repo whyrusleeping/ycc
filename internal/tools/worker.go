@@ -203,14 +203,13 @@ func writeFile(ws *Workspace) *gollama.Tool {
 func editFile(ws *Workspace) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "Edit",
-		Description: "Perform an exact string replacement in a file. By default old_string must be unique in the " +
-			"file (include enough surrounding context to make it unique); set replace_all to replace every " +
-			"occurrence. Fails if old_string is not found, or is not unique and replace_all is false.",
+		Description: "Perform an exact string replacement in a file. old_string must match exactly once in the " +
+			"file (include enough surrounding context to make it unique). Fails if old_string is not found, or if " +
+			"it matches more than once.",
 		Params: obj(map[string]any{
-			"file_path":   strProp("absolute path to the file (or relative to the workspace root)"),
-			"old_string":  strProp("the exact text to replace"),
-			"new_string":  strProp("the text to replace it with (must differ from old_string)"),
-			"replace_all": map[string]any{"type": "boolean", "description": "replace all occurrences (default false)"},
+			"file_path":  strProp("absolute path to the file (or relative to the workspace root)"),
+			"old_string": strProp("the exact text to replace"),
+			"new_string": strProp("the text to replace it with (must differ from old_string)"),
 		}, "file_path", "old_string", "new_string"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			fp, ok := getString(params, "file_path")
@@ -222,7 +221,6 @@ func editFile(ws *Workspace) *gollama.Tool {
 				return errResult("Edit: missing 'old_string'"), nil
 			}
 			newStr, _ := getString(params, "new_string")
-			replaceAll := getBool(params, "replace_all", false)
 			abs, err := ws.resolve(fp)
 			if err != nil {
 				return errResult("Edit: %v", err), nil
@@ -235,21 +233,17 @@ func editFile(ws *Workspace) *gollama.Tool {
 			switch {
 			case count == 0:
 				return errResult("Edit: old_string not found in %s", fp), nil
-			case count > 1 && !replaceAll:
-				return errResult("Edit: old_string is not unique in %s (%d matches); add more surrounding context or set replace_all", fp, count), nil
+			case count > 1:
+				return errResult("Edit: old_string is not unique in %s (found %d matches); the search text must match exactly once — add more surrounding context to disambiguate", fp, count), nil
 			}
-			reps := 1
-			if replaceAll {
-				reps = -1
-			}
-			updated := strings.Replace(string(data), oldStr, newStr, reps)
+			updated := strings.Replace(string(data), oldStr, newStr, 1)
 			if err := os.WriteFile(abs, []byte(updated), 0o644); err != nil {
 				return errResult("Edit: %v", err), nil
 			}
 			if ws.OnWrite != nil {
 				ws.OnWrite(abs)
 			}
-			return okResult(fmt.Sprintf("edited %s (%d replacement(s))", fp, count)), nil
+			return okResult(fmt.Sprintf("edited %s", fp)), nil
 		},
 	}
 }
