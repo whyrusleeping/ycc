@@ -152,12 +152,20 @@ func (l *Loop) backend() (Turner, string, modelIdentity, Thinking) {
 // 0010's concern.
 const defaultMaxTurns = 200
 
+// maxTruncRetries bounds how many consecutive times the loop will nudge the
+// model to continue after a turn was cut off at the output token cap before it
+// emitted any tool call (commonly: the whole budget went to an extended-thinking
+// block). Past this, the loop gives up and returns a truncation error rather
+// than spinning forever.
+const maxTruncRetries = 2
+
 // Result is the outcome of a completed loop.
 type Result struct {
 	Report     string // final report (from a control tool) or last assistant text
 	Turns      int
 	NextMode   string // if set, a control tool requested a transition to this mode
 	NextPrompt string // if set, the verbatim seed prompt for the next mode's loop
+	Truncated  bool   // the final turn hit the token cap before producing an action
 }
 
 // Seed appends an initial user message (the task prompt) before Run.
@@ -170,6 +178,40 @@ func (l *Loop) Post(content string) {
 	l.history = append(l.history, gollama.Message{Role: "user", Content: content})
 }
 
+// appendToolResult appends a tool result message to the conversation, carrying
+// any native media (images/PDFs) the tool returned so multimodal Reads round-
+// trip to the model (spec §8).
+//
+// Anthropic accepts image/document blocks inside a tool_result, so we attach them
+// directly to the tool message. OpenAI-compatible APIs do not allow media in a
+// tool-role message, so for those backends we attach images as a follow-up user
+// message (the model still sees them, right after the result). Documents (PDFs)
+// are Anthropic-only in gollama and are dropped for other backends.
+func (l *Loop) appendToolResult(callID string, res *gollama.ToolResult) {
+	msg := gollama.Message{Role: "tool", ToolCallID: callID, Content: res.Content}
+	if len(res.Images) == 0 && len(res.Documents) == 0 {
+		l.history = append(l.history, msg)
+		return
+	}
+	if strings.EqualFold(l.Backend, "anthropic") {
+		msg.Images = res.Images
+		msg.Documents = res.Documents
+		l.history = append(l.history, msg)
+		return
+	}
+	// Non-Anthropic: keep the tool result text-only, then carry images in a
+	// follow-up user message that OpenAI-compatible backends accept.
+	l.history = append(l.history, msg)
+	if len(res.Images) == 0 {
+		return
+	}
+	blocks := []gollama.ContentBlock{{Type: "text", Text: "(attached file contents from the previous Read)"}}
+	for _, img := range res.Images {
+		blocks = append(blocks, gollama.ContentBlock{Type: "image", ImageBase64: img})
+	}
+	l.history = append(l.history, gollama.Message{Role: "user", MultiContent: blocks})
+}
+
 // Run executes the loop to completion. It returns when a control tool signals
 // stop, the model produces a turn with no tool calls, or MaxTurns is reached.
 func (l *Loop) Run(ctx context.Context) (*Result, error) {
@@ -177,6 +219,10 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 	if maxTurns == 0 {
 		maxTurns = defaultMaxTurns
 	}
+
+	// truncRetries counts consecutive turns cut off at the token cap with no
+	// tool call; it resets whenever a turn completes normally.
+	truncRetries := 0
 
 	// turn resets to 1 on every Run, so MaxTurns is a per-Run budget rather
 	// than a cumulative one across revise rounds (see defaultMaxTurns).
@@ -228,12 +274,15 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		// Capture per-turn token usage (spec §20.1). resp.Usage is zero-valued for
 		// backends that don't report it, so usage records zeros without error.
 		u := resp.Usage
+		truncated := resp.Truncated()
 		l.Emitter.Emit(event.ModelTurn, map[string]any{
-			"text":       msg.Content,
-			"tool_calls": len(msg.ToolCalls),
-			"model_name": ident.Name,
-			"backend":    ident.Backend,
-			"model_id":   ident.ID,
+			"text":        msg.Content,
+			"tool_calls":  len(msg.ToolCalls),
+			"model_name":  ident.Name,
+			"backend":     ident.Backend,
+			"model_id":    ident.ID,
+			"stop_reason": resp.StopReason,
+			"truncated":   truncated,
 			"usage": event.Usage{
 				Input:      u.PromptTokens,
 				Output:     u.CompletionTokens,
@@ -242,13 +291,41 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 				Total:      u.TotalTokens,
 			},
 		})
-		// Record the assistant turn (text + tool_use) so context carries forward.
-		l.history = append(l.history, msg)
 
 		if len(msg.ToolCalls) == 0 {
+			// A turn cut off at the output token cap before it emitted any tool
+			// call is NOT a voluntary yield — the model ran out of budget mid-
+			// thought (commonly the whole allowance went to an extended-thinking
+			// block). Treating it as a finish surfaces an empty report and leaves
+			// the caller (e.g. the coordinator) puzzled that nothing happened.
+			// Instead, nudge the model to continue, bounded by maxTruncRetries.
+			if truncated {
+				if truncRetries >= maxTruncRetries {
+					return &Result{Report: msg.Content, Turns: turn, Truncated: true},
+						fmt.Errorf("turn %d truncated at the output token cap with no tool call (after %d retries); raise max_tokens or reduce thinking", turn, truncRetries)
+				}
+				truncRetries++
+				// Keep a SANITIZED copy of the truncated turn in history: drop its
+				// thinking blocks (a cut-off block is unsigned and Anthropic rejects
+				// it on the next request) and guarantee non-empty content (empty
+				// assistant messages are also rejected). Keeping an assistant turn
+				// preserves user/assistant alternation, so the follow-up user nudge
+				// doesn't collide with the preceding user message.
+				stub := gollama.Message{Role: msg.Role, Content: msg.Content}
+				if strings.TrimSpace(stub.Content) == "" {
+					stub.Content = "(my previous response was cut off at the output token limit)"
+				}
+				l.history = append(l.history, stub)
+				l.Post("Your previous response was cut off at the output token limit before you took any action. Keep your reasoning brief and call a tool now to make concrete progress.")
+				continue
+			}
 			// Model yielded with no further action: treat its text as the result.
+			l.history = append(l.history, msg)
 			return &Result{Report: msg.Content, Turns: turn}, nil
 		}
+		truncRetries = 0
+		// Record the assistant turn (text + tool_use) so context carries forward.
+		l.history = append(l.history, msg)
 
 		for _, call := range msg.ToolCalls {
 			l.Emitter.Emit(event.ToolCall, map[string]any{
@@ -261,12 +338,10 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 				"name":   call.Function.Name,
 				"result": res.Content,
 				"error":  res.IsError,
+				"images": len(res.Images),
+				"docs":   len(res.Documents),
 			})
-			l.history = append(l.history, gollama.Message{
-				Role:       "tool",
-				ToolCallID: call.ID,
-				Content:    res.Content,
-			})
+			l.appendToolResult(call.ID, res)
 			if ctrl := tools.ControlOf(res); ctrl != nil && ctrl.Stop {
 				report := ctrl.Report
 				if report == "" {

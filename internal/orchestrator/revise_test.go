@@ -84,6 +84,42 @@ func TestSpawnImplementerEmitsTaskFocus(t *testing.T) {
 	}
 }
 
+// An implementer that yields without editing anything (empty report, no new
+// diff) must surface an actionable error to the coordinator — not a blank
+// "report" that reads as success — so the coordinator retries instead of being
+// puzzled that nothing happened (the motivating bug).
+func TestSpawnImplementerNoOpGuard(t *testing.T) {
+	ws := t.TempDir()
+	repo, err := git.Open(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := docs.NewStore(ws)
+	if _, err := store.Create("a task", "## Work log\n", 1, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	// Yields immediately with empty text and no tool call → no workspace changes.
+	implTurner := &scripted{resp: []*gollama.ResponseMessageGenerate{text("")}}
+	d := &Deps{
+		Workspace:   ws,
+		Docs:        store,
+		Repo:        repo,
+		Emitter:     event.NewEmitter(&captureRec{}, "coordinator"),
+		Implementer: AgentSpec{Name: "impl", Model: "m", NewClient: func() engine.Turner { return implTurner }},
+		Asker:       noopAsker{},
+	}
+	res, err := spawnImplementer(d).Call(context.Background(), map[string]any{"task_id": "0001", "plan": "go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatalf("expected an error result for a no-op implementer, got ok: %q", res.Content)
+	}
+	if !strings.Contains(res.Content, "no changes") {
+		t.Fatalf("error result should explain the no-op, got: %q", res.Content)
+	}
+}
+
 type noopAsker struct{}
 
 func (noopAsker) Ask(context.Context, string, []string) (string, error) { return "ok", nil }

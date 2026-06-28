@@ -72,3 +72,8 @@ require (
 	golang.org/x/text v0.38.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
+
+// Develop gollama in lockstep locally (see project notes). The StopReason /
+// Truncated work this depends on must be published + the require bumped before
+// this builds without the checkout.
+replace github.com/whyrusleeping/gollama => ../gollama

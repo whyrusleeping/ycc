@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/whyrusleeping/gollama"
@@ -35,6 +36,14 @@ func assistantToolCall(name, args string) *gollama.ResponseMessageGenerate {
 
 func assistantText(text string) *gollama.ResponseMessageGenerate {
 	return &gollama.ResponseMessageGenerate{Choices: []gollama.GenChoice{{Message: gollama.Message{Role: "assistant", Content: text}}}}
+}
+
+// truncatedTurn models an Anthropic turn cut off at the output token cap: the
+// model emitted no tool call and stop_reason is "max_tokens".
+func truncatedTurn(text string) *gollama.ResponseMessageGenerate {
+	r := assistantText(text)
+	r.StopReason = "max_tokens"
+	return r
 }
 
 func newLoop(t *testing.T, turner Turner) *Loop {
@@ -77,6 +86,61 @@ func TestLoopYieldsOnNoToolCalls(t *testing.T) {
 	}
 	if res.Report != "nothing left to do" {
 		t.Fatalf("report = %q", res.Report)
+	}
+}
+
+// A turn truncated at the token cap with no tool call is NOT a clean yield: the
+// loop nudges the model to continue, and once it acts the run proceeds normally.
+func TestLoopContinuesAfterTruncation(t *testing.T) {
+	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{
+		truncatedTurn(""), // ran out of budget mid-thinking, emitted nothing actionable
+		assistantToolCall("finish", `{"report":"recovered"}`),
+	}}
+	loop := newLoop(t, turner)
+	res, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Report != "recovered" {
+		t.Fatalf("report = %q, want recovered", res.Report)
+	}
+	// Invariants of the retry context (turner.lastMsgs is what the recovery turn saw):
+	var sawNudge bool
+	var prevRole string
+	for _, m := range turner.lastMsgs {
+		// No partial/unsigned thinking block may be echoed back.
+		if len(m.ThinkingBlocks) != 0 || strings.TrimSpace(m.Thinking) != "" {
+			t.Fatalf("truncated thinking was kept in history: %+v", m)
+		}
+		// Roles must alternate — two consecutive user turns would be rejected by
+		// the Anthropic API.
+		if m.Role == "user" && prevRole == "user" {
+			t.Fatalf("consecutive user messages in history: %+v", turner.lastMsgs)
+		}
+		prevRole = m.Role
+		if m.Role == "user" && strings.Contains(m.Content, "cut off") {
+			sawNudge = true
+		}
+	}
+	if !sawNudge {
+		t.Fatalf("expected a continue-nudge user message in history: %+v", turner.lastMsgs)
+	}
+}
+
+// Persistent truncation (the model never recovers) eventually fails loudly with
+// a truncation error rather than silently returning an empty report.
+func TestLoopFailsOnRepeatedTruncation(t *testing.T) {
+	resps := make([]*gollama.ResponseMessageGenerate, 0, maxTruncRetries+1)
+	for i := 0; i < maxTruncRetries+1; i++ {
+		resps = append(resps, truncatedTurn(""))
+	}
+	turner := &scriptedTurner{responses: resps}
+	res, err := newLoop(t, turner).Run(context.Background())
+	if err == nil {
+		t.Fatalf("expected a truncation error, got nil (res=%+v)", res)
+	}
+	if res == nil || !res.Truncated {
+		t.Fatalf("expected res.Truncated=true, got %+v", res)
 	}
 }
 
@@ -322,5 +386,84 @@ func TestLoopMaxTurnsResetsPerRun(t *testing.T) {
 	}
 	if res.Report != "done round two" {
 		t.Fatalf("report = %q", res.Report)
+	}
+}
+
+// mediaTool returns a tool result carrying an image and a PDF, modelling the
+// multimodal Read path.
+func mediaTool() *gollama.Tool {
+	return &gollama.Tool{
+		Name:   "Read",
+		Params: gollama.ToolFunctionParams{Type: "object", Properties: map[string]any{}, Required: []string{}},
+		Call: func(ctx context.Context, _ any) (*gollama.ToolResult, error) {
+			return &gollama.ToolResult{
+				Content:   "Read image pic.png; it is attached.",
+				Images:    []string{"aW1hZ2U="},
+				Documents: []gollama.Document{{Base64: "ZG9j", MediaType: "application/pdf"}},
+			}, nil
+		},
+	}
+}
+
+func mediaLoop(t *testing.T, turner Turner, backend string) *Loop {
+	t.Helper()
+	reg := tools.New()
+	reg.Add(mediaTool())
+	return &Loop{Client: turner, Model: "test", Backend: backend, Tools: reg, Emitter: event.NewEmitter(nil, "agent")}
+}
+
+// On Anthropic, tool-result media attaches directly to the tool message.
+func TestToolResultMediaAttachesToToolMessageAnthropic(t *testing.T) {
+	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{
+		assistantToolCall("Read", `{}`),
+		assistantText("looked at it"),
+	}}
+	loop := mediaLoop(t, turner, "anthropic")
+	if _, err := loop.Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	var tool *gollama.Message
+	for i := range turner.lastMsgs {
+		if turner.lastMsgs[i].Role == "tool" {
+			tool = &turner.lastMsgs[i]
+		}
+	}
+	if tool == nil {
+		t.Fatal("no tool message in history")
+	}
+	if len(tool.Images) != 1 || len(tool.Documents) != 1 {
+		t.Fatalf("expected media on tool message, got images=%d docs=%d", len(tool.Images), len(tool.Documents))
+	}
+}
+
+// On OpenAI-compatible backends, images come back as a follow-up user message
+// (tool messages can't carry images there); documents are dropped.
+func TestToolResultMediaFollowupUserMessageOpenAI(t *testing.T) {
+	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{
+		assistantToolCall("Read", `{}`),
+		assistantText("looked at it"),
+	}}
+	loop := mediaLoop(t, turner, "openai")
+	if _, err := loop.Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	var sawToolText, sawUserImage bool
+	for _, m := range turner.lastMsgs {
+		if m.Role == "tool" && len(m.Images) != 0 {
+			t.Fatal("openai tool message should not carry images")
+		}
+		if m.Role == "tool" && m.Content != "" {
+			sawToolText = true
+		}
+		if m.Role == "user" && len(m.MultiContent) > 0 {
+			for _, b := range m.MultiContent {
+				if b.Type == "image" && b.ImageBase64 == "aW1hZ2U=" {
+					sawUserImage = true
+				}
+			}
+		}
+	}
+	if !sawToolText || !sawUserImage {
+		t.Fatalf("expected tool text + follow-up user image (toolText=%v userImage=%v)", sawToolText, sawUserImage)
 	}
 }

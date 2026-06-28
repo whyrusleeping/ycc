@@ -27,3 +27,4 @@ The backlog overlay view currently shows completed (done) tasks alongside open o
 …[truncated]
 - 2026-06-28 review tier: simple (coordinator self-review)
 - 2026-06-28 decision: accept — commit 7c62644: TUI backlog overlay: hide done tasks by default, toggle with 'd' (task 0048)
+- 2026-06-28 usage: 12,058 tok (in 64, out 11,994, cache_r 543,691, cache_w 32,654) · cost n/a (unpriced)

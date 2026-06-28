@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -151,5 +152,69 @@ func TestUnknownTool(t *testing.T) {
 	res := dispatch(t, reg, "nope", `{}`)
 	if !res.IsError {
 		t.Fatal("expected error for unknown tool")
+	}
+}
+
+// 1x1 transparent PNG.
+var tinyPNG = []byte{
+	0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+	0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+	0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00,
+	0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+	0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+	0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+}
+
+func TestReadImageReturnsContentBlock(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "pic.png"), tinyPNG, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg := workerReg(root)
+	res := dispatch(t, reg, "Read", `{"file_path":"pic.png"}`)
+	if res.IsError {
+		t.Fatalf("Read image: %s", res.Content)
+	}
+	if len(res.Images) != 1 {
+		t.Fatalf("expected 1 image, got %d", len(res.Images))
+	}
+	if got, err := base64.StdEncoding.DecodeString(res.Images[0]); err != nil || len(got) != len(tinyPNG) {
+		t.Fatalf("image payload roundtrip failed: err=%v len=%d", err, len(got))
+	}
+	if !strings.Contains(res.Content, "image/png") {
+		t.Fatalf("expected media-type note in content, got %q", res.Content)
+	}
+}
+
+func TestReadPDFReturnsDocument(t *testing.T) {
+	root := t.TempDir()
+	// Minimal PDF header is enough; the tool only base64-encodes the bytes.
+	if err := os.WriteFile(filepath.Join(root, "doc.pdf"), []byte("%PDF-1.4\n%%EOF\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg := workerReg(root)
+	res := dispatch(t, reg, "Read", `{"file_path":"doc.pdf"}`)
+	if res.IsError {
+		t.Fatalf("Read pdf: %s", res.Content)
+	}
+	if len(res.Documents) != 1 || res.Documents[0].MediaType != "application/pdf" {
+		t.Fatalf("expected 1 pdf document, got %+v", res.Documents)
+	}
+	if res.Documents[0].Base64 == "" {
+		t.Fatal("expected base64 document payload")
+	}
+}
+
+func TestReadOversizeMediaErrors(t *testing.T) {
+	root := t.TempDir()
+	big := make([]byte, maxMediaBytes+1)
+	copy(big, tinyPNG)
+	if err := os.WriteFile(filepath.Join(root, "huge.png"), big, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg := workerReg(root)
+	res := dispatch(t, reg, "Read", `{"file_path":"huge.png"}`)
+	if !res.IsError || len(res.Images) != 0 {
+		t.Fatalf("expected oversize error, got err=%v images=%d", res.IsError, len(res.Images))
 	}
 }

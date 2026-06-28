@@ -47,6 +47,12 @@ Match review intensity to the change. spawn_reviewers takes an optional review_t
 changes). Omit review_tier to use the configured default. The chosen tier is recorded in the
 work log.
 
+Important: choosing 'simple' does NOT get the change reviewed for you. That call spawns no
+reviewer agent — it only RECORDS your decision to self-review. When you pick 'simple' you must
+then actually do the review yourself: inspect the diff ('git diff'), check it against the
+task's acceptance criteria, and only then commit or send revisions to the implementer. Do not
+treat a 'simple' call as a completed review.
+
 The backlog is shared and live: the user may add a new task at any moment out of band (via a
 quick-capture overlay that runs separately from this session), so a task you don't recognize can
 appear in list_backlog mid-session. That is intentional and fine — it is not an error, not

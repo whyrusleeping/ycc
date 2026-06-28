@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,7 +20,23 @@ const (
 	bashTimeout      = 2 * time.Minute
 	defaultReadLines = 2000
 	maxLineChars     = 2000
+	// maxMediaBytes caps the raw (pre-base64) size of an image/PDF the Read tool
+	// will inline as a native content block. Providers reject very large media
+	// (Anthropic ~5MB/image, ~32MB/PDF); we use a conservative shared limit and
+	// tell the model to fall back to other tools past it.
+	maxMediaBytes = 12 * 1024 * 1024
 )
+
+// imageMediaTypes maps a lower-case file extension to the image media type the
+// Read tool returns it as. These are the formats the major LLM APIs accept
+// natively as image content blocks.
+var imageMediaTypes = map[string]string{
+	".png":  "image/png",
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".gif":  "image/gif",
+	".webp": "image/webp",
+}
 
 // Editing returns the file + shell tools (Read, Write, Edit, Bash) without a
 // control/finish tool — for open-ended modes (chat) where the agent yields
@@ -37,14 +54,15 @@ func Worker(ws *Workspace) []*gollama.Tool {
 func readFile(ws *Workspace) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "Read",
-		Description: "Read a file from the workspace. Returns the contents with line numbers in cat -n format " +
+		Description: "Read a file from the workspace. Text files are returned with line numbers in cat -n format " +
 			"(line number, a tab, then the line). file_path should be an absolute path within the workspace (a " +
 			"path relative to the workspace root is also accepted). By default up to 2000 lines are returned; use " +
-			"offset (1-based start line) and limit to read a specific window of a large file.",
+			"offset (1-based start line) and limit to read a specific window of a large file. Images (PNG, JPEG, " +
+			"GIF, WebP) and PDFs are returned to you natively as visual content — just Read them like any other file.",
 		Params: obj(map[string]any{
 			"file_path": strProp("absolute path to the file (or relative to the workspace root)"),
-			"offset":    map[string]any{"type": "integer", "description": "1-based line number to start reading from (optional)"},
-			"limit":     map[string]any{"type": "integer", "description": "maximum number of lines to read (optional)"},
+			"offset":    map[string]any{"type": "integer", "description": "1-based line number to start reading from (optional; text files only)"},
+			"limit":     map[string]any{"type": "integer", "description": "maximum number of lines to read (optional; text files only)"},
 		}, "file_path"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			fp, ok := getString(params, "file_path")
@@ -54,6 +72,12 @@ func readFile(ws *Workspace) *gollama.Tool {
 			abs, err := ws.resolve(fp)
 			if err != nil {
 				return errResult("Read: %v", err), nil
+			}
+			// Images and PDFs are handed to the model as native content blocks
+			// (the same affordance Claude Code's Read tool gives) rather than as
+			// cat -n text, which would be meaningless binary.
+			if res, handled := readMedia(abs, fp); handled {
+				return res, nil
 			}
 			data, err := os.ReadFile(abs)
 			if err != nil {
@@ -91,6 +115,56 @@ func readFile(ws *Workspace) *gollama.Tool {
 			return okResult(b.String()), nil
 		},
 	}
+}
+
+// readMedia classifies abs by extension and, if it is an image or PDF, reads it,
+// base64-encodes it, and returns a ToolResult carrying it as a native content
+// block (Images for images, Documents for PDFs). The boolean reports whether the
+// file was handled as media; false means the caller should read it as text.
+//
+// fp is the caller-supplied display path used in the text note. Errors (too big,
+// unreadable) are returned as media-handled error results so the model gets a
+// clear message rather than a binary text dump.
+func readMedia(abs, fp string) (*gollama.ToolResult, bool) {
+	ext := strings.ToLower(filepath.Ext(abs))
+	mediaType, isImage := imageMediaTypes[ext]
+	isPDF := ext == ".pdf"
+	if !isImage && !isPDF {
+		return nil, false
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return errResult("Read: %v", err), true
+	}
+	if info.IsDir() {
+		return nil, false
+	}
+	if info.Size() > maxMediaBytes {
+		return errResult("Read: %s is %d bytes, too large to inline (limit %d). Use Bash for metadata, or extract/convert it first.",
+			fp, info.Size(), maxMediaBytes), true
+	}
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		return errResult("Read: %v", err), true
+	}
+	if len(data) == 0 {
+		return okResult("(file is empty)"), true
+	}
+	b64 := base64.StdEncoding.EncodeToString(data)
+	if isPDF {
+		return &gollama.ToolResult{
+			Content: fmt.Sprintf("Read PDF %s (%d bytes); its pages are attached as a document.", fp, len(data)),
+			Documents: []gollama.Document{{
+				Base64:    b64,
+				MediaType: "application/pdf",
+				Title:     filepath.Base(abs),
+			}},
+		}, true
+	}
+	return &gollama.ToolResult{
+		Content: fmt.Sprintf("Read image %s (%d bytes, %s); it is attached.", fp, len(data), mediaType),
+		Images:  []string{b64},
+	}, true
 }
 
 func writeFile(ws *Workspace) *gollama.Tool {

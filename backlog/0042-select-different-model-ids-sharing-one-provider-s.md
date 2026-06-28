@@ -1,7 +1,7 @@
 ---
 id: "0042"
 title: Select different model ids sharing one provider's credentials (opus/sonnet/haiku)
-status: in_progress
+status: done
 priority: 2
 created: "2026-06-27"
 updated: "2026-06-28"
@@ -78,3 +78,6 @@ notes this as optional future work; this task deliberately does NOT require it.
 …[truncated]
 - 2026-06-28 decision: accept — commit bb1a13a: Model variants under one provider: duplicate sibling + per-backend model-id presets (§13, task 0042)  The 0044 duplicate flow already lets a sibling reuse an existing model's backend/base_url/key_env
 …[truncated]
+- 2026-06-28 decision: accept — commit c6b24c1: Model variants under one provider: duplicate sibling + per-backend model-id presets (§13, task 0042)  The 0044 duplicate flow already lets a sibling reuse an existing model's backend/base_url/key_env
+…[truncated]
+- 2026-06-28 usage: 30,244 tok (in 124, out 30,120, cache_r 2,576,062, cache_w 110,427) · cost n/a (unpriced)

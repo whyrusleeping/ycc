@@ -310,6 +310,17 @@ turn returns a reasoning summary, the loop emits a dedicated `thinking` event (b
 `read_file`, `write_file`, `edit_file`, `list_dir`, `grep`, `glob`, `bash`,
 `finish_implementation(report)`.
 
+**Multimodal `Read`.** The `Read` tool is multimodal, mirroring Claude Code: there is **no
+separate "view image" tool**. When `Read` is given an image (PNG, JPEG, GIF, WebP) or a PDF
+it returns the bytes as a **native content block** (an image block / an Anthropic document
+block) in the tool result rather than `cat -n` text, so the model perceives the file through
+the provider's native vision/PDF support. gollama already carries this end-to-end —
+`ToolResult.Images`/`Documents` round-trip into a `tool_result`'s content blocks (Anthropic
+native path). The engine loop attaches that media to the tool message for Anthropic; for
+OpenAI-compatible backends (which don't allow media in a tool-role message) it instead sends
+images as a follow-up user message, and PDFs degrade to a text note. A size cap keeps oversize
+files from being inlined (the model is told to use `Bash` for those instead).
+
 **Coordinator tools** (orchestrate; never edit code directly):
 `list_backlog`, `get_task`, `create_task`, `update_task`, `update_spec`,
 `spawn_implementer(task, plan)`, `spawn_reviewer(model, task, diff)`,

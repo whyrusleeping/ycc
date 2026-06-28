@@ -25,6 +25,12 @@ import (
 
 const maxDiffChars = 16000
 
+// implementerMinTok is the floor on the implementer's per-turn output token cap.
+// The implementer reasons (extended thinking) and writes large multi-file edits
+// in the same turn, both drawing on this budget; a low cap truncates the turn
+// before a tool call lands. It only raises the configured cap, never lowers it.
+const implementerMinTok = 16384
+
 // AgentSpec describes how to build a subagent's backend.
 type AgentSpec struct {
 	Name      string // logical name, used as the actor label "reviewer:<name>"
@@ -292,11 +298,20 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 			reg.Add(tools.Worker(&tools.Workspace{Root: d.Workspace})...)
 			impl := d.implementer()
 			loop := d.newLoop(impl, implementerSystem+"\n\n"+workspaceNote(d.Workspace), reg, "implementer")
+			// The implementer needs more output headroom than the shared cap: a
+			// single turn may interleave an extended-thinking block with a large
+			// multi-file edit, and the thinking counts against the same budget. Too
+			// low a cap truncates the turn before any tool call lands (see fix in
+			// engine.Run). Floor it so a thorough turn isn't cut off mid-thought.
+			if loop.MaxTok < implementerMinTok {
+				loop.MaxTok = implementerMinTok
+			}
 			loop.Seed(implementerPrompt(t, plan))
 			d.mu.Lock()
 			d.impl = loop
 			d.mu.Unlock()
 
+			before, _ := d.Repo.Diff()
 			d.Emitter.Emit(event.SubagentSpawned, map[string]any{"role": "implementer", "model": impl.Model})
 			res, err := loop.Run(ctx)
 			if err != nil {
@@ -304,8 +319,7 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 				return tools.ErrResult("implementer failed: %v", err), nil
 			}
 			d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "implementer"})
-			d.Docs.AppendWorkLog(id, "implementer report: "+oneLine(res.Report))
-			return tools.OkResult(reportWithDiff(d, res.Report)), nil
+			return implementerOutcome(d, id, "implementer report", before, res), nil
 		},
 	}
 }
@@ -329,6 +343,7 @@ func sendToImplementer(d *Deps) *gollama.Tool {
 				return tools.ErrResult("send_to_implementer: no implementer yet; call spawn_implementer first"), nil
 			}
 			loop.Post(revisePrompt(instr))
+			before, _ := d.Repo.Diff()
 			d.Emitter.Emit(event.SubagentSpawned, map[string]any{"role": "implementer", "model": d.implementer().Model, "revise": true})
 			res, err := loop.Run(ctx)
 			if err != nil {
@@ -336,8 +351,7 @@ func sendToImplementer(d *Deps) *gollama.Tool {
 				return tools.ErrResult("implementer failed: %v", err), nil
 			}
 			d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "implementer"})
-			d.Docs.AppendWorkLog(id, "revision: "+oneLine(res.Report))
-			return tools.OkResult(reportWithDiff(d, res.Report)), nil
+			return implementerOutcome(d, id, "revision", before, res), nil
 		},
 	}
 }
@@ -544,6 +558,29 @@ func runReviewers(ctx context.Context, d *Deps, handles []*reviewerHandle, taskI
 		d.Docs.AppendWorkLog(taskID, fmt.Sprintf("review (%s): %s — %s", r.name, r.rv.Verdict, oneLine(r.rv.Summary)))
 	}
 	return results
+}
+
+// implementerOutcome turns a finished implementer Run into the result the
+// coordinator sees. It guards the puzzling no-op case — an empty report with no
+// new changes since `before` (the diff captured just before the run) — by
+// returning an actionable error instead of a blank report, so the coordinator
+// retries with a tighter plan rather than wondering why nothing happened. The
+// most common cause is a turn cut off at the token cap before any tool call
+// (res.Truncated); the engine already turns that into a Run error, and this is
+// the backstop for any other way the implementer yields without doing work.
+func implementerOutcome(d *Deps, id, label, before string, res *engine.Result) *gollama.ToolResult {
+	after, _ := d.Repo.Diff()
+	if strings.TrimSpace(res.Report) == "" && strings.TrimSpace(after) == strings.TrimSpace(before) {
+		d.Docs.AppendWorkLog(id, label+": no progress (empty report, no new changes)")
+		msg := "implementer returned no report and made no changes to the workspace."
+		if res.Truncated {
+			msg += " Its turn was cut off at the output token limit before it could act."
+		}
+		msg += " Re-spawn it with a tighter, concrete plan (name the exact files and edits) or split the task into smaller steps."
+		return tools.ErrResult("%s", msg)
+	}
+	d.Docs.AppendWorkLog(id, label+": "+oneLine(res.Report))
+	return tools.OkResult(reportWithDiff(d, res.Report))
 }
 
 func reportWithDiff(d *Deps, report string) string {
