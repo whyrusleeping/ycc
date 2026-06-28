@@ -1,10 +1,10 @@
 ---
 id: "0042"
 title: Select different model ids sharing one provider's credentials (opus/sonnet/haiku)
-status: todo
+status: in_progress
 priority: 2
 created: "2026-06-27"
-updated: "2026-06-27"
+updated: "2026-06-28"
 depends_on:
     - "0041"
 spec_refs:
@@ -44,14 +44,14 @@ backend/base_url/key_env/pricing) would remove the duplicated credential per sib
 notes this as optional future work; this task deliberately does NOT require it.
 
 ## Acceptance criteria
-- [ ] From the backend manager the user can create a model variant that shares an existing
+- [x] From the backend manager the user can create a model variant that shares an existing
       model's backend/base_url/key_env (and pricing) and differs only in name + model id,
       without re-entering credentials.
-- [ ] The new variant is assignable to any role (coordinator/implementer/reviewers) and the
+- [x] The new variant is assignable to any role (coordinator/implementer/reviewers) and the
       next turn/spawn uses its model id under the shared credential.
-- [ ] Usage/cost attribution still works per logical model name (variants are distinct names).
-- [ ] (Nice-to-have) per-backend model-id suggestions are offered, with free-text entry kept.
-- [ ] Tests cover creating a sibling and resolving it through `Registry.Build` (correct model
+- [x] Usage/cost attribution still works per logical model name (variants are distinct names).
+- [x] (Nice-to-have) per-backend model-id suggestions are offered, with free-text entry kept.
+- [x] Tests cover creating a sibling and resolving it through `Registry.Build` (correct model
       id, shared key_env).
 
 ## Notes
@@ -60,3 +60,21 @@ notes this as optional future work; this task deliberately does NOT require it.
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-28 plan: Most of 0042 is already delivered by 0044's duplicate flow (a sibling reuses backend/base_url/key_env/pricing, differs only in name+model id, is assignable to roles, attributed per name). Close the re
+…[truncated]
+- 2026-06-28 done: Added config test TestModelSiblingSharesCredentials proving a sibling
+  ("claude-sonnet") copying the base "claude" credential but with a distinct model id resolves
+  through Registry.Build to its own model id under the shared key_env, and inherits/round-trips
+  pricing (distinct per-name cost attribution). Added per-backend model-id presets
+  (mbModelPresets) in the TUI backend-manager model field — ctrl+n/ctrl+p cycle suggestions while
+  free-text entry is retained, with a dim presets hint under the focused model field. Tests:
+  TestModelBackendsModelPresets (preset cycling + free text) and TestModelBackendsDuplicatePricing
+  (duplicate carries shared base_url/key_env + identical pricing under a new name). No proto/schema
+  change. go build ./... and full go test ./... pass.
+- 2026-06-28 implementer report: Implemented task 0042 (run different model ids sharing one provider's credentials).  Changes: 1. internal/config/config_test.go — added TestModelSiblingSharesCredentials: starting from the base "cla
+…[truncated]
+- 2026-06-28 review tier: single-opus — reviewers: claude
+- 2026-06-28 review (claude): accept — The staged task-0042 change satisfies the acceptance criteria. The duplicate flow (from 0044) lets a sibling reuse an existing model's backend/base_url/key_env and pricing while changing only name + m
+…[truncated]
+- 2026-06-28 decision: accept — commit bb1a13a: Model variants under one provider: duplicate sibling + per-backend model-id presets (§13, task 0042)  The 0044 duplicate flow already lets a sibling reuse an existing model's backend/base_url/key_env
+…[truncated]

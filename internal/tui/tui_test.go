@@ -343,6 +343,10 @@ func drive(t *testing.T, m model, key string) model {
 		km = tea.KeyMsg{Type: tea.KeyLeft}
 	case "right":
 		km = tea.KeyMsg{Type: tea.KeyRight}
+	case "ctrl+n":
+		km = tea.KeyMsg{Type: tea.KeyCtrlN}
+	case "ctrl+p":
+		km = tea.KeyMsg{Type: tea.KeyCtrlP}
 	default:
 		km = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
 	}
@@ -490,6 +494,88 @@ func TestModelBackendsDuplicate(t *testing.T) {
 	}
 	if len(m.models) != 2 {
 		t.Fatalf("after duplicate list has %d models, want 2", len(m.models))
+	}
+}
+
+// TestModelBackendsDuplicatePricing strengthens duplicate coverage: a model with
+// pricing pointers is duplicated, and the resulting UpsertModel carries the same
+// pricing values plus the shared base_url/key_env under a new name (task 0042 —
+// a credential-sharing sibling that differs only in name + model id).
+func TestModelBackendsDuplicatePricing(t *testing.T) {
+	pi, po, cr, cw := 3.0, 15.0, 0.3, 3.75
+	f := newFakeClient(&v1.ModelConfig{
+		Name: "claude", Backend: "anthropic",
+		BaseUrl: "https://api.anthropic.com", Model: "claude-opus-4-8",
+		KeyEnv:     "ANTHROPIC_API_KEY",
+		PriceInput: &pi, PriceOutput: &po, PriceCacheRead: &cr, PriceCacheWrite: &cw,
+	})
+	m := newBackendsModel(f)
+	m = runCmds(t, m, m.fetchModels)
+	m = drive(t, m, "d")
+	if m.mbView != 1 || m.mbFormMode != mbDuplicate {
+		t.Fatalf("after 'd' mbView=%d mbFormMode=%d", m.mbView, m.mbFormMode)
+	}
+	// Change only the model id to a sibling (sonnet) — credentials are untouched.
+	m.mbInputs[mbFieldModel].SetValue("claude-sonnet-4-5")
+	m = drive(t, m, "enter")
+	u := f.lastUpsert
+	if u == nil {
+		t.Fatal("duplicate UpsertModel not called")
+	}
+	if u.Name != "claude-copy" || u.Model != "claude-sonnet-4-5" {
+		t.Fatalf("sibling name=%q model=%q, want claude-copy / claude-sonnet-4-5", u.Name, u.Model)
+	}
+	// Shared credential/endpoint carried over without re-entry.
+	if u.BaseUrl != "https://api.anthropic.com" || u.KeyEnv != "ANTHROPIC_API_KEY" || u.Backend != "anthropic" {
+		t.Fatalf("sibling did not inherit credentials: base=%q key=%q backend=%q", u.BaseUrl, u.KeyEnv, u.Backend)
+	}
+	// Pricing pointers carried over identically.
+	if u.PriceInput == nil || *u.PriceInput != pi ||
+		u.PriceOutput == nil || *u.PriceOutput != po ||
+		u.PriceCacheRead == nil || *u.PriceCacheRead != cr ||
+		u.PriceCacheWrite == nil || *u.PriceCacheWrite != cw {
+		t.Fatalf("sibling pricing mismatch: in=%v out=%v cr=%v cw=%v",
+			u.PriceInput, u.PriceOutput, u.PriceCacheRead, u.PriceCacheWrite)
+	}
+}
+
+// TestModelBackendsModelPresets exercises the per-backend model-id presets
+// (task 0042 nice-to-have): ctrl+n/ctrl+p cycle the suggestions on the model
+// field while free-text entry is retained.
+func TestModelBackendsModelPresets(t *testing.T) {
+	f := newFakeClient(&v1.ModelConfig{Name: "claude", Backend: "anthropic", Model: "claude-3"})
+	m := newBackendsModel(f)
+	m = runCmds(t, m, m.fetchModels)
+	// Blank add form: backend defaults to anthropic.
+	m = drive(t, m, "a")
+	// Focus the model field (name -> backend -> base_url -> model).
+	m = drive(t, m, "tab")
+	m = drive(t, m, "tab")
+	m = drive(t, m, "tab")
+	if m.mbFocus != mbFieldModel {
+		t.Fatalf("focus=%d, want mbFieldModel(%d)", m.mbFocus, mbFieldModel)
+	}
+	anthropic := mbModelPresets["anthropic"]
+	// ctrl+n selects the first preset.
+	m = drive(t, m, "ctrl+n")
+	if got := m.mbInputs[mbFieldModel].Value(); got != anthropic[0] {
+		t.Fatalf("after ctrl+n model=%q, want %q", got, anthropic[0])
+	}
+	// ctrl+n again advances to the second.
+	m = drive(t, m, "ctrl+n")
+	if got := m.mbInputs[mbFieldModel].Value(); got != anthropic[1] {
+		t.Fatalf("after 2x ctrl+n model=%q, want %q", got, anthropic[1])
+	}
+	// ctrl+p steps back to the first.
+	m = drive(t, m, "ctrl+p")
+	if got := m.mbInputs[mbFieldModel].Value(); got != anthropic[0] {
+		t.Fatalf("after ctrl+p model=%q, want %q", got, anthropic[0])
+	}
+	// Free text is still accepted: clear and type a custom id.
+	m.mbInputs[mbFieldModel].SetValue("")
+	m = typeText(t, m, "my-custom-model")
+	if got := m.mbInputs[mbFieldModel].Value(); got != "my-custom-model" {
+		t.Fatalf("free text not retained: model=%q", got)
 	}
 }
 

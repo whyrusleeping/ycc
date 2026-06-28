@@ -1,7 +1,7 @@
 ---
 id: "0044"
 title: Settings-overlay "Model backends" management form (add/edit/duplicate/remove)
-status: in_progress
+status: done
 priority: 2
 created: "2026-06-27"
 updated: "2026-06-28"
@@ -59,3 +59,6 @@ to **list / add / edit / duplicate / remove** logical model backends, wired to t
 …[truncated]
 - 2026-06-28 review (claude): accept — The implementation adds the "Model backends" settings-overlay surface (list/add/edit/duplicate/remove) wired to the 0041 RPCs (ListModels/GetModelConfig/UpsertModel/RemoveModel), with a persist toggle
 …[truncated]
+- 2026-06-28 decision: accept — commit d342185: TUI: Model backends management modal in settings overlay (add/edit/duplicate/remove) (§18.2, task 0044)  Add a "model backends" entry to the settings overlay that opens a sub-modal to list/add/edit/d
+…[truncated]
+- 2026-06-28 usage: 51,733 tok (in 150, out 51,583, cache_r 4,409,191, cache_w 236,564) · cost n/a (unpriced)

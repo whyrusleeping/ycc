@@ -133,6 +133,7 @@ type model struct {
 	mbThinkIdx   int
 	mbEffortIdx  int
 	mbDisplayIdx int
+	mbPresetIdx  int // cursor into the current backend's model-id presets (-1 = none yet)
 	mbFocus      int
 }
 
@@ -1314,6 +1315,17 @@ var (
 	mbThinkingList = []string{"", "adaptive", "off"}
 	mbEffortList   = []string{"", "low", "medium", "high", "xhigh", "max"}
 	mbDisplayList  = []string{"", "summarized", "omitted"}
+
+	// mbModelPresets offers a small built-in list of common model ids per backend
+	// as suggestions in the model field (spec §13, task 0042). They are
+	// suggestions only — free-text entry is always retained, so any id works. The
+	// model field stays a normal text input; ctrl+n/ctrl+p just fill it with the
+	// next/previous preset for the current backend.
+	mbModelPresets = map[string][]string{
+		"anthropic": {"claude-opus-4-8", "claude-sonnet-4-5", "claude-haiku-4-5"},
+		"openai":    {"gpt-5.5", "gpt-5-mini", "gpt-4o", "o3"},
+		"ollama":    {"qwen2.5-coder", "llama3.3", "deepseek-r1"},
+	}
 )
 
 func mbIsText(i int) bool {
@@ -1382,6 +1394,7 @@ func (m *model) mbStartAdd() {
 	m.mbBackends = append([]string(nil), mbBackendList...)
 	m.mbBackendIdx = 0
 	m.mbThinkIdx, m.mbEffortIdx, m.mbDisplayIdx = 0, 0, 0
+	m.mbPresetIdx = -1
 	m.mbFormMode = mbAdd
 	m.mbOrigName = ""
 	m.mbErr = ""
@@ -1413,6 +1426,7 @@ func (m *model) mbPrefill(cfg *v1.ModelConfig, mode int) {
 	m.mbThinkIdx = mbIndexOf(mbThinkingList, cfg.Thinking)
 	m.mbEffortIdx = mbIndexOf(mbEffortList, cfg.Effort)
 	m.mbDisplayIdx = mbIndexOf(mbDisplayList, cfg.ThinkingDisplay)
+	m.mbPresetIdx = -1
 	m.mbErr = ""
 	m.mbView = 1
 	if mode == mbEdit {
@@ -1592,6 +1606,18 @@ func (m model) mbUpdateForm(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter":
 		return m.mbSubmitForm()
+	case "ctrl+n":
+		// On the model field, ctrl+n/ctrl+p cycle the backend's id presets while
+		// keeping the field free-text. Elsewhere they fall through unchanged.
+		if m.mbFocus == mbFieldModel {
+			m.mbCyclePreset(1)
+			return m, nil
+		}
+	case "ctrl+p":
+		if m.mbFocus == mbFieldModel {
+			m.mbCyclePreset(-1)
+			return m, nil
+		}
 	}
 	if mbIsText(m.mbFocus) {
 		var cmd tea.Cmd
@@ -1599,6 +1625,19 @@ func (m model) mbUpdateForm(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	return m, nil
+}
+
+// mbCyclePreset fills the model field with the next/previous built-in id preset
+// for the current backend (task 0042). It is a convenience over free text — the
+// field remains a normal text input the user can overtype.
+func (m *model) mbCyclePreset(d int) {
+	presets := mbModelPresets[m.mbBackends[m.mbBackendIdx]]
+	if len(presets) == 0 {
+		return
+	}
+	m.mbPresetIdx = (m.mbPresetIdx + d + len(presets)) % len(presets)
+	m.mbInputs[mbFieldModel].SetValue(presets[m.mbPresetIdx])
+	m.mbInputs[mbFieldModel].CursorEnd()
 }
 
 // mbSubmitForm validates and builds a *v1.ModelConfig and issues UpsertModel.
@@ -1775,6 +1814,13 @@ func (m model) mbFormView() string {
 			val = m.mbInputs[f].View()
 		}
 		b.WriteString("  " + cursor + label + " " + val + "\n")
+		// Under the focused model field, hint the current backend's id presets.
+		// Free text still works; this just advertises the ctrl+n/p suggestions.
+		if f == mbFieldModel && m.mbFocus == mbFieldModel {
+			if presets := mbModelPresets[m.mbBackends[m.mbBackendIdx]]; len(presets) > 0 {
+				b.WriteString("      " + dimStyle.Render("presets: "+strings.Join(presets, " · ")+"  (ctrl+n/p)") + "\n")
+			}
+		}
 	}
 	if m.mbErr != "" {
 		b.WriteString("\n  " + errStyle.Render(m.mbErr) + "\n")

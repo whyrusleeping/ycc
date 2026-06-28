@@ -334,6 +334,66 @@ func TestUpsertModelLiveAddAndEdit(t *testing.T) {
 	}
 }
 
+// TestModelSiblingSharesCredentials exercises the core ergonomic of task 0042:
+// running different model ids that share one provider's credentials/endpoint. A
+// sibling "claude-sonnet" reuses the base "claude" backend/base_url/key_env (and
+// a pricing pointer) but points at a different model id — no credential is
+// re-entered. Both names resolve through Build to their own model id under the
+// shared key.
+func TestModelSiblingSharesCredentials(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "secret")
+	reg := baseRegistry()
+
+	base, ok := reg.GetModel("claude")
+	if !ok {
+		t.Fatal("expected base claude model present")
+	}
+	// Give the base a price so we can confirm the sibling inherits it.
+	price := 3.0
+	base.PriceInput = &price
+	if err := reg.UpsertModel("claude", base, false); err != nil {
+		t.Fatalf("UpsertModel(claude) with price: %v", err)
+	}
+
+	// Create the sibling by copying the base and changing only name + model id —
+	// the credential fields (Backend/BaseURL/KeyEnv) and pricing are reused.
+	sibling := base
+	sibling.Model = "claude-sonnet-4-5"
+	if err := reg.UpsertModel("claude-sonnet", sibling, false); err != nil {
+		t.Fatalf("UpsertModel(claude-sonnet): %v", err)
+	}
+
+	// Each logical name resolves to its own model id under the shared credential.
+	if _, id, err := reg.Build("claude"); err != nil || id != "claude-x" {
+		t.Fatalf("Build(claude) = %q,%v, want claude-x,nil", id, err)
+	}
+	if c, id, err := reg.Build("claude-sonnet"); err != nil || id != "claude-sonnet-4-5" || c == nil {
+		t.Fatalf("Build(claude-sonnet) = %q,%v, want claude-sonnet-4-5,nil", id, err)
+	}
+
+	// The sibling carries the same base_url + key_env as the base (shared
+	// credential, not re-entered) and inherited the pricing pointer.
+	got, ok := reg.GetModel("claude-sonnet")
+	if !ok {
+		t.Fatal("expected sibling claude-sonnet present")
+	}
+	if got.BaseURL != base.BaseURL || got.KeyEnv != base.KeyEnv || got.Backend != base.Backend {
+		t.Fatalf("sibling credentials = %+v, want shared from base %+v", got, base)
+	}
+	if got.KeyEnv != "ANTHROPIC_API_KEY" {
+		t.Fatalf("sibling key_env = %q, want ANTHROPIC_API_KEY", got.KeyEnv)
+	}
+	if got.PriceInput == nil || *got.PriceInput != price {
+		t.Fatalf("sibling pricing = %v, want shared %v", got.PriceInput, price)
+	}
+
+	// Usage/cost attribution remains per logical name: the sibling is its own
+	// distinct name with its own pricing entry.
+	if p := reg.PricingFor("claude-sonnet"); !p.Configured || p.Input != price {
+		t.Fatalf("sibling pricing resolve = %+v, want input %v", p, price)
+	}
+}
+
 func TestUpsertModelValidation(t *testing.T) {
 	reg := baseRegistry()
 	if err := reg.UpsertModel("", Model{Backend: "openai", Model: "m"}, false); err == nil {
