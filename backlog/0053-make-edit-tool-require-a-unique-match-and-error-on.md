@@ -1,7 +1,7 @@
 ---
 id: "0053"
 title: Make edit tool require a unique match and error on multiple matches
-status: in_progress
+status: done
 priority: 3
 created: "2026-06-28"
 updated: "2026-06-28"
@@ -36,3 +36,6 @@ Change the edit tool to enforce a single, unique match:
 - 2026-06-28 review tier: single-opus — reviewers: Claude
 - 2026-06-28 review (Claude): accept — The Edit tool now requires a unique match: the replace_all param and replaceAll read were removed, the description updated, multi-match now errors with a message guiding the caller to add context, zer
 …[truncated]
+- 2026-06-28 decision: accept — commit 1bf8107: Make Edit tool require a unique match; error on multiple matches  Remove replace_all from the Edit tool. old_string must now match exactly once: zero matches errors as before, more than one errors wit
+…[truncated]
+- 2026-06-28 usage: 6,345 tok (in 34, out 6,311, cache_r 157,009, cache_w 22,625) · cost n/a (unpriced)

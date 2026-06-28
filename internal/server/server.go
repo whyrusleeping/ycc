@@ -171,6 +171,19 @@ func (s *Server) Resume(_ context.Context, req *connect.Request[v1.ResumeRequest
 	return connect.NewResponse(&v1.ResumeResponse{}), nil
 }
 
+// StopSession hard-terminates a running session (spec §12): it cancels the
+// agent loop, closes the log, and removes the session from the daemon. Distinct
+// from Interrupt's graceful pause (spec §18.7) — there is no resume.
+func (s *Server) StopSession(_ context.Context, req *connect.Request[v1.StopSessionRequest]) (*connect.Response[v1.StopSessionResponse], error) {
+	if err := s.mgr.Stop(req.Msg.SessionId); err != nil {
+		if errors.Is(err, session.ErrUnknownSession) {
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&v1.StopSessionResponse{}), nil
+}
+
 // AnswerQuestion responds to a question the coordinator asked via ask_user.
 func (s *Server) AnswerQuestion(_ context.Context, req *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error) {
 	sess, ok := s.mgr.Get(req.Msg.SessionId)

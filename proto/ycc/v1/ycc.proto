@@ -69,6 +69,11 @@ message InterruptResponse {}
 // Resume continues a paused session (optionally after SendInput corrections).
 message ResumeRequest { string session_id = 1; }
 message ResumeResponse {}
+// StopSession hard-terminates a session (spec §12): it cancels the agent loop,
+// closes the event log, and removes the session from the daemon. Distinct from
+// Interrupt's graceful pause/steer (spec §18.7) — there is no resume.
+message StopSessionRequest { string session_id = 1; }
+message StopSessionResponse {}
 
 message ListModesRequest {}
 message Mode {
@@ -278,6 +283,11 @@ service SessionService {
   // steered SendInput correction). Distinct from the hard Stop/terminate.
   rpc Interrupt(InterruptRequest) returns (InterruptResponse);
   rpc Resume(ResumeRequest) returns (ResumeResponse);
+
+  // StopSession hard-terminates a session: cancels its agent loop, closes its
+  // event log, and removes it from the daemon (no resume). Distinct from
+  // Interrupt's graceful pause (spec §12, §18.7).
+  rpc StopSession(StopSessionRequest) returns (StopSessionResponse);
 
   // Projects — persistent multi-project daemon (spec §3.1).
   rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);

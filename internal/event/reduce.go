@@ -10,6 +10,9 @@ const (
 	// StatusPaused is a running session gracefully paused at a steer checkpoint
 	// (spec §18.7); a Resume (or steered SendInput) returns it to running.
 	StatusPaused Status = "paused"
+	// StatusStopped is a session hard-terminated via StopSession (spec §12): its
+	// agent loop is cancelled and its log closed; it cannot resume.
+	StatusStopped Status = "stopped"
 )
 
 // Projection is the reduced view of a session's event log (spec §5: UI state is
@@ -73,6 +76,8 @@ func Reduce(events []Event) Projection {
 			p.Status = StatusPaused
 		case Resumed:
 			p.Status = StatusRunning
+		case SessionStopped:
+			p.Status = StatusStopped
 		}
 	}
 	return p

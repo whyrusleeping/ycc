@@ -12,7 +12,7 @@
 | [0006](backlog/0006-home-menu-modes-tui.md) | Home menu, spec/backlog/feature/bug modes, TUI (M4) | done | 4 | 0005 |
 | [0007](backlog/0007-remote-sync.md) | Remote session sync + phone-facing surface (M5) | todo | 5 | 0006 |
 | [0008](backlog/0008-reviewer-sandboxing.md) | Sandbox reviewer bash to prevent workspace mutation | todo | 6 | 0005 |
-| [0009](backlog/0009-session-lifecycle-interrupt.md) | Session lifecycle — Interrupt RPC and stop/GC | todo | 3 | 0003 |
+| [0009](backlog/0009-session-lifecycle-interrupt.md) | Session lifecycle — Interrupt RPC and stop/GC | in_progress | 3 | 0003 |
 | [0010](backlog/0010-context-window-management.md) | Context-window management for long sessions | todo | 3 | 0002 |
 | [0011](backlog/0011-multiline-input.md) | Multiline session input (textarea) | todo | 3 | 0006 |
 | [0012](backlog/0012-settings-overlay.md) | Settings overlay (esc) with mid-session interaction level + per-role model config | done | 2 | 0006 |
@@ -55,4 +55,5 @@
 | [0050](backlog/0050-auto-retry-transient-llm-api-call-failures-with-ba.md) | Auto-retry transient LLM API call failures with backoff | todo | 3 | — |
 | [0051](backlog/0051-bug-status-header-stuck-on-error-never-returns-to.md) | Bug: status header stuck on "error" — never returns to "running" after recovery | done | 2 | — |
 | [0052](backlog/0052-fix-last-line-of-agent-final-output-hidden-behind.md) | Fix: last line of agent final output hidden behind input box | done | 2 | — |
-| [0053](backlog/0053-make-edit-tool-require-a-unique-match-and-error-on.md) | Make edit tool require a unique match and error on multiple matches | in_progress | 3 | — |
+| [0053](backlog/0053-make-edit-tool-require-a-unique-match-and-error-on.md) | Make edit tool require a unique match and error on multiple matches | done | 3 | — |
+| [0054](backlog/0054-automatic-idle-session-gc-on-disk-log-retention.md) | Automatic idle-session GC + on-disk log retention | todo | 3 | 0009 |

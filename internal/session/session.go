@@ -58,6 +58,10 @@ type Session struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 
+	// stopOnce guards Stop so a hard terminate runs at most once even if both a
+	// StopSession RPC and a manager teardown race to call it.
+	stopOnce sync.Once
+
 	mu          sync.Mutex
 	status      event.Status
 	coordinator string   // logical model name driving the coordinator
@@ -176,10 +180,16 @@ func (s *Session) AnswerOption(idx int, text string) error {
 	return nil
 }
 
-// Stop cancels the session's agent loop and closes its log.
+// Stop hard-terminates the session: it records the terminal session_stopped
+// event, cancels the agent loop (unblocking any ask_user / checkpoint waiting on
+// the ctx), and closes the event log. It is idempotent (runs at most once).
 func (s *Session) Stop() {
-	s.cancel()
-	s.log.Close()
+	s.stopOnce.Do(func() {
+		s.setStatus(event.StatusStopped)
+		s.emitter.Emit(event.SessionStopped, map[string]any{})
+		s.cancel()
+		s.log.Close()
+	})
 }
 
 // Checkpoint implements engine.Steer (spec §18.7). At a safe checkpoint the
@@ -875,6 +885,23 @@ func (m *Manager) Get(id string) (*Session, bool) {
 	return s, ok
 }
 
+// Stop hard-terminates a live session: it cancels the agent loop, closes the
+// event log, and removes the session from the manager so its goroutine and
+// resources are reclaimed (no leak). Unknown id => ErrUnknownSession.
+func (m *Manager) Stop(id string) error {
+	m.mu.Lock()
+	s, ok := m.sessions[id]
+	if ok {
+		delete(m.sessions, id)
+	}
+	m.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("%w %q", ErrUnknownSession, id)
+	}
+	s.Stop()
+	return nil
+}
+
 // List returns all live sessions.
 func (m *Manager) List() []*Session {
 	m.mu.Lock()
@@ -992,6 +1019,10 @@ func (m *Manager) CaptureBacklogItem(project, description, priorQuestion, priorA
 // workspace. It is a client-input error (distinct from IO/scan failures) so RPC
 // handlers can map it to an invalid-argument code rather than internal.
 var ErrUnknownProject = errors.New("unknown project")
+
+// ErrUnknownSession indicates a session id is not (or no longer) live in the
+// manager, so RPC handlers can map it to a not-found code.
+var ErrUnknownSession = errors.New("unknown session")
 
 // UsageReport scans the given project's workspace (empty => the daemon default
 // workspace) for session event logs and returns the aggregated, priced usage

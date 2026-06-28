@@ -56,6 +56,9 @@ const (
 	SessionServiceInterruptProcedure = "/ycc.v1.SessionService/Interrupt"
 	// SessionServiceResumeProcedure is the fully-qualified name of the SessionService's Resume RPC.
 	SessionServiceResumeProcedure = "/ycc.v1.SessionService/Resume"
+	// SessionServiceStopSessionProcedure is the fully-qualified name of the SessionService's
+	// StopSession RPC.
+	SessionServiceStopSessionProcedure = "/ycc.v1.SessionService/StopSession"
 	// SessionServiceListProjectsProcedure is the fully-qualified name of the SessionService's
 	// ListProjects RPC.
 	SessionServiceListProjectsProcedure = "/ycc.v1.SessionService/ListProjects"
@@ -111,6 +114,10 @@ type SessionServiceClient interface {
 	// steered SendInput correction). Distinct from the hard Stop/terminate.
 	Interrupt(context.Context, *connect.Request[v1.InterruptRequest]) (*connect.Response[v1.InterruptResponse], error)
 	Resume(context.Context, *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error)
+	// StopSession hard-terminates a session: cancels its agent loop, closes its
+	// event log, and removes it from the daemon (no resume). Distinct from
+	// Interrupt's graceful pause (spec §12, §18.7).
+	StopSession(context.Context, *connect.Request[v1.StopSessionRequest]) (*connect.Response[v1.StopSessionResponse], error)
 	// Projects — persistent multi-project daemon (spec §3.1).
 	ListProjects(context.Context, *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error)
 	AddProject(context.Context, *connect.Request[v1.AddProjectRequest]) (*connect.Response[v1.AddProjectResponse], error)
@@ -196,6 +203,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			httpClient,
 			baseURL+SessionServiceResumeProcedure,
 			connect.WithSchema(sessionServiceMethods.ByName("Resume")),
+			connect.WithClientOptions(opts...),
+		),
+		stopSession: connect.NewClient[v1.StopSessionRequest, v1.StopSessionResponse](
+			httpClient,
+			baseURL+SessionServiceStopSessionProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("StopSession")),
 			connect.WithClientOptions(opts...),
 		),
 		listProjects: connect.NewClient[v1.ListProjectsRequest, v1.ListProjectsResponse](
@@ -295,6 +308,7 @@ type sessionServiceClient struct {
 	answerQuestion      *connect.Client[v1.AnswerQuestionRequest, v1.AnswerQuestionResponse]
 	interrupt           *connect.Client[v1.InterruptRequest, v1.InterruptResponse]
 	resume              *connect.Client[v1.ResumeRequest, v1.ResumeResponse]
+	stopSession         *connect.Client[v1.StopSessionRequest, v1.StopSessionResponse]
 	listProjects        *connect.Client[v1.ListProjectsRequest, v1.ListProjectsResponse]
 	addProject          *connect.Client[v1.AddProjectRequest, v1.AddProjectResponse]
 	removeProject       *connect.Client[v1.RemoveProjectRequest, v1.RemoveProjectResponse]
@@ -349,6 +363,11 @@ func (c *sessionServiceClient) Interrupt(ctx context.Context, req *connect.Reque
 // Resume calls ycc.v1.SessionService.Resume.
 func (c *sessionServiceClient) Resume(ctx context.Context, req *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error) {
 	return c.resume.CallUnary(ctx, req)
+}
+
+// StopSession calls ycc.v1.SessionService.StopSession.
+func (c *sessionServiceClient) StopSession(ctx context.Context, req *connect.Request[v1.StopSessionRequest]) (*connect.Response[v1.StopSessionResponse], error) {
+	return c.stopSession.CallUnary(ctx, req)
 }
 
 // ListProjects calls ycc.v1.SessionService.ListProjects.
@@ -434,6 +453,10 @@ type SessionServiceHandler interface {
 	// steered SendInput correction). Distinct from the hard Stop/terminate.
 	Interrupt(context.Context, *connect.Request[v1.InterruptRequest]) (*connect.Response[v1.InterruptResponse], error)
 	Resume(context.Context, *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error)
+	// StopSession hard-terminates a session: cancels its agent loop, closes its
+	// event log, and removes it from the daemon (no resume). Distinct from
+	// Interrupt's graceful pause (spec §12, §18.7).
+	StopSession(context.Context, *connect.Request[v1.StopSessionRequest]) (*connect.Response[v1.StopSessionResponse], error)
 	// Projects — persistent multi-project daemon (spec §3.1).
 	ListProjects(context.Context, *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error)
 	AddProject(context.Context, *connect.Request[v1.AddProjectRequest]) (*connect.Response[v1.AddProjectResponse], error)
@@ -515,6 +538,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		SessionServiceResumeProcedure,
 		svc.Resume,
 		connect.WithSchema(sessionServiceMethods.ByName("Resume")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceStopSessionHandler := connect.NewUnaryHandler(
+		SessionServiceStopSessionProcedure,
+		svc.StopSession,
+		connect.WithSchema(sessionServiceMethods.ByName("StopSession")),
 		connect.WithHandlerOptions(opts...),
 	)
 	sessionServiceListProjectsHandler := connect.NewUnaryHandler(
@@ -619,6 +648,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceInterruptHandler.ServeHTTP(w, r)
 		case SessionServiceResumeProcedure:
 			sessionServiceResumeHandler.ServeHTTP(w, r)
+		case SessionServiceStopSessionProcedure:
+			sessionServiceStopSessionHandler.ServeHTTP(w, r)
 		case SessionServiceListProjectsProcedure:
 			sessionServiceListProjectsHandler.ServeHTTP(w, r)
 		case SessionServiceAddProjectProcedure:
@@ -686,6 +717,10 @@ func (UnimplementedSessionServiceHandler) Interrupt(context.Context, *connect.Re
 
 func (UnimplementedSessionServiceHandler) Resume(context.Context, *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.Resume is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) StopSession(context.Context, *connect.Request[v1.StopSessionRequest]) (*connect.Response[v1.StopSessionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.StopSession is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) ListProjects(context.Context, *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error) {

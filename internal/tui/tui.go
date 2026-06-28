@@ -344,6 +344,20 @@ func (m model) resume() tea.Cmd {
 	}
 }
 
+// stopSession hard-terminates the running session (spec §12) and returns to the
+// menu. Distinct from interrupt() which only pauses to steer.
+func (m model) stopSession() tea.Cmd {
+	return func() tea.Msg {
+		if m.sessionID == "" {
+			return nil
+		}
+		if _, err := m.client.StopSession(m.ctx, connect.NewRequest(&v1.StopSessionRequest{SessionId: m.sessionID})); err != nil {
+			return errMsg{err}
+		}
+		return nil
+	}
+}
+
 // answerQuestion sends a structured answer to a pending question: optIdx >= 0
 // selects a suggested option (resolved to its text on the daemon), otherwise
 // optIdx is -1 and text is taken as free text.
@@ -766,6 +780,15 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.interrupt()
 			}
 			return m, nil
+		case "ctrl+x":
+			// Hard-terminate the session and return to the menu (spec §12). This
+			// is distinct from ctrl+i, which only pauses to steer.
+			cmd := m.stopSession()
+			m.state = stateMenu
+			m.sessionID = ""
+			m.paused = false
+			m.status = ""
+			return m, cmd
 		case "up":
 			m.moveSelection(-1)
 			return m, nil
@@ -2232,7 +2255,7 @@ func (m model) sessionView() string {
 		help := m.footer(" ⏸ paused — type a correction + enter to steer · enter to resume · esc settings")
 		return top + "\n" + body + "\n " + m.input.View() + "\n" + help
 	}
-	help := m.footer(" enter send/expand · ↑↓ select · click expand · pgup/pgdn scroll · ctrl+i interrupt · esc settings · ctrl+b backlog · ctrl+n new task")
+	help := m.footer(" enter send/expand · ↑↓ select · click expand · pgup/pgdn scroll · ctrl+i interrupt · ctrl+x stop · esc settings · ctrl+b backlog · ctrl+n new task")
 	return top + "\n" + body + "\n " + m.input.View() + "\n" + help
 }
 

@@ -55,7 +55,7 @@ func main() {
 	configPath := global.String("config", "", "TOML model config for the local daemon")
 	background := global.Bool("background", false, "spawn a detached persistent daemon and attach (opt-in persistence)")
 	global.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: ycc [-addr URL] [-token T] [--background] [<start|attach|list|modes|cost|daemon>] [args]")
+		fmt.Fprintln(os.Stderr, "usage: ycc [-addr URL] [-token T] [--background] [<start|attach|list|stop|modes|cost|daemon>] [args]")
 		fmt.Fprintln(os.Stderr, "  with no subcommand, launches the interactive TUI (home menu)")
 		fmt.Fprintln(os.Stderr, "  by default the daemon runs in-process and is torn down on exit (no persistence)")
 		fmt.Fprintln(os.Stderr, "  use `ycc daemon` or `ycc --background` for a persistent daemon")
@@ -168,6 +168,16 @@ func main() {
 		for _, s := range resp.Msg.Sessions {
 			fmt.Printf("%s  %-8s %-8s %s\n", s.SessionId, s.Mode, s.Status, s.Workspace)
 		}
+
+	case "stop":
+		if len(args) < 2 {
+			fatal("usage: ycc stop <session-id>")
+		}
+		id := args[1]
+		if _, err := client.StopSession(ctx, connect.NewRequest(&v1.StopSessionRequest{SessionId: id})); err != nil {
+			fatal("StopSession: %v", err)
+		}
+		fmt.Printf("stopped session %s\n", id)
 
 	case "project", "projects":
 		runProject(ctx, client, args[1:])
