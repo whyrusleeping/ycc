@@ -1,7 +1,7 @@
 ---
 id: "0033"
 title: Durable session index + ListSessionHistory RPC
-status: in_progress
+status: done
 priority: 3
 created: "2026-06-27"
 updated: "2026-06-28"
@@ -45,3 +45,6 @@ a daemon restart or GC. This task adds read-only enumeration of all sessions for
 - 2026-06-28 review tier: single-opus — reviewers: Claude
 - 2026-06-28 review (Claude): accept — The change fully satisfies Task 0033. A new `internal/session/history.go` provides `SessionSummary` and `scanSessionHistory`, globbing `<ws>/.ycc/sessions/*/events.jsonl`, reducing each log via `event
 …[truncated]
+- 2026-06-28 decision: accept — commit 441091d: Add durable session index + ListSessionHistory RPC  Enumerate all sessions for a project (live + persisted on-disk logs) by scanning .ycc/sessions/*/events.jsonl and reducing each. Adds SessionSummary
+…[truncated]
+- 2026-06-28 usage: 20,215 tok (in 72, out 20,143, cache_r 1,332,256, cache_w 96,183) · cost n/a (unpriced)
