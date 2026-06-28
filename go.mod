@@ -9,7 +9,7 @@ require (
 	github.com/charmbracelet/glamour v1.0.0
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/pelletier/go-toml/v2 v2.0.1
-	github.com/whyrusleeping/gollama v0.0.0-20260627031324-1b50b06e41fe
+	github.com/whyrusleeping/gollama v0.0.0-20260628184513-567eebc663b0
 	golang.org/x/net v0.56.0
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
@@ -72,8 +72,3 @@ require (
 	golang.org/x/text v0.38.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
-
-// Develop gollama in lockstep locally (see project notes). The StopReason /
-// Truncated work this depends on must be published + the require bumped before
-// this builds without the checkout.
-replace github.com/whyrusleeping/gollama => ../gollama
