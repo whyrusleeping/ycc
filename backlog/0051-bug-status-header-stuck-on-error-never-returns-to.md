@@ -1,7 +1,7 @@
 ---
 id: "0051"
 title: 'Bug: status header stuck on "error" — never returns to "running" after recovery'
-status: in_progress
+status: done
 priority: 2
 created: "2026-06-27"
 updated: "2026-06-28"
@@ -38,3 +38,5 @@ When the underlying error condition recovers (e.g. a transient failure resolves 
 - 2026-06-28 implementer report: Fixed the sticky "error" session status so it returns to "running" once the agent makes forward progress after a recovered error.  Changes: 1. internal/event/reduce.go — In Reduce, added error→run
 …[truncated]
 - 2026-06-28 review tier: simple (coordinator self-review)
+- 2026-06-28 decision: accept — commit 115fcb1: Fix sticky "error" session status: clear on forward progress after recovery (task 0051)
+- 2026-06-28 usage: 7,179 tok (in 40, out 7,139, cache_r 552,354, cache_w 55,304) · cost n/a (unpriced)

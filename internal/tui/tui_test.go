@@ -1,10 +1,14 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 )
@@ -196,5 +200,47 @@ func TestAppendEventClearsLatchedError(t *testing.T) {
 	m.appendEvent(&v1.Event{Type: "model_turn", DataJson: `{"text":"recovered"}`})
 	if m.status != "running" {
 		t.Fatalf("after model_turn status = %q, want running", m.status)
+	}
+}
+
+// The session view must fit exactly within the terminal: every rendered line must
+// be no wider than the terminal (so nothing wraps to a second physical row) and
+// the total number of lines must equal the terminal height. A wrapping footer or
+// header pushes the frame down a row, which is what hides the agent's last output
+// line behind the input box (task 0052).
+func TestSessionViewFitsTerminal(t *testing.T) {
+	sizes := []struct{ w, h int }{{80, 24}, {60, 20}}
+	for _, sz := range sizes {
+		m := model{
+			state: stateSession, status: "running", mode: "implement",
+			sessionID: "sess12345678abcdef", follow: true,
+			expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+		}
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: sz.w, Height: sz.h})
+		m = updated.(model)
+
+		// Fill well past the viewport so the frame is full and GotoBottom is active.
+		for i := 0; i < 40; i++ {
+			m.appendEvent(&v1.Event{
+				Seq: int64(i), Type: "model_turn", Actor: "coordinator",
+				DataJson: fmt.Sprintf(`{"text":"this is a fairly long output line number %d that is meant to wrap inside the body region but must never overflow the terminal width"}`, i),
+			})
+		}
+		// The agent's final output (multi-line), the line that was being clipped.
+		m.appendEvent(&v1.Event{
+			Seq: 100, Type: "session_idle", Actor: "coordinator",
+			DataJson: `{"report":"final report line one\nfinal report line two\nthis is the last visible line of the final output"}`,
+		})
+
+		view := m.sessionView()
+		lines := strings.Split(view, "\n")
+		if len(lines) != sz.h {
+			t.Fatalf("%dx%d: sessionView produced %d lines, want %d", sz.w, sz.h, len(lines), sz.h)
+		}
+		for i, ln := range lines {
+			if w := lipgloss.Width(ln); w > sz.w {
+				t.Fatalf("%dx%d: line %d width %d exceeds terminal width %d: %q", sz.w, sz.h, i, w, sz.w, ln)
+			}
+		}
 	}
 }

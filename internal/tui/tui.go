@@ -1517,6 +1517,22 @@ func isAllDigits(s string) bool {
 
 func (m model) sessionView() string {
 	statusTxt := fmt.Sprintf(" %s · mode:%s · %s ", short(m.sessionID), m.mode, m.status)
+	// Clamp the (plain) status to the terminal width so the header occupies a
+	// single physical row: a wrapped header pushes the whole frame down by a row,
+	// which is what lets the input box overlap the agent's last output line.
+	if m.w > 0 {
+		// headerStyle adds 1 col of padding on each side; reserve room for the
+		// "? answer below" badge when a question is pending so it never wraps.
+		// trunc may append a 1-col ellipsis, so reserve that column too.
+		max := m.w - 2 - 1
+		if m.pending != "" {
+			max -= lipgloss.Width(askStyle.Render(" ? answer below "))
+		}
+		if max < 1 {
+			max = 1
+		}
+		statusTxt = trunc(statusTxt, max)
+	}
 	if m.pending != "" {
 		statusTxt = askStyle.Render(" ? answer below ") + statusTxt
 	}
@@ -1526,15 +1542,28 @@ func (m model) sessionView() string {
 		body = m.vp.View()
 	}
 	if m.picking {
-		help := dimStyle.Render(" ↑↓ choose · enter select · esc settings")
+		help := m.footer(" ↑↓ choose · enter select · esc settings")
 		return top + "\n" + body + "\n" + m.pickerView() + "\n" + help
 	}
 	if m.paused {
-		help := dimStyle.Render(" ⏸ paused — type a correction + enter to steer · enter to resume · esc settings")
+		help := m.footer(" ⏸ paused — type a correction + enter to steer · enter to resume · esc settings")
 		return top + "\n" + body + "\n " + m.input.View() + "\n" + help
 	}
-	help := dimStyle.Render(" enter send/expand · ↑↓ select · click expand · pgup/pgdn scroll · ctrl+i interrupt · esc settings · ctrl+b backlog · ctrl+n new task")
+	help := m.footer(" enter send/expand · ↑↓ select · click expand · pgup/pgdn scroll · ctrl+i interrupt · esc settings · ctrl+b backlog · ctrl+n new task")
 	return top + "\n" + body + "\n " + m.input.View() + "\n" + help
+}
+
+// footer renders a single-row help/status line, clamped to the terminal width so
+// it can never wrap to a second physical row. Without this clamp a long help line
+// wraps, overflowing the H-row frame and corrupting Bubble Tea's line accounting —
+// which visually shows up as the input box overlapping the agent's last output
+// line. A zero width (before the first WindowSizeMsg) is a no-op.
+func (m model) footer(text string) string {
+	if m.w > 0 {
+		// trunc may append a 1-col ellipsis, so clamp to m.w-1 to stay within m.w.
+		text = trunc(strings.ReplaceAll(text, "\n", " "), m.w-1)
+	}
+	return dimStyle.Render(text)
 }
 
 // pickerView renders the navigable list of suggested answers plus an "other…"
@@ -1548,9 +1577,15 @@ func (m model) pickerView() string {
 	for i, opt := range rows {
 		cursor := "  "
 		label := opt
+		// Clamp option text so a long suggestion can't wrap to a second physical
+		// row (reserve the "  " + cursor "▸ " = 4 leading columns; trunc may add a
+		// 1-col ellipsis, so reserve that too).
+		if m.w > 0 {
+			label = trunc(label, m.w-4-1)
+		}
 		if i == m.pickerCursor {
 			cursor = selStyle.Render("▸ ")
-			label = selStyle.Render(opt)
+			label = selStyle.Render(label)
 		}
 		b.WriteString("  " + cursor + label + "\n")
 	}
