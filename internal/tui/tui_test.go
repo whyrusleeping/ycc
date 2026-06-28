@@ -660,3 +660,61 @@ func TestModelBackendsRemoveLastClampsCursor(t *testing.T) {
 	m = drive(t, m, "e")
 	m = drive(t, m, "x")
 }
+
+func TestBacklogHidesDoneByDefault(t *testing.T) {
+	tasks := []*v1.BacklogTaskSummary{
+		{Id: "0001", Status: "todo", Title: "a"},
+		{Id: "0002", Status: "in_progress", Title: "b"},
+		{Id: "0003", Status: "done", Title: "c"},
+		{Id: "0004", Status: "blocked", Title: "d"},
+		{Id: "0005", Status: "done", Title: "e"},
+	}
+	m := model{backlog: true, backlogTasks: tasks}
+
+	// Default: done tasks are hidden.
+	vis := m.visibleBacklogTasks()
+	if len(vis) != 3 {
+		t.Fatalf("default visible=%d, want 3 (done hidden)", len(vis))
+	}
+	for _, tk := range vis {
+		if tk.Status == "done" {
+			t.Fatalf("done task %s visible by default", tk.Id)
+		}
+	}
+
+	// Toggle with "d": done tasks become visible.
+	updated, _ := m.updateBacklog(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	m = updated.(model)
+	if !m.backlogShowDone {
+		t.Fatalf("backlogShowDone not set after toggle")
+	}
+	if len(m.visibleBacklogTasks()) != len(tasks) {
+		t.Fatalf("after toggle visible=%d, want %d", len(m.visibleBacklogTasks()), len(tasks))
+	}
+
+	// Non-done tasks always present regardless of toggle.
+	for _, showDone := range []bool{true, false} {
+		m.backlogShowDone = showDone
+		got := map[string]bool{}
+		for _, tk := range m.visibleBacklogTasks() {
+			got[tk.Id] = true
+		}
+		for _, id := range []string{"0001", "0002", "0004"} {
+			if !got[id] {
+				t.Fatalf("non-done task %s missing (showDone=%v)", id, showDone)
+			}
+		}
+	}
+
+	// Cursor stays in range when toggling show->hide while pointing at a done row.
+	m.backlogShowDone = true
+	m.backlogCursor = len(m.visibleBacklogTasks()) - 1 // last (done) row
+	updated, _ = m.updateBacklog(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	m = updated.(model)
+	if m.backlogShowDone {
+		t.Fatalf("expected toggle back to hide done")
+	}
+	if m.backlogCursor >= len(m.visibleBacklogTasks()) {
+		t.Fatalf("cursor=%d out of range for %d visible", m.backlogCursor, len(m.visibleBacklogTasks()))
+	}
+}

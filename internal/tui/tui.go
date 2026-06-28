@@ -100,10 +100,11 @@ type model struct {
 
 	// backlog browser (spec §18.5): modal over menu/session, opened with ctrl+b.
 	// Read-only: lists tasks, drills into one task's full detail.
-	backlog       bool
-	backlogTasks  []*v1.BacklogTaskSummary
-	backlogCursor int
-	backlogDetail *v1.TaskDetail // nil => list view; set => detail view
+	backlog         bool
+	backlogTasks    []*v1.BacklogTaskSummary
+	backlogCursor   int
+	backlogDetail   *v1.TaskDetail // nil => list view; set => detail view
+	backlogShowDone bool           // when false (default), done tasks are hidden in the list view
 
 	// quick-add backlog capture overlay (spec §18.2, task 0016): modal over
 	// menu/session, opened with ctrl+n. It runs a lightweight, off-stream capture
@@ -665,6 +666,7 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+b":
 			// Open the read-only backlog browser (spec §18.5).
 			m.backlog, m.backlogCursor, m.backlogDetail = true, 0, nil
+			m.backlogShowDone = false
 			return m, m.fetchBacklog
 		case "up":
 			if m.cursor > 0 {
@@ -756,6 +758,7 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+b":
 			// Open the read-only backlog browser (spec §18.5).
 			m.backlog, m.backlogCursor, m.backlogDetail = true, 0, nil
+			m.backlogShowDone = false
 			return m, m.fetchBacklog
 		case "ctrl+i":
 			// Gracefully interrupt the running agent to steer it (spec §18.7).
@@ -932,6 +935,7 @@ func (m model) updateBacklog(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	// List view.
+	vis := m.visibleBacklogTasks()
 	switch key.String() {
 	case "ctrl+c":
 		return m, tea.Quit
@@ -944,17 +948,42 @@ func (m model) updateBacklog(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "down":
-		if m.backlogCursor < len(m.backlogTasks)-1 {
+		if m.backlogCursor < len(vis)-1 {
 			m.backlogCursor++
 		}
 		return m, nil
+	case "d":
+		m.backlogShowDone = !m.backlogShowDone
+		if vis := m.visibleBacklogTasks(); m.backlogCursor >= len(vis) {
+			m.backlogCursor = len(vis) - 1
+			if m.backlogCursor < 0 {
+				m.backlogCursor = 0
+			}
+		}
+		return m, nil
 	case "enter":
-		if len(m.backlogTasks) > 0 {
-			return m, m.fetchTask(m.backlogTasks[m.backlogCursor].Id)
+		if len(vis) > 0 {
+			return m, m.fetchTask(vis[m.backlogCursor].Id)
 		}
 		return m, nil
 	}
 	return m, nil
+}
+
+// visibleBacklogTasks returns the backlog rows to display: all tasks when
+// backlogShowDone is set, otherwise only non-done (actionable) tasks. This keeps
+// the overlay focused on open work by default while letting done tasks be revealed.
+func (m model) visibleBacklogTasks() []*v1.BacklogTaskSummary {
+	if m.backlogShowDone {
+		return m.backlogTasks
+	}
+	out := make([]*v1.BacklogTaskSummary, 0, len(m.backlogTasks))
+	for _, t := range m.backlogTasks {
+		if t.Status != "done" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // backlogView renders the modal backlog browser (list or detail).
@@ -964,10 +993,11 @@ func (m model) backlogView() string {
 	}
 	var b strings.Builder
 	b.WriteString(titleStyle.Render(" ycc — backlog ") + "\n\n")
-	if len(m.backlogTasks) == 0 {
+	vis := m.visibleBacklogTasks()
+	if len(vis) == 0 {
 		b.WriteString("  " + dimStyle.Render("(no backlog tasks)") + "\n")
 	}
-	for i, t := range m.backlogTasks {
+	for i, t := range vis {
 		cursor := "  "
 		row := fmt.Sprintf("%-5s %-12s p%d  %s", t.Id, t.Status, t.Priority, t.Title)
 		var tag string
@@ -984,7 +1014,7 @@ func (m model) backlogView() string {
 		}
 		b.WriteString("  " + cursor + row + tag + "\n")
 	}
-	b.WriteString("\n" + dimStyle.Render("  ↑/↓ select · enter inspect · esc close"))
+	b.WriteString("\n" + dimStyle.Render("  ↑/↓ select · enter inspect · d show/hide done · esc close"))
 	return b.String()
 }
 

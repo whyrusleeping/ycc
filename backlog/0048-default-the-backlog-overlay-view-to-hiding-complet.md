@@ -1,10 +1,10 @@
 ---
 id: "0048"
 title: Default the backlog overlay view to hiding completed tasks
-status: todo
+status: done
 priority: 3
 created: "2026-06-27"
-updated: "2026-06-27"
+updated: "2026-06-28"
 depends_on: []
 spec_refs: []
 ---
@@ -21,3 +21,9 @@ The backlog overlay view currently shows completed (done) tasks alongside open o
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-28 plan: Filter completed tasks out of the backlog overlay list view client-side, defaulting to hidden, with a toggle key.  Changes in internal/tui/tui.go: 1. Add a `backlogShowDone bool` field to the model (n
+…[truncated]
+- 2026-06-28 implementer report: Implemented default-hidden completed tasks in the backlog overlay (internal/tui/tui.go):  - Added `backlogShowDone bool` model field (default false). - Added `visibleBacklogTasks()` helper that filter
+…[truncated]
+- 2026-06-28 review tier: simple (coordinator self-review)
+- 2026-06-28 decision: accept — commit 7c62644: TUI backlog overlay: hide done tasks by default, toggle with 'd' (task 0048)
