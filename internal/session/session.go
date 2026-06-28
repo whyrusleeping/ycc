@@ -863,6 +863,22 @@ func (m *Manager) ListByProject(name string) []*Session {
 // Models returns the configured logical models for the settings overlay pickers.
 func (m *Manager) Models() []config.ModelInfo { return m.reg.Models() }
 
+// GetModel returns a copy of a logical model's record for editing in the
+// settings overlay (spec §18.2).
+func (m *Manager) GetModel(name string) (config.Model, bool) { return m.reg.GetModel(name) }
+
+// UpsertModel adds or replaces a logical model backend at runtime; persist also
+// writes ycc.toml (spec §18.2).
+func (m *Manager) UpsertModel(name string, mdl config.Model, persist bool) error {
+	return m.reg.UpsertModel(name, mdl, persist)
+}
+
+// RemoveModel deletes a logical model backend (rejected if a role references
+// it); persist also writes ycc.toml (spec §18.2).
+func (m *Manager) RemoveModel(name string, persist bool) error {
+	return m.reg.RemoveModel(name, persist)
+}
+
 // Backlog returns a docs.Store for the given project's workspace (empty => the
 // daemon default workspace). Used by the read-only backlog RPCs (spec §18.5).
 func (m *Manager) Backlog(project string) (*docs.Store, error) {

@@ -77,6 +77,15 @@ const (
 	// SessionServiceSetThinkingProcedure is the fully-qualified name of the SessionService's
 	// SetThinking RPC.
 	SessionServiceSetThinkingProcedure = "/ycc.v1.SessionService/SetThinking"
+	// SessionServiceUpsertModelProcedure is the fully-qualified name of the SessionService's
+	// UpsertModel RPC.
+	SessionServiceUpsertModelProcedure = "/ycc.v1.SessionService/UpsertModel"
+	// SessionServiceRemoveModelProcedure is the fully-qualified name of the SessionService's
+	// RemoveModel RPC.
+	SessionServiceRemoveModelProcedure = "/ycc.v1.SessionService/RemoveModel"
+	// SessionServiceGetModelConfigProcedure is the fully-qualified name of the SessionService's
+	// GetModelConfig RPC.
+	SessionServiceGetModelConfigProcedure = "/ycc.v1.SessionService/GetModelConfig"
 	// SessionServiceListBacklogProcedure is the fully-qualified name of the SessionService's
 	// ListBacklog RPC.
 	SessionServiceListBacklogProcedure = "/ycc.v1.SessionService/ListBacklog"
@@ -112,6 +121,11 @@ type SessionServiceClient interface {
 	SetInteractionLevel(context.Context, *connect.Request[v1.SetInteractionLevelRequest]) (*connect.Response[v1.SetInteractionLevelResponse], error)
 	SetRoleConfig(context.Context, *connect.Request[v1.SetRoleConfigRequest]) (*connect.Response[v1.SetRoleConfigResponse], error)
 	SetThinking(context.Context, *connect.Request[v1.SetThinkingRequest]) (*connect.Response[v1.SetThinkingResponse], error)
+	// Model backends (spec §18.2): add/edit/remove a logical model backend at
+	// runtime; optionally persisted to ycc.toml.
+	UpsertModel(context.Context, *connect.Request[v1.UpsertModelRequest]) (*connect.Response[v1.UpsertModelResponse], error)
+	RemoveModel(context.Context, *connect.Request[v1.RemoveModelRequest]) (*connect.Response[v1.RemoveModelResponse], error)
+	GetModelConfig(context.Context, *connect.Request[v1.GetModelConfigRequest]) (*connect.Response[v1.GetModelConfigResponse], error)
 	// Backlog browser (spec §18.5): read-only access to the durable backlog.
 	ListBacklog(context.Context, *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error)
 	GetTask(context.Context, *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error)
@@ -226,6 +240,24 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("SetThinking")),
 			connect.WithClientOptions(opts...),
 		),
+		upsertModel: connect.NewClient[v1.UpsertModelRequest, v1.UpsertModelResponse](
+			httpClient,
+			baseURL+SessionServiceUpsertModelProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("UpsertModel")),
+			connect.WithClientOptions(opts...),
+		),
+		removeModel: connect.NewClient[v1.RemoveModelRequest, v1.RemoveModelResponse](
+			httpClient,
+			baseURL+SessionServiceRemoveModelProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("RemoveModel")),
+			connect.WithClientOptions(opts...),
+		),
+		getModelConfig: connect.NewClient[v1.GetModelConfigRequest, v1.GetModelConfigResponse](
+			httpClient,
+			baseURL+SessionServiceGetModelConfigProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("GetModelConfig")),
+			connect.WithClientOptions(opts...),
+		),
 		listBacklog: connect.NewClient[v1.ListBacklogRequest, v1.ListBacklogResponse](
 			httpClient,
 			baseURL+SessionServiceListBacklogProcedure,
@@ -270,6 +302,9 @@ type sessionServiceClient struct {
 	setInteractionLevel *connect.Client[v1.SetInteractionLevelRequest, v1.SetInteractionLevelResponse]
 	setRoleConfig       *connect.Client[v1.SetRoleConfigRequest, v1.SetRoleConfigResponse]
 	setThinking         *connect.Client[v1.SetThinkingRequest, v1.SetThinkingResponse]
+	upsertModel         *connect.Client[v1.UpsertModelRequest, v1.UpsertModelResponse]
+	removeModel         *connect.Client[v1.RemoveModelRequest, v1.RemoveModelResponse]
+	getModelConfig      *connect.Client[v1.GetModelConfigRequest, v1.GetModelConfigResponse]
 	listBacklog         *connect.Client[v1.ListBacklogRequest, v1.ListBacklogResponse]
 	getTask             *connect.Client[v1.GetTaskRequest, v1.GetTaskResponse]
 	captureBacklogItem  *connect.Client[v1.CaptureBacklogItemRequest, v1.CaptureBacklogItemResponse]
@@ -351,6 +386,21 @@ func (c *sessionServiceClient) SetThinking(ctx context.Context, req *connect.Req
 	return c.setThinking.CallUnary(ctx, req)
 }
 
+// UpsertModel calls ycc.v1.SessionService.UpsertModel.
+func (c *sessionServiceClient) UpsertModel(ctx context.Context, req *connect.Request[v1.UpsertModelRequest]) (*connect.Response[v1.UpsertModelResponse], error) {
+	return c.upsertModel.CallUnary(ctx, req)
+}
+
+// RemoveModel calls ycc.v1.SessionService.RemoveModel.
+func (c *sessionServiceClient) RemoveModel(ctx context.Context, req *connect.Request[v1.RemoveModelRequest]) (*connect.Response[v1.RemoveModelResponse], error) {
+	return c.removeModel.CallUnary(ctx, req)
+}
+
+// GetModelConfig calls ycc.v1.SessionService.GetModelConfig.
+func (c *sessionServiceClient) GetModelConfig(ctx context.Context, req *connect.Request[v1.GetModelConfigRequest]) (*connect.Response[v1.GetModelConfigResponse], error) {
+	return c.getModelConfig.CallUnary(ctx, req)
+}
+
 // ListBacklog calls ycc.v1.SessionService.ListBacklog.
 func (c *sessionServiceClient) ListBacklog(ctx context.Context, req *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error) {
 	return c.listBacklog.CallUnary(ctx, req)
@@ -394,6 +444,11 @@ type SessionServiceHandler interface {
 	SetInteractionLevel(context.Context, *connect.Request[v1.SetInteractionLevelRequest]) (*connect.Response[v1.SetInteractionLevelResponse], error)
 	SetRoleConfig(context.Context, *connect.Request[v1.SetRoleConfigRequest]) (*connect.Response[v1.SetRoleConfigResponse], error)
 	SetThinking(context.Context, *connect.Request[v1.SetThinkingRequest]) (*connect.Response[v1.SetThinkingResponse], error)
+	// Model backends (spec §18.2): add/edit/remove a logical model backend at
+	// runtime; optionally persisted to ycc.toml.
+	UpsertModel(context.Context, *connect.Request[v1.UpsertModelRequest]) (*connect.Response[v1.UpsertModelResponse], error)
+	RemoveModel(context.Context, *connect.Request[v1.RemoveModelRequest]) (*connect.Response[v1.RemoveModelResponse], error)
+	GetModelConfig(context.Context, *connect.Request[v1.GetModelConfigRequest]) (*connect.Response[v1.GetModelConfigResponse], error)
 	// Backlog browser (spec §18.5): read-only access to the durable backlog.
 	ListBacklog(context.Context, *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error)
 	GetTask(context.Context, *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error)
@@ -504,6 +559,24 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("SetThinking")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceUpsertModelHandler := connect.NewUnaryHandler(
+		SessionServiceUpsertModelProcedure,
+		svc.UpsertModel,
+		connect.WithSchema(sessionServiceMethods.ByName("UpsertModel")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceRemoveModelHandler := connect.NewUnaryHandler(
+		SessionServiceRemoveModelProcedure,
+		svc.RemoveModel,
+		connect.WithSchema(sessionServiceMethods.ByName("RemoveModel")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceGetModelConfigHandler := connect.NewUnaryHandler(
+		SessionServiceGetModelConfigProcedure,
+		svc.GetModelConfig,
+		connect.WithSchema(sessionServiceMethods.ByName("GetModelConfig")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sessionServiceListBacklogHandler := connect.NewUnaryHandler(
 		SessionServiceListBacklogProcedure,
 		svc.ListBacklog,
@@ -560,6 +633,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceSetRoleConfigHandler.ServeHTTP(w, r)
 		case SessionServiceSetThinkingProcedure:
 			sessionServiceSetThinkingHandler.ServeHTTP(w, r)
+		case SessionServiceUpsertModelProcedure:
+			sessionServiceUpsertModelHandler.ServeHTTP(w, r)
+		case SessionServiceRemoveModelProcedure:
+			sessionServiceRemoveModelHandler.ServeHTTP(w, r)
+		case SessionServiceGetModelConfigProcedure:
+			sessionServiceGetModelConfigHandler.ServeHTTP(w, r)
 		case SessionServiceListBacklogProcedure:
 			sessionServiceListBacklogHandler.ServeHTTP(w, r)
 		case SessionServiceGetTaskProcedure:
@@ -635,6 +714,18 @@ func (UnimplementedSessionServiceHandler) SetRoleConfig(context.Context, *connec
 
 func (UnimplementedSessionServiceHandler) SetThinking(context.Context, *connect.Request[v1.SetThinkingRequest]) (*connect.Response[v1.SetThinkingResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.SetThinking is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) UpsertModel(context.Context, *connect.Request[v1.UpsertModelRequest]) (*connect.Response[v1.UpsertModelResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.UpsertModel is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) RemoveModel(context.Context, *connect.Request[v1.RemoveModelRequest]) (*connect.Response[v1.RemoveModelResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.RemoveModel is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) GetModelConfig(context.Context, *connect.Request[v1.GetModelConfigRequest]) (*connect.Response[v1.GetModelConfigResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetModelConfig is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) ListBacklog(context.Context, *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error) {

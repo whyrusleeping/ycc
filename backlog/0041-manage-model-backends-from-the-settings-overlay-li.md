@@ -1,7 +1,7 @@
 ---
 id: "0041"
 title: Manage model backends from the settings overlay (live add/edit/remove, persisted)
-status: todo
+status: in_progress
 priority: 2
 created: "2026-06-27"
 updated: "2026-06-27"
@@ -70,4 +70,10 @@ See spec §18.2 (Model backends — add/edit/remove), §12 (RPCs), §13.
 
 ## Work log
 - 2026-06-27 plan: Make the daemon config mutable and expose backend CRUD to the TUI.  1. config/registry: make `config.Registry` hold a mutable `*Config` under a mutex; add    `UpsertModel(config.Model)`, `RemoveModel(
+…[truncated]
+- 2026-06-27 plan: Scope: backend foundation for managing model backends at runtime. The TUI form is split out to task 0044 (depends on this). Deliver mutable registry + RPCs + persistence + tests.  1. config/registry (
+…[truncated]
+- 2026-06-27 implementer report: Implemented the runtime model-backend management foundation for task 0041 (TUI form excluded — that is task 0044, per the coordinator's plan).  ## Changes  **internal/config/config.go** - Added `Mod
+…[truncated]
+- 2026-06-27 review (claude): accept — The change implements the runtime model-backend management foundation for task 0041, which the coordinator explicitly re-scoped (TUI form split out into the new, committed task 0044). The delivered wo
 …[truncated]

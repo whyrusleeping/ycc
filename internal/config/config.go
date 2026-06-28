@@ -6,10 +6,13 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
+	"sync"
 
 	"github.com/pelletier/go-toml/v2"
 	"github.com/whyrusleeping/gollama"
@@ -97,6 +100,26 @@ func (p Pricing) Cost(u event.Usage) (cost float64, priced bool) {
 		float64(u.CacheRead)*p.CacheRead +
 		float64(u.CacheWrite)*p.CacheWrite) / 1e6
 	return cost, true
+}
+
+// Validate checks a single model record for the minimum fields Build needs. It
+// is used by the runtime CRUD path (Registry.UpsertModel) before a model is
+// admitted to the live config. name is the logical model name the record is
+// stored under; an empty name, empty backend model id, or unsupported backend
+// are rejected (the accepted backends mirror Build's switch).
+func (m Model) Validate(name string) error {
+	if name == "" {
+		return errors.New("model name is required")
+	}
+	if m.Model == "" {
+		return fmt.Errorf("model %q: model id is required", name)
+	}
+	switch m.Backend {
+	case "anthropic", "openai", "openai-compatible", "glm", "ollama":
+	default:
+		return fmt.Errorf("model %q: unsupported backend %q", name, m.Backend)
+	}
+	return nil
 }
 
 // Thinking carries the resolved per-model reasoning settings the engine plumbs
@@ -277,30 +300,62 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// Registry builds backends from a Config.
+// Registry builds backends from a Config. The config is mutable at runtime
+// (UpsertModel/RemoveModel) so the settings overlay can add/edit/remove model
+// backends without a daemon restart: because Build reads cfg.Models live on
+// every call and the same *Registry is shared by every session, a mutation
+// takes effect on the next Build/turn/spawn. All access to cfg is guarded by mu.
 type Registry struct {
-	cfg *Config
+	mu   sync.RWMutex
+	cfg  *Config
+	path string // discovered config file path for persist=true (empty => cannot persist)
 }
 
 // NewRegistry returns a Registry over cfg.
 func NewRegistry(cfg *Config) *Registry { return &Registry{cfg: cfg} }
 
+// SetPath records the config file path used when a mutation is persisted
+// (persist=true). It is set once at startup; an empty path disables persistence.
+func (r *Registry) SetPath(p string) { r.path = p }
+
 // MaxTokens returns the configured per-turn token cap (0 if unset).
-func (r *Registry) MaxTokens() int { return r.cfg.MaxTokens }
+func (r *Registry) MaxTokens() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.cfg.MaxTokens
+}
 
 // MaxTurns returns the configured per-Run tool-call turn cap (0 if unset, in
 // which case the engine applies its high default backstop).
-func (r *Registry) MaxTurns() int { return r.cfg.MaxTurns }
+func (r *Registry) MaxTurns() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.cfg.MaxTurns
+}
 
 // CoordinatorName / ImplementerName / ReviewerNames expose the role assignments.
-func (r *Registry) CoordinatorName() string { return r.cfg.Roles.Coordinator }
-func (r *Registry) ImplementerName() string { return r.cfg.Roles.Implementer }
-func (r *Registry) ReviewerNames() []string { return r.cfg.Roles.Reviewers }
+func (r *Registry) CoordinatorName() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.cfg.Roles.Coordinator
+}
+func (r *Registry) ImplementerName() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.cfg.Roles.Implementer
+}
+func (r *Registry) ReviewerNames() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return append([]string(nil), r.cfg.Roles.Reviewers...)
+}
 
 // RoleThinking returns the configured per-role thinking level for a role
 // ("coordinator"|"implementer"|"reviewers"). ok is false when the role has no
 // per-role override configured (so callers fall back to per-model config).
 func (r *Registry) RoleThinking(role string) (string, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	var lvl string
 	switch role {
 	case RoleCoordinator:
@@ -323,10 +378,104 @@ type ModelInfo struct {
 	Model   string
 }
 
+// GetModel returns a copy of the model record stored under name (for editing in
+// the settings overlay), and whether it is configured.
+func (r *Registry) GetModel(name string) (Model, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	m, ok := r.cfg.Models[name]
+	return m, ok
+}
+
+// UpsertModel adds or replaces the logical model named name with m, taking
+// effect on the next Build (no restart). The record is validated first. When
+// persist is true the whole config is written back to the discovered config
+// path via Save; if Save fails (or no path is set) the in-memory change is
+// reverted so the live config and the file never diverge.
+func (r *Registry) UpsertModel(name string, m Model, persist bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := m.Validate(name); err != nil {
+		return err
+	}
+	prev, prevOK := r.cfg.Models[name]
+	if r.cfg.Models == nil {
+		r.cfg.Models = make(map[string]Model)
+	}
+	r.cfg.Models[name] = m
+	if persist {
+		if err := r.persistLocked(); err != nil {
+			r.restoreLocked(name, prev, prevOK)
+			return err
+		}
+	}
+	return nil
+}
+
+// RemoveModel deletes the logical model named name, taking effect on the next
+// Build (no restart). It is rejected if a role still references the model (so a
+// session can never point at a missing backend). When persist is true the
+// change is written back to the config file, reverting on failure.
+func (r *Registry) RemoveModel(name string, persist bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	prev, ok := r.cfg.Models[name]
+	if !ok {
+		return fmt.Errorf("unknown model %q", name)
+	}
+	var refs []string
+	if r.cfg.Roles.Coordinator == name {
+		refs = append(refs, RoleCoordinator)
+	}
+	if r.cfg.Roles.Implementer == name {
+		refs = append(refs, RoleImplementer)
+	}
+	for _, rev := range r.cfg.Roles.Reviewers {
+		if rev == name {
+			refs = append(refs, RoleReviewers)
+			break
+		}
+	}
+	if len(refs) > 0 {
+		return fmt.Errorf("cannot remove model %q: still referenced by role(s) %s", name, strings.Join(refs, ", "))
+	}
+	delete(r.cfg.Models, name)
+	if persist {
+		if err := r.persistLocked(); err != nil {
+			r.cfg.Models[name] = prev
+			return err
+		}
+	}
+	return nil
+}
+
+// persistLocked writes the current config to r.path. Caller must hold r.mu.
+func (r *Registry) persistLocked() error {
+	if r.path == "" {
+		return errors.New("config: no config file path to persist to")
+	}
+	if err := Save(r.path, r.cfg); err != nil {
+		return fmt.Errorf("persist config: %w", err)
+	}
+	return nil
+}
+
+// restoreLocked reverts an upsert: restore the prior record or delete the entry
+// if there was none. Caller must hold r.mu.
+func (r *Registry) restoreLocked(name string, prev Model, prevOK bool) {
+	if prevOK {
+		r.cfg.Models[name] = prev
+	} else {
+		delete(r.cfg.Models, name)
+	}
+}
+
 // ThinkingFor returns the resolved reasoning settings for a logical model name,
 // applying defaults for unset fields. Unknown names return the package defaults
 // so callers always get reasoning-on behaviour.
 func (r *Registry) ThinkingFor(name string) Thinking {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	m, ok := r.cfg.Models[name]
 	if !ok {
 		return Model{}.ResolveThinking()
@@ -338,6 +487,8 @@ func (r *Registry) ThinkingFor(name string) Thinking {
 // An unknown name returns the zero (unconfigured) Pricing, so cost is reported
 // as unknown rather than invented.
 func (r *Registry) PricingFor(name string) Pricing {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	m, ok := r.cfg.Models[name]
 	if !ok {
 		return Pricing{}
@@ -347,6 +498,8 @@ func (r *Registry) PricingFor(name string) Pricing {
 
 // Has reports whether a logical model name is configured.
 func (r *Registry) Has(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	_, ok := r.cfg.Models[name]
 	return ok
 }
@@ -355,6 +508,8 @@ func (r *Registry) Has(name string) bool {
 // a configured model name, or "" if unknown. Used to label per-turn usage events
 // (spec §20.1) with the backend that produced them.
 func (r *Registry) BackendFor(name string) string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	if m, ok := r.cfg.Models[name]; ok {
 		return m.Backend
 	}
@@ -364,6 +519,8 @@ func (r *Registry) BackendFor(name string) string {
 // Models returns the configured logical models sorted by name so the settings
 // overlay can populate the per-role pickers (spec §13, §18.2).
 func (r *Registry) Models() []ModelInfo {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	names := make([]string, 0, len(r.cfg.Models))
 	for name := range r.cfg.Models {
 		names = append(names, name)
@@ -380,6 +537,8 @@ func (r *Registry) Models() []ModelInfo {
 // Build constructs a fresh backend client and returns it with its model id. A new
 // client per call avoids shared-state races across concurrent subagents.
 func (r *Registry) Build(name string) (engine.Turner, string, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	m, ok := r.cfg.Models[name]
 	if !ok {
 		return nil, "", fmt.Errorf("unknown model %q", name)

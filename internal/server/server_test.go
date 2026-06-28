@@ -139,3 +139,61 @@ func TestBacklogRPCs(t *testing.T) {
 		t.Fatalf("code = %v, want NotFound", got)
 	}
 }
+
+func TestModelBackendRPCs(t *testing.T) {
+	reg := config.NewRegistry(&config.Config{
+		Models: map[string]config.Model{"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"}},
+		Roles:  config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
+	})
+	srv := New(session.NewManager(reg, t.TempDir()))
+	ctx := context.Background()
+
+	// Add a new backend (live only).
+	_, err := srv.UpsertModel(ctx, connect.NewRequest(&v1.UpsertModelRequest{
+		Model: &v1.ModelConfig{
+			Name: "gpt", Backend: "openai", BaseUrl: "https://oai", Model: "gpt-4o", KeyEnv: "OPENAI_API_KEY",
+		},
+	}))
+	if err != nil {
+		t.Fatalf("UpsertModel: %v", err)
+	}
+
+	// It now appears in ListModels.
+	list, err := srv.ListModels(ctx, connect.NewRequest(&v1.ListModelsRequest{}))
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	var found bool
+	for _, m := range list.Msg.Models {
+		if m.Name == "gpt" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected gpt in ListModels after upsert")
+	}
+
+	// GetModelConfig round-trips the record, including key_env (a reference, not
+	// a secret value).
+	got, err := srv.GetModelConfig(ctx, connect.NewRequest(&v1.GetModelConfigRequest{Name: "gpt"}))
+	if err != nil {
+		t.Fatalf("GetModelConfig: %v", err)
+	}
+	mc := got.Msg.Model
+	if mc.Backend != "openai" || mc.Model != "gpt-4o" || mc.KeyEnv != "OPENAI_API_KEY" {
+		t.Fatalf("GetModelConfig = %+v", mc)
+	}
+
+	// Removing a role-referenced model is rejected.
+	if _, err := srv.RemoveModel(ctx, connect.NewRequest(&v1.RemoveModelRequest{Name: "a"})); err == nil {
+		t.Fatal("expected error removing role-referenced model")
+	}
+
+	// Removing the unreferenced model succeeds.
+	if _, err := srv.RemoveModel(ctx, connect.NewRequest(&v1.RemoveModelRequest{Name: "gpt"})); err != nil {
+		t.Fatalf("RemoveModel(gpt): %v", err)
+	}
+	if _, err := srv.GetModelConfig(ctx, connect.NewRequest(&v1.GetModelConfigRequest{Name: "gpt"})); err == nil {
+		t.Fatal("expected NotFound after removal")
+	}
+}

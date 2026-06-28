@@ -13,6 +13,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/docs"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/orchestrator"
@@ -190,6 +191,80 @@ func (s *Server) ListModels(_ context.Context, _ *connect.Request[v1.ListModelsR
 		models = append(models, &v1.ModelInfo{Name: m.Name, Backend: m.Backend, Model: m.Model})
 	}
 	return connect.NewResponse(&v1.ListModelsResponse{Models: models}), nil
+}
+
+// modelConfigToConfig translates a proto ModelConfig into a config.Model. Only
+// key_env references move through — never secret values.
+func modelConfigToConfig(mc *v1.ModelConfig) config.Model {
+	return config.Model{
+		Backend:         mc.Backend,
+		BaseURL:         mc.BaseUrl,
+		Model:           mc.Model,
+		KeyEnv:          mc.KeyEnv,
+		Thinking:        mc.Thinking,
+		Effort:          mc.Effort,
+		ThinkingDisplay: mc.ThinkingDisplay,
+		PriceInput:      mc.PriceInput,
+		PriceOutput:     mc.PriceOutput,
+		PriceCacheRead:  mc.PriceCacheRead,
+		PriceCacheWrite: mc.PriceCacheWrite,
+	}
+}
+
+// configToModelConfig translates a config.Model (under logical name) into a
+// proto ModelConfig for editing in the settings overlay.
+func configToModelConfig(name string, m config.Model) *v1.ModelConfig {
+	return &v1.ModelConfig{
+		Name:            name,
+		Backend:         m.Backend,
+		BaseUrl:         m.BaseURL,
+		Model:           m.Model,
+		KeyEnv:          m.KeyEnv,
+		Thinking:        m.Thinking,
+		Effort:          m.Effort,
+		ThinkingDisplay: m.ThinkingDisplay,
+		PriceInput:      m.PriceInput,
+		PriceOutput:     m.PriceOutput,
+		PriceCacheRead:  m.PriceCacheRead,
+		PriceCacheWrite: m.PriceCacheWrite,
+	}
+}
+
+// UpsertModel adds or replaces a logical model backend at runtime (spec §18.2).
+// The change takes effect on the next turn/spawn; persist also writes ycc.toml.
+func (s *Server) UpsertModel(_ context.Context, req *connect.Request[v1.UpsertModelRequest]) (*connect.Response[v1.UpsertModelResponse], error) {
+	mc := req.Msg.Model
+	if mc == nil || mc.Name == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("model name is required"))
+	}
+	if err := s.mgr.UpsertModel(mc.Name, modelConfigToConfig(mc), req.Msg.Persist); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	return connect.NewResponse(&v1.UpsertModelResponse{}), nil
+}
+
+// RemoveModel deletes a logical model backend (spec §18.2). It is rejected if a
+// role still references it; persist also writes ycc.toml.
+func (s *Server) RemoveModel(_ context.Context, req *connect.Request[v1.RemoveModelRequest]) (*connect.Response[v1.RemoveModelResponse], error) {
+	if req.Msg.Name == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("model name is required"))
+	}
+	if err := s.mgr.RemoveModel(req.Msg.Name, req.Msg.Persist); err != nil {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	return connect.NewResponse(&v1.RemoveModelResponse{}), nil
+}
+
+// GetModelConfig returns a model backend's full record for editing (spec §18.2).
+func (s *Server) GetModelConfig(_ context.Context, req *connect.Request[v1.GetModelConfigRequest]) (*connect.Response[v1.GetModelConfigResponse], error) {
+	if req.Msg.Name == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("model name is required"))
+	}
+	m, ok := s.mgr.GetModel(req.Msg.Name)
+	if !ok {
+		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("unknown model %q", req.Msg.Name))
+	}
+	return connect.NewResponse(&v1.GetModelConfigResponse{Model: configToModelConfig(req.Msg.Name, m)}), nil
 }
 
 // SetInteractionLevel changes a session's interaction level mid-flight (spec §11).

@@ -10,6 +10,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -60,7 +62,9 @@ func buildHandler(o Options) (http.Handler, error) {
 		log.Printf("using single Anthropic backend (model=%s)", o.Model)
 	}
 
-	mgr := session.NewManager(config.NewRegistry(cfg), o.Workspace)
+	reg := config.NewRegistry(cfg)
+	reg.SetPath(persistPath(o))
+	mgr := session.NewManager(reg, o.Workspace)
 	// A persistent daemon backs its project registry with durable state so the
 	// project list survives restarts (spec §3.1). The one-shot in-process path
 	// keeps the default in-memory registry (cwd is the single implicit project).
@@ -160,6 +164,22 @@ func (p *InProcess) Close() error {
 		return nil
 	}
 	return p.httpSrv.Close()
+}
+
+// persistPath returns the config file path a runtime config mutation should be
+// written back to when persist=true (spec §18.2, §19.1). It prefers the
+// explicitly loaded config path; otherwise it falls back to the default
+// discovered location ($XDG_CONFIG_HOME/ycc/ycc.toml) so that even the
+// no-config DefaultAnthropic startup can persist edits. An empty return value
+// (no user config dir) disables persistence.
+func persistPath(o Options) string {
+	if o.ConfigPath != "" {
+		return o.ConfigPath
+	}
+	if dir, err := os.UserConfigDir(); err == nil {
+		return filepath.Join(dir, "ycc", "ycc.toml")
+	}
+	return ""
 }
 
 func isLoopback(addr string) bool {

@@ -294,3 +294,144 @@ func TestSaveRejectsInvalidConfigWithoutWriting(t *testing.T) {
 		t.Fatalf("Save wrote a file for an invalid config (err=%v)", err)
 	}
 }
+
+// baseRegistry returns a Registry with a single "claude" model referenced by
+// every role, the common starting point for the runtime-mutation tests.
+func baseRegistry() *Registry {
+	return NewRegistry(&Config{
+		Models: map[string]Model{
+			"claude": {Backend: "anthropic", BaseURL: "https://api", Model: "claude-x", KeyEnv: "ANTHROPIC_API_KEY"},
+		},
+		Roles: Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"}},
+	})
+}
+
+func TestUpsertModelLiveAddAndEdit(t *testing.T) {
+	reg := baseRegistry()
+
+	// Add a brand-new model (live only).
+	gpt := Model{Backend: "openai", BaseURL: "https://oai", Model: "gpt-4o", KeyEnv: "OPENAI_API_KEY"}
+	if err := reg.UpsertModel("gpt", gpt, false); err != nil {
+		t.Fatalf("UpsertModel(gpt): %v", err)
+	}
+	if !reg.Has("gpt") {
+		t.Fatal("expected Has(gpt) after upsert")
+	}
+	if _, id, err := reg.Build("gpt"); err != nil || id != "gpt-4o" {
+		t.Fatalf("Build(gpt) = %q,%v, want gpt-4o,nil", id, err)
+	}
+	if got, ok := reg.GetModel("gpt"); !ok || got.Backend != "openai" || got.KeyEnv != "OPENAI_API_KEY" {
+		t.Fatalf("GetModel(gpt) = %+v,%v", got, ok)
+	}
+
+	// Editing an existing model's id is reflected by the next Build.
+	gpt.Model = "gpt-4o-mini"
+	if err := reg.UpsertModel("gpt", gpt, false); err != nil {
+		t.Fatalf("UpsertModel(gpt) edit: %v", err)
+	}
+	if _, id, _ := reg.Build("gpt"); id != "gpt-4o-mini" {
+		t.Fatalf("Build(gpt) after edit = %q, want gpt-4o-mini", id)
+	}
+}
+
+func TestUpsertModelValidation(t *testing.T) {
+	reg := baseRegistry()
+	if err := reg.UpsertModel("", Model{Backend: "openai", Model: "m"}, false); err == nil {
+		t.Fatal("expected error for empty name")
+	}
+	if err := reg.UpsertModel("x", Model{Backend: "openai", Model: ""}, false); err == nil {
+		t.Fatal("expected error for empty model id")
+	}
+	if err := reg.UpsertModel("x", Model{Backend: "nope", Model: "m"}, false); err == nil {
+		t.Fatal("expected error for unsupported backend")
+	}
+	if reg.Has("x") {
+		t.Fatal("invalid model must not be admitted")
+	}
+}
+
+func TestRemoveModel(t *testing.T) {
+	reg := baseRegistry()
+
+	// A role-referenced model cannot be removed; the error names the role and
+	// the model survives.
+	err := reg.RemoveModel("claude", false)
+	if err == nil {
+		t.Fatal("expected error removing role-referenced model")
+	}
+	if !strings.Contains(err.Error(), RoleCoordinator) {
+		t.Fatalf("error %q should mention referencing role", err)
+	}
+	if !reg.Has("claude") {
+		t.Fatal("claude must still be present after rejected removal")
+	}
+
+	// An unreferenced model removes cleanly.
+	if err := reg.UpsertModel("gpt", Model{Backend: "openai", Model: "gpt-4o"}, false); err != nil {
+		t.Fatalf("UpsertModel(gpt): %v", err)
+	}
+	if err := reg.RemoveModel("gpt", false); err != nil {
+		t.Fatalf("RemoveModel(gpt): %v", err)
+	}
+	if reg.Has("gpt") {
+		t.Fatal("gpt should be gone after removal")
+	}
+
+	// Removing a missing model errors.
+	if err := reg.RemoveModel("nope", false); err == nil {
+		t.Fatal("expected error removing unknown model")
+	}
+}
+
+func TestUpsertRemovePersist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ycc.toml")
+	reg := baseRegistry()
+	reg.SetPath(path)
+
+	// Persisted upsert: file written and reloads with the new model.
+	if err := reg.UpsertModel("gpt", Model{Backend: "openai", BaseURL: "https://oai", Model: "gpt-4o", KeyEnv: "OPENAI_API_KEY"}, true); err != nil {
+		t.Fatalf("UpsertModel persist: %v", err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load after persist: %v", err)
+	}
+	m, ok := loaded.Models["gpt"]
+	if !ok || m.Model != "gpt-4o" || m.KeyEnv != "OPENAI_API_KEY" {
+		t.Fatalf("reloaded gpt = %+v,%v", m, ok)
+	}
+
+	// Persisted remove: model gone after reload.
+	if err := reg.RemoveModel("gpt", true); err != nil {
+		t.Fatalf("RemoveModel persist: %v", err)
+	}
+	loaded2, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load after remove: %v", err)
+	}
+	if _, ok := loaded2.Models["gpt"]; ok {
+		t.Fatal("gpt should be gone from persisted config after removal")
+	}
+}
+
+func TestPersistWithoutPathErrors(t *testing.T) {
+	reg := baseRegistry() // no SetPath
+	if err := reg.UpsertModel("gpt", Model{Backend: "openai", Model: "gpt-4o"}, true); err == nil {
+		t.Fatal("expected error persisting without a config path")
+	}
+	if reg.Has("gpt") {
+		t.Fatal("failed persist must revert the live change")
+	}
+}
+
+func TestPersistFalseDoesNotWriteFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ycc.toml")
+	reg := baseRegistry()
+	reg.SetPath(path)
+	if err := reg.UpsertModel("gpt", Model{Backend: "openai", Model: "gpt-4o"}, false); err != nil {
+		t.Fatalf("UpsertModel: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("persist=false must not write the config file (err=%v)", err)
+	}
+}

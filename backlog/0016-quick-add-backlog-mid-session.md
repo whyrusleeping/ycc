@@ -1,7 +1,7 @@
 ---
 id: "0016"
 title: Quick-add backlog items mid-session (TUI capture overlay)
-status: in_progress
+status: done
 priority: 3
 created: "2026-06-26"
 updated: "2026-06-27"
@@ -48,3 +48,6 @@ Design notes:
 …[truncated]
 - 2026-06-27 review (claude): accept — The change fully implements task 0016. A new CaptureBacklogItem RPC runs a lightweight, off-stream capture agent (RunCapture in internal/orchestrator/capture.go) scoped to a project, using a trimmed r
 …[truncated]
+- 2026-06-27 decision: accept — commit ee89417: Quick-add backlog items mid-session via TUI capture overlay (§18.2, task 0016)  Add a ctrl+n capture overlay that turns a natural-language description into a structured backlog task without disturbin
+…[truncated]
+- 2026-06-27 usage: 64,246 tok (in 266, out 63,980, cache_r 10,011,071, cache_w 388,173) · cost n/a (unpriced)

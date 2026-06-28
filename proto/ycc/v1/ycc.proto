@@ -112,6 +112,45 @@ message ModelInfo {
 }
 message ListModelsResponse { repeated ModelInfo models = 1; }
 
+// ModelConfig mirrors a [models.X] block (spec §13, §18.2) for the settings
+// overlay's add/edit/remove of model backends. Keys are referenced via key_env
+// only — no secret values cross the wire. The pricing fields are optional so an
+// unset price is distinguishable from an explicit 0.0.
+message ModelConfig {
+  string name = 1;             // logical name (e.g. "claude", "gpt")
+  string backend = 2;          // anthropic | openai | openai-compatible | glm | ollama
+  string base_url = 3;
+  string model = 4;            // backend model id
+  string key_env = 5;          // env var holding the API key (never the key itself)
+  string thinking = 6;         // adaptive | off | ""
+  string effort = 7;           // low | medium | high | xhigh | max
+  string thinking_display = 8; // summarized | omitted
+  optional double price_input = 9;
+  optional double price_output = 10;
+  optional double price_cache_read = 11;
+  optional double price_cache_write = 12;
+}
+
+// UpsertModel adds or replaces a logical model backend (spec §18.2). The change
+// takes effect on the next turn/spawn; persist=true also writes ycc.toml.
+message UpsertModelRequest {
+  ModelConfig model = 1;
+  bool persist = 2;
+}
+message UpsertModelResponse {}
+
+// RemoveModel deletes a logical model backend. Rejected if a role still
+// references it. persist=true also writes ycc.toml.
+message RemoveModelRequest {
+  string name = 1;
+  bool persist = 2;
+}
+message RemoveModelResponse {}
+
+// GetModelConfig returns a model backend's full record for editing.
+message GetModelConfigRequest { string name = 1; }
+message GetModelConfigResponse { ModelConfig model = 1; }
+
 // SetInteractionLevel changes a session's interaction level mid-flight (spec §11,
 // §18.2). It takes effect at the next gate and is recorded in the event log.
 message SetInteractionLevelRequest {
@@ -251,6 +290,12 @@ service SessionService {
   rpc SetInteractionLevel(SetInteractionLevelRequest) returns (SetInteractionLevelResponse);
   rpc SetRoleConfig(SetRoleConfigRequest) returns (SetRoleConfigResponse);
   rpc SetThinking(SetThinkingRequest) returns (SetThinkingResponse);
+
+  // Model backends (spec §18.2): add/edit/remove a logical model backend at
+  // runtime; optionally persisted to ycc.toml.
+  rpc UpsertModel(UpsertModelRequest) returns (UpsertModelResponse);
+  rpc RemoveModel(RemoveModelRequest) returns (RemoveModelResponse);
+  rpc GetModelConfig(GetModelConfigRequest) returns (GetModelConfigResponse);
 
   // Backlog browser (spec §18.5): read-only access to the durable backlog.
   rpc ListBacklog(ListBacklogRequest) returns (ListBacklogResponse);
