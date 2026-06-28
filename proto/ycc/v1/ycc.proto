@@ -107,6 +107,24 @@ message SessionInfo {
 }
 message ListSessionsResponse { repeated SessionInfo sessions = 1; }
 
+message ListSessionHistoryRequest {
+  string project = 1; // optional registered project; empty => daemon default workspace
+}
+message SessionSummary {
+  string session_id = 1;
+  string mode = 2;
+  string status = 3;        // running | idle | error | paused | stopped
+  string workspace = 4;
+  string title = 5;         // derived from the first user prompt
+  string started_at = 6;    // RFC3339
+  string last_activity = 7; // RFC3339
+  repeated string focus_tasks = 8;
+  int64 turns = 9;
+  int64 tool_calls = 10;
+  bool live = 11;
+}
+message ListSessionHistoryResponse { repeated SessionSummary sessions = 1; }
+
 // ListModels enumerates the configured logical models (spec §13) so the settings
 // overlay can populate the per-role pickers.
 message ListModelsRequest {}
@@ -274,6 +292,9 @@ service SessionService {
   rpc ListModes(ListModesRequest) returns (ListModesResponse);
   rpc StartSession(StartSessionRequest) returns (StartSessionResponse);
   rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
+  // ListSessionHistory enumerates all sessions for a project (live + persisted
+  // on-disk logs), most-recent first (spec §18.6). ListSessions stays live-only.
+  rpc ListSessionHistory(ListSessionHistoryRequest) returns (ListSessionHistoryResponse);
   rpc Subscribe(SubscribeRequest) returns (stream Event);
   rpc SendInput(SendInputRequest) returns (SendInputResponse);
   rpc AnswerQuestion(AnswerQuestionRequest) returns (AnswerQuestionResponse);

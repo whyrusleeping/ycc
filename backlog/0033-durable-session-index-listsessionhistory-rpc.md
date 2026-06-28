@@ -1,10 +1,10 @@
 ---
 id: "0033"
 title: Durable session index + ListSessionHistory RPC
-status: todo
+status: in_progress
 priority: 3
 created: "2026-06-27"
-updated: "2026-06-27"
+updated: "2026-06-28"
 depends_on: []
 spec_refs: []
 ---
@@ -38,3 +38,10 @@ a daemon restart or GC. This task adds read-only enumeration of all sessions for
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-28 plan: Add durable session-index enumeration (live + persisted) and a ListSessionHistory RPC.  1. internal/session/history.go (new):    - `SessionSummary` struct: ID, Mode, Status (event.Status), Workspace, 
+…[truncated]
+- 2026-06-28 implementer report: Implemented Task 0033: durable session index + ListSessionHistory RPC.  Changes: - internal/session/history.go (new): `SessionSummary` struct; `scanSessionHistory(workspace)` globs `<ws>/.ycc/sessions
+…[truncated]
+- 2026-06-28 review tier: single-opus — reviewers: Claude
+- 2026-06-28 review (Claude): accept — The change fully satisfies Task 0033. A new `internal/session/history.go` provides `SessionSummary` and `scanSessionHistory`, globbing `<ws>/.ycc/sessions/*/events.jsonl`, reducing each log via `event
+…[truncated]

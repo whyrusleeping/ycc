@@ -1,7 +1,7 @@
 ---
 id: "0009"
 title: Session lifecycle — Interrupt RPC and stop/GC
-status: in_progress
+status: done
 priority: 3
 created: "2026-06-26"
 updated: "2026-06-28"
@@ -35,3 +35,6 @@ MAJOR #2.)
 - 2026-06-28 review tier: single-opus — reviewers: Claude
 - 2026-06-28 review (Claude): accept — The change adds a distinct StopSession RPC (proto + regenerated connect/pb code) that hard-terminates a session, correctly kept separate from the existing graceful Interrupt. Session.Stop() is now ide
 …[truncated]
+- 2026-06-28 decision: accept — commit c043d0c: Add StopSession RPC to hard-terminate sessions  Adds a distinct StopSession RPC (separate from the graceful Interrupt/steer) that cancels the agent loop, records a terminal session_stopped event (new 
+…[truncated]
+- 2026-06-28 usage: 23,826 tok (in 122, out 23,704, cache_r 3,298,197, cache_w 100,309) · cost n/a (unpriced)

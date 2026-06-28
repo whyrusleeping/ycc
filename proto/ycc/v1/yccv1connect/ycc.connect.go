@@ -42,6 +42,9 @@ const (
 	// SessionServiceListSessionsProcedure is the fully-qualified name of the SessionService's
 	// ListSessions RPC.
 	SessionServiceListSessionsProcedure = "/ycc.v1.SessionService/ListSessions"
+	// SessionServiceListSessionHistoryProcedure is the fully-qualified name of the SessionService's
+	// ListSessionHistory RPC.
+	SessionServiceListSessionHistoryProcedure = "/ycc.v1.SessionService/ListSessionHistory"
 	// SessionServiceSubscribeProcedure is the fully-qualified name of the SessionService's Subscribe
 	// RPC.
 	SessionServiceSubscribeProcedure = "/ycc.v1.SessionService/Subscribe"
@@ -106,6 +109,9 @@ type SessionServiceClient interface {
 	ListModes(context.Context, *connect.Request[v1.ListModesRequest]) (*connect.Response[v1.ListModesResponse], error)
 	StartSession(context.Context, *connect.Request[v1.StartSessionRequest]) (*connect.Response[v1.StartSessionResponse], error)
 	ListSessions(context.Context, *connect.Request[v1.ListSessionsRequest]) (*connect.Response[v1.ListSessionsResponse], error)
+	// ListSessionHistory enumerates all sessions for a project (live + persisted
+	// on-disk logs), most-recent first (spec §18.6). ListSessions stays live-only.
+	ListSessionHistory(context.Context, *connect.Request[v1.ListSessionHistoryRequest]) (*connect.Response[v1.ListSessionHistoryResponse], error)
 	Subscribe(context.Context, *connect.Request[v1.SubscribeRequest]) (*connect.ServerStreamForClient[v1.Event], error)
 	SendInput(context.Context, *connect.Request[v1.SendInputRequest]) (*connect.Response[v1.SendInputResponse], error)
 	AnswerQuestion(context.Context, *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error)
@@ -173,6 +179,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			httpClient,
 			baseURL+SessionServiceListSessionsProcedure,
 			connect.WithSchema(sessionServiceMethods.ByName("ListSessions")),
+			connect.WithClientOptions(opts...),
+		),
+		listSessionHistory: connect.NewClient[v1.ListSessionHistoryRequest, v1.ListSessionHistoryResponse](
+			httpClient,
+			baseURL+SessionServiceListSessionHistoryProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("ListSessionHistory")),
 			connect.WithClientOptions(opts...),
 		),
 		subscribe: connect.NewClient[v1.SubscribeRequest, v1.Event](
@@ -303,6 +315,7 @@ type sessionServiceClient struct {
 	listModes           *connect.Client[v1.ListModesRequest, v1.ListModesResponse]
 	startSession        *connect.Client[v1.StartSessionRequest, v1.StartSessionResponse]
 	listSessions        *connect.Client[v1.ListSessionsRequest, v1.ListSessionsResponse]
+	listSessionHistory  *connect.Client[v1.ListSessionHistoryRequest, v1.ListSessionHistoryResponse]
 	subscribe           *connect.Client[v1.SubscribeRequest, v1.Event]
 	sendInput           *connect.Client[v1.SendInputRequest, v1.SendInputResponse]
 	answerQuestion      *connect.Client[v1.AnswerQuestionRequest, v1.AnswerQuestionResponse]
@@ -338,6 +351,11 @@ func (c *sessionServiceClient) StartSession(ctx context.Context, req *connect.Re
 // ListSessions calls ycc.v1.SessionService.ListSessions.
 func (c *sessionServiceClient) ListSessions(ctx context.Context, req *connect.Request[v1.ListSessionsRequest]) (*connect.Response[v1.ListSessionsResponse], error) {
 	return c.listSessions.CallUnary(ctx, req)
+}
+
+// ListSessionHistory calls ycc.v1.SessionService.ListSessionHistory.
+func (c *sessionServiceClient) ListSessionHistory(ctx context.Context, req *connect.Request[v1.ListSessionHistoryRequest]) (*connect.Response[v1.ListSessionHistoryResponse], error) {
+	return c.listSessionHistory.CallUnary(ctx, req)
 }
 
 // Subscribe calls ycc.v1.SessionService.Subscribe.
@@ -445,6 +463,9 @@ type SessionServiceHandler interface {
 	ListModes(context.Context, *connect.Request[v1.ListModesRequest]) (*connect.Response[v1.ListModesResponse], error)
 	StartSession(context.Context, *connect.Request[v1.StartSessionRequest]) (*connect.Response[v1.StartSessionResponse], error)
 	ListSessions(context.Context, *connect.Request[v1.ListSessionsRequest]) (*connect.Response[v1.ListSessionsResponse], error)
+	// ListSessionHistory enumerates all sessions for a project (live + persisted
+	// on-disk logs), most-recent first (spec §18.6). ListSessions stays live-only.
+	ListSessionHistory(context.Context, *connect.Request[v1.ListSessionHistoryRequest]) (*connect.Response[v1.ListSessionHistoryResponse], error)
 	Subscribe(context.Context, *connect.Request[v1.SubscribeRequest], *connect.ServerStream[v1.Event]) error
 	SendInput(context.Context, *connect.Request[v1.SendInputRequest]) (*connect.Response[v1.SendInputResponse], error)
 	AnswerQuestion(context.Context, *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error)
@@ -508,6 +529,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		SessionServiceListSessionsProcedure,
 		svc.ListSessions,
 		connect.WithSchema(sessionServiceMethods.ByName("ListSessions")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceListSessionHistoryHandler := connect.NewUnaryHandler(
+		SessionServiceListSessionHistoryProcedure,
+		svc.ListSessionHistory,
+		connect.WithSchema(sessionServiceMethods.ByName("ListSessionHistory")),
 		connect.WithHandlerOptions(opts...),
 	)
 	sessionServiceSubscribeHandler := connect.NewServerStreamHandler(
@@ -638,6 +665,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceStartSessionHandler.ServeHTTP(w, r)
 		case SessionServiceListSessionsProcedure:
 			sessionServiceListSessionsHandler.ServeHTTP(w, r)
+		case SessionServiceListSessionHistoryProcedure:
+			sessionServiceListSessionHistoryHandler.ServeHTTP(w, r)
 		case SessionServiceSubscribeProcedure:
 			sessionServiceSubscribeHandler.ServeHTTP(w, r)
 		case SessionServiceSendInputProcedure:
@@ -697,6 +726,10 @@ func (UnimplementedSessionServiceHandler) StartSession(context.Context, *connect
 
 func (UnimplementedSessionServiceHandler) ListSessions(context.Context, *connect.Request[v1.ListSessionsRequest]) (*connect.Response[v1.ListSessionsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ListSessions is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) ListSessionHistory(context.Context, *connect.Request[v1.ListSessionHistoryRequest]) (*connect.Response[v1.ListSessionHistoryResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ListSessionHistory is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) Subscribe(context.Context, *connect.Request[v1.SubscribeRequest], *connect.ServerStream[v1.Event]) error {

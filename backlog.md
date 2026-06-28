@@ -12,7 +12,7 @@
 | [0006](backlog/0006-home-menu-modes-tui.md) | Home menu, spec/backlog/feature/bug modes, TUI (M4) | done | 4 | 0005 |
 | [0007](backlog/0007-remote-sync.md) | Remote session sync + phone-facing surface (M5) | todo | 5 | 0006 |
 | [0008](backlog/0008-reviewer-sandboxing.md) | Sandbox reviewer bash to prevent workspace mutation | todo | 6 | 0005 |
-| [0009](backlog/0009-session-lifecycle-interrupt.md) | Session lifecycle — Interrupt RPC and stop/GC | in_progress | 3 | 0003 |
+| [0009](backlog/0009-session-lifecycle-interrupt.md) | Session lifecycle — Interrupt RPC and stop/GC | done | 3 | 0003 |
 | [0010](backlog/0010-context-window-management.md) | Context-window management for long sessions | todo | 3 | 0002 |
 | [0011](backlog/0011-multiline-input.md) | Multiline session input (textarea) | todo | 3 | 0006 |
 | [0012](backlog/0012-settings-overlay.md) | Settings overlay (esc) with mid-session interaction level + per-role model config | done | 2 | 0006 |
@@ -35,7 +35,7 @@
 | [0030](backlog/0030-let-the-work-coordinator-create-backlog-tasks-spli.md) | Let the work coordinator create backlog tasks (split + follow-on work) | done | 2 | — |
 | [0031](backlog/0031-backlog-browser-view-and-inspect-tasks-in-the-tui.md) | Backlog browser — view and inspect tasks in the TUI (ListBacklog/GetTask RPCs) | done | 3 | 0006 |
 | [0032](backlog/0032-bug-follow-up-user-message-not-displayed-until-age.md) | Bug: follow-up user message not displayed until agent's next response (user_input echo emitted on dequeue, not on send) | done | 2 | — |
-| [0033](backlog/0033-durable-session-index-listsessionhistory-rpc.md) | Durable session index + ListSessionHistory RPC | todo | 3 | — |
+| [0033](backlog/0033-durable-session-index-listsessionhistory-rpc.md) | Durable session index + ListSessionHistory RPC | in_progress | 3 | — |
 | [0034](backlog/0034-reopen-resume-a-persisted-session-reconstruct-loop.md) | Reopen/resume a persisted session (reconstruct loop history) | todo | 3 | 0033 |
 | [0035](backlog/0035-tui-session-browser-list-transcript-reopen-shared.md) | TUI session browser (list, transcript, reopen) + shared list+detail modal | todo | 3 | 0033, 0034, 0031 |
 | [0036](backlog/0036-per-role-thinking-level-independent-reasoning-per.md) | Per-role thinking level (independent reasoning per agent) | done | 3 | — |

@@ -107,6 +107,45 @@ func (s *Server) ListSessions(_ context.Context, req *connect.Request[v1.ListSes
 	return connect.NewResponse(&v1.ListSessionsResponse{Sessions: infos}), nil
 }
 
+// ListSessionHistory enumerates all sessions for a project (live + persisted
+// on-disk logs), most-recent first (spec §18.6). Unlike ListSessions it includes
+// sessions that are no longer live in memory.
+func (s *Server) ListSessionHistory(_ context.Context, req *connect.Request[v1.ListSessionHistoryRequest]) (*connect.Response[v1.ListSessionHistoryResponse], error) {
+	sums, err := s.mgr.ListSessionHistory(req.Msg.Project)
+	if err != nil {
+		if errors.Is(err, session.ErrUnknownProject) {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	var out []*v1.SessionSummary
+	for _, su := range sums {
+		out = append(out, &v1.SessionSummary{
+			SessionId:    su.ID,
+			Mode:         su.Mode,
+			Status:       string(su.Status),
+			Workspace:    su.Workspace,
+			Title:        su.Title,
+			StartedAt:    rfc3339(su.StartedAt),
+			LastActivity: rfc3339(su.LastActivity),
+			FocusTasks:   su.FocusTasks,
+			Turns:        int64(su.Turns),
+			ToolCalls:    int64(su.ToolCalls),
+			Live:         su.Live,
+		})
+	}
+	return connect.NewResponse(&v1.ListSessionHistoryResponse{Sessions: out}), nil
+}
+
+// rfc3339 formats a timestamp using the same precision as toProto, returning ""
+// for a zero time so absent timestamps serialize as empty rather than a sentinel.
+func rfc3339(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format("2006-01-02T15:04:05.000Z07:00")
+}
+
 // Subscribe streams a session's events, replaying those with seq > from_seq and
 // then delivering live ones until the client disconnects.
 func (s *Server) Subscribe(ctx context.Context, req *connect.Request[v1.SubscribeRequest], stream *connect.ServerStream[v1.Event]) error {
