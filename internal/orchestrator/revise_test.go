@@ -172,3 +172,102 @@ func TestReviseLoop(t *testing.T) {
 		}
 	}
 }
+
+// reviewLogLines returns the work-log lines a task accumulated (for assertions).
+func workLogContains(t *testing.T, store *docs.Store, id, want string) bool {
+	t.Helper()
+	task, err := store.Get(id)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	return strings.Contains(task.Body, want)
+}
+
+// With a SelfReview ReviewPlan (the 'simple' tier), spawn_reviewers spawns no
+// reviewer loop: it returns self-review guidance, records the tier in the work
+// log, and emits a review_tier_selected event.
+func TestSpawnReviewersSelfReviewTier(t *testing.T) {
+	ws := t.TempDir()
+	repo, err := git.Open(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := docs.NewStore(ws)
+	if _, err := store.Create("a task", "## Work log\n", 1, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	rec := &captureRec{}
+	d := &Deps{
+		Workspace: ws,
+		Docs:      store,
+		Repo:      repo,
+		Emitter:   event.NewEmitter(rec, "coordinator"),
+		Asker:     noopAsker{},
+		ReviewTier: func(name string) ReviewPlan {
+			return ReviewPlan{Tier: "simple", Requested: name, SelfReview: true}
+		},
+	}
+	res, err := spawnReviewers(d).Call(context.Background(), map[string]any{"task_id": "0001", "review_tier": "simple"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Content, "review this change yourself") {
+		t.Fatalf("self-review guidance missing:\n%s", res.Content)
+	}
+	if !workLogContains(t, store, "0001", "review tier: simple (coordinator self-review)") {
+		t.Fatalf("work log missing self-review tier line")
+	}
+	// review_tier_selected emitted with self_review=true.
+	found := false
+	for _, ev := range rec.events {
+		if ev.Type == event.ReviewTierSelected {
+			found = true
+			if sr, _ := ev.Data["self_review"].(bool); !sr {
+				t.Fatalf("review_tier_selected self_review = false, want true")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no review_tier_selected event emitted")
+	}
+}
+
+// With a ReviewPlan carrying Specs, spawn_reviewers runs those reviewers and
+// records the tier line in the work log.
+func TestSpawnReviewersTierWithSpecs(t *testing.T) {
+	ws := t.TempDir()
+	repo, err := git.Open(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := docs.NewStore(ws)
+	if _, err := store.Create("a task", "## Work log\n", 1, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	revTurner := &scripted{resp: []*gollama.ResponseMessageGenerate{
+		call("submit_review", `{"verdict":"accept","summary":"ok"}`),
+	}}
+	rec := &captureRec{}
+	d := &Deps{
+		Workspace: ws,
+		Docs:      store,
+		Repo:      repo,
+		Emitter:   event.NewEmitter(rec, "coordinator"),
+		Asker:     noopAsker{},
+		ReviewTier: func(name string) ReviewPlan {
+			return ReviewPlan{Tier: "single-opus", Requested: name, Specs: []AgentSpec{
+				{Name: "rev", Model: "m", NewClient: func() engine.Turner { return revTurner }},
+			}}
+		},
+	}
+	res, err := spawnReviewers(d).Call(context.Background(), map[string]any{"task_id": "0001"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Content, "1/1 reviewers accept") {
+		t.Fatalf("expected one reviewer to accept:\n%s", res.Content)
+	}
+	if !workLogContains(t, store, "0001", "review tier: single-opus — reviewers: rev") {
+		t.Fatalf("work log missing tier-with-reviewers line")
+	}
+}

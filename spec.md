@@ -179,6 +179,7 @@ Event `type`s (initial set):
 | `question_asked` / `question_answered` | the `ask_user` flow |
 | `interrupted` / `resumed` | agent paused to steer / continued (§18.7) |
 | `plan_proposed` / `plan_accepted` | coordinator plan checkpoints |
+| `review_tier_selected` | which review tier the coordinator chose for a change (§13.1) |
 | `review_submitted` | one reviewer's findings |
 | `decision_made` | accept / revise, with rationale |
 | `doc_updated` | spec or task file changed (with diff) |
@@ -573,6 +574,50 @@ still stopping a degenerate infinite tool-call loop. The cap is **per `Run`**, s
 rounds. Interaction with context-window management (§ task 0010): a higher turn cap lets a
 run accumulate more conversation history, so until context budgeting lands a very high
 `max_turns` can trade a turn-limit abort for a context-window-limit abort on long runs.
+
+### 13.1 Review tiers
+
+Review intensity is **tiered** and the work coordinator picks a tier per change based on its
+size/risk, rather than every change getting the same fixed review. Tiers are named and
+configurable under an optional `[reviews]` table:
+
+```toml
+[reviews]
+default = "single-opus"           # tier used when the coordinator doesn't pick one
+[reviews.tiers.high-powered]
+models = ["claude", "gpt"]        # parallel multi-model review
+[reviews.tiers.simple]
+strategy = "coordinator"          # coordinator self-reviews; no reviewer agent
+```
+
+Three **built-in tiers** always exist (and may be overridden by a same-named `[reviews.tiers.X]`):
+
+- **simple** — `strategy = "coordinator"`: the coordinator reviews the change itself; **no
+  reviewer agent is spawned**. Intended only for tiny, low-risk changes.
+- **single-opus** — one reviewer; reproduces the current default reviewer behaviour (the
+  configured `roles.reviewers`).
+- **high-powered** — multiple reviewers running **in parallel**, results aggregated; for
+  large, risky, security-sensitive, or hard-to-reverse changes. Out of the box the built-in
+  `high-powered` tier resolves to the **same reviewer set as `single-opus`** (the configured
+  `roles.reviewers`); it only runs a genuinely parallel multi-model review once
+  `[reviews.tiers.high-powered]` is configured with more than one model (e.g.
+  `models = ["claude", "gpt"]`).
+
+Each tier maps to a **strategy** plus a model/agent set: `strategy = "agents"` (the default
+when empty) spawns a reviewer subagent for each logical model in `models`; `strategy =
+"coordinator"` (aliases `self` / `self-review`) means the coordinator self-reviews with no
+separate reviewer agent. The coordinator selects a tier per change via the `spawn_reviewers`
+tool's optional `review_tier` parameter; omitting it uses `reviews.default` (which itself
+defaults to `single-opus` — the sensible default for ordinary changes).
+
+Selection is **auditable**: every `spawn_reviewers` call emits a `review_tier_selected` event
+(`{ task, tier, requested, self_review, fallback, reviewers }`) and writes a `review tier: …`
+line to the task's work log. An **unknown or missing tier degrades gracefully** — an unknown
+`review_tier` falls back to the default (recorded with `fallback=true`), an `agents` tier whose
+models don't resolve falls back to the session's current reviewer assignment, and a tier that
+resolves to no reviewer at all degrades to coordinator self-review. The explicitly configured
+tiers are validated at load (unknown strategy, an `agents` tier referencing an unknown model,
+or a `reviews.default` naming no tier are rejected); the built-ins are always valid.
 
 ## 14. Persistence & remote sync
 

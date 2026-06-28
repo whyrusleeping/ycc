@@ -200,10 +200,85 @@ func validThinkingLevel(s string) bool {
 	}
 }
 
+// isSelfReviewStrategy reports whether a review tier's strategy means the
+// coordinator reviews the change itself (no separate reviewer agent).
+func isSelfReviewStrategy(s string) bool {
+	switch s {
+	case "coordinator", "self", "self-review":
+		return true
+	default:
+		return false
+	}
+}
+
+// validReviewStrategy reports whether s is a recognized review strategy. The
+// empty string is valid and means the default ("agents").
+func validReviewStrategy(s string) bool {
+	switch s {
+	case "", "agents":
+		return true
+	default:
+		return isSelfReviewStrategy(s)
+	}
+}
+
+// builtinReviewTiers names the tiers that always exist regardless of config.
+var builtinReviewTiers = map[string]bool{
+	"simple": true, "single-opus": true, "high-powered": true,
+}
+
+// effectiveReviewTiers returns the built-in tiers overlaid with any configured
+// tiers, plus the effective default tier name. The built-ins guarantee the
+// simple/single-opus/high-powered tiers always exist; a configured tier with the
+// same name overrides the built-in. Caller must hold the registry lock when
+// invoked via the Registry.
+func (c *Config) effectiveReviewTiers() (map[string]ReviewTier, string) {
+	revs := append([]string(nil), c.Roles.Reviewers...)
+	tiers := map[string]ReviewTier{
+		"simple":       {Strategy: "coordinator"},
+		"single-opus":  {Strategy: "agents", Models: revs},
+		"high-powered": {Strategy: "agents", Models: append([]string(nil), revs...)},
+	}
+	for name, t := range c.Reviews.Tiers {
+		tiers[name] = t
+	}
+	def := "single-opus"
+	if c.Reviews.Default != "" {
+		def = c.Reviews.Default
+	}
+	return tiers, def
+}
+
+// ReviewTierResolved is the effective tier a coordinator review should use.
+type ReviewTierResolved struct {
+	Name       string   // effective tier name actually used
+	SelfReview bool     // coordinator self-reviews; no reviewer agents
+	Models     []string // logical model names for the reviewer fan-out
+	Fallback   bool     // requested tier was unknown and we degraded to the default
+}
+
+// ReviewTier is one configurable review intensity tier (spec §13). Strategy
+// "agents" (the default when empty) spawns reviewer subagents for each logical
+// model in Models; "coordinator" (aliases "self"/"self-review") means the
+// coordinator reviews the change itself with no separate reviewer agent.
+type ReviewTier struct {
+	Strategy string   `toml:"strategy"`
+	Models   []string `toml:"models"`
+}
+
+// Reviews configures the named review tiers and the default tier (spec §13). The
+// built-in tiers (simple, single-opus, high-powered) always exist; entries here
+// add new tiers or override the built-ins.
+type Reviews struct {
+	Default string                `toml:"default"`
+	Tiers   map[string]ReviewTier `toml:"tiers,omitempty"`
+}
+
 // Config is the whole ycc configuration.
 type Config struct {
 	Models    map[string]Model `toml:"models"`
 	Roles     Roles            `toml:"roles"`
+	Reviews   Reviews          `toml:"reviews,omitempty"`
 	MaxTokens int              `toml:"max_tokens"`
 	// MaxTurns caps the number of tool-call turns in a single engine Run as a
 	// runaway/cost backstop. 0 means "use the engine's high default" (see
@@ -297,6 +372,27 @@ func (c *Config) validate() error {
 			return fmt.Errorf("roles.thinking.%s: unknown thinking level %q", role, lvl)
 		}
 	}
+	// Validate only the explicitly configured review tiers; the built-ins are
+	// always valid. An unknown strategy, an agents-tier referencing an unknown
+	// model, or a default naming no tier are configuration errors.
+	for name, t := range c.Reviews.Tiers {
+		if !validReviewStrategy(t.Strategy) {
+			return fmt.Errorf("reviews.tiers.%s: unknown strategy %q", name, t.Strategy)
+		}
+		if !isSelfReviewStrategy(t.Strategy) {
+			for _, mdl := range t.Models {
+				if _, ok := c.Models[mdl]; !ok {
+					return fmt.Errorf("reviews.tiers.%s: unknown model %q", name, mdl)
+				}
+			}
+		}
+	}
+	if c.Reviews.Default != "" {
+		_, configured := c.Reviews.Tiers[c.Reviews.Default]
+		if !configured && !builtinReviewTiers[c.Reviews.Default] {
+			return fmt.Errorf("reviews.default: unknown tier %q", c.Reviews.Default)
+		}
+	}
 	return nil
 }
 
@@ -348,6 +444,37 @@ func (r *Registry) ReviewerNames() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return append([]string(nil), r.cfg.Roles.Reviewers...)
+}
+
+// ReviewTier resolves a requested tier name (possibly empty) into the effective
+// tier (spec §13). An empty request selects the configured default (not a
+// fallback). An unknown non-empty request degrades gracefully to the default
+// with Fallback=true.
+func (r *Registry) ReviewTier(requested string) ReviewTierResolved {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	tiers, def := r.cfg.effectiveReviewTiers()
+	name := requested
+	fallback := false
+	if name == "" {
+		name = def
+	} else if _, ok := tiers[name]; !ok {
+		name, fallback = def, true
+	}
+	t, ok := tiers[name]
+	if !ok { // default itself missing/misconfigured — last-resort safe tier
+		return ReviewTierResolved{
+			Name:     name,
+			Models:   append([]string(nil), r.cfg.Roles.Reviewers...),
+			Fallback: fallback,
+		}
+	}
+	return ReviewTierResolved{
+		Name:       name,
+		SelfReview: isSelfReviewStrategy(t.Strategy),
+		Models:     append([]string(nil), t.Models...),
+		Fallback:   fallback,
+	}
 }
 
 // RoleThinking returns the configured per-role thinking level for a role

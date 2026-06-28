@@ -475,6 +475,47 @@ func (s *Session) agentSpec(role, name string) (orchestrator.AgentSpec, error) {
 	}, nil
 }
 
+// resolveReviewTier turns a requested tier name into a concrete ReviewPlan,
+// resolving the configured tier to reviewer agent specs (spec §13). Unknown
+// models are skipped (graceful degradation); a tier that resolves to no agents
+// falls back to the session's current reviewer assignment, and finally to
+// coordinator self-review if even that is empty.
+func (s *Session) resolveReviewTier(requested string) orchestrator.ReviewPlan {
+	td := s.reg.ReviewTier(requested)
+	plan := orchestrator.ReviewPlan{Tier: td.Name, Requested: requested, Fallback: td.Fallback}
+	if td.SelfReview {
+		plan.SelfReview = true
+		return plan
+	}
+	models := td.Models
+	if len(models) == 0 {
+		s.mu.Lock()
+		models = append([]string(nil), s.reviewers...)
+		s.mu.Unlock()
+	}
+	for _, name := range models {
+		spec, err := s.agentSpec(roleReviewers, name)
+		if err != nil {
+			continue // skip unbuildable/unknown model — degrade gracefully
+		}
+		plan.Specs = append(plan.Specs, spec)
+	}
+	if len(plan.Specs) == 0 {
+		s.mu.Lock()
+		cur := append([]string(nil), s.reviewers...)
+		s.mu.Unlock()
+		for _, name := range cur {
+			if spec, err := s.agentSpec(roleReviewers, name); err == nil {
+				plan.Specs = append(plan.Specs, spec)
+			}
+		}
+		if len(plan.Specs) == 0 {
+			plan.SelfReview = true
+		}
+	}
+	return plan
+}
+
 func (s *Session) run() {
 	s.emitter.Emit(event.SessionStarted, map[string]any{
 		"workspace":         s.Workspace,
@@ -775,6 +816,12 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 		return nil, err
 	}
 	s.loop = loop
+
+	// Wire the review-tier resolver so spawn_reviewers can pick a tier per change
+	// (spec §13). It resolves the configured tier to concrete reviewer specs.
+	deps.ReviewTier = func(name string) orchestrator.ReviewPlan {
+		return s.resolveReviewTier(name)
+	}
 
 	m.mu.Lock()
 	m.sessions[id] = s

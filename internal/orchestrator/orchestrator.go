@@ -50,6 +50,17 @@ type Asker interface {
 	Confirm(ctx context.Context, question string) (bool, error)
 }
 
+// ReviewPlan is the resolved review approach for one spawn_reviewers call: which
+// reviewer agents to spawn, or (SelfReview) that the coordinator reviews the
+// change itself (the 'simple' tier). It is produced by Deps.ReviewTier.
+type ReviewPlan struct {
+	Tier       string      // effective tier name used
+	SelfReview bool        // simple tier: coordinator self-reviews; no agents spawned
+	Specs      []AgentSpec // reviewer agents to spawn (empty when SelfReview)
+	Requested  string      // tier the coordinator requested (for auditing)
+	Fallback   bool        // requested tier was unknown; degraded to default
+}
+
 // Deps is everything the coordinator tools need to orchestrate a work session.
 // It also holds the live subagent handles so the revise loop can reuse their
 // conversation contexts across rounds.
@@ -63,6 +74,11 @@ type Deps struct {
 	Asker       Asker
 	MaxTok      int
 	MaxTurns    int // per-Run tool-call turn cap; 0 => engine default backstop
+	// ReviewTier resolves a requested review tier name (possibly empty) into a
+	// concrete ReviewPlan — which reviewer agents to spawn, or that the
+	// coordinator self-reviews (spec §13). Nil-safe: when unset, spawn_reviewers
+	// falls back to the configured reviewer fan-out (current default behaviour).
+	ReviewTier func(name string) ReviewPlan
 
 	mu        sync.Mutex
 	impl      *engine.Loop
@@ -329,16 +345,64 @@ func sendToImplementer(d *Deps) *gollama.Tool {
 func spawnReviewers(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "spawn_reviewers",
-		Description: "Get independent reviews of the implementer's changes from ALL configured reviewers " +
-			"(possibly different models), running concurrently. Returns each verdict (accept/revise) and findings.",
-		Params: tools.Obj(map[string]any{"task_id": tools.StrProp("task id")}, "task_id"),
+		Description: "Get independent reviews of the implementer's changes, running concurrently. Match review " +
+			"intensity to the change via the optional review_tier: 'simple' (you, the coordinator, review the change " +
+			"yourself — NO reviewer agent is spawned; only for tiny, low-risk changes), 'single-opus' (one reviewer; " +
+			"the sensible default for ordinary changes), or 'high-powered' (parallel multi-model review when " +
+			"configured with multiple models — for large, risky, security-sensitive, or hard-to-reverse changes). " +
+			"Omit review_tier to use the configured default. " +
+			"Returns each verdict (accept/revise) and findings; the chosen tier is recorded in the work log.",
+		Params: tools.Obj(map[string]any{
+			"task_id":     tools.StrProp("task id"),
+			"review_tier": tools.StrProp("review tier to use (e.g. simple, single-opus, high-powered); default is the configured default"),
+		}, "task_id"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			id, _ := tools.GetString(params, "task_id")
 			t, err := d.Docs.Get(id)
 			if err != nil {
 				return tools.ErrResult("spawn_reviewers: %v", err), nil
 			}
-			specs := d.reviewerSpecs()
+			tier, _ := tools.GetString(params, "review_tier")
+			var plan ReviewPlan
+			if d.ReviewTier != nil {
+				plan = d.ReviewTier(tier)
+			} else {
+				plan = ReviewPlan{Tier: "default", Requested: tier, Specs: d.reviewerSpecs()}
+			}
+
+			// Surface the tier selection in events and the work log (always).
+			revNames := make([]string, 0, len(plan.Specs))
+			for _, s := range plan.Specs {
+				revNames = append(revNames, s.Name)
+			}
+			d.Emitter.Emit(event.ReviewTierSelected, map[string]any{
+				"task": id, "tier": plan.Tier, "requested": plan.Requested,
+				"self_review": plan.SelfReview, "fallback": plan.Fallback, "reviewers": revNames,
+			})
+			logLine := fmt.Sprintf("review tier: %s", plan.Tier)
+			if plan.SelfReview {
+				logLine += " (coordinator self-review)"
+			} else if len(revNames) > 0 {
+				logLine += " — reviewers: " + strings.Join(revNames, ", ")
+			}
+			if plan.Fallback && plan.Requested != "" {
+				logLine += fmt.Sprintf(" [requested %q unknown; used default]", plan.Requested)
+			}
+			d.Docs.AppendWorkLog(id, logLine)
+
+			if plan.SelfReview {
+				d.mu.Lock()
+				d.reviewers = nil
+				d.mu.Unlock()
+				return tools.OkResult("Review tier 'simple': no reviewer agent was spawned — you (the coordinator) " +
+					"must review this change yourself. Inspect the diff (run 'git diff'), check it against the task's " +
+					"acceptance criteria, and decide whether to commit or send revisions to the implementer."), nil
+			}
+
+			specs := plan.Specs
+			if len(specs) == 0 {
+				specs = d.reviewerSpecs()
+			}
 			d.mu.Lock()
 			d.reviewers = nil
 			for _, spec := range specs {

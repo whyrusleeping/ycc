@@ -33,12 +33,15 @@ const (
 	SubagentSpawned  Type = "subagent_spawned"
 	SubagentFinished Type = "subagent_finished"
 	PlanProposed     Type = "plan_proposed"
-	ReviewSubmitted  Type = "review_submitted"
-	DecisionMade     Type = "decision_made"
-	DocUpdated       Type = "doc_updated"
-	CommitMade       Type = "commit_made"
-	QuestionAsked    Type = "question_asked"
-	QuestionAnswered Type = "question_answered"
+	// ReviewTierSelected records which review tier the coordinator chose for a
+	// change (spec §13), so tier selection is auditable in the work log/events.
+	ReviewTierSelected Type = "review_tier_selected"
+	ReviewSubmitted    Type = "review_submitted"
+	DecisionMade       Type = "decision_made"
+	DocUpdated         Type = "doc_updated"
+	CommitMade         Type = "commit_made"
+	QuestionAsked      Type = "question_asked"
+	QuestionAnswered   Type = "question_answered"
 	// TaskFocus durably links a session to the backlog task it is working on so
 	// usage can be attributed "by backlog task" (spec §20.2). Emitted when focus
 	// is established (data: { task: "0007" }); subsequent model_turns are

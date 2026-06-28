@@ -1,7 +1,7 @@
 ---
 id: "0041"
 title: Manage model backends from the settings overlay (live add/edit/remove, persisted)
-status: in_progress
+status: done
 priority: 2
 created: "2026-06-27"
 updated: "2026-06-27"
@@ -77,3 +77,6 @@ See spec §18.2 (Model backends — add/edit/remove), §12 (RPCs), §13.
 …[truncated]
 - 2026-06-27 review (claude): accept — The change implements the runtime model-backend management foundation for task 0041, which the coordinator explicitly re-scoped (TUI form split out into the new, committed task 0044). The delivered wo
 …[truncated]
+- 2026-06-27 decision: accept — commit 6a5feb8: Runtime model-backend CRUD: mutable registry + UpsertModel/RemoveModel/GetModelConfig RPCs (§18.2)  Make config.Registry thread-safe and mutable so model backends can be added, edited, and removed wi
+…[truncated]
+- 2026-06-27 usage: 38,361 tok (in 132, out 38,229, cache_r 2,454,951, cache_w 104,380) · cost n/a (unpriced)

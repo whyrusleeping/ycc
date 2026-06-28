@@ -40,6 +40,19 @@ uncommitted (it is fine if there is nothing to commit), update_task "done", and 
 task is only partially done, resume from where it left off rather than starting over. Spend
 effort where it is actually needed, and keep moving.
 
+Match review intensity to the change. spawn_reviewers takes an optional review_tier: 'simple'
+(you review the change yourself — no reviewer agent — only for tiny, low-risk changes),
+'single-opus' (one reviewer; the sensible default for ordinary changes), or 'high-powered'
+(multiple reviewers in parallel — use for large, risky, security-sensitive, or hard-to-reverse
+changes). Omit review_tier to use the configured default. The chosen tier is recorded in the
+work log.
+
+The backlog is shared and live: the user may add a new task at any moment out of band (via a
+quick-capture overlay that runs separately from this session), so a task you don't recognize can
+appear in list_backlog mid-session. That is intentional and fine — it is not an error, not
+something you created and forgot, and not a request to change course. Just note it and carry on
+with your assigned task; only pick up a newly added task if the user explicitly tells you to.
+
 Keep the active task focused — don't let its scope balloon. You may use create_task to grow
 the backlog in two cases: (a) splitting, when a task turns out too big, break the
 remaining/secondary scope into new, well-scoped tasks (use depends_on the current one when

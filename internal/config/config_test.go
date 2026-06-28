@@ -435,3 +435,138 @@ func TestPersistFalseDoesNotWriteFile(t *testing.T) {
 		t.Fatalf("persist=false must not write the config file (err=%v)", err)
 	}
 }
+
+// --- review tiers (spec §13.1) ---
+
+func TestReviewTierBuiltins(t *testing.T) {
+	reg := baseRegistry()
+	// "" selects the default (single-opus), not a fallback.
+	def := reg.ReviewTier("")
+	if def.Name != "single-opus" || def.Fallback {
+		t.Fatalf("empty request = %+v, want single-opus no fallback", def)
+	}
+	if def.SelfReview || len(def.Models) != 1 || def.Models[0] != "claude" {
+		t.Fatalf("single-opus models = %+v, want [claude] agents", def)
+	}
+	// simple built-in is coordinator self-review.
+	simple := reg.ReviewTier("simple")
+	if simple.Name != "simple" || !simple.SelfReview {
+		t.Fatalf("simple = %+v, want self-review", simple)
+	}
+	// high-powered built-in exists.
+	hp := reg.ReviewTier("high-powered")
+	if hp.Name != "high-powered" || hp.SelfReview {
+		t.Fatalf("high-powered = %+v, want agents tier", hp)
+	}
+	// Unknown tier degrades to the default with Fallback=true.
+	unk := reg.ReviewTier("nope")
+	if unk.Name != "single-opus" || !unk.Fallback {
+		t.Fatalf("unknown request = %+v, want single-opus fallback", unk)
+	}
+}
+
+func TestReviewTierConfiguredOverrides(t *testing.T) {
+	reg := NewRegistry(&Config{
+		Models: map[string]Model{
+			"claude": {Backend: "anthropic", Model: "claude-x"},
+			"gpt":    {Backend: "openai", Model: "gpt-x"},
+		},
+		Roles: Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"}},
+		Reviews: Reviews{
+			Tiers: map[string]ReviewTier{
+				"simple":       {Strategy: "coordinator"},
+				"high-powered": {Strategy: "agents", Models: []string{"claude", "gpt"}},
+			},
+		},
+	})
+	simple := reg.ReviewTier("simple")
+	if !simple.SelfReview {
+		t.Fatalf("configured simple should be self-review: %+v", simple)
+	}
+	hp := reg.ReviewTier("high-powered")
+	if hp.SelfReview || len(hp.Models) != 2 || hp.Models[0] != "claude" || hp.Models[1] != "gpt" {
+		t.Fatalf("overridden high-powered = %+v, want [claude gpt] agents", hp)
+	}
+}
+
+func TestReviewTierDefaultOverride(t *testing.T) {
+	reg := NewRegistry(&Config{
+		Models: map[string]Model{"claude": {Backend: "anthropic", Model: "claude-x"}},
+		Roles:  Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"}},
+		Reviews: Reviews{
+			Default: "simple",
+			Tiers:   map[string]ReviewTier{"simple": {Strategy: "coordinator"}},
+		},
+	})
+	def := reg.ReviewTier("")
+	if def.Name != "simple" || !def.SelfReview || def.Fallback {
+		t.Fatalf("default override = %+v, want simple self-review", def)
+	}
+}
+
+func TestReviewTierSaveLoadRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ycc.toml")
+	c := &Config{
+		Models: map[string]Model{
+			"claude": {Backend: "anthropic", Model: "claude-x"},
+			"gpt":    {Backend: "openai", Model: "gpt-x"},
+		},
+		Roles: Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"}},
+		Reviews: Reviews{
+			Default: "single-opus",
+			Tiers: map[string]ReviewTier{
+				"high-powered": {Strategy: "agents", Models: []string{"claude", "gpt"}},
+				"simple":       {Strategy: "coordinator"},
+			},
+		},
+	}
+	if err := Save(path, c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.Reviews.Default != "single-opus" {
+		t.Fatalf("round-trip default = %q, want single-opus", loaded.Reviews.Default)
+	}
+	if hp := loaded.Reviews.Tiers["high-powered"]; hp.Strategy != "agents" || !reflect.DeepEqual(hp.Models, []string{"claude", "gpt"}) {
+		t.Fatalf("round-trip high-powered = %+v", hp)
+	}
+	if sp := loaded.Reviews.Tiers["simple"]; sp.Strategy != "coordinator" {
+		t.Fatalf("round-trip simple = %+v, want coordinator strategy", sp)
+	}
+}
+
+func TestReviewTierValidation(t *testing.T) {
+	base := func() *Config {
+		return &Config{
+			Models: map[string]Model{"claude": {Backend: "anthropic", Model: "claude-x"}},
+			Roles:  Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"}},
+		}
+	}
+	// Unknown strategy.
+	c := base()
+	c.Reviews.Tiers = map[string]ReviewTier{"x": {Strategy: "bogus"}}
+	if err := c.validate(); err == nil || !strings.Contains(err.Error(), "unknown strategy") {
+		t.Fatalf("expected unknown strategy error, got %v", err)
+	}
+	// Agents tier referencing an unknown model.
+	c = base()
+	c.Reviews.Tiers = map[string]ReviewTier{"x": {Strategy: "agents", Models: []string{"ghost"}}}
+	if err := c.validate(); err == nil || !strings.Contains(err.Error(), "unknown model") {
+		t.Fatalf("expected unknown model error, got %v", err)
+	}
+	// Default naming no tier.
+	c = base()
+	c.Reviews.Default = "ghost-tier"
+	if err := c.validate(); err == nil || !strings.Contains(err.Error(), "unknown tier") {
+		t.Fatalf("expected unknown tier error, got %v", err)
+	}
+	// A self-review tier with stray models is allowed (models ignored).
+	c = base()
+	c.Reviews.Tiers = map[string]ReviewTier{"x": {Strategy: "coordinator", Models: []string{"ghost"}}}
+	if err := c.validate(); err != nil {
+		t.Fatalf("self-review tier should validate, got %v", err)
+	}
+}
