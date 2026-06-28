@@ -1,7 +1,7 @@
 ---
 id: "0052"
 title: 'Fix: last line of agent final output hidden behind input box'
-status: in_progress
+status: done
 priority: 2
 created: "2026-06-27"
 updated: "2026-06-28"
@@ -31,3 +31,5 @@ The final line of the agent's "final" output in the session view gets obscured/h
 - 2026-06-28 review tier: single-opus — reviewers: claude
 - 2026-06-28 review (claude): accept — The change fixes the clipped final-output line by clamping the session view's footer/help line (the actual culprit — a very long help string that wrapped to a second physical row, overflowing the H-
 …[truncated]
+- 2026-06-28 decision: accept — commit 379f598: Fix TUI session view: clamp footer/header/picker lines to terminal width so they can't wrap and hide the agent's last output line behind the input box (task 0052)
+- 2026-06-28 usage: 20,351 tok (in 64, out 20,287, cache_r 988,388, cache_w 73,416) · cost n/a (unpriced)

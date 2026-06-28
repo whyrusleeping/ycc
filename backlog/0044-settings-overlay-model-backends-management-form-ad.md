@@ -1,10 +1,10 @@
 ---
 id: "0044"
 title: Settings-overlay "Model backends" management form (add/edit/duplicate/remove)
-status: todo
+status: in_progress
 priority: 2
 created: "2026-06-27"
-updated: "2026-06-27"
+updated: "2026-06-28"
 depends_on:
     - "0041"
 spec_refs:
@@ -47,3 +47,15 @@ to **list / add / edit / duplicate / remove** logical model backends, wired to t
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-28 plan: Add a "Model backends" management surface to the TUI settings overlay, wired to the existing 0041 RPCs (ListModels/GetModelConfig/UpsertModel/RemoveModel + ModelConfig).  All work in internal/tui/tui.
+…[truncated]
+- 2026-06-28 implementer report:
+- 2026-06-28 revision: Implemented task 0044: a "Model backends" management surface in the TUI settings overlay, wired to the existing 0041 RPCs (ListModels/GetModelConfig/UpsertModel/RemoveModel + ModelConfig). All changes
+…[truncated]
+- 2026-06-28 review tier: single-opus — reviewers: claude
+- 2026-06-28 review (claude): revise — The model-backends management modal is well-implemented and meets essentially all acceptance criteria: a "Model backends" overlay row lists configured logical models; add/edit/duplicate/remove are wir
+…[truncated]
+- 2026-06-28 revision: Fixed the reachable out-of-range crash when the model-backends list shrinks after a removal.  ## internal/tui/tui.go 1. In the `modelsMsg` handler in Update() (where m.models is set), clamped mbCursor
+…[truncated]
+- 2026-06-28 review (claude): accept — The implementation adds the "Model backends" settings-overlay surface (list/add/edit/duplicate/remove) wired to the 0041 RPCs (ListModels/GetModelConfig/UpsertModel/RemoveModel), with a persist toggle
+…[truncated]

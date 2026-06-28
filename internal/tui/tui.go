@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -114,6 +115,25 @@ type model struct {
 	captureDesc     string // the original description (carried into stage 1)
 	captureMsg      string // status/result/error line
 	captureBusy     bool   // a CaptureBacklogItem RPC is in flight
+
+	// model-backends management modal (spec §18.2, task 0044): list / add / edit /
+	// duplicate / remove logical model backends, wired to the 0041 RPCs
+	// (ListModels/GetModelConfig/UpsertModel/RemoveModel). Opened from the settings
+	// overlay's "model backends" row; modal over both menu and session.
+	mbOpen       bool
+	mbView       int    // 0=list · 1=form · 2=confirm-remove
+	mbCursor     int    // cursor into m.models in the list view
+	mbErr        string // inline error/validation message
+	mbPersist    bool   // persist=true writes the change to ycc.toml
+	mbFormMode   int    // mbAdd | mbEdit | mbDuplicate
+	mbOrigName   string // name of the model loaded for edit/duplicate
+	mbInputs     [mbNumFields]textinput.Model
+	mbBackends   []string // per-form backend cycle list (preserves an unknown loaded backend)
+	mbBackendIdx int
+	mbThinkIdx   int
+	mbEffortIdx  int
+	mbDisplayIdx int
+	mbFocus      int
 }
 
 // Run starts the TUI against the daemon client. showPicker selects the initial
@@ -191,6 +211,19 @@ type captureResultMsg struct {
 	taskID, title, question string
 	err                     error
 }
+
+// mbPrefillMsg carries a model backend's full record loaded via GetModelConfig
+// for the edit/duplicate form (task 0044). On error the form is not opened.
+type mbPrefillMsg struct {
+	cfg  *v1.ModelConfig
+	mode int
+	err  error
+}
+
+// mbWriteMsg is the result of an UpsertModel/RemoveModel RPC (task 0044). On
+// success the modal returns to the list and refreshes ListModels; on error the
+// message is surfaced inline via mbErr.
+type mbWriteMsg struct{ err error }
 
 func (m model) Init() tea.Cmd {
 	cmds := []tea.Cmd{m.fetchModes, m.fetchModels}
@@ -437,6 +470,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case modelsMsg:
 		m.models = msg.models
+		// Keep the model-backends cursor in range: a removal can shrink the list
+		// out from under it (task 0044).
+		if m.mbCursor >= len(m.models) {
+			if len(m.models) == 0 {
+				m.mbCursor = 0
+			} else {
+				m.mbCursor = len(m.models) - 1
+			}
+		}
 		return m, nil
 	case projectsMsg:
 		m.projects = msg.projects
@@ -486,6 +528,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.captureMsg = "(no result)"
 		return m, nil
+	case mbPrefillMsg:
+		if msg.err != nil {
+			m.mbErr = "load failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.mbPrefill(msg.cfg, msg.mode)
+		return m, nil
+	case mbWriteMsg:
+		if msg.err != nil {
+			// Surface RPC/validation errors inline (e.g. removing a role-referenced
+			// model) so the modal stays usable — never the global m.err.
+			m.mbErr = msg.err.Error()
+			return m, nil
+		}
+		m.mbErr = ""
+		m.mbView = 0
+		// Refresh ListModels so the role pickers reflect the change.
+		return m, m.fetchModels
 	}
 
 	// The project picker (spec §3.1) is shown first when attached to a
@@ -505,6 +565,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// (spec §18.5).
 	if m.backlog {
 		return m.updateBacklog(msg)
+	}
+
+	// The model-backends management modal (task 0044) owns input while open. It is
+	// reached from the settings overlay and is modal over menu/session.
+	if m.mbOpen {
+		return m.updateModelBackends(msg)
 	}
 
 	// The settings overlay (Esc) is modal over BOTH the menu and a session.
@@ -958,6 +1024,7 @@ const (
 	ovCoord
 	ovImpl
 	ovReviewers
+	ovBackends
 	ovTheme
 	ovFollow
 	ovApplyRoles
@@ -1067,6 +1134,15 @@ func (m model) overlayActivate() (tea.Model, tea.Cmd) {
 	case ovReviewers:
 		m.toggleReviewer()
 		return m, nil
+	case ovBackends:
+		// Open the model-backends management modal (task 0044) and refresh the
+		// model list so it lists the current backends.
+		m.overlay = false
+		m.mbOpen = true
+		m.mbView = 0
+		m.mbCursor = 0
+		m.mbErr = ""
+		return m, m.fetchModels
 	case ovApplyRoles:
 		// Commit per-role assignment; reviewers must be non-empty to apply.
 		revs := m.roleReviewrs
@@ -1158,6 +1234,7 @@ func (m model) overlayView() string {
 		{"coordinator model", m.roleCoord + " (" + m.thinkLevels["coordinator"] + ")"},
 		{"implementer model", m.roleImpl + " (" + m.thinkLevels["implementer"] + ")"},
 		{"reviewers", strings.Join(m.roleReviewrs, ", ")},
+		{"model backends", "add / edit / remove…"},
 		{"theme", m.prefs.Theme},
 		{"follow / auto-scroll", boolStr(m.prefs.Follow)},
 		{"apply role config", ""},
@@ -1202,6 +1279,533 @@ func boolStr(b bool) string {
 		return "on"
 	}
 	return "off"
+}
+
+// --- model-backends management modal (spec §18.2, task 0044) ---
+
+// form mode for the add/edit/duplicate form.
+const (
+	mbAdd = iota
+	mbEdit
+	mbDuplicate
+)
+
+// form field indices (focus order). backend/thinking/effort/display/persist are
+// focusable non-text fields cycled with ←/→; the rest are text inputs.
+const (
+	mbFieldName = iota
+	mbFieldBackend
+	mbFieldBaseURL
+	mbFieldModel
+	mbFieldKeyEnv
+	mbFieldThinking
+	mbFieldEffort
+	mbFieldDisplay
+	mbFieldPriceIn
+	mbFieldPriceOut
+	mbFieldPriceCacheRead
+	mbFieldPriceCacheWrite
+	mbFieldPersist
+	mbNumFields
+)
+
+var (
+	mbBackendList  = []string{"anthropic", "openai", "ollama"}
+	mbThinkingList = []string{"", "adaptive", "off"}
+	mbEffortList   = []string{"", "low", "medium", "high", "xhigh", "max"}
+	mbDisplayList  = []string{"", "summarized", "omitted"}
+)
+
+func mbIsText(i int) bool {
+	switch i {
+	case mbFieldName, mbFieldBaseURL, mbFieldModel, mbFieldKeyEnv,
+		mbFieldPriceIn, mbFieldPriceOut, mbFieldPriceCacheRead, mbFieldPriceCacheWrite:
+		return true
+	}
+	return false
+}
+
+func mbLabel(i int) string {
+	switch i {
+	case mbFieldName:
+		return "name"
+	case mbFieldBackend:
+		return "backend"
+	case mbFieldBaseURL:
+		return "base url"
+	case mbFieldModel:
+		return "model"
+	case mbFieldKeyEnv:
+		return "key env"
+	case mbFieldThinking:
+		return "thinking"
+	case mbFieldEffort:
+		return "effort"
+	case mbFieldDisplay:
+		return "thinking disp"
+	case mbFieldPriceIn:
+		return "price in"
+	case mbFieldPriceOut:
+		return "price out"
+	case mbFieldPriceCacheRead:
+		return "price c.read"
+	case mbFieldPriceCacheWrite:
+		return "price c.write"
+	case mbFieldPersist:
+		return "persist toml"
+	}
+	return ""
+}
+
+// mbNewInputs (re)initializes the form's text inputs with the wizard's
+// CharLimit/Width so the form reads consistently with first-run setup.
+func (m *model) mbNewInputs() {
+	for i := range m.mbInputs {
+		ti := textinput.New()
+		ti.CharLimit = 200
+		ti.Width = 50
+		m.mbInputs[i] = ti
+	}
+	m.mbInputs[mbFieldName].Placeholder = "logical name (e.g. claude)"
+	m.mbInputs[mbFieldBaseURL].Placeholder = "base url"
+	m.mbInputs[mbFieldModel].Placeholder = "model id"
+	m.mbInputs[mbFieldKeyEnv].Placeholder = "API key env var name (never the key)"
+	m.mbInputs[mbFieldPriceIn].Placeholder = "$/Mtok (optional)"
+	m.mbInputs[mbFieldPriceOut].Placeholder = "$/Mtok (optional)"
+	m.mbInputs[mbFieldPriceCacheRead].Placeholder = "$/Mtok (optional)"
+	m.mbInputs[mbFieldPriceCacheWrite].Placeholder = "$/Mtok (optional)"
+}
+
+// mbStartAdd opens a blank add form (backend defaults to anthropic).
+func (m *model) mbStartAdd() {
+	m.mbNewInputs()
+	m.mbBackends = append([]string(nil), mbBackendList...)
+	m.mbBackendIdx = 0
+	m.mbThinkIdx, m.mbEffortIdx, m.mbDisplayIdx = 0, 0, 0
+	m.mbFormMode = mbAdd
+	m.mbOrigName = ""
+	m.mbErr = ""
+	m.mbFocus = mbFieldName
+	m.mbView = 1
+	m.mbFocusInputs()
+}
+
+// mbPrefill fills the form from a loaded ModelConfig for edit/duplicate.
+func (m *model) mbPrefill(cfg *v1.ModelConfig, mode int) {
+	m.mbNewInputs()
+	m.mbFormMode = mode
+	m.mbOrigName = cfg.Name
+	name := cfg.Name
+	if mode == mbDuplicate {
+		name = cfg.Name + "-copy"
+	}
+	m.mbInputs[mbFieldName].SetValue(name)
+	m.mbInputs[mbFieldBaseURL].SetValue(cfg.BaseUrl)
+	m.mbInputs[mbFieldModel].SetValue(cfg.Model)
+	m.mbInputs[mbFieldKeyEnv].SetValue(cfg.KeyEnv)
+	m.mbInputs[mbFieldPriceIn].SetValue(fmtPrice(cfg.PriceInput))
+	m.mbInputs[mbFieldPriceOut].SetValue(fmtPrice(cfg.PriceOutput))
+	m.mbInputs[mbFieldPriceCacheRead].SetValue(fmtPrice(cfg.PriceCacheRead))
+	m.mbInputs[mbFieldPriceCacheWrite].SetValue(fmtPrice(cfg.PriceCacheWrite))
+	// Preserve a loaded backend that isn't one of the built-in choices (e.g. "glm").
+	m.mbBackends = append([]string(nil), mbBackendList...)
+	m.mbBackendIdx = mbIndexOrAppend(&m.mbBackends, cfg.Backend)
+	m.mbThinkIdx = mbIndexOf(mbThinkingList, cfg.Thinking)
+	m.mbEffortIdx = mbIndexOf(mbEffortList, cfg.Effort)
+	m.mbDisplayIdx = mbIndexOf(mbDisplayList, cfg.ThinkingDisplay)
+	m.mbErr = ""
+	m.mbView = 1
+	if mode == mbEdit {
+		// The name is read-only in edit mode (rename via duplicate+remove).
+		m.mbFocus = mbFieldBackend
+	} else {
+		m.mbFocus = mbFieldName
+	}
+	m.mbFocusInputs()
+}
+
+func fmtPrice(p *float64) string {
+	if p == nil {
+		return ""
+	}
+	return strconv.FormatFloat(*p, 'f', -1, 64)
+}
+
+func mbIndexOf(vals []string, cur string) int {
+	for i, v := range vals {
+		if v == cur {
+			return i
+		}
+	}
+	return 0
+}
+
+func mbIndexOrAppend(vals *[]string, cur string) int {
+	for i, v := range *vals {
+		if v == cur {
+			return i
+		}
+	}
+	*vals = append(*vals, cur)
+	return len(*vals) - 1
+}
+
+func parsePrice(s string) (*float64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, nil
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return nil, err
+	}
+	return &f, nil
+}
+
+func (m *model) mbFocusInputs() {
+	for j := range m.mbInputs {
+		m.mbInputs[j].Blur()
+	}
+	if mbIsText(m.mbFocus) {
+		m.mbInputs[m.mbFocus].Focus()
+	}
+}
+
+// mbMoveFocus advances the form focus, skipping the read-only name field in edit
+// mode so renaming is only possible via duplicate+remove.
+func (m *model) mbMoveFocus(dir int) {
+	for i := 0; i < mbNumFields; i++ {
+		m.mbFocus = (m.mbFocus + dir + mbNumFields) % mbNumFields
+		if m.mbFormMode == mbEdit && m.mbFocus == mbFieldName {
+			continue
+		}
+		break
+	}
+	m.mbFocusInputs()
+}
+
+// mbCycleFocused cycles the focused non-text field (backend/thinking/effort/
+// display) or toggles persist with ←/→.
+func (m *model) mbCycleFocused(d int) {
+	switch m.mbFocus {
+	case mbFieldBackend:
+		m.mbBackendIdx = (m.mbBackendIdx + d + len(m.mbBackends)) % len(m.mbBackends)
+	case mbFieldThinking:
+		m.mbThinkIdx = (m.mbThinkIdx + d + len(mbThinkingList)) % len(mbThinkingList)
+	case mbFieldEffort:
+		m.mbEffortIdx = (m.mbEffortIdx + d + len(mbEffortList)) % len(mbEffortList)
+	case mbFieldDisplay:
+		m.mbDisplayIdx = (m.mbDisplayIdx + d + len(mbDisplayList)) % len(mbDisplayList)
+	case mbFieldPersist:
+		m.mbPersist = !m.mbPersist
+	}
+}
+
+// updateModelBackends handles input while the model-backends modal is open.
+func (m model) updateModelBackends(msg tea.Msg) (tea.Model, tea.Cmd) {
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		if m.mbView == 1 && mbIsText(m.mbFocus) {
+			var cmd tea.Cmd
+			m.mbInputs[m.mbFocus], cmd = m.mbInputs[m.mbFocus].Update(msg)
+			return m, cmd
+		}
+		return m, nil
+	}
+	switch m.mbView {
+	case 1:
+		return m.mbUpdateForm(key)
+	case 2:
+		return m.mbUpdateConfirm(key)
+	default:
+		return m.mbUpdateList(key)
+	}
+}
+
+func (m model) mbUpdateList(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch key.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		// Back to the settings overlay.
+		m.mbOpen = false
+		m.overlay = true
+		return m, nil
+	case "up":
+		if m.mbCursor > 0 {
+			m.mbCursor--
+		}
+		return m, nil
+	case "down":
+		if m.mbCursor < len(m.models)-1 {
+			m.mbCursor++
+		}
+		return m, nil
+	case "a":
+		m.mbStartAdd()
+		return m, nil
+	case "e", "enter":
+		if m.mbCursor >= len(m.models) {
+			return m, nil
+		}
+		m.mbErr = ""
+		return m, m.mbFetchConfig(m.models[m.mbCursor].Name, mbEdit)
+	case "d":
+		if m.mbCursor >= len(m.models) {
+			return m, nil
+		}
+		m.mbErr = ""
+		return m, m.mbFetchConfig(m.models[m.mbCursor].Name, mbDuplicate)
+	case "x":
+		if m.mbCursor >= len(m.models) {
+			return m, nil
+		}
+		m.mbErr = ""
+		m.mbView = 2
+		return m, nil
+	case "p":
+		m.mbPersist = !m.mbPersist
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m model) mbUpdateForm(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch key.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.mbView = 0
+		m.mbErr = ""
+		return m, nil
+	case "tab", "down":
+		m.mbMoveFocus(1)
+		return m, nil
+	case "shift+tab", "up":
+		m.mbMoveFocus(-1)
+		return m, nil
+	case "left":
+		m.mbCycleFocused(-1)
+		return m, nil
+	case "right":
+		m.mbCycleFocused(1)
+		return m, nil
+	case "enter":
+		return m.mbSubmitForm()
+	}
+	if mbIsText(m.mbFocus) {
+		var cmd tea.Cmd
+		m.mbInputs[m.mbFocus], cmd = m.mbInputs[m.mbFocus].Update(key)
+		return m, cmd
+	}
+	return m, nil
+}
+
+// mbSubmitForm validates and builds a *v1.ModelConfig and issues UpsertModel.
+func (m model) mbSubmitForm() (tea.Model, tea.Cmd) {
+	name := strings.TrimSpace(m.mbInputs[mbFieldName].Value())
+	if m.mbFormMode == mbEdit {
+		name = m.mbOrigName // name is fixed in edit mode
+	}
+	backend := m.mbBackends[m.mbBackendIdx]
+	mdl := strings.TrimSpace(m.mbInputs[mbFieldModel].Value())
+	if name == "" || backend == "" || mdl == "" {
+		m.mbErr = "name, backend and model are required"
+		return m, nil
+	}
+	cfg := &v1.ModelConfig{
+		Name:            name,
+		Backend:         backend,
+		BaseUrl:         strings.TrimSpace(m.mbInputs[mbFieldBaseURL].Value()),
+		Model:           mdl,
+		KeyEnv:          strings.TrimSpace(m.mbInputs[mbFieldKeyEnv].Value()),
+		Thinking:        mbThinkingList[m.mbThinkIdx],
+		Effort:          mbEffortList[m.mbEffortIdx],
+		ThinkingDisplay: mbDisplayList[m.mbDisplayIdx],
+	}
+	prices := []struct {
+		idx   int
+		dst   **float64
+		label string
+	}{
+		{mbFieldPriceIn, &cfg.PriceInput, "price in"},
+		{mbFieldPriceOut, &cfg.PriceOutput, "price out"},
+		{mbFieldPriceCacheRead, &cfg.PriceCacheRead, "price cache read"},
+		{mbFieldPriceCacheWrite, &cfg.PriceCacheWrite, "price cache write"},
+	}
+	for _, p := range prices {
+		v, err := parsePrice(m.mbInputs[p.idx].Value())
+		if err != nil {
+			m.mbErr = p.label + " must be a number"
+			return m, nil
+		}
+		*p.dst = v
+	}
+	m.mbErr = ""
+	return m, m.mbUpsert(cfg, m.mbPersist)
+}
+
+func (m model) mbUpdateConfirm(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch key.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.mbView = 0
+		return m, nil
+	case "enter":
+		if m.mbCursor >= len(m.models) {
+			m.mbView = 0
+			return m, nil
+		}
+		return m, m.mbRemove(m.models[m.mbCursor].Name, m.mbPersist)
+	}
+	return m, nil
+}
+
+// mbFetchConfig loads a model backend's full record for the edit/duplicate form.
+func (m model) mbFetchConfig(name string, mode int) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := m.client.GetModelConfig(m.ctx, connect.NewRequest(&v1.GetModelConfigRequest{Name: name}))
+		if err != nil {
+			return mbPrefillMsg{err: err, mode: mode}
+		}
+		return mbPrefillMsg{cfg: resp.Msg.Model, mode: mode}
+	}
+}
+
+// mbUpsert adds or replaces a logical model backend (persist => also ycc.toml).
+func (m model) mbUpsert(cfg *v1.ModelConfig, persist bool) tea.Cmd {
+	return func() tea.Msg {
+		if _, err := m.client.UpsertModel(m.ctx, connect.NewRequest(&v1.UpsertModelRequest{
+			Model: cfg, Persist: persist,
+		})); err != nil {
+			return mbWriteMsg{err: err}
+		}
+		return mbWriteMsg{}
+	}
+}
+
+// mbRemove deletes a logical model backend; rejected if a role still references it.
+func (m model) mbRemove(name string, persist bool) tea.Cmd {
+	return func() tea.Msg {
+		if _, err := m.client.RemoveModel(m.ctx, connect.NewRequest(&v1.RemoveModelRequest{
+			Name: name, Persist: persist,
+		})); err != nil {
+			return mbWriteMsg{err: err}
+		}
+		return mbWriteMsg{}
+	}
+}
+
+func (m model) modelBackendsView() string {
+	switch m.mbView {
+	case 1:
+		return m.mbFormView()
+	case 2:
+		return m.mbConfirmView()
+	default:
+		return m.mbListView()
+	}
+}
+
+func (m model) mbListView() string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render(" model backends ") + "\n\n")
+	if len(m.models) == 0 {
+		b.WriteString("  " + dimStyle.Render("(no model backends configured)") + "\n")
+	}
+	for i, mm := range m.models {
+		cursor := "  "
+		row := fmt.Sprintf("%-16s %-12s %s", mm.Name, mm.Backend, mm.Model)
+		if i == m.mbCursor {
+			cursor = selStyle.Render("▸ ")
+			row = selStyle.Render(row)
+		}
+		b.WriteString("  " + cursor + row + "\n")
+	}
+	if m.mbErr != "" {
+		b.WriteString("\n  " + errStyle.Render(m.mbErr) + "\n")
+	}
+	b.WriteString("\n" + dimStyle.Render("  persist to ycc.toml: "+boolStr(m.mbPersist)))
+	b.WriteString("\n" + dimStyle.Render("  a add · e/enter edit · d duplicate · x remove · p toggle persist · esc back"))
+	return b.String()
+}
+
+func (m model) mbFormView() string {
+	var b strings.Builder
+	title := "add model backend"
+	switch m.mbFormMode {
+	case mbEdit:
+		title = "edit model backend"
+	case mbDuplicate:
+		title = "duplicate model backend"
+	}
+	b.WriteString(titleStyle.Render(" "+title+" ") + "\n\n")
+	order := []int{
+		mbFieldName, mbFieldBackend, mbFieldBaseURL, mbFieldModel, mbFieldKeyEnv,
+		mbFieldThinking, mbFieldEffort, mbFieldDisplay,
+		mbFieldPriceIn, mbFieldPriceOut, mbFieldPriceCacheRead, mbFieldPriceCacheWrite,
+		mbFieldPersist,
+	}
+	for _, f := range order {
+		cursor := "  "
+		if m.mbFocus == f {
+			cursor = selStyle.Render("▸ ")
+		}
+		label := fmt.Sprintf("%-14s", mbLabel(f)+":")
+		var val string
+		switch f {
+		case mbFieldName:
+			if m.mbFormMode == mbEdit {
+				val = dimStyle.Render(m.mbInputs[mbFieldName].Value() + "  (rename via duplicate)")
+			} else {
+				val = m.mbInputs[f].View()
+			}
+		case mbFieldBackend:
+			val = "◂ " + m.mbBackends[m.mbBackendIdx] + " ▸"
+		case mbFieldThinking:
+			val = "◂ " + mbShow(mbThinkingList[m.mbThinkIdx]) + " ▸"
+		case mbFieldEffort:
+			val = "◂ " + mbShow(mbEffortList[m.mbEffortIdx]) + " ▸"
+		case mbFieldDisplay:
+			val = "◂ " + mbShow(mbDisplayList[m.mbDisplayIdx]) + " ▸"
+		case mbFieldPersist:
+			val = "◂ " + boolStr(m.mbPersist) + " ▸"
+		default:
+			val = m.mbInputs[f].View()
+		}
+		b.WriteString("  " + cursor + label + " " + val + "\n")
+	}
+	if m.mbErr != "" {
+		b.WriteString("\n  " + errStyle.Render(m.mbErr) + "\n")
+	}
+	b.WriteString("\n" + dimStyle.Render("  Tab/↑↓ move · ←/→ change · enter save · esc back"))
+	b.WriteString("\n" + dimStyle.Render("  (keys are env-var references only — never paste a secret)"))
+	return b.String()
+}
+
+func (m model) mbConfirmView() string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render(" remove model backend ") + "\n\n")
+	name := ""
+	if m.mbCursor < len(m.models) {
+		name = m.models[m.mbCursor].Name
+	}
+	b.WriteString("  remove " + selStyle.Render(name) + "?\n")
+	b.WriteString("\n" + dimStyle.Render("  persist to ycc.toml: "+boolStr(m.mbPersist)))
+	if m.mbErr != "" {
+		b.WriteString("\n\n  " + errStyle.Render(m.mbErr) + "\n")
+	}
+	b.WriteString("\n" + dimStyle.Render("  enter confirm · esc cancel"))
+	return b.String()
+}
+
+// mbShow renders an empty cycle value as "(none)" for readability.
+func mbShow(s string) string {
+	if s == "" {
+		return "(none)"
+	}
+	return s
 }
 
 func (m *model) moveSelection(d int) {
@@ -1380,6 +1984,9 @@ func (m model) View() string {
 	}
 	if m.backlog {
 		return m.backlogView()
+	}
+	if m.mbOpen {
+		return m.modelBackendsView()
 	}
 	if m.overlay {
 		return m.overlayView()
