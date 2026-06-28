@@ -47,10 +47,20 @@ func Reduce(events []Event) Projection {
 		case TaskFocus:
 			p.FocusTask = str(ev.Data, "task")
 		case ModelTurn:
+			if p.Status == StatusError {
+				p.Status = StatusRunning
+			}
 			p.Turns++
 			p.TurnsByTask[p.FocusTask]++
 		case ToolCall:
+			if p.Status == StatusError {
+				p.Status = StatusRunning
+			}
 			p.ToolCalls++
+		case UserInput:
+			if p.Status == StatusError {
+				p.Status = StatusRunning
+			}
 		case SessionIdle:
 			p.Status = StatusIdle
 			if r := str(ev.Data, "report"); r != "" {

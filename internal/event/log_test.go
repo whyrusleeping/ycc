@@ -155,3 +155,35 @@ func TestReduceAttributesTurnsToFocusedTask(t *testing.T) {
 		t.Fatalf("0008 turns = %d, want 1", p.TurnsByTask["0008"])
 	}
 }
+
+// A session_error status must not latch: once forward progress resumes
+// (model_turn, tool_call, or user_input), the projection returns to running
+// (task 0051). A bare session_error still yields error.
+func TestReduceClearsErrorOnRecovery(t *testing.T) {
+	errOnly := Reduce([]Event{
+		{Seq: 1, Type: SessionStarted, Data: map[string]any{"mode": "work"}},
+		{Seq: 2, Type: SessionError, Data: map[string]any{"msg": "boom"}},
+	})
+	if errOnly.Status != StatusError {
+		t.Fatalf("error-only status = %q, want error", errOnly.Status)
+	}
+
+	afterTurn := Reduce([]Event{
+		{Seq: 1, Type: SessionStarted, Data: map[string]any{"mode": "work"}},
+		{Seq: 2, Type: SessionError, Data: map[string]any{"msg": "boom"}},
+		{Seq: 3, Type: ModelTurn},
+	})
+	if afterTurn.Status != StatusRunning {
+		t.Fatalf("after model_turn status = %q, want running", afterTurn.Status)
+	}
+
+	afterInput := Reduce([]Event{
+		{Seq: 1, Type: SessionStarted, Data: map[string]any{"mode": "work"}},
+		{Seq: 2, Type: SessionError, Data: map[string]any{"msg": "boom"}},
+		{Seq: 3, Type: UserInput, Data: map[string]any{"text": "retry"}},
+		{Seq: 4, Type: ModelTurn},
+	})
+	if afterInput.Status != StatusRunning {
+		t.Fatalf("after user_input status = %q, want running", afterInput.Status)
+	}
+}

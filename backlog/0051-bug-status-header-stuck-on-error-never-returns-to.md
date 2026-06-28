@@ -1,10 +1,10 @@
 ---
 id: "0051"
 title: 'Bug: status header stuck on "error" — never returns to "running" after recovery'
-status: todo
+status: in_progress
 priority: 2
 created: "2026-06-27"
-updated: "2026-06-27"
+updated: "2026-06-28"
 depends_on: []
 spec_refs: []
 ---
@@ -33,3 +33,8 @@ When the underlying error condition recovers (e.g. a transient failure resolves 
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-28 plan: Root cause: the session status is event-driven in two projections — the TUI header (`m.status` in internal/tui/tui.go appendEvent) and `event.Reduce` (internal/event/reduce.go) — and both only eve
+…[truncated]
+- 2026-06-28 implementer report: Fixed the sticky "error" session status so it returns to "running" once the agent makes forward progress after a recovered error.  Changes: 1. internal/event/reduce.go — In Reduce, added error→run
+…[truncated]
+- 2026-06-28 review tier: simple (coordinator self-review)

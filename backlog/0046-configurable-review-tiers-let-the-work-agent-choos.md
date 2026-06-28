@@ -1,7 +1,7 @@
 ---
 id: "0046"
 title: Configurable review tiers — let the work agent choose review intensity per change
-status: in_progress
+status: done
 priority: 3
 created: "2026-06-27"
 updated: "2026-06-27"
@@ -58,3 +58,6 @@ change; how aggressively it should default is a design question (see acceptance 
 …[truncated]
 - 2026-06-27 review (claude): accept — The revision resolves my earlier minor finding: the spec (§13.1) and the spawn_reviewers tool description now accurately state that the built-in high-powered tier resolves to the same reviewer set as
 …[truncated]
+- 2026-06-27 decision: accept — commit a066d98: Configurable review tiers: coordinator selects review intensity per change (§13.1)  Add named, configurable review tiers (simple/single-opus/high-powered) via a [reviews] TOML schema. The work-coordi
+…[truncated]
+- 2026-06-27 usage: 56,097 tok (in 186, out 55,911, cache_r 4,802,657, cache_w 195,033) · cost n/a (unpriced)

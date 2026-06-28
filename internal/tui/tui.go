@@ -1295,6 +1295,14 @@ func (m *model) appendEvent(ev *v1.Event) {
 			m.roleReviewrs = rv
 		}
 	}
+	// Clear a latched error status once real activity resumes (task 0051):
+	// the header must not stay stuck on "error" after recovery.
+	if m.status == "error" {
+		switch ev.Type {
+		case "model_turn", "tool_call", "tool_result", "thinking", "user_input":
+			m.status = "running"
+		}
+	}
 	if m.follow {
 		m.selected = len(m.evs) - 1
 	}

@@ -183,3 +183,18 @@ func writeFile(t *testing.T, dir, rel, content string) {
 		t.Fatal(err)
 	}
 }
+
+// The status header must not latch on "error": after a session_error sets the
+// status, a subsequent model_turn (forward progress) clears it back to running
+// (task 0051).
+func TestAppendEventClearsLatchedError(t *testing.T) {
+	m := &model{w: 80, follow: true}
+	m.appendEvent(&v1.Event{Type: "session_error", DataJson: `{"msg":"boom"}`})
+	if m.status != "error" {
+		t.Fatalf("after session_error status = %q, want error", m.status)
+	}
+	m.appendEvent(&v1.Event{Type: "model_turn", DataJson: `{"text":"recovered"}`})
+	if m.status != "running" {
+		t.Fatalf("after model_turn status = %q, want running", m.status)
+	}
+}
