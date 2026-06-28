@@ -35,7 +35,7 @@
 | [0030](backlog/0030-let-the-work-coordinator-create-backlog-tasks-spli.md) | Let the work coordinator create backlog tasks (split + follow-on work) | done | 2 | — |
 | [0031](backlog/0031-backlog-browser-view-and-inspect-tasks-in-the-tui.md) | Backlog browser — view and inspect tasks in the TUI (ListBacklog/GetTask RPCs) | done | 3 | 0006 |
 | [0032](backlog/0032-bug-follow-up-user-message-not-displayed-until-age.md) | Bug: follow-up user message not displayed until agent's next response (user_input echo emitted on dequeue, not on send) | done | 2 | — |
-| [0033](backlog/0033-durable-session-index-listsessionhistory-rpc.md) | Durable session index + ListSessionHistory RPC | in_progress | 3 | — |
+| [0033](backlog/0033-durable-session-index-listsessionhistory-rpc.md) | Durable session index + ListSessionHistory RPC | done | 3 | — |
 | [0034](backlog/0034-reopen-resume-a-persisted-session-reconstruct-loop.md) | Reopen/resume a persisted session (reconstruct loop history) | todo | 3 | 0033 |
 | [0035](backlog/0035-tui-session-browser-list-transcript-reopen-shared.md) | TUI session browser (list, transcript, reopen) + shared list+detail modal | todo | 3 | 0033, 0034, 0031 |
 | [0036](backlog/0036-per-role-thinking-level-independent-reasoning-per.md) | Per-role thinking level (independent reasoning per agent) | done | 3 | — |
@@ -52,7 +52,7 @@
 | [0047](backlog/0047-support-multiple-questions-with-per-question-answe.md) | Support multiple questions with per-question answer sets in ask-user tool | todo | 3 | — |
 | [0048](backlog/0048-default-the-backlog-overlay-view-to-hiding-complet.md) | Default the backlog overlay view to hiding completed tasks | done | 3 | — |
 | [0049](backlog/0049-show-agent-action-log-in-quick-add-task-overlay-af.md) | Show agent action log in quick-add task overlay after submit | todo | 3 | — |
-| [0050](backlog/0050-auto-retry-transient-llm-api-call-failures-with-ba.md) | Auto-retry transient LLM API call failures with backoff | todo | 3 | — |
+| [0050](backlog/0050-auto-retry-transient-llm-api-call-failures-with-ba.md) | Auto-retry transient LLM API call failures with backoff | in_progress | 3 | — |
 | [0051](backlog/0051-bug-status-header-stuck-on-error-never-returns-to.md) | Bug: status header stuck on "error" — never returns to "running" after recovery | done | 2 | — |
 | [0052](backlog/0052-fix-last-line-of-agent-final-output-hidden-behind.md) | Fix: last line of agent final output hidden behind input box | done | 2 | — |
 | [0053](backlog/0053-make-edit-tool-require-a-unique-match-and-error-on.md) | Make edit tool require a unique match and error on multiple matches | done | 3 | — |

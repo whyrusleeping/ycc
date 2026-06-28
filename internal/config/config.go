@@ -696,5 +696,8 @@ func (r *Registry) Build(name string) (engine.Turner, string, error) {
 	default:
 		return nil, "", fmt.Errorf("model %q: unsupported backend %q", name, m.Backend)
 	}
-	return c, m.Model, nil
+	// Wrap the configured client so transient (network/timeout/429/5xx) API
+	// failures are retried with exponential backoff (spec task 0050). Done after
+	// auth/mode configuration so the retry layer reuses the fully-built client.
+	return engine.WithRetry(c, engine.DefaultRetryPolicy()), m.Model, nil
 }

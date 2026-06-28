@@ -1,10 +1,10 @@
 ---
 id: "0050"
 title: Auto-retry transient LLM API call failures with backoff
-status: todo
+status: in_progress
 priority: 3
 created: "2026-06-27"
-updated: "2026-06-27"
+updated: "2026-06-28"
 depends_on: []
 spec_refs: []
 ---
@@ -37,3 +37,10 @@ Use exponential backoff between retries (ideally with jitter) and cap the number
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-28 plan: Add an LLM-call retry layer with exponential backoff + jitter, wrapping the single backend chokepoint.  1. New file internal/engine/retry.go:    - RetryPolicy{MaxAttempts, BaseDelay, MaxDelay} + Defau
+…[truncated]
+- 2026-06-28 implementer report: Implemented auto-retry of transient LLM API call failures with exponential backoff + jitter.  Changes: 1. New file `internal/engine/retry.go`:    - `RetryPolicy{MaxAttempts, BaseDelay, MaxDelay}` and 
+…[truncated]
+- 2026-06-28 review tier: single-opus — reviewers: Claude
+- 2026-06-28 review (Claude): accept — Task 0050 is implemented correctly and cleanly. A new `internal/engine/retry.go` adds a `RetryPolicy`/`DefaultRetryPolicy` (3 attempts, 500ms base, 30s cap) and a `WithRetry` decorator over the `Turne
+…[truncated]
