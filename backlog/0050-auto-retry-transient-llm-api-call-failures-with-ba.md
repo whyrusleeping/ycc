@@ -1,7 +1,7 @@
 ---
 id: "0050"
 title: Auto-retry transient LLM API call failures with backoff
-status: in_progress
+status: done
 priority: 3
 created: "2026-06-27"
 updated: "2026-06-28"
@@ -44,3 +44,6 @@ Use exponential backoff between retries (ideally with jitter) and cap the number
 - 2026-06-28 review tier: single-opus — reviewers: Claude
 - 2026-06-28 review (Claude): accept — Task 0050 is implemented correctly and cleanly. A new `internal/engine/retry.go` adds a `RetryPolicy`/`DefaultRetryPolicy` (3 attempts, 500ms base, 30s cap) and a `WithRetry` decorator over the `Turne
 …[truncated]
+- 2026-06-28 decision: accept — commit 5a03508: Auto-retry transient LLM API call failures with backoff  Wrap each backend client built by Registry.Build with a retry decorator (engine.WithRetry) so transient failures — network/transport errors, 
+…[truncated]
+- 2026-06-28 usage: 17,162 tok (in 66, out 17,096, cache_r 615,257, cache_w 58,991) · cost n/a (unpriced)
