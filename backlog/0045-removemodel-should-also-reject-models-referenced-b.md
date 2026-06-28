@@ -1,10 +1,10 @@
 ---
 id: "0045"
 title: RemoveModel should also reject models referenced by live session role assignments
-status: todo
+status: in_progress
 priority: 3
 created: "2026-06-27"
-updated: "2026-06-27"
+updated: "2026-06-28"
 depends_on:
     - "0041"
 spec_refs: []
@@ -37,3 +37,10 @@ backend" guarantee in this edge case.
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-28 plan: Add a guard so a logical model referenced by a running session's *live* role config (set via SetRoleConfig, stored on the Session, not in cfg.Roles) cannot be removed.  1. internal/session/session.go:
+…[truncated]
+- 2026-06-28 implementer report: Implemented task 0045: RemoveModel now rejects models referenced by live session role assignments.  Changes (internal/session/session.go): - Added `(*Session).ReferencesModel(name string) bool` — re
+…[truncated]
+- 2026-06-28 review tier: single-opus — reviewers: Claude
+- 2026-06-28 review (Claude): accept — The change adds Session.ReferencesModel (checks live coordinator/implementer/reviewers under lock) and updates Manager.RemoveModel to iterate running sessions and reject removal with a clear error bef
+…[truncated]

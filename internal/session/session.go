@@ -355,6 +355,24 @@ func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []str
 	return nil
 }
 
+// ReferencesModel reports whether the session's current (possibly mid-session
+// overridden via SetRoleConfig) role assignments reference the named logical
+// model. Used by Manager.RemoveModel so a running session can never be left
+// pointing at a removed backend.
+func (s *Session) ReferencesModel(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.coordinator == name || s.implementer == name {
+		return true
+	}
+	for _, r := range s.reviewers {
+		if r == name {
+			return true
+		}
+	}
+	return false
+}
+
 // SetThinking sets a per-role reasoning override (spec §7.4, §18.2). An empty
 // role updates all three roles (back-compat / "all"); a specific role
 // ("coordinator"|"implementer"|"reviewers") updates just that one. It updates the
@@ -947,9 +965,24 @@ func (m *Manager) UpsertModel(name string, mdl config.Model, persist bool) error
 	return m.reg.UpsertModel(name, mdl, persist)
 }
 
-// RemoveModel deletes a logical model backend (rejected if a role references
-// it); persist also writes ycc.toml (spec §18.2).
+// RemoveModel deletes a logical model backend; persist also writes ycc.toml
+// (spec §18.2). The removal is rejected if a static role (cfg.Roles) references
+// the model, or if any running session's live role config (set via
+// SetRoleConfig, stored on the Session rather than cfg.Roles) still references
+// it — otherwise that session's next spawn would point at a missing backend.
 func (m *Manager) RemoveModel(name string, persist bool) error {
+	m.mu.Lock()
+	var refID string
+	for id, s := range m.sessions {
+		if s.ReferencesModel(name) {
+			refID = id
+			break
+		}
+	}
+	m.mu.Unlock()
+	if refID != "" {
+		return fmt.Errorf("cannot remove model %q: still referenced by running session %s", name, refID)
+	}
 	return m.reg.RemoveModel(name, persist)
 }
 
