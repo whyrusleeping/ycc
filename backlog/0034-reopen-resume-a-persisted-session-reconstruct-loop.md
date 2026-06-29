@@ -58,3 +58,4 @@ appended to the same `events.jsonl`.
 …[truncated]
 - 2026-06-29 decision: accept — commit 3c6bcf0: Reopen/resume a persisted session (reconstruct loop history)  Implement "resume = replay" (spec §4.5/§5/§18.6): reopening a persisted session re-instantiates its coordinator on the EXISTING event l
 …[truncated]
+- 2026-06-29 usage: 54,421 tok (in 204, out 54,217, cache_r 7,459,439, cache_w 304,572) · cost n/a (unpriced)

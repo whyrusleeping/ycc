@@ -174,12 +174,18 @@ func Render(ev Event) string {
 		fmt.Fprintf(&b, " %v(%s)", ev.Data["name"], truncate(fmt.Sprint(ev.Data["args"]), 120))
 	case ToolResult:
 		fmt.Fprintf(&b, " %s", truncate(fmt.Sprint(ev.Data["result"]), 120))
+		if ms := durationMS(ev.Data["duration_ms"]); ms > 0 {
+			fmt.Fprintf(&b, " %s", fmtDur(ms))
+		}
 	case ModelTurn:
 		if txt, ok := ev.Data["text"].(string); ok && txt != "" {
 			fmt.Fprintf(&b, " %s", truncate(txt, 200))
 		}
 		if tok := usageTotal(ev.Data["usage"]); tok > 0 {
 			fmt.Fprintf(&b, " (%d tok)", tok)
+		}
+		if ms := durationMS(ev.Data["duration_ms"]); ms > 0 {
+			fmt.Fprintf(&b, " %s", fmtDur(ms))
 		}
 	default:
 		for _, k := range []string{"text", "report", "msg", "plan", "summary", "role", "sha", "task"} {
@@ -213,6 +219,30 @@ func usageTotal(v any) int {
 		}
 	}
 	return 0
+}
+
+// durationMS extracts a duration in milliseconds from an event data value. Like
+// usageTotal it accepts the freshly-emitted int64/int as well as a JSONL-decoded
+// float64, returning 0 when absent or unparsable.
+func durationMS(v any) int64 {
+	switch d := v.(type) {
+	case int64:
+		return d
+	case int:
+		return int64(d)
+	case float64:
+		return int64(d)
+	}
+	return 0
+}
+
+// fmtDur renders a millisecond duration compactly: sub-second values as "340ms",
+// otherwise one-decimal seconds like "1.2s".
+func fmtDur(ms int64) string {
+	if ms < 1000 {
+		return fmt.Sprintf("%dms", ms)
+	}
+	return fmt.Sprintf("%.1fs", float64(ms)/1000)
 }
 
 func truncate(s string, n int) string {

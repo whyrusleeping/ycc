@@ -172,6 +172,48 @@ func TestLoopFeedsResultsAndContinues(t *testing.T) {
 	}
 }
 
+// model_turn and tool_result events carry an elapsed duration_ms so per-session
+// performance is visible in the logs (task 0055).
+func TestLoopRecordsTiming(t *testing.T) {
+	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{
+		assistantToolCall("Write", `{"file_path":"a.txt","content":"hi"}`),
+		assistantToolCall("finish", `{"report":"done"}`),
+	}}
+	rec := &captureRecorder{}
+	loop := newLoop(t, turner)
+	loop.Emitter = event.NewEmitter(rec, "agent")
+	if _, err := loop.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	var sawTurn, sawTool bool
+	for _, ev := range rec.evs {
+		switch ev.Type {
+		case event.ModelTurn:
+			sawTurn = true
+			if _, ok := ev.Data["duration_ms"].(int64); !ok {
+				t.Fatalf("model_turn duration_ms = %v (%T), want int64", ev.Data["duration_ms"], ev.Data["duration_ms"])
+			}
+			if ev.Data["duration_ms"].(int64) < 0 {
+				t.Fatalf("model_turn duration_ms = %d, want >= 0", ev.Data["duration_ms"].(int64))
+			}
+		case event.ToolResult:
+			sawTool = true
+			if _, ok := ev.Data["duration_ms"].(int64); !ok {
+				t.Fatalf("tool_result duration_ms = %v (%T), want int64", ev.Data["duration_ms"], ev.Data["duration_ms"])
+			}
+			if ev.Data["duration_ms"].(int64) < 0 {
+				t.Fatalf("tool_result duration_ms = %d, want >= 0", ev.Data["duration_ms"].(int64))
+			}
+		}
+	}
+	if !sawTurn {
+		t.Fatal("no model_turn event emitted")
+	}
+	if !sawTool {
+		t.Fatal("no tool_result event emitted")
+	}
+}
+
 // captureRecorder records emitted events in memory for assertions.
 type captureRecorder struct{ evs []event.Event }
 

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/event"
@@ -282,9 +283,11 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			opts.Options = &gollama.Options{MaxTokens: l.MaxTok}
 		}
 
+		start := time.Now()
 		resp, err := client.Turn(opts)
+		elapsedMS := time.Since(start).Milliseconds()
 		if err != nil {
-			l.Emitter.Emit(event.SessionError, map[string]any{"msg": err.Error()})
+			l.Emitter.Emit(event.SessionError, map[string]any{"msg": err.Error(), "duration_ms": elapsedMS})
 			return nil, fmt.Errorf("turn %d: %w", turn, err)
 		}
 		if len(resp.Choices) == 0 {
@@ -315,6 +318,7 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			"model_id":    ident.ID,
 			"stop_reason": resp.StopReason,
 			"truncated":   truncated,
+			"duration_ms": elapsedMS,
 			// thinking_blocks carries the signed/redacted reasoning blocks on the
 			// ALWAYS-emitted model_turn (not the optional Thinking display event,
 			// which is skipped when display is "omitted" yet still produces signed
@@ -371,14 +375,17 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 				"args": call.Function.Arguments,
 				"id":   call.ID,
 			})
+			toolStart := time.Now()
 			res := l.Tools.Dispatch(ctx, call)
+			toolMS := time.Since(toolStart).Milliseconds()
 			l.Emitter.Emit(event.ToolResult, map[string]any{
-				"name":   call.Function.Name,
-				"result": res.Content,
-				"error":  res.IsError,
-				"images": len(res.Images),
-				"docs":   len(res.Documents),
-				"id":     call.ID,
+				"name":        call.Function.Name,
+				"result":      res.Content,
+				"error":       res.IsError,
+				"images":      len(res.Images),
+				"docs":        len(res.Documents),
+				"id":          call.ID,
+				"duration_ms": toolMS,
 			})
 			l.appendToolResult(call.ID, res)
 			if ctrl := tools.ControlOf(res); ctrl != nil && ctrl.Stop {

@@ -1,7 +1,7 @@
 ---
 id: "0055"
 title: Record timing in model-output and tool-call logs
-status: todo
+status: in_progress
 priority: 3
 created: "2026-06-29"
 updated: "2026-06-29"
@@ -34,3 +34,10 @@ viewed/exported.
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-29 plan: Add elapsed-duration timing to model-output and tool-call log entries.  1. internal/engine/loop.go:    - Time the model generation: capture start before `client.Turn(opts)`, compute `time.Since(start)
+…[truncated]
+- 2026-06-29 implementer report: Added elapsed-duration timing to model-output and tool-call log entries (task 0055).  Changes: - internal/engine/loop.go: import `time`. In Run(), capture `start` before `client.Turn(opts)` and record
+…[truncated]
+- 2026-06-29 review tier: single-opus — reviewers: Claude
+- 2026-06-29 review (Claude): accept — The change adds elapsed-duration timing (duration_ms) to model generation (model_turn), tool calls (tool_result), and session_error events in internal/engine/loop.go. Timing is measured tightly around
+…[truncated]
