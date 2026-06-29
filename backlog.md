@@ -14,7 +14,7 @@
 | [0008](backlog/0008-reviewer-sandboxing.md) | Sandbox reviewer bash to prevent workspace mutation | todo | 6 | 0005 |
 | [0009](backlog/0009-session-lifecycle-interrupt.md) | Session lifecycle — Interrupt RPC and stop/GC | done | 3 | 0003 |
 | [0010](backlog/0010-context-window-management.md) | Context-window management for long sessions | todo | 3 | 0002 |
-| [0011](backlog/0011-multiline-input.md) | Multiline session input (textarea) | todo | 3 | 0006 |
+| [0011](backlog/0011-multiline-input.md) | Multiline session input (textarea) | in_progress | 3 | 0006 |
 | [0012](backlog/0012-settings-overlay.md) | Settings overlay (esc) with mid-session interaction level + per-role model config | done | 2 | 0006 |
 | [0013](backlog/0013-structured-questions.md) | Structured interactive ask_user questions (option pickers) | done | 2 | 0006 |
 | [0014](backlog/0014-daemon-lifecycle-oneshot.md) | Daemon lifecycle — one-shot in-process default, opt-in persistence | done | 2 | 0003 |
@@ -45,7 +45,7 @@
 | [0040](backlog/0040-interrupt-steer-a-running-agent-pause-correct-resu.md) | Interrupt & steer a running agent (pause / correct / resume) | done | 2 | — |
 | [0041](backlog/0041-manage-model-backends-from-the-settings-overlay-li.md) | Manage model backends from the settings overlay (live add/edit/remove, persisted) | done | 2 | — |
 | [0042](backlog/0042-select-different-model-ids-sharing-one-provider-s.md) | Select different model ids sharing one provider's credentials (opus/sonnet/haiku) | done | 2 | 0041 |
-| [0043](backlog/0043-unify-tool-call-params-and-response-into-one-colla.md) | Unify tool-call params and response into one collapsed chat-log row | in_progress | 3 | 0006 |
+| [0043](backlog/0043-unify-tool-call-params-and-response-into-one-colla.md) | Unify tool-call params and response into one collapsed chat-log row | done | 3 | 0006 |
 | [0044](backlog/0044-settings-overlay-model-backends-management-form-ad.md) | Settings-overlay "Model backends" management form (add/edit/duplicate/remove) | done | 2 | 0041 |
 | [0045](backlog/0045-removemodel-should-also-reject-models-referenced-b.md) | RemoveModel should also reject models referenced by live session role assignments | done | 3 | 0041 |
 | [0046](backlog/0046-configurable-review-tiers-let-the-work-agent-choos.md) | Configurable review tiers — let the work agent choose review intensity per change | done | 3 | — |

@@ -14,9 +14,12 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"connectrpc.com/connect"
 
+	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -34,10 +37,13 @@ type state int
 const (
 	statePicker state = iota
 	stateMenu
+	stateHistory
 	stateSession
 )
 
 const headerHeight = 1 // the session status bar occupies the first row
+
+const maxInputRows = 6 // session input grows up to this many rows, then scrolls
 
 type model struct {
 	client    yccv1connect.SessionServiceClient
@@ -57,6 +63,13 @@ type model struct {
 	cursor  int
 	prompt  textinput.Model
 
+	// previous-sessions screen (spec §18.6): a navigable list of persisted
+	// sessions reached from the menu (ctrl+r). Enter reopens the selected one via
+	// ResumeSession ("resume = replay").
+	history       []*v1.SessionSummary
+	historyCursor int
+	historyMsgTxt string // status/error line for the history screen
+
 	sessionID string
 	mode      string
 	events    chan *v1.Event
@@ -69,7 +82,7 @@ type model struct {
 	follow     bool           // auto-scroll + auto-select latest
 
 	vp      viewport.Model
-	input   textinput.Model
+	input   textarea.Model
 	glam    *glamour.TermRenderer
 	pending string
 	status  string
@@ -155,10 +168,7 @@ func initialModel(ctx context.Context, client yccv1connect.SessionServiceClient,
 	prompt.CharLimit = 8000
 	prompt.Width = 60
 
-	input := textinput.New()
-	input.Placeholder = "type to prod / answer · Enter sends · ↑↓ select · click to expand"
-	input.CharLimit = 8000
-	input.Width = 60
+	input := newSessionInput()
 
 	captureInput := textinput.New()
 	captureInput.Placeholder = "describe a new backlog item…"
@@ -201,6 +211,10 @@ type menuEntry struct {
 type modelsMsg struct{ models []*v1.ModelInfo }
 type projectsMsg struct{ projects []*v1.ProjectInfo }
 type startedMsg struct{ id, mode string }
+type historyMsg struct {
+	sessions []*v1.SessionSummary
+	err      error
+}
 type evMsg struct{ ev *v1.Event }
 type streamClosedMsg struct{}
 type errMsg struct{ err error }
@@ -268,6 +282,30 @@ func (m model) startSession(mode, prompt string) tea.Cmd {
 			return errMsg{err}
 		}
 		return startedMsg{id: resp.Msg.SessionId, mode: mode}
+	}
+}
+
+// fetchHistory loads the persisted session history for the previous-sessions
+// screen (spec §18.6), scoped to the current project.
+func (m model) fetchHistory() tea.Msg {
+	resp, err := m.client.ListSessionHistory(m.ctx, connect.NewRequest(&v1.ListSessionHistoryRequest{Project: m.project}))
+	if err != nil {
+		return historyMsg{err: err}
+	}
+	return historyMsg{sessions: resp.Msg.Sessions}
+}
+
+// reopenSession re-opens a persisted session on its existing event log via
+// ResumeSession ("resume = replay", spec §4.5/§18.6) and enters the session view.
+func (m model) reopenSession(id string) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := m.client.ResumeSession(m.ctx, connect.NewRequest(&v1.ResumeSessionRequest{
+			Project: m.project, SessionId: id,
+		}))
+		if err != nil {
+			return errMsg{err}
+		}
+		return startedMsg{id: resp.Msg.SessionId, mode: resp.Msg.Mode}
 	}
 }
 
@@ -439,9 +477,53 @@ func (m model) fetchTask(id string) tea.Cmd {
 	}
 }
 
+// newSessionInput builds the multi-line session input textarea (task 0011).
+func newSessionInput() textarea.Model {
+	input := textarea.New()
+	input.Placeholder = "type to prod / answer · enter sends · shift+enter newline · ↑↓ select · click to expand"
+	input.CharLimit = 8000
+	input.ShowLineNumbers = false
+	input.Prompt = ""
+	input.MaxHeight = maxInputRows
+	input.SetHeight(1)
+	input.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("shift+enter", "ctrl+j"))
+	return input
+}
+
+// syncInputHeight grows the session textarea with its content up to
+// maxInputRows, after which it scrolls internally.
+func (m *model) syncInputHeight() {
+	h := m.input.LineCount()
+	if h < 1 {
+		h = 1
+	}
+	if h > maxInputRows {
+		h = maxInputRows
+	}
+	if h != m.input.Height() {
+		m.input.SetHeight(h)
+	}
+}
+
+// relayout recomputes the viewport height so the (possibly multi-row) input
+// and the help line never crowd out the event stream / status bar.
+func (m *model) relayout() {
+	if !m.ready {
+		return
+	}
+	vpHeight := m.h - headerHeight - 1 - m.input.Height()
+	if vpHeight < 3 {
+		vpHeight = 3
+	}
+	m.vp.Height = vpHeight
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		if m.input.MaxHeight == 0 { // zero-value textarea (e.g. a test-constructed model literal)
+			m.input = newSessionInput()
+		}
 		m.w, m.h = msg.Width, msg.Height
 		vpHeight := msg.Height - headerHeight - 2
 		if vpHeight < 3 {
@@ -454,11 +536,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.vp.Width, m.vp.Height = msg.Width, vpHeight
 		}
 		m.prompt.Width = msg.Width - 4
-		m.input.Width = msg.Width - 4
+		m.input.SetWidth(msg.Width - 4)
 		m.captureInput.Width = msg.Width - 4
 		m.makeRenderer()
 		m.bodyCache = map[int]string{} // re-render bodies at the new width
 		m.rebuild()
+		m.syncInputHeight()
+		m.relayout()
 		return m, nil
 
 	case modesMsg:
@@ -502,13 +586,42 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.projectCur = 0
 		}
 		return m, nil
+	case historyMsg:
+		if msg.err != nil {
+			m.history = nil
+			m.historyMsgTxt = "error: " + msg.err.Error()
+			return m, nil
+		}
+		m.history = msg.sessions
+		if m.historyCursor >= len(m.history) {
+			m.historyCursor = 0
+		}
+		if len(m.history) == 0 {
+			m.historyMsgTxt = "no previous sessions"
+		} else {
+			m.historyMsgTxt = ""
+		}
+		return m, nil
 	case errMsg:
 		m.err = msg.err
 		return m, nil
 	case startedMsg:
+		// Reset any stale event/view state from a prior session so a reopened
+		// session renders cleanly from its replayed log (spec §18.6).
+		m.evs = nil
+		m.expanded = map[int]bool{}
+		m.bodyCache = map[int]string{}
+		m.eventStart = nil
+		m.selected = -1
+		m.follow = m.prefs.Follow
+		m.pending, m.paused, m.picking = "", false, false
+		m.pickerOpts, m.pickerCursor = nil, 0
 		m.sessionID, m.mode, m.state, m.status = msg.id, msg.mode, stateSession, "running"
-		m.input.Focus()
-		return m, m.subscribe()
+		m.input.SetValue("")
+		fc := m.input.Focus()
+		m.syncInputHeight()
+		m.relayout()
+		return m, tea.Batch(m.subscribe(), fc)
 	case streamClosedMsg:
 		m.status = "stream closed"
 		return m, nil
@@ -568,6 +681,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// persistent/remote daemon; it owns input until a project is chosen.
 	if m.state == statePicker {
 		return m.updatePicker(msg)
+	}
+
+	// The previous-sessions screen (ctrl+r from the menu) owns input until the
+	// user reopens a session or returns to the menu (spec §18.6).
+	if m.state == stateHistory {
+		return m.updateHistory(msg)
 	}
 
 	// The quick-add backlog capture overlay (ctrl+n) is modal over both the menu
@@ -655,6 +774,44 @@ func (m model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// updateHistory handles the previous-sessions screen (spec §18.6): navigate the
+// list of persisted sessions, Enter reopens the selected one via ResumeSession,
+// `r` refreshes, Esc/q returns to the menu.
+func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch key.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc", "q":
+		m.state = stateMenu
+		return m, nil
+	case "r":
+		m.historyMsgTxt = "loading…"
+		return m, m.fetchHistory
+	case "up":
+		if m.historyCursor > 0 {
+			m.historyCursor--
+		}
+		return m, nil
+	case "down":
+		if m.historyCursor < len(m.history)-1 {
+			m.historyCursor++
+		}
+		return m, nil
+	case "enter":
+		if len(m.history) == 0 {
+			return m, nil
+		}
+		sel := m.history[m.historyCursor]
+		m.historyMsgTxt = "reopening " + short(sel.SessionId) + "…"
+		return m, m.reopenSession(sel.SessionId)
+	}
+	return m, nil
+}
+
 // openCapture enters the quick-add backlog capture overlay (task 0016), resetting
 // it to the "describe" stage with a focused, empty input.
 func (m *model) openCapture() {
@@ -682,6 +839,14 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.backlog, m.backlogCursor, m.backlogDetail = true, 0, nil
 			m.backlogShowDone = false
 			return m, m.fetchBacklog
+		case "ctrl+r":
+			// Open the previous-sessions screen to reopen a persisted session
+			// (spec §18.6).
+			m.state = stateHistory
+			m.historyCursor = 0
+			m.history = nil
+			m.historyMsgTxt = "loading…"
+			return m, m.fetchHistory
 		case "up":
 			if m.cursor > 0 {
 				m.cursor--
@@ -750,8 +915,7 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.pickerCursor >= len(m.pickerOpts) {
 					// "other…": drop into the free-text textarea.
 					m.picking = false
-					m.input.Focus()
-					return m, nil
+					return m, m.input.Focus()
 				}
 				idx := m.pickerCursor
 				m.picking = false
@@ -817,6 +981,8 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.input.SetValue("")
+			m.syncInputHeight()
+			m.relayout()
 			// While paused, a non-empty Enter steers: send the correction AND
 			// resume so the agent continues with it (spec §18.7).
 			if m.paused {
@@ -839,6 +1005,8 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	var icmd tea.Cmd
 	m.input, icmd = m.input.Update(msg)
+	m.syncInputHeight()
+	m.relayout()
 	return m, icmd
 }
 
@@ -2153,6 +2321,9 @@ func (m model) View() string {
 	if m.state == statePicker {
 		return m.pickerScreenView()
 	}
+	if m.state == stateHistory {
+		return m.historyView()
+	}
 	if m.state == stateMenu {
 		return m.menuView()
 	}
@@ -2207,8 +2378,72 @@ func (m model) menuView() string {
 		b.WriteString("  " + cursor + label + "\n")
 	}
 	b.WriteString("\n  " + m.prompt.View() + "\n")
-	b.WriteString("\n" + dimStyle.Render("  ↑/↓ choose mode · type a prompt · enter start · esc settings · ctrl+b backlog · ctrl+n new task"))
+	b.WriteString("\n" + dimStyle.Render("  ↑/↓ choose mode · type a prompt · enter start · ctrl+r previous sessions · esc settings · ctrl+b backlog · ctrl+n new task"))
 	return b.String()
+}
+
+// historyView renders the previous-sessions screen (spec §18.6): a navigable
+// list of persisted sessions, most-recent first, that can be reopened.
+func (m model) historyView() string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render(" ycc — previous sessions ") + "\n\n")
+	if len(m.history) == 0 {
+		msg := m.historyMsgTxt
+		if msg == "" {
+			msg = "no previous sessions"
+		}
+		b.WriteString("  " + dimStyle.Render(msg) + "\n")
+		b.WriteString("\n" + dimStyle.Render("  r refresh · esc/q back"))
+		return b.String()
+	}
+	for i, s := range m.history {
+		// Prefer a derived title; fall back to the short id.
+		title := strings.TrimSpace(s.Title)
+		if title == "" {
+			title = short(s.SessionId)
+		}
+		meta := s.Mode + " · " + s.Status
+		if s.Live {
+			meta += " · live"
+		}
+		if when := historyWhen(s); when != "" {
+			meta += " · " + when
+		}
+		// Clamp the title so the row stays on a single physical line.
+		tw := 48
+		if m.w > 0 && m.w-4 < tw {
+			tw = m.w - 4
+		}
+		line := fmt.Sprintf("%-*s  %s", tw, trunc(title, tw), dimStyle.Render(meta))
+		cursor := "  "
+		if i == m.historyCursor {
+			cursor = selStyle.Render("▸ ")
+			line = selStyle.Render(fmt.Sprintf("%-*s  ", tw, trunc(title, tw))) + dimStyle.Render(meta)
+		}
+		b.WriteString("  " + cursor + line + "\n")
+	}
+	if m.historyMsgTxt != "" {
+		b.WriteString("\n  " + dimStyle.Render(m.historyMsgTxt))
+	}
+	b.WriteString("\n\n" + dimStyle.Render("  ↑/↓ choose · enter reopen · r refresh · esc/q back"))
+	return b.String()
+}
+
+// historyWhen renders a session's last-activity (or start) timestamp compactly
+// for the previous-sessions list, returning "" when neither is available.
+func historyWhen(s *v1.SessionSummary) string {
+	ts := s.LastActivity
+	if ts == "" {
+		ts = s.StartedAt
+	}
+	if ts == "" {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
+		return ts
+	}
+	return t.Local().Format("2006-01-02 15:04")
 }
 
 // needsOnboarding reports whether a workspace looks un-onboarded (spec §19.2): it
@@ -2315,7 +2550,7 @@ func (m model) sessionView() string {
 		help := m.footer(" ⏸ paused — type a correction + enter to steer · enter to resume · esc settings")
 		return top + "\n" + body + "\n " + m.input.View() + "\n" + help
 	}
-	help := m.footer(" enter send/expand · ↑↓ select · click expand · pgup/pgdn scroll · ctrl+i interrupt · ctrl+x stop · esc settings · ctrl+b backlog · ctrl+n new task")
+	help := m.footer(" enter send/expand · shift+enter newline · ↑↓ select · click expand · pgup/pgdn scroll · ctrl+i interrupt · ctrl+x stop · esc settings · ctrl+b backlog · ctrl+n new task")
 	return top + "\n" + body + "\n " + m.input.View() + "\n" + help
 }
 
@@ -2398,7 +2633,7 @@ func (m *model) renderCombined(i, ri int) string {
 	if dataField(res, "error") == "true" {
 		status = "✗"
 	}
-	detail := fmt.Sprintf("%s(%s) %s", name, args, status)
+	detail := appendDur(res, fmt.Sprintf("%s(%s) %s", name, args, status))
 
 	header := m.renderHeaderDetail(call, selected, exp && hasBody, hasBody, detail)
 	if !(exp && hasBody) {
@@ -2700,9 +2935,9 @@ func detailLine(ev *v1.Event) string {
 	case "tool_call":
 		return fmt.Sprintf("%s(%s)", dataField(ev, "name"), oneLine(dataField(ev, "args"), 70))
 	case "tool_result":
-		return oneLine(dataField(ev, "result"), 90)
+		return appendDur(ev, oneLine(dataField(ev, "result"), 90))
 	case "model_turn":
-		return oneLine(dataField(ev, "text"), 120)
+		return appendDur(ev, oneLine(dataField(ev, "text"), 120))
 	case "thinking":
 		return dimStyle.Render("(reasoning) " + oneLine(dataField(ev, "text"), 110))
 	case "user_input":
@@ -2727,6 +2962,42 @@ func detailLine(ev *v1.Event) string {
 		return oneLine(dataField(ev, "msg"), 120)
 	}
 	return ""
+}
+
+// appendDur appends a compact, dim-styled elapsed-duration suffix to a row's
+// detail line when the event carries a positive duration_ms, so per-turn and
+// per-tool-call timing is visible when scanning the chat log.
+func appendDur(ev *v1.Event, s string) string {
+	ms := durationMSField(ev)
+	if ms <= 0 {
+		return s
+	}
+	return s + dimStyle.Render(" "+fmtDurMS(ms))
+}
+
+// durationMSField reads the numeric duration_ms field from an event's data JSON,
+// returning 0 when absent or unparsable.
+func durationMSField(ev *v1.Event) int64 {
+	if ev.DataJson == "" {
+		return 0
+	}
+	var mp map[string]any
+	if json.Unmarshal([]byte(ev.DataJson), &mp) != nil {
+		return 0
+	}
+	if v, ok := mp["duration_ms"].(float64); ok {
+		return int64(v)
+	}
+	return 0
+}
+
+// fmtDurMS renders a millisecond duration compactly: sub-second as "340ms",
+// otherwise one-decimal seconds like "1.2s".
+func fmtDurMS(ms int64) string {
+	if ms < 1000 {
+		return fmt.Sprintf("%dms", ms)
+	}
+	return fmt.Sprintf("%.1fs", float64(ms)/1000)
 }
 
 func dataField(ev *v1.Event, key string) string {

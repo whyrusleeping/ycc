@@ -517,6 +517,10 @@ type fakeClient struct {
 	lastUpsert  *v1.ModelConfig
 	lastPersist bool
 	lastRemove  string
+
+	// previous-sessions screen (spec §18.6)
+	history      []*v1.SessionSummary
+	lastReopened string
 }
 
 func newFakeClient(cfgs ...*v1.ModelConfig) *fakeClient {
@@ -576,6 +580,28 @@ func (f *fakeClient) RemoveModel(_ context.Context, req *connect.Request[v1.Remo
 	return connect.NewResponse(&v1.RemoveModelResponse{}), nil
 }
 
+// ListSessionHistory and ResumeSession back the previous-sessions screen (spec
+// §18.6). Subscribe returns an error so the post-reopen subscribe cmd resolves to
+// an errMsg instead of panicking on the embedded nil interface.
+func (f *fakeClient) ListSessionHistory(_ context.Context, _ *connect.Request[v1.ListSessionHistoryRequest]) (*connect.Response[v1.ListSessionHistoryResponse], error) {
+	return connect.NewResponse(&v1.ListSessionHistoryResponse{Sessions: f.history}), nil
+}
+
+func (f *fakeClient) ResumeSession(_ context.Context, req *connect.Request[v1.ResumeSessionRequest]) (*connect.Response[v1.ResumeSessionResponse], error) {
+	f.lastReopened = req.Msg.SessionId
+	mode := "work"
+	for _, s := range f.history {
+		if s.SessionId == req.Msg.SessionId {
+			mode = s.Mode
+		}
+	}
+	return connect.NewResponse(&v1.ResumeSessionResponse{SessionId: req.Msg.SessionId, Mode: mode, Status: "idle"}), nil
+}
+
+func (f *fakeClient) Subscribe(_ context.Context, _ *connect.Request[v1.SubscribeRequest]) (*connect.ServerStreamForClient[v1.Event], error) {
+	return nil, fmt.Errorf("subscribe not supported in fakeClient")
+}
+
 // drive feeds a key through Update and, if a command is returned, runs it and
 // feeds the resulting message back through Update (recursing until no command).
 // It threads the model value through, mirroring the Bubble Tea runtime.
@@ -601,6 +627,8 @@ func drive(t *testing.T, m model, key string) model {
 		km = tea.KeyMsg{Type: tea.KeyCtrlN}
 	case "ctrl+p":
 		km = tea.KeyMsg{Type: tea.KeyCtrlP}
+	case "ctrl+r":
+		km = tea.KeyMsg{Type: tea.KeyCtrlR}
 	default:
 		km = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
 	}
@@ -970,5 +998,68 @@ func TestBacklogHidesDoneByDefault(t *testing.T) {
 	}
 	if m.backlogCursor >= len(m.visibleBacklogTasks()) {
 		t.Fatalf("cursor=%d out of range for %d visible", m.backlogCursor, len(m.visibleBacklogTasks()))
+	}
+}
+
+// TestPreviousSessionsReopen drives the menu -> previous-sessions -> reopen flow
+// (spec §18.6): ctrl+r opens the history screen and loads the list, ↓ moves the
+// cursor, and Enter reopens the selected session via ResumeSession, entering the
+// session view.
+func TestPreviousSessionsReopen(t *testing.T) {
+	f := newFakeClient()
+	f.history = []*v1.SessionSummary{
+		{SessionId: "s_newer", Mode: "work", Status: "idle", Title: "build the thing", LastActivity: "2024-01-02T10:00:00Z"},
+		{SessionId: "s_older", Mode: "chat", Status: "stopped", Title: "ask questions", LastActivity: "2024-01-01T10:00:00Z"},
+	}
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	if m.state != stateMenu {
+		t.Fatalf("initial state=%v, want stateMenu", m.state)
+	}
+
+	// ctrl+r opens the previous-sessions screen and loads history.
+	m = drive(t, m, "ctrl+r")
+	if m.state != stateHistory {
+		t.Fatalf("after ctrl+r state=%v, want stateHistory", m.state)
+	}
+	if len(m.history) != 2 {
+		t.Fatalf("history len=%d, want 2", len(m.history))
+	}
+
+	// Navigate to the second row and reopen it.
+	m = drive(t, m, "down")
+	if m.historyCursor != 1 {
+		t.Fatalf("historyCursor=%d, want 1", m.historyCursor)
+	}
+	m = drive(t, m, "enter")
+
+	if f.lastReopened != "s_older" {
+		t.Fatalf("reopened %q, want s_older", f.lastReopened)
+	}
+	if m.sessionID != "s_older" {
+		t.Fatalf("sessionID=%q, want s_older", m.sessionID)
+	}
+	if m.mode != "chat" {
+		t.Fatalf("mode=%q, want chat", m.mode)
+	}
+	if m.state != stateSession {
+		t.Fatalf("state=%v, want stateSession", m.state)
+	}
+}
+
+// TestPreviousSessionsEscReturnsToMenu verifies Esc on the history screen returns
+// to the menu rather than opening the settings overlay.
+func TestPreviousSessionsEscReturnsToMenu(t *testing.T) {
+	f := newFakeClient()
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	m = drive(t, m, "ctrl+r")
+	if m.state != stateHistory {
+		t.Fatalf("state=%v, want stateHistory", m.state)
+	}
+	m = drive(t, m, "esc")
+	if m.state != stateMenu {
+		t.Fatalf("after esc state=%v, want stateMenu", m.state)
+	}
+	if m.overlay {
+		t.Fatalf("esc on history opened the settings overlay")
 	}
 }

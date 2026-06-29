@@ -1,7 +1,7 @@
 ---
 id: "0043"
 title: Unify tool-call params and response into one collapsed chat-log row
-status: in_progress
+status: done
 priority: 3
 created: "2026-06-27"
 updated: "2026-06-29"
@@ -40,3 +40,6 @@ existing syntax highlighting / JSON-args / diff / cat -n formatting once expande
 - 2026-06-29 review tier: single-opus — reviewers: Claude
 - 2026-06-29 review (Claude): accept — The change cleanly unifies an adjacent tool_call + tool_result into a single collapsed chat-log row in internal/tui/tui.go. Pairing is by adjacency + actor + id, which correctly excludes spawn-style t
 …[truncated]
+- 2026-06-29 decision: accept — commit f64fc96: Unify adjacent tool_call + tool_result into one collapsed chat-log row  Pair a tool_call with its immediately-following tool_result (same actor, matching id) and render them as a single chat-log row: 
+…[truncated]
+- 2026-06-29 usage: 44,256 tok (in 116, out 44,140, cache_r 2,151,271, cache_w 94,881) · cost n/a (unpriced)
