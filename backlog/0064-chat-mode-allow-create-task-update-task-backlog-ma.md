@@ -1,7 +1,7 @@
 ---
 id: "0064"
 title: 'Chat mode: allow create_task/update_task backlog management'
-status: todo
+status: done
 priority: 3
 created: "2026-06-29"
 updated: "2026-06-29"
@@ -28,3 +28,8 @@ These changes are unrelated to 0049 and were deliberately kept out of that commi
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-29 plan: The implementation already exists, staged, in the working tree (modes.go adds create_task/update_task to chat toolset; modes_test.go asserts present/absent tools; prompts.go documents them). I verifie
+…[truncated]
+- 2026-06-29 review tier: simple (coordinator self-review)
+- 2026-06-29 decision: accept — commit: chat mode: allow create_task/update_task backlog management  Add create_task and update_task to the chat-mode toolset, document them in the chat system prompt as the preferred way to manage the backlo
+…[truncated]

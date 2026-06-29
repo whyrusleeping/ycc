@@ -113,7 +113,10 @@ conversationally. There is no required workflow — be direct and useful.
 
 Use the tools as needed: Read/Edit/Write to view and change files (the spec is just spec.md
 at the workspace root — Read it like any other file), Bash to search (ripgrep) and run
-things, and list_backlog/get_task for project context. Prefer the Read tool over 'cat'. Make
+things, and list_backlog/get_task for project context. You can also manage the backlog
+directly: create_task adds a new backlog entry (it assigns the id and regenerates the index)
+and update_task changes a task's status — prefer these over hand-writing files under backlog/.
+Prefer the Read tool over 'cat'. Make
 changes directly when asked and explain what you did. The conversation continues across turns,
 so you don't need to do everything at once — respond, then wait for the user's next message.`
 

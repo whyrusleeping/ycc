@@ -12,3 +12,4 @@ ant-key
 # session state + scratch
 .ycc/
 scratch/
+lsp.webp

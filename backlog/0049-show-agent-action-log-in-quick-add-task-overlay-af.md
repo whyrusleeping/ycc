@@ -31,3 +31,4 @@ The "quick add task" overlay (opened via Ctrl+N) currently gives no feedback aft
 …[truncated]
 - 2026-06-29 decision: accept — commit: tui: stream capture agent action log live in quick-add overlay [0049]  Convert CaptureBacklogItem to a server-streaming RPC and thread the capture agent's events through a new event.FuncRecorder so th
 …[truncated]
+- 2026-06-29 usage: 38,893 tok (in 170, out 38,723, cache_r 3,658,527, cache_w 114,549) · cost n/a (unpriced)

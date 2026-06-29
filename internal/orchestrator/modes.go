@@ -72,7 +72,7 @@ func BuildMode(mode string, d *Deps, level string) (*tools.Registry, string) {
 	switch mode {
 	case "chat":
 		reg.Add(tools.Editing(ws)...)
-		reg.Add(listBacklog(d), getTask(d), askUser(d))
+		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d), askUser(d))
 		return reg, sys(chatModeSystem, level, d.Workspace)
 	case "pm":
 		// pm maintains spec.md (a plain file) so it keeps Write/Edit, but it does

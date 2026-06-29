@@ -90,6 +90,19 @@ func TestBuildModeToolsets(t *testing.T) {
 			t.Fatalf("pm mode should not have %s (no implementation)", gone)
 		}
 	}
+	// chat is the freeform assistant: file tools + read AND write backlog tools
+	// (create_task/update_task), but no implementation pipeline or switch_to_work.
+	chatReg, _ := BuildMode("chat", d, "judgement")
+	for _, want := range []string{"Read", "Edit", "Write", "Bash", "list_backlog", "get_task", "create_task", "update_task", "ask_user"} {
+		if !hasTool(chatReg, want) {
+			t.Fatalf("chat mode missing %s", want)
+		}
+	}
+	for _, gone := range []string{"spawn_implementer", "spawn_reviewers", "commit", "switch_to_work"} {
+		if hasTool(chatReg, gone) {
+			t.Fatalf("chat mode should not have %s", gone)
+		}
+	}
 	// The removed authoring modes no longer build.
 	for _, mode := range []string{"spec", "backlog", "feature", "bug"} {
 		reg, _ := BuildMode(mode, d, "judgement")
