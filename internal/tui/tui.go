@@ -1429,6 +1429,7 @@ const (
 	ovBackends
 	ovTheme
 	ovFollow
+	ovAutoExpand
 	ovApplyRoles
 	ovBackHome
 	ovQuit
@@ -1513,6 +1514,9 @@ func (m model) overlayAdjust(d int) (tea.Model, tea.Cmd) {
 		m.follow = m.prefs.Follow
 		clientconfig.Save(m.prefs)
 		return m, nil
+	case ovAutoExpand:
+		m.toggleAutoExpand()
+		return m, nil
 	}
 	return m, nil
 }
@@ -1567,8 +1571,30 @@ func (m model) overlayActivate() (tea.Model, tea.Cmd) {
 		return m, nil
 	case ovQuit:
 		return m, tea.Quit
+	case ovAutoExpand:
+		m.toggleAutoExpand()
+		return m, nil
 	}
 	return m, nil
+}
+
+// toggleAutoExpand flips the auto-expand-agent-logs preference, persists it, and
+// rebuilds the event stream so the new default takes effect immediately.
+func (m *model) toggleAutoExpand() {
+	m.prefs.AutoExpandLogs = !m.prefs.AutoExpandLogs
+	clientconfig.Save(m.prefs)
+	m.bodyCache = map[int]string{}
+	m.rebuild()
+}
+
+// eventExpanded reports whether the event with the given seq/type should render
+// expanded. A manual per-row override (m.expanded) always wins; otherwise the
+// auto-expand preference and the per-type default decide.
+func (m *model) eventExpanded(seq int, typ string) bool {
+	if v, ok := m.expanded[seq]; ok {
+		return v
+	}
+	return m.prefs.AutoExpandLogs || autoExpand(typ)
 }
 
 // toggleReviewer flips the reviewers row's multi-select membership. Each
@@ -1645,6 +1671,7 @@ func (m model) overlayView() string {
 		{"model backends", "add / edit / remove…"},
 		{"theme", m.prefs.Theme},
 		{"follow / auto-scroll", boolStr(m.prefs.Follow)},
+		{"auto-expand agent logs", boolStr(m.prefs.AutoExpandLogs)},
 		{"apply role config", ""},
 		{"back to home menu", ""},
 		{"quit", ""},
@@ -2306,7 +2333,8 @@ func (m *model) toggle(i int) {
 		i--
 	}
 	seq := int(m.evs[i].Seq)
-	m.expanded[seq] = !m.expanded[seq]
+	cur := m.eventExpanded(seq, m.evs[i].Type)
+	m.expanded[seq] = !cur
 	m.rebuild()
 	m.ensureVisible()
 }
@@ -2899,7 +2927,7 @@ func (m *model) renderBlock(i int, ev *v1.Event) string {
 	}
 	body := m.bodyFor(ev)
 	hasBody := strings.TrimSpace(body) != ""
-	exp := m.expanded[int(ev.Seq)] || autoExpand(ev.Type)
+	exp := m.eventExpanded(int(ev.Seq), ev.Type)
 	header := m.renderHeader(ev, i == m.selected, exp && hasBody, hasBody, first)
 	if exp && hasBody {
 		return header + "\n" + body
@@ -2926,7 +2954,7 @@ func (m *model) firstOfRun(i int) bool {
 // either a compact one-line summary (collapsed) or a bordered card (expanded).
 // res is nil while the call is still in flight.
 func (m *model) renderToolCall(i int, call, res *v1.Event, first bool) string {
-	exp := m.expanded[int(call.Seq)] || autoExpand(call.Type)
+	exp := m.eventExpanded(int(call.Seq), call.Type)
 	selected := i == m.selected || (res != nil && i+1 == m.selected)
 
 	paramsBody := m.cardParams(call)
@@ -3510,7 +3538,6 @@ func durSuffix(ev *v1.Event) string {
 	}
 	return ""
 }
-
 
 func indentLines(s, prefix string) string {
 	lines := strings.Split(s, "\n")

@@ -1281,3 +1281,62 @@ func TestCaptureStreamsActionLog(t *testing.T) {
 		t.Fatalf("captureMsg = %q, want it to mention the created id", m.captureMsg)
 	}
 }
+
+// TestEventExpandedDefaults verifies default expansion logic with and without
+// the auto-expand-agent-logs preference, and that manual per-row overrides win
+// in both directions.
+func TestEventExpandedDefaults(t *testing.T) {
+	m := &model{expanded: map[int]bool{}}
+
+	// Auto-expand off: normal events collapsed, auto-expand types expanded.
+	m.prefs.AutoExpandLogs = false
+	if m.eventExpanded(1, "tool_call") {
+		t.Fatalf("expected normal event collapsed by default with auto-expand off")
+	}
+	if !m.eventExpanded(2, "session_idle") {
+		t.Fatalf("expected session_idle auto-expanded regardless of preference")
+	}
+
+	// Auto-expand on: normal events expanded by default.
+	m.prefs.AutoExpandLogs = true
+	if !m.eventExpanded(3, "tool_call") {
+		t.Fatalf("expected normal event expanded by default with auto-expand on")
+	}
+
+	// Manual override beats default: collapse with auto-expand on.
+	m.expanded[3] = false
+	if m.eventExpanded(3, "tool_call") {
+		t.Fatalf("expected manual collapse override to win over auto-expand on")
+	}
+
+	// Manual override beats default: expand with auto-expand off.
+	m.prefs.AutoExpandLogs = false
+	m.expanded[4] = true
+	if !m.eventExpanded(4, "tool_call") {
+		t.Fatalf("expected manual expand override to win over auto-expand off")
+	}
+}
+
+// TestToggleWithAutoExpand verifies that toggling a row whose effective state is
+// expanded-by-default (auto-expand on) records an explicit collapse override,
+// and toggling again re-expands it.
+func TestToggleWithAutoExpand(t *testing.T) {
+	m := &model{w: 100, expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1}
+	m.prefs.AutoExpandLogs = true
+	m.evs = []*v1.Event{
+		{Seq: 1, Type: "tool_call", Actor: "coordinator", DataJson: `{"id":"c1","name":"Read","args":"{}"}`},
+	}
+	m.rebuild()
+
+	if !m.eventExpanded(1, "tool_call") {
+		t.Fatalf("precondition: event should be expanded by default with auto-expand on")
+	}
+	m.toggle(0)
+	if m.eventExpanded(1, "tool_call") {
+		t.Fatalf("expected toggle to collapse an auto-expanded row")
+	}
+	m.toggle(0)
+	if !m.eventExpanded(1, "tool_call") {
+		t.Fatalf("expected second toggle to re-expand the row")
+	}
+}

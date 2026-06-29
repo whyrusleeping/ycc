@@ -11,12 +11,12 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	// On macOS UserConfigDir uses HOME/Library; override both to be safe.
 	t.Setenv("HOME", dir)
 
-	p := Prefs{Theme: "light", Follow: false}
+	p := Prefs{Theme: "light", Follow: false, AutoExpandLogs: true}
 	if err := Save(p); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	got := Load()
-	if got.Theme != "light" || got.Follow != false {
+	if got.Theme != "light" || got.Follow != false || got.AutoExpandLogs != true {
 		t.Fatalf("round trip = %+v", got)
 	}
 	// File lives under the user config dir.
@@ -30,7 +30,7 @@ func TestLoadDefaultsWhenMissing(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("HOME", dir)
 	got := Load()
-	if got.Theme != "dark" || got.Follow != true {
+	if got.Theme != "dark" || got.Follow != true || got.AutoExpandLogs != false {
 		t.Fatalf("defaults = %+v", got)
 	}
 }

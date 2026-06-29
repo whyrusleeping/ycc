@@ -69,5 +69,5 @@
 | [0064](backlog/0064-chat-mode-allow-create-task-update-task-backlog-ma.md) | Chat mode: allow create_task/update_task backlog management | done | 3 | — |
 | [0065](backlog/0065-store-llm-backend-tokens-in-the-global-ycc-config.md) | Store LLM backend tokens in the global ycc config dir instead of env-only | done | 3 | 0041 |
 | [0066](backlog/0066-use-multiline-textarea-for-all-chat-inputs-style-w.md) | Use multiline textarea for all chat inputs + style with rounded expanding frame (per lsp.webp) | todo | 3 | 0058 |
-| [0067](backlog/0067-add-settings-option-to-auto-expand-all-agent-logs.md) | Add settings option to auto-expand all agent logs by default | todo | 3 | — |
+| [0067](backlog/0067-add-settings-option-to-auto-expand-all-agent-logs.md) | Add settings option to auto-expand all agent logs by default | done | 3 | — |
 | [0068](backlog/0068-allow-reading-trusted-paths-outside-the-workspace.md) | Allow reading trusted paths outside the workspace (e.g. Go mod cache) | done | 3 | — |

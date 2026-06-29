@@ -11,8 +11,9 @@ import (
 
 // Prefs are the client-only UI preferences.
 type Prefs struct {
-	Theme  string `json:"theme"`  // "dark" | "light"
-	Follow bool   `json:"follow"` // auto-scroll + auto-select latest
+	Theme          string `json:"theme"`          // "dark" | "light"
+	Follow         bool   `json:"follow"`         // auto-scroll + auto-select latest
+	AutoExpandLogs bool   `json:"autoExpandLogs"` // expand all agent log events by default
 }
 
 // Default returns the built-in defaults.
