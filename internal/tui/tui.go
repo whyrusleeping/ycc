@@ -790,7 +790,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case evMsg:
 		m.appendEvent(msg.ev)
+		// Coalesce a burst into one rebuild. On reopen the daemon replays the whole
+		// persisted log (N events) which arrive buffered in m.events essentially at
+		// once; draining them here and rebuilding a single time keeps reload O(N)
+		// instead of O(N^2) (one full re-render per event). Update runs on the Bubble
+		// Tea main loop and we only re-arm waitEvent after draining, so there is no
+		// concurrent reader of m.events.
+		closed := false
+	drain:
+		for {
+			select {
+			case ev, ok := <-m.events:
+				if !ok {
+					closed = true
+					break drain
+				}
+				m.appendEvent(ev)
+			default:
+				break drain
+			}
+		}
+		m.rebuild()
 		spin := m.spinnerCmd() // mutates m.spinning; evaluate before returning m
+		if closed {
+			return m, func() tea.Msg { return streamClosedMsg{} }
+		}
 		return m, tea.Batch(waitEvent(m.events), spin)
 	case backlogMsg:
 		m.backlogTasks = msg.tasks
@@ -2366,21 +2390,22 @@ func (m *model) moveSelection(d int) {
 	if m.selected >= len(m.evs) {
 		m.selected = len(m.evs) - 1
 	}
-	// Skip folded tool_result rows: they share their call's combined row, so
-	// selection should land on the call, never the result. Travel in the move
-	// direction past any merged result, then snap back to the call if needed.
+	// Skip hidden rows (folded tool_results and empty model_turns): they share
+	// another event's rendered row, so selection should land on the owning
+	// visible row, never on them. Travel in the move direction past any hidden
+	// row, then snap back if we ran off the end.
 	dir := d
 	if dir == 0 {
 		dir = 1
 	}
-	for m.isMergedResult(m.selected) {
+	for m.hiddenRow(m.selected) {
 		next := m.selected + dir
 		if next < 0 || next >= len(m.evs) {
 			break
 		}
 		m.selected = next
 	}
-	if m.isMergedResult(m.selected) {
+	for m.hiddenRow(m.selected) && m.selected > 0 {
 		m.selected--
 	}
 	m.follow = m.selected == len(m.evs)-1
@@ -2392,8 +2417,9 @@ func (m *model) toggle(i int) {
 	if i < 0 || i >= len(m.evs) {
 		return
 	}
-	// A folded tool_result toggles its call's combined row.
-	if m.isMergedResult(i) {
+	// A hidden row (folded tool_result or empty model_turn) toggles the visible
+	// row it shares.
+	for m.hiddenRow(i) && i > 0 {
 		i--
 	}
 	seq := int(m.evs[i].Seq)
@@ -2498,7 +2524,9 @@ func (m *model) appendEvent(ev *v1.Event) {
 	if m.follow {
 		m.selected = len(m.evs) - 1
 	}
-	m.rebuild()
+	// NOTE: appendEvent deliberately does NOT call rebuild() — the caller batches
+	// a burst of events (e.g. the persisted log replayed on reopen) and rebuilds
+	// once, turning an O(N^2) "rebuild per event" reload into a single O(N) pass.
 }
 
 // mergedResultIdx reports the index of the tool_result that should be folded
@@ -2530,6 +2558,27 @@ func (m *model) isMergedResult(j int) bool {
 	return j > 0 && m.mergedResultIdx(j-1) == j
 }
 
+// isEmptyModelTurn reports whether the event at index i is a model_turn that
+// carries no text — i.e. an agent turn whose only payload was tool calls. Such a
+// turn would otherwise render as a bare row showing just its timing/usage
+// suffix, so we hide it and let the surrounding tool calls stand on their own.
+// Per-turn token usage is still accumulated from the raw event stream elsewhere,
+// so suppressing the row does not affect cost tracking.
+func (m *model) isEmptyModelTurn(i int) bool {
+	if i < 0 || i >= len(m.evs) {
+		return false
+	}
+	ev := m.evs[i]
+	return ev.Type == "model_turn" && strings.TrimSpace(dataField(ev, "text")) == ""
+}
+
+// hiddenRow reports whether event i renders no block of its own and instead
+// shares the previous rendered row's start line: either a tool_result folded
+// into its preceding tool_call, or an empty (tool-calls-only) model_turn.
+func (m *model) hiddenRow(i int) bool {
+	return m.isMergedResult(i) || m.isEmptyModelTurn(i)
+}
+
 // eventAt returns the index of the event whose rendered block contains content
 // line `row`, or -1.
 func (m *model) eventAt(row int) int {
@@ -2539,7 +2588,7 @@ func (m *model) eventAt(row int) int {
 	for i := len(m.eventStart) - 1; i >= 0; i-- {
 		if row >= m.eventStart[i] {
 			idx := i
-			if m.isMergedResult(idx) {
+			for idx > 0 && m.hiddenRow(idx) {
 				idx--
 			}
 			return idx
@@ -2586,10 +2635,13 @@ func (m *model) rebuild() {
 	line := 0
 	for i, ev := range m.evs {
 		m.eventStart = append(m.eventStart, line)
-		// A tool_result folded into its preceding tool_call's combined row
-		// shares that call's start line and emits no block of its own.
-		if m.isMergedResult(i) {
-			m.eventStart[i] = m.eventStart[i-1]
+		// A hidden row (a tool_result folded into its preceding tool_call, or an
+		// empty tool-calls-only model_turn) shares the previous rendered row's
+		// start line and emits no block of its own.
+		if m.hiddenRow(i) {
+			if i > 0 {
+				m.eventStart[i] = m.eventStart[i-1]
+			}
 			continue
 		}
 		block := m.renderBlock(i, ev)
@@ -3118,7 +3170,7 @@ func (m *model) renderBlock(i int, ev *v1.Event) string {
 // the start of each run.
 func (m *model) firstOfRun(i int) bool {
 	j := i - 1
-	for j >= 0 && m.isMergedResult(j) {
+	for j >= 0 && m.hiddenRow(j) {
 		j--
 	}
 	if j < 0 {
@@ -3238,7 +3290,31 @@ func (m *model) toolCardExpanded(call, res *v1.Event, selected bool, paramsBody,
 }
 
 func (m *model) renderHeader(ev *v1.Event, selected, expanded, hasBody, first bool) string {
-	return m.renderHeaderDetail(ev, selected, expanded, hasBody, detailLine(ev), first)
+	detail := detailLine(ev)
+	if expanded && hasBody {
+		// The body box already shows the full content, so the header's one-line
+		// snippet would be a redundant echo — drop it for prose rows (keeping only
+		// non-body metadata like a turn's elapsed time).
+		detail = expandedDetailLine(ev)
+	}
+	return m.renderHeaderDetail(ev, selected, expanded, hasBody, detail, first)
+}
+
+// expandedDetailLine is the header detail used when a row is expanded. For prose
+// rows whose full text is rendered in the body box, the collapsed snippet is
+// redundant, so it's suppressed (a model_turn keeps just its elapsed-time suffix,
+// which isn't echoed in the body). Non-prose rows keep their normal summary.
+func expandedDetailLine(ev *v1.Event) string {
+	switch ev.Type {
+	case "model_turn":
+		if ms := durationMSField(ev); ms > 0 {
+			return dimStyle.Render(fmtDurMS(ms))
+		}
+		return ""
+	case "user_input", "session_idle", "question_asked", "question_answered", "thinking":
+		return ""
+	}
+	return detailLine(ev)
 }
 
 func (m *model) renderHeaderDetail(ev *v1.Event, selected, expanded, hasBody bool, detail string, first bool) string {
@@ -3284,6 +3360,42 @@ func (m *model) bodyFor(ev *v1.Event) string {
 	return c
 }
 
+// precedingTurnText returns the text of the last coordinator model_turn before
+// the event at seq (the model's final assistant output), or "" if none. Used to
+// detect when a session_idle report merely echoes that final turn.
+func (m *model) precedingTurnText(seq int64) string {
+	last := ""
+	for _, ev := range m.evs {
+		if ev.Seq >= seq {
+			break
+		}
+		if ev.Type == "model_turn" {
+			if t := firstField(ev, "text"); strings.TrimSpace(t) != "" {
+				last = t
+			}
+		}
+	}
+	return last
+}
+
+// dropDuplicatePrefix removes a leading occurrence of prev from s (comparing
+// trimmed), returning the trimmed remainder; if s doesn't begin with prev it is
+// returned unchanged. Lets an idle report show only what it adds beyond the
+// already-rendered final assistant turn.
+func dropDuplicatePrefix(s, prev string) string {
+	ts, tp := strings.TrimSpace(s), strings.TrimSpace(prev)
+	if tp == "" {
+		return s
+	}
+	if ts == tp {
+		return ""
+	}
+	if strings.HasPrefix(ts, tp) {
+		return strings.TrimSpace(ts[len(tp):])
+	}
+	return s
+}
+
 func (m *model) renderBody(ev *v1.Event) string {
 	switch ev.Type {
 	case "question_asked":
@@ -3315,9 +3427,26 @@ func (m *model) renderBody(ev *v1.Event) string {
 			return ""
 		}
 		return indentLines(m.markdown(txt), "  ")
-	case "model_turn", "session_idle", "user_input":
+	case "model_turn", "user_input":
 		txt := firstField(ev, "text", "report", "question", "answer")
 		if txt == "" {
+			return ""
+		}
+		return indentLines(m.markdown(txt), "  ")
+	case "session_idle":
+		txt := firstField(ev, "report")
+		if strings.TrimSpace(txt) == "" {
+			return ""
+		}
+		// The model's final text is already shown as its own model_turn row; the
+		// idle report repeats it (when the model yields plainly its report IS that
+		// text, sometimes with autonomous-mode assumptions appended). Strip the
+		// duplicated portion so the final output isn't printed twice — keep only
+		// what the report adds, or a control-tool report that genuinely differs.
+		if prev := m.precedingTurnText(ev.Seq); prev != "" {
+			txt = dropDuplicatePrefix(txt, prev)
+		}
+		if strings.TrimSpace(txt) == "" {
 			return ""
 		}
 		return indentLines(m.markdown(txt), "  ")

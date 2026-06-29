@@ -87,6 +87,7 @@ func TestRebuildCombinesRow(t *testing.T) {
 	m.appendEvent(&v1.Event{Seq: 2, Type: "tool_call", Actor: "coordinator", DataJson: `{"id":"c1","name":"Read","args":"{\"file_path\":\"x.go\"}"}`})
 	m.appendEvent(&v1.Event{Seq: 3, Type: "tool_result", Actor: "coordinator", DataJson: `{"id":"c1","result":"contents"}`})
 	m.appendEvent(&v1.Event{Seq: 4, Type: "model_turn", Actor: "coordinator", DataJson: `{"text":"bye"}`})
+	m.rebuild() // appendEvent no longer rebuilds; caller batches + rebuilds once
 
 	if m.eventStart[2] != m.eventStart[1] {
 		t.Fatalf("folded result start %d != call start %d", m.eventStart[2], m.eventStart[1])
@@ -101,8 +102,51 @@ func TestRebuildCombinesRow(t *testing.T) {
 	}
 }
 
-// Expanding a combined tool_call+tool_result row reveals both the full params
-// and the full response with no information lost (task 0043).
+// An empty model_turn (an agent turn carrying only tool calls, no text) is
+// hidden: it renders no row of its own and shares the previous rendered row's
+// start line, so the chat no longer shows a bare line with just a duration. The
+// following tool call still resolves and selection skips the hidden turn.
+func TestRebuildHidesEmptyModelTurn(t *testing.T) {
+	m := model{
+		state: stateSession, status: "running", follow: true,
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+	}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(model)
+	m.appendEvent(&v1.Event{Seq: 1, Type: "user_input", Actor: "user", DataJson: `{"text":"go"}`})
+	// Empty agent turn: no text, just timing — the noise we want gone.
+	m.appendEvent(&v1.Event{Seq: 2, Type: "model_turn", Actor: "coordinator", DataJson: `{"text":"","duration_ms":340}`})
+	m.appendEvent(&v1.Event{Seq: 3, Type: "tool_call", Actor: "coordinator", DataJson: `{"id":"c1","name":"Read","args":"{\"file_path\":\"x.go\"}"}`})
+	m.appendEvent(&v1.Event{Seq: 4, Type: "tool_result", Actor: "coordinator", DataJson: `{"id":"c1","result":"ok"}`})
+	m.rebuild() // appendEvent no longer rebuilds; caller batches + rebuilds once
+
+	if !m.isEmptyModelTurn(1) {
+		t.Fatal("isEmptyModelTurn(1) = false, want true for a text-less model_turn")
+	}
+	if m.isEmptyModelTurn(0) {
+		t.Fatal("isEmptyModelTurn(0) = true, want false for a user_input")
+	}
+	// The hidden turn shares the previous row's start line and emits no block.
+	if m.eventStart[1] != m.eventStart[0] {
+		t.Fatalf("empty model_turn start %d != previous row start %d", m.eventStart[1], m.eventStart[0])
+	}
+	// The following tool call advances past the shared row.
+	if m.eventStart[2] <= m.eventStart[0] {
+		t.Fatalf("tool_call start %d should be after the user_input row %d", m.eventStart[2], m.eventStart[0])
+	}
+	// A click on the hidden turn's line resolves to the previous visible row.
+	if got := m.eventAt(m.eventStart[1]); got != 0 {
+		t.Fatalf("eventAt(empty turn line) = %d, want 0", got)
+	}
+	// Selecting downward from the user_input skips the hidden turn onto the call.
+	m.selected = 0
+	m.moveSelection(1)
+	if m.selected != 2 {
+		t.Fatalf("moveSelection(1) landed on %d, want 2 (skip the empty turn)", m.selected)
+	}
+}
+
+// Expanding a combined tool_call+tool_result row reveals both the full params and the full response with no information lost (task 0043).
 func TestRenderCombinedExpanded(t *testing.T) {
 	m := model{w: 100, expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1}
 	m.evs = []*v1.Event{
@@ -521,6 +565,73 @@ func TestThinkingRendering(t *testing.T) {
 	empty := &v1.Event{Type: "thinking", DataJson: `{"text":""}`}
 	if b := m.renderBody(empty); strings.TrimSpace(b) != "" {
 		t.Fatalf("empty thinking body = %q", b)
+	}
+}
+
+// When a prose row is expanded, the header drops its one-line snippet (the full
+// text is in the body box) but keeps non-body metadata like a model_turn's
+// elapsed time; collapsed rows still show the snippet preview.
+func TestExpandedHeaderDropsSnippet(t *testing.T) {
+	turn := &v1.Event{Seq: 1, Type: "model_turn", Actor: "coordinator", DataJson: `{"text":"here is my long final answer about things","duration_ms":1200}`}
+	m := &model{w: 120, bodyCache: map[int]string{}}
+
+	// Collapsed: snippet present.
+	collapsed := m.renderHeader(turn, false, false, true, true)
+	if !strings.Contains(collapsed, "long final answer") {
+		t.Fatalf("collapsed header should show the snippet, got %q", collapsed)
+	}
+
+	// Expanded: snippet gone, duration kept.
+	expanded := m.renderHeader(turn, false, true, true, true)
+	if strings.Contains(expanded, "long final answer") {
+		t.Fatalf("expanded header should drop the redundant snippet, got %q", expanded)
+	}
+	if !strings.Contains(expanded, "1.2s") {
+		t.Fatalf("expanded model_turn header should keep its elapsed time, got %q", expanded)
+	}
+
+	// A user_input row drops its snippet entirely when expanded.
+	in := &v1.Event{Seq: 2, Type: "user_input", Actor: "user", DataJson: `{"text":"please refactor the parser module"}`}
+	if h := m.renderHeader(in, false, true, true, true); strings.Contains(h, "refactor the parser") {
+		t.Fatalf("expanded user_input header should drop the snippet, got %q", h)
+	}
+}
+
+// A session_idle report that merely echoes the model's final assistant turn
+// renders no body (the final output must not be printed twice), while any extra
+// the report adds (autonomous-mode assumptions) — or a genuinely different
+// control-tool report — still renders.
+func TestIdleReportDeduped(t *testing.T) {
+	mk := func(evs ...*v1.Event) *model {
+		m := &model{w: 80, bodyCache: map[int]string{}}
+		m.evs = evs
+		return m
+	}
+	turn := &v1.Event{Seq: 1, Type: "model_turn", Actor: "coordinator", DataJson: `{"text":"All done — shipped the feature and tests pass."}`}
+
+	// Exact echo: no body.
+	idle := &v1.Event{Seq: 2, Type: "session_idle", DataJson: `{"report":"All done — shipped the feature and tests pass."}`}
+	m := mk(turn, idle)
+	if b := m.renderBody(idle); strings.TrimSpace(b) != "" {
+		t.Fatalf("echoing idle report should render empty body, got %q", b)
+	}
+
+	// Echo + appended assumptions: only the assumptions remain.
+	idle2 := &v1.Event{Seq: 2, Type: "session_idle", DataJson: `{"report":"All done — shipped the feature and tests pass.\n\nAssumptions made without consulting the user (autonomous mode):\n- used port 8080\n"}`}
+	m = mk(turn, idle2)
+	b := m.renderBody(idle2)
+	if strings.Contains(b, "shipped the feature") {
+		t.Fatalf("idle body should drop the duplicated final turn, got %q", b)
+	}
+	if !strings.Contains(b, "Assumptions") || !strings.Contains(b, "port 8080") {
+		t.Fatalf("idle body should keep the appended assumptions, got %q", b)
+	}
+
+	// Different control-tool report: rendered in full.
+	idle3 := &v1.Event{Seq: 2, Type: "session_idle", DataJson: `{"report":"Completed task 0042 and committed the change."}`}
+	m = mk(turn, idle3)
+	if b := m.renderBody(idle3); !strings.Contains(b, "task 0042") {
+		t.Fatalf("a differing report should render in full, got %q", b)
 	}
 }
 
