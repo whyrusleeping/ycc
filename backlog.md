@@ -56,7 +56,7 @@
 | [0051](backlog/0051-bug-status-header-stuck-on-error-never-returns-to.md) | Bug: status header stuck on "error" — never returns to "running" after recovery | done | 2 | — |
 | [0052](backlog/0052-fix-last-line-of-agent-final-output-hidden-behind.md) | Fix: last line of agent final output hidden behind input box | done | 2 | — |
 | [0053](backlog/0053-make-edit-tool-require-a-unique-match-and-error-on.md) | Make edit tool require a unique match and error on multiple matches | done | 3 | — |
-| [0054](backlog/0054-automatic-idle-session-gc-on-disk-log-retention.md) | Automatic idle-session GC + on-disk log retention | todo | 3 | 0009 |
+| [0054](backlog/0054-automatic-idle-session-gc-on-disk-log-retention.md) | Automatic idle-session GC + on-disk log retention | done | 3 | 0009 |
 | [0055](backlog/0055-record-timing-in-model-output-and-tool-call-logs.md) | Record timing in model-output and tool-call logs | done | 3 | — |
 | [0056](backlog/0056-replay-fidelity-for-mid-run-truncation-nudges-on-r.md) | Replay fidelity for mid-Run truncation nudges on reopen | done | 3 | 0034 |
 | [0057](backlog/0057-surface-model-tool-timing-duration-ms-in-tui-chat.md) | Surface model/tool timing (duration_ms) in TUI chat-log rows | done | 4 | 0055 |

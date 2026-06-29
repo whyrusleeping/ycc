@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
 	"github.com/whyrusleeping/gollama"
@@ -288,6 +289,23 @@ type Config struct {
 	// very high value can trade a turn-limit abort for a context-window-limit
 	// abort until context-window management (0010) lands.
 	MaxTurns int `toml:"max_turns"`
+	// GC configures automatic reclamation of idle sessions and on-disk session
+	// logs (task 0054). All fields default to 0 (disabled) — conservative by
+	// default so nothing is reaped or pruned unless explicitly opted in.
+	GC GC `toml:"gc,omitempty"`
+}
+
+// GC configures the background session reaper (task 0054). IntervalSeconds sets
+// how often the reaper runs (0 => a sensible default). IdleTimeoutMinutes stops
+// sessions that have been idle (idle status, no pending question, not paused) for
+// that long; 0 disables idle reaping. LogRetentionDays prunes on-disk session
+// logs older than that many days; 0 disables pruning. Log pruning is OFF by
+// default because those logs back the durable session index / history + reopen
+// view (tasks 0033/0034) — enabling it discards logs a user could reopen.
+type GC struct {
+	IntervalSeconds    int `toml:"interval_seconds,omitempty"`
+	IdleTimeoutMinutes int `toml:"idle_timeout_minutes,omitempty"`
+	LogRetentionDays   int `toml:"log_retention_days,omitempty"`
 }
 
 // Load reads and validates a TOML config file.
@@ -393,6 +411,9 @@ func (c *Config) validate() error {
 			return fmt.Errorf("reviews.default: unknown tier %q", c.Reviews.Default)
 		}
 	}
+	if c.GC.IntervalSeconds < 0 || c.GC.IdleTimeoutMinutes < 0 || c.GC.LogRetentionDays < 0 {
+		return fmt.Errorf("gc: interval_seconds, idle_timeout_minutes, and log_retention_days must be non-negative")
+	}
 	return nil
 }
 
@@ -427,6 +448,17 @@ func (r *Registry) MaxTurns() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.cfg.MaxTurns
+}
+
+// GC returns the configured GC interval, idle timeout, and log retention as
+// durations (each zero when unset/disabled). Guarded by the registry lock like
+// MaxTokens/MaxTurns.
+func (r *Registry) GC() (interval, idleTimeout, logRetention time.Duration) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return time.Duration(r.cfg.GC.IntervalSeconds) * time.Second,
+		time.Duration(r.cfg.GC.IdleTimeoutMinutes) * time.Minute,
+		time.Duration(r.cfg.GC.LogRetentionDays) * 24 * time.Hour
 }
 
 // CoordinatorName / ImplementerName / ReviewerNames expose the role assignments.

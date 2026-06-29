@@ -224,6 +224,23 @@ func (s *Session) Stop() {
 	})
 }
 
+// reapable reports whether the session is safe for the idle reaper to stop: it
+// is idle (between turns — a turn blocked on ask_user stays StatusRunning), not
+// paused/pausing for steer, and has no pending question. This deliberately
+// excludes sessions legitimately waiting for user input.
+func (s *Session) reapable() bool {
+	if s.Status() != event.StatusIdle {
+		return false
+	}
+	s.steerMu.Lock()
+	paused := s.paused || s.pauseReq
+	s.steerMu.Unlock()
+	if paused {
+		return false
+	}
+	return !s.inter.pending()
+}
+
 // Checkpoint implements engine.Steer (spec §18.7). At a safe checkpoint the
 // loop calls it: if no pause is pending it returns immediately (cheap no-op);
 // otherwise it marks the session paused, emits interrupted, and blocks until a

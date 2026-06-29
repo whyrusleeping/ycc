@@ -294,6 +294,15 @@ func (in *interaction) AnswerAll(ans []answer) bool {
 	return true
 }
 
+// pending reports whether a question (single or batch) is currently awaiting a
+// user answer. Used by the idle reaper so a session blocked on ask_user is never
+// reaped as "idle".
+func (in *interaction) pending() bool {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	return in.waiting != nil || in.batchWaiting != nil
+}
+
 // Assumptions returns the questions auto-answered in autonomous mode.
 func (in *interaction) Assumptions() []string {
 	in.mu.Lock()

@@ -69,11 +69,20 @@ func buildHandler(o Options) (http.Handler, error) {
 	// project list survives restarts (spec §3.1). The one-shot in-process path
 	// keeps the default in-memory registry (cwd is the single implicit project).
 	if o.Persist {
-		reg, err := project.Open(project.StateFile())
+		preg, err := project.Open(project.StateFile())
 		if err != nil {
 			return nil, fmt.Errorf("load project registry: %w", err)
 		}
-		mgr.SetProjects(reg)
+		mgr.SetProjects(preg)
+		// A persistent daemon outlives any single session, so it runs the
+		// background GC reaper (task 0054) when enabled in config: idle-session
+		// reaping and/or on-disk log retention. Both default to 0 (disabled), so
+		// this is a no-op unless explicitly opted in. The one-shot in-process path
+		// is short-lived and carries no GC config, so it leaves GC off.
+		iv, idle, ret := reg.GC()
+		if idle > 0 || ret > 0 {
+			mgr.StartReaper(context.Background(), session.GCConfig{Interval: iv, IdleTimeout: idle, LogRetention: ret})
+		}
 	}
 	srv := server.New(mgr)
 
