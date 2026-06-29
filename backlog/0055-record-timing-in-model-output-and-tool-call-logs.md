@@ -1,7 +1,7 @@
 ---
 id: "0055"
 title: Record timing in model-output and tool-call logs
-status: in_progress
+status: done
 priority: 3
 created: "2026-06-29"
 updated: "2026-06-29"
@@ -40,4 +40,6 @@ viewed/exported.
 …[truncated]
 - 2026-06-29 review tier: single-opus — reviewers: Claude
 - 2026-06-29 review (Claude): accept — The change adds elapsed-duration timing (duration_ms) to model generation (model_turn), tool calls (tool_result), and session_error events in internal/engine/loop.go. Timing is measured tightly around
+…[truncated]
+- 2026-06-29 decision: accept — commit 794f520: Record elapsed duration on model_turn, tool_result, and session_error events  Time the model generation (around client.Turn) and each tool dispatch, and record duration_ms (int64 ms) on the model_turn
 …[truncated]
