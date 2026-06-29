@@ -875,6 +875,7 @@ func (m *Manager) newSession(absWS, id, mode, level, prompt string, log *event.L
 		Asker:       inter,
 		MaxTok:      m.reg.MaxTokens(),
 		MaxTurns:    m.reg.MaxTurns(),
+		ReadRoots:   m.reg.ReadRoots(),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

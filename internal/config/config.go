@@ -294,6 +294,11 @@ type Config struct {
 	// logs (task 0054). All fields default to 0 (disabled) — conservative by
 	// default so nothing is reaped or pruned unless explicitly opted in.
 	GC GC `toml:"gc,omitempty"`
+	// ReadRoots lists additional trusted read-only roots OUTSIDE the workspace
+	// that the Read tool may access (task 0068). Defaults (the Go module cache
+	// and GOROOT) are always included; these extend them. Writes stay confined
+	// to the workspace regardless.
+	ReadRoots []string `toml:"read_roots,omitempty"`
 }
 
 // GC configures the background session reaper (task 0054). IntervalSeconds sets
@@ -460,6 +465,16 @@ func (r *Registry) GC() (interval, idleTimeout, logRetention time.Duration) {
 	return time.Duration(r.cfg.GC.IntervalSeconds) * time.Second,
 		time.Duration(r.cfg.GC.IdleTimeoutMinutes) * time.Minute,
 		time.Duration(r.cfg.GC.LogRetentionDays) * 24 * time.Hour
+}
+
+// ReadRoots returns a copy of the configured extra trusted read-only roots
+// outside the workspace that the Read tool may access (task 0068). The built-in
+// defaults (Go module cache, GOROOT) are added separately by the tools layer;
+// these are user-configured additions. Writes stay confined to the workspace.
+func (r *Registry) ReadRoots() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return append([]string(nil), r.cfg.ReadRoots...)
 }
 
 // CoordinatorName / ImplementerName / ReviewerNames expose the role assignments.

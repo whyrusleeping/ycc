@@ -7,7 +7,9 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/whyrusleeping/gollama"
@@ -235,6 +237,12 @@ func okResult(content string) *gollama.ToolResult {
 // Workspace confines tool file operations to a root directory.
 type Workspace struct {
 	Root string
+	// ReadRoots are absolute, trusted read-only roots OUTSIDE the workspace that
+	// the Read tool may also read from (e.g. the Go module cache and GOROOT).
+	// They relax read access only: Write/Edit stay confined to Root via resolve.
+	// Containment against these roots is symlink-aware (see resolveRead) so a
+	// symlink inside an allowed root cannot be used to escape it.
+	ReadRoots []string
 	// OnWrite, if set, is invoked with the resolved absolute path after a
 	// successful Write or Edit. Callers use it to surface document updates
 	// (e.g. an edit to spec.md) as events; it must not block.
@@ -267,4 +275,144 @@ func (w *Workspace) resolve(p string) (string, error) {
 		return "", fmt.Errorf("path %q is outside the workspace", p)
 	}
 	return clean, nil
+}
+
+// resolveRead cleans a user-supplied path for READ access. Like resolve it
+// accepts in-workspace paths (absolute within Root, or relative to Root). In
+// addition it accepts paths that fall within one of the trusted read-only roots
+// in w.ReadRoots (e.g. the Go module cache), so the model can read dependency
+// source that lives outside the workspace. Containment against ReadRoots is
+// symlink-aware so an allowed root cannot be used to escape into arbitrary
+// locations via a symlink. Write/Edit must keep using resolve — this relaxes
+// read access only.
+func (w *Workspace) resolveRead(p string) (string, error) {
+	if p == "" {
+		p = "."
+	}
+	var clean string
+	if filepath.IsAbs(p) {
+		clean = filepath.Clean(p)
+	} else {
+		clean = filepath.Clean(filepath.Join(w.Root, p))
+	}
+	// In-workspace fast path: same TEXTUAL ".."-rejection check resolve() uses,
+	// to preserve the current in-workspace behavior exactly.
+	if relToRoot, err := filepath.Rel(w.Root, clean); err == nil {
+		if relToRoot != ".." && !strings.HasPrefix(relToRoot, ".."+string(filepath.Separator)) {
+			return clean, nil
+		}
+	}
+	// Otherwise the path must fall within one of the trusted read-only roots.
+	for _, root := range w.ReadRoots {
+		if root == "" {
+			continue
+		}
+		if withinRoot(clean, root) {
+			return clean, nil
+		}
+	}
+	return "", fmt.Errorf("path %q is outside the workspace and not within a trusted read-only root", p)
+}
+
+// withinRoot reports whether clean is contained within root, resolving symlinks
+// on both sides so the check cannot be fooled by a symlink inside root that
+// points elsewhere. Non-existent paths are handled by evalExisting, which
+// resolves the longest existing prefix.
+func withinRoot(clean, root string) bool {
+	cr := evalExisting(clean)
+	rr := evalExisting(root)
+	rel, err := filepath.Rel(rr, cr)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+// evalExisting resolves symlinks in the longest existing prefix of p, then
+// re-appends the (non-existent) trailing suffix. This makes containment checks
+// robust when p does not yet exist: we resolve as far as the filesystem lets us
+// and treat the remainder textually. If no prefix resolves, p is returned as-is.
+func evalExisting(p string) string {
+	p = filepath.Clean(p)
+	cur := p
+	var suffix string
+	for {
+		if resolved, err := filepath.EvalSymlinks(cur); err == nil {
+			if suffix == "" {
+				return resolved
+			}
+			return filepath.Join(resolved, suffix)
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			// Reached the root without anything resolving.
+			return p
+		}
+		suffix = filepath.Join(filepath.Base(cur), suffix)
+		cur = parent
+	}
+}
+
+// DefaultReadRoots returns the built-in trusted read-only roots: the Go module
+// cache and GOROOT. Module-cache resolution mirrors the Go toolchain: $GOMODCACHE
+// if set, else the first $GOPATH entry's pkg/mod, else $HOME/go/pkg/mod. Missing
+// env vars are handled gracefully (entries that cannot be resolved are skipped).
+// Each returned path is absolute and cleaned.
+func DefaultReadRoots() []string {
+	var roots []string
+	if mc := goModCache(); mc != "" {
+		roots = append(roots, mc)
+	}
+	if gr := runtime.GOROOT(); gr != "" {
+		roots = append(roots, filepath.Clean(gr))
+	}
+	return roots
+}
+
+// goModCache resolves the Go module cache directory the way the toolchain does,
+// returning "" only if even the $HOME fallback is unavailable.
+func goModCache() string {
+	if v := os.Getenv("GOMODCACHE"); v != "" {
+		return filepath.Clean(v)
+	}
+	if gp := os.Getenv("GOPATH"); gp != "" {
+		if parts := filepath.SplitList(gp); len(parts) > 0 && parts[0] != "" {
+			return filepath.Clean(filepath.Join(parts[0], "pkg", "mod"))
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Clean(filepath.Join(home, "go", "pkg", "mod"))
+	}
+	return ""
+}
+
+// ReadRoots returns the default trusted read-only roots (DefaultReadRoots)
+// followed by any caller-supplied extras, with each entry made absolute where
+// possible, cleaned, empties dropped, and duplicates removed.
+func ReadRoots(extra []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(p string) {
+		if strings.TrimSpace(p) == "" {
+			return
+		}
+		if !filepath.IsAbs(p) {
+			if abs, err := filepath.Abs(p); err == nil {
+				p = abs
+			}
+		}
+		p = filepath.Clean(p)
+		if seen[p] {
+			return
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	for _, p := range DefaultReadRoots() {
+		add(p)
+	}
+	for _, p := range extra {
+		add(p)
+	}
+	return out
 }

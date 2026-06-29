@@ -98,6 +98,11 @@ type Deps struct {
 	// falls back to the configured reviewer fan-out (current default behaviour).
 	ReviewTier func(name string) ReviewPlan
 
+	// ReadRoots are configured trusted read-only roots outside the workspace,
+	// passed through to tool workspaces so the Read tool can access them (task
+	// 0068). Writes stay confined to the workspace.
+	ReadRoots []string
+
 	mu        sync.Mutex
 	impl      *engine.Loop
 	reviewers []*reviewerHandle
@@ -307,7 +312,7 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 			// Delegating a task is an unambiguous focus signal (spec §20.2).
 			d.emitFocus(id)
 			reg := tools.New()
-			reg.Add(tools.Worker(&tools.Workspace{Root: d.Workspace})...)
+			reg.Add(tools.Worker(&tools.Workspace{Root: d.Workspace, ReadRoots: tools.ReadRoots(d.ReadRoots)})...)
 			impl := d.implementer()
 			loop := d.newLoop(impl, implementerSystem+"\n\n"+workspaceNote(d.Workspace), reg, "implementer")
 			// The implementer needs more output headroom than the shared cap: a
@@ -433,7 +438,7 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 			d.reviewers = nil
 			for _, spec := range specs {
 				reg := tools.New()
-				reg.Add(tools.Reviewer(&tools.Workspace{Root: d.Workspace})...)
+				reg.Add(tools.Reviewer(&tools.Workspace{Root: d.Workspace, ReadRoots: tools.ReadRoots(d.ReadRoots)})...)
 				loop := d.newLoop(spec, reviewerSystem+"\n\n"+workspaceNote(d.Workspace), reg, "reviewer:"+spec.Name)
 				loop.Seed(reviewerPrompt(t))
 				d.reviewers = append(d.reviewers, &reviewerHandle{name: spec.Name, loop: loop})

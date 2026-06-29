@@ -61,7 +61,8 @@ func Presets() []Preset {
 func BuildMode(mode string, d *Deps, level string) (*tools.Registry, string) {
 	specPath := d.Docs.SpecPath()
 	ws := &tools.Workspace{
-		Root: d.Workspace,
+		Root:      d.Workspace,
+		ReadRoots: tools.ReadRoots(d.ReadRoots),
 		OnWrite: func(path string) {
 			if path == specPath {
 				d.Emitter.Emit(event.DocUpdated, map[string]any{"doc": "spec"})

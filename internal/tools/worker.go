@@ -56,7 +56,8 @@ func readFile(ws *Workspace) *gollama.Tool {
 		Name: "Read",
 		Description: "Read a file from the workspace. Text files are returned with line numbers in cat -n format " +
 			"(line number, a tab, then the line). file_path should be an absolute path within the workspace (a " +
-			"path relative to the workspace root is also accepted). By default up to 2000 lines are returned; use " +
+			"path relative to the workspace root is also accepted). Files under trusted read-only roots outside the " +
+			"workspace (e.g. the Go module cache) are also readable. By default up to 2000 lines are returned; use " +
 			"offset (1-based start line) and limit to read a specific window of a large file. Images (PNG, JPEG, " +
 			"GIF, WebP) and PDFs are returned to you natively as visual content — just Read them like any other file.",
 		Params: obj(map[string]any{
@@ -69,7 +70,7 @@ func readFile(ws *Workspace) *gollama.Tool {
 			if !ok {
 				return errResult("Read: missing 'file_path'"), nil
 			}
-			abs, err := ws.resolve(fp)
+			abs, err := ws.resolveRead(fp)
 			if err != nil {
 				return errResult("Read: %v", err), nil
 			}
