@@ -1,10 +1,10 @@
 ---
 id: "0017"
 title: Smarter language inference for tool-call syntax highlighting
-status: todo
+status: done
 priority: 3
 created: "2026-06-26"
-updated: "2026-06-26"
+updated: "2026-06-29"
 depends_on:
     - "0006"
 spec_refs:
@@ -39,3 +39,16 @@ with the existing pure-helper TUI tests (eventAt, diff/catn/json).
 - [ ] graceful fallback for unknown extensions and binary/oversized content
 
 ## Work log
+- 2026-06-29 plan: Add chroma-based syntax highlighting for tool-call result content in the TUI, gated on confident language inference.  1. Engine (internal/engine/loop.go): add `"id": call.ID` to the ToolResult event e
+…[truncated]
+- 2026-06-29 implementer report: Implemented smarter language inference for tool-call syntax highlighting in the TUI (task 0017).  ## Changes  **internal/engine/loop.go** — Added `"id": call.ID` to the `ToolResult` event payload so
+…[truncated]
+- 2026-06-29 review tier: single-opus — reviewers: Claude
+- 2026-06-29 review (Claude): accept — The change satisfies the task's acceptance criteria. Language inference is centralized in a new pure-helper file (internal/tui/highlight.go) with good unit-test coverage including ambiguous cases (mix
+…[truncated]
+- 2026-06-29 revision: Addressed the reviewer's defect: `dataField` couldn't surface JSON booleans, so the `tool_result` error-routing check `dataField(ev, "error") == "true"` was dead code (the engine emits `"error": res.I
+…[truncated]
+- 2026-06-29 review (Claude): accept — The revision resolves the only prior finding: dataField now converts JSON booleans to \"true\"/\"false\", so the tool_result error-routing branch (dataField(ev,\"error\")==\"true\") works as intended 
+…[truncated]
+- 2026-06-29 decision: accept — commit 8b0f11e: TUI: infer language for tool-call result syntax highlighting (task 0017)  Highlight Read results by file_path extension (preserving the dimmed cat -n gutter) and grep/ripgrep results when the language
+…[truncated]

@@ -57,6 +57,164 @@ func TestCatNDimming(t *testing.T) {
 	}
 }
 
+// --- language inference (task 0017) ---
+
+// dataField must surface JSON booleans as "true"/"false" so checks like the
+// tool_result error routing (dataField(ev,"error") == "true") work — the engine
+// emits "error" as a JSON bool.
+func TestDataFieldBool(t *testing.T) {
+	if got := dataField(&v1.Event{DataJson: `{"error":true}`}, "error"); got != "true" {
+		t.Fatalf("dataField bool true = %q, want \"true\"", got)
+	}
+	if got := dataField(&v1.Event{DataJson: `{"error":false}`}, "error"); got != "false" {
+		t.Fatalf("dataField bool false = %q, want \"false\"", got)
+	}
+}
+
+func TestLexerNameForPath(t *testing.T) {
+	cases := []struct {
+		path    string
+		want    string // exact name, or "" for empty
+		contain string // substring expectation when want is ""
+	}{
+		{"main.go", "", "Go"},
+		{"sub/dir/x.py", "Python", ""},
+		{"a.ts", "TypeScript", ""},
+		{"noext", "", ""},
+		{"weird.zzzzz", "", ""},
+		{"", "", ""},
+	}
+	for _, c := range cases {
+		got := lexerNameForPath(c.path)
+		switch {
+		case c.want != "":
+			if got != c.want {
+				t.Errorf("lexerNameForPath(%q) = %q, want %q", c.path, got, c.want)
+			}
+		case c.contain != "":
+			if !strings.Contains(got, c.contain) {
+				t.Errorf("lexerNameForPath(%q) = %q, want containing %q", c.path, got, c.contain)
+			}
+		default:
+			if got != "" {
+				t.Errorf("lexerNameForPath(%q) = %q, want \"\"", c.path, got)
+			}
+		}
+	}
+}
+
+func TestLexerNameForCommand(t *testing.T) {
+	if got := lexerNameForCommand("rg -g '*.go' foo"); !strings.Contains(got, "Go") {
+		t.Errorf("rg -g '*.go' => %q, want Go", got)
+	}
+	if got := lexerNameForCommand("rg --type py foo"); got != "Python" {
+		t.Errorf("rg --type py => %q, want Python", got)
+	}
+	if got := lexerNameForCommand("rg -t go foo src/"); !strings.Contains(got, "Go") {
+		t.Errorf("rg -t go => %q, want Go", got)
+	}
+	if got := lexerNameForCommand("rg --glob=*.py foo"); got != "Python" {
+		t.Errorf("rg --glob=*.py => %q, want Python", got)
+	}
+	// Ambiguous: a Go type AND a Python glob.
+	if got := lexerNameForCommand("rg -t go -g '*.py' foo"); got != "" {
+		t.Errorf("ambiguous mixed => %q, want \"\"", got)
+	}
+	// No restriction at all.
+	if got := lexerNameForCommand("rg foo"); got != "" {
+		t.Errorf("rg foo => %q, want \"\"", got)
+	}
+	if got := lexerNameForCommand("grep -rn foo ."); got != "" {
+		t.Errorf("grep -rn => %q, want \"\"", got)
+	}
+	// Negated glob alone is ignored (not a positive restriction).
+	if got := lexerNameForCommand("rg -g '!*.go' foo"); got != "" {
+		t.Errorf("negated glob => %q, want \"\"", got)
+	}
+}
+
+func TestLexerNameForGrepPaths(t *testing.T) {
+	uniform := "internal/a.go:10:func A() {}\ninternal/b.go:3:func B() {}"
+	if got := lexerNameForGrepPaths(uniform); !strings.Contains(got, "Go") {
+		t.Errorf("uniform .go => %q, want Go", got)
+	}
+	mixed := "a.go:1:x\nb.py:2:y"
+	if got := lexerNameForGrepPaths(mixed); got != "" {
+		t.Errorf("mixed => %q, want \"\"", got)
+	}
+	none := "just some text\nno prefixes here"
+	if got := lexerNameForGrepPaths(none); got != "" {
+		t.Errorf("no prefixes => %q, want \"\"", got)
+	}
+	// Column-numbered prefixes are also recognized.
+	withCol := "a.go:10:5:func A() {}\nb.go:1:1:package main"
+	if got := lexerNameForGrepPaths(withCol); !strings.Contains(got, "Go") {
+		t.Errorf("with col => %q, want Go", got)
+	}
+}
+
+func TestHighlightCodeFallbacks(t *testing.T) {
+	const code = "func main() {}"
+	if got := highlightCode(code, ""); got != code {
+		t.Errorf("empty lexer should return input unchanged, got %q", got)
+	}
+	if got := highlightCode(code, "no-such-lexer-xyz"); got != code {
+		t.Errorf("unknown lexer should return input unchanged, got %q", got)
+	}
+}
+
+func TestHighlightCatNNeverDrops(t *testing.T) {
+	src := "     1\tpackage main\n     2\tfunc main() {}"
+	out := highlightCatN(src, "Go")
+	if !strings.Contains(stripANSI(out), "package main") || !strings.Contains(stripANSI(out), "func main() {}") {
+		t.Fatalf("highlightCatN dropped code:\n%q", out)
+	}
+	// Line count must be preserved.
+	if got, want := len(strings.Split(out, "\n")), 2; got != want {
+		t.Fatalf("highlightCatN line count = %d, want %d", got, want)
+	}
+	// With no lexer it behaves like dimLineNumbers.
+	if got := highlightCatN(src, ""); got != dimLineNumbers(src) {
+		t.Fatalf("highlightCatN with no lexer should equal dimLineNumbers")
+	}
+}
+
+func TestHighlightGrepNeverDrops(t *testing.T) {
+	src := "internal/x.go:10:func Foo() {}"
+	out := highlightGrep(src, "Go")
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "func Foo() {}") {
+		t.Fatalf("highlightGrep dropped match text:\n%q", out)
+	}
+	if !strings.Contains(plain, "internal/x.go:10:") {
+		t.Fatalf("highlightGrep dropped path prefix:\n%q", out)
+	}
+	// Non-prefixed lines pass through; with no lexer the input is unchanged.
+	if got := highlightGrep(src, ""); got != src {
+		t.Fatalf("highlightGrep with no lexer should return input unchanged")
+	}
+}
+
+// argField/callFor correlate a tool_result with its originating tool_call so the
+// renderer can infer language from the call's args.
+func TestCallForAndArgField(t *testing.T) {
+	call := &v1.Event{Seq: 1, Type: "tool_call", DataJson: `{"name":"Read","args":"{\"file_path\":\"x.go\"}","id":"c1"}`}
+	res := &v1.Event{Seq: 2, Type: "tool_result", DataJson: `{"name":"Read","result":"...","id":"c1"}`}
+	m := &model{evs: []*v1.Event{call, res}}
+	if got := m.callFor(res); got != call {
+		t.Fatalf("callFor did not match by id")
+	}
+	if got := argField(call, "file_path"); got != "x.go" {
+		t.Fatalf("argField(file_path) = %q, want x.go", got)
+	}
+	// Fallback to nearest preceding tool_call when id is absent.
+	res2 := &v1.Event{Seq: 2, Type: "tool_result", DataJson: `{"name":"Read","result":"..."}`}
+	m2 := &model{evs: []*v1.Event{call, res2}}
+	if got := m2.callFor(res2); got != call {
+		t.Fatalf("callFor fallback to preceding tool_call failed")
+	}
+}
+
 func TestPrettyArgs(t *testing.T) {
 	out := prettyArgs(`{"file_path":"a.go","content":"x"}`)
 	if !strings.Contains(out, "\n") || !strings.Contains(out, "file_path") {

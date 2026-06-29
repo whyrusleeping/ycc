@@ -340,6 +340,7 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 				"error":  res.IsError,
 				"images": len(res.Images),
 				"docs":   len(res.Documents),
+				"id":     call.ID,
 			})
 			l.appendToolResult(call.ID, res)
 			if ctrl := tools.ControlOf(res); ctrl != nil && ctrl.Stop {

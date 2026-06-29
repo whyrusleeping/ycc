@@ -2372,7 +2372,12 @@ func (m *model) renderBody(ev *v1.Event) string {
 		if r == "" {
 			return ""
 		}
-		return indentLines(highlightResult(r), bodyBar)
+		// Error output keeps the existing plain/diff/cat-n behavior — we don't
+		// language-highlight error text (it's usually not source code).
+		if dataField(ev, "error") == "true" {
+			return indentLines(highlightResult(r), bodyBar)
+		}
+		return indentLines(m.highlightToolResult(r, ev), bodyBar)
 	case "review_submitted":
 		txt := fmt.Sprintf("%s — %s\n%s", dataField(ev, "model"), dataField(ev, "verdict"), dataField(ev, "summary"))
 		return indentLines(m.markdown(txt), "  ")
@@ -2408,6 +2413,80 @@ func highlightResult(s string) string {
 		return dimLineNumbers(s)
 	}
 	return s
+}
+
+// callFor returns the tool_call event that produced the given tool_result, by
+// matching the call id, falling back to the nearest preceding tool_call. This
+// correlation lets the renderer infer a result's language from the call's args
+// (e.g. Read's file_path, Bash's command).
+func (m *model) callFor(res *v1.Event) *v1.Event {
+	id := dataField(res, "id")
+	var prev *v1.Event
+	for _, e := range m.evs {
+		if e.Type == "tool_call" {
+			if id != "" && dataField(e, "id") == id {
+				return e
+			}
+			prev = e
+		}
+		if e.Seq == res.Seq {
+			break
+		}
+	}
+	return prev
+}
+
+// argField unmarshals a tool_call's args JSON (itself a JSON string) and returns
+// the named string field, or "".
+func argField(call *v1.Event, key string) string {
+	if call == nil {
+		return ""
+	}
+	args := dataField(call, "args")
+	if args == "" {
+		return ""
+	}
+	var mp map[string]any
+	if json.Unmarshal([]byte(args), &mp) != nil {
+		return ""
+	}
+	if v, ok := mp[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+// highlightToolResult renders successful tool result content with best-effort
+// syntax highlighting inferred from the originating tool call (task 0017):
+//   - diffs are colorized as before;
+//   - Read's `cat -n` output is highlighted by the file_path extension, keeping
+//     the dimmed line-number gutter;
+//   - Bash grep/ripgrep output is highlighted when the language is unambiguous.
+//
+// Anything not confidently inferable falls back to the existing plain rendering.
+func (m *model) highlightToolResult(r string, res *v1.Event) string {
+	if looksDiff(r) {
+		return colorizeDiff(r)
+	}
+	call := m.callFor(res)
+	name := ""
+	if call != nil {
+		name = dataField(call, "name")
+	}
+	if looksCatN(r) {
+		lexer := ""
+		if name == "Read" {
+			lexer = lexerNameForPath(argField(call, "file_path"))
+		}
+		return highlightCatN(r, lexer)
+	}
+	if name == "Bash" {
+		if lexer := grepLexer(argField(call, "command"), r); lexer != "" {
+			return highlightGrep(r, lexer)
+		}
+		return r
+	}
+	return highlightResult(r)
 }
 
 func looksDiff(s string) bool {
@@ -2556,6 +2635,8 @@ func dataField(ev *v1.Event, key string) string {
 	switch v := mp[key].(type) {
 	case string:
 		return v
+	case bool:
+		return fmt.Sprintf("%t", v)
 	case float64:
 		return fmt.Sprintf("%g", v)
 	}
