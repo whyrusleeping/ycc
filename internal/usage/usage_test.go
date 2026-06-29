@@ -29,6 +29,14 @@ func turn(day, model string, u event.Usage) event.Event {
 	}}
 }
 
+// turnBy is like turn but tags the model_turn with the actor (agent) that spent
+// the tokens, so attribution by agent role can be exercised.
+func turnBy(day, model, actor string, u event.Usage) event.Event {
+	ev := turn(day, model, u)
+	ev.Actor = actor
+	return ev
+}
+
 func focus(task string) event.Event {
 	return event.Event{Type: event.TaskFocus, Data: map[string]any{"task": task}}
 }
@@ -134,6 +142,42 @@ func TestAggregateByTaskPriced(t *testing.T) {
 	}
 	if res.Total.Tokens.Total != 3850 {
 		t.Fatalf("total tokens = %d, want 3850", res.Total.Tokens.Total)
+	}
+}
+
+func TestAggregateByAgentCollapsesReviewers(t *testing.T) {
+	evs := []event.Event{
+		focus("0007"),
+		turnBy("2026-06-01", "claude", "coordinator", event.Usage{Input: 100, Output: 10, Total: 110}),
+		turnBy("2026-06-01", "claude", "implementer", event.Usage{Input: 1000, Output: 100, Total: 1100}),
+		turnBy("2026-06-01", "gpt", "reviewer:gpt", event.Usage{Input: 200, Output: 20, Total: 220}),
+		turnBy("2026-06-01", "glm", "reviewer:glm", event.Usage{Input: 300, Output: 30, Total: 330}),
+	}
+	entries := ReduceEvents("s1", evs)
+
+	// Grouping by agent collapses reviewer:gpt + reviewer:glm into one "reviewer".
+	rows := Aggregate(entries, pricer(), Options{GroupBy: []Dim{DimAgent}}).Rows
+	byAgent := map[string]Row{}
+	for _, r := range rows {
+		byAgent[r.Agent] = r
+	}
+	if len(byAgent) != 3 {
+		t.Fatalf("agents = %v, want coordinator/implementer/reviewer", byAgent)
+	}
+	if rv := byAgent["reviewer"]; rv.Tokens.Total != 550 {
+		t.Fatalf("reviewer total = %d, want 550 (gpt 220 + glm 330)", rv.Tokens.Total)
+	}
+	if byAgent["implementer"].Tokens.Total != 1100 {
+		t.Fatalf("implementer total = %d, want 1100", byAgent["implementer"].Tokens.Total)
+	}
+	if byAgent["coordinator"].Tokens.Total != 110 {
+		t.Fatalf("coordinator total = %d, want 110", byAgent["coordinator"].Tokens.Total)
+	}
+
+	// Grouping by agent+model keeps reviewers split per model.
+	am := Aggregate(entries, pricer(), Options{GroupBy: []Dim{DimAgent, DimModel}}).Rows
+	if len(am) != 4 {
+		t.Fatalf("agent+model rows = %d, want 4", len(am))
 	}
 }
 

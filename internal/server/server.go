@@ -467,6 +467,7 @@ func usageRowToProto(r usage.Row) *v1.UsageRow {
 		Task:        r.Task,
 		Model:       r.Model,
 		Session:     r.Session,
+		Agent:       r.Agent,
 		Day:         r.Day,
 		Input:       int64(r.Tokens.Input),
 		Output:      int64(r.Tokens.Output),

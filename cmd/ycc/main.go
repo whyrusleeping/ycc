@@ -398,12 +398,12 @@ func filepathAbs(p string) (string, error) { return filepath.Abs(p) }
 
 // runCost renders the usage/cost breakdown (spec §20.3, §20.5) returned by the
 // daemon's GetUsage RPC. By default it groups by backlog task; -by selects other
-// dimensions (comma-separated: task,model,session,day) and -since/-until bound an
-// inclusive date range.
+// dimensions (comma-separated: task,model,session,agent,day) and -since/-until
+// bound an inclusive date range.
 func runCost(ctx context.Context, client yccv1connect.SessionServiceClient, args []string) {
 	fs := flag.NewFlagSet("cost", flag.ExitOnError)
 	project := fs.String("project", "", "registered project name (default: daemon default workspace)")
-	by := fs.String("by", "task", "group by, comma-separated: task,model,session,day")
+	by := fs.String("by", "task", "group by, comma-separated: task,model,session,agent,day")
 	since := fs.String("since", "", "include usage on/after this day (YYYY-MM-DD)")
 	until := fs.String("until", "", "include usage on/before this day (YYYY-MM-DD)")
 	fs.Parse(args)
@@ -478,6 +478,10 @@ func costRowLine(r *v1.UsageRow, groupBy []string) string {
 			}
 		case "session":
 			v = r.Session
+		case "agent":
+			if v = r.Agent; v == "" {
+				v = "(unknown)"
+			}
 		case "day":
 			v = r.Day
 		}

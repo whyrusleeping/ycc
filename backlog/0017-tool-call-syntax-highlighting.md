@@ -52,3 +52,4 @@ with the existing pure-helper TUI tests (eventAt, diff/catn/json).
 …[truncated]
 - 2026-06-29 decision: accept — commit 8b0f11e: TUI: infer language for tool-call result syntax highlighting (task 0017)  Highlight Read results by file_path extension (preserving the dimmed cat -n gutter) and grep/ripgrep results when the language
 …[truncated]
+- 2026-06-29 usage: 48,010 tok (in 180, out 47,830, cache_r 4,241,759, cache_w 164,866) · cost n/a (unpriced)

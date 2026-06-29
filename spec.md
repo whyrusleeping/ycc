@@ -1078,9 +1078,13 @@ in the log (replayable, syncable) rather than as out-of-band session metadata.
 The usage projection (an extension of `event.Reduce`, §5) folds a session's `model_turn`
 usage into totals **by model and by focused task**. A cross-session aggregator
 (`internal/usage`) scans a workspace's `.ycc/sessions/*/events.jsonl`, reduces each, and
-produces a breakdown grouped by **task × model × time** (e.g. per-day buckets), plus
-per-session and project totals. Because raw events are the source, the breakdown is
-always recomputable and never drifts.
+produces a breakdown grouped by **task × model × agent × time** (e.g. per-day buckets), plus
+per-session and project totals. The **agent** dimension is the event actor that spent the
+tokens, collapsed to its role — `coordinator`, `implementer`, or `reviewer` (the per-model
+reviewer actors `reviewer:<model>` collapse to one `reviewer` group; pair `agent` with
+`model` to split them back out). This separates the cost of the coordinator's orchestration
+from the implementer's work and the reviewers' passes. Because raw events are the source,
+the breakdown is always recomputable and never drifts.
 
 ### 20.4 Pricing & cost
 
@@ -1110,8 +1114,8 @@ vendor prices change without touching the event log.
   to the task's work log (§6.2), so the cost of a task accrues in the backlog itself across
   the multiple sessions that may touch it.
 - **Project rollup.** A `GetUsage` RPC + a `ycc cost` CLI view render the cross-session
-  breakdown by task / model / time from the aggregator (§20.3). This is the "detailed cost
-  breakdown by backlog task over time" surface. In the TUI this cost view is a modal that
+  breakdown by task / model / agent / time from the aggregator (§20.3). This is the "detailed
+  cost breakdown by backlog task over time" surface. In the TUI this cost view is a modal that
   shares the generic list+detail "browser" surface with the session history browser
   (§18.6) and the backlog browser (§18.5).
 

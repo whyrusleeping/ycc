@@ -1,7 +1,7 @@
 ---
 id: "0045"
 title: RemoveModel should also reject models referenced by live session role assignments
-status: in_progress
+status: done
 priority: 3
 created: "2026-06-27"
 updated: "2026-06-28"
@@ -44,3 +44,6 @@ backend" guarantee in this edge case.
 - 2026-06-28 review tier: single-opus — reviewers: Claude
 - 2026-06-28 review (Claude): accept — The change adds Session.ReferencesModel (checks live coordinator/implementer/reviewers under lock) and updates Manager.RemoveModel to iterate running sessions and reject removal with a clear error bef
 …[truncated]
+- 2026-06-28 decision: accept — commit d19d35f: RemoveModel: reject models referenced by live session role assignments  Manager.RemoveModel now scans running sessions and rejects removal of a model still referenced by a session's live role config (
+…[truncated]
+- 2026-06-28 usage: 9,386 tok (in 62, out 9,324, cache_r 383,776, cache_w 30,991) · cost n/a (unpriced)

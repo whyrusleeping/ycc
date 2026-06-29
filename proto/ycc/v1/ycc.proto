@@ -263,7 +263,7 @@ message CaptureBacklogItemResponse {
 // non-CLI clients (TUI/phone) can render it identically to `ycc cost`.
 message GetUsageRequest {
   string project = 1;           // optional registered project; empty => daemon default workspace
-  repeated string group_by = 2; // task | model | session | day (default: task)
+  repeated string group_by = 2; // task | model | session | agent | day (default: task)
   string since = 3;             // YYYY-MM-DD inclusive, optional
   string until = 4;             // YYYY-MM-DD inclusive, optional
 }
@@ -279,6 +279,7 @@ message UsageRow {
   int64 total = 9;
   double cost = 10;
   string price_status = 11; // priced | unpriced | partial
+  string agent = 12;        // coordinator | implementer | reviewer (collapsed role)
 }
 message GetUsageResponse {
   repeated UsageRow rows = 1;

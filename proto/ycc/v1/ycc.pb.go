@@ -2999,7 +2999,7 @@ func (x *CaptureBacklogItemResponse) GetQuestion() string {
 type GetUsageRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`                // optional registered project; empty => daemon default workspace
-	GroupBy       []string               `protobuf:"bytes,2,rep,name=group_by,json=groupBy,proto3" json:"group_by,omitempty"` // task | model | session | day (default: task)
+	GroupBy       []string               `protobuf:"bytes,2,rep,name=group_by,json=groupBy,proto3" json:"group_by,omitempty"` // task | model | session | agent | day (default: task)
 	Since         string                 `protobuf:"bytes,3,opt,name=since,proto3" json:"since,omitempty"`                    // YYYY-MM-DD inclusive, optional
 	Until         string                 `protobuf:"bytes,4,opt,name=until,proto3" json:"until,omitempty"`                    // YYYY-MM-DD inclusive, optional
 	unknownFields protoimpl.UnknownFields
@@ -3077,6 +3077,7 @@ type UsageRow struct {
 	Total         int64                  `protobuf:"varint,9,opt,name=total,proto3" json:"total,omitempty"`
 	Cost          float64                `protobuf:"fixed64,10,opt,name=cost,proto3" json:"cost,omitempty"`
 	PriceStatus   string                 `protobuf:"bytes,11,opt,name=price_status,json=priceStatus,proto3" json:"price_status,omitempty"` // priced | unpriced | partial
+	Agent         string                 `protobuf:"bytes,12,opt,name=agent,proto3" json:"agent,omitempty"`                                // coordinator | implementer | reviewer (collapsed role)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3184,6 +3185,13 @@ func (x *UsageRow) GetCost() float64 {
 func (x *UsageRow) GetPriceStatus() string {
 	if x != nil {
 		return x.PriceStatus
+	}
+	return ""
+}
+
+func (x *UsageRow) GetAgent() string {
+	if x != nil {
+		return x.Agent
 	}
 	return ""
 }
@@ -3458,7 +3466,7 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12\x19\n" +
 	"\bgroup_by\x18\x02 \x03(\tR\agroupBy\x12\x14\n" +
 	"\x05since\x18\x03 \x01(\tR\x05since\x12\x14\n" +
-	"\x05until\x18\x04 \x01(\tR\x05until\"\x9b\x02\n" +
+	"\x05until\x18\x04 \x01(\tR\x05until\"\xb1\x02\n" +
 	"\bUsageRow\x12\x12\n" +
 	"\x04task\x18\x01 \x01(\tR\x04task\x12\x14\n" +
 	"\x05model\x18\x02 \x01(\tR\x05model\x12\x18\n" +
@@ -3473,7 +3481,8 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x05total\x18\t \x01(\x03R\x05total\x12\x12\n" +
 	"\x04cost\x18\n" +
 	" \x01(\x01R\x04cost\x12!\n" +
-	"\fprice_status\x18\v \x01(\tR\vpriceStatus\"~\n" +
+	"\fprice_status\x18\v \x01(\tR\vpriceStatus\x12\x14\n" +
+	"\x05agent\x18\f \x01(\tR\x05agent\"~\n" +
 	"\x10GetUsageResponse\x12$\n" +
 	"\x04rows\x18\x01 \x03(\v2\x10.ycc.v1.UsageRowR\x04rows\x12&\n" +
 	"\x05total\x18\x02 \x01(\v2\x10.ycc.v1.UsageRowR\x05total\x12\x1c\n" +

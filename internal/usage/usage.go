@@ -55,15 +55,32 @@ func (t Tokens) usage() event.Usage {
 	return event.Usage{Input: t.Input, Output: t.Output, CacheRead: t.CacheRead, CacheWrite: t.CacheWrite, Total: t.Total}
 }
 
-// Entry is one reduced (session, task, model, day) bucket of token usage. Task
-// "" means usage that occurred before any task_focus ("unattributed"); Model ""
-// means the turn did not record a model name.
+// Entry is one reduced (session, task, model, agent, day) bucket of token usage.
+// Task "" means usage that occurred before any task_focus ("unattributed");
+// Model "" means the turn did not record a model name. Agent is the raw event
+// actor that spent the tokens (e.g. "coordinator", "implementer",
+// "reviewer:gpt"); see AgentRole for the collapsed role used by the agent
+// grouping dimension.
 type Entry struct {
 	Session string
 	Task    string
 	Model   string
+	Agent   string
 	Day     string // YYYY-MM-DD in UTC
 	Tokens  Tokens
+}
+
+// AgentRole collapses a raw event actor to its role: the segment before the
+// first ":". So "reviewer:gpt" and "reviewer:glm" both become "reviewer", while
+// "coordinator" and "implementer" pass through unchanged. This is the value used
+// by the DimAgent grouping dimension so the default agent view separates the
+// coordinator, the implementer, and the reviewers as a group; pair it with
+// DimModel to split reviewers per model.
+func AgentRole(actor string) string {
+	if i := strings.IndexByte(actor, ':'); i >= 0 {
+		return actor[:i]
+	}
+	return actor
 }
 
 // Dim names a grouping dimension for the breakdown.
@@ -73,16 +90,17 @@ const (
 	DimTask    Dim = "task"
 	DimModel   Dim = "model"
 	DimSession Dim = "session"
+	DimAgent   Dim = "agent"
 	DimDay     Dim = "day"
 )
 
 // ParseDim resolves a dimension name, returning an error for unknown values.
 func ParseDim(s string) (Dim, error) {
 	switch Dim(s) {
-	case DimTask, DimModel, DimSession, DimDay:
+	case DimTask, DimModel, DimSession, DimAgent, DimDay:
 		return Dim(s), nil
 	default:
-		return "", fmt.Errorf("unknown group-by dimension %q (want task|model|session|day)", s)
+		return "", fmt.Errorf("unknown group-by dimension %q (want task|model|session|agent|day)", s)
 	}
 }
 
@@ -106,6 +124,7 @@ type Row struct {
 	Task    string
 	Model   string
 	Session string
+	Agent   string
 	Day     string
 	Tokens  Tokens
 	Cost    float64
@@ -127,10 +146,11 @@ type Result struct {
 	Total     Row
 }
 
-// ReduceEvents folds one session's events into per-(task,model,day) entries,
-// attributing each model_turn to the most recent task_focus.
+// ReduceEvents folds one session's events into per-(task,model,agent,day)
+// entries, attributing each model_turn to the most recent task_focus and to the
+// actor that emitted it (the agent that spent the tokens).
 func ReduceEvents(sessionID string, events []event.Event) []Entry {
-	type key struct{ task, model, day string }
+	type key struct{ task, model, agent, day string }
 	buckets := map[key]*Entry{}
 	var order []key
 	focus := ""
@@ -142,10 +162,10 @@ func ReduceEvents(sessionID string, events []event.Event) []Entry {
 			u := usageFromData(ev.Data["usage"])
 			model := stringField(ev.Data, "model_name")
 			day := ev.TS.UTC().Format("2006-01-02")
-			k := key{task: focus, model: model, day: day}
+			k := key{task: focus, model: model, agent: ev.Actor, day: day}
 			e, ok := buckets[k]
 			if !ok {
-				e = &Entry{Session: sessionID, Task: focus, Model: model, Day: day}
+				e = &Entry{Session: sessionID, Task: focus, Model: model, Agent: ev.Actor, Day: day}
 				buckets[k] = e
 				order = append(order, k)
 			}
@@ -366,6 +386,8 @@ func rowFor(e Entry, dims []Dim) Row {
 			r.Model = e.Model
 		case DimSession:
 			r.Session = e.Session
+		case DimAgent:
+			r.Agent = AgentRole(e.Agent)
 		case DimDay:
 			r.Day = e.Day
 		}
@@ -381,6 +403,8 @@ func dimValue(e Entry, d Dim) string {
 		return e.Model
 	case DimSession:
 		return e.Session
+	case DimAgent:
+		return AgentRole(e.Agent)
 	case DimDay:
 		return e.Day
 	}
@@ -397,6 +421,8 @@ func rowSortKey(r Row, dims []Dim) string {
 			parts[i] = r.Model
 		case DimSession:
 			parts[i] = r.Session
+		case DimAgent:
+			parts[i] = r.Agent
 		case DimDay:
 			parts[i] = r.Day
 		}
@@ -476,6 +502,11 @@ func rowLine(r Row, groupBy []Dim) string {
 			}
 		case DimSession:
 			v = r.Session
+		case DimAgent:
+			v = r.Agent
+			if v == "" {
+				v = "(unknown)"
+			}
 		case DimDay:
 			v = r.Day
 		}
