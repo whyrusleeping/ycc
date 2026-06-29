@@ -40,7 +40,7 @@
 | [0035](backlog/0035-tui-session-browser-list-transcript-reopen-shared.md) | TUI session browser (list, transcript, reopen) + shared list+detail modal | todo | 3 | 0033, 0034, 0031 |
 | [0036](backlog/0036-per-role-thinking-level-independent-reasoning-per.md) | Per-role thinking level (independent reasoning per agent) | done | 3 | — |
 | [0037](backlog/0037-review-land-leftover-settings-overlay-thinking-ui.md) | Review & land leftover settings-overlay thinking-UI rework (inline +/- thinking) | done | 3 | — |
-| [0038](backlog/0038-per-task-work-log-usage-summary-for-all-tasks-work.md) | Per-task work-log usage summary for all tasks worked in a session (not just current focus) | in_progress | 3 | 0029 |
+| [0038](backlog/0038-per-task-work-log-usage-summary-for-all-tasks-work.md) | Per-task work-log usage summary for all tasks worked in a session (not just current focus) | done | 3 | 0029 |
 | [0039](backlog/0039-tui-cost-view-browse-usage-cost-breakdown-via-getu.md) | TUI cost view — browse usage/cost breakdown via GetUsage (shared browser modal) | todo | 3 | 0029, 0035 |
 | [0040](backlog/0040-interrupt-steer-a-running-agent-pause-correct-resu.md) | Interrupt & steer a running agent (pause / correct / resume) | done | 2 | — |
 | [0041](backlog/0041-manage-model-backends-from-the-settings-overlay-li.md) | Manage model backends from the settings overlay (live add/edit/remove, persisted) | done | 2 | — |

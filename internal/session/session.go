@@ -675,52 +675,48 @@ func (s *Session) withAssumptions(report string) string {
 	return string(b)
 }
 
-// summarizeUsage appends a one-line usage/cost summary for the session's focused
-// task to that task's work log when a work-mode session goes idle (spec §6.2,
-// §20.5), so per-task cost accrues in the backlog across sessions. It is
-// idempotent per task within a session: at most one line per focused task.
+// summarizeUsage appends a one-line usage/cost summary to the work log of EVERY
+// task that accrued usage in the session — not just the currently-focused task —
+// when a work-mode session goes idle (spec §6.2, §20.5), so per-task cost accrues
+// in the backlog across sessions. It is idempotent per task within a session: at
+// most one line per task.
+//
+// Cumulative-vs-snapshot: the work-log line is a one-shot snapshot captured the
+// first idle a task has nonzero usage and is NOT refreshed as more usage accrues
+// for that task in later idle cycles. The recomputed `ycc cost` view aggregates
+// from the event log and stays authoritative for cumulative totals.
 func (s *Session) summarizeUsage() {
 	if s.Mode != "work" {
 		return
 	}
 	events := s.log.Snapshot()
-	task := event.Reduce(events).FocusTask
-	if task == "" {
-		return
-	}
-	s.mu.Lock()
-	if s.usageSummarized == nil {
-		s.usageSummarized = map[string]bool{}
-	}
-	already := s.usageSummarized[task]
-	s.mu.Unlock()
-	if already {
-		return
-	}
 
 	entries := usage.ReduceEvents(s.ID, events)
 	res := usage.Aggregate(entries, s.reg, usage.Options{GroupBy: []usage.Dim{usage.DimTask}})
-	var row usage.Row
-	found := false
-	for _, r := range res.Rows {
-		if r.Task == task {
-			row, found = r, true
-			break
+	for _, row := range res.Rows {
+		if row.Task == "" || row.Tokens.Total == 0 {
+			continue
 		}
-	}
-	if !found || row.Tokens.Total == 0 {
-		return
-	}
+		s.mu.Lock()
+		if s.usageSummarized == nil {
+			s.usageSummarized = map[string]bool{}
+		}
+		already := s.usageSummarized[row.Task]
+		s.mu.Unlock()
+		if already {
+			continue
+		}
 
-	if s.deps != nil && s.deps.Docs != nil {
-		if _, err := s.deps.Docs.AppendWorkLog(task, usage.FormatWorkLogLine(row)); err != nil {
-			s.emitter.Emit(event.Narration, map[string]any{"msg": "usage summary work-log append failed: " + err.Error()})
-			return
+		if s.deps != nil && s.deps.Docs != nil {
+			if _, err := s.deps.Docs.AppendWorkLog(row.Task, usage.FormatWorkLogLine(row)); err != nil {
+				s.emitter.Emit(event.Narration, map[string]any{"msg": "usage summary work-log append failed: " + err.Error()})
+				continue
+			}
 		}
+		s.mu.Lock()
+		s.usageSummarized[row.Task] = true
+		s.mu.Unlock()
 	}
-	s.mu.Lock()
-	s.usageSummarized[task] = true
-	s.mu.Unlock()
 }
 
 // Manager owns the set of live sessions and the backend registry used to build

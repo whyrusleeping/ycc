@@ -1,10 +1,10 @@
 ---
 id: "0038"
 title: Per-task work-log usage summary for all tasks worked in a session (not just current focus)
-status: todo
+status: done
 priority: 3
 created: "2026-06-27"
-updated: "2026-06-27"
+updated: "2026-06-29"
 depends_on:
     - "0029"
 spec_refs:
@@ -39,3 +39,8 @@ tasks, but only `event.Reduce(events).FocusTask` is inspected.
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-29 plan: Broaden `Session.summarizeUsage` (internal/session/session.go) to record a usage/cost work-log line for every task that accrued usage in the session, not just the currently-focused task.  Changes: 1. 
+…[truncated]
+- 2026-06-29 implementer report: Broadened `Session.summarizeUsage` (internal/session/session.go) to record a usage/cost work-log line for every task that accrued usage in the session, not just the currently-focused task.  Changes: -
+…[truncated]
+- 2026-06-29 review tier: simple (coordinator self-review)

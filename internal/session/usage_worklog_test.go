@@ -71,3 +71,63 @@ func TestSummarizeUsageAppendsOnceToWorkLog(t *testing.T) {
 		t.Fatalf("priced summary should contain a dollar cost:\n%s", got.Body)
 	}
 }
+
+// summarizeUsage records a usage line for every task worked in the session, not
+// just the currently-focused one (spec §6.2, §20.5).
+func TestSummarizeUsageMultipleTasks(t *testing.T) {
+	ws := t.TempDir()
+	store := docs.NewStore(ws)
+	taskA, err := store.Create("task A", "", 1, nil, nil)
+	if err != nil {
+		t.Fatalf("create task A: %v", err)
+	}
+	taskB, err := store.Create("task B", "", 1, nil, nil)
+	if err != nil {
+		t.Fatalf("create task B: %v", err)
+	}
+
+	logPath := ws + "/.ycc/sessions/s_test/events.jsonl"
+	log, err := event.OpenLog(logPath)
+	if err != nil {
+		t.Fatalf("open log: %v", err)
+	}
+	defer log.Close()
+	emitter := event.NewEmitter(log, "coordinator")
+	emitter.Emit(event.TaskFocus, map[string]any{"task": taskA.ID})
+	emitter.Emit(event.ModelTurn, map[string]any{
+		"model_name": "a",
+		"usage":      event.Usage{Input: 1000, Output: 100, Total: 1100},
+	})
+	emitter.Emit(event.TaskFocus, map[string]any{"task": taskB.ID})
+	emitter.Emit(event.ModelTurn, map[string]any{
+		"model_name": "a",
+		"usage":      event.Usage{Input: 2000, Output: 200, Total: 2200},
+	})
+
+	s := &Session{
+		ID:              "s_test",
+		Mode:            "work",
+		log:             log,
+		emitter:         emitter,
+		reg:             pricedRegistry(),
+		deps:            &orchestrator.Deps{Docs: store, Emitter: emitter},
+		usageSummarized: map[string]bool{},
+	}
+
+	s.summarizeUsage()
+	s.summarizeUsage() // second idle cycle must not append again
+
+	for _, task := range []string{taskA.ID, taskB.ID} {
+		got, err := store.Get(task)
+		if err != nil {
+			t.Fatalf("get task %s: %v", task, err)
+		}
+		n := strings.Count(got.Body, "usage: ")
+		if n != 1 {
+			t.Fatalf("task %s usage lines = %d, want exactly 1\nbody:\n%s", task, n, got.Body)
+		}
+		if !strings.Contains(got.Body, "$") {
+			t.Fatalf("task %s priced summary should contain a dollar cost:\n%s", task, got.Body)
+		}
+	}
+}
