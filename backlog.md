@@ -40,7 +40,7 @@
 | [0035](backlog/0035-tui-session-browser-list-transcript-reopen-shared.md) | TUI session browser (list, transcript, reopen) + shared list+detail modal | todo | 3 | 0033, 0034, 0031 |
 | [0036](backlog/0036-per-role-thinking-level-independent-reasoning-per.md) | Per-role thinking level (independent reasoning per agent) | done | 3 | — |
 | [0037](backlog/0037-review-land-leftover-settings-overlay-thinking-ui.md) | Review & land leftover settings-overlay thinking-UI rework (inline +/- thinking) | done | 3 | — |
-| [0038](backlog/0038-per-task-work-log-usage-summary-for-all-tasks-work.md) | Per-task work-log usage summary for all tasks worked in a session (not just current focus) | todo | 3 | 0029 |
+| [0038](backlog/0038-per-task-work-log-usage-summary-for-all-tasks-work.md) | Per-task work-log usage summary for all tasks worked in a session (not just current focus) | in_progress | 3 | 0029 |
 | [0039](backlog/0039-tui-cost-view-browse-usage-cost-breakdown-via-getu.md) | TUI cost view — browse usage/cost breakdown via GetUsage (shared browser modal) | todo | 3 | 0029, 0035 |
 | [0040](backlog/0040-interrupt-steer-a-running-agent-pause-correct-resu.md) | Interrupt & steer a running agent (pause / correct / resume) | done | 2 | — |
 | [0041](backlog/0041-manage-model-backends-from-the-settings-overlay-li.md) | Manage model backends from the settings overlay (live add/edit/remove, persisted) | done | 2 | — |
@@ -49,7 +49,7 @@
 | [0044](backlog/0044-settings-overlay-model-backends-management-form-ad.md) | Settings-overlay "Model backends" management form (add/edit/duplicate/remove) | done | 2 | 0041 |
 | [0045](backlog/0045-removemodel-should-also-reject-models-referenced-b.md) | RemoveModel should also reject models referenced by live session role assignments | done | 3 | 0041 |
 | [0046](backlog/0046-configurable-review-tiers-let-the-work-agent-choos.md) | Configurable review tiers — let the work agent choose review intensity per change | done | 3 | — |
-| [0047](backlog/0047-support-multiple-questions-with-per-question-answe.md) | Support multiple questions with per-question answer sets in ask-user tool | in_progress | 3 | — |
+| [0047](backlog/0047-support-multiple-questions-with-per-question-answe.md) | Support multiple questions with per-question answer sets in ask-user tool | done | 3 | — |
 | [0048](backlog/0048-default-the-backlog-overlay-view-to-hiding-complet.md) | Default the backlog overlay view to hiding completed tasks | done | 3 | — |
 | [0049](backlog/0049-show-agent-action-log-in-quick-add-task-overlay-af.md) | Show agent action log in quick-add task overlay after submit | todo | 3 | — |
 | [0050](backlog/0050-auto-retry-transient-llm-api-call-failures-with-ba.md) | Auto-retry transient LLM API call failures with backoff | done | 3 | — |

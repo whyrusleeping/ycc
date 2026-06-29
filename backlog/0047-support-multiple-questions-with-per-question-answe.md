@@ -1,7 +1,7 @@
 ---
 id: "0047"
 title: Support multiple questions with per-question answer sets in ask-user tool
-status: in_progress
+status: done
 priority: 3
 created: "2026-06-27"
 updated: "2026-06-29"
@@ -43,3 +43,5 @@ When the model needs several pieces of input from the user, it must currently ma
 …[truncated]
 - 2026-06-29 review (Claude): accept — The revision resolves the previously flagged major TUI focus bug: loadWizQuestion now focuses the textarea for free-text wizard questions and returns the blink cmd, which recordWizAnswer propagates th
 …[truncated]
+- 2026-06-29 decision: accept — commit e0498df: ask_user: support multiple questions with per-question answer sets [0047]
+- 2026-06-29 usage: 64,168 tok (in 318, out 63,850, cache_r 7,978,067, cache_w 296,966) · cost n/a (unpriced)
