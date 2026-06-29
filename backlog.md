@@ -67,5 +67,5 @@
 | [0062](backlog/0062-live-session-status-bar-mode-level-thinking-elapse.md) | Live session status bar (mode/level/thinking/elapsed/token-cost) + activity spinner | todo | 3 | 0060 |
 | [0063](backlog/0063-event-stream-visual-polish-type-glyphs-verdict-col.md) | Event-stream visual polish (type glyphs, verdict colors, subagent tree, selection bar) | todo | 3 | 0060 |
 | [0064](backlog/0064-chat-mode-allow-create-task-update-task-backlog-ma.md) | Chat mode: allow create_task/update_task backlog management | done | 3 | — |
-| [0065](backlog/0065-store-llm-backend-tokens-in-the-global-ycc-config.md) | Store LLM backend tokens in the global ycc config dir instead of env-only | todo | 3 | 0041 |
+| [0065](backlog/0065-store-llm-backend-tokens-in-the-global-ycc-config.md) | Store LLM backend tokens in the global ycc config dir instead of env-only | done | 3 | 0041 |
 | [0066](backlog/0066-use-multiline-textarea-for-all-chat-inputs-style-w.md) | Use multiline textarea for all chat inputs + style with rounded expanding frame (per lsp.webp) | todo | 3 | 0058 |

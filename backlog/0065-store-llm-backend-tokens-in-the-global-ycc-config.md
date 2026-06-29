@@ -1,7 +1,7 @@
 ---
 id: "0065"
 title: Store LLM backend tokens in the global ycc config dir instead of env-only
-status: todo
+status: done
 priority: 3
 created: "2026-06-29"
 updated: "2026-06-29"
@@ -50,3 +50,12 @@ project config.
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-29 plan: Add a global, restricted-perms secrets store for LLM backend tokens, keyed by the existing `key_env` name, and wire credential resolution to fall back to it. Keep `key_env`-based env resolution workin
+…[truncated]
+- 2026-06-29 implementer report: Implemented a global, restricted-perms secrets store for LLM backend tokens with env→stored-token resolution precedence. Backward compatible.  Changes: - New package internal/secrets (internal/secre
+…[truncated]
+- 2026-06-29 review tier: single-opus — reviewers: Claude
+- 2026-06-29 review (Claude): accept — The change adds a clean, machine-local secrets store (internal/secrets) writing to ~/.config/ycc/secrets.json with dir mode 0700 and file mode 0600, never touching the project ycc.toml. Credential res
+…[truncated]
+- 2026-06-29 decision: accept — commit: Store LLM backend tokens in a global 0600 secrets store with env→stored fallback (0065)  Add internal/secrets: a machine-local secrets.json under the user config dir (dir 0700, file 0600) keyed by k
+…[truncated]

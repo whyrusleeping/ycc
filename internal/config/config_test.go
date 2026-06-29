@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/whyrusleeping/ycc/internal/secrets"
 )
 
 const sample = `
@@ -628,5 +630,33 @@ func TestReviewTierValidation(t *testing.T) {
 	c.Reviews.Tiers = map[string]ReviewTier{"x": {Strategy: "coordinator", Models: []string{"ghost"}}}
 	if err := c.validate(); err != nil {
 		t.Fatalf("self-review tier should validate, got %v", err)
+	}
+}
+
+func TestResolveKeyPrecedence(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
+
+	if err := secrets.Set("ANTHROPIC_API_KEY", "stored-token"); err != nil {
+		t.Fatalf("secrets.Set: %v", err)
+	}
+	m := Model{Backend: "anthropic", KeyEnv: "ANTHROPIC_API_KEY"}
+
+	// Env var unset: falls back to the stored token.
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	if got := resolveKey(m); got != "stored-token" {
+		t.Fatalf("resolveKey (env unset) = %q, want stored-token", got)
+	}
+
+	// Env var set: explicit env wins over the stored token.
+	t.Setenv("ANTHROPIC_API_KEY", "env-token")
+	if got := resolveKey(m); got != "env-token" {
+		t.Fatalf("resolveKey (env set) = %q, want env-token", got)
+	}
+
+	// No key_env: empty.
+	if got := resolveKey(Model{Backend: "ollama"}); got != "" {
+		t.Fatalf("resolveKey (no key_env) = %q, want empty", got)
 	}
 }

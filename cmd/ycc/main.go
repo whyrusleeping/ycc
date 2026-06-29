@@ -33,6 +33,7 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/whyrusleeping/ycc/internal/daemon"
+	"github.com/whyrusleeping/ycc/internal/secrets"
 	"github.com/whyrusleeping/ycc/internal/setup"
 	"github.com/whyrusleeping/ycc/internal/tui"
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
@@ -47,6 +48,13 @@ func main() {
 		return
 	}
 
+	// The token subcommand manages the machine-local secrets store; it's a
+	// purely-local operation that does not need the daemon.
+	if len(os.Args) > 1 && os.Args[1] == "token" {
+		runToken(os.Args[2:])
+		return
+	}
+
 	// Global flags precede the subcommand; subcommand-specific flags follow it.
 	global := flag.NewFlagSet("ycc", flag.ExitOnError)
 	addr := global.String("addr", "", "remote/explicit daemon URL to attach to")
@@ -55,7 +63,7 @@ func main() {
 	configPath := global.String("config", "", "TOML model config for the local daemon")
 	background := global.Bool("background", false, "spawn a detached persistent daemon and attach (opt-in persistence)")
 	global.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: ycc [-addr URL] [-token T] [--background] [<start|attach|list|stop|modes|cost|daemon>] [args]")
+		fmt.Fprintln(os.Stderr, "usage: ycc [-addr URL] [-token T] [--background] [<start|attach|list|stop|modes|cost|token|daemon>] [args]")
 		fmt.Fprintln(os.Stderr, "  with no subcommand, launches the interactive TUI (home menu)")
 		fmt.Fprintln(os.Stderr, "  by default the daemon runs in-process and is torn down on exit (no persistence)")
 		fmt.Fprintln(os.Stderr, "  use `ycc daemon` or `ycc --background` for a persistent daemon")
@@ -312,6 +320,59 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// runToken manages the machine-local LLM backend secrets store: a token can be
+// saved once (keyed by its key_env name) instead of being exported in the
+// environment every session. The token value is read from stdin — never taken
+// as a command-line argument — so it never lands in shell history or argv.
+func runToken(argv []string) {
+	if len(argv) == 0 {
+		fatal("usage: ycc token <set|list|rm> [KEY_ENV]")
+	}
+	switch argv[0] {
+	case "set":
+		if len(argv) < 2 || argv[1] == "" {
+			fatal("usage: ycc token set <KEY_ENV>")
+		}
+		keyEnv := argv[1]
+		// Prompt only when stdin is a terminal; a piped value works unattended.
+		if fi, err := os.Stdin.Stat(); err == nil && (fi.Mode()&os.ModeCharDevice) != 0 {
+			fmt.Fprintf(os.Stderr, "enter token for %s (input hidden if piped): ", keyEnv)
+		}
+		r := bufio.NewReader(os.Stdin)
+		line, err := r.ReadString('\n')
+		if err != nil && line == "" {
+			fatal("token: reading token: %v", err)
+		}
+		tok := strings.TrimSpace(line)
+		if tok == "" {
+			fatal("token: empty token, nothing stored")
+		}
+		if err := secrets.Set(keyEnv, tok); err != nil {
+			fatal("token: %v", err)
+		}
+		fmt.Printf("stored token for %s\n", keyEnv)
+	case "list":
+		keys := secrets.Keys()
+		if len(keys) == 0 {
+			fmt.Println("(no stored tokens)")
+			return
+		}
+		for _, k := range keys {
+			fmt.Println(k)
+		}
+	case "rm", "remove":
+		if len(argv) < 2 || argv[1] == "" {
+			fatal("usage: ycc token rm <KEY_ENV>")
+		}
+		if err := secrets.Remove(argv[1]); err != nil {
+			fatal("token: %v", err)
+		}
+		fmt.Printf("removed token for %s\n", argv[1])
+	default:
+		fatal("usage: ycc token <set|list|rm> [KEY_ENV]")
+	}
 }
 
 // runDaemon parses daemon flags and serves until killed. This is the explicit,

@@ -37,3 +37,4 @@ Follow-on from 0009 (explicit StopSession landed). Add automatic reclamation so 
 …[truncated]
 - 2026-06-29 decision: accept — commit: Add automatic idle-session GC reaper + opt-in on-disk log retention (0054)  Background reaper on the session Manager stops sessions left idle past a configurable timeout (idle status, no pending ask_u
 …[truncated]
+- 2026-06-29 usage: 24,391 tok (in 108, out 24,283, cache_r 2,012,488, cache_w 104,691) · cost n/a (unpriced)

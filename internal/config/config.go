@@ -19,6 +19,7 @@ import (
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
+	"github.com/whyrusleeping/ycc/internal/secrets"
 )
 
 // Model describes one logical backend.
@@ -693,6 +694,25 @@ func (r *Registry) Models() []ModelInfo {
 	return out
 }
 
+// resolveKey returns the API credential for a model following a documented
+// precedence: an explicit env var wins (e.g. a CI/one-off override), then a
+// token stored in the machine-local secrets store (so a token can be saved once
+// instead of exported every session). An empty result is left empty — auth
+// failure stays deferred to the API call — to preserve the existing keyless
+// Build behavior for backends/tests that build without a key set.
+func resolveKey(m Model) string {
+	if m.KeyEnv == "" {
+		return ""
+	}
+	if v := os.Getenv(m.KeyEnv); v != "" {
+		return v
+	}
+	if v, ok := secrets.Lookup(m.KeyEnv); ok {
+		return v
+	}
+	return ""
+}
+
 // Build constructs a fresh backend client and returns it with its model id. A new
 // client per call avoids shared-state races across concurrent subagents.
 func (r *Registry) Build(name string) (engine.Turner, string, error) {
@@ -703,10 +723,7 @@ func (r *Registry) Build(name string) (engine.Turner, string, error) {
 		return nil, "", fmt.Errorf("unknown model %q", name)
 	}
 	c := gollama.NewClient(m.BaseURL)
-	key := ""
-	if m.KeyEnv != "" {
-		key = os.Getenv(m.KeyEnv)
-	}
+	key := resolveKey(m)
 	switch m.Backend {
 	case "anthropic":
 		// Pin the native Anthropic transport explicitly rather than relying on
