@@ -328,6 +328,65 @@ func TestDetailLineToolCall(t *testing.T) {
 	}
 }
 
+// fmtDurMS renders sub-second durations in milliseconds and longer ones as
+// one-decimal seconds.
+func TestFmtDurMS(t *testing.T) {
+	cases := map[int64]string{
+		0:    "0ms",
+		340:  "340ms",
+		999:  "999ms",
+		1000: "1.0s",
+		1200: "1.2s",
+		1250: "1.2s",
+		9999: "10.0s",
+	}
+	for ms, want := range cases {
+		if got := fmtDurMS(ms); got != want {
+			t.Errorf("fmtDurMS(%d) = %q, want %q", ms, got, want)
+		}
+	}
+}
+
+// durationMSField extracts duration_ms from an event's data JSON, tolerating
+// missing fields and malformed JSON.
+func TestDurationMSField(t *testing.T) {
+	if got := durationMSField(&v1.Event{DataJson: `{"duration_ms":340}`}); got != 340 {
+		t.Errorf("duration_ms present = %d, want 340", got)
+	}
+	if got := durationMSField(&v1.Event{DataJson: `{"text":"hi"}`}); got != 0 {
+		t.Errorf("duration_ms absent = %d, want 0", got)
+	}
+	if got := durationMSField(&v1.Event{DataJson: ``}); got != 0 {
+		t.Errorf("empty data = %d, want 0", got)
+	}
+	if got := durationMSField(&v1.Event{DataJson: `not json`}); got != 0 {
+		t.Errorf("bad json = %d, want 0", got)
+	}
+}
+
+// Collapsed model_turn and tool_result rows append a compact duration suffix
+// when duration_ms is positive, and omit it otherwise.
+func TestDetailLineDuration(t *testing.T) {
+	mt := &v1.Event{Type: "model_turn", DataJson: `{"text":"done","duration_ms":1200}`}
+	if d := detailLine(mt); !strings.Contains(d, "1.2s") || !strings.Contains(d, "done") {
+		t.Fatalf("model_turn detailLine = %q, want text + 1.2s", d)
+	}
+	tr := &v1.Event{Type: "tool_result", DataJson: `{"result":"ok","duration_ms":340}`}
+	if d := detailLine(tr); !strings.Contains(d, "340ms") || !strings.Contains(d, "ok") {
+		t.Fatalf("tool_result detailLine = %q, want result + 340ms", d)
+	}
+	// No duration field -> no suffix.
+	noDur := &v1.Event{Type: "model_turn", DataJson: `{"text":"done"}`}
+	if d := detailLine(noDur); strings.Contains(d, "ms") || strings.Contains(d, "s ") {
+		t.Fatalf("model_turn without duration should have no suffix: %q", d)
+	}
+	// Zero duration -> no suffix.
+	zeroDur := &v1.Event{Type: "tool_result", DataJson: `{"result":"ok","duration_ms":0}`}
+	if d := detailLine(zeroDur); d != "ok" {
+		t.Fatalf("zero duration should add no suffix: %q", d)
+	}
+}
+
 // The markdown renderer must build with a fixed style (no terminal query, which
 // would block under Bubble Tea) and render content.
 func TestRendererBuildsAndRenders(t *testing.T) {

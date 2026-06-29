@@ -59,5 +59,5 @@
 | [0054](backlog/0054-automatic-idle-session-gc-on-disk-log-retention.md) | Automatic idle-session GC + on-disk log retention | todo | 3 | 0009 |
 | [0055](backlog/0055-record-timing-in-model-output-and-tool-call-logs.md) | Record timing in model-output and tool-call logs | done | 3 | — |
 | [0056](backlog/0056-replay-fidelity-for-mid-run-truncation-nudges-on-r.md) | Replay fidelity for mid-Run truncation nudges on reopen | todo | 3 | 0034 |
-| [0057](backlog/0057-surface-model-tool-timing-duration-ms-in-tui-chat.md) | Surface model/tool timing (duration_ms) in TUI chat-log rows | in_review | 4 | 0055 |
+| [0057](backlog/0057-surface-model-tool-timing-duration-ms-in-tui-chat.md) | Surface model/tool timing (duration_ms) in TUI chat-log rows | in_progress | 4 | 0055 |
 | [0058](backlog/0058-session-textarea-grow-on-wrapped-long-lines-add-in.md) | Session textarea: grow on wrapped long lines + add input behavior tests | todo | 4 | 0011 |

@@ -34,3 +34,4 @@ spec §18.1.
 …[truncated]
 - 2026-06-29 decision: accept — commit 14f6b76: TUI: multiline session input (textarea) [0011]  Convert the session input from a single-line textinput to a bounded, growing textarea: Enter sends+clears, shift+enter/ctrl+j insert a newline, height g
 …[truncated]
+- 2026-06-29 usage: 47,082 tok (in 130, out 46,952, cache_r 2,294,321, cache_w 122,488) · cost n/a (unpriced)

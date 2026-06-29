@@ -1,7 +1,7 @@
 ---
 id: "0057"
 title: Surface model/tool timing (duration_ms) in TUI chat-log rows
-status: in_review
+status: in_progress
 priority: 4
 created: "2026-06-29"
 updated: "2026-06-29"
@@ -36,3 +36,4 @@ re-apply the timing display cleanly.
   with task 0011 per maintainer decision). Functionally complete and green; the only
   remaining acceptance criterion is a dedicated TUI test. Do NOT re-implement — just add
   the test, then mark done.
+- 2026-06-29 review tier: simple (coordinator self-review)
