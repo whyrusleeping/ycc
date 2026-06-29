@@ -299,6 +299,16 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		resp, err := client.Turn(opts)
 		elapsedMS := time.Since(start).Milliseconds()
 		if err != nil {
+			// A context-window-exceeded failure (history too large for the model)
+			// is terminal and opaque from the provider. Surface a clear, actionable
+			// message instead of the raw 400 so the user knows to start fresh or
+			// narrow scope rather than retry (task 0010). All other errors keep
+			// their existing behavior.
+			if IsContextLengthError(err) {
+				msg := fmt.Sprintf("context window exceeded for model %s: the conversation history (~%d tokens) is too large to continue. This session cannot proceed automatically — start a fresh session or narrow the task scope.", modelID, approxContextTokens(l.System, l.history))
+				l.Emitter.Emit(event.SessionError, map[string]any{"msg": msg, "duration_ms": elapsedMS})
+				return nil, errors.New(msg)
+			}
 			l.Emitter.Emit(event.SessionError, map[string]any{"msg": err.Error(), "duration_ms": elapsedMS})
 			return nil, fmt.Errorf("turn %d: %w", turn, err)
 		}
@@ -322,15 +332,20 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		// backends that don't report it, so usage records zeros without error.
 		u := resp.Usage
 		truncated := resp.Truncated()
+		// contextEst is a coarse estimate of the prompt size (system + history)
+		// that produced this turn, surfaced so long-session growth toward the
+		// context window is visible in telemetry (task 0010).
+		contextEst := approxContextTokens(l.System, l.history)
 		l.Emitter.Emit(event.ModelTurn, map[string]any{
-			"text":        msg.Content,
-			"tool_calls":  len(msg.ToolCalls),
-			"model_name":  ident.Name,
-			"backend":     ident.Backend,
-			"model_id":    ident.ID,
-			"stop_reason": resp.StopReason,
-			"truncated":   truncated,
-			"duration_ms": elapsedMS,
+			"text":               msg.Content,
+			"tool_calls":         len(msg.ToolCalls),
+			"model_name":         ident.Name,
+			"backend":            ident.Backend,
+			"model_id":           ident.ID,
+			"stop_reason":        resp.StopReason,
+			"truncated":          truncated,
+			"duration_ms":        elapsedMS,
+			"context_tokens_est": contextEst,
 			// thinking_blocks carries the signed/redacted reasoning blocks on the
 			// ALWAYS-emitted model_turn (not the optional Thinking display event,
 			// which is skipped when display is "omitted" yet still produces signed
