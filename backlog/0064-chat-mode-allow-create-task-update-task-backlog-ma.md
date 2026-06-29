@@ -33,3 +33,4 @@ These changes are unrelated to 0049 and were deliberately kept out of that commi
 - 2026-06-29 review tier: simple (coordinator self-review)
 - 2026-06-29 decision: accept — commit: chat mode: allow create_task/update_task backlog management  Add create_task and update_task to the chat-mode toolset, document them in the chat system prompt as the preferred way to manage the backlo
 …[truncated]
+- 2026-06-29 usage: 2,457 tok (in 18, out 2,439, cache_r 199,215, cache_w 5,421) · cost n/a (unpriced)

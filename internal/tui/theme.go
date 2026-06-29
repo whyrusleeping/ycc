@@ -30,6 +30,15 @@ type theme struct {
 	askBg  lipgloss.Color
 	err    lipgloss.Color
 
+	// Tool-call "card" roles (task: LSP-style cards). border is the resting card
+	// outline; borderSel is the outline of the currently-selected card; success is
+	// the green glyph/accent for a completed tool call; path tints file paths in
+	// structured tool output.
+	border    lipgloss.Color
+	borderSel lipgloss.Color
+	success   lipgloss.Color
+	path      lipgloss.Color
+
 	diffAdd  lipgloss.Color
 	diffDel  lipgloss.Color
 	diffHunk lipgloss.Color
@@ -64,6 +73,11 @@ var darkTheme = theme{
 	askBg:  "11",
 	err:    "203",
 
+	border:    "238",
+	borderSel: "75",
+	success:   "78",
+	path:      "75",
+
 	diffAdd:  "42",
 	diffDel:  "203",
 	diffHunk: "44",
@@ -96,6 +110,11 @@ var lightTheme = theme{
 	askFg:  "0",
 	askBg:  "11",
 	err:    "124", // deep red
+
+	border:    "250",
+	borderSel: "92",
+	success:   "28",
+	path:      "26",
 
 	diffAdd:  "28",  // deep green
 	diffDel:  "124", // deep red
@@ -142,6 +161,12 @@ func applyTheme(t theme) {
 	diffDelStyle = lipgloss.NewStyle().Foreground(t.diffDel)
 	diffHunkStyle = lipgloss.NewStyle().Foreground(t.diffHunk)
 	diffMetaStyle = lipgloss.NewStyle().Bold(true).Foreground(t.diffMeta)
+
+	borderStyle = lipgloss.NewStyle().Foreground(t.border)
+	borderSelStyle = lipgloss.NewStyle().Foreground(t.borderSel)
+	successStyle = lipgloss.NewStyle().Foreground(t.success)
+	pathStyle = lipgloss.NewStyle().Foreground(t.path)
+	cardTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(t.titleFg)
 
 	chromaStyle = pickStyle(t.chromaStyleName)
 }

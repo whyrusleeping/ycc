@@ -441,7 +441,7 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 			handles := d.reviewers
 			d.mu.Unlock()
 			results := runReviewers(ctx, d, handles, id)
-			return tools.OkResult(aggregateReviews(results)), nil
+			return tools.OkResultView(aggregateReviews(results), aggregateReviewsView(results)), nil
 		},
 	}
 }
@@ -464,7 +464,7 @@ func reReview(d *Deps) *gollama.Tool {
 				h.loop.Post(reReviewPrompt)
 			}
 			results := runReviewers(ctx, d, handles, id)
-			return tools.OkResult(aggregateReviews(results)), nil
+			return tools.OkResultView(aggregateReviews(results), aggregateReviewsView(results)), nil
 		},
 	}
 }
@@ -706,6 +706,54 @@ func aggregateReviews(results []reviewResult) string {
 		b.WriteString("\nNot all reviewers accept — consolidate the findings and send_to_implementer, then re_review.")
 	}
 	return b.String()
+}
+
+// aggregateReviewsView builds the structured tree the TUI renders for a review
+// round: a "N/M reviewers accept" headline, one node per reviewer (verdict as
+// detail), and findings nested beneath, severity-colored. It mirrors the textual
+// aggregateReviews summary the model reads.
+func aggregateReviewsView(results []reviewResult) *tools.ResultView {
+	accepts := 0
+	for _, r := range results {
+		if r.rv.Verdict == "accept" {
+			accepts++
+		}
+	}
+	status := "ok"
+	if accepts < len(results) {
+		status = "warn"
+	}
+	v := &tools.ResultView{
+		Summary: fmt.Sprintf("%d/%d reviewers accept", accepts, len(results)),
+		Status:  status,
+	}
+	for _, r := range results {
+		kind := "ok"
+		switch r.rv.Verdict {
+		case "accept":
+			kind = "ok"
+		case "reject":
+			kind = "error"
+		default:
+			kind = "warn"
+		}
+		node := tools.ViewNode{Label: r.name, Detail: r.rv.Verdict, Kind: kind}
+		if s := strings.TrimSpace(r.rv.Summary); s != "" {
+			node.Children = append(node.Children, tools.ViewNode{Label: oneLine(s), Kind: "muted"})
+		}
+		for _, f := range r.rv.Findings {
+			fk := "muted"
+			switch f.Severity {
+			case "blocker", "major", "critical":
+				fk = "error"
+			case "minor", "nit", "suggestion":
+				fk = "warn"
+			}
+			node.Children = append(node.Children, tools.ViewNode{Label: f.Message, Detail: "[" + f.Severity + "]", Kind: fk})
+		}
+		v.Nodes = append(v.Nodes, node)
+	}
+	return v
 }
 
 func renderTask(t *docs.Task) string {

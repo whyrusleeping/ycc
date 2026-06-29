@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +26,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 	"github.com/whyrusleeping/ycc/proto/ycc/v1/yccv1connect"
@@ -2707,28 +2709,69 @@ func isAllDigits(s string) bool {
 	return true
 }
 
-func (m model) sessionView() string {
-	statusTxt := fmt.Sprintf(" %s · mode:%s · %s ", short(m.sessionID), m.mode, m.status)
-	// Clamp the (plain) status to the terminal width so the header occupies a
-	// single physical row: a wrapped header pushes the whole frame down by a row,
-	// which is what lets the input box overlap the agent's last output line.
-	if m.w > 0 {
-		// headerStyle adds 1 col of padding on each side; reserve room for the
-		// "? answer below" badge when a question is pending so it never wraps.
-		// trunc may append a 1-col ellipsis, so reserve that column too.
-		max := m.w - 2 - 1
-		if m.pending != "" {
-			max -= lipgloss.Width(askStyle.Render(" ? answer below "))
-		}
-		if max < 1 {
-			max = 1
-		}
-		statusTxt = trunc(statusTxt, max)
+// statusBar renders the single-row session status line: a set of colored,
+// glyph-prefixed segments (status, mode, model, thinking level, project, id)
+// joined by dim chevrons, in the spirit of the reference LSP UI's bottom bar.
+// It is always exactly one physical row — clamped to the terminal width with an
+// ANSI-aware truncation so styling never causes a wrap (which would corrupt the
+// fixed-height frame; see TestSessionViewFitsTerminal).
+func (m model) statusBar() string {
+	var segs []string
+
+	// status with a state-colored dot.
+	dot := dimStyle
+	switch m.status {
+	case "running":
+		dot = successStyle
+	case "paused":
+		dot = recoStyle
+	case "error":
+		dot = errStyle
+	case "idle", "waiting for your answer":
+		dot = pathStyle
 	}
+	segs = append(segs, dot.Render("●")+" "+typeStyle.Render(m.status))
+
+	if m.mode != "" {
+		segs = append(segs, dimStyle.Render("mode ")+typeStyle.Render(m.mode))
+	}
+	if m.roleCoord != "" {
+		segs = append(segs, actorStyle("coordinator").Render(m.roleCoord))
+	}
+	if lvl := m.thinkLevels["coordinator"]; lvl != "" {
+		segs = append(segs, pathStyle.Render("◆")+" "+dimStyle.Render(lvl))
+	}
+	if loc := m.locationLabel(); loc != "" {
+		segs = append(segs, dimStyle.Render(loc))
+	}
+	if m.sessionID != "" {
+		segs = append(segs, dimStyle.Render(short(m.sessionID)))
+	}
+
+	bar := " " + strings.Join(segs, dimStyle.Render(" › ")) + " "
 	if m.pending != "" {
-		statusTxt = askStyle.Render(" ? answer below ") + statusTxt
+		bar = askStyle.Render(" ? answer below ") + bar
 	}
-	top := headerStyle.Render(statusTxt)
+	if m.w > 0 {
+		bar = ansi.Truncate(bar, m.w, dimStyle.Render("…"))
+	}
+	return bar
+}
+
+// locationLabel is the project name when attached to a daemon registry, else the
+// basename of the workspace path — the bar's "where am I" segment.
+func (m model) locationLabel() string {
+	if m.project != "" {
+		return m.project
+	}
+	if m.workspace != "" {
+		return filepath.Base(m.workspace)
+	}
+	return ""
+}
+
+func (m model) sessionView() string {
+	top := m.statusBar()
 	body := ""
 	if m.ready {
 		body = m.vp.View()
@@ -2840,62 +2883,160 @@ func (m model) wizardView() string {
 func autoExpand(t string) bool { return t == "session_idle" || t == "question_asked" }
 
 func (m *model) renderBlock(i int, ev *v1.Event) string {
-	// Combine an adjacent tool_call + tool_result into a single row: collapsed
-	// shows the call + a concise result status; expanded reveals both the full
-	// params and the full response with all existing per-content formatting.
+	// An actor's name is spelled out only when it FIRST starts acting in a run
+	// of consecutive rows; continuation rows show just its glyph (color + glyph
+	// carry the identity), which declutters long single-actor stretches.
+	first := m.firstOfRun(i)
+	// Tool calls render as LSP-style "cards": a bordered frame whose title is
+	// inset into the top border, with a status glyph and a nested Response box.
+	// A tool_call is combined with its adjacent tool_result into one card.
 	if ev.Type == "tool_call" {
+		var res *v1.Event
 		if ri := m.mergedResultIdx(i); ri >= 0 {
-			return m.renderCombined(i, ri)
+			res = m.evs[ri]
 		}
+		return m.renderToolCall(i, ev, res, first)
 	}
 	body := m.bodyFor(ev)
 	hasBody := strings.TrimSpace(body) != ""
 	exp := m.expanded[int(ev.Seq)] || autoExpand(ev.Type)
-	header := m.renderHeader(ev, i == m.selected, exp && hasBody, hasBody)
+	header := m.renderHeader(ev, i == m.selected, exp && hasBody, hasBody, first)
 	if exp && hasBody {
 		return header + "\n" + body
 	}
 	return header
 }
 
-// renderCombined renders a tool_call (index i) together with its folded
-// tool_result (index ri == i+1) as one chat-log row.
-func (m *model) renderCombined(i, ri int) string {
-	call, res := m.evs[i], m.evs[ri]
+// firstOfRun reports whether event i begins a new run of rows by its actor: true
+// when the previous *rendered* row (skipping tool_results folded into their
+// call) belongs to a different actor. Used to spell out the actor's name only at
+// the start of each run.
+func (m *model) firstOfRun(i int) bool {
+	j := i - 1
+	for j >= 0 && m.isMergedResult(j) {
+		j--
+	}
+	if j < 0 {
+		return true
+	}
+	return m.evs[j].Actor != m.evs[i].Actor
+}
+
+// renderToolCall renders a tool_call (optionally with its folded tool_result) as
+// either a compact one-line summary (collapsed) or a bordered card (expanded).
+// res is nil while the call is still in flight.
+func (m *model) renderToolCall(i int, call, res *v1.Event, first bool) string {
 	exp := m.expanded[int(call.Seq)] || autoExpand(call.Type)
-	selected := i == m.selected || ri == m.selected
+	selected := i == m.selected || (res != nil && i+1 == m.selected)
 
-	paramsBody := m.bodyFor(call)
-	resultBody := m.bodyFor(res)
-	hasBody := strings.TrimSpace(paramsBody) != "" || strings.TrimSpace(resultBody) != ""
-
-	name := dataField(call, "name")
-	args := oneLine(dataField(call, "args"), 60)
-	status := "✓"
-	if dataField(res, "error") == "true" {
-		status = "✗"
+	paramsBody := m.cardParams(call)
+	var resultBody string
+	if res != nil {
+		resultBody = m.cardResult(res)
 	}
-	detail := appendDur(res, fmt.Sprintf("%s(%s) %s", name, args, status))
+	hasBody := strings.TrimSpace(paramsBody) != "" || strings.TrimSpace(resultBody) != "" || res == nil
 
-	header := m.renderHeaderDetail(call, selected, exp && hasBody, hasBody, detail)
 	if !(exp && hasBody) {
-		return header
+		return m.toolCollapsed(call, res, selected, hasBody, first)
 	}
-	var sections []string
+	return m.toolCardExpanded(call, res, selected, paramsBody, resultBody, first)
+}
+
+// toolStatusGlyph returns the status marker for a tool call: a dim ring while in
+// flight (res == nil), a red ✗ on error, else a green ✓.
+func toolStatusGlyph(res *v1.Event) string {
+	switch {
+	case res == nil:
+		return dimStyle.Render("○")
+	case dataField(res, "error") == "true":
+		return errStyle.Render("✗")
+	default:
+		return successStyle.Render("✓")
+	}
+}
+
+// toolCollapsed renders the single-line summary of a tool call: status glyph,
+// bold name, a dim argument summary, and (for sub-agents) a dim actor tag.
+func (m *model) toolCollapsed(call, res *v1.Event, selected, hasBody, first bool) string {
+	bar := "  "
+	if selected {
+		bar = selBarStyle.Render("▌ ")
+	}
+	indent := ""
+	if isSub(call.Actor) {
+		indent = "  "
+	}
+	tri := "  "
+	if hasBody {
+		tri = dimStyle.Render("▸ ")
+	}
+	line := toolStatusGlyph(res) + " " + cardTitleStyle.Render(dataField(call, "name"))
+	// Tag the owning sub-agent only when it first starts acting; later rows in
+	// the same run rely on the indent + the spelled-out name above them.
+	if isSub(call.Actor) && first {
+		line += " " + dimStyle.Render("("+call.Actor+")")
+	}
+	if s := argSummary(call); s != "" {
+		avail := m.w - len(indent) - 8 - lipgloss.Width(line)
+		if avail < 8 {
+			avail = 8
+		}
+		line += "  " + dimStyle.Render(oneLine(s, avail))
+	}
+	if res != nil {
+		line = appendDur(res, line)
+	}
+	return bar + indent + tri + line
+}
+
+// toolCardExpanded renders the bordered tool card: an inset title in the top
+// border, dim parameter lines, and a nested Response box around the result.
+// Selection is shown by tinting the card's border (per the chosen design).
+func (m *model) toolCardExpanded(call, res *v1.Event, selected bool, paramsBody, resultBody string, first bool) string {
+	bc := borderStyle
+	if selected {
+		bc = borderSelStyle
+	}
+	title := toolStatusGlyph(res) + " " + cardTitleStyle.Render(dataField(call, "name"))
+	if d := durSuffix(res); d != "" {
+		title += " " + d
+	}
+
+	indent := 2
+	if isSub(call.Actor) {
+		indent += 2
+		if first {
+			title += " " + dimStyle.Render("("+call.Actor+")")
+		}
+	}
+	contentW := m.w - indent - 4 // outer border (2) + outer padding (2)
+	if contentW < 16 {
+		contentW = 16
+	}
+
+	var parts []string
 	if strings.TrimSpace(paramsBody) != "" {
-		sections = append(sections, paramsBody)
+		parts = append(parts, paramsBody)
 	}
-	if strings.TrimSpace(resultBody) != "" {
-		sections = append(sections, dimStyle.Render(bodyBar+"── result ──"), resultBody)
+	switch {
+	case res == nil:
+		parts = append(parts, dimStyle.Render("running…"))
+	case strings.TrimSpace(resultBody) != "":
+		parts = append(parts, titledBox(dimStyle.Render("Response"), resultBody, contentW-4, borderStyle))
 	}
-	return header + "\n" + strings.Join(sections, "\n")
+
+	card := titledBox(title, strings.Join(parts, "\n"), contentW, bc)
+	if indent > 0 {
+		card = indentLines(card, strings.Repeat(" ", indent))
+	}
+	return card
 }
 
-func (m *model) renderHeader(ev *v1.Event, selected, expanded, hasBody bool) string {
-	return m.renderHeaderDetail(ev, selected, expanded, hasBody, detailLine(ev))
+func (m *model) renderHeader(ev *v1.Event, selected, expanded, hasBody, first bool) string {
+	return m.renderHeaderDetail(ev, selected, expanded, hasBody, detailLine(ev), first)
 }
 
-func (m *model) renderHeaderDetail(ev *v1.Event, selected, expanded, hasBody bool, detail string) string {
+func (m *model) renderHeaderDetail(ev *v1.Event, selected, expanded, hasBody bool, detail string, first bool) string {
 	bar := "  "
 	if selected {
 		bar = selBarStyle.Render("▌ ")
@@ -2916,10 +3057,17 @@ func (m *model) renderHeaderDetail(ev *v1.Event, selected, expanded, hasBody boo
 	if avail < 12 {
 		avail = 12
 	}
+	// model_turn is the agent's own narration — it frames the surrounding tool
+	// activity, so we drop the redundant "model_turn" type label and let the
+	// words read as prose.
+	typeSeg := typeStyle.Render(ev.Type) + " "
+	if ev.Type == "model_turn" {
+		typeSeg = ""
+	}
 	return fmt.Sprintf("%s%s%s%s %s",
 		bar, indent, dimStyle.Render(tri),
-		actorStyle(ev.Actor).Render(fmt.Sprintf("%-13s", ev.Actor)),
-		typeStyle.Render(ev.Type)+" "+trunc(detail, avail))
+		m.actorColumn(ev.Actor, first),
+		typeSeg+trunc(detail, avail))
 }
 
 func (m *model) bodyFor(ev *v1.Event) string {
@@ -3155,6 +3303,215 @@ func prettyArgs(s string) string {
 	return s
 }
 
+// titledBox draws a rounded border around body with the given (already-styled)
+// title inset into the top border — the LSP-card look. width is the inner
+// content width (excluding the 1-col padding and the border). The border is
+// drawn in bc's foreground color. Tabs in body are expanded first so lipgloss's
+// width accounting (and therefore the right border) stays aligned.
+func titledBox(title, body string, width int, bc lipgloss.Style) string {
+	if width < 4 {
+		width = 4
+	}
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(bc.GetForeground()).
+		Width(width).
+		Padding(0, 1).
+		Render(expandTabs(body))
+	lines := strings.Split(box, "\n")
+	if len(lines) == 0 {
+		return box
+	}
+	// Rebuild the top border line as: ╭─ <title> ───…───╮ at the box's width.
+	total := lipgloss.Width(lines[0])
+	used := 3 + lipgloss.Width(title) + 1 // "╭─ " + title + " "
+	dashes := total - used - 1            // trailing "╮"
+	if dashes < 0 {
+		dashes = 0
+	}
+	lines[0] = bc.Render("╭─ ") + title + bc.Render(" "+strings.Repeat("─", dashes)+"╮")
+	return strings.Join(lines, "\n")
+}
+
+// expandTabs replaces tabs with spaces so box width math is correct (lipgloss
+// counts a tab as a single cell, which misaligns bordered boxes).
+func expandTabs(s string) string { return strings.ReplaceAll(s, "\t", "    ") }
+
+// cardParams renders a tool call's arguments as dim "key: value" lines (scalars
+// inline, complex values as compact JSON), falling back to pretty-printed JSON.
+// This is the param block shown at the top of an expanded tool card.
+func (m *model) cardParams(call *v1.Event) string {
+	args := dataField(call, "args")
+	if strings.TrimSpace(args) == "" {
+		return ""
+	}
+	var mp map[string]json.RawMessage
+	if json.Unmarshal([]byte(args), &mp) != nil {
+		return dimStyle.Render(prettyArgs(args))
+	}
+	keys := make([]string, 0, len(mp))
+	for k := range mp {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var lines []string
+	for _, k := range keys {
+		raw := strings.TrimSpace(string(mp[k]))
+		var sv string
+		if json.Unmarshal(mp[k], &sv) != nil { // not a plain string → keep JSON
+			sv = raw
+		}
+		lines = append(lines, dimStyle.Render(k+": ")+typeStyle.Render(oneLine(sv, 200)))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// cardResult renders a tool_result's body for display inside a card's Response
+// box (no left-rail prefix — the box border provides the framing). When the
+// result carries a structured view (LSP-style tree), that is rendered instead of
+// the raw text.
+func (m *model) cardResult(res *v1.Event) string {
+	if v := toolViewOf(res); v != nil {
+		return renderToolView(v)
+	}
+	r := dataField(res, "result")
+	if r == "" {
+		return ""
+	}
+	if dataField(res, "error") == "true" {
+		return highlightResult(r)
+	}
+	return m.highlightToolResult(r, res)
+}
+
+// toolView mirrors tools.ResultView for decoding from a tool_result event's
+// "view" field. It is the structured rendering a display tool attached.
+type toolView struct {
+	Summary string     `json:"summary"`
+	Status  string     `json:"status"`
+	Nodes   []viewNode `json:"nodes"`
+}
+
+type viewNode struct {
+	Label    string     `json:"label"`
+	Detail   string     `json:"detail"`
+	Kind     string     `json:"kind"`
+	Children []viewNode `json:"children"`
+}
+
+// toolViewOf extracts the structured view attached to a tool_result event, or
+// nil when absent/unparsable.
+func toolViewOf(ev *v1.Event) *toolView {
+	if ev == nil || ev.DataJson == "" {
+		return nil
+	}
+	var top map[string]json.RawMessage
+	if json.Unmarshal([]byte(ev.DataJson), &top) != nil {
+		return nil
+	}
+	raw, ok := top["view"]
+	if !ok {
+		return nil
+	}
+	var v toolView
+	if json.Unmarshal(raw, &v) != nil {
+		return nil
+	}
+	if v.Summary == "" && len(v.Nodes) == 0 {
+		return nil
+	}
+	return &v
+}
+
+// renderToolView renders a structured view as a connector tree: a glyph+summary
+// headline followed by ├─/└─ nested rows, colored by each node's Kind.
+func renderToolView(v *toolView) string {
+	var b strings.Builder
+	if v.Summary != "" {
+		b.WriteString(viewKindStyle(v.Status).Render(viewGlyph(v.Status)) + " " + typeStyle.Render(v.Summary))
+		if len(v.Nodes) > 0 {
+			b.WriteByte('\n')
+		}
+	}
+	b.WriteString(renderViewNodes(v.Nodes, ""))
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func renderViewNodes(nodes []viewNode, prefix string) string {
+	var b strings.Builder
+	for i, n := range nodes {
+		last := i == len(nodes)-1
+		conn, cont := "├─ ", "│  "
+		if last {
+			conn, cont = "└─ ", "   "
+		}
+		b.WriteString(prefix + dimStyle.Render(conn) + viewKindStyle(n.Kind).Render(n.Label))
+		if n.Detail != "" {
+			b.WriteString(" " + dimStyle.Render(n.Detail))
+		}
+		b.WriteByte('\n')
+		if len(n.Children) > 0 {
+			b.WriteString(renderViewNodes(n.Children, prefix+dimStyle.Render(cont)))
+		}
+	}
+	return b.String()
+}
+
+// viewKindStyle maps a view node/summary kind to a style.
+func viewKindStyle(kind string) lipgloss.Style {
+	switch kind {
+	case "path":
+		return pathStyle
+	case "ok":
+		return successStyle
+	case "warn":
+		return recoStyle
+	case "error":
+		return errStyle
+	case "muted":
+		return dimStyle
+	default:
+		return typeStyle
+	}
+}
+
+// viewGlyph is the headline marker for a view's status.
+func viewGlyph(status string) string {
+	switch status {
+	case "warn":
+		return "!"
+	case "error":
+		return "✗"
+	default:
+		return "✓"
+	}
+}
+
+// argSummary is the one-line argument hint shown on a collapsed tool card: the
+// most salient argument value (path/pattern/command) when present, else a
+// compact rendering of all args.
+func argSummary(call *v1.Event) string {
+	for _, k := range []string{"file_path", "path", "pattern", "command", "query", "url", "task_id"} {
+		if v := argField(call, k); v != "" {
+			return v
+		}
+	}
+	return oneLine(dataField(call, "args"), 80)
+}
+
+// durSuffix renders an event's duration_ms as a dim suffix (e.g. "340ms"), or ""
+// when absent.
+func durSuffix(ev *v1.Event) string {
+	if ev == nil {
+		return ""
+	}
+	if ms := durationMSField(ev); ms > 0 {
+		return dimStyle.Render(fmtDurMS(ms))
+	}
+	return ""
+}
+
+
 func indentLines(s, prefix string) string {
 	lines := strings.Split(s, "\n")
 	for i := range lines {
@@ -3183,6 +3540,12 @@ var (
 	diffDelStyle  lipgloss.Style
 	diffHunkStyle lipgloss.Style
 	diffMetaStyle lipgloss.Style
+
+	borderStyle    lipgloss.Style
+	borderSelStyle lipgloss.Style
+	successStyle   lipgloss.Style
+	pathStyle      lipgloss.Style
+	cardTitleStyle lipgloss.Style
 )
 
 func actorStyle(actor string) lipgloss.Style {
@@ -3198,6 +3561,35 @@ func actorStyle(actor string) lipgloss.Style {
 	default:
 		return dimStyle
 	}
+}
+
+// actorGlyph returns a compact per-role icon used on continuation rows (where the
+// actor's name was already spelled out above). Color still distinguishes roles;
+// the glyph gives a second, shape-based cue (diamond/circle/square).
+func actorGlyph(actor string) string {
+	switch {
+	case actor == "coordinator":
+		return "◆"
+	case actor == "implementer":
+		return "●"
+	case strings.HasPrefix(actor, "reviewer"):
+		return "■"
+	case actor == "user":
+		return "›"
+	default:
+		return "·"
+	}
+}
+
+// actorColumn renders the fixed-width (13-cell) actor column: the spelled-out
+// name when the actor first starts a run, else just its glyph. Both are colored
+// by role so a glance still reads who is acting.
+func (m *model) actorColumn(actor string, first bool) string {
+	label := actor
+	if !first {
+		label = actorGlyph(actor)
+	}
+	return actorStyle(actor).Render(fmt.Sprintf("%-13s", label))
 }
 
 func isSub(actor string) bool {

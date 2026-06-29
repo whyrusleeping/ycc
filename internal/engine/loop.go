@@ -405,7 +405,7 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			toolStart := time.Now()
 			res := l.Tools.Dispatch(ctx, call)
 			toolMS := time.Since(toolStart).Milliseconds()
-			l.Emitter.Emit(event.ToolResult, map[string]any{
+			resultData := map[string]any{
 				"name":        call.Function.Name,
 				"result":      res.Content,
 				"error":       res.IsError,
@@ -413,7 +413,13 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 				"docs":        len(res.Documents),
 				"id":          call.ID,
 				"duration_ms": toolMS,
-			})
+			}
+			// A display tool may attach a structured view for rich UI rendering
+			// (LSP-style trees); it serializes into the event data under "view".
+			if v := tools.ViewOf(res); v != nil {
+				resultData["view"] = v
+			}
+			l.Emitter.Emit(event.ToolResult, resultData)
 			l.appendToolResult(call.ID, res)
 			if ctrl := tools.ControlOf(res); ctrl != nil && ctrl.Stop {
 				report := ctrl.Report

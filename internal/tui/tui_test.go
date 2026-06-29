@@ -115,8 +115,8 @@ func TestRenderCombinedExpanded(t *testing.T) {
 	if !strings.Contains(out, "RESULTBODY") {
 		t.Fatalf("expanded combined row missing result content:\n%s", out)
 	}
-	if !strings.Contains(out, "result") {
-		t.Fatalf("expanded combined row missing result separator:\n%s", out)
+	if !strings.Contains(out, "Response") {
+		t.Fatalf("expanded combined row missing Response box:\n%s", out)
 	}
 	// Collapsed: still shows the tool name + a status marker.
 	m.expanded[2] = false
@@ -124,6 +124,72 @@ func TestRenderCombinedExpanded(t *testing.T) {
 	col := m.renderBlock(0, m.evs[0])
 	if !strings.Contains(col, "Read") || !strings.Contains(col, "✓") {
 		t.Fatalf("collapsed combined row missing name/status:\n%s", col)
+	}
+}
+
+// The actor name is spelled out only when an actor first starts a run of rows;
+// continuation rows by the same actor show its compact glyph instead. A
+// model_turn is rendered as framing prose, dropping the redundant type label.
+func TestActorRunDedupAndFraming(t *testing.T) {
+	m := model{w: 100, expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1}
+	m.evs = []*v1.Event{
+		{Seq: 1, Type: "model_turn", Actor: "coordinator", DataJson: `{"text":"first words"}`},
+		{Seq: 2, Type: "thinking", Actor: "coordinator", DataJson: `{"text":"pondering"}`},
+		{Seq: 3, Type: "model_turn", Actor: "implementer", DataJson: `{"text":"now me"}`},
+	}
+
+	// First coordinator row spells out the name; model_turn omits the type label.
+	first := m.renderBlock(0, m.evs[0])
+	if !strings.Contains(first, "coordinator") {
+		t.Fatalf("first-of-run row should spell out actor name:\n%s", first)
+	}
+	if strings.Contains(first, "model_turn") {
+		t.Fatalf("model_turn row should drop the redundant type label:\n%s", first)
+	}
+	if !strings.Contains(first, "first words") {
+		t.Fatalf("model_turn row should show its prose:\n%s", first)
+	}
+
+	// Second coordinator row (continuation) shows the glyph, not the name.
+	cont := m.renderBlock(1, m.evs[1])
+	if strings.Contains(cont, "coordinator") {
+		t.Fatalf("continuation row should not repeat the actor name:\n%s", cont)
+	}
+	if !strings.Contains(cont, actorGlyph("coordinator")) {
+		t.Fatalf("continuation row should show the actor glyph:\n%s", cont)
+	}
+
+	// Actor switch spells out the new actor again.
+	switched := m.renderBlock(2, m.evs[2])
+	if !strings.Contains(switched, "implementer") {
+		t.Fatalf("actor switch should spell out the new actor:\n%s", switched)
+	}
+}
+
+// A tool_result carrying a structured view renders as a connector tree (summary
+// headline + nested nodes) instead of the raw text, inside the expanded card.
+func TestToolViewTreeRendering(t *testing.T) {
+	m := &model{w: 90, expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1}
+	view := `{"summary":"1/2 reviewers accept","status":"warn","nodes":[` +
+		`{"label":"claude","detail":"accept","kind":"ok"},` +
+		`{"label":"gpt","detail":"reject","kind":"error","children":[{"label":"off-by-one","detail":"[blocker]","kind":"error"}]}]}`
+	m.evs = []*v1.Event{
+		{Seq: 1, Type: "tool_call", Actor: "coordinator", DataJson: `{"id":"c1","name":"re_review","args":"{\"task_id\":\"0042\"}"}`},
+		{Seq: 2, Type: "tool_result", Actor: "coordinator", DataJson: `{"id":"c1","result":"RAWTEXT","view":` + view + `}`},
+	}
+	m.expanded[1] = true
+	out := m.renderBlock(0, m.evs[0])
+	for _, want := range []string{"1/2 reviewers accept", "claude", "├─", "└─", "off-by-one", "[blocker]"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("view tree missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "RAWTEXT") {
+		t.Fatalf("view present but raw result text still rendered:\n%s", out)
+	}
+	// No view => raw text path still works.
+	if toolViewOf(&v1.Event{DataJson: `{"result":"x"}`}) != nil {
+		t.Fatal("toolViewOf should be nil without a view field")
 	}
 }
 
