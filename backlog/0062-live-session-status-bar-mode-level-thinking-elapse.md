@@ -1,7 +1,7 @@
 ---
 id: "0062"
 title: Live session status bar (mode/level/thinking/elapsed/token-cost) + activity spinner
-status: todo
+status: done
 priority: 3
 created: "2026-06-29"
 updated: "2026-06-29"
@@ -54,3 +54,12 @@ This task turns the header into a richer, live status bar and adds an activity i
   resurrect on a stale error state.
 
 ## Work log
+- 2026-06-29 plan: Turn the flat session header into a richer, live, segmented status bar with running token/cost and an activity spinner.  1) Surface pricing to the TUI (so cost can be computed live):    - proto/ycc/v1
+…[truncated]
+- 2026-06-29 implementer report: Implemented task 0062: live, segmented session status bar with running token/cost readout plus an activity spinner.  ## Changes  **Pricing surfaced through ListModels** - `proto/ycc/v1/ycc.proto`: ext
+…[truncated]
+- 2026-06-29 review tier: single-opus — reviewers: Claude
+- 2026-06-29 review (Claude): accept — The change fully and correctly implements task 0062. Pricing is surfaced through ListModels with optional price fields and a `priced` flag (server never invents a cost for unpriced models). The TUI he
+…[truncated]
+- 2026-06-29 decision: accept — commit: tui: live segmented session status bar (mode/level/thinking/elapsed/token-cost) + spinner [0062]  Surface per-model pricing through ListModels (optional price_* fields + priced flag) and rebuild the s
+…[truncated]

@@ -20,6 +20,7 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -32,6 +33,8 @@ import (
 	"github.com/whyrusleeping/ycc/proto/ycc/v1/yccv1connect"
 
 	"github.com/whyrusleeping/ycc/internal/clientconfig"
+	"github.com/whyrusleeping/ycc/internal/config"
+	"github.com/whyrusleeping/ycc/internal/event"
 )
 
 type state int
@@ -89,6 +92,17 @@ type model struct {
 	pending string
 	status  string
 	paused  bool // session is paused-to-steer (spec §18.7)
+
+	// live status-bar state (task 0062): a running per-model token tally summed
+	// from model_turn usage blocks, per-model pricing surfaced via ListModels, the
+	// session/turn start used for the elapsed clock, and an activity spinner that
+	// ticks via the Bubble Tea command loop while the session is running (or a
+	// quick-capture RPC is in flight).
+	usageByModel map[string]event.Usage    // logical model_name -> summed usage
+	pricing      map[string]config.Pricing // logical model_name -> pricing ($/Mtok)
+	sessionStart time.Time                 // when the current session view started
+	spin         spinner.Model
+	spinning     bool // a spinner.Tick command is already in flight
 
 	// picker state: when the pending question carries options, the footer shows
 	// a navigable list instead of the textinput until the user picks "other…".
@@ -191,6 +205,12 @@ func initialModel(ctx context.Context, client yccv1connect.SessionServiceClient,
 	captureInput.CharLimit = 8000
 	captureInput.Width = 60
 
+	// Activity spinner (task 0062): a small dot animation tinted with the palette's
+	// success role; it ticks via the Bubble Tea command loop while the session is
+	// running or a quick-capture RPC is in flight.
+	spin := spinner.New(spinner.WithSpinner(spinner.Dot))
+	spin.Style = lipgloss.NewStyle().Foreground(activeTheme.success)
+
 	initState := stateMenu
 	if showPicker {
 		initState = statePicker
@@ -203,7 +223,10 @@ func initialModel(ctx context.Context, client yccv1connect.SessionServiceClient,
 		events:       make(chan *v1.Event, 256), status: "starting",
 		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1, follow: prefs.Follow,
 		prefs: prefs, level: "judgement",
-		thinkLevels: map[string]string{"coordinator": "high", "implementer": "high", "reviewers": "high"},
+		thinkLevels:  map[string]string{"coordinator": "high", "implementer": "high", "reviewers": "high"},
+		spin:         spin,
+		usageByModel: map[string]event.Usage{},
+		pricing:      map[string]config.Pricing{},
 	}
 }
 
@@ -626,6 +649,18 @@ func (m *model) relayout() {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		// Advance the activity spinner only while there is activity to indicate.
+		// When the session goes idle/paused/error (and no capture RPC is running)
+		// we stop ticking so the spinner doesn't resurrect on a stale error state
+		// (task 0051): the next start re-arms it via spinnerCmd.
+		if m.status != "running" && !m.captureBusy {
+			m.spinning = false
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.spin, cmd = m.spin.Update(msg)
+		return m, cmd
 	case tea.WindowSizeMsg:
 		if m.input.MaxHeight == 0 { // zero-value textarea (e.g. a test-constructed model literal)
 			m.input = newSessionInput()
@@ -676,6 +711,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case modelsMsg:
 		m.models = msg.models
+		// Build the per-model pricing table (task 0062) used by the live status
+		// bar's token/cost readout. Only models flagged priced get an entry, so an
+		// unpriced model is absent from the map and sessionUsage renders tokens-only
+		// rather than inventing a cost.
+		m.pricing = map[string]config.Pricing{}
+		for _, mi := range msg.models {
+			if mi.GetPriced() {
+				m.pricing[mi.GetName()] = config.Pricing{
+					Input:      mi.GetPriceInput(),
+					Output:     mi.GetPriceOutput(),
+					CacheRead:  mi.GetPriceCacheRead(),
+					CacheWrite: mi.GetPriceCacheWrite(),
+					Configured: true,
+				}
+			}
+		}
 		// Keep the model-backends cursor in range: a removal can shrink the list
 		// out from under it (task 0044).
 		if m.mbCursor >= len(m.models) {
@@ -724,17 +775,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pickerOpts, m.pickerCursor = nil, 0
 		m.clearWizard()
 		m.sessionID, m.mode, m.state, m.status = msg.id, msg.mode, stateSession, "running"
+		// Reset the running usage tally and start the elapsed clock for the new (or
+		// reopened) session — usage accumulates only over the current view (task 0062).
+		m.usageByModel = map[string]event.Usage{}
+		m.sessionStart = time.Now()
 		m.input.SetValue("")
 		fc := m.input.Focus()
 		m.syncInputHeight()
 		m.relayout()
-		return m, tea.Batch(m.subscribe(), fc)
+		spin := m.spinnerCmd() // arm the activity spinner (mutates m.spinning) before returning m
+		return m, tea.Batch(m.subscribe(), fc, spin)
 	case streamClosedMsg:
 		m.status = "stream closed"
 		return m, nil
 	case evMsg:
 		m.appendEvent(msg.ev)
-		return m, waitEvent(m.events)
+		spin := m.spinnerCmd() // mutates m.spinning; evaluate before returning m
+		return m, tea.Batch(waitEvent(m.events), spin)
 	case backlogMsg:
 		m.backlogTasks = msg.tasks
 		if m.backlogCursor >= len(m.backlogTasks) {
@@ -1187,7 +1244,8 @@ func (m model) updateCapture(msg tea.Msg) (tea.Model, tea.Cmd) {
 			ch := make(chan *v1.Event, 64)
 			m.captureEvents = ch
 			m.captureInput.SetValue("")
-			return m, m.captureSubmit(ch, m.captureDesc, "", "")
+			spin := m.spinnerCmd() // mutates m.spinning before returning m
+			return m, tea.Batch(m.captureSubmit(ch, m.captureDesc, "", ""), spin)
 		}
 		// Stage 1: answering the agent's clarifying question.
 		m.captureBusy = true
@@ -1197,7 +1255,8 @@ func (m model) updateCapture(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.captureEvents = ch
 		ans := val
 		m.captureInput.SetValue("")
-		return m, m.captureSubmit(ch, m.captureDesc, m.captureQuestion, ans)
+		spin := m.spinnerCmd() // mutates m.spinning before returning m
+		return m, tea.Batch(m.captureSubmit(ch, m.captureDesc, m.captureQuestion, ans), spin)
 	default:
 		var c tea.Cmd
 		m.captureInput, c = m.captureInput.Update(msg)
@@ -1273,7 +1332,12 @@ func (m model) captureView() string {
 		}
 	}
 	if m.captureBusy {
-		b.WriteString("\n" + dimStyle.Render("  capturing…"))
+		// Animate the same activity spinner (task 0062) while the capture RPC streams.
+		spin := dimStyle.Render("…")
+		if len(m.spin.Spinner.Frames) > 0 {
+			spin = m.spin.View()
+		}
+		b.WriteString("\n  " + spin + " " + dimStyle.Render("capturing…"))
 	} else if strings.HasPrefix(m.captureMsg, "error:") {
 		b.WriteString("\n  " + selStyle.Render(m.captureMsg))
 	}
@@ -2342,6 +2406,22 @@ func (m *model) toggle(i int) {
 func (m *model) appendEvent(ev *v1.Event) {
 	m.evs = append(m.evs, ev)
 	switch ev.Type {
+	case "model_turn":
+		// Accumulate the turn's usage into the running per-model tally that feeds
+		// the live token/cost readout (task 0062, spec §20.1). Parsing is best-effort:
+		// a turn without a usage block contributes nothing.
+		if u, name := eventUsage(ev); u != (event.Usage{}) {
+			if m.usageByModel == nil {
+				m.usageByModel = map[string]event.Usage{}
+			}
+			cur := m.usageByModel[name]
+			cur.Input += u.Input
+			cur.Output += u.Output
+			cur.CacheRead += u.CacheRead
+			cur.CacheWrite += u.CacheWrite
+			cur.Total += u.Total
+			m.usageByModel[name] = cur
+		}
 	case "question_asked":
 		if qs := dataQuestions(ev); len(qs) > 0 {
 			// Multi-question form: start the questionnaire wizard.
@@ -2737,16 +2817,27 @@ func isAllDigits(s string) bool {
 	return true
 }
 
-// statusBar renders the single-row session status line: a set of colored,
-// glyph-prefixed segments (status, mode, model, thinking level, project, id)
-// joined by dim chevrons, in the spirit of the reference LSP UI's bottom bar.
-// It is always exactly one physical row — clamped to the terminal width with an
-// ANSI-aware truncation so styling never causes a wrap (which would corrupt the
-// fixed-height frame; see TestSessionViewFitsTerminal).
+// statusBar renders the single-row session status line as a set of colored,
+// glyph-prefixed segments — an activity spinner / state dot, a mode pill, the
+// interaction level, the coordinator's thinking level, the elapsed clock, a live
+// token/cost readout (task 0062), and the location/id — joined by dim chevrons.
+//
+// It is ALWAYS exactly one physical row. Each segment carries a priority (lower =
+// keep longer); when the joined bar would exceed the terminal width we drop the
+// lowest-priority segments first, then apply an ANSI-aware truncation as a final
+// clamp. This preserves the fixed-height frame (a wrap here corrupts Bubble Tea's
+// line accounting; see TestSessionViewFitsTerminal) while degrading gracefully on
+// narrow terminals.
 func (m model) statusBar() string {
-	var segs []string
+	type seg struct {
+		text string
+		prio int // lower = more important (dropped last)
+	}
+	var segs []seg
 
-	// status with a state-colored dot.
+	// status: a spinning glyph while running, else a state-colored dot. The spinner
+	// is only ticked while status=="running"/capture-busy (see spinnerCmd), and the
+	// static dot covers idle/paused/error so a stale error never animates (task 0051).
 	dot := dimStyle
 	switch m.status {
 	case "running":
@@ -2758,32 +2849,118 @@ func (m model) statusBar() string {
 	case "idle", "waiting for your answer":
 		dot = pathStyle
 	}
-	segs = append(segs, dot.Render("●")+" "+typeStyle.Render(m.status))
+	glyph := dot.Render("●")
+	if m.status == "running" && len(m.spin.Spinner.Frames) > 0 {
+		glyph = m.spin.View()
+	}
+	segs = append(segs, seg{glyph + " " + typeStyle.Render(m.status), 0})
 
 	if m.mode != "" {
-		segs = append(segs, dimStyle.Render("mode ")+typeStyle.Render(m.mode))
+		segs = append(segs, seg{dimStyle.Render("mode ") + typeStyle.Render(m.mode), 1})
 	}
-	if m.roleCoord != "" {
-		segs = append(segs, actorStyle("coordinator").Render(m.roleCoord))
+	// live token/cost readout — the headline new datum, kept at high priority.
+	if tokens, cost, st := m.sessionUsage(); tokens > 0 {
+		readout := dimStyle.Render("Σ ") + typeStyle.Render(fmtTokens(tokens))
+		switch st {
+		case "priced":
+			readout += " " + successStyle.Render(fmt.Sprintf("$%.4f", cost))
+		case "partial":
+			readout += " " + recoStyle.Render(fmt.Sprintf("$%.4f*", cost))
+		}
+		segs = append(segs, seg{readout, 2})
+	}
+	if m.level != "" {
+		segs = append(segs, seg{dimStyle.Render("lvl ") + typeStyle.Render(m.level), 3})
 	}
 	if lvl := m.thinkLevels["coordinator"]; lvl != "" {
-		segs = append(segs, pathStyle.Render("◆")+" "+dimStyle.Render(lvl))
+		segs = append(segs, seg{pathStyle.Render("◆") + " " + dimStyle.Render(lvl), 4})
+	}
+	if !m.sessionStart.IsZero() {
+		segs = append(segs, seg{dimStyle.Render("⏱ " + fmtElapsed(time.Since(m.sessionStart))), 5})
 	}
 	if loc := m.locationLabel(); loc != "" {
-		segs = append(segs, dimStyle.Render(loc))
+		segs = append(segs, seg{dimStyle.Render(loc), 6})
 	}
 	if m.sessionID != "" {
-		segs = append(segs, dimStyle.Render(short(m.sessionID)))
+		segs = append(segs, seg{dimStyle.Render(short(m.sessionID)), 7})
 	}
 
-	bar := " " + strings.Join(segs, dimStyle.Render(" › ")) + " "
+	prefix := ""
 	if m.pending != "" {
-		bar = askStyle.Render(" ? answer below ") + bar
+		prefix = askStyle.Render(" ? answer below ")
 	}
+	sep := dimStyle.Render(" › ")
+	// render joins the chosen segments (in their original visual order) into the bar.
+	render := func(chosen []seg) string {
+		parts := make([]string, len(chosen))
+		for i, s := range chosen {
+			parts[i] = s.text
+		}
+		return prefix + " " + strings.Join(parts, sep) + " "
+	}
+
+	// Greedily include segments by priority while the rendered bar fits the width,
+	// then emit the kept segments in visual order. A zero width (before the first
+	// WindowSizeMsg) keeps everything.
 	if m.w > 0 {
-		bar = ansi.Truncate(bar, m.w, dimStyle.Render("…"))
+		order := make([]int, len(segs))
+		for i := range order {
+			order[i] = i
+		}
+		sort.SliceStable(order, func(a, b int) bool { return segs[order[a]].prio < segs[order[b]].prio })
+		keep := make([]bool, len(segs))
+		for _, idx := range order {
+			keep[idx] = true
+			chosen := chosenSegs(segs, keep)
+			if lipgloss.Width(render(chosen)) > m.w {
+				keep[idx] = false // this segment doesn't fit; skip it (lower-priority ones may still fit)
+			}
+		}
+		bar := render(chosenSegs(segs, keep))
+		return ansi.Truncate(bar, m.w, dimStyle.Render("…"))
 	}
-	return bar
+	all := make([]seg, len(segs))
+	copy(all, segs)
+	return render(all)
+}
+
+// chosenSegs returns the segments flagged keep[i], preserving visual order. A tiny
+// helper kept out of statusBar so the drop loop reads cleanly.
+func chosenSegs[T any](segs []T, keep []bool) []T {
+	out := make([]T, 0, len(segs))
+	for i, s := range segs {
+		if keep[i] {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// fmtTokens renders a token count compactly: "842", "12.3k", "1.2M".
+func fmtTokens(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1_000)
+	default:
+		return strconv.Itoa(n)
+	}
+}
+
+// fmtElapsed renders a session/turn duration as mm:ss, or h:mm:ss past an hour.
+func fmtElapsed(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	total := int(d.Seconds())
+	h := total / 3600
+	mn := (total % 3600) / 60
+	s := total % 60
+	if h > 0 {
+		return fmt.Sprintf("%d:%02d:%02d", h, mn, s)
+	}
+	return fmt.Sprintf("%02d:%02d", mn, s)
 }
 
 // locationLabel is the project name when attached to a daemon registry, else the
@@ -3701,6 +3878,89 @@ func fmtDurMS(ms int64) string {
 		return fmt.Sprintf("%dms", ms)
 	}
 	return fmt.Sprintf("%.1fs", float64(ms)/1000)
+}
+
+// eventUsage extracts the per-turn token usage and the logical model name from a
+// model_turn event's data JSON (task 0062). It parses the proto DataJson directly
+// (the live stream carries proto Events, not event.Event) and reads the nested
+// "usage" object plus "model_name". Numbers decode as float64; a missing or
+// unparsable usage block yields the zero Usage so accumulation degrades gracefully.
+func eventUsage(ev *v1.Event) (event.Usage, string) {
+	if ev == nil || ev.DataJson == "" {
+		return event.Usage{}, ""
+	}
+	var mp map[string]any
+	if json.Unmarshal([]byte(ev.DataJson), &mp) != nil {
+		return event.Usage{}, ""
+	}
+	name, _ := mp["model_name"].(string)
+	u, _ := mp["usage"].(map[string]any)
+	if u == nil {
+		return event.Usage{}, name
+	}
+	num := func(k string) int {
+		if f, ok := u[k].(float64); ok {
+			return int(f)
+		}
+		return 0
+	}
+	return event.Usage{
+		Input:      num("input"),
+		Output:     num("output"),
+		CacheRead:  num("cache_read"),
+		CacheWrite: num("cache_write"),
+		Total:      num("total"),
+	}, name
+}
+
+// sessionUsage sums the running per-model usage and prices it (task 0062, spec
+// §20). tokens is the total token count across every model. cost is the dollar
+// sum over models that have configured pricing; unpriced models contribute tokens
+// but never an invented cost. status reports the pricing coverage:
+//   - "priced":   every model that spent tokens is priced
+//   - "partial":  some but not all spending models are priced
+//   - "unpriced": no spending model is priced (or there is no usage)
+func (m model) sessionUsage() (tokens int, cost float64, status string) {
+	var priced, unpriced int
+	for name, u := range m.usageByModel {
+		t := u.Total
+		if t == 0 {
+			t = u.Input + u.Output + u.CacheRead + u.CacheWrite
+		}
+		if t == 0 {
+			continue // a model that recorded no tokens doesn't affect pricing status
+		}
+		tokens += t
+		if p, ok := m.pricing[name]; ok {
+			if c, ok := p.Cost(u); ok {
+				cost += c
+				priced++
+				continue
+			}
+		}
+		unpriced++
+	}
+	switch {
+	case priced > 0 && unpriced == 0:
+		status = "priced"
+	case priced > 0:
+		status = "partial"
+	default:
+		status = "unpriced"
+	}
+	return tokens, cost, status
+}
+
+// spinnerCmd arms the activity spinner's tick loop when there is activity to
+// indicate (the session is running or a quick-capture RPC is in flight) and it is
+// not already ticking. It returns nil otherwise so we never stack duplicate tick
+// commands. The pointer receiver lets it record that a tick is in flight.
+func (m *model) spinnerCmd() tea.Cmd {
+	if (m.status == "running" || m.captureBusy) && !m.spinning {
+		m.spinning = true
+		return m.spin.Tick
+	}
+	return nil
 }
 
 func dataField(ev *v1.Event, key string) string {

@@ -1919,12 +1919,22 @@ func (*ListModelsRequest) Descriptor() ([]byte, []int) {
 }
 
 type ModelInfo struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`       // logical name (e.g. "claude", "gpt")
-	Backend       string                 `protobuf:"bytes,2,opt,name=backend,proto3" json:"backend,omitempty"` // anthropic | openai | ollama | ...
-	Model         string                 `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`     // backend model id
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Name    string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`       // logical name (e.g. "claude", "gpt")
+	Backend string                 `protobuf:"bytes,2,opt,name=backend,proto3" json:"backend,omitempty"` // anthropic | openai | ollama | ...
+	Model   string                 `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`     // backend model id
+	// Per-model pricing ($/Mtok) surfaced so the live session status bar can price
+	// running usage (spec §20.4). The price_* fields are optional so an unset rate
+	// is distinguishable from an explicit 0.0; priced reports whether ANY rate is
+	// configured (mirrors config.Pricing.Configured) so unpriced models render
+	// tokens-only without inventing a cost.
+	PriceInput      *float64 `protobuf:"fixed64,4,opt,name=price_input,json=priceInput,proto3,oneof" json:"price_input,omitempty"`
+	PriceOutput     *float64 `protobuf:"fixed64,5,opt,name=price_output,json=priceOutput,proto3,oneof" json:"price_output,omitempty"`
+	PriceCacheRead  *float64 `protobuf:"fixed64,6,opt,name=price_cache_read,json=priceCacheRead,proto3,oneof" json:"price_cache_read,omitempty"`
+	PriceCacheWrite *float64 `protobuf:"fixed64,7,opt,name=price_cache_write,json=priceCacheWrite,proto3,oneof" json:"price_cache_write,omitempty"`
+	Priced          bool     `protobuf:"varint,8,opt,name=priced,proto3" json:"priced,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ModelInfo) Reset() {
@@ -1976,6 +1986,41 @@ func (x *ModelInfo) GetModel() string {
 		return x.Model
 	}
 	return ""
+}
+
+func (x *ModelInfo) GetPriceInput() float64 {
+	if x != nil && x.PriceInput != nil {
+		return *x.PriceInput
+	}
+	return 0
+}
+
+func (x *ModelInfo) GetPriceOutput() float64 {
+	if x != nil && x.PriceOutput != nil {
+		return *x.PriceOutput
+	}
+	return 0
+}
+
+func (x *ModelInfo) GetPriceCacheRead() float64 {
+	if x != nil && x.PriceCacheRead != nil {
+		return *x.PriceCacheRead
+	}
+	return 0
+}
+
+func (x *ModelInfo) GetPriceCacheWrite() float64 {
+	if x != nil && x.PriceCacheWrite != nil {
+		return *x.PriceCacheWrite
+	}
+	return 0
+}
+
+func (x *ModelInfo) GetPriced() bool {
+	if x != nil {
+		return x.Priced
+	}
+	return false
 }
 
 type ListModelsResponse struct {
@@ -3589,11 +3634,21 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x04live\x18\v \x01(\bR\x04live\"P\n" +
 	"\x1aListSessionHistoryResponse\x122\n" +
 	"\bsessions\x18\x01 \x03(\v2\x16.ycc.v1.SessionSummaryR\bsessions\"\x13\n" +
-	"\x11ListModelsRequest\"O\n" +
+	"\x11ListModelsRequest\"\xe1\x02\n" +
 	"\tModelInfo\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\abackend\x18\x02 \x01(\tR\abackend\x12\x14\n" +
-	"\x05model\x18\x03 \x01(\tR\x05model\"?\n" +
+	"\x05model\x18\x03 \x01(\tR\x05model\x12$\n" +
+	"\vprice_input\x18\x04 \x01(\x01H\x00R\n" +
+	"priceInput\x88\x01\x01\x12&\n" +
+	"\fprice_output\x18\x05 \x01(\x01H\x01R\vpriceOutput\x88\x01\x01\x12-\n" +
+	"\x10price_cache_read\x18\x06 \x01(\x01H\x02R\x0epriceCacheRead\x88\x01\x01\x12/\n" +
+	"\x11price_cache_write\x18\a \x01(\x01H\x03R\x0fpriceCacheWrite\x88\x01\x01\x12\x16\n" +
+	"\x06priced\x18\b \x01(\bR\x06pricedB\x0e\n" +
+	"\f_price_inputB\x0f\n" +
+	"\r_price_outputB\x13\n" +
+	"\x11_price_cache_readB\x14\n" +
+	"\x12_price_cache_write\"?\n" +
 	"\x12ListModelsResponse\x12)\n" +
 	"\x06models\x18\x01 \x03(\v2\x11.ycc.v1.ModelInfoR\x06models\"\xde\x03\n" +
 	"\vModelConfig\x12\x12\n" +
@@ -3896,6 +3951,7 @@ func file_ycc_v1_ycc_proto_init() {
 	if File_ycc_v1_ycc_proto != nil {
 		return
 	}
+	file_ycc_v1_ycc_proto_msgTypes[37].OneofWrappers = []any{}
 	file_ycc_v1_ycc_proto_msgTypes[39].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{

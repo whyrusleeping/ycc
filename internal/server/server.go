@@ -13,6 +13,8 @@ import (
 
 	"connectrpc.com/connect"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/docs"
 	"github.com/whyrusleeping/ycc/internal/event"
@@ -286,7 +288,17 @@ func (s *Server) AnswerQuestions(_ context.Context, req *connect.Request[v1.Answ
 func (s *Server) ListModels(_ context.Context, _ *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error) {
 	var models []*v1.ModelInfo
 	for _, m := range s.mgr.Models() {
-		models = append(models, &v1.ModelInfo{Name: m.Name, Backend: m.Backend, Model: m.Model})
+		mi := &v1.ModelInfo{Name: m.Name, Backend: m.Backend, Model: m.Model, Priced: m.Pricing.Configured}
+		// Only attach the optional price_* fields when pricing is configured so an
+		// unset rate stays nil on the wire (spec §20.4): the TUI must never invent a
+		// cost for an unpriced model.
+		if m.Pricing.Configured {
+			mi.PriceInput = proto.Float64(m.Pricing.Input)
+			mi.PriceOutput = proto.Float64(m.Pricing.Output)
+			mi.PriceCacheRead = proto.Float64(m.Pricing.CacheRead)
+			mi.PriceCacheWrite = proto.Float64(m.Pricing.CacheWrite)
+		}
+		models = append(models, mi)
 	}
 	return connect.NewResponse(&v1.ListModelsResponse{Models: models}), nil
 }

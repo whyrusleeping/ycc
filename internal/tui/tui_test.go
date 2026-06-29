@@ -13,6 +13,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/whyrusleeping/ycc/internal/config"
+	"github.com/whyrusleeping/ycc/internal/event"
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 	"github.com/whyrusleeping/ycc/proto/ycc/v1/yccv1connect"
 )
@@ -1338,5 +1340,114 @@ func TestToggleWithAutoExpand(t *testing.T) {
 	m.toggle(0)
 	if !m.eventExpanded(1, "tool_call") {
 		t.Fatalf("expected second toggle to re-expand the row")
+	}
+}
+
+// --- live status bar (task 0062) ---
+
+// turnEvent builds a model_turn proto Event carrying a usage block for model name.
+func turnEvent(seq int, name string, u event.Usage) *v1.Event {
+	return &v1.Event{
+		Seq: int64(seq), Type: "model_turn", Actor: "coordinator",
+		DataJson: fmt.Sprintf(
+			`{"model_name":%q,"usage":{"input":%d,"output":%d,"cache_read":%d,"cache_write":%d,"total":%d}}`,
+			name, u.Input, u.Output, u.CacheRead, u.CacheWrite, u.Total),
+	}
+}
+
+// TestSessionUsageSummation checks that model_turn usage blocks accumulate per
+// model and price correctly: a priced + unpriced mix is "partial" (cost from the
+// priced model only), an all-priced mix is "priced", and an all-unpriced mix is
+// "unpriced" with no invented cost.
+func TestSessionUsageSummation(t *testing.T) {
+	newModel := func(pricing map[string]config.Pricing) *model {
+		return &model{
+			expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+			usageByModel: map[string]event.Usage{}, pricing: pricing,
+		}
+	}
+
+	// 1) partial: "claude" priced, "local" unpriced.
+	priced := config.Pricing{Input: 3, Output: 15, CacheRead: 0.3, CacheWrite: 3.75, Configured: true}
+	m := newModel(map[string]config.Pricing{"claude": priced})
+	m.appendEvent(turnEvent(1, "claude", event.Usage{Input: 1000, Output: 500, Total: 1500}))
+	m.appendEvent(turnEvent(2, "claude", event.Usage{Input: 2000, Output: 1000, Total: 3000}))
+	m.appendEvent(turnEvent(3, "local", event.Usage{Input: 4000, Output: 0, Total: 4000}))
+	tokens, cost, status := m.sessionUsage()
+	if tokens != 1500+3000+4000 {
+		t.Fatalf("tokens = %d, want %d", tokens, 1500+3000+4000)
+	}
+	// claude: input 3000 * $3/Mtok + output 1500 * $15/Mtok = 0.009 + 0.0225 = 0.0315
+	wantCost := (3000*3 + 1500*15) / 1e6
+	if d := cost - wantCost; d < -1e-9 || d > 1e-9 {
+		t.Fatalf("cost = %v, want %v", cost, wantCost)
+	}
+	if status != "partial" {
+		t.Fatalf("status = %q, want partial", status)
+	}
+
+	// 2) fully priced.
+	m = newModel(map[string]config.Pricing{"claude": priced})
+	m.appendEvent(turnEvent(1, "claude", event.Usage{Input: 1000, Output: 1000, Total: 2000}))
+	tokens, cost, status = m.sessionUsage()
+	if tokens != 2000 || status != "priced" {
+		t.Fatalf("priced case: tokens=%d status=%q", tokens, status)
+	}
+	if want := (1000*3 + 1000*15) / 1e6; cost != want {
+		t.Fatalf("priced cost = %v, want %v", cost, want)
+	}
+
+	// 3) fully unpriced: tokens surface but cost stays 0 and status unpriced.
+	m = newModel(map[string]config.Pricing{})
+	m.appendEvent(turnEvent(1, "local", event.Usage{Input: 500, Output: 500, Total: 1000}))
+	tokens, cost, status = m.sessionUsage()
+	if tokens != 1000 || cost != 0 || status != "unpriced" {
+		t.Fatalf("unpriced case: tokens=%d cost=%v status=%q", tokens, cost, status)
+	}
+
+	// 4) empty: no usage at all.
+	m = newModel(map[string]config.Pricing{})
+	if tk, c, st := m.sessionUsage(); tk != 0 || c != 0 || st != "unpriced" {
+		t.Fatalf("empty case: %d %v %q", tk, c, st)
+	}
+}
+
+// TestStatusBarSegments renders the status bar with a fully-populated session and
+// asserts the distinct segments (mode, level, thinking, token readout) appear, and
+// that the bar stays exactly one physical row at a narrow width (no wrap).
+func TestStatusBarSegments(t *testing.T) {
+	m := model{
+		state: stateSession, status: "running", mode: "implement", level: "judgement",
+		sessionID: "sess12345678", w: 120,
+		thinkLevels:  map[string]string{"coordinator": "high"},
+		usageByModel: map[string]event.Usage{"claude": {Input: 12000, Output: 6000, Total: 18000}},
+		pricing:      map[string]config.Pricing{"claude": {Input: 3, Output: 15, Configured: true}},
+	}
+	bar := m.statusBar()
+	for _, want := range []string{"implement", "judgement", "high", "18.0k", "$"} {
+		if !strings.Contains(bar, want) {
+			t.Fatalf("status bar missing %q:\n%s", want, bar)
+		}
+	}
+
+	// Single physical row at a narrow width: no newline and width within bound.
+	m.w = 40
+	bar = m.statusBar()
+	if strings.Contains(bar, "\n") {
+		t.Fatalf("status bar wrapped to multiple rows: %q", bar)
+	}
+	if w := lipgloss.Width(bar); w > 40 {
+		t.Fatalf("status bar width %d exceeds 40: %q", w, bar)
+	}
+
+	// Unpriced session: tokens shown, never a bogus cost.
+	m.w = 120
+	m.pricing = map[string]config.Pricing{}
+	bar = m.statusBar()
+	if strings.Contains(bar, "$") {
+		t.Fatalf("unpriced bar must not show a cost: %s", bar)
+	}
+	if !strings.Contains(bar, "18.0k") {
+		t.Fatalf("unpriced bar should still show tokens: %s", bar)
 	}
 }

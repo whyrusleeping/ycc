@@ -551,6 +551,7 @@ type ModelInfo struct {
 	Name    string
 	Backend string
 	Model   string
+	Pricing Pricing // resolved per-model pricing (spec §20.4); Configured=false ⇒ unpriced
 }
 
 // GetModel returns a copy of the model record stored under name (for editing in
@@ -704,7 +705,7 @@ func (r *Registry) Models() []ModelInfo {
 	out := make([]ModelInfo, 0, len(names))
 	for _, name := range names {
 		m := r.cfg.Models[name]
-		out = append(out, ModelInfo{Name: name, Backend: m.Backend, Model: m.Model})
+		out = append(out, ModelInfo{Name: name, Backend: m.Backend, Model: m.Model, Pricing: m.Pricing()})
 	}
 	return out
 }

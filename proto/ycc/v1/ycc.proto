@@ -162,6 +162,16 @@ message ModelInfo {
   string name = 1;    // logical name (e.g. "claude", "gpt")
   string backend = 2; // anthropic | openai | ollama | ...
   string model = 3;   // backend model id
+  // Per-model pricing ($/Mtok) surfaced so the live session status bar can price
+  // running usage (spec §20.4). The price_* fields are optional so an unset rate
+  // is distinguishable from an explicit 0.0; priced reports whether ANY rate is
+  // configured (mirrors config.Pricing.Configured) so unpriced models render
+  // tokens-only without inventing a cost.
+  optional double price_input = 4;
+  optional double price_output = 5;
+  optional double price_cache_read = 6;
+  optional double price_cache_write = 7;
+  bool priced = 8;
 }
 message ListModelsResponse { repeated ModelInfo models = 1; }
 

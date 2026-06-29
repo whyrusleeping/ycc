@@ -44,3 +44,4 @@ Add a settings menu option that, when enabled, automatically expands all agent l
 …[truncated]
 - 2026-06-29 decision: accept — commit: Add settings toggle to auto-expand agent logs by default (0067)  Add a client pref AutoExpandLogs (persisted via clientconfig) and a settings overlay row to toggle it. A new eventExpanded helper makes
 …[truncated]
+- 2026-06-29 usage: 26,419 tok (in 136, out 26,283, cache_r 1,437,161, cache_w 80,711) · cost n/a (unpriced)
