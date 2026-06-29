@@ -54,6 +54,9 @@ const (
 	// SessionServiceAnswerQuestionProcedure is the fully-qualified name of the SessionService's
 	// AnswerQuestion RPC.
 	SessionServiceAnswerQuestionProcedure = "/ycc.v1.SessionService/AnswerQuestion"
+	// SessionServiceAnswerQuestionsProcedure is the fully-qualified name of the SessionService's
+	// AnswerQuestions RPC.
+	SessionServiceAnswerQuestionsProcedure = "/ycc.v1.SessionService/AnswerQuestions"
 	// SessionServiceInterruptProcedure is the fully-qualified name of the SessionService's Interrupt
 	// RPC.
 	SessionServiceInterruptProcedure = "/ycc.v1.SessionService/Interrupt"
@@ -118,6 +121,8 @@ type SessionServiceClient interface {
 	Subscribe(context.Context, *connect.Request[v1.SubscribeRequest]) (*connect.ServerStreamForClient[v1.Event], error)
 	SendInput(context.Context, *connect.Request[v1.SendInputRequest]) (*connect.Response[v1.SendInputResponse], error)
 	AnswerQuestion(context.Context, *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error)
+	// AnswerQuestions replies to a batch of questions posed in one ask_user call.
+	AnswerQuestions(context.Context, *connect.Request[v1.AnswerQuestionsRequest]) (*connect.Response[v1.AnswerQuestionsResponse], error)
 	// Interrupt & steer (spec §18.7): gracefully pause a running session at its
 	// next safe checkpoint, then continue the same loop (optionally after a
 	// steered SendInput correction). Distinct from the hard Stop/terminate.
@@ -210,6 +215,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			httpClient,
 			baseURL+SessionServiceAnswerQuestionProcedure,
 			connect.WithSchema(sessionServiceMethods.ByName("AnswerQuestion")),
+			connect.WithClientOptions(opts...),
+		),
+		answerQuestions: connect.NewClient[v1.AnswerQuestionsRequest, v1.AnswerQuestionsResponse](
+			httpClient,
+			baseURL+SessionServiceAnswerQuestionsProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("AnswerQuestions")),
 			connect.WithClientOptions(opts...),
 		),
 		interrupt: connect.NewClient[v1.InterruptRequest, v1.InterruptResponse](
@@ -332,6 +343,7 @@ type sessionServiceClient struct {
 	subscribe           *connect.Client[v1.SubscribeRequest, v1.Event]
 	sendInput           *connect.Client[v1.SendInputRequest, v1.SendInputResponse]
 	answerQuestion      *connect.Client[v1.AnswerQuestionRequest, v1.AnswerQuestionResponse]
+	answerQuestions     *connect.Client[v1.AnswerQuestionsRequest, v1.AnswerQuestionsResponse]
 	interrupt           *connect.Client[v1.InterruptRequest, v1.InterruptResponse]
 	resume              *connect.Client[v1.ResumeRequest, v1.ResumeResponse]
 	stopSession         *connect.Client[v1.StopSessionRequest, v1.StopSessionResponse]
@@ -385,6 +397,11 @@ func (c *sessionServiceClient) SendInput(ctx context.Context, req *connect.Reque
 // AnswerQuestion calls ycc.v1.SessionService.AnswerQuestion.
 func (c *sessionServiceClient) AnswerQuestion(ctx context.Context, req *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error) {
 	return c.answerQuestion.CallUnary(ctx, req)
+}
+
+// AnswerQuestions calls ycc.v1.SessionService.AnswerQuestions.
+func (c *sessionServiceClient) AnswerQuestions(ctx context.Context, req *connect.Request[v1.AnswerQuestionsRequest]) (*connect.Response[v1.AnswerQuestionsResponse], error) {
+	return c.answerQuestions.CallUnary(ctx, req)
 }
 
 // Interrupt calls ycc.v1.SessionService.Interrupt.
@@ -488,6 +505,8 @@ type SessionServiceHandler interface {
 	Subscribe(context.Context, *connect.Request[v1.SubscribeRequest], *connect.ServerStream[v1.Event]) error
 	SendInput(context.Context, *connect.Request[v1.SendInputRequest]) (*connect.Response[v1.SendInputResponse], error)
 	AnswerQuestion(context.Context, *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error)
+	// AnswerQuestions replies to a batch of questions posed in one ask_user call.
+	AnswerQuestions(context.Context, *connect.Request[v1.AnswerQuestionsRequest]) (*connect.Response[v1.AnswerQuestionsResponse], error)
 	// Interrupt & steer (spec §18.7): gracefully pause a running session at its
 	// next safe checkpoint, then continue the same loop (optionally after a
 	// steered SendInput correction). Distinct from the hard Stop/terminate.
@@ -576,6 +595,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		SessionServiceAnswerQuestionProcedure,
 		svc.AnswerQuestion,
 		connect.WithSchema(sessionServiceMethods.ByName("AnswerQuestion")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceAnswerQuestionsHandler := connect.NewUnaryHandler(
+		SessionServiceAnswerQuestionsProcedure,
+		svc.AnswerQuestions,
+		connect.WithSchema(sessionServiceMethods.ByName("AnswerQuestions")),
 		connect.WithHandlerOptions(opts...),
 	)
 	sessionServiceInterruptHandler := connect.NewUnaryHandler(
@@ -702,6 +727,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceSendInputHandler.ServeHTTP(w, r)
 		case SessionServiceAnswerQuestionProcedure:
 			sessionServiceAnswerQuestionHandler.ServeHTTP(w, r)
+		case SessionServiceAnswerQuestionsProcedure:
+			sessionServiceAnswerQuestionsHandler.ServeHTTP(w, r)
 		case SessionServiceInterruptProcedure:
 			sessionServiceInterruptHandler.ServeHTTP(w, r)
 		case SessionServiceResumeProcedure:
@@ -773,6 +800,10 @@ func (UnimplementedSessionServiceHandler) SendInput(context.Context, *connect.Re
 
 func (UnimplementedSessionServiceHandler) AnswerQuestion(context.Context, *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.AnswerQuestion is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) AnswerQuestions(context.Context, *connect.Request[v1.AnswerQuestionsRequest]) (*connect.Response[v1.AnswerQuestionsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.AnswerQuestions is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) Interrupt(context.Context, *connect.Request[v1.InterruptRequest]) (*connect.Response[v1.InterruptResponse], error) {

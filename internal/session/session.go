@@ -186,6 +186,32 @@ func (s *Session) AnswerOption(idx int, text string) error {
 	return nil
 }
 
+// AnswerBatch responds to a pending batch (multi-question) ask_user call. idxs
+// and texts are positional and parallel: the i-th answer resolves to option
+// idxs[i] of the i-th question when in range, otherwise to free text texts[i].
+// Errors if no batch question is pending.
+func (s *Session) AnswerBatch(idxs []int, texts []string) error {
+	n := len(idxs)
+	if len(texts) > n {
+		n = len(texts)
+	}
+	ans := make([]answer, n)
+	for i := 0; i < n; i++ {
+		a := answer{idx: -1}
+		if i < len(idxs) {
+			a.idx = idxs[i]
+		}
+		if i < len(texts) {
+			a.text = texts[i]
+		}
+		ans[i] = a
+	}
+	if !s.inter.AnswerAll(ans) {
+		return fmt.Errorf("session %s has no pending question", s.ID)
+	}
+	return nil
+}
+
 // Stop hard-terminates the session: it records the terminal session_stopped
 // event, cancels the agent loop (unblocking any ask_user / checkpoint waiting on
 // the ctx), and closes the event log. It is idempotent (runs at most once).

@@ -1122,3 +1122,48 @@ func TestPreviousSessionsEscReturnsToMenu(t *testing.T) {
 		t.Fatalf("esc on history opened the settings overlay")
 	}
 }
+
+// TestWizardFreeTextAfterPickerFocusesInput guards the mixed-batch focus
+// regression: when a picker question precedes a free-text question in one
+// multi-question ask_user batch, advancing past the picker (which blurs the
+// textarea) must re-focus the textarea so the next free-text answer is typable.
+func TestWizardFreeTextAfterPickerFocusesInput(t *testing.T) {
+	f := newFakeClient()
+	m := model{
+		client: f, ctx: context.Background(),
+		state: stateSession, status: "running", sessionID: "s1", follow: true,
+		input:    newSessionInput(),
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+	}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(model)
+
+	// Drive a multi-question batch: question 1 is a picker, question 2 is free text.
+	m.appendEvent(&v1.Event{
+		Seq: 1, Type: "question_asked", Actor: "coordinator",
+		DataJson: `{"questions":[{"question":"db?","options":["postgres","sqlite"]},{"question":"name?"}]}`,
+	})
+	if !m.wizActive {
+		t.Fatal("wizard should be active after a batch question_asked")
+	}
+	if !m.picking || m.wizIdx != 0 {
+		t.Fatalf("first question should be a picker at idx 0 (picking=%v idx=%d)", m.picking, m.wizIdx)
+	}
+
+	// Answer the first (picker) question by selecting the highlighted option.
+	// Update is called directly (not via drive) because advancing to the free-text
+	// question returns the textarea's cursor-blink cmd, which would block if run
+	// synchronously (see typeText).
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+
+	if m.wizIdx != 1 {
+		t.Fatalf("after answering Q1, wizIdx=%d, want 1", m.wizIdx)
+	}
+	if m.picking {
+		t.Fatal("Q2 is free text; picking should be false")
+	}
+	if !m.input.Focused() {
+		t.Fatal("textarea must be focused for the free-text question following a picker")
+	}
+}

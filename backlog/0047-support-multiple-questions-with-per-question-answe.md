@@ -1,10 +1,10 @@
 ---
 id: "0047"
 title: Support multiple questions with per-question answer sets in ask-user tool
-status: todo
+status: in_progress
 priority: 3
 created: "2026-06-27"
-updated: "2026-06-27"
+updated: "2026-06-29"
 depends_on: []
 spec_refs: []
 ---
@@ -32,3 +32,14 @@ When the model needs several pieces of input from the user, it must currently ma
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-29 plan: Extend ask_user to support a batch of questions, each with its own option set, end-to-end while preserving the single-question form.  1. Proto (proto/ycc/v1/ycc.proto): add `QuestionAnswer {string tex
+…[truncated]
+- 2026-06-29 implementer report: Implemented task 0047: ask_user now supports multiple questions, each with its own answer set, end-to-end, while preserving the single-question form.  Changes: - **proto/ycc/v1/ycc.proto**: added `Que
+…[truncated]
+- 2026-06-29 review tier: single-opus — reviewers: Claude
+- 2026-06-29 review (Claude): revise — The multi-question ask_user feature is implemented end-to-end (proto, orchestrator routing via AskMany, session batch gating, AnswerQuestions RPC, regenerated protobuf/connect, TUI wizard) with good t
+…[truncated]
+- 2026-06-29 revision: Addressed the reviewer's mixed-batch focus defect:  1. **internal/tui/tui.go `loadWizQuestion()`**: changed it to return a `tea.Cmd`. In the free-text branch (current wizard question has no options) i
+…[truncated]
+- 2026-06-29 review (Claude): accept — The revision resolves the previously flagged major TUI focus bug: loadWizQuestion now focuses the textarea for free-text wizard questions and returns the blink cmd, which recordWizAnswer propagates th
+…[truncated]

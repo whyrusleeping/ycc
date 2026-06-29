@@ -94,6 +94,14 @@ type model struct {
 	pickerCursor int      // index into pickerOpts; len(pickerOpts) == "other…"
 	picking      bool     // true while the picker (not the textarea) has focus
 
+	// questionnaire wizard state: when an ask_user call poses MULTIPLE questions,
+	// the user answers them one at a time (picker or free-text per question) and
+	// all answers are submitted together at the end. wizActive gates this mode.
+	wizActive    bool
+	wizQuestions []wizQuestion // parsed questions (prompt + per-question options)
+	wizAnswers   []wizAnswer   // collected answers, parallel to wizQuestions
+	wizIdx       int           // index of the question currently being answered
+
 	err   error
 	ready bool
 	w, h  int
@@ -396,6 +404,89 @@ func (m model) stopSession() tea.Cmd {
 	}
 }
 
+// answerQuestions submits a batch of answers for a multi-question ask_user call.
+func (m model) answerQuestions(answers []*v1.QuestionAnswer) tea.Cmd {
+	return func() tea.Msg {
+		_, err := m.client.AnswerQuestions(m.ctx, connect.NewRequest(&v1.AnswerQuestionsRequest{
+			SessionId: m.sessionID, Answers: answers,
+		}))
+		if err != nil {
+			return errMsg{err}
+		}
+		return nil
+	}
+}
+
+// startWizard enters the questionnaire wizard for a multi-question ask_user call,
+// resetting collected answers and presenting the first question.
+func (m *model) startWizard(qs []wizQuestion) {
+	m.wizActive = true
+	m.wizQuestions = qs
+	m.wizAnswers = make([]wizAnswer, len(qs))
+	for i := range m.wizAnswers {
+		m.wizAnswers[i] = wizAnswer{idx: -1}
+	}
+	m.wizIdx = 0
+	m.status = "waiting for your answer"
+	m.loadWizQuestion()
+}
+
+// loadWizQuestion configures the per-question input (picker or free-text) for the
+// current wizard question. For a free-text question it focuses the textarea and
+// returns its blink command; the caller in Update propagates it. For a picker
+// question it blurs the textarea and returns nil.
+func (m *model) loadWizQuestion() tea.Cmd {
+	if m.wizIdx < 0 || m.wizIdx >= len(m.wizQuestions) {
+		return nil
+	}
+	q := m.wizQuestions[m.wizIdx]
+	m.pending = q.prompt
+	m.pickerOpts = append([]string(nil), q.options...)
+	m.input.SetValue("")
+	if len(m.pickerOpts) > 0 {
+		m.picking = true
+		m.pickerCursor = 0
+		m.input.Blur()
+		return nil
+	}
+	// Free-text question: re-focus the textarea so the user can type, even when a
+	// preceding picker question blurred it. Focus() sets the focused state
+	// synchronously (what matters for typing) and returns the cosmetic blink cmd.
+	m.picking = false
+	return m.input.Focus()
+}
+
+// clearWizard exits the questionnaire wizard and resets its state.
+func (m *model) clearWizard() {
+	m.wizActive = false
+	m.wizQuestions = nil
+	m.wizAnswers = nil
+	m.wizIdx = 0
+}
+
+// recordWizAnswer stores the answer for the current question and advances. When
+// the last question is answered it returns the command that submits all answers;
+// otherwise it loads the next question and returns nil.
+func (m *model) recordWizAnswer(idx int, text string, viaPicker bool) tea.Cmd {
+	if m.wizIdx >= 0 && m.wizIdx < len(m.wizAnswers) {
+		m.wizAnswers[m.wizIdx] = wizAnswer{idx: idx, text: text, done: true, picking: viaPicker}
+	}
+	if m.wizIdx < len(m.wizQuestions)-1 {
+		m.wizIdx++
+		return m.loadWizQuestion()
+	}
+	// Last question answered: submit the whole batch.
+	answers := make([]*v1.QuestionAnswer, len(m.wizAnswers))
+	for i, a := range m.wizAnswers {
+		answers[i] = &v1.QuestionAnswer{Text: a.text, OptionIndex: int32(a.idx)}
+	}
+	m.pending = ""
+	m.picking = false
+	m.pickerOpts = nil
+	m.follow = true
+	return m.answerQuestions(answers)
+}
+
 // answerQuestion sends a structured answer to a pending question: optIdx >= 0
 // selects a suggested option (resolved to its text on the daemon), otherwise
 // optIdx is -1 and text is taken as free text.
@@ -616,6 +707,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.follow = m.prefs.Follow
 		m.pending, m.paused, m.picking = "", false, false
 		m.pickerOpts, m.pickerCursor = nil, 0
+		m.clearWizard()
 		m.sessionID, m.mode, m.state, m.status = msg.id, msg.mode, stateSession, "running"
 		m.input.SetValue("")
 		fc := m.input.Focus()
@@ -919,6 +1011,10 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				idx := m.pickerCursor
 				m.picking = false
+				if m.wizActive {
+					cmd := m.recordWizAnswer(idx, m.pickerOpts[idx], true)
+					return m, cmd
+				}
 				m.pending = ""
 				m.pickerOpts = nil
 				m.follow = true
@@ -991,6 +1087,14 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// If a question is pending, answer it as free text (option_index -1);
 			// otherwise it's a prod handled by SendInput.
+			if m.wizActive {
+				m.follow = true
+				cmd := m.recordWizAnswer(-1, text, false)
+				if cmd == nil {
+					return m, nil
+				}
+				return m, cmd
+			}
 			if m.pending != "" {
 				m.pending = ""
 				m.follow = true
@@ -2129,6 +2233,11 @@ func (m *model) appendEvent(ev *v1.Event) {
 	m.evs = append(m.evs, ev)
 	switch ev.Type {
 	case "question_asked":
+		if qs := dataQuestions(ev); len(qs) > 0 {
+			// Multi-question form: start the questionnaire wizard.
+			m.startWizard(qs)
+			break
+		}
 		m.pending = dataField(ev, "question")
 		m.status = "waiting for your answer"
 		m.pickerOpts = dataList(ev, "options")
@@ -2144,6 +2253,7 @@ func (m *model) appendEvent(ev *v1.Event) {
 		m.status = "running"
 		m.pickerOpts = nil
 		m.picking = false
+		m.clearWizard()
 	case "session_idle":
 		m.status = "idle"
 	case "session_error":
@@ -2542,6 +2652,15 @@ func (m model) sessionView() string {
 	if m.ready {
 		body = m.vp.View()
 	}
+	if m.wizActive {
+		overview := m.wizardView()
+		if m.picking {
+			help := m.footer(" ↑↓ choose · enter select · esc settings")
+			return top + "\n" + body + "\n" + overview + "\n" + m.pickerView() + "\n" + help
+		}
+		help := m.footer(" type your answer + enter · esc settings")
+		return top + "\n" + body + "\n" + overview + "\n " + m.input.View() + "\n" + help
+	}
 	if m.picking {
 		help := m.footer(" ↑↓ choose · enter select · esc settings")
 		return top + "\n" + body + "\n" + m.pickerView() + "\n" + help
@@ -2593,8 +2712,50 @@ func (m model) pickerView() string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// --- per-event rendering ---
+// wizardView renders an overview of all questions in a multi-question ask_user
+// call alongside each collected answer, marking the question currently being
+// answered. The active question's picker/textarea is rendered below it.
+func (m model) wizardView() string {
+	var b strings.Builder
+	b.WriteString(" " + askStyle.Render(" ? ") + " " +
+		dimStyle.Render(fmt.Sprintf("question %d of %d", m.wizIdx+1, len(m.wizQuestions))) + "\n")
+	for i, q := range m.wizQuestions {
+		marker := "  "
+		if i == m.wizIdx {
+			marker = selStyle.Render("▸ ")
+		}
+		num := fmt.Sprintf("%d. ", i+1)
+		prompt := q.prompt
+		if m.w > 0 {
+			prompt = trunc(prompt, m.w-len(num)-4)
+		}
+		line := num + prompt
+		if i == m.wizIdx {
+			line = selStyle.Render(line)
+		}
+		b.WriteString("  " + marker + line + "\n")
+		// Show the collected answer (or a pending marker) under each question.
+		var ansTxt string
+		if a := m.wizAnswers[i]; a.done {
+			if a.idx >= 0 && a.idx < len(q.options) {
+				ansTxt = "→ " + q.options[a.idx]
+			} else {
+				ansTxt = "→ " + a.text
+			}
+		} else if i == m.wizIdx {
+			ansTxt = "→ (answer below)"
+		} else {
+			ansTxt = "→ …"
+		}
+		if m.w > 0 {
+			ansTxt = trunc(ansTxt, m.w-6)
+		}
+		b.WriteString("     " + dimStyle.Render(ansTxt) + "\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
 
+// --- per-event rendering ---
 func autoExpand(t string) bool { return t == "session_idle" || t == "question_asked" }
 
 func (m *model) renderBlock(i int, ev *v1.Event) string {
@@ -2691,7 +2852,36 @@ func (m *model) bodyFor(ev *v1.Event) string {
 
 func (m *model) renderBody(ev *v1.Event) string {
 	switch ev.Type {
-	case "model_turn", "session_idle", "user_input", "question_asked", "question_answered":
+	case "question_asked":
+		if qs := dataQuestions(ev); len(qs) > 0 {
+			var b strings.Builder
+			for i, q := range qs {
+				fmt.Fprintf(&b, "%d. %s\n", i+1, q.prompt)
+				for _, o := range q.options {
+					b.WriteString("   - " + o + "\n")
+				}
+			}
+			return indentLines(m.markdown(strings.TrimRight(b.String(), "\n")), "  ")
+		}
+		txt := firstField(ev, "question")
+		if txt == "" {
+			return ""
+		}
+		return indentLines(m.markdown(txt), "  ")
+	case "question_answered":
+		if ans := dataList(ev, "answers"); len(ans) > 0 {
+			var b strings.Builder
+			for i, a := range ans {
+				fmt.Fprintf(&b, "A%d: %s\n", i+1, a)
+			}
+			return indentLines(m.markdown(strings.TrimRight(b.String(), "\n")), "  ")
+		}
+		txt := firstField(ev, "answer")
+		if txt == "" {
+			return ""
+		}
+		return indentLines(m.markdown(txt), "  ")
+	case "model_turn", "session_idle", "user_input":
 		txt := firstField(ev, "text", "report", "question", "answer")
 		if txt == "" {
 			return ""
@@ -2943,8 +3133,18 @@ func detailLine(ev *v1.Event) string {
 	case "user_input":
 		return "› " + oneLine(dataField(ev, "text"), 120)
 	case "question_asked":
+		if qs := dataQuestions(ev); len(qs) > 0 {
+			prompts := make([]string, len(qs))
+			for i, q := range qs {
+				prompts[i] = q.prompt
+			}
+			return "? " + oneLine(fmt.Sprintf("%d questions: %s", len(qs), strings.Join(prompts, " · ")), 120)
+		}
 		return "? " + oneLine(dataField(ev, "question"), 120)
 	case "question_answered":
+		if ans := dataList(ev, "answers"); len(ans) > 0 {
+			return oneLine(strings.Join(ans, " · "), 120)
+		}
 		return oneLine(dataField(ev, "answer"), 100)
 	case "subagent_spawned", "subagent_finished":
 		return strings.TrimSpace(dataField(ev, "role") + " " + dataField(ev, "model"))
@@ -3038,6 +3238,59 @@ func dataList(ev *v1.Event, key string) []string {
 		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
 			out = append(out, s)
 		}
+	}
+	return out
+}
+
+// wizQuestion is one parsed question in a multi-question ask_user call.
+type wizQuestion struct {
+	prompt  string
+	options []string
+}
+
+// wizAnswer is the user's collected answer to one wizard question. idx >= 0
+// selects an option (resolved to its text on the daemon); idx == -1 means the
+// free-text field holds the answer.
+type wizAnswer struct {
+	idx     int
+	text    string
+	done    bool
+	picking bool // chosen via the picker (vs. typed) — for the overview display
+}
+
+// dataQuestions parses the `questions` field of a question_asked event into a
+// slice of wizQuestion. Returns nil when absent or empty (single-question form).
+func dataQuestions(ev *v1.Event) []wizQuestion {
+	if ev.DataJson == "" {
+		return nil
+	}
+	var mp map[string]any
+	if json.Unmarshal([]byte(ev.DataJson), &mp) != nil {
+		return nil
+	}
+	raw, ok := mp["questions"].([]any)
+	if !ok {
+		return nil
+	}
+	var out []wizQuestion
+	for _, item := range raw {
+		qm, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		prompt, _ := qm["question"].(string)
+		if strings.TrimSpace(prompt) == "" {
+			continue
+		}
+		q := wizQuestion{prompt: prompt}
+		if opts, ok := qm["options"].([]any); ok {
+			for _, o := range opts {
+				if s, ok := o.(string); ok && strings.TrimSpace(s) != "" {
+					q.options = append(q.options, s)
+				}
+			}
+		}
+		out = append(out, q)
 	}
 	return out
 }

@@ -335,6 +335,13 @@ absent, the user answers with free (multiline) text. See §18.3 for the UI side.
 `Asker.Ask(ctx, question, options)` interface already carries `options` end-to-end;
 exposing it on the tool schema + answering by option is the remaining wiring.
 
+`ask_user` can also pose **several questions in one call**: pass `questions`, a list
+where each item has its own `question` text and its own optional `options` set. The
+client presents a short questionnaire (the user answers each question — picker or free
+text — before a single final submit) and the answers are returned mapped to their
+questions (`Q1/A1`, `Q2/A2`, …). This is wired end-to-end via `Asker.AskMany` and the
+`AnswerQuestions` RPC; the single-question form (above) is unchanged.
+
 Tools are gollama `Tool` values (`Params` is JSON schema, `Call` does the work + emits
 events). Worker and orchestration tools are the same kind of object.
 
@@ -802,6 +809,15 @@ Wire path: `question_asked` events carry the options; `AnswerQuestion` carries e
 chosen option (index/value) or free text. This gives the agent the same crisp,
 low-friction Q&A loop a good interactive coding assistant has, instead of forcing every
 clarification into prose.
+
+`ask_user` may also pose **multiple questions at once** (via the `questions` list — see
+§8): each question has its own optional options set. The client then drives a short
+**questionnaire wizard** — it shows an overview of every question and answers them one at
+a time (picker or free text per question), then submits all answers together. Wire path:
+one `question_asked` event carries the `questions` list; the `AnswerQuestions` RPC carries
+the positional answers (per-question option index or free text); one `question_answered`
+event carries the `answers` list, returned to the model mapped to each question. The
+single-question wire path above is unchanged.
 
 ### 18.4 Reasoning (thinking) in the event stream
 

@@ -33,6 +33,27 @@ func TestSetThinkingUnknownSession(t *testing.T) {
 	}
 }
 
+// AnswerQuestions maps an unknown session to a NotFound connect error, mirroring
+// the single-question AnswerQuestion RPC.
+func TestAnswerQuestionsUnknownSession(t *testing.T) {
+	reg := config.NewRegistry(&config.Config{
+		Models: map[string]config.Model{"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"}},
+		Roles:  config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
+	})
+	srv := New(session.NewManager(reg, t.TempDir()))
+
+	_, err := srv.AnswerQuestions(context.Background(), connect.NewRequest(&v1.AnswerQuestionsRequest{
+		SessionId: "nope",
+		Answers:   []*v1.QuestionAnswer{{Text: "a"}, {OptionIndex: 1}},
+	}))
+	if err == nil {
+		t.Fatal("expected error for unknown session")
+	}
+	if got := connect.CodeOf(err); got != connect.CodeNotFound {
+		t.Fatalf("code = %v, want NotFound", got)
+	}
+}
+
 // TestProjectRPCs roundtrips the project registry through the RPC surface:
 // AddProject registers a workspace, ListProjects returns it, and RemoveProject
 // drops it (spec §3.1).

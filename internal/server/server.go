@@ -261,6 +261,26 @@ func (s *Server) AnswerQuestion(_ context.Context, req *connect.Request[v1.Answe
 	return connect.NewResponse(&v1.AnswerQuestionResponse{}), nil
 }
 
+// AnswerQuestions responds to a batch of questions the coordinator asked via a
+// single ask_user call. Answers are positional: the i-th answer answers the
+// i-th question.
+func (s *Server) AnswerQuestions(_ context.Context, req *connect.Request[v1.AnswerQuestionsRequest]) (*connect.Response[v1.AnswerQuestionsResponse], error) {
+	sess, ok := s.mgr.Get(req.Msg.SessionId)
+	if !ok {
+		return nil, connect.NewError(connect.CodeNotFound, errNoSession)
+	}
+	idxs := make([]int, len(req.Msg.Answers))
+	texts := make([]string, len(req.Msg.Answers))
+	for i, a := range req.Msg.Answers {
+		idxs[i] = int(a.OptionIndex)
+		texts[i] = a.Text
+	}
+	if err := sess.AnswerBatch(idxs, texts); err != nil {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	return connect.NewResponse(&v1.AnswerQuestionsResponse{}), nil
+}
+
 // ListModels enumerates the configured logical models for the settings overlay
 // pickers (spec §13, §18.2).
 func (s *Server) ListModels(_ context.Context, _ *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error) {

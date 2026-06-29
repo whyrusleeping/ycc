@@ -49,7 +49,7 @@
 | [0044](backlog/0044-settings-overlay-model-backends-management-form-ad.md) | Settings-overlay "Model backends" management form (add/edit/duplicate/remove) | done | 2 | 0041 |
 | [0045](backlog/0045-removemodel-should-also-reject-models-referenced-b.md) | RemoveModel should also reject models referenced by live session role assignments | done | 3 | 0041 |
 | [0046](backlog/0046-configurable-review-tiers-let-the-work-agent-choos.md) | Configurable review tiers — let the work agent choose review intensity per change | done | 3 | — |
-| [0047](backlog/0047-support-multiple-questions-with-per-question-answe.md) | Support multiple questions with per-question answer sets in ask-user tool | todo | 3 | — |
+| [0047](backlog/0047-support-multiple-questions-with-per-question-answe.md) | Support multiple questions with per-question answer sets in ask-user tool | in_progress | 3 | — |
 | [0048](backlog/0048-default-the-backlog-overlay-view-to-hiding-complet.md) | Default the backlog overlay view to hiding completed tasks | done | 3 | — |
 | [0049](backlog/0049-show-agent-action-log-in-quick-add-task-overlay-af.md) | Show agent action log in quick-add task overlay after submit | todo | 3 | — |
 | [0050](backlog/0050-auto-retry-transient-llm-api-call-failures-with-ba.md) | Auto-retry transient LLM API call failures with backoff | done | 3 | — |
@@ -58,6 +58,7 @@
 | [0053](backlog/0053-make-edit-tool-require-a-unique-match-and-error-on.md) | Make edit tool require a unique match and error on multiple matches | done | 3 | — |
 | [0054](backlog/0054-automatic-idle-session-gc-on-disk-log-retention.md) | Automatic idle-session GC + on-disk log retention | todo | 3 | 0009 |
 | [0055](backlog/0055-record-timing-in-model-output-and-tool-call-logs.md) | Record timing in model-output and tool-call logs | done | 3 | — |
-| [0056](backlog/0056-replay-fidelity-for-mid-run-truncation-nudges-on-r.md) | Replay fidelity for mid-Run truncation nudges on reopen | in_progress | 3 | 0034 |
+| [0056](backlog/0056-replay-fidelity-for-mid-run-truncation-nudges-on-r.md) | Replay fidelity for mid-Run truncation nudges on reopen | done | 3 | 0034 |
 | [0057](backlog/0057-surface-model-tool-timing-duration-ms-in-tui-chat.md) | Surface model/tool timing (duration_ms) in TUI chat-log rows | done | 4 | 0055 |
 | [0058](backlog/0058-session-textarea-grow-on-wrapped-long-lines-add-in.md) | Session textarea: grow on wrapped long lines + add input behavior tests | todo | 4 | 0011 |
+| [0059](backlog/0059-encourage-work-agent-to-commit-after-finishing-a-t.md) | Encourage work agent to commit after finishing a task (avoid leftover uncommitted backlog files) | todo | 3 | — |

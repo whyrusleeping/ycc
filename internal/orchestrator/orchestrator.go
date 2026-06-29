@@ -45,10 +45,22 @@ type AgentSpec struct {
 	ThinkingDisplay string
 }
 
+// Question is one prompt in a batch ask_user call, with its own optional set of
+// suggested answers.
+type Question struct {
+	Prompt  string
+	Options []string
+}
+
 // Asker lets the coordinator ask the user a question, subject to the session's
 // interaction level. Implemented by the session.
 type Asker interface {
 	Ask(ctx context.Context, question string, options []string) (string, error)
+	// AskMany poses several questions in a single round-trip, each with its own
+	// optional set of suggested answers. The returned slice is parallel to the
+	// input: answers[i] is the answer to questions[i]. Subject to the same
+	// interaction-level gating as Ask (autonomous mode auto-answers each).
+	AskMany(ctx context.Context, questions []Question) ([]string, error)
 	// Confirm asks the user a yes/no question for a high-impact, hard-to-reverse
 	// action (e.g. starting the work pipeline). Unlike Ask, it requires a real
 	// human answer even in autonomous mode: when no human is available it returns
@@ -460,16 +472,64 @@ func reReview(d *Deps) *gollama.Tool {
 func askUser(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "ask_user",
-		Description: "Ask the user a question and get their answer. Use only as your interaction level permits. " +
-			"In autonomous mode no human answers; you will be told to proceed on your own judgement. " +
-			"For multiple-choice clarifications, supply `options` (a short list of suggested answers); the " +
-			"client renders them as a picker so the user can choose crisply, and may still type free text.",
+		Description: "Ask the user one or more questions and get their answers. Use only as your interaction level " +
+			"permits. In autonomous mode no human answers; you will be told to proceed on your own judgement. " +
+			"For a single question, pass `question` (and optional `options`, a short list of suggested answers). " +
+			"To ask several questions in one round-trip, pass `questions`: a list where each item has its own " +
+			"`question` text and its own optional `options` list. The client renders options as a picker so the " +
+			"user can choose crisply, and may still type free text. Answers are returned mapped to each question.",
 		Params: tools.Obj(map[string]any{
-			"question": tools.StrProp("the question for the user"),
-			"options":  tools.StrArrProp("optional suggested answers to offer as selectable choices"),
-		}, "question"),
+			"question": tools.StrProp("the question for the user (single-question form)"),
+			"options":  tools.StrArrProp("optional suggested answers to offer as selectable choices (single-question form)"),
+			"questions": map[string]any{
+				"type":        "array",
+				"description": "ask several questions at once; each item has its own question text and options",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"question": tools.StrProp("the question for the user"),
+						"options":  tools.StrArrProp("optional suggested answers to offer as selectable choices"),
+					},
+					"required": []string{"question"},
+				},
+			},
+		}),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
+			rawQs := tools.GetMapSlice(params, "questions")
+			if len(rawQs) > 0 {
+				var qs []Question
+				for _, qm := range rawQs {
+					prompt, _ := tools.GetString(qm, "question")
+					if strings.TrimSpace(prompt) == "" {
+						continue
+					}
+					qs = append(qs, Question{Prompt: prompt, Options: tools.GetStringSlice(qm, "options")})
+				}
+				if len(qs) == 0 {
+					return tools.ErrResult("ask_user: 'questions' must contain at least one question with non-empty text"), nil
+				}
+				ans, err := d.Asker.AskMany(ctx, qs)
+				if err != nil {
+					return tools.ErrResult("ask_user: %v", err), nil
+				}
+				var b strings.Builder
+				for i, q := range qs {
+					if i > 0 {
+						b.WriteString("\n\n")
+					}
+					a := ""
+					if i < len(ans) {
+						a = ans[i]
+					}
+					fmt.Fprintf(&b, "Q%d: %s\nA%d: %s", i+1, q.Prompt, i+1, a)
+				}
+				return tools.OkResult(b.String()), nil
+			}
+
 			q, _ := tools.GetString(params, "question")
+			if strings.TrimSpace(q) == "" {
+				return tools.ErrResult("ask_user: provide a 'question' or a non-empty 'questions' list"), nil
+			}
 			opts := tools.GetStringSlice(params, "options")
 			ans, err := d.Asker.Ask(ctx, q, opts)
 			if err != nil {

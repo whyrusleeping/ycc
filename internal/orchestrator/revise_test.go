@@ -123,7 +123,14 @@ func TestSpawnImplementerNoOpGuard(t *testing.T) {
 type noopAsker struct{}
 
 func (noopAsker) Ask(context.Context, string, []string) (string, error) { return "ok", nil }
-func (noopAsker) Confirm(context.Context, string) (bool, error)         { return true, nil }
+func (noopAsker) AskMany(_ context.Context, qs []Question) ([]string, error) {
+	out := make([]string, len(qs))
+	for i := range qs {
+		out[i] = "ok"
+	}
+	return out, nil
+}
+func (noopAsker) Confirm(context.Context, string) (bool, error) { return true, nil }
 
 // TestReviseLoop exercises the full M3 revise cycle deterministically: the
 // implementer ships a buggy Add (a-b), the reviewer says "revise", the

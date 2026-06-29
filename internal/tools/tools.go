@@ -122,6 +122,10 @@ func GetString(params any, key string) (string, bool) { return getString(params,
 // Returns nil when the argument is absent.
 func GetStringSlice(params any, key string) []string { return getStringSlice(params, key) }
 
+// GetMapSlice pulls an array-of-objects argument, coercing each element that is
+// a map[string]any. Returns nil when the argument is absent or not an array.
+func GetMapSlice(params any, key string) []map[string]any { return getMapSlice(params, key) }
+
 // GetBool pulls a boolean argument, returning def when absent or not a boolean.
 func GetBool(params any, key string, def bool) bool { return getBool(params, key, def) }
 
@@ -171,6 +175,27 @@ func getStringSlice(params any, key string) []string {
 	for _, v := range raw {
 		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
 			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// getMapSlice pulls an array-of-objects argument, coercing each element that is
+// a map[string]any. Non-object elements are skipped. Returns nil when absent or
+// not an array.
+func getMapSlice(params any, key string) []map[string]any {
+	m, ok := params.(map[string]any)
+	if !ok {
+		return nil
+	}
+	raw, ok := m[key].([]any)
+	if !ok {
+		return nil
+	}
+	var out []map[string]any
+	for _, v := range raw {
+		if mm, ok := v.(map[string]any); ok {
+			out = append(out, mm)
 		}
 	}
 	return out

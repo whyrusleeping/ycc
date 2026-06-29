@@ -222,7 +222,14 @@ func hasTool(reg *tools.Registry, name string) bool {
 type declineAsker struct{}
 
 func (declineAsker) Ask(context.Context, string, []string) (string, error) { return "ok", nil }
-func (declineAsker) Confirm(context.Context, string) (bool, error)         { return false, nil }
+func (declineAsker) AskMany(_ context.Context, qs []Question) ([]string, error) {
+	out := make([]string, len(qs))
+	for i := range qs {
+		out[i] = "ok"
+	}
+	return out, nil
+}
+func (declineAsker) Confirm(context.Context, string) (bool, error) { return false, nil }
 
 // captureRec records every event in memory so tests can assert on emission.
 type captureRec struct{ events []event.Event }

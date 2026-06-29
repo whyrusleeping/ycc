@@ -1,7 +1,7 @@
 ---
 id: "0056"
 title: Replay fidelity for mid-Run truncation nudges on reopen
-status: in_progress
+status: done
 priority: 3
 created: "2026-06-29"
 updated: "2026-06-29"
@@ -52,3 +52,5 @@ results, or document the limitation explicitly.
 - 2026-06-29 review tier: single-opus — reviewers: Claude
 - 2026-06-29 review (Claude): accept — The change cleanly closes the ordering gap: it extracts the truncation stub/nudge strings into shared constants, and ReplayHistory synthesizes the unrecorded user nudge when reconstructing a truncatio
 …[truncated]
+- 2026-06-29 decision: accept — commit 81b2012: engine: synthesize truncation nudge on replay for valid alternation [0056]
+- 2026-06-29 usage: 12,513 tok (in 54, out 12,459, cache_r 486,848, cache_w 41,027) · cost n/a (unpriced)
