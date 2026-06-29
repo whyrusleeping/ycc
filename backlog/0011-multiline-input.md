@@ -1,7 +1,7 @@
 ---
 id: "0011"
 title: Multiline session input (textarea)
-status: in_progress
+status: done
 priority: 3
 created: "2026-06-26"
 updated: "2026-06-29"
@@ -31,4 +31,6 @@ spec §18.1.
 …[truncated]
 - 2026-06-29 review tier: single-opus — reviewers: Claude
 - 2026-06-29 review (Claude): accept — The session input is correctly converted from textinput to a bounded, growing textarea. All four acceptance criteria are met: it uses textarea.New() with wrapping (SetWidth), Enter is intercepted to s
+…[truncated]
+- 2026-06-29 decision: accept — commit 14f6b76: TUI: multiline session input (textarea) [0011]  Convert the session input from a single-line textinput to a bounded, growing textarea: Enter sends+clears, shift+enter/ctrl+j insert a newline, height g
 …[truncated]

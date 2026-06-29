@@ -44,3 +44,10 @@ pattern into a shared component reused by the backlog browser and the future cos
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-29: a PARTIAL implementation landed in commit 14f6b76 (bundled with task 0011
+  per maintainer decision): a previous-sessions screen (`stateHistory`, `historyView`,
+  `updateHistory`, `fetchHistory`/`reopenSession`, opened with `ctrl+r` from the menu) that
+  lists persisted sessions and reopens one via `ResumeSession`, with two tests. STILL TODO:
+  the reusable list+detail modal component + backlog-browser refactor, the read-only
+  transcript drill-in, and the unified "browse" menu entry. Build on the committed
+  `ctrl+r` history screen rather than re-implementing it.

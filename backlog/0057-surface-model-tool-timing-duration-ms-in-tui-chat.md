@@ -1,7 +1,7 @@
 ---
 id: "0057"
 title: Surface model/tool timing (duration_ms) in TUI chat-log rows
-status: todo
+status: in_review
 priority: 4
 created: "2026-06-29"
 updated: "2026-06-29"
@@ -31,3 +31,8 @@ re-apply the timing display cleanly.
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-29: the timing-display implementation (`appendDur`, `durationMSField`,
+  `fmtDurMS` + `detailLine`/`renderCombined` edits) LANDED in commit 14f6b76 (bundled
+  with task 0011 per maintainer decision). Functionally complete and green; the only
+  remaining acceptance criterion is a dedicated TUI test. Do NOT re-implement — just add
+  the test, then mark done.

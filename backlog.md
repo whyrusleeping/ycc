@@ -14,7 +14,7 @@
 | [0008](backlog/0008-reviewer-sandboxing.md) | Sandbox reviewer bash to prevent workspace mutation | todo | 6 | 0005 |
 | [0009](backlog/0009-session-lifecycle-interrupt.md) | Session lifecycle — Interrupt RPC and stop/GC | done | 3 | 0003 |
 | [0010](backlog/0010-context-window-management.md) | Context-window management for long sessions | todo | 3 | 0002 |
-| [0011](backlog/0011-multiline-input.md) | Multiline session input (textarea) | in_progress | 3 | 0006 |
+| [0011](backlog/0011-multiline-input.md) | Multiline session input (textarea) | done | 3 | 0006 |
 | [0012](backlog/0012-settings-overlay.md) | Settings overlay (esc) with mid-session interaction level + per-role model config | done | 2 | 0006 |
 | [0013](backlog/0013-structured-questions.md) | Structured interactive ask_user questions (option pickers) | done | 2 | 0006 |
 | [0014](backlog/0014-daemon-lifecycle-oneshot.md) | Daemon lifecycle — one-shot in-process default, opt-in persistence | done | 2 | 0003 |
@@ -59,4 +59,5 @@
 | [0054](backlog/0054-automatic-idle-session-gc-on-disk-log-retention.md) | Automatic idle-session GC + on-disk log retention | todo | 3 | 0009 |
 | [0055](backlog/0055-record-timing-in-model-output-and-tool-call-logs.md) | Record timing in model-output and tool-call logs | done | 3 | — |
 | [0056](backlog/0056-replay-fidelity-for-mid-run-truncation-nudges-on-r.md) | Replay fidelity for mid-Run truncation nudges on reopen | todo | 3 | 0034 |
-| [0057](backlog/0057-surface-model-tool-timing-duration-ms-in-tui-chat.md) | Surface model/tool timing (duration_ms) in TUI chat-log rows | todo | 4 | 0055 |
+| [0057](backlog/0057-surface-model-tool-timing-duration-ms-in-tui-chat.md) | Surface model/tool timing (duration_ms) in TUI chat-log rows | in_review | 4 | 0055 |
+| [0058](backlog/0058-session-textarea-grow-on-wrapped-long-lines-add-in.md) | Session textarea: grow on wrapped long lines + add input behavior tests | todo | 4 | 0011 |
