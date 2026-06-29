@@ -44,3 +44,4 @@ tasks, but only `event.Reduce(events).FocusTask` is inspected.
 - 2026-06-29 implementer report: Broadened `Session.summarizeUsage` (internal/session/session.go) to record a usage/cost work-log line for every task that accrued usage in the session, not just the currently-focused task.  Changes: -
 …[truncated]
 - 2026-06-29 review tier: simple (coordinator self-review)
+- 2026-06-29 decision: accept — commit 19d636e: session: summarize usage to work log for every task worked in a session [0038]
