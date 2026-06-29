@@ -170,6 +170,10 @@ func Run(ctx context.Context, client yccv1connect.SessionServiceClient, workspac
 
 func initialModel(ctx context.Context, client yccv1connect.SessionServiceClient, workspace string, showPicker bool) model {
 	prefs := clientconfig.Load()
+	// Apply the persisted theme to the package-level palette/chroma at launch so
+	// the lipgloss palette and syntax style match the saved pref (glamour already
+	// reads prefs.Theme in makeRenderer).
+	applyTheme(themeByName(prefs.Theme))
 	prompt := textinput.New()
 	prompt.Placeholder = "what should the agent do? (optional for 'work')"
 	prompt.Focus()
@@ -1425,6 +1429,12 @@ func (m model) overlayAdjust(d int) (tea.Model, tea.Cmd) {
 	case ovTheme:
 		m.prefs.Theme = cycle(themes, m.prefs.Theme, d)
 		clientconfig.Save(m.prefs)
+		// Live-switch the palette so the open menu/session repaints in the new
+		// theme without a restart.
+		applyTheme(themeByName(m.prefs.Theme))
+		m.makeRenderer()
+		m.bodyCache = map[int]string{}
+		m.rebuild()
 		return m, nil
 	case ovFollow:
 		m.prefs.Follow = !m.prefs.Follow
@@ -2377,8 +2387,9 @@ func (m *model) makeRenderer() {
 	}
 	// Use a fixed style, NOT WithAutoStyle: auto-style queries the terminal's
 	// background by reading stdin, which Bubble Tea already owns — that blocks the
-	// event loop and freezes the UI. "dark" is a safe default for terminals.
-	r, err := glamour.NewTermRenderer(glamour.WithStandardStyle("dark"), glamour.WithWordWrap(w))
+	// event loop and freezes the UI. The style is chosen from the user's explicit
+	// theme pref (never by querying the terminal).
+	r, err := glamour.NewTermRenderer(glamour.WithStandardStyle(themeByName(m.prefs.Theme).glamourStyle), glamour.WithWordWrap(w))
 	if err == nil {
 		m.glam = r
 	}
@@ -3084,33 +3095,36 @@ func indentLines(s, prefix string) string {
 
 // --- styles ---
 
+// These package-level styles are (re)built from the active theme by applyTheme
+// (see theme.go); init() populates them with the dark theme. No raw color
+// literals live here — every color is a named role in theme.go.
 var (
-	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15")).Background(lipgloss.Color("63")).Padding(0, 1)
-	headerStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15")).Background(lipgloss.Color("238")).Padding(0, 1)
-	selStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("213"))
-	recoStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220"))
-	selBarStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("213"))
-	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	thinkStyle    = lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color("245"))
-	typeStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
-	askStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("11"))
-	errStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
-	diffAddStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	diffDelStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
-	diffHunkStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("44"))
-	diffMetaStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("250"))
+	titleStyle    lipgloss.Style
+	headerStyle   lipgloss.Style
+	selStyle      lipgloss.Style
+	recoStyle     lipgloss.Style
+	selBarStyle   lipgloss.Style
+	dimStyle      lipgloss.Style
+	thinkStyle    lipgloss.Style
+	typeStyle     lipgloss.Style
+	askStyle      lipgloss.Style
+	errStyle      lipgloss.Style
+	diffAddStyle  lipgloss.Style
+	diffDelStyle  lipgloss.Style
+	diffHunkStyle lipgloss.Style
+	diffMetaStyle lipgloss.Style
 )
 
 func actorStyle(actor string) lipgloss.Style {
 	switch {
 	case actor == "coordinator":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("44"))
+		return lipgloss.NewStyle().Foreground(activeTheme.actorCoord)
 	case actor == "implementer":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+		return lipgloss.NewStyle().Foreground(activeTheme.actorImpl)
 	case strings.HasPrefix(actor, "reviewer"):
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("170"))
+		return lipgloss.NewStyle().Foreground(activeTheme.actorReviewer)
 	case actor == "user":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+		return lipgloss.NewStyle().Foreground(activeTheme.actorUser)
 	default:
 		return dimStyle
 	}

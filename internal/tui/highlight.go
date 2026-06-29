@@ -24,7 +24,8 @@ const maxHighlightBytes = 256 * 1024
 
 var (
 	chromaFormatter = pickFormatter()
-	chromaStyle     = pickStyle()
+	// chromaStyle is owned by applyTheme (see theme.go); init() sets it.
+	chromaStyle *chroma.Style
 )
 
 func pickFormatter() chroma.Formatter {
@@ -34,7 +35,12 @@ func pickFormatter() chroma.Formatter {
 	return formatters.Fallback
 }
 
-func pickStyle() *chroma.Style {
+// pickStyle resolves a chroma style by name, falling back to monokai then the
+// chroma fallback style so it never returns nil.
+func pickStyle(name string) *chroma.Style {
+	if s := styles.Get(name); s != nil {
+		return s
+	}
 	if s := styles.Get("monokai"); s != nil {
 		return s
 	}
