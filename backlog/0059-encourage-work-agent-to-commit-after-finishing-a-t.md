@@ -34,3 +34,4 @@ Adjust the work agent's flow/prompting so that the commit happens *after* the ta
 - 2026-06-29 review tier: single-opus — reviewers: Claude
 - 2026-06-29 review (Claude): accept — The change correctly addresses the task. In commitTool, the work-log append was moved before the actual git commit so that the final backlog state (status set via update_task "done", plus the decision
 …[truncated]
+- 2026-06-29 decision: accept — commit fc32931: orchestrator: commit last so backlog state is captured, leaving a clean tree [0059]
