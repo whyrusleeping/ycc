@@ -1921,6 +1921,23 @@ func (m *model) moveSelection(d int) {
 	if m.selected >= len(m.evs) {
 		m.selected = len(m.evs) - 1
 	}
+	// Skip folded tool_result rows: they share their call's combined row, so
+	// selection should land on the call, never the result. Travel in the move
+	// direction past any merged result, then snap back to the call if needed.
+	dir := d
+	if dir == 0 {
+		dir = 1
+	}
+	for m.isMergedResult(m.selected) {
+		next := m.selected + dir
+		if next < 0 || next >= len(m.evs) {
+			break
+		}
+		m.selected = next
+	}
+	if m.isMergedResult(m.selected) {
+		m.selected--
+	}
 	m.follow = m.selected == len(m.evs)-1
 	m.rebuild()
 	m.ensureVisible()
@@ -1929,6 +1946,10 @@ func (m *model) moveSelection(d int) {
 func (m *model) toggle(i int) {
 	if i < 0 || i >= len(m.evs) {
 		return
+	}
+	// A folded tool_result toggles its call's combined row.
+	if m.isMergedResult(i) {
+		i--
 	}
 	seq := int(m.evs[i].Seq)
 	m.expanded[seq] = !m.expanded[seq]
@@ -2012,6 +2033,35 @@ func (m *model) appendEvent(ev *v1.Event) {
 	m.rebuild()
 }
 
+// mergedResultIdx reports the index of the tool_result that should be folded
+// into the tool_call at index i (rendered as one combined row), or -1 when the
+// call at i has no adjacent matching result. Pairing is by adjacency (result at
+// i+1) which naturally excludes spawn-style tools whose subagent events appear
+// between the parent's call and result.
+func (m *model) mergedResultIdx(i int) int {
+	if i < 0 || i+1 >= len(m.evs) {
+		return -1
+	}
+	call, res := m.evs[i], m.evs[i+1]
+	if call.Type != "tool_call" || res.Type != "tool_result" {
+		return -1
+	}
+	if call.Actor != res.Actor {
+		return -1
+	}
+	cid, rid := dataField(call, "id"), dataField(res, "id")
+	if cid != "" && rid != "" && cid != rid {
+		return -1
+	}
+	return i + 1
+}
+
+// isMergedResult reports whether the event at index j is a tool_result that has
+// been folded into its preceding tool_call's combined row.
+func (m *model) isMergedResult(j int) bool {
+	return j > 0 && m.mergedResultIdx(j-1) == j
+}
+
 // eventAt returns the index of the event whose rendered block contains content
 // line `row`, or -1.
 func (m *model) eventAt(row int) int {
@@ -2020,7 +2070,11 @@ func (m *model) eventAt(row int) int {
 	}
 	for i := len(m.eventStart) - 1; i >= 0; i-- {
 		if row >= m.eventStart[i] {
-			return i
+			idx := i
+			if m.isMergedResult(idx) {
+				idx--
+			}
+			return idx
 		}
 	}
 	return -1
@@ -2063,6 +2117,12 @@ func (m *model) rebuild() {
 	line := 0
 	for i, ev := range m.evs {
 		m.eventStart = append(m.eventStart, line)
+		// A tool_result folded into its preceding tool_call's combined row
+		// shares that call's start line and emits no block of its own.
+		if m.isMergedResult(i) {
+			m.eventStart[i] = m.eventStart[i-1]
+			continue
+		}
 		block := m.renderBlock(i, ev)
 		b.WriteString(block)
 		b.WriteByte('\n')
@@ -2303,6 +2363,14 @@ func (m model) pickerView() string {
 func autoExpand(t string) bool { return t == "session_idle" || t == "question_asked" }
 
 func (m *model) renderBlock(i int, ev *v1.Event) string {
+	// Combine an adjacent tool_call + tool_result into a single row: collapsed
+	// shows the call + a concise result status; expanded reveals both the full
+	// params and the full response with all existing per-content formatting.
+	if ev.Type == "tool_call" {
+		if ri := m.mergedResultIdx(i); ri >= 0 {
+			return m.renderCombined(i, ri)
+		}
+	}
 	body := m.bodyFor(ev)
 	hasBody := strings.TrimSpace(body) != ""
 	exp := m.expanded[int(ev.Seq)] || autoExpand(ev.Type)
@@ -2313,7 +2381,44 @@ func (m *model) renderBlock(i int, ev *v1.Event) string {
 	return header
 }
 
+// renderCombined renders a tool_call (index i) together with its folded
+// tool_result (index ri == i+1) as one chat-log row.
+func (m *model) renderCombined(i, ri int) string {
+	call, res := m.evs[i], m.evs[ri]
+	exp := m.expanded[int(call.Seq)] || autoExpand(call.Type)
+	selected := i == m.selected || ri == m.selected
+
+	paramsBody := m.bodyFor(call)
+	resultBody := m.bodyFor(res)
+	hasBody := strings.TrimSpace(paramsBody) != "" || strings.TrimSpace(resultBody) != ""
+
+	name := dataField(call, "name")
+	args := oneLine(dataField(call, "args"), 60)
+	status := "✓"
+	if dataField(res, "error") == "true" {
+		status = "✗"
+	}
+	detail := fmt.Sprintf("%s(%s) %s", name, args, status)
+
+	header := m.renderHeaderDetail(call, selected, exp && hasBody, hasBody, detail)
+	if !(exp && hasBody) {
+		return header
+	}
+	var sections []string
+	if strings.TrimSpace(paramsBody) != "" {
+		sections = append(sections, paramsBody)
+	}
+	if strings.TrimSpace(resultBody) != "" {
+		sections = append(sections, dimStyle.Render(bodyBar+"── result ──"), resultBody)
+	}
+	return header + "\n" + strings.Join(sections, "\n")
+}
+
 func (m *model) renderHeader(ev *v1.Event, selected, expanded, hasBody bool) string {
+	return m.renderHeaderDetail(ev, selected, expanded, hasBody, detailLine(ev))
+}
+
+func (m *model) renderHeaderDetail(ev *v1.Event, selected, expanded, hasBody bool, detail string) string {
 	bar := "  "
 	if selected {
 		bar = selBarStyle.Render("▌ ")
@@ -2337,7 +2442,7 @@ func (m *model) renderHeader(ev *v1.Event, selected, expanded, hasBody bool) str
 	return fmt.Sprintf("%s%s%s%s %s",
 		bar, indent, dimStyle.Render(tri),
 		actorStyle(ev.Actor).Render(fmt.Sprintf("%-13s", ev.Actor)),
-		typeStyle.Render(ev.Type)+" "+trunc(detailLine(ev), avail))
+		typeStyle.Render(ev.Type)+" "+trunc(detail, avail))
 }
 
 func (m *model) bodyFor(ev *v1.Event) string {

@@ -45,7 +45,7 @@
 | [0040](backlog/0040-interrupt-steer-a-running-agent-pause-correct-resu.md) | Interrupt & steer a running agent (pause / correct / resume) | done | 2 | — |
 | [0041](backlog/0041-manage-model-backends-from-the-settings-overlay-li.md) | Manage model backends from the settings overlay (live add/edit/remove, persisted) | done | 2 | — |
 | [0042](backlog/0042-select-different-model-ids-sharing-one-provider-s.md) | Select different model ids sharing one provider's credentials (opus/sonnet/haiku) | done | 2 | 0041 |
-| [0043](backlog/0043-unify-tool-call-params-and-response-into-one-colla.md) | Unify tool-call params and response into one collapsed chat-log row | todo | 3 | 0006 |
+| [0043](backlog/0043-unify-tool-call-params-and-response-into-one-colla.md) | Unify tool-call params and response into one collapsed chat-log row | in_progress | 3 | 0006 |
 | [0044](backlog/0044-settings-overlay-model-backends-management-form-ad.md) | Settings-overlay "Model backends" management form (add/edit/duplicate/remove) | done | 2 | 0041 |
 | [0045](backlog/0045-removemodel-should-also-reject-models-referenced-b.md) | RemoveModel should also reject models referenced by live session role assignments | done | 3 | 0041 |
 | [0046](backlog/0046-configurable-review-tiers-let-the-work-agent-choos.md) | Configurable review tiers — let the work agent choose review intensity per change | done | 3 | — |

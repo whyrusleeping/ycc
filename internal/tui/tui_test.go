@@ -30,6 +30,102 @@ func TestEventAt(t *testing.T) {
 	}
 }
 
+// A tool_call immediately followed by its matching tool_result must fold into a
+// single combined chat-log row (task 0043). Spawn-style tools (whose subagent
+// events appear between call and result) and id-mismatched pairs must not fold.
+func TestMergedResultPairing(t *testing.T) {
+	m := &model{evs: []*v1.Event{
+		{Seq: 1, Type: "model_turn", Actor: "coordinator"},
+		{Seq: 2, Type: "tool_call", Actor: "coordinator", DataJson: `{"id":"c1","name":"Read"}`},
+		{Seq: 3, Type: "tool_result", Actor: "coordinator", DataJson: `{"id":"c1","result":"ok"}`},
+		{Seq: 4, Type: "model_turn", Actor: "coordinator"},
+	}}
+	if got := m.mergedResultIdx(1); got != 2 {
+		t.Fatalf("mergedResultIdx(1) = %d, want 2", got)
+	}
+	if !m.isMergedResult(2) {
+		t.Fatal("isMergedResult(2) = false, want true")
+	}
+	if m.isMergedResult(1) {
+		t.Fatal("isMergedResult(1) = true, want false (call is not a result)")
+	}
+
+	// Spawn-style: a non-adjacent result (subagent event in between) must not fold.
+	spawn := &model{evs: []*v1.Event{
+		{Seq: 1, Type: "tool_call", Actor: "coordinator", DataJson: `{"id":"s1","name":"spawn_implementer"}`},
+		{Seq: 2, Type: "subagent_spawned", Actor: "coordinator"},
+		{Seq: 3, Type: "tool_result", Actor: "coordinator", DataJson: `{"id":"s1","result":"done"}`},
+	}}
+	if got := spawn.mergedResultIdx(0); got != -1 {
+		t.Fatalf("spawn mergedResultIdx(0) = %d, want -1", got)
+	}
+
+	// Id mismatch (adjacent but different ids) must not fold.
+	mismatch := &model{evs: []*v1.Event{
+		{Seq: 1, Type: "tool_call", Actor: "coordinator", DataJson: `{"id":"a","name":"Read"}`},
+		{Seq: 2, Type: "tool_result", Actor: "coordinator", DataJson: `{"id":"b","result":"ok"}`},
+	}}
+	if got := mismatch.mergedResultIdx(0); got != -1 {
+		t.Fatalf("mismatch mergedResultIdx(0) = %d, want -1", got)
+	}
+}
+
+// After rebuild, a folded tool_result shares its call's start line and emits no
+// block of its own, and clicks anywhere in the combined region resolve to the
+// call (task 0043).
+func TestRebuildCombinesRow(t *testing.T) {
+	m := model{
+		state: stateSession, status: "running", follow: true,
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+	}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(model)
+	m.appendEvent(&v1.Event{Seq: 1, Type: "model_turn", Actor: "coordinator", DataJson: `{"text":"hi"}`})
+	m.appendEvent(&v1.Event{Seq: 2, Type: "tool_call", Actor: "coordinator", DataJson: `{"id":"c1","name":"Read","args":"{\"file_path\":\"x.go\"}"}`})
+	m.appendEvent(&v1.Event{Seq: 3, Type: "tool_result", Actor: "coordinator", DataJson: `{"id":"c1","result":"contents"}`})
+	m.appendEvent(&v1.Event{Seq: 4, Type: "model_turn", Actor: "coordinator", DataJson: `{"text":"bye"}`})
+
+	if m.eventStart[2] != m.eventStart[1] {
+		t.Fatalf("folded result start %d != call start %d", m.eventStart[2], m.eventStart[1])
+	}
+	// The result block must not advance the line counter past the call.
+	if m.eventStart[3] <= m.eventStart[1] {
+		t.Fatalf("trailing event start %d should be after combined row %d", m.eventStart[3], m.eventStart[1])
+	}
+	// A click in the combined region resolves to the call (index 1).
+	if got := m.eventAt(m.eventStart[1]); got != 1 {
+		t.Fatalf("eventAt(call start) = %d, want 1", got)
+	}
+}
+
+// Expanding a combined tool_call+tool_result row reveals both the full params
+// and the full response with no information lost (task 0043).
+func TestRenderCombinedExpanded(t *testing.T) {
+	m := model{w: 100, expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1}
+	m.evs = []*v1.Event{
+		{Seq: 2, Type: "tool_call", Actor: "coordinator", DataJson: `{"id":"c1","name":"Read","args":"{\"file_path\":\"hello.go\"}"}`},
+		{Seq: 3, Type: "tool_result", Actor: "coordinator", DataJson: `{"id":"c1","result":"RESULTBODY"}`},
+	}
+	m.expanded[2] = true
+	out := m.renderBlock(0, m.evs[0])
+	if !strings.Contains(out, "hello.go") {
+		t.Fatalf("expanded combined row missing args content:\n%s", out)
+	}
+	if !strings.Contains(out, "RESULTBODY") {
+		t.Fatalf("expanded combined row missing result content:\n%s", out)
+	}
+	if !strings.Contains(out, "result") {
+		t.Fatalf("expanded combined row missing result separator:\n%s", out)
+	}
+	// Collapsed: still shows the tool name + a status marker.
+	m.expanded[2] = false
+	m.bodyCache = map[int]string{}
+	col := m.renderBlock(0, m.evs[0])
+	if !strings.Contains(col, "Read") || !strings.Contains(col, "✓") {
+		t.Fatalf("collapsed combined row missing name/status:\n%s", col)
+	}
+}
+
 func TestDiffDetectionAndColorize(t *testing.T) {
 	diff := "diff --git a/x b/x\n@@ -1 +1 @@\n-old line\n+new line\n unchanged"
 	if !looksDiff(diff) {
