@@ -1,7 +1,7 @@
 ---
 id: "0034"
 title: Reopen/resume a persisted session (reconstruct loop history)
-status: in_progress
+status: done
 priority: 3
 created: "2026-06-27"
 updated: "2026-06-29"
@@ -55,4 +55,6 @@ appended to the same `events.jsonl`.
 - 2026-06-29 revision: Addressed all three review fixes:  1. **Check-then-register race in Manager.Reopen** — Kept the early `m.Get(id)` fast-path, and after building the session/loop, registration is now atomic: under `m
 …[truncated]
 - 2026-06-29 review (Claude): accept — The revision cleanly resolves all three findings from the prior review. Reopen now registers atomically under the manager lock (loser cancels and closes its log, eliminating the check-then-act race an
+…[truncated]
+- 2026-06-29 decision: accept — commit 3c6bcf0: Reopen/resume a persisted session (reconstruct loop history)  Implement "resume = replay" (spec §4.5/§5/§18.6): reopening a persisted session re-instantiates its coordinator on the EXISTING event l
 …[truncated]
