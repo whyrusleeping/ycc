@@ -281,11 +281,6 @@ message CaptureBacklogItemRequest {
   string prior_question = 3; // the clarifying question the agent asked previously (if any)
   string prior_answer = 4;   // the user's answer to that question
 }
-message CaptureBacklogItemResponse {
-  string task_id = 1;  // set when a task was created
-  string title = 2;    // the created task's title
-  string question = 3; // set when the agent asks ONE clarifying question instead
-}
 
 // Usage/cost breakdown (spec §20.3, §20.5): the daemon scans a workspace's
 // session event logs, joins per-turn usage with task focus and per-model
@@ -374,7 +369,12 @@ service SessionService {
   // off-stream capture agent that turns a natural-language description into a
   // backlog task without disturbing the running session. May ask ONE clarifying
   // question, carried back via prior_question/prior_answer.
-  rpc CaptureBacklogItem(CaptureBacklogItemRequest) returns (CaptureBacklogItemResponse);
+  //
+  // Streams the capture agent's action log (the same Event stream as Subscribe)
+  // so the client can show live progress, ending with a terminal
+  // `capture_result` event whose data_json carries {task_id,title,question} on
+  // success (or {error} on failure).
+  rpc CaptureBacklogItem(CaptureBacklogItemRequest) returns (stream Event);
 
   // Usage/cost breakdown (spec §20): aggregated, priced token usage by task ×
   // model × day so clients can render the cost breakdown.

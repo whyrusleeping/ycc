@@ -165,6 +165,29 @@ func (s *StdoutRecorder) Record(actor string, t Type, data map[string]any) Event
 	return ev
 }
 
+// FuncRecorder is a Recorder that stamps a monotonic seq + timestamp and hands
+// each event to fn. It is used to stream a transient agent's events (e.g. the
+// quick-add capture agent) live to a caller without a durable log.
+type FuncRecorder struct {
+	mu  sync.Mutex
+	seq int
+	fn  func(Event)
+}
+
+// NewFuncRecorder returns a FuncRecorder that invokes fn with each stamped event.
+func NewFuncRecorder(fn func(Event)) *FuncRecorder { return &FuncRecorder{fn: fn} }
+
+func (r *FuncRecorder) Record(actor string, t Type, data map[string]any) Event {
+	r.mu.Lock()
+	r.seq++
+	ev := Event{Seq: r.seq, TS: time.Now(), Actor: actor, Type: t, Data: data}
+	r.mu.Unlock()
+	if r.fn != nil {
+		r.fn(ev)
+	}
+	return ev
+}
+
 // Render formats an event as a single terse human-readable line.
 func Render(ev Event) string {
 	var b strings.Builder

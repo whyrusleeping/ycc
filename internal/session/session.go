@@ -1155,8 +1155,10 @@ func (m *Manager) Backlog(project string) (*docs.Store, error) {
 // session. The agent may ask ONE clarifying question (returned via Question);
 // the client re-invokes with priorQuestion/priorAnswer so it creates the task.
 // project empty => the daemon default workspace; backlog writes are serialized
-// in docs.Store so a concurrent work session can't corrupt the index.
-func (m *Manager) CaptureBacklogItem(project, description, priorQuestion, priorAnswer string) (orchestrator.CaptureResult, error) {
+// in docs.Store so a concurrent work session can't corrupt the index. emit, when
+// non-nil, receives the capture agent's action-log events live so the caller can
+// stream progress; the passed ctx bounds the run.
+func (m *Manager) CaptureBacklogItem(ctx context.Context, project, description, priorQuestion, priorAnswer string, emit func(event.Event)) (orchestrator.CaptureResult, error) {
 	if strings.TrimSpace(description) == "" {
 		return orchestrator.CaptureResult{}, fmt.Errorf("description is required")
 	}
@@ -1188,9 +1190,13 @@ func (m *Manager) CaptureBacklogItem(project, description, priorQuestion, priorA
 		Thinking:  engine.Thinking{}, // reasoning OFF for a fast capture
 		MaxTok:    m.reg.MaxTokens(),
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	var rec event.Recorder
+	if emit != nil {
+		rec = event.NewFuncRecorder(emit)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	return orchestrator.RunCapture(ctx, cd, description, priorQuestion, priorAnswer)
+	return orchestrator.RunCapture(ctx, cd, rec, description, priorQuestion, priorAnswer)
 }
 
 // ErrUnknownProject indicates a project name did not resolve to a registered

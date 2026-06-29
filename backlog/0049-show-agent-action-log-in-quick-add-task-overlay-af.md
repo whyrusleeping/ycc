@@ -1,10 +1,10 @@
 ---
 id: "0049"
 title: Show agent action log in quick-add task overlay after submit
-status: todo
+status: done
 priority: 3
 created: "2026-06-27"
-updated: "2026-06-27"
+updated: "2026-06-29"
 depends_on: []
 spec_refs: []
 ---
@@ -22,3 +22,12 @@ The "quick add task" overlay (opened via Ctrl+N) currently gives no feedback aft
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-29 plan: Make the quick-add (Ctrl+N) capture overlay stream the capture agent's action log live, instead of showing nothing until completion. The capture agent already runs server-side via an Emitter whose Rec
+…[truncated]
+- 2026-06-29 implementer report: Implemented task 0049: the Ctrl+N quick-add capture overlay now streams the capture agent's action log live instead of showing nothing until completion.  Changes: - proto/ycc/v1/ycc.proto: `CaptureBac
+…[truncated]
+- 2026-06-29 review tier: single-opus — reviewers: Claude
+- 2026-06-29 review (Claude): accept — The change fully satisfies the task. The quick-add (Ctrl+N) capture overlay now streams the capture agent's action log live: CaptureBacklogItem was converted to a server-streaming RPC, a new event.Fun
+…[truncated]
+- 2026-06-29 decision: accept — commit: tui: stream capture agent action log live in quick-add overlay [0049]  Convert CaptureBacklogItem to a server-streaming RPC and thread the capture agent's events through a new event.FuncRecorder so th
+…[truncated]

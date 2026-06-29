@@ -72,3 +72,4 @@ UI-pass tasks (0061/0062/0063) cheaply by giving them named color roles to build
 …[truncated]
 - 2026-06-29 decision: accept — commit: tui: centralize colors into a theme palette + make the light theme real [0060]  Introduce internal/tui/theme.go with named semantic color roles and dark/light palettes. Package-level styles, actorStyl
 …[truncated]
+- 2026-06-29 usage: 25,008 tok (in 110, out 24,898, cache_r 1,606,372, cache_w 85,580) · cost n/a (unpriced)

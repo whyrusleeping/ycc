@@ -132,11 +132,13 @@ type model struct {
 	// agent server-side so the running session is undisturbed.
 	capture         bool
 	captureInput    textinput.Model
-	captureStage    int    // 0 describe · 1 answer clarification · 2 created (dismiss)
-	captureQuestion string // the agent's clarifying question (stage 1)
-	captureDesc     string // the original description (carried into stage 1)
-	captureMsg      string // status/result/error line
-	captureBusy     bool   // a CaptureBacklogItem RPC is in flight
+	captureStage    int            // 0 describe · 1 answer clarification · 2 created (dismiss)
+	captureQuestion string         // the agent's clarifying question (stage 1)
+	captureDesc     string         // the original description (carried into stage 1)
+	captureMsg      string         // status/result/error line
+	captureBusy     bool           // a CaptureBacklogItem RPC is in flight
+	captureEvents   chan *v1.Event // live capture agent action-log stream
+	captureLog      []*v1.Event    // accumulated capture agent events for display
 
 	// model-backends management modal (spec §18.2, task 0044): list / add / edit /
 	// duplicate / remove logical model backends, wired to the 0041 RPCs
@@ -233,12 +235,19 @@ type errMsg struct{ err error }
 type backlogMsg struct{ tasks []*v1.BacklogTaskSummary }
 type taskDetailMsg struct{ task *v1.TaskDetail }
 
-// captureResultMsg carries the outcome of a CaptureBacklogItem RPC (task 0016):
-// a created task (taskID/title) or a single clarifying question, or an error.
-type captureResultMsg struct {
-	taskID, title, question string
-	err                     error
-}
+// captureEvMsg carries one streamed capture-agent action-log event. A terminal
+// event of type "capture_result" carries the outcome of a CaptureBacklogItem RPC
+// (task 0016): a created task (task_id/title), a single clarifying question, or
+// an error — in its data_json.
+type captureEvMsg struct{ ev *v1.Event }
+
+// captureStreamClosedMsg signals the capture stream ended (the goroutine closed
+// the channel) without a terminal capture_result event.
+type captureStreamClosedMsg struct{}
+
+// captureErrMsg reports a transport/RPC error opening or reading the capture
+// stream.
+type captureErrMsg struct{ err error }
 
 // mbPrefillMsg carries a model backend's full record loaded via GetModelConfig
 // for the edit/duplicate form (task 0044). On error the form is not opened.
@@ -733,25 +742,43 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case taskDetailMsg:
 		m.backlogDetail = msg.task
 		return m, nil
-	case captureResultMsg:
+	case captureEvMsg:
+		ev := msg.ev
+		if ev.Type == "capture_result" {
+			m.captureBusy = false
+			if e := dataField(ev, "error"); e != "" {
+				m.captureMsg = "error: " + e
+				return m, nil
+			}
+			taskID, title, q := dataField(ev, "task_id"), dataField(ev, "title"), dataField(ev, "question")
+			if taskID != "" {
+				m.captureStage = 2
+				m.captureMsg = "created " + taskID + ": " + title
+				return m, nil
+			}
+			if q != "" {
+				m.captureStage = 1
+				m.captureQuestion = q
+				m.captureInput.SetValue("")
+				m.captureInput.Focus()
+				return m, nil
+			}
+			m.captureMsg = "(no result)"
+			return m, nil
+		}
+		m.captureLog = append(m.captureLog, ev)
+		return m, waitCaptureEvent(m.captureEvents)
+	case captureStreamClosedMsg:
+		if m.captureBusy {
+			m.captureBusy = false
+			if m.captureMsg == "" {
+				m.captureMsg = "error: capture ended without a result"
+			}
+		}
+		return m, nil
+	case captureErrMsg:
 		m.captureBusy = false
-		if msg.err != nil {
-			m.captureMsg = "error: " + msg.err.Error()
-			return m, nil
-		}
-		if msg.taskID != "" {
-			m.captureStage = 2
-			m.captureMsg = "created " + msg.taskID + ": " + msg.title
-			return m, nil
-		}
-		if msg.question != "" {
-			m.captureStage = 1
-			m.captureQuestion = msg.question
-			m.captureInput.SetValue("")
-			m.captureInput.Focus()
-			return m, nil
-		}
-		m.captureMsg = "(no result)"
+		m.captureMsg = "error: " + msg.err.Error()
 		return m, nil
 	case mbPrefillMsg:
 		if msg.err != nil {
@@ -1154,15 +1181,21 @@ func (m model) updateCapture(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.captureDesc = val
 			m.captureBusy = true
 			m.captureMsg = ""
+			m.captureLog = nil
+			ch := make(chan *v1.Event, 64)
+			m.captureEvents = ch
 			m.captureInput.SetValue("")
-			return m, m.captureSubmit(m.captureDesc, "", "")
+			return m, m.captureSubmit(ch, m.captureDesc, "", "")
 		}
 		// Stage 1: answering the agent's clarifying question.
 		m.captureBusy = true
 		m.captureMsg = ""
+		m.captureLog = nil
+		ch := make(chan *v1.Event, 64)
+		m.captureEvents = ch
 		ans := val
 		m.captureInput.SetValue("")
-		return m, m.captureSubmit(m.captureDesc, m.captureQuestion, ans)
+		return m, m.captureSubmit(ch, m.captureDesc, m.captureQuestion, ans)
 	default:
 		var c tea.Cmd
 		m.captureInput, c = m.captureInput.Update(msg)
@@ -1170,17 +1203,37 @@ func (m model) updateCapture(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
-// captureSubmit issues the CaptureBacklogItem RPC, scoped to the current project,
-// returning a captureResultMsg. It does not touch the session stream.
-func (m model) captureSubmit(desc, q, a string) tea.Cmd {
+// captureSubmit opens the streaming CaptureBacklogItem RPC, scoped to the current
+// project, and pumps its action-log events into ch. It does not touch the session
+// stream. The first event (or an open error) is delivered as the returned msg;
+// subsequent events are pulled via waitCaptureEvent.
+func (m model) captureSubmit(ch chan *v1.Event, desc, q, a string) tea.Cmd {
 	return func() tea.Msg {
-		resp, err := m.client.CaptureBacklogItem(m.ctx, connect.NewRequest(&v1.CaptureBacklogItemRequest{
+		stream, err := m.client.CaptureBacklogItem(m.ctx, connect.NewRequest(&v1.CaptureBacklogItemRequest{
 			Project: m.project, Description: desc, PriorQuestion: q, PriorAnswer: a,
 		}))
 		if err != nil {
-			return captureResultMsg{err: err}
+			return captureErrMsg{err}
 		}
-		return captureResultMsg{taskID: resp.Msg.TaskId, title: resp.Msg.Title, question: resp.Msg.Question}
+		go func() {
+			for stream.Receive() {
+				ch <- stream.Msg()
+			}
+			close(ch)
+		}()
+		return waitCaptureEvent(ch)()
+	}
+}
+
+// waitCaptureEvent blocks for the next capture-agent event on ch, mapping a
+// closed channel to captureStreamClosedMsg.
+func waitCaptureEvent(ch chan *v1.Event) tea.Cmd {
+	return func() tea.Msg {
+		ev, ok := <-ch
+		if !ok {
+			return captureStreamClosedMsg{}
+		}
+		return captureEvMsg{ev}
 	}
 }
 
@@ -1199,6 +1252,23 @@ func (m model) captureView() string {
 		b.WriteString("  " + m.captureInput.View() + "\n")
 	case 2:
 		b.WriteString("  " + selStyle.Render(m.captureMsg) + "\n")
+	}
+	// Stream the capture agent's action log live (task 0049): show the last few
+	// events so the user sees progress instead of a blank wait.
+	if len(m.captureLog) > 0 {
+		b.WriteString("\n")
+		const maxLines = 10
+		start := 0
+		if len(m.captureLog) > maxLines {
+			start = len(m.captureLog) - maxLines
+		}
+		for _, ev := range m.captureLog[start:] {
+			line := detailLine(ev)
+			if line == "" {
+				continue
+			}
+			b.WriteString("  " + dimStyle.Render(ev.Actor) + " " + line + "\n")
+		}
 	}
 	if m.captureBusy {
 		b.WriteString("\n" + dimStyle.Render("  capturing…"))

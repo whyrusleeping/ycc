@@ -51,7 +51,7 @@
 | [0046](backlog/0046-configurable-review-tiers-let-the-work-agent-choos.md) | Configurable review tiers — let the work agent choose review intensity per change | done | 3 | — |
 | [0047](backlog/0047-support-multiple-questions-with-per-question-answe.md) | Support multiple questions with per-question answer sets in ask-user tool | done | 3 | — |
 | [0048](backlog/0048-default-the-backlog-overlay-view-to-hiding-complet.md) | Default the backlog overlay view to hiding completed tasks | done | 3 | — |
-| [0049](backlog/0049-show-agent-action-log-in-quick-add-task-overlay-af.md) | Show agent action log in quick-add task overlay after submit | todo | 3 | — |
+| [0049](backlog/0049-show-agent-action-log-in-quick-add-task-overlay-af.md) | Show agent action log in quick-add task overlay after submit | done | 3 | — |
 | [0050](backlog/0050-auto-retry-transient-llm-api-call-failures-with-ba.md) | Auto-retry transient LLM API call failures with backoff | done | 3 | — |
 | [0051](backlog/0051-bug-status-header-stuck-on-error-never-returns-to.md) | Bug: status header stuck on "error" — never returns to "running" after recovery | done | 2 | — |
 | [0052](backlog/0052-fix-last-line-of-agent-final-output-hidden-behind.md) | Fix: last line of agent final output hidden behind input box | done | 2 | — |
@@ -66,3 +66,4 @@
 | [0061](backlog/0061-unified-tui-app-frame-bordered-modal-cards.md) | Unified TUI app frame + bordered modal cards | todo | 3 | 0060 |
 | [0062](backlog/0062-live-session-status-bar-mode-level-thinking-elapse.md) | Live session status bar (mode/level/thinking/elapsed/token-cost) + activity spinner | todo | 3 | 0060 |
 | [0063](backlog/0063-event-stream-visual-polish-type-glyphs-verdict-col.md) | Event-stream visual polish (type glyphs, verdict colors, subagent tree, selection bar) | todo | 3 | 0060 |
+| [0064](backlog/0064-chat-mode-allow-create-task-update-task-backlog-ma.md) | Chat mode: allow create_task/update_task backlog management | todo | 3 | — |

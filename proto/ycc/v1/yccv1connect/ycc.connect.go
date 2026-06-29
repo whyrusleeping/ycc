@@ -158,7 +158,12 @@ type SessionServiceClient interface {
 	// off-stream capture agent that turns a natural-language description into a
 	// backlog task without disturbing the running session. May ask ONE clarifying
 	// question, carried back via prior_question/prior_answer.
-	CaptureBacklogItem(context.Context, *connect.Request[v1.CaptureBacklogItemRequest]) (*connect.Response[v1.CaptureBacklogItemResponse], error)
+	//
+	// Streams the capture agent's action log (the same Event stream as Subscribe)
+	// so the client can show live progress, ending with a terminal
+	// `capture_result` event whose data_json carries {task_id,title,question} on
+	// success (or {error} on failure).
+	CaptureBacklogItem(context.Context, *connect.Request[v1.CaptureBacklogItemRequest]) (*connect.ServerStreamForClient[v1.Event], error)
 	// Usage/cost breakdown (spec §20): aggregated, priced token usage by task ×
 	// model × day so clients can render the cost breakdown.
 	GetUsage(context.Context, *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error)
@@ -319,7 +324,7 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("GetTask")),
 			connect.WithClientOptions(opts...),
 		),
-		captureBacklogItem: connect.NewClient[v1.CaptureBacklogItemRequest, v1.CaptureBacklogItemResponse](
+		captureBacklogItem: connect.NewClient[v1.CaptureBacklogItemRequest, v1.Event](
 			httpClient,
 			baseURL+SessionServiceCaptureBacklogItemProcedure,
 			connect.WithSchema(sessionServiceMethods.ByName("CaptureBacklogItem")),
@@ -360,7 +365,7 @@ type sessionServiceClient struct {
 	getModelConfig      *connect.Client[v1.GetModelConfigRequest, v1.GetModelConfigResponse]
 	listBacklog         *connect.Client[v1.ListBacklogRequest, v1.ListBacklogResponse]
 	getTask             *connect.Client[v1.GetTaskRequest, v1.GetTaskResponse]
-	captureBacklogItem  *connect.Client[v1.CaptureBacklogItemRequest, v1.CaptureBacklogItemResponse]
+	captureBacklogItem  *connect.Client[v1.CaptureBacklogItemRequest, v1.Event]
 	getUsage            *connect.Client[v1.GetUsageRequest, v1.GetUsageResponse]
 }
 
@@ -485,8 +490,8 @@ func (c *sessionServiceClient) GetTask(ctx context.Context, req *connect.Request
 }
 
 // CaptureBacklogItem calls ycc.v1.SessionService.CaptureBacklogItem.
-func (c *sessionServiceClient) CaptureBacklogItem(ctx context.Context, req *connect.Request[v1.CaptureBacklogItemRequest]) (*connect.Response[v1.CaptureBacklogItemResponse], error) {
-	return c.captureBacklogItem.CallUnary(ctx, req)
+func (c *sessionServiceClient) CaptureBacklogItem(ctx context.Context, req *connect.Request[v1.CaptureBacklogItemRequest]) (*connect.ServerStreamForClient[v1.Event], error) {
+	return c.captureBacklogItem.CallServerStream(ctx, req)
 }
 
 // GetUsage calls ycc.v1.SessionService.GetUsage.
@@ -542,7 +547,12 @@ type SessionServiceHandler interface {
 	// off-stream capture agent that turns a natural-language description into a
 	// backlog task without disturbing the running session. May ask ONE clarifying
 	// question, carried back via prior_question/prior_answer.
-	CaptureBacklogItem(context.Context, *connect.Request[v1.CaptureBacklogItemRequest]) (*connect.Response[v1.CaptureBacklogItemResponse], error)
+	//
+	// Streams the capture agent's action log (the same Event stream as Subscribe)
+	// so the client can show live progress, ending with a terminal
+	// `capture_result` event whose data_json carries {task_id,title,question} on
+	// success (or {error} on failure).
+	CaptureBacklogItem(context.Context, *connect.Request[v1.CaptureBacklogItemRequest], *connect.ServerStream[v1.Event]) error
 	// Usage/cost breakdown (spec §20): aggregated, priced token usage by task ×
 	// model × day so clients can render the cost breakdown.
 	GetUsage(context.Context, *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error)
@@ -699,7 +709,7 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("GetTask")),
 		connect.WithHandlerOptions(opts...),
 	)
-	sessionServiceCaptureBacklogItemHandler := connect.NewUnaryHandler(
+	sessionServiceCaptureBacklogItemHandler := connect.NewServerStreamHandler(
 		SessionServiceCaptureBacklogItemProcedure,
 		svc.CaptureBacklogItem,
 		connect.WithSchema(sessionServiceMethods.ByName("CaptureBacklogItem")),
@@ -870,8 +880,8 @@ func (UnimplementedSessionServiceHandler) GetTask(context.Context, *connect.Requ
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetTask is not implemented"))
 }
 
-func (UnimplementedSessionServiceHandler) CaptureBacklogItem(context.Context, *connect.Request[v1.CaptureBacklogItemRequest]) (*connect.Response[v1.CaptureBacklogItemResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.CaptureBacklogItem is not implemented"))
+func (UnimplementedSessionServiceHandler) CaptureBacklogItem(context.Context, *connect.Request[v1.CaptureBacklogItemRequest], *connect.ServerStream[v1.Event]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.CaptureBacklogItem is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) GetUsage(context.Context, *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error) {

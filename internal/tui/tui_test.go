@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -1165,5 +1166,52 @@ func TestWizardFreeTextAfterPickerFocusesInput(t *testing.T) {
 	}
 	if !m.input.Focused() {
 		t.Fatal("textarea must be focused for the free-text question following a picker")
+	}
+}
+
+// The quick-add capture overlay (task 0049) streams the capture agent's action
+// log live: each captureEvMsg appends to captureLog and is rendered in
+// captureView, and a terminal capture_result event drives the overlay to its
+// created/answered/error state.
+func TestCaptureStreamsActionLog(t *testing.T) {
+	m := model{w: 80, capture: true, captureStage: 0, captureBusy: true}
+	m.captureInput = textinput.New()
+	m.captureEvents = make(chan *v1.Event, 8)
+
+	// Feed two action-log events; each should append and rearm the waiter.
+	turn := &v1.Event{Seq: 1, Actor: "capture", Type: "model_turn", DataJson: `{"text":"drafting the task"}`}
+	tc := &v1.Event{Seq: 2, Actor: "capture", Type: "tool_call", DataJson: `{"name":"create_task","args":"{\"title\":\"x\"}"}`}
+
+	nm, _ := m.Update(captureEvMsg{turn})
+	m = nm.(model)
+	nm, _ = m.Update(captureEvMsg{tc})
+	m = nm.(model)
+
+	if len(m.captureLog) != 2 {
+		t.Fatalf("captureLog len = %d, want 2", len(m.captureLog))
+	}
+	if !m.captureBusy {
+		t.Fatal("expected captureBusy to remain true while streaming")
+	}
+	view := m.captureView()
+	if !strings.Contains(view, "drafting the task") {
+		t.Fatalf("captureView missing model_turn detail:\n%s", view)
+	}
+	if !strings.Contains(view, "create_task") {
+		t.Fatalf("captureView missing tool_call detail:\n%s", view)
+	}
+
+	// Terminal capture_result with a created task: stage 2, not busy, msg set.
+	done := &v1.Event{Actor: "capture", Type: "capture_result", DataJson: `{"task_id":"0050","title":"Add x","question":""}`}
+	nm, _ = m.Update(captureEvMsg{done})
+	m = nm.(model)
+	if m.captureBusy {
+		t.Fatal("expected captureBusy=false after capture_result")
+	}
+	if m.captureStage != 2 {
+		t.Fatalf("captureStage = %d, want 2", m.captureStage)
+	}
+	if !strings.Contains(m.captureMsg, "0050") {
+		t.Fatalf("captureMsg = %q, want it to mention the created id", m.captureMsg)
 	}
 }

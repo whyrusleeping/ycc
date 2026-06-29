@@ -17,7 +17,7 @@ func TestRunCaptureCreatesTask(t *testing.T) {
 	}}
 	cd := CaptureDeps{Workspace: ws, Docs: store, Client: turner, Model: "m", ModelName: "m", MaxTok: 0}
 
-	res, err := RunCapture(context.Background(), cd, "make fetch retry on errors", "", "")
+	res, err := RunCapture(context.Background(), cd, nil, "make fetch retry on errors", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestRunCaptureAsksClarification(t *testing.T) {
 	}}
 	cd := CaptureDeps{Workspace: ws, Docs: store, Client: turner, Model: "m", ModelName: "m"}
 
-	res, err := RunCapture(context.Background(), cd, "add retries", "", "")
+	res, err := RunCapture(context.Background(), cd, nil, "add retries", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

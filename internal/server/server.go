@@ -449,22 +449,45 @@ func (s *Server) GetTask(_ context.Context, req *connect.Request[v1.GetTaskReque
 
 // CaptureBacklogItem runs the lightweight, off-stream quick-add capture agent to
 // turn a natural-language description into a backlog task without disturbing any
-// running session (spec §18.2, task 0016). It may return a single clarifying
-// question instead of a task id.
-func (s *Server) CaptureBacklogItem(_ context.Context, req *connect.Request[v1.CaptureBacklogItemRequest]) (*connect.Response[v1.CaptureBacklogItemResponse], error) {
+// running session (spec §18.2, task 0016). It streams the capture agent's action
+// log live (the same Event stream as Subscribe), ending with a terminal
+// `capture_result` event whose data carries {task_id,title,question} on success
+// (or {error} on failure / a clarifying question via `question`).
+func (s *Server) CaptureBacklogItem(ctx context.Context, req *connect.Request[v1.CaptureBacklogItemRequest], stream *connect.ServerStream[v1.Event]) error {
 	if strings.TrimSpace(req.Msg.Description) == "" {
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("description is required"))
+		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("description is required"))
 	}
-	res, err := s.mgr.CaptureBacklogItem(req.Msg.Project, req.Msg.Description, req.Msg.PriorQuestion, req.Msg.PriorAnswer)
-	if err != nil {
-		if errors.Is(err, session.ErrUnknownProject) {
-			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	ch := make(chan event.Event, 64)
+	go func() {
+		res, err := s.mgr.CaptureBacklogItem(ctx, req.Msg.Project, req.Msg.Description, req.Msg.PriorQuestion, req.Msg.PriorAnswer, func(ev event.Event) {
+			select {
+			case ch <- ev:
+			case <-ctx.Done():
+			}
+		})
+		// Terminal event: the stream has already started, so a mid-stream gRPC
+		// error code is no longer possible — surface failures (including an
+		// unknown project) via the capture_result error field instead.
+		data := map[string]any{}
+		if err != nil {
+			data["error"] = err.Error()
+		} else {
+			data["task_id"] = res.TaskID
+			data["title"] = res.Title
+			data["question"] = res.Question
 		}
-		return nil, connect.NewError(connect.CodeInternal, err)
+		select {
+		case ch <- event.Event{Actor: "capture", Type: "capture_result", Data: data}:
+		case <-ctx.Done():
+		}
+		close(ch)
+	}()
+	for ev := range ch {
+		if err := stream.Send(toProto(ev)); err != nil {
+			return err
+		}
 	}
-	return connect.NewResponse(&v1.CaptureBacklogItemResponse{
-		TaskId: res.TaskID, Title: res.Title, Question: res.Question,
-	}), nil
+	return nil
 }
 
 // GetUsage returns the aggregated, priced usage/cost breakdown for a project's

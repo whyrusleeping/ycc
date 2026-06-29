@@ -40,3 +40,4 @@ genuine long-session growth. Discuss with the user before implementing.
 …[truncated]
 - 2026-06-29 decision: accept — commit: engine: detect context-window-exceeded errors and surface context-size telemetry [0010]  Add IsContextLengthError + approxContextTokens; the agent loop now fails with a clear, actionable message on co
 …[truncated]
+- 2026-06-29 usage: 16,659 tok (in 84, out 16,575, cache_r 777,646, cache_w 101,422) · cost n/a (unpriced)

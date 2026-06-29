@@ -106,13 +106,14 @@ func captureCreateTask(d *Deps) *gollama.Tool {
 }
 
 // RunCapture runs the lightweight capture agent to convert a natural-language
-// description into a backlog task. It is a transient, off-stream agent (the
-// emitter records nothing) so the caller's main session stream is unaffected. If
-// the agent asks a clarifying question, RunCapture returns it via Question; the
-// client re-invokes with priorQuestion/priorAnswer so the agent creates the task
-// without asking again.
-func RunCapture(ctx context.Context, cd CaptureDeps, description, priorQuestion, priorAnswer string) (CaptureResult, error) {
-	emitter := event.NewEmitter(nil, "capture")
+// description into a backlog task. It is a transient, off-stream agent: pass a
+// real event.Recorder (e.g. event.NewFuncRecorder) to stream its action log to
+// the caller, or nil to drop all events so the caller's main session stream is
+// unaffected. If the agent asks a clarifying question, RunCapture returns it via
+// Question; the client re-invokes with priorQuestion/priorAnswer so the agent
+// creates the task without asking again.
+func RunCapture(ctx context.Context, cd CaptureDeps, rec event.Recorder, description, priorQuestion, priorAnswer string) (CaptureResult, error) {
+	emitter := event.NewEmitter(rec, "capture")
 	ws := &tools.Workspace{Root: cd.Workspace}
 	d := &Deps{Workspace: cd.Workspace, Docs: cd.Docs, Emitter: emitter}
 
