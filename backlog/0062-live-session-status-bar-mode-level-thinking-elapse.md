@@ -63,3 +63,4 @@ This task turns the header into a richer, live status bar and adds an activity i
 …[truncated]
 - 2026-06-29 decision: accept — commit: tui: live segmented session status bar (mode/level/thinking/elapsed/token-cost) + spinner [0062]  Surface per-model pricing through ListModels (optional price_* fields + priced flag) and rebuild the s
 …[truncated]
+- 2026-06-29 usage: 44,218 tok (in 202, out 44,016, cache_r 4,975,097, cache_w 192,994) · cost n/a (unpriced)
