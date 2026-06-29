@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -204,6 +205,16 @@ func TestReviseLoop(t *testing.T) {
 	r5, err := commitTool(d).Call(ctx, args("task_id", "0001", "message", "add Add"))
 	if err != nil || r5.IsError {
 		t.Fatalf("commit failed: %v %s", err, r5.Content)
+	}
+
+	// Commit must leave the working tree clean: the work-log line is appended
+	// before committing, so no backlog files are left uncommitted afterward.
+	out, gerr := exec.Command("git", "-C", ws, "status", "--porcelain").Output()
+	if gerr != nil {
+		t.Fatalf("git status: %v", gerr)
+	}
+	if strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("working tree not clean after commit:\n%s", out)
 	}
 
 	// Work log should record plan?(no, we skipped) but at least implementer report,

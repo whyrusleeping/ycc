@@ -61,4 +61,4 @@
 | [0056](backlog/0056-replay-fidelity-for-mid-run-truncation-nudges-on-r.md) | Replay fidelity for mid-Run truncation nudges on reopen | done | 3 | 0034 |
 | [0057](backlog/0057-surface-model-tool-timing-duration-ms-in-tui-chat.md) | Surface model/tool timing (duration_ms) in TUI chat-log rows | done | 4 | 0055 |
 | [0058](backlog/0058-session-textarea-grow-on-wrapped-long-lines-add-in.md) | Session textarea: grow on wrapped long lines + add input behavior tests | todo | 4 | 0011 |
-| [0059](backlog/0059-encourage-work-agent-to-commit-after-finishing-a-t.md) | Encourage work agent to commit after finishing a task (avoid leftover uncommitted backlog files) | todo | 3 | — |
+| [0059](backlog/0059-encourage-work-agent-to-commit-after-finishing-a-t.md) | Encourage work agent to commit after finishing a task (avoid leftover uncommitted backlog files) | done | 3 | — |

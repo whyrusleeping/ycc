@@ -27,16 +27,20 @@ Usual flow:
    the task and plan. You receive its report and staged diff.
 4. Have the change reviewed: spawn_reviewers runs all configured reviewers concurrently and
    returns each verdict and findings.
-5. Decide: if the acceptance criteria are met and reviewers accept, commit (concise message),
-   update_task "done", finish. If reviewers want changes, consolidate their findings into
+5. Decide: if the acceptance criteria are met and reviewers accept, update_task "done",
+   then commit (concise message) — committing last so the final backlog state (status and
+   work log) is captured in the same commit and the working tree is left clean. finish. If
+   reviewers want changes, consolidate their findings into
    specific instructions and send_to_implementer (it keeps its context), then re_review;
    repeat, but cap at ~3 rounds — if it still isn't accepted, set "in_review", finish, and
    summarize what remains.
 
 Don't redo finished work. If a task already appears implemented and reviewed (its work log
 shows accepted reviews and the change is in place), do NOT spawn an implementer or re-review
-from scratch — confirm the acceptance criteria are met, call commit to capture anything still
-uncommitted (it is fine if there is nothing to commit), update_task "done", and finish. If a
+from scratch — confirm the acceptance criteria are met, update_task "done", then call commit
+to capture the final backlog state plus anything still uncommitted (committing last so no
+backlog files are left in the working tree; it is fine if there is nothing to commit), and
+finish. If a
 task is only partially done, resume from where it left off rather than starting over. Spend
 effort where it is actually needed, and keep moving.
 

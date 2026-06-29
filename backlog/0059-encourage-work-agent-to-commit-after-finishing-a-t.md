@@ -1,7 +1,7 @@
 ---
 id: "0059"
 title: Encourage work agent to commit after finishing a task (avoid leftover uncommitted backlog files)
-status: todo
+status: done
 priority: 3
 created: "2026-06-29"
 updated: "2026-06-29"
@@ -27,3 +27,10 @@ Adjust the work agent's flow/prompting so that the commit happens *after* the ta
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-29 plan: Make `commit` the finalizing step that captures the full backlog state in one commit, and reorder the documented flow so the task is marked done before committing.  1. internal/orchestrator/orchestrat
+…[truncated]
+- 2026-06-29 implementer report: Implemented Task 0059: commit now finalizes the backlog state so no uncommitted backlog files are left after a task finishes.  Changes: 1. internal/orchestrator/orchestrator.go (commitTool): Moved the
+…[truncated]
+- 2026-06-29 review tier: single-opus — reviewers: Claude
+- 2026-06-29 review (Claude): accept — The change correctly addresses the task. In commitTool, the work-log append was moved before the actual git commit so that the final backlog state (status set via update_task "done", plus the decision
+…[truncated]

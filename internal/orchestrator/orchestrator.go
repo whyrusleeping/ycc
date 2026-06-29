@@ -551,13 +551,18 @@ func commitTool(d *Deps) *gollama.Tool {
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			id, _ := tools.GetString(params, "task_id")
 			msg, _ := tools.GetString(params, "message")
+			// Record the acceptance decision in the work log BEFORE committing so the
+			// final backlog state (status, work log) is captured in the same commit
+			// (Commit does `git add -A`), leaving no leftover uncommitted backlog files.
+			// The sha is not known until after the commit and embedding it would change
+			// the tree, so the work-log line omits it.
+			d.Docs.AppendWorkLog(id, "decision: accept — commit: "+oneLine(msg))
 			sha, err := d.Repo.Commit(msg)
 			if err != nil {
 				return tools.ErrResult("commit: %v", err), nil
 			}
 			d.Emitter.Emit(event.DecisionMade, map[string]any{"task": id, "decision": "accept"})
 			d.Emitter.Emit(event.CommitMade, map[string]any{"task": id, "sha": sha, "message": msg})
-			d.Docs.AppendWorkLog(id, fmt.Sprintf("decision: accept — commit %s: %s", sha, oneLine(msg)))
 			return tools.OkResult("committed " + sha), nil
 		},
 	}

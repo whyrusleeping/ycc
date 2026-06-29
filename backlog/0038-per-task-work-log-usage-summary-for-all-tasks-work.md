@@ -45,3 +45,4 @@ tasks, but only `event.Reduce(events).FocusTask` is inspected.
 …[truncated]
 - 2026-06-29 review tier: simple (coordinator self-review)
 - 2026-06-29 decision: accept — commit 19d636e: session: summarize usage to work log for every task worked in a session [0038]
+- 2026-06-29 usage: 7,645 tok (in 30, out 7,615, cache_r 273,570, cache_w 19,750) · cost n/a (unpriced)

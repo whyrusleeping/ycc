@@ -391,7 +391,7 @@ coordinator (FRESH context, mode=work)
   5. review        → spawn_reviewer × N  (different models, concurrent)
                      each returns findings {severity, summary, items[]}
   6. judge:
-        if acceptable → commit + update_task(status=done) + work-log + finish
+        if acceptable → update_task(status=done) + commit (captures final backlog state) + finish
         else          → send_to_implementer(consolidated instructions)
                         → re_review()   (reuse reviewer contexts)
                         → back to 6
