@@ -74,6 +74,20 @@ message ResumeResponse {}
 // Interrupt's graceful pause/steer (spec §18.7) — there is no resume.
 message StopSessionRequest { string session_id = 1; }
 message StopSessionResponse {}
+// ResumeSession re-opens a persisted (finished/idle) session on its EXISTING
+// event log ("resume = replay", spec §4.5/§18.6): its coordinator is
+// re-instantiated with history reconstructed from the log and new activity
+// appends to the same continuous events.jsonl. Idempotent if already live.
+message ResumeSessionRequest {
+  string session_id = 1;
+  string project = 2;
+}
+message ResumeSessionResponse {
+  string session_id = 1;
+  string mode = 2;
+  string status = 3;
+  string workspace = 4;
+}
 
 message ListModesRequest {}
 message Mode {
@@ -310,6 +324,11 @@ service SessionService {
   // event log, and removes it from the daemon (no resume). Distinct from
   // Interrupt's graceful pause (spec §12, §18.7).
   rpc StopSession(StopSessionRequest) returns (StopSessionResponse);
+
+  // ResumeSession re-opens a persisted session on its existing event log
+  // (reconstructs loop history; "resume = replay", spec §4.5/§18.6). Idempotent
+  // if the session is already live.
+  rpc ResumeSession(ResumeSessionRequest) returns (ResumeSessionResponse);
 
   // Projects — persistent multi-project daemon (spec §3.1).
   rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);

@@ -171,6 +171,38 @@ type Result struct {
 // Seed appends an initial user message (the task prompt) before Run.
 func (l *Loop) Seed(prompt string) { l.Post(prompt) }
 
+// toEventThinking maps gollama reasoning blocks to the serializable event shape
+// so they round-trip through the JSONL log (and back, for reopen replay).
+func toEventThinking(blocks []gollama.ThinkingBlock) []event.ThinkingBlock {
+	if len(blocks) == 0 {
+		return nil
+	}
+	out := make([]event.ThinkingBlock, len(blocks))
+	for i, b := range blocks {
+		out[i] = event.ThinkingBlock{Thinking: b.Thinking, Signature: b.Signature, Redacted: b.Redacted}
+	}
+	return out
+}
+
+// SetHistory replaces the loop's conversation history. Used by session reopen to
+// install a history reconstructed from the event log before the first new turn
+// (spec §4.5). Safe to call concurrently with Run (guarded like backend()),
+// though in practice it is set before Run begins.
+func (l *Loop) SetHistory(h []gollama.Message) {
+	l.mu.Lock()
+	l.history = h
+	l.mu.Unlock()
+}
+
+// History returns a copy of the loop's current conversation history.
+func (l *Loop) History() []gollama.Message {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := make([]gollama.Message, len(l.history))
+	copy(out, l.history)
+	return out
+}
+
 // Post appends a user message to the conversation. Used both to seed the initial
 // task and to inject follow-up input between Run calls (a "prod"), so a session
 // can continue the same agent across multiple turns.
@@ -283,6 +315,12 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			"model_id":    ident.ID,
 			"stop_reason": resp.StopReason,
 			"truncated":   truncated,
+			// thinking_blocks carries the signed/redacted reasoning blocks on the
+			// ALWAYS-emitted model_turn (not the optional Thinking display event,
+			// which is skipped when display is "omitted" yet still produces signed
+			// blocks needed to replay the turn on Anthropic). This lets reopen
+			// reconstruct the conversation losslessly (spec §5.1).
+			"thinking_blocks": toEventThinking(msg.ThinkingBlocks),
 			"usage": event.Usage{
 				Input:      u.PromptTokens,
 				Output:     u.CompletionTokens,

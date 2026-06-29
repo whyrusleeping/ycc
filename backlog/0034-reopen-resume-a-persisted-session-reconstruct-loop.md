@@ -1,10 +1,10 @@
 ---
 id: "0034"
 title: Reopen/resume a persisted session (reconstruct loop history)
-status: todo
+status: in_progress
 priority: 3
 created: "2026-06-27"
-updated: "2026-06-27"
+updated: "2026-06-29"
 depends_on:
     - "0033"
 spec_refs: []
@@ -45,3 +45,14 @@ appended to the same `events.jsonl`.
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-29 plan: Implement "resume = replay": reconstruct a coordinator loop's conversation history from a session's event log and reopen it as a live session.  1. event package (capture-side fix + new types):    - Ad
+…[truncated]
+- 2026-06-29 implementer report: Implemented "resume = replay" (task 0034): reopening a persisted session re-instantiates its coordinator on the EXISTING event log with reconstructed history, appending new activity to the same `event
+…[truncated]
+- 2026-06-29 review tier: single-opus — reviewers: Claude
+- 2026-06-29 review (Claude): accept — The change correctly and completely implements "resume = replay" for task 0034. It adds engine.ReplayHistory to reconstruct the coordinator loop history (user inputs, assistant turns with thinking blo
+…[truncated]
+- 2026-06-29 revision: Addressed all three review fixes:  1. **Check-then-register race in Manager.Reopen** — Kept the early `m.Get(id)` fast-path, and after building the session/loop, registration is now atomic: under `m
+…[truncated]
+- 2026-06-29 review (Claude): accept — The revision cleanly resolves all three findings from the prior review. Reopen now registers atomically under the manager lock (loser cancels and closes its log, eliminating the check-then-act race an
+…[truncated]

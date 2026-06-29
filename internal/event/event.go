@@ -24,11 +24,11 @@ const (
 	ModelTurn      Type = "model_turn"
 	// Thinking carries a model's reasoning summary for a turn (spec §7, §18).
 	// Emitted before the corresponding ModelTurn when non-empty.
-	Thinking         Type = "thinking"
-	ToolCall         Type = "tool_call"
-	ToolResult       Type = "tool_result"
-	SessionIdle      Type = "session_idle"
-	SessionError     Type = "session_error"
+	Thinking     Type = "thinking"
+	ToolCall     Type = "tool_call"
+	ToolResult   Type = "tool_result"
+	SessionIdle  Type = "session_idle"
+	SessionError Type = "session_error"
 	// SessionStopped marks a session that was hard-terminated via StopSession
 	// (spec §12): its agent loop is cancelled and its log closed, with no resume.
 	SessionStopped   Type = "session_stopped"
@@ -60,7 +60,25 @@ const (
 	// steered-in correction.
 	Interrupted Type = "interrupted"
 	Resumed     Type = "resumed"
+	// SessionReopened is an informational marker emitted when a persisted session
+	// is re-opened ("resume = replay", spec §4.5/§18.6): its coordinator is
+	// re-instantiated on the EXISTING event log with history reconstructed from
+	// the log, and new activity appends to the same continuous stream. It does not
+	// change status (see Reduce).
+	SessionReopened Type = "session_reopened"
 )
+
+// ThinkingBlock mirrors gollama.ThinkingBlock for lossless serialization in the
+// event log: it lets a model_turn carry the signed/redacted reasoning blocks so
+// the conversation can be replayed verbatim on reopen (Anthropic verifies these
+// signatures, spec §5.1). For a normal block Thinking holds the summary text and
+// Signature the verification signature; for a redacted block Redacted holds the
+// opaque data payload.
+type ThinkingBlock struct {
+	Thinking  string `json:"thinking,omitempty"`
+	Signature string `json:"signature,omitempty"`
+	Redacted  string `json:"data,omitempty"`
+}
 
 // Usage is the per-turn token accounting attached to a model_turn event's data
 // (spec §20.1, cost tracking). It is the source of truth for usage in the JSONL

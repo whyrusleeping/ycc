@@ -78,6 +78,11 @@ func Reduce(events []Event) Projection {
 			p.Status = StatusRunning
 		case SessionStopped:
 			p.Status = StatusStopped
+		case SessionReopened:
+			// Purely informational: marks that the session was re-instantiated on
+			// its existing log. It does NOT change status — the reopened session's
+			// status is whatever its prior events established (it resumes idle,
+			// awaiting the first new input).
 		}
 	}
 	return p

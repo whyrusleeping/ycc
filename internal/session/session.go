@@ -54,6 +54,12 @@ type Session struct {
 	prompt    string
 	buildLoop func(mode, prompt string) (*engine.Loop, error)
 
+	// resumed marks a session re-instantiated on an EXISTING log via Reopen
+	// ("resume = replay", spec §4.5/§18.6): run() then skips the SessionStarted /
+	// initial UserInput / seed, emits a SessionReopened marker, and waits idle for
+	// the first new input before continuing on the reconstructed history.
+	resumed bool
+
 	inputCh chan string
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -545,12 +551,27 @@ func (s *Session) resolveReviewTier(requested string) orchestrator.ReviewPlan {
 }
 
 func (s *Session) run() {
-	s.emitter.Emit(event.SessionStarted, map[string]any{
-		"workspace":         s.Workspace,
-		"mode":              s.Mode,
-		"interaction_level": s.Level(),
-	})
-	s.emitter.EmitAs("user", event.UserInput, map[string]any{"text": s.prompt})
+	if s.resumed {
+		// Reopened session ("resume = replay", spec §4.5/§18.6): the loop already
+		// carries a history reconstructed from the existing log, so do NOT emit a
+		// fresh SessionStarted / initial UserInput nor seed. Mark the reopen in the
+		// continuous log and wait idle for the first new input before continuing.
+		s.emitter.Emit(event.SessionReopened, map[string]any{})
+		s.setStatus(event.StatusIdle)
+		select {
+		case text := <-s.inputCh:
+			s.currentLoop().Post(text)
+		case <-s.ctx.Done():
+			return
+		}
+	} else {
+		s.emitter.Emit(event.SessionStarted, map[string]any{
+			"workspace":         s.Workspace,
+			"mode":              s.Mode,
+			"interaction_level": s.Level(),
+		})
+		s.emitter.EmitAs("user", event.UserInput, map[string]any{"text": s.prompt})
+	}
 
 	for {
 		s.setStatus(event.StatusRunning)
@@ -760,6 +781,30 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 		return nil, fmt.Errorf("open event log: %w", err)
 	}
 
+	s, err := m.newSession(absWS, id, mode, level, prompt, log, false)
+	if err != nil {
+		return nil, err
+	}
+	loop, err := s.buildLoop(mode, prompt)
+	if err != nil {
+		return nil, err
+	}
+	s.loop = loop
+
+	m.mu.Lock()
+	m.sessions[id] = s
+	m.mu.Unlock()
+
+	go s.run()
+	return s, nil
+}
+
+// newSession assembles a Session (emitter, interaction, deps, role specs, the
+// buildLoop closure, and review-tier wiring) on a given event log, WITHOUT
+// creating/seeding its loop or registering it — callers do that, since Start
+// seeds the loop while Reopen installs a reconstructed history. resumed marks a
+// session re-instantiated on an existing log (spec §4.5).
+func (m *Manager) newSession(absWS, id, mode, level, prompt string, log *event.Log, resumed bool) (*Session, error) {
 	emitter := event.NewEmitter(log, "coordinator")
 	inter := newInteraction(level, emitter)
 	repo, err := git.Open(absWS)
@@ -805,6 +850,7 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 		deps:             deps,
 		reg:              m.reg,
 		prompt:           prompt,
+		resumed:          resumed,
 		inputCh:          make(chan string, 64),
 		ctx:              ctx,
 		cancel:           cancel,
@@ -836,14 +882,13 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 			Thinking: th.Thinking, Effort: th.Effort, ThinkingDisplay: th.ThinkingDisplay,
 		}
 		loop.Steer = s
-		loop.Seed(prompt)
+		// Mode transitions and Start always pass a non-empty seed; reopen passes
+		// "" because it installs a reconstructed history instead of seeding.
+		if prompt != "" {
+			loop.Seed(prompt)
+		}
 		return loop, nil
 	}
-	loop, err := s.buildLoop(mode, prompt)
-	if err != nil {
-		return nil, err
-	}
-	s.loop = loop
 
 	// Wire the review-tier resolver so spawn_reviewers can pick a tier per change
 	// (spec §13). It resolves the configured tier to concrete reviewer specs.
@@ -851,7 +896,85 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 		return s.resolveReviewTier(name)
 	}
 
+	return s, nil
+}
+
+// Reopen re-instantiates a persisted session on its EXISTING event log ("resume
+// = replay", spec §4.5/§18.6): it re-opens the log, restores mode + interaction
+// level from the projection, reconstructs the coordinator loop's conversation
+// history from the log, and registers it as a live session whose new activity
+// appends to the same continuous events.jsonl. It is idempotent: reopening an
+// already-live session returns the live one. An empty project uses the default
+// workspace; an unknown project is ErrUnknownProject; a session with no persisted
+// log is ErrUnknownSession.
+func (m *Manager) Reopen(project, id string) (*Session, error) {
+	if s, ok := m.Get(id); ok {
+		return s, nil // already live — no-op
+	}
+	ws := m.defaultWorkspace
+	if project != "" {
+		p, ok := m.projects.Resolve(project)
+		if !ok {
+			return nil, fmt.Errorf("%w %q", ErrUnknownProject, project)
+		}
+		ws = p
+	}
+	absWS, err := filepath.Abs(ws)
+	if err != nil {
+		return nil, fmt.Errorf("resolve workspace: %w", err)
+	}
+
+	logPath := filepath.Join(absWS, ".ycc", "sessions", id, "events.jsonl")
+	log, err := event.OpenLog(logPath)
+	if err != nil {
+		return nil, fmt.Errorf("open event log: %w", err)
+	}
+	events := log.Snapshot()
+	if len(events) == 0 {
+		log.Close()
+		return nil, fmt.Errorf("%w %q", ErrUnknownSession, id)
+	}
+
+	proj := event.Reduce(events)
+	// A hard-stopped session has no resume (spec §12): its agent loop was
+	// cancelled and its log closed terminally. Reject reopening it.
+	if proj.Status == event.StatusStopped {
+		log.Close()
+		return nil, fmt.Errorf("%w %q", ErrSessionStopped, id)
+	}
+	mode := proj.Mode
+	if mode == "" {
+		mode = "work"
+	}
+	level := proj.InteractionLevel
+	if level == "" {
+		level = "judgement"
+	}
+
+	s, err := m.newSession(absWS, id, mode, level, "", log, true)
+	if err != nil {
+		log.Close()
+		return nil, err
+	}
+	loop, err := s.buildLoop(mode, "")
+	if err != nil {
+		log.Close()
+		return nil, err
+	}
+	loop.SetHistory(engine.ReplayHistory(events))
+	s.loop = loop
+
+	// Register atomically: re-check under the lock so a concurrent Reopen/Start
+	// that won the race keeps its live session. The loser closes its freshly
+	// opened log and abandons its (never-started) session — no goroutine or log
+	// leak.
 	m.mu.Lock()
+	if existing, ok := m.sessions[id]; ok {
+		m.mu.Unlock()
+		s.cancel()
+		log.Close()
+		return existing, nil
+	}
 	m.sessions[id] = s
 	m.mu.Unlock()
 
@@ -1056,6 +1179,11 @@ var ErrUnknownProject = errors.New("unknown project")
 // ErrUnknownSession indicates a session id is not (or no longer) live in the
 // manager, so RPC handlers can map it to a not-found code.
 var ErrUnknownSession = errors.New("unknown session")
+
+// ErrSessionStopped indicates an attempt to reopen a session that was
+// hard-terminated via StopSession (spec §12: a stopped session has no resume),
+// so RPC handlers can map it to a failed-precondition code.
+var ErrSessionStopped = errors.New("session was stopped and cannot be reopened")
 
 // UsageReport scans the given project's workspace (empty => the daemon default
 // workspace) for session event logs and returns the aggregated, priced usage

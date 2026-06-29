@@ -1,0 +1,163 @@
+package engine
+
+import (
+	"encoding/json"
+	"reflect"
+	"testing"
+
+	"github.com/whyrusleeping/gollama"
+	"github.com/whyrusleeping/ycc/internal/event"
+)
+
+// coordinatorSession builds a representative event sequence: a user input; a
+// coordinator model_turn with thinking blocks (incl. a signed one) and text; a
+// coordinator tool_call and its tool_result; an interleaved SUBAGENT
+// (implementer) model_turn + tool_call that must be filtered out; and a final
+// coordinator model_turn that yields (no tool calls).
+func coordinatorSession() []event.Event {
+	return []event.Event{
+		{Seq: 1, Type: event.SessionStarted, Data: map[string]any{"mode": "work"}},
+		{Seq: 2, Actor: "user", Type: event.UserInput, Data: map[string]any{"text": "do the thing"}},
+		{Seq: 3, Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{
+			"text": "I'll start by reading.",
+			"thinking_blocks": []event.ThinkingBlock{
+				{Thinking: "let me think", Signature: "sig-abc"},
+				{Redacted: "opaque-data"},
+			},
+		}},
+		{Seq: 4, Actor: "coordinator", Type: event.ToolCall, Data: map[string]any{
+			"name": "read_file", "args": `{"path":"x"}`, "id": "call_1",
+		}},
+		{Seq: 5, Actor: "coordinator", Type: event.ToolResult, Data: map[string]any{
+			"id": "call_1", "result": "file contents",
+		}},
+		// Interleaved subagent activity — must be ignored by ReplayHistory.
+		{Seq: 6, Actor: "implementer", Type: event.ModelTurn, Data: map[string]any{"text": "subagent thinking"}},
+		{Seq: 7, Actor: "implementer", Type: event.ToolCall, Data: map[string]any{
+			"name": "write_file", "args": `{}`, "id": "sub_1",
+		}},
+		{Seq: 8, Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{"text": "All done."}},
+		{Seq: 9, Type: event.SessionIdle, Data: map[string]any{"report": "All done."}},
+	}
+}
+
+func wantHistory() []gollama.Message {
+	return []gollama.Message{
+		{Role: "user", Content: "do the thing"},
+		{
+			Role:    "assistant",
+			Content: "I'll start by reading.",
+			ThinkingBlocks: []gollama.ThinkingBlock{
+				{Thinking: "let me think", Signature: "sig-abc"},
+				{Redacted: "opaque-data"},
+			},
+			ToolCalls: []gollama.ToolCall{
+				{ID: "call_1", Type: "function", Function: gollama.ToolCallFunction{Name: "read_file", Arguments: `{"path":"x"}`}},
+			},
+		},
+		{Role: "tool", ToolCallID: "call_1", Content: "file contents"},
+		{Role: "assistant", Content: "All done."},
+	}
+}
+
+func TestReplayHistoryTyped(t *testing.T) {
+	got := ReplayHistory(coordinatorSession())
+	want := wantHistory()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ReplayHistory mismatch:\n got=%+v\nwant=%+v", got, want)
+	}
+}
+
+// TestReplayHistoryFromDisk round-trips each event through JSON (so Data becomes
+// map[string]any, as it would when read back from events.jsonl) and asserts the
+// decoded-map path reconstructs identically.
+func TestReplayHistoryFromDisk(t *testing.T) {
+	src := coordinatorSession()
+	decoded := make([]event.Event, len(src))
+	for i, ev := range src {
+		b, err := json.Marshal(ev)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if err := json.Unmarshal(b, &decoded[i]); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+	}
+	got := ReplayHistory(decoded)
+	want := wantHistory()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ReplayHistory (from disk) mismatch:\n got=%+v\nwant=%+v", got, want)
+	}
+}
+
+// TestReplayHistoryDanglingToolCall covers a session reopened mid-turn: the last
+// assistant message has a tool_call with no following tool_result, so a synthetic
+// tool message is appended to keep the conversation valid for the next turn.
+func TestReplayHistoryDanglingToolCall(t *testing.T) {
+	events := []event.Event{
+		{Seq: 1, Actor: "user", Type: event.UserInput, Data: map[string]any{"text": "go"}},
+		{Seq: 2, Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{"text": "working"}},
+		{Seq: 3, Actor: "coordinator", Type: event.ToolCall, Data: map[string]any{
+			"name": "read_file", "args": `{}`, "id": "dangling",
+		}},
+	}
+	got := ReplayHistory(events)
+	if len(got) != 3 {
+		t.Fatalf("want 3 messages, got %d: %+v", len(got), got)
+	}
+	last := got[2]
+	if last.Role != "tool" || last.ToolCallID != "dangling" {
+		t.Fatalf("want synthetic tool result for dangling call, got %+v", last)
+	}
+	if last.Content == "" {
+		t.Fatalf("synthetic tool result should have non-empty content")
+	}
+}
+
+// TestReplayHistoryTruncatedDropsThinking: a coordinator model_turn marked
+// truncated may carry an unsigned/cut-off thinking block, so ReplayHistory drops
+// the blocks to match the live loop's sanitized stub. Covers both the typed and
+// JSON-decoded (bool) shapes.
+func TestReplayHistoryTruncatedDropsThinking(t *testing.T) {
+	mk := func() []event.Event {
+		return []event.Event{
+			{Seq: 1, Actor: "user", Type: event.UserInput, Data: map[string]any{"text": "go"}},
+			{Seq: 2, Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{
+				"text":      "cut off mid-thought",
+				"truncated": true,
+				"thinking_blocks": []event.ThinkingBlock{
+					{Thinking: "incomplete", Signature: ""},
+				},
+			}},
+		}
+	}
+
+	check := func(t *testing.T, events []event.Event) {
+		got := ReplayHistory(events)
+		if len(got) != 2 {
+			t.Fatalf("want 2 messages, got %d: %+v", len(got), got)
+		}
+		if got[1].Role != "assistant" || got[1].Content != "cut off mid-thought" {
+			t.Fatalf("unexpected assistant message: %+v", got[1])
+		}
+		if got[1].ThinkingBlocks != nil {
+			t.Fatalf("truncated turn should drop thinking blocks, got %+v", got[1].ThinkingBlocks)
+		}
+	}
+
+	t.Run("typed", func(t *testing.T) { check(t, mk()) })
+	t.Run("from_disk", func(t *testing.T) {
+		src := mk()
+		decoded := make([]event.Event, len(src))
+		for i, ev := range src {
+			b, err := json.Marshal(ev)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if err := json.Unmarshal(b, &decoded[i]); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+		}
+		check(t, decoded)
+	})
+}

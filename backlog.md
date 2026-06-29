@@ -36,7 +36,7 @@
 | [0031](backlog/0031-backlog-browser-view-and-inspect-tasks-in-the-tui.md) | Backlog browser — view and inspect tasks in the TUI (ListBacklog/GetTask RPCs) | done | 3 | 0006 |
 | [0032](backlog/0032-bug-follow-up-user-message-not-displayed-until-age.md) | Bug: follow-up user message not displayed until agent's next response (user_input echo emitted on dequeue, not on send) | done | 2 | — |
 | [0033](backlog/0033-durable-session-index-listsessionhistory-rpc.md) | Durable session index + ListSessionHistory RPC | done | 3 | — |
-| [0034](backlog/0034-reopen-resume-a-persisted-session-reconstruct-loop.md) | Reopen/resume a persisted session (reconstruct loop history) | todo | 3 | 0033 |
+| [0034](backlog/0034-reopen-resume-a-persisted-session-reconstruct-loop.md) | Reopen/resume a persisted session (reconstruct loop history) | in_progress | 3 | 0033 |
 | [0035](backlog/0035-tui-session-browser-list-transcript-reopen-shared.md) | TUI session browser (list, transcript, reopen) + shared list+detail modal | todo | 3 | 0033, 0034, 0031 |
 | [0036](backlog/0036-per-role-thinking-level-independent-reasoning-per.md) | Per-role thinking level (independent reasoning per agent) | done | 3 | — |
 | [0037](backlog/0037-review-land-leftover-settings-overlay-thinking-ui.md) | Review & land leftover settings-overlay thinking-UI rework (inline +/- thinking) | done | 3 | — |
@@ -47,7 +47,7 @@
 | [0042](backlog/0042-select-different-model-ids-sharing-one-provider-s.md) | Select different model ids sharing one provider's credentials (opus/sonnet/haiku) | done | 2 | 0041 |
 | [0043](backlog/0043-unify-tool-call-params-and-response-into-one-colla.md) | Unify tool-call params and response into one collapsed chat-log row | todo | 3 | 0006 |
 | [0044](backlog/0044-settings-overlay-model-backends-management-form-ad.md) | Settings-overlay "Model backends" management form (add/edit/duplicate/remove) | done | 2 | 0041 |
-| [0045](backlog/0045-removemodel-should-also-reject-models-referenced-b.md) | RemoveModel should also reject models referenced by live session role assignments | in_progress | 3 | 0041 |
+| [0045](backlog/0045-removemodel-should-also-reject-models-referenced-b.md) | RemoveModel should also reject models referenced by live session role assignments | done | 3 | 0041 |
 | [0046](backlog/0046-configurable-review-tiers-let-the-work-agent-choos.md) | Configurable review tiers — let the work agent choose review intensity per change | done | 3 | — |
 | [0047](backlog/0047-support-multiple-questions-with-per-question-answe.md) | Support multiple questions with per-question answer sets in ask-user tool | todo | 3 | — |
 | [0048](backlog/0048-default-the-backlog-overlay-view-to-hiding-complet.md) | Default the backlog overlay view to hiding completed tasks | done | 3 | — |
@@ -57,3 +57,5 @@
 | [0052](backlog/0052-fix-last-line-of-agent-final-output-hidden-behind.md) | Fix: last line of agent final output hidden behind input box | done | 2 | — |
 | [0053](backlog/0053-make-edit-tool-require-a-unique-match-and-error-on.md) | Make edit tool require a unique match and error on multiple matches | done | 3 | — |
 | [0054](backlog/0054-automatic-idle-session-gc-on-disk-log-retention.md) | Automatic idle-session GC + on-disk log retention | todo | 3 | 0009 |
+| [0055](backlog/0055-record-timing-in-model-output-and-tool-call-logs.md) | Record timing in model-output and tool-call logs | todo | 3 | — |
+| [0056](backlog/0056-replay-fidelity-for-mid-run-truncation-nudges-on-r.md) | Replay fidelity for mid-Run truncation nudges on reopen | todo | 3 | 0034 |

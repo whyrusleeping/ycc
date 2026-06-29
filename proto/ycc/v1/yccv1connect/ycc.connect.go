@@ -62,6 +62,9 @@ const (
 	// SessionServiceStopSessionProcedure is the fully-qualified name of the SessionService's
 	// StopSession RPC.
 	SessionServiceStopSessionProcedure = "/ycc.v1.SessionService/StopSession"
+	// SessionServiceResumeSessionProcedure is the fully-qualified name of the SessionService's
+	// ResumeSession RPC.
+	SessionServiceResumeSessionProcedure = "/ycc.v1.SessionService/ResumeSession"
 	// SessionServiceListProjectsProcedure is the fully-qualified name of the SessionService's
 	// ListProjects RPC.
 	SessionServiceListProjectsProcedure = "/ycc.v1.SessionService/ListProjects"
@@ -124,6 +127,10 @@ type SessionServiceClient interface {
 	// event log, and removes it from the daemon (no resume). Distinct from
 	// Interrupt's graceful pause (spec §12, §18.7).
 	StopSession(context.Context, *connect.Request[v1.StopSessionRequest]) (*connect.Response[v1.StopSessionResponse], error)
+	// ResumeSession re-opens a persisted session on its existing event log
+	// (reconstructs loop history; "resume = replay", spec §4.5/§18.6). Idempotent
+	// if the session is already live.
+	ResumeSession(context.Context, *connect.Request[v1.ResumeSessionRequest]) (*connect.Response[v1.ResumeSessionResponse], error)
 	// Projects — persistent multi-project daemon (spec §3.1).
 	ListProjects(context.Context, *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error)
 	AddProject(context.Context, *connect.Request[v1.AddProjectRequest]) (*connect.Response[v1.AddProjectResponse], error)
@@ -221,6 +228,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			httpClient,
 			baseURL+SessionServiceStopSessionProcedure,
 			connect.WithSchema(sessionServiceMethods.ByName("StopSession")),
+			connect.WithClientOptions(opts...),
+		),
+		resumeSession: connect.NewClient[v1.ResumeSessionRequest, v1.ResumeSessionResponse](
+			httpClient,
+			baseURL+SessionServiceResumeSessionProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("ResumeSession")),
 			connect.WithClientOptions(opts...),
 		),
 		listProjects: connect.NewClient[v1.ListProjectsRequest, v1.ListProjectsResponse](
@@ -322,6 +335,7 @@ type sessionServiceClient struct {
 	interrupt           *connect.Client[v1.InterruptRequest, v1.InterruptResponse]
 	resume              *connect.Client[v1.ResumeRequest, v1.ResumeResponse]
 	stopSession         *connect.Client[v1.StopSessionRequest, v1.StopSessionResponse]
+	resumeSession       *connect.Client[v1.ResumeSessionRequest, v1.ResumeSessionResponse]
 	listProjects        *connect.Client[v1.ListProjectsRequest, v1.ListProjectsResponse]
 	addProject          *connect.Client[v1.AddProjectRequest, v1.AddProjectResponse]
 	removeProject       *connect.Client[v1.RemoveProjectRequest, v1.RemoveProjectResponse]
@@ -386,6 +400,11 @@ func (c *sessionServiceClient) Resume(ctx context.Context, req *connect.Request[
 // StopSession calls ycc.v1.SessionService.StopSession.
 func (c *sessionServiceClient) StopSession(ctx context.Context, req *connect.Request[v1.StopSessionRequest]) (*connect.Response[v1.StopSessionResponse], error) {
 	return c.stopSession.CallUnary(ctx, req)
+}
+
+// ResumeSession calls ycc.v1.SessionService.ResumeSession.
+func (c *sessionServiceClient) ResumeSession(ctx context.Context, req *connect.Request[v1.ResumeSessionRequest]) (*connect.Response[v1.ResumeSessionResponse], error) {
+	return c.resumeSession.CallUnary(ctx, req)
 }
 
 // ListProjects calls ycc.v1.SessionService.ListProjects.
@@ -478,6 +497,10 @@ type SessionServiceHandler interface {
 	// event log, and removes it from the daemon (no resume). Distinct from
 	// Interrupt's graceful pause (spec §12, §18.7).
 	StopSession(context.Context, *connect.Request[v1.StopSessionRequest]) (*connect.Response[v1.StopSessionResponse], error)
+	// ResumeSession re-opens a persisted session on its existing event log
+	// (reconstructs loop history; "resume = replay", spec §4.5/§18.6). Idempotent
+	// if the session is already live.
+	ResumeSession(context.Context, *connect.Request[v1.ResumeSessionRequest]) (*connect.Response[v1.ResumeSessionResponse], error)
 	// Projects — persistent multi-project daemon (spec §3.1).
 	ListProjects(context.Context, *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error)
 	AddProject(context.Context, *connect.Request[v1.AddProjectRequest]) (*connect.Response[v1.AddProjectResponse], error)
@@ -571,6 +594,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		SessionServiceStopSessionProcedure,
 		svc.StopSession,
 		connect.WithSchema(sessionServiceMethods.ByName("StopSession")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceResumeSessionHandler := connect.NewUnaryHandler(
+		SessionServiceResumeSessionProcedure,
+		svc.ResumeSession,
+		connect.WithSchema(sessionServiceMethods.ByName("ResumeSession")),
 		connect.WithHandlerOptions(opts...),
 	)
 	sessionServiceListProjectsHandler := connect.NewUnaryHandler(
@@ -679,6 +708,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceResumeHandler.ServeHTTP(w, r)
 		case SessionServiceStopSessionProcedure:
 			sessionServiceStopSessionHandler.ServeHTTP(w, r)
+		case SessionServiceResumeSessionProcedure:
+			sessionServiceResumeSessionHandler.ServeHTTP(w, r)
 		case SessionServiceListProjectsProcedure:
 			sessionServiceListProjectsHandler.ServeHTTP(w, r)
 		case SessionServiceAddProjectProcedure:
@@ -754,6 +785,10 @@ func (UnimplementedSessionServiceHandler) Resume(context.Context, *connect.Reque
 
 func (UnimplementedSessionServiceHandler) StopSession(context.Context, *connect.Request[v1.StopSessionRequest]) (*connect.Response[v1.StopSessionResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.StopSession is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) ResumeSession(context.Context, *connect.Request[v1.ResumeSessionRequest]) (*connect.Response[v1.ResumeSessionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ResumeSession is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) ListProjects(context.Context, *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error) {

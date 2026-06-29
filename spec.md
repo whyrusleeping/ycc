@@ -868,7 +868,10 @@ live loop appends, §7), restores mode and focus from the projection, and regist
 the manager so `Subscribe`/`SendInput`/`AnswerQuestion` work again. New activity appends to
 the same `events.jsonl` — one continuous log. This depends on the event log capturing
 enough to rebuild model history losslessly; where it does not yet, that is a bug to fix
-(the log is meant to be the whole state, §5.1). Reopen is exposed as a `ResumeSession`
+(the log is meant to be the whole state, §5.1). To that end `model_turn` events now carry
+`thinking_blocks` — the signed/redacted reasoning blocks — so the model history rebuilds
+losslessly (Anthropic verifies these signatures, §7), and reopen emits a `session_reopened`
+marker into the continuous log. Reopen is exposed as a `ResumeSession`
 (a.k.a. reopen) RPC and interacts with session lifecycle/GC (§ task 0009) and
 context-window management (§ task 0010), since a resumed long session may need budgeting
 before its first new turn.

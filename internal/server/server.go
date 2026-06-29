@@ -223,6 +223,32 @@ func (s *Server) StopSession(_ context.Context, req *connect.Request[v1.StopSess
 	return connect.NewResponse(&v1.StopSessionResponse{}), nil
 }
 
+// ResumeSession re-opens a persisted session on its existing event log
+// ("resume = replay", spec §4.5/§18.6): the coordinator is re-instantiated with
+// history reconstructed from the log and new activity appends to the same
+// continuous events.jsonl. Idempotent if the session is already live.
+func (s *Server) ResumeSession(_ context.Context, req *connect.Request[v1.ResumeSessionRequest]) (*connect.Response[v1.ResumeSessionResponse], error) {
+	sess, err := s.mgr.Reopen(req.Msg.Project, req.Msg.SessionId)
+	if err != nil {
+		switch {
+		case errors.Is(err, session.ErrUnknownProject):
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		case errors.Is(err, session.ErrUnknownSession):
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		case errors.Is(err, session.ErrSessionStopped):
+			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+		default:
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+	}
+	return connect.NewResponse(&v1.ResumeSessionResponse{
+		SessionId: sess.ID,
+		Mode:      sess.Mode,
+		Status:    string(sess.Status()),
+		Workspace: sess.Workspace,
+	}), nil
+}
+
 // AnswerQuestion responds to a question the coordinator asked via ask_user.
 func (s *Server) AnswerQuestion(_ context.Context, req *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error) {
 	sess, ok := s.mgr.Get(req.Msg.SessionId)
