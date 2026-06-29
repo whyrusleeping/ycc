@@ -4,14 +4,24 @@ package engine
 // coordinator loop's conversation history from a session's persisted event log so
 // a finished/idle session can be re-opened and continued on the SAME log.
 //
-// Known lossy edges, deferred to follow-up: tool-result images/PDFs are NOT
-// restored (only their counts are recorded on tool_result events), and the
-// internal truncation-retry nudge (the synthetic "your response was cut off"
-// stub + follow-up user message) is not logged, so it is not replayed. These are
-// acceptable limitations for now — the reconstructed history is still valid for
-// continuing the conversation on the next turn.
+// Known lossy edge, explicitly documented as unsupported: tool-result
+// images/PDFs are NOT restored on replay (only their counts are recorded on
+// tool_result events). Multimodal tool-result content does not round-trip; the
+// reconstructed history carries the text result only. This is an accepted
+// limitation (see spec §18.6).
+//
+// The internal truncation-retry nudge IS reproduced on replay: when the live
+// loop hits a mid-Run output-token truncation it appends a sanitized assistant
+// stub plus an internal user "nudge" message, but the nudge is posted via
+// Loop.Post and never recorded in the event log. ReplayHistory synthesizes that
+// nudge when it detects a truncated coordinator turn immediately followed by
+// another coordinator assistant turn, so the reconstructed conversation keeps
+// strict user/assistant alternation (some backends reject two consecutive
+// assistant turns).
 
 import (
+	"strings"
+
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/event"
 )
@@ -33,6 +43,10 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 	// answered records tool_call ids that have a matching tool_result, so we can
 	// repair any dangling calls at the end.
 	answered := map[string]bool{}
+	// lastTurnTruncated tracks whether the previous coordinator model_turn was
+	// cut off at the output token cap, so we can synthesize the internal nudge
+	// (see file doc comment) before the retry turn.
+	lastTurnTruncated := false
 
 	for _, ev := range events {
 		switch ev.Type {
@@ -41,24 +55,39 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			// actor (they are emitted as actor "user").
 			history = append(history, gollama.Message{Role: "user", Content: str(ev.Data, "text")})
 			assistantIdx = -1
+			lastTurnTruncated = false // a real user input breaks the truncation chain
 		case event.ModelTurn:
 			if ev.Actor != "coordinator" {
 				continue // subagent turn — not part of the coordinator history
+			}
+			truncated := boolv(ev.Data, "truncated")
+			text := str(ev.Data, "text")
+			// If the previous turn was truncated and we're about to append another
+			// assistant turn (the retry), synthesize the internal user nudge the
+			// live loop posts between the truncated stub and the retry. This keeps
+			// strict user/assistant alternation, which some backends require.
+			if lastTurnTruncated && len(history) > 0 && history[len(history)-1].Role == "assistant" {
+				history = append(history, gollama.Message{Role: "user", Content: truncationNudge})
 			}
 			// A turn cut off at the output token cap (truncated) may carry an
 			// unsigned/incomplete thinking block; drop the blocks here to match the
 			// live loop's sanitized stub (which omits the cut-off block so Anthropic
 			// doesn't reject it on the next request).
 			var blocks []gollama.ThinkingBlock
-			if !boolv(ev.Data, "truncated") {
+			if !truncated {
 				blocks = parseThinkingBlocks(ev.Data["thinking_blocks"])
+			} else if strings.TrimSpace(text) == "" {
+				// Guarantee non-empty content for a truncated turn (empty assistant
+				// messages are rejected by backends), matching the live sanitized stub.
+				text = truncatedStubContent
 			}
 			history = append(history, gollama.Message{
 				Role:           "assistant",
-				Content:        str(ev.Data, "text"),
+				Content:        text,
 				ThinkingBlocks: blocks,
 			})
 			assistantIdx = len(history) - 1
+			lastTurnTruncated = truncated
 		case event.ToolCall:
 			if ev.Actor != "coordinator" {
 				continue

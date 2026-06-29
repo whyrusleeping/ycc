@@ -1,7 +1,7 @@
 ---
 id: "0057"
 title: Surface model/tool timing (duration_ms) in TUI chat-log rows
-status: in_progress
+status: done
 priority: 4
 created: "2026-06-29"
 updated: "2026-06-29"
@@ -37,3 +37,5 @@ re-apply the timing display cleanly.
   remaining acceptance criterion is a dedicated TUI test. Do NOT re-implement — just add
   the test, then mark done.
 - 2026-06-29 review tier: simple (coordinator self-review)
+- 2026-06-29 decision: accept — commit 5e16b22: TUI: add tests for chat-log duration display (fmtDurMS, durationMSField, detailLine) [0057]
+- 2026-06-29 usage: 2,471 tok (in 14, out 2,457, cache_r 98,433, cache_w 3,044) · cost n/a (unpriced)

@@ -871,7 +871,16 @@ enough to rebuild model history losslessly; where it does not yet, that is a bug
 (the log is meant to be the whole state, §5.1). To that end `model_turn` events now carry
 `thinking_blocks` — the signed/redacted reasoning blocks — so the model history rebuilds
 losslessly (Anthropic verifies these signatures, §7), and reopen emits a `session_reopened`
-marker into the continuous log. Reopen is exposed as a `ResumeSession`
+marker into the continuous log. Two replay-fidelity details matter at a mid-Run truncation
+boundary: when a turn is cut off at the output-token cap the live loop appends a sanitized
+assistant stub plus an internal user "nudge" message, but that nudge is posted via
+`Loop.Post` and is **not** recorded in the event log; so replay *synthesizes* the nudge
+(a user message) whenever it detects a truncated coordinator turn immediately followed by
+another coordinator assistant turn, keeping strict user/assistant alternation (some
+backends reject two consecutive assistant turns). One known limitation remains explicit and
+unsupported: multimodal tool-result content (images/PDFs) is **not** round-tripped on replay
+— only the counts are recorded on `tool_result` events, so the reconstructed history carries
+the text result only. Reopen is exposed as a `ResumeSession`
 (a.k.a. reopen) RPC and interacts with session lifecycle/GC (§ task 0009) and
 context-window management (§ task 0010), since a resumed long session may need budgeting
 before its first new turn.

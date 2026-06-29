@@ -161,3 +161,73 @@ func TestReplayHistoryTruncatedDropsThinking(t *testing.T) {
 		check(t, decoded)
 	})
 }
+
+// TestReplayHistoryTruncationBoundary covers reconstruction across a mid-Run
+// truncation-retry boundary: a truncated coordinator turn (empty text + unsigned
+// thinking block) immediately followed by the retry turn. The live loop posts an
+// internal user "nudge" between them that is NOT recorded in the event log, so
+// ReplayHistory must synthesize it to preserve strict user/assistant alternation.
+func TestReplayHistoryTruncationBoundary(t *testing.T) {
+	mk := func() []event.Event {
+		return []event.Event{
+			{Seq: 1, Actor: "user", Type: event.UserInput, Data: map[string]any{"text": "go"}},
+			{Seq: 2, Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{
+				"text":      "   ",
+				"truncated": true,
+				"thinking_blocks": []event.ThinkingBlock{
+					{Thinking: "incomplete", Signature: ""},
+				},
+			}},
+			{Seq: 3, Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{"text": "Now acting."}},
+			{Seq: 4, Actor: "coordinator", Type: event.ToolCall, Data: map[string]any{
+				"name": "read_file", "args": `{}`, "id": "c1",
+			}},
+			{Seq: 5, Actor: "coordinator", Type: event.ToolResult, Data: map[string]any{
+				"id": "c1", "result": "ok",
+			}},
+		}
+	}
+
+	want := []gollama.Message{
+		{Role: "user", Content: "go"},
+		{Role: "assistant", Content: truncatedStubContent},
+		{Role: "user", Content: truncationNudge},
+		{
+			Role:    "assistant",
+			Content: "Now acting.",
+			ToolCalls: []gollama.ToolCall{
+				{ID: "c1", Type: "function", Function: gollama.ToolCallFunction{Name: "read_file", Arguments: `{}`}},
+			},
+		},
+		{Role: "tool", ToolCallID: "c1", Content: "ok"},
+	}
+
+	check := func(t *testing.T, events []event.Event) {
+		got := ReplayHistory(events)
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("ReplayHistory mismatch:\n got=%+v\nwant=%+v", got, want)
+		}
+		// Assert strict alternation: never two consecutive assistant turns.
+		for i := 1; i < len(got); i++ {
+			if got[i].Role == "assistant" && got[i-1].Role == "assistant" {
+				t.Fatalf("two consecutive assistant messages at %d/%d: %+v", i-1, i, got)
+			}
+		}
+	}
+
+	t.Run("typed", func(t *testing.T) { check(t, mk()) })
+	t.Run("from_disk", func(t *testing.T) {
+		src := mk()
+		decoded := make([]event.Event, len(src))
+		for i, ev := range src {
+			b, err := json.Marshal(ev)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if err := json.Unmarshal(b, &decoded[i]); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+		}
+		check(t, decoded)
+	})
+}

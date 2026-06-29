@@ -160,6 +160,18 @@ const defaultMaxTurns = 200
 // than spinning forever.
 const maxTruncRetries = 2
 
+// truncatedStubContent and truncationNudge are the two messages the live loop
+// appends at a mid-Run output-token truncation boundary: a sanitized assistant
+// stub (with non-empty content so backends don't reject it) followed by an
+// internal user "nudge" telling the model to continue. The nudge is posted via
+// Loop.Post and is NOT recorded in the event log, so replay.go (ReplayHistory)
+// reuses these constants to synthesize the nudge when it reconstructs a
+// truncation-retry boundary, preserving strict user/assistant alternation.
+const (
+	truncatedStubContent = "(my previous response was cut off at the output token limit)"
+	truncationNudge      = "Your previous response was cut off at the output token limit before you took any action. Keep your reasoning brief and call a tool now to make concrete progress."
+)
+
 // Result is the outcome of a completed loop.
 type Result struct {
 	Report     string // final report (from a control tool) or last assistant text
@@ -355,10 +367,10 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 				// doesn't collide with the preceding user message.
 				stub := gollama.Message{Role: msg.Role, Content: msg.Content}
 				if strings.TrimSpace(stub.Content) == "" {
-					stub.Content = "(my previous response was cut off at the output token limit)"
+					stub.Content = truncatedStubContent
 				}
 				l.history = append(l.history, stub)
-				l.Post("Your previous response was cut off at the output token limit before you took any action. Keep your reasoning brief and call a tool now to make concrete progress.")
+				l.Post(truncationNudge)
 				continue
 			}
 			// Model yielded with no further action: treat its text as the result.

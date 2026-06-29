@@ -1,7 +1,7 @@
 ---
 id: "0056"
 title: Replay fidelity for mid-Run truncation nudges on reopen
-status: todo
+status: in_progress
 priority: 3
 created: "2026-06-29"
 updated: "2026-06-29"
@@ -45,3 +45,10 @@ results, or document the limitation explicitly.
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-29 plan: Fix replay so a mid-Run truncation-retry boundary reconstructs to a valid, strictly-alternating conversation (option 2 from the task: synthesize the nudge during ReplayHistory).  1. internal/engine/lo
+…[truncated]
+- 2026-06-29 implementer report: Implemented task 0056 (replay fidelity for mid-Run truncation nudges).  Changes: 1. internal/engine/loop.go — extracted the two literal truncation-boundary strings into package-level constants `trun
+…[truncated]
+- 2026-06-29 review tier: single-opus — reviewers: Claude
+- 2026-06-29 review (Claude): accept — The change cleanly closes the ordering gap: it extracts the truncation stub/nudge strings into shared constants, and ReplayHistory synthesizes the unrecorded user nudge when reconstructing a truncatio
+…[truncated]
