@@ -217,8 +217,11 @@ question has a small set of likely answers, supply them via ask_user ` + "`optio
 user gets a clean multiple-choice picker.`
 	case "autonomous":
 		return `INTERACTION LEVEL: autonomous. Do NOT ask the user anything; make every decision
-yourself. (ask_user will not reach a human.) Note any significant assumptions in your
-final report.`
+yourself. (ask_user will not reach a human, so it cannot unblock you.) Proceed on your best
+judgement wherever you reasonably can. If a task GENUINELY cannot proceed without the user — an
+unresolved design decision, conflicting requirements, or a choice that is hard to reverse — do
+not guess: set it "blocked" (update_task) with a brief note of what you need and why, then move
+on to another ready task or finish. Note any significant assumptions in your final report.`
 	default: // judgement
 		return `INTERACTION LEVEL: judgement. Proceed on your best judgement. Use ask_user only when
 genuinely blocked or a decision is hard to reverse.`

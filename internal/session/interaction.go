@@ -65,7 +65,11 @@ func (in *interaction) Ask(ctx context.Context, question string, options []strin
 	level := in.level
 	in.mu.Unlock()
 	if level == "autonomous" {
-		const ans = "You are in autonomous mode and no human is available. Proceed using your best judgement."
+		const ans = "You are in autonomous mode and no human is available, so this question " +
+			"cannot be answered. If you can responsibly proceed, do so on your best judgement. If " +
+			"you genuinely cannot — the answer is needed and a wrong guess is hard to reverse — do " +
+			"not guess: set the current task \"blocked\" (update_task) with a brief note of this " +
+			"question, then move on to another ready task or finish."
 		in.emitter.Emit(event.QuestionAsked, askData(question, options, true))
 		in.mu.Lock()
 		in.assumptions = append(in.assumptions, question)
@@ -107,7 +111,11 @@ func (in *interaction) AskMany(ctx context.Context, questions []orchestrator.Que
 	in.mu.Unlock()
 
 	if level == "autonomous" {
-		const ans = "You are in autonomous mode and no human is available. Proceed using your best judgement."
+		const ans = "You are in autonomous mode and no human is available, so this question " +
+			"cannot be answered. If you can responsibly proceed, do so on your best judgement. If " +
+			"you genuinely cannot — the answer is needed and a wrong guess is hard to reverse — do " +
+			"not guess: set the current task \"blocked\" (update_task) with a brief note of this " +
+			"question, then move on to another ready task or finish."
 		in.emitter.Emit(event.QuestionAsked, askManyData(questions, true))
 		answers := make([]string, len(questions))
 		in.mu.Lock()

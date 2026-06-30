@@ -903,6 +903,8 @@ type fakeClient struct {
 	lastRemove  string
 	lastStopped string
 
+	lastStartLevel string // InteractionLevel of the most recent StartSession
+
 	// previous-sessions screen (spec §18.6)
 	history      []*v1.SessionSummary
 	lastReopened string
@@ -939,6 +941,13 @@ func (f *fakeClient) ListModels(_ context.Context, _ *connect.Request[v1.ListMod
 func (f *fakeClient) StopSession(_ context.Context, req *connect.Request[v1.StopSessionRequest]) (*connect.Response[v1.StopSessionResponse], error) {
 	f.lastStopped = req.Msg.SessionId
 	return connect.NewResponse(&v1.StopSessionResponse{}), nil
+}
+
+// StartSession records the requested interaction level so the loop-autonomy test
+// can assert that a loop iteration starts an unattended (autonomous) session.
+func (f *fakeClient) StartSession(_ context.Context, req *connect.Request[v1.StartSessionRequest]) (*connect.Response[v1.StartSessionResponse], error) {
+	f.lastStartLevel = req.Msg.InteractionLevel
+	return connect.NewResponse(&v1.StartSessionResponse{SessionId: "s-new"}), nil
 }
 
 func (f *fakeClient) GetModelConfig(_ context.Context, req *connect.Request[v1.GetModelConfigRequest]) (*connect.Response[v1.GetModelConfigResponse], error) {
@@ -2225,6 +2234,26 @@ func TestLoopDecisionStopsWhenEmpty(t *testing.T) {
 	mm := next.(model)
 	if mm.looping || mm.state != stateMenu {
 		t.Fatalf("expected loop to stop and return to menu, looping=%v state=%v", mm.looping, mm.state)
+	}
+}
+
+// A loop iteration that has a ready task starts the next work session in
+// AUTONOMOUS mode so an unattended run never blocks on ask_user (a genuinely
+// stuck task is marked blocked by the coordinator and skipped).
+func TestLoopDecisionStartsAutonomousSession(t *testing.T) {
+	fc := newFakeClient()
+	m := &model{looping: true, loopExpected: "", client: fc, ctx: context.Background()}
+	next, cmd := m.applyLoopDecision(loopDecisionMsg{next: "0003", prev: ""})
+	mm := next.(model)
+	if !mm.looping || mm.loopExpected != "0003" {
+		t.Fatalf("expected loop to continue on 0003, looping=%v expected=%q", mm.looping, mm.loopExpected)
+	}
+	if cmd == nil {
+		t.Fatal("expected a startSession command")
+	}
+	cmd() // executes the StartSession RPC against the fake client
+	if fc.lastStartLevel != "autonomous" {
+		t.Fatalf("loop session must start autonomous, got %q", fc.lastStartLevel)
 	}
 }
 

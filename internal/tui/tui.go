@@ -386,10 +386,13 @@ func (m model) fetchModels() tea.Msg {
 	return modelsMsg{resp.Msg.Models}
 }
 
-func (m model) startSession(mode, prompt string) tea.Cmd {
+// startSession starts a session in the given mode. An empty level lets the daemon
+// apply its default (judgement); the work loop passes "autonomous" so unattended
+// runs never block on ask_user (spec §9, §11).
+func (m model) startSession(mode, prompt, level string) tea.Cmd {
 	return func() tea.Msg {
 		resp, err := m.client.StartSession(m.ctx, connect.NewRequest(&v1.StartSessionRequest{
-			Mode: mode, Prompt: prompt, Workspace: m.workspace, Project: m.project,
+			Mode: mode, Prompt: prompt, Workspace: m.workspace, Project: m.project, InteractionLevel: level,
 		}))
 		if err != nil {
 			return errMsg{err}
@@ -451,7 +454,9 @@ func (m model) applyLoopDecision(msg loopDecisionMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.loopExpected = msg.next
-	return m, m.startSession("work", "")
+	// Loop sessions run autonomously: ask_user must never block an unattended run.
+	// A genuinely stuck task is marked blocked (and skipped) rather than waited on.
+	return m, m.startSession("work", "", "autonomous")
 }
 
 // topReadyTask returns the id of the task a work session would pick next: the
@@ -1052,6 +1057,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pickerOpts, m.pickerCursor = nil, 0
 		m.loopStopping = false
 		m.clearWizard()
+		// Allocate a fresh event channel for this session. The subscribe goroutine
+		// closes its channel when the stream ends; in a loop run the next session
+		// must not reuse (and send on) that already-closed channel — doing so panics
+		// with "send on closed channel" and crashes the TUI back to the shell.
+		m.events = make(chan *v1.Event, 256)
 		m.sessionID, m.mode, m.state, m.status = msg.id, msg.mode, stateSession, "running"
 		// Reset the running usage tally and start the elapsed clock for the new (or
 		// reopened) session — usage accumulates only over the current view (task 0062).
@@ -1450,7 +1460,7 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if strings.TrimSpace(prompt) == "" {
 				prompt = e.openingPrompt
 			}
-			return m, m.startSession(e.mode, prompt)
+			return m, m.startSession(e.mode, prompt, "")
 		}
 	}
 	var cmd tea.Cmd
@@ -3564,7 +3574,7 @@ func (m model) menuView() string {
 		lbl, desc := e.label, e.description
 		if m.loop && isWorkEntry(e) {
 			lbl = e.label + " (loop)"
-			desc = "Chew through every ready backlog task unattended — done, blocked, or in_review."
+			desc = "Chew through every ready backlog task unattended (autonomous) — stuck tasks are marked blocked and skipped."
 		}
 		label := fmt.Sprintf("%-9s %s", lbl, dimStyle.Render(desc))
 		switch {
