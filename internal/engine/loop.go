@@ -220,7 +220,34 @@ func (l *Loop) History() []gollama.Message {
 // task and to inject follow-up input between Run calls (a "prod"), so a session
 // can continue the same agent across multiple turns.
 func (l *Loop) Post(content string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.history = append(l.history, gollama.Message{Role: "user", Content: content})
+}
+
+// PendingResponse reports whether the conversation is currently waiting on an
+// assistant turn — i.e. the last message is a user input or a tool result the
+// model has not yet responded to.
+//
+// Used by session resume: a reopened session whose reconstructed history ends
+// mid-turn (the model owes a response to a user message or to tool results) must
+// let the model respond BEFORE accepting new user input. Posting a fresh user
+// message in that state would place two non-assistant turns back to back —
+// Anthropic renders tool results as user-role messages, so a tool result (or
+// bare user message) immediately followed by a new user message is two
+// consecutive user turns, which backends reject with a 400
+// invalid_request_error ("messages: roles must alternate").
+func (l *Loop) PendingResponse() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.history) == 0 {
+		return false
+	}
+	switch l.history[len(l.history)-1].Role {
+	case "user", "tool":
+		return true
+	}
+	return false
 }
 
 // appendToolResult appends a tool result message to the conversation, carrying

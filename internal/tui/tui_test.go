@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -632,6 +633,37 @@ func TestIdleReportDeduped(t *testing.T) {
 	m = mk(turn, idle3)
 	if b := m.renderBody(idle3); !strings.Contains(b, "task 0042") {
 		t.Fatalf("a differing report should render in full, got %q", b)
+	}
+}
+
+// A session_idle whose report merely echoes the final model_turn is hidden
+// entirely (hiddenRow): otherwise its collapsed header re-prints the full report
+// a second time, directly below the identical model_turn row. Any idle that adds
+// content (assumptions) or differs stays visible.
+func TestEchoedIdleHidden(t *testing.T) {
+	mk := func(evs ...*v1.Event) *model {
+		m := &model{w: 80, bodyCache: map[int]string{}}
+		m.evs = evs
+		return m
+	}
+	turn := &v1.Event{Seq: 1, Type: "model_turn", Actor: "coordinator", DataJson: `{"text":"All green. Shipped it."}`}
+
+	echo := &v1.Event{Seq: 2, Type: "session_idle", DataJson: `{"report":"All green. Shipped it."}`}
+	m := mk(turn, echo)
+	if !m.hiddenRow(1) {
+		t.Fatal("a session_idle echoing the final turn should be a hidden row")
+	}
+
+	added := &v1.Event{Seq: 2, Type: "session_idle", DataJson: `{"report":"All green. Shipped it.\n\nAssumptions:\n- used port 8080"}`}
+	m = mk(turn, added)
+	if m.hiddenRow(1) {
+		t.Fatal("an idle that adds content should stay visible")
+	}
+
+	diff := &v1.Event{Seq: 2, Type: "session_idle", DataJson: `{"report":"Completed task 0042."}`}
+	m = mk(turn, diff)
+	if m.hiddenRow(1) {
+		t.Fatal("a differing idle report should stay visible")
 	}
 }
 
@@ -1562,3 +1594,34 @@ func TestStatusBarSegments(t *testing.T) {
 		t.Fatalf("unpriced bar should still show tokens: %s", bar)
 	}
 }
+
+// TestRenderBodySessionErrorWraps verifies a long single-line session_error
+// message (e.g. a backend 400 invalid_request_error with a JSON body) is wrapped
+// to the body width instead of running off the right edge. Regression for the
+// truncated/unwrapped error display.
+func TestRenderBodySessionErrorWraps(t *testing.T) {
+	long := "invalid_request_error: " + strings.Repeat("abcdefghij0123456789", 12) + " end"
+	ev := &v1.Event{Seq: 1, Type: "session_error", DataJson: `{"msg":` + jsonQuote(long) + `}`}
+
+	m := &model{w: 40}
+	body := m.renderBody(ev)
+	if body == "" {
+		t.Fatal("renderBody returned empty for session_error")
+	}
+	for _, line := range strings.Split(body, "\n") {
+		if w := lipgloss.Width(line); w > 40 {
+			t.Fatalf("error line width %d exceeds terminal width 40: %q", w, line)
+		}
+	}
+	// The full message must survive wrapping (no content dropped): stripping the
+	// indent/bar prefix and joining should recover the original characters.
+	if !strings.Contains(stripANSI(body), "end") {
+		t.Fatalf("wrapped error dropped trailing content: %q", body)
+	}
+}
+
+func jsonQuote(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"regexp"
 	"encoding/json"
 	"reflect"
 	"testing"
@@ -111,6 +112,115 @@ func TestReplayHistoryDanglingToolCall(t *testing.T) {
 	}
 	if last.Content == "" {
 		t.Fatalf("synthetic tool result should have non-empty content")
+	}
+}
+
+// TestReplayHistoryCanonicalizesToolIDs covers reopening a session whose recorded
+// tool-call ids are not valid Anthropic tool_use ids (e.g. they came from a
+// different backend and contain '.'/':' or are empty). Both the assistant
+// tool_use id and the matching tool_result tool_use_id must be rewritten to the
+// SAME canonical, pattern-valid id so the conversation is accepted on resume.
+func TestReplayHistoryCanonicalizesToolIDs(t *testing.T) {
+	valid := regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+	events := []event.Event{
+		{Seq: 1, Actor: "user", Type: event.UserInput, Data: map[string]any{"text": "go"}},
+		{Seq: 2, Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{"text": "working"}},
+		{Seq: 3, Actor: "coordinator", Type: event.ToolCall, Data: map[string]any{
+			"name": "read_file", "args": `{}`, "id": "call_abc.0:xyz",
+		}},
+		{Seq: 4, Actor: "coordinator", Type: event.ToolResult, Data: map[string]any{
+			"name": "read_file", "result": "ok", "id": "call_abc.0:xyz",
+		}},
+		// A second tool call with an EMPTY id (some backends omit it).
+		{Seq: 5, Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{"text": "again"}},
+		{Seq: 6, Actor: "coordinator", Type: event.ToolCall, Data: map[string]any{
+			"name": "read_file", "args": `{}`, "id": "",
+		}},
+		{Seq: 7, Actor: "coordinator", Type: event.ToolResult, Data: map[string]any{
+			"name": "read_file", "result": "ok2", "id": "",
+		}},
+	}
+	got := ReplayHistory(events)
+
+	// Collect each assistant tool_use id and each tool_result id, asserting all
+	// are pattern-valid and that each result matches its call.
+	var toolUseIDs []string
+	resultByID := map[string]bool{}
+	for _, m := range got {
+		for _, c := range m.ToolCalls {
+			if !valid.MatchString(c.ID) {
+				t.Fatalf("tool_use id %q does not match Anthropic pattern", c.ID)
+			}
+			toolUseIDs = append(toolUseIDs, c.ID)
+		}
+		if m.Role == "tool" {
+			if !valid.MatchString(m.ToolCallID) {
+				t.Fatalf("tool_result tool_use_id %q does not match Anthropic pattern", m.ToolCallID)
+			}
+			resultByID[m.ToolCallID] = true
+		}
+	}
+	if len(toolUseIDs) != 2 {
+		t.Fatalf("want 2 tool_use ids, got %d", len(toolUseIDs))
+	}
+	for _, id := range toolUseIDs {
+		if !resultByID[id] {
+			t.Fatalf("tool_use id %q has no matching tool_result", id)
+		}
+	}
+}
+
+// TestReplayHistoryLegacyMissingResultID reproduces the real on-disk case: logs
+// written before the loop recorded an "id" on tool_result events have a valid
+// toolu_… id on the tool_call but NO id on the matching tool_result. Replay must
+// recover the pairing positionally (each result follows its call) so the
+// tool_result carries the call's real id rather than an empty tool_use_id (which
+// Anthropic rejects: tool_use_id must match ^[a-zA-Z0-9_-]+$).
+func TestReplayHistoryLegacyMissingResultID(t *testing.T) {
+	events := []event.Event{
+		{Seq: 1, Actor: "user", Type: event.UserInput, Data: map[string]any{"text": "go"}},
+		{Seq: 2, Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{"text": "t"}},
+		{Seq: 3, Actor: "coordinator", Type: event.ToolCall, Data: map[string]any{
+			"name": "Read", "args": `{}`, "id": "toolu_01AAAA",
+		}},
+		// Legacy tool_result: no "id" field at all.
+		{Seq: 4, Actor: "coordinator", Type: event.ToolResult, Data: map[string]any{
+			"name": "Read", "result": "first",
+		}},
+		{Seq: 5, Actor: "coordinator", Type: event.ToolCall, Data: map[string]any{
+			"name": "Read", "args": `{}`, "id": "toolu_01BBBB",
+		}},
+		{Seq: 6, Actor: "coordinator", Type: event.ToolResult, Data: map[string]any{
+			"name": "Read", "result": "second",
+		}},
+	}
+	got := ReplayHistory(events)
+
+	// Map each tool result back to the call it answers, by id, and check the
+	// content lines up with the FIFO order (first result -> first call).
+	var calls []gollama.ToolCall
+	results := map[string]string{} // tool_use_id -> result content
+	for _, m := range got {
+		calls = append(calls, m.ToolCalls...)
+		if m.Role == "tool" {
+			if m.ToolCallID == "" {
+				t.Fatal("tool_result has empty tool_use_id; Anthropic would 400")
+			}
+			results[m.ToolCallID] = m.Content
+		}
+	}
+	if len(calls) != 2 {
+		t.Fatalf("want 2 tool calls, got %d", len(calls))
+	}
+	if results[calls[0].ID] != "first" {
+		t.Fatalf("call %q paired to %q, want first", calls[0].ID, results[calls[0].ID])
+	}
+	if results[calls[1].ID] != "second" {
+		t.Fatalf("call %q paired to %q, want second", calls[1].ID, results[calls[1].ID])
+	}
+	// The real recorded ids are valid and must be preserved as-is.
+	if calls[0].ID != "toolu_01AAAA" || calls[1].ID != "toolu_01BBBB" {
+		t.Fatalf("valid recorded ids were not preserved: %q, %q", calls[0].ID, calls[1].ID)
 	}
 }
 

@@ -28,6 +28,8 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/reflow/wordwrap"
+	"github.com/muesli/reflow/wrap"
 
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 	"github.com/whyrusleeping/ycc/proto/ycc/v1/yccv1connect"
@@ -2572,11 +2574,25 @@ func (m *model) isEmptyModelTurn(i int) bool {
 	return ev.Type == "model_turn" && strings.TrimSpace(dataField(ev, "text")) == ""
 }
 
+// isEchoedIdle reports whether the event at index i is a session_idle whose
+// report merely echoes the preceding final model_turn (so renderBody de-dupes it
+// to nothing). Such a row carries no content beyond the status change — and its
+// collapsed header would otherwise re-print the full report a second time, right
+// below the identical model_turn — so we hide it entirely.
+func (m *model) isEchoedIdle(i int) bool {
+	if i < 0 || i >= len(m.evs) {
+		return false
+	}
+	ev := m.evs[i]
+	return ev.Type == "session_idle" && strings.TrimSpace(m.bodyFor(ev)) == ""
+}
+
 // hiddenRow reports whether event i renders no block of its own and instead
-// shares the previous rendered row's start line: either a tool_result folded
-// into its preceding tool_call, or an empty (tool-calls-only) model_turn.
+// shares the previous rendered row's start line: a tool_result folded into its
+// preceding tool_call, an empty (tool-calls-only) model_turn, or a session_idle
+// whose report just echoes the final model_turn.
 func (m *model) hiddenRow(i int) bool {
-	return m.isMergedResult(i) || m.isEmptyModelTurn(i)
+	return m.isMergedResult(i) || m.isEmptyModelTurn(i) || m.isEchoedIdle(i)
 }
 
 // eventAt returns the index of the event whose rendered block contains content
@@ -3475,7 +3491,15 @@ func (m *model) renderBody(ev *v1.Event) string {
 		txt := fmt.Sprintf("%s — %s\n%s", dataField(ev, "model"), dataField(ev, "verdict"), dataField(ev, "summary"))
 		return indentLines(m.markdown(txt), "  ")
 	case "session_error":
-		return indentLines(errStyle.Render(dataField(ev, "msg")), bodyBar)
+		msg := dataField(ev, "msg")
+		// Error messages (e.g. a backend 400 invalid_request_error with a long
+		// JSON body) are often a single very long line. Wrap to the body width so
+		// the text doesn't run off the right edge — wordwrap on spaces, then hard
+		// wrap to break any unbroken token (URLs, JSON, etc.).
+		if w := m.w - lipgloss.Width(bodyBar); w > 0 {
+			msg = wrap.String(wordwrap.String(msg, w), w)
+		}
+		return indentLines(errStyle.Render(msg), bodyBar)
 	default:
 		return ""
 	}

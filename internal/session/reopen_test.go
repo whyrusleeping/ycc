@@ -182,3 +182,63 @@ func TestResumeRunLoopAppends(t *testing.T) {
 
 	s.Stop()
 }
+
+// A session reopened mid-turn — its reconstructed history ends on a tool result
+// the model has not yet responded to — must run the loop IMMEDIATELY on resume
+// (letting the model respond) instead of waiting for new user input. Posting a
+// fresh user turn after a tool result would yield two consecutive user turns
+// (Anthropic renders tool results as user messages), a 400 invalid_request_error.
+func TestResumeRunsPendingTurnBeforeInput(t *testing.T) {
+	log, err := event.OpenLog(filepath.Join(t.TempDir(), "events.jsonl"))
+	if err != nil {
+		t.Fatalf("OpenLog: %v", err)
+	}
+	em := event.NewEmitter(log, "coordinator")
+	s := newStopSession(t)
+	s.log = log
+	s.emitter = em
+	s.inter = newInteraction("autonomous", em)
+	s.Mode = "chat"
+	s.resumed = true
+
+	turner := &scriptTurner{text: "responding to tool result"}
+	loop := &engine.Loop{
+		Client:  turner,
+		Model:   "test",
+		Tools:   tools.New(),
+		Emitter: em,
+		Steer:   s,
+	}
+	// History ends on a tool result: the model owes a response.
+	loop.SetHistory([]gollama.Message{
+		{Role: "user", Content: "do the thing"},
+		{Role: "assistant", ToolCalls: []gollama.ToolCall{{ID: "c1", Type: "function", Function: gollama.ToolCallFunction{Name: "Bash", Arguments: "{}"}}}},
+		{Role: "tool", ToolCallID: "c1", Content: "ok"},
+	})
+	s.loop = loop
+
+	go s.run()
+
+	// Without sending any input, the resume must run a model turn and reach idle.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if hasType(s.log.Snapshot(), event.SessionIdle) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("resume did not run the pending turn before waiting for input")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if turner.calls == 0 {
+		t.Fatal("model was never called to respond to the outstanding tool result")
+	}
+	// The reconstructed history must not have grown a second consecutive user
+	// turn; after the resume turn it ends on the assistant's response.
+	h := loop.History()
+	if last := h[len(h)-1]; last.Role != "assistant" {
+		t.Fatalf("history ends on %q, want assistant after the resume turn", last.Role)
+	}
+
+	s.Stop()
+}

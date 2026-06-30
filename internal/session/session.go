@@ -598,14 +598,26 @@ func (s *Session) run() {
 		// Reopened session ("resume = replay", spec §4.5/§18.6): the loop already
 		// carries a history reconstructed from the existing log, so do NOT emit a
 		// fresh SessionStarted / initial UserInput nor seed. Mark the reopen in the
-		// continuous log and wait idle for the first new input before continuing.
+		// continuous log.
 		s.emitter.Emit(event.SessionReopened, map[string]any{})
-		s.setStatus(event.StatusIdle)
-		select {
-		case text := <-s.inputCh:
-			s.currentLoop().Post(text)
-		case <-s.ctx.Done():
-			return
+		// If the reconstructed history ends mid-turn — the model still owes a
+		// response to a user message or to tool results (e.g. the session was
+		// reopened after tools ran but before the model replied, or a dangling
+		// tool call was repaired with a synthetic result) — fall through to the
+		// run loop so the model responds FIRST and the conversation reaches a clean
+		// idle state. Waiting for new input here and Post-ing it would place two
+		// non-assistant turns back to back: Anthropic renders tool results as
+		// user-role messages, so a tool result (or bare user turn) immediately
+		// followed by a fresh user message is two consecutive user turns, which
+		// backends reject with a 400 invalid_request_error.
+		if !s.currentLoop().PendingResponse() {
+			s.setStatus(event.StatusIdle)
+			select {
+			case text := <-s.inputCh:
+				s.currentLoop().Post(text)
+			case <-s.ctx.Done():
+				return
+			}
 		}
 	} else {
 		s.emitter.Emit(event.SessionStarted, map[string]any{

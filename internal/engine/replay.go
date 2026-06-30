@@ -20,11 +20,22 @@ package engine
 // assistant turns).
 
 import (
+	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/event"
 )
+
+// toolIDInvalid matches any character Anthropic rejects in a tool_use id. The
+// native /v1/messages API requires tool_use ids (and the tool_result tool_use_id
+// that references them) to match ^[a-zA-Z0-9_-]+$. Other backends (and some
+// gateways/local models) emit ids with other characters — or none at all — which
+// the original backend accepted but Anthropic rejects with a 400 on resume. We
+// canonicalize ids on replay so a reopened session is valid regardless of which
+// backend originally produced them.
+var toolIDInvalid = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 
 // ReplayHistory reconstructs the coordinator agent loop's conversation history
 // from a session's events, in order: user inputs, the coordinator's assistant
@@ -47,6 +58,45 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 	// cut off at the output token cap, so we can synthesize the internal nudge
 	// (see file doc comment) before the retry turn.
 	lastTurnTruncated := false
+
+	// canon maps a raw recorded tool-call id to a canonical, Anthropic-valid id.
+	// Ids that are empty or contain characters outside ^[a-zA-Z0-9_-]+$ are
+	// rewritten to a unique "call_N"; ids already valid are kept as-is. The map
+	// keys on the raw id so repeated references to the same raw id are stable.
+	idMap := map[string]string{}
+	usedIDs := map[string]bool{}
+	canon := func(raw string) string {
+		if c, ok := idMap[raw]; ok {
+			return c
+		}
+		c := raw
+		if c == "" || toolIDInvalid.MatchString(c) || usedIDs[c] {
+			c = fmt.Sprintf("call_%d", len(idMap))
+			for usedIDs[c] {
+				c = fmt.Sprintf("call_%d", len(idMap)+len(usedIDs))
+			}
+		}
+		idMap[raw] = c
+		usedIDs[c] = true
+		return c
+	}
+
+	// pending is a FIFO queue of canonical tool-call ids awaiting a tool_result,
+	// in emission order. Tool results pair to calls by id when the id was recorded,
+	// otherwise POSITIONALLY: older logs (before the loop recorded an "id" on
+	// tool_result events) omit it, leaving an empty tool_use_id that Anthropic
+	// rejects. The live loop emits each ToolResult immediately after its ToolCall,
+	// so the FIFO order is exact and lets us recover the correct pairing.
+	canonByRaw := map[string]string{} // raw call id -> canonical (for id-based match)
+	var pending []string
+	popPending := func(id string) {
+		for i, p := range pending {
+			if p == id {
+				pending = append(pending[:i], pending[i+1:]...)
+				return
+			}
+		}
+	}
 
 	for _, ev := range events {
 		switch ev.Type {
@@ -95,8 +145,12 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			if assistantIdx < 0 {
 				continue // orphan tool call with no preceding assistant message
 			}
+			rawID := str(ev.Data, "id")
+			id := canon(rawID)
+			canonByRaw[rawID] = id
+			pending = append(pending, id)
 			call := gollama.ToolCall{
-				ID:   str(ev.Data, "id"),
+				ID:   id,
 				Type: "function",
 				Function: gollama.ToolCallFunction{
 					Name:      str(ev.Data, "name"),
@@ -108,7 +162,26 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			if ev.Actor != "coordinator" {
 				continue
 			}
-			id := str(ev.Data, "id")
+			// Resolve the call this result answers. Prefer an id match when the
+			// result recorded one and it maps to a known call; otherwise fall back
+			// to the oldest unanswered call (positional FIFO), which recovers the
+			// pairing for legacy logs that omitted the tool_result id.
+			rawID := str(ev.Data, "id")
+			var id string
+			if rawID != "" {
+				if c, ok := canonByRaw[rawID]; ok {
+					id = c
+				}
+			}
+			if id == "" && len(pending) > 0 {
+				id = pending[0]
+			}
+			if id == "" {
+				// Orphan result with no pending call (shouldn't happen in practice):
+				// mint a valid id so the message is at least well-formed.
+				id = canon(rawID)
+			}
+			popPending(id)
 			answered[id] = true
 			history = append(history, gollama.Message{Role: "tool", ToolCallID: id, Content: str(ev.Data, "result")})
 		}

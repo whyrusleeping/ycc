@@ -509,3 +509,27 @@ func TestToolResultMediaFollowupUserMessageOpenAI(t *testing.T) {
 		t.Fatalf("expected tool text + follow-up user image (toolText=%v userImage=%v)", sawToolText, sawUserImage)
 	}
 }
+
+// TestPendingResponse covers the reopen-mid-turn detector: the loop "owes a
+// turn" whenever its history ends on a user input or an unanswered tool result.
+func TestPendingResponse(t *testing.T) {
+	cases := []struct {
+		name string
+		hist []gollama.Message
+		want bool
+	}{
+		{"empty", nil, false},
+		{"ends user", []gollama.Message{{Role: "user", Content: "hi"}}, true},
+		{"ends tool", []gollama.Message{{Role: "user"}, {Role: "assistant"}, {Role: "tool", Content: "r"}}, true},
+		{"ends assistant", []gollama.Message{{Role: "user"}, {Role: "assistant", Content: "done"}}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			l := &Loop{}
+			l.SetHistory(tc.hist)
+			if got := l.PendingResponse(); got != tc.want {
+				t.Fatalf("PendingResponse() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
