@@ -78,4 +78,4 @@
 | [0073](backlog/0073-investigate-fix-multi-question-ask-user-ui-interac.md) | Investigate/fix multi-question ask_user UI (interactive/judgement modes) | todo | 3 | — |
 | [0074](backlog/0074-tui-snapshot-to-image-rendering-for-visual-debuggi.md) | TUI snapshot-to-image rendering for visual debugging | done | 3 | — |
 | [0075](backlog/0075-scroll-tui-backlog-view-when-items-exceed-terminal.md) | Scroll TUI backlog view when items exceed terminal height | done | 3 | — |
-| [0076](backlog/0076-move-activity-spinner-to-the-bottom-next-to-the-se.md) | Move activity spinner to the bottom next to the session input box | todo | 3 | — |
+| [0076](backlog/0076-move-activity-spinner-to-the-bottom-next-to-the-se.md) | Move activity spinner to the bottom next to the session input box | done | 3 | — |

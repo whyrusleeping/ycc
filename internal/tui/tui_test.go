@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"connectrpc.com/connect"
@@ -883,6 +884,41 @@ func TestSessionViewFitsTerminal(t *testing.T) {
 				t.Fatalf("%dx%d: line %d width %d exceeds terminal width %d: %q", sz.w, sz.h, i, w, sz.w, ln)
 			}
 		}
+	}
+}
+
+// TestSpinnerInInputRow verifies the activity spinner moved from the top status
+// bar to the bottom input row (task 0076): while running, the input row shows a
+// spinner frame and the status bar shows only the static dot.
+func TestSpinnerInInputRow(t *testing.T) {
+	m := model{
+		state: stateSession, status: "running", mode: "implement",
+		sessionID: "sess12345678abcdef", follow: true,
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+		spin: spinner.New(spinner.WithSpinner(spinner.Dot)),
+	}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(model)
+
+	glyph := m.spin.View()
+	if glyph == "" {
+		t.Fatal("spinner produced an empty frame")
+	}
+
+	if row := m.inputRow(); !strings.Contains(row, glyph) {
+		t.Fatalf("inputRow should contain spinner frame %q while running:\n%s", glyph, row)
+	}
+	if bar := m.statusBar(); strings.Contains(bar, glyph) {
+		t.Fatalf("status bar should not contain spinner frame %q (spinner moved to input): %q", glyph, bar)
+	}
+	if bar := m.statusBar(); !strings.Contains(bar, "●") {
+		t.Fatalf("status bar should contain the static dot ●: %q", bar)
+	}
+
+	// On idle the gutter is blank: the input row no longer carries a spinner.
+	m.status = "idle"
+	if row := m.inputRow(); strings.Contains(row, glyph) {
+		t.Fatalf("inputRow should not animate while idle: %q", row)
 	}
 }
 

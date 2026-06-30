@@ -853,6 +853,34 @@ func framedInput(ta textarea.Model, n int) string {
 	return indentBlock(inputFrameStyle.Render(ta.View()), n)
 }
 
+// inputRow renders the framed session input with the activity spinner in the
+// left gutter (task 0076): the spinner sits next to the place the user types.
+// The spinner animates only while running (same gating as the old status-bar
+// glyph and spinnerCmd); otherwise the gutter is a blank column, preserving the
+// single-column indent framedInput(m.input, 1) used so the box does not shift.
+func (m model) inputRow() string {
+	frame := inputFrameStyle.Render(m.input.View())
+	rows := strings.Split(frame, "\n")
+	glyph := " "
+	if m.status == "running" && len(m.spin.Spinner.Frames) > 0 {
+		glyph = m.spin.View()
+	}
+	// Place the glyph on the first content row (row index 1, just below the top
+	// border); clamp for safety. Every other gutter row is a single space.
+	spinRow := 1
+	if spinRow >= len(rows) {
+		spinRow = 0
+	}
+	for i := range rows {
+		if i == spinRow {
+			rows[i] = glyph + rows[i]
+		} else {
+			rows[i] = " " + rows[i]
+		}
+	}
+	return strings.Join(rows, "\n")
+}
+
 // indentBlock left-pads every line of s by n spaces.
 func indentBlock(s string, n int) string {
 	if n <= 0 {
@@ -3835,9 +3863,10 @@ func (m model) statusBar() string {
 	}
 	var segs []seg
 
-	// status: a spinning glyph while running, else a state-colored dot. The spinner
-	// is only ticked while status=="running"/capture-busy (see spinnerCmd), and the
-	// static dot covers idle/paused/error so a stale error never animates (task 0051).
+	// status: a state-colored dot. The header always shows the static dot; the
+	// activity spinner now lives next to the input box at the bottom of the
+	// session view (see inputRow / task 0076). The static dot covers
+	// idle/paused/error so a stale error never animates (task 0051).
 	dot := dimStyle
 	switch m.status {
 	case "running":
@@ -3850,9 +3879,6 @@ func (m model) statusBar() string {
 		dot = pathStyle
 	}
 	glyph := dot.Render("●")
-	if m.status == "running" && len(m.spin.Spinner.Frames) > 0 {
-		glyph = m.spin.View()
-	}
 	segs = append(segs, seg{glyph + " " + typeStyle.Render(m.status), 0})
 
 	if m.mode != "" {
@@ -3993,7 +4019,7 @@ func (m model) sessionView() string {
 			return top + "\n" + body + "\n" + overview + "\n" + m.pickerView() + "\n" + help
 		}
 		help := m.footer(" type your answer + enter · esc settings")
-		return top + "\n" + body + "\n" + overview + "\n" + framedInput(m.input, 1) + "\n" + help
+		return top + "\n" + body + "\n" + overview + "\n" + m.inputRow() + "\n" + help
 	}
 	if m.picking {
 		help := m.footer(" ↑↓ choose · enter select · esc settings")
@@ -4001,7 +4027,7 @@ func (m model) sessionView() string {
 	}
 	if m.paused {
 		help := m.footer(" ⏸ paused — type a correction + enter to steer · enter to resume · esc settings")
-		return top + "\n" + body + "\n" + framedInput(m.input, 1) + "\n" + help
+		return top + "\n" + body + "\n" + m.inputRow() + "\n" + help
 	}
 	help := m.footer(" enter send/expand · shift+enter newline · ↑↓ select · click expand · pgup/pgdn scroll · ctrl+i interrupt · esc settings · ctrl+b backlog · ctrl+n new task")
 	if m.mode == "work" {
@@ -4013,7 +4039,7 @@ func (m model) sessionView() string {
 			help = m.footer(" shift+tab loop · enter send/expand · ↑↓ select · pgup/pgdn scroll · ctrl+i interrupt · esc settings")
 		}
 	}
-	return top + "\n" + body + "\n" + framedInput(m.input, 1) + "\n" + help
+	return top + "\n" + body + "\n" + m.inputRow() + "\n" + help
 }
 
 // footer renders a single-row help/status line, clamped to the terminal width so

@@ -37,3 +37,4 @@ The backlog view should render within the terminal bounds and scroll smoothly (e
 …[truncated]
 - 2026-06-30 decision: accept — commit: tui: window backlog browser to viewport height so long lists scroll instead of overrunning  Add listWindow helper and apply vertical windowing in the shared browserCard component, keeping the cursor v
 …[truncated]
+- 2026-06-30 usage: 11,402 tok (in 66, out 11,336, cache_r 411,661, cache_w 34,505) · cost n/a (unpriced)
