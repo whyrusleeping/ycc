@@ -1,7 +1,7 @@
 ---
 id: "0071"
 title: Render Edit tool output as a git-style colored diff
-status: todo
+status: done
 priority: 3
 created: "2026-06-30"
 updated: "2026-06-30"
@@ -32,3 +32,12 @@ Render edits like a git diff:
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-30 plan: Render the Edit tool's call params as a unified git-style diff in the TUI.  Findings: - Edit tool (internal/tools/worker.go) takes file_path/old_string/new_string and returns a plain "edited <path>" r
+…[truncated]
+- 2026-06-30 implementer report: Implemented git-style unified diff rendering for Edit tool calls in the TUI.  Changes (internal/tui/tui.go): - Added `unifiedDiff(oldStr, newStr string, context int) string`: splits both sides into li
+…[truncated]
+- 2026-06-30 review tier: single-opus — reviewers: Claude
+- 2026-06-30 review (Claude): accept — The change adds a proper line-level LCS unified diff (`unifiedDiff`/`diffOps`) and wires Edit tool calls in `cardParams` to render old_string vs new_string as a git-style diff via the existing `colori
+…[truncated]
+- 2026-06-30 decision: accept — commit: Render Edit tool calls as a git-style unified colored diff in the TUI  Add line-level LCS unifiedDiff/diffOps helpers and special-case Edit calls in cardParams to show old_string vs new_string as a un
+…[truncated]

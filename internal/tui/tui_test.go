@@ -1771,3 +1771,65 @@ func TestDropMouseFragment(t *testing.T) {
 		t.Error("expected no drop when no recent mouse activity")
 	}
 }
+
+func TestUnifiedDiff(t *testing.T) {
+	oldStr := "line one\n\tindented\nmiddle old\nfour\nfive"
+	newStr := "line one\n\tindented\nmiddle new\nfour\nfive"
+	out := unifiedDiff(oldStr, newStr, 3)
+	if !strings.Contains(out, "@@") {
+		t.Fatalf("expected hunk header, got:\n%s", out)
+	}
+	if !strings.Contains(out, "-middle old") {
+		t.Errorf("expected removed line, got:\n%s", out)
+	}
+	if !strings.Contains(out, "+middle new") {
+		t.Errorf("expected added line, got:\n%s", out)
+	}
+	if !strings.Contains(out, " line one") {
+		t.Errorf("expected context line prefixed with space, got:\n%s", out)
+	}
+	// Indentation preserved after the prefix.
+	if !strings.Contains(out, " \tindented") {
+		t.Errorf("expected indentation preserved, got:\n%q", out)
+	}
+}
+
+func TestUnifiedDiffTruncation(t *testing.T) {
+	var oldB, newB strings.Builder
+	for i := 0; i < 5000; i++ {
+		fmt.Fprintf(&oldB, "old %d\n", i)
+		fmt.Fprintf(&newB, "new %d\n", i)
+	}
+	out := unifiedDiff(oldB.String(), newB.String(), 3)
+	if !strings.Contains(out, "diff truncated") {
+		t.Errorf("expected truncation marker for very large input")
+	}
+	if n := strings.Count(out, "\n"); n > 420 {
+		t.Errorf("expected output bounded, got %d lines", n)
+	}
+}
+
+func TestEditCardParamsDiff(t *testing.T) {
+	m := &model{w: 100}
+	args := `{"file_path":"x.go","old_string":"foo\nbar\nbaz","new_string":"foo\nqux\nbaz"}`
+	call := &v1.Event{Seq: 1, Type: "tool_call", Actor: "coordinator",
+		DataJson: `{"id":"c1","name":"Edit","args":` + mustJSONString(args) + `}`}
+	out := stripANSI(m.cardParams(call))
+	if !strings.Contains(out, "-bar") || !strings.Contains(out, "+qux") {
+		t.Errorf("expected diff lines, got:\n%s", out)
+	}
+	if !strings.Contains(out, "@@") {
+		t.Errorf("expected hunk header, got:\n%s", out)
+	}
+	if strings.Contains(out, "old_string:") || strings.Contains(out, "new_string:") {
+		t.Errorf("expected raw key labels to be suppressed, got:\n%s", out)
+	}
+	if !strings.Contains(out, "x.go") {
+		t.Errorf("expected file_path shown, got:\n%s", out)
+	}
+}
+
+func mustJSONString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}

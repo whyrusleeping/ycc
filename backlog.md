@@ -73,4 +73,4 @@
 | [0068](backlog/0068-allow-reading-trusted-paths-outside-the-workspace.md) | Allow reading trusted paths outside the workspace (e.g. Go mod cache) | done | 3 | — |
 | [0069](backlog/0069-fix-tui-styling-of-thinking-reasoning-text-black-o.md) | Fix TUI styling of thinking/reasoning text (black-on-white background and extra line spacing) | done | 3 | — |
 | [0070](backlog/0070-improve-ctrl-n-quick-add-backlog-ui-echo-user-mess.md) | Improve ctrl+n quick-add backlog UI: echo user message in log, wrap log lines, reuse interactive question UI | todo | 3 | — |
-| [0071](backlog/0071-render-edit-tool-output-as-a-git-style-colored-dif.md) | Render Edit tool output as a git-style colored diff | todo | 3 | — |
+| [0071](backlog/0071-render-edit-tool-output-as-a-git-style-colored-dif.md) | Render Edit tool output as a git-style colored diff | done | 3 | — |

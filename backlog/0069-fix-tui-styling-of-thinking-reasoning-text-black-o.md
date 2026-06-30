@@ -33,3 +33,4 @@ Pure visual/styling fix for the TUI rendering of thinking/reasoning text only. N
 …[truncated]
 - 2026-06-30 review tier: simple (coordinator self-review)
 - 2026-06-30 decision: accept — commit: Fix TUI thinking text styling: drop italic (reverse-video bg) and per-line wrap to remove spurious line spacing
+- 2026-06-30 usage: 5,095 tok (in 24, out 5,071, cache_r 248,027, cache_w 12,056) · cost n/a (unpriced)
