@@ -1,10 +1,10 @@
 ---
 id: "0061"
 title: Unified TUI app frame + bordered modal cards
-status: todo
+status: done
 priority: 3
 created: "2026-06-29"
-updated: "2026-06-29"
+updated: "2026-06-30"
 depends_on:
     - "0060"
 spec_refs:
@@ -49,3 +49,12 @@ This task gives every screen the same shape and makes modals look like modals.
   `relayout()` — the session's scrollable region must keep its correct height.
 
 ## Work log
+- 2026-06-30 plan: Presentation-only refactor of TUI chrome in internal/tui/tui.go, consuming the 0060 theme palette. No keybinding/behavior changes.  1. Add small layout helpers (new section in tui.go, colors from them
+…[truncated]
+- 2026-06-30 implementer report: Implemented Task 0061: unified TUI app frame + bordered modal cards (presentation-only) in `internal/tui/tui.go`, consuming the 0060 theme palette.  ## What changed  Added a small shared-chrome helper
+…[truncated]
+- 2026-06-30 review tier: single-opus — reviewers: Claude
+- 2026-06-30 review (Claude): accept — Presentation-only refactor that adds unified TUI chrome helpers (titleBar/footerBar/modalCard) and renders the settings, backlog, quick-capture, and model-backends overlays as bordered, centered cards
+…[truncated]
+- 2026-06-30 decision: accept — commit: tui: unified app frame + bordered modal cards [0061]  Add shared chrome helpers (titleBar/footerBar/modalCard) consuming the 0060 theme palette. Menu, picker, history, and backlog share a consistent t
+…[truncated]

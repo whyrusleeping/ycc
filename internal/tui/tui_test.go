@@ -736,6 +736,46 @@ func TestAppendEventClearsLatchedError(t *testing.T) {
 // the total number of lines must equal the terminal height. A wrapping footer or
 // header pushes the frame down a row, which is what hides the agent's last output
 // line behind the input box (task 0052).
+// TestOverlayRendersAsCard checks that modal overlays (settings, backlog) render
+// as bordered, centered cards: the rendered View contains rounded-border glyphs
+// and no physical line exceeds the terminal width (task 0061).
+func TestOverlayRendersAsCard(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(*model)
+	}{
+		{"settings", func(m *model) { m.openOverlay() }},
+		{"backlog", func(m *model) {
+			m.backlog = true
+			m.backlogTasks = []*v1.BacklogTaskSummary{
+				{Id: "0001", Status: "todo", Priority: 1, Title: "do a thing", Ready: true},
+				{Id: "0002", Status: "doing", Priority: 2, Title: "another task", Ready: false, BlockedBy: []string{"0001"}},
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := model{
+				state: stateMenu, expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+				thinkLevels: map[string]string{"coordinator": "high", "implementer": "high", "reviewers": "high"},
+			}
+			updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+			m = updated.(model)
+			tc.setup(&m)
+
+			view := m.View()
+			if !strings.ContainsAny(view, "╭╰│╮╯") {
+				t.Fatalf("%s overlay does not render a rounded border:\n%s", tc.name, view)
+			}
+			for i, ln := range strings.Split(view, "\n") {
+				if w := lipgloss.Width(ln); w > 80 {
+					t.Fatalf("%s overlay line %d width %d exceeds terminal width 80: %q", tc.name, i, w, ln)
+				}
+			}
+		})
+	}
+}
+
 func TestSessionViewFitsTerminal(t *testing.T) {
 	sizes := []struct{ w, h int }{{80, 24}, {60, 20}}
 	for _, sz := range sizes {
@@ -1624,4 +1664,3 @@ func jsonQuote(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
 }
-

@@ -1324,21 +1324,20 @@ func waitCaptureEvent(ch chan *v1.Event) tea.Cmd {
 	}
 }
 
-// captureView renders the quick-add backlog capture overlay.
+// captureView renders the quick-add backlog capture overlay as a bordered modal card.
 func (m model) captureView() string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render(" capture backlog item ") + "\n\n")
 	switch m.captureStage {
 	case 0:
-		b.WriteString("  Describe a new backlog item:\n\n")
-		b.WriteString("  " + m.captureInput.View() + "\n")
+		b.WriteString("Describe a new backlog item:\n\n")
+		b.WriteString(m.captureInput.View() + "\n")
 	case 1:
-		b.WriteString("  " + selStyle.Render("The capture agent asks:") + "\n")
-		b.WriteString("  " + m.captureQuestion + "\n\n")
-		b.WriteString("  Your answer:\n\n")
-		b.WriteString("  " + m.captureInput.View() + "\n")
+		b.WriteString(selStyle.Render("The capture agent asks:") + "\n")
+		b.WriteString(m.captureQuestion + "\n\n")
+		b.WriteString("Your answer:\n\n")
+		b.WriteString(m.captureInput.View() + "\n")
 	case 2:
-		b.WriteString("  " + selStyle.Render(m.captureMsg) + "\n")
+		b.WriteString(selStyle.Render(m.captureMsg) + "\n")
 	}
 	// Stream the capture agent's action log live (task 0049): show the last few
 	// events so the user sees progress instead of a blank wait.
@@ -1354,7 +1353,7 @@ func (m model) captureView() string {
 			if line == "" {
 				continue
 			}
-			b.WriteString("  " + dimStyle.Render(ev.Actor) + " " + line + "\n")
+			b.WriteString(dimStyle.Render(ev.Actor) + " " + line + "\n")
 		}
 	}
 	if m.captureBusy {
@@ -1363,17 +1362,16 @@ func (m model) captureView() string {
 		if len(m.spin.Spinner.Frames) > 0 {
 			spin = m.spin.View()
 		}
-		b.WriteString("\n  " + spin + " " + dimStyle.Render("capturing…"))
+		b.WriteString("\n" + spin + " " + dimStyle.Render("capturing…"))
 	} else if strings.HasPrefix(m.captureMsg, "error:") {
-		b.WriteString("\n  " + selStyle.Render(m.captureMsg))
+		b.WriteString("\n" + selStyle.Render(m.captureMsg))
 	}
-	hint := "  enter submit · esc cancel"
+	b.WriteString("\n\n" + dimStyle.Render("(the running session keeps going — capture is off-stream)"))
+	hint := "enter submit · esc cancel"
 	if m.captureStage == 2 {
-		hint = "  enter/esc close"
+		hint = "enter/esc close"
 	}
-	b.WriteString("\n\n" + dimStyle.Render(hint))
-	b.WriteString("\n" + dimStyle.Render("  (the running session keeps going — capture is off-stream)"))
-	return b.String()
+	return m.modalCard(" capture backlog item ", strings.TrimRight(b.String(), "\n"), hint)
 }
 
 // --- backlog browser (spec §18.5) ---
@@ -1447,16 +1445,15 @@ func (m model) visibleBacklogTasks() []*v1.BacklogTaskSummary {
 	return out
 }
 
-// backlogView renders the modal backlog browser (list or detail).
+// backlogView renders the modal backlog browser (list or detail) as a bordered card.
 func (m model) backlogView() string {
 	if m.backlogDetail != nil {
 		return m.taskDetailView(m.backlogDetail)
 	}
 	var b strings.Builder
-	b.WriteString(titleStyle.Render(" ycc — backlog ") + "\n\n")
 	vis := m.visibleBacklogTasks()
 	if len(vis) == 0 {
-		b.WriteString("  " + dimStyle.Render("(no backlog tasks)") + "\n")
+		b.WriteString(dimStyle.Render("(no backlog tasks)") + "\n")
 	}
 	for i, t := range vis {
 		cursor := "  "
@@ -1473,16 +1470,15 @@ func (m model) backlogView() string {
 			cursor = selStyle.Render("▸ ")
 			row = selStyle.Render(row)
 		}
-		b.WriteString("  " + cursor + row + tag + "\n")
+		b.WriteString(cursor + row + tag + "\n")
 	}
-	b.WriteString("\n" + dimStyle.Render("  ↑/↓ select · enter inspect · d show/hide done · esc close"))
-	return b.String()
+	return m.modalCard(" ycc — backlog ", strings.TrimRight(b.String(), "\n"),
+		"↑/↓ select · enter inspect · d show/hide done · esc close")
 }
 
-// taskDetailView renders a single task's full, read-only detail (spec §18.5).
+// taskDetailView renders a single task's full, read-only detail (spec §18.5) as a card.
 func (m model) taskDetailView(t *v1.TaskDetail) string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render(" "+t.Id+" — "+t.Title+" ") + "\n\n")
 	readiness := "ready"
 	if t.Status == "done" {
 		readiness = "done"
@@ -1496,16 +1492,16 @@ func (m model) taskDetailView(t *v1.TaskDetail) string {
 	if len(t.SpecRefs) > 0 {
 		meta += " · spec: " + strings.Join(t.SpecRefs, ", ")
 	}
-	b.WriteString("  " + dimStyle.Render(meta) + "\n\n")
+	b.WriteString(dimStyle.Render(meta) + "\n\n")
 	body := t.Body
 	if m.glam != nil {
 		if out, err := m.glam.Render(body); err == nil {
 			body = strings.Trim(out, "\n")
 		}
 	}
-	b.WriteString(indentLines(body, "  "))
-	b.WriteString("\n\n" + dimStyle.Render("  esc/← back · ctrl+c quit"))
-	return b.String()
+	b.WriteString(body)
+	return m.modalCard(" "+t.Id+" — "+t.Title+" ", strings.TrimRight(b.String(), "\n"),
+		"esc/← back · ctrl+c quit")
 }
 
 // --- settings overlay (spec §18.2) ---
@@ -1752,7 +1748,6 @@ func cycleModel(models []*v1.ModelInfo, cur string, d int) string {
 
 func (m model) overlayView() string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render(" settings ") + "\n\n")
 	rows := []struct{ label, val string }{
 		{"interaction level", m.level},
 		{"coordinator model", m.roleCoord + " (" + m.thinkLevels["coordinator"] + ")"},
@@ -1777,14 +1772,13 @@ func (m model) overlayView() string {
 		if i == ovReviewers && len(m.models) > 0 {
 			val = "(" + m.thinkLevels["reviewers"] + ")  " + m.reviewerSummary()
 		}
-		b.WriteString("  " + cursor + label + dimStyle.Render(val) + "\n")
+		b.WriteString(cursor + label + dimStyle.Render(val) + "\n")
 	}
-	help := "  ↑/↓ move · ←/→ change · +/- thinking · space toggle reviewer · enter activate · esc close"
-	b.WriteString("\n" + dimStyle.Render(help))
 	if m.sessionID == "" {
-		b.WriteString("\n" + dimStyle.Render("  (no active session: level/role changes apply only within a session)"))
+		b.WriteString("\n" + dimStyle.Render("(no active session: level/role changes apply only within a session)"))
 	}
-	return b.String()
+	help := "↑/↓ move · ←/→ change · +/- thinking · space toggle reviewer · enter activate · esc close"
+	return m.modalCard(" settings ", strings.TrimRight(b.String(), "\n"), help)
 }
 
 func (m model) reviewerSummary() string {
@@ -2273,9 +2267,8 @@ func (m model) modelBackendsView() string {
 
 func (m model) mbListView() string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render(" model backends ") + "\n\n")
 	if len(m.models) == 0 {
-		b.WriteString("  " + dimStyle.Render("(no model backends configured)") + "\n")
+		b.WriteString(dimStyle.Render("(no model backends configured)") + "\n")
 	}
 	for i, mm := range m.models {
 		cursor := "  "
@@ -2284,14 +2277,14 @@ func (m model) mbListView() string {
 			cursor = selStyle.Render("▸ ")
 			row = selStyle.Render(row)
 		}
-		b.WriteString("  " + cursor + row + "\n")
+		b.WriteString(cursor + row + "\n")
 	}
 	if m.mbErr != "" {
-		b.WriteString("\n  " + errStyle.Render(m.mbErr) + "\n")
+		b.WriteString("\n" + errStyle.Render(m.mbErr) + "\n")
 	}
-	b.WriteString("\n" + dimStyle.Render("  persist to ycc.toml: "+boolStr(m.mbPersist)))
-	b.WriteString("\n" + dimStyle.Render("  a add · e/enter edit · d duplicate · x remove · p toggle persist · esc back"))
-	return b.String()
+	b.WriteString("\n" + dimStyle.Render("persist to ycc.toml: "+boolStr(m.mbPersist)))
+	return m.modalCard(" model backends ", strings.TrimRight(b.String(), "\n"),
+		"a add · e/enter edit · d duplicate · x remove · p toggle persist · esc back")
 }
 
 func (m model) mbFormView() string {
@@ -2303,7 +2296,6 @@ func (m model) mbFormView() string {
 	case mbDuplicate:
 		title = "duplicate model backend"
 	}
-	b.WriteString(titleStyle.Render(" "+title+" ") + "\n\n")
 	order := []int{
 		mbFieldName, mbFieldBackend, mbFieldBaseURL, mbFieldModel, mbFieldKeyEnv,
 		mbFieldThinking, mbFieldEffort, mbFieldDisplay,
@@ -2337,37 +2329,36 @@ func (m model) mbFormView() string {
 		default:
 			val = m.mbInputs[f].View()
 		}
-		b.WriteString("  " + cursor + label + " " + val + "\n")
+		b.WriteString(cursor + label + " " + val + "\n")
 		// Under the focused model field, hint the current backend's id presets.
 		// Free text still works; this just advertises the ctrl+n/p suggestions.
 		if f == mbFieldModel && m.mbFocus == mbFieldModel {
 			if presets := mbModelPresets[m.mbBackends[m.mbBackendIdx]]; len(presets) > 0 {
-				b.WriteString("      " + dimStyle.Render("presets: "+strings.Join(presets, " · ")+"  (ctrl+n/p)") + "\n")
+				b.WriteString("    " + dimStyle.Render("presets: "+strings.Join(presets, " · ")+"  (ctrl+n/p)") + "\n")
 			}
 		}
 	}
 	if m.mbErr != "" {
-		b.WriteString("\n  " + errStyle.Render(m.mbErr) + "\n")
+		b.WriteString("\n" + errStyle.Render(m.mbErr) + "\n")
 	}
-	b.WriteString("\n" + dimStyle.Render("  Tab/↑↓ move · ←/→ change · enter save · esc back"))
-	b.WriteString("\n" + dimStyle.Render("  (keys are env-var references only — never paste a secret)"))
-	return b.String()
+	b.WriteString("\n" + dimStyle.Render("(keys are env-var references only — never paste a secret)"))
+	return m.modalCard(" "+title+" ", strings.TrimRight(b.String(), "\n"),
+		"Tab/↑↓ move · ←/→ change · enter save · esc back")
 }
 
 func (m model) mbConfirmView() string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render(" remove model backend ") + "\n\n")
 	name := ""
 	if m.mbCursor < len(m.models) {
 		name = m.models[m.mbCursor].Name
 	}
-	b.WriteString("  remove " + selStyle.Render(name) + "?\n")
-	b.WriteString("\n" + dimStyle.Render("  persist to ycc.toml: "+boolStr(m.mbPersist)))
+	b.WriteString("remove " + selStyle.Render(name) + "?\n")
+	b.WriteString("\n" + dimStyle.Render("persist to ycc.toml: "+boolStr(m.mbPersist)))
 	if m.mbErr != "" {
-		b.WriteString("\n\n  " + errStyle.Render(m.mbErr) + "\n")
+		b.WriteString("\n\n" + errStyle.Render(m.mbErr) + "\n")
 	}
-	b.WriteString("\n" + dimStyle.Render("  enter confirm · esc cancel"))
-	return b.String()
+	return m.modalCard(" remove model backend ", strings.TrimRight(b.String(), "\n"),
+		"enter confirm · esc cancel")
 }
 
 // mbShow renders an empty cycle value as "(none)" for readability.
@@ -2671,6 +2662,83 @@ func (m *model) rebuild() {
 	}
 }
 
+// --- shared screen chrome (task 0061) ---
+//
+// Every screen draws the same shape: a standardized title/breadcrumb bar at the
+// top, a content region, and a consistent, width-clamped key-hint footer. Modal
+// overlays additionally wrap their content in a bordered, centered card so they
+// read as floating modals rather than full-screen replacements.
+
+// titleBar renders the standardized top title/breadcrumb pill used across every
+// screen (menu / picker / history / backlog / overlays).
+func (m model) titleBar(text string) string {
+	return titleStyle.Render(text)
+}
+
+// footerBar renders a single-row, width-clamped key-hint line shared by every
+// screen. The clamp guarantees a long hint can never wrap to a second physical
+// row (which would corrupt Bubble Tea's line accounting / overflow the frame). A
+// zero width (before the first WindowSizeMsg) is a no-op.
+func (m model) footerBar(text string) string {
+	if m.w > 0 {
+		// trunc may append a 1-col ellipsis, so clamp to m.w-1 to stay within m.w.
+		text = trunc(strings.ReplaceAll(text, "\n", " "), m.w-1)
+	}
+	return dimStyle.Render(text)
+}
+
+// clampCardLines truncates each line of a multi-line block to width w (ANSI-aware)
+// so a card's content can never make the bordered card wider than the screen.
+func clampCardLines(s string, w int) string {
+	if w < 1 {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	for i, ln := range lines {
+		if lipgloss.Width(ln) > w {
+			lines[i] = ansi.Truncate(ln, w, "…")
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// modalCard renders content as a bordered, centered card floating over a cleared
+// full-screen backdrop so an overlay reads as a modal rather than a full-screen
+// text replacement. title becomes the card's title bar, content its body, and
+// hint a clamped key-hint footer — all inside a rounded border with padding.
+//
+// Before the first WindowSizeMsg (m.w/m.h == 0, e.g. test-constructed models) it
+// returns the plain title+content+hint without a border or Place so early renders
+// and zero-size tests don't break.
+func (m model) modalCard(title, content, hint string) string {
+	var b strings.Builder
+	b.WriteString(m.titleBar(title))
+	b.WriteString("\n\n")
+	b.WriteString(content)
+	if hint != "" {
+		b.WriteString("\n\n")
+		b.WriteString(m.footerBar(hint))
+	}
+	body := b.String()
+
+	if m.w == 0 || m.h == 0 {
+		return body
+	}
+
+	// Inner width budget: subtract the rounded border (2 cols) and padding (2 cols)
+	// so the card — at most as wide as its widest content line — fits within m.w.
+	inner := m.w - 4
+	if inner < 1 {
+		inner = 1
+	}
+	card := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(activeTheme.border).
+		Padding(0, 1).
+		Render(clampCardLines(body, inner))
+	return lipgloss.Place(m.w, m.h, lipgloss.Center, lipgloss.Center, card)
+}
+
 func (m model) View() string {
 	if m.err != nil {
 		return fmt.Sprintf("\n  error: %v\n\n  (ctrl+c to quit)\n", m.err)
@@ -2702,7 +2770,7 @@ func (m model) View() string {
 // pickerScreenView renders the project picker (spec §3.1).
 func (m model) pickerScreenView() string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render(" ycc — projects ") + "\n\n")
+	b.WriteString(m.titleBar(" ycc — projects ") + "\n\n")
 	if len(m.projects) == 0 {
 		b.WriteString("  " + dimStyle.Render("no projects registered yet") + "\n")
 	}
@@ -2715,14 +2783,14 @@ func (m model) pickerScreenView() string {
 		}
 		b.WriteString("  " + cursor + label + "\n")
 	}
-	b.WriteString("\n" + dimStyle.Render("  ↑/↓ choose · enter open · a add current dir · q quit"))
-	b.WriteString("\n" + dimStyle.Render("  cwd: "+m.workspace))
+	b.WriteString("\n" + m.footerBar("  ↑/↓ choose · enter open · a add current dir · q quit"))
+	b.WriteString("\n" + m.footerBar("  cwd: "+m.workspace))
 	return b.String()
 }
 
 func (m model) menuView() string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render(" ycc — home ") + "\n\n")
+	b.WriteString(m.titleBar(" ycc — home ") + "\n\n")
 	if len(m.entries) == 0 {
 		b.WriteString("  loading modes…\n")
 	}
@@ -2747,7 +2815,7 @@ func (m model) menuView() string {
 		b.WriteString("  " + cursor + label + "\n")
 	}
 	b.WriteString("\n  " + m.prompt.View() + "\n")
-	b.WriteString("\n" + dimStyle.Render("  ↑/↓ choose mode · type a prompt · enter start · ctrl+r previous sessions · esc settings · ctrl+b backlog · ctrl+n new task"))
+	b.WriteString("\n" + m.footerBar("  ↑/↓ choose mode · type a prompt · enter start · ctrl+r previous sessions · esc settings · ctrl+b backlog · ctrl+n new task"))
 	return b.String()
 }
 
@@ -2755,14 +2823,14 @@ func (m model) menuView() string {
 // list of persisted sessions, most-recent first, that can be reopened.
 func (m model) historyView() string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render(" ycc — previous sessions ") + "\n\n")
+	b.WriteString(m.titleBar(" ycc — previous sessions ") + "\n\n")
 	if len(m.history) == 0 {
 		msg := m.historyMsgTxt
 		if msg == "" {
 			msg = "no previous sessions"
 		}
 		b.WriteString("  " + dimStyle.Render(msg) + "\n")
-		b.WriteString("\n" + dimStyle.Render("  r refresh · esc/q back"))
+		b.WriteString("\n" + m.footerBar("  r refresh · esc/q back"))
 		return b.String()
 	}
 	for i, s := range m.history {
@@ -2794,7 +2862,7 @@ func (m model) historyView() string {
 	if m.historyMsgTxt != "" {
 		b.WriteString("\n  " + dimStyle.Render(m.historyMsgTxt))
 	}
-	b.WriteString("\n\n" + dimStyle.Render("  ↑/↓ choose · enter reopen · r refresh · esc/q back"))
+	b.WriteString("\n\n" + m.footerBar("  ↑/↓ choose · enter reopen · r refresh · esc/q back"))
 	return b.String()
 }
 
@@ -3075,12 +3143,11 @@ func (m model) sessionView() string {
 // wraps, overflowing the H-row frame and corrupting Bubble Tea's line accounting —
 // which visually shows up as the input box overlapping the agent's last output
 // line. A zero width (before the first WindowSizeMsg) is a no-op.
+//
+// It is the session view's footer; it delegates to footerBar so the clamp is
+// byte-identical to the one shared by every other screen.
 func (m model) footer(text string) string {
-	if m.w > 0 {
-		// trunc may append a 1-col ellipsis, so clamp to m.w-1 to stay within m.w.
-		text = trunc(strings.ReplaceAll(text, "\n", " "), m.w-1)
-	}
-	return dimStyle.Render(text)
+	return m.footerBar(text)
 }
 
 // pickerView renders the navigable list of suggested answers plus an "other…"

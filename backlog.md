@@ -63,7 +63,7 @@
 | [0058](backlog/0058-session-textarea-grow-on-wrapped-long-lines-add-in.md) | Session textarea: grow on wrapped long lines + add input behavior tests | todo | 4 | 0011 |
 | [0059](backlog/0059-encourage-work-agent-to-commit-after-finishing-a-t.md) | Encourage work agent to commit after finishing a task (avoid leftover uncommitted backlog files) | done | 3 | — |
 | [0060](backlog/0060-tui-theme-palette-centralization-make-the-light-th.md) | TUI theme/palette centralization + make the light theme real | done | 3 | — |
-| [0061](backlog/0061-unified-tui-app-frame-bordered-modal-cards.md) | Unified TUI app frame + bordered modal cards | todo | 3 | 0060 |
+| [0061](backlog/0061-unified-tui-app-frame-bordered-modal-cards.md) | Unified TUI app frame + bordered modal cards | done | 3 | 0060 |
 | [0062](backlog/0062-live-session-status-bar-mode-level-thinking-elapse.md) | Live session status bar (mode/level/thinking/elapsed/token-cost) + activity spinner | done | 3 | 0060 |
 | [0063](backlog/0063-event-stream-visual-polish-type-glyphs-verdict-col.md) | Event-stream visual polish (type glyphs, verdict colors, subagent tree, selection bar) | todo | 3 | 0060 |
 | [0064](backlog/0064-chat-mode-allow-create-task-update-task-backlog-ma.md) | Chat mode: allow create_task/update_task backlog management | done | 3 | — |
