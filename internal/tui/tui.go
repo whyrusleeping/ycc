@@ -163,6 +163,7 @@ type model struct {
 	wizQuestions []wizQuestion // parsed questions (prompt + per-question options)
 	wizAnswers   []wizAnswer   // collected answers, parallel to wizQuestions
 	wizIdx       int           // index of the question currently being answered
+	wizSeq       int64         // seq of the question_asked event whose batch the wizard is collecting
 
 	err   error
 	ready bool
@@ -629,7 +630,7 @@ func (m model) answerQuestions(answers []*v1.QuestionAnswer) tea.Cmd {
 
 // startWizard enters the questionnaire wizard for a multi-question ask_user call,
 // resetting collected answers and presenting the first question.
-func (m *model) startWizard(qs []wizQuestion) {
+func (m *model) startWizard(qs []wizQuestion, seq int64) {
 	m.wizActive = true
 	m.wizQuestions = qs
 	m.wizAnswers = make([]wizAnswer, len(qs))
@@ -637,7 +638,12 @@ func (m *model) startWizard(qs []wizQuestion) {
 		m.wizAnswers[i] = wizAnswer{idx: -1}
 	}
 	m.wizIdx = 0
+	m.wizSeq = seq
 	m.status = "waiting for your answer"
+	// Invalidate the body cache so the active question_asked entry re-renders in
+	// its condensed form (the wizard below is now the focal point, not the inline
+	// log dump of every question).
+	m.bodyCache = map[int]string{}
 	m.loadWizQuestion()
 }
 
@@ -672,6 +678,10 @@ func (m *model) clearWizard() {
 	m.wizQuestions = nil
 	m.wizAnswers = nil
 	m.wizIdx = 0
+	m.wizSeq = 0
+	// Invalidate the body cache so the (now answered) entry re-renders its full
+	// enumerated form once the wizard is dismissed.
+	m.bodyCache = map[int]string{}
 }
 
 // recordWizAnswer stores the answer for the current question and advances. When
@@ -3293,7 +3303,7 @@ func (m *model) appendEvent(ev *v1.Event) {
 	case "question_asked":
 		if qs := dataQuestions(ev); len(qs) > 0 {
 			// Multi-question form: start the questionnaire wizard.
-			m.startWizard(qs)
+			m.startWizard(qs, ev.Seq)
 			break
 		}
 		m.pending = dataField(ev, "question")
@@ -4015,7 +4025,7 @@ func (m model) sessionView() string {
 	if m.wizActive {
 		overview := m.wizardView()
 		if m.picking {
-			help := m.footer(" ↑↓ choose · enter select · esc settings")
+			help := m.footer(" ↑↓ choose · enter select · ‹other…› to type · esc settings")
 			return top + "\n" + body + "\n" + overview + "\n" + m.pickerView() + "\n" + help
 		}
 		help := m.footer(" type your answer + enter · esc settings")
@@ -4077,7 +4087,7 @@ func (m model) pickerView() string {
 	if m.pending != "" {
 		b.WriteString(questionPrompt(m.pending, m.w-6, false) + "\n")
 	}
-	rows := append(append([]string(nil), m.pickerOpts...), "other…")
+	rows := append(append([]string(nil), m.pickerOpts...), "other… (type your own)")
 	for i, opt := range rows {
 		cursor := "  "
 		label := opt
@@ -4444,6 +4454,16 @@ func (m *model) renderBody(ev *v1.Event) string {
 	switch ev.Type {
 	case "question_asked":
 		if qs := dataQuestions(ev); len(qs) > 0 {
+			// While the wizard is actively collecting answers for this batch, don't
+			// dump every question inline — the one-at-a-time wizard below is the
+			// focal point. Render a single concise summary pointing at it.
+			if m.wizActive && ev.Seq == m.wizSeq {
+				noun := "questions"
+				if len(qs) == 1 {
+					noun = "question"
+				}
+				return indentLines(dimStyle.Render(fmt.Sprintf("%d %s — answer below ↓", len(qs), noun)), "  ")
+			}
 			var b strings.Builder
 			for i, q := range qs {
 				fmt.Fprintf(&b, "%d. %s\n", i+1, q.prompt)

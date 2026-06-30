@@ -1809,6 +1809,84 @@ func TestWizardFreeTextAfterPickerFocusesInput(t *testing.T) {
 	}
 }
 
+// While the wizard is collecting answers for a multi-question batch, the inline
+// event-log body for that question_asked event must NOT dump every question
+// (which competed with / obscured the one-at-a-time wizard). It should show a
+// concise summary pointing down at the wizard. Once the wizard is dismissed, the
+// same event reverts to its full enumerated form.
+func TestWizardCondensesInlineQuestionDump(t *testing.T) {
+	f := newFakeClient()
+	m := model{
+		client: f, ctx: context.Background(),
+		state: stateSession, status: "running", sessionID: "s1", follow: true,
+		input:    newSessionInput(),
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+	}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(model)
+
+	ev := &v1.Event{
+		Seq: 7, Type: "question_asked", Actor: "coordinator",
+		DataJson: `{"questions":[{"question":"which database?","options":["postgres","sqlite"]},{"question":"service name?"}]}`,
+	}
+	m.appendEvent(ev)
+	if !m.wizActive {
+		t.Fatal("wizard should be active after a batch question_asked")
+	}
+
+	// Active: condensed summary, no inline enumeration of the second question.
+	body := m.bodyFor(ev)
+	if !strings.Contains(body, "questions — answer below") {
+		t.Fatalf("active wizard body should show condensed summary, got:\n%s", body)
+	}
+	if strings.Contains(body, "service name?") {
+		t.Fatalf("active wizard body should not enumerate questions inline, got:\n%s", body)
+	}
+
+	// Dismiss the wizard; the same event should re-render its full enumerated form.
+	m.clearWizard()
+	m.bodyCache = map[int]string{}
+	body = stripANSI(m.bodyFor(ev))
+	if !strings.Contains(body, "which database?") || !strings.Contains(body, "service name?") {
+		t.Fatalf("after clearWizard the body should enumerate all questions, got:\n%s", body)
+	}
+}
+
+// The wizard surfaces the active question's options via the picker and an
+// obvious free-text escape, and the footer help spells out the interaction.
+func TestWizardPickerAndFooterAffordances(t *testing.T) {
+	f := newFakeClient()
+	m := model{
+		client: f, ctx: context.Background(),
+		state: stateSession, status: "running", sessionID: "s1", follow: true,
+		input:    newSessionInput(),
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+	}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(model)
+
+	m.appendEvent(&v1.Event{
+		Seq: 3, Type: "question_asked", Actor: "coordinator",
+		DataJson: `{"questions":[{"question":"db?","options":["postgres","sqlite"]},{"question":"name?"}]}`,
+	})
+	if !m.wizActive || !m.picking {
+		t.Fatalf("expected an active picker wizard (active=%v picking=%v)", m.wizActive, m.picking)
+	}
+
+	picker := m.pickerView()
+	if !strings.Contains(picker, "postgres") || !strings.Contains(picker, "sqlite") {
+		t.Fatalf("picker should list the active question's options, got:\n%s", picker)
+	}
+	if !strings.Contains(picker, "other… (type your own)") {
+		t.Fatalf("picker should offer an obvious free-text escape, got:\n%s", picker)
+	}
+
+	view := m.sessionView()
+	if !strings.Contains(view, "choose") || !strings.Contains(view, "other…") {
+		t.Fatalf("wizard footer should explain choosing + free-text, got:\n%s", view)
+	}
+}
+
 // The quick-add capture overlay (task 0049) streams the capture agent's action
 // log live: each captureEvMsg appends to captureLog and is rendered in
 // captureView, and a terminal capture_result event drives the overlay to its

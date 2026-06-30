@@ -1,7 +1,7 @@
 ---
 id: "0073"
 title: Investigate/fix multi-question ask_user UI (interactive/judgement modes)
-status: todo
+status: done
 priority: 3
 created: "2026-06-30"
 updated: "2026-06-30"
@@ -40,3 +40,12 @@ explicit interactive/judgement sessions now.
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-30 plan: Fix the multi-question ask_user presentation in internal/tui/tui.go so the one-at-a-time wizard is the clear focal point and the inline log dump no longer competes with it.  1. Stop the inline log dum
+…[truncated]
+- 2026-06-30 implementer report: Fixed the multi-question ask_user TUI presentation in internal/tui/tui.go so the one-at-a-time wizard is the clear focal point.  Changes: 1. Added `wizSeq int64` field to the model struct (seq of the 
+…[truncated]
+- 2026-06-30 review tier: single-opus — reviewers: Claude
+- 2026-06-30 review (Claude): accept — The change correctly fixes the multi-question ask_user presentation: while the wizard is active, the inline question_asked log body is condensed to a single summary pointing at the wizard (tracked via
+…[truncated]
+- 2026-06-30 decision: accept — commit: tui: make multi-question ask_user wizard the focal point  Condense the inline question_asked log dump while the questionnaire wizard is collecting answers (tracked via new wizSeq), so it no longer dup
+…[truncated]

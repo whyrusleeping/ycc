@@ -35,3 +35,4 @@ The activity spinner added in task 0062 currently animates in the session status
 …[truncated]
 - 2026-06-30 decision: accept — commit: tui: move activity spinner from status bar to bottom input row  Relocate the running-activity spinner next to the session input box: the header now always shows the static state-colored dot, and input
 …[truncated]
+- 2026-06-30 usage: 12,816 tok (in 74, out 12,742, cache_r 491,949, cache_w 31,144) · cost n/a (unpriced)
