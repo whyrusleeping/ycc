@@ -1,7 +1,7 @@
 ---
 id: "0078"
 title: 'Spike: design parallel agent workstreams via git worktrees'
-status: todo
+status: done
 priority: 4
 created: "2026-06-30"
 updated: "2026-06-30"
@@ -38,3 +38,14 @@ A short written design proposal (recommended approach + rejected alternatives + 
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-30 plan: Produce a design proposal doc at `docs/design/parallel-workstreams.md` (create the docs/design dir). The doc must, grounded in ycc's real architecture (spec §3 daemon single-writer, §5 per-session J
+…[truncated]
+- 2026-06-30 implementer report: Completed the design spike (task 0078). No Go code was changed.  **Deliverable:** Created `docs/design/parallel-workstreams.md` (new `docs/design/` directory) — a decisive design proposal grounded i
+…[truncated]
+- 2026-06-30 review tier: single-opus — reviewers: Claude
+- 2026-06-30 review (Claude): revise — Excellent, decisive design spike. The doc enumerates three isolation approaches with tradeoffs, recommends git worktrees with solid rationale, covers the full worktree lifecycle and conflict handling 
+…[truncated]
+- 2026-06-30 review (Claude): accept — The revision addresses the sole outstanding finding: the implementer filed six concrete follow-up implementation tasks (0081 worktree primitives, 0082 workstream registry/lifecycle, 0083 merge/conflic
+…[truncated]
+- 2026-06-30 decision: accept — commit: docs: design spike for parallel agent workstreams via git worktrees (task 0078)  Add docs/design/parallel-workstreams.md proposing git worktrees for parallel workstreams: 3 isolation approaches with t
+…[truncated]

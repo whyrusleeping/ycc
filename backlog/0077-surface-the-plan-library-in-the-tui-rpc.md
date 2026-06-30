@@ -39,3 +39,4 @@ let a user browse and read saved plans from the TUI (and, if needed, over RPC).
 …[truncated]
 - 2026-06-30 decision: accept — commit: plans: surface the plan library over RPC + TUI (task 0077)  Add read-only ListPlans/GetPlan RPCs (reusing docs.Store.ListPlans/ReadPlan) and a modal TUI plan-library browser (list + markdown detail) r
 …[truncated]
+- 2026-06-30 usage: 26,699 tok (in 168, out 26,531, cache_r 2,566,837, cache_w 129,075) · cost n/a (unpriced)
