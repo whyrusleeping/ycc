@@ -2,8 +2,10 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/whyrusleeping/gollama"
@@ -103,5 +105,23 @@ func TestRunCaptureAsksClarification(t *testing.T) {
 	}
 	if tasks, _ := store.List(); len(tasks) != 0 {
 		t.Fatalf("clarification should not create a task; got %d", len(tasks))
+	}
+}
+
+// The capture system prompt references the same turn budget as captureMaxTurns,
+// so the two can't drift apart.
+func TestCapturePromptMentionsTurnBudget(t *testing.T) {
+	want := fmt.Sprintf("%d turns", captureMaxTurns)
+	ws := t.TempDir()
+	store := docs.NewStore(ws)
+	turner := &scripted{resp: []*gollama.ResponseMessageGenerate{
+		call("create_task", `{"title":"x"}`),
+	}}
+	cd := CaptureDeps{Workspace: ws, Docs: store, Client: turner, Model: "m", ModelName: "m"}
+	if _, err := RunCapture(context.Background(), cd, nil, "x", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(turner.system, want) {
+		t.Fatalf("system prompt should mention %q; got:\n%s", want, turner.system)
 	}
 }

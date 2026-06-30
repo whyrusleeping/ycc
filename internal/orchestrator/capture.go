@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/whyrusleeping/gollama"
@@ -58,6 +59,11 @@ when they are obvious. If the user has ALREADY answered a clarifying question, d
 create the task now.
 
 Call create_task exactly once; it ends your work.`
+
+// captureMaxTurns is the turn budget for the capture loop. It is the single
+// source of truth used both for the loop's MaxTurns and the turn-budget
+// sentence in the system prompt, so the two can't drift.
+const captureMaxTurns = 32
 
 // captureClarify is a control tool: it lets the capture agent ask ONE clarifying
 // question, ending the loop with the question carried back to the client.
@@ -127,11 +133,15 @@ func RunCapture(ctx context.Context, cd CaptureDeps, rec event.Recorder, descrip
 		Model:           cd.Model,
 		ModelName:       cd.ModelName,
 		Backend:         cd.Backend,
-		System:          captureSystem + "\n\n" + workspaceNote(cd.Workspace),
+		System: captureSystem +
+			fmt.Sprintf("\n\nYou have a budget of %d turns (each is one model step that may include tool calls); "+
+				"pace your quick investigation so you finish by calling create_task (or ask_clarification) "+
+				"well before running out.", captureMaxTurns) +
+			"\n\n" + workspaceNote(cd.Workspace),
 		Tools:           reg,
 		Emitter:         emitter,
 		MaxTok:          cd.MaxTok,
-		MaxTurns:        16,
+		MaxTurns:        captureMaxTurns,
 		Thinking:        cd.Thinking.Thinking,
 		Effort:          cd.Thinking.Effort,
 		ThinkingDisplay: cd.Thinking.ThinkingDisplay,
