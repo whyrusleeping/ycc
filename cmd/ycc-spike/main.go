@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 
 	"github.com/whyrusleeping/gollama"
+	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/tools"
@@ -42,7 +43,7 @@ func main() {
 	baseURL := flag.String("base-url", "https://api.anthropic.com", "API base URL")
 	keyEnv := flag.String("key-env", "ANTHROPIC_API_KEY", "env var holding the API key")
 	bearer := flag.Bool("bearer", false, "send the key as a Bearer token (OpenAI-compatible) instead of x-api-key")
-	maxTok := flag.Int("max-tokens", 8192, "max tokens per turn")
+	maxTok := flag.Int("max-tokens", config.DefaultMaxTokens, "max tokens per turn")
 	maxTurns := flag.Int("max-turns", 40, "maximum agent turns")
 	flag.Parse()
 

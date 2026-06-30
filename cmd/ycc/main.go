@@ -35,6 +35,7 @@ import (
 	"connectrpc.com/connect"
 	cli "github.com/urfave/cli/v3"
 
+	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/daemon"
 	"github.com/whyrusleeping/ycc/internal/secrets"
 	"github.com/whyrusleeping/ycc/internal/setup"
@@ -537,7 +538,7 @@ func daemonCommand() *cli.Command {
 			&cli.StringFlag{Name: "model", Value: "claude-opus-4-8", Usage: "fallback model id (when no --config)"},
 			&cli.StringFlag{Name: "base-url", Value: "https://api.anthropic.com", Usage: "fallback API base URL (when no --config)"},
 			&cli.StringFlag{Name: "key-env", Value: "ANTHROPIC_API_KEY", Usage: "fallback API key env var (when no --config)"},
-			&cli.IntFlag{Name: "max-tokens", Value: 8192, Usage: "fallback max tokens per turn (when no --config)"},
+			&cli.IntFlag{Name: "max-tokens", Value: config.DefaultMaxTokens, Usage: "fallback max tokens per turn (when no --config)"},
 			&cli.StringFlag{Name: "token", Sources: cli.EnvVars("YCC_TOKEN"), Usage: "bearer token clients must present (empty disables auth)"},
 			&cli.StringFlag{Name: "tls-cert", Usage: "TLS certificate `file` (enables HTTPS)"},
 			&cli.StringFlag{Name: "tls-key", Usage: "TLS key `file`"},
@@ -601,7 +602,7 @@ func resolveDaemon(addr, token string, background bool, ws, configPath string) (
 	ip, err := daemon.StartInProcess(daemon.Options{
 		Addr: "127.0.0.1:0", Workspace: ws, ConfigPath: configPath,
 		Model: "claude-opus-4-8", BaseURL: "https://api.anthropic.com",
-		KeyEnv: "ANTHROPIC_API_KEY", MaxTokens: 8192,
+		KeyEnv: "ANTHROPIC_API_KEY", MaxTokens: config.DefaultMaxTokens,
 	})
 	if err != nil {
 		return "", "", false, noop, fmt.Errorf("start in-process daemon: %w", err)

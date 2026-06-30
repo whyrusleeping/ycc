@@ -570,7 +570,7 @@ coordinator = "xhigh"          # off | low | medium | high | xhigh | max
 implementer = "low"
 reviewers   = "high"           # one level for the whole reviewer fan-out
 
-max_tokens  = 8192   # per-turn output token cap (0 => backend default)
+max_tokens  = 32000  # per-turn output token cap (0 => backend default)
 max_turns   = 200    # per-Run tool-call turn cap; runaway/cost backstop (0 => engine default, 200)
 ```
 

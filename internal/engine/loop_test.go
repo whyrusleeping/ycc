@@ -89,6 +89,48 @@ func TestLoopYieldsOnNoToolCalls(t *testing.T) {
 	}
 }
 
+// A non-truncated turn with empty content and no tool calls (e.g. stop_reason
+// "refusal", or the whole budget consumed by a thinking block with no follow-up
+// text) must never surface as a blank assistant message: the loop synthesizes a
+// non-empty, stop-reason-aware report and stores it as the assistant turn.
+func TestLoopEmptyYieldSynthesizesReport(t *testing.T) {
+	r := assistantText("") // no content, no tool calls
+	r.StopReason = "refusal"
+	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{r}}
+	loop := newLoop(t, turner)
+	res, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if strings.TrimSpace(res.Report) == "" {
+		t.Fatalf("expected a non-empty report, got %q", res.Report)
+	}
+	if !strings.Contains(strings.ToLower(res.Report), "declined") {
+		t.Fatalf("report should mention the refusal/declination, got %q", res.Report)
+	}
+	// The final assistant message in history must be non-empty (no blank message).
+	hist := loop.History()
+	last := hist[len(hist)-1]
+	if last.Role != "assistant" || strings.TrimSpace(last.Content) == "" {
+		t.Fatalf("expected a non-empty trailing assistant message, got %+v", last)
+	}
+}
+
+// An unfamiliar/odd stop reason on an empty turn surfaces the raw reason in the
+// synthesized report so it isn't hidden behind a blank message.
+func TestLoopEmptyYieldUnknownStopReason(t *testing.T) {
+	r := assistantText("")
+	r.StopReason = "content_filter"
+	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{r}}
+	res, err := newLoop(t, turner).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(res.Report, "content_filter") {
+		t.Fatalf("report should surface the raw stop reason, got %q", res.Report)
+	}
+}
+
 // A turn truncated at the token cap with no tool call is NOT a clean yield: the
 // loop nudges the model to continue, and once it acts the run proceeds normally.
 func TestLoopContinuesAfterTruncation(t *testing.T) {

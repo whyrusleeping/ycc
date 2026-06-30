@@ -172,6 +172,24 @@ const (
 	truncationNudge      = "Your previous response was cut off at the output token limit before you took any action. Keep your reasoning brief and call a tool now to make concrete progress."
 )
 
+// noContentYieldReport produces a concise, ALWAYS non-empty description of why a
+// turn ended when the model emitted neither a tool call nor any visible content
+// (and the turn was NOT truncated at the token cap). It branches on the provider
+// stop reason so a refusal reads differently from an ordinary end-of-turn, and an
+// unfamiliar reason is surfaced verbatim rather than hidden behind a blank
+// message. The result is used both as the assistant turn's content (recorded on
+// the model_turn event for lossless replay) and as the loop's Result.Report.
+func noContentYieldReport(stopReason string) string {
+	switch strings.ToLower(strings.TrimSpace(stopReason)) {
+	case "refusal":
+		return "(the model declined to respond and produced no content or tool call)"
+	case "", "end_turn", "stop", "stop_sequence":
+		return "(the model ended its turn without any content or tool call)"
+	default:
+		return fmt.Sprintf("(the model ended its turn without any content or tool call; stop reason: %s)", stopReason)
+	}
+}
+
 // Result is the outcome of a completed loop.
 type Result struct {
 	Report     string // final report (from a control tool) or last assistant text
@@ -179,6 +197,14 @@ type Result struct {
 	NextMode   string // if set, a control tool requested a transition to this mode
 	NextPrompt string // if set, the verbatim seed prompt for the next mode's loop
 	Truncated  bool   // the final turn hit the token cap before producing an action
+	// NoContent is set when the loop ended on a non-truncated turn that produced
+	// neither a tool call nor any visible content (e.g. stop_reason "refusal", or
+	// the whole budget consumed by a thinking block with no follow-up text). In
+	// that case Report holds a synthesized, non-empty stop-reason description
+	// rather than real model output, so callers can distinguish a genuine yield
+	// with substance from a degenerate empty yield (e.g. the implementer no-op
+	// guard).
+	NoContent bool
 }
 
 // Seed appends an initial user message (the task prompt) before Run.
@@ -359,6 +385,22 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		// backends that don't report it, so usage records zeros without error.
 		u := resp.Usage
 		truncated := resp.Truncated()
+		// A non-truncated turn that produced no tool call AND no content is a
+		// degenerate stop: most often the whole output budget went to an
+		// extended-thinking block that the model didn't follow with any visible
+		// text, or the provider returned an odd stop reason (refusal/other). We
+		// MUST NOT surface this as a bare empty assistant message — that confuses
+		// the model (and any caller reading Result.Report). Synthesize a concise,
+		// non-empty description of WHY the turn ended BEFORE the model_turn event
+		// is emitted, so the synthesized text is recorded on the event and reopen/
+		// replay reconstructs the identical non-empty turn (no replay.go change).
+		// Truncated turns are intentionally left alone here: they have their own
+		// sanitized-stub + nudge handling below that replay depends on.
+		noContentYield := false
+		if len(msg.ToolCalls) == 0 && !truncated && strings.TrimSpace(msg.Content) == "" {
+			msg.Content = noContentYieldReport(resp.StopReason)
+			noContentYield = true
+		}
 		// contextEst is a coarse estimate of the prompt size (system + history)
 		// that produced this turn, surfaced so long-session growth toward the
 		// context window is visible in telemetry (task 0010).
@@ -389,12 +431,14 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		})
 
 		if len(msg.ToolCalls) == 0 {
-			// A turn cut off at the output token cap before it emitted any tool
-			// call is NOT a voluntary yield — the model ran out of budget mid-
-			// thought (commonly the whole allowance went to an extended-thinking
-			// block). Treating it as a finish surfaces an empty report and leaves
-			// the caller (e.g. the coordinator) puzzled that nothing happened.
-			// Instead, nudge the model to continue, bounded by maxTruncRetries.
+			// Branch on the actual stop reason (resp.Truncated() is true only for
+			// max_tokens/length stops). A turn cut off at the output token cap
+			// before it emitted any tool call is NOT a voluntary yield — the model
+			// ran out of budget mid-thought (commonly the whole allowance went to
+			// an extended-thinking block). Treating it as a finish surfaces an
+			// empty report and leaves the caller (e.g. the coordinator) puzzled
+			// that nothing happened. Instead, nudge the model to continue, bounded
+			// by maxTruncRetries.
 			if truncated {
 				if truncRetries >= maxTruncRetries {
 					return &Result{Report: msg.Content, Turns: turn, Truncated: true},
@@ -415,9 +459,13 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 				l.Post(truncationNudge)
 				continue
 			}
-			// Model yielded with no further action: treat its text as the result.
+			// A non-truncated no-tool-call turn is a genuine end-of-turn yield (or
+			// an odd stop like refusal): treat its text as the result. msg.Content
+			// is guaranteed non-empty here — the pre-emit guard above synthesized a
+			// concise stop-reason description for the empty-content case — so the
+			// report is never blank and history never holds an empty assistant turn.
 			l.history = append(l.history, msg)
-			return &Result{Report: msg.Content, Turns: turn}, nil
+			return &Result{Report: msg.Content, Turns: turn, NoContent: noContentYield}, nil
 		}
 		truncRetries = 0
 		// Record the assistant turn (text + tool_use) so context carries forward.

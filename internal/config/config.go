@@ -141,6 +141,15 @@ const (
 	defaultThinkingDisplay = "summarized"
 )
 
+// DefaultMaxTokens is the default per-turn output token cap (plumbed to
+// gollama.Options.MaxTokens). It is deliberately large because extended-thinking
+// budgets are drawn from this same allowance: a small cap can be entirely
+// consumed by a reasoning block, cutting the turn off before the model emits any
+// tool call. The default model (Claude Opus 4) comfortably supports an output
+// cap this size. Used as the shared default across the config default, the
+// daemon options, and the CLI flag default so they stay consistent.
+const DefaultMaxTokens = 32000
+
 // ResolveThinking fills in defaults for unset fields and normalizes the
 // "off"/disabled cases. A model that does not opt out gets adaptive thinking at
 // high effort with summarized display; thinking = "off" (or "none"/"disabled")

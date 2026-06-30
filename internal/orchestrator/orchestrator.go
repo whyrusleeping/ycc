@@ -749,16 +749,20 @@ func runReviewers(ctx context.Context, d *Deps, handles []*reviewerHandle, taskI
 }
 
 // implementerOutcome turns a finished implementer Run into the result the
-// coordinator sees. It guards the puzzling no-op case — an empty report with no
-// new changes since `before` (the diff captured just before the run) — by
-// returning an actionable error instead of a blank report, so the coordinator
-// retries with a tighter plan rather than wondering why nothing happened. The
-// most common cause is a turn cut off at the token cap before any tool call
-// (res.Truncated); the engine already turns that into a Run error, and this is
-// the backstop for any other way the implementer yields without doing work.
+// coordinator sees. It guards the puzzling no-op case — no new changes since
+// `before` (the diff captured just before the run) combined with either an empty
+// report or a degenerate no-content yield (res.NoContent: the model produced
+// neither a tool call nor any real content, so res.Report holds only a
+// synthesized stop-reason note). It returns an actionable error instead of a
+// blank/placeholder report, so the coordinator retries with a tighter plan
+// rather than wondering why nothing happened. The most common cause is a turn
+// cut off at the token cap before any tool call (res.Truncated); the engine
+// already turns that into a Run error, and this is the backstop for any other
+// way the implementer yields without doing work.
 func implementerOutcome(d *Deps, id, label, before string, res *engine.Result) *gollama.ToolResult {
 	after, _ := d.Repo.Diff()
-	if strings.TrimSpace(res.Report) == "" && strings.TrimSpace(after) == strings.TrimSpace(before) {
+	noReport := strings.TrimSpace(res.Report) == "" || res.NoContent
+	if noReport && strings.TrimSpace(after) == strings.TrimSpace(before) {
 		d.Docs.AppendWorkLog(id, label+": no progress (empty report, no new changes)")
 		msg := "implementer returned no report and made no changes to the workspace."
 		if res.Truncated {

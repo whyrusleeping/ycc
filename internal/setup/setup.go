@@ -122,7 +122,7 @@ func buildConfig(providers []provider, coord, impl string, reviewers []string) (
 	return &config.Config{
 		Models:    models,
 		Roles:     config.Roles{Coordinator: coord, Implementer: impl, Reviewers: reviewers},
-		MaxTokens: 8192,
+		MaxTokens: config.DefaultMaxTokens,
 	}, nil
 }
 

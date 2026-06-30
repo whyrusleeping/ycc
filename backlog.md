@@ -95,4 +95,6 @@
 | [0090](backlog/0090-make-backlog-task-detail-view-scrollable-in-the-tu.md) | Make backlog task detail view scrollable in the TUI viewer | done | 3 | — |
 | [0091](backlog/0091-drop-spec-feature-bug-backlog-home-menu-presets-in.md) | Drop spec/feature/bug/backlog home-menu presets in favor of just the pm mode | todo | 3 | — |
 | [0092](backlog/0092-bump-capture-agent-maxturns-to-32-and-tell-agent-i.md) | Bump capture agent MaxTurns to 32 and tell agent its turn budget | done | 3 | — |
-| [0093](backlog/0093-raise-maxtokens-default-and-handle-non-stop-stop-r.md) | Raise MaxTokens default and handle non-stop stop reasons robustly | todo | 2 | — |
+| [0093](backlog/0093-raise-maxtokens-default-and-handle-non-stop-stop-r.md) | Raise MaxTokens default and handle non-stop stop reasons robustly | done | 2 | — |
+| [0094](backlog/0094-fix-box-border-alignment-when-spinner-is-at-bottom.md) | Fix box border alignment when spinner is at bottom near text input | todo | 3 | — |
+| [0095](backlog/0095-onboarding-mode-should-read-existing-spec-backlog.md) | Onboarding mode should read existing spec/backlog first and orient from them | todo | 3 | — |

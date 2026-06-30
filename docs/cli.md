@@ -164,7 +164,7 @@ does not dial a client of its own.
 | `--model ID` | `claude-opus-4-8` | fallback model id (when no `--config`) |
 | `--base-url URL` | `https://api.anthropic.com` | fallback API base URL (when no `--config`) |
 | `--key-env VAR` | `ANTHROPIC_API_KEY` | fallback API key env var (when no `--config`) |
-| `--max-tokens N` | `8192` | fallback max tokens per turn (when no `--config`) |
+| `--max-tokens N` | `32000` | fallback max tokens per turn (when no `--config`) |
 | `--token T` | `$YCC_TOKEN` | bearer token clients must present (empty disables auth) |
 | `--tls-cert FILE` | | TLS certificate file (enables HTTPS) |
 | `--tls-key FILE` | | TLS key file |

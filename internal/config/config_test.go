@@ -660,3 +660,12 @@ func TestResolveKeyPrecedence(t *testing.T) {
 		t.Fatalf("resolveKey (no key_env) = %q, want empty", got)
 	}
 }
+
+// DefaultMaxTokens is the shared per-turn output cap default; it was raised so
+// extended-thinking budgets aren't exhausted mid-turn. Pin the value so the
+// config default, daemon options, and CLI flag default stay in sync.
+func TestDefaultMaxTokens(t *testing.T) {
+	if DefaultMaxTokens != 32000 {
+		t.Fatalf("DefaultMaxTokens = %d, want 32000", DefaultMaxTokens)
+	}
+}

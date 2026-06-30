@@ -1,7 +1,7 @@
 ---
 id: "0093"
 title: Raise MaxTokens default and handle non-stop stop reasons robustly
-status: todo
+status: done
 priority: 2
 created: "2026-06-30"
 updated: "2026-06-30"
@@ -40,4 +40,43 @@ We should both (a) raise the default token budget and (b) handle the full range 
 
 ## Acceptance criteria
 
+## Plan
+
+Two parts.
+
+PART A — raise default MaxTokens to a single shared constant.
+- Add `const DefaultMaxTokens = 32000` to internal/config/config.go (documented: per-turn output cap; larger so extended-thinking budgets aren't exhausted mid-turn; default model Opus 4 supports it).
+- Replace the three production literals `8192` with config.DefaultMaxTokens: cmd/ycc/main.go flag `max-tokens` Value (~540); cmd/ycc/main.go in-process daemon fallback (~604); internal/setup/setup.go generated config (~125).
+- daemon/serve.go already plumbs the supplied value through DefaultAnthropic — no literal there.
+- Leave *_test.go call sites that pass 8192 explicitly; add one assertion that DefaultMaxTokens is the raised value.
+
+PART B — robust stop-reason handling in internal/engine/loop.go.
+- After `msg := resp.Choices[0].Message` and `truncated := resp.Truncated()`, BEFORE the model_turn emit, add a guard: if no tool calls AND not truncated AND blank content, set msg.Content = noContentYieldReport(resp.StopReason). Doing it before emit records the synthesized text on the event so reopen/replay reconstructs the identical non-empty turn with NO replay.go change.
+- Helper noContentYieldReport(stopReason): switch on lowercased reason — "refusal" → declined note; ""/"end_turn"/"stop"/"stop_sequence" → "ended its turn without any content or tool call"; default → includes raw reason. Always non-empty.
+- The `if len(msg.ToolCalls) == 0` block: truncated branch UNCHANGED (nudge/retry via truncatedStubContent + truncationNudge, bounded by maxTruncRetries — DO NOT touch, replay depends on it); else (yield) appends msg (non-empty content) and returns Report = msg.Content (never blank).
+- Keep comments explaining the branching.
+
+Replay: truncation-retry boundary untouched → replay.go stays correct; new path records synthesized text so replay appends verbatim — verify replay tests pass.
+
+Tests (internal/engine): loop_test.go add non-truncated empty-yield test (StopReason "refusal") → non-empty Report mentioning the reason + non-empty stored assistant message; keep truncation tests green. config_test.go assert DefaultMaxTokens == 32000.
+
+Build + go test ./... .
+
+### Starting points
+- internal/engine/loop.go: msg/truncated computed ~line 345-361, model_turn emit ~366, no-tool-call block ~391-421; truncatedStubContent/truncationNudge consts ~170; maxTruncRetries ~161
+- internal/engine/replay.go: truncation boundary reconstruction lines 109-140 (do not break)
+- internal/config/config.go: DefaultAnthropic ~363; cmd/ycc/main.go:540,604; internal/setup/setup.go:125
+- gollama ResponseMessageGenerate.Truncated() returns true for stop_reason max_tokens/length
+
 ## Work log
+- 2026-06-30 plan: Two parts.  PART A — raise default MaxTokens to a single shared constant. - Add `const DefaultMaxTokens = 32000` to internal/config/config.go (documented: per-turn output cap; larger so extended-thi
+…[truncated]
+- 2026-06-30 context hints: 4 recorded with plan
+- 2026-06-30 context hints: internal/engine/loop.go: msg/truncated computed ~line 345-361, model_turn emit ~366, no-tool-call block ~391-421; truncatedStubContent/truncationNudge consts ~170; maxTruncRetries ~161; internal/engin
+…[truncated]
+- 2026-06-30 implementer report: Implemented Task 0093 in two parts.  PART A — raised default MaxTokens to a shared constant: - Added `const DefaultMaxTokens = 32000` to internal/config/config.go with documentation (per-turn output
+…[truncated]
+- 2026-06-30 review tier: single-opus — reviewers: Claude
+- 2026-06-30 review (Claude): accept — The change satisfies all acceptance criteria. Default MaxTokens is raised to a shared constant (config.DefaultMaxTokens = 32000) and used consistently across the CLI flag, in-process daemon fallback, 
+…[truncated]
+- 2026-06-30 decision: accept — commit: engine/config: raise default MaxTokens to 32000 and robustly handle no-content yields (0093)
