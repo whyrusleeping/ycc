@@ -158,7 +158,7 @@ func applyTheme(t theme) {
 	recoStyle = lipgloss.NewStyle().Bold(true).Foreground(c(t.reco))
 	selBarStyle = lipgloss.NewStyle().Foreground(c(t.selBar))
 	dimStyle = lipgloss.NewStyle().Foreground(c(t.dim))
-	thinkStyle = lipgloss.NewStyle().Italic(true).Foreground(c(t.think))
+	thinkStyle = lipgloss.NewStyle().Foreground(c(t.think))
 	typeStyle = lipgloss.NewStyle().Foreground(c(t.typ))
 	askStyle = lipgloss.NewStyle().Bold(true).Foreground(c(t.askFg)).Background(c(t.askBg))
 	errStyle = lipgloss.NewStyle().Foreground(c(t.err))

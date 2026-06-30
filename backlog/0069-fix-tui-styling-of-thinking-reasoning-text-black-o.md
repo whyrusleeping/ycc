@@ -1,7 +1,7 @@
 ---
 id: "0069"
 title: Fix TUI styling of thinking/reasoning text (black-on-white background and extra line spacing)
-status: todo
+status: done
 priority: 3
 created: "2026-06-30"
 updated: "2026-06-30"
@@ -27,3 +27,9 @@ Pure visual/styling fix for the TUI rendering of thinking/reasoning text only. N
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-30 plan: Fix TUI thinking/reasoning rendering (internal/tui).  Two root causes confirmed: 1. Black-on-white "background": thinkStyle uses Italic(true). Many terminals render the italic SGR (3) as reverse video
+…[truncated]
+- 2026-06-30 implementer report: Fixed TUI thinking/reasoning text styling in internal/tui only.  Changes: 1. theme.go: Removed `Italic(true)` from `thinkStyle` (was `lipgloss.NewStyle().Italic(true).Foreground(c(t.think))` → `lipg
+…[truncated]
+- 2026-06-30 review tier: simple (coordinator self-review)
+- 2026-06-30 decision: accept — commit: Fix TUI thinking text styling: drop italic (reverse-video bg) and per-line wrap to remove spurious line spacing

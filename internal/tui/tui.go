@@ -3635,13 +3635,16 @@ func (m *model) renderBody(ev *v1.Event) string {
 		}
 		return indentLines(m.markdown(txt), "  ")
 	case "thinking":
-		// Render the reasoning summary dimmed + italic so it reads as the
-		// model's "inner voice", distinct from its actual response (spec §18).
+		// Render the reasoning summary dimmed so it reads as the model's
+		// "inner voice", distinct from its actual response (spec §18).
 		txt := dataField(ev, "text")
-		if txt == "" {
+		if strings.TrimSpace(txt) == "" {
 			return ""
 		}
-		return indentLines(thinkStyle.Render(txt), bodyBar)
+		if w := m.w - lipgloss.Width(bodyBar); w > 0 {
+			txt = wrap.String(wordwrap.String(txt, w), w)
+		}
+		return indentLines(styleLines(txt, thinkStyle), bodyBar)
 	case "tool_call":
 		return indentLines(prettyArgs(dataField(ev, "args")), bodyBar)
 	case "tool_result":
@@ -4050,6 +4053,17 @@ func indentLines(s, prefix string) string {
 	lines := strings.Split(s, "\n")
 	for i := range lines {
 		lines[i] = prefix + lines[i]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// styleLines applies a style to each line independently so lipgloss does not
+// pad the block to the longest line's width (which would push lines past the
+// terminal edge and cause spurious wraps).
+func styleLines(s string, st lipgloss.Style) string {
+	lines := strings.Split(s, "\n")
+	for i, ln := range lines {
+		lines[i] = st.Render(ln)
 	}
 	return strings.Join(lines, "\n")
 }
