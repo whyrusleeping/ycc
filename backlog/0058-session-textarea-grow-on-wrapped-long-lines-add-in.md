@@ -1,10 +1,10 @@
 ---
 id: "0058"
 title: 'Session textarea: grow on wrapped long lines + add input behavior tests'
-status: todo
+status: done
 priority: 4
 created: "2026-06-29"
-updated: "2026-06-29"
+updated: "2026-06-30"
 depends_on:
     - "0011"
 spec_refs: []
@@ -24,3 +24,12 @@ The session input is now a `textarea` (internal/tui/tui.go). `syncInputHeight()`
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-30 plan: Make the session textarea grow on soft-wrapped long lines (not just explicit newlines) by switching to the bubbles/v2 textarea's built-in DynamicHeight, then add focused unit tests.  Implementation (i
+…[truncated]
+- 2026-06-30 implementer report: Implemented task 0058.  Changes in internal/tui/tui.go: - newSessionInput(): enabled the bubbles/v2 textarea's built-in DynamicHeight (set DynamicHeight=true, MinHeight=1; kept MaxHeight=maxInputRows 
+…[truncated]
+- 2026-06-30 review tier: single-opus — reviewers: Claude
+- 2026-06-30 review (Claude): accept — Task 0058 is correctly and completely implemented. The session textarea now grows on soft-wrapped long lines via the bubbles/v2 textarea's built-in DynamicHeight (MinHeight=1, MaxHeight=maxInputRows),
+…[truncated]
+- 2026-06-30 decision: accept — commit: Session textarea grows on soft-wrapped long lines + input behavior tests (task 0058)  Enable the bubbles/v2 textarea DynamicHeight so the session input grows from total visual (soft-wrapped) lines, bo
+…[truncated]

@@ -754,24 +754,14 @@ func newSessionInput() textarea.Model {
 	input.ShowLineNumbers = false
 	input.Prompt = ""
 	input.MaxHeight = maxInputRows
+	// DynamicHeight grows the box from total *visual* (soft-wrapped) lines up to
+	// MaxHeight on every Update/SetValue/SetWidth, so a single very long line
+	// that wraps grows the box too — not just explicit shift+enter newlines.
+	input.MinHeight = 1
+	input.DynamicHeight = true
 	input.SetHeight(1)
 	input.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("shift+enter", "ctrl+j"))
 	return input
-}
-
-// syncInputHeight grows the session textarea with its content up to
-// maxInputRows, after which it scrolls internally.
-func (m *model) syncInputHeight() {
-	h := m.input.LineCount()
-	if h < 1 {
-		h = 1
-	}
-	if h > maxInputRows {
-		h = maxInputRows
-	}
-	if h != m.input.Height() {
-		m.input.SetHeight(h)
-	}
 }
 
 // relayout recomputes the viewport height so the (possibly multi-row) input
@@ -861,7 +851,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.makeRenderer()
 		m.bodyCache = map[int]string{} // re-render bodies at the new width
 		m.rebuild()
-		m.syncInputHeight()
 		m.relayout()
 		return m, nil
 
@@ -982,7 +971,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sessionStart = time.Now()
 		m.input.SetValue("")
 		fc := m.input.Focus()
-		m.syncInputHeight()
 		m.relayout()
 		spin := m.spinnerCmd() // arm the activity spinner (mutates m.spinning) before returning m
 		return m, tea.Batch(m.subscribe(), fc, spin)
@@ -1487,7 +1475,6 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.input.SetValue("")
-			m.syncInputHeight()
 			m.relayout()
 			// While paused, a non-empty Enter steers: send the correction AND
 			// resume so the agent continues with it (spec §18.7).
@@ -1519,7 +1506,6 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	var icmd tea.Cmd
 	m.input, icmd = m.input.Update(msg)
-	m.syncInputHeight()
 	m.relayout()
 	return m, icmd
 }

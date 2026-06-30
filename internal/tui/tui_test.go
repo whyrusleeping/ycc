@@ -2220,3 +2220,97 @@ func TestLoopDecisionStopsWhenEmpty(t *testing.T) {
 		t.Fatalf("expected loop to stop and return to menu, looping=%v state=%v", mm.looping, mm.state)
 	}
 }
+
+// --- session textarea input behavior (task 0058) ---
+
+// newSessionTextareaModel builds a sized session model whose input is a real
+// textarea, mirroring how the running TUI is constructed.
+func newSessionTextareaModel(t *testing.T) model {
+	t.Helper()
+	m := model{
+		state: stateSession, status: "running", mode: "implement",
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+		input: newSessionInput(),
+	}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(model)
+	m.input.Focus()
+	return m
+}
+
+func TestSessionInputEnterSendsAndClears(t *testing.T) {
+	m := newSessionTextareaModel(t)
+	m = typeText(t, m, "hello agent")
+	if m.input.Value() != "hello agent" {
+		t.Fatalf("setup: value = %q, want %q", m.input.Value(), "hello agent")
+	}
+	updated, cmd := m.Update(keyMsg("enter"))
+	m = updated.(model)
+	if m.input.Value() != "" {
+		t.Fatalf("enter did not clear input: %q", m.input.Value())
+	}
+	if cmd == nil {
+		t.Fatalf("enter on non-empty input should issue a send command")
+	}
+}
+
+func TestSessionInputShiftEnterInsertsNewline(t *testing.T) {
+	m := newSessionTextareaModel(t)
+	m = typeText(t, m, "ab")
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift})
+	m = updated.(model)
+	m = typeText(t, m, "cd")
+	if m.input.Value() != "ab\ncd" {
+		t.Fatalf("shift+enter: value = %q, want %q", m.input.Value(), "ab\ncd")
+	}
+	if m.input.LineCount() != 2 {
+		t.Fatalf("shift+enter: LineCount = %d, want 2", m.input.LineCount())
+	}
+}
+
+func TestSessionInputCtrlJInsertsNewline(t *testing.T) {
+	m := newSessionTextareaModel(t)
+	m = typeText(t, m, "ab")
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'j', Mod: tea.ModCtrl})
+	m = updated.(model)
+	m = typeText(t, m, "cd")
+	if m.input.Value() != "ab\ncd" {
+		t.Fatalf("ctrl+j: value = %q, want %q", m.input.Value(), "ab\ncd")
+	}
+	if m.input.LineCount() != 2 {
+		t.Fatalf("ctrl+j: LineCount = %d, want 2", m.input.LineCount())
+	}
+}
+
+func TestSessionInputHeightCapsWithNewlines(t *testing.T) {
+	m := newSessionTextareaModel(t)
+	for i := 0; i < maxInputRows+3; i++ {
+		m = typeText(t, m, "x")
+		updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift})
+		m = updated.(model)
+	}
+	if m.input.Height() != maxInputRows {
+		t.Fatalf("height with many newlines = %d, want %d", m.input.Height(), maxInputRows)
+	}
+}
+
+func TestSessionInputGrowsOnSoftWrap(t *testing.T) {
+	m := newSessionTextareaModel(t)
+	m = typeText(t, m, strings.Repeat("a", 200))
+	if m.input.Height() <= 1 {
+		t.Fatalf("soft-wrapped long line height = %d, want > 1", m.input.Height())
+	}
+	m2 := newSessionTextareaModel(t)
+	m2 = typeText(t, m2, strings.Repeat("a", 600))
+	if m2.input.Height() != maxInputRows {
+		t.Fatalf("very long wrapped line height = %d, want %d (capped)", m2.input.Height(), maxInputRows)
+	}
+}
+
+func TestSessionInputRelayoutFitsTerminal(t *testing.T) {
+	m := newSessionTextareaModel(t)
+	m = typeText(t, m, strings.Repeat("a", 600))
+	if got := len(strings.Split(m.sessionView(), "\n")); got != 24 {
+		t.Fatalf("sessionView produced %d lines, want 24", got)
+	}
+}

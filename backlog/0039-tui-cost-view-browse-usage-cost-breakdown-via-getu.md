@@ -57,3 +57,4 @@ opened over the home menu or a session and dismissed with Esc, routed from a sma
 …[truncated]
 - 2026-06-30 decision: accept — commit: TUI cost view — browse usage/cost breakdown via GetUsage (task 0039)  Add a cost modal to the TUI, reachable from the browse selector (ctrl+o → cost), backed by the existing GetUsage RPC and reusi
 …[truncated]
+- 2026-06-30 usage: 22,805 tok (in 118, out 22,687, cache_r 1,554,212, cache_w 68,998) · cost n/a (unpriced)
