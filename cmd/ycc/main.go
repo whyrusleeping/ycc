@@ -4,7 +4,7 @@
 // running, otherwise it starts the daemon in-process on an ephemeral loopback
 // address tied to this process and torn down on exit (closing it ends in-flight
 // agent work). `ycc daemon` is the explicit, persistent, foreground service;
-// `ycc --background` spawns a detached persistent daemon and attaches; `-addr`
+// `ycc --background` spawns a detached persistent daemon and attaches; `--addr`
 // attaches to a remote/explicit daemon.
 //
 //	ycc                                  # TUI home menu (one-shot in-process daemon)
@@ -13,15 +13,17 @@
 //	ycc attach s_abc123 --from 0         # re-attach, replay from a seq offset
 //	ycc list | ycc modes
 //	ycc cost --by task --since 2026-06-01  # usage/cost breakdown by backlog task
-//	ycc -addr https://host:8787 -token T # attach to a remote daemon
-//	ycc daemon -addr 0.0.0.0:8787 -token T -tls-cert c.pem -tls-key k.pem
+//	ycc --addr https://host:8787 --token T # attach to a remote daemon
+//	ycc daemon --addr 0.0.0.0:8787 --token T --tls-cert c.pem --tls-key k.pem
+//
+// The command tree is built with urfave/cli (v3), which gives every subcommand
+// discoverable `--help` output and a generated command list (`ycc --help`).
 package main
 
 import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -31,6 +33,7 @@ import (
 	"text/tabwriter"
 
 	"connectrpc.com/connect"
+	cli "github.com/urfave/cli/v3"
 
 	"github.com/whyrusleeping/ycc/internal/daemon"
 	"github.com/whyrusleeping/ycc/internal/secrets"
@@ -40,161 +43,524 @@ import (
 	"github.com/whyrusleeping/ycc/proto/ycc/v1/yccv1connect"
 )
 
+// app holds the resolved global flags shared by every subcommand. Global flags
+// are captured straight into these fields via cli flag Destinations, so a
+// subcommand action just reads them.
+type app struct {
+	addr       string // remote/explicit daemon URL (empty = local)
+	token      string // bearer token for --addr
+	workspace  string // workspace for new sessions (resolved to cwd if empty)
+	configPath string // TOML model config for the local daemon
+	background bool   // spawn a detached persistent daemon and attach
+}
+
 func main() {
-	// The daemon subcommand runs the explicit, persistent service; it has its
-	// own flags.
-	if len(os.Args) > 1 && os.Args[1] == "daemon" {
-		runDaemon(os.Args[2:])
-		return
+	a := &app{}
+	root := newRootCommand(a)
+	if err := root.Run(context.Background(), os.Args); err != nil {
+		fatal("%v", err)
+	}
+}
+
+// newRootCommand assembles the full command tree. Global flags are marked Local
+// so they precede the subcommand (e.g. `ycc --addr X list`) and never collide
+// with same-named subcommand flags such as `daemon --addr`.
+func newRootCommand(a *app) *cli.Command {
+	globalFlags := []cli.Flag{
+		&cli.StringFlag{
+			Name:        "addr",
+			Usage:       "remote/explicit daemon `URL` to attach to",
+			Destination: &a.addr,
+			Local:       true,
+		},
+		&cli.StringFlag{
+			Name:        "token",
+			Usage:       "bearer `token` (for --addr)",
+			Sources:     cli.EnvVars("YCC_TOKEN"),
+			Destination: &a.token,
+			Local:       true,
+		},
+		&cli.StringFlag{
+			Name:        "workspace",
+			Usage:       "workspace `dir` for new sessions (default: current directory)",
+			Destination: &a.workspace,
+			Local:       true,
+		},
+		&cli.StringFlag{
+			Name:        "config",
+			Usage:       "TOML model config `file` for the local daemon",
+			Destination: &a.configPath,
+			Local:       true,
+		},
+		&cli.BoolFlag{
+			Name:        "background",
+			Usage:       "spawn a detached persistent daemon and attach (opt-in persistence)",
+			Destination: &a.background,
+			Local:       true,
+		},
 	}
 
-	// The token subcommand manages the machine-local secrets store; it's a
-	// purely-local operation that does not need the daemon.
-	if len(os.Args) > 1 && os.Args[1] == "token" {
-		runToken(os.Args[2:])
-		return
+	return &cli.Command{
+		Name:  "ycc",
+		Usage: "coding-agent client, TUI, and daemon in one binary",
+		Description: "With no subcommand, ycc launches the interactive TUI (home menu).\n" +
+			"By default the daemon runs in-process and is torn down on exit (no persistence);\n" +
+			"use `ycc daemon` or `ycc --background` for a persistent daemon.",
+		Flags: globalFlags,
+		// Resolve the workspace once, before any subcommand action runs.
+		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
+			if a.workspace == "" {
+				if cwd, err := os.Getwd(); err == nil {
+					a.workspace = cwd
+				}
+			}
+			return ctx, nil
+		},
+		// No subcommand: launch the TUI.
+		Action: a.runTUI,
+		Commands: []*cli.Command{
+			a.startCommand(),
+			a.attachCommand(),
+			a.listCommand(),
+			a.modesCommand(),
+			a.stopCommand(),
+			a.projectCommand(),
+			a.costCommand(),
+			tokenCommand(),
+			daemonCommand(),
+		},
 	}
+}
 
-	// Global flags precede the subcommand; subcommand-specific flags follow it.
-	global := flag.NewFlagSet("ycc", flag.ExitOnError)
-	addr := global.String("addr", "", "remote/explicit daemon URL to attach to")
-	token := global.String("token", os.Getenv("YCC_TOKEN"), "bearer token (for -addr)")
-	workspace := global.String("workspace", "", "workspace for new sessions (default: current directory)")
-	configPath := global.String("config", "", "TOML model config for the local daemon")
-	background := global.Bool("background", false, "spawn a detached persistent daemon and attach (opt-in persistence)")
-	global.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: ycc [-addr URL] [-token T] [--background] [<start|attach|list|stop|modes|cost|token|daemon>] [args]")
-		fmt.Fprintln(os.Stderr, "  with no subcommand, launches the interactive TUI (home menu)")
-		fmt.Fprintln(os.Stderr, "  by default the daemon runs in-process and is torn down on exit (no persistence)")
-		fmt.Fprintln(os.Stderr, "  use `ycc daemon` or `ycc --background` for a persistent daemon")
-		global.PrintDefaults()
+// dial resolves the daemon to talk to, installs a signal-driven teardown for any
+// one-shot in-process daemon, and returns a connected client plus a cleanup func
+// the caller must defer. persistent reports whether the daemon is multi-project.
+// On error no client is returned and cleanup is a no-op.
+func (a *app) dial() (client yccv1connect.SessionServiceClient, persistent bool, cleanup func(), err error) {
+	target, tok, persistent, shutdown, err := resolveDaemon(a.addr, a.token, a.background, a.workspace, a.configPath)
+	if err != nil {
+		return nil, false, func() {}, err
 	}
-	global.Parse(os.Args[1:])
-
-	// Sessions bind to the current directory unless overridden, so one daemon can
-	// serve many workspaces.
-	ws := *workspace
-	if ws == "" {
-		if cwd, err := os.Getwd(); err == nil {
-			ws = cwd
-		}
-	}
-
-	// First-run setup wizard (spec §19.1): when launching the TUI with no
-	// usable model configuration and no fallback env key, guide the user through
-	// configuring providers + roles and write ~/.config/ycc/ycc.toml, then feed
-	// that path into daemon resolution. Skipping leaves *configPath empty and the
-	// prior fallback/keyless behaviour is preserved.
-	args := global.Args()
-	if len(args) == 0 && *addr == "" && !*background && *configPath == "" && setup.NeedsSetup(ws) {
-		if p, err := setup.Run(ws); err == nil && p != "" {
-			*configPath = p
-		}
-	}
-
-	// Resolve the daemon to talk to and obtain a teardown hook for any one-shot
-	// in-process daemon we start.
-	target, tok, persistent, shutdown := resolveDaemon(*addr, *token, *background, ws, *configPath)
-	defer shutdown()
-	// Tear the one-shot daemon down on ctrl-c / SIGTERM too — a defer alone won't
-	// fire when the process is signalled. (A panic still runs the defer.)
 	installSignalShutdown(shutdown)
+	return daemon.DialClient(target, tok), persistent, shutdown, nil
+}
 
-	client := daemon.DialClient(target, tok)
-	ctx := context.Background()
-
-	if len(args) == 0 {
-		// A persistent/remote daemon is multi-project: show the picker first. A
-		// one-shot in-process daemon has a single implicit project (cwd) and skips
-		// it (spec §3.1).
-		if err := tui.Run(ctx, client, ws, persistent); err != nil {
-			fatal("tui: %v", err)
-		}
-		return
+// runTUI is the no-subcommand action: optionally run the first-run setup wizard,
+// then attach a client and launch the interactive TUI (spec §19.1, §3.1).
+func (a *app) runTUI(ctx context.Context, cmd *cli.Command) error {
+	// An unrecognised subcommand lands here as a leftover positional; reject it
+	// rather than silently launching the TUI.
+	if cmd.Args().Present() {
+		return fmt.Errorf("unknown command %q (run `ycc --help`)", cmd.Args().First())
 	}
+	// First-run setup wizard: when launching the TUI with no usable model
+	// configuration and no fallback env key, guide the user through configuring
+	// providers + roles and write ~/.config/ycc/ycc.toml, then feed that path
+	// into daemon resolution.
+	if a.addr == "" && !a.background && a.configPath == "" && setup.NeedsSetup(a.workspace) {
+		if p, err := setup.Run(a.workspace); err == nil && p != "" {
+			a.configPath = p
+		}
+	}
+	client, persistent, cleanup, err := a.dial()
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	if err := tui.Run(ctx, client, a.workspace, persistent); err != nil {
+		return fmt.Errorf("tui: %w", err)
+	}
+	return nil
+}
 
-	switch args[0] {
-	case "start":
-		// The task is an optional leading positional (omit it for work mode to let
-		// the coordinator pick from the backlog); flags may follow it.
-		task := ""
-		rest := args[1:]
-		if len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
-			task, rest = rest[0], rest[1:]
-		}
-		fs := flag.NewFlagSet("start", flag.ExitOnError)
-		workspace := fs.String("workspace", ws, "workspace dir (default: current directory)")
-		project := fs.String("project", "", "registered project name (overrides -workspace)")
-		mode := fs.String("mode", "", "session mode (default: work)")
-		level := fs.String("level", "", "interaction level: interactive | judgement | autonomous")
-		fs.Parse(rest)
-		resp, err := client.StartSession(ctx, connect.NewRequest(&v1.StartSessionRequest{
-			Workspace:        *workspace,
-			Project:          *project,
-			Mode:             *mode,
-			InteractionLevel: *level,
-			Prompt:           task,
-		}))
-		if err != nil {
-			fatal("StartSession: %v", err)
-		}
-		id := resp.Msg.SessionId
-		fmt.Printf("session %s\n", id)
-		go readStdinInto(ctx, client, id)
-		stream(ctx, client, id, 0)
+// startCommand starts a session and streams it; the task is an optional leading
+// positional (omit it for work mode to let the coordinator pick from the
+// backlog).
+func (a *app) startCommand() *cli.Command {
+	return &cli.Command{
+		Name:      "start",
+		Usage:     "start a session and stream it (type to prod the agent)",
+		ArgsUsage: "[task]",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "workspace", Usage: "workspace `dir` (default: --workspace or current directory)"},
+			&cli.StringFlag{Name: "project", Usage: "registered project `name` (overrides --workspace)"},
+			&cli.StringFlag{Name: "mode", Usage: "session `mode` (default: work)"},
+			&cli.StringFlag{Name: "level", Usage: "interaction `level`: interactive | judgement | autonomous"},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			ws := cmd.String("workspace")
+			if ws == "" {
+				ws = a.workspace
+			}
+			client, _, cleanup, err := a.dial()
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			resp, err := client.StartSession(ctx, connect.NewRequest(&v1.StartSessionRequest{
+				Workspace:        ws,
+				Project:          cmd.String("project"),
+				Mode:             cmd.String("mode"),
+				InteractionLevel: cmd.String("level"),
+				Prompt:           cmd.Args().First(),
+			}))
+			if err != nil {
+				return fmt.Errorf("StartSession: %w", err)
+			}
+			id := resp.Msg.SessionId
+			fmt.Printf("session %s\n", id)
+			go readStdinInto(ctx, client, id)
+			return stream(ctx, client, id, 0)
+		},
+	}
+}
 
-	case "attach":
-		// Positional (session id) comes first; flags follow it.
-		if len(args) < 2 {
-			fatal("usage: ycc attach <session-id> [--from N]")
-		}
-		id := args[1]
-		fs := flag.NewFlagSet("attach", flag.ExitOnError)
-		fromSeq := fs.Int64("from", 0, "replay events with seq greater than this")
-		fs.Parse(args[2:])
-		go readStdinInto(ctx, client, id)
-		stream(ctx, client, id, *fromSeq)
+// attachCommand re-attaches to a running session and replays from a seq offset.
+func (a *app) attachCommand() *cli.Command {
+	return &cli.Command{
+		Name:      "attach",
+		Usage:     "re-attach to a session and stream it",
+		ArgsUsage: "<session-id>",
+		Flags: []cli.Flag{
+			&cli.Int64Flag{Name: "from", Usage: "replay events with seq greater than `N`"},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			id := cmd.Args().First()
+			if id == "" {
+				return fmt.Errorf("usage: ycc attach <session-id> [--from N]")
+			}
+			client, _, cleanup, err := a.dial()
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			go readStdinInto(ctx, client, id)
+			return stream(ctx, client, id, cmd.Int64("from"))
+		},
+	}
+}
 
-	case "modes":
-		resp, err := client.ListModes(ctx, connect.NewRequest(&v1.ListModesRequest{}))
-		if err != nil {
-			fatal("ListModes: %v", err)
-		}
-		for _, mode := range resp.Msg.Modes {
-			fmt.Printf("%-9s %s\n", mode.Name, mode.Description)
-		}
+// listCommand lists known sessions.
+func (a *app) listCommand() *cli.Command {
+	return &cli.Command{
+		Name:  "list",
+		Usage: "list sessions",
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			client, _, cleanup, err := a.dial()
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			resp, err := client.ListSessions(ctx, connect.NewRequest(&v1.ListSessionsRequest{}))
+			if err != nil {
+				return fmt.Errorf("ListSessions: %w", err)
+			}
+			if len(resp.Msg.Sessions) == 0 {
+				fmt.Println("(no sessions)")
+				return nil
+			}
+			for _, s := range resp.Msg.Sessions {
+				fmt.Printf("%s  %-8s %-8s %s\n", s.SessionId, s.Mode, s.Status, s.Workspace)
+			}
+			return nil
+		},
+	}
+}
 
-	case "list":
-		resp, err := client.ListSessions(ctx, connect.NewRequest(&v1.ListSessionsRequest{}))
-		if err != nil {
-			fatal("ListSessions: %v", err)
-		}
-		if len(resp.Msg.Sessions) == 0 {
-			fmt.Println("(no sessions)")
-			return
-		}
-		for _, s := range resp.Msg.Sessions {
-			fmt.Printf("%s  %-8s %-8s %s\n", s.SessionId, s.Mode, s.Status, s.Workspace)
-		}
+// modesCommand lists the available session modes.
+func (a *app) modesCommand() *cli.Command {
+	return &cli.Command{
+		Name:  "modes",
+		Usage: "list available session modes",
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			client, _, cleanup, err := a.dial()
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			resp, err := client.ListModes(ctx, connect.NewRequest(&v1.ListModesRequest{}))
+			if err != nil {
+				return fmt.Errorf("ListModes: %w", err)
+			}
+			for _, mode := range resp.Msg.Modes {
+				fmt.Printf("%-9s %s\n", mode.Name, mode.Description)
+			}
+			return nil
+		},
+	}
+}
 
-	case "stop":
-		if len(args) < 2 {
-			fatal("usage: ycc stop <session-id>")
-		}
-		id := args[1]
-		if _, err := client.StopSession(ctx, connect.NewRequest(&v1.StopSessionRequest{SessionId: id})); err != nil {
-			fatal("StopSession: %v", err)
-		}
-		fmt.Printf("stopped session %s\n", id)
+// stopCommand stops a running session.
+func (a *app) stopCommand() *cli.Command {
+	return &cli.Command{
+		Name:      "stop",
+		Usage:     "stop a running session",
+		ArgsUsage: "<session-id>",
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			id := cmd.Args().First()
+			if id == "" {
+				return fmt.Errorf("usage: ycc stop <session-id>")
+			}
+			client, _, cleanup, err := a.dial()
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			if _, err := client.StopSession(ctx, connect.NewRequest(&v1.StopSessionRequest{SessionId: id})); err != nil {
+				return fmt.Errorf("StopSession: %w", err)
+			}
+			fmt.Printf("stopped session %s\n", id)
+			return nil
+		},
+	}
+}
 
-	case "project", "projects":
-		runProject(ctx, client, args[1:])
+// projectCommand implements `ycc project <add|list|remove>` against the daemon's
+// project registry (spec §3.1).
+func (a *app) projectCommand() *cli.Command {
+	return &cli.Command{
+		Name:    "project",
+		Aliases: []string{"projects"},
+		Usage:   "manage the daemon's project registry",
+		// `ycc project` with no subcommand lists, preserving prior behaviour.
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			if cmd.Args().Present() {
+				return fmt.Errorf("unknown project command %q", cmd.Args().First())
+			}
+			return a.projectList(ctx)
+		},
+		Commands: []*cli.Command{
+			{
+				Name:      "add",
+				Usage:     "register a project directory",
+				ArgsUsage: "<path>",
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: "name", Usage: "project `name` (default: directory basename)"},
+				},
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					path := cmd.Args().First()
+					if path == "" {
+						return fmt.Errorf("usage: ycc project add <path> [--name N]")
+					}
+					if abs, err := filepath.Abs(path); err == nil {
+						path = abs
+					}
+					client, _, cleanup, err := a.dial()
+					if err != nil {
+						return err
+					}
+					defer cleanup()
+					resp, err := client.AddProject(ctx, connect.NewRequest(&v1.AddProjectRequest{Path: path, Name: cmd.String("name")}))
+					if err != nil {
+						return fmt.Errorf("AddProject: %w", err)
+					}
+					p := resp.Msg.Project
+					fmt.Printf("registered %s  %s\n", p.Name, p.Path)
+					return nil
+				},
+			},
+			{
+				Name:      "remove",
+				Aliases:   []string{"rm"},
+				Usage:     "remove a registered project",
+				ArgsUsage: "<name>",
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					name := cmd.Args().First()
+					if name == "" {
+						return fmt.Errorf("usage: ycc project remove <name>")
+					}
+					client, _, cleanup, err := a.dial()
+					if err != nil {
+						return err
+					}
+					defer cleanup()
+					if _, err := client.RemoveProject(ctx, connect.NewRequest(&v1.RemoveProjectRequest{Name: name})); err != nil {
+						return fmt.Errorf("RemoveProject: %w", err)
+					}
+					fmt.Printf("removed %s\n", name)
+					return nil
+				},
+			},
+			{
+				Name:  "list",
+				Usage: "list registered projects",
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					return a.projectList(ctx)
+				},
+			},
+		},
+	}
+}
 
-	case "cost":
-		runCost(ctx, client, args[1:])
+func (a *app) projectList(ctx context.Context) error {
+	client, _, cleanup, err := a.dial()
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	resp, err := client.ListProjects(ctx, connect.NewRequest(&v1.ListProjectsRequest{}))
+	if err != nil {
+		return fmt.Errorf("ListProjects: %w", err)
+	}
+	if len(resp.Msg.Projects) == 0 {
+		fmt.Println("(no projects)")
+		return nil
+	}
+	for _, p := range resp.Msg.Projects {
+		fmt.Printf("%-20s %s\n", p.Name, p.Path)
+	}
+	return nil
+}
 
-	default:
-		fatal("unknown command %q", args[0])
+// costCommand renders the usage/cost breakdown (spec §20.3, §20.5) returned by
+// the daemon's GetUsage RPC. By default it groups by backlog task; --by selects
+// other dimensions (comma-separated: task,model,session,agent,day) and
+// --since/--until bound an inclusive date range.
+func (a *app) costCommand() *cli.Command {
+	return &cli.Command{
+		Name:  "cost",
+		Usage: "show a usage/cost breakdown",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "project", Usage: "registered project `name` (default: daemon default workspace)"},
+			&cli.StringFlag{Name: "by", Value: "task", Usage: "group by, comma-separated: task,model,session,agent,day"},
+			&cli.StringFlag{Name: "since", Usage: "include usage on/after this day (`YYYY-MM-DD`)"},
+			&cli.StringFlag{Name: "until", Usage: "include usage on/before this day (`YYYY-MM-DD`)"},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			var groupBy []string
+			for _, g := range strings.Split(cmd.String("by"), ",") {
+				if g = strings.TrimSpace(g); g != "" {
+					groupBy = append(groupBy, g)
+				}
+			}
+			client, _, cleanup, err := a.dial()
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			resp, err := client.GetUsage(ctx, connect.NewRequest(&v1.GetUsageRequest{
+				Project: cmd.String("project"), GroupBy: groupBy, Since: cmd.String("since"), Until: cmd.String("until"),
+			}))
+			if err != nil {
+				return fmt.Errorf("GetUsage: %w", err)
+			}
+			renderCost(resp.Msg, groupBy)
+			return nil
+		},
+	}
+}
+
+// tokenCommand manages the machine-local LLM backend secrets store; it is a
+// purely-local operation that does not need the daemon. A token can be saved
+// once (keyed by its key_env name) instead of being exported in the environment
+// every session.
+func tokenCommand() *cli.Command {
+	return &cli.Command{
+		Name:  "token",
+		Usage: "manage the machine-local secrets store (LLM backend / tool keys)",
+		Commands: []*cli.Command{
+			{
+				Name:      "set",
+				Usage:     "store a token, read from stdin (never from argv)",
+				ArgsUsage: "<KEY_ENV>",
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					keyEnv := cmd.Args().First()
+					if keyEnv == "" {
+						return fmt.Errorf("usage: ycc token set <KEY_ENV>")
+					}
+					// Prompt only when stdin is a terminal; a piped value works unattended.
+					if fi, err := os.Stdin.Stat(); err == nil && (fi.Mode()&os.ModeCharDevice) != 0 {
+						fmt.Fprintf(os.Stderr, "enter token for %s (input hidden if piped): ", keyEnv)
+					}
+					r := bufio.NewReader(os.Stdin)
+					line, err := r.ReadString('\n')
+					if err != nil && line == "" {
+						return fmt.Errorf("reading token: %w", err)
+					}
+					tok := strings.TrimSpace(line)
+					if tok == "" {
+						return fmt.Errorf("empty token, nothing stored")
+					}
+					if err := secrets.Set(keyEnv, tok); err != nil {
+						return err
+					}
+					fmt.Printf("stored token for %s\n", keyEnv)
+					return nil
+				},
+			},
+			{
+				Name:  "list",
+				Usage: "list stored token key names",
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					keys := secrets.Keys()
+					if len(keys) == 0 {
+						fmt.Println("(no stored tokens)")
+						return nil
+					}
+					for _, k := range keys {
+						fmt.Println(k)
+					}
+					return nil
+				},
+			},
+			{
+				Name:      "rm",
+				Aliases:   []string{"remove"},
+				Usage:     "remove a stored token",
+				ArgsUsage: "<KEY_ENV>",
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					keyEnv := cmd.Args().First()
+					if keyEnv == "" {
+						return fmt.Errorf("usage: ycc token rm <KEY_ENV>")
+					}
+					if err := secrets.Remove(keyEnv); err != nil {
+						return err
+					}
+					fmt.Printf("removed token for %s\n", keyEnv)
+					return nil
+				},
+			},
+		},
+	}
+}
+
+// daemonCommand runs the explicit, persistent, foreground service. It serves
+// until killed and does not dial a client of its own.
+func daemonCommand() *cli.Command {
+	return &cli.Command{
+		Name:  "daemon",
+		Usage: "run the explicit, persistent, foreground daemon",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "addr", Value: "127.0.0.1:8787", Usage: "address to listen on"},
+			&cli.StringFlag{Name: "workspace", Value: ".", Usage: "default workspace for sessions that don't specify one"},
+			&cli.StringFlag{Name: "config", Usage: "TOML config `file` (models + roles)"},
+			&cli.StringFlag{Name: "model", Value: "claude-opus-4-8", Usage: "fallback model id (when no --config)"},
+			&cli.StringFlag{Name: "base-url", Value: "https://api.anthropic.com", Usage: "fallback API base URL (when no --config)"},
+			&cli.StringFlag{Name: "key-env", Value: "ANTHROPIC_API_KEY", Usage: "fallback API key env var (when no --config)"},
+			&cli.IntFlag{Name: "max-tokens", Value: 8192, Usage: "fallback max tokens per turn (when no --config)"},
+			&cli.StringFlag{Name: "token", Sources: cli.EnvVars("YCC_TOKEN"), Usage: "bearer token clients must present (empty disables auth)"},
+			&cli.StringFlag{Name: "tls-cert", Usage: "TLS certificate `file` (enables HTTPS)"},
+			&cli.StringFlag{Name: "tls-key", Usage: "TLS key `file`"},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			err := daemon.Serve(daemon.Options{
+				Addr:       cmd.String("addr"),
+				Workspace:  cmd.String("workspace"),
+				ConfigPath: cmd.String("config"),
+				Model:      cmd.String("model"),
+				BaseURL:    cmd.String("base-url"),
+				KeyEnv:     cmd.String("key-env"),
+				MaxTokens:  int(cmd.Int("max-tokens")),
+				Token:      cmd.String("token"),
+				TLSCert:    cmd.String("tls-cert"),
+				TLSKey:     cmd.String("tls-key"),
+				Persist:    true,
+			})
+			if err != nil {
+				return fmt.Errorf("daemon: %w", err)
+			}
+			return nil
+		},
 	}
 }
 
@@ -203,28 +569,28 @@ func main() {
 // daemon, and a teardown func (a no-op for everything except a one-shot
 // in-process daemon, which the caller must shut down on exit).
 //
-//   - -addr:        attach to the explicit/remote daemon.
-//   - --background: spawn (if needed) a detached persistent daemon and attach.
-//   - default:      attach to a persistent local daemon if one is already
+//   - --addr:        attach to the explicit/remote daemon.
+//   - --background:  spawn (if needed) a detached persistent daemon and attach.
+//   - default:       attach to a persistent local daemon if one is already
 //     running, else start the daemon in-process on an ephemeral
 //     address tied to this process (no persistence).
-func resolveDaemon(addr, token string, background bool, ws, configPath string) (target, tok string, persistent bool, shutdown func()) {
+func resolveDaemon(addr, token string, background bool, ws, configPath string) (target, tok string, persistent bool, shutdown func(), err error) {
 	noop := func() {}
 
 	if addr != "" {
-		return addr, token, true, noop
+		return addr, token, true, noop, nil
 	}
 
 	if background {
 		if err := daemon.EnsureBackgroundDaemon(ws, configPath); err != nil {
-			fatal("%v", err)
+			return "", "", false, noop, err
 		}
-		return daemon.LocalAddr, "", true, noop
+		return daemon.LocalAddr, "", true, noop, nil
 	}
 
 	// Attach to an already-running persistent local daemon if present.
 	if daemon.Reachable(daemon.LocalAddr, "") {
-		return daemon.LocalAddr, "", true, noop
+		return daemon.LocalAddr, "", true, noop, nil
 	}
 
 	// Otherwise: one-shot in-process daemon on an ephemeral loopback address,
@@ -238,11 +604,11 @@ func resolveDaemon(addr, token string, background bool, ws, configPath string) (
 		KeyEnv: "ANTHROPIC_API_KEY", MaxTokens: 8192,
 	})
 	if err != nil {
-		fatal("start in-process daemon: %v", err)
+		return "", "", false, noop, fmt.Errorf("start in-process daemon: %w", err)
 	}
 	fmt.Fprintln(os.Stderr, "ycc: running one-shot in-process daemon (no persistence); closing ycc ends in-flight work.")
 	fmt.Fprintln(os.Stderr, "ycc: use `ycc daemon` or `ycc --background` to keep work running after exit.")
-	return ip.Addr, "", false, func() { _ = ip.Shutdown() }
+	return ip.Addr, "", false, func() { _ = ip.Shutdown() }, nil
 }
 
 // installSignalShutdown runs the teardown hook on SIGINT/SIGTERM so a one-shot
@@ -257,17 +623,18 @@ func installSignalShutdown(shutdown func()) {
 	}()
 }
 
-func stream(ctx context.Context, client yccv1connect.SessionServiceClient, id string, from int64) {
+func stream(ctx context.Context, client yccv1connect.SessionServiceClient, id string, from int64) error {
 	s, err := client.Subscribe(ctx, connect.NewRequest(&v1.SubscribeRequest{SessionId: id, FromSeq: from}))
 	if err != nil {
-		fatal("Subscribe: %v", err)
+		return fmt.Errorf("Subscribe: %w", err)
 	}
 	for s.Receive() {
 		printEvent(s.Msg())
 	}
 	if err := s.Err(); err != nil {
-		fatal("stream: %v", err)
+		return fmt.Errorf("stream: %w", err)
 	}
+	return nil
 }
 
 func readStdinInto(ctx context.Context, client yccv1connect.SessionServiceClient, id string) {
@@ -322,172 +689,15 @@ func truncate(s string, n int) string {
 	return s[:n] + "…"
 }
 
-// runToken manages the machine-local LLM backend secrets store: a token can be
-// saved once (keyed by its key_env name) instead of being exported in the
-// environment every session. The token value is read from stdin — never taken
-// as a command-line argument — so it never lands in shell history or argv.
-func runToken(argv []string) {
-	if len(argv) == 0 {
-		fatal("usage: ycc token <set|list|rm> [KEY_ENV]")
-	}
-	switch argv[0] {
-	case "set":
-		if len(argv) < 2 || argv[1] == "" {
-			fatal("usage: ycc token set <KEY_ENV>")
-		}
-		keyEnv := argv[1]
-		// Prompt only when stdin is a terminal; a piped value works unattended.
-		if fi, err := os.Stdin.Stat(); err == nil && (fi.Mode()&os.ModeCharDevice) != 0 {
-			fmt.Fprintf(os.Stderr, "enter token for %s (input hidden if piped): ", keyEnv)
-		}
-		r := bufio.NewReader(os.Stdin)
-		line, err := r.ReadString('\n')
-		if err != nil && line == "" {
-			fatal("token: reading token: %v", err)
-		}
-		tok := strings.TrimSpace(line)
-		if tok == "" {
-			fatal("token: empty token, nothing stored")
-		}
-		if err := secrets.Set(keyEnv, tok); err != nil {
-			fatal("token: %v", err)
-		}
-		fmt.Printf("stored token for %s\n", keyEnv)
-	case "list":
-		keys := secrets.Keys()
-		if len(keys) == 0 {
-			fmt.Println("(no stored tokens)")
-			return
-		}
-		for _, k := range keys {
-			fmt.Println(k)
-		}
-	case "rm", "remove":
-		if len(argv) < 2 || argv[1] == "" {
-			fatal("usage: ycc token rm <KEY_ENV>")
-		}
-		if err := secrets.Remove(argv[1]); err != nil {
-			fatal("token: %v", err)
-		}
-		fmt.Printf("removed token for %s\n", argv[1])
-	default:
-		fatal("usage: ycc token <set|list|rm> [KEY_ENV]")
-	}
-}
-
-// runDaemon parses daemon flags and serves until killed. This is the explicit,
-// persistent, foreground service (`ycc daemon`).
-func runDaemon(argv []string) {
-	fs := flag.NewFlagSet("ycc daemon", flag.ExitOnError)
-	addr := fs.String("addr", "127.0.0.1:8787", "address to listen on")
-	workspace := fs.String("workspace", ".", "default workspace for sessions that don't specify one")
-	configPath := fs.String("config", "", "TOML config file (models + roles)")
-	model := fs.String("model", "claude-opus-4-8", "fallback model id (when no -config)")
-	baseURL := fs.String("base-url", "https://api.anthropic.com", "fallback API base URL (when no -config)")
-	keyEnv := fs.String("key-env", "ANTHROPIC_API_KEY", "fallback API key env var (when no -config)")
-	maxTok := fs.Int("max-tokens", 8192, "fallback max tokens per turn (when no -config)")
-	token := fs.String("token", os.Getenv("YCC_TOKEN"), "bearer token clients must present (empty disables auth)")
-	tlsCert := fs.String("tls-cert", "", "TLS certificate file (enables HTTPS)")
-	tlsKey := fs.String("tls-key", "", "TLS key file")
-	fs.Parse(argv)
-
-	err := daemon.Serve(daemon.Options{
-		Addr: *addr, Workspace: *workspace, ConfigPath: *configPath,
-		Model: *model, BaseURL: *baseURL, KeyEnv: *keyEnv, MaxTokens: *maxTok,
-		Token: *token, TLSCert: *tlsCert, TLSKey: *tlsKey, Persist: true,
-	})
-	if err != nil {
-		fatal("daemon: %v", err)
-	}
-}
-
-// runProject implements `ycc project <add|list|remove>` against the daemon's
-// project registry (spec §3.1).
-func runProject(ctx context.Context, client yccv1connect.SessionServiceClient, args []string) {
-	sub := "list"
-	if len(args) > 0 {
-		sub, args = args[0], args[1:]
-	}
-	switch sub {
-	case "add":
-		// Positional path comes first; flags follow it.
-		if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-			fatal("usage: ycc project add <path> [--name N]")
-		}
-		path, rest := args[0], args[1:]
-		fs := flag.NewFlagSet("project add", flag.ExitOnError)
-		name := fs.String("name", "", "project name (default: directory basename)")
-		fs.Parse(rest)
-		if abs, err := filepathAbs(path); err == nil {
-			path = abs
-		}
-		resp, err := client.AddProject(ctx, connect.NewRequest(&v1.AddProjectRequest{Path: path, Name: *name}))
-		if err != nil {
-			fatal("AddProject: %v", err)
-		}
-		p := resp.Msg.Project
-		fmt.Printf("registered %s  %s\n", p.Name, p.Path)
-
-	case "remove", "rm":
-		if len(args) == 0 {
-			fatal("usage: ycc project remove <name>")
-		}
-		if _, err := client.RemoveProject(ctx, connect.NewRequest(&v1.RemoveProjectRequest{Name: args[0]})); err != nil {
-			fatal("RemoveProject: %v", err)
-		}
-		fmt.Printf("removed %s\n", args[0])
-
-	case "list":
-		resp, err := client.ListProjects(ctx, connect.NewRequest(&v1.ListProjectsRequest{}))
-		if err != nil {
-			fatal("ListProjects: %v", err)
-		}
-		if len(resp.Msg.Projects) == 0 {
-			fmt.Println("(no projects)")
-			return
-		}
-		for _, p := range resp.Msg.Projects {
-			fmt.Printf("%-20s %s\n", p.Name, p.Path)
-		}
-
-	default:
-		fatal("usage: ycc project <add|list|remove>")
-	}
-}
-
-func filepathAbs(p string) (string, error) { return filepath.Abs(p) }
-
-// runCost renders the usage/cost breakdown (spec §20.3, §20.5) returned by the
-// daemon's GetUsage RPC. By default it groups by backlog task; -by selects other
-// dimensions (comma-separated: task,model,session,agent,day) and -since/-until
-// bound an inclusive date range.
-func runCost(ctx context.Context, client yccv1connect.SessionServiceClient, args []string) {
-	fs := flag.NewFlagSet("cost", flag.ExitOnError)
-	project := fs.String("project", "", "registered project name (default: daemon default workspace)")
-	by := fs.String("by", "task", "group by, comma-separated: task,model,session,agent,day")
-	since := fs.String("since", "", "include usage on/after this day (YYYY-MM-DD)")
-	until := fs.String("until", "", "include usage on/before this day (YYYY-MM-DD)")
-	fs.Parse(args)
-
-	var groupBy []string
-	for _, g := range strings.Split(*by, ",") {
-		if g = strings.TrimSpace(g); g != "" {
-			groupBy = append(groupBy, g)
-		}
-	}
-	resp, err := client.GetUsage(ctx, connect.NewRequest(&v1.GetUsageRequest{
-		Project: *project, GroupBy: groupBy, Since: *since, Until: *until,
-	}))
-	if err != nil {
-		fatal("GetUsage: %v", err)
-	}
+// renderCost renders the usage/cost table from a GetUsage response.
+func renderCost(msg *v1.GetUsageResponse, groupBy []string) {
 	if len(groupBy) == 0 {
 		groupBy = []string{"task"}
 	}
-	if resp.Msg.Workspace != "" {
-		fmt.Printf("usage breakdown for %s\n", resp.Msg.Workspace)
+	if msg.Workspace != "" {
+		fmt.Printf("usage breakdown for %s\n", msg.Workspace)
 	}
-	if len(resp.Msg.Rows) == 0 {
+	if len(msg.Rows) == 0 {
 		fmt.Println("(no usage recorded)")
 		return
 	}
@@ -501,13 +711,13 @@ func runCost(ctx context.Context, client yccv1connect.SessionServiceClient, args
 	fmt.Fprintln(tw, strings.Join(header, "\t"))
 
 	partial := false
-	for _, r := range resp.Msg.Rows {
+	for _, r := range msg.Rows {
 		fmt.Fprintln(tw, costRowLine(r, groupBy))
 		if r.PriceStatus == "partial" {
 			partial = true
 		}
 	}
-	total := resp.Msg.Total
+	total := msg.Total
 	if total != nil {
 		cells := make([]string, len(groupBy))
 		cells[0] = "TOTAL"

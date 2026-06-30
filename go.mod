@@ -13,6 +13,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/muesli/reflow v0.3.0
 	github.com/pelletier/go-toml/v2 v2.0.1
+	github.com/urfave/cli/v3 v3.10.1
 	github.com/whyrusleeping/gollama v0.0.0-20260628184513-567eebc663b0
 	golang.org/x/image v0.25.0
 	golang.org/x/net v0.56.0
