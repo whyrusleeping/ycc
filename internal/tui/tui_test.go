@@ -2060,3 +2060,58 @@ func mustJSONString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
 }
+
+func TestTopReadyTask(t *testing.T) {
+	tasks := []*v1.BacklogTaskSummary{
+		{Id: "0003", Status: "todo", Priority: 1, Ready: false}, // blocked by deps
+		{Id: "0004", Status: "done", Priority: 1, Ready: true},  // already done
+		{Id: "0005", Status: "todo", Priority: 2, Ready: true},  // ready, p2
+		{Id: "0002", Status: "todo", Priority: 1, Ready: true},  // ready, p1 -> winner
+		{Id: "0006", Status: "in_review", Priority: 1, Ready: true},
+		{Id: "0007", Status: "blocked", Priority: 1, Ready: true},
+	}
+	if got := topReadyTask(tasks); got != "0002" {
+		t.Fatalf("expected highest-priority ready todo 0002, got %q", got)
+	}
+	// In-progress is resumable and ready; with no todo it should be picked.
+	resume := []*v1.BacklogTaskSummary{
+		{Id: "0009", Status: "in_progress", Priority: 3, Ready: true},
+		{Id: "0008", Status: "in_review", Priority: 1, Ready: true},
+		{Id: "0010", Status: "blocked", Priority: 1, Ready: true},
+	}
+	if got := topReadyTask(resume); got != "0009" {
+		t.Fatalf("expected resumable in_progress 0009, got %q", got)
+	}
+	// Nothing actionable -> empty.
+	none := []*v1.BacklogTaskSummary{
+		{Id: "0011", Status: "done", Priority: 1, Ready: true},
+		{Id: "0012", Status: "blocked", Priority: 1, Ready: true},
+		{Id: "0013", Status: "todo", Priority: 1, Ready: false},
+	}
+	if got := topReadyTask(none); got != "" {
+		t.Fatalf("expected no ready task, got %q", got)
+	}
+}
+
+func TestLoopDecisionStopsOnNoProgress(t *testing.T) {
+	// Same task surfaces as next that the finished session was expected to handle:
+	// the loop must stop instead of re-picking it forever.
+	m := &model{looping: true, loopExpected: "0002"}
+	next, _ := m.applyLoopDecision(loopDecisionMsg{next: "0002", prev: "0002"})
+	mm := next.(model)
+	if mm.looping {
+		t.Fatalf("expected loop to stop on no-progress, still looping")
+	}
+	if mm.state != stateMenu {
+		t.Fatalf("expected return to menu, got state %v", mm.state)
+	}
+}
+
+func TestLoopDecisionStopsWhenEmpty(t *testing.T) {
+	m := &model{looping: true, loopExpected: "0002"}
+	next, _ := m.applyLoopDecision(loopDecisionMsg{next: "", prev: "0002"})
+	mm := next.(model)
+	if mm.looping || mm.state != stateMenu {
+		t.Fatalf("expected loop to stop and return to menu, looping=%v state=%v", mm.looping, mm.state)
+	}
+}

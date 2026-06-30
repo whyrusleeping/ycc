@@ -367,6 +367,20 @@ Each mode = a coordinator system prompt + a tool subset + a state machine. There
 - **`work`** — the orchestrated implementation pipeline (§10): pick/accept a task, plan,
   spawn implementer, multi-model review, revise, commit, update backlog.
 
+**`work (loop)` — unattended backlog drain.** On the home menu, pressing **tab** with the
+`work` entry selected toggles it to `work (loop)`. Starting it runs `work` repeatedly: each
+session drives one task to a committed (or blocked/in_review) state, and when it ends the
+client immediately starts a fresh `work` session (new context, no carried prompt) for the
+next ready task. It keeps going until nothing is actionable — every remaining task is `done`,
+`blocked`, `in_review`, or not yet `ready` (dependencies unmet). A guard stops the loop if a
+finished session left its expected task unchanged (so it would re-pick the same task forever),
+and **shift+tab** in the running session toggles the loop — halting is *graceful* (the current
+task finishes and commits; the loop just doesn't pick up the next one), and it can likewise
+roll a single `work` session into a loop. This pairs with the coordinator's
+ability to mark a task `blocked` when it needs user feedback (§10): the loop simply skips such
+tasks rather than stalling. The loop is a **client** concern (the daemon just runs each
+session); the running session view shows a `⟳ loop` indicator.
+
 **Hand-off `pm` → `work`.** `pm` may offer `switch_to_work`, but it is *deliberate*, never
 automatic: (1) it requires explicit interactive **user approval** before transitioning, and
 (2) it carries the planning **context plus the specific target task** into the `work`

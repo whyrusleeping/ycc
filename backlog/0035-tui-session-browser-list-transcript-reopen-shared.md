@@ -64,3 +64,4 @@ pattern into a shared component reused by the backlog browser and the future cos
 …[truncated]
 - 2026-06-30 decision: accept — commit: TUI session browser + shared list+detail browser surface (task 0035)  Add a session browser to the TUI: a navigable list of live + persisted sessions that drills into a read-only replayed transcript (
 …[truncated]
+- 2026-06-30 usage: 69,470 tok (in 274, out 69,196, cache_r 12,173,422, cache_w 284,412) · cost n/a (unpriced)

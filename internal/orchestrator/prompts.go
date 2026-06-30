@@ -57,6 +57,13 @@ then actually do the review yourself: inspect the diff ('git diff'), check it ag
 task's acceptance criteria, and only then commit or send revisions to the implementer. Do not
 treat a 'simple' call as a completed review.
 
+If a task can't responsibly be worked yet because it needs the user — an unresolved design
+decision, ambiguous or conflicting requirements, a clarifying question whose answer changes the
+approach, or any choice that's hard to reverse — set it "blocked" (update_task) rather than
+guessing. Briefly note in the task what feedback is needed and why, then move on to another
+ready task or finish. Reserve this for genuine need-the-user blockers, not ordinary judgement
+calls you can reasonably make yourself.
+
 The backlog is shared and live: the user may add a new task at any moment out of band (via a
 quick-capture overlay that runs separately from this session), so a task you don't recognize can
 appear in list_backlog mid-session. That is intentional and fine — it is not an error, not

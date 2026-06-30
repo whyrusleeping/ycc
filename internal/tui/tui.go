@@ -70,6 +70,16 @@ type model struct {
 	cursor  int
 	prompt  textinput.Model
 
+	// "work (loop)" mode (toggled with tab on the work entry): chew through the
+	// backlog unattended, starting a fresh work session for each ready task until
+	// none remain (every task done, blocked, or in_review). loop is the menu toggle;
+	// looping is true while a loop run is in flight; loopExpected is the task id we
+	// expect the in-flight session to act on, used to detect a no-progress stall and
+	// stop rather than spin forever on the same task.
+	loop         bool
+	looping      bool
+	loopExpected string
+
 	// session browser / previous-sessions screen (spec §18.6): a navigable list of
 	// persisted + live sessions reached from the menu (ctrl+r) or the browse
 	// selector. Enter drills into a read-only replayed transcript; `o` reopens the
@@ -271,6 +281,16 @@ type menuEntry struct {
 type modelsMsg struct{ models []*v1.ModelInfo }
 type projectsMsg struct{ projects []*v1.ProjectInfo }
 type startedMsg struct{ id, mode string }
+
+// loopDecisionMsg carries the "work (loop)" driver's decision after a session
+// ends: next is the id of the next ready task to work (""=none left), and prev is
+// the task the just-finished session was expected to act on (to detect a stall).
+type loopDecisionMsg struct {
+	next string
+	prev string
+	err  error
+}
+
 type historyMsg struct {
 	sessions []*v1.SessionSummary
 	err      error
@@ -358,6 +378,66 @@ func (m model) startSession(mode, prompt string) tea.Cmd {
 		}
 		return startedMsg{id: resp.Msg.SessionId, mode: mode}
 	}
+}
+
+// isWorkEntry reports whether a menu entry is the plain "work" mode (not a preset,
+// which would carry an opening prompt). Only this entry supports the loop toggle.
+func isWorkEntry(e menuEntry) bool { return e.mode == "work" && e.openingPrompt == "" }
+
+// loopNext drives the "work (loop)" run: it loads the backlog, picks the next
+// ready task, and decides whether to start another work session (spec §9). The
+// decision is returned as a loopDecisionMsg so Update can apply it on the main loop.
+func (m model) loopNext() tea.Cmd {
+	prev := m.loopExpected
+	return func() tea.Msg {
+		resp, err := m.client.ListBacklog(m.ctx, connect.NewRequest(&v1.ListBacklogRequest{Project: m.project}))
+		if err != nil {
+			return loopDecisionMsg{err: err}
+		}
+		next := topReadyTask(resp.Msg.Tasks)
+		return loopDecisionMsg{next: next, prev: prev}
+	}
+}
+
+// applyLoopDecision acts on the loop driver's decision: stop and return to the
+// menu when nothing is actionable, an error occurred, or the just-finished session
+// made no progress on the task it was expected to handle (re-picking it would spin
+// forever); otherwise start the next work session and stay in the loop.
+func (m model) applyLoopDecision(msg loopDecisionMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case msg.err != nil:
+		m.looping, m.loopExpected = false, ""
+		m.state, m.status = stateMenu, "loop stopped: "+msg.err.Error()
+		return m, nil
+	case msg.next == "":
+		m.looping, m.loopExpected = false, ""
+		m.state, m.status = stateMenu, "loop complete: no ready tasks remain"
+		return m, nil
+	case msg.prev != "" && msg.next == msg.prev:
+		m.looping, m.loopExpected = false, ""
+		m.state, m.status = stateMenu, "loop stopped: no progress on "+msg.next
+		return m, nil
+	}
+	m.loopExpected = msg.next
+	return m, m.startSession("work", "")
+}
+
+// topReadyTask returns the id of the task a work session would pick next: the
+// highest-priority (lowest priority number) actionable task that is ready and not
+// yet done/blocked/in-review — i.e. status "todo" or a resumable "in_progress".
+// Ties break by id so the choice is stable. Returns "" when nothing is ready.
+func topReadyTask(tasks []*v1.BacklogTaskSummary) string {
+	best := ""
+	bestPrio := int32(0)
+	for _, t := range tasks {
+		if !t.Ready || (t.Status != "todo" && t.Status != "in_progress") {
+			continue
+		}
+		if best == "" || t.Priority < bestPrio || (t.Priority == bestPrio && t.Id < best) {
+			best, bestPrio = t.Id, t.Priority
+		}
+	}
+	return best
 }
 
 // fetchHistory loads the persisted session history for the previous-sessions
@@ -465,20 +545,6 @@ func (m model) resume() tea.Cmd {
 			return nil
 		}
 		if _, err := m.client.Resume(m.ctx, connect.NewRequest(&v1.ResumeRequest{SessionId: m.sessionID})); err != nil {
-			return errMsg{err}
-		}
-		return nil
-	}
-}
-
-// stopSession hard-terminates the running session (spec §12) and returns to the
-// menu. Distinct from interrupt() which only pauses to steer.
-func (m model) stopSession() tea.Cmd {
-	return func() tea.Msg {
-		if m.sessionID == "" {
-			return nil
-		}
-		if _, err := m.client.StopSession(m.ctx, connect.NewRequest(&v1.StopSessionRequest{SessionId: m.sessionID})); err != nil {
 			return errMsg{err}
 		}
 		return nil
@@ -891,7 +957,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.subscribe(), fc, spin)
 	case streamClosedMsg:
 		m.status = "stream closed"
+		// In a loop run, a closed stream means the work session finished. Decide
+		// whether to start the next task rather than dropping back to an idle view.
+		if m.looping {
+			m.status = "loop: session ended — checking backlog…"
+			return m, m.loopNext()
+		}
 		return m, nil
+	case loopDecisionMsg:
+		return m.applyLoopDecision(msg)
 	case evMsg:
 		m.appendEvent(msg.ev)
 		// Coalesce a burst into one rebuild. On reopen the daemon replays the whole
@@ -1217,11 +1291,26 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor++
 			}
 			return m, nil
+		case "tab":
+			// Toggle "work (loop)" on the work entry: an unattended run that keeps
+			// starting fresh work sessions for each ready backlog task until none
+			// remain. Only the work mode supports it; tab is a no-op elsewhere.
+			if len(m.entries) > 0 && isWorkEntry(m.entries[m.cursor]) {
+				m.loop = !m.loop
+			}
+			return m, nil
 		case "enter":
 			if len(m.entries) == 0 {
 				return m, nil
 			}
 			e := m.entries[m.cursor]
+			// "work (loop)": drive the backlog unattended. Hand off to the loop
+			// driver, which picks the next ready task, starts a session, and repeats
+			// when it ends — ignoring any typed prompt so every iteration auto-picks.
+			if m.loop && isWorkEntry(e) {
+				m.looping, m.loopExpected = true, ""
+				return m, m.loopNext()
+			}
 			// A typed prompt always wins; otherwise a preset seeds its opening prompt.
 			prompt := m.prompt.Value()
 			if strings.TrimSpace(prompt) == "" {
@@ -1311,15 +1400,17 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.interrupt()
 			}
 			return m, nil
-		case "ctrl+x":
-			// Hard-terminate the session and return to the menu (spec §12). This
-			// is distinct from ctrl+i, which only pauses to steer.
-			cmd := m.stopSession()
-			m.state = stateMenu
-			m.sessionID = ""
-			m.paused = false
-			m.status = ""
-			return m, cmd
+		case "shift+tab":
+			// Toggle the unattended "work (loop)" run mid-session (spec §9). Halting
+			// it is graceful: the current task runs to completion (commit/blocked/
+			// in_review) and the loop simply doesn't pick up the next one. Toggling it
+			// on lets an ordinary work session roll into a loop once it finishes. Only
+			// meaningful for work-mode sessions.
+			if m.mode == "work" {
+				m.looping = !m.looping
+				m.loopExpected = ""
+			}
+			return m, nil
 		case "up":
 			m.moveSelection(-1)
 			return m, nil
@@ -3133,7 +3224,13 @@ func (m model) menuView() string {
 	}
 	for i, e := range m.entries {
 		cursor := "  "
-		label := fmt.Sprintf("%-9s %s", e.label, dimStyle.Render(e.description))
+		// Surface the loop toggle on the work entry (tab toggles it).
+		lbl, desc := e.label, e.description
+		if m.loop && isWorkEntry(e) {
+			lbl = e.label + " (loop)"
+			desc = "Chew through every ready backlog task unattended — done, blocked, or in_review."
+		}
+		label := fmt.Sprintf("%-9s %s", lbl, dimStyle.Render(desc))
 		switch {
 		case i == m.cursor && e.prominent:
 			// Selected AND recommended: keep the selection treatment but still
@@ -3143,7 +3240,7 @@ func (m model) menuView() string {
 			label = selStyle.Render("★ "+fmt.Sprintf("%-7s ", e.label)) + dimStyle.Render(e.description+"  (recommended)")
 		case i == m.cursor:
 			cursor = selStyle.Render("▸ ")
-			label = selStyle.Render(fmt.Sprintf("%-9s ", e.label)) + dimStyle.Render(e.description)
+			label = selStyle.Render(fmt.Sprintf("%-9s ", lbl)) + dimStyle.Render(desc)
 		case e.prominent:
 			// Surface a recommended entry (e.g. onboarding on an un-onboarded
 			// workspace) so it stands out without stealing the cursor highlight.
@@ -3152,7 +3249,7 @@ func (m model) menuView() string {
 		b.WriteString("  " + cursor + label + "\n")
 	}
 	b.WriteString("\n  " + m.prompt.View() + "\n")
-	b.WriteString("\n" + m.footerBar("  ↑/↓ choose mode · type a prompt · enter start · ctrl+o browse · ctrl+r sessions · esc settings · ctrl+b backlog · ctrl+n new task"))
+	b.WriteString("\n" + m.footerBar("  ↑/↓ choose mode · tab loop (work) · type a prompt · enter start · ctrl+o browse · ctrl+r sessions · esc settings · ctrl+b backlog · ctrl+n new task"))
 	return b.String()
 }
 
@@ -3352,6 +3449,11 @@ func (m model) statusBar() string {
 	if m.mode != "" {
 		segs = append(segs, seg{dimStyle.Render("mode ") + typeStyle.Render(m.mode), 1})
 	}
+	// Surface that an unattended loop run is driving this session (tab on the work
+	// entry); kept high-priority so the user always sees they're in a loop.
+	if m.looping {
+		segs = append(segs, seg{recoStyle.Render("⟳ loop"), 1})
+	}
 	// live token/cost readout — the headline new datum, kept at high priority.
 	if tokens, cost, st := m.sessionUsage(); tokens > 0 {
 		readout := dimStyle.Render("Σ ") + typeStyle.Render(fmtTokens(tokens))
@@ -3492,7 +3594,16 @@ func (m model) sessionView() string {
 		help := m.footer(" ⏸ paused — type a correction + enter to steer · enter to resume · esc settings")
 		return top + "\n" + body + "\n " + m.input.View() + "\n" + help
 	}
-	help := m.footer(" enter send/expand · shift+enter newline · ↑↓ select · click expand · pgup/pgdn scroll · ctrl+i interrupt · ctrl+x stop · esc settings · ctrl+b backlog · ctrl+n new task")
+	help := m.footer(" enter send/expand · shift+enter newline · ↑↓ select · click expand · pgup/pgdn scroll · ctrl+i interrupt · esc settings · ctrl+b backlog · ctrl+n new task")
+	if m.mode == "work" {
+		// Surface the loop toggle on work sessions: shift+tab halts a running loop
+		// gracefully (current task finishes) or rolls a single session into a loop.
+		if m.looping {
+			help = m.footer(" shift+tab halt loop · enter send/expand · ↑↓ select · pgup/pgdn scroll · ctrl+i interrupt · esc settings")
+		} else {
+			help = m.footer(" shift+tab loop · enter send/expand · ↑↓ select · pgup/pgdn scroll · ctrl+i interrupt · esc settings")
+		}
+	}
 	return top + "\n" + body + "\n " + m.input.View() + "\n" + help
 }
 
