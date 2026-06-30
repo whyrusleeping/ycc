@@ -1869,6 +1869,27 @@ func clampCursor(cursor, n int) int {
 	return cursor
 }
 
+// listWindow returns the [start,end) bounds of the visible slice of n items
+// shown in a scroll window of at most `size` rows, keeping `cursor` visible.
+// It center-anchors the cursor and clamps to the list bounds, so the window
+// scrolls one row at a time as the cursor moves and the selected item always
+// stays on screen. size<=0 or n<=size means no clipping (returns 0,n).
+func listWindow(cursor, n, size int) (start, end int) {
+	if size <= 0 || n <= size {
+		return 0, n
+	}
+	start = cursor - size/2
+	if start < 0 {
+		start = 0
+	}
+	end = start + size
+	if end > n {
+		end = n
+		start = n - size
+	}
+	return start, end
+}
+
 func (b *browser) up() { b.cursor = navUp(b.cursor) }
 
 func (b *browser) down() { b.cursor = navDown(b.cursor, len(b.rows)) }
@@ -1887,16 +1908,32 @@ func (m model) browserCard(b browser) string {
 		}
 		sb.WriteString(dimStyle.Render(empty) + "\n")
 	}
-	for i, r := range b.rows {
+	// Window the rows so the card never overruns the terminal vertically.
+	// modalCard's chrome is 6 non-content rows (title + blank + blank + footer
+	// + top/bottom border), so the content budget is m.h-6. Before the first
+	// WindowSizeMsg (m.h == 0) keep the legacy behaviour of rendering all rows.
+	budget := len(b.rows)
+	if m.h > 0 {
+		budget = m.h - 6
+		if budget < 1 {
+			budget = 1
+		}
+	}
+	start, end := listWindow(b.cursor, len(b.rows), budget)
+	hint := b.hint
+	if start > 0 || end < len(b.rows) {
+		hint = fmt.Sprintf("%s · %d–%d/%d", b.hint, start+1, end, len(b.rows))
+	}
+	for i, r := range b.rows[start:end] {
 		cursor := "  "
 		text := r.text
-		if i == b.cursor {
+		if start+i == b.cursor {
 			cursor = selStyle.Render("▸ ")
 			text = selStyle.Render(text)
 		}
 		sb.WriteString(cursor + text + r.suffix + "\n")
 	}
-	return m.modalCard(b.title, strings.TrimRight(sb.String(), "\n"), b.hint)
+	return m.modalCard(b.title, strings.TrimRight(sb.String(), "\n"), hint)
 }
 
 // --- browse selector (spec §18.6 / §20.5) ---

@@ -2446,3 +2446,80 @@ func TestSessionInputRelayoutFitsTerminal(t *testing.T) {
 		t.Fatalf("sessionView produced %d lines, want 24", got)
 	}
 }
+
+func TestListWindow(t *testing.T) {
+	// n<=size: no clipping.
+	if s, e := listWindow(0, 3, 5); s != 0 || e != 3 {
+		t.Fatalf("n<=size: got (%d,%d), want (0,3)", s, e)
+	}
+	// size<=0: no clipping.
+	if s, e := listWindow(2, 10, 0); s != 0 || e != 10 {
+		t.Fatalf("size<=0: got (%d,%d), want (0,10)", s, e)
+	}
+	// cursor at top → start 0.
+	if s, e := listWindow(0, 30, 10); s != 0 || e != 10 {
+		t.Fatalf("cursor top: got (%d,%d), want (0,10)", s, e)
+	}
+	// cursor in middle → cursor within window and centered.
+	s, e := listWindow(15, 30, 10)
+	if !(s <= 15 && 15 < e) {
+		t.Fatalf("cursor middle: 15 not in [%d,%d)", s, e)
+	}
+	if e-s != 10 {
+		t.Fatalf("cursor middle: window len=%d, want 10", e-s)
+	}
+	if s != 15-10/2 {
+		t.Fatalf("cursor middle: start=%d, want %d (centered)", s, 15-10/2)
+	}
+	// cursor at last index → end==n and last visible.
+	s, e = listWindow(29, 30, 10)
+	if e != 30 {
+		t.Fatalf("cursor last: end=%d, want 30", e)
+	}
+	if !(s <= 29 && 29 < e) {
+		t.Fatalf("cursor last: 29 not in [%d,%d)", s, e)
+	}
+	if e-s != 10 {
+		t.Fatalf("cursor last: window len=%d, want 10", e-s)
+	}
+}
+
+func TestBacklogViewScrollsWithinViewport(t *testing.T) {
+	var tasks []*v1.BacklogTaskSummary
+	for i := 1; i <= 30; i++ {
+		tasks = append(tasks, &v1.BacklogTaskSummary{
+			Id:     fmt.Sprintf("%04d", i),
+			Status: "todo",
+			Title:  fmt.Sprintf("task %d", i),
+			Ready:  true,
+		})
+	}
+	m := model{backlog: true, backlogTasks: tasks}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	m = updated.(model)
+
+	// Cursor at top: list clipped to viewport, first task visible.
+	out := m.backlogView()
+	if lines := len(strings.Split(out, "\n")); lines > 12 {
+		t.Fatalf("backlogView produced %d lines, want <= 12", lines)
+	}
+	if !strings.Contains(out, "0001") {
+		t.Fatalf("first task 0001 not visible at cursor top:\n%s", out)
+	}
+	if strings.Contains(out, "0030") {
+		t.Fatalf("last task 0030 unexpectedly visible at cursor top:\n%s", out)
+	}
+
+	// Move cursor to the last task: window scrolls.
+	m.backlogCursor = len(m.visibleBacklogTasks()) - 1
+	out = m.backlogView()
+	if lines := len(strings.Split(out, "\n")); lines > 12 {
+		t.Fatalf("backlogView (last) produced %d lines, want <= 12", lines)
+	}
+	if !strings.Contains(out, "0030") {
+		t.Fatalf("last task 0030 not visible at cursor bottom:\n%s", out)
+	}
+	if strings.Contains(out, "0001") {
+		t.Fatalf("first task 0001 still visible after scrolling to bottom:\n%s", out)
+	}
+}

@@ -1,7 +1,7 @@
 ---
 id: "0075"
 title: Scroll TUI backlog view when items exceed terminal height
-status: todo
+status: done
 priority: 3
 created: "2026-06-30"
 updated: "2026-06-30"
@@ -28,3 +28,12 @@ The backlog view should render within the terminal bounds and scroll smoothly (e
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-30 plan: Fix the backlog browser overflow by adding vertical windowing to the shared `browserCard` component in internal/tui/tui.go (this also benefits the sessions/browse browsers that use it).  1. Add a smal
+…[truncated]
+- 2026-06-30 implementer report: Implemented vertical windowing for the shared `browserCard` component so the backlog (and sessions/browse) browsers clip and scroll within the terminal instead of overrunning the bottom.  Changes in i
+…[truncated]
+- 2026-06-30 review tier: single-opus — reviewers: Claude
+- 2026-06-30 review (Claude): accept — The change adds a well-documented `listWindow` helper and integrates vertical windowing into the shared `browserCard`, which the backlog browser uses. The chrome budget (`m.h - 6`) correctly accounts 
+…[truncated]
+- 2026-06-30 decision: accept — commit: tui: window backlog browser to viewport height so long lists scroll instead of overrunning  Add listWindow helper and apply vertical windowing in the shared browserCard component, keeping the cursor v
+…[truncated]
