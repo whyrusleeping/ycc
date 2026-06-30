@@ -1,7 +1,7 @@
 ---
 id: "0090"
 title: Make backlog task detail view scrollable in the TUI viewer
-status: todo
+status: done
 priority: 3
 created: "2026-06-30"
 updated: "2026-06-30"
@@ -25,3 +25,11 @@ The task detail view should be a scrollable view, allowing the user to scroll do
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-30 plan: Make the backlog task detail view scrollable by giving it its own viewport, mirroring the existing read-only transcript drill-in (updateHistory/transcriptView) pattern.  Files: internal/tui/tui.go (+ 
+…[truncated]
+- 2026-06-30 implementer report: Made the backlog task detail view scrollable in internal/tui/tui.go by giving it its own viewport, mirroring the transcript drill-in pattern.  Changes: - Added `backlogVP viewport.Model` field to the 
+…[truncated]
+- 2026-06-30 review tier: single-opus — reviewers: Claude
+- 2026-06-30 review (Claude): accept — The change makes the backlog task detail view a full-screen scrollable viewport, faithfully mirroring the existing read-only transcript drill-in pattern (titleBar + viewport + footerBar). It adds a ba
+…[truncated]
+- 2026-06-30 decision: accept — commit: tui: make backlog task detail view scrollable (task 0090)

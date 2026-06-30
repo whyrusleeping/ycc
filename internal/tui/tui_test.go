@@ -2710,3 +2710,49 @@ func TestBacklogViewScrollsWithinViewport(t *testing.T) {
 		t.Fatalf("first task 0001 still visible after scrolling to bottom:\n%s", out)
 	}
 }
+
+// TestBacklogDetailScrolls verifies the backlog task detail view is a scrollable
+// viewport: opening a task starts at the top, scroll keys advance the offset so
+// long content is reachable, and opening a different task resets to the top.
+func TestBacklogDetailScrolls(t *testing.T) {
+	m := model{
+		state: stateMenu, expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+		thinkLevels: map[string]string{"coordinator": "high", "implementer": "high", "reviewers": "high"},
+	}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(model)
+	m.backlog = true
+
+	// A body far longer than one viewport page.
+	var sb strings.Builder
+	for i := 0; i < 200; i++ {
+		fmt.Fprintf(&sb, "line %03d\n", i)
+	}
+	updated, _ = m.Update(taskDetailMsg{task: &v1.TaskDetail{Id: "0001", Title: "t", Body: sb.String()}})
+	m = updated.(model)
+
+	if !m.backlogVP.AtTop() {
+		t.Fatalf("detail viewport did not start at top: YOffset=%d", m.backlogVP.YOffset())
+	}
+	// Render once (detail view) to ensure it does not panic and produces output.
+	if out := m.render(); out == "" {
+		t.Fatalf("detail render produced no output")
+	}
+
+	// Scroll down several times; the offset must increase.
+	before := m.backlogVP.YOffset()
+	for i := 0; i < 5; i++ {
+		updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
+		m = updated.(model)
+	}
+	if m.backlogVP.YOffset() <= before {
+		t.Fatalf("scrolling did not advance offset: before=%d after=%d", before, m.backlogVP.YOffset())
+	}
+
+	// Opening a different task resets scroll to the top.
+	updated, _ = m.Update(taskDetailMsg{task: &v1.TaskDetail{Id: "0002", Title: "u", Body: sb.String()}})
+	m = updated.(model)
+	if !m.backlogVP.AtTop() {
+		t.Fatalf("opening a new task did not reset to top: YOffset=%d", m.backlogVP.YOffset())
+	}
+}

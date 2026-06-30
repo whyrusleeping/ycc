@@ -189,6 +189,7 @@ type model struct {
 	backlogCursor   int
 	backlogDetail   *v1.TaskDetail // nil => list view; set => detail view
 	backlogShowDone bool           // when false (default), done tasks are hidden in the list view
+	backlogVP       viewport.Model // scrollable viewport for the detail view
 
 	// plan library browser (task 0020/0077): modal over menu/session, reached
 	// from the browse selector (ctrl+o). Read-only: lists saved plans (plans/*.md)
@@ -1038,6 +1039,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.bodyCache = map[int]string{} // re-render bodies at the new width
 		m.rebuild()
 		m.relayout()
+		m.refreshBacklogDetailVP()
 		return m, nil
 
 	case modesMsg:
@@ -1223,6 +1225,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case taskDetailMsg:
 		m.backlogDetail = msg.task
+		m.refreshBacklogDetailVP()
+		m.backlogVP.GotoTop()
 		return m, nil
 	case plansMsg:
 		m.plansList = msg.plans
@@ -2305,14 +2309,18 @@ func (m model) updateBacklog(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.backlogDetail != nil {
-		// Detail view: back returns to the list.
+		// Detail view: back returns to the list; all other keys scroll the
+		// detail viewport.
 		switch key.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
 		case "esc", "backspace", "left":
 			m.backlogDetail = nil
+			return m, nil
 		}
-		return m, nil
+		var cmd tea.Cmd
+		m.backlogVP, cmd = m.backlogVP.Update(msg)
+		return m, cmd
 	}
 	// List view.
 	vis := m.visibleBacklogTasks()
@@ -2383,8 +2391,10 @@ func (m model) backlogView() string {
 	return m.browserCard(b)
 }
 
-// taskDetailView renders a single task's full, read-only detail (spec §18.5) as a card.
-func (m model) taskDetailView(t *v1.TaskDetail) string {
+// taskDetailContent builds the read-only body shown for a single task: a dim
+// meta line followed by the glamour-rendered task body. It is the scrollable
+// content placed into the detail viewport (m.backlogVP).
+func (m model) taskDetailContent(t *v1.TaskDetail) string {
 	var b strings.Builder
 	readiness := "ready"
 	if t.Status == "done" {
@@ -2407,8 +2417,39 @@ func (m model) taskDetailView(t *v1.TaskDetail) string {
 		}
 	}
 	b.WriteString(body)
-	return m.modalCard(" "+t.Id+" — "+t.Title+" ", strings.TrimRight(b.String(), "\n"),
-		"esc/← back · ctrl+c quit")
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// refreshBacklogDetailVP (re)sizes the detail viewport to the current terminal
+// dimensions and loads the current task's content. It is a no-op when no detail
+// task is open or the terminal size is not yet known.
+func (m *model) refreshBacklogDetailVP() {
+	if m.backlogDetail == nil || !m.ready {
+		return
+	}
+	h := m.h - 2 // one row for the title bar, one for the footer
+	if h < 3 {
+		h = 3
+	}
+	if m.backlogVP.Height() == 0 && m.backlogVP.Width() == 0 {
+		m.backlogVP = viewport.New(viewport.WithWidth(m.w), viewport.WithHeight(h))
+	} else {
+		m.backlogVP.SetWidth(m.w)
+		m.backlogVP.SetHeight(h)
+	}
+	m.backlogVP.SetContent(m.taskDetailContent(m.backlogDetail))
+}
+
+// taskDetailView renders a single task's full, read-only detail (spec §18.5) as a
+// full-screen scrollable viewport (mirroring the transcript drill-in).
+func (m model) taskDetailView(t *v1.TaskDetail) string {
+	top := m.titleBar(" " + t.Id + " — " + t.Title + " ")
+	body := ""
+	if m.ready {
+		body = m.backlogVP.View()
+	}
+	help := m.footerBar(" ↑↓/pgup/pgdn scroll · esc/← back · ctrl+c quit ")
+	return top + "\n" + body + "\n" + help
 }
 
 // updatePlans handles the modal plan library browser: a list of saved plans with

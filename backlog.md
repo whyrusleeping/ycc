@@ -92,4 +92,4 @@
 | [0087](backlog/0087-add-web-search-fetch-page-agent-tools-via-exa.md) | Add web search + fetch-page agent tools (via Exa) | done | 3 | — |
 | [0088](backlog/0088-make-read-tool-list-directory-contents-when-given.md) | Make Read tool list directory contents when given a directory path | done | 3 | — |
 | [0089](backlog/0089-break-down-per-task-work-log-token-usage-by-agent.md) | Break down per-task work-log token usage by agent role | todo | 3 | 0038 |
-| [0090](backlog/0090-make-backlog-task-detail-view-scrollable-in-the-tu.md) | Make backlog task detail view scrollable in the TUI viewer | todo | 3 | — |
+| [0090](backlog/0090-make-backlog-task-detail-view-scrollable-in-the-tu.md) | Make backlog task detail view scrollable in the TUI viewer | done | 3 | — |

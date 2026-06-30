@@ -36,3 +36,4 @@ Use [Exa](https://exa.ai) as the backend provider (consistent with prior project
 - 2026-06-30 review (Claude): accept — The change adds two Exa-backed agent tools (web_search, fetch_page) in a new internal/tools/web.go, registered by appending Web() into Editing()/Worker() so the agent receives them. The Exa API key is
 …[truncated]
 - 2026-06-30 decision: accept — commit: tools: add Exa-backed web_search + fetch_page agent tools (task 0087)
+- 2026-06-30 usage: 18,545 tok (in 58, out 18,487, cache_r 888,184, cache_w 67,156) · cost n/a (unpriced)
