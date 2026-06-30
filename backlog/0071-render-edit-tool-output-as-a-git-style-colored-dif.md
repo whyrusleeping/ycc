@@ -41,3 +41,4 @@ Render edits like a git diff:
 …[truncated]
 - 2026-06-30 decision: accept — commit: Render Edit tool calls as a git-style unified colored diff in the TUI  Add line-level LCS unifiedDiff/diffOps helpers and special-case Edit calls in cardParams to show old_string vs new_string as a un
 …[truncated]
+- 2026-06-30 usage: 12,938 tok (in 70, out 12,868, cache_r 519,581, cache_w 44,707) · cost n/a (unpriced)

@@ -1076,6 +1076,7 @@ func (m *model) openCapture() {
 	m.captureDesc = ""
 	m.captureMsg = ""
 	m.captureBusy = false
+	m.captureLog = nil
 	m.captureInput.SetValue("")
 	m.captureInput.Focus()
 }
@@ -1316,7 +1317,9 @@ func (m model) updateCapture(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.captureDesc = val
 			m.captureBusy = true
 			m.captureMsg = ""
-			m.captureLog = nil
+			// Echo the user's own message into the transcript so the
+			// conversation history stays visible after Enter clears the input.
+			m.captureLog = append(m.captureLog, userInputEvent(val))
 			ch := make(chan *v1.Event, 64)
 			m.captureEvents = ch
 			m.captureInput.SetValue("")
@@ -1326,7 +1329,7 @@ func (m model) updateCapture(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Stage 1: answering the agent's clarifying question.
 		m.captureBusy = true
 		m.captureMsg = ""
-		m.captureLog = nil
+		m.captureLog = append(m.captureLog, userInputEvent(val))
 		ch := make(chan *v1.Event, 64)
 		m.captureEvents = ch
 		ans := val
@@ -1338,6 +1341,17 @@ func (m model) updateCapture(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.captureInput, c = m.captureInput.Update(msg)
 		return m, c
 	}
+}
+
+// userInputEvent builds a synthetic action-log event echoing the user's own
+// submitted text, so the capture overlay transcript shows the conversation
+// history (their message alongside the agent's events).
+func userInputEvent(text string) *v1.Event {
+	var dj string
+	if b, err := json.Marshal(map[string]string{"text": text}); err == nil {
+		dj = string(b)
+	}
+	return &v1.Event{Actor: "you", Type: "user_input", DataJson: dj}
 }
 
 // captureSubmit opens the streaming CaptureBacklogItem RPC, scoped to the current
@@ -1377,13 +1391,17 @@ func waitCaptureEvent(ch chan *v1.Event) tea.Cmd {
 // captureView renders the quick-add backlog capture overlay as a bordered modal card.
 func (m model) captureView() string {
 	var b strings.Builder
+	w := m.w - 4
+	if w < 1 {
+		w = 20
+	}
 	switch m.captureStage {
 	case 0:
 		b.WriteString("Describe a new backlog item:\n\n")
 		b.WriteString(m.captureInput.View() + "\n")
 	case 1:
-		b.WriteString(selStyle.Render("The capture agent asks:") + "\n")
-		b.WriteString(m.captureQuestion + "\n\n")
+		// Reuse the shared interactive question UI badge the main agents use.
+		b.WriteString(questionPrompt(m.captureQuestion, w, true) + "\n\n")
 		b.WriteString("Your answer:\n\n")
 		b.WriteString(m.captureInput.View() + "\n")
 	case 2:
@@ -1399,11 +1417,22 @@ func (m model) captureView() string {
 			start = len(m.captureLog) - maxLines
 		}
 		for _, ev := range m.captureLog[start:] {
+			// Echo the user's own messages in full (wrapped), without the
+			// truncation detailLine applies, so the conversation reads cleanly.
+			if ev.Actor == "you" || ev.Type == "user_input" {
+				text := dataField(ev, "text")
+				if strings.TrimSpace(text) == "" {
+					continue
+				}
+				b.WriteString(wrap.String(wordwrap.String("› "+text, w), w) + "\n")
+				continue
+			}
 			line := detailLine(ev)
 			if line == "" {
 				continue
 			}
-			b.WriteString(dimStyle.Render(ev.Actor) + " " + line + "\n")
+			composed := dimStyle.Render(ev.Actor) + " " + line
+			b.WriteString(wrap.String(wordwrap.String(composed, w), w) + "\n")
 		}
 	}
 	if m.captureBusy {
@@ -3210,12 +3239,28 @@ func (m model) footer(text string) string {
 	return m.footerBar(text)
 }
 
+// questionPrompt renders the shared interactive-question badge used by the main
+// agents (the askStyle " ? " badge followed by the prompt). When wrapField is
+// true the prompt is word-wrapped to width w (used by the capture overlay modal);
+// otherwise it is clamped to a single physical row via oneLine (used by the
+// session picker footer, whose layout must stay exactly one row tall).
+func questionPrompt(prompt string, w int, wrapField bool) string {
+	badge := " " + askStyle.Render(" ? ") + " "
+	if wrapField {
+		if w < 1 {
+			w = 20
+		}
+		return badge + wrap.String(wordwrap.String(prompt, w), w)
+	}
+	return badge + oneLine(prompt, w)
+}
+
 // pickerView renders the navigable list of suggested answers plus an "other…"
 // escape into the free-text textarea.
 func (m model) pickerView() string {
 	var b strings.Builder
 	if m.pending != "" {
-		b.WriteString(" " + askStyle.Render(" ? ") + " " + oneLine(m.pending, m.w-6) + "\n")
+		b.WriteString(questionPrompt(m.pending, m.w-6, false) + "\n")
 	}
 	rows := append(append([]string(nil), m.pickerOpts...), "other…")
 	for i, opt := range rows {
