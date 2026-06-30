@@ -80,6 +80,11 @@ type model struct {
 	loop         bool
 	looping      bool
 	loopExpected string
+	// loopStopping guards the idle→stop transition while looping: a finished work
+	// session goes idle and blocks (it does not self-terminate), so the loop driver
+	// stops it explicitly to close its stream and advance. The flag prevents issuing
+	// StopSession more than once for the same idle session.
+	loopStopping bool
 
 	// session browser / previous-sessions screen (spec §18.6): a navigable list of
 	// persisted + live sessions reached from the menu (ctrl+r) or the browse
@@ -402,6 +407,20 @@ func (m model) startSession(mode, prompt string) tea.Cmd {
 // isWorkEntry reports whether a menu entry is the plain "work" mode (not a preset,
 // which would carry an opening prompt). Only this entry supports the loop toggle.
 func isWorkEntry(e menuEntry) bool { return e.mode == "work" && e.openingPrompt == "" }
+
+// stopSession hard-terminates the current session via StopSession (spec §12). The
+// loop driver uses it to end a finished work session that has gone idle (it blocks
+// waiting for input rather than self-terminating): stopping it closes the event
+// stream, which surfaces as streamClosedMsg and drives the next loop iteration.
+func (m model) stopSession() tea.Cmd {
+	id := m.sessionID
+	return func() tea.Msg {
+		if _, err := m.client.StopSession(m.ctx, connect.NewRequest(&v1.StopSessionRequest{SessionId: id})); err != nil {
+			return errMsg{err}
+		}
+		return nil
+	}
+}
 
 // loopNext drives the "work (loop)" run: it loads the backlog, picks the next
 // ready task, and decides whether to start another work session (spec §9). The
@@ -963,6 +982,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.follow = m.prefs.Follow
 		m.pending, m.paused, m.picking = "", false, false
 		m.pickerOpts, m.pickerCursor = nil, 0
+		m.loopStopping = false
 		m.clearWizard()
 		m.sessionID, m.mode, m.state, m.status = msg.id, msg.mode, stateSession, "running"
 		// Reset the running usage tally and start the elapsed clock for the new (or
@@ -1011,6 +1031,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		spin := m.spinnerCmd() // mutates m.spinning; evaluate before returning m
 		if closed {
 			return m, func() tea.Msg { return streamClosedMsg{} }
+		}
+		// In a loop run a finished work session goes idle and blocks waiting for
+		// input rather than self-terminating, so its stream never closes on its own.
+		// When that happens, stop it explicitly: closing its stream surfaces as
+		// streamClosedMsg, which advances the loop to the next ready task. The guard
+		// ensures we issue StopSession only once for this idle session.
+		if m.looping && !m.loopStopping && m.status == "idle" {
+			m.loopStopping = true
+			m.status = "loop: task finished — advancing…"
+			return m, tea.Batch(m.stopSession(), waitEvent(m.events), spin)
 		}
 		return m, tea.Batch(waitEvent(m.events), spin)
 	case backlogMsg:

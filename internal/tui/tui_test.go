@@ -902,6 +902,7 @@ type fakeClient struct {
 	lastUpsert  *v1.ModelConfig
 	lastPersist bool
 	lastRemove  string
+	lastStopped string
 
 	// previous-sessions screen (spec §18.6)
 	history      []*v1.SessionSummary
@@ -932,6 +933,13 @@ func (f *fakeClient) ListModels(_ context.Context, _ *connect.Request[v1.ListMod
 		out = append(out, &v1.ModelInfo{Name: c.Name, Backend: c.Backend, Model: c.Model})
 	}
 	return connect.NewResponse(&v1.ListModelsResponse{Models: out}), nil
+}
+
+// StopSession records the stopped session id; the loop-idle test exercises it
+// without dialing a real daemon.
+func (f *fakeClient) StopSession(_ context.Context, req *connect.Request[v1.StopSessionRequest]) (*connect.Response[v1.StopSessionResponse], error) {
+	f.lastStopped = req.Msg.SessionId
+	return connect.NewResponse(&v1.StopSessionResponse{}), nil
 }
 
 func (f *fakeClient) GetModelConfig(_ context.Context, req *connect.Request[v1.GetModelConfigRequest]) (*connect.Response[v1.GetModelConfigResponse], error) {
@@ -2218,6 +2226,83 @@ func TestLoopDecisionStopsWhenEmpty(t *testing.T) {
 	mm := next.(model)
 	if mm.looping || mm.state != stateMenu {
 		t.Fatalf("expected loop to stop and return to menu, looping=%v state=%v", mm.looping, mm.state)
+	}
+}
+
+// A finished work session goes idle and blocks for input rather than
+// self-terminating, so while looping the driver must stop it explicitly (closing
+// its stream to advance the loop). A second idle event must not re-trigger.
+func TestLoopStopsIdleSession(t *testing.T) {
+	m := newSessionTextareaModel(t)
+	m.looping = true
+	m.sessionID = "s1"
+	m.client = newFakeClient()
+	m.ctx = context.Background()
+	m.events = make(chan *v1.Event, 4)
+
+	idle := &v1.Event{Seq: 1, Type: "session_idle", DataJson: `{"report":"shipped task 0002"}`}
+	nm, cmd := m.Update(evMsg{idle})
+	m = nm.(model)
+	if !m.loopStopping {
+		t.Fatal("expected loopStopping=true after a looping session goes idle")
+	}
+	if cmd == nil {
+		t.Fatal("expected a command (StopSession) to be issued on idle while looping")
+	}
+
+	// A subsequent idle event must not re-arm the stop (guard against repeats).
+	idle2 := &v1.Event{Seq: 2, Type: "session_idle", DataJson: `{"report":"again"}`}
+	nm, _ = m.Update(evMsg{idle2})
+	m = nm.(model)
+	if !m.loopStopping {
+		t.Fatal("loopStopping should remain set across further idle events")
+	}
+
+	// The returned command must re-arm a reader on m.events. The idle branch
+	// batches stopSession()+waitEvent()+spin; StopSession closes the event stream,
+	// and only an armed waitEvent surfaces that close as streamClosedMsg to drive
+	// the loop advance. Verify the batch issues StopSession AND contains a command
+	// that yields streamClosedMsg once the channel is closed (fails if waitEvent is
+	// dropped from the batch).
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("expected a tea.BatchMsg from the idle-looping command, got %T", cmd())
+	}
+	close(m.events)
+	fc := m.client.(*fakeClient)
+	sawStreamClosed := false
+	for _, c := range batch {
+		if c == nil {
+			continue
+		}
+		if _, isClosed := c().(streamClosedMsg); isClosed {
+			sawStreamClosed = true
+		}
+	}
+	if fc.lastStopped != "s1" {
+		t.Fatalf("expected StopSession to be issued for s1, got %q", fc.lastStopped)
+	}
+	if !sawStreamClosed {
+		t.Fatal("idle-looping command must re-arm waitEvent(m.events) so the closed stream yields streamClosedMsg")
+	}
+}
+
+// When the loop is NOT active, an idle session must stay put (no auto-stop) so a
+// normal work session remains usable after finishing a task.
+func TestNonLoopIdleStaysPut(t *testing.T) {
+	m := newSessionTextareaModel(t)
+	m.looping = false
+	m.sessionID = "s1"
+	m.events = make(chan *v1.Event, 4)
+
+	idle := &v1.Event{Seq: 1, Type: "session_idle", DataJson: `{"report":"done"}`}
+	nm, _ := m.Update(evMsg{idle})
+	m = nm.(model)
+	if m.loopStopping {
+		t.Fatal("non-loop session must not arm loopStopping on idle")
+	}
+	if m.status != "idle" {
+		t.Fatalf("expected status idle, got %q", m.status)
 	}
 }
 

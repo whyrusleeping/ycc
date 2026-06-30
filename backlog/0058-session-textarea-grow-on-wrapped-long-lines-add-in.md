@@ -33,3 +33,4 @@ The session input is now a `textarea` (internal/tui/tui.go). `syncInputHeight()`
 …[truncated]
 - 2026-06-30 decision: accept — commit: Session textarea grows on soft-wrapped long lines + input behavior tests (task 0058)  Enable the bubbles/v2 textarea DynamicHeight so the session input grows from total visual (soft-wrapped) lines, bo
 …[truncated]
+- 2026-06-30 usage: 13,048 tok (in 66, out 12,982, cache_r 660,355, cache_w 50,998) · cost n/a (unpriced)
