@@ -69,7 +69,7 @@ type model struct {
 	state   state
 	entries []menuEntry // modes + presets, in menu order
 	cursor  int
-	prompt  textinput.Model
+	prompt  textarea.Model
 
 	// "work (loop)" mode (toggled with tab on the work entry): chew through the
 	// backlog unattended, starting a fresh work session for each ready task until
@@ -195,7 +195,7 @@ type model struct {
 	// menu/session, opened with ctrl+n. It runs a lightweight, off-stream capture
 	// agent server-side so the running session is undisturbed.
 	capture         bool
-	captureInput    textinput.Model
+	captureInput    textarea.Model
 	captureStage    int            // 0 describe · 1 answer clarification · 2 created (dismiss)
 	captureQuestion string         // the agent's clarifying question (stage 1)
 	captureDesc     string         // the original description (carried into stage 1)
@@ -240,18 +240,12 @@ func initialModel(ctx context.Context, client yccv1connect.SessionServiceClient,
 	// the lipgloss palette and syntax style match the saved pref (glamour already
 	// reads prefs.Theme in makeRenderer).
 	applyTheme(themeByName(prefs.Theme))
-	prompt := textinput.New()
-	prompt.Placeholder = "what should the agent do? (optional for 'work')"
+	prompt := newChatInput("what should the agent do? (optional for 'work')")
 	prompt.Focus()
-	prompt.CharLimit = 8000
-	prompt.SetWidth(60)
 
 	input := newSessionInput()
 
-	captureInput := textinput.New()
-	captureInput.Placeholder = "describe a new backlog item…"
-	captureInput.CharLimit = 8000
-	captureInput.SetWidth(60)
+	captureInput := newChatInput("describe a new backlog item…")
 
 	// Activity spinner (task 0062): a small dot animation tinted with the palette's
 	// success role; it ticks via the Bubble Tea command loop while the session is
@@ -767,8 +761,17 @@ func (m model) fetchUsage() tea.Msg {
 
 // newSessionInput builds the multi-line session input textarea (task 0011).
 func newSessionInput() textarea.Model {
+	return newChatInput("type to prod / answer · enter sends · shift+enter newline · ↑↓ select · click to expand")
+}
+
+// newChatInput builds a multi-line chat-input textarea shared by every input
+// surface (menu prompt, session input, quick-add capture). It grows from one row
+// up to maxInputRows as the text wraps, sends on Enter, and inserts a newline on
+// shift+enter / ctrl+j. It is framed by a rounded border (see styleChatInput)
+// rather than a dark-background block.
+func newChatInput(placeholder string) textarea.Model {
 	input := textarea.New()
-	input.Placeholder = "type to prod / answer · enter sends · shift+enter newline · ↑↓ select · click to expand"
+	input.Placeholder = placeholder
 	input.CharLimit = 8000
 	input.ShowLineNumbers = false
 	input.Prompt = ""
@@ -780,7 +783,59 @@ func newSessionInput() textarea.Model {
 	input.DynamicHeight = true
 	input.SetHeight(1)
 	input.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("shift+enter", "ctrl+j"))
+	styleChatInput(&input)
 	return input
+}
+
+// styleChatInput strips the default dark-background cursor-line block from a
+// chat-input textarea so it can sit inside the rounded frame (inputFrameStyle)
+// without a highlighted block behind the text. The frame itself is drawn around
+// the textarea's View() (see framedInput); the textarea keeps a neutral Base so
+// the library does not double-render the frame in its empty/placeholder state.
+// Reapplied on a live theme switch so the blurred dim color tracks the palette
+// (see restyleInputs).
+func styleChatInput(ta *textarea.Model) {
+	s := ta.Styles()
+	s.Focused.Base = lipgloss.NewStyle()
+	s.Blurred.Base = lipgloss.NewStyle()
+	// Clear the dark-background highlight block: the focused line keeps no
+	// background, the blurred line stays dimmed text (no block).
+	s.Focused.CursorLine = lipgloss.NewStyle()
+	s.Blurred.CursorLine = lipgloss.NewStyle().Foreground(lipgloss.Color(activeTheme.dim))
+	ta.SetStyles(s)
+}
+
+// restyleInputs reapplies styleChatInput to every chat-input surface so a live
+// theme switch repaints their blurred dim color in the new palette. (The rounded
+// frame color is a package style rebuilt by applyTheme, so it needs no per-input
+// fixup.)
+func (m *model) restyleInputs() {
+	styleChatInput(&m.prompt)
+	styleChatInput(&m.input)
+	styleChatInput(&m.captureInput)
+}
+
+// framedInput renders a chat-input textarea inside the rounded, expanding frame
+// (inputFrameStyle, per lsp.webp), indented by n columns so every line of the
+// multi-row frame aligns (a bare "  " prefix would only shift the first line).
+func framedInput(ta textarea.Model, n int) string {
+	return indentBlock(inputFrameStyle.Render(ta.View()), n)
+}
+
+// indentBlock left-pads every line of s by n spaces.
+func indentBlock(s string, n int) string {
+	if n <= 0 {
+		return s
+	}
+	pad := strings.Repeat(" ", n)
+	return pad + strings.ReplaceAll(s, "\n", "\n"+pad)
+}
+
+// inputViewHeight is the rendered height of the session input including its
+// rounded frame (Height() reports only content rows; inputFrameStyle adds the
+// vertical border).
+func (m model) inputViewHeight() int {
+	return m.input.Height() + inputFrameStyle.GetVerticalFrameSize()
 }
 
 // relayout recomputes the viewport height so the (possibly multi-row) input
@@ -789,7 +844,7 @@ func (m *model) relayout() {
 	if !m.ready {
 		return
 	}
-	vpHeight := m.h - headerHeight - 1 - m.input.Height()
+	vpHeight := m.h - headerHeight - 1 - m.inputViewHeight()
 	if vpHeight < 3 {
 		vpHeight = 3
 	}
@@ -849,8 +904,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spin, cmd = m.spin.Update(msg)
 		return m, cmd
 	case tea.WindowSizeMsg:
-		if m.input.MaxHeight == 0 { // zero-value textarea (e.g. a test-constructed model literal)
+		// Reinitialize any zero-value textareas (e.g. a test-constructed model
+		// literal): a zero-value textarea has an uninitialized viewport and panics
+		// on SetWidth.
+		if m.input.MaxHeight == 0 {
 			m.input = newSessionInput()
+		}
+		if m.prompt.MaxHeight == 0 {
+			m.prompt = newChatInput("what should the agent do? (optional for 'work')")
+			m.prompt.Focus()
+		}
+		if m.captureInput.MaxHeight == 0 {
+			m.captureInput = newChatInput("describe a new backlog item…")
 		}
 		m.w, m.h = msg.Width, msg.Height
 		vpHeight := msg.Height - headerHeight - 2
@@ -864,9 +929,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.vp.SetWidth(msg.Width)
 			m.vp.SetHeight(vpHeight)
 		}
-		m.prompt.SetWidth(msg.Width - 4)
-		m.input.SetWidth(msg.Width - 4)
-		m.captureInput.SetWidth(msg.Width - 4)
+		// Reserve room for the rounded frame (inputFrameStyle) drawn around each
+		// input so the framed box fits the same width the bare input used to.
+		inputW := msg.Width - 4 - inputFrameStyle.GetHorizontalFrameSize()
+		m.prompt.SetWidth(inputW)
+		m.input.SetWidth(inputW)
+		m.captureInput.SetWidth(inputW)
 		m.makeRenderer()
 		m.bodyCache = map[int]string{} // re-render bodies at the new width
 		m.rebuild()
@@ -1657,12 +1725,12 @@ func (m model) captureView() string {
 	switch m.captureStage {
 	case 0:
 		b.WriteString("Describe a new backlog item:\n\n")
-		b.WriteString(m.captureInput.View() + "\n")
+		b.WriteString(framedInput(m.captureInput, 0) + "\n")
 	case 1:
 		// Reuse the shared interactive question UI badge the main agents use.
 		b.WriteString(questionPrompt(m.captureQuestion, w, true) + "\n\n")
 		b.WriteString("Your answer:\n\n")
-		b.WriteString(m.captureInput.View() + "\n")
+		b.WriteString(framedInput(m.captureInput, 0) + "\n")
 	case 2:
 		b.WriteString(selStyle.Render(m.captureMsg) + "\n")
 	}
@@ -2270,6 +2338,7 @@ func (m model) overlayAdjust(d int) (tea.Model, tea.Cmd) {
 		// Live-switch the palette so the open menu/session repaints in the new
 		// theme without a restart.
 		applyTheme(themeByName(m.prefs.Theme))
+		m.restyleInputs()
 		m.makeRenderer()
 		m.bodyCache = map[int]string{}
 		m.rebuild()
@@ -3515,7 +3584,7 @@ func (m model) menuView() string {
 		}
 		b.WriteString("  " + cursor + label + "\n")
 	}
-	b.WriteString("\n  " + m.prompt.View() + "\n")
+	b.WriteString("\n" + framedInput(m.prompt, 2) + "\n")
 	b.WriteString("\n" + m.footerBar("  ↑/↓ choose mode · tab loop (work) · type a prompt · enter start · ctrl+o browse · ctrl+r sessions · esc settings · ctrl+b backlog · ctrl+n new task"))
 	return b.String()
 }
@@ -3851,7 +3920,7 @@ func (m model) sessionView() string {
 			return top + "\n" + body + "\n" + overview + "\n" + m.pickerView() + "\n" + help
 		}
 		help := m.footer(" type your answer + enter · esc settings")
-		return top + "\n" + body + "\n" + overview + "\n " + m.input.View() + "\n" + help
+		return top + "\n" + body + "\n" + overview + "\n" + framedInput(m.input, 1) + "\n" + help
 	}
 	if m.picking {
 		help := m.footer(" ↑↓ choose · enter select · esc settings")
@@ -3859,7 +3928,7 @@ func (m model) sessionView() string {
 	}
 	if m.paused {
 		help := m.footer(" ⏸ paused — type a correction + enter to steer · enter to resume · esc settings")
-		return top + "\n" + body + "\n " + m.input.View() + "\n" + help
+		return top + "\n" + body + "\n" + framedInput(m.input, 1) + "\n" + help
 	}
 	help := m.footer(" enter send/expand · shift+enter newline · ↑↓ select · click expand · pgup/pgdn scroll · ctrl+i interrupt · esc settings · ctrl+b backlog · ctrl+n new task")
 	if m.mode == "work" {
@@ -3871,7 +3940,7 @@ func (m model) sessionView() string {
 			help = m.footer(" shift+tab loop · enter send/expand · ↑↓ select · pgup/pgdn scroll · ctrl+i interrupt · esc settings")
 		}
 	}
-	return top + "\n" + body + "\n " + m.input.View() + "\n" + help
+	return top + "\n" + body + "\n" + framedInput(m.input, 1) + "\n" + help
 }
 
 // footer renders a single-row help/status line, clamped to the terminal width so
@@ -5011,6 +5080,11 @@ var (
 	successStyle   lipgloss.Style
 	pathStyle      lipgloss.Style
 	cardTitleStyle lipgloss.Style
+
+	// inputFrameStyle is the rounded, expanding frame drawn around every chat
+	// input (per lsp.webp): a rounded border in the palette's border color with a
+	// single column of horizontal padding. Rebuilt by applyTheme on a theme switch.
+	inputFrameStyle lipgloss.Style
 )
 
 func actorStyle(actor string) lipgloss.Style {

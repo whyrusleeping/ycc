@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"connectrpc.com/connect"
@@ -1771,7 +1770,7 @@ func TestWizardFreeTextAfterPickerFocusesInput(t *testing.T) {
 // created/answered/error state.
 func TestCaptureStreamsActionLog(t *testing.T) {
 	m := model{w: 80, capture: true, captureStage: 0, captureBusy: true}
-	m.captureInput = textinput.New()
+	m.captureInput = newChatInput("describe a new backlog item…")
 	m.captureEvents = make(chan *v1.Event, 8)
 
 	// Feed two action-log events; each should append and rearm the waiter.
@@ -1817,7 +1816,7 @@ func TestCaptureStreamsActionLog(t *testing.T) {
 // (so the conversation history stays visible) and that captureView shows it.
 func TestCaptureEchoesUserMessage(t *testing.T) {
 	m := model{w: 80, capture: true, captureStage: 0, state: stateMenu}
-	m.captureInput = textinput.New()
+	m.captureInput = newChatInput("describe a new backlog item…")
 	m.captureInput.Focus()
 	m.captureInput.SetValue("add a dark mode toggle")
 
@@ -1844,7 +1843,7 @@ func TestCaptureEchoesUserMessage(t *testing.T) {
 // inner width instead of being truncated with an ellipsis or overflowing.
 func TestCaptureLogWraps(t *testing.T) {
 	m := model{w: 40, h: 24, capture: true, captureStage: 0}
-	m.captureInput = textinput.New()
+	m.captureInput = newChatInput("describe a new backlog item…")
 	m.captureEvents = make(chan *v1.Event, 8)
 
 	long := strings.Repeat("wrapme ", 30)
@@ -1871,7 +1870,7 @@ func TestCaptureLogWraps(t *testing.T) {
 // main agents use, rather than a bespoke header.
 func TestCaptureQuestionUsesSharedBadge(t *testing.T) {
 	m := model{w: 80, capture: true, captureStage: 1, captureQuestion: "Which platform?"}
-	m.captureInput = textinput.New()
+	m.captureInput = newChatInput("describe a new backlog item…")
 
 	view := m.captureView()
 	if !strings.Contains(view, askStyle.Render(" ? ")) {

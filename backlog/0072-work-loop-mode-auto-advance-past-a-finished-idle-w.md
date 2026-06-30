@@ -60,3 +60,4 @@ usable for steering.
 …[truncated]
 - 2026-06-30 decision: accept — commit: Work-loop mode: auto-advance past a finished (idle) work session (task 0072)  A work session does not self-terminate after finishing: the daemon emits session_idle and blocks for input, so its event s
 …[truncated]
+- 2026-06-30 usage: 33,163 tok (in 114, out 33,049, cache_r 1,108,895, cache_w 87,459) · cost n/a (unpriced)

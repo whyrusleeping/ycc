@@ -1,10 +1,10 @@
 ---
 id: "0066"
 title: Use multiline textarea for all chat inputs + style with rounded expanding frame (per lsp.webp)
-status: todo
+status: done
 priority: 3
 created: "2026-06-29"
-updated: "2026-06-29"
+updated: "2026-06-30"
 depends_on:
     - "0058"
 spec_refs: []
@@ -28,3 +28,12 @@ Note: the reference image (`~/lsp.webp`) lives outside the workspace and could n
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-30 plan: Unify all chat inputs on the multiline textarea and restyle with a rounded, expanding frame (per lsp.webp), in internal/tui.  1. Shared constructor + styling. Add `newChatInput(placeholder string) tex
+…[truncated]
+- 2026-06-30 implementer report: Unified all chat-input surfaces onto the multiline `textarea` and restyled them with a rounded, expanding frame (per lsp.webp), in `internal/tui/`.  Changes (internal/tui/tui.go): - Converted the `pro
+…[truncated]
+- 2026-06-30 review tier: single-opus — reviewers: Claude
+- 2026-06-30 review (Claude): accept — The change unifies all three chat-input surfaces (menu prompt, session input, quick-add capture) onto the multiline `textarea` via a shared `newChatInput` constructor, replacing the single-line `texti
+…[truncated]
+- 2026-06-30 decision: accept — commit: Unify chat inputs on multiline textarea with rounded expanding frame (task 0066)  Convert the menu prompt and quick-add capture inputs from single-line textinput to the multiline textarea (the session
+…[truncated]

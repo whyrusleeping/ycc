@@ -174,6 +174,11 @@ func applyTheme(t theme) {
 	pathStyle = lipgloss.NewStyle().Foreground(c(t.path))
 	cardTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(c(t.titleFg))
 
+	inputFrameStyle = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(c(t.border)).
+		Padding(0, 1)
+
 	chromaStyle = pickStyle(t.chromaStyleName)
 }
 
