@@ -82,10 +82,12 @@
 | [0077](backlog/0077-surface-the-plan-library-in-the-tui-rpc.md) | Surface the plan library in the TUI / RPC | done | 4 | 0020 |
 | [0078](backlog/0078-spike-design-parallel-agent-workstreams-via-git-wo.md) | Spike: design parallel agent workstreams via git worktrees | done | 4 | — |
 | [0079](backlog/0079-let-coordinator-preload-worker-agent-with-file-sni.md) | Let coordinator preload worker agent with file/snippet context hints from the plan | todo | 3 | — |
-| [0080](backlog/0080-give-capture-agent-bounded-read-access-to-ground-b.md) | Give capture agent bounded read access to ground backlog items in the codebase | todo | 3 | — |
+| [0080](backlog/0080-give-capture-agent-bounded-read-access-to-ground-b.md) | Give capture agent bounded read access to ground backlog items in the codebase | done | 3 | — |
 | [0081](backlog/0081-worktree-primitives-in-internal-git.md) | Worktree primitives in internal/git | todo | 4 | 0078 |
 | [0082](backlog/0082-workstream-registry-lifecycle-in-the-daemon-sessio.md) | Workstream registry + lifecycle in the daemon/session manager | todo | 4 | 0081 |
 | [0083](backlog/0083-workstream-merge-integration-flow-with-conflict-su.md) | Workstream merge/integration flow with conflict surfacing | todo | 4 | 0082 |
 | [0084](backlog/0084-rpc-surface-for-workstreams-spawn-list-preview-mer.md) | RPC surface for workstreams (spawn/list/preview/merge/discard) | todo | 4 | 0082, 0083 |
 | [0085](backlog/0085-tui-workstreams-panel-spawn-monitor-merge-ux.md) | TUI: Workstreams panel + spawn/monitor/merge UX | todo | 4 | 0084 |
 | [0086](backlog/0086-spec-document-workstream-concept-worktree-decision.md) | Spec: document workstream concept + worktree decision | todo | 4 | 0078 |
+| [0087](backlog/0087-add-web-search-fetch-page-agent-tools-via-exa.md) | Add web search + fetch-page agent tools (via Exa) | todo | 3 | — |
+| [0088](backlog/0088-make-read-tool-list-directory-contents-when-given.md) | Make Read tool list directory contents when given a directory path | todo | 3 | — |

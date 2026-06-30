@@ -49,3 +49,4 @@ A short written design proposal (recommended approach + rejected alternatives + 
 …[truncated]
 - 2026-06-30 decision: accept — commit: docs: design spike for parallel agent workstreams via git worktrees (task 0078)  Add docs/design/parallel-workstreams.md proposing git worktrees for parallel workstreams: 3 isolation approaches with t
 …[truncated]
+- 2026-06-30 usage: 28,163 tok (in 78, out 28,085, cache_r 1,130,612, cache_w 99,848) · cost n/a (unpriced)

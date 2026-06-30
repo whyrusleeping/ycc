@@ -1,7 +1,7 @@
 ---
 id: "0080"
 title: Give capture agent bounded read access to ground backlog items in the codebase
-status: todo
+status: done
 priority: 3
 created: "2026-06-30"
 updated: "2026-06-30"
@@ -31,3 +31,10 @@ The key constraint is that this should remain a **quick capture**, not a plannin
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-30 plan: Task 0080 is largely already satisfied by code committed in 8c5c72f: the capture agent (RunCapture in internal/orchestrator/capture.go) already registers the read-only Read tool plus list_backlog/get_
+…[truncated]
+- 2026-06-30 implementer report: Closed Task 0080 by verifying existing bounded read-access behavior and lightly tightening guidance.  Changes: 1. internal/orchestrator/capture_test.go — added TestRunCaptureGroundsInCodebase: creat
+…[truncated]
+- 2026-06-30 review tier: simple (coordinator self-review)
+- 2026-06-30 decision: accept — commit: capture: verify bounded read-access grounding + tighten prompt (task 0080)  The capture agent already had read-only Read + list_backlog/get_task tools and a bounded prompt (from 8c5c72f). Add TestRunC
+…[truncated]
