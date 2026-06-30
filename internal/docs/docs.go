@@ -229,6 +229,85 @@ func (s *Store) AppendWorkLog(id, line string) (*Task, error) {
 	})
 }
 
+// SetPlan upserts a "## Plan" section into the task body, persisting the FULL
+// coordinator plan next to its task (task 0020). The section is placed just above
+// "## Work log" when present, else appended. Repeated calls REPLACE the section's
+// content rather than appending duplicate sections.
+func (s *Store) SetPlan(id, plan string) (*Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.updateLocked(id, func(t *Task) {
+		t.Body = upsertSection(t.Body, "## Plan", plan)
+	})
+}
+
+// upsertSection inserts or replaces a markdown section (identified by its header
+// line, e.g. "## Plan") in body with the given content. When the section already
+// exists its content is replaced in place; otherwise the section is inserted just
+// above a "## Work log" section if one exists, else appended at the end.
+func upsertSection(body, header, content string) string {
+	content = strings.Trim(content, "\n")
+	section := header + "\n\n" + content + "\n"
+	lines := strings.Split(body, "\n")
+	start := -1
+	for i, ln := range lines {
+		if strings.TrimRight(ln, " \t") == header {
+			start = i
+			break
+		}
+	}
+	if start >= 0 {
+		// Find the end of this section: the next top-level "## " header, or EOF.
+		end := len(lines)
+		for i := start + 1; i < len(lines); i++ {
+			if strings.HasPrefix(lines[i], "## ") {
+				end = i
+				break
+			}
+		}
+		before := strings.Join(lines[:start], "\n")
+		after := strings.Join(lines[end:], "\n")
+		var b strings.Builder
+		b.WriteString(strings.TrimRight(before, "\n"))
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(section)
+		rest := strings.TrimLeft(after, "\n")
+		if rest != "" {
+			b.WriteString("\n")
+			b.WriteString(rest)
+		}
+		return b.String()
+	}
+	// No existing section. Insert above "## Work log" if present, else append.
+	wl := -1
+	for i, ln := range lines {
+		if strings.HasPrefix(ln, "## Work log") {
+			wl = i
+			break
+		}
+	}
+	if wl >= 0 {
+		before := strings.TrimRight(strings.Join(lines[:wl], "\n"), "\n")
+		after := strings.Join(lines[wl:], "\n")
+		var b strings.Builder
+		if before != "" {
+			b.WriteString(before)
+			b.WriteString("\n\n")
+		}
+		b.WriteString(section)
+		b.WriteString("\n")
+		b.WriteString(after)
+		return b.String()
+	}
+	out := strings.TrimRight(body, "\n")
+	if out != "" {
+		out += "\n\n"
+	}
+	return out + section
+}
+
 // RenderIndex regenerates backlog.md (in the workspace root) from the task files.
 func (s *Store) RenderIndex() error {
 	s.mu.Lock()

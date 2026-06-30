@@ -80,7 +80,7 @@ func BuildMode(mode string, d *Deps, level string) (*tools.Registry, string) {
 		// no implementation: no spawn_* / commit, and the prompt enforces a soft
 		// "no code edits" boundary (hard enforcement is future work).
 		reg.Add(tools.Editing(ws)...)
-		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d), proposePlan(d), switchToWork(d), askUser(d), tools.Finish())
+		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d), proposePlan(d), listPlans(d), runPlan(d), savePlan(d), switchToWork(d), askUser(d), tools.Finish())
 		return reg, sys(pmModeSystem, level, d.Workspace)
 	default: // work
 		return CoordinatorTools(d, ws), CoordinatorSystem(level) + "\n\n" + workspaceNote(d.Workspace)

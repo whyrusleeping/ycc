@@ -49,3 +49,4 @@ explicit interactive/judgement sessions now.
 …[truncated]
 - 2026-06-30 decision: accept — commit: tui: make multi-question ask_user wizard the focal point  Condense the inline question_asked log dump while the questionnaire wizard is collecting answers (tracked via new wizSeq), so it no longer dup
 …[truncated]
+- 2026-06-30 usage: 19,465 tok (in 96, out 19,369, cache_r 745,296, cache_w 60,275) · cost n/a (unpriced)

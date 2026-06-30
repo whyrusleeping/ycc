@@ -22,7 +22,7 @@
 | [0016](backlog/0016-quick-add-backlog-mid-session.md) | Quick-add backlog items mid-session (TUI capture overlay) | done | 3 | 0006 |
 | [0017](backlog/0017-tool-call-syntax-highlighting.md) | Smarter language inference for tool-call syntax highlighting | done | 3 | 0006 |
 | [0018](backlog/0018-implementer-turn-limit.md) | Remove / raise / make-configurable the implementer turn limit | done | 2 | 0002 |
-| [0020](backlog/0020-save-rerun-plans.md) | Persist and re-run coordinator / testing plans (plan library) | todo | 3 | 0004 |
+| [0020](backlog/0020-save-rerun-plans.md) | Persist and re-run coordinator / testing plans (plan library) | done | 3 | 0004 |
 | [0021](backlog/0021-collapse-modes-into-pm.md) | Collapse spec/backlog/feature/bug into a single `pm` (project manager) mode | done | 2 | 0006 |
 | [0022](backlog/0022-config-save-write-ycc-toml-from-a-config.md) | config.Save — write ycc.toml from a Config | done | 2 | — |
 | [0023](backlog/0023-first-run-setup-wizard-configure-model-providers-r.md) | First-run setup wizard — configure model providers & roles (write ycc.toml) | done | 2 | 0022 |
@@ -79,3 +79,4 @@
 | [0074](backlog/0074-tui-snapshot-to-image-rendering-for-visual-debuggi.md) | TUI snapshot-to-image rendering for visual debugging | done | 3 | — |
 | [0075](backlog/0075-scroll-tui-backlog-view-when-items-exceed-terminal.md) | Scroll TUI backlog view when items exceed terminal height | done | 3 | — |
 | [0076](backlog/0076-move-activity-spinner-to-the-bottom-next-to-the-se.md) | Move activity spinner to the bottom next to the session input box | done | 3 | — |
+| [0077](backlog/0077-surface-the-plan-library-in-the-tui-rpc.md) | Surface the plan library in the TUI / RPC | todo | 4 | 0020 |

@@ -1,10 +1,10 @@
 ---
 id: "0020"
 title: Persist and re-run coordinator / testing plans (plan library)
-status: todo
+status: done
 priority: 3
 created: "2026-06-26"
-updated: "2026-06-26"
+updated: "2026-06-30"
 depends_on:
     - "0004"
 spec_refs:
@@ -54,3 +54,12 @@ Open design questions:
   0013 implementer agent via `git rm` as "out of scope," and 0019 collided with a task a live
   session created — so it landed here as 0020 and was committed on creation so it can't be
   silently cleaned again. Motivates the agent scope-guard / workspace-isolation work, 0008.)
+- 2026-06-30 plan: Design decision (autonomous, per task's stated preferences): reusable plans live in-repo at `plans/*.md` (committed, version-controlled — matches docs-driven philosophy). Full coordinator plans are 
+…[truncated]
+- 2026-06-30 implementer report: Implemented task 0020: full-plan persistence + reusable in-repo plan library.  **docs package** (`internal/docs/docs.go`, new `internal/docs/plans.go`): - `SetPlan(id, plan)` upserts a `## Plan` secti
+…[truncated]
+- 2026-06-30 review tier: single-opus — reviewers: Claude
+- 2026-06-30 review (Claude): accept — The change cleanly satisfies all acceptance criteria for task 0020. It (1) makes a documented design decision that reusable plans live in-repo at `plans/*.md` (committed, version-controlled), recorded
+…[truncated]
+- 2026-06-30 decision: accept — commit: plans: persist full coordinator plans + in-repo reusable plan library  Persist the FULL plan to the task's ## Plan section via docs.SetPlan (idempotent upsert above the work log) instead of only a one
+…[truncated]

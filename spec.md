@@ -239,6 +239,24 @@ Why this exists and what "done" means in prose.
 `backlog.md`, append to a task's work log, and provide `list/get/create/update` used by
 the coordinator tools.
 
+### 6.3 Reusable plans (runbooks)
+
+Distinct from the backlog: a **task** is one-off work to do; a **plan** is *how* to do
+something, repeatably. Reusable plans live in-repo at `plans/*.md` — committed,
+version-controlled markdown procedures (matches the docs-driven philosophy). The
+motivating case is a **testing/verification plan**: a repeatable procedure you replay
+instead of re-describing. A plan is free markdown with a `#` title, concrete steps, and an
+expected outcome.
+
+Three coordinator/pm tools surface the library: `list_plans` (enumerate saved plans),
+`run_plan <name>` (read a plan and execute its steps end to end — e.g. rerun a saved
+testing plan), and `save_plan <name> <content>` (write a reusable plan into `plans/`). The
+`docs` package provides `ListPlans/ReadPlan/SavePlan/PlansDir`.
+
+Separately, `propose_plan` now persists the FULL coordinator plan to the task's `## Plan`
+section (a durable, human-browsable artifact) in addition to the dated one-line work-log
+breadcrumb — the complete plan lives next to its task, not just buried in a session event.
+
 ## 7. Agent engine
 
 ### 7.1 gollama integration (and the one addition we need)
