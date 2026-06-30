@@ -981,6 +981,26 @@ suspended at a clean point (§4, interaction layer); steer-interrupt targets the
 case. Hard termination is the separate `Stop` RPC (task 0009); naming is split so `Interrupt`
 = pause-to-steer and `Stop` = terminate.
 
+### 18.8 Snapshot rendering for debugging (dev/test aid)
+
+Debugging TUI layout/styling is hard from text alone: tests can assert on
+`stripANSI(model.View())` substrings, but neither a human nor the agent can *see* what the
+screen looks like — colors, alignment, borders, wrapping. The `internal/tui/snapshot` package
+rasterizes a TUI ANSI frame (the output of `model.render()` / `View()`) plus a `(cols, rows)`
+size into a PNG: `snapshot.RenderANSI(ansi, cols, rows) (image.Image, error)` and
+`snapshot.WritePNG(path, ansi, cols, rows) error`. It parses the frame into a cell grid with
+`github.com/charmbracelet/ultraviolet` and draws a fixed monospace grid (embedded Go Mono /
+Go Mono Bold via `golang.org/x/image`), honoring per-cell foreground/background colors plus
+the bold, faint and reverse SGR attributes; cell alignment follows each cell's terminal width.
+It is self-contained — no external terminal emulator, no network.
+
+This is purely additive dev/test tooling; it does not change runtime behaviour. Tests
+construct a `model`, size it via `tea.WindowSizeMsg`, and render it to an in-memory image for
+assertions (valid dimensions, color survived to pixels). PNG files are written to disk only
+when the `YCC_TUI_SNAPSHOT_DIR` env var is set, so ordinary `go test ./...` never litters the
+tree; with the var set, a maintainer or the agent (via the multimodal `Read` tool, §8) can
+open the PNG to visually inspect the rendered screen.
+
 ## 19. Onboarding flows
 
 ycc has two onboarding moments. They are independent and triggered by different signals:

@@ -9,11 +9,12 @@ require (
 	charm.land/lipgloss/v2 v2.0.4
 	connectrpc.com/connect v1.20.0
 	github.com/alecthomas/chroma/v2 v2.20.0
+	github.com/charmbracelet/ultraviolet v0.0.0-20260525132238-948f4557a654
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/muesli/reflow v0.3.0
-	github.com/muesli/termenv v0.16.0
 	github.com/pelletier/go-toml/v2 v2.0.1
 	github.com/whyrusleeping/gollama v0.0.0-20260628184513-567eebc663b0
+	golang.org/x/image v0.25.0
 	golang.org/x/net v0.56.0
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
@@ -21,12 +22,10 @@ require (
 
 require (
 	github.com/atotto/clipboard v0.1.4 // indirect
-	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.1 // indirect
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
-	github.com/charmbracelet/ultraviolet v0.0.0-20260525132238-948f4557a654 // indirect
 	github.com/charmbracelet/x/exp/slice v0.0.0-20250327172914-2fdc97757edf // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect

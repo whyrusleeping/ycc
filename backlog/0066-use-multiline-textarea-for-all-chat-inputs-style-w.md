@@ -37,3 +37,4 @@ Note: the reference image (`~/lsp.webp`) lives outside the workspace and could n
 …[truncated]
 - 2026-06-30 decision: accept — commit: Unify chat inputs on multiline textarea with rounded expanding frame (task 0066)  Convert the menu prompt and quick-add capture inputs from single-line textinput to the multiline textarea (the session
 …[truncated]
+- 2026-06-30 usage: 33,859 tok (in 164, out 33,695, cache_r 4,593,308, cache_w 187,869) · cost n/a (unpriced)
