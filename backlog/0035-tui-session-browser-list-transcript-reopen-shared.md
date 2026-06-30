@@ -1,10 +1,10 @@
 ---
 id: "0035"
 title: TUI session browser (list, transcript, reopen) + shared list+detail modal
-status: todo
+status: done
 priority: 3
 created: "2026-06-27"
-updated: "2026-06-27"
+updated: "2026-06-30"
 depends_on:
     - "0033"
     - "0034"
@@ -51,3 +51,16 @@ pattern into a shared component reused by the backlog browser and the future cos
   the reusable list+detail modal component + backlog-browser refactor, the read-only
   transcript drill-in, and the unified "browse" menu entry. Build on the committed
   `ctrl+r` history screen rather than re-implementing it.
+- 2026-06-30 plan: Build the TUI session browser + shared list+detail modal, in parts:  1. Shared list+detail modal component (internal/tui): a lightweight reusable struct (`browser`/`listDetail`) owning navigable list 
+…[truncated]
+- 2026-06-30 implementer report: Implemented task 0035: TUI session browser (list, read-only transcript, reopen) + a shared list+detail modal component, plus the supporting transcript RPC.  ## What changed  **Shared list+detail modal
+…[truncated]
+- 2026-06-30 review tier: high-powered — reviewers: Claude
+- 2026-06-30 review (Claude): accept — The change satisfies the task's acceptance criteria. It adds a GetSessionTranscript read RPC (proto/server/session/event layers), a session browser that lists live+persisted sessions, drills into a re
+…[truncated]
+- 2026-06-30 revision: Addressed the review finding that the shared `browser` component's navigation was effectively dead code (only exercised by TestBrowserNav while the update handlers duplicated cursor arithmetic inline)
+…[truncated]
+- 2026-06-30 review (Claude): accept — The revision resolves the main finding from my prior review. Cursor navigation arithmetic is now centralized in navUp/navDown/clampCursor and reused by both the shared browser component methods and ev
+…[truncated]
+- 2026-06-30 decision: accept — commit: TUI session browser + shared list+detail browser surface (task 0035)  Add a session browser to the TUI: a navigable list of live + persisted sessions that drills into a read-only replayed transcript (
+…[truncated]

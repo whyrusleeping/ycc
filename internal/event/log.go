@@ -47,6 +47,13 @@ func OpenLog(path string) (*Log, error) {
 	return l, nil
 }
 
+// ReadLog reads and parses all persisted events from a session's events.jsonl at
+// path, reusing the strict line-by-line decoder. A missing file yields (nil, nil);
+// a corrupt line is a hard error. It backs the read-only transcript view (spec §18.6).
+func ReadLog(path string) ([]Event, error) {
+	return readEvents(path)
+}
+
 func readEvents(path string) ([]Event, error) {
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {

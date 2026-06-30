@@ -2,12 +2,14 @@ package server
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"connectrpc.com/connect"
 
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/docs"
+	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/session"
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 )
@@ -216,5 +218,62 @@ func TestModelBackendRPCs(t *testing.T) {
 	}
 	if _, err := srv.GetModelConfig(ctx, connect.NewRequest(&v1.GetModelConfigRequest{Name: "gpt"})); err == nil {
 		t.Fatal("expected NotFound after removal")
+	}
+}
+
+// TestGetSessionTranscript covers the read-only transcript RPC (spec §18.6): a
+// persisted on-disk session log is read and converted to proto events, an unknown
+// session is a NotFound error, and a live session returns its in-memory snapshot.
+func TestGetSessionTranscript(t *testing.T) {
+	reg := config.NewRegistry(&config.Config{
+		Models: map[string]config.Model{"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"}},
+		Roles:  config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
+	})
+	ws := t.TempDir()
+	srv := New(session.NewManager(reg, ws))
+	ctx := context.Background()
+
+	// Persist a session log on disk under .ycc/sessions/<id>/events.jsonl.
+	id := "sess_persisted"
+	logPath := filepath.Join(ws, ".ycc", "sessions", id, "events.jsonl")
+	lg, err := event.OpenLog(logPath)
+	if err != nil {
+		t.Fatalf("OpenLog: %v", err)
+	}
+	lg.Record("user", event.UserInput, map[string]any{"text": "do the thing"})
+	lg.Record("coordinator", event.ModelTurn, map[string]any{"text": "on it"})
+	lg.Close()
+
+	resp, err := srv.GetSessionTranscript(ctx, connect.NewRequest(&v1.GetSessionTranscriptRequest{SessionId: id}))
+	if err != nil {
+		t.Fatalf("GetSessionTranscript: %v", err)
+	}
+	if len(resp.Msg.Events) != 2 {
+		t.Fatalf("transcript = %d events, want 2", len(resp.Msg.Events))
+	}
+	if resp.Msg.Events[0].Type != string(event.UserInput) || resp.Msg.Events[1].Type != string(event.ModelTurn) {
+		t.Fatalf("transcript event types = %q/%q", resp.Msg.Events[0].Type, resp.Msg.Events[1].Type)
+	}
+
+	// Unknown session => NotFound.
+	if _, err := srv.GetSessionTranscript(ctx, connect.NewRequest(&v1.GetSessionTranscriptRequest{SessionId: "nope"})); err == nil {
+		t.Fatal("expected NotFound for unknown session")
+	} else if got := connect.CodeOf(err); got != connect.CodeNotFound {
+		t.Fatalf("code = %v, want NotFound", got)
+	}
+
+	// Live session: reopening registers it in the manager, after which the
+	// transcript is served from the in-memory snapshot (the Get path) rather than
+	// re-read from disk. The reopened session's own marker event is included.
+	if _, err := srv.ResumeSession(ctx, connect.NewRequest(&v1.ResumeSessionRequest{SessionId: id})); err != nil {
+		t.Fatalf("ResumeSession: %v", err)
+	}
+	defer srv.mgr.Stop(id)
+	live, err := srv.GetSessionTranscript(ctx, connect.NewRequest(&v1.GetSessionTranscriptRequest{SessionId: id}))
+	if err != nil {
+		t.Fatalf("GetSessionTranscript (live): %v", err)
+	}
+	if len(live.Msg.Events) < 2 {
+		t.Fatalf("live transcript = %d events, want >= 2", len(live.Msg.Events))
 	}
 }

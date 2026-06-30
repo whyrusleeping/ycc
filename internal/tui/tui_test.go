@@ -906,6 +906,8 @@ type fakeClient struct {
 	// previous-sessions screen (spec §18.6)
 	history      []*v1.SessionSummary
 	lastReopened string
+	transcript   []*v1.Event // returned by GetSessionTranscript
+	lastTransID  string
 }
 
 func newFakeClient(cfgs ...*v1.ModelConfig) *fakeClient {
@@ -987,6 +989,18 @@ func (f *fakeClient) Subscribe(_ context.Context, _ *connect.Request[v1.Subscrib
 	return nil, fmt.Errorf("subscribe not supported in fakeClient")
 }
 
+// GetSessionTranscript backs the read-only transcript drill-in (spec §18.6).
+func (f *fakeClient) GetSessionTranscript(_ context.Context, req *connect.Request[v1.GetSessionTranscriptRequest]) (*connect.Response[v1.GetSessionTranscriptResponse], error) {
+	f.lastTransID = req.Msg.SessionId
+	return connect.NewResponse(&v1.GetSessionTranscriptResponse{Events: f.transcript}), nil
+}
+
+// ListBacklog backs the backlog browser route from the browse selector; the
+// browse tests only need it to not panic, so it returns an empty list.
+func (f *fakeClient) ListBacklog(_ context.Context, _ *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error) {
+	return connect.NewResponse(&v1.ListBacklogResponse{}), nil
+}
+
 // drive feeds a key through Update and, if a command is returned, runs it and
 // feeds the resulting message back through Update (recursing until no command).
 // It threads the model value through, mirroring the Bubble Tea runtime.
@@ -1021,6 +1035,8 @@ func keyMsg(key string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl}
 	case "ctrl+r":
 		return tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl}
+	case "ctrl+o":
+		return tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl}
 	default:
 		return tea.KeyPressMsg{Code: []rune(key)[0], Text: key}
 	}
@@ -1390,10 +1406,10 @@ func TestBacklogHidesDoneByDefault(t *testing.T) {
 	}
 }
 
-// TestPreviousSessionsReopen drives the menu -> previous-sessions -> reopen flow
-// (spec §18.6): ctrl+r opens the history screen and loads the list, ↓ moves the
-// cursor, and Enter reopens the selected session via ResumeSession, entering the
-// session view.
+// TestPreviousSessionsReopen drives the menu -> session browser -> reopen flow
+// (spec §18.6): ctrl+r opens the browser and loads the list, ↓ moves the cursor,
+// and `o` reopens the selected session via ResumeSession, entering the session
+// view. (Enter now drills into the transcript; see TestSessionBrowserTranscript.)
 func TestPreviousSessionsReopen(t *testing.T) {
 	f := newFakeClient()
 	f.history = []*v1.SessionSummary{
@@ -1405,7 +1421,7 @@ func TestPreviousSessionsReopen(t *testing.T) {
 		t.Fatalf("initial state=%v, want stateMenu", m.state)
 	}
 
-	// ctrl+r opens the previous-sessions screen and loads history.
+	// ctrl+r opens the session browser and loads history.
 	m = drive(t, m, "ctrl+r")
 	if m.state != stateHistory {
 		t.Fatalf("after ctrl+r state=%v, want stateHistory", m.state)
@@ -1414,12 +1430,12 @@ func TestPreviousSessionsReopen(t *testing.T) {
 		t.Fatalf("history len=%d, want 2", len(m.history))
 	}
 
-	// Navigate to the second row and reopen it.
+	// Navigate to the second row and reopen it with `o`.
 	m = drive(t, m, "down")
 	if m.historyCursor != 1 {
 		t.Fatalf("historyCursor=%d, want 1", m.historyCursor)
 	}
-	m = drive(t, m, "enter")
+	m = drive(t, m, "o")
 
 	if f.lastReopened != "s_older" {
 		t.Fatalf("reopened %q, want s_older", f.lastReopened)
@@ -1432,6 +1448,144 @@ func TestPreviousSessionsReopen(t *testing.T) {
 	}
 	if m.state != stateSession {
 		t.Fatalf("state=%v, want stateSession", m.state)
+	}
+}
+
+// TestSessionBrowserTranscript drives the session browser transcript drill-in
+// (spec §18.6): Enter on a row fetches the transcript via GetSessionTranscript
+// and loads it into the event-rendering pipeline (read-only), Esc backs out to
+// the list, and `o` from the transcript reopens the session.
+func TestSessionBrowserTranscript(t *testing.T) {
+	f := newFakeClient()
+	f.history = []*v1.SessionSummary{
+		{SessionId: "s1", Mode: "work", Status: "idle", Title: "do the thing", LastActivity: "2024-01-02T10:00:00Z"},
+	}
+	f.transcript = []*v1.Event{
+		{Seq: 1, Type: "user_input", Actor: "user", DataJson: `{"text":"go"}`},
+		{Seq: 2, Type: "model_turn", Actor: "coordinator", DataJson: `{"text":"on it"}`},
+	}
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	m = drive(t, m, "ctrl+r")
+	if m.state != stateHistory {
+		t.Fatalf("state=%v, want stateHistory", m.state)
+	}
+
+	// Enter drills into the read-only transcript (no reopen).
+	m = drive(t, m, "enter")
+	if !m.historyTranscript {
+		t.Fatal("enter should open the transcript drill-in")
+	}
+	if f.lastTransID != "s1" {
+		t.Fatalf("GetSessionTranscript id=%q, want s1", f.lastTransID)
+	}
+	if f.lastReopened != "" {
+		t.Fatalf("transcript drill-in must not reopen the session (lastReopened=%q)", f.lastReopened)
+	}
+	if len(m.evs) != 2 {
+		t.Fatalf("transcript loaded %d events into the pipeline, want 2", len(m.evs))
+	}
+	// The transcript renders via the shared event components.
+	view := m.transcriptView()
+	if !strings.Contains(view, "transcript") {
+		t.Fatalf("transcriptView missing title:\n%s", view)
+	}
+
+	// Esc backs out to the list and clears the transient transcript state.
+	m = drive(t, m, "esc")
+	if m.historyTranscript {
+		t.Fatal("esc should leave the transcript drill-in")
+	}
+	if m.state != stateHistory {
+		t.Fatalf("after esc state=%v, want stateHistory (back to list)", m.state)
+	}
+	if len(m.evs) != 0 {
+		t.Fatalf("esc should clear transient transcript events, got %d", len(m.evs))
+	}
+
+	// Re-enter the transcript and reopen via `o`.
+	m = drive(t, m, "enter")
+	m = drive(t, m, "o")
+	if f.lastReopened != "s1" {
+		t.Fatalf("reopen from transcript: lastReopened=%q, want s1", f.lastReopened)
+	}
+	if m.state != stateSession || m.sessionID != "s1" {
+		t.Fatalf("after reopen state=%v sessionID=%q, want stateSession/s1", m.state, m.sessionID)
+	}
+}
+
+// TestBrowserNav exercises the shared list+detail component's cursor navigation:
+// up/down move with clamping at both bounds and clamp() repairs an out-of-range
+// cursor after the row set shrinks.
+func TestBrowserNav(t *testing.T) {
+	b := browser{rows: []browserRow{{text: "a"}, {text: "b"}, {text: "c"}}}
+	b.up() // already at top: no-op
+	if b.cursor != 0 {
+		t.Fatalf("up at top: cursor=%d, want 0", b.cursor)
+	}
+	b.down()
+	b.down()
+	if b.cursor != 2 {
+		t.Fatalf("two downs: cursor=%d, want 2", b.cursor)
+	}
+	b.down() // at bottom: clamped
+	if b.cursor != 2 {
+		t.Fatalf("down at bottom: cursor=%d, want 2", b.cursor)
+	}
+	// Shrink the row set out from under the cursor; clamp repairs it.
+	b.rows = b.rows[:1]
+	b.clamp()
+	if b.cursor != 0 {
+		t.Fatalf("clamp after shrink: cursor=%d, want 0", b.cursor)
+	}
+	// Empty list clamps to 0 (never negative).
+	b.rows = nil
+	b.clamp()
+	if b.cursor != 0 {
+		t.Fatalf("clamp on empty: cursor=%d, want 0", b.cursor)
+	}
+}
+
+// TestBrowseMenuRoutes verifies the browse selector (ctrl+o) routes to the
+// backlog and session browsers (spec §18.6/§20.5), and esc dismisses it.
+func TestBrowseMenuRoutes(t *testing.T) {
+	f := newFakeClient()
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+
+	// ctrl+o opens the browse selector.
+	m = drive(t, m, "ctrl+o")
+	if !m.browse {
+		t.Fatal("ctrl+o should open the browse selector")
+	}
+	// First entry routes to the backlog browser.
+	m = drive(t, m, "enter")
+	if m.browse {
+		t.Fatal("enter should dismiss the browse selector")
+	}
+	if !m.backlog {
+		t.Fatalf("first browse entry should open the backlog browser")
+	}
+
+	// Re-open and route to the sessions browser (second entry).
+	m.backlog = false
+	m = drive(t, m, "ctrl+o")
+	m = drive(t, m, "down")
+	m = drive(t, m, "enter")
+	if m.browse {
+		t.Fatal("enter should dismiss the browse selector")
+	}
+	if m.state != stateHistory {
+		t.Fatalf("second browse entry should open the session browser (state=%v)", m.state)
+	}
+
+	// Esc dismisses the selector without routing.
+	m.state = stateMenu
+	m = drive(t, m, "ctrl+o")
+	m = drive(t, m, "esc")
+	if m.browse {
+		t.Fatal("esc should dismiss the browse selector")
+	}
+	if m.state != stateMenu || m.backlog {
+		t.Fatalf("esc must not route anywhere (state=%v backlog=%v)", m.state, m.backlog)
 	}
 }
 

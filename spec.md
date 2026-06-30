@@ -873,8 +873,11 @@ the existing `ListSessions` continues to mean "live only".
 menu or settings overlay exactly like the backlog browser (§18.5). The list shows the
 summary rows (most-recent first); selecting one drills into a **read-only transcript** —
 the reduced/replayed event stream rendered with the same components the live session view
-uses, so reasoning, tool calls, and results display identically. From a selected session
-the human can **Reopen** it.
+uses, so reasoning, tool calls, and results display identically. The transcript is served
+by a read RPC (`GetSessionTranscript`, project + session-id scoped) that returns a session's
+full event log — the live in-memory snapshot for a running session, otherwise the persisted
+`events.jsonl` read from disk. From a selected session (in the list or the transcript) the
+human can **Reopen** it.
 
 **Reopen / re-enter (resume = replay).** Reopening a persisted session re-instantiates its
 coordinator on the *existing* log rather than starting a fresh one: the daemon loads the
@@ -904,10 +907,11 @@ before its first new turn.
 **Shared modal "browser" surface.** The settings overlay (§18.2), backlog browser
 (§18.5), this session browser, and the cost view (§20.5, task 0029) are all the same
 shape: a modal, navigable list with a drill-in detail pane, opened over the home menu or a
-session and dismissed with Esc. These should share one reusable TUI component (a generic
-list+detail modal) plus a small "browsers" menu that routes to backlog / sessions / cost,
-rather than each re-implementing navigation. The same read RPCs back the future phone
-client (§5).
+session and dismissed with Esc. These share one reusable TUI component (a generic
+list+detail modal, `browser`/`browserRow`/`browserCard` in `internal/tui`) reused by the
+backlog and session browsers, plus a small "browse" selector (ctrl+o) that routes to
+backlog / sessions today and is ready to add cost (§20.5, task 0029) as a third row. The
+same read RPCs back the future phone client (§5).
 
 ### 18.7 Interrupt & steer (pause / correct / resume)
 

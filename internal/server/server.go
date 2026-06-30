@@ -139,6 +139,28 @@ func (s *Server) ListSessionHistory(_ context.Context, req *connect.Request[v1.L
 	return connect.NewResponse(&v1.ListSessionHistoryResponse{Sessions: out}), nil
 }
 
+// GetSessionTranscript returns a session's full event log (live or persisted on
+// disk) so the session browser can render a read-only replayed transcript with
+// the same event components as the live view (spec §18.6).
+func (s *Server) GetSessionTranscript(_ context.Context, req *connect.Request[v1.GetSessionTranscriptRequest]) (*connect.Response[v1.GetSessionTranscriptResponse], error) {
+	evs, err := s.mgr.SessionTranscript(req.Msg.Project, req.Msg.SessionId)
+	if err != nil {
+		switch {
+		case errors.Is(err, session.ErrUnknownProject):
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		case errors.Is(err, session.ErrUnknownSession):
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		default:
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+	}
+	out := make([]*v1.Event, 0, len(evs))
+	for _, ev := range evs {
+		out = append(out, toProto(ev))
+	}
+	return connect.NewResponse(&v1.GetSessionTranscriptResponse{Events: out}), nil
+}
+
 // rfc3339 formats a timestamp using the same precision as toProto, returning ""
 // for a zero time so absent timestamps serialize as empty rather than a sentinel.
 func rfc3339(t time.Time) string {

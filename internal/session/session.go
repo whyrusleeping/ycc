@@ -1034,6 +1034,39 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 	return s, nil
 }
 
+// SessionTranscript returns the full event log for a session — live or persisted
+// on disk — for the read-only transcript view (spec §18.6). A live session
+// returns its in-memory snapshot; otherwise the persisted
+// <workspace>/.ycc/sessions/<id>/events.jsonl is read. An empty project uses the
+// default workspace; an unknown project is ErrUnknownProject; a session with no
+// live state and no persisted log is ErrUnknownSession.
+func (m *Manager) SessionTranscript(project, id string) ([]event.Event, error) {
+	if s, ok := m.Get(id); ok {
+		return s.Log().Snapshot(), nil
+	}
+	ws := m.defaultWorkspace
+	if project != "" {
+		p, ok := m.projects.Resolve(project)
+		if !ok {
+			return nil, fmt.Errorf("%w %q", ErrUnknownProject, project)
+		}
+		ws = p
+	}
+	absWS, err := filepath.Abs(ws)
+	if err != nil {
+		return nil, fmt.Errorf("resolve workspace: %w", err)
+	}
+	logPath := filepath.Join(absWS, ".ycc", "sessions", id, "events.jsonl")
+	events, err := event.ReadLog(logPath)
+	if err != nil {
+		return nil, fmt.Errorf("read event log: %w", err)
+	}
+	if len(events) == 0 {
+		return nil, fmt.Errorf("%w %q", ErrUnknownSession, id)
+	}
+	return events, nil
+}
+
 // agentSpec builds an orchestrator.AgentSpec for a logical model name in a role,
 // validating that it resolves now so the per-spawn closures can assume success. It
 // honors the per-role thinking config (per-role config → per-model config →

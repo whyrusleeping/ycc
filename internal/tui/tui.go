@@ -70,12 +70,23 @@ type model struct {
 	cursor  int
 	prompt  textinput.Model
 
-	// previous-sessions screen (spec §18.6): a navigable list of persisted
-	// sessions reached from the menu (ctrl+r). Enter reopens the selected one via
-	// ResumeSession ("resume = replay").
+	// session browser / previous-sessions screen (spec §18.6): a navigable list of
+	// persisted + live sessions reached from the menu (ctrl+r) or the browse
+	// selector. Enter drills into a read-only replayed transcript; `o` reopens the
+	// selected session via ResumeSession ("resume = replay").
 	history       []*v1.SessionSummary
 	historyCursor int
-	historyMsgTxt string // status/error line for the history screen
+	historyMsgTxt string // status/error line for the session list
+	// historyTranscript gates the read-only transcript drill-in: when true the
+	// session browser shows the selected session's replayed event log (loaded into
+	// the shared event-rendering pipeline: m.evs + m.vp) instead of the list.
+	historyTranscript bool
+	historyTransID    string // session id whose transcript is currently shown
+
+	// browse selector (spec §18.6/§20.5): a small modal routing to the list+detail
+	// browsers — backlog and sessions today, with cost (task 0029) ready to add.
+	browse       bool
+	browseCursor int
 
 	sessionID string
 	mode      string
@@ -264,6 +275,14 @@ type historyMsg struct {
 	sessions []*v1.SessionSummary
 	err      error
 }
+
+// transcriptMsg carries a session's replayed event log for the read-only
+// transcript drill-in (spec §18.6), or an error if the fetch failed.
+type transcriptMsg struct {
+	id     string
+	events []*v1.Event
+	err    error
+}
 type evMsg struct{ ev *v1.Event }
 type streamClosedMsg struct{}
 type errMsg struct{ err error }
@@ -349,6 +368,20 @@ func (m model) fetchHistory() tea.Msg {
 		return historyMsg{err: err}
 	}
 	return historyMsg{sessions: resp.Msg.Sessions}
+}
+
+// fetchTranscript loads a session's full replayed event log for the read-only
+// transcript drill-in (spec §18.6) via the GetSessionTranscript RPC.
+func (m model) fetchTranscript(id string) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := m.client.GetSessionTranscript(m.ctx, connect.NewRequest(&v1.GetSessionTranscriptRequest{
+			Project: m.project, SessionId: id,
+		}))
+		if err != nil {
+			return transcriptMsg{id: id, err: err}
+		}
+		return transcriptMsg{id: id, events: resp.Msg.Events}
+	}
 }
 
 // reopenSession re-opens a persisted session on its existing event log via
@@ -808,6 +841,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.historyMsgTxt = ""
 		}
 		return m, nil
+	case transcriptMsg:
+		if msg.err != nil {
+			m.historyMsgTxt = "error: " + msg.err.Error()
+			return m, nil
+		}
+		// Load the replayed transcript into the shared event-rendering pipeline so
+		// it renders identically to the live session view (reasoning, tool-calls,
+		// folding all match), but read-only and starting at the top.
+		m.historyTranscript = true
+		m.historyTransID = msg.id
+		m.historyMsgTxt = ""
+		m.evs = msg.events
+		m.expanded = map[int]bool{}
+		m.bodyCache = map[int]string{}
+		m.eventStart = nil
+		m.selected = -1
+		m.follow = false
+		if m.ready {
+			m.rebuild()
+			m.vp.GotoTop()
+		}
+		return m, nil
 	case errMsg:
 		m.err = msg.err
 		return m, nil
@@ -957,6 +1012,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateBacklog(msg)
 	}
 
+	// The browse selector (ctrl+o) is modal over the menu (spec §18.6/§20.5): it
+	// routes to the backlog / session browsers.
+	if m.browse {
+		return m.updateBrowse(msg)
+	}
+
 	// The model-backends management modal (task 0044) owns input while open. It is
 	// reached from the settings overlay and is modal over menu/session.
 	if m.mbOpen {
@@ -1029,10 +1090,44 @@ func (m model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateHistory handles the previous-sessions screen (spec §18.6): navigate the
-// list of persisted sessions, Enter reopens the selected one via ResumeSession,
-// `r` refreshes, Esc/q returns to the menu.
+// updateHistory handles the session browser (spec §18.6): navigate the list of
+// persisted + live sessions, Enter drills into a read-only replayed transcript,
+// `o` reopens the selected session via ResumeSession, `r` refreshes, Esc/q backs
+// out (transcript → list, list → menu).
 func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Transcript drill-in: a read-only replayed view that scrolls via the viewport.
+	if m.historyTranscript {
+		key, ok := msg.(tea.KeyMsg)
+		if !ok {
+			return m, nil
+		}
+		switch key.String() {
+		case "ctrl+c":
+			return m, tea.Quit
+		case "esc", "q", "backspace", "left":
+			// Back to the list: drop the transient transcript event state.
+			m.historyTranscript = false
+			m.historyTransID = ""
+			m.evs = nil
+			m.expanded = map[int]bool{}
+			m.bodyCache = map[int]string{}
+			m.eventStart = nil
+			if m.ready {
+				m.rebuild()
+			}
+			return m, nil
+		case "o", "enter":
+			// Reopen the session whose transcript we're viewing (resume = replay).
+			m.historyTranscript = false
+			m.historyMsgTxt = "reopening " + short(m.historyTransID) + "…"
+			return m, m.reopenSession(m.historyTransID)
+		}
+		// Everything else (↑/↓, pgup/pgdn, wheel) scrolls the transcript viewport.
+		var cmd tea.Cmd
+		m.vp, cmd = m.vp.Update(msg)
+		return m, cmd
+	}
+
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return m, nil
@@ -1047,16 +1142,21 @@ func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.historyMsgTxt = "loading…"
 		return m, m.fetchHistory
 	case "up":
-		if m.historyCursor > 0 {
-			m.historyCursor--
-		}
+		m.historyCursor = navUp(m.historyCursor)
 		return m, nil
 	case "down":
-		if m.historyCursor < len(m.history)-1 {
-			m.historyCursor++
-		}
+		m.historyCursor = navDown(m.historyCursor, len(m.history))
 		return m, nil
 	case "enter":
+		// Drill into a read-only replayed transcript of the selected session.
+		if len(m.history) == 0 {
+			return m, nil
+		}
+		sel := m.history[m.historyCursor]
+		m.historyMsgTxt = "loading transcript…"
+		return m, m.fetchTranscript(sel.SessionId)
+	case "o":
+		// Reopen the selected session directly from the list (resume = replay).
 		if len(m.history) == 0 {
 			return m, nil
 		}
@@ -1096,13 +1196,17 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.backlogShowDone = false
 			return m, m.fetchBacklog
 		case "ctrl+r":
-			// Open the previous-sessions screen to reopen a persisted session
-			// (spec §18.6).
+			// Open the session browser to inspect/reopen a session (spec §18.6).
 			m.state = stateHistory
 			m.historyCursor = 0
 			m.history = nil
+			m.historyTranscript = false
 			m.historyMsgTxt = "loading…"
 			return m, m.fetchHistory
+		case "ctrl+o":
+			// Open the browse selector (backlog / sessions; cost later) — spec §18.6.
+			m.openBrowse()
+			return m, nil
 		case "up":
 			if m.cursor > 0 {
 				m.cursor--
@@ -1453,6 +1557,161 @@ func (m model) captureView() string {
 	return m.modalCard(" capture backlog item ", strings.TrimRight(b.String(), "\n"), hint)
 }
 
+// --- shared list+detail browser surface (spec §18.5/§18.6/§20.5) ---
+//
+// browser is the reusable modal list+detail component behind every browser
+// (backlog today, sessions, and a future cost view): it owns generic list
+// navigation (cursor up/down with clamping) and bordered-card rendering via
+// modalCard. Each specific browser supplies the rendered row text, footer hint,
+// and any extra keybindings — the owner handles enter/extra keys while this
+// component handles up/down + cursor clamp + rendering. It deliberately stays
+// small: factor the duplicated list+card pattern, don't over-engineer.
+type browser struct {
+	title  string
+	rows   []browserRow
+	cursor int
+	hint   string
+	empty  string // message shown when there are no rows
+}
+
+// browserRow is one list entry: text is selection-highlighted when the row is
+// under the cursor, while suffix (dim meta/tags) is appended unstyled so a row
+// can carry secondary detail without it being swallowed by the selection style.
+type browserRow struct {
+	text   string
+	suffix string
+}
+
+// navUp / navDown / clampCursor are the single source of truth for navigable-list
+// cursor arithmetic, shared by the browser component AND the specific update
+// handlers (backlog/history/browse) so cursor movement is never re-implemented
+// inline. navDown/clampCursor take the row count n; an empty list clamps to 0.
+func navUp(cursor int) int {
+	if cursor > 0 {
+		return cursor - 1
+	}
+	return cursor
+}
+
+func navDown(cursor, n int) int {
+	if cursor < n-1 {
+		return cursor + 1
+	}
+	return cursor
+}
+
+func clampCursor(cursor, n int) int {
+	if cursor >= n {
+		cursor = n - 1
+	}
+	if cursor < 0 {
+		cursor = 0
+	}
+	return cursor
+}
+
+func (b *browser) up() { b.cursor = navUp(b.cursor) }
+
+func (b *browser) down() { b.cursor = navDown(b.cursor, len(b.rows)) }
+
+// clamp keeps the cursor within [0, len-1] after the underlying row set changes
+// (e.g. a show/hide-done toggle shrinks the list out from under it).
+func (b *browser) clamp() { b.cursor = clampCursor(b.cursor, len(b.rows)) }
+
+// browserCard renders a browser's navigable list as a bordered modal card.
+func (m model) browserCard(b browser) string {
+	var sb strings.Builder
+	if len(b.rows) == 0 {
+		empty := b.empty
+		if empty == "" {
+			empty = "(empty)"
+		}
+		sb.WriteString(dimStyle.Render(empty) + "\n")
+	}
+	for i, r := range b.rows {
+		cursor := "  "
+		text := r.text
+		if i == b.cursor {
+			cursor = selStyle.Render("▸ ")
+			text = selStyle.Render(text)
+		}
+		sb.WriteString(cursor + text + r.suffix + "\n")
+	}
+	return m.modalCard(b.title, strings.TrimRight(sb.String(), "\n"), b.hint)
+}
+
+// --- browse selector (spec §18.6 / §20.5) ---
+//
+// browseTargets are the routes the browse selector offers. It is the single
+// extension point for the shared browser surface: add a {"cost", …} row here
+// once task 0029 lands its GetUsage-backed cost view (spec §20.5) and wire its
+// case into updateBrowse — no other plumbing is needed.
+var browseTargets = []struct{ label, desc string }{
+	{"backlog", "tasks · readiness · drill-in detail"},
+	{"sessions", "previous + live · transcript · reopen"},
+	// {"cost", "token/cost breakdown by task × model × day"}, // task 0029 (spec §20.5)
+}
+
+// openBrowse enters the browse selector modal.
+func (m *model) openBrowse() {
+	m.browse = true
+	m.browseCursor = 0
+}
+
+// updateBrowse handles the browse selector: navigate the routes and Enter opens
+// the chosen browser (backlog / sessions). Esc/q dismisses it.
+func (m model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch key.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc", "q":
+		m.browse = false
+		return m, nil
+	case "up":
+		m.browseCursor = navUp(m.browseCursor)
+		return m, nil
+	case "down":
+		m.browseCursor = navDown(m.browseCursor, len(browseTargets))
+		return m, nil
+	case "enter":
+		m.browse = false
+		switch browseTargets[m.browseCursor].label {
+		case "backlog":
+			m.backlog, m.backlogCursor, m.backlogDetail = true, 0, nil
+			m.backlogShowDone = false
+			return m, m.fetchBacklog
+		case "sessions":
+			m.state = stateHistory
+			m.historyCursor = 0
+			m.history = nil
+			m.historyTranscript = false
+			m.historyMsgTxt = "loading…"
+			return m, m.fetchHistory
+			// case "cost": route to the cost view once task 0029 lands (spec §20.5).
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+// browseView renders the browse selector as a bordered modal card via the shared
+// list component.
+func (m model) browseView() string {
+	b := browser{
+		title:  " ycc — browse ",
+		cursor: m.browseCursor,
+		hint:   "↑/↓ choose · enter open · esc back",
+	}
+	for _, t := range browseTargets {
+		b.rows = append(b.rows, browserRow{text: fmt.Sprintf("%-10s", t.label), suffix: dimStyle.Render(t.desc)})
+	}
+	return m.browserCard(b)
+}
+
 // --- backlog browser (spec §18.5) ---
 
 // updateBacklog handles the modal backlog browser: a task list with drill-down
@@ -1481,23 +1740,14 @@ func (m model) updateBacklog(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.backlog = false
 		return m, nil
 	case "up":
-		if m.backlogCursor > 0 {
-			m.backlogCursor--
-		}
+		m.backlogCursor = navUp(m.backlogCursor)
 		return m, nil
 	case "down":
-		if m.backlogCursor < len(vis)-1 {
-			m.backlogCursor++
-		}
+		m.backlogCursor = navDown(m.backlogCursor, len(vis))
 		return m, nil
 	case "d":
 		m.backlogShowDone = !m.backlogShowDone
-		if vis := m.visibleBacklogTasks(); m.backlogCursor >= len(vis) {
-			m.backlogCursor = len(vis) - 1
-			if m.backlogCursor < 0 {
-				m.backlogCursor = 0
-			}
-		}
+		m.backlogCursor = clampCursor(m.backlogCursor, len(m.visibleBacklogTasks()))
 		return m, nil
 	case "enter":
 		if len(vis) > 0 {
@@ -1529,13 +1779,13 @@ func (m model) backlogView() string {
 	if m.backlogDetail != nil {
 		return m.taskDetailView(m.backlogDetail)
 	}
-	var b strings.Builder
-	vis := m.visibleBacklogTasks()
-	if len(vis) == 0 {
-		b.WriteString(dimStyle.Render("(no backlog tasks)") + "\n")
+	b := browser{
+		title:  " ycc — backlog ",
+		cursor: m.backlogCursor,
+		hint:   "↑/↓ select · enter inspect · d show/hide done · esc close",
+		empty:  "(no backlog tasks)",
 	}
-	for i, t := range vis {
-		cursor := "  "
+	for _, t := range m.visibleBacklogTasks() {
 		row := fmt.Sprintf("%-5s %-12s p%d  %s", t.Id, t.Status, t.Priority, t.Title)
 		var tag string
 		if t.Status != "done" {
@@ -1545,14 +1795,9 @@ func (m model) backlogView() string {
 				tag = " " + dimStyle.Render("[blocked by "+strings.Join(t.BlockedBy, ", ")+"]")
 			}
 		}
-		if i == m.backlogCursor {
-			cursor = selStyle.Render("▸ ")
-			row = selStyle.Render(row)
-		}
-		b.WriteString(cursor + row + tag + "\n")
+		b.rows = append(b.rows, browserRow{text: row, suffix: tag})
 	}
-	return m.modalCard(" ycc — backlog ", strings.TrimRight(b.String(), "\n"),
-		"↑/↓ select · enter inspect · d show/hide done · esc close")
+	return m.browserCard(b)
 }
 
 // taskDetailView renders a single task's full, read-only detail (spec §18.5) as a card.
@@ -2838,6 +3083,9 @@ func (m model) render() string {
 	if m.backlog {
 		return m.backlogView()
 	}
+	if m.browse {
+		return m.browseView()
+	}
 	if m.mbOpen {
 		return m.modelBackendsView()
 	}
@@ -2904,25 +3152,36 @@ func (m model) menuView() string {
 		b.WriteString("  " + cursor + label + "\n")
 	}
 	b.WriteString("\n  " + m.prompt.View() + "\n")
-	b.WriteString("\n" + m.footerBar("  ↑/↓ choose mode · type a prompt · enter start · ctrl+r previous sessions · esc settings · ctrl+b backlog · ctrl+n new task"))
+	b.WriteString("\n" + m.footerBar("  ↑/↓ choose mode · type a prompt · enter start · ctrl+o browse · ctrl+r sessions · esc settings · ctrl+b backlog · ctrl+n new task"))
 	return b.String()
 }
 
-// historyView renders the previous-sessions screen (spec §18.6): a navigable
-// list of persisted sessions, most-recent first, that can be reopened.
+// historyView renders the session browser (spec §18.6): a navigable list of
+// persisted + live sessions, most-recent first, that can be inspected (read-only
+// transcript) or reopened. When a transcript is open it renders that instead.
 func (m model) historyView() string {
-	var b strings.Builder
-	b.WriteString(m.titleBar(" ycc — previous sessions ") + "\n\n")
-	if len(m.history) == 0 {
-		msg := m.historyMsgTxt
-		if msg == "" {
-			msg = "no previous sessions"
-		}
-		b.WriteString("  " + dimStyle.Render(msg) + "\n")
-		b.WriteString("\n" + m.footerBar("  r refresh · esc/q back"))
-		return b.String()
+	if m.historyTranscript {
+		return m.transcriptView()
 	}
-	for i, s := range m.history {
+	emptyMsg := m.historyMsgTxt
+	if emptyMsg == "" {
+		emptyMsg = "no previous sessions"
+	}
+	b := browser{
+		title:  " ycc — sessions ",
+		cursor: m.historyCursor,
+		hint:   "↑/↓ choose · enter transcript · o reopen · r refresh · esc/q back",
+		empty:  emptyMsg,
+	}
+	// Clamp the title column so a row stays on a single physical line.
+	tw := 48
+	if m.w > 0 && m.w-4 < tw {
+		tw = m.w - 4
+	}
+	if tw < 1 {
+		tw = 1
+	}
+	for _, s := range m.history {
 		// Prefer a derived title; fall back to the short id.
 		title := strings.TrimSpace(s.Title)
 		if title == "" {
@@ -2935,24 +3194,34 @@ func (m model) historyView() string {
 		if when := historyWhen(s); when != "" {
 			meta += " · " + when
 		}
-		// Clamp the title so the row stays on a single physical line.
-		tw := 48
-		if m.w > 0 && m.w-4 < tw {
-			tw = m.w - 4
+		if len(s.FocusTasks) > 0 {
+			meta += " · " + strings.Join(s.FocusTasks, ",")
 		}
-		line := fmt.Sprintf("%-*s  %s", tw, trunc(title, tw), dimStyle.Render(meta))
-		cursor := "  "
-		if i == m.historyCursor {
-			cursor = selStyle.Render("▸ ")
-			line = selStyle.Render(fmt.Sprintf("%-*s  ", tw, trunc(title, tw))) + dimStyle.Render(meta)
+		b.rows = append(b.rows, browserRow{
+			text:   fmt.Sprintf("%-*s", tw, trunc(title, tw)),
+			suffix: "  " + dimStyle.Render(meta),
+		})
+	}
+	return m.browserCard(b)
+}
+
+// transcriptView renders the read-only replayed transcript of a session (spec
+// §18.6): the same scrollable event viewport as the live session view, but with
+// no input box and read-only.
+func (m model) transcriptView() string {
+	title := short(m.historyTransID)
+	if m.historyCursor < len(m.history) {
+		if t := strings.TrimSpace(m.history[m.historyCursor].Title); t != "" {
+			title = t
 		}
-		b.WriteString("  " + cursor + line + "\n")
 	}
-	if m.historyMsgTxt != "" {
-		b.WriteString("\n  " + dimStyle.Render(m.historyMsgTxt))
+	top := m.titleBar(" ycc — transcript · " + title + " ")
+	body := ""
+	if m.ready {
+		body = m.vp.View()
 	}
-	b.WriteString("\n\n" + m.footerBar("  ↑/↓ choose · enter reopen · r refresh · esc/q back"))
-	return b.String()
+	help := m.footerBar(" ↑↓/pgup/pgdn scroll · o reopen · esc/q back")
+	return top + "\n" + body + "\n" + help
 }
 
 // historyWhen renders a session's last-activity (or start) timestamp compactly

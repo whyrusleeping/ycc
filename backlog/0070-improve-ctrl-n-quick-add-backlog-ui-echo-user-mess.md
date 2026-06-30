@@ -35,3 +35,4 @@ The ctrl+n "quick add" backlog capture UI has a few UX problems that make it har
 …[truncated]
 - 2026-06-30 decision: accept — commit: Improve ctrl+n quick-add capture overlay: echo user messages, wrap log lines, reuse shared question UI  - Echo the user's submitted text into the capture transcript (synthetic   user_input event) and 
 …[truncated]
+- 2026-06-30 usage: 19,992 tok (in 112, out 19,880, cache_r 1,330,081, cache_w 55,990) · cost n/a (unpriced)
