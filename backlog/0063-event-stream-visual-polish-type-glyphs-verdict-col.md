@@ -1,10 +1,10 @@
 ---
 id: "0063"
 title: Event-stream visual polish (type glyphs, verdict colors, subagent tree, selection bar)
-status: todo
+status: done
 priority: 3
 created: "2026-06-29"
-updated: "2026-06-29"
+updated: "2026-06-30"
 depends_on:
     - "0060"
 spec_refs:
@@ -52,3 +52,12 @@ faster to scan and nicer to look at.
   click-to-expand (`rebuild()` counts newlines per block).
 
 ## Work log
+- 2026-06-30 plan: Focused per-event rendering polish in internal/tui (tui.go + theme.go), consuming the 0060 palette. Keep line-count accounting (rebuild/eventStart/eventAt) intact — all changes are inline single-lin
+…[truncated]
+- 2026-06-30 implementer report: Implemented task 0063 (event-stream visual polish) in internal/tui, consuming the 0060 palette. All edits are inline single-line changes — no newlines added/removed in rendered blocks, so rebuild()/
+…[truncated]
+- 2026-06-30 review tier: single-opus — reviewers: Claude
+- 2026-06-30 review (Claude): accept — The change cleanly implements the event-stream visual polish: per-type leading glyphs (colored, with review using the verdict color), color-coded review verdicts in both the collapsed detail line and 
+…[truncated]
+- 2026-06-30 decision: accept — commit: tui: event-stream visual polish — type glyphs, verdict colors, subagent tree connectors [0063]  Add per-type leading glyphs (typeGlyph/typeGlyphStyle) as a fixed colored column, color-code review ve
+…[truncated]

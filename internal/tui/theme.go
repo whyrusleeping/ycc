@@ -29,6 +29,7 @@ type theme struct {
 	askFg  lipgloss.Color
 	askBg  lipgloss.Color
 	err    lipgloss.Color
+	warn   lipgloss.Color // warning/intermediate verdict (e.g. revise)
 
 	// Tool-call "card" roles (task: LSP-style cards). border is the resting card
 	// outline; borderSel is the outline of the currently-selected card; success is
@@ -72,6 +73,7 @@ var darkTheme = theme{
 	askFg:  "0",
 	askBg:  "11",
 	err:    "203",
+	warn:   "214", // amber
 
 	border:    "238",
 	borderSel: "75",
@@ -110,6 +112,7 @@ var lightTheme = theme{
 	askFg:  "0",
 	askBg:  "11",
 	err:    "124", // deep red
+	warn:   "166", // amber/orange, readable on white
 
 	border:    "250",
 	borderSel: "92",
@@ -157,6 +160,7 @@ func applyTheme(t theme) {
 	typeStyle = lipgloss.NewStyle().Foreground(t.typ)
 	askStyle = lipgloss.NewStyle().Bold(true).Foreground(t.askFg).Background(t.askBg)
 	errStyle = lipgloss.NewStyle().Foreground(t.err)
+	warnStyle = lipgloss.NewStyle().Foreground(t.warn)
 	diffAddStyle = lipgloss.NewStyle().Foreground(t.diffAdd)
 	diffDelStyle = lipgloss.NewStyle().Foreground(t.diffDel)
 	diffHunkStyle = lipgloss.NewStyle().Foreground(t.diffHunk)

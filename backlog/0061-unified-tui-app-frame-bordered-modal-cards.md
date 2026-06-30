@@ -58,3 +58,4 @@ This task gives every screen the same shape and makes modals look like modals.
 …[truncated]
 - 2026-06-30 decision: accept — commit: tui: unified app frame + bordered modal cards [0061]  Add shared chrome helpers (titleBar/footerBar/modalCard) consuming the 0060 theme palette. Menu, picker, history, and backlog share a consistent t
 …[truncated]
+- 2026-06-30 usage: 34,093 tok (in 114, out 33,979, cache_r 3,310,192, cache_w 177,095) · cost n/a (unpriced)

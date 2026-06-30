@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/event"
@@ -210,6 +211,83 @@ func TestActorRunDedupAndFraming(t *testing.T) {
 	switched := m.renderBlock(2, m.evs[2])
 	if !strings.Contains(switched, "implementer") {
 		t.Fatalf("actor switch should spell out the new actor:\n%s", switched)
+	}
+}
+
+// Each event type renders its consistent leading glyph, and continuation rows
+// still carry the actor glyph (column alignment preserved).
+func TestTypeGlyphsInHeader(t *testing.T) {
+	m := &model{w: 120, expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1}
+	m.evs = []*v1.Event{
+		{Seq: 1, Type: "thinking", Actor: "coordinator", DataJson: `{"text":"pondering"}`},
+		{Seq: 2, Type: "user_input", Actor: "user", DataJson: `{"text":"go"}`},
+		{Seq: 3, Type: "review_submitted", Actor: "reviewer-1", DataJson: `{"model":"claude","verdict":"accept","summary":"lgtm"}`},
+	}
+	cases := []struct {
+		i    int
+		typ  string
+		want string
+	}{
+		{0, "thinking", typeGlyph("thinking")},
+		{1, "user_input", typeGlyph("user_input")},
+		{2, "review_submitted", typeGlyph("review_submitted")},
+	}
+	for _, c := range cases {
+		out := m.renderBlock(c.i, m.evs[c.i])
+		if !strings.Contains(out, c.want) {
+			t.Fatalf("%s row should contain glyph %q:\n%s", c.typ, c.want, out)
+		}
+	}
+}
+
+// detailLine color-codes review verdicts: accept=success, revise=warn, reject=danger.
+func TestVerdictColorsInDetailLine(t *testing.T) {
+	// Force a color profile so Render actually emits ANSI (the test runner is not a
+	// TTY, where lipgloss would otherwise strip color and make the styles identical).
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	for _, v := range []string{"accept", "revise", "reject"} {
+		ev := &v1.Event{Seq: 1, Type: "review_submitted", Actor: "reviewer-1",
+			DataJson: fmt.Sprintf(`{"model":"claude","verdict":%q,"summary":"sum"}`, v)}
+		d := detailLine(ev)
+		styled := verdictStyle(v).Render(v)
+		if !strings.Contains(d, styled) {
+			t.Fatalf("verdict %q should be styled via verdictStyle in detailLine:\ngot  %q\nwant substring %q", v, d, styled)
+		}
+		// The styled token must differ from the bare token (i.e. ANSI was applied).
+		if styled == v {
+			t.Fatalf("verdictStyle(%q) produced no styling: %q", v, styled)
+		}
+	}
+}
+
+// A contiguous sub-agent run renders ├─ on its non-last rows and └─ on the last,
+// nesting the sub-agents under the coordinator.
+func TestSubAgentTreeConnectors(t *testing.T) {
+	m := &model{w: 120, expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1}
+	m.evs = []*v1.Event{
+		{Seq: 1, Type: "model_turn", Actor: "coordinator", DataJson: `{"text":"dispatching"}`},
+		{Seq: 2, Type: "model_turn", Actor: "implementer", DataJson: `{"text":"working a"}`},
+		{Seq: 3, Type: "model_turn", Actor: "implementer", DataJson: `{"text":"working b"}`},
+		{Seq: 4, Type: "model_turn", Actor: "reviewer-1", DataJson: `{"text":"reviewing"}`},
+	}
+	// Coordinator row: no connector.
+	if c := m.renderBlock(0, m.evs[0]); strings.Contains(c, "├─") || strings.Contains(c, "└─") {
+		t.Fatalf("coordinator row should not have a sub-agent connector:\n%s", c)
+	}
+	// Non-last sub-agent rows use ├─.
+	for _, i := range []int{1, 2} {
+		out := m.renderBlock(i, m.evs[i])
+		if !strings.Contains(out, "├─") {
+			t.Fatalf("non-last sub-agent row %d should use ├─:\n%s", i, out)
+		}
+	}
+	// Last sub-agent row of the run uses └─.
+	last := m.renderBlock(3, m.evs[3])
+	if !strings.Contains(last, "└─") {
+		t.Fatalf("last sub-agent row should use └─:\n%s", last)
 	}
 }
 
@@ -577,13 +655,13 @@ func TestExpandedHeaderDropsSnippet(t *testing.T) {
 	m := &model{w: 120, bodyCache: map[int]string{}}
 
 	// Collapsed: snippet present.
-	collapsed := m.renderHeader(turn, false, false, true, true)
+	collapsed := m.renderHeader(0, turn, false, false, true, true)
 	if !strings.Contains(collapsed, "long final answer") {
 		t.Fatalf("collapsed header should show the snippet, got %q", collapsed)
 	}
 
 	// Expanded: snippet gone, duration kept.
-	expanded := m.renderHeader(turn, false, true, true, true)
+	expanded := m.renderHeader(0, turn, false, true, true, true)
 	if strings.Contains(expanded, "long final answer") {
 		t.Fatalf("expanded header should drop the redundant snippet, got %q", expanded)
 	}
@@ -593,7 +671,7 @@ func TestExpandedHeaderDropsSnippet(t *testing.T) {
 
 	// A user_input row drops its snippet entirely when expanded.
 	in := &v1.Event{Seq: 2, Type: "user_input", Actor: "user", DataJson: `{"text":"please refactor the parser module"}`}
-	if h := m.renderHeader(in, false, true, true, true); strings.Contains(h, "refactor the parser") {
+	if h := m.renderHeader(1, in, false, true, true, true); strings.Contains(h, "refactor the parser") {
 		t.Fatalf("expanded user_input header should drop the snippet, got %q", h)
 	}
 }

@@ -3240,7 +3240,7 @@ func (m *model) renderBlock(i int, ev *v1.Event) string {
 	body := m.bodyFor(ev)
 	hasBody := strings.TrimSpace(body) != ""
 	exp := m.eventExpanded(int(ev.Seq), ev.Type)
-	header := m.renderHeader(ev, i == m.selected, exp && hasBody, hasBody, first)
+	header := m.renderHeader(i, ev, i == m.selected, exp && hasBody, hasBody, first)
 	if exp && hasBody {
 		return header + "\n" + body
 	}
@@ -3262,6 +3262,21 @@ func (m *model) firstOfRun(i int) bool {
 	return m.evs[j].Actor != m.evs[i].Actor
 }
 
+// lastOfSubRun reports whether event i is the last row of a contiguous run of
+// sub-agent (implementer/reviewer) rows: true when the next *rendered* row
+// (skipping tool_results folded into their call, mirroring firstOfRun) is not a
+// sub-agent actor, or there is none. Drives the └─ vs ├─ tree connector.
+func (m *model) lastOfSubRun(i int) bool {
+	j := i + 1
+	for j < len(m.evs) && m.hiddenRow(j) {
+		j++
+	}
+	if j >= len(m.evs) {
+		return true
+	}
+	return !isSub(m.evs[j].Actor)
+}
+
 // renderToolCall renders a tool_call (optionally with its folded tool_result) as
 // either a compact one-line summary (collapsed) or a bordered card (expanded).
 // res is nil while the call is still in flight.
@@ -3276,8 +3291,15 @@ func (m *model) renderToolCall(i int, call, res *v1.Event, first bool) string {
 	}
 	hasBody := strings.TrimSpace(paramsBody) != "" || strings.TrimSpace(resultBody) != "" || res == nil
 
+	// Sub-agent tool rows nest under the coordinator with the same tree connector
+	// used by prose rows (└─ on the last row of a sub-run, ├─ otherwise).
+	subConn := ""
+	if isSub(call.Actor) {
+		subConn = subConnector(m.lastOfSubRun(i))
+	}
+
 	if !(exp && hasBody) {
-		return m.toolCollapsed(call, res, selected, hasBody, first)
+		return m.toolCollapsed(call, res, selected, hasBody, first, subConn)
 	}
 	return m.toolCardExpanded(call, res, selected, paramsBody, resultBody, first)
 }
@@ -3297,14 +3319,14 @@ func toolStatusGlyph(res *v1.Event) string {
 
 // toolCollapsed renders the single-line summary of a tool call: status glyph,
 // bold name, a dim argument summary, and (for sub-agents) a dim actor tag.
-func (m *model) toolCollapsed(call, res *v1.Event, selected, hasBody, first bool) string {
+func (m *model) toolCollapsed(call, res *v1.Event, selected, hasBody, first bool, subConn string) string {
 	bar := "  "
 	if selected {
 		bar = selBarStyle.Render("▌ ")
 	}
 	indent := ""
 	if isSub(call.Actor) {
-		indent = "  "
+		indent = subConn
 	}
 	tri := "  "
 	if hasBody {
@@ -3317,7 +3339,7 @@ func (m *model) toolCollapsed(call, res *v1.Event, selected, hasBody, first bool
 		line += " " + dimStyle.Render("("+call.Actor+")")
 	}
 	if s := argSummary(call); s != "" {
-		avail := m.w - len(indent) - 8 - lipgloss.Width(line)
+		avail := m.w - lipgloss.Width(indent) - 8 - lipgloss.Width(line)
 		if avail < 8 {
 			avail = 8
 		}
@@ -3344,6 +3366,9 @@ func (m *model) toolCardExpanded(call, res *v1.Event, selected bool, paramsBody,
 
 	indent := 2
 	if isSub(call.Actor) {
+		// Expanded cards stay indented by spaces rather than a tree connector: the
+		// boxed card is already visually nested, and a per-line indentLines prefix
+		// can't host a single connector glyph cleanly across the card's many rows.
 		indent += 2
 		if first {
 			title += " " + dimStyle.Render("("+call.Actor+")")
@@ -3372,7 +3397,7 @@ func (m *model) toolCardExpanded(call, res *v1.Event, selected bool, paramsBody,
 	return card
 }
 
-func (m *model) renderHeader(ev *v1.Event, selected, expanded, hasBody, first bool) string {
+func (m *model) renderHeader(i int, ev *v1.Event, selected, expanded, hasBody, first bool) string {
 	detail := detailLine(ev)
 	if expanded && hasBody {
 		// The body box already shows the full content, so the header's one-line
@@ -3380,7 +3405,7 @@ func (m *model) renderHeader(ev *v1.Event, selected, expanded, hasBody, first bo
 		// non-body metadata like a turn's elapsed time).
 		detail = expandedDetailLine(ev)
 	}
-	return m.renderHeaderDetail(ev, selected, expanded, hasBody, detail, first)
+	return m.renderHeaderDetail(i, ev, selected, expanded, hasBody, detail, first)
 }
 
 // expandedDetailLine is the header detail used when a row is expanded. For prose
@@ -3400,14 +3425,17 @@ func expandedDetailLine(ev *v1.Event) string {
 	return detailLine(ev)
 }
 
-func (m *model) renderHeaderDetail(ev *v1.Event, selected, expanded, hasBody bool, detail string, first bool) string {
+func (m *model) renderHeaderDetail(i int, ev *v1.Event, selected, expanded, hasBody bool, detail string, first bool) string {
 	bar := "  "
 	if selected {
 		bar = selBarStyle.Render("▌ ")
 	}
+	// Sub-agent (implementer/reviewer) rows nest under the coordinator via a tree
+	// connector (└─ on the last row of the run, ├─ otherwise) instead of a bare
+	// two-space indent, so the nesting reads at a glance.
 	indent := ""
 	if isSub(ev.Actor) {
-		indent = "  "
+		indent = subConnector(m.lastOfSubRun(i))
 	}
 	tri := "  "
 	if hasBody {
@@ -3417,7 +3445,19 @@ func (m *model) renderHeaderDetail(ev *v1.Event, selected, expanded, hasBody boo
 			tri = "▸ "
 		}
 	}
-	avail := m.w - len(indent) - 21
+	// Per-type leading glyph: a fixed 2-cell colored column (glyph + space) placed
+	// after the actor column, for fast scanning. Subtract its width from avail so
+	// detail truncation stays correct.
+	glyph := typeGlyph(ev.Type)
+	glyphCol := ""
+	if glyph != "" {
+		gs := typeGlyphStyle(ev.Type)
+		if ev.Type == "review_submitted" {
+			gs = verdictStyle(dataField(ev, "verdict"))
+		}
+		glyphCol = gs.Render(glyph) + " "
+	}
+	avail := m.w - lipgloss.Width(indent) - 21 - lipgloss.Width(glyphCol)
 	if avail < 12 {
 		avail = 12
 	}
@@ -3428,9 +3468,10 @@ func (m *model) renderHeaderDetail(ev *v1.Event, selected, expanded, hasBody boo
 	if ev.Type == "model_turn" {
 		typeSeg = ""
 	}
-	return fmt.Sprintf("%s%s%s%s %s",
+	return fmt.Sprintf("%s%s%s%s %s%s",
 		bar, indent, dimStyle.Render(tri),
 		m.actorColumn(ev.Actor, first),
+		glyphCol,
 		typeSeg+trunc(detail, avail))
 }
 
@@ -3555,8 +3596,17 @@ func (m *model) renderBody(ev *v1.Event) string {
 		}
 		return indentLines(m.highlightToolResult(r, ev), bodyBar)
 	case "review_submitted":
-		txt := fmt.Sprintf("%s — %s\n%s", dataField(ev, "model"), dataField(ev, "verdict"), dataField(ev, "summary"))
-		return indentLines(m.markdown(txt), "  ")
+		// The verdict is colorized in a plain header line (model — VERDICT); passing
+		// it through glamour would strip the ANSI, so only the summary is markdown-
+		// rendered, indented below the header. Both share the "  " body indent.
+		verdict := dataField(ev, "verdict")
+		head := dataField(ev, "model") + " — " + verdictStyle(verdict).Render(strings.ToUpper(verdict))
+		summary := strings.TrimSpace(dataField(ev, "summary"))
+		body := head
+		if summary != "" {
+			body += "\n" + m.markdown(summary)
+		}
+		return indentLines(body, "  ")
 	case "session_error":
 		msg := dataField(ev, "msg")
 		// Error messages (e.g. a backend 400 invalid_request_error with a long
@@ -3960,6 +4010,7 @@ var (
 	typeStyle     lipgloss.Style
 	askStyle      lipgloss.Style
 	errStyle      lipgloss.Style
+	warnStyle     lipgloss.Style
 	diffAddStyle  lipgloss.Style
 	diffDelStyle  lipgloss.Style
 	diffHunkStyle lipgloss.Style
@@ -4020,6 +4071,84 @@ func isSub(actor string) bool {
 	return actor == "implementer" || strings.HasPrefix(actor, "reviewer")
 }
 
+// typeGlyph returns a single-width leading icon for an event type, giving each
+// row a fast, shape-based scanning cue. All glyphs are single-cell unicode from
+// the families already used elsewhere in the renderer so column alignment and
+// the line-offset accounting in rebuild() are unaffected. tool_call returns ""
+// because tool rows lead with toolStatusGlyph (✓/✗/○) instead.
+func typeGlyph(t string) string {
+	switch t {
+	case "tool_call":
+		return ""
+	case "thinking":
+		return "✦"
+	case "model_turn":
+		return "»"
+	case "user_input":
+		return "›"
+	case "review_submitted":
+		return "§"
+	case "commit_made":
+		return "●"
+	case "doc_updated":
+		return "✎"
+	case "mode_changed":
+		return "↻"
+	case "subagent_spawned", "subagent_finished":
+		return "◇"
+	case "question_asked":
+		return "?"
+	case "question_answered":
+		return "✓"
+	case "session_idle":
+		return "■"
+	case "session_error":
+		return "✗"
+	default:
+		return "·"
+	}
+}
+
+// typeGlyphStyle picks a palette role to tint a type's leading glyph: errors and
+// commits get danger/success accents, everything else uses the dim type color so
+// the glyph reads as quiet metadata.
+func typeGlyphStyle(t string) lipgloss.Style {
+	switch t {
+	case "session_error":
+		return errStyle
+	case "commit_made", "question_answered":
+		return successStyle
+	default:
+		return typeStyle
+	}
+}
+
+// verdictStyle color-codes a review verdict token: accept/approve = success,
+// revise = warn (amber), reject = danger (red); anything else stays neutral.
+func verdictStyle(verdict string) lipgloss.Style {
+	switch strings.ToLower(strings.TrimSpace(verdict)) {
+	case "accept", "approve", "approved":
+		return successStyle
+	case "revise":
+		return warnStyle
+	case "reject", "rejected":
+		return errStyle
+	default:
+		return typeStyle
+	}
+}
+
+// subConnector renders the tree guide that nests a sub-agent (implementer /
+// reviewer) row under the coordinator: "└─ " on the last row of a contiguous
+// sub-run, "├─ " otherwise. It is a single-line, 3-cell inline prefix, so the
+// per-block line counts in rebuild() are unchanged.
+func subConnector(last bool) string {
+	if last {
+		return dimStyle.Render("└─ ")
+	}
+	return dimStyle.Render("├─ ")
+}
+
 func detailLine(ev *v1.Event) string {
 	switch ev.Type {
 	case "tool_call":
@@ -4049,7 +4178,8 @@ func detailLine(ev *v1.Event) string {
 	case "subagent_spawned", "subagent_finished":
 		return strings.TrimSpace(dataField(ev, "role") + " " + dataField(ev, "model"))
 	case "review_submitted":
-		return fmt.Sprintf("%s: %s — %s", dataField(ev, "model"), dataField(ev, "verdict"), oneLine(dataField(ev, "summary"), 80))
+		verdict := dataField(ev, "verdict")
+		return fmt.Sprintf("%s: %s — %s", dataField(ev, "model"), verdictStyle(verdict).Render(verdict), oneLine(dataField(ev, "summary"), 80))
 	case "commit_made":
 		return dataField(ev, "sha") + " " + oneLine(dataField(ev, "message"), 80)
 	case "doc_updated":
