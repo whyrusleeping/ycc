@@ -63,3 +63,4 @@ Open design questions:
 …[truncated]
 - 2026-06-30 decision: accept — commit: plans: persist full coordinator plans + in-repo reusable plan library  Persist the FULL plan to the task's ## Plan section via docs.SetPlan (idempotent upsert above the work log) instead of only a one
 …[truncated]
+- 2026-06-30 usage: 21,576 tok (in 98, out 21,478, cache_r 1,353,363, cache_w 76,370) · cost n/a (unpriced)

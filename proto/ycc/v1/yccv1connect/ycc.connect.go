@@ -106,6 +106,11 @@ const (
 	SessionServiceListBacklogProcedure = "/ycc.v1.SessionService/ListBacklog"
 	// SessionServiceGetTaskProcedure is the fully-qualified name of the SessionService's GetTask RPC.
 	SessionServiceGetTaskProcedure = "/ycc.v1.SessionService/GetTask"
+	// SessionServiceListPlansProcedure is the fully-qualified name of the SessionService's ListPlans
+	// RPC.
+	SessionServiceListPlansProcedure = "/ycc.v1.SessionService/ListPlans"
+	// SessionServiceGetPlanProcedure is the fully-qualified name of the SessionService's GetPlan RPC.
+	SessionServiceGetPlanProcedure = "/ycc.v1.SessionService/GetPlan"
 	// SessionServiceCaptureBacklogItemProcedure is the fully-qualified name of the SessionService's
 	// CaptureBacklogItem RPC.
 	SessionServiceCaptureBacklogItemProcedure = "/ycc.v1.SessionService/CaptureBacklogItem"
@@ -160,6 +165,10 @@ type SessionServiceClient interface {
 	// Backlog browser (spec §18.5): read-only access to the durable backlog.
 	ListBacklog(context.Context, *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error)
 	GetTask(context.Context, *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error)
+	// Plan library (reusable runbooks, task 0020/0077): read-only access to the
+	// in-repo plans/*.md so clients can browse and view saved plans.
+	ListPlans(context.Context, *connect.Request[v1.ListPlansRequest]) (*connect.Response[v1.ListPlansResponse], error)
+	GetPlan(context.Context, *connect.Request[v1.GetPlanRequest]) (*connect.Response[v1.GetPlanResponse], error)
 	// Quick-add backlog capture (spec §18.2, task 0016): run a lightweight,
 	// off-stream capture agent that turns a natural-language description into a
 	// backlog task without disturbing the running session. May ask ONE clarifying
@@ -336,6 +345,18 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("GetTask")),
 			connect.WithClientOptions(opts...),
 		),
+		listPlans: connect.NewClient[v1.ListPlansRequest, v1.ListPlansResponse](
+			httpClient,
+			baseURL+SessionServiceListPlansProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("ListPlans")),
+			connect.WithClientOptions(opts...),
+		),
+		getPlan: connect.NewClient[v1.GetPlanRequest, v1.GetPlanResponse](
+			httpClient,
+			baseURL+SessionServiceGetPlanProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("GetPlan")),
+			connect.WithClientOptions(opts...),
+		),
 		captureBacklogItem: connect.NewClient[v1.CaptureBacklogItemRequest, v1.Event](
 			httpClient,
 			baseURL+SessionServiceCaptureBacklogItemProcedure,
@@ -378,6 +399,8 @@ type sessionServiceClient struct {
 	getModelConfig       *connect.Client[v1.GetModelConfigRequest, v1.GetModelConfigResponse]
 	listBacklog          *connect.Client[v1.ListBacklogRequest, v1.ListBacklogResponse]
 	getTask              *connect.Client[v1.GetTaskRequest, v1.GetTaskResponse]
+	listPlans            *connect.Client[v1.ListPlansRequest, v1.ListPlansResponse]
+	getPlan              *connect.Client[v1.GetPlanRequest, v1.GetPlanResponse]
 	captureBacklogItem   *connect.Client[v1.CaptureBacklogItemRequest, v1.Event]
 	getUsage             *connect.Client[v1.GetUsageRequest, v1.GetUsageResponse]
 }
@@ -507,6 +530,16 @@ func (c *sessionServiceClient) GetTask(ctx context.Context, req *connect.Request
 	return c.getTask.CallUnary(ctx, req)
 }
 
+// ListPlans calls ycc.v1.SessionService.ListPlans.
+func (c *sessionServiceClient) ListPlans(ctx context.Context, req *connect.Request[v1.ListPlansRequest]) (*connect.Response[v1.ListPlansResponse], error) {
+	return c.listPlans.CallUnary(ctx, req)
+}
+
+// GetPlan calls ycc.v1.SessionService.GetPlan.
+func (c *sessionServiceClient) GetPlan(ctx context.Context, req *connect.Request[v1.GetPlanRequest]) (*connect.Response[v1.GetPlanResponse], error) {
+	return c.getPlan.CallUnary(ctx, req)
+}
+
 // CaptureBacklogItem calls ycc.v1.SessionService.CaptureBacklogItem.
 func (c *sessionServiceClient) CaptureBacklogItem(ctx context.Context, req *connect.Request[v1.CaptureBacklogItemRequest]) (*connect.ServerStreamForClient[v1.Event], error) {
 	return c.captureBacklogItem.CallServerStream(ctx, req)
@@ -564,6 +597,10 @@ type SessionServiceHandler interface {
 	// Backlog browser (spec §18.5): read-only access to the durable backlog.
 	ListBacklog(context.Context, *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error)
 	GetTask(context.Context, *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error)
+	// Plan library (reusable runbooks, task 0020/0077): read-only access to the
+	// in-repo plans/*.md so clients can browse and view saved plans.
+	ListPlans(context.Context, *connect.Request[v1.ListPlansRequest]) (*connect.Response[v1.ListPlansResponse], error)
+	GetPlan(context.Context, *connect.Request[v1.GetPlanRequest]) (*connect.Response[v1.GetPlanResponse], error)
 	// Quick-add backlog capture (spec §18.2, task 0016): run a lightweight,
 	// off-stream capture agent that turns a natural-language description into a
 	// backlog task without disturbing the running session. May ask ONE clarifying
@@ -736,6 +773,18 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("GetTask")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceListPlansHandler := connect.NewUnaryHandler(
+		SessionServiceListPlansProcedure,
+		svc.ListPlans,
+		connect.WithSchema(sessionServiceMethods.ByName("ListPlans")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceGetPlanHandler := connect.NewUnaryHandler(
+		SessionServiceGetPlanProcedure,
+		svc.GetPlan,
+		connect.WithSchema(sessionServiceMethods.ByName("GetPlan")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sessionServiceCaptureBacklogItemHandler := connect.NewServerStreamHandler(
 		SessionServiceCaptureBacklogItemProcedure,
 		svc.CaptureBacklogItem,
@@ -800,6 +849,10 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceListBacklogHandler.ServeHTTP(w, r)
 		case SessionServiceGetTaskProcedure:
 			sessionServiceGetTaskHandler.ServeHTTP(w, r)
+		case SessionServiceListPlansProcedure:
+			sessionServiceListPlansHandler.ServeHTTP(w, r)
+		case SessionServiceGetPlanProcedure:
+			sessionServiceGetPlanHandler.ServeHTTP(w, r)
 		case SessionServiceCaptureBacklogItemProcedure:
 			sessionServiceCaptureBacklogItemHandler.ServeHTTP(w, r)
 		case SessionServiceGetUsageProcedure:
@@ -911,6 +964,14 @@ func (UnimplementedSessionServiceHandler) ListBacklog(context.Context, *connect.
 
 func (UnimplementedSessionServiceHandler) GetTask(context.Context, *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetTask is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) ListPlans(context.Context, *connect.Request[v1.ListPlansRequest]) (*connect.Response[v1.ListPlansResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ListPlans is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) GetPlan(context.Context, *connect.Request[v1.GetPlanRequest]) (*connect.Response[v1.GetPlanResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetPlan is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) CaptureBacklogItem(context.Context, *connect.Request[v1.CaptureBacklogItemRequest], *connect.ServerStream[v1.Event]) error {

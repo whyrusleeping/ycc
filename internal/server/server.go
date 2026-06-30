@@ -481,6 +481,47 @@ func (s *Server) GetTask(_ context.Context, req *connect.Request[v1.GetTaskReque
 	}}), nil
 }
 
+// ListPlans returns the in-repo plan library (plans/*.md) so clients can browse
+// saved runbooks (task 0020/0077). Read-only.
+func (s *Server) ListPlans(_ context.Context, req *connect.Request[v1.ListPlansRequest]) (*connect.Response[v1.ListPlansResponse], error) {
+	store, err := s.mgr.Backlog(req.Msg.Project)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	plans, err := store.ListPlans()
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	var out []*v1.PlanSummary
+	for _, p := range plans {
+		out = append(out, &v1.PlanSummary{Name: p.Name, Title: p.Title, Path: p.Path})
+	}
+	return connect.NewResponse(&v1.ListPlansResponse{Plans: out}), nil
+}
+
+// GetPlan returns one saved plan's markdown content for viewing (task 0077).
+func (s *Server) GetPlan(_ context.Context, req *connect.Request[v1.GetPlanRequest]) (*connect.Response[v1.GetPlanResponse], error) {
+	store, err := s.mgr.Backlog(req.Msg.Project)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	content, err := store.ReadPlan(req.Msg.Name)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeNotFound, err)
+	}
+	// Derive title from the listing (first heading) when available, else the name.
+	title := req.Msg.Name
+	if plans, lerr := store.ListPlans(); lerr == nil {
+		for _, p := range plans {
+			if p.Name == req.Msg.Name || p.Name == strings.TrimSuffix(req.Msg.Name, ".md") {
+				title = p.Title
+				break
+			}
+		}
+	}
+	return connect.NewResponse(&v1.GetPlanResponse{Name: req.Msg.Name, Title: title, Content: content}), nil
+}
+
 // CaptureBacklogItem runs the lightweight, off-stream quick-add capture agent to
 // turn a natural-language description into a backlog task without disturbing any
 // running session (spec §18.2, task 0016). It streams the capture agent's action

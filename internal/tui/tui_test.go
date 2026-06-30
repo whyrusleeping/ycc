@@ -952,6 +952,9 @@ type fakeClient struct {
 	usageTotal  *v1.UsageRow
 	usageWksp   string
 	lastGroupBy []string
+
+	// plan library browser (task 0077)
+	plans []*v1.PlanSummary
 }
 
 func newFakeClient(cfgs ...*v1.ModelConfig) *fakeClient {
@@ -1057,6 +1060,16 @@ func (f *fakeClient) GetSessionTranscript(_ context.Context, req *connect.Reques
 // browse tests only need it to not panic, so it returns an empty list.
 func (f *fakeClient) ListBacklog(_ context.Context, _ *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error) {
 	return connect.NewResponse(&v1.ListBacklogResponse{}), nil
+}
+
+// ListPlans / GetPlan back the plan library browser route (task 0077). They
+// return canned data so the browse selector → plans route can be driven.
+func (f *fakeClient) ListPlans(_ context.Context, _ *connect.Request[v1.ListPlansRequest]) (*connect.Response[v1.ListPlansResponse], error) {
+	return connect.NewResponse(&v1.ListPlansResponse{Plans: f.plans}), nil
+}
+
+func (f *fakeClient) GetPlan(_ context.Context, req *connect.Request[v1.GetPlanRequest]) (*connect.Response[v1.GetPlanResponse], error) {
+	return connect.NewResponse(&v1.GetPlanResponse{Name: req.Msg.Name, Title: req.Msg.Name, Content: "# " + req.Msg.Name + "\nbody"}), nil
 }
 
 // GetUsage backs the cost view route (spec §20.5, task 0039). It records the
@@ -1635,7 +1648,7 @@ func TestBrowseMenuRoutes(t *testing.T) {
 		t.Fatalf("first browse entry should open the backlog browser")
 	}
 
-	// Re-open and route to the sessions browser (second entry).
+	// Re-open and route to the plan library browser (second entry).
 	m.backlog = false
 	m = drive(t, m, "ctrl+o")
 	m = drive(t, m, "down")
@@ -1643,8 +1656,21 @@ func TestBrowseMenuRoutes(t *testing.T) {
 	if m.browse {
 		t.Fatal("enter should dismiss the browse selector")
 	}
+	if !m.plans {
+		t.Fatalf("second browse entry should open the plan library browser")
+	}
+
+	// Re-open and route to the sessions browser (third entry).
+	m.plans = false
+	m = drive(t, m, "ctrl+o")
+	m = drive(t, m, "down")
+	m = drive(t, m, "down")
+	m = drive(t, m, "enter")
+	if m.browse {
+		t.Fatal("enter should dismiss the browse selector")
+	}
 	if m.state != stateHistory {
-		t.Fatalf("second browse entry should open the session browser (state=%v)", m.state)
+		t.Fatalf("third browse entry should open the session browser (state=%v)", m.state)
 	}
 
 	// Esc dismisses the selector without routing.
@@ -1656,6 +1682,51 @@ func TestBrowseMenuRoutes(t *testing.T) {
 	}
 	if m.state != stateMenu || m.backlog {
 		t.Fatalf("esc must not route anywhere (state=%v backlog=%v)", m.state, m.backlog)
+	}
+}
+
+// TestPlansBrowser verifies the plan library browser (task 0077): the browse
+// selector → plans route lists saved plans, and enter drills into a plan's
+// markdown detail; esc/← backs out to the list and esc closes the browser.
+func TestPlansBrowser(t *testing.T) {
+	f := newFakeClient()
+	f.plans = []*v1.PlanSummary{
+		{Name: "build-and-test", Title: "Build and test"},
+		{Name: "release", Title: "Cut a release"},
+	}
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+
+	// Open the browse selector and route to plans (second entry).
+	m = drive(t, m, "ctrl+o")
+	m = drive(t, m, "down")
+	m = drive(t, m, "enter")
+	if !m.plans {
+		t.Fatal("plans route should open the plan library browser")
+	}
+	if len(m.plansList) != 2 {
+		t.Fatalf("plansList = %d, want 2", len(m.plansList))
+	}
+	if got := m.plansView(); !strings.Contains(got, "build-and-test") || !strings.Contains(got, "Cut a release") {
+		t.Fatalf("plansView missing entries: %q", got)
+	}
+
+	// Enter drills into the first plan's detail.
+	m = drive(t, m, "enter")
+	if m.planDetail == nil || m.planDetail.Name != "build-and-test" {
+		t.Fatalf("enter should load plan detail, got %+v", m.planDetail)
+	}
+	if got := m.plansView(); !strings.Contains(got, "build-and-test") {
+		t.Fatalf("planDetailView missing plan name: %q", got)
+	}
+
+	// Esc backs out to the list, then esc closes the browser.
+	m = drive(t, m, "esc")
+	if m.planDetail != nil {
+		t.Fatal("esc should clear plan detail")
+	}
+	m = drive(t, m, "esc")
+	if m.plans {
+		t.Fatal("esc should close the plan library browser")
 	}
 }
 
@@ -1679,7 +1750,8 @@ func TestCostViewRoute(t *testing.T) {
 	m := initialModel(context.Background(), f, t_tempWorkspace, false)
 
 	m = drive(t, m, "ctrl+o")
-	// Cost is the third browse entry.
+	// Cost is the fourth browse entry.
+	m = drive(t, m, "down")
 	m = drive(t, m, "down")
 	m = drive(t, m, "down")
 	m = drive(t, m, "enter")
@@ -1687,7 +1759,7 @@ func TestCostViewRoute(t *testing.T) {
 		t.Fatal("enter should dismiss the browse selector")
 	}
 	if !m.cost {
-		t.Fatal("third browse entry should open the cost view")
+		t.Fatal("fourth browse entry should open the cost view")
 	}
 	if len(m.costRows) != 2 {
 		t.Fatalf("cost rows not populated: got %d, want 2", len(m.costRows))
@@ -1702,6 +1774,7 @@ func TestCostView(t *testing.T) {
 	f := newCostFakeClient()
 	m := initialModel(context.Background(), f, t_tempWorkspace, false)
 	m = drive(t, m, "ctrl+o")
+	m = drive(t, m, "down")
 	m = drive(t, m, "down")
 	m = drive(t, m, "down")
 	m = drive(t, m, "enter")

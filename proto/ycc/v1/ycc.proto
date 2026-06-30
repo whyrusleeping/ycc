@@ -288,6 +288,25 @@ message TaskDetail {
 }
 message GetTaskResponse { TaskDetail task = 1; }
 
+// Plan library (reusable runbooks, task 0020/0077): read-only access to the
+// in-repo plans/*.md so clients can browse and view saved plans.
+message ListPlansRequest { string project = 1; }
+message PlanSummary {
+  string name = 1;  // file name without .md (the invocation key)
+  string title = 2; // first markdown heading, else name
+  string path = 3;  // absolute path
+}
+message ListPlansResponse { repeated PlanSummary plans = 1; }
+message GetPlanRequest {
+  string project = 1;
+  string name = 2;
+}
+message GetPlanResponse {
+  string name = 1;
+  string title = 2;
+  string content = 3;
+}
+
 // Quick-add backlog capture (spec §18.2, task 0016): a TUI overlay lets the user
 // quick-add a backlog item mid-session WITHOUT disturbing the running session.
 // The daemon runs a lightweight, off-stream capture agent that turns the
@@ -386,6 +405,10 @@ service SessionService {
   // Backlog browser (spec §18.5): read-only access to the durable backlog.
   rpc ListBacklog(ListBacklogRequest) returns (ListBacklogResponse);
   rpc GetTask(GetTaskRequest) returns (GetTaskResponse);
+  // Plan library (reusable runbooks, task 0020/0077): read-only access to the
+  // in-repo plans/*.md so clients can browse and view saved plans.
+  rpc ListPlans(ListPlansRequest) returns (ListPlansResponse);
+  rpc GetPlan(GetPlanRequest) returns (GetPlanResponse);
 
   // Quick-add backlog capture (spec §18.2, task 0016): run a lightweight,
   // off-stream capture agent that turns a natural-language description into a

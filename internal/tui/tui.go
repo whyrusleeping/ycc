@@ -190,6 +190,14 @@ type model struct {
 	backlogDetail   *v1.TaskDetail // nil => list view; set => detail view
 	backlogShowDone bool           // when false (default), done tasks are hidden in the list view
 
+	// plan library browser (task 0020/0077): modal over menu/session, reached
+	// from the browse selector (ctrl+o). Read-only: lists saved plans (plans/*.md)
+	// and views one plan's markdown.
+	plans       bool
+	plansCursor int
+	plansList   []*v1.PlanSummary
+	planDetail  *v1.GetPlanResponse // nil => list view; set => detail view
+
 	// cost view (spec §20.5, task 0039): modal over menu/session, reached from the
 	// browse selector (ctrl+o). Read-only: shows the GetUsage token/cost breakdown
 	// for the selected project, grouped by a single dimension cycled with "g".
@@ -331,6 +339,8 @@ type streamClosedMsg struct{}
 type errMsg struct{ err error }
 type backlogMsg struct{ tasks []*v1.BacklogTaskSummary }
 type taskDetailMsg struct{ task *v1.TaskDetail }
+type plansMsg struct{ plans []*v1.PlanSummary }
+type planDetailMsg struct{ plan *v1.GetPlanResponse }
 
 // usageMsg carries the GetUsage breakdown for the cost view (spec §20.5, task 0039).
 type usageMsg struct {
@@ -788,6 +798,26 @@ func (m model) fetchTask(id string) tea.Cmd {
 	}
 }
 
+// fetchPlans loads the saved plan library list for the plans browser (task 0077).
+func (m model) fetchPlans() tea.Msg {
+	resp, err := m.client.ListPlans(m.ctx, connect.NewRequest(&v1.ListPlansRequest{Project: m.project}))
+	if err != nil {
+		return errMsg{err}
+	}
+	return plansMsg{resp.Msg.Plans}
+}
+
+// fetchPlan loads one saved plan's markdown for the plans browser (task 0077).
+func (m model) fetchPlan(name string) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := m.client.GetPlan(m.ctx, connect.NewRequest(&v1.GetPlanRequest{Project: m.project, Name: name}))
+		if err != nil {
+			return errMsg{err}
+		}
+		return planDetailMsg{resp.Msg}
+	}
+}
+
 // fetchUsage loads the token/cost breakdown for the cost view (spec §20.5, task
 // 0039). It respects the selected project and the chosen group-by dimension.
 func (m model) fetchUsage() tea.Msg {
@@ -1194,6 +1224,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case taskDetailMsg:
 		m.backlogDetail = msg.task
 		return m, nil
+	case plansMsg:
+		m.plansList = msg.plans
+		if m.plansCursor >= len(m.plansList) {
+			m.plansCursor = 0
+		}
+		return m, nil
+	case planDetailMsg:
+		m.planDetail = msg.plan
+		return m, nil
 	case usageMsg:
 		m.costRows = msg.rows
 		m.costTotal = msg.total
@@ -1286,6 +1325,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// (spec §18.5).
 	if m.backlog {
 		return m.updateBacklog(msg)
+	}
+
+	// The plan library browser (browse selector → plans) is modal over both the
+	// menu and a session (task 0077).
+	if m.plans {
+		return m.updatePlans(msg)
 	}
 
 	// The cost view (browse selector → cost) is modal over both the menu and a
@@ -1981,6 +2026,7 @@ func (m model) browserCard(b browser) string {
 // updateBrowse — no other plumbing is needed (spec §18.6/§20.5).
 var browseTargets = []struct{ label, desc string }{
 	{"backlog", "tasks · readiness · drill-in detail"},
+	{"plans", "saved runbooks · view markdown"},
 	{"sessions", "previous + live · transcript · reopen"},
 	{"cost", "token/cost breakdown by task × model × day"},
 }
@@ -2017,6 +2063,9 @@ func (m model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.backlog, m.backlogCursor, m.backlogDetail = true, 0, nil
 			m.backlogShowDone = false
 			return m, m.fetchBacklog
+		case "plans":
+			m.plans, m.plansCursor, m.planDetail = true, 0, nil
+			return m, m.fetchPlans
 		case "sessions":
 			m.state = stateHistory
 			m.historyCursor = 0
@@ -2360,6 +2409,77 @@ func (m model) taskDetailView(t *v1.TaskDetail) string {
 	b.WriteString(body)
 	return m.modalCard(" "+t.Id+" — "+t.Title+" ", strings.TrimRight(b.String(), "\n"),
 		"esc/← back · ctrl+c quit")
+}
+
+// updatePlans handles the modal plan library browser: a list of saved plans with
+// drill-down into one plan's read-only markdown (task 0077).
+func (m model) updatePlans(msg tea.Msg) (tea.Model, tea.Cmd) {
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	if m.planDetail != nil {
+		// Detail view: back returns to the list.
+		switch key.String() {
+		case "ctrl+c", "q":
+			return m, tea.Quit
+		case "esc", "backspace", "left":
+			m.planDetail = nil
+		}
+		return m, nil
+	}
+	// List view.
+	switch key.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc", "q":
+		m.plans = false
+		return m, nil
+	case "up":
+		m.plansCursor = navUp(m.plansCursor)
+		return m, nil
+	case "down":
+		m.plansCursor = navDown(m.plansCursor, len(m.plansList))
+		return m, nil
+	case "enter":
+		if len(m.plansList) > 0 {
+			return m, m.fetchPlan(m.plansList[m.plansCursor].Name)
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+// plansView renders the modal plan library browser (list or detail) as a card.
+func (m model) plansView() string {
+	if m.planDetail != nil {
+		return m.planDetailView(m.planDetail)
+	}
+	b := browser{
+		title:  " ycc — plans ",
+		cursor: m.plansCursor,
+		hint:   "↑/↓ select · enter view · esc close",
+		empty:  "(no saved plans)",
+	}
+	for _, p := range m.plansList {
+		b.rows = append(b.rows, browserRow{
+			text:   fmt.Sprintf("%-20s", p.Name),
+			suffix: dimStyle.Render(p.Title),
+		})
+	}
+	return m.browserCard(b)
+}
+
+// planDetailView renders a single saved plan's markdown content (task 0077) as a card.
+func (m model) planDetailView(p *v1.GetPlanResponse) string {
+	body := p.Content
+	if m.glam != nil {
+		if out, err := m.glam.Render(body); err == nil {
+			body = strings.Trim(out, "\n")
+		}
+	}
+	return m.modalCard(" "+p.Name+" — "+p.Title+" ", body,
+		"esc/← back · ctrl+c quit · (run via the run_plan tool in a session)")
 }
 
 // --- settings overlay (spec §18.2) ---
@@ -3617,6 +3737,9 @@ func (m model) render() string {
 	}
 	if m.backlog {
 		return m.backlogView()
+	}
+	if m.plans {
+		return m.plansView()
 	}
 	if m.cost {
 		return m.costView()

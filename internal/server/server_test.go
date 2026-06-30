@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -160,6 +161,50 @@ func TestBacklogRPCs(t *testing.T) {
 		t.Fatal("GetTask with bogus id: expected error")
 	} else if got := connect.CodeOf(err); got != connect.CodeNotFound {
 		t.Fatalf("code = %v, want NotFound", got)
+	}
+}
+
+// TestPlanRPCs exercises the read-only plan library browser surface (task 0077):
+// ListPlans projects saved plans (name/title), GetPlan returns a plan's markdown
+// content, and an unknown name is a NotFound error.
+func TestPlanRPCs(t *testing.T) {
+	reg := config.NewRegistry(&config.Config{
+		Models: map[string]config.Model{"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"}},
+		Roles:  config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
+	})
+	ws := t.TempDir()
+	store := docs.NewStore(ws)
+	if _, err := store.SavePlan("my-plan", "# My Plan\nsteps"); err != nil {
+		t.Fatalf("SavePlan: %v", err)
+	}
+
+	srv := New(session.NewManager(reg, ws))
+	ctx := context.Background()
+
+	list, err := srv.ListPlans(ctx, connect.NewRequest(&v1.ListPlansRequest{}))
+	if err != nil {
+		t.Fatalf("ListPlans: %v", err)
+	}
+	if len(list.Msg.Plans) != 1 {
+		t.Fatalf("ListPlans = %d plans, want 1", len(list.Msg.Plans))
+	}
+	p := list.Msg.Plans[0]
+	if p.GetName() != "my-plan" || p.GetTitle() != "My Plan" {
+		t.Fatalf("plan = %+v, want name=my-plan title=My Plan", p)
+	}
+
+	got, err := srv.GetPlan(ctx, connect.NewRequest(&v1.GetPlanRequest{Name: "my-plan"}))
+	if err != nil {
+		t.Fatalf("GetPlan: %v", err)
+	}
+	if !strings.HasPrefix(got.Msg.GetContent(), "# My Plan\nsteps") || got.Msg.GetTitle() != "My Plan" {
+		t.Fatalf("GetPlan = %+v, want content+title populated", got.Msg)
+	}
+
+	if _, err := srv.GetPlan(ctx, connect.NewRequest(&v1.GetPlanRequest{Name: "nope"})); err == nil {
+		t.Fatal("GetPlan with bogus name: expected error")
+	} else if code := connect.CodeOf(err); code != connect.CodeNotFound {
+		t.Fatalf("code = %v, want NotFound", code)
 	}
 }
 

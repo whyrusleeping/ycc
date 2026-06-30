@@ -79,4 +79,5 @@
 | [0074](backlog/0074-tui-snapshot-to-image-rendering-for-visual-debuggi.md) | TUI snapshot-to-image rendering for visual debugging | done | 3 | — |
 | [0075](backlog/0075-scroll-tui-backlog-view-when-items-exceed-terminal.md) | Scroll TUI backlog view when items exceed terminal height | done | 3 | — |
 | [0076](backlog/0076-move-activity-spinner-to-the-bottom-next-to-the-se.md) | Move activity spinner to the bottom next to the session input box | done | 3 | — |
-| [0077](backlog/0077-surface-the-plan-library-in-the-tui-rpc.md) | Surface the plan library in the TUI / RPC | todo | 4 | 0020 |
+| [0077](backlog/0077-surface-the-plan-library-in-the-tui-rpc.md) | Surface the plan library in the TUI / RPC | done | 4 | 0020 |
+| [0078](backlog/0078-spike-design-parallel-agent-workstreams-via-git-wo.md) | Spike: design parallel agent workstreams via git worktrees | todo | 4 | — |
