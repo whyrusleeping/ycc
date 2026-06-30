@@ -43,3 +43,6 @@ Build + go test ./internal/orchestrator/...
 …[truncated]
 - 2026-06-30 review tier: simple (coordinator self-review)
 - 2026-06-30 decision: accept — commit: capture: bump MaxTurns to 32 and make prompt turn-budget aware (0092)
+- 2026-06-30 usage: 14,664 tok (in 68, out 14,596, cache_r 735,305, cache_w 38,404) · cost n/a (unpriced)
+  coordinator: 11,270 tok (in 30, out 11,240, cache_r 586,131, cache_w 25,973) · cost n/a (unpriced)
+  implementer: 3,394 tok (in 38, out 3,356, cache_r 149,174, cache_w 12,431) · cost n/a (unpriced)

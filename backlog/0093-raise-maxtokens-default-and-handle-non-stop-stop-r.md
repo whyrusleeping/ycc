@@ -80,3 +80,7 @@ Build + go test ./... .
 - 2026-06-30 review (Claude): accept — The change satisfies all acceptance criteria. Default MaxTokens is raised to a shared constant (config.DefaultMaxTokens = 32000) and used consistently across the CLI flag, in-process daemon fallback, 
 …[truncated]
 - 2026-06-30 decision: accept — commit: engine/config: raise default MaxTokens to 32000 and robustly handle no-content yields (0093)
+- 2026-06-30 usage: 26,059 tok (in 156, out 25,903, cache_r 2,829,245, cache_w 84,924) · cost n/a (unpriced)
+  implementer: 16,339 tok (in 106, out 16,233, cache_r 1,762,714, cache_w 47,240) · cost n/a (unpriced)
+  coordinator: 6,290 tok (in 28, out 6,262, cache_r 951,021, cache_w 19,935) · cost n/a (unpriced)
+  reviewer:Claude: 3,430 tok (in 22, out 3,408, cache_r 115,510, cache_w 17,749) · cost n/a (unpriced)
