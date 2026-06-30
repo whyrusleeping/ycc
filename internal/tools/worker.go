@@ -45,7 +45,7 @@ var imageMediaTypes = map[string]string{
 // control/finish tool — for open-ended modes (chat) where the agent yields
 // naturally rather than declaring the task complete.
 func Editing(ws *Workspace) []*gollama.Tool {
-	return []*gollama.Tool{readFile(ws), writeFile(ws), editFile(ws), bash(ws)}
+	return append([]*gollama.Tool{readFile(ws), writeFile(ws), editFile(ws), bash(ws)}, Web()...)
 }
 
 // Worker returns the standard worker tool set scoped to ws (spec §8): the editing

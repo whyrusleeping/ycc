@@ -1,7 +1,7 @@
 ---
 id: "0087"
 title: Add web search + fetch-page agent tools (via Exa)
-status: todo
+status: done
 priority: 3
 created: "2026-06-30"
 updated: "2026-06-30"
@@ -28,3 +28,11 @@ Use [Exa](https://exa.ai) as the backend provider (consistent with prior project
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-30 plan: Add two new agent tools backed by Exa: `web_search` and `fetch_page`.  1. New file `internal/tools/web.go`:    - `exaAPIKey()` resolves the key following the project's existing precedence (mirror conf
+…[truncated]
+- 2026-06-30 implementer report: Added two Exa-backed agent tools, `web_search` and `fetch_page`, following the existing tool conventions in `internal/tools`.  ## Changes - **`internal/tools/web.go`** (new):   - `exaAPIKey()` resolve
+…[truncated]
+- 2026-06-30 review tier: single-opus — reviewers: Claude
+- 2026-06-30 review (Claude): accept — The change adds two Exa-backed agent tools (web_search, fetch_page) in a new internal/tools/web.go, registered by appending Web() into Editing()/Worker() so the agent receives them. The Exa API key is
+…[truncated]
+- 2026-06-30 decision: accept — commit: tools: add Exa-backed web_search + fetch_page agent tools (task 0087)

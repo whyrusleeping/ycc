@@ -36,3 +36,4 @@ Agents frequently call the `Read` tool on a directory path. Today this returns a
 - 2026-06-30 review (Claude): accept — The change cleanly implements directory listing for the Read tool. When the resolved path is a directory, it lists immediate entries via a new readDir helper, marks subdirectories (and symlinks-to-dir
 …[truncated]
 - 2026-06-30 decision: accept — commit: tools: Read lists directory contents instead of erroring (task 0088)
+- 2026-06-30 usage: 9,670 tok (in 68, out 9,602, cache_r 400,635, cache_w 39,890) · cost n/a (unpriced)
