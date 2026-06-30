@@ -908,6 +908,12 @@ type fakeClient struct {
 	lastReopened string
 	transcript   []*v1.Event // returned by GetSessionTranscript
 	lastTransID  string
+
+	// cost view (spec §20.5, task 0039)
+	usageRows   []*v1.UsageRow
+	usageTotal  *v1.UsageRow
+	usageWksp   string
+	lastGroupBy []string
 }
 
 func newFakeClient(cfgs ...*v1.ModelConfig) *fakeClient {
@@ -999,6 +1005,18 @@ func (f *fakeClient) GetSessionTranscript(_ context.Context, req *connect.Reques
 // browse tests only need it to not panic, so it returns an empty list.
 func (f *fakeClient) ListBacklog(_ context.Context, _ *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error) {
 	return connect.NewResponse(&v1.ListBacklogResponse{}), nil
+}
+
+// GetUsage backs the cost view route (spec §20.5, task 0039). It records the
+// requested group-by so tests can assert the "g" cycle re-fetches with a new
+// dimension, and returns canned priced/unpriced rows plus a total.
+func (f *fakeClient) GetUsage(_ context.Context, req *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error) {
+	f.lastGroupBy = req.Msg.GroupBy
+	return connect.NewResponse(&v1.GetUsageResponse{
+		Rows:      f.usageRows,
+		Total:     f.usageTotal,
+		Workspace: f.usageWksp,
+	}), nil
 }
 
 // drive feeds a key through Update and, if a command is returned, runs it and
@@ -1586,6 +1604,93 @@ func TestBrowseMenuRoutes(t *testing.T) {
 	}
 	if m.state != stateMenu || m.backlog {
 		t.Fatalf("esc must not route anywhere (state=%v backlog=%v)", m.state, m.backlog)
+	}
+}
+
+// newCostFakeClient returns a fakeClient with canned usage rows for the cost view
+// tests: one priced row, one unpriced row, a total, and a workspace name.
+func newCostFakeClient() *fakeClient {
+	f := newFakeClient()
+	f.usageWksp = "demo-workspace"
+	f.usageRows = []*v1.UsageRow{
+		{Task: "0001", Model: "sonnet", Input: 1000, Output: 200, CacheRead: 50, CacheWrite: 10, Total: 1260, Cost: 0.1234, PriceStatus: "priced"},
+		{Task: "", Model: "local", Input: 500, Output: 100, Total: 600, PriceStatus: "unpriced"},
+	}
+	f.usageTotal = &v1.UsageRow{Input: 1500, Output: 300, CacheRead: 50, CacheWrite: 10, Total: 1860, Cost: 0.1234, PriceStatus: "partial"}
+	return f
+}
+
+// TestCostViewRoute verifies the browse selector (ctrl+o) routes to the cost view
+// and that driving the fetch populates the rows (spec §20.5, task 0039).
+func TestCostViewRoute(t *testing.T) {
+	f := newCostFakeClient()
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+
+	m = drive(t, m, "ctrl+o")
+	// Cost is the third browse entry.
+	m = drive(t, m, "down")
+	m = drive(t, m, "down")
+	m = drive(t, m, "enter")
+	if m.browse {
+		t.Fatal("enter should dismiss the browse selector")
+	}
+	if !m.cost {
+		t.Fatal("third browse entry should open the cost view")
+	}
+	if len(m.costRows) != 2 {
+		t.Fatalf("cost rows not populated: got %d, want 2", len(m.costRows))
+	}
+	if got := m.costGroupBy; len(got) != 1 || got[0] != "task" {
+		t.Fatalf("default group-by = %v, want [task]", got)
+	}
+}
+
+// TestCostView exercises navigation, the group-by cycle, esc, and rendering.
+func TestCostView(t *testing.T) {
+	f := newCostFakeClient()
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	m = drive(t, m, "ctrl+o")
+	m = drive(t, m, "down")
+	m = drive(t, m, "down")
+	m = drive(t, m, "enter")
+
+	// "g" cycles task -> model and re-fetches with the new dimension.
+	m = drive(t, m, "g")
+	if got := m.costGroupBy; len(got) != 1 || got[0] != "model" {
+		t.Fatalf("after g, group-by = %v, want [model]", got)
+	}
+	if got := f.lastGroupBy; len(got) != 1 || got[0] != "model" {
+		t.Fatalf("g should re-fetch with [model], lastGroupBy = %v", got)
+	}
+
+	// Down then up should clamp within bounds (2 rows -> max cursor 1).
+	m = drive(t, m, "down")
+	m = drive(t, m, "down")
+	if m.costCursor != 1 {
+		t.Fatalf("cursor should clamp at 1, got %d", m.costCursor)
+	}
+	m = drive(t, m, "up")
+	m = drive(t, m, "up")
+	if m.costCursor != 0 {
+		t.Fatalf("cursor should clamp at 0, got %d", m.costCursor)
+	}
+
+	// Render: priced cell, unpriced marker, and TOTAL line present.
+	out := m.costView()
+	if !strings.Contains(out, "$0.1234") {
+		t.Errorf("costView should show a priced $ cell:\n%s", out)
+	}
+	if !strings.Contains(out, "—") {
+		t.Errorf("costView should show the unpriced — marker:\n%s", out)
+	}
+	if !strings.Contains(out, "TOTAL") {
+		t.Errorf("costView should show a TOTAL line:\n%s", out)
+	}
+
+	// Esc closes the cost view.
+	m = drive(t, m, "esc")
+	if m.cost {
+		t.Fatal("esc should close the cost view")
 	}
 }
 

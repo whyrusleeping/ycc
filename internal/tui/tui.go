@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"connectrpc.com/connect"
@@ -94,7 +95,7 @@ type model struct {
 	historyTransID    string // session id whose transcript is currently shown
 
 	// browse selector (spec §18.6/§20.5): a small modal routing to the list+detail
-	// browsers — backlog and sessions today, with cost (task 0029) ready to add.
+	// browsers — backlog, sessions, and cost (spec §18.6/§20.5).
 	browse       bool
 	browseCursor int
 
@@ -173,6 +174,17 @@ type model struct {
 	backlogCursor   int
 	backlogDetail   *v1.TaskDetail // nil => list view; set => detail view
 	backlogShowDone bool           // when false (default), done tasks are hidden in the list view
+
+	// cost view (spec §20.5, task 0039): modal over menu/session, reached from the
+	// browse selector (ctrl+o). Read-only: shows the GetUsage token/cost breakdown
+	// for the selected project, grouped by a single dimension cycled with "g".
+	cost          bool
+	costRows      []*v1.UsageRow
+	costTotal     *v1.UsageRow
+	costWorkspace string
+	costGroupBy   []string // single dimension today: task|model|session|day|agent
+	costCursor    int
+	costMsg       string // status/empty line (loading…, (no usage recorded))
 
 	// quick-add backlog capture overlay (spec §18.2, task 0016): modal over
 	// menu/session, opened with ctrl+n. It runs a lightweight, off-stream capture
@@ -308,6 +320,13 @@ type streamClosedMsg struct{}
 type errMsg struct{ err error }
 type backlogMsg struct{ tasks []*v1.BacklogTaskSummary }
 type taskDetailMsg struct{ task *v1.TaskDetail }
+
+// usageMsg carries the GetUsage breakdown for the cost view (spec §20.5, task 0039).
+type usageMsg struct {
+	rows      []*v1.UsageRow
+	total     *v1.UsageRow
+	workspace string
+}
 
 // captureEvMsg carries one streamed capture-agent action-log event. A terminal
 // event of type "capture_result" carries the outcome of a CaptureBacklogItem RPC
@@ -715,6 +734,18 @@ func (m model) fetchTask(id string) tea.Cmd {
 	}
 }
 
+// fetchUsage loads the token/cost breakdown for the cost view (spec §20.5, task
+// 0039). It respects the selected project and the chosen group-by dimension.
+func (m model) fetchUsage() tea.Msg {
+	resp, err := m.client.GetUsage(m.ctx, connect.NewRequest(&v1.GetUsageRequest{
+		Project: m.project, GroupBy: m.costGroupBy,
+	}))
+	if err != nil {
+		return errMsg{err}
+	}
+	return usageMsg{rows: resp.Msg.Rows, total: resp.Msg.Total, workspace: resp.Msg.Workspace}
+}
+
 // newSessionInput builds the multi-line session input textarea (task 0011).
 func newSessionInput() textarea.Model {
 	input := textarea.New()
@@ -1003,6 +1034,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case taskDetailMsg:
 		m.backlogDetail = msg.task
 		return m, nil
+	case usageMsg:
+		m.costRows = msg.rows
+		m.costTotal = msg.total
+		m.costWorkspace = msg.workspace
+		m.costCursor = clampCursor(m.costCursor, len(m.costRows))
+		if len(m.costRows) == 0 {
+			m.costMsg = "(no usage recorded)"
+		} else {
+			m.costMsg = ""
+		}
+		return m, nil
 	case captureEvMsg:
 		ev := msg.ev
 		if ev.Type == "capture_result" {
@@ -1084,6 +1126,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// (spec §18.5).
 	if m.backlog {
 		return m.updateBacklog(msg)
+	}
+
+	// The cost view (browse selector → cost) is modal over both the menu and a
+	// session (spec §20.5, task 0039).
+	if m.cost {
+		return m.updateCost(msg)
 	}
 
 	// The browse selector (ctrl+o) is modal over the menu (spec §18.6/§20.5): it
@@ -1278,7 +1326,7 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.historyMsgTxt = "loading…"
 			return m, m.fetchHistory
 		case "ctrl+o":
-			// Open the browse selector (backlog / sessions; cost later) — spec §18.6.
+			// Open the browse selector (backlog / sessions / cost) — spec §18.6/§20.5.
 			m.openBrowse()
 			return m, nil
 		case "up":
@@ -1734,13 +1782,12 @@ func (m model) browserCard(b browser) string {
 // --- browse selector (spec §18.6 / §20.5) ---
 //
 // browseTargets are the routes the browse selector offers. It is the single
-// extension point for the shared browser surface: add a {"cost", …} row here
-// once task 0029 lands its GetUsage-backed cost view (spec §20.5) and wire its
-// case into updateBrowse — no other plumbing is needed.
+// extension point for the shared browser surface: each row maps to a case in
+// updateBrowse — no other plumbing is needed (spec §18.6/§20.5).
 var browseTargets = []struct{ label, desc string }{
 	{"backlog", "tasks · readiness · drill-in detail"},
 	{"sessions", "previous + live · transcript · reopen"},
-	// {"cost", "token/cost breakdown by task × model × day"}, // task 0029 (spec §20.5)
+	{"cost", "token/cost breakdown by task × model × day"},
 }
 
 // openBrowse enters the browse selector modal.
@@ -1782,7 +1829,13 @@ func (m model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.historyTranscript = false
 			m.historyMsgTxt = "loading…"
 			return m, m.fetchHistory
-			// case "cost": route to the cost view once task 0029 lands (spec §20.5).
+		case "cost":
+			// The cost view (spec §20.5, task 0039) opens grouped by task.
+			m.cost, m.costCursor = true, 0
+			m.costGroupBy = []string{"task"}
+			m.costRows, m.costTotal = nil, nil
+			m.costMsg = "loading…"
+			return m, m.fetchUsage
 		}
 		return m, nil
 	}
@@ -1803,7 +1856,202 @@ func (m model) browseView() string {
 	return m.browserCard(b)
 }
 
-// --- backlog browser (spec §18.5) ---
+// --- cost view (spec §20.5, task 0039) ---
+
+// costGroupOrder is the cycle of group-by dimensions the cost view rotates through
+// with the "g" key (mirrors the CLI's -by options in cmd/ycc).
+var costGroupOrder = []string{"task", "model", "session", "day", "agent"}
+
+// updateCost handles the modal cost view: list navigation plus "g" to cycle the
+// group-by dimension (which re-fetches). Esc/q dismisses it.
+func (m model) updateCost(msg tea.Msg) (tea.Model, tea.Cmd) {
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch key.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc", "q":
+		m.cost = false
+		return m, nil
+	case "up":
+		m.costCursor = navUp(m.costCursor)
+		return m, nil
+	case "down":
+		m.costCursor = navDown(m.costCursor, len(m.costRows))
+		return m, nil
+	case "g":
+		cur := "task"
+		if len(m.costGroupBy) > 0 {
+			cur = m.costGroupBy[0]
+		}
+		next := costGroupOrder[0]
+		for i, d := range costGroupOrder {
+			if d == cur {
+				next = costGroupOrder[(i+1)%len(costGroupOrder)]
+				break
+			}
+		}
+		m.costGroupBy = []string{next}
+		m.costCursor = 0
+		m.costMsg = "loading…"
+		return m, m.fetchUsage
+	}
+	return m, nil
+}
+
+// costCellTUI renders the cost column for a usage row, mirroring cmd/ycc's
+// costCell: unpriced rows show "—", partial pricing appends "*".
+func costCellTUI(r *v1.UsageRow) string {
+	switch r.PriceStatus {
+	case "unpriced":
+		return "—"
+	case "partial":
+		return fmt.Sprintf("$%.4f*", r.Cost)
+	default:
+		return fmt.Sprintf("$%.4f", r.Cost)
+	}
+}
+
+// costTitleTUI capitalises a group-by dimension for the table header (mirrors
+// cmd/ycc's costTitle).
+func costTitleTUI(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// commasTUI formats an int64 with thousands separators (mirrors cmd/ycc's commas).
+func commasTUI(n int64) string {
+	s := fmt.Sprintf("%d", n)
+	neg := strings.HasPrefix(s, "-")
+	if neg {
+		s = s[1:]
+	}
+	var out []byte
+	for i := 0; i < len(s); i++ {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			out = append(out, ',')
+		}
+		out = append(out, s[i])
+	}
+	if neg {
+		return "-" + string(out)
+	}
+	return string(out)
+}
+
+// costGroupValue resolves the group label for one row + dimension, mirroring the
+// CLI's placeholder treatment for unattributed/unknown values.
+func costGroupValue(r *v1.UsageRow, dim string) string {
+	switch dim {
+	case "task":
+		if r.Task == "" {
+			return "(unattributed)"
+		}
+		return r.Task
+	case "model":
+		if r.Model == "" {
+			return "(unknown)"
+		}
+		return r.Model
+	case "session":
+		return r.Session
+	case "agent":
+		if r.Agent == "" {
+			return "(unknown)"
+		}
+		return r.Agent
+	case "day":
+		return r.Day
+	}
+	return ""
+}
+
+// costView renders the token/cost breakdown as a bordered modal card (spec §20.5,
+// task 0039). Columns mirror the `ycc cost` CLI table; the row under the cursor is
+// selection-highlighted and a dim TOTAL line closes the table.
+func (m model) costView() string {
+	groupBy := m.costGroupBy
+	if len(groupBy) == 0 {
+		groupBy = []string{"task"}
+	}
+
+	title := " ycc — cost "
+	if m.costWorkspace != "" {
+		title = " ycc — cost · " + m.costWorkspace + " "
+	}
+	hint := fmt.Sprintf("g group-by:%s · ↑/↓ select · esc close", groupBy[0])
+
+	if len(m.costRows) == 0 {
+		msg := m.costMsg
+		if msg == "" {
+			msg = "(no usage recorded)"
+		}
+		return m.modalCard(title, dimStyle.Render(msg), hint)
+	}
+
+	// Build aligned columns with a tabwriter, then apply selection styling per
+	// rendered line (the writer pads on raw widths, so style after flushing).
+	var buf bytes.Buffer
+	tw := tabwriter.NewWriter(&buf, 0, 2, 2, ' ', 0)
+	header := make([]string, 0, len(groupBy)+5)
+	for _, d := range groupBy {
+		header = append(header, costTitleTUI(d))
+	}
+	header = append(header, "Input", "Output", "Cache", "Total", "Cost")
+	fmt.Fprintln(tw, "  "+strings.Join(header, "\t"))
+
+	partial := false
+	for _, r := range m.costRows {
+		cells := make([]string, 0, len(groupBy)+5)
+		for _, d := range groupBy {
+			cells = append(cells, costGroupValue(r, d))
+		}
+		cache := r.CacheRead + r.CacheWrite
+		cells = append(cells, commasTUI(r.Input), commasTUI(r.Output), commasTUI(cache), commasTUI(r.Total), costCellTUI(r))
+		fmt.Fprintln(tw, "  "+strings.Join(cells, "\t"))
+		if r.PriceStatus == "partial" {
+			partial = true
+		}
+	}
+	if total := m.costTotal; total != nil {
+		cells := make([]string, len(groupBy))
+		cells[0] = "TOTAL"
+		cache := total.CacheRead + total.CacheWrite
+		cells = append(cells, commasTUI(total.Input), commasTUI(total.Output), commasTUI(cache), commasTUI(total.Total), costCellTUI(total))
+		fmt.Fprintln(tw, "  "+strings.Join(cells, "\t"))
+		if total.PriceStatus == "partial" {
+			partial = true
+		}
+	}
+	tw.Flush()
+
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	var sb strings.Builder
+	for i, line := range lines {
+		switch {
+		case i == 0:
+			// Header row.
+			sb.WriteString(dimStyle.Render(line) + "\n")
+		case i == len(lines)-1 && m.costTotal != nil:
+			// TOTAL row.
+			sb.WriteString(dimStyle.Render(line) + "\n")
+		case i-1 == m.costCursor:
+			// Data rows start at index 1; highlight the cursor row.
+			marked := "▸" + line[1:]
+			sb.WriteString(selStyle.Render(marked) + "\n")
+		default:
+			sb.WriteString(line + "\n")
+		}
+	}
+	if partial {
+		sb.WriteString(dimStyle.Render("  * partial pricing (some models unpriced)") + "\n")
+	}
+	return m.modalCard(title, strings.TrimRight(sb.String(), "\n"), hint)
+}
 
 // updateBacklog handles the modal backlog browser: a task list with drill-down
 // into a single task's read-only detail.
@@ -3173,6 +3421,9 @@ func (m model) render() string {
 	}
 	if m.backlog {
 		return m.backlogView()
+	}
+	if m.cost {
+		return m.costView()
 	}
 	if m.browse {
 		return m.browseView()

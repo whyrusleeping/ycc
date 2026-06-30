@@ -1,10 +1,10 @@
 ---
 id: "0039"
 title: TUI cost view — browse usage/cost breakdown via GetUsage (shared browser modal)
-status: todo
+status: done
 priority: 3
 created: "2026-06-27"
-updated: "2026-06-27"
+updated: "2026-06-30"
 depends_on:
     - "0029"
     - "0035"
@@ -48,3 +48,12 @@ opened over the home menu or a session and dismissed with Esc, routed from a sma
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-30 plan: Add a TUI cost view as a modal reachable from the browse selector (ctrl+o), reusing the shared browser/modalCard surface, backed by the existing GetUsage RPC.  1. Model state (internal/tui/tui.go): ad
+…[truncated]
+- 2026-06-30 implementer report: Implemented the TUI cost view (task 0039) — a modal that calls the existing GetUsage RPC and renders the token/cost breakdown, reusing the shared browser/modalCard surface. All changes in internal/t
+…[truncated]
+- 2026-06-30 review tier: single-opus — reviewers: Claude
+- 2026-06-30 review (Claude): accept — The TUI cost view is implemented as a modal reached from the browse selector (ctrl+o → cost), backed by the existing GetUsage RPC and reusing the shared modalCard surface consistent with the backlog
+…[truncated]
+- 2026-06-30 decision: accept — commit: TUI cost view — browse usage/cost breakdown via GetUsage (task 0039)  Add a cost modal to the TUI, reachable from the browse selector (ctrl+o → cost), backed by the existing GetUsage RPC and reusi
+…[truncated]
