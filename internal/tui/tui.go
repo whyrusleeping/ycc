@@ -74,12 +74,21 @@ type model struct {
 	// "work (loop)" mode (toggled with tab on the work entry): chew through the
 	// backlog unattended, starting a fresh work session for each ready task until
 	// none remain (every task done, blocked, or in_review). loop is the menu toggle;
-	// looping is true while a loop run is in flight; loopExpected is the task id we
-	// expect the in-flight session to act on, used to detect a no-progress stall and
-	// stop rather than spin forever on the same task.
-	loop         bool
-	looping      bool
-	loopExpected string
+	// looping is true while a loop run is in flight.
+	//
+	// Stall detection is by backlog FINGERPRINT, not by predicting which task the
+	// session will work: the coordinator is an LLM that picks its own task, so a
+	// driver that guessed task X and then re-derived X afterwards (because the LLM
+	// actually worked a different ready task, leaving X pending) would falsely
+	// conclude "no progress" and bail after a single completed task. Instead we
+	// snapshot the backlog (id+status of every task) before each session and stop
+	// only when a finished session leaves that snapshot completely unchanged — i.e.
+	// it genuinely advanced nothing. loopStarted marks that at least one session has
+	// run, so the very first decision is never judged a stall.
+	loop        bool
+	looping     bool
+	loopStarted bool
+	loopPrevFP  string
 	// loopStopping guards the idle→stop transition while looping: a finished work
 	// session goes idle and blocks (it does not self-terminate), so the loop driver
 	// stops it explicitly to close its stream and advance. The flag prevents issuing
@@ -294,11 +303,13 @@ type projectsMsg struct{ projects []*v1.ProjectInfo }
 type startedMsg struct{ id, mode string }
 
 // loopDecisionMsg carries the "work (loop)" driver's decision after a session
-// ends: next is the id of the next ready task to work (""=none left), and prev is
-// the task the just-finished session was expected to act on (to detect a stall).
+// ends: next is the id of the next ready task to work (""=none left), and fp is a
+// fingerprint of the whole backlog at this point (id+status of every task). The
+// driver compares fp against the snapshot taken before the just-finished session
+// to detect a genuine stall (nothing changed) without guessing which task ran.
 type loopDecisionMsg struct {
 	next string
-	prev string
+	fp   string
 	err  error
 }
 
@@ -423,37 +434,52 @@ func (m model) stopSession() tea.Cmd {
 // ready task, and decides whether to start another work session (spec §9). The
 // decision is returned as a loopDecisionMsg so Update can apply it on the main loop.
 func (m model) loopNext() tea.Cmd {
-	prev := m.loopExpected
 	return func() tea.Msg {
 		resp, err := m.client.ListBacklog(m.ctx, connect.NewRequest(&v1.ListBacklogRequest{Project: m.project}))
 		if err != nil {
 			return loopDecisionMsg{err: err}
 		}
-		next := topReadyTask(resp.Msg.Tasks)
-		return loopDecisionMsg{next: next, prev: prev}
+		return loopDecisionMsg{next: topReadyTask(resp.Msg.Tasks), fp: backlogFingerprint(resp.Msg.Tasks)}
 	}
+}
+
+// backlogFingerprint is a stable, order-independent summary of the backlog's
+// actionable state: the id and status of every task. The loop driver compares
+// the fingerprint before and after a session to tell whether that session
+// advanced anything at all (a task moving todo→in_progress→done/in_review/blocked,
+// or a new task appearing, all change it). Equal fingerprints across a finished
+// session mean nothing moved — a genuine stall.
+func backlogFingerprint(tasks []*v1.BacklogTaskSummary) string {
+	parts := make([]string, 0, len(tasks))
+	for _, t := range tasks {
+		parts = append(parts, t.Id+":"+t.Status)
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ",")
 }
 
 // applyLoopDecision acts on the loop driver's decision: stop and return to the
 // menu when nothing is actionable, an error occurred, or the just-finished session
-// made no progress on the task it was expected to handle (re-picking it would spin
-// forever); otherwise start the next work session and stay in the loop.
+// left the backlog completely unchanged (a stall — re-running would spin forever);
+// otherwise start the next work session and stay in the loop.
 func (m model) applyLoopDecision(msg loopDecisionMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case msg.err != nil:
-		m.looping, m.loopExpected = false, ""
+		m.looping, m.loopStarted, m.loopPrevFP = false, false, ""
 		m.state, m.status = stateMenu, "loop stopped: "+msg.err.Error()
 		return m, nil
 	case msg.next == "":
-		m.looping, m.loopExpected = false, ""
+		m.looping, m.loopStarted, m.loopPrevFP = false, false, ""
 		m.state, m.status = stateMenu, "loop complete: no ready tasks remain"
 		return m, nil
-	case msg.prev != "" && msg.next == msg.prev:
-		m.looping, m.loopExpected = false, ""
-		m.state, m.status = stateMenu, "loop stopped: no progress on "+msg.next
+	case m.loopStarted && msg.fp == m.loopPrevFP:
+		// A session ran but the backlog is byte-for-byte unchanged: it advanced
+		// nothing, so starting another would loop forever on the same state.
+		m.looping, m.loopStarted, m.loopPrevFP = false, false, ""
+		m.state, m.status = stateMenu, "loop stopped: session made no progress"
 		return m, nil
 	}
-	m.loopExpected = msg.next
+	m.loopStarted, m.loopPrevFP = true, msg.fp
 	// Loop sessions run autonomously: ask_user must never block an unattended run.
 	// A genuinely stuck task is marked blocked (and skipped) rather than waited on.
 	return m, m.startSession("work", "", "autonomous")
@@ -1452,7 +1478,7 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// driver, which picks the next ready task, starts a session, and repeats
 			// when it ends — ignoring any typed prompt so every iteration auto-picks.
 			if m.loop && isWorkEntry(e) {
-				m.looping, m.loopExpected = true, ""
+				m.looping, m.loopStarted, m.loopPrevFP = true, false, ""
 				return m, m.loopNext()
 			}
 			// A typed prompt always wins; otherwise a preset seeds its opening prompt.
@@ -1552,7 +1578,7 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// meaningful for work-mode sessions.
 			if m.mode == "work" {
 				m.looping = !m.looping
-				m.loopExpected = ""
+				m.loopStarted, m.loopPrevFP = false, ""
 			}
 			return m, nil
 		case "up":

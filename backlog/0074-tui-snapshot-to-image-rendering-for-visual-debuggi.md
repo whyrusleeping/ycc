@@ -103,3 +103,4 @@ ANSI-string → PNG rasterizer, no external processes (no vhs/ttyd/ffmpeg):
 …[truncated]
 - 2026-06-30 decision: accept — commit: TUI snapshot-to-image (PNG) rendering for visual debugging (task 0074)  Add internal/tui/snapshot: a self-contained ANSI-frame -> PNG rasterizer (RenderANSI/WritePNG/CellSize) that parses a TUI frame 
 …[truncated]
+- 2026-06-30 usage: 47,673 tok (in 198, out 47,475, cache_r 3,197,830, cache_w 131,723) · cost n/a (unpriced)

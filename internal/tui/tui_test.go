@@ -2215,10 +2215,13 @@ func TestTopReadyTask(t *testing.T) {
 }
 
 func TestLoopDecisionStopsOnNoProgress(t *testing.T) {
-	// Same task surfaces as next that the finished session was expected to handle:
-	// the loop must stop instead of re-picking it forever.
-	m := &model{looping: true, loopExpected: "0002"}
-	next, _ := m.applyLoopDecision(loopDecisionMsg{next: "0002", prev: "0002"})
+	// A session ran (loopStarted) but the backlog fingerprint is unchanged from
+	// before it: nothing advanced, so the loop must stop instead of spinning. This
+	// is fingerprint-based, NOT a guess at which task ran, so a session that worked
+	// a different task than the driver might have predicted is NOT a false stall —
+	// any status change yields a different fingerprint and keeps the loop going.
+	m := &model{looping: true, loopStarted: true, loopPrevFP: "0001:done,0002:todo"}
+	next, _ := m.applyLoopDecision(loopDecisionMsg{next: "0002", fp: "0001:done,0002:todo"})
 	mm := next.(model)
 	if mm.looping {
 		t.Fatalf("expected loop to stop on no-progress, still looping")
@@ -2228,9 +2231,25 @@ func TestLoopDecisionStopsOnNoProgress(t *testing.T) {
 	}
 }
 
+// A finished session that changed the backlog (even if it worked a different
+// ready task than the driver would have guessed) must NOT be treated as a stall:
+// the fingerprint differs, so the loop continues to the next task.
+func TestLoopDecisionContinuesWhenBacklogChanged(t *testing.T) {
+	fc := newFakeClient()
+	m := &model{looping: true, loopStarted: true, loopPrevFP: "0001:todo,0002:todo", client: fc, ctx: context.Background()}
+	next, cmd := m.applyLoopDecision(loopDecisionMsg{next: "0001", fp: "0001:todo,0002:done"})
+	mm := next.(model)
+	if !mm.looping || mm.loopPrevFP != "0001:todo,0002:done" {
+		t.Fatalf("expected loop to continue with new fingerprint, looping=%v fp=%q", mm.looping, mm.loopPrevFP)
+	}
+	if cmd == nil {
+		t.Fatal("expected a startSession command")
+	}
+}
+
 func TestLoopDecisionStopsWhenEmpty(t *testing.T) {
-	m := &model{looping: true, loopExpected: "0002"}
-	next, _ := m.applyLoopDecision(loopDecisionMsg{next: "", prev: "0002"})
+	m := &model{looping: true, loopStarted: true, loopPrevFP: "0002:todo"}
+	next, _ := m.applyLoopDecision(loopDecisionMsg{next: "", fp: "0002:done"})
 	mm := next.(model)
 	if mm.looping || mm.state != stateMenu {
 		t.Fatalf("expected loop to stop and return to menu, looping=%v state=%v", mm.looping, mm.state)
@@ -2242,11 +2261,11 @@ func TestLoopDecisionStopsWhenEmpty(t *testing.T) {
 // stuck task is marked blocked by the coordinator and skipped).
 func TestLoopDecisionStartsAutonomousSession(t *testing.T) {
 	fc := newFakeClient()
-	m := &model{looping: true, loopExpected: "", client: fc, ctx: context.Background()}
-	next, cmd := m.applyLoopDecision(loopDecisionMsg{next: "0003", prev: ""})
+	m := &model{looping: true, loopStarted: false, loopPrevFP: "", client: fc, ctx: context.Background()}
+	next, cmd := m.applyLoopDecision(loopDecisionMsg{next: "0003", fp: "0003:todo"})
 	mm := next.(model)
-	if !mm.looping || mm.loopExpected != "0003" {
-		t.Fatalf("expected loop to continue on 0003, looping=%v expected=%q", mm.looping, mm.loopExpected)
+	if !mm.looping || !mm.loopStarted || mm.loopPrevFP != "0003:todo" {
+		t.Fatalf("expected loop to continue, looping=%v started=%v fp=%q", mm.looping, mm.loopStarted, mm.loopPrevFP)
 	}
 	if cmd == nil {
 		t.Fatal("expected a startSession command")
