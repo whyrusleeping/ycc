@@ -46,3 +46,4 @@ Let the coordinator attach explicit context hints — relevant file paths, code 
 …[truncated]
 - 2026-06-30 decision: accept — commit: orchestrator: optional advisory context hints from coordinator to worker (task 0079)  Let propose_plan and spawn_implementer accept an optional context_hints list (relevant files, symbol refs, small s
 …[truncated]
+- 2026-06-30 usage: 19,050 tok (in 64, out 18,986, cache_r 955,306, cache_w 75,656) · cost n/a (unpriced)
