@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // step is the wizard's current screen.
@@ -66,7 +66,7 @@ func newModel() model {
 	for i := range m.inputs {
 		ti := textinput.New()
 		ti.CharLimit = 200
-		ti.Width = 50
+		ti.SetWidth(50)
 		m.inputs[i] = ti
 	}
 	m.inputs[fieldName].Placeholder = "logical name (e.g. claude)"
@@ -294,7 +294,15 @@ var (
 	selStyle   = lipgloss.NewStyle().Bold(true)
 )
 
-func (m model) View() string {
+// View renders the wizard. AltScreen is declared here (a v2 View property)
+// rather than via a NewProgram option.
+func (m model) View() tea.View {
+	v := tea.NewView(m.render())
+	v.AltScreen = true
+	return v
+}
+
+func (m model) render() string {
 	var b strings.Builder
 	switch m.step {
 	case stepProvider:

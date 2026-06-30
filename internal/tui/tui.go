@@ -19,14 +19,14 @@ import (
 
 	"connectrpc.com/connect"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/glamour/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/reflow/wordwrap"
 	"github.com/muesli/reflow/wrap"
@@ -106,6 +106,14 @@ type model struct {
 	spin         spinner.Model
 	spinning     bool // a spinner.Tick command is already in flight
 
+	// lastMouse records when we last saw a mouse event. bubbletea v1's input
+	// parser leaks the bytes of a split SGR mouse report (common during rapid
+	// scroll, when the 256-byte read buffer fills and cuts an event in half) as
+	// stray keypresses into the focused input. We swallow key messages that look
+	// like such fragments when they arrive right on the heels of mouse activity
+	// (see dropMouseFragment).
+	lastMouse time.Time
+
 	// picker state: when the pending question carries options, the footer shows
 	// a navigable list instead of the textinput until the user picks "other…".
 	pickerOpts   []string // suggested answers ("" sentinel handled separately)
@@ -183,7 +191,7 @@ type model struct {
 // project-picker screen (persistent/remote daemon); a one-shot daemon passes
 // false so the cwd is the single implicit project (spec §3.1).
 func Run(ctx context.Context, client yccv1connect.SessionServiceClient, workspace string, showPicker bool) error {
-	p := tea.NewProgram(initialModel(ctx, client, workspace, showPicker), tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(initialModel(ctx, client, workspace, showPicker))
 	_, err := p.Run()
 	return err
 }
@@ -198,20 +206,20 @@ func initialModel(ctx context.Context, client yccv1connect.SessionServiceClient,
 	prompt.Placeholder = "what should the agent do? (optional for 'work')"
 	prompt.Focus()
 	prompt.CharLimit = 8000
-	prompt.Width = 60
+	prompt.SetWidth(60)
 
 	input := newSessionInput()
 
 	captureInput := textinput.New()
 	captureInput.Placeholder = "describe a new backlog item…"
 	captureInput.CharLimit = 8000
-	captureInput.Width = 60
+	captureInput.SetWidth(60)
 
 	// Activity spinner (task 0062): a small dot animation tinted with the palette's
 	// success role; it ticks via the Bubble Tea command loop while the session is
 	// running or a quick-capture RPC is in flight.
 	spin := spinner.New(spinner.WithSpinner(spinner.Dot))
-	spin.Style = lipgloss.NewStyle().Foreground(activeTheme.success)
+	spin.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(activeTheme.success))
 
 	initState := stateMenu
 	if showPicker {
@@ -646,10 +654,48 @@ func (m *model) relayout() {
 	if vpHeight < 3 {
 		vpHeight = 3
 	}
-	m.vp.Height = vpHeight
+	m.vp.SetHeight(vpHeight)
+}
+
+// mouseFragmentRe matches the printable remnants of a split SGR mouse report
+// ("<Cb;Cx;Cy" optionally with a trailing M/m). The required digit-then-';'
+// shape keeps it from matching ordinary typed text — real chat input is
+// virtually never a bare run of digits and semicolons.
+var mouseFragmentRe = regexp.MustCompile(`^<?[0-9]+;[0-9;]*[Mm<]?$`)
+
+// dropMouseFragment reports whether a key message is actually a leaked fragment
+// of a mouse escape sequence that bubbletea v1's parser failed to reassemble
+// (see the lastMouse field). We only drop when the keystroke arrives hard on the
+// heels of genuine mouse activity AND looks like SGR mouse bytes, so it cannot
+// eat real typing during normal use.
+func (m model) dropMouseFragment(k tea.KeyMsg) bool {
+	if time.Since(m.lastMouse) > 150*time.Millisecond {
+		return false
+	}
+	key := k.Key()
+	// "\x1b[" from a split report surfaces as alt+[.
+	if key.Mod&tea.ModAlt != 0 && key.Text == "[" {
+		return true
+	}
+	if key.Text == "" {
+		return false
+	}
+	return mouseFragmentRe.MatchString(key.Text)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Track mouse activity and swallow keystrokes that are really the leaked
+	// bytes of a split mouse report (bubbletea v1 input-parser bug). This runs
+	// ahead of all state dispatch so it protects every input box uniformly.
+	switch msg.(type) {
+	case tea.MouseMsg:
+		m.lastMouse = time.Now()
+	case tea.KeyMsg:
+		if m.dropMouseFragment(msg.(tea.KeyMsg)) {
+			return m, nil
+		}
+	}
+
 	switch msg := msg.(type) {
 	case spinner.TickMsg:
 		// Advance the activity spinner only while there is activity to indicate.
@@ -673,14 +719,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			vpHeight = 3
 		}
 		if !m.ready {
-			m.vp = viewport.New(msg.Width, vpHeight)
+			m.vp = viewport.New(viewport.WithWidth(msg.Width), viewport.WithHeight(vpHeight))
 			m.ready = true
 		} else {
-			m.vp.Width, m.vp.Height = msg.Width, vpHeight
+			m.vp.SetWidth(msg.Width)
+			m.vp.SetHeight(vpHeight)
 		}
-		m.prompt.Width = msg.Width - 4
+		m.prompt.SetWidth(msg.Width - 4)
 		m.input.SetWidth(msg.Width - 4)
-		m.captureInput.Width = msg.Width - 4
+		m.captureInput.SetWidth(msg.Width - 4)
 		m.makeRenderer()
 		m.bodyCache = map[int]string{} // re-render bodies at the new width
 		m.rebuild()
@@ -1085,15 +1132,18 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.MouseMsg:
-		if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
+	case tea.MouseWheelMsg:
+		if msg.Button == tea.MouseWheelUp || msg.Button == tea.MouseWheelDown {
 			var cmd tea.Cmd
 			m.vp, cmd = m.vp.Update(msg)
 			m.follow = m.vp.AtBottom()
 			return m, cmd
 		}
-		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-			row := msg.Y - headerHeight + m.vp.YOffset
+		return m, nil
+
+	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft {
+			row := msg.Y - headerHeight + m.vp.YOffset()
 			if i := m.eventAt(row); i >= 0 {
 				m.selected = i
 				m.toggle(i)
@@ -1893,7 +1943,7 @@ func (m *model) mbNewInputs() {
 	for i := range m.mbInputs {
 		ti := textinput.New()
 		ti.CharLimit = 200
-		ti.Width = 50
+		ti.SetWidth(50)
 		m.mbInputs[i] = ti
 	}
 	m.mbInputs[mbFieldName].Placeholder = "logical name (e.g. claude)"
@@ -2609,10 +2659,10 @@ func (m *model) ensureVisible() {
 		return
 	}
 	start := m.eventStart[m.selected]
-	if start < m.vp.YOffset {
+	if start < m.vp.YOffset() {
 		m.vp.SetYOffset(start)
-	} else if start >= m.vp.YOffset+m.vp.Height {
-		m.vp.SetYOffset(start - m.vp.Height + 1)
+	} else if start >= m.vp.YOffset()+m.vp.Height() {
+		m.vp.SetYOffset(start - m.vp.Height() + 1)
 	}
 }
 
@@ -2733,13 +2783,23 @@ func (m model) modalCard(title, content, hint string) string {
 	}
 	card := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(activeTheme.border).
+		BorderForeground(lipgloss.Color(activeTheme.border)).
 		Padding(0, 1).
 		Render(clampCardLines(body, inner))
 	return lipgloss.Place(m.w, m.h, lipgloss.Center, lipgloss.Center, card)
 }
 
-func (m model) View() string {
+// View renders the model and declares the program-level terminal modes the TUI
+// needs (alt screen + cell-motion mouse reporting). In bubbletea v2 these are
+// properties of the returned View rather than NewProgram options.
+func (m model) View() tea.View {
+	v := tea.NewView(m.render())
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
+}
+
+func (m model) render() string {
 	if m.err != nil {
 		return fmt.Sprintf("\n  error: %v\n\n  (ctrl+c to quit)\n", m.err)
 	}
@@ -4026,13 +4086,13 @@ var (
 func actorStyle(actor string) lipgloss.Style {
 	switch {
 	case actor == "coordinator":
-		return lipgloss.NewStyle().Foreground(activeTheme.actorCoord)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(activeTheme.actorCoord))
 	case actor == "implementer":
-		return lipgloss.NewStyle().Foreground(activeTheme.actorImpl)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(activeTheme.actorImpl))
 	case strings.HasPrefix(actor, "reviewer"):
-		return lipgloss.NewStyle().Foreground(activeTheme.actorReviewer)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(activeTheme.actorReviewer))
 	case actor == "user":
-		return lipgloss.NewStyle().Foreground(activeTheme.actorUser)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(activeTheme.actorUser))
 	default:
 		return dimStyle
 	}

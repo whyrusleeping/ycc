@@ -1,6 +1,10 @@
 package tui
 
-import "testing"
+import (
+	"testing"
+
+	"charm.land/lipgloss/v2"
+)
 
 // TestThemesDiffer ensures the light and dark palettes are actually distinct so
 // the settings toggle has a visible effect.
@@ -25,7 +29,7 @@ func TestApplyThemeLive(t *testing.T) {
 	if chromaStyle == nil {
 		t.Fatal("chromaStyle nil after applyTheme(lightTheme)")
 	}
-	if got := actorStyle("coordinator").GetForeground(); got != lightTheme.actorCoord {
+	if got := actorStyle("coordinator").GetForeground(); got != lipgloss.Color(lightTheme.actorCoord) {
 		t.Errorf("coordinator color = %v, want %v", got, lightTheme.actorCoord)
 	}
 
@@ -33,7 +37,7 @@ func TestApplyThemeLive(t *testing.T) {
 	if chromaStyle == nil {
 		t.Fatal("chromaStyle nil after applyTheme(darkTheme)")
 	}
-	if got := actorStyle("coordinator").GetForeground(); got != darkTheme.actorCoord {
+	if got := actorStyle("coordinator").GetForeground(); got != lipgloss.Color(darkTheme.actorCoord) {
 		t.Errorf("coordinator color = %v, want %v", got, darkTheme.actorCoord)
 	}
 }

@@ -8,12 +8,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"connectrpc.com/connect"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
 
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/event"
@@ -242,12 +242,8 @@ func TestTypeGlyphsInHeader(t *testing.T) {
 
 // detailLine color-codes review verdicts: accept=success, revise=warn, reject=danger.
 func TestVerdictColorsInDetailLine(t *testing.T) {
-	// Force a color profile so Render actually emits ANSI (the test runner is not a
-	// TTY, where lipgloss would otherwise strip color and make the styles identical).
-	prev := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	defer lipgloss.SetColorProfile(prev)
-
+	// lipgloss v2 styles always emit ANSI (the program output layer handles
+	// profile downsampling), so no color-profile setup is needed here.
 	for _, v := range []string{"accept", "revise", "reject"} {
 		ev := &v1.Event{Seq: 1, Type: "review_submitted", Actor: "reviewer-1",
 			DataJson: fmt.Sprintf(`{"model":"claude","verdict":%q,"summary":"sum"}`, v)}
@@ -841,7 +837,7 @@ func TestOverlayRendersAsCard(t *testing.T) {
 			m = updated.(model)
 			tc.setup(&m)
 
-			view := m.View()
+			view := m.render()
 			if !strings.ContainsAny(view, "╭╰│╮╯") {
 				t.Fatalf("%s overlay does not render a rounded border:\n%s", tc.name, view)
 			}
@@ -996,34 +992,38 @@ func (f *fakeClient) Subscribe(_ context.Context, _ *connect.Request[v1.Subscrib
 // It threads the model value through, mirroring the Bubble Tea runtime.
 func drive(t *testing.T, m model, key string) model {
 	t.Helper()
-	var km tea.KeyMsg
-	switch key {
-	case "enter":
-		km = tea.KeyMsg{Type: tea.KeyEnter}
-	case "esc":
-		km = tea.KeyMsg{Type: tea.KeyEsc}
-	case "tab":
-		km = tea.KeyMsg{Type: tea.KeyTab}
-	case "up":
-		km = tea.KeyMsg{Type: tea.KeyUp}
-	case "down":
-		km = tea.KeyMsg{Type: tea.KeyDown}
-	case "left":
-		km = tea.KeyMsg{Type: tea.KeyLeft}
-	case "right":
-		km = tea.KeyMsg{Type: tea.KeyRight}
-	case "ctrl+n":
-		km = tea.KeyMsg{Type: tea.KeyCtrlN}
-	case "ctrl+p":
-		km = tea.KeyMsg{Type: tea.KeyCtrlP}
-	case "ctrl+r":
-		km = tea.KeyMsg{Type: tea.KeyCtrlR}
-	default:
-		km = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
-	}
-	updated, cmd := m.Update(km)
+	updated, cmd := m.Update(keyMsg(key))
 	m = updated.(model)
 	return runCmds(t, m, cmd)
+}
+
+// keyMsg builds a v2 KeyPressMsg from a key name ("enter", "ctrl+n", …) or, for
+// anything else, a run of printable runes to type.
+func keyMsg(key string) tea.KeyPressMsg {
+	switch key {
+	case "enter":
+		return tea.KeyPressMsg{Code: tea.KeyEnter}
+	case "esc":
+		return tea.KeyPressMsg{Code: tea.KeyEsc}
+	case "tab":
+		return tea.KeyPressMsg{Code: tea.KeyTab}
+	case "up":
+		return tea.KeyPressMsg{Code: tea.KeyUp}
+	case "down":
+		return tea.KeyPressMsg{Code: tea.KeyDown}
+	case "left":
+		return tea.KeyPressMsg{Code: tea.KeyLeft}
+	case "right":
+		return tea.KeyPressMsg{Code: tea.KeyRight}
+	case "ctrl+n":
+		return tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl}
+	case "ctrl+p":
+		return tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl}
+	case "ctrl+r":
+		return tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl}
+	default:
+		return tea.KeyPressMsg{Code: []rune(key)[0], Text: key}
+	}
 }
 
 // runCmds executes a command (and any follow-ups it yields) by feeding each
@@ -1048,7 +1048,7 @@ func runCmds(t *testing.T, m model, cmd tea.Cmd) model {
 func typeText(t *testing.T, m model, s string) model {
 	t.Helper()
 	for _, r := range s {
-		km := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
+		km := tea.KeyPressMsg{Code: r, Text: string(r)}
 		updated, _ := m.Update(km)
 		m = updated.(model)
 	}
@@ -1354,7 +1354,7 @@ func TestBacklogHidesDoneByDefault(t *testing.T) {
 	}
 
 	// Toggle with "d": done tasks become visible.
-	updated, _ := m.updateBacklog(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	updated, _ := m.updateBacklog(keyMsg("d"))
 	m = updated.(model)
 	if !m.backlogShowDone {
 		t.Fatalf("backlogShowDone not set after toggle")
@@ -1380,7 +1380,7 @@ func TestBacklogHidesDoneByDefault(t *testing.T) {
 	// Cursor stays in range when toggling show->hide while pointing at a done row.
 	m.backlogShowDone = true
 	m.backlogCursor = len(m.visibleBacklogTasks()) - 1 // last (done) row
-	updated, _ = m.updateBacklog(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	updated, _ = m.updateBacklog(keyMsg("d"))
 	m = updated.(model)
 	if m.backlogShowDone {
 		t.Fatalf("expected toggle back to hide done")
@@ -1484,7 +1484,7 @@ func TestWizardFreeTextAfterPickerFocusesInput(t *testing.T) {
 	// Update is called directly (not via drive) because advancing to the free-text
 	// question returns the textarea's cursor-blink cmd, which would block if run
 	// synchronously (see typeText).
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ = m.Update(keyMsg("enter"))
 	m = updated.(model)
 
 	if m.wizIdx != 1 {
@@ -1741,4 +1741,33 @@ func TestRenderBodySessionErrorWraps(t *testing.T) {
 func jsonQuote(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// TestDropMouseFragment verifies the defensive filter that swallows leaked
+// SGR mouse-report bytes (a hardening kept across the bubbletea v2 upgrade)
+// without eating real typing. See model.dropMouseFragment.
+func TestDropMouseFragment(t *testing.T) {
+	runes := func(s string) tea.KeyMsg {
+		return tea.KeyPressMsg{Code: []rune(s)[0], Text: s}
+	}
+	altBracket := tea.KeyPressMsg{Code: '[', Text: "[", Mod: tea.ModAlt}
+
+	// With recent mouse activity, mouse-report fragments are dropped.
+	recent := model{lastMouse: time.Now()}
+	for _, k := range []tea.KeyMsg{runes("<65;80;12M"), runes("35;86;14"), runes("65;80"), altBracket} {
+		if !recent.dropMouseFragment(k) {
+			t.Errorf("expected fragment %q to be dropped", k.String())
+		}
+	}
+	// Real typing is never dropped, even right after scrolling.
+	for _, k := range []tea.KeyMsg{runes("hello"), runes("a"), runes("<3"), runes("5"), runes(";")} {
+		if recent.dropMouseFragment(k) {
+			t.Errorf("expected real input %q to be kept", k.String())
+		}
+	}
+	// Without recent mouse activity, nothing is dropped.
+	stale := model{lastMouse: time.Now().Add(-time.Second)}
+	if stale.dropMouseFragment(runes("<65;80;12M")) {
+		t.Error("expected no drop when no recent mouse activity")
+	}
 }

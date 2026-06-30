@@ -9,46 +9,47 @@
 // that makeRenderer() deliberately avoids (it can block Bubble Tea's event loop).
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import "charm.land/lipgloss/v2"
 
-// theme holds every color role the TUI renders with. Colors are plain
-// lipgloss.Color (ANSI-256) values; attributes (bold/italic/padding) are applied
-// in applyTheme so the per-theme palette stays purely about color.
+// theme holds every color role the TUI renders with. Colors are plain ANSI-256
+// strings (resolved to lipgloss colors in applyTheme); attributes
+// (bold/italic/padding) are applied in applyTheme so the per-theme palette stays
+// purely about color.
 type theme struct {
-	titleFg  lipgloss.Color
-	titleBg  lipgloss.Color
-	headerFg lipgloss.Color
-	headerBg lipgloss.Color
+	titleFg  string
+	titleBg  string
+	headerFg string
+	headerBg string
 
-	sel    lipgloss.Color // selection accent
-	reco   lipgloss.Color // recommendation highlight
-	selBar lipgloss.Color // selection bar
-	dim    lipgloss.Color // dimmed/secondary text
-	think  lipgloss.Color // thinking (italic) text
-	typ    lipgloss.Color // type/label text
-	askFg  lipgloss.Color
-	askBg  lipgloss.Color
-	err    lipgloss.Color
-	warn   lipgloss.Color // warning/intermediate verdict (e.g. revise)
+	sel    string // selection accent
+	reco   string // recommendation highlight
+	selBar string // selection bar
+	dim    string // dimmed/secondary text
+	think  string // thinking (italic) text
+	typ    string // type/label text
+	askFg  string
+	askBg  string
+	err    string
+	warn   string // warning/intermediate verdict (e.g. revise)
 
 	// Tool-call "card" roles (task: LSP-style cards). border is the resting card
 	// outline; borderSel is the outline of the currently-selected card; success is
 	// the green glyph/accent for a completed tool call; path tints file paths in
 	// structured tool output.
-	border    lipgloss.Color
-	borderSel lipgloss.Color
-	success   lipgloss.Color
-	path      lipgloss.Color
+	border    string
+	borderSel string
+	success   string
+	path      string
 
-	diffAdd  lipgloss.Color
-	diffDel  lipgloss.Color
-	diffHunk lipgloss.Color
-	diffMeta lipgloss.Color
+	diffAdd  string
+	diffDel  string
+	diffHunk string
+	diffMeta string
 
-	actorCoord    lipgloss.Color
-	actorImpl     lipgloss.Color
-	actorReviewer lipgloss.Color
-	actorUser     lipgloss.Color
+	actorCoord    string
+	actorImpl     string
+	actorReviewer string
+	actorUser     string
 
 	// chromaStyleName names the chroma syntax-highlight style for this theme.
 	chromaStyleName string
@@ -150,27 +151,28 @@ var activeTheme theme
 func applyTheme(t theme) {
 	activeTheme = t
 
-	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(t.titleFg).Background(t.titleBg).Padding(0, 1)
-	headerStyle = lipgloss.NewStyle().Bold(true).Foreground(t.headerFg).Background(t.headerBg).Padding(0, 1)
-	selStyle = lipgloss.NewStyle().Bold(true).Foreground(t.sel)
-	recoStyle = lipgloss.NewStyle().Bold(true).Foreground(t.reco)
-	selBarStyle = lipgloss.NewStyle().Foreground(t.selBar)
-	dimStyle = lipgloss.NewStyle().Foreground(t.dim)
-	thinkStyle = lipgloss.NewStyle().Italic(true).Foreground(t.think)
-	typeStyle = lipgloss.NewStyle().Foreground(t.typ)
-	askStyle = lipgloss.NewStyle().Bold(true).Foreground(t.askFg).Background(t.askBg)
-	errStyle = lipgloss.NewStyle().Foreground(t.err)
-	warnStyle = lipgloss.NewStyle().Foreground(t.warn)
-	diffAddStyle = lipgloss.NewStyle().Foreground(t.diffAdd)
-	diffDelStyle = lipgloss.NewStyle().Foreground(t.diffDel)
-	diffHunkStyle = lipgloss.NewStyle().Foreground(t.diffHunk)
-	diffMetaStyle = lipgloss.NewStyle().Bold(true).Foreground(t.diffMeta)
+	c := lipgloss.Color
+	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(c(t.titleFg)).Background(c(t.titleBg)).Padding(0, 1)
+	headerStyle = lipgloss.NewStyle().Bold(true).Foreground(c(t.headerFg)).Background(c(t.headerBg)).Padding(0, 1)
+	selStyle = lipgloss.NewStyle().Bold(true).Foreground(c(t.sel))
+	recoStyle = lipgloss.NewStyle().Bold(true).Foreground(c(t.reco))
+	selBarStyle = lipgloss.NewStyle().Foreground(c(t.selBar))
+	dimStyle = lipgloss.NewStyle().Foreground(c(t.dim))
+	thinkStyle = lipgloss.NewStyle().Italic(true).Foreground(c(t.think))
+	typeStyle = lipgloss.NewStyle().Foreground(c(t.typ))
+	askStyle = lipgloss.NewStyle().Bold(true).Foreground(c(t.askFg)).Background(c(t.askBg))
+	errStyle = lipgloss.NewStyle().Foreground(c(t.err))
+	warnStyle = lipgloss.NewStyle().Foreground(c(t.warn))
+	diffAddStyle = lipgloss.NewStyle().Foreground(c(t.diffAdd))
+	diffDelStyle = lipgloss.NewStyle().Foreground(c(t.diffDel))
+	diffHunkStyle = lipgloss.NewStyle().Foreground(c(t.diffHunk))
+	diffMetaStyle = lipgloss.NewStyle().Bold(true).Foreground(c(t.diffMeta))
 
-	borderStyle = lipgloss.NewStyle().Foreground(t.border)
-	borderSelStyle = lipgloss.NewStyle().Foreground(t.borderSel)
-	successStyle = lipgloss.NewStyle().Foreground(t.success)
-	pathStyle = lipgloss.NewStyle().Foreground(t.path)
-	cardTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(t.titleFg)
+	borderStyle = lipgloss.NewStyle().Foreground(c(t.border))
+	borderSelStyle = lipgloss.NewStyle().Foreground(c(t.borderSel))
+	successStyle = lipgloss.NewStyle().Foreground(c(t.success))
+	pathStyle = lipgloss.NewStyle().Foreground(c(t.path))
+	cardTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(c(t.titleFg))
 
 	chromaStyle = pickStyle(t.chromaStyleName)
 }

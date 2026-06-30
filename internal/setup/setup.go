@@ -15,7 +15,7 @@ import (
 	"os"
 	"path/filepath"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/daemon"
@@ -130,7 +130,7 @@ func buildConfig(providers []provider, coord, impl string, reviewers []string) (
 // completion, or "" when the user skipped (or on a non-fatal write error, so the
 // caller falls back rather than crashing). A non-empty path means "use it".
 func Run(workspace string) (string, error) {
-	prog := tea.NewProgram(newModel(), tea.WithAltScreen())
+	prog := tea.NewProgram(newModel())
 	out, err := prog.Run()
 	if err != nil {
 		return "", err

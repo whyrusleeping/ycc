@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/whyrusleeping/ycc/internal/config"
 )
@@ -99,31 +99,35 @@ func TestBuildConfigNoProviders(t *testing.T) {
 // drive feeds key strings to the model and returns the resulting model.
 func drive(m model, keys ...string) model {
 	for _, k := range keys {
-		var msg tea.KeyMsg
-		switch k {
-		case "enter":
-			msg = tea.KeyMsg{Type: tea.KeyEnter}
-		case "tab":
-			msg = tea.KeyMsg{Type: tea.KeyTab}
-		case "down":
-			msg = tea.KeyMsg{Type: tea.KeyDown}
-		case "up":
-			msg = tea.KeyMsg{Type: tea.KeyUp}
-		case "left":
-			msg = tea.KeyMsg{Type: tea.KeyLeft}
-		case "right":
-			msg = tea.KeyMsg{Type: tea.KeyRight}
-		case "esc":
-			msg = tea.KeyMsg{Type: tea.KeyEsc}
-		case "space":
-			msg = tea.KeyMsg{Type: tea.KeySpace}
-		default:
-			msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
-		}
-		out, _ := m.Update(msg)
+		out, _ := m.Update(keyMsg(k))
 		m = out.(model)
 	}
 	return m
+}
+
+// keyMsg builds a v2 KeyPressMsg from a key name ("enter", "tab", …) or, for
+// anything else, a run of printable runes to type.
+func keyMsg(k string) tea.KeyPressMsg {
+	switch k {
+	case "enter":
+		return tea.KeyPressMsg{Code: tea.KeyEnter}
+	case "tab":
+		return tea.KeyPressMsg{Code: tea.KeyTab}
+	case "down":
+		return tea.KeyPressMsg{Code: tea.KeyDown}
+	case "up":
+		return tea.KeyPressMsg{Code: tea.KeyUp}
+	case "left":
+		return tea.KeyPressMsg{Code: tea.KeyLeft}
+	case "right":
+		return tea.KeyPressMsg{Code: tea.KeyRight}
+	case "esc":
+		return tea.KeyPressMsg{Code: tea.KeyEsc}
+	case "space":
+		return tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
+	default:
+		return tea.KeyPressMsg{Code: []rune(k)[0], Text: k}
+	}
 }
 
 func TestWizardInteraction(t *testing.T) {

@@ -61,3 +61,5 @@ faster to scan and nicer to look at.
 …[truncated]
 - 2026-06-30 decision: accept — commit: tui: event-stream visual polish — type glyphs, verdict colors, subagent tree connectors [0063]  Add per-type leading glyphs (typeGlyph/typeGlyphStyle) as a fixed colored column, color-code review ve
 …[truncated]
+- 2026-06-30 usage: 34,953 tok (in 146, out 34,807, cache_r 3,729,345, cache_w 171,249) · cost n/a (unpriced)
+- 2026-06-30 usage: 35,368 tok (in 148, out 35,220, cache_r 3,790,032, cache_w 171,991) · cost n/a (unpriced)
