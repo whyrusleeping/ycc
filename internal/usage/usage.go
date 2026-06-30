@@ -433,8 +433,19 @@ func rowSortKey(r Row, dims []Dim) string {
 // FormatWorkLogLine renders a one-line usage/cost summary for a task's work log
 // (spec §6.2) so per-task cost accrues in the backlog across sessions.
 func FormatWorkLogLine(r Row) string {
+	return "usage: " + formatTokensCost(r)
+}
+
+// formatTokensCost renders the token breakdown and cost suffix for a row,
+// without the "usage: " prefix, e.g.:
+//
+//	"7,645 tok (in 30, out 7,615, cache_r 273,570, cache_w 19,750) · $0.1234"
+//
+// The cost suffix is " · $%.4f" when priced, " · cost n/a (unpriced)" when
+// unpriced, and " · $%.4f (partial pricing)" when partially priced.
+func formatTokensCost(r Row) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "usage: %s tok (in %s, out %s, cache_r %s, cache_w %s)",
+	fmt.Fprintf(&b, "%s tok (in %s, out %s, cache_r %s, cache_w %s)",
 		commas(r.Tokens.Total), commas(r.Tokens.Input), commas(r.Tokens.Output),
 		commas(r.Tokens.CacheRead), commas(r.Tokens.CacheWrite))
 	switch r.Status {
@@ -444,6 +455,60 @@ func FormatWorkLogLine(r Row) string {
 		fmt.Fprintf(&b, " · $%.4f (partial pricing)", r.Cost)
 	default:
 		fmt.Fprintf(&b, " · $%.4f", r.Cost)
+	}
+	return b.String()
+}
+
+// AgentRows groups entries by RAW actor (Entry.Agent, NOT the collapsed
+// AgentRole — so reviewer:gpt and reviewer:claude stay distinct), prices each,
+// drops zero-token actors, and returns rows sorted by Tokens.Total desc
+// (tie-break by Agent name asc). Row.Agent holds the raw actor.
+func AgentRows(entries []Entry, pricer Pricer) []Row {
+	groups := map[string]*rowAgg{}
+	var order []string
+	for _, e := range entries {
+		g, ok := groups[e.Agent]
+		if !ok {
+			g = &rowAgg{row: Row{Agent: e.Agent}}
+			groups[e.Agent] = g
+			order = append(order, e.Agent)
+		}
+		g.accumulate(e, pricer)
+	}
+	rows := make([]Row, 0, len(order))
+	for _, agent := range order {
+		g := groups[agent]
+		if g.row.Tokens.Total == 0 {
+			continue
+		}
+		rows = append(rows, finalizeRow(g.row, g.cost, g.priced, g.unpriced))
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].Tokens.Total != rows[j].Tokens.Total {
+			return rows[i].Tokens.Total > rows[j].Tokens.Total
+		}
+		return rows[i].Agent < rows[j].Agent
+	})
+	return rows
+}
+
+// FormatWorkLogSummary renders the multi-line per-task usage summary: the
+// aggregate line (FormatWorkLogLine(total)) followed by an indented per-agent
+// breakdown, one line per actor: "  <actor>: " + formatTokensCost(row).
+// Reviewers appear individually by name. When there are fewer than 2 agent rows
+// the breakdown adds no information, so just return FormatWorkLogLine(total).
+func FormatWorkLogSummary(total Row, agents []Row) string {
+	line := FormatWorkLogLine(total)
+	if len(agents) < 2 {
+		return line
+	}
+	var b strings.Builder
+	b.WriteString(line)
+	for _, a := range agents {
+		b.WriteString("\n  ")
+		b.WriteString(a.Agent)
+		b.WriteString(": ")
+		b.WriteString(formatTokensCost(a))
 	}
 	return b.String()
 }

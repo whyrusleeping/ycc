@@ -737,7 +737,14 @@ func (s *Session) summarizeUsage() {
 		}
 
 		if s.deps != nil && s.deps.Docs != nil {
-			if _, err := s.deps.Docs.AppendWorkLog(row.Task, usage.FormatWorkLogLine(row)); err != nil {
+			var filtered []usage.Entry
+			for _, e := range entries {
+				if e.Task == row.Task {
+					filtered = append(filtered, e)
+				}
+			}
+			agentRows := usage.AgentRows(filtered, s.reg)
+			if _, err := s.deps.Docs.AppendWorkLog(row.Task, usage.FormatWorkLogSummary(row, agentRows)); err != nil {
 				s.emitter.Emit(event.Narration, map[string]any{"msg": "usage summary work-log append failed: " + err.Error()})
 				continue
 			}

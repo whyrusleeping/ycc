@@ -1,7 +1,7 @@
 ---
 id: "0089"
 title: Break down per-task work-log token usage by agent role
-status: todo
+status: done
 priority: 3
 created: "2026-06-30"
 updated: "2026-06-30"
@@ -44,3 +44,11 @@ to the work-log summary.
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-30 plan: Make the per-task work-log usage summary break down tokens (and cost) by agent role, listing reviewers individually (reviewer:<name>).  internal/usage/usage.go: - Refactor token+cost rendering out of 
+…[truncated]
+- 2026-06-30 implementer report: Implemented per-agent-role breakdown for the per-task work-log usage summary.  ## internal/usage/usage.go - Refactored token+cost rendering out of `FormatWorkLogLine` into a shared `formatTokensCost(R
+…[truncated]
+- 2026-06-30 review tier: single-opus — reviewers: Claude
+- 2026-06-30 review (Claude): accept — The change correctly implements a per-agent-role breakdown of the per-task work-log usage summary. It refactors token/cost rendering into a shared `formatTokensCost` helper, adds `AgentRows` (groups b
+…[truncated]
+- 2026-06-30 decision: accept — commit: usage: break down per-task work-log token usage by agent role (task 0089)

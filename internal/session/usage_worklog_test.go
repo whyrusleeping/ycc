@@ -131,3 +131,65 @@ func TestSummarizeUsageMultipleTasks(t *testing.T) {
 		}
 	}
 }
+
+// summarizeUsage breaks the per-task usage line down by agent role, listing
+// reviewers individually by name (spec §6.2, §20.5; task 0089).
+func TestSummarizeUsageRoleBreakdown(t *testing.T) {
+	ws := t.TempDir()
+	store := docs.NewStore(ws)
+	task, err := store.Create("test task", "", 1, nil, nil)
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	logPath := ws + "/.ycc/sessions/s_test/events.jsonl"
+	log, err := event.OpenLog(logPath)
+	if err != nil {
+		t.Fatalf("open log: %v", err)
+	}
+	defer log.Close()
+
+	coordinator := event.NewEmitter(log, "coordinator")
+	implementer := event.NewEmitter(log, "implementer")
+	reviewerGPT := event.NewEmitter(log, "reviewer:gpt")
+	reviewerClaude := event.NewEmitter(log, "reviewer:claude")
+
+	coordinator.Emit(event.TaskFocus, map[string]any{"task": task.ID})
+	coordinator.Emit(event.ModelTurn, map[string]any{
+		"model_name": "a", "usage": event.Usage{Input: 100, Output: 10, Total: 110},
+	})
+	implementer.Emit(event.ModelTurn, map[string]any{
+		"model_name": "a", "usage": event.Usage{Input: 2000, Output: 200, Total: 2200},
+	})
+	reviewerGPT.Emit(event.ModelTurn, map[string]any{
+		"model_name": "a", "usage": event.Usage{Input: 500, Output: 50, Total: 550},
+	})
+	reviewerClaude.Emit(event.ModelTurn, map[string]any{
+		"model_name": "a", "usage": event.Usage{Input: 300, Output: 30, Total: 330},
+	})
+
+	s := &Session{
+		ID:              "s_test",
+		Mode:            "work",
+		log:             log,
+		emitter:         coordinator,
+		reg:             pricedRegistry(),
+		deps:            &orchestrator.Deps{Docs: store, Emitter: coordinator},
+		usageSummarized: map[string]bool{},
+	}
+
+	s.summarizeUsage()
+
+	got, err := store.Get(task.ID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if n := strings.Count(got.Body, "usage: "); n != 1 {
+		t.Fatalf("usage lines = %d, want exactly 1\nbody:\n%s", n, got.Body)
+	}
+	for _, role := range []string{"coordinator", "implementer", "reviewer:gpt", "reviewer:claude"} {
+		if !strings.Contains(got.Body, role) {
+			t.Fatalf("breakdown missing role %q:\n%s", role, got.Body)
+		}
+	}
+}

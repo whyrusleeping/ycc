@@ -33,3 +33,4 @@ The task detail view should be a scrollable view, allowing the user to scroll do
 - 2026-06-30 review (Claude): accept — The change makes the backlog task detail view a full-screen scrollable viewport, faithfully mirroring the existing read-only transcript drill-in pattern (titleBar + viewport + footerBar). It adds a ba
 …[truncated]
 - 2026-06-30 decision: accept — commit: tui: make backlog task detail view scrollable (task 0090)
+- 2026-06-30 usage: 16,500 tok (in 92, out 16,408, cache_r 708,404, cache_w 44,679) · cost n/a (unpriced)

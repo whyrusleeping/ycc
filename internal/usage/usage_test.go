@@ -255,6 +255,73 @@ func TestFormatWorkLogLine(t *testing.T) {
 	}
 }
 
+func TestAgentRows(t *testing.T) {
+	entries := []Entry{
+		{Task: "0007", Model: "claude", Agent: "coordinator", Tokens: Tokens{Input: 50, Total: 50}},
+		{Task: "0007", Model: "claude", Agent: "implementer", Tokens: Tokens{Input: 400, Total: 400}},
+		{Task: "0007", Model: "gpt", Agent: "reviewer:gpt", Tokens: Tokens{Input: 200, Total: 200}},
+		{Task: "0007", Model: "claude", Agent: "reviewer:claude", Tokens: Tokens{Input: 100, Total: 100}},
+		{Task: "0007", Model: "claude", Agent: "idle", Tokens: Tokens{Total: 0}},
+	}
+	rows := AgentRows(entries, pricer())
+	for _, r := range rows {
+		if r.Agent == "idle" {
+			t.Fatalf("zero-token agent should be omitted: %+v", rows)
+		}
+	}
+	if len(rows) != 4 {
+		t.Fatalf("want 4 rows, got %d: %+v", len(rows), rows)
+	}
+	// Sorted by total desc: implementer(400), reviewer:gpt(200), reviewer:claude(100), coordinator(50)
+	wantOrder := []string{"implementer", "reviewer:gpt", "reviewer:claude", "coordinator"}
+	for i, want := range wantOrder {
+		if rows[i].Agent != want {
+			t.Fatalf("row %d agent = %q, want %q (rows: %+v)", i, rows[i].Agent, want, rows)
+		}
+	}
+	// Reviewers kept distinct by raw name.
+	var sawGPT, sawClaude bool
+	for _, r := range rows {
+		if r.Agent == "reviewer:gpt" {
+			sawGPT = true
+		}
+		if r.Agent == "reviewer:claude" {
+			sawClaude = true
+		}
+	}
+	if !sawGPT || !sawClaude {
+		t.Fatalf("reviewers not distinct: %+v", rows)
+	}
+}
+
+func TestFormatWorkLogSummary(t *testing.T) {
+	total := Row{Tokens: Tokens{Input: 750, Total: 750}, Cost: 0.1, Status: StatusPriced}
+	agents := []Row{
+		{Agent: "coordinator", Tokens: Tokens{Input: 50, Total: 50}, Cost: 0.01, Status: StatusPriced},
+		{Agent: "reviewer:gpt", Tokens: Tokens{Input: 200, Total: 200}, Status: StatusUnpriced},
+		{Agent: "implementer", Tokens: Tokens{Input: 500, Total: 500}, Cost: 0.09, Status: StatusPriced},
+	}
+	got := FormatWorkLogSummary(total, agents)
+	lines := strings.Split(got, "\n")
+	if lines[0] != FormatWorkLogLine(total) {
+		t.Fatalf("first line = %q, want %q", lines[0], FormatWorkLogLine(total))
+	}
+	if !strings.HasPrefix(lines[0], "usage: ") {
+		t.Fatalf("first line missing usage prefix: %q", lines[0])
+	}
+	if !strings.Contains(got, "\n  reviewer:gpt:") || !strings.Contains(got, "\n  coordinator:") {
+		t.Fatalf("breakdown missing roles:\n%s", got)
+	}
+	if !strings.Contains(got, "cost n/a") {
+		t.Fatalf("unpriced agent should show cost n/a:\n%s", got)
+	}
+	// Single agent row collapses to just the aggregate line.
+	single := FormatWorkLogSummary(total, agents[:1])
+	if single != FormatWorkLogLine(total) {
+		t.Fatalf("single-agent summary = %q, want aggregate line", single)
+	}
+}
+
 func TestRenderTable(t *testing.T) {
 	res := Aggregate(sampleEntries(), pricer(), Options{GroupBy: []Dim{DimTask}})
 	var buf bytes.Buffer
