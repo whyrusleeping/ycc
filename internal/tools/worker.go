@@ -20,6 +20,9 @@ const (
 	bashTimeout      = 2 * time.Minute
 	defaultReadLines = 2000
 	maxLineChars     = 2000
+	// maxDirEntries caps how many entries the Read tool lists when given a
+	// directory path, mirroring the line-limit approach for files.
+	maxDirEntries = 1000
 	// maxMediaBytes caps the raw (pre-base64) size of an image/PDF the Read tool
 	// will inline as a native content block. Providers reject very large media
 	// (Anthropic ~5MB/image, ~32MB/PDF); we use a conservative shared limit and
@@ -59,7 +62,8 @@ func readFile(ws *Workspace) *gollama.Tool {
 			"path relative to the workspace root is also accepted). Files under trusted read-only roots outside the " +
 			"workspace (e.g. the Go module cache) are also readable. By default up to 2000 lines are returned; use " +
 			"offset (1-based start line) and limit to read a specific window of a large file. Images (PNG, JPEG, " +
-			"GIF, WebP) and PDFs are returned to you natively as visual content — just Read them like any other file.",
+			"GIF, WebP) and PDFs are returned to you natively as visual content — just Read them like any other file. " +
+			"Passing a directory path lists its immediate entries (subdirectories are shown with a trailing '/').",
 		Params: obj(map[string]any{
 			"file_path": strProp("absolute path to the file (or relative to the workspace root)"),
 			"offset":    map[string]any{"type": "integer", "description": "1-based line number to start reading from (optional; text files only)"},
@@ -73,6 +77,12 @@ func readFile(ws *Workspace) *gollama.Tool {
 			abs, err := ws.resolveRead(fp)
 			if err != nil {
 				return errResult("Read: %v", err), nil
+			}
+			// A directory path lists its immediate entries rather than erroring,
+			// mirroring Claude Code's Read tool. os.Stat follows symlinks so a
+			// symlink to a directory is listed too.
+			if info, err := os.Stat(abs); err == nil && info.IsDir() {
+				return readDir(abs, fp), nil
 			}
 			// Images and PDFs are handed to the model as native content blocks
 			// (the same affordance Claude Code's Read tool gives) rather than as
@@ -166,6 +176,47 @@ func readMedia(abs, fp string) (*gollama.ToolResult, bool) {
 		Content: fmt.Sprintf("Read image %s (%d bytes, %s); it is attached.", fp, len(data), mediaType),
 		Images:  []string{b64},
 	}, true
+}
+
+// readDir lists the immediate entries of the directory at abs. Subdirectories
+// are shown with a trailing '/' so the model can navigate. The listing is
+// prefixed with the display path (fp) for context and capped at maxDirEntries,
+// with a clear indication when more entries exist. Entries from os.ReadDir are
+// already sorted by name.
+func readDir(abs, fp string) *gollama.ToolResult {
+	entries, err := os.ReadDir(abs)
+	if err != nil {
+		return errResult("Read: %v", err)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s/\n", strings.TrimRight(fp, "/"))
+	if len(entries) == 0 {
+		b.WriteString("(directory is empty)\n")
+		return okResult(b.String())
+	}
+	shown := len(entries)
+	if shown > maxDirEntries {
+		shown = maxDirEntries
+	}
+	for _, e := range entries[:shown] {
+		name := e.Name()
+		isDir := e.IsDir()
+		if !isDir && e.Type()&os.ModeSymlink != 0 {
+			// Best-effort: resolve symlinks so links to directories are
+			// marked too. Ignore stat errors (dangling link) and list bare.
+			if info, err := os.Stat(filepath.Join(abs, name)); err == nil && info.IsDir() {
+				isDir = true
+			}
+		}
+		if isDir {
+			name += "/"
+		}
+		fmt.Fprintf(&b, "%s\n", name)
+	}
+	if len(entries) > shown {
+		fmt.Fprintf(&b, "… [%d more entries truncated]\n", len(entries)-shown)
+	}
+	return okResult(b.String())
 }
 
 func writeFile(ws *Workspace) *gollama.Tool {

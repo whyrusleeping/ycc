@@ -38,3 +38,4 @@ The key constraint is that this should remain a **quick capture**, not a plannin
 - 2026-06-30 review tier: simple (coordinator self-review)
 - 2026-06-30 decision: accept — commit: capture: verify bounded read-access grounding + tighten prompt (task 0080)  The capture agent already had read-only Read + list_backlog/get_task tools and a bounded prompt (from 8c5c72f). Add TestRunC
 …[truncated]
+- 2026-06-30 usage: 5,705 tok (in 30, out 5,675, cache_r 296,707, cache_w 26,085) · cost n/a (unpriced)

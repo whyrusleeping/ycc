@@ -1,7 +1,7 @@
 ---
 id: "0088"
 title: Make Read tool list directory contents when given a directory path
-status: todo
+status: done
 priority: 3
 created: "2026-06-30"
 updated: "2026-06-30"
@@ -28,3 +28,11 @@ Agents frequently call the `Read` tool on a directory path. Today this returns a
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-30 plan: Modify the `Read` tool in internal/tools/worker.go so that when `file_path` resolves to a directory, it returns a listing instead of an error.  1. Add a `maxDirEntries` constant (e.g. 1000) near the e
+…[truncated]
+- 2026-06-30 implementer report: Implemented directory listing for the Read tool in internal/tools/worker.go.  Changes: - Added `maxDirEntries = 1000` constant alongside the existing read limits. - In `readFile`'s Call closure, after
+…[truncated]
+- 2026-06-30 review tier: single-opus — reviewers: Claude
+- 2026-06-30 review (Claude): accept — The change cleanly implements directory listing for the Read tool. When the resolved path is a directory, it lists immediate entries via a new readDir helper, marks subdirectories (and symlinks-to-dir
+…[truncated]
+- 2026-06-30 decision: accept — commit: tools: Read lists directory contents instead of erroring (task 0088)

@@ -90,4 +90,4 @@
 | [0085](backlog/0085-tui-workstreams-panel-spawn-monitor-merge-ux.md) | TUI: Workstreams panel + spawn/monitor/merge UX | todo | 4 | 0084 |
 | [0086](backlog/0086-spec-document-workstream-concept-worktree-decision.md) | Spec: document workstream concept + worktree decision | todo | 4 | 0078 |
 | [0087](backlog/0087-add-web-search-fetch-page-agent-tools-via-exa.md) | Add web search + fetch-page agent tools (via Exa) | todo | 3 | — |
-| [0088](backlog/0088-make-read-tool-list-directory-contents-when-given.md) | Make Read tool list directory contents when given a directory path | todo | 3 | — |
+| [0088](backlog/0088-make-read-tool-list-directory-contents-when-given.md) | Make Read tool list directory contents when given a directory path | done | 3 | — |

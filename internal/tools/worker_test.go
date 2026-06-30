@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -229,5 +230,67 @@ func TestReadOversizeMediaErrors(t *testing.T) {
 	res := dispatch(t, reg, "Read", `{"file_path":"huge.png"}`)
 	if !res.IsError || len(res.Images) != 0 {
 		t.Fatalf("expected oversize error, got err=%v images=%d", res.IsError, len(res.Images))
+	}
+}
+
+// TestReadDirectoryLists confirms Read on a directory returns its immediate
+// entries (not an error) and marks subdirectories with a trailing '/'.
+func TestReadDirectoryLists(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "file.txt"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "subdir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	reg := workerReg(root)
+	res := dispatch(t, reg, "Read", `{"file_path":"."}`)
+	if res.IsError {
+		t.Fatalf("Read dir: %s", res.Content)
+	}
+	if !strings.Contains(res.Content, "subdir/") {
+		t.Fatalf("expected subdir marked with trailing slash, got %q", res.Content)
+	}
+	if !strings.Contains(res.Content, "file.txt") || strings.Contains(res.Content, "file.txt/") {
+		t.Fatalf("expected plain file entry, got %q", res.Content)
+	}
+}
+
+// TestReadEmptyDirectory confirms an empty directory yields a clear message.
+func TestReadEmptyDirectory(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "empty"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	reg := workerReg(root)
+	res := dispatch(t, reg, "Read", `{"file_path":"empty"}`)
+	if res.IsError || !strings.Contains(res.Content, "(directory is empty)") {
+		t.Fatalf("expected empty-directory message, got %q (err=%v)", res.Content, res.IsError)
+	}
+}
+
+// TestReadDirectoryTruncates confirms a directory with more than maxDirEntries
+// entries is truncated with a clear indicator.
+func TestReadDirectoryTruncates(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "big")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < maxDirEntries+5; i++ {
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("f%05d", i)), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reg := workerReg(root)
+	res := dispatch(t, reg, "Read", `{"file_path":"big"}`)
+	if res.IsError {
+		t.Fatalf("Read big dir: %s", res.Content)
+	}
+	if !strings.Contains(res.Content, "more entries truncated") {
+		t.Fatalf("expected truncation indicator, got %q", res.Content)
+	}
+	if !strings.Contains(res.Content, "[5 more entries truncated]") {
+		t.Fatalf("expected exact truncated count, got %q", res.Content)
 	}
 }
