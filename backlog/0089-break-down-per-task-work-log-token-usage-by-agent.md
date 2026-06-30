@@ -52,3 +52,4 @@ to the work-log summary.
 - 2026-06-30 review (Claude): accept — The change correctly implements a per-agent-role breakdown of the per-task work-log usage summary. It refactors token/cost rendering into a shared `formatTokensCost` helper, adds `AgentRows` (groups b
 …[truncated]
 - 2026-06-30 decision: accept — commit: usage: break down per-task work-log token usage by agent role (task 0089)
+- 2026-06-30 usage: 13,054 tok (in 52, out 13,002, cache_r 505,029, cache_w 45,744) · cost n/a (unpriced)

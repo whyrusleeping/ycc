@@ -1,7 +1,7 @@
 ---
 id: "0079"
 title: Let coordinator preload worker agent with file/snippet context hints from the plan
-status: todo
+status: done
 priority: 3
 created: "2026-06-30"
 updated: "2026-06-30"
@@ -37,3 +37,12 @@ Let the coordinator attach explicit context hints — relevant file paths, code 
 ## Acceptance criteria
 
 ## Work log
+- 2026-06-30 plan: Add optional, advisory "context hints" that the coordinator can attach so the implementer (worker) gets a concise "starting points" preload, without dictating the solution.  Implementation (internal/o
+…[truncated]
+- 2026-06-30 implementer report: Implemented optional, advisory coordinator→worker "context hints" preload (task 0079).  Changes: - internal/orchestrator/prompts.go:   - Added `maxContextHints` (16) and `maxContextHintLen` (600 run
+…[truncated]
+- 2026-06-30 review tier: single-opus — reviewers: Claude
+- 2026-06-30 review (Claude): accept — The change cleanly implements optional, advisory coordinator→worker context hints. Both propose_plan and spawn_implementer accept a concise context_hints array; boundHints enforces bounded token cos
+…[truncated]
+- 2026-06-30 decision: accept — commit: orchestrator: optional advisory context hints from coordinator to worker (task 0079)  Let propose_plan and spawn_implementer accept an optional context_hints list (relevant files, symbol refs, small s
+…[truncated]

@@ -81,7 +81,7 @@
 | [0076](backlog/0076-move-activity-spinner-to-the-bottom-next-to-the-se.md) | Move activity spinner to the bottom next to the session input box | done | 3 | — |
 | [0077](backlog/0077-surface-the-plan-library-in-the-tui-rpc.md) | Surface the plan library in the TUI / RPC | done | 4 | 0020 |
 | [0078](backlog/0078-spike-design-parallel-agent-workstreams-via-git-wo.md) | Spike: design parallel agent workstreams via git worktrees | done | 4 | — |
-| [0079](backlog/0079-let-coordinator-preload-worker-agent-with-file-sni.md) | Let coordinator preload worker agent with file/snippet context hints from the plan | todo | 3 | — |
+| [0079](backlog/0079-let-coordinator-preload-worker-agent-with-file-sni.md) | Let coordinator preload worker agent with file/snippet context hints from the plan | done | 3 | — |
 | [0080](backlog/0080-give-capture-agent-bounded-read-access-to-ground-b.md) | Give capture agent bounded read access to ground backlog items in the codebase | done | 3 | — |
 | [0081](backlog/0081-worktree-primitives-in-internal-git.md) | Worktree primitives in internal/git | todo | 4 | 0078 |
 | [0082](backlog/0082-workstream-registry-lifecycle-in-the-daemon-sessio.md) | Workstream registry + lifecycle in the daemon/session manager | todo | 4 | 0081 |
@@ -93,3 +93,4 @@
 | [0088](backlog/0088-make-read-tool-list-directory-contents-when-given.md) | Make Read tool list directory contents when given a directory path | done | 3 | — |
 | [0089](backlog/0089-break-down-per-task-work-log-token-usage-by-agent.md) | Break down per-task work-log token usage by agent role | done | 3 | 0038 |
 | [0090](backlog/0090-make-backlog-task-detail-view-scrollable-in-the-tu.md) | Make backlog task detail view scrollable in the TUI viewer | done | 3 | — |
+| [0091](backlog/0091-drop-spec-feature-bug-backlog-home-menu-presets-in.md) | Drop spec/feature/bug/backlog home-menu presets in favor of just the pm mode | todo | 3 | — |

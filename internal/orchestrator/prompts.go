@@ -2,9 +2,68 @@ package orchestrator
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/whyrusleeping/ycc/internal/docs"
 )
+
+// Bounds on the optional coordinator-supplied context hints (task 0079). They
+// keep the worker's "starting points" preload concise so it doesn't bloat the
+// subagent's context for simple tasks: cap how many hints are surfaced and how
+// long any single hint may be.
+const (
+	maxContextHints   = 16
+	maxContextHintLen = 600 // runes
+)
+
+// boundHints normalizes a coordinator-supplied hint list into the bounded form
+// surfaced to the worker and persisted in the plan artifact: it drops blank
+// entries, truncates any over-long hint, and caps the total count, appending a
+// "…(N more hints omitted)" marker when the list is trimmed. Returning a small,
+// predictable slice lets both the worker preload and the plan artifact render
+// the same content without duplicating the bounding logic.
+func boundHints(hints []string) []string {
+	var out []string
+	omitted := 0
+	for _, h := range hints {
+		h = strings.TrimSpace(h)
+		if h == "" {
+			continue
+		}
+		if len(out) >= maxContextHints {
+			omitted++
+			continue
+		}
+		if r := []rune(h); len(r) > maxContextHintLen {
+			h = string(r[:maxContextHintLen]) + "…[truncated]"
+		}
+		out = append(out, h)
+	}
+	if omitted > 0 {
+		out = append(out, fmt.Sprintf("…(%d more hints omitted)", omitted))
+	}
+	return out
+}
+
+// contextHintsBlock renders the advisory "starting points" preload appended to
+// the worker's seed prompt. It returns "" when there are no usable hints, so a
+// task without hints produces a byte-identical prompt to before (task 0079). The
+// framing is deliberately non-prescriptive: the hints are suggested investigation
+// starting points, not mandated steps, to preserve the worker's autonomy.
+func contextHintsBlock(hints []string) string {
+	bounded := boundHints(hints)
+	if len(bounded) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nStarting points (suggested by the coordinator — advisory, NOT prescriptive):\n")
+	b.WriteString("These are likely-relevant files/symbols to investigate first to save you exploration. " +
+		"Verify them and use your own judgement — they are hints, not mandated steps.\n")
+	for _, h := range bounded {
+		fmt.Fprintf(&b, "  - %s\n", h)
+	}
+	return b.String()
+}
 
 const coordinatorSystem = `You are the COORDINATOR of a docs-driven coding workflow. You orchestrate subagents and
 keep the backlog accurate. You can inspect the workspace directly — use Read to view files and
@@ -67,7 +126,11 @@ calls you can reasonably make yourself.
 Reusable plans (runbooks) are separate from the backlog: list_plans shows saved procedures
 in plans/*.md, run_plan replays one end to end (e.g. a saved testing/verification plan), and
 save_plan stores a new one. propose_plan persists your FULL plan to the task's "## Plan"
-section (a durable artifact next to the task), not just a one-line work-log note.
+section (a durable artifact next to the task), not just a one-line work-log note. propose_plan
+and spawn_implementer also accept optional context_hints: a short, advisory list of likely-relevant
+file paths, function/symbol refs, or small snippets, surfaced to the implementer as non-prescriptive
+"starting points" to cut redundant exploration. Keep them concise (no full-file dumps) and only when
+they genuinely help — they are hints, not mandated steps.
 
 The backlog is shared and live: the user may add a new task at any moment out of band (via a
 quick-capture overlay that runs separately from this session), so a task you don't recognize can
@@ -236,7 +299,7 @@ genuinely blocked or a decision is hard to reverse.`
 	}
 }
 
-func implementerPrompt(t *docs.Task, plan string) string {
+func implementerPrompt(t *docs.Task, plan string, hints []string) string {
 	return fmt.Sprintf(`Implement this task.
 
 Task %s: %s
@@ -245,8 +308,8 @@ Task %s: %s
 
 Coordinator's plan:
 %s
-
-Begin now. Call finish when the task is complete.`, t.ID, t.Title, t.Body, plan)
+%s
+Begin now. Call finish when the task is complete.`, t.ID, t.Title, t.Body, plan, contextHintsBlock(hints))
 }
 
 func revisePrompt(instructions string) string {

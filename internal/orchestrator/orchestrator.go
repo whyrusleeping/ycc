@@ -275,23 +275,39 @@ func getTask(d *Deps) *gollama.Tool {
 
 func proposePlan(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
-		Name:        "propose_plan",
-		Description: "Record your implementation plan for a task before delegating. Call once after choosing a task.",
+		Name: "propose_plan",
+		Description: "Record your implementation plan for a task before delegating. Call once after choosing a task. " +
+			"Optionally attach concise, advisory context_hints (relevant file paths, function/symbol refs, or small " +
+			"snippets) recorded alongside the plan as non-prescriptive starting points for the implementer.",
 		Params: tools.Obj(map[string]any{
-			"task_id": tools.StrProp("task id"),
-			"plan":    tools.StrProp("the implementation plan"),
+			"task_id":       tools.StrProp("task id"),
+			"plan":          tools.StrProp("the implementation plan"),
+			"context_hints": tools.StrArrProp("optional, concise advisory starting points — relevant file paths, function/symbol refs, or small snippets — recorded alongside the plan as non-prescriptive hints to cut the implementer's redundant exploration; keep them short, no full-file dumps"),
 		}, "task_id", "plan"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			id, _ := tools.GetString(params, "task_id")
 			plan, _ := tools.GetString(params, "plan")
+			hints := boundHints(tools.GetStringSlice(params, "context_hints"))
 			d.Emitter.Emit(event.PlanProposed, map[string]any{"task": id, "plan": plan})
 			// Persist the FULL plan to the task's "## Plan" section (durable,
 			// human-browsable), and keep a dated one-line work-log breadcrumb (task 0020).
-			if _, err := d.Docs.SetPlan(id, plan); err != nil {
+			// When the coordinator supplied context hints, append them as a "### Starting
+			// points" subsection so the durable plan artifact records them too (task 0079).
+			planDoc := plan
+			if len(hints) > 0 {
+				planDoc += "\n\n### Starting points\n"
+				for _, h := range hints {
+					planDoc += "- " + h + "\n"
+				}
+			}
+			if _, err := d.Docs.SetPlan(id, planDoc); err != nil {
 				return tools.ErrResult("propose_plan: %v", err), nil
 			}
 			if _, err := d.Docs.AppendWorkLog(id, "plan: "+oneLine(plan)); err != nil {
 				return tools.ErrResult("propose_plan: %v", err), nil
+			}
+			if len(hints) > 0 {
+				d.Docs.AppendWorkLog(id, fmt.Sprintf("context hints: %d recorded with plan", len(hints)))
 			}
 			return tools.OkResult("plan recorded"), nil
 		},
@@ -390,21 +406,29 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "spawn_implementer",
 		Description: "Delegate implementation of a task to a coding subagent. It edits the workspace and returns a " +
-			"report plus the staged diff. Provide the task id and your plan. Call once per task; use " +
-			"send_to_implementer for follow-up revisions.",
+			"report plus the staged diff. Provide the task id and your plan. Optionally attach concise, advisory " +
+			"context_hints (relevant file paths, function/symbol refs, or small snippets) surfaced to the worker as " +
+			"non-prescriptive 'starting points'. Call once per task; use send_to_implementer for follow-up revisions.",
 		Params: tools.Obj(map[string]any{
-			"task_id": tools.StrProp("task id"),
-			"plan":    tools.StrProp("the plan the implementer should follow"),
+			"task_id":       tools.StrProp("task id"),
+			"plan":          tools.StrProp("the plan the implementer should follow"),
+			"context_hints": tools.StrArrProp("optional, concise advisory starting points — relevant file paths, function/symbol refs, or small snippets — surfaced to the worker as non-prescriptive hints to cut redundant exploration; keep them short, no full-file dumps"),
 		}, "task_id", "plan"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			id, _ := tools.GetString(params, "task_id")
 			plan, _ := tools.GetString(params, "plan")
+			hints := boundHints(tools.GetStringSlice(params, "context_hints"))
 			t, err := d.Docs.Get(id)
 			if err != nil {
 				return tools.ErrResult("spawn_implementer: %v", err), nil
 			}
 			// Delegating a task is an unambiguous focus signal (spec §20.2).
 			d.emitFocus(id)
+			// Record a best-effort work-log breadcrumb noting the advisory hints
+			// surfaced to the worker (task 0079); don't fail the spawn on a write error.
+			if len(hints) > 0 {
+				d.Docs.AppendWorkLog(id, "context hints: "+oneLine(strings.Join(hints, "; ")))
+			}
 			reg := tools.New()
 			reg.Add(tools.Worker(&tools.Workspace{Root: d.Workspace, ReadRoots: tools.ReadRoots(d.ReadRoots)})...)
 			impl := d.implementer()
@@ -417,7 +441,7 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 			if loop.MaxTok < implementerMinTok {
 				loop.MaxTok = implementerMinTok
 			}
-			loop.Seed(implementerPrompt(t, plan))
+			loop.Seed(implementerPrompt(t, plan, hints))
 			d.mu.Lock()
 			d.impl = loop
 			d.mu.Unlock()
