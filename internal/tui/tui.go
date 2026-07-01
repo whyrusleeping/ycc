@@ -1629,9 +1629,10 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.fetchBacklog
 		case "w":
 			// Jump to the blocked tasks the agent is waiting on (task 0101). Only
-			// intercept when something is actually blocked so 'w' still types into
-			// the prompt otherwise.
-			if m.blockedTaskCount() > 0 {
+			// intercept when something is actually blocked AND the prompt is empty —
+			// a bare letter must never hijack typing into the focused prompt (e.g.
+			// "write a test…"); mid-composition it types normally.
+			if m.blockedTaskCount() > 0 && strings.TrimSpace(m.prompt.Value()) == "" {
 				m.backlog, m.backlogCursor, m.backlogDetail = true, 0, nil
 				m.backlogShowDone = false
 				m.backlogBlockedOnly = true
@@ -1679,10 +1680,17 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.looping, m.loopStarted, m.loopPrevFP = true, false, ""
 				return m, m.loopNext()
 			}
-			// A typed prompt always wins; otherwise a preset seeds its opening prompt.
-			prompt := m.prompt.Value()
-			if strings.TrimSpace(prompt) == "" {
+			// Compose the preset's opening prompt with any typed text: choosing a
+			// preset AND typing details means both — the preset supplies the
+			// framing and the typed text is the user's upfront context. A typed
+			// prompt on a plain mode entry is sent as-is; an empty prompt falls
+			// back to the preset's opening prompt alone.
+			prompt := strings.TrimSpace(m.prompt.Value())
+			switch {
+			case prompt == "":
 				prompt = e.openingPrompt
+			case e.openingPrompt != "":
+				prompt = e.openingPrompt + "\n\nContext from the user (supplied upfront with this request):\n" + prompt
 			}
 			return m, m.startSession(e.mode, prompt, "")
 		}
@@ -2663,6 +2671,7 @@ const (
 	ovTheme
 	ovFollow
 	ovAutoExpand
+	ovInterrupt
 	ovBackHome
 	ovQuit
 	ovCount
@@ -2800,6 +2809,23 @@ func (m model) overlayActivate() (tea.Model, tea.Cmd) {
 		m.mbCursor = 0
 		m.mbErr = ""
 		return m, m.fetchModels
+	case ovInterrupt:
+		// Interrupt the running agent (or resume a paused one) — the overlay
+		// route promised by spec §18.7, and the reliable path on terminals where
+		// ctrl+i can't be distinguished from tab. Close the overlay so the user
+		// sees the paused/running state and can steer immediately.
+		if m.sessionID == "" || m.state != stateSession {
+			return m, nil
+		}
+		if m.paused {
+			m.overlay = false
+			return m, m.resume()
+		}
+		if m.status == "running" {
+			m.overlay = false
+			return m, m.interrupt()
+		}
+		return m, nil
 	case ovBackHome:
 		// Explicit, intentional exit from the session (spec §18.2).
 		m.overlay = false
@@ -2898,6 +2924,18 @@ func cycleModel(models []*v1.ModelInfo, cur string, d int) string {
 
 func (m model) overlayView() string {
 	var b strings.Builder
+	// The interrupt row doubles as resume while paused (spec §18.7). It also
+	// serves as the fallback route to interrupt on terminals where ctrl+i is
+	// indistinguishable from tab (no kitty keyboard protocol).
+	interruptLabel, interruptVal := "interrupt agent", "pause at next safe checkpoint"
+	switch {
+	case m.sessionID == "" || m.state != stateSession:
+		interruptVal = "(no active session)"
+	case m.paused:
+		interruptLabel, interruptVal = "resume agent", "continue from the pause"
+	case m.status != "running":
+		interruptVal = "(agent is " + m.status + ")"
+	}
 	rows := []struct{ label, val string }{
 		{"interaction level", m.level},
 		{"coordinator model", m.roleCoord + " (" + m.thinkLevels["coordinator"] + ")"},
@@ -2907,6 +2945,7 @@ func (m model) overlayView() string {
 		{"theme", m.prefs.Theme},
 		{"follow / auto-scroll", boolStr(m.prefs.Follow)},
 		{"auto-expand agent logs", boolStr(m.prefs.AutoExpandLogs)},
+		{interruptLabel, interruptVal},
 		{"back to home menu", ""},
 		{"quit", ""},
 	}

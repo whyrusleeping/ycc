@@ -105,3 +105,17 @@
 | [0100](backlog/0100-spec-doctor-detect-spec-code-drift-coverage-gaps-d.md) | Spec-doctor: detect spec/code drift + coverage gaps (design with user first) | todo | 3 | — |
 | [0101](backlog/0101-home-menu-notify-when-tasks-are-blocked-and-waitin.md) | Home menu: notify when tasks are blocked and waiting on the user | done | 2 | — |
 | [0102](backlog/0102-tui-ctrl-left-right-for-word-wise-cursor-movement.md) | TUI: Ctrl+Left/Right for word-wise cursor movement in prompt input | todo | 3 | — |
+| [0103](backlog/0103-deliver-mid-run-user-input-at-the-next-safe-checkp.md) | Deliver mid-run user input at the next safe checkpoint (steer-by-default) | todo | 2 | — |
+| [0104](backlog/0104-tui-transient-rpc-errors-must-not-replace-the-ui-w.md) | TUI: transient RPC errors must not replace the UI with a fatal error screen | todo | 2 | — |
+| [0105](backlog/0105-interrupt-keybinding-that-works-without-kitty-keyb.md) | Interrupt keybinding that works without kitty keyboard protocol (ctrl+i == tab) | todo | 3 | — |
+| [0106](backlog/0106-question-picker-number-key-selection-don-t-lock-ou.md) | Question picker: number-key selection + don't lock out scrolling/browsers | todo | 3 | — |
+| [0107](backlog/0107-home-menu-surface-live-sessions-that-are-waiting-f.md) | Home menu: surface live sessions that are waiting for the user | todo | 3 | — |
+| [0108](backlog/0108-terminal-notification-bell-osc-when-the-agent-need.md) | Terminal notification (bell/OSC) when the agent needs the user or finishes | todo | 3 | — |
+| [0109](backlog/0109-guard-ctrl-c-don-t-instantly-kill-a-running-sessio.md) | Guard ctrl+c: don't instantly kill a running session on a one-shot daemon | todo | 3 | — |
+| [0110](backlog/0110-settings-overlay-replace-rotating-reviewer-toggle.md) | Settings overlay: replace rotating reviewer toggle with an explicit multi-select | todo | 4 | — |
+| [0111](backlog/0111-tui-help-modal-listing-keybindings-per-state.md) | TUI help modal (?) listing keybindings per state | todo | 4 | — |
+| [0112](backlog/0112-key-parity-browse-selector-session-browser-reachab.md) | Key parity: browse selector + session browser reachable from within a session | todo | 4 | — |
+| [0113](backlog/0113-home-menu-choose-the-interaction-level-at-session.md) | Home menu: choose the interaction level at session start | todo | 4 | — |
+| [0114](backlog/0114-stream-model-output-incrementally-into-the-session.md) | Stream model output incrementally into the session view | todo | 3 | — |
+| [0115](backlog/0115-structured-blocked-escalation-from-the-implementer.md) | Structured "blocked" escalation from the implementer to the coordinator | todo | 4 | — |
+| [0116](backlog/0116-transcript-search-and-jump-to-event-navigation.md) | Transcript search (/) and jump-to-event navigation | todo | 4 | — |

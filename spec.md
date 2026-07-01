@@ -379,7 +379,9 @@ Each mode = a coordinator system prompt + a tool subset + a state machine. There
   they were one capability set under four prompt framings. The home menu keeps those
   framings as **opening-prompt presets** that drop into `pm` ("New feature" → explore then
   propose; "Bug report" → reproduce then localize; "Author spec"; "Build backlog"), so the
-  affordances survive without four modes.
+  affordances survive without four modes. A prompt typed alongside a selected preset
+  **composes** with it — the preset supplies the framing and the typed text is appended as
+  the user's upfront context — rather than replacing it.
 - **`chat`** — open-ended assistant that *can* edit code directly, with no fixed workflow.
   Kept as the freeform "just do it" counterpart to `pm`'s "just plan it."
 - **`work`** — the orchestrated implementation pipeline (§10): pick/accept a task, plan,
@@ -848,6 +850,10 @@ Overlay contents:
 - **UI preferences** — theme/style, follow/auto-scroll toggle, and similar client-only
   prefs. These never touch the daemon; they live in client state (and a small local
   client config).
+- **Interrupt agent** — gracefully pause the running agent at its next safe checkpoint
+  (§18.7); while paused the same row reads **Resume agent**. This is the overlay route to
+  interrupt, and the reliable fallback on terminals where `ctrl+i` cannot be
+  distinguished from tab (no kitty keyboard protocol).
 - **Back to home menu** — leaves the session view (replaces the old "esc = back to
   menu" reflex).
 - **Quit** — exit the client.

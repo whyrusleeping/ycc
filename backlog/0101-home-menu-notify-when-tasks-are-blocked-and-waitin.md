@@ -62,3 +62,7 @@ Tests (internal/tui/tui_test.go): add a test that sets m.backlogTasks with/witho
 - 2026-07-01 review (Claude): accept — The staged changes implement task 0101 correctly and completely. menuView() renders a single glanceable warn-styled "⚠ N task(s) blocked — waiting on you · press w to view" banner (and a "w view 
 …[truncated]
 - 2026-07-01 decision: accept — commit: tui: home-menu blocked-task indicator + blocked-filtered backlog view (0101)
+- 2026-07-01 usage: 26,479 tok (in 158, out 26,321, cache_r 2,127,334, cache_w 83,168) · cost n/a (unpriced)
+  implementer: 13,148 tok (in 96, out 13,052, cache_r 1,191,889, cache_w 37,138) · cost n/a (unpriced)
+  coordinator: 9,230 tok (in 30, out 9,200, cache_r 686,528, cache_w 23,908) · cost n/a (unpriced)
+  reviewer:Claude: 4,101 tok (in 32, out 4,069, cache_r 248,917, cache_w 22,122) · cost n/a (unpriced)

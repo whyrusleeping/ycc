@@ -102,6 +102,15 @@ func TestFetchPage(t *testing.T) {
 
 func TestWebMissingKey(t *testing.T) {
 	t.Setenv("EXA_API_KEY", "")
+	// exaKey also falls back to the machine-local secrets store (secrets.Lookup
+	// reads the user config dir). Point the config dir at an empty temp dir so
+	// the test doesn't depend on whether the developer's machine has a stored
+	// EXA_API_KEY. os.UserConfigDir derives from XDG_CONFIG_HOME (Linux), HOME
+	// (darwin), and AppData (Windows) — override all three.
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+	t.Setenv("HOME", tmp)
+	t.Setenv("AppData", tmp)
 
 	hit := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
