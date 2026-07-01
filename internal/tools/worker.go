@@ -355,8 +355,10 @@ func bash(ws *Workspace) *gollama.Tool {
 // Finish is a control tool: it ends the agent loop and returns the final report.
 func Finish() *gollama.Tool {
 	return &gollama.Tool{
-		Name:        "finish",
-		Description: "Call when the task is complete. Provide a concise report of what was done. This ends the session.",
+		Name: "finish",
+		Description: "Call when your assigned work is complete. Provide a concise report of what was done " +
+			"and how it was verified. This ends your run and returns the report to whoever is waiting on " +
+			"you (the user, or the coordinator that spawned you).",
 		Params:      obj(map[string]any{"report": strProp("summary of the work performed and its outcome")}, "report"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			report, _ := getString(params, "report")

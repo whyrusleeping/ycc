@@ -83,24 +83,54 @@ func BuildMode(mode string, d *Deps, level string) (*tools.Registry, string) {
 		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d), proposePlan(d), listPlans(d), runPlan(d), savePlan(d), switchToWork(d), askUser(d), tools.Finish())
 		return reg, sys(pmModeSystem, level, d.Workspace)
 	default: // work
-		return CoordinatorTools(d, ws), CoordinatorSystem(level) + "\n\n" + workspaceNote(d.Workspace)
+		return CoordinatorTools(d, ws), sys(coordinatorSystem, level, d.Workspace)
 	}
 }
 
-const toolingHint = "Use the Read tool to view files, Edit/Write to change them, and Bash with " +
-	"ripgrep (`rg 'pattern'`) to search. Every Bash command runs in a fresh shell already rooted at " +
-	"the workspace and the working directory does not carry between calls, so run commands directly " +
-	"instead of prefixing a redundant `cd` into the workspace root — write `rg 'pattern'`, not " +
-	"`cd <workspace> && rg 'pattern'`. (Chaining real steps with `&&`, e.g. `go build ./... && go test ./...`, " +
-	"is fine; only the leading `cd` into the root is redundant.)"
+// The shared tooling guidance, split so read-only roles (reviewers) get the
+// read/search rules without the editing sentence they have no tools for.
+const (
+	inspectHint = "Use the Read tool to view files (prefer it over `cat`/`sed`), and search with Bash + " +
+		"ripgrep (`rg 'pattern'`, `rg --files -g '*.go'`) rather than grep. Every Bash command runs in a " +
+		"fresh shell already rooted at the workspace and the working directory does not carry between " +
+		"calls, so run commands directly instead of prefixing a redundant `cd` into the workspace root — " +
+		"write `rg 'pattern'`, not `cd <workspace> && rg 'pattern'`. (Chaining real steps with `&&`, e.g. " +
+		"`go build ./... && go test ./...`, is fine; only the leading `cd` into the root is redundant.)"
+	editHint = "Change files with the Edit tool (exact string replacement) or Write (create/overwrite " +
+		"whole file) rather than via shell redirection."
+)
 
 func workspaceNote(root string) string {
 	return "Workspace root: " + root + " — Read/Write/Edit accept absolute paths within it (or paths " +
 		"relative to it), and every Bash command also starts in this directory, so commands need no `cd` here."
 }
 
+// sys assembles the full system prompt every agent uses: the role's base prompt,
+// the shared tooling guidance, the workspace note, and — when level is non-empty —
+// the interaction-level policy. One assembly path keeps the shared rules
+// byte-identical across roles instead of hand-copied paraphrases that drift.
+// Subagents (implementer/reviewers) pass level="" because they have no ask_user
+// gate; the interaction level is the coordinator's concern.
 func sys(base, level, root string) string {
-	return base + "\n\n" + toolingHint + "\n" + workspaceNote(root) + "\n\n" + levelGuidance(level)
+	return assemble(base, level, root, true)
+}
+
+// inspectSys assembles the system prompt for read-only roles (reviewers): the
+// same shared guidance minus the editing sentence.
+func inspectSys(base, root string) string {
+	return assemble(base, "", root, false)
+}
+
+func assemble(base, level, root string, editing bool) string {
+	hint := inspectHint
+	if editing {
+		hint += " " + editHint
+	}
+	s := base + "\n\n" + hint + "\n" + workspaceNote(root)
+	if level != "" {
+		s += "\n\n" + levelGuidance(level)
+	}
+	return s
 }
 
 func createTask(d *Deps) *gollama.Tool {

@@ -59,23 +59,30 @@ func (in *interaction) Level() string {
 	return in.level
 }
 
+// autonomousAutoAnswer is the canned reply every ask_user call receives in
+// autonomous mode (spec §11): no human is available, so the agent is told to
+// proceed on its own judgement — or, when a wrong guess would be hard to
+// reverse, to mark the affected backlog task "blocked" instead of guessing.
+// One constant serves both the single-question and batch paths so the two
+// can't drift apart.
+const autonomousAutoAnswer = "You are in autonomous mode and no human is available, so this question " +
+	"cannot be answered. If you can responsibly proceed, do so on your best judgement and note the " +
+	"assumption in your final report. If you genuinely cannot — the answer is needed and a wrong guess " +
+	"is hard to reverse — do not guess: mark the affected backlog task \"blocked\" (update_task) with a " +
+	"brief note of this question, then move on to other work or finish."
+
 // Ask implements orchestrator.Asker.
 func (in *interaction) Ask(ctx context.Context, question string, options []string) (string, error) {
 	in.mu.Lock()
 	level := in.level
 	in.mu.Unlock()
 	if level == "autonomous" {
-		const ans = "You are in autonomous mode and no human is available, so this question " +
-			"cannot be answered. If you can responsibly proceed, do so on your best judgement. If " +
-			"you genuinely cannot — the answer is needed and a wrong guess is hard to reverse — do " +
-			"not guess: set the current task \"blocked\" (update_task) with a brief note of this " +
-			"question, then move on to another ready task or finish."
 		in.emitter.Emit(event.QuestionAsked, askData(question, options, true))
 		in.mu.Lock()
 		in.assumptions = append(in.assumptions, question)
 		in.mu.Unlock()
-		in.emitter.Emit(event.QuestionAnswered, map[string]any{"answer": ans, "auto": true})
-		return ans, nil
+		in.emitter.Emit(event.QuestionAnswered, map[string]any{"answer": autonomousAutoAnswer, "auto": true})
+		return autonomousAutoAnswer, nil
 	}
 
 	ch := make(chan string, 1)
@@ -111,17 +118,12 @@ func (in *interaction) AskMany(ctx context.Context, questions []orchestrator.Que
 	in.mu.Unlock()
 
 	if level == "autonomous" {
-		const ans = "You are in autonomous mode and no human is available, so this question " +
-			"cannot be answered. If you can responsibly proceed, do so on your best judgement. If " +
-			"you genuinely cannot — the answer is needed and a wrong guess is hard to reverse — do " +
-			"not guess: set the current task \"blocked\" (update_task) with a brief note of this " +
-			"question, then move on to another ready task or finish."
 		in.emitter.Emit(event.QuestionAsked, askManyData(questions, true))
 		answers := make([]string, len(questions))
 		in.mu.Lock()
 		for i, q := range questions {
 			in.assumptions = append(in.assumptions, q.Prompt)
-			answers[i] = ans
+			answers[i] = autonomousAutoAnswer
 		}
 		in.mu.Unlock()
 		in.emitter.Emit(event.QuestionAnswered, map[string]any{"answers": answers, "auto": true})

@@ -325,8 +325,10 @@ turn returns a reasoning summary, the loop emits a dedicated `thinking` event (b
 ## 8. Tools
 
 **Worker tools** (implementer; read/write the workspace):
-`read_file`, `write_file`, `edit_file`, `list_dir`, `grep`, `glob`, `bash`,
-`finish_implementation(report)`.
+`Read`, `Write`, `Edit`, `Bash`, `web_search`/`fetch_page` (Exa-backed; no-op without a
+key), and `finish(report)` — the control tool that ends the run and returns the report to
+the coordinator. There are no separate `list_dir`/`grep`/`glob` tools: `Read` on a
+directory lists it, and searching goes through `Bash` + ripgrep.
 
 **Multimodal `Read`.** The `Read` tool is multimodal, mirroring Claude Code: there is **no
 separate "view image" tool**. When `Read` is given an image (PNG, JPEG, GIF, WebP) or a PDF
@@ -339,12 +341,23 @@ OpenAI-compatible backends (which don't allow media in a tool-role message) it i
 images as a follow-up user message, and PDFs degrade to a text note. A size cap keeps oversize
 files from being inlined (the model is told to use `Bash` for those instead).
 
-**Coordinator tools** (orchestrate; never edit code directly):
-`list_backlog`, `get_task`, `create_task`, `update_task`, `update_spec`,
-`spawn_implementer(task, plan)`, `spawn_reviewer(model, task, diff)`,
-`send_to_implementer(instructions)` (revise; reuses implementer ctx),
-`re_review()` (reuses reviewer ctx), `commit(message)`, `ask_user(question, options?)`,
-`propose_plan(plan)`, `finish()`.
+**Coordinator tools** (orchestrate; delegate real coding to the implementer):
+the editing set (`Read`/`Write`/`Edit`/`Bash` — for verifying state and reviewing diffs
+first-hand; the prompt confines its own edits to tiny touch-ups),
+`list_backlog`, `get_task`, `create_task`, `update_task`,
+`propose_plan(task_id, plan, context_hints?)`, `list_plans`/`run_plan`/`save_plan` (§6.3),
+`spawn_implementer(task_id, plan, context_hints?)`,
+`spawn_reviewers(task_id, review_tier?)` (§13.1),
+`send_to_implementer(task_id, instructions)` (revise; reuses implementer ctx),
+`re_review(task_id)` (reuses reviewer ctx), `commit(task_id, message)`,
+`ask_user(question, options?)`, `finish()`. There is no `update_spec` tool: `spec.md` is a
+plain file edited with `Edit`/`Write` (a write to it is surfaced as a `doc_updated` event).
+
+**Shared prompt assembly.** Every agent's system prompt is assembled through one path
+(`sys`/`inspectSys` in `internal/orchestrator`): the role's base prompt + the shared tooling
+guidance (Read-over-cat, ripgrep, fresh-shell/no-`cd` rules; read-only roles get it without
+the editing sentence) + a workspace note + (coordinator/pm/chat only) the interaction-level
+policy. Subagents don't receive interaction-level guidance — they have no `ask_user`.
 
 `ask_user(question, options?)` is the structured-question control tool. The optional
 `options` parameter is a list of suggested answers; when present, the client renders a

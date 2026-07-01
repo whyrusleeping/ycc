@@ -161,10 +161,8 @@ func (d *Deps) reviewerSpecs() []AgentSpec {
 	return append([]AgentSpec(nil), d.Reviewers...)
 }
 
-// CoordinatorSystem returns the coordinator's system prompt for an interaction level.
-func CoordinatorSystem(level string) string {
-	return coordinatorSystem + "\n\n" + levelGuidance(level)
-}
+// (The coordinator's system prompt is assembled by BuildMode via sys() in
+// modes.go, the single assembly path shared by every agent role.)
 
 // CoordinatorTools returns the coordinator's tool registry. The coordinator gets
 // the Editing set (Read/Write/Edit/Bash) so it can inspect the workspace and review
@@ -432,7 +430,7 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 			reg := tools.New()
 			reg.Add(tools.Worker(&tools.Workspace{Root: d.Workspace, ReadRoots: tools.ReadRoots(d.ReadRoots)})...)
 			impl := d.implementer()
-			loop := d.newLoop(impl, implementerSystem+"\n\n"+workspaceNote(d.Workspace), reg, "implementer")
+			loop := d.newLoop(impl, sys(implementerSystem, "", d.Workspace), reg, "implementer")
 			// The implementer needs more output headroom than the shared cap: a
 			// single turn may interleave an extended-thinking block with a large
 			// multi-file edit, and the thinking counts against the same budget. Too
@@ -557,7 +555,7 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 			for _, spec := range specs {
 				reg := tools.New()
 				reg.Add(tools.Reviewer(&tools.Workspace{Root: d.Workspace, ReadRoots: tools.ReadRoots(d.ReadRoots)})...)
-				loop := d.newLoop(spec, reviewerSystem+"\n\n"+workspaceNote(d.Workspace), reg, "reviewer:"+spec.Name)
+				loop := d.newLoop(spec, inspectSys(reviewerSystem, d.Workspace), reg, "reviewer:"+spec.Name)
 				loop.Seed(reviewerPrompt(t))
 				d.reviewers = append(d.reviewers, &reviewerHandle{name: spec.Name, loop: loop})
 			}
