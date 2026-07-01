@@ -504,6 +504,43 @@ func (r *Registry) ReviewerNames() []string {
 	return append([]string(nil), r.cfg.Roles.Reviewers...)
 }
 
+// SetRoles updates the default per-role model assignments (roles.coordinator /
+// implementer / reviewers) and writes the change back to ycc.toml so a role
+// selection made in the settings overlay survives a restart (spec §18.2). Empty
+// coordinator/implementer or an empty reviewers slice leaves that role unchanged.
+// Every named model must exist. On a persist failure the change is reverted so
+// the live config and the file never diverge.
+func (r *Registry) SetRoles(coordinator, implementer string, reviewers []string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	prev := r.cfg.Roles
+	if coordinator != "" {
+		if _, ok := r.cfg.Models[coordinator]; !ok {
+			return fmt.Errorf("unknown model %q", coordinator)
+		}
+		r.cfg.Roles.Coordinator = coordinator
+	}
+	if implementer != "" {
+		if _, ok := r.cfg.Models[implementer]; !ok {
+			return fmt.Errorf("unknown model %q", implementer)
+		}
+		r.cfg.Roles.Implementer = implementer
+	}
+	if len(reviewers) > 0 {
+		for _, name := range reviewers {
+			if _, ok := r.cfg.Models[name]; !ok {
+				return fmt.Errorf("unknown model %q", name)
+			}
+		}
+		r.cfg.Roles.Reviewers = append([]string(nil), reviewers...)
+	}
+	if err := r.persistLocked(); err != nil {
+		r.cfg.Roles = prev
+		return err
+	}
+	return nil
+}
+
 // ReviewTier resolves a requested tier name (possibly empty) into the effective
 // tier (spec §13). An empty request selects the configured default (not a
 // fallback). An unknown non-empty request degrades gracefully to the default
@@ -556,7 +593,56 @@ func (r *Registry) RoleThinking(role string) (string, bool) {
 	return lvl, true
 }
 
-// ModelInfo describes a configured logical model for enumeration (ListModels).
+// SetRoleThinking sets the default per-role reasoning level (roles.thinking.* in
+// ycc.toml) and persists it so a thinking-level change survives a restart (spec
+// §7.4, §18.2). An empty role updates all three roles; a specific role updates
+// just that one. The level must be a valid single-knob level (off|low|medium|
+// high|xhigh|max). On a persist failure the change is reverted.
+func (r *Registry) SetRoleThinking(role, level string) error {
+	if !validThinkingLevel(level) {
+		return fmt.Errorf("unknown thinking level %q", level)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	prev := r.cfg.Roles.Thinking
+	switch role {
+	case "":
+		r.cfg.Roles.Thinking.Coordinator = level
+		r.cfg.Roles.Thinking.Implementer = level
+		r.cfg.Roles.Thinking.Reviewers = level
+	case RoleCoordinator:
+		r.cfg.Roles.Thinking.Coordinator = level
+	case RoleImplementer:
+		r.cfg.Roles.Thinking.Implementer = level
+	case RoleReviewers:
+		r.cfg.Roles.Thinking.Reviewers = level
+	default:
+		return fmt.Errorf("unknown thinking role %q", role)
+	}
+	if err := r.persistLocked(); err != nil {
+		r.cfg.Roles.Thinking = prev
+		return err
+	}
+	return nil
+}
+
+// RoleThinkingLevels returns the effective default thinking level for each role,
+// resolving unset per-role overrides to the package default (high) so the
+// settings overlay can seed its pickers with the real current values.
+func (r *Registry) RoleThinkingLevels() (coordinator, implementer, reviewers string) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	pick := func(lvl string) string {
+		if lvl == "" {
+			return defaultEffort
+		}
+		return lvl
+	}
+	t := r.cfg.Roles.Thinking
+	return pick(t.Coordinator), pick(t.Implementer), pick(t.Reviewers)
+}
+
+
 type ModelInfo struct {
 	Name    string
 	Backend string

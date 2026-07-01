@@ -182,7 +182,20 @@ message ModelInfo {
   optional double price_cache_write = 7;
   bool priced = 8;
 }
-message ListModelsResponse { repeated ModelInfo models = 1; }
+message ListModelsResponse {
+  repeated ModelInfo models = 1;
+  // Current default per-role assignment (config.Roles) so the settings overlay can
+  // seed its per-role pickers with the ACTUAL current selection — even when opened
+  // from the home menu with no live session (spec §18.2).
+  string coordinator = 2;
+  string implementer = 3;
+  repeated string reviewers = 4;
+  // Current default per-role thinking level (roles.thinking.*, resolved to the
+  // package default when unset) so the overlay seeds its thinking pickers too.
+  string coordinator_thinking = 5;
+  string implementer_thinking = 6;
+  string reviewers_thinking = 7;
+}
 
 // ModelConfig mirrors a [models.X] block (spec §13, §18.2) for the settings
 // overlay's add/edit/remove of model backends. Keys are referenced via key_env
@@ -248,9 +261,12 @@ message SetInteractionLevelRequest {
 }
 message SetInteractionLevelResponse {}
 
-// SetRoleConfig reassigns per-role logical models mid-session (spec §13, §18.2).
-// Empty coordinator/implementer leaves that role unchanged; an empty reviewers
-// list leaves reviewers unchanged.
+// SetRoleConfig reassigns per-role logical models (spec §13, §18.2). Empty
+// coordinator/implementer leaves that role unchanged; an empty reviewers list
+// leaves reviewers unchanged. The assignment is persisted as the default (roles
+// in ycc.toml) so it survives a restart. When session_id names a live session the
+// change also applies to it immediately; an empty/unknown session_id just updates
+// the persisted default (e.g. changed from the home menu with no session).
 message SetRoleConfigRequest {
   string session_id = 1;
   string coordinator = 2;
@@ -259,10 +275,12 @@ message SetRoleConfigRequest {
 }
 message SetRoleConfigResponse {}
 
-// SetThinking changes a thinking/effort level mid-session (spec §7.4, §18.2). The
-// override applies per role (empty role = all roles) and takes precedence over the
-// per-role config then per-model config until changed. Levels: off | low | medium
-// | high | xhigh | max.
+// SetThinking changes a thinking/effort level (spec §7.4, §18.2). The override
+// applies per role (empty role = all roles) and is persisted as the default
+// (roles.thinking.* in ycc.toml) so it survives a restart. When session_id names
+// a live session the change also applies to it immediately; an empty/unknown
+// session_id just updates the persisted default (e.g. changed from the home menu).
+// Levels: off | low | medium | high | xhigh | max.
 message SetThinkingRequest {
   string session_id = 1;
   string level = 2; // off | low | medium | high | xhigh | max

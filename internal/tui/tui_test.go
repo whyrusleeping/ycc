@@ -946,6 +946,8 @@ type fakeClient struct {
 
 	lastStartLevel string // InteractionLevel of the most recent StartSession
 
+	lastRoleReq *v1.SetRoleConfigRequest // most recent SetRoleConfig call
+
 	// previous-sessions screen (spec §18.6)
 	history      []*v1.SessionSummary
 	lastReopened string
@@ -978,6 +980,13 @@ func (f *fakeClient) ListModels(_ context.Context, _ *connect.Request[v1.ListMod
 		out = append(out, &v1.ModelInfo{Name: c.Name, Backend: c.Backend, Model: c.Model})
 	}
 	return connect.NewResponse(&v1.ListModelsResponse{Models: out}), nil
+}
+
+// SetRoleConfig records the most recent role-config request so tests can assert
+// that cycling a role picker issues it immediately.
+func (f *fakeClient) SetRoleConfig(_ context.Context, req *connect.Request[v1.SetRoleConfigRequest]) (*connect.Response[v1.SetRoleConfigResponse], error) {
+	f.lastRoleReq = req.Msg
+	return connect.NewResponse(&v1.SetRoleConfigResponse{}), nil
 }
 
 // StopSession records the stopped session id; the loop-idle test exercises it
@@ -1172,6 +1181,36 @@ func newBackendsModel(f *fakeClient) model {
 	m.mbOpen = true
 	m.mbView = 0
 	return m
+}
+
+// TestOverlayCoordinatorAppliesImmediately covers the fix for the "role change
+// didn't stick" bug: cycling the coordinator with →  in the settings overlay must
+// issue SetRoleConfig right away (no separate "apply" step), so the daemon
+// persists it. It works even with no active session (empty session_id).
+func TestOverlayCoordinatorAppliesImmediately(t *testing.T) {
+	f := newFakeClient(
+		&v1.ModelConfig{Name: "claude", Backend: "anthropic", Model: "claude-x"},
+		&v1.ModelConfig{Name: "fable", Backend: "anthropic", Model: "claude-fable-5"},
+	)
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	m = runCmds(t, m, m.fetchModels) // populate the model list + seed roles
+	m.openOverlay()
+	// Move the cursor to the coordinator row and cycle it.
+	m = drive(t, m, "down") // interaction level -> coordinator
+	if m.ovCursor != ovCoord {
+		t.Fatalf("cursor = %d, want ovCoord(%d)", m.ovCursor, ovCoord)
+	}
+	before := m.roleCoord
+	m = drive(t, m, "right")
+	if m.roleCoord == before {
+		t.Fatalf("coordinator did not change from %q", before)
+	}
+	if f.lastRoleReq == nil {
+		t.Fatal("cycling coordinator did not issue SetRoleConfig")
+	}
+	if f.lastRoleReq.Coordinator != m.roleCoord {
+		t.Fatalf("SetRoleConfig coordinator = %q, want %q", f.lastRoleReq.Coordinator, m.roleCoord)
+	}
 }
 
 // t_tempWorkspace is an empty path; the modal tests don't touch the filesystem.

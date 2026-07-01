@@ -310,7 +310,15 @@ type menuEntry struct {
 	openingPrompt string
 	prominent     bool // surfaced at the top (e.g. onboarding on an un-onboarded workspace)
 }
-type modelsMsg struct{ models []*v1.ModelInfo }
+type modelsMsg struct {
+	models      []*v1.ModelInfo
+	coordinator string
+	implementer string
+	reviewers   []string
+	coordThink  string
+	implThink   string
+	revThink    string
+}
 type projectsMsg struct{ projects []*v1.ProjectInfo }
 type startedMsg struct{ id, mode string }
 
@@ -418,7 +426,15 @@ func (m model) fetchModels() tea.Msg {
 	if err != nil {
 		return nil // models are optional for the overlay; don't surface as a fatal error
 	}
-	return modelsMsg{resp.Msg.Models}
+	return modelsMsg{
+		models:      resp.Msg.Models,
+		coordinator: resp.Msg.Coordinator,
+		implementer: resp.Msg.Implementer,
+		reviewers:   resp.Msg.Reviewers,
+		coordThink:  resp.Msg.CoordinatorThinking,
+		implThink:   resp.Msg.ImplementerThinking,
+		revThink:    resp.Msg.ReviewersThinking,
+	}
 }
 
 // startSession starts a session in the given mode. An empty level lets the daemon
@@ -760,13 +776,12 @@ func (m model) setLevel(level string) tea.Cmd {
 	}
 }
 
-// setThinking issues SetThinking for the current session per role (spec §7.4,
-// §18.2). An empty role updates all roles.
+// setThinking issues SetThinking per role (spec §7.4, §18.2). With a live session
+// it applies to that session and persists; with no session an empty session_id
+// just persists the new default. An empty role updates all roles. Either way the
+// level is written to ycc.toml so it survives a restart.
 func (m model) setThinking(role, level string) tea.Cmd {
 	return func() tea.Msg {
-		if m.sessionID == "" {
-			return nil
-		}
 		if _, err := m.client.SetThinking(m.ctx, connect.NewRequest(&v1.SetThinkingRequest{
 			SessionId: m.sessionID, Level: level, Role: role,
 		})); err != nil {
@@ -776,12 +791,12 @@ func (m model) setThinking(role, level string) tea.Cmd {
 	}
 }
 
-// setRoleConfig issues SetRoleConfig for the current session (spec §18.2).
+// setRoleConfig issues SetRoleConfig (spec §18.2). With a live session it applies
+// the change to that session and persists it; with no session (changed from the
+// home menu) an empty session_id just persists the new default. Either way the
+// selection is written to ycc.toml so it survives a restart.
 func (m model) setRoleConfig(coord, impl string, reviewers []string) tea.Cmd {
 	return func() tea.Msg {
-		if m.sessionID == "" {
-			return nil
-		}
 		if _, err := m.client.SetRoleConfig(m.ctx, connect.NewRequest(&v1.SetRoleConfigRequest{
 			SessionId: m.sessionID, Coordinator: coord, Implementer: impl, Reviewers: reviewers,
 		})); err != nil {
@@ -1100,6 +1115,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case modelsMsg:
 		m.models = msg.models
+		// Seed the per-role pickers with the daemon's CURRENT default assignment
+		// (config.Roles) so the settings overlay shows the real selection — even
+		// when opened from the home menu with no live session. A live session keeps
+		// these in sync via role_config_changed events.
+		if msg.coordinator != "" {
+			m.roleCoord = msg.coordinator
+		}
+		if msg.implementer != "" {
+			m.roleImpl = msg.implementer
+		}
+		if len(msg.reviewers) > 0 {
+			m.roleReviewrs = msg.reviewers
+		}
+		// Seed the thinking pickers with the daemon's current default levels too.
+		if msg.coordThink != "" {
+			m.thinkLevels["coordinator"] = msg.coordThink
+		}
+		if msg.implThink != "" {
+			m.thinkLevels["implementer"] = msg.implThink
+		}
+		if msg.revThink != "" {
+			m.thinkLevels["reviewers"] = msg.revThink
+		}
 		// Build the per-model pricing table (task 0062) used by the live status
 		// bar's token/cost readout. Only models flagged priced get an entry, so an
 		// unpriced model is absent from the map and sessionUsage renders tokens-only
@@ -2581,7 +2619,6 @@ const (
 	ovTheme
 	ovFollow
 	ovAutoExpand
-	ovApplyRoles
 	ovBackHome
 	ovQuit
 	ovCount
@@ -2630,6 +2667,16 @@ func (m model) updateOverlay(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case " ", "space":
 		if m.ovCursor == ovReviewers {
 			m.toggleReviewer()
+			// Persist the new reviewer set immediately, guarding the non-empty
+			// invariant so a session never points at zero reviewers.
+			revs := m.roleReviewrs
+			if len(revs) == 0 && len(m.models) > 0 {
+				revs = []string{m.models[0].Name}
+				m.roleReviewrs = revs
+			}
+			if len(revs) > 0 {
+				return m, m.setRoleConfig("", "", revs)
+			}
 		}
 		return m, nil
 	case "enter":
@@ -2646,10 +2693,12 @@ func (m model) overlayAdjust(d int) (tea.Model, tea.Cmd) {
 		return m, m.setLevel(m.level)
 	case ovCoord:
 		m.roleCoord = cycleModel(m.models, m.roleCoord, d)
-		return m, nil
+		// Apply immediately (like interaction level) so the choice sticks without a
+		// separate "apply" step — the daemon persists it to ycc.toml.
+		return m, m.setRoleConfig(m.roleCoord, "", nil)
 	case ovImpl:
 		m.roleImpl = cycleModel(m.models, m.roleImpl, d)
-		return m, nil
+		return m, m.setRoleConfig("", m.roleImpl, nil)
 	case ovTheme:
 		m.prefs.Theme = cycle(themes, m.prefs.Theme, d)
 		clientconfig.Save(m.prefs)
@@ -2707,15 +2756,6 @@ func (m model) overlayActivate() (tea.Model, tea.Cmd) {
 		m.mbCursor = 0
 		m.mbErr = ""
 		return m, m.fetchModels
-	case ovApplyRoles:
-		// Commit per-role assignment; reviewers must be non-empty to apply.
-		revs := m.roleReviewrs
-		if len(revs) == 0 && len(m.models) > 0 {
-			revs = []string{m.models[0].Name}
-			m.roleReviewrs = revs
-		}
-		m.overlay = false
-		return m, m.setRoleConfig(m.roleCoord, m.roleImpl, revs)
 	case ovBackHome:
 		// Explicit, intentional exit from the session (spec §18.2).
 		m.overlay = false
@@ -2823,7 +2863,6 @@ func (m model) overlayView() string {
 		{"theme", m.prefs.Theme},
 		{"follow / auto-scroll", boolStr(m.prefs.Follow)},
 		{"auto-expand agent logs", boolStr(m.prefs.AutoExpandLogs)},
-		{"apply role config", ""},
 		{"back to home menu", ""},
 		{"quit", ""},
 	}
@@ -2841,7 +2880,7 @@ func (m model) overlayView() string {
 		b.WriteString(cursor + label + dimStyle.Render(val) + "\n")
 	}
 	if m.sessionID == "" {
-		b.WriteString("\n" + dimStyle.Render("(no active session: level/role changes apply only within a session)"))
+		b.WriteString("\n" + dimStyle.Render("(no active session: role changes are saved as defaults; interaction/thinking level apply only within a session)"))
 	}
 	help := "↑/↓ move · ←/→ change · +/- thinking · space toggle reviewer · enter activate · esc close"
 	return m.modalCard(" settings ", strings.TrimRight(b.String(), "\n"), help)

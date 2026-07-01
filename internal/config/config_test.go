@@ -476,6 +476,50 @@ func TestUpsertRemovePersist(t *testing.T) {
 	}
 }
 
+func TestSetRolesPersists(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ycc.toml")
+	reg := baseRegistry()
+	reg.SetPath(path)
+	// Add a second model so the role can actually change to a distinct target.
+	if err := reg.UpsertModel("gpt", Model{Backend: "openai", BaseURL: "https://oai", Model: "gpt-4o", KeyEnv: "OPENAI_API_KEY"}, false); err != nil {
+		t.Fatalf("UpsertModel(gpt): %v", err)
+	}
+
+	if err := reg.SetRoles("gpt", "gpt", []string{"gpt", "claude"}); err != nil {
+		t.Fatalf("SetRoles: %v", err)
+	}
+	// Live view reflects it immediately.
+	if reg.CoordinatorName() != "gpt" || reg.ImplementerName() != "gpt" {
+		t.Fatalf("live roles not updated: coord=%q impl=%q", reg.CoordinatorName(), reg.ImplementerName())
+	}
+	// And it survives a reload from disk.
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load after SetRoles: %v", err)
+	}
+	if loaded.Roles.Coordinator != "gpt" || loaded.Roles.Implementer != "gpt" {
+		t.Fatalf("persisted roles = %+v", loaded.Roles)
+	}
+	if len(loaded.Roles.Reviewers) != 2 || loaded.Roles.Reviewers[0] != "gpt" || loaded.Roles.Reviewers[1] != "claude" {
+		t.Fatalf("persisted reviewers = %v", loaded.Roles.Reviewers)
+	}
+
+	// Empty args leave a role unchanged; an unknown model is rejected and does not
+	// touch the persisted config.
+	if err := reg.SetRoles("", "claude", nil); err != nil {
+		t.Fatalf("SetRoles partial: %v", err)
+	}
+	if reg.CoordinatorName() != "gpt" || reg.ImplementerName() != "claude" {
+		t.Fatalf("partial SetRoles: coord=%q impl=%q", reg.CoordinatorName(), reg.ImplementerName())
+	}
+	if err := reg.SetRoles("nope", "", nil); err == nil {
+		t.Fatal("expected error setting role to unknown model")
+	}
+	if reg.CoordinatorName() != "gpt" {
+		t.Fatal("failed SetRoles must not change the live role")
+	}
+}
+
 func TestPersistWithoutPathIsInMemory(t *testing.T) {
 	// With no config path, a persisted edit still applies in-memory instead of
 	// failing — a runtime change should never be rejected just because there is

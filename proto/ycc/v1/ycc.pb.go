@@ -2123,10 +2123,21 @@ func (x *ModelInfo) GetPriced() bool {
 }
 
 type ListModelsResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Models        []*ModelInfo           `protobuf:"bytes,1,rep,name=models,proto3" json:"models,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Models []*ModelInfo           `protobuf:"bytes,1,rep,name=models,proto3" json:"models,omitempty"`
+	// Current default per-role assignment (config.Roles) so the settings overlay can
+	// seed its per-role pickers with the ACTUAL current selection — even when opened
+	// from the home menu with no live session (spec §18.2).
+	Coordinator string   `protobuf:"bytes,2,opt,name=coordinator,proto3" json:"coordinator,omitempty"`
+	Implementer string   `protobuf:"bytes,3,opt,name=implementer,proto3" json:"implementer,omitempty"`
+	Reviewers   []string `protobuf:"bytes,4,rep,name=reviewers,proto3" json:"reviewers,omitempty"`
+	// Current default per-role thinking level (roles.thinking.*, resolved to the
+	// package default when unset) so the overlay seeds its thinking pickers too.
+	CoordinatorThinking string `protobuf:"bytes,5,opt,name=coordinator_thinking,json=coordinatorThinking,proto3" json:"coordinator_thinking,omitempty"`
+	ImplementerThinking string `protobuf:"bytes,6,opt,name=implementer_thinking,json=implementerThinking,proto3" json:"implementer_thinking,omitempty"`
+	ReviewersThinking   string `protobuf:"bytes,7,opt,name=reviewers_thinking,json=reviewersThinking,proto3" json:"reviewers_thinking,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *ListModelsResponse) Reset() {
@@ -2164,6 +2175,48 @@ func (x *ListModelsResponse) GetModels() []*ModelInfo {
 		return x.Models
 	}
 	return nil
+}
+
+func (x *ListModelsResponse) GetCoordinator() string {
+	if x != nil {
+		return x.Coordinator
+	}
+	return ""
+}
+
+func (x *ListModelsResponse) GetImplementer() string {
+	if x != nil {
+		return x.Implementer
+	}
+	return ""
+}
+
+func (x *ListModelsResponse) GetReviewers() []string {
+	if x != nil {
+		return x.Reviewers
+	}
+	return nil
+}
+
+func (x *ListModelsResponse) GetCoordinatorThinking() string {
+	if x != nil {
+		return x.CoordinatorThinking
+	}
+	return ""
+}
+
+func (x *ListModelsResponse) GetImplementerThinking() string {
+	if x != nil {
+		return x.ImplementerThinking
+	}
+	return ""
+}
+
+func (x *ListModelsResponse) GetReviewersThinking() string {
+	if x != nil {
+		return x.ReviewersThinking
+	}
+	return ""
 }
 
 // ModelConfig mirrors a [models.X] block (spec §13, §18.2) for the settings
@@ -2786,9 +2839,12 @@ func (*SetInteractionLevelResponse) Descriptor() ([]byte, []int) {
 	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{51}
 }
 
-// SetRoleConfig reassigns per-role logical models mid-session (spec §13, §18.2).
-// Empty coordinator/implementer leaves that role unchanged; an empty reviewers
-// list leaves reviewers unchanged.
+// SetRoleConfig reassigns per-role logical models (spec §13, §18.2). Empty
+// coordinator/implementer leaves that role unchanged; an empty reviewers list
+// leaves reviewers unchanged. The assignment is persisted as the default (roles
+// in ycc.toml) so it survives a restart. When session_id names a live session the
+// change also applies to it immediately; an empty/unknown session_id just updates
+// the persisted default (e.g. changed from the home menu with no session).
 type SetRoleConfigRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -2893,10 +2949,12 @@ func (*SetRoleConfigResponse) Descriptor() ([]byte, []int) {
 	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{53}
 }
 
-// SetThinking changes a thinking/effort level mid-session (spec §7.4, §18.2). The
-// override applies per role (empty role = all roles) and takes precedence over the
-// per-role config then per-model config until changed. Levels: off | low | medium
-// | high | xhigh | max.
+// SetThinking changes a thinking/effort level (spec §7.4, §18.2). The override
+// applies per role (empty role = all roles) and is persisted as the default
+// (roles.thinking.* in ycc.toml) so it survives a restart. When session_id names
+// a live session the change also applies to it immediately; an empty/unknown
+// session_id just updates the persisted default (e.g. changed from the home menu).
+// Levels: off | low | medium | high | xhigh | max.
 type SetThinkingRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -4140,9 +4198,15 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\f_price_inputB\x0f\n" +
 	"\r_price_outputB\x13\n" +
 	"\x11_price_cache_readB\x14\n" +
-	"\x12_price_cache_write\"?\n" +
+	"\x12_price_cache_write\"\xb6\x02\n" +
 	"\x12ListModelsResponse\x12)\n" +
-	"\x06models\x18\x01 \x03(\v2\x11.ycc.v1.ModelInfoR\x06models\"\xde\x03\n" +
+	"\x06models\x18\x01 \x03(\v2\x11.ycc.v1.ModelInfoR\x06models\x12 \n" +
+	"\vcoordinator\x18\x02 \x01(\tR\vcoordinator\x12 \n" +
+	"\vimplementer\x18\x03 \x01(\tR\vimplementer\x12\x1c\n" +
+	"\treviewers\x18\x04 \x03(\tR\treviewers\x121\n" +
+	"\x14coordinator_thinking\x18\x05 \x01(\tR\x13coordinatorThinking\x121\n" +
+	"\x14implementer_thinking\x18\x06 \x01(\tR\x13implementerThinking\x12-\n" +
+	"\x12reviewers_thinking\x18\a \x01(\tR\x11reviewersThinking\"\xde\x03\n" +
 	"\vModelConfig\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\abackend\x18\x02 \x01(\tR\abackend\x12\x19\n" +

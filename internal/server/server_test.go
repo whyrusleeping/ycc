@@ -15,24 +15,52 @@ import (
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 )
 
-// SetThinking maps an unknown session to a NotFound connect error, mirroring the
-// other settings RPCs. (A live session requires a running backend, so the
-// happy/InvalidArgument paths are covered by the session package's unit tests.)
-func TestSetThinkingUnknownSession(t *testing.T) {
-	reg := config.NewRegistry(&config.Config{
+// SetThinking with no live session persists the new level as the default
+// (roles.thinking.*) rather than erroring — a thinking change from the home menu
+// must survive a restart (spec §7.4, §18.2). An invalid level is still rejected.
+func TestSetThinkingNoSessionPersists(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ycc.toml")
+	if err := config.Save(path, &config.Config{
 		Models: map[string]config.Model{"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"}},
 		Roles:  config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
-	})
-	srv := New(session.NewManager(reg, t.TempDir()))
-
-	_, err := srv.SetThinking(context.Background(), connect.NewRequest(&v1.SetThinkingRequest{
-		SessionId: "nope", Level: "high",
-	}))
-	if err == nil {
-		t.Fatal("expected error for unknown session")
+	}); err != nil {
+		t.Fatalf("seed config: %v", err)
 	}
-	if got := connect.CodeOf(err); got != connect.CodeNotFound {
-		t.Fatalf("code = %v, want NotFound", got)
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	reg := config.NewRegistry(cfg)
+	reg.SetPath(path)
+	srv := New(session.NewManager(reg, t.TempDir()))
+	ctx := context.Background()
+
+	// No session id → persist the coordinator's default thinking level.
+	if _, err := srv.SetThinking(ctx, connect.NewRequest(&v1.SetThinkingRequest{
+		Role: "coordinator", Level: "low",
+	})); err != nil {
+		t.Fatalf("SetThinking (no session): %v", err)
+	}
+	list, err := srv.ListModels(ctx, connect.NewRequest(&v1.ListModelsRequest{}))
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if list.Msg.CoordinatorThinking != "low" {
+		t.Fatalf("coordinator thinking = %q, want low", list.Msg.CoordinatorThinking)
+	}
+	reloaded, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if reloaded.Roles.Thinking.Coordinator != "low" {
+		t.Fatalf("persisted thinking = %q, want low", reloaded.Roles.Thinking.Coordinator)
+	}
+
+	// An invalid level is still rejected.
+	if _, err := srv.SetThinking(ctx, connect.NewRequest(&v1.SetThinkingRequest{
+		Role: "coordinator", Level: "bogus",
+	})); err == nil {
+		t.Fatal("expected error for invalid thinking level")
 	}
 }
 
@@ -263,6 +291,55 @@ func TestModelBackendRPCs(t *testing.T) {
 	}
 	if _, err := srv.GetModelConfig(ctx, connect.NewRequest(&v1.GetModelConfigRequest{Name: "gpt"})); err == nil {
 		t.Fatal("expected NotFound after removal")
+	}
+}
+
+// TestSetRoleConfigNoSessionPersists covers the home-menu path: a role change
+// made with no live session (empty session_id) updates the persisted default and
+// is reflected by ListModels (spec §18.2).
+func TestSetRoleConfigNoSessionPersists(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ycc.toml")
+	if err := config.Save(path, &config.Config{
+		Models: map[string]config.Model{
+			"a":     {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"},
+			"fable": {Backend: "anthropic", BaseURL: "https://api", Model: "claude-fable-5", KeyEnv: "ANTHROPIC_API_KEY"},
+		},
+		Roles: config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
+	}); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	reg := config.NewRegistry(cfg)
+	reg.SetPath(path)
+	srv := New(session.NewManager(reg, t.TempDir()))
+	ctx := context.Background()
+
+	// Change the coordinator with NO session id — must not error and must persist.
+	if _, err := srv.SetRoleConfig(ctx, connect.NewRequest(&v1.SetRoleConfigRequest{
+		Coordinator: "fable",
+	})); err != nil {
+		t.Fatalf("SetRoleConfig (no session): %v", err)
+	}
+
+	// ListModels reflects the new coordinator.
+	list, err := srv.ListModels(ctx, connect.NewRequest(&v1.ListModelsRequest{}))
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if list.Msg.Coordinator != "fable" {
+		t.Fatalf("ListModels coordinator = %q, want fable", list.Msg.Coordinator)
+	}
+
+	// And it is on disk: a fresh Load sees the new default.
+	reloaded, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if reloaded.Roles.Coordinator != "fable" {
+		t.Fatalf("persisted coordinator = %q, want fable", reloaded.Roles.Coordinator)
 	}
 }
 

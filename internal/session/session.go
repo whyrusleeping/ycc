@@ -340,7 +340,9 @@ func (s *Session) SetInteractionLevel(level string) error {
 // SetRoleConfig reassigns per-role logical models mid-session and rebuilds the
 // relevant gollama clients so the next coordinator turn / next spawned subagent
 // uses the new assignment (spec §13, §18.2). Empty coordinator/implementer leaves
-// that role unchanged; an empty reviewers slice leaves reviewers unchanged.
+// that role unchanged; an empty reviewers slice leaves reviewers unchanged. The
+// new assignment is also persisted as the default (roles in ycc.toml) so it
+// survives a restart and applies to future sessions.
 func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []string) error {
 	s.mu.Lock()
 	newCoord, newImpl, newRevs := s.coordinator, s.implementer, s.reviewers
@@ -365,6 +367,14 @@ func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []str
 			}
 		}
 		newRevs = append([]string(nil), reviewers...)
+	}
+
+	// Persist the new assignment as the default (roles in ycc.toml) so the choice
+	// survives a restart and applies to future sessions — a settings change should
+	// stick, not just live for this session (spec §18.2). Done before the live
+	// rebuild so a persist failure aborts without half-applying.
+	if err := s.reg.SetRoles(newCoord, newImpl, newRevs); err != nil {
+		return fmt.Errorf("persist role config: %w", err)
 	}
 
 	// Rebuild the implementer / reviewer specs so the next spawn uses the new
@@ -494,6 +504,11 @@ func (s *Session) SetThinking(role, level string) error {
 		emittedRole = "all"
 	}
 	s.emitter.Emit(event.ThinkingLevelChanged, map[string]any{"role": emittedRole, "from": from, "to": level})
+	// Persist the new level as the default (roles.thinking.* in ycc.toml) so a
+	// thinking-level change survives a restart and applies to future sessions.
+	if err := s.reg.SetRoleThinking(role, level); err != nil {
+		return fmt.Errorf("persist thinking level: %w", err)
+	}
 	return nil
 }
 
@@ -1185,6 +1200,35 @@ func (m *Manager) DiscoverModels(ctx context.Context, backend, baseURL, keyEnv s
 // writes ycc.toml (spec §18.2).
 func (m *Manager) UpsertModel(name string, mdl config.Model, persist bool) error {
 	return m.reg.UpsertModel(name, mdl, persist)
+}
+
+// SetRoles updates the default per-role model assignment (config.Roles) and
+// persists it to ycc.toml (spec §18.2). Used when a role change is made with no
+// live session to apply it to (e.g. from the home-menu settings overlay); a
+// change made inside a session goes through Session.SetRoleConfig, which also
+// applies it live before persisting the same way.
+func (m *Manager) SetRoles(coordinator, implementer string, reviewers []string) error {
+	return m.reg.SetRoles(coordinator, implementer, reviewers)
+}
+
+// SetRoleThinking updates the default per-role reasoning level (roles.thinking.*)
+// and persists it to ycc.toml (spec §7.4, §18.2). Used when a thinking change is
+// made with no live session; an in-session change goes through
+// Session.SetThinking, which applies it live before persisting the same way.
+func (m *Manager) SetRoleThinking(role, level string) error {
+	return m.reg.SetRoleThinking(role, level)
+}
+
+// Roles returns the current default per-role assignment (config.Roles) so the
+// settings overlay can seed its pickers with the real current selection.
+func (m *Manager) Roles() (coordinator, implementer string, reviewers []string) {
+	return m.reg.CoordinatorName(), m.reg.ImplementerName(), m.reg.ReviewerNames()
+}
+
+// ThinkingLevels returns the effective default thinking level per role so the
+// settings overlay can seed its thinking pickers with the real current values.
+func (m *Manager) ThinkingLevels() (coordinator, implementer, reviewers string) {
+	return m.reg.RoleThinkingLevels()
 }
 
 // RemoveModel deletes a logical model backend; persist also writes ycc.toml

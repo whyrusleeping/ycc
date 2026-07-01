@@ -322,7 +322,12 @@ func (s *Server) ListModels(_ context.Context, _ *connect.Request[v1.ListModelsR
 		}
 		models = append(models, mi)
 	}
-	return connect.NewResponse(&v1.ListModelsResponse{Models: models}), nil
+	coord, impl, revs := s.mgr.Roles()
+	ct, it, rt := s.mgr.ThinkingLevels()
+	return connect.NewResponse(&v1.ListModelsResponse{
+		Models: models, Coordinator: coord, Implementer: impl, Reviewers: revs,
+		CoordinatorThinking: ct, ImplementerThinking: it, ReviewersThinking: rt,
+	}), nil
 }
 
 // modelConfigToConfig translates a proto ModelConfig into a config.Model. Only
@@ -441,26 +446,37 @@ func (s *Server) SetInteractionLevel(_ context.Context, req *connect.Request[v1.
 	return connect.NewResponse(&v1.SetInteractionLevelResponse{}), nil
 }
 
-// SetRoleConfig reassigns per-role logical models mid-session (spec §13, §18.2).
+// SetRoleConfig reassigns per-role logical models (spec §13, §18.2). When
+// session_id names a live session the change applies to it immediately and is
+// persisted; with an empty/unknown session_id (e.g. changed from the home menu
+// before any session exists) it just updates the persisted default in ycc.toml.
 func (s *Server) SetRoleConfig(_ context.Context, req *connect.Request[v1.SetRoleConfigRequest]) (*connect.Response[v1.SetRoleConfigResponse], error) {
-	sess, ok := s.mgr.Get(req.Msg.SessionId)
-	if !ok {
-		return nil, connect.NewError(connect.CodeNotFound, errNoSession)
+	if sess, ok := s.mgr.Get(req.Msg.SessionId); ok {
+		if err := sess.SetRoleConfig(req.Msg.Coordinator, req.Msg.Implementer, req.Msg.Reviewers); err != nil {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
+		return connect.NewResponse(&v1.SetRoleConfigResponse{}), nil
 	}
-	if err := sess.SetRoleConfig(req.Msg.Coordinator, req.Msg.Implementer, req.Msg.Reviewers); err != nil {
+	// No live session to apply to — persist the default assignment so it takes
+	// effect for the next session (and survives a restart).
+	if err := s.mgr.SetRoles(req.Msg.Coordinator, req.Msg.Implementer, req.Msg.Reviewers); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	return connect.NewResponse(&v1.SetRoleConfigResponse{}), nil
 }
 
-// SetThinking changes a thinking/effort level mid-session per role (empty role =
-// all roles) (spec §7.4, §18.2).
+// SetThinking changes a thinking/effort level per role (empty role = all roles)
+// (spec §7.4, §18.2). When session_id names a live session the change applies to
+// it immediately and is persisted; with an empty/unknown session_id it just
+// updates the persisted default (roles.thinking.*) so it survives a restart.
 func (s *Server) SetThinking(_ context.Context, req *connect.Request[v1.SetThinkingRequest]) (*connect.Response[v1.SetThinkingResponse], error) {
-	sess, ok := s.mgr.Get(req.Msg.SessionId)
-	if !ok {
-		return nil, connect.NewError(connect.CodeNotFound, errNoSession)
+	if sess, ok := s.mgr.Get(req.Msg.SessionId); ok {
+		if err := sess.SetThinking(req.Msg.Role, req.Msg.Level); err != nil {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
+		return connect.NewResponse(&v1.SetThinkingResponse{}), nil
 	}
-	if err := sess.SetThinking(req.Msg.Role, req.Msg.Level); err != nil {
+	if err := s.mgr.SetRoleThinking(req.Msg.Role, req.Msg.Level); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	return connect.NewResponse(&v1.SetThinkingResponse{}), nil

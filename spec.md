@@ -791,24 +791,36 @@ Overlay contents:
 - **Interaction level** — `interactive | judgement | autonomous`, changeable
   **mid-session** (see §11). Selecting a value issues `SetInteractionLevel(sessionID,
   level)`; the daemon updates the live policy and emits an event so the change is in the
-  log (and reflected in any other subscribed client).
+  log (and reflected in any other subscribed client). This is deliberately **per-session
+  and not persisted** — a persisted global `autonomous` default (no human approval gates)
+  would be a safety footgun, so each session starts at its configured/default level.
 - **Thinking level** — `off | low | medium | high | xhigh | max`, changeable
   **mid-session**, set **per role** (coordinator / implementer / reviewers). Each role has
   its own reasoning override that applies to that agent (and the reviewer fan-out for
   `reviewers`), taking precedence over that role's config thinking (§13) until changed.
   Selecting a value issues `SetThinking(sessionID, role, level)`; the daemon updates the live
   coordinator loop (when the coordinator role changes) and rebuilds the implementer/reviewer
-  specs so the next spawn uses it, then emits a `thinking_level_changed` event carrying the
-  role. `off` disables reasoning; any effort level maps to adaptive thinking at that effort
-  with summarized display.
+  specs so the next spawn uses it, emits a `thinking_level_changed` event carrying the role,
+  and **persists** the new level as the default (`roles.thinking.*` in `ycc.toml`) so it
+  survives a restart. With no live session (changed from the home menu) an empty `session_id`
+  just persists the default. `off` disables reasoning; any effort level maps to adaptive
+  thinking at that effort with summarized display.
 - **Model / role configuration** — the headline feature. Per-role model selection:
   - **coordinator** — pick one model
   - **implementer** — pick one model
   - **reviewers** — pick *one or more* models (multi-select; reviewer fan-out, §13)
-  - Choices are drawn from the configured logical models (§13). Changes apply to the
-    current session (and optionally persist to config). Issued via
-    `SetRoleConfig(sessionID, roles)`; the daemon rebuilds the relevant gollama clients
-    so the next coordinator turn / next spawned subagent uses the new assignment.
+  - Choices are drawn from the configured logical models (§13). Cycling a role
+    picker (←/→ for coordinator/implementer, space to toggle reviewers) **applies
+    immediately** — there is no separate "apply" step. The change updates the
+    current session **and is persisted** as the default role assignment (`roles` in
+    `ycc.toml`) so the selection survives a restart and applies to future sessions.
+    Issued via `SetRoleConfig(sessionID, roles)`; with a live session the daemon
+    rebuilds the relevant gollama clients so the next coordinator turn / next spawned
+    subagent uses the new assignment, then writes `ycc.toml` via `config.Save`. Opened
+    from the home menu with **no** session, an empty `session_id` just persists the new
+    default (which the next session picks up). The overlay seeds its pickers from the
+    daemon's current default assignment (returned by `ListModels`) so it always shows
+    the real current selection rather than a guess.
 - **Model backends (add / edit / remove)** — beyond *choosing* among configured models,
   the overlay can **manage the model backends themselves**, so the user can configure
   everything about a provider from the TUI without hand-editing `ycc.toml` or re-running

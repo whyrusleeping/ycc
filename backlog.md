@@ -100,3 +100,7 @@
 | [0095](backlog/0095-onboarding-mode-should-read-existing-spec-backlog.md) | Onboarding mode should read existing spec/backlog first and orient from them | todo | 3 | — |
 | [0096](backlog/0096-connection-centric-model-config-multi-model-id-ent.md) | Connection-centric model config: multi model-id entry + backend model discovery | in_review | 2 | — |
 | [0097](backlog/0097-sendinput-answer-ignores-a-pending-batch-multi-que.md) | SendInput/Answer ignores a pending batch (multi-question) ask_user | todo | 4 | — |
+| [0098](backlog/0098-work-loop-batch-digest-here-s-what-happened-while.md) | Work-loop batch digest: "here's what happened while you were gone" | todo | 2 | — |
+| [0099](backlog/0099-tui-backlog-grooming-edit-reprioritize-status-open.md) | TUI backlog grooming: edit/reprioritize/status + open task in $EDITOR | todo | 3 | — |
+| [0100](backlog/0100-spec-doctor-detect-spec-code-drift-coverage-gaps-d.md) | Spec-doctor: detect spec/code drift + coverage gaps (design with user first) | todo | 3 | — |
+| [0101](backlog/0101-home-menu-notify-when-tasks-are-blocked-and-waitin.md) | Home menu: notify when tasks are blocked and waiting on the user | todo | 2 | — |
