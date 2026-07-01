@@ -231,9 +231,11 @@ type model struct {
 	mbView       int    // 0=list · 1=form · 2=confirm-remove
 	mbCursor     int    // cursor into m.models in the list view
 	mbErr        string // inline error/validation message
-	mbPersist    bool   // persist=true writes the change to ycc.toml
+	mbInfo       string // inline non-error status (e.g. model-discovery result)
+	mbBusy       bool   // a discovery RPC is in flight
 	mbFormMode   int    // mbAdd | mbEdit | mbDuplicate
 	mbOrigName   string // name of the model loaded for edit/duplicate
+	mbOrigModel  string // model id of the model loaded for edit (to keep its name)
 	mbInputs     [mbNumFields]textinput.Model
 	mbBackends   []string // per-form backend cycle list (preserves an unknown loaded backend)
 	mbBackendIdx int
@@ -376,6 +378,16 @@ type mbPrefillMsg struct {
 // success the modal returns to the list and refreshes ListModels; on error the
 // message is surfaced inline via mbErr.
 type mbWriteMsg struct{ err error }
+
+// mbDiscoverMsg carries the result of a DiscoverModels RPC (spec §13). On success
+// the ids populate the connection form's model-id field; note is a human-readable
+// status line (e.g. why a curated fallback was used).
+type mbDiscoverMsg struct {
+	ids     []string
+	note    string
+	fromNet bool
+	err     error
+}
 
 func (m model) Init() tea.Cmd {
 	cmds := []tea.Cmd{m.fetchModes, m.fetchModels}
@@ -906,8 +918,29 @@ func (m model) inputRow() string {
 	if m.status == "running" && len(m.spin.Spinner.Frames) > 0 {
 		glyph = m.spin.View()
 	}
+	// The gutter must be the SAME display width on every row or the box's left
+	// border goes crooked (task 0094). Some spinner frames are wider than one
+	// column — e.g. the Dot spinner's frames are a braille glyph + a trailing
+	// space (width 2) — so we can't assume the running glyph is one column. Pin
+	// the gutter to the widest frame the spinner can show (falling back to 1),
+	// so the width is stable across the running/idle transition AND across
+	// animation frames, then pad the glyph and every blank row to that width.
+	gw := 1
+	for _, f := range m.spin.Spinner.Frames {
+		if w := lipgloss.Width(f); w > gw {
+			gw = w
+		}
+	}
+	pad := func(s string) string {
+		if d := gw - lipgloss.Width(s); d > 0 {
+			return s + strings.Repeat(" ", d)
+		}
+		return s
+	}
+	glyph = pad(glyph)
+	blank := strings.Repeat(" ", gw)
 	// Place the glyph on the first content row (row index 1, just below the top
-	// border); clamp for safety. Every other gutter row is a single space.
+	// border); clamp for safety. Every other gutter row is blank of equal width.
 	spinRow := 1
 	if spinRow >= len(rows) {
 		spinRow = 0
@@ -916,7 +949,7 @@ func (m model) inputRow() string {
 		if i == spinRow {
 			rows[i] = glyph + rows[i]
 		} else {
-			rows[i] = " " + rows[i]
+			rows[i] = blank + rows[i]
 		}
 	}
 	return strings.Join(rows, "\n")
@@ -1304,6 +1337,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mbView = 0
 		// Refresh ListModels so the role pickers reflect the change.
 		return m, m.fetchModels
+	case mbDiscoverMsg:
+		m.mbBusy = false
+		if msg.err != nil {
+			m.mbErr = "discover failed: " + msg.err.Error()
+			return m, nil
+		}
+		if len(msg.ids) > 0 {
+			m.mbInputs[mbFieldModel].SetValue(strings.Join(msg.ids, " "))
+			m.mbInputs[mbFieldModel].CursorEnd()
+		}
+		m.mbErr = ""
+		m.mbInfo = msg.note
+		return m, nil
 	}
 
 	// The project picker (spec §3.1) is shown first when attached to a
@@ -2844,7 +2890,6 @@ const (
 	mbFieldPriceOut
 	mbFieldPriceCacheRead
 	mbFieldPriceCacheWrite
-	mbFieldPersist
 	mbNumFields
 )
 
@@ -2860,7 +2905,7 @@ var (
 	// model field stays a normal text input; ctrl+n/ctrl+p just fill it with the
 	// next/previous preset for the current backend.
 	mbModelPresets = map[string][]string{
-		"anthropic": {"claude-opus-4-8", "claude-sonnet-4-5", "claude-haiku-4-5"},
+		"anthropic": {"claude-opus-4-8", "claude-sonnet-4-5", "claude-haiku-4-5", "claude-fable-5"},
 		"openai":    {"gpt-5.5", "gpt-5-mini", "gpt-4o", "o3"},
 		"ollama":    {"qwen2.5-coder", "llama3.3", "deepseek-r1"},
 	}
@@ -2884,7 +2929,7 @@ func mbLabel(i int) string {
 	case mbFieldBaseURL:
 		return "base url"
 	case mbFieldModel:
-		return "model"
+		return "model id(s)"
 	case mbFieldKeyEnv:
 		return "key env"
 	case mbFieldThinking:
@@ -2901,8 +2946,6 @@ func mbLabel(i int) string {
 		return "price c.read"
 	case mbFieldPriceCacheWrite:
 		return "price c.write"
-	case mbFieldPersist:
-		return "persist toml"
 	}
 	return ""
 }
@@ -2916,9 +2959,13 @@ func (m *model) mbNewInputs() {
 		ti.SetWidth(50)
 		m.mbInputs[i] = ti
 	}
-	m.mbInputs[mbFieldName].Placeholder = "logical name (e.g. claude)"
+	m.mbInputs[mbFieldName].Placeholder = "logical name (optional; defaults to model id)"
 	m.mbInputs[mbFieldBaseURL].Placeholder = "base url"
-	m.mbInputs[mbFieldModel].Placeholder = "model id"
+	m.mbInputs[mbFieldModel].Placeholder = "model id(s), space-separated (ctrl+f to fetch)"
+	// The model field holds one or more space/comma-separated ids, so it needs a
+	// larger char limit than the other single-value inputs.
+	m.mbInputs[mbFieldModel].CharLimit = 800
+	m.mbInputs[mbFieldModel].SetWidth(60)
 	m.mbInputs[mbFieldKeyEnv].Placeholder = "API key env var name (never the key)"
 	m.mbInputs[mbFieldPriceIn].Placeholder = "$/Mtok (optional)"
 	m.mbInputs[mbFieldPriceOut].Placeholder = "$/Mtok (optional)"
@@ -2926,7 +2973,9 @@ func (m *model) mbNewInputs() {
 	m.mbInputs[mbFieldPriceCacheWrite].Placeholder = "$/Mtok (optional)"
 }
 
-// mbStartAdd opens a blank add form (backend defaults to anthropic).
+// mbStartAdd opens a blank "add connection" form. The backend defaults to
+// anthropic and the model field is prefilled with that backend's curated ids, so
+// a single connection produces sibling logical models out of the box (spec §13).
 func (m *model) mbStartAdd() {
 	m.mbNewInputs()
 	m.mbBackends = append([]string(nil), mbBackendList...)
@@ -2935,10 +2984,23 @@ func (m *model) mbStartAdd() {
 	m.mbPresetIdx = -1
 	m.mbFormMode = mbAdd
 	m.mbOrigName = ""
-	m.mbErr = ""
+	m.mbErr, m.mbInfo = "", ""
+	m.mbApplyCuratedIDs()
 	m.mbFocus = mbFieldName
 	m.mbView = 1
 	m.mbFocusInputs()
+}
+
+// mbApplyCuratedIDs fills the model-id field with the current backend's curated
+// default ids (space-separated). Used when opening the add form and when the
+// backend is changed in add mode, so switching backend re-seeds sensible ids.
+func (m *model) mbApplyCuratedIDs() {
+	if presets := mbModelPresets[m.mbBackends[m.mbBackendIdx]]; len(presets) > 0 {
+		m.mbInputs[mbFieldModel].SetValue(strings.Join(presets, " "))
+		m.mbInputs[mbFieldModel].CursorEnd()
+	} else {
+		m.mbInputs[mbFieldModel].SetValue("")
+	}
 }
 
 // mbPrefill fills the form from a loaded ModelConfig for edit/duplicate.
@@ -2946,6 +3008,7 @@ func (m *model) mbPrefill(cfg *v1.ModelConfig, mode int) {
 	m.mbNewInputs()
 	m.mbFormMode = mode
 	m.mbOrigName = cfg.Name
+	m.mbOrigModel = cfg.Model
 	name := cfg.Name
 	if mode == mbDuplicate {
 		name = cfg.Name + "-copy"
@@ -2965,7 +3028,7 @@ func (m *model) mbPrefill(cfg *v1.ModelConfig, mode int) {
 	m.mbEffortIdx = mbIndexOf(mbEffortList, cfg.Effort)
 	m.mbDisplayIdx = mbIndexOf(mbDisplayList, cfg.ThinkingDisplay)
 	m.mbPresetIdx = -1
-	m.mbErr = ""
+	m.mbErr, m.mbInfo = "", ""
 	m.mbView = 1
 	if mode == mbEdit {
 		// The name is read-only in edit mode (rename via duplicate+remove).
@@ -3042,14 +3105,18 @@ func (m *model) mbCycleFocused(d int) {
 	switch m.mbFocus {
 	case mbFieldBackend:
 		m.mbBackendIdx = (m.mbBackendIdx + d + len(m.mbBackends)) % len(m.mbBackends)
+		m.mbPresetIdx = -1
+		// In add mode, re-seed the model-id field with the new backend's curated
+		// defaults so switching backend offers sensible ids (spec §13).
+		if m.mbFormMode == mbAdd {
+			m.mbApplyCuratedIDs()
+		}
 	case mbFieldThinking:
 		m.mbThinkIdx = (m.mbThinkIdx + d + len(mbThinkingList)) % len(mbThinkingList)
 	case mbFieldEffort:
 		m.mbEffortIdx = (m.mbEffortIdx + d + len(mbEffortList)) % len(mbEffortList)
 	case mbFieldDisplay:
 		m.mbDisplayIdx = (m.mbDisplayIdx + d + len(mbDisplayList)) % len(mbDisplayList)
-	case mbFieldPersist:
-		m.mbPersist = !m.mbPersist
 	}
 }
 
@@ -3115,9 +3182,6 @@ func (m model) mbUpdateList(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mbErr = ""
 		m.mbView = 2
 		return m, nil
-	case "p":
-		m.mbPersist = !m.mbPersist
-		return m, nil
 	}
 	return m, nil
 }
@@ -3128,7 +3192,7 @@ func (m model) mbUpdateForm(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "esc":
 		m.mbView = 0
-		m.mbErr = ""
+		m.mbErr, m.mbInfo = "", ""
 		return m, nil
 	case "tab", "down":
 		m.mbMoveFocus(1)
@@ -3144,6 +3208,12 @@ func (m model) mbUpdateForm(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter":
 		return m.mbSubmitForm()
+	case "ctrl+f":
+		// Fetch the connection's available model ids into the model-id field.
+		m.mbBusy = true
+		m.mbErr = ""
+		m.mbInfo = "fetching available models…"
+		return m, m.mbDiscover()
 	case "ctrl+n":
 		// On the model field, ctrl+n/ctrl+p cycle the backend's id presets while
 		// keeping the field free-text. Elsewhere they fall through unchanged.
@@ -3178,37 +3248,58 @@ func (m *model) mbCyclePreset(d int) {
 	m.mbInputs[mbFieldModel].CursorEnd()
 }
 
-// mbSubmitForm validates and builds a *v1.ModelConfig and issues UpsertModel.
-func (m model) mbSubmitForm() (tea.Model, tea.Cmd) {
-	name := strings.TrimSpace(m.mbInputs[mbFieldName].Value())
-	if m.mbFormMode == mbEdit {
-		name = m.mbOrigName // name is fixed in edit mode
+// parseModelIDs splits the model-id field into individual ids on whitespace and
+// commas, trimming and de-duplicating while preserving order.
+func parseModelIDs(s string) []string {
+	fields := strings.FieldsFunc(s, func(r rune) bool {
+		return r == ' ' || r == '\t' || r == '\n' || r == ','
+	})
+	seen := make(map[string]bool, len(fields))
+	out := make([]string, 0, len(fields))
+	for _, f := range fields {
+		f = strings.TrimSpace(f)
+		if f == "" || seen[f] {
+			continue
+		}
+		seen[f] = true
+		out = append(out, f)
 	}
+	return out
+}
+
+// mbSubmitForm validates the connection form and issues UpsertModel for each
+// model id entered (spec §13, §18.2). A single connection (backend + base_url +
+// key_env + reasoning/pricing) with N model ids becomes N sibling logical models,
+// each named after its model id (so the role pickers can select opus vs sonnet vs
+// fable within one connection). With a single id an explicit name is honored. In
+// edit mode the edited model keeps its logical name for its own model id; any
+// extra ids become new siblings on the same connection.
+func (m model) mbSubmitForm() (tea.Model, tea.Cmd) {
+	explicitName := strings.TrimSpace(m.mbInputs[mbFieldName].Value())
 	backend := m.mbBackends[m.mbBackendIdx]
-	mdl := strings.TrimSpace(m.mbInputs[mbFieldModel].Value())
-	if name == "" || backend == "" || mdl == "" {
-		m.mbErr = "name, backend and model are required"
+	ids := parseModelIDs(m.mbInputs[mbFieldModel].Value())
+	if backend == "" || len(ids) == 0 {
+		m.mbErr = "backend and at least one model id are required"
 		return m, nil
 	}
-	cfg := &v1.ModelConfig{
-		Name:            name,
-		Backend:         backend,
-		BaseUrl:         strings.TrimSpace(m.mbInputs[mbFieldBaseURL].Value()),
-		Model:           mdl,
-		KeyEnv:          strings.TrimSpace(m.mbInputs[mbFieldKeyEnv].Value()),
-		Thinking:        mbThinkingList[m.mbThinkIdx],
-		Effort:          mbEffortList[m.mbEffortIdx],
-		ThinkingDisplay: mbDisplayList[m.mbDisplayIdx],
-	}
+
+	// Shared connection fields for every sibling.
+	backendURL := strings.TrimSpace(m.mbInputs[mbFieldBaseURL].Value())
+	keyEnv := strings.TrimSpace(m.mbInputs[mbFieldKeyEnv].Value())
+	thinking := mbThinkingList[m.mbThinkIdx]
+	effort := mbEffortList[m.mbEffortIdx]
+	display := mbDisplayList[m.mbDisplayIdx]
+
+	var priceIn, priceOut, priceCacheRead, priceCacheWrite *float64
 	prices := []struct {
 		idx   int
 		dst   **float64
 		label string
 	}{
-		{mbFieldPriceIn, &cfg.PriceInput, "price in"},
-		{mbFieldPriceOut, &cfg.PriceOutput, "price out"},
-		{mbFieldPriceCacheRead, &cfg.PriceCacheRead, "price cache read"},
-		{mbFieldPriceCacheWrite, &cfg.PriceCacheWrite, "price cache write"},
+		{mbFieldPriceIn, &priceIn, "price in"},
+		{mbFieldPriceOut, &priceOut, "price out"},
+		{mbFieldPriceCacheRead, &priceCacheRead, "price cache read"},
+		{mbFieldPriceCacheWrite, &priceCacheWrite, "price cache write"},
 	}
 	for _, p := range prices {
 		v, err := parsePrice(m.mbInputs[p.idx].Value())
@@ -3218,8 +3309,59 @@ func (m model) mbSubmitForm() (tea.Model, tea.Cmd) {
 		}
 		*p.dst = v
 	}
-	m.mbErr = ""
-	return m, m.mbUpsert(cfg, m.mbPersist)
+
+	// Compute the logical name for each id. By default the name is the id itself.
+	names := mbModelNames(ids, m.mbFormMode, m.mbOrigName, m.mbOrigModel, explicitName)
+
+	var cfgs []*v1.ModelConfig
+	for i, id := range ids {
+		cfgs = append(cfgs, &v1.ModelConfig{
+			Name:            names[i],
+			Backend:         backend,
+			BaseUrl:         backendURL,
+			Model:           id,
+			KeyEnv:          keyEnv,
+			Thinking:        thinking,
+			Effort:          effort,
+			ThinkingDisplay: display,
+			PriceInput:      priceIn,
+			PriceOutput:     priceOut,
+			PriceCacheRead:  priceCacheRead,
+			PriceCacheWrite: priceCacheWrite,
+		})
+	}
+	m.mbErr, m.mbInfo = "", ""
+	return m, m.mbUpsertMany(cfgs)
+}
+
+// mbModelNames assigns a logical name to each model id. Names default to the id
+// itself so a connection's model ids become self-named sibling models. Two
+// special cases preserve an existing logical name:
+//   - add/duplicate with exactly one id and an explicit name → use that name;
+//   - edit mode → the edited model keeps its name (origName) for its own id
+//     (origModel), or, if that id is gone, for the first id (an id rename). All
+//     other ids are new siblings named after themselves.
+func mbModelNames(ids []string, formMode int, origName, origModel, explicitName string) []string {
+	names := make([]string, len(ids))
+	for i, id := range ids {
+		names[i] = id
+	}
+	if formMode == mbEdit && origName != "" {
+		keep := -1
+		for i, id := range ids {
+			if id == origModel {
+				keep = i
+				break
+			}
+		}
+		if keep == -1 {
+			keep = 0 // original id was changed → treat the first id as the rename
+		}
+		names[keep] = origName
+	} else if len(ids) == 1 && explicitName != "" {
+		names[0] = explicitName
+	}
+	return names
 }
 
 func (m model) mbUpdateConfirm(key tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -3234,7 +3376,7 @@ func (m model) mbUpdateConfirm(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mbView = 0
 			return m, nil
 		}
-		return m, m.mbRemove(m.models[m.mbCursor].Name, m.mbPersist)
+		return m, m.mbRemove(m.models[m.mbCursor].Name)
 	}
 	return m, nil
 }
@@ -3250,11 +3392,12 @@ func (m model) mbFetchConfig(name string, mode int) tea.Cmd {
 	}
 }
 
-// mbUpsert adds or replaces a logical model backend (persist => also ycc.toml).
-func (m model) mbUpsert(cfg *v1.ModelConfig, persist bool) tea.Cmd {
+// mbUpsert adds or replaces a logical model backend. The change always takes
+// effect at runtime and is written back to ycc.toml by the daemon.
+func (m model) mbUpsert(cfg *v1.ModelConfig) tea.Cmd {
 	return func() tea.Msg {
 		if _, err := m.client.UpsertModel(m.ctx, connect.NewRequest(&v1.UpsertModelRequest{
-			Model: cfg, Persist: persist,
+			Model: cfg, Persist: true,
 		})); err != nil {
 			return mbWriteMsg{err: err}
 		}
@@ -3262,11 +3405,44 @@ func (m model) mbUpsert(cfg *v1.ModelConfig, persist bool) tea.Cmd {
 	}
 }
 
+// mbUpsertMany upserts several sibling logical models (one per model id) that
+// share a connection (spec §13). Any failure aborts and is surfaced inline; the
+// models upserted before the failure remain (idempotent re-submit fixes it).
+func (m model) mbUpsertMany(cfgs []*v1.ModelConfig) tea.Cmd {
+	return func() tea.Msg {
+		for _, cfg := range cfgs {
+			if _, err := m.client.UpsertModel(m.ctx, connect.NewRequest(&v1.UpsertModelRequest{
+				Model: cfg, Persist: true,
+			})); err != nil {
+				return mbWriteMsg{err: fmt.Errorf("%s: %w", cfg.Name, err)}
+			}
+		}
+		return mbWriteMsg{}
+	}
+}
+
+// mbDiscover queries the backend connection currently entered in the form for its
+// available model ids (spec §13). The result populates the model-id field.
+func (m model) mbDiscover() tea.Cmd {
+	backend := m.mbBackends[m.mbBackendIdx]
+	baseURL := strings.TrimSpace(m.mbInputs[mbFieldBaseURL].Value())
+	keyEnv := strings.TrimSpace(m.mbInputs[mbFieldKeyEnv].Value())
+	return func() tea.Msg {
+		resp, err := m.client.DiscoverModels(m.ctx, connect.NewRequest(&v1.DiscoverModelsRequest{
+			Backend: backend, BaseUrl: baseURL, KeyEnv: keyEnv,
+		}))
+		if err != nil {
+			return mbDiscoverMsg{err: err}
+		}
+		return mbDiscoverMsg{ids: resp.Msg.ModelIds, note: resp.Msg.Note, fromNet: resp.Msg.FromNetwork}
+	}
+}
+
 // mbRemove deletes a logical model backend; rejected if a role still references it.
-func (m model) mbRemove(name string, persist bool) tea.Cmd {
+func (m model) mbRemove(name string) tea.Cmd {
 	return func() tea.Msg {
 		if _, err := m.client.RemoveModel(m.ctx, connect.NewRequest(&v1.RemoveModelRequest{
-			Name: name, Persist: persist,
+			Name: name, Persist: true,
 		})); err != nil {
 			return mbWriteMsg{err: err}
 		}
@@ -3302,9 +3478,9 @@ func (m model) mbListView() string {
 	if m.mbErr != "" {
 		b.WriteString("\n" + errStyle.Render(m.mbErr) + "\n")
 	}
-	b.WriteString("\n" + dimStyle.Render("persist to ycc.toml: "+boolStr(m.mbPersist)))
+	b.WriteString("\n" + dimStyle.Render("changes are saved to ycc.toml automatically"))
 	return m.modalCard(" model backends ", strings.TrimRight(b.String(), "\n"),
-		"a add · e/enter edit · d duplicate · x remove · p toggle persist · esc back")
+		"a add · e/enter edit · d duplicate · x remove · esc back")
 }
 
 func (m model) mbFormView() string {
@@ -3320,7 +3496,6 @@ func (m model) mbFormView() string {
 		mbFieldName, mbFieldBackend, mbFieldBaseURL, mbFieldModel, mbFieldKeyEnv,
 		mbFieldThinking, mbFieldEffort, mbFieldDisplay,
 		mbFieldPriceIn, mbFieldPriceOut, mbFieldPriceCacheRead, mbFieldPriceCacheWrite,
-		mbFieldPersist,
 	}
 	for _, f := range order {
 		cursor := "  "
@@ -3344,26 +3519,28 @@ func (m model) mbFormView() string {
 			val = "◂ " + mbShow(mbEffortList[m.mbEffortIdx]) + " ▸"
 		case mbFieldDisplay:
 			val = "◂ " + mbShow(mbDisplayList[m.mbDisplayIdx]) + " ▸"
-		case mbFieldPersist:
-			val = "◂ " + boolStr(m.mbPersist) + " ▸"
 		default:
 			val = m.mbInputs[f].View()
 		}
 		b.WriteString(cursor + label + " " + val + "\n")
-		// Under the focused model field, hint the current backend's id presets.
-		// Free text still works; this just advertises the ctrl+n/p suggestions.
+		// Under the focused model field, hint that multiple ids are allowed and how
+		// to fetch/cycle them. Free text always works.
 		if f == mbFieldModel && m.mbFocus == mbFieldModel {
+			b.WriteString("    " + dimStyle.Render("space-separated ids · ctrl+f fetch from backend · ctrl+n/p cycle presets") + "\n")
 			if presets := mbModelPresets[m.mbBackends[m.mbBackendIdx]]; len(presets) > 0 {
-				b.WriteString("    " + dimStyle.Render("presets: "+strings.Join(presets, " · ")+"  (ctrl+n/p)") + "\n")
+				b.WriteString("    " + dimStyle.Render("presets: "+strings.Join(presets, " · ")) + "\n")
 			}
 		}
+	}
+	if m.mbInfo != "" {
+		b.WriteString("\n" + dimStyle.Render(m.mbInfo) + "\n")
 	}
 	if m.mbErr != "" {
 		b.WriteString("\n" + errStyle.Render(m.mbErr) + "\n")
 	}
 	b.WriteString("\n" + dimStyle.Render("(keys are env-var references only — never paste a secret)"))
 	return m.modalCard(" "+title+" ", strings.TrimRight(b.String(), "\n"),
-		"Tab/↑↓ move · ←/→ change · enter save · esc back")
+		"Tab/↑↓ move · ←/→ change · ctrl+f fetch models · enter save · esc back")
 }
 
 func (m model) mbConfirmView() string {
@@ -3373,7 +3550,7 @@ func (m model) mbConfirmView() string {
 		name = m.models[m.mbCursor].Name
 	}
 	b.WriteString("remove " + selStyle.Render(name) + "?\n")
-	b.WriteString("\n" + dimStyle.Render("persist to ycc.toml: "+boolStr(m.mbPersist)))
+	b.WriteString("\n" + dimStyle.Render("this is saved to ycc.toml"))
 	if m.mbErr != "" {
 		b.WriteString("\n\n" + errStyle.Render(m.mbErr) + "\n")
 	}

@@ -96,5 +96,7 @@
 | [0091](backlog/0091-drop-spec-feature-bug-backlog-home-menu-presets-in.md) | Drop spec/feature/bug/backlog home-menu presets in favor of just the pm mode | todo | 3 | — |
 | [0092](backlog/0092-bump-capture-agent-maxturns-to-32-and-tell-agent-i.md) | Bump capture agent MaxTurns to 32 and tell agent its turn budget | done | 3 | — |
 | [0093](backlog/0093-raise-maxtokens-default-and-handle-non-stop-stop-r.md) | Raise MaxTokens default and handle non-stop stop reasons robustly | done | 2 | — |
-| [0094](backlog/0094-fix-box-border-alignment-when-spinner-is-at-bottom.md) | Fix box border alignment when spinner is at bottom near text input | todo | 3 | — |
+| [0094](backlog/0094-fix-box-border-alignment-when-spinner-is-at-bottom.md) | Fix box border alignment when spinner is at bottom near text input | in_review | 3 | — |
 | [0095](backlog/0095-onboarding-mode-should-read-existing-spec-backlog.md) | Onboarding mode should read existing spec/backlog first and orient from them | todo | 3 | — |
+| [0096](backlog/0096-connection-centric-model-config-multi-model-id-ent.md) | Connection-centric model config: multi model-id entry + backend model discovery | in_review | 2 | — |
+| [0097](backlog/0097-sendinput-answer-ignores-a-pending-batch-multi-que.md) | SendInput/Answer ignores a pending batch (multi-question) ask_user | todo | 4 | — |

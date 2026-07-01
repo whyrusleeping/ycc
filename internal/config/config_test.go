@@ -476,13 +476,16 @@ func TestUpsertRemovePersist(t *testing.T) {
 	}
 }
 
-func TestPersistWithoutPathErrors(t *testing.T) {
+func TestPersistWithoutPathIsInMemory(t *testing.T) {
+	// With no config path, a persisted edit still applies in-memory instead of
+	// failing — a runtime change should never be rejected just because there is
+	// nowhere on disk to write it back to.
 	reg := baseRegistry() // no SetPath
-	if err := reg.UpsertModel("gpt", Model{Backend: "openai", Model: "gpt-4o"}, true); err == nil {
-		t.Fatal("expected error persisting without a config path")
+	if err := reg.UpsertModel("gpt", Model{Backend: "openai", Model: "gpt-4o"}, true); err != nil {
+		t.Fatalf("UpsertModel without path should succeed in-memory: %v", err)
 	}
-	if reg.Has("gpt") {
-		t.Fatal("failed persist must revert the live change")
+	if !reg.Has("gpt") {
+		t.Fatal("in-memory change should be applied even without a config path")
 	}
 }
 

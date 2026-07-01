@@ -6,6 +6,7 @@
 package config
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -572,6 +573,15 @@ func (r *Registry) GetModel(name string) (Model, bool) {
 	return m, ok
 }
 
+// DiscoverConnModels lists the model ids available from a backend connection by
+// resolving key_env locally (env then secrets store) and querying the backend's
+// listing endpoint (spec §13). It never returns or logs the secret value. On any
+// failure the caller should fall back to CuratedModelIDs(backend).
+func (r *Registry) DiscoverConnModels(ctx context.Context, backend, baseURL, keyEnv string) ([]string, error) {
+	key := resolveKey(Model{KeyEnv: keyEnv})
+	return DiscoverModels(ctx, backend, baseURL, key)
+}
+
 // UpsertModel adds or replaces the logical model named name with m, taking
 // effect on the next Build (no restart). The record is validated first. When
 // persist is true the whole config is written back to the discovered config
@@ -634,10 +644,13 @@ func (r *Registry) RemoveModel(name string, persist bool) error {
 	return nil
 }
 
-// persistLocked writes the current config to r.path. Caller must hold r.mu.
+// persistLocked writes the current config to r.path. Caller must hold r.mu. If
+// no config path is known it is a no-op (nil) rather than an error: a runtime
+// edit should always take effect in-memory even when there is nowhere on disk
+// to write it (the common paths always resolve a path — see daemon.persistPath).
 func (r *Registry) persistLocked() error {
 	if r.path == "" {
-		return errors.New("config: no config file path to persist to")
+		return nil
 	}
 	if err := Save(r.path, r.cfg); err != nil {
 		return fmt.Errorf("persist config: %w", err)

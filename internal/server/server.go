@@ -363,25 +363,28 @@ func configToModelConfig(name string, m config.Model) *v1.ModelConfig {
 }
 
 // UpsertModel adds or replaces a logical model backend at runtime (spec §18.2).
-// The change takes effect on the next turn/spawn; persist also writes ycc.toml.
+// The change takes effect on the next turn/spawn and is always written back to
+// ycc.toml so settings edits survive a restart. The request's persist flag is
+// retained for wire compatibility but ignored — persistence is unconditional.
 func (s *Server) UpsertModel(_ context.Context, req *connect.Request[v1.UpsertModelRequest]) (*connect.Response[v1.UpsertModelResponse], error) {
 	mc := req.Msg.Model
 	if mc == nil || mc.Name == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("model name is required"))
 	}
-	if err := s.mgr.UpsertModel(mc.Name, modelConfigToConfig(mc), req.Msg.Persist); err != nil {
+	if err := s.mgr.UpsertModel(mc.Name, modelConfigToConfig(mc), true); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	return connect.NewResponse(&v1.UpsertModelResponse{}), nil
 }
 
 // RemoveModel deletes a logical model backend (spec §18.2). It is rejected if a
-// role still references it; persist also writes ycc.toml.
+// role still references it. Like UpsertModel the change is always written back
+// to ycc.toml; the request's persist flag is ignored.
 func (s *Server) RemoveModel(_ context.Context, req *connect.Request[v1.RemoveModelRequest]) (*connect.Response[v1.RemoveModelResponse], error) {
 	if req.Msg.Name == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("model name is required"))
 	}
-	if err := s.mgr.RemoveModel(req.Msg.Name, req.Msg.Persist); err != nil {
+	if err := s.mgr.RemoveModel(req.Msg.Name, true); err != nil {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
 	}
 	return connect.NewResponse(&v1.RemoveModelResponse{}), nil
@@ -397,6 +400,33 @@ func (s *Server) GetModelConfig(_ context.Context, req *connect.Request[v1.GetMo
 		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("unknown model %q", req.Msg.Name))
 	}
 	return connect.NewResponse(&v1.GetModelConfigResponse{Model: configToModelConfig(req.Msg.Name, m)}), nil
+}
+
+// DiscoverModels lists the model ids available from a backend connection (spec
+// §13, §18.2) so the connection form can offer them for selection. On a
+// discovery failure it degrades to curated defaults rather than erroring, so the
+// form is always usable offline / without a key.
+func (s *Server) DiscoverModels(ctx context.Context, req *connect.Request[v1.DiscoverModelsRequest]) (*connect.Response[v1.DiscoverModelsResponse], error) {
+	backend := req.Msg.Backend
+	if backend == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("backend is required"))
+	}
+	ids, err := s.mgr.DiscoverModels(ctx, backend, req.Msg.BaseUrl, req.Msg.KeyEnv)
+	if err != nil || len(ids) == 0 {
+		curated := config.CuratedModelIDs(backend)
+		note := "using curated defaults"
+		if err != nil {
+			note = "discovery failed (" + err.Error() + "); using curated defaults"
+		} else if len(ids) == 0 {
+			note = "backend returned no models; using curated defaults"
+		}
+		return connect.NewResponse(&v1.DiscoverModelsResponse{
+			ModelIds: curated, FromNetwork: false, Note: note,
+		}), nil
+	}
+	return connect.NewResponse(&v1.DiscoverModelsResponse{
+		ModelIds: ids, FromNetwork: true, Note: fmt.Sprintf("%d models from %s", len(ids), backend),
+	}), nil
 }
 
 // SetInteractionLevel changes a session's interaction level mid-flight (spec §11).

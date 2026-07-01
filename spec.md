@@ -497,6 +497,7 @@ service SessionService {
   rpc ListModels(ListModelsRequest) returns (ListModelsResponse);       // available logical models
   rpc UpsertModel(UpsertModelRequest) returns (UpsertModelResponse);    // add/edit a model backend (§18.2, task 0041)
   rpc RemoveModel(RemoveModelRequest) returns (RemoveModelResponse);    // delete a model backend (§18.2, task 0041)
+  rpc DiscoverModels(DiscoverModelsRequest) returns (DiscoverModelsResponse); // list a connection's model ids (§13, §18.2)
   rpc SetInteractionLevel(SetInteractionLevelRequest) returns (SetInteractionLevelResponse);
   rpc SetRoleConfig(SetRoleConfigRequest) returns (SetRoleConfigResponse);
   rpc SetThinking(SetThinkingRequest) returns (SetThinkingResponse);    // per-role reasoning level
@@ -530,11 +531,11 @@ Notable message shapes for the settings + structured-question work:
   `[models.X]` block (name, backend, base_url, model, key_env, thinking/effort/display,
   pricing) and is returned by an extended `ListModels` (or a `GetModelConfig`).
   `UpsertModelRequest { ModelConfig model; bool persist }` adds or replaces a logical model
-  by name; `RemoveModelRequest { string name; bool persist }` deletes one. With
-  `persist=true` the daemon writes the change back to `ycc.toml` via `config.Save` (§19.1)
-  so it survives restart; otherwise it edits only the live session/daemon config. The
-  daemon rebuilds backends on the next `Build`, so changes take effect without a restart
-  (§13, §18.2, task 0041).
+  by name; `RemoveModelRequest { string name; bool persist }` deletes one. The daemon
+  **always** writes the change back to `ycc.toml` via `config.Save` (§19.1) so it survives
+  restart; the `persist` field is retained for wire compatibility but ignored (a settings
+  edit is never runtime-only). The daemon rebuilds backends on the next `Build`, so changes
+  take effect without a restart (§13, §18.2, task 0041).
 - `InterruptRequest { session_id }` / `ResumeRequest { session_id }` — pause a running
   agent at the next safe checkpoint, then continue (§18.7). A correction is steered in by
   `SendInput` while paused; `Resume` continues with no change. `Interrupt` is a *graceful
@@ -584,11 +585,15 @@ one backend's credentials/endpoint while pointing at **different model ids** —
 `claude-opus`, `claude-sonnet`, and `claude-haiku` all using the same `anthropic` backend,
 `base_url`, and `ANTHROPIC_API_KEY`, differing only in `model` (and possibly pricing). This
 is how "the same backing token, a different model" is expressed: define sibling logical
-models that reuse the credential. The TUI's backend manager (§18.2) makes this ergonomic by
-letting the user **duplicate** an existing model and change only the name + model id, rather
-than re-entering credentials; the underlying config stays the flat per-logical-model map (a
-dedicated `[providers.X]` credential table that models reference is a possible future
-normalization, not required for this).
+models that reuse the credential. The TUI's backend manager (§18.2) makes this ergonomic in
+two ways: **adding a connection** captures the credential/endpoint once plus a *set* of
+model ids (one space/comma-separated field), creating one sibling logical model per id
+(named after the id); and **duplicate** clones an existing model, changing only the name +
+model id. The set of ids can be **discovered** from the live backend via `DiscoverModels`
+(the OpenAI-compatible `/models`, Anthropic `/v1/models`, or Ollama `/api/tags` endpoint)
+or seeded from curated per-backend defaults. The underlying config stays the flat
+per-logical-model map (a dedicated `[providers.X]` credential table that models reference is
+a possible future normalization, not required for this).
 
 **Per-model reasoning** (`thinking` / `effort` / `thinking_display`) is configured on each
 `[models.X]` block and resolved by the registry (`ThinkingFor(name)`), paralleling
@@ -808,13 +813,24 @@ Overlay contents:
   the overlay can **manage the model backends themselves**, so the user can configure
   everything about a provider from the TUI without hand-editing `ycc.toml` or re-running
   first-run setup (§19.1). A backend manager screen lists the configured logical models and
-  lets the user **add** a new one (logical name, backend `anthropic|openai|ollama`, base URL,
-  model id, `key_env`, optional pricing + thinking), **edit** an existing one, **duplicate**
-  one (clone its credentials/endpoint and change only the name + model id — the ergonomic
-  path to "the same anthropic token, but sonnet/haiku", §13), and **remove** one. This
-  reuses the first-run wizard's provider form (task 0023). Edits issue
+  lets the user **add** a new one, **edit** an existing one, **duplicate** one, and
+  **remove** one. Adding is **connection-centric** (§13): the form captures one connection
+  (backend `anthropic|openai|openai-compatible|glm|ollama`, base URL, `key_env`, shared
+  reasoning/pricing) plus a **set of model ids** in a single space/comma-separated field.
+  Submitting creates **one sibling logical model per id**, each named after its model id, so
+  a single anthropic connection yields selectable `claude-opus-4-8` / `claude-sonnet-4-5` /
+  `claude-fable-5` models the role pickers can assign independently. The model-id field is
+  seeded with the backend's curated defaults (opus/sonnet/fable for anthropic) and can be
+  populated from the live backend with **`ctrl+f`** (`DiscoverModels`, §13) — the
+  OpenAI-compatible `/models`, Anthropic `/v1/models`, or Ollama `/api/tags` endpoint —
+  falling back to curated defaults when discovery is unavailable. **Edit** operates on a
+  single model id; **duplicate** clones a connection and changes only the name + model id.
+  This reuses the first-run wizard's provider form (task 0023). Edits issue
   `UpsertModel` / `RemoveModel` (§12); the daemon updates the live config (so the next
-  `Build` uses it) and, when the user opts to persist, writes `ycc.toml` via `config.Save`.
+  `Build` uses it) and **always** writes `ycc.toml` via `config.Save` so a settings
+  change survives a restart — persistence is unconditional, not an opt-in toggle. (The
+  RPCs keep a `persist` field for wire compatibility but the daemon ignores it and
+  always persists; when no config path can be resolved the edit still applies in-memory.)
   A removed or renamed model still referenced by a role is rejected (validation) so the
   session never points at a missing backend.
 - **UI preferences** — theme/style, follow/auto-scroll toggle, and similar client-only

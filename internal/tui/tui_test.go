@@ -935,9 +935,14 @@ type fakeClient struct {
 	referenced map[string]bool
 
 	lastUpsert  *v1.ModelConfig
+	upserts     []*v1.ModelConfig // every UpsertModel call, in order
 	lastPersist bool
 	lastRemove  string
 	lastStopped string
+
+	discoverIDs  []string // returned by DiscoverModels
+	discoverNote string
+	lastDiscover *v1.DiscoverModelsRequest
 
 	lastStartLevel string // InteractionLevel of the most recent StartSession
 
@@ -1000,12 +1005,20 @@ func (f *fakeClient) GetModelConfig(_ context.Context, req *connect.Request[v1.G
 func (f *fakeClient) UpsertModel(_ context.Context, req *connect.Request[v1.UpsertModelRequest]) (*connect.Response[v1.UpsertModelResponse], error) {
 	c := req.Msg.Model
 	f.lastUpsert = c
+	f.upserts = append(f.upserts, c)
 	f.lastPersist = req.Msg.Persist
 	if _, ok := f.models[c.Name]; !ok {
 		f.order = append(f.order, c.Name)
 	}
 	f.models[c.Name] = c
 	return connect.NewResponse(&v1.UpsertModelResponse{}), nil
+}
+
+func (f *fakeClient) DiscoverModels(_ context.Context, req *connect.Request[v1.DiscoverModelsRequest]) (*connect.Response[v1.DiscoverModelsResponse], error) {
+	f.lastDiscover = req.Msg
+	return connect.NewResponse(&v1.DiscoverModelsResponse{
+		ModelIds: f.discoverIDs, Note: f.discoverNote, FromNetwork: len(f.discoverIDs) > 0,
+	}), nil
 }
 
 func (f *fakeClient) RemoveModel(_ context.Context, req *connect.Request[v1.RemoveModelRequest]) (*connect.Response[v1.RemoveModelResponse], error) {
@@ -1184,13 +1197,14 @@ func TestModelBackendsAdd(t *testing.T) {
 	// move to model field (backend->base_url->model) and type.
 	m = drive(t, m, "tab") // base_url
 	m = drive(t, m, "tab") // model
+	// The add form seeds the model field with the backend's curated ids; clear it
+	// and enter a single id so this exercises the single-model path.
+	m.mbInputs[mbFieldModel].SetValue("")
 	m = typeText(t, m, "gpt-5")
 	// move to key_env and type.
 	m = drive(t, m, "tab")
 	m = typeText(t, m, "OPENAI_API_KEY")
-	// toggle persist on by enabling it via the list-level toggle before submit:
-	m.mbPersist = true
-	// Submit.
+	// Submit. Backend edits always persist to ycc.toml (no opt-out).
 	m = drive(t, m, "enter")
 	if f.lastUpsert == nil {
 		t.Fatal("UpsertModel was not called")
@@ -1306,6 +1320,112 @@ func TestModelBackendsDuplicatePricing(t *testing.T) {
 		u.PriceCacheWrite == nil || *u.PriceCacheWrite != cw {
 		t.Fatalf("sibling pricing mismatch: in=%v out=%v cr=%v cw=%v",
 			u.PriceInput, u.PriceOutput, u.PriceCacheRead, u.PriceCacheWrite)
+	}
+}
+
+// TestModelBackendsAddConnectionSiblings exercises the connection-centric add
+// flow (spec §13): the anthropic add form seeds the model field with curated ids,
+// and submitting creates one sibling logical model per id, each named after its
+// model id and sharing the connection's credentials.
+func TestModelBackendsAddConnectionSiblings(t *testing.T) {
+	f := newFakeClient()
+	m := newBackendsModel(f)
+	m = runCmds(t, m, m.fetchModels)
+	m = drive(t, m, "a") // add form, backend defaults to anthropic
+	// The model field is prefilled with anthropic curated ids.
+	if got := m.mbInputs[mbFieldModel].Value(); got == "" {
+		t.Fatal("expected model field prefilled with curated ids")
+	}
+	// Set an explicit connection + a specific set of ids.
+	m.mbInputs[mbFieldBaseURL].SetValue("https://api.anthropic.com")
+	m.mbInputs[mbFieldKeyEnv].SetValue("ANTHROPIC_API_KEY")
+	m.mbInputs[mbFieldModel].SetValue("claude-opus-4-8 claude-sonnet-4-5 claude-fable-5")
+	m = drive(t, m, "enter")
+
+	if len(f.upserts) != 3 {
+		t.Fatalf("expected 3 sibling upserts, got %d", len(f.upserts))
+	}
+	want := map[string]bool{"claude-opus-4-8": true, "claude-sonnet-4-5": true, "claude-fable-5": true}
+	for _, u := range f.upserts {
+		if u.Name != u.Model {
+			t.Errorf("sibling name=%q should equal model id=%q", u.Name, u.Model)
+		}
+		if !want[u.Model] {
+			t.Errorf("unexpected model %q", u.Model)
+		}
+		if u.Backend != "anthropic" || u.BaseUrl != "https://api.anthropic.com" || u.KeyEnv != "ANTHROPIC_API_KEY" {
+			t.Errorf("sibling %q did not share connection: backend=%q base=%q key=%q", u.Model, u.Backend, u.BaseUrl, u.KeyEnv)
+		}
+	}
+}
+
+// TestModelBackendsFetchModels exercises ctrl+f discovery: the fetched ids
+// populate the model-id field so the whole connection's models become siblings.
+func TestModelBackendsFetchModels(t *testing.T) {
+	f := newFakeClient()
+	f.discoverIDs = []string{"gpt-5.5", "gpt-4o", "o3"}
+	f.discoverNote = "3 models from openai"
+	m := newBackendsModel(f)
+	m = runCmds(t, m, m.fetchModels)
+	m = drive(t, m, "a")
+	// Move focus to the model field and fetch.
+	m.mbFocus = mbFieldModel
+	m = drive(t, m, "ctrl+f")
+	if m.lastDiscoverBackend(f) == "" {
+		t.Fatal("DiscoverModels was not called")
+	}
+	if got := m.mbInputs[mbFieldModel].Value(); got != "gpt-5.5 gpt-4o o3" {
+		t.Fatalf("model field after fetch = %q, want the discovered ids", got)
+	}
+	if m.mbInfo != "3 models from openai" {
+		t.Fatalf("mbInfo = %q, want the discovery note", m.mbInfo)
+	}
+}
+
+// lastDiscoverBackend is a tiny helper for the fetch test.
+func (m model) lastDiscoverBackend(f *fakeClient) string {
+	if f.lastDiscover == nil {
+		return ""
+	}
+	return f.lastDiscover.Backend
+}
+
+// TestModelBackendsEditMultiID covers editing a model and entering (or fetching)
+// multiple ids: the edited model keeps its logical name for its own id, and any
+// extra ids become new siblings on the same connection — instead of erroring.
+func TestModelBackendsEditMultiID(t *testing.T) {
+	f := newFakeClient(&v1.ModelConfig{
+		Name: "claude", Backend: "anthropic",
+		BaseUrl: "https://api.anthropic.com", Model: "claude-opus-4-8", KeyEnv: "ANTHROPIC_API_KEY",
+	})
+	m := newBackendsModel(f)
+	m = runCmds(t, m, m.fetchModels)
+	m = drive(t, m, "e")
+	if m.mbFormMode != mbEdit {
+		t.Fatalf("mbFormMode=%d, want mbEdit", m.mbFormMode)
+	}
+	// Simulate fetching/typing several ids (the original id plus two more).
+	m.mbInputs[mbFieldModel].SetValue("claude-opus-4-8 claude-sonnet-4-5 claude-fable-5")
+	m = drive(t, m, "enter")
+	if m.mbErr != "" {
+		t.Fatalf("unexpected error: %q", m.mbErr)
+	}
+	if len(f.upserts) != 3 {
+		t.Fatalf("expected 3 upserts, got %d", len(f.upserts))
+	}
+	names := map[string]string{} // model id -> logical name
+	for _, u := range f.upserts {
+		names[u.Model] = u.Name
+		if u.BaseUrl != "https://api.anthropic.com" || u.KeyEnv != "ANTHROPIC_API_KEY" {
+			t.Errorf("sibling %q lost connection: base=%q key=%q", u.Model, u.BaseUrl, u.KeyEnv)
+		}
+	}
+	// The edited model keeps its name for its own id; the extras are self-named.
+	if names["claude-opus-4-8"] != "claude" {
+		t.Errorf("edited model name = %q, want claude", names["claude-opus-4-8"])
+	}
+	if names["claude-sonnet-4-5"] != "claude-sonnet-4-5" || names["claude-fable-5"] != "claude-fable-5" {
+		t.Errorf("extra siblings not self-named: %v", names)
 	}
 }
 

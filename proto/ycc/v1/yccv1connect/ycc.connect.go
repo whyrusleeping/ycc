@@ -101,6 +101,9 @@ const (
 	// SessionServiceGetModelConfigProcedure is the fully-qualified name of the SessionService's
 	// GetModelConfig RPC.
 	SessionServiceGetModelConfigProcedure = "/ycc.v1.SessionService/GetModelConfig"
+	// SessionServiceDiscoverModelsProcedure is the fully-qualified name of the SessionService's
+	// DiscoverModels RPC.
+	SessionServiceDiscoverModelsProcedure = "/ycc.v1.SessionService/DiscoverModels"
 	// SessionServiceListBacklogProcedure is the fully-qualified name of the SessionService's
 	// ListBacklog RPC.
 	SessionServiceListBacklogProcedure = "/ycc.v1.SessionService/ListBacklog"
@@ -162,6 +165,7 @@ type SessionServiceClient interface {
 	UpsertModel(context.Context, *connect.Request[v1.UpsertModelRequest]) (*connect.Response[v1.UpsertModelResponse], error)
 	RemoveModel(context.Context, *connect.Request[v1.RemoveModelRequest]) (*connect.Response[v1.RemoveModelResponse], error)
 	GetModelConfig(context.Context, *connect.Request[v1.GetModelConfigRequest]) (*connect.Response[v1.GetModelConfigResponse], error)
+	DiscoverModels(context.Context, *connect.Request[v1.DiscoverModelsRequest]) (*connect.Response[v1.DiscoverModelsResponse], error)
 	// Backlog browser (spec §18.5): read-only access to the durable backlog.
 	ListBacklog(context.Context, *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error)
 	GetTask(context.Context, *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error)
@@ -333,6 +337,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("GetModelConfig")),
 			connect.WithClientOptions(opts...),
 		),
+		discoverModels: connect.NewClient[v1.DiscoverModelsRequest, v1.DiscoverModelsResponse](
+			httpClient,
+			baseURL+SessionServiceDiscoverModelsProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("DiscoverModels")),
+			connect.WithClientOptions(opts...),
+		),
 		listBacklog: connect.NewClient[v1.ListBacklogRequest, v1.ListBacklogResponse](
 			httpClient,
 			baseURL+SessionServiceListBacklogProcedure,
@@ -397,6 +407,7 @@ type sessionServiceClient struct {
 	upsertModel          *connect.Client[v1.UpsertModelRequest, v1.UpsertModelResponse]
 	removeModel          *connect.Client[v1.RemoveModelRequest, v1.RemoveModelResponse]
 	getModelConfig       *connect.Client[v1.GetModelConfigRequest, v1.GetModelConfigResponse]
+	discoverModels       *connect.Client[v1.DiscoverModelsRequest, v1.DiscoverModelsResponse]
 	listBacklog          *connect.Client[v1.ListBacklogRequest, v1.ListBacklogResponse]
 	getTask              *connect.Client[v1.GetTaskRequest, v1.GetTaskResponse]
 	listPlans            *connect.Client[v1.ListPlansRequest, v1.ListPlansResponse]
@@ -520,6 +531,11 @@ func (c *sessionServiceClient) GetModelConfig(ctx context.Context, req *connect.
 	return c.getModelConfig.CallUnary(ctx, req)
 }
 
+// DiscoverModels calls ycc.v1.SessionService.DiscoverModels.
+func (c *sessionServiceClient) DiscoverModels(ctx context.Context, req *connect.Request[v1.DiscoverModelsRequest]) (*connect.Response[v1.DiscoverModelsResponse], error) {
+	return c.discoverModels.CallUnary(ctx, req)
+}
+
 // ListBacklog calls ycc.v1.SessionService.ListBacklog.
 func (c *sessionServiceClient) ListBacklog(ctx context.Context, req *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error) {
 	return c.listBacklog.CallUnary(ctx, req)
@@ -594,6 +610,7 @@ type SessionServiceHandler interface {
 	UpsertModel(context.Context, *connect.Request[v1.UpsertModelRequest]) (*connect.Response[v1.UpsertModelResponse], error)
 	RemoveModel(context.Context, *connect.Request[v1.RemoveModelRequest]) (*connect.Response[v1.RemoveModelResponse], error)
 	GetModelConfig(context.Context, *connect.Request[v1.GetModelConfigRequest]) (*connect.Response[v1.GetModelConfigResponse], error)
+	DiscoverModels(context.Context, *connect.Request[v1.DiscoverModelsRequest]) (*connect.Response[v1.DiscoverModelsResponse], error)
 	// Backlog browser (spec §18.5): read-only access to the durable backlog.
 	ListBacklog(context.Context, *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error)
 	GetTask(context.Context, *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error)
@@ -761,6 +778,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("GetModelConfig")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceDiscoverModelsHandler := connect.NewUnaryHandler(
+		SessionServiceDiscoverModelsProcedure,
+		svc.DiscoverModels,
+		connect.WithSchema(sessionServiceMethods.ByName("DiscoverModels")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sessionServiceListBacklogHandler := connect.NewUnaryHandler(
 		SessionServiceListBacklogProcedure,
 		svc.ListBacklog,
@@ -845,6 +868,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceRemoveModelHandler.ServeHTTP(w, r)
 		case SessionServiceGetModelConfigProcedure:
 			sessionServiceGetModelConfigHandler.ServeHTTP(w, r)
+		case SessionServiceDiscoverModelsProcedure:
+			sessionServiceDiscoverModelsHandler.ServeHTTP(w, r)
 		case SessionServiceListBacklogProcedure:
 			sessionServiceListBacklogHandler.ServeHTTP(w, r)
 		case SessionServiceGetTaskProcedure:
@@ -956,6 +981,10 @@ func (UnimplementedSessionServiceHandler) RemoveModel(context.Context, *connect.
 
 func (UnimplementedSessionServiceHandler) GetModelConfig(context.Context, *connect.Request[v1.GetModelConfigRequest]) (*connect.Response[v1.GetModelConfigResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetModelConfig is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) DiscoverModels(context.Context, *connect.Request[v1.DiscoverModelsRequest]) (*connect.Response[v1.DiscoverModelsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.DiscoverModels is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) ListBacklog(context.Context, *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error) {

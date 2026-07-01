@@ -471,7 +471,7 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		// Record the assistant turn (text + tool_use) so context carries forward.
 		l.history = append(l.history, msg)
 
-		for _, call := range msg.ToolCalls {
+		for ci, call := range msg.ToolCalls {
 			l.Emitter.Emit(event.ToolCall, map[string]any{
 				"name": call.Function.Name,
 				"args": call.Function.Arguments,
@@ -497,6 +497,19 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			l.Emitter.Emit(event.ToolResult, resultData)
 			l.appendToolResult(call.ID, res)
 			if ctrl := tools.ControlOf(res); ctrl != nil && ctrl.Stop {
+				// The model may batch a control-stop tool (e.g. finish) alongside
+				// other tool calls in the SAME turn. Those later calls are never
+				// dispatched, so they have no tool_result. If the session later
+				// continues on this history (e.g. a user prod after the coordinator
+				// finishes), Anthropic rejects an assistant tool_use with no matching
+				// tool_result ("messages: ... tool_use ids were found without
+				// tool_result blocks"). Append synthetic results for the undispatched
+				// remainder so the history stays valid to replay/continue.
+				for _, rem := range msg.ToolCalls[ci+1:] {
+					l.appendToolResult(rem.ID, &gollama.ToolResult{
+						Content: "(skipped: the session ended before this tool ran)",
+					})
+				}
 				report := ctrl.Report
 				if report == "" {
 					report = msg.Content

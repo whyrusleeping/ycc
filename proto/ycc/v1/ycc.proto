@@ -223,6 +223,23 @@ message RemoveModelResponse {}
 message GetModelConfigRequest { string name = 1; }
 message GetModelConfigResponse { ModelConfig model = 1; }
 
+// DiscoverModels lists the model ids available from a backend connection (spec
+// §13) so the connection form can offer them for selection. base_url + key_env
+// describe the connection to probe (the key value never crosses the wire — the
+// daemon resolves key_env locally). On a discovery failure the daemon falls back
+// to curated defaults and sets from_network=false with a human-readable note.
+message DiscoverModelsRequest {
+  string backend = 1;  // anthropic | openai | openai-compatible | glm | ollama
+  string base_url = 2;
+  string key_env = 3;  // env var holding the API key (never the key itself)
+}
+message DiscoverModelsResponse {
+  repeated string model_ids = 1;
+  bool from_network = 2; // true => queried the backend; false => curated fallback
+  string note = 3;       // human-readable status/error (e.g. why fallback happened)
+}
+
+
 // SetInteractionLevel changes a session's interaction level mid-flight (spec §11,
 // §18.2). It takes effect at the next gate and is recorded in the event log.
 message SetInteractionLevelRequest {
@@ -401,6 +418,7 @@ service SessionService {
   rpc UpsertModel(UpsertModelRequest) returns (UpsertModelResponse);
   rpc RemoveModel(RemoveModelRequest) returns (RemoveModelResponse);
   rpc GetModelConfig(GetModelConfigRequest) returns (GetModelConfigResponse);
+  rpc DiscoverModels(DiscoverModelsRequest) returns (DiscoverModelsResponse);
 
   // Backlog browser (spec §18.5): read-only access to the durable backlog.
   rpc ListBacklog(ListBacklogRequest) returns (ListBacklogResponse);

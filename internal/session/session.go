@@ -1174,6 +1174,13 @@ func (m *Manager) Models() []config.ModelInfo { return m.reg.Models() }
 // settings overlay (spec §18.2).
 func (m *Manager) GetModel(name string) (config.Model, bool) { return m.reg.GetModel(name) }
 
+// DiscoverModels lists the model ids available from a backend connection for the
+// connection form (spec §13, §18.2). key_env is resolved locally; the secret
+// value never leaves the daemon.
+func (m *Manager) DiscoverModels(ctx context.Context, backend, baseURL, keyEnv string) ([]string, error) {
+	return m.reg.DiscoverConnModels(ctx, backend, baseURL, keyEnv)
+}
+
 // UpsertModel adds or replaces a logical model backend at runtime; persist also
 // writes ycc.toml (spec §18.2).
 func (m *Manager) UpsertModel(name string, mdl config.Model, persist bool) error {

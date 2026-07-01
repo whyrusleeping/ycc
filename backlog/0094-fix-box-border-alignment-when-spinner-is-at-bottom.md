@@ -1,10 +1,10 @@
 ---
 id: "0094"
 title: Fix box border alignment when spinner is at bottom near text input
-status: todo
+status: in_review
 priority: 3
 created: "2026-06-30"
-updated: "2026-06-30"
+updated: "2026-07-01"
 depends_on: []
 spec_refs: []
 ---
