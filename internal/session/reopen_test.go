@@ -1,7 +1,6 @@
 package session
 
 import (
-	"errors"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -54,24 +53,29 @@ func TestReopenUnknown(t *testing.T) {
 	}
 }
 
-// A hard-stopped session (log ends in session_stopped) cannot be reopened:
-// Reopen returns ErrSessionStopped and registers no live session.
+// A previously Stop-terminated session (log ends in session_stopped) is still
+// reopenable: resume is pure log replay (spec §4.5/§18.6), so session_stopped is
+// informational and does not block reconstructing the session from its log.
 func TestReopenStopped(t *testing.T) {
 	ws := t.TempDir()
+	absWS, _ := filepath.Abs(ws)
 	id := "s_stopped"
 	writeSession(t, ws, id, []event.Event{
-		{Seq: 1, TS: ts(1), Type: event.SessionStarted, Data: map[string]any{"mode": "work"}},
+		{Seq: 1, TS: ts(1), Type: event.SessionStarted, Data: map[string]any{"mode": "work", "workspace": absWS}},
 		{Seq: 2, TS: ts(2), Actor: "user", Type: event.UserInput, Data: map[string]any{"text": "go"}},
 		{Seq: 3, TS: ts(3), Type: event.SessionStopped},
 	})
 
 	m := NewManager(testRegistry(), ws)
-	_, err := m.Reopen("", id)
-	if !errors.Is(err, ErrSessionStopped) {
-		t.Fatalf("Reopen err = %v, want ErrSessionStopped", err)
+	sess, err := m.Reopen("", id)
+	if err != nil {
+		t.Fatalf("Reopen of a stopped session: %v", err)
 	}
-	if _, ok := m.Get(id); ok {
-		t.Fatal("stopped session should not be registered as live")
+	if sess == nil {
+		t.Fatal("Reopen returned nil session")
+	}
+	if _, ok := m.Get(id); !ok {
+		t.Fatal("reopened session not registered as live")
 	}
 }
 

@@ -212,13 +212,28 @@ func (s *Session) AnswerBatch(idxs []int, texts []string) error {
 	return nil
 }
 
-// Stop hard-terminates the session: it records the terminal session_stopped
-// event, cancels the agent loop (unblocking any ask_user / checkpoint waiting on
-// the ctx), and closes the event log. It is idempotent (runs at most once).
+// Stop terminates the session's live process: it records a session_stopped
+// event (informational — the session stays reopenable via log replay, §18.6),
+// cancels the agent loop (unblocking any ask_user / checkpoint waiting on the
+// ctx), and closes the event log. It is idempotent (runs at most once).
 func (s *Session) Stop() {
 	s.stopOnce.Do(func() {
 		s.setStatus(event.StatusStopped)
 		s.emitter.Emit(event.SessionStopped, map[string]any{})
+		s.cancel()
+		s.log.Close()
+	})
+}
+
+// reap releases a live but idle session's in-memory resources for the GC
+// reaper (task 0054) WITHOUT recording a session_stopped marker: it cancels the
+// loop and closes the event log, leaving the durable events.jsonl exactly as
+// the session left it. Both reap and Stop keep a session reopenable (resume =
+// log replay); reap simply avoids writing a spurious "terminated" marker into a
+// log the reaper is only reclaiming for memory. It shares stopOnce with Stop so
+// at most one of them ever runs.
+func (s *Session) reap() {
+	s.stopOnce.Do(func() {
 		s.cancel()
 		s.log.Close()
 	})
@@ -978,7 +993,9 @@ func (m *Manager) newSession(absWS, id, mode, level, prompt string, log *event.L
 // level from the projection, reconstructs the coordinator loop's conversation
 // history from the log, and registers it as a live session whose new activity
 // appends to the same continuous events.jsonl. It is idempotent: reopening an
-// already-live session returns the live one. An empty project uses the default
+// already-live session returns the live one. A previously Stop-terminated
+// session is reopenable too — resume is pure log replay, so session_stopped is
+// informational and does not block it. An empty project uses the default
 // workspace; an unknown project is ErrUnknownProject; a session with no persisted
 // log is ErrUnknownSession.
 func (m *Manager) Reopen(project, id string) (*Session, error) {
@@ -1010,12 +1027,10 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 	}
 
 	proj := event.Reduce(events)
-	// A hard-stopped session has no resume (spec §12): its agent loop was
-	// cancelled and its log closed terminally. Reject reopening it.
-	if proj.Status == event.StatusStopped {
-		log.Close()
-		return nil, fmt.Errorf("%w %q", ErrSessionStopped, id)
-	}
+	// A previously Stop-terminated session is still reopenable: resume is pure
+	// log replay (spec §4.5/§18.6), so a session_stopped marker is informational
+	// (it records that the live process was terminated) and does NOT block
+	// reconstructing the conversation from the durable log.
 	mode := proj.Mode
 	if mode == "" {
 		mode = "work"
@@ -1148,6 +1163,24 @@ func (m *Manager) Stop(id string) error {
 	}
 	s.Stop()
 	return nil
+}
+
+// reclaim removes an idle session from the live map to free memory WITHOUT
+// terminating it: it cancels the loop and closes the log via Session.reap but
+// does NOT emit the terminal session_stopped marker, so the durable log stays
+// resumable (spec §18.6). Used by the background GC reaper (task 0054); unknown
+// ids are silently ignored.
+func (m *Manager) reclaim(id string) {
+	m.mu.Lock()
+	s, ok := m.sessions[id]
+	if ok {
+		delete(m.sessions, id)
+	}
+	m.mu.Unlock()
+	if !ok {
+		return
+	}
+	s.reap()
 }
 
 // List returns all live sessions.
@@ -1328,11 +1361,6 @@ var ErrUnknownProject = errors.New("unknown project")
 // ErrUnknownSession indicates a session id is not (or no longer) live in the
 // manager, so RPC handlers can map it to a not-found code.
 var ErrUnknownSession = errors.New("unknown session")
-
-// ErrSessionStopped indicates an attempt to reopen a session that was
-// hard-terminated via StopSession (spec §12: a stopped session has no resume),
-// so RPC handlers can map it to a failed-precondition code.
-var ErrSessionStopped = errors.New("session was stopped and cannot be reopened")
 
 // UsageReport scans the given project's workspace (empty => the daemon default
 // workspace) for session event logs and returns the aggregated, priced usage

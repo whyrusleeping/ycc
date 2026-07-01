@@ -189,7 +189,10 @@ type model struct {
 	backlogCursor   int
 	backlogDetail   *v1.TaskDetail // nil => list view; set => detail view
 	backlogShowDone bool           // when false (default), done tasks are hidden in the list view
-	backlogVP       viewport.Model // scrollable viewport for the detail view
+	// backlogBlockedOnly restricts the list to blocked tasks. Set when the browser
+	// is opened from the home menu's "blocked — waiting on you" indicator (task 0101).
+	backlogBlockedOnly bool
+	backlogVP          viewport.Model // scrollable viewport for the detail view
 
 	// plan library browser (task 0020/0077): modal over menu/session, reached
 	// from the browse selector (ctrl+o). Read-only: lists saved plans (plans/*.md)
@@ -398,7 +401,7 @@ type mbDiscoverMsg struct {
 }
 
 func (m model) Init() tea.Cmd {
-	cmds := []tea.Cmd{m.fetchModes, m.fetchModels}
+	cmds := []tea.Cmd{m.fetchModes, m.fetchModels, m.fetchBacklog}
 	if m.showPicker {
 		cmds = append(cmds, m.fetchProjects)
 	}
@@ -507,22 +510,35 @@ func (m model) applyLoopDecision(msg loopDecisionMsg) (tea.Model, tea.Cmd) {
 	case msg.err != nil:
 		m.looping, m.loopStarted, m.loopPrevFP = false, false, ""
 		m.state, m.status = stateMenu, "loop stopped: "+msg.err.Error()
-		return m, nil
+		return m, m.fetchBacklog
 	case msg.next == "":
 		m.looping, m.loopStarted, m.loopPrevFP = false, false, ""
 		m.state, m.status = stateMenu, "loop complete: no ready tasks remain"
-		return m, nil
+		return m, m.fetchBacklog
 	case m.loopStarted && msg.fp == m.loopPrevFP:
 		// A session ran but the backlog is byte-for-byte unchanged: it advanced
 		// nothing, so starting another would loop forever on the same state.
 		m.looping, m.loopStarted, m.loopPrevFP = false, false, ""
 		m.state, m.status = stateMenu, "loop stopped: session made no progress"
-		return m, nil
+		return m, m.fetchBacklog
 	}
 	m.loopStarted, m.loopPrevFP = true, msg.fp
 	// Loop sessions run autonomously: ask_user must never block an unattended run.
 	// A genuinely stuck task is marked blocked (and skipped) rather than waited on.
 	return m, m.startSession("work", "", "autonomous")
+}
+
+// blockedTaskCount reports how many backlog tasks are currently marked "blocked"
+// (an autonomous/loop session set them aside pending user input — spec §10/§11).
+// The home menu uses it to surface a "waiting on you" indicator (task 0101).
+func (m model) blockedTaskCount() int {
+	n := 0
+	for _, t := range m.backlogTasks {
+		if t.Status == "blocked" {
+			n++
+		}
+	}
+	return n
 }
 
 // topReadyTask returns the id of the task a work session would pick next: the
@@ -1609,7 +1625,18 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Open the read-only backlog browser (spec §18.5).
 			m.backlog, m.backlogCursor, m.backlogDetail = true, 0, nil
 			m.backlogShowDone = false
+			m.backlogBlockedOnly = false
 			return m, m.fetchBacklog
+		case "w":
+			// Jump to the blocked tasks the agent is waiting on (task 0101). Only
+			// intercept when something is actually blocked so 'w' still types into
+			// the prompt otherwise.
+			if m.blockedTaskCount() > 0 {
+				m.backlog, m.backlogCursor, m.backlogDetail = true, 0, nil
+				m.backlogShowDone = false
+				m.backlogBlockedOnly = true
+				return m, m.fetchBacklog
+			}
 		case "ctrl+r":
 			// Open the session browser to inspect/reopen a session (spec §18.6).
 			m.state = stateHistory
@@ -1734,6 +1761,7 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Open the read-only backlog browser (spec §18.5).
 			m.backlog, m.backlogCursor, m.backlogDetail = true, 0, nil
 			m.backlogShowDone = false
+			m.backlogBlockedOnly = false
 			return m, m.fetchBacklog
 		case "ctrl+i":
 			// Gracefully interrupt the running agent to steer it (spec §18.7).
@@ -2150,6 +2178,7 @@ func (m model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "backlog":
 			m.backlog, m.backlogCursor, m.backlogDetail = true, 0, nil
 			m.backlogShowDone = false
+			m.backlogBlockedOnly = false
 			return m, m.fetchBacklog
 		case "plans":
 			m.plans, m.plansCursor, m.planDetail = true, 0, nil
@@ -2413,6 +2442,7 @@ func (m model) updateBacklog(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "esc", "q":
 		m.backlog = false
+		m.backlogBlockedOnly = false
 		return m, nil
 	case "up":
 		m.backlogCursor = navUp(m.backlogCursor)
@@ -2437,6 +2467,15 @@ func (m model) updateBacklog(msg tea.Msg) (tea.Model, tea.Cmd) {
 // backlogShowDone is set, otherwise only non-done (actionable) tasks. This keeps
 // the overlay focused on open work by default while letting done tasks be revealed.
 func (m model) visibleBacklogTasks() []*v1.BacklogTaskSummary {
+	if m.backlogBlockedOnly {
+		out := make([]*v1.BacklogTaskSummary, 0, len(m.backlogTasks))
+		for _, t := range m.backlogTasks {
+			if t.Status == "blocked" {
+				out = append(out, t)
+			}
+		}
+		return out
+	}
 	if m.backlogShowDone {
 		return m.backlogTasks
 	}
@@ -2459,6 +2498,11 @@ func (m model) backlogView() string {
 		cursor: m.backlogCursor,
 		hint:   "↑/↓ select · enter inspect · d show/hide done · esc close",
 		empty:  "(no backlog tasks)",
+	}
+	if m.backlogBlockedOnly {
+		b.title = " ycc — blocked tasks "
+		b.hint = "↑/↓ select · enter inspect (see why) · esc close"
+		b.empty = "(no blocked tasks)"
 	}
 	for _, t := range m.visibleBacklogTasks() {
 		row := fmt.Sprintf("%-5s %-12s p%d  %s", t.Id, t.Status, t.Priority, t.Title)
@@ -2760,7 +2804,7 @@ func (m model) overlayActivate() (tea.Model, tea.Cmd) {
 		// Explicit, intentional exit from the session (spec §18.2).
 		m.overlay = false
 		m.state = stateMenu
-		return m, nil
+		return m, m.fetchBacklog
 	case ovQuit:
 		return m, tea.Quit
 	case ovAutoExpand:
@@ -4046,6 +4090,14 @@ func (m model) pickerScreenView() string {
 func (m model) menuView() string {
 	var b strings.Builder
 	b.WriteString(m.titleBar(" ycc — home ") + "\n\n")
+	if n := m.blockedTaskCount(); n > 0 {
+		noun := "task"
+		if n > 1 {
+			noun = "tasks"
+		}
+		b.WriteString("  " + warnStyle.Render(fmt.Sprintf("⚠ %d %s blocked — waiting on you", n, noun)) +
+			dimStyle.Render(" · press w to view") + "\n\n")
+	}
 	if len(m.entries) == 0 {
 		b.WriteString("  loading modes…\n")
 	}
@@ -4076,7 +4128,11 @@ func (m model) menuView() string {
 		b.WriteString("  " + cursor + label + "\n")
 	}
 	b.WriteString("\n" + framedInput(m.prompt, 2) + "\n")
-	b.WriteString("\n" + m.footerBar("  ↑/↓ choose mode · tab loop (work) · type a prompt · enter start · ctrl+o browse · ctrl+r sessions · esc settings · ctrl+b backlog · ctrl+n new task"))
+	footer := "  ↑/↓ choose mode · tab loop (work) · type a prompt · enter start · ctrl+o browse · ctrl+r sessions · esc settings · ctrl+b backlog · ctrl+n new task"
+	if m.blockedTaskCount() > 0 {
+		footer += " · w view blocked"
+	}
+	b.WriteString("\n" + m.footerBar(footer))
 	return b.String()
 }
 

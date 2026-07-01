@@ -29,8 +29,10 @@ const (
 	ToolResult   Type = "tool_result"
 	SessionIdle  Type = "session_idle"
 	SessionError Type = "session_error"
-	// SessionStopped marks a session that was hard-terminated via StopSession
-	// (spec §12): its agent loop is cancelled and its log closed, with no resume.
+	// SessionStopped is an informational marker that a session's live process
+	// was terminated via StopSession (spec §12): its agent loop was cancelled and
+	// its log closed. It does NOT prevent resume — reopening replays the durable
+	// log (§18.6) regardless of this marker.
 	SessionStopped   Type = "session_stopped"
 	Narration        Type = "log" // free-text narration line for the UI
 	SubagentSpawned  Type = "subagent_spawned"

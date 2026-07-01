@@ -1648,6 +1648,84 @@ func TestBacklogHidesDoneByDefault(t *testing.T) {
 	}
 }
 
+// TestBlockedIndicator verifies the home-menu "waiting on you" indicator appears
+// only when a backlog task is blocked, and that pressing "w" opens the backlog
+// browser filtered to the blocked tasks (task 0101).
+func TestBlockedIndicator(t *testing.T) {
+	// No blocked tasks: indicator absent.
+	m := model{state: stateMenu, backlogTasks: []*v1.BacklogTaskSummary{
+		{Id: "0001", Status: "todo", Title: "a"},
+		{Id: "0002", Status: "done", Title: "b"},
+	}}
+	m.prompt = newChatInput("test")
+	if m.blockedTaskCount() != 0 {
+		t.Fatalf("blockedTaskCount=%d, want 0", m.blockedTaskCount())
+	}
+	if strings.Contains(m.menuView(), "waiting on you") {
+		t.Fatalf("menu shows blocked indicator when nothing is blocked:\n%s", m.menuView())
+	}
+
+	// Add blocked tasks: indicator present with a count.
+	m.backlogTasks = append(m.backlogTasks,
+		&v1.BacklogTaskSummary{Id: "0003", Status: "blocked", Title: "c"},
+		&v1.BacklogTaskSummary{Id: "0004", Status: "blocked", Title: "d"},
+	)
+	if m.blockedTaskCount() != 2 {
+		t.Fatalf("blockedTaskCount=%d, want 2", m.blockedTaskCount())
+	}
+	view := m.menuView()
+	if !strings.Contains(view, "waiting on you") {
+		t.Fatalf("menu missing blocked indicator:\n%s", view)
+	}
+	if !strings.Contains(view, "2 tasks blocked") {
+		t.Fatalf("menu missing blocked count:\n%s", view)
+	}
+
+	// Press "w": opens the backlog browser filtered to blocked tasks.
+	updated, _ := m.updateMenu(keyMsg("w"))
+	m = updated.(model)
+	if !m.backlog {
+		t.Fatalf("after w, backlog browser not open")
+	}
+	if !m.backlogBlockedOnly {
+		t.Fatalf("after w, backlogBlockedOnly not set")
+	}
+	vis := m.visibleBacklogTasks()
+	if len(vis) != 2 {
+		t.Fatalf("blocked-only visible=%d, want 2", len(vis))
+	}
+	for _, tk := range vis {
+		if tk.Status != "blocked" {
+			t.Fatalf("blocked-only view shows non-blocked task %s (%s)", tk.Id, tk.Status)
+		}
+	}
+
+	// esc closes and clears the filter.
+	updated, _ = m.updateBacklog(keyMsg("esc"))
+	m = updated.(model)
+	if m.backlog || m.backlogBlockedOnly {
+		t.Fatalf("esc did not close/clear blocked filter: backlog=%v blockedOnly=%v", m.backlog, m.backlogBlockedOnly)
+	}
+}
+
+// TestBlockedIndicatorWNoOpWhenNothingBlocked ensures "w" types into the prompt
+// (not intercepted) when nothing is blocked (task 0101).
+func TestBlockedIndicatorWNoOpWhenNothingBlocked(t *testing.T) {
+	m := model{state: stateMenu, backlogTasks: []*v1.BacklogTaskSummary{
+		{Id: "0001", Status: "todo", Title: "a"},
+	}}
+	m.prompt = newChatInput("test")
+	m.prompt.Focus()
+	updated, _ := m.updateMenu(keyMsg("w"))
+	m = updated.(model)
+	if m.backlog {
+		t.Fatalf("w opened backlog browser when nothing is blocked")
+	}
+	if m.prompt.Value() != "w" {
+		t.Fatalf("w not typed into prompt, got %q", m.prompt.Value())
+	}
+}
+
 // TestPreviousSessionsReopen drives the menu -> session browser -> reopen flow
 // (spec §18.6): ctrl+r opens the browser and loads the list, ↓ moves the cursor,
 // and `o` reopens the selected session via ResumeSession, entering the session

@@ -150,6 +150,31 @@ func TestReaperTimerResetsOnLeavingIdle(t *testing.T) {
 	}
 }
 
+// Reaping an idle session frees memory WITHOUT terminating it: no
+// session_stopped marker is recorded, so the durable log stays reopenable
+// (spec §18.6 — a GC'd idle session can still be resumed / re-entered). This is
+// the regression guard for the bug where reaping made a session un-reopenable.
+func TestReaperDoesNotHardStop(t *testing.T) {
+	m := NewManager(nil, t.TempDir())
+	clk := newFakeClock()
+	r := newReaper(m, GCConfig{IdleTimeout: time.Minute, Now: clk.Now})
+	s := idleSession(t, m, "s_reap")
+
+	r.tick()
+	clk.Advance(time.Hour)
+	r.tick()
+
+	if _, ok := m.Get("s_reap"); ok {
+		t.Fatal("idle session was not reaped after timeout")
+	}
+	if n := countType(s.log.Snapshot(), event.SessionStopped); n != 0 {
+		t.Fatalf("reaped session recorded %d session_stopped events, want 0", n)
+	}
+	if proj := event.Reduce(s.log.Snapshot()); proj.Status == event.StatusStopped {
+		t.Fatal("reaped session reduced to StatusStopped; it must stay reopenable")
+	}
+}
+
 // A disabled reaper (no idle timeout, no retention) launches no goroutine and
 // reaps nothing.
 func TestStartReaperDisabled(t *testing.T) {

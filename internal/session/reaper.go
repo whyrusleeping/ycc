@@ -73,7 +73,7 @@ func (r *reaper) tick() {
 				continue
 			}
 			if now.Sub(first) >= r.cfg.IdleTimeout {
-				r.m.Stop(s.ID)
+				r.m.reclaim(s.ID)
 				delete(r.idleSince, s.ID)
 			}
 		}

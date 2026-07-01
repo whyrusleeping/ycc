@@ -259,8 +259,6 @@ func (s *Server) ResumeSession(_ context.Context, req *connect.Request[v1.Resume
 			return nil, connect.NewError(connect.CodeInvalidArgument, err)
 		case errors.Is(err, session.ErrUnknownSession):
 			return nil, connect.NewError(connect.CodeNotFound, err)
-		case errors.Is(err, session.ErrSessionStopped):
-			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
 		default:
 			return nil, connect.NewError(connect.CodeInternal, err)
 		}

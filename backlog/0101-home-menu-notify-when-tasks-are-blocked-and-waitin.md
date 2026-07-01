@@ -1,7 +1,7 @@
 ---
 id: "0101"
 title: 'Home menu: notify when tasks are blocked and waiting on the user'
-status: todo
+status: done
 priority: 2
 created: "2026-07-01"
 updated: "2026-07-01"
@@ -31,4 +31,34 @@ Keep it lightweight and non-nagging: a single glanceable indicator, not a modal 
 
 ## Acceptance criteria
 
+## Plan
+
+Surface a "blocked — waiting on you" indicator on the home menu and let the user jump to the blocked tasks in a filtered backlog browser.
+
+Implementation (all in internal/tui/tui.go):
+1. Data: ensure the home menu knows blocked tasks. Add `m.fetchBacklog` to `Init()` so `m.backlogTasks` is populated for the initial menu, and re-fetch on menu (re)entry so the indicator reflects current state — return `m.fetchBacklog` when transitioning to `stateMenu` after a loop ends (`applyLoopDecision`, all three menu-return branches) and on explicit back-home (`ovBackHome`). (backlogMsg already stores into m.backlogTasks.)
+2. Helper `blockedTaskCount()` (or similar) counting `m.backlogTasks` with Status=="blocked".
+3. menuView: when count>0, render a single glanceable banner line (e.g. "⚠ N task(s) blocked — waiting on you · press w to view") styled with an attention style; render nothing when zero. Mention `w view blocked` in the footer only when count>0.
+4. Add filter field `backlogBlockedOnly bool`. In `updateMenu`, add key "w": if blockedTaskCount()>0, open the backlog browser (`m.backlog=true`, reset cursor/detail, `backlogShowDone=false`, `backlogBlockedOnly=true`) and fetch. Also reset `backlogBlockedOnly=false` in the existing ctrl+b open path so the normal browser is unfiltered.
+5. `visibleBacklogTasks()`: when `backlogBlockedOnly`, return only Status=="blocked" tasks (takes precedence; ignore showDone). `backlogView()` title/hint reflect the filter (e.g. title " ycc — blocked tasks ", hint notes esc close). Block reason is already visible via `enter inspect` (TaskDetail.Body includes the work log).
+6. Clear `backlogBlockedOnly=false` when the browser closes (where m.backlog is set false).
+
+Tests (internal/tui/tui_test.go): add a test that sets m.backlogTasks with/without blocked entries and asserts menuView contains/omits the indicator; and a test that pressing "w" opens the backlog browser with backlogBlockedOnly set and visibleBacklogTasks returns only blocked tasks. Run gofmt, go build ./..., go test ./internal/tui/.
+
+### Starting points
+- internal/tui/tui.go: menuView() ~line 4046, updateMenu() ~1599, Init() ~400, applyLoopDecision() ~505, ovBackHome ~2759, visibleBacklogTasks() ~2439, backlogView() ~2452, backlogMsg handler ~1291
+- model fields near line 185 (backlogTasks, backlogShowDone, backlogCursor, backlogDetail)
+- block reason is visible via enter-inspect detail: TaskDetail.Body includes work log (server.go GetTask ~521)
+
 ## Work log
+- 2026-07-01 plan: Surface a "blocked — waiting on you" indicator on the home menu and let the user jump to the blocked tasks in a filtered backlog browser.  Implementation (all in internal/tui/tui.go): 1. Data: ensur
+…[truncated]
+- 2026-07-01 context hints: 3 recorded with plan
+- 2026-07-01 context hints: internal/tui/tui.go; internal/tui/tui_test.go; menuView ~4046, updateMenu ~1599, Init ~400, applyLoopDecision ~505, ovBackHome ~2759, visibleBacklogTasks ~2439, backlogView ~2452, model fields ~185, b
+…[truncated]
+- 2026-07-01 implementer report: Implemented a "blocked — waiting on you" indicator on the home menu (task 0101). All changes in internal/tui/tui.go (+ tests).  Changes: - Added model field `backlogBlockedOnly bool` for a blocked-o
+…[truncated]
+- 2026-07-01 review tier: single-opus — reviewers: Claude
+- 2026-07-01 review (Claude): accept — The staged changes implement task 0101 correctly and completely. menuView() renders a single glanceable warn-styled "⚠ N task(s) blocked — waiting on you · press w to view" banner (and a "w view 
+…[truncated]
+- 2026-07-01 decision: accept — commit: tui: home-menu blocked-task indicator + blocked-filtered backlog view (0101)
