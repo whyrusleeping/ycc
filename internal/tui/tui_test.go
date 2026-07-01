@@ -2993,3 +2993,111 @@ func TestBacklogDetailScrolls(t *testing.T) {
 		t.Fatalf("opening a new task did not reset to top: YOffset=%d", m.backlogVP.YOffset())
 	}
 }
+
+// TestTransientErrorKeepsSessionUsable verifies that a failed RPC on a live,
+// connected session surfaces as an inline status-bar flash while the session
+// view keeps rendering its events and accepting input — never the full-screen
+// fatal error (task 0104).
+func TestTransientErrorKeepsSessionUsable(t *testing.T) {
+	m := model{
+		state: stateSession, status: "running", follow: true, connected: true,
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+		thinkLevels: map[string]string{"coordinator": "high"},
+	}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(model)
+	m.input.Focus()
+	m.appendEvent(&v1.Event{Seq: 1, Type: "model_turn", Actor: "coordinator", DataJson: `{"text":"hello world"}`})
+	m.rebuild()
+
+	// A failed SendInput/etc. produces errMsg. Because the client is connected
+	// this must NOT set the fatal error.
+	updated, _ = m.Update(errMsg{err: fmt.Errorf("send failed: boom")})
+	m = updated.(model)
+	if m.err != nil {
+		t.Fatalf("transient errMsg set fatal m.err = %v, want nil", m.err)
+	}
+	if m.flashErr == "" {
+		t.Fatalf("transient errMsg did not set flashErr")
+	}
+
+	view := m.render()
+	if strings.Contains(view, "r to retry") || strings.Contains(view, "ctrl+c to quit") {
+		t.Fatalf("transient error rendered the fatal screen:\n%s", view)
+	}
+	if !strings.Contains(view, "hello world") {
+		t.Fatalf("session events no longer render after transient error:\n%s", view)
+	}
+	if !strings.Contains(view, "send failed: boom") {
+		t.Fatalf("status bar does not surface the inline error:\n%s", view)
+	}
+
+	// The input still accepts text.
+	updated, _ = m.Update(keyMsg("x"))
+	m = updated.(model)
+	if !strings.Contains(m.input.Value(), "x") {
+		t.Fatalf("input did not accept text after transient error: value=%q", m.input.Value())
+	}
+
+	// The clear tick dismisses the flash (a stale tick with an old seq would not).
+	updated, _ = m.Update(flashClearMsg{seq: m.flashSeq})
+	m = updated.(model)
+	if m.flashErr != "" {
+		t.Fatalf("flash did not clear on the matching tick: %q", m.flashErr)
+	}
+}
+
+// TestTransientErrorClearsOnSuccess verifies the inline flash clears when the
+// next successful RPC result arrives (task 0104).
+func TestTransientErrorClearsOnSuccess(t *testing.T) {
+	m := model{
+		state: stateSession, status: "running", connected: true,
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+		thinkLevels: map[string]string{},
+	}
+	updated, _ := m.Update(errMsg{err: fmt.Errorf("hiccup")})
+	m = updated.(model)
+	if m.flashErr == "" {
+		t.Fatalf("errMsg did not arm flash")
+	}
+	// A successful backlog fetch result clears the flash.
+	updated, _ = m.Update(backlogMsg{tasks: nil})
+	m = updated.(model)
+	if m.flashErr != "" {
+		t.Fatalf("flash did not clear on a successful RPC result: %q", m.flashErr)
+	}
+}
+
+// TestFatalStartupErrorRendersRetry verifies that an RPC failure before the
+// client has ever reached the daemon is fatal, renders the full-screen error,
+// offers a retry, and that "r" re-runs Init while leaving quit intact (task
+// 0104).
+func TestFatalStartupErrorRendersRetry(t *testing.T) {
+	m := model{
+		state: stateMenu, connected: false,
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+		thinkLevels: map[string]string{},
+	}
+	updated, _ := m.Update(errMsg{err: fmt.Errorf("dial daemon: connection refused")})
+	m = updated.(model)
+	if m.err == nil {
+		t.Fatalf("startup errMsg (not connected) did not set fatal m.err")
+	}
+	view := m.render()
+	if !strings.Contains(view, "connection refused") {
+		t.Fatalf("fatal screen missing error text:\n%s", view)
+	}
+	if !strings.Contains(view, "retry") {
+		t.Fatalf("fatal screen missing retry affordance:\n%s", view)
+	}
+
+	// "r" clears the fatal error and re-runs the Init fetches.
+	updated, cmd := m.Update(keyMsg("r"))
+	m = updated.(model)
+	if m.err != nil {
+		t.Fatalf("retry did not clear fatal m.err = %v", m.err)
+	}
+	if cmd == nil {
+		t.Fatalf("retry did not return a command to re-run Init")
+	}
+}

@@ -165,9 +165,22 @@ type model struct {
 	wizIdx       int           // index of the question currently being answered
 	wizSeq       int64         // seq of the question_asked event whose batch the wizard is collecting
 
-	err   error
-	ready bool
-	w, h  int
+	// err holds a FATAL, unrecoverable error (e.g. the daemon is unreachable at
+	// startup and no screen has any data yet). render() short-circuits to a
+	// full-screen error with a retry/quit affordance only when err != nil. All
+	// other (transient) RPC failures surface via flashErr instead.
+	err error
+	// flashErr is a transient, self-clearing inline error shown in the status
+	// bar / menu notice while the live view keeps rendering. flashSeq guards the
+	// clear timer so a stale timeout never wipes a newer error (task 0104).
+	flashErr string
+	flashSeq int
+	// connected records that the client has successfully talked to the daemon at
+	// least once. Until then an RPC error is treated as a fatal startup failure;
+	// afterwards every RPC failure is transient (task 0104).
+	connected bool
+	ready     bool
+	w, h      int
 
 	// settings overlay (spec §18.2): modal over both menu and session, opened by
 	// Esc. It exposes interaction level, per-role model config, UI prefs, and Quit.
@@ -351,6 +364,11 @@ type transcriptMsg struct {
 type evMsg struct{ ev *v1.Event }
 type streamClosedMsg struct{}
 type errMsg struct{ err error }
+
+// flashClearMsg fires ~5s after a transient error was shown; the handler clears
+// flashErr only when seq still matches the current flash so a stale timer never
+// wipes a newer error (task 0104).
+type flashClearMsg struct{ seq int }
 type backlogMsg struct{ tasks []*v1.BacklogTaskSummary }
 type taskDetailMsg struct{ task *v1.TaskDetail }
 type plansMsg struct{ plans []*v1.PlanSummary }
@@ -406,6 +424,50 @@ func (m model) Init() tea.Cmd {
 		cmds = append(cmds, m.fetchProjects)
 	}
 	return tea.Batch(cmds...)
+}
+
+// flash arms a transient, self-clearing inline error (shown in the status bar /
+// menu notice) while the live view keeps rendering, and returns a command that
+// clears it after a timeout unless a newer error supersedes it. When the client
+// has never reached the daemon it is a fatal startup failure instead: render()
+// short-circuits to the full-screen error with a retry affordance (task 0104).
+func (m *model) flash(err error) tea.Cmd {
+	if err == nil {
+		return nil
+	}
+	if !m.connected {
+		m.err = err
+		return nil
+	}
+	m.flashSeq++
+	m.flashErr = err.Error()
+	seq := m.flashSeq
+	return tea.Tick(5*time.Second, func(time.Time) tea.Msg { return flashClearMsg{seq} })
+}
+
+// clearFlash dismisses any transient inline error. Bumping flashSeq also disarms
+// the pending clear timer so it can't wipe a future error (task 0104).
+func (m *model) clearFlash() {
+	m.flashErr = ""
+	m.flashSeq++
+}
+
+// markConnected records that the client has reached the daemon at least once,
+// so subsequent RPC failures are treated as transient rather than a fatal
+// startup failure (task 0104). It does not touch the visible flash.
+func (m *model) markConnected() {
+	m.connected = true
+}
+
+// rpcOK marks the client connected and clears any lingering transient error — a
+// successful user-facing RPC/action/fetch dismisses the previous flash (task
+// 0104). It also clears a lingering fatal startup error: Init fires several
+// fetches concurrently, so one may fail (setting m.err while not yet connected)
+// just before another succeeds — proof the daemon is reachable after all.
+func (m *model) rpcOK() {
+	m.connected = true
+	m.err = nil
+	m.clearFlash()
 }
 
 func (m model) fetchProjects() tea.Msg {
@@ -1054,6 +1116,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// A fatal startup failure owns the screen (render short-circuits to it). Only
+	// the retry/quit affordance is live here; retry re-runs the Init fetches and
+	// clears the fatal error so a recovered daemon brings the UI back (task 0104).
+	if m.err != nil {
+		if key, ok := msg.(tea.KeyMsg); ok {
+			switch key.String() {
+			case "ctrl+c", "q":
+				return m, tea.Quit
+			case "r":
+				m.err = nil
+				return m, m.Init()
+			}
+			return m, nil
+		}
+	}
+
 	switch msg := msg.(type) {
 	case spinner.TickMsg:
 		// Advance the activity spinner only while there is activity to indicate.
@@ -1107,6 +1185,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case modesMsg:
+		m.rpcOK()
 		m.entries = m.entries[:0]
 		for _, md := range msg.modes {
 			m.entries = append(m.entries, menuEntry{label: md.Name, description: md.Description, mode: md.Name})
@@ -1130,6 +1209,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case modelsMsg:
+		m.rpcOK()
 		m.models = msg.models
 		// Seed the per-role pickers with the daemon's CURRENT default assignment
 		// (config.Roles) so the settings overlay shows the real selection — even
@@ -1181,6 +1261,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case projectsMsg:
+		m.rpcOK()
 		m.projects = msg.projects
 		if m.projectCur >= len(m.projects) {
 			m.projectCur = 0
@@ -1192,6 +1273,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.historyMsgTxt = "error: " + msg.err.Error()
 			return m, nil
 		}
+		m.rpcOK()
 		m.history = msg.sessions
 		if m.historyCursor >= len(m.history) {
 			m.historyCursor = 0
@@ -1207,6 +1289,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.historyMsgTxt = "error: " + msg.err.Error()
 			return m, nil
 		}
+		m.rpcOK()
 		// Load the replayed transcript into the shared event-rendering pipeline so
 		// it renders identically to the live session view (reasoning, tool-calls,
 		// folding all match), but read-only and starting at the top.
@@ -1225,9 +1308,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case errMsg:
-		m.err = msg.err
+		return m, m.flash(msg.err)
+	case flashClearMsg:
+		if msg.seq == m.flashSeq {
+			m.flashErr = ""
+		}
 		return m, nil
 	case startedMsg:
+		m.rpcOK()
 		// Reset any stale event/view state from a prior session so a reopened
 		// session renders cleanly from its replayed log (spec §18.6).
 		m.evs = nil
@@ -1267,6 +1355,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case loopDecisionMsg:
 		return m.applyLoopDecision(msg)
 	case evMsg:
+		m.markConnected()
 		m.appendEvent(msg.ev)
 		// Coalesce a burst into one rebuild. On reopen the daemon replays the whole
 		// persisted log (N events) which arrive buffered in m.events essentially at
@@ -1305,26 +1394,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(waitEvent(m.events), spin)
 	case backlogMsg:
+		m.rpcOK()
 		m.backlogTasks = msg.tasks
 		if m.backlogCursor >= len(m.backlogTasks) {
 			m.backlogCursor = 0
 		}
 		return m, nil
 	case taskDetailMsg:
+		m.rpcOK()
 		m.backlogDetail = msg.task
 		m.refreshBacklogDetailVP()
 		m.backlogVP.GotoTop()
 		return m, nil
 	case plansMsg:
+		m.rpcOK()
 		m.plansList = msg.plans
 		if m.plansCursor >= len(m.plansList) {
 			m.plansCursor = 0
 		}
 		return m, nil
 	case planDetailMsg:
+		m.rpcOK()
 		m.planDetail = msg.plan
 		return m, nil
 	case usageMsg:
+		m.rpcOK()
 		m.costRows = msg.rows
 		m.costTotal = msg.total
 		m.costWorkspace = msg.workspace
@@ -4070,7 +4164,10 @@ func (m model) View() tea.View {
 
 func (m model) render() string {
 	if m.err != nil {
-		return fmt.Sprintf("\n  error: %v\n\n  (ctrl+c to quit)\n", m.err)
+		// Fatal, unrecoverable startup failure (e.g. daemon unreachable before any
+		// screen has data). Offer a retry as well as quit — a transient RPC hiccup
+		// never reaches here; it surfaces inline via flashErr (task 0104).
+		return fmt.Sprintf("\n  error: %v\n\n  (r to retry · ctrl+c to quit)\n", m.err)
 	}
 	if m.capture {
 		return m.captureView()
@@ -4109,6 +4206,9 @@ func (m model) render() string {
 func (m model) pickerScreenView() string {
 	var b strings.Builder
 	b.WriteString(m.titleBar(" ycc — projects ") + "\n\n")
+	if m.flashErr != "" {
+		b.WriteString("  " + errStyle.Render("✗ "+m.flashErr) + "\n\n")
+	}
 	if len(m.projects) == 0 {
 		b.WriteString("  " + dimStyle.Render("no projects registered yet") + "\n")
 	}
@@ -4129,6 +4229,9 @@ func (m model) pickerScreenView() string {
 func (m model) menuView() string {
 	var b strings.Builder
 	b.WriteString(m.titleBar(" ycc — home ") + "\n\n")
+	if m.flashErr != "" {
+		b.WriteString("  " + errStyle.Render("✗ "+m.flashErr) + "\n\n")
+	}
 	if n := m.blockedTaskCount(); n > 0 {
 		noun := "task"
 		if n > 1 {
@@ -4348,6 +4451,11 @@ func (m model) statusBar() string {
 	}
 	var segs []seg
 
+	// A transient inline error (failed RPC on an otherwise-live session) rides at
+	// the highest priority so the width-greedy fitter never drops it (task 0104).
+	if m.flashErr != "" {
+		segs = append(segs, seg{errStyle.Render("✗ " + m.flashErr), -1})
+	}
 	// status: a state-colored dot. The header always shows the static dot; the
 	// activity spinner now lives next to the input box at the bottom of the
 	// session view (see inputRow / task 0076). The static dot covers

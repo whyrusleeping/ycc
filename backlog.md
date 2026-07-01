@@ -106,7 +106,7 @@
 | [0101](backlog/0101-home-menu-notify-when-tasks-are-blocked-and-waitin.md) | Home menu: notify when tasks are blocked and waiting on the user | done | 2 | — |
 | [0102](backlog/0102-tui-ctrl-left-right-for-word-wise-cursor-movement.md) | TUI: Ctrl+Left/Right for word-wise cursor movement in prompt input | todo | 3 | — |
 | [0103](backlog/0103-deliver-mid-run-user-input-at-the-next-safe-checkp.md) | Deliver mid-run user input at the next safe checkpoint (steer-by-default) | todo | 2 | — |
-| [0104](backlog/0104-tui-transient-rpc-errors-must-not-replace-the-ui-w.md) | TUI: transient RPC errors must not replace the UI with a fatal error screen | todo | 2 | — |
+| [0104](backlog/0104-tui-transient-rpc-errors-must-not-replace-the-ui-w.md) | TUI: transient RPC errors must not replace the UI with a fatal error screen | done | 2 | — |
 | [0105](backlog/0105-interrupt-keybinding-that-works-without-kitty-keyb.md) | Interrupt keybinding that works without kitty keyboard protocol (ctrl+i == tab) | todo | 3 | — |
 | [0106](backlog/0106-question-picker-number-key-selection-don-t-lock-ou.md) | Question picker: number-key selection + don't lock out scrolling/browsers | todo | 3 | — |
 | [0107](backlog/0107-home-menu-surface-live-sessions-that-are-waiting-f.md) | Home menu: surface live sessions that are waiting for the user | todo | 3 | — |
