@@ -1,7 +1,7 @@
 ---
 id: "0096"
 title: 'Connection-centric model config: multi model-id entry + backend model discovery'
-status: in_review
+status: done
 priority: 2
 created: "2026-07-01"
 updated: "2026-07-01"
@@ -31,3 +31,4 @@ Acceptance:
 ## Acceptance criteria
 
 ## Work log
+- 2026-07-01 decision: accept — commit: backlog: mark 0094 + 0096 done (implemented and committed in eaa34e5, statuses were stale)
