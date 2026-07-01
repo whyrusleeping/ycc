@@ -103,9 +103,27 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 		case event.UserInput:
 			// All user inputs belong to the coordinator conversation regardless of
 			// actor (they are emitted as actor "user").
+			//
+			// A queued mid-run echo (queued:true, spec §18.7) has NOT yet entered the
+			// conversation at this position: the matching user_input_delivered event
+			// appends it at the real delivery point. Skip it here. A queued echo with
+			// no delivery (the session was stopped mid-run before the next checkpoint)
+			// is deliberately absent from replayed history — it never reached the
+			// model, so the reconstructed conversation matches what the model saw.
+			if boolv(ev.Data, "queued") {
+				continue
+			}
 			history = append(history, gollama.Message{Role: "user", Content: str(ev.Data, "text")})
 			assistantIdx = -1
 			lastTurnTruncated = false // a real user input breaks the truncation chain
+		case event.UserInputDelivered:
+			// A queued mid-run input entering the conversation at its safe checkpoint
+			// (spec §18.7): append it exactly where the live loop Posted it so the
+			// replayed history matches what the model saw, and reset turn state like
+			// a normal user input.
+			history = append(history, gollama.Message{Role: "user", Content: str(ev.Data, "text")})
+			assistantIdx = -1
+			lastTurnTruncated = false
 		case event.ModelTurn:
 			if ev.Actor != "coordinator" {
 				continue // subagent turn — not part of the coordinator history

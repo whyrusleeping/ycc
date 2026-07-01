@@ -123,6 +123,10 @@ type model struct {
 	eventStart []int          // content line index where each event begins
 	selected   int            // index into evs, or -1
 	follow     bool           // auto-scroll + auto-select latest
+	// deliveredSeqs holds the seqs of queued mid-run user_input echoes that a
+	// later user_input_delivered event has marked as delivered (spec §18.7), so a
+	// queued echo renders "(queued)" only until its delivery point.
+	deliveredSeqs map[int64]bool
 
 	vp      viewport.Model
 	input   textarea.Model
@@ -301,7 +305,8 @@ func initialModel(ctx context.Context, client yccv1connect.SessionServiceClient,
 		captureInput: captureInput,
 		events:       make(chan *v1.Event, 256), status: "starting",
 		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1, follow: prefs.Follow,
-		prefs: prefs, level: "judgement",
+		deliveredSeqs: map[int64]bool{},
+		prefs:         prefs, level: "judgement",
 		thinkLevels:  map[string]string{"coordinator": "high", "implementer": "high", "reviewers": "high"},
 		spin:         spin,
 		usageByModel: map[string]event.Usage{},
@@ -1299,6 +1304,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.evs = msg.events
 		m.expanded = map[int]bool{}
 		m.bodyCache = map[int]string{}
+		m.deliveredSeqs = deliveredSeqSet(msg.events)
 		m.eventStart = nil
 		m.selected = -1
 		m.follow = false
@@ -1321,6 +1327,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.evs = nil
 		m.expanded = map[int]bool{}
 		m.bodyCache = map[int]string{}
+		m.deliveredSeqs = map[int64]bool{}
 		m.eventStart = nil
 		m.selected = -1
 		m.follow = m.prefs.Follow
@@ -1636,6 +1643,7 @@ func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.evs = nil
 			m.expanded = map[int]bool{}
 			m.bodyCache = map[int]string{}
+			m.deliveredSeqs = map[int64]bool{}
 			m.eventStart = nil
 			if m.ready {
 				m.rebuild()
@@ -3837,6 +3845,16 @@ func (m *model) toggle(i int) {
 
 func (m *model) appendEvent(ev *v1.Event) {
 	m.evs = append(m.evs, ev)
+	if ev.Type == "user_input_delivered" {
+		// Mark the queued echo this delivery pairs with as delivered so it stops
+		// rendering "(queued)" once it actually entered the conversation (§18.7).
+		if seq, ok := deliveredSeq(ev); ok {
+			if m.deliveredSeqs == nil {
+				m.deliveredSeqs = map[int64]bool{}
+			}
+			m.deliveredSeqs[seq] = true
+		}
+	}
 	switch ev.Type {
 	case "model_turn":
 		// Accumulate the turn's usage into the running per-model tally that feeds
@@ -3923,7 +3941,7 @@ func (m *model) appendEvent(ev *v1.Event) {
 	// the header must not stay stuck on "error" after recovery.
 	if m.status == "error" {
 		switch ev.Type {
-		case "model_turn", "tool_call", "tool_result", "thinking", "user_input":
+		case "model_turn", "tool_call", "tool_result", "thinking", "user_input", "user_input_delivered":
 			m.status = "running"
 		}
 	}
@@ -3996,6 +4014,12 @@ func (m *model) isEchoedIdle(i int) bool {
 // preceding tool_call, an empty (tool-calls-only) model_turn, or a session_idle
 // whose report just echoes the final model_turn.
 func (m *model) hiddenRow(i int) bool {
+	if i >= 0 && i < len(m.evs) && m.evs[i].Type == "user_input_delivered" {
+		// The delivery marker is a bookkeeping event, not a message: its text is
+		// already shown by the (now-upgraded) queued user_input row, so it renders
+		// no block of its own — otherwise the message would appear twice (§18.7).
+		return true
+	}
 	return m.isMergedResult(i) || m.isEmptyModelTurn(i) || m.isEchoedIdle(i)
 }
 
@@ -4911,7 +4935,7 @@ func (m *model) toolCardExpanded(call, res *v1.Event, selected bool, paramsBody,
 }
 
 func (m *model) renderHeader(i int, ev *v1.Event, selected, expanded, hasBody, first bool) string {
-	detail := detailLine(ev)
+	detail := m.detailLineFor(ev)
 	if expanded && hasBody {
 		// The body box already shows the full content, so the header's one-line
 		// snippet would be a redundant echo — drop it for prose rows (keeping only
@@ -5915,6 +5939,19 @@ func subConnector(last bool) string {
 	return dimStyle.Render("├─ ")
 }
 
+// detailLineFor is detailLine plus session-model context: a queued mid-run
+// user_input echo (queued:true) that has not yet been delivered gets a dim
+// "(queued)" suffix, so the transcript never claims the message was delivered
+// before its checkpoint. Once the matching user_input_delivered event arrives,
+// rebuild() re-renders and the suffix disappears (spec §18.7).
+func (m *model) detailLineFor(ev *v1.Event) string {
+	d := detailLine(ev)
+	if ev.Type == "user_input" && dataField(ev, "queued") == "true" && !m.deliveredSeqs[ev.Seq] {
+		d += " " + dimStyle.Render("(queued)")
+	}
+	return d
+}
+
 func detailLine(ev *v1.Event) string {
 	switch ev.Type {
 	case "tool_call":
@@ -6077,6 +6114,34 @@ func (m *model) spinnerCmd() tea.Cmd {
 		return m.spin.Tick
 	}
 	return nil
+}
+
+// deliveredSeq extracts the queued-echo seq a user_input_delivered event refers
+// to (spec §18.7). Returns false for other event types or malformed data.
+func deliveredSeq(ev *v1.Event) (int64, bool) {
+	if ev.Type != "user_input_delivered" || ev.DataJson == "" {
+		return 0, false
+	}
+	var mp map[string]any
+	if json.Unmarshal([]byte(ev.DataJson), &mp) != nil {
+		return 0, false
+	}
+	if f, ok := mp["seq"].(float64); ok {
+		return int64(f), true
+	}
+	return 0, false
+}
+
+// deliveredSeqSet builds the set of delivered queued-echo seqs from an event
+// slice, used when the transcript view loads a whole log at once.
+func deliveredSeqSet(evs []*v1.Event) map[int64]bool {
+	set := map[int64]bool{}
+	for _, ev := range evs {
+		if seq, ok := deliveredSeq(ev); ok {
+			set[seq] = true
+		}
+	}
+	return set
 }
 
 func dataField(ev *v1.Event, key string) string {

@@ -66,6 +66,12 @@ func Reduce(events []Event) Projection {
 			if p.Status == StatusError {
 				p.Status = StatusRunning
 			}
+		case UserInputDelivered:
+			// A queued mid-run input entering the conversation counts as real
+			// activity: clear a latched error status like UserInput does.
+			if p.Status == StatusError {
+				p.Status = StatusRunning
+			}
 		case SessionIdle:
 			p.Status = StatusIdle
 			if r := str(ev.Data, "report"); r != "" {

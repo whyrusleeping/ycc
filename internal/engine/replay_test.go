@@ -1,9 +1,9 @@
 package engine
 
 import (
-	"regexp"
 	"encoding/json"
 	"reflect"
+	"regexp"
 	"testing"
 
 	"github.com/whyrusleeping/gollama"

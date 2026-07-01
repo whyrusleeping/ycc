@@ -178,6 +178,7 @@ Event `type`s (initial set):
 | `subagent_spawned` / `subagent_finished` | with role + model + child session ref |
 | `question_asked` / `question_answered` | the `ask_user` flow |
 | `interrupted` / `resumed` | agent paused to steer / continued (§18.7) |
+| `user_input` / `user_input_delivered` | user message accepted (queued mid-run carries `queued:true`) / delivered at a safe checkpoint (§18.7) |
 | `plan_proposed` / `plan_accepted` | coordinator plan checkpoints |
 | `review_tier_selected` | which review tier the coordinator chose for a change (§13.1) |
 | `review_submitted` | one reviewer's findings |
@@ -1000,11 +1001,23 @@ of hands gives you when you say "wait, hold on." This is distinct from a hard **
 (terminate the session, task 0009): interrupt is a *graceful pause to steer*, after which
 the agent keeps going on the **same** loop and conversation.
 
-**Why it's needed.** Today `SendInput` only reaches the agent *between* `Run` calls (when
-the session is idle); while a turn or tool-call sequence is in flight, the text sits buffered
-in `inputCh` and is not seen until the run completes. So a user watching the agent head down
-the wrong path has no way to redirect it mid-flight — they can only wait it out, then correct,
-after the wrong work is already done.
+**Why it's needed.** A user watching the agent head down the wrong path needs to redirect it
+*mid-flight*, not only after the wrong work is already done. There are two shapes of this:
+
+- **Steer-by-default (deliver at the next checkpoint).** Typing a message and pressing Enter
+  while a run is in flight does **not** wait for `Run` to complete. The session queues the text
+  as a correction and the engine `Loop` appends it to the conversation at the **next safe
+  checkpoint** (between turns / after a tool result) — so the model sees "no, wrong file"
+  before its next turn without any pause/resume ceremony. The echo is honest: a mid-run
+  `user_input` carries `queued: true` (rendered distinctly, e.g. "(queued)") and a
+  `user_input_delivered` event marks the checkpoint where it actually entered the conversation,
+  so the transcript never claims delivery before it happens.
+- **Interrupt (stop and hold to steer).** When the human wants the agent to *stop and wait*
+  rather than finish the current stretch of work, `Interrupt` pauses it at the next checkpoint;
+  corrections then buffer and are drained only on an explicit `Resume`. Behavior while paused
+  is unchanged by steer-by-default.
+
+An idle session's input is unchanged: it is enqueued and picked up as the next prod.
 
 **Model (graceful pause at a safe checkpoint).**
 1. **Interrupt.** The client calls `Interrupt(session_id)`. The session marks a pause request
@@ -1022,10 +1035,13 @@ after the wrong work is already done.
 
 **Engine seam.** The `Loop` gains a `Steer` hook checked at each checkpoint
 (`Checkpoint(ctx) ([]string, error)`): if a pause is pending it blocks until resume (or
-`ctx` cancellation, which propagates as a normal stop), then returns any correction messages
-to `Post` into history before the next turn. The session implements `Steer`, coordinating the
-pause flag, a resume signal, and the buffered corrections; `SendInput`/`Resume` while paused
-feed it. When not paused, `Checkpoint` is a cheap no-op, so the hot loop is unaffected.
+`ctx` cancellation, which propagates as a normal stop); otherwise, when mid-run corrections
+have queued up, it drains and returns them immediately (steer-by-default) — no pause. Either
+way it returns any correction messages to `Post` into history before the next turn and emits a
+`user_input_delivered` event per delivered message. The session implements `Steer`,
+coordinating the pause flag, a resume signal, a `running` flag, and the buffered corrections;
+`SendInput`/`Resume` feed it. When not paused and nothing is queued, `Checkpoint` is a cheap
+no-op, so the hot loop is unaffected.
 
 *Optional immediacy (enhancement).* For responsiveness during a long in-flight **model turn**,
 the turn may run under a child context that `Interrupt` cancels, discarding that turn's output

@@ -60,3 +60,7 @@ Goal: transient RPC failures surface as an inline, self-clearing status-bar erro
 - 2026-07-01 review (Claude): accept — The change cleanly implements task 0104. errMsg no longer sets the fatal m.err; instead the new flash()/clearFlash()/rpcOK()/markConnected() helpers route RPC failures to a transient, self-clearing st
 …[truncated]
 - 2026-07-01 decision: accept — commit: tui: transient RPC errors surface as an inline self-clearing flash instead of the fatal screen; fatal screen reserved for pre-connection startup failures and gains an 'r' retry (0104)
+- 2026-07-01 usage: 32,981 tok (in 162, out 32,819, cache_r 2,470,618, cache_w 132,231) · cost n/a (unpriced)
+  implementer: 20,016 tok (in 116, out 19,900, cache_r 1,955,415, cache_w 56,527) · cost n/a (unpriced)
+  coordinator: 6,872 tok (in 24, out 6,848, cache_r 385,315, cache_w 54,365) · cost n/a (unpriced)
+  reviewer:Claude: 6,093 tok (in 22, out 6,071, cache_r 129,888, cache_w 21,339) · cost n/a (unpriced)

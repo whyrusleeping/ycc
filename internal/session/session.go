@@ -87,13 +87,26 @@ type Session struct {
 	// never contends with the s.mu hot paths. pauseReq is set by Interrupt and
 	// consumed at the next checkpoint; paused is true while a checkpoint blocks;
 	// resumeReq wakes it (Resume or a steered correction); corrections buffers
-	// steered-in user messages to inject on resume; resumeCh is closed to wake.
+	// steered-in user messages to inject at the next checkpoint; resumeCh is closed
+	// to wake. running is true while the agent loop's Run is executing, so a
+	// mid-run SendInput is queued as a correction (steer-by-default) and delivered
+	// at the next safe checkpoint rather than waiting for the run to finish.
 	steerMu     sync.Mutex
 	pauseReq    bool
 	paused      bool
+	running     bool
 	resumeReq   bool
-	corrections []string
+	corrections []correction
 	resumeCh    chan struct{}
+}
+
+// correction is a steered-in user message buffered until the next checkpoint (or
+// explicit Resume when paused). seq is the sequence of the queued user_input echo
+// emitted when it was accepted, so the later user_input_delivered event can refer
+// back to it (spec §18.7).
+type correction struct {
+	text string
+	seq  int
 }
 
 // Role name constants used to key per-role thinking overrides and resolution.
@@ -139,21 +152,25 @@ func (s *Session) setLoop(l *engine.Loop) {
 }
 
 // SendInput delivers user text. If the agent is currently blocked on a question,
-// the text answers it; otherwise it is queued as a follow-up prod for when the
-// agent next goes idle.
+// the text answers it. If a run is in flight (or the loop is paused/pausing at a
+// steer checkpoint) the text is queued as a correction and delivered at the next
+// safe checkpoint (steer-by-default, spec §18.7) — its echo carries queued:true
+// so the transcript never claims delivery before it happens. Otherwise (idle) it
+// is enqueued as a follow-up prod for when the agent next picks it up.
 func (s *Session) SendInput(text string) error {
 	if s.inter.Answer(text) {
 		return nil
 	}
-	// If the running loop is paused (or pausing) at a steer checkpoint, buffer the
-	// text as a correction (and echo it); the loop drains all buffered corrections
-	// in order only on an explicit Resume, so multiple sends land deterministically
-	// (§18.7). It does NOT auto-resume here.
+	// Mid-run or paused: buffer as a correction and echo it as queued. A run in
+	// flight drains corrections at its next safe checkpoint; a paused loop drains
+	// them only on an explicit Resume. Either way multiple sends land in FIFO
+	// order because the queued echo (which stamps the seq) and the append happen
+	// together under steerMu. It does NOT auto-resume a paused loop (§18.7).
 	s.steerMu.Lock()
-	if s.paused || s.pauseReq {
-		s.corrections = append(s.corrections, text)
+	if s.paused || s.pauseReq || s.running {
+		ev := s.emitter.EmitAs("user", event.UserInput, map[string]any{"text": text, "queued": true})
+		s.corrections = append(s.corrections, correction{text: text, seq: ev.Seq})
 		s.steerMu.Unlock()
-		s.emitter.EmitAs("user", event.UserInput, map[string]any{"text": text})
 		return nil
 	}
 	s.steerMu.Unlock()
@@ -257,15 +274,27 @@ func (s *Session) reapable() bool {
 }
 
 // Checkpoint implements engine.Steer (spec §18.7). At a safe checkpoint the
-// loop calls it: if no pause is pending it returns immediately (cheap no-op);
-// otherwise it marks the session paused, emits interrupted, and blocks until a
-// Resume or a steered SendInput wakes it (or ctx is cancelled, returned as a
-// normal stop). It returns any steered-in corrections, in order, to append.
+// loop calls it. If no pause is pending it drains any mid-run corrections queued
+// since the last checkpoint (steer-by-default) and returns their texts to append
+// before the next turn — with no pause ceremony; if none are pending it returns
+// immediately (cheap no-op). If a pause IS pending it marks the session paused,
+// emits interrupted, and blocks until a Resume or a steered SendInput wakes it
+// (or ctx is cancelled, returned as a normal stop). Either way it emits a
+// user_input_delivered event for each drained correction, marking the point at
+// which the queued input actually enters the conversation.
 func (s *Session) Checkpoint(ctx context.Context) ([]string, error) {
 	s.steerMu.Lock()
 	if !s.pauseReq {
+		// Steer-by-default fast path: deliver any queued corrections now without a
+		// pause, or a cheap no-op when there are none.
+		if len(s.corrections) == 0 {
+			s.steerMu.Unlock()
+			return nil, nil
+		}
+		corr := s.corrections
+		s.corrections = nil
 		s.steerMu.Unlock()
-		return nil, nil // cheap no-op fast path
+		return s.deliverCorrections(corr), nil
 	}
 	s.pauseReq = false
 	s.paused = true
@@ -299,7 +328,24 @@ func (s *Session) Checkpoint(ctx context.Context) ([]string, error) {
 
 	s.setStatus(event.StatusRunning)
 	s.emitter.Emit(event.Resumed, map[string]any{})
-	return corr, nil
+	return s.deliverCorrections(corr), nil
+}
+
+// deliverCorrections emits a user_input_delivered event for each queued
+// correction — marking the checkpoint at which its (queued) echo actually enters
+// the conversation — and returns their texts, in order, for the engine to Post
+// before the next turn (spec §18.7). The delivered event references the queued
+// echo by seq so replay and the TUI can pair them.
+func (s *Session) deliverCorrections(corr []correction) []string {
+	if len(corr) == 0 {
+		return nil
+	}
+	texts := make([]string, len(corr))
+	for i, c := range corr {
+		texts[i] = c.text
+		s.emitter.EmitAs("user", event.UserInputDelivered, map[string]any{"seq": c.seq, "text": c.text})
+	}
+	return texts
 }
 
 // signalResumeLocked wakes a blocked Checkpoint. Call only while holding steerMu.
@@ -660,7 +706,16 @@ func (s *Session) run() {
 
 	for {
 		s.setStatus(event.StatusRunning)
+		s.steerMu.Lock()
+		s.running = true
+		s.steerMu.Unlock()
 		res, err := s.currentLoop().Run(s.ctx)
+		// Clear running BEFORE checking ctx/handling the result so a SendInput
+		// racing the end of the run either landed as a correction (drained just
+		// below) or, seeing running=false, takes the idle inputCh path.
+		s.steerMu.Lock()
+		s.running = false
+		s.steerMu.Unlock()
 		if s.ctx.Err() != nil {
 			return
 		}
@@ -680,7 +735,7 @@ func (s *Session) run() {
 				s.emitter.Emit(event.ModeChanged, map[string]any{"from": s.Mode, "to": res.NextMode})
 				s.Mode = res.NextMode
 				s.setLoop(next)
-				continue // run the new mode's loop immediately
+				continue // run the new mode's loop immediately (its first checkpoint drains any pending corrections)
 			} else {
 				s.emitter.Emit(event.SessionError, map[string]any{"msg": "mode switch failed: " + berr.Error()})
 			}
@@ -688,6 +743,21 @@ func (s *Session) run() {
 			s.setStatus(event.StatusIdle)
 			s.emitter.Emit(event.SessionIdle, map[string]any{"report": s.withAssumptions(res.Report)})
 			s.summarizeUsage()
+		}
+
+		// Steer-by-default race: input that arrived after the run's final
+		// checkpoint but before running was cleared is buffered as corrections.
+		// Deliver it now (Post + user_input_delivered) and continue the loop so
+		// the model sees it, rather than dropping into the idle wait below (§18.7).
+		s.steerMu.Lock()
+		corr := s.corrections
+		s.corrections = nil
+		s.steerMu.Unlock()
+		if len(corr) > 0 {
+			for _, text := range s.deliverCorrections(corr) {
+				s.currentLoop().Post(text)
+			}
+			continue
 		}
 
 		select {

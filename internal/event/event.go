@@ -21,7 +21,15 @@ const (
 	SessionStarted Type = "session_started"
 	ModeChanged    Type = "mode_changed"
 	UserInput      Type = "user_input"
-	ModelTurn      Type = "model_turn"
+	// UserInputDelivered marks the safe checkpoint at which a queued mid-run
+	// user_input actually entered the conversation (steer-by-default, spec §18.7).
+	// A user_input echoed while a run was in flight carries queued:true and is not
+	// yet part of the model's view; the matching UserInputDelivered event
+	// (data: { seq: <queued echo seq>, text }) records where it was appended, so
+	// replay reconstructs the conversation at the real delivery position and the
+	// TUI can render the echo as "queued" until it is delivered.
+	UserInputDelivered Type = "user_input_delivered"
+	ModelTurn          Type = "model_turn"
 	// Thinking carries a model's reasoning summary for a turn (spec §7, §18).
 	// Emitted before the corresponding ModelTurn when non-empty.
 	Thinking     Type = "thinking"
