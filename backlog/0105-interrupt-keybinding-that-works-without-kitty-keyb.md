@@ -14,7 +14,9 @@ spec_refs:
 ## Description
 `ctrl+i` is byte-identical to Tab (0x09); bubbletea v2 only disambiguates on terminals supporting the kitty keyboard enhancement. On plain xterm/ssh/tmux setups the primary runtime affordance — interrupt — is unreachable from the keyboard (the settings-overlay "Interrupt agent" row now exists as the fallback, but a direct key should work everywhere).
 
-Add a binding that survives everywhere (candidates: `ctrl+x`, `ctrl+g`, or double-esc), keep `ctrl+i` where distinguishable, and render the session-footer hint from the binding that actually works (bubbletea delivers `KeyboardEnhancementsMsg` when disambiguation is available — use it to pick the shown hint).
+Add a binding that survives everywhere, keep `ctrl+i` where distinguishable, and render the session-footer hint from the binding that actually works (bubbletea delivers `KeyboardEnhancementsMsg` when disambiguation is available — use it to pick the shown hint).
+
+**Decided (user, 2026-07-02): the fallback chord is `ctrl+x`.** (Candidates considered: ctrl+x, ctrl+g, double-esc.)
 
 ## Acceptance criteria
 - [ ] Interrupt reachable via a single key chord on terminals without the kitty protocol

@@ -1,10 +1,10 @@
 ---
 id: "0100"
 title: 'Spec-doctor: detect spec/code drift + coverage gaps (design with user first)'
-status: todo
+status: blocked
 priority: 3
 created: "2026-07-01"
-updated: "2026-07-01"
+updated: "2026-07-02"
 depends_on: []
 spec_refs: []
 ---
@@ -40,3 +40,4 @@ Relevant code / prior art:
 ## Acceptance criteria
 
 ## Work log
+- 2026-07-02 blocked: parked for the overnight autonomous work-loop run — this task requires an interactive design pass with the user before any implementation. Unblock by holding that design discussion (pm session) and recording the agreed shape here.

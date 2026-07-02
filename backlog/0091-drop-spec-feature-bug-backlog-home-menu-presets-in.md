@@ -17,8 +17,8 @@ the menu should drop those presets and present a single `pm` mode whose descript
 it covers planning, spec authoring, backlog grooming, new features, and bug intake.
 
 Scope:
-- Remove the `feature`/`bug`/`spec`/`backlog` presets from `Presets()` (decide what to do with
-  `onboard` — it is arguably a distinct first-run flow, see 0024; likely keep it, but confirm).
+- Remove the `feature`/`bug`/`spec`/`backlog` presets from `Presets()`. **Confirmed with the
+  user (2026-07-02): KEEP the `onboard` preset** — it is a distinct first-run flow (see 0024).
 - Update the `pm` `ModeInfo` title/description in `Modes()` so it reads as the catch-all for
   spec/backlog/feature/bug planning work — "no implementation".
 - Update the TUI home menu so the dropped presets no longer appear; ensure the menu still renders

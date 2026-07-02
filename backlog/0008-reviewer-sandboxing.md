@@ -1,15 +1,15 @@
 ---
 id: "0008"
 title: Sandbox reviewer bash to prevent workspace mutation
-status: todo
+status: blocked
 priority: 6
 created: "2026-06-25"
-updated: "2026-06-26"
+updated: "2026-07-02"
 depends_on:
-  - "0005"
+    - "0005"
 spec_refs:
-  - Tools
-  - Open questions
+    - Tools
+    - Open questions
 ---
 
 ## Description
@@ -29,6 +29,7 @@ non-mutation is prompt-enforced only.
       the current check is textual; a symlink inside the workspace pointing out isn't caught)
 
 ## Work log
+- 2026-07-02 blocked: parked for the overnight autonomous run — sandboxing mechanism is platform-dependent (bwrap/landlock/overlay choices) and hard to verify unattended; user wants to be present. Unblock for an attended session.
 
 - 2026-06-26 plan: Goal: prevent reviewer bash/tool calls from mutating the workspace, while keeping read-only inspection (git diff, cat, grep, ls) working. Degrade gracefully when sandboxing is unavailable. Approach:
   …[truncated]

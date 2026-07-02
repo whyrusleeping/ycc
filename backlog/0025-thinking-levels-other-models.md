@@ -1,10 +1,10 @@
 ---
 id: "0025"
 title: Verify thinking levels (effort) across backends as models are added
-status: todo
+status: blocked
 priority: 3
 created: "2026-06-26"
-updated: "2026-06-26"
+updated: "2026-07-02"
 depends_on:
     - "0005"
 spec_refs:
@@ -45,3 +45,4 @@ engine and to surface returned thinking in the event log/TUI.
       ignore vs. error) so a per-role effort setting degrades gracefully across mixed backends
 
 ## Work log
+- 2026-07-02 blocked: parked for the overnight autonomous run — requires live smoke tests against OpenAI/GLM/Ollama backends (keys/endpoints not available unattended) and edits in the separate gollama repo; user wants to be present. Unblock when the user can supply/verify backend access.

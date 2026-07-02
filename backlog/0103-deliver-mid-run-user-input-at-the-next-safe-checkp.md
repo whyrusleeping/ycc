@@ -93,3 +93,7 @@ Goal: text sent while a run is in flight is delivered at the next safe checkpoin
 - 2026-07-01 review (Claude): accept — The change implements steer-by-default mid-run input delivery cleanly and completely across all layers (session, events, replay, TUI, spec). Mid-run SendInput now queues corrections with a queued:true
 …[truncated]
 - 2026-07-01 decision: accept — commit: session: deliver mid-run user input at the next safe checkpoint (steer-by-default) with queued/delivered events, lossless replay, and honest TUI echo (0103)
+- 2026-07-01 usage: 56,749 tok (in 242, out 56,507, cache_r 7,567,602, cache_w 265,182) · cost n/a (unpriced)
+  implementer: 33,132 tok (in 144, out 32,988, cache_r 5,754,998, cache_w 103,863) · cost n/a (unpriced)
+  coordinator: 18,213 tok (in 70, out 18,143, cache_r 1,491,889, cache_w 127,003) · cost n/a (unpriced)
+  reviewer:Claude: 5,404 tok (in 28, out 5,376, cache_r 320,715, cache_w 34,316) · cost n/a (unpriced)

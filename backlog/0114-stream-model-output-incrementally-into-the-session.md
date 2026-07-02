@@ -1,10 +1,10 @@
 ---
 id: "0114"
 title: Stream model output incrementally into the session view
-status: todo
+status: blocked
 priority: 3
 created: "2026-07-01"
-updated: "2026-07-01"
+updated: "2026-07-02"
 depends_on: []
 spec_refs:
     - 7. Agent engine
@@ -27,3 +27,4 @@ This is a design-first task: the event log is append-only and replayed, so parti
 ## Acceptance criteria
 
 ## Work log
+- 2026-07-02 blocked: parked for the overnight autonomous work-loop run — design-first task (streaming seam + append-only-log invariant + cross-repo gollama work) that the user wants to decide interactively. Unblock after a design discussion records the chosen seam in this task/spec.

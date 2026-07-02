@@ -10,8 +10,8 @@
 | [0004](backlog/0004-work-mode-happy-path.md) | work mode happy path (M2) | done | 2 | 0003 |
 | [0005](backlog/0005-multimodel-review-revise-levels.md) | Multi-model review, revise loop, interaction levels (M3) | done | 3 | 0004 |
 | [0006](backlog/0006-home-menu-modes-tui.md) | Home menu, spec/backlog/feature/bug modes, TUI (M4) | done | 4 | 0005 |
-| [0007](backlog/0007-remote-sync.md) | Remote session sync + phone-facing surface (M5) | todo | 5 | 0006 |
-| [0008](backlog/0008-reviewer-sandboxing.md) | Sandbox reviewer bash to prevent workspace mutation | todo | 6 | 0005 |
+| [0007](backlog/0007-remote-sync.md) | Remote session sync + phone-facing surface (M5) | blocked | 5 | 0006 |
+| [0008](backlog/0008-reviewer-sandboxing.md) | Sandbox reviewer bash to prevent workspace mutation | blocked | 6 | 0005 |
 | [0009](backlog/0009-session-lifecycle-interrupt.md) | Session lifecycle — Interrupt RPC and stop/GC | done | 3 | 0003 |
 | [0010](backlog/0010-context-window-management.md) | Context-window management for long sessions | done | 3 | 0002 |
 | [0011](backlog/0011-multiline-input.md) | Multiline session input (textarea) | done | 3 | 0006 |
@@ -27,7 +27,7 @@
 | [0022](backlog/0022-config-save-write-ycc-toml-from-a-config.md) | config.Save — write ycc.toml from a Config | done | 2 | — |
 | [0023](backlog/0023-first-run-setup-wizard-configure-model-providers-r.md) | First-run setup wizard — configure model providers & roles (write ycc.toml) | done | 2 | 0022 |
 | [0024](backlog/0024-per-project-onboarding-greenfield-full-spec-vs-bro.md) | Per-project onboarding — greenfield (full spec) vs brownfield (scoped) pm presets | done | 2 | — |
-| [0025](backlog/0025-thinking-levels-other-models.md) | Verify thinking levels (effort) across backends as models are added | todo | 3 | 0005 |
+| [0025](backlog/0025-thinking-levels-other-models.md) | Verify thinking levels (effort) across backends as models are added | blocked | 3 | 0005 |
 | [0026](backlog/0026-capture-per-turn-token-usage-on-model-turn-events.md) | Capture per-turn token usage on model_turn events | done | 2 | 0002 |
 | [0027](backlog/0027-record-session-task-focus-for-cost-attribution.md) | Record session→task focus for cost attribution | done | 2 | 0004 |
 | [0028](backlog/0028-per-model-pricing-config-cost-computation.md) | Per-model pricing config + cost computation | done | 3 | — |
@@ -100,9 +100,9 @@
 | [0095](backlog/0095-onboarding-mode-should-read-existing-spec-backlog.md) | Onboarding mode should read existing spec/backlog first and orient from them | todo | 3 | — |
 | [0096](backlog/0096-connection-centric-model-config-multi-model-id-ent.md) | Connection-centric model config: multi model-id entry + backend model discovery | done | 2 | — |
 | [0097](backlog/0097-sendinput-answer-ignores-a-pending-batch-multi-que.md) | SendInput/Answer ignores a pending batch (multi-question) ask_user | todo | 4 | — |
-| [0098](backlog/0098-work-loop-batch-digest-here-s-what-happened-while.md) | Work-loop batch digest: "here's what happened while you were gone" | todo | 2 | — |
+| [0098](backlog/0098-work-loop-batch-digest-here-s-what-happened-while.md) | Work-loop batch digest: "here's what happened while you were gone" | in_progress | 2 | — |
 | [0099](backlog/0099-tui-backlog-grooming-edit-reprioritize-status-open.md) | TUI backlog grooming: edit/reprioritize/status + open task in $EDITOR | todo | 3 | — |
-| [0100](backlog/0100-spec-doctor-detect-spec-code-drift-coverage-gaps-d.md) | Spec-doctor: detect spec/code drift + coverage gaps (design with user first) | todo | 3 | — |
+| [0100](backlog/0100-spec-doctor-detect-spec-code-drift-coverage-gaps-d.md) | Spec-doctor: detect spec/code drift + coverage gaps (design with user first) | blocked | 3 | — |
 | [0101](backlog/0101-home-menu-notify-when-tasks-are-blocked-and-waitin.md) | Home menu: notify when tasks are blocked and waiting on the user | done | 2 | — |
 | [0102](backlog/0102-tui-ctrl-left-right-for-word-wise-cursor-movement.md) | TUI: Ctrl+Left/Right for word-wise cursor movement in prompt input | todo | 3 | — |
 | [0103](backlog/0103-deliver-mid-run-user-input-at-the-next-safe-checkp.md) | Deliver mid-run user input at the next safe checkpoint (steer-by-default) | done | 2 | — |
@@ -116,6 +116,6 @@
 | [0111](backlog/0111-tui-help-modal-listing-keybindings-per-state.md) | TUI help modal (?) listing keybindings per state | todo | 4 | — |
 | [0112](backlog/0112-key-parity-browse-selector-session-browser-reachab.md) | Key parity: browse selector + session browser reachable from within a session | todo | 4 | — |
 | [0113](backlog/0113-home-menu-choose-the-interaction-level-at-session.md) | Home menu: choose the interaction level at session start | todo | 4 | — |
-| [0114](backlog/0114-stream-model-output-incrementally-into-the-session.md) | Stream model output incrementally into the session view | todo | 3 | — |
+| [0114](backlog/0114-stream-model-output-incrementally-into-the-session.md) | Stream model output incrementally into the session view | blocked | 3 | — |
 | [0115](backlog/0115-structured-blocked-escalation-from-the-implementer.md) | Structured "blocked" escalation from the implementer to the coordinator | todo | 4 | — |
 | [0116](backlog/0116-transcript-search-and-jump-to-event-navigation.md) | Transcript search (/) and jump-to-event navigation | todo | 4 | — |

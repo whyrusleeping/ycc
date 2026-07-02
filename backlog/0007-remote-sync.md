@@ -1,12 +1,15 @@
 ---
 id: "0007"
 title: Remote session sync + phone-facing surface (M5)
-status: todo
+status: blocked
 priority: 5
-created: 2026-06-25
-updated: 2026-06-25
-depends_on: ["0006"]
-spec_refs: ["Persistence & remote sync", "RPC protocol"]
+created: "2026-06-25"
+updated: "2026-07-02"
+depends_on:
+    - "0006"
+spec_refs:
+    - Persistence & remote sync
+    - RPC protocol
 ---
 
 ## Description
@@ -22,3 +25,4 @@ Connect already provides so a phone app can talk to it without a gRPC stack.
 - [ ] documented HTTP/JSON endpoints for the future phone app
 
 ## Work log
+- 2026-07-02 blocked: parked for the overnight autonomous run — milestone-sized (M5) and underspecified (sync target/protocol undecided); needs a scoping/design pass with the user before implementation. Unblock after that pass splits it into concrete tasks.
