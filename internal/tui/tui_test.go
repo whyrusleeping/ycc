@@ -2254,6 +2254,135 @@ func TestBrowseMenuRoutes(t *testing.T) {
 	}
 }
 
+// TestSessionBrowseParity verifies task 0112: the browse selector (ctrl+o) and
+// the read-only session browser modal (ctrl+r / browse → sessions) are reachable
+// from within a live session, browsing there never disturbs (or reopens over) the
+// live session, and esc unwinds transcript → list → session.
+func TestSessionBrowseParity(t *testing.T) {
+	f := newFakeClient()
+	f.history = []*v1.SessionSummary{
+		{SessionId: "s_hist", Mode: "chat", Status: "idle", Title: "old chat", LastActivity: "2024-01-01T10:00:00Z"},
+	}
+	f.transcript = []*v1.Event{
+		{Seq: 10, Type: "user_input", Actor: "user", DataJson: `{"text":"replayed"}`},
+		{Seq: 11, Type: "model_turn", Actor: "coordinator", DataJson: `{"text":"replayed reply"}`},
+	}
+	m := model{
+		client: f, ctx: context.Background(),
+		state: stateSession, status: "running", sessionID: "s_live", mode: "work", follow: true,
+		input:    newSessionInput(),
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+	}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(model)
+	// Give the live session some events so we can detect clobbering.
+	m.appendEvent(&v1.Event{Seq: 1, Type: "model_turn", Actor: "coordinator", DataJson: `{"text":"live one"}`})
+	m.appendEvent(&v1.Event{Seq: 2, Type: "model_turn", Actor: "coordinator", DataJson: `{"text":"live two"}`})
+	m.rebuild()
+	liveDelivered := len(m.deliveredSeqs)
+
+	// ctrl+o opens the browse selector from a session; esc returns to the session.
+	m = drive(t, m, "ctrl+o")
+	if !m.browse {
+		t.Fatal("ctrl+o should open the browse selector from a session")
+	}
+	m = drive(t, m, "esc")
+	if m.browse {
+		t.Fatal("esc should dismiss the browse selector")
+	}
+	if m.state != stateSession {
+		t.Fatalf("esc from the browse selector should return to the session (state=%v)", m.state)
+	}
+	if len(m.evs) != 2 {
+		t.Fatalf("browse selector must not touch the live session events (evs=%d, want 2)", len(m.evs))
+	}
+
+	// browse → sessions from a session opens the read-only modal, NOT stateHistory.
+	m = drive(t, m, "ctrl+o")
+	m = drive(t, m, "down")
+	m = drive(t, m, "down")
+	m = drive(t, m, "enter") // "sessions" is the third browse target
+	if m.state != stateSession {
+		t.Fatalf("browse → sessions from a session must stay stateSession (state=%v)", m.state)
+	}
+	if !m.histModal {
+		t.Fatal("browse → sessions from a session should open the session browser modal")
+	}
+	if len(m.history) != 1 {
+		t.Fatalf("session browser modal should load history (len=%d, want 1)", len(m.history))
+	}
+	// esc closes the modal back to the live session.
+	m = drive(t, m, "esc")
+	if m.histModal {
+		t.Fatal("esc should close the session browser modal")
+	}
+
+	// ctrl+r from a session opens the same read-only modal directly.
+	m = drive(t, m, "ctrl+r")
+	if !m.histModal || m.state != stateSession {
+		t.Fatalf("ctrl+r from a session should open the modal over the session (histModal=%v state=%v)", m.histModal, m.state)
+	}
+
+	// enter loads the transcript into the modal viewport WITHOUT clobbering the
+	// live session's event pipeline.
+	m = drive(t, m, "enter")
+	if !m.histModalTranscript {
+		t.Fatal("enter should drill into the read-only transcript modal")
+	}
+	if f.lastTransID != "s_hist" {
+		t.Fatalf("GetSessionTranscript id=%q, want s_hist", f.lastTransID)
+	}
+	if len(m.evs) != 2 {
+		t.Fatalf("modal transcript must not clobber live session evs (evs=%d, want 2)", len(m.evs))
+	}
+	if len(m.deliveredSeqs) != liveDelivered {
+		t.Fatalf("modal transcript must not clobber live deliveredSeqs (%d, want %d)", len(m.deliveredSeqs), liveDelivered)
+	}
+	// The modal transcript renders the replayed events into its own viewport.
+	if view := m.histModalView(); !strings.Contains(view, "transcript") {
+		t.Fatalf("histModalView (transcript) missing title:\n%s", view)
+	}
+
+	// `o` in the modal transcript is a no-op (no reopen-over-live-session footgun).
+	m = drive(t, m, "o")
+	if f.lastReopened != "" {
+		t.Fatalf("`o` in the modal transcript must not reopen (lastReopened=%q)", f.lastReopened)
+	}
+	if !m.histModalTranscript {
+		t.Fatal("`o` in the modal transcript should be a no-op (still on the transcript)")
+	}
+
+	// esc unwinds: transcript → list.
+	m = drive(t, m, "esc")
+	if m.histModalTranscript {
+		t.Fatal("esc should leave the transcript back to the list")
+	}
+	if !m.histModal {
+		t.Fatal("esc from the transcript should return to the list, not close the modal")
+	}
+
+	// `o` in the modal list is also a no-op.
+	m = drive(t, m, "o")
+	if f.lastReopened != "" {
+		t.Fatalf("`o` in the modal list must not reopen (lastReopened=%q)", f.lastReopened)
+	}
+	if !m.histModal {
+		t.Fatal("`o` in the modal list should be a no-op (still open)")
+	}
+
+	// esc from the list closes the modal, back to the live session intact.
+	m = drive(t, m, "esc")
+	if m.histModal {
+		t.Fatal("esc should close the session browser modal")
+	}
+	if m.state != stateSession || m.sessionID != "s_live" {
+		t.Fatalf("after closing the modal, back to the live session (state=%v id=%q)", m.state, m.sessionID)
+	}
+	if len(m.evs) != 2 {
+		t.Fatalf("live session events must be intact after browsing (evs=%d, want 2)", len(m.evs))
+	}
+}
+
 // TestPlansBrowser verifies the plan library browser (task 0077): the browse
 // selector → plans route lists saved plans, and enter drills into a plan's
 // markdown detail; esc/← backs out to the list and esc closes the browser.

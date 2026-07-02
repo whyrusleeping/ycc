@@ -68,3 +68,7 @@ Add a help modal to the TUI (task 0111), following the existing modal-overlay pa
 - 2026-07-02 review (Claude): accept — The change adds a TUI keybinding help modal (task 0111) that fully satisfies the acceptance criteria. A new internal/tui/help.go holds a single curated binding catalog (grouped by context) with a prom
 …[truncated]
 - 2026-07-02 decision: accept — commit: tui: add keybinding help modal on ?/ctrl+h/ctrl+_ with per-state catalog (task 0111)
+- 2026-07-02 usage: 41,424 tok (in 216, out 41,208, cache_r 3,776,057, cache_w 196,054) · cost n/a (unpriced)
+  implementer: 21,820 tok (in 120, out 21,700, cache_r 2,421,982, cache_w 63,619) · cost n/a (unpriced)
+  coordinator: 15,489 tok (in 68, out 15,421, cache_r 1,094,760, cache_w 105,404) · cost n/a (unpriced)
+  reviewer:Claude: 4,115 tok (in 28, out 4,087, cache_r 259,315, cache_w 27,031) · cost n/a (unpriced)

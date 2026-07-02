@@ -133,6 +133,18 @@ type model struct {
 	// the home menu's "session waiting for you" indicator (task 0107).
 	historyWaitingOnly bool
 
+	// histModal is the session browser opened as a modal OVER a live session
+	// (ctrl+r / browse selector → sessions from within a session, task 0112).
+	// Unlike stateHistory (a full state reached from the menu) it never touches
+	// the live session's event pipeline (m.evs/m.vp), so browsing here is strictly
+	// read-only: transcripts render into a separate viewport and reopen is disabled
+	// (no reopen-over-live-session footgun). It reuses the shared m.history list
+	// and m.historyCursor for navigation.
+	histModal           bool
+	histModalTranscript bool           // true => a transcript is drilled into (over the list)
+	histModalID         string         // session id whose transcript is shown
+	histModalVP         viewport.Model // scroll viewport for the modal transcript (never m.vp)
+
 	// waitingSessions holds the live sessions that need the user right now — a
 	// pending ask_user question or a paused-mid-steer session (task 0107). The home
 	// menu surfaces a count + a one-key route in ("s"); refreshed on entry to the
@@ -1922,6 +1934,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.relayout()
 		m.refreshBacklogDetailVP()
 		m.refreshWsMergeVP()
+		// Keep the modal transcript viewport (task 0112) sized to the terminal.
+		if m.histModalVP.Height() != 0 || m.histModalVP.Width() != 0 {
+			h := msg.Height - 2
+			if h < 3 {
+				h = 3
+			}
+			m.histModalVP.SetWidth(msg.Width)
+			m.histModalVP.SetHeight(h)
+		}
 		return m, nil
 
 	case modesMsg:
@@ -2064,12 +2085,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.rpcOK()
+		m.historyMsgTxt = ""
+		// When the session browser is open as a modal over a live session (task
+		// 0112), render the replayed transcript statelessly into its own viewport —
+		// the live session's event pipeline (m.evs/m.vp/caches) must be left intact.
+		if m.histModal {
+			m.histModalTranscript = true
+			m.histModalID = msg.id
+			m.refreshHistModalVP(msg.events)
+			return m, nil
+		}
 		// Load the replayed transcript into the shared event-rendering pipeline so
 		// it renders identically to the live session view (reasoning, tool-calls,
 		// folding all match), but read-only and starting at the top.
 		m.historyTranscript = true
 		m.historyTransID = msg.id
-		m.historyMsgTxt = ""
 		m.evs = msg.events
 		m.expanded = map[int]bool{}
 		m.bodyCache = map[int]string{}
@@ -2476,6 +2506,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateDigest(msg)
 	}
 
+	// The session browser opened as a modal over a live session (ctrl+r / browse
+	// selector → sessions from within a session, task 0112). Read-only: it owns
+	// input while open and never disturbs the live session behind it.
+	if m.histModal {
+		return m.updateHistoryModal(msg)
+	}
+
 	// The browse selector (ctrl+o) is modal over the menu (spec §18.6/§20.5): it
 	// routes to the backlog / session browsers.
 	if m.browse {
@@ -2629,6 +2666,80 @@ func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 		sel := m.history[m.historyCursor]
 		m.historyMsgTxt = "reopening " + short(sel.SessionId) + "…"
 		return m, m.reopenSession(sel.SessionId)
+	}
+	return m, nil
+}
+
+// openHistModal opens the session browser as a read-only modal over the current
+// live session (task 0112). It reuses the shared history list/cursor but keeps
+// the live session's event pipeline untouched. Callers should return
+// m.fetchHistory to populate the list.
+func (m *model) openHistModal() {
+	m.histModal = true
+	m.histModalTranscript = false
+	m.histModalID = ""
+	m.historyCursor = 0
+	m.history = nil
+	m.historyWaitingOnly = false
+	m.historyMsgTxt = "loading…"
+}
+
+// updateHistoryModal handles the session browser when it is open as a modal over
+// a live session (task 0112). It mirrors updateHistory's navigation but is
+// strictly read-only: there is no `o`/enter reopen (reopening over a live session
+// is a footgun), and transcripts scroll a separate viewport so the live session
+// behind the modal is never disturbed.
+func (m model) updateHistoryModal(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Transcript drill-in: a read-only replayed view that scrolls its own viewport.
+	if m.histModalTranscript {
+		key, ok := msg.(tea.KeyMsg)
+		if !ok {
+			return m, nil
+		}
+		switch key.String() {
+		case "ctrl+c":
+			return m.confirmQuit()
+		case "esc", "q", "backspace", "left":
+			// Back to the list; drop the transient transcript state.
+			m.histModalTranscript = false
+			m.histModalID = ""
+			return m, nil
+		}
+		// Everything else (↑/↓, pgup/pgdn, wheel) scrolls the transcript viewport.
+		// No `o`/enter reopen: browsing from a live session is read-only.
+		var cmd tea.Cmd
+		m.histModalVP, cmd = m.histModalVP.Update(msg)
+		return m, cmd
+	}
+
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch key.String() {
+	case "ctrl+c":
+		return m.confirmQuit()
+	case "esc", "q":
+		// Close the modal and return to the live session behind it.
+		m.histModal = false
+		return m, nil
+	case "r":
+		m.historyMsgTxt = "loading…"
+		return m, m.fetchHistory
+	case "up":
+		m.historyCursor = navUp(m.historyCursor)
+		return m, nil
+	case "down":
+		m.historyCursor = navDown(m.historyCursor, len(m.history))
+		return m, nil
+	case "enter":
+		// Drill into a read-only replayed transcript of the selected session.
+		if len(m.history) == 0 {
+			return m, nil
+		}
+		sel := m.history[m.historyCursor]
+		m.historyMsgTxt = "loading transcript…"
+		return m, m.fetchTranscript(sel.SessionId)
 	}
 	return m, nil
 }
@@ -2849,6 +2960,15 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.backlogShowDone = false
 				m.backlogBlockedOnly = false
 				return m, m.fetchBacklog
+			case "ctrl+o":
+				// Open the browse selector (backlog / sessions / cost) — parity with
+				// the menu (task 0112). m.picking stays set so the picker restores.
+				m.openBrowse()
+				return m, nil
+			case "ctrl+r":
+				// Open the read-only session browser modal (task 0112).
+				m.openHistModal()
+				return m, m.fetchHistory
 			case "?", "ctrl+h", "ctrl+_":
 				// Open the keybinding help modal (task 0111). No free-text input is
 				// focused in the picker, so "?"/ctrl+h open unconditionally here.
@@ -2870,6 +2990,15 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.backlogShowDone = false
 			m.backlogBlockedOnly = false
 			return m, m.fetchBacklog
+		case "ctrl+o":
+			// Open the browse selector (backlog / plans / sessions / cost) from a
+			// session — parity with the menu (task 0112).
+			m.openBrowse()
+			return m, nil
+		case "ctrl+r":
+			// Open the read-only session browser modal over the session (task 0112).
+			m.openHistModal()
+			return m, m.fetchHistory
 		case "?", "ctrl+h":
 			// Open the keybinding help modal (task 0111). Gated on empty input so a
 			// bare "?" still types and ctrl+h (== legacy BS byte 0x08, bound by the
@@ -3313,6 +3442,13 @@ func (m model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.plans, m.plansCursor, m.planDetail = true, 0, nil
 			return m, m.fetchPlans
 		case "sessions":
+			// From a live session, open the read-only modal variant (task 0112) so
+			// browsing never disturbs (or reopens over) the session behind it. From
+			// the menu, use the full-state session browser as before.
+			if m.state == stateSession {
+				m.openHistModal()
+				return m, m.fetchHistory
+			}
 			m.state = stateHistory
 			m.historyCursor = 0
 			m.history = nil
@@ -4226,6 +4362,52 @@ func (m *model) refreshBacklogDetailVP() {
 		m.backlogVP.SetHeight(h)
 	}
 	m.backlogVP.SetContent(m.taskDetailContent(m.backlogDetail))
+}
+
+// refreshHistModalVP (re)sizes the modal session-browser transcript viewport and
+// loads a stateless render of the replayed events into it (task 0112). It never
+// touches the live session's m.vp/m.evs.
+func (m *model) refreshHistModalVP(events []*v1.Event) {
+	if !m.ready {
+		return
+	}
+	h := m.h - 2 // one row for the title bar, one for the footer
+	if h < 3 {
+		h = 3
+	}
+	if m.histModalVP.Height() == 0 && m.histModalVP.Width() == 0 {
+		m.histModalVP = viewport.New(viewport.WithWidth(m.w), viewport.WithHeight(h))
+	} else {
+		m.histModalVP.SetWidth(m.w)
+		m.histModalVP.SetHeight(h)
+	}
+	m.histModalVP.SetContent(m.renderTranscriptContent(events))
+	m.histModalVP.GotoTop()
+}
+
+// renderTranscriptContent renders a replayed event log to a string using the same
+// pipeline as rebuild()/the live session view, WITHOUT mutating the live model
+// (task 0112). It works on a scratch copy of the model whose event state and
+// caches are freshly allocated, so renderBlock's cache mutations never leak into
+// the live session's shared maps.
+func (m model) renderTranscriptContent(events []*v1.Event) string {
+	scratch := m
+	scratch.evs = events
+	scratch.expanded = map[int]bool{}
+	scratch.bodyCache = map[int]string{}
+	scratch.deliveredSeqs = deliveredSeqSet(events)
+	scratch.eventStart = nil
+	scratch.selected = -1
+	scratch.follow = false
+	var b strings.Builder
+	for i, ev := range events {
+		if scratch.hiddenRow(i) {
+			continue
+		}
+		b.WriteString(scratch.renderBlock(i, ev))
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 // taskDetailView renders a single task's full, read-only detail (spec §18.5) as a
@@ -5834,6 +6016,9 @@ func (m model) render() string {
 	if m.digest {
 		return m.digestView()
 	}
+	if m.histModal {
+		return m.histModalView()
+	}
 	if m.browse {
 		return m.browseView()
 	}
@@ -5979,6 +6164,14 @@ func (m model) historyView() string {
 			b.empty = "(no sessions waiting)"
 		}
 	}
+	b.rows = m.historyRows()
+	return m.browserCard(b)
+}
+
+// historyRows builds the session-browser list rows shared by the full-state
+// session browser (historyView) and the read-only modal variant (histModalView),
+// keeping the row format identical between them (task 0112).
+func (m model) historyRows() []browserRow {
 	// Clamp the title column so a row stays on a single physical line.
 	tw := 48
 	if m.w > 0 && m.w-4 < tw {
@@ -5987,6 +6180,7 @@ func (m model) historyView() string {
 	if tw < 1 {
 		tw = 1
 	}
+	var rows []browserRow
 	for _, s := range m.history {
 		// Prefer a derived title; fall back to the short id.
 		title := strings.TrimSpace(s.Title)
@@ -6003,11 +6197,45 @@ func (m model) historyView() string {
 		if len(s.FocusTasks) > 0 {
 			meta += " · " + strings.Join(s.FocusTasks, ",")
 		}
-		b.rows = append(b.rows, browserRow{
+		rows = append(rows, browserRow{
 			text:   fmt.Sprintf("%-*s", tw, trunc(title, tw)),
 			suffix: "  " + dimStyle.Render(meta),
 		})
 	}
+	return rows
+}
+
+// histModalView renders the read-only session browser modal shown over a live
+// session (task 0112). When a transcript is drilled into it shows that instead.
+// Unlike historyView it advertises no `o reopen` — browsing from a live session
+// is strictly read-only.
+func (m model) histModalView() string {
+	if m.histModalTranscript {
+		title := short(m.histModalID)
+		if m.historyCursor < len(m.history) {
+			if t := strings.TrimSpace(m.history[m.historyCursor].Title); t != "" {
+				title = t
+			}
+		}
+		top := m.titleBar(" ycc — transcript · " + title + " ")
+		body := ""
+		if m.ready {
+			body = m.histModalVP.View()
+		}
+		help := m.footerBar(" ↑↓/pgup/pgdn scroll · esc/q back · read-only")
+		return top + "\n" + body + "\n" + help
+	}
+	emptyMsg := m.historyMsgTxt
+	if emptyMsg == "" {
+		emptyMsg = "no previous sessions"
+	}
+	b := browser{
+		title:  " ycc — sessions ",
+		cursor: m.historyCursor,
+		hint:   "↑/↓ choose · enter transcript · r refresh · esc/q back",
+		empty:  emptyMsg,
+	}
+	b.rows = m.historyRows()
 	return m.browserCard(b)
 }
 
@@ -6311,7 +6539,7 @@ func (m model) sessionView() string {
 		help := m.footer(" ⏸ paused — type a correction + enter to steer · enter to resume · esc settings")
 		return top + "\n" + body + "\n" + m.inputRow() + "\n" + help
 	}
-	help := m.footer(" ? help · enter send/expand · shift+enter newline · ↑↓ select · click expand · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings · ctrl+b backlog · ctrl+n new task")
+	help := m.footer(" ? help · enter send/expand · shift+enter newline · ↑↓ select · click expand · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings · ctrl+b backlog · ctrl+o browse · ctrl+n new task")
 	if m.mode == "work" {
 		// Surface the loop toggle on work sessions: shift+tab halts a running loop
 		// gracefully (current task finishes) or rolls a single session into a loop.

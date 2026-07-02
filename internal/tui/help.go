@@ -21,7 +21,7 @@ import (
 //     • session .............. updateSession (main key switch)
 //     • question picker ...... updateSession (m.picking branch)
 //     • backlog browser ...... updateBacklog (+ detail / status-choice modes)
-//     • session browser ..... updateHistory (list + transcript drill-in)
+//     • session browser ..... updateHistory + updateHistoryModal (read-only, over a session)
 //     • workstreams .......... updateWorkstreams (+ merge / discard prompts)
 //     • plans ................ updatePlans
 //     • cost ................. updateCost
@@ -55,7 +55,7 @@ func (m model) helpSections() []helpSection {
 			{"ctrl+n", "new backlog task (quick-add capture)"},
 			{"ctrl+b", "browse the backlog"},
 			{"ctrl+o", "browse selector (backlog · plans · sessions · cost · workstreams · digest)"},
-			{"ctrl+r", "previous sessions (from the menu)"},
+			{"ctrl+r", "browse previous sessions (from a session: read-only)"},
 		}},
 		{"home menu", []helpBind{
 			{"↑ / ↓", "choose a mode"},
@@ -93,7 +93,7 @@ func (m model) helpSections() []helpSection {
 		{"session browser", []helpBind{
 			{"↑ / ↓", "move between sessions"},
 			{"enter", "view the transcript (read-only replay)"},
-			{"o", "reopen / attach the selected session"},
+			{"o", "reopen / attach the selected session (from the menu only)"},
 			{"r", "refresh the list"},
 			{"esc / q", "close · back from a transcript"},
 		}},
