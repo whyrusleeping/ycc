@@ -115,7 +115,7 @@
 | [0110](backlog/0110-settings-overlay-replace-rotating-reviewer-toggle.md) | Settings overlay: replace rotating reviewer toggle with an explicit multi-select | done | 4 | — |
 | [0111](backlog/0111-tui-help-modal-listing-keybindings-per-state.md) | TUI help modal (?) listing keybindings per state | done | 4 | — |
 | [0112](backlog/0112-key-parity-browse-selector-session-browser-reachab.md) | Key parity: browse selector + session browser reachable from within a session | done | 4 | — |
-| [0113](backlog/0113-home-menu-choose-the-interaction-level-at-session.md) | Home menu: choose the interaction level at session start | todo | 4 | — |
+| [0113](backlog/0113-home-menu-choose-the-interaction-level-at-session.md) | Home menu: choose the interaction level at session start | done | 4 | — |
 | [0114](backlog/0114-stream-model-output-incrementally-into-the-session.md) | Stream model output incrementally into the session view | blocked | 3 | — |
 | [0115](backlog/0115-structured-blocked-escalation-from-the-implementer.md) | Structured "blocked" escalation from the implementer to the coordinator | todo | 4 | — |
 | [0116](backlog/0116-transcript-search-and-jump-to-event-navigation.md) | Transcript search (/) and jump-to-event navigation | todo | 4 | — |

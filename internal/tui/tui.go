@@ -258,6 +258,7 @@ type model struct {
 	ovCursor     int
 	models       []*v1.ModelInfo   // populated from ListModels
 	level        string            // current interaction level (session)
+	menuLevel    string            // home-menu selector: interaction level for the NEXT session (not persisted; defaults to judgement each launch — §18.2)
 	thinkLevels  map[string]string // per-role thinking levels (coordinator|implementer|reviewers)
 	roleCoord    string            // logical model driving the coordinator
 	roleImpl     string            // logical model for the implementer
@@ -411,7 +412,7 @@ func initialModel(ctx context.Context, client yccv1connect.SessionServiceClient,
 		events:       make(chan *v1.Event, 256), status: "starting",
 		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1, follow: prefs.Follow,
 		deliveredSeqs: map[int64]bool{},
-		prefs:         prefs, level: "judgement",
+		prefs:         prefs, level: "judgement", menuLevel: "judgement",
 		thinkLevels:  map[string]string{"coordinator": "high", "implementer": "high", "reviewers": "high"},
 		spin:         spin,
 		usageByModel: map[string]event.Usage{},
@@ -2832,6 +2833,18 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+_":
 			m.openHelp()
 			return m, nil
+		case "left", "right":
+			// Cycle the interaction level for the next session, but only when the
+			// prompt is empty so ←/→ still move the cursor mid-edit (same gating as
+			// the "?" help key). Not persisted — resets to judgement each launch.
+			if strings.TrimSpace(m.prompt.Value()) == "" {
+				d := 1
+				if key.String() == "left" {
+					d = -1
+				}
+				m.menuLevel = cycle(levels, m.menuLevel, d)
+				return m, nil
+			}
 		case "up":
 			if m.cursor > 0 {
 				m.cursor--
@@ -2875,7 +2888,7 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case e.openingPrompt != "":
 				prompt = e.openingPrompt + "\n\nContext from the user (supplied upfront with this request):\n" + prompt
 			}
-			return m, m.startSession(e.mode, prompt, "")
+			return m, m.startSession(e.mode, prompt, m.menuLevel)
 		}
 	}
 	var cmd tea.Cmd
@@ -6114,8 +6127,9 @@ func (m model) menuView() string {
 		}
 		b.WriteString("  " + cursor + label + "\n")
 	}
-	b.WriteString("\n" + framedInput(m.prompt, 2) + "\n")
-	footer := "  ? help · ↑/↓ choose mode · tab loop (work) · type a prompt · enter start · ctrl+o browse · ctrl+r sessions · esc settings · ctrl+b backlog · ctrl+n new task"
+	b.WriteString("\n  " + dimStyle.Render("level ") + typeStyle.Render("‹"+m.menuLevel+"›") + dimStyle.Render("  ←/→") + "\n")
+	b.WriteString(framedInput(m.prompt, 2) + "\n")
+	footer := "  ? help · ↑/↓ choose mode · ←/→ level · tab loop (work) · type a prompt · enter start · ctrl+o browse · ctrl+r sessions · esc settings · ctrl+b backlog · ctrl+n new task"
 	if m.blockedTaskCount() > 0 {
 		footer += " · w view blocked"
 	}

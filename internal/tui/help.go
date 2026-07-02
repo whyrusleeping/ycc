@@ -59,6 +59,7 @@ func (m model) helpSections() []helpSection {
 		}},
 		{"home menu", []helpBind{
 			{"↑ / ↓", "choose a mode"},
+			{"← / →", "cycle the interaction level for the next session (when the prompt is empty)"},
 			{"tab", "toggle work (loop) on the work entry"},
 			{"enter", "start the selected mode with the typed prompt"},
 			{"w", "jump to blocked tasks (when any are blocked)"},

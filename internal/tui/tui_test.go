@@ -3343,6 +3343,92 @@ func TestLoopDecisionStartsAutonomousSession(t *testing.T) {
 	}
 }
 
+// The home menu starts at judgement each launch (not persisted — §18.2), and
+// ←/→ cycle the selector through interactive/judgement/autonomous when the prompt
+// is empty. With a typed prompt, the arrows move the cursor and leave the level
+// untouched. The chosen level is passed to StartSession on enter, while a loop
+// start always forces autonomous regardless of the selector.
+func TestMenuLevelSelector(t *testing.T) {
+	// Default is judgement on a fresh model.
+	m := newBackendsModel(newFakeClient())
+	m.state = stateMenu
+	if m.menuLevel != "judgement" {
+		t.Fatalf("fresh menuLevel = %q, want judgement", m.menuLevel)
+	}
+
+	// right cycles judgement → autonomous; left wraps autonomous → judgement etc.
+	step := func(key, want string) {
+		t.Helper()
+		updated, _ := m.updateMenu(keyMsg(key))
+		m = updated.(model)
+		if m.menuLevel != want {
+			t.Fatalf("after %s, menuLevel = %q, want %q", key, m.menuLevel, want)
+		}
+	}
+	step("right", "autonomous")
+	step("right", "interactive") // wraps
+	step("left", "autonomous")   // wraps back
+	step("left", "judgement")
+
+	// The footer and level pill document/show the selector.
+	view := m.menuView()
+	if !strings.Contains(view, "←/→ level") {
+		t.Fatalf("menu footer missing level key:\n%s", view)
+	}
+	if !strings.Contains(view, "judgement") {
+		t.Fatalf("menu view missing level pill:\n%s", view)
+	}
+
+	// With a typed prompt, ←/→ move the cursor and leave the level unchanged.
+	m.mbOpen = false
+	m.prompt.Focus()
+	m = typeText(t, m, "fix the bug")
+	if strings.TrimSpace(m.prompt.Value()) == "" {
+		t.Fatalf("prompt did not receive typed text")
+	}
+	updated, _ := m.updateMenu(keyMsg("right"))
+	m = updated.(model)
+	if m.menuLevel != "judgement" {
+		t.Fatalf("with a typed prompt, right changed menuLevel to %q", m.menuLevel)
+	}
+}
+
+// The enter path starts the selected session at the level chosen on the home menu.
+func TestMenuEnterUsesSelectedLevel(t *testing.T) {
+	fc := newFakeClient()
+	m := newBackendsModel(fc)
+	m.state = stateMenu
+	m.prompt = newChatInput("test")
+	m.entries = []menuEntry{{label: "chat", description: "chat mode", mode: "chat"}}
+	m.cursor = 0
+	m.menuLevel = "interactive"
+
+	updated, cmd := m.updateMenu(keyMsg("enter"))
+	m = updated.(model)
+	if cmd == nil {
+		t.Fatal("expected a startSession command from enter")
+	}
+	cmd() // executes StartSession against the fake client
+	if fc.lastStartLevel != "interactive" {
+		t.Fatalf("enter started level %q, want interactive", fc.lastStartLevel)
+	}
+}
+
+// A loop start forces autonomous even when the home-menu selector picked a
+// less-autonomous level (the loop path must never block on ask_user).
+func TestMenuLoopForcesAutonomousDespiteSelector(t *testing.T) {
+	fc := newFakeClient()
+	m := &model{looping: true, loopStarted: false, loopPrevFP: "", menuLevel: "interactive", client: fc, ctx: context.Background()}
+	_, cmd := m.applyLoopDecision(loopDecisionMsg{next: "0003", fp: "0003:todo"})
+	if cmd == nil {
+		t.Fatal("expected a startSession command from the loop")
+	}
+	cmd()
+	if fc.lastStartLevel != "autonomous" {
+		t.Fatalf("loop start used level %q despite selector, want autonomous", fc.lastStartLevel)
+	}
+}
+
 // A finished work session goes idle and blocks for input rather than
 // self-terminating, so while looping the driver must stop it explicitly (closing
 // its stream to advance the loop). A second idle event must not re-trigger.

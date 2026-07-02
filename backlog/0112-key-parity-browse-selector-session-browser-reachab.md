@@ -83,3 +83,7 @@ Verify: gofmt, go build ./..., go test ./internal/tui/ (and full go test ./...).
 - 2026-07-02 review (Claude): accept — The change satisfies all acceptance criteria for task 0112. ctrl+o (browse selector) and ctrl+r (session browser) are now reachable from within a live session; the session-history variant is a strictl
 …[truncated]
 - 2026-07-02 decision: accept — commit: tui: make browse selector + read-only session browser reachable from within a session (task 0112)
+- 2026-07-02 usage: 36,013 tok (in 174, out 35,839, cache_r 3,509,269, cache_w 177,962) · cost n/a (unpriced)
+  implementer: 20,911 tok (in 102, out 20,809, cache_r 2,221,418, cache_w 68,494) · cost n/a (unpriced)
+  coordinator: 7,572 tok (in 28, out 7,544, cache_r 862,933, cache_w 77,792) · cost n/a (unpriced)
+  reviewer:Claude: 7,530 tok (in 44, out 7,486, cache_r 424,918, cache_w 31,676) · cost n/a (unpriced)
