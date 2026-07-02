@@ -95,6 +95,18 @@ type model struct {
 	// StopSession more than once for the same idle session.
 	loopStopping bool
 
+	// batch digest (task 0098, §9): the "work (loop)" driver accumulates a
+	// per-session summary as it runs (loopRun) and rolls it up into an
+	// end-of-batch digest (loopDigest) shown when the loop ends — "here's what
+	// happened while you were gone": tasks completed / blocked / in_review /
+	// created, with commit sha, review verdicts, tokens and cost. loopDigest
+	// survives dismissal so the browse selector can reopen it. digest gates the
+	// modal digest surface (shared list+detail browser).
+	loopRun      *loopRunState
+	loopDigest   *loopDigest
+	digest       bool
+	digestCursor int
+
 	// session browser / previous-sessions screen (spec §18.6): a navigable list of
 	// persisted + live sessions reached from the menu (ctrl+r) or the browse
 	// selector. Enter drills into a read-only replayed transcript; `o` reopens the
@@ -349,8 +361,25 @@ type startedMsg struct{ id, mode string }
 // driver compares fp against the snapshot taken before the just-finished session
 // to detect a genuine stall (nothing changed) without guessing which task ran.
 type loopDecisionMsg struct {
-	next string
-	fp   string
+	next  string
+	fp    string
+	tasks []*v1.BacklogTaskSummary // full backlog snapshot at this decision point
+	err   error
+}
+
+// loopUsageMsg carries the per-session token/cost breakdown (GetUsage grouped by
+// session) used to price the batch digest (task 0098, §20). The handler matches
+// rows to the loop run's session ids and fills per-task + total cost.
+type loopUsageMsg struct {
+	rows []*v1.UsageRow
+	err  error
+}
+
+// digestTaskMsg carries one blocked task's full detail so the digest can surface
+// the specific reason it is blocked (task 0098; ties into §18.7 semantics).
+type digestTaskMsg struct {
+	id   string
+	task *v1.TaskDetail
 	err  error
 }
 
@@ -549,7 +578,293 @@ func (m model) loopNext() tea.Cmd {
 		if err != nil {
 			return loopDecisionMsg{err: err}
 		}
-		return loopDecisionMsg{next: topReadyTask(resp.Msg.Tasks), fp: backlogFingerprint(resp.Msg.Tasks)}
+		return loopDecisionMsg{
+			next:  topReadyTask(resp.Msg.Tasks),
+			fp:    backlogFingerprint(resp.Msg.Tasks),
+			tasks: resp.Msg.Tasks,
+		}
+	}
+}
+
+// --- work-loop batch digest (task 0098, §9/§20) ---
+//
+// The loop driver accumulates a per-session summary as it runs and rolls it up
+// into an end-of-batch digest when the loop stops. Everything is projected from
+// data that already exists — the backlog snapshot at loop start (baseline), the
+// live event log of each session (task_focus / commit_made / review_submitted),
+// the running per-model token tally, and the GetUsage cost aggregator — rather
+// than new bookkeeping.
+
+// loopCommit is one commit made during a loop session.
+type loopCommit struct{ task, sha, message string }
+
+// loopSessRec is a per-session snapshot captured when a loop session's stream
+// closes: its id, focus task, wall-clock duration, summed tokens, the commits it
+// made, and the review verdicts it collected. Cost/priceStatus are filled later
+// from GetUsage (grouped by session).
+type loopSessRec struct {
+	id          string
+	focus       string
+	dur         time.Duration
+	tokens      int64
+	commits     []loopCommit
+	verdicts    []string
+	cost        float64
+	priceStatus string
+}
+
+// loopRunState accumulates across every session a single loop run drives.
+// baseline is the backlog (id → summary) at loop start so the finished digest can
+// classify each task by how it changed (completed / blocked / in_review / new).
+type loopRunState struct {
+	startedAt time.Time
+	baseline  map[string]*v1.BacklogTaskSummary
+	sessions  []loopSessRec
+}
+
+// digestTask is one task row in the finished digest.
+type digestTask struct {
+	id, title, status string
+	sha               string
+	verdictTally      string
+	tokens            int64
+	cost              float64
+	priceStatus       string
+	reason            string // blocked reason (filled from the task's work log)
+}
+
+// loopDigest is the finished, re-openable batch digest surface.
+type loopDigest struct {
+	outcome     string
+	startedAt   time.Time
+	dur         time.Duration
+	sessions    []loopSessRec
+	completed   []digestTask
+	blocked     []digestTask
+	inReview    []digestTask
+	created     []digestTask
+	totalTokens int64
+	totalCost   float64
+	costStatus  string
+}
+
+// buildLoopDigest rolls a finished loop run up into the digest artifact: it
+// aggregates commits/verdicts/tokens per task from the session records and
+// classifies every final backlog task against the run's baseline. It is pure so
+// the roll-up is unit-testable. Cost is left "unpriced" until fetchLoopUsage fills
+// it (§20.4: cost renders "—" while unpriced).
+func buildLoopDigest(run *loopRunState, final []*v1.BacklogTaskSummary, outcome string) *loopDigest {
+	d := &loopDigest{outcome: outcome, costStatus: "unpriced"}
+	baseline := map[string]*v1.BacklogTaskSummary{}
+	if run != nil {
+		d.startedAt = run.startedAt
+		if !run.startedAt.IsZero() {
+			d.dur = time.Since(run.startedAt)
+		}
+		d.sessions = run.sessions
+		baseline = run.baseline
+	}
+
+	shaByTask := map[string]string{}
+	verdictsByTask := map[string][]string{}
+	tokensByTask := map[string]int64{}
+	for _, s := range d.sessions {
+		d.totalTokens += s.tokens
+		for _, c := range s.commits {
+			if c.task != "" {
+				shaByTask[c.task] = c.sha
+			}
+		}
+		if s.focus != "" {
+			verdictsByTask[s.focus] = append(verdictsByTask[s.focus], s.verdicts...)
+			tokensByTask[s.focus] += s.tokens
+		}
+	}
+
+	sorted := append([]*v1.BacklogTaskSummary(nil), final...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Id < sorted[j].Id })
+	for _, t := range sorted {
+		dt := digestTask{
+			id: t.Id, title: t.Title, status: t.Status,
+			sha:          shaByTask[t.Id],
+			verdictTally: tallyVerdicts(verdictsByTask[t.Id]),
+			tokens:       tokensByTask[t.Id],
+			priceStatus:  "unpriced",
+		}
+		base, existed := baseline[t.Id]
+		if !existed {
+			d.created = append(d.created, dt)
+			continue
+		}
+		switch t.Status {
+		case "done":
+			if base.Status != "done" {
+				d.completed = append(d.completed, dt)
+			}
+		case "blocked":
+			d.blocked = append(d.blocked, dt)
+		case "in_review":
+			d.inReview = append(d.inReview, dt)
+		}
+	}
+	return d
+}
+
+// tallyVerdicts summarises a task's review verdicts as "approve×2 reject×1"
+// (insertion order preserved) for the completed-task suffix.
+func tallyVerdicts(verdicts []string) string {
+	if len(verdicts) == 0 {
+		return ""
+	}
+	counts := map[string]int{}
+	var order []string
+	for _, v := range verdicts {
+		if _, ok := counts[v]; !ok {
+			order = append(order, v)
+		}
+		counts[v]++
+	}
+	parts := make([]string, 0, len(order))
+	for _, v := range order {
+		parts = append(parts, fmt.Sprintf("%s×%d", v, counts[v]))
+	}
+	return strings.Join(parts, " ")
+}
+
+// mergeCostStatus combines two price statuses: unset ("") adopts the other; a
+// disagreement is "partial" (some priced, some not).
+func mergeCostStatus(a, b string) string {
+	if a == "" {
+		return b
+	}
+	if b == "" || a == b {
+		return a
+	}
+	return "partial"
+}
+
+// applyUsage prices the digest from GetUsage rows grouped by session: each row is
+// matched to a session record (and, via its focus task, to a digest task), and
+// per-task + total cost/priceStatus are recomputed (task 0098, §20).
+func (d *loopDigest) applyUsage(rows []*v1.UsageRow) {
+	bySession := map[string]*v1.UsageRow{}
+	for _, r := range rows {
+		bySession[r.Session] = r
+	}
+	costByTask := map[string]float64{}
+	statusByTask := map[string]string{}
+	var total float64
+	totalStatus := ""
+	for i := range d.sessions {
+		s := &d.sessions[i]
+		r := bySession[s.id]
+		if r == nil {
+			continue
+		}
+		s.cost, s.priceStatus = r.Cost, r.PriceStatus
+		total += r.Cost
+		totalStatus = mergeCostStatus(totalStatus, r.PriceStatus)
+		if s.focus != "" {
+			costByTask[s.focus] += r.Cost
+			statusByTask[s.focus] = mergeCostStatus(statusByTask[s.focus], r.PriceStatus)
+		}
+	}
+	d.totalCost = total
+	if totalStatus != "" {
+		d.costStatus = totalStatus
+	}
+	assign := func(list []digestTask) {
+		for i := range list {
+			if st, ok := statusByTask[list[i].id]; ok {
+				list[i].cost = costByTask[list[i].id]
+				list[i].priceStatus = st
+			}
+		}
+	}
+	assign(d.completed)
+	assign(d.blocked)
+	assign(d.inReview)
+	assign(d.created)
+}
+
+// blockedReasonFromBody extracts a one-line reason a task is blocked from its
+// markdown body: the last "## Work log" bullet mentioning "blocked", else the
+// last bullet (task 0098; ties into §18.7). Empty when there is no work log.
+func blockedReasonFromBody(body string) string {
+	lines := strings.Split(body, "\n")
+	inLog := false
+	var bullets []string
+	for _, ln := range lines {
+		t := strings.TrimSpace(ln)
+		if strings.HasPrefix(t, "#") {
+			inLog = strings.Contains(strings.ToLower(t), "work log")
+			continue
+		}
+		if inLog && (strings.HasPrefix(t, "- ") || strings.HasPrefix(t, "* ")) {
+			bullets = append(bullets, strings.TrimSpace(t[2:]))
+		}
+	}
+	if len(bullets) == 0 {
+		return ""
+	}
+	for i := len(bullets) - 1; i >= 0; i-- {
+		if strings.Contains(strings.ToLower(bullets[i]), "blocked") {
+			return bullets[i]
+		}
+	}
+	return bullets[len(bullets)-1]
+}
+
+// snapshotLoopSession captures the just-finished session's summary from live TUI
+// state (event log + running token tally) for the batch digest roll-up.
+func (m model) snapshotLoopSession() loopSessRec {
+	rec := loopSessRec{id: m.sessionID, priceStatus: "unpriced"}
+	if !m.sessionStart.IsZero() {
+		rec.dur = time.Since(m.sessionStart)
+	}
+	for _, u := range m.usageByModel {
+		rec.tokens += int64(u.Total)
+	}
+	for _, ev := range m.evs {
+		switch ev.Type {
+		case "task_focus":
+			if t := dataField(ev, "task"); t != "" {
+				rec.focus = t
+			}
+		case "commit_made":
+			rec.commits = append(rec.commits, loopCommit{
+				task: dataField(ev, "task"), sha: dataField(ev, "sha"), message: dataField(ev, "message"),
+			})
+		case "review_submitted":
+			if v := dataField(ev, "verdict"); v != "" {
+				rec.verdicts = append(rec.verdicts, v)
+			}
+		}
+	}
+	return rec
+}
+
+// fetchLoopUsage loads the per-session token/cost breakdown to price the batch
+// digest (task 0098, §20). Grouped by session so rows match the run's sessions.
+func (m model) fetchLoopUsage() tea.Msg {
+	resp, err := m.client.GetUsage(m.ctx, connect.NewRequest(&v1.GetUsageRequest{
+		Project: m.project, GroupBy: []string{"session"},
+	}))
+	if err != nil {
+		return loopUsageMsg{err: err}
+	}
+	return loopUsageMsg{rows: resp.Msg.Rows}
+}
+
+// fetchDigestTask loads one blocked task's detail so the digest can surface the
+// specific reason it is blocked and offer a jump-to-task (task 0098).
+func (m model) fetchDigestTask(id string) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := m.client.GetTask(m.ctx, connect.NewRequest(&v1.GetTaskRequest{Project: m.project, Id: id}))
+		if err != nil {
+			return digestTaskMsg{id: id, err: err}
+		}
+		return digestTaskMsg{id: id, task: resp.Msg.Task}
 	}
 }
 
@@ -573,21 +888,47 @@ func backlogFingerprint(tasks []*v1.BacklogTaskSummary) string {
 // left the backlog completely unchanged (a stall — re-running would spin forever);
 // otherwise start the next work session and stay in the loop.
 func (m model) applyLoopDecision(msg loopDecisionMsg) (tea.Model, tea.Cmd) {
+	// Initialise the run accumulator on the first decision of a loop run: the
+	// baseline is the backlog at loop start so the end-of-batch digest can diff
+	// against it. loopNext runs before/between every session, so this covers both
+	// entry paths (menu enter and shift+tab mid-session).
+	if m.loopRun == nil && msg.err == nil {
+		m.loopRun = &loopRunState{startedAt: time.Now(), baseline: map[string]*v1.BacklogTaskSummary{}}
+		for _, t := range msg.tasks {
+			m.loopRun.baseline[t.Id] = t
+		}
+	}
+
+	// finish stops the loop and, when at least one session actually ran, rolls the
+	// run up into the re-openable batch digest ("here's what happened while you
+	// were gone") and opens it — otherwise it just shows the status line as before
+	// (e.g. starting a loop on an empty backlog).
+	finish := func(outcome string) (tea.Model, tea.Cmd) {
+		run := m.loopRun
+		m.looping, m.loopStarted, m.loopPrevFP = false, false, ""
+		m.loopRun = nil
+		m.state, m.status = stateMenu, outcome
+		if run == nil || len(run.sessions) == 0 {
+			return m, m.fetchBacklog
+		}
+		m.loopDigest = buildLoopDigest(run, msg.tasks, outcome)
+		m.digest, m.digestCursor = true, 0
+		cmds := []tea.Cmd{m.fetchBacklog, m.fetchLoopUsage}
+		for _, bt := range m.loopDigest.blocked {
+			cmds = append(cmds, m.fetchDigestTask(bt.id))
+		}
+		return m, tea.Batch(cmds...)
+	}
+
 	switch {
 	case msg.err != nil:
-		m.looping, m.loopStarted, m.loopPrevFP = false, false, ""
-		m.state, m.status = stateMenu, "loop stopped: "+msg.err.Error()
-		return m, m.fetchBacklog
+		return finish("loop stopped: " + msg.err.Error())
 	case msg.next == "":
-		m.looping, m.loopStarted, m.loopPrevFP = false, false, ""
-		m.state, m.status = stateMenu, "loop complete: no ready tasks remain"
-		return m, m.fetchBacklog
+		return finish("loop complete: no ready tasks remain")
 	case m.loopStarted && msg.fp == m.loopPrevFP:
 		// A session ran but the backlog is byte-for-byte unchanged: it advanced
 		// nothing, so starting another would loop forever on the same state.
-		m.looping, m.loopStarted, m.loopPrevFP = false, false, ""
-		m.state, m.status = stateMenu, "loop stopped: session made no progress"
-		return m, m.fetchBacklog
+		return finish("loop stopped: session made no progress")
 	}
 	m.loopStarted, m.loopPrevFP = true, msg.fp
 	// Loop sessions run autonomously: ask_user must never block an unattended run.
@@ -785,12 +1126,14 @@ func (m *model) loadWizQuestion() tea.Cmd {
 		m.picking = true
 		m.pickerCursor = 0
 		m.input.Blur()
+		m.relayout() // picker rows replace the input box; resize the viewport
 		return nil
 	}
 	// Free-text question: re-focus the textarea so the user can type, even when a
 	// preceding picker question blurred it. Focus() sets the focused state
 	// synchronously (what matters for typing) and returns the cosmetic blink cmd.
 	m.picking = false
+	m.relayout() // input box replaces the picker rows; resize the viewport
 	return m.input.Focus()
 }
 
@@ -804,6 +1147,7 @@ func (m *model) clearWizard() {
 	// Invalidate the body cache so the (now answered) entry re-renders its full
 	// enumerated form once the wizard is dismissed.
 	m.bodyCache = map[int]string{}
+	m.relayout() // the wizard overview rows are gone; give them back to the viewport
 }
 
 // recordWizAnswer stores the answer for the current question and advances. When
@@ -826,6 +1170,7 @@ func (m *model) recordWizAnswer(idx int, text string, viaPicker bool) tea.Cmd {
 	m.picking = false
 	m.pickerOpts = nil
 	m.follow = true
+	m.relayout() // picker rows collapse back to the input box while awaiting question_answered
 	return m.answerQuestions(answers)
 }
 
@@ -1069,17 +1414,38 @@ func (m model) inputViewHeight() int {
 	return m.input.Height() + inputFrameStyle.GetVerticalFrameSize()
 }
 
-// relayout recomputes the viewport height so the (possibly multi-row) input
-// and the help line never crowd out the event stream / status bar.
+// relayout recomputes the viewport height so the (possibly multi-row) footer
+// stack — input box, question picker, wizard overview — and the help line never
+// crowd out the event stream / status bar.
 func (m *model) relayout() {
 	if !m.ready {
 		return
 	}
-	vpHeight := m.h - headerHeight - 1 - m.inputViewHeight()
+	vpHeight := m.h - headerHeight - 1 - m.footerStackHeight()
 	if vpHeight < 3 {
 		vpHeight = 3
 	}
 	m.vp.SetHeight(vpHeight)
+}
+
+// footerStackHeight is the number of rows sessionView stacks between the
+// viewport body and the one-row help footer. Normally that is just the framed
+// input box, but while a question with options is pending the option picker
+// (question line + option rows) replaces it, and a multi-question ask_user
+// additionally shows the wizard overview above it. Measuring the same rendered
+// strings sessionView emits keeps this in lockstep with the actual layout, so
+// the picker and help line can never be pushed off the bottom of the screen.
+func (m model) footerStackHeight() int {
+	h := 0
+	if m.wizActive {
+		h += lipgloss.Height(m.wizardView())
+	}
+	if m.picking {
+		h += lipgloss.Height(m.pickerView())
+	} else {
+		h += m.inputViewHeight()
+	}
+	return h
 }
 
 // mouseFragmentRe matches the printable remnants of a split SGR mouse report
@@ -1352,15 +1718,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.subscribe(), fc, spin)
 	case streamClosedMsg:
 		m.status = "stream closed"
-		// In a loop run, a closed stream means the work session finished. Decide
-		// whether to start the next task rather than dropping back to an idle view.
+		// In a loop run, a closed stream means the work session finished. Record a
+		// per-session summary for the batch digest before deciding whether to start
+		// the next task rather than dropping back to an idle view.
 		if m.looping {
+			if m.loopRun != nil {
+				m.loopRun.sessions = append(m.loopRun.sessions, m.snapshotLoopSession())
+			}
 			m.status = "loop: session ended — checking backlog…"
 			return m, m.loopNext()
 		}
 		return m, nil
 	case loopDecisionMsg:
 		return m.applyLoopDecision(msg)
+	case loopUsageMsg:
+		// Price the batch digest from the per-session usage breakdown (task 0098).
+		if msg.err == nil && m.loopDigest != nil {
+			m.loopDigest.applyUsage(msg.rows)
+		}
+		return m, nil
+	case digestTaskMsg:
+		// Fill a blocked digest task's specific reason from its work log (task 0098).
+		if msg.err == nil && m.loopDigest != nil && msg.task != nil {
+			reason := blockedReasonFromBody(msg.task.Body)
+			for i := range m.loopDigest.blocked {
+				if m.loopDigest.blocked[i].id == msg.id {
+					m.loopDigest.blocked[i].reason = reason
+				}
+			}
+		}
+		return m, nil
 	case evMsg:
 		m.markConnected()
 		m.appendEvent(msg.ev)
@@ -1384,6 +1771,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break drain
 			}
 		}
+		// Events can change the footer stack (question_asked shows the picker /
+		// wizard; question_answered dismisses them), so recompute the viewport
+		// height BEFORE rebuild — follow-mode's GotoBottom needs the final height
+		// or the pending question scrolls off the bottom of the screen.
+		m.relayout()
 		m.rebuild()
 		spin := m.spinnerCmd() // mutates m.spinning; evaluate before returning m
 		if closed {
@@ -1542,6 +1934,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// session (spec §20.5, task 0039).
 	if m.cost {
 		return m.updateCost(msg)
+	}
+
+	// The work-loop batch digest (shown when a loop ends, re-opened from the
+	// browse selector) is modal over both the menu and a session (task 0098).
+	if m.digest {
+		return m.updateDigest(msg)
 	}
 
 	// The browse selector (ctrl+o) is modal over the menu (spec §18.6/§20.5): it
@@ -1780,6 +2178,7 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// when it ends — ignoring any typed prompt so every iteration auto-picks.
 			if m.loop && isWorkEntry(e) {
 				m.looping, m.loopStarted, m.loopPrevFP = true, false, ""
+				m.loopRun = nil // start a fresh batch-digest accumulation (task 0098)
 				return m, m.loopNext()
 			}
 			// Compose the preset's opening prompt with any typed text: choosing a
@@ -1845,6 +2244,7 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.pickerCursor >= len(m.pickerOpts) {
 					// "other…": drop into the free-text textarea.
 					m.picking = false
+					m.relayout()
 					return m, m.input.Focus()
 				}
 				idx := m.pickerCursor
@@ -1856,6 +2256,7 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pending = ""
 				m.pickerOpts = nil
 				m.follow = true
+				m.relayout()
 				return m, m.answerQuestion(idx, "")
 			}
 			return m, nil
@@ -1888,6 +2289,9 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.mode == "work" {
 				m.looping = !m.looping
 				m.loopStarted, m.loopPrevFP = false, ""
+				if m.looping {
+					m.loopRun = nil // fresh batch-digest accumulation (task 0098)
+				}
 			}
 			return m, nil
 		case "up":
@@ -2255,6 +2659,7 @@ var browseTargets = []struct{ label, desc string }{
 	{"plans", "saved runbooks · view markdown"},
 	{"sessions", "previous + live · transcript · reopen"},
 	{"cost", "token/cost breakdown by task × model × day"},
+	{"digest", "last work-loop run — done · blocked · cost"},
 }
 
 // openBrowse enters the browse selector modal.
@@ -2307,6 +2712,11 @@ func (m model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.costRows, m.costTotal = nil, nil
 			m.costMsg = "loading…"
 			return m, m.fetchUsage
+		case "digest":
+			// Reopen the last work-loop batch digest (task 0098). When no loop has
+			// finished yet the digest surface shows its empty-state message.
+			m.digest, m.digestCursor = true, 0
+			return m, nil
 		}
 		return m, nil
 	}
@@ -2524,8 +2934,122 @@ func (m model) costView() string {
 	return m.modalCard(title, strings.TrimRight(sb.String(), "\n"), hint)
 }
 
-// updateBacklog handles the modal backlog browser: a task list with drill-down
-// into a single task's read-only detail.
+// --- work-loop batch digest surface (task 0098, §9/§18.6/§20) ---
+
+// shortSHA truncates a commit sha to its conventional 7-char prefix for display.
+func shortSHA(sha string) string {
+	if len(sha) > 7 {
+		return sha[:7]
+	}
+	return sha
+}
+
+// digestRows builds the digest's list rows (shared browser surface) alongside a
+// parallel nav slice giving each row's task id ("" for informational rows), so
+// updateDigest and digestView agree on which row maps to which task.
+func (m model) digestRows() (rows []browserRow, nav []string) {
+	d := m.loopDigest
+	if d == nil {
+		return nil, nil
+	}
+	add := func(text, suffix, id string) {
+		rows = append(rows, browserRow{text: text, suffix: suffix})
+		nav = append(nav, id)
+	}
+	add(d.outcome, "", "")
+	add(dimStyle.Render(fmt.Sprintf("%d session(s) · %s", len(d.sessions), fmtElapsed(d.dur))), "", "")
+	add(dimStyle.Render(fmt.Sprintf("total: %s tok · %s", commasTUI(d.totalTokens),
+		costCellTUI(&v1.UsageRow{Cost: d.totalCost, PriceStatus: d.costStatus}))), "", "")
+
+	section := func(title, marker string, tasks []digestTask, suf func(digestTask) string) {
+		if len(tasks) == 0 {
+			return
+		}
+		add(dimStyle.Render(fmt.Sprintf("%s (%d)", title, len(tasks))), "", "")
+		for _, t := range tasks {
+			add(fmt.Sprintf("%s %s  %s", marker, t.id, oneLine(t.title, 48)), suf(t), t.id)
+		}
+	}
+	tokCost := func(t digestTask) string {
+		return fmt.Sprintf("%s tok · %s", commasTUI(t.tokens),
+			costCellTUI(&v1.UsageRow{Cost: t.cost, PriceStatus: t.priceStatus}))
+	}
+	section("completed", "✔", d.completed, func(t digestTask) string {
+		parts := []string{}
+		if t.sha != "" {
+			parts = append(parts, shortSHA(t.sha))
+		}
+		if t.verdictTally != "" {
+			parts = append(parts, t.verdictTally)
+		}
+		parts = append(parts, tokCost(t))
+		return "  " + dimStyle.Render(strings.Join(parts, " · "))
+	})
+	section("blocked", "⛔", d.blocked, func(t digestTask) string {
+		reason := t.reason
+		if reason == "" {
+			reason = "(no reason recorded — open to view)"
+		}
+		return "  " + dimStyle.Render(oneLine(reason, 60))
+	})
+	section("in_review / unfinished", "◌", d.inReview, func(t digestTask) string {
+		return "  " + dimStyle.Render(tokCost(t))
+	})
+	section("created during run", "+", d.created, func(t digestTask) string {
+		return "  " + dimStyle.Render(t.status)
+	})
+	return rows, nav
+}
+
+// digestView renders the batch digest as a bordered modal card via the shared
+// list component (task 0098).
+func (m model) digestView() string {
+	rows, _ := m.digestRows()
+	b := browser{
+		title:  " ycc — loop digest ",
+		rows:   rows,
+		cursor: m.digestCursor,
+		hint:   "↑/↓ · enter open task · esc close",
+		empty:  "no completed loop run yet",
+	}
+	return m.browserCard(b)
+}
+
+// updateDigest handles the batch digest modal: list navigation, and Enter on a
+// task row jumps into the backlog browser's detail for that task — the fast path
+// to answer a blocked task + re-queue, or just inspect what happened (task 0098).
+func (m model) updateDigest(msg tea.Msg) (tea.Model, tea.Cmd) {
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	_, nav := m.digestRows()
+	switch key.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc", "q":
+		m.digest = false
+		return m, nil
+	case "up":
+		m.digestCursor = navUp(m.digestCursor)
+		return m, nil
+	case "down":
+		m.digestCursor = navDown(m.digestCursor, len(nav))
+		return m, nil
+	case "enter":
+		if m.digestCursor >= 0 && m.digestCursor < len(nav) && nav[m.digestCursor] != "" {
+			id := nav[m.digestCursor]
+			m.digest = false
+			m.backlog, m.backlogCursor, m.backlogDetail = true, 0, nil
+			m.backlogShowDone = true
+			m.backlogBlockedOnly = false
+			return m, tea.Batch(m.fetchBacklog, m.fetchTask(id))
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
 func (m model) updateBacklog(msg tea.Msg) (tea.Model, tea.Cmd) {
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
@@ -4204,6 +4728,9 @@ func (m model) render() string {
 	}
 	if m.cost {
 		return m.costView()
+	}
+	if m.digest {
+		return m.digestView()
 	}
 	if m.browse {
 		return m.browseView()

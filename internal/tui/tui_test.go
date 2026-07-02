@@ -962,6 +962,11 @@ type fakeClient struct {
 
 	// plan library browser (task 0077)
 	plans []*v1.PlanSummary
+
+	// batch digest (task 0098): canned per-task detail returned by GetTask so the
+	// digest can surface a blocked task's reason, plus the last id requested.
+	taskDetails map[string]*v1.TaskDetail
+	lastGetTask string
 }
 
 func newFakeClient(cfgs ...*v1.ModelConfig) *fakeClient {
@@ -1082,6 +1087,16 @@ func (f *fakeClient) GetSessionTranscript(_ context.Context, req *connect.Reques
 // browse tests only need it to not panic, so it returns an empty list.
 func (f *fakeClient) ListBacklog(_ context.Context, _ *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error) {
 	return connect.NewResponse(&v1.ListBacklogResponse{}), nil
+}
+
+// GetTask backs the backlog detail drill-in and the batch digest's blocked-reason
+// fetch (task 0098). It returns canned detail keyed by id, or an empty detail.
+func (f *fakeClient) GetTask(_ context.Context, req *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error) {
+	f.lastGetTask = req.Msg.Id
+	if t, ok := f.taskDetails[req.Msg.Id]; ok {
+		return connect.NewResponse(&v1.GetTaskResponse{Task: t}), nil
+	}
+	return connect.NewResponse(&v1.GetTaskResponse{Task: &v1.TaskDetail{Id: req.Msg.Id}}), nil
 }
 
 // ListPlans / GetPlan back the plan library browser route (task 0077). They
@@ -2777,6 +2792,192 @@ func TestNonLoopIdleStaysPut(t *testing.T) {
 	}
 }
 
+// --- work-loop batch digest (task 0098) ---
+
+// evJSON builds an event of the given type with a JSON data payload.
+func evJSON(seq int64, typ, data string) *v1.Event {
+	return &v1.Event{Seq: seq, Type: typ, DataJson: data}
+}
+
+// TestBlockedReasonFromBody covers the pure work-log reason extractor: it prefers
+// the last bullet mentioning "blocked", else the last bullet, else "".
+func TestBlockedReasonFromBody(t *testing.T) {
+	cases := []struct{ name, body, want string }{
+		{"prefers last blocked", "## Work log\n- did a thing\n- blocked: need the API key\n- (later) tidied up", "blocked: need the API key"},
+		{"prefers blocked", "## Work log\n- blocked: waiting on review\n- noted", "blocked: waiting on review"},
+		{"last bullet", "## Work log\n- first\n- second", "second"},
+		{"star bullets", "# Task\n## Work log\n* only bullet here", "only bullet here"},
+		{"no work log", "## Description\n- not a work log bullet", ""},
+		{"empty", "", ""},
+	}
+	for _, c := range cases {
+		if got := blockedReasonFromBody(c.body); got != c.want {
+			t.Errorf("%s: blockedReasonFromBody = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// digestLoopModel builds a model wired to the given fake client ready to drive a
+// scripted loop run for the digest tests.
+func digestLoopModel(fc *fakeClient) model {
+	return model{
+		client: fc, ctx: context.Background(),
+		looping: true, loopStarted: false,
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+		usageByModel: map[string]event.Usage{},
+	}
+}
+
+// TestLoopDigestRollup drives a scripted two-session loop and asserts the digest
+// classifies tasks, records commit sha + verdict tally, and per-session records.
+func TestLoopDigestRollup(t *testing.T) {
+	fc := newFakeClient()
+	fc.taskDetails = map[string]*v1.TaskDetail{
+		"0002": {Id: "0002", Status: "blocked", Body: "## Work log\n- started\n- blocked: needs the staging DB password"},
+	}
+	m := digestLoopModel(fc)
+
+	// First decision initialises the run baseline (0001,0002 todo) and starts s1.
+	baseline := []*v1.BacklogTaskSummary{
+		{Id: "0001", Title: "First task", Status: "todo", Ready: true},
+		{Id: "0002", Title: "Second task", Status: "todo", Ready: true},
+	}
+	nm, _ := m.applyLoopDecision(loopDecisionMsg{next: "0001", fp: "0001:todo,0002:todo", tasks: baseline})
+	m = nm.(model)
+	if m.loopRun == nil || len(m.loopRun.baseline) != 2 {
+		t.Fatalf("expected run baseline of 2 tasks, got %+v", m.loopRun)
+	}
+
+	// Session 1 works 0001: focuses it, commits, two approvals, spends 1000 tokens.
+	m.sessionID = "s1"
+	m.sessionStart = time.Now().Add(-90 * time.Second)
+	m.usageByModel = map[string]event.Usage{"m": {Total: 1000}}
+	m.evs = []*v1.Event{
+		evJSON(1, "task_focus", `{"task":"0001"}`),
+		evJSON(2, "commit_made", `{"task":"0001","sha":"abcdef1234567","message":"do the thing"}`),
+		evJSON(3, "review_submitted", `{"verdict":"approve"}`),
+		evJSON(4, "review_submitted", `{"verdict":"approve"}`),
+	}
+	nm, _ = m.Update(streamClosedMsg{})
+	m = nm.(model)
+	if len(m.loopRun.sessions) != 1 {
+		t.Fatalf("expected 1 session recorded after s1, got %d", len(m.loopRun.sessions))
+	}
+
+	// Second decision (0002 ready) continues the loop; start s2.
+	nm, _ = m.applyLoopDecision(loopDecisionMsg{next: "0002", fp: "0001:done,0002:todo", tasks: baseline})
+	m = nm.(model)
+
+	// Session 2 works 0002 and blocks it, spending 500 tokens.
+	m.sessionID = "s2"
+	m.sessionStart = time.Now().Add(-30 * time.Second)
+	m.usageByModel = map[string]event.Usage{"m": {Total: 500}}
+	m.evs = []*v1.Event{
+		evJSON(1, "task_focus", `{"task":"0002"}`),
+	}
+	nm, _ = m.Update(streamClosedMsg{})
+	m = nm.(model)
+	if len(m.loopRun.sessions) != 2 {
+		t.Fatalf("expected 2 sessions recorded, got %d", len(m.loopRun.sessions))
+	}
+
+	// Final decision: nothing ready. 0001 done, 0002 blocked, 0003 newly created.
+	final := []*v1.BacklogTaskSummary{
+		{Id: "0001", Title: "First task", Status: "done"},
+		{Id: "0002", Title: "Second task", Status: "blocked"},
+		{Id: "0003", Title: "Follow-up", Status: "todo"},
+	}
+	nm, cmd := m.applyLoopDecision(loopDecisionMsg{next: "", fp: "", tasks: final})
+	m = nm.(model)
+
+	if !m.digest {
+		t.Fatal("expected the digest modal to open when the loop ends")
+	}
+	d := m.loopDigest
+	if d == nil {
+		t.Fatal("expected a loopDigest to be built")
+	}
+	if len(d.completed) != 1 || d.completed[0].id != "0001" {
+		t.Fatalf("expected 0001 completed, got %+v", d.completed)
+	}
+	if d.completed[0].sha != "abcdef1234567" {
+		t.Fatalf("expected commit sha recorded, got %q", d.completed[0].sha)
+	}
+	if d.completed[0].verdictTally != "approve×2" {
+		t.Fatalf("expected verdict tally approve×2, got %q", d.completed[0].verdictTally)
+	}
+	if d.completed[0].tokens != 1000 {
+		t.Fatalf("expected 1000 tokens for 0001, got %d", d.completed[0].tokens)
+	}
+	if len(d.blocked) != 1 || d.blocked[0].id != "0002" {
+		t.Fatalf("expected 0002 blocked, got %+v", d.blocked)
+	}
+	if len(d.created) != 1 || d.created[0].id != "0003" {
+		t.Fatalf("expected 0003 created, got %+v", d.created)
+	}
+	if d.totalTokens != 1500 {
+		t.Fatalf("expected total 1500 tokens, got %d", d.totalTokens)
+	}
+
+	// The finish batch fetches each blocked task's reason; drive that fetch and
+	// feed the digestTaskMsg back so the reason fills in.
+	_ = cmd
+	dm := m.fetchDigestTask("0002")()
+	nm, _ = m.Update(dm)
+	m = nm.(model)
+	if got := m.loopDigest.blocked[0].reason; got != "blocked: needs the staging DB password" {
+		t.Fatalf("expected blocked reason from work log, got %q", got)
+	}
+}
+
+// TestLoopDigestPricingAndReopen covers cost fill (unpriced renders "—" until
+// priced) and that the digest is re-openable from the browse selector.
+func TestLoopDigestPricingAndReopen(t *testing.T) {
+	d := &loopDigest{
+		outcome:    "loop complete: no ready tasks remain",
+		costStatus: "unpriced",
+		sessions:   []loopSessRec{{id: "s1", focus: "0001", tokens: 1000, priceStatus: "unpriced"}},
+		completed:  []digestTask{{id: "0001", title: "First", tokens: 1000, priceStatus: "unpriced"}},
+	}
+	m := model{loopDigest: d, digest: true}
+
+	// Before pricing, cost renders "—" (§20.4).
+	if !strings.Contains(m.digestView(), "—") {
+		t.Fatalf("expected unpriced cost to render as em dash, got:\n%s", m.digestView())
+	}
+
+	// Price it from a per-session usage row; cost fills for the session's focus task.
+	d.applyUsage([]*v1.UsageRow{{Session: "s1", Cost: 0.42, PriceStatus: "priced", Total: 1000}})
+	if d.completed[0].priceStatus != "priced" || d.completed[0].cost != 0.42 {
+		t.Fatalf("expected 0001 priced at 0.42, got status=%q cost=%v", d.completed[0].priceStatus, d.completed[0].cost)
+	}
+	if d.totalCost != 0.42 || d.costStatus != "priced" {
+		t.Fatalf("expected total 0.42 priced, got cost=%v status=%q", d.totalCost, d.costStatus)
+	}
+	if !strings.Contains(m.digestView(), "$0.4200") {
+		t.Fatalf("expected priced cost in digest view, got:\n%s", m.digestView())
+	}
+
+	// Re-openable: from the menu, browse selector → "digest" reopens it.
+	fc := newFakeClient()
+	mm := model{
+		client: fc, ctx: context.Background(), state: stateMenu,
+		loopDigest: d, browse: true,
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+	}
+	// Move the browse cursor to the "digest" target and open it.
+	for i, tgt := range browseTargets {
+		if tgt.label == "digest" {
+			mm.browseCursor = i
+		}
+	}
+	nm, _ := mm.updateBrowse(keyMsg("enter"))
+	mm = nm.(model)
+	if !mm.digest || mm.browse {
+		t.Fatalf("expected browse selector to reopen the digest, digest=%v browse=%v", mm.digest, mm.browse)
+	}
+}
+
 // --- session textarea input behavior (task 0058) ---
 
 // newSessionTextareaModel builds a sized session model whose input is a real
@@ -3099,5 +3300,60 @@ func TestFatalStartupErrorRendersRetry(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatalf("retry did not return a command to re-run Init")
+	}
+}
+
+// TestQuestionPickerFitsOnScreen guards the ask_user layout regression: when a
+// question_asked event carries options (single question or a multi-question
+// batch), the rendered session view must still fit the terminal height with the
+// picker options and help footer visible. Previously relayout only accounted
+// for the input box, so the wizard overview / option picker stacked BELOW a
+// full-height viewport and were clipped off the bottom of the screen — the user
+// never saw the options and the question faded off the bottom.
+func TestQuestionPickerFitsOnScreen(t *testing.T) {
+	cases := map[string]string{
+		"single": `{"question":"db?","options":["postgres","sqlite","mysql"]}`,
+		"batch":  `{"questions":[{"question":"db?","options":["postgres","sqlite"]},{"question":"name?"}]}`,
+	}
+	for name, dataJSON := range cases {
+		t.Run(name, func(t *testing.T) {
+			m := newSessionTextareaModel(t)
+			m.client = newFakeClient()
+			m.ctx = context.Background()
+			m.sessionID = "s1"
+			m.events = make(chan *v1.Event, 4)
+			m.follow = true
+
+			// Fill the log with enough turns that the viewport content alone
+			// exceeds the 24-row terminal — the situation where an unshrunk
+			// viewport pushes the picker off-screen.
+			var seq int64
+			for seq = 1; seq <= 40; seq++ {
+				nm, _ := m.Update(evMsg{&v1.Event{
+					Seq: seq, Type: "model_turn", Actor: "coordinator",
+					DataJson: fmt.Sprintf(`{"text":"working on step %d"}`, seq),
+				}})
+				m = nm.(model)
+			}
+			nm, _ := m.Update(evMsg{&v1.Event{
+				Seq: seq, Type: "question_asked", Actor: "coordinator", DataJson: dataJSON,
+			}})
+			m = nm.(model)
+			if !m.picking {
+				t.Fatal("expected the option picker to be active after question_asked with options")
+			}
+
+			view := m.render()
+			lines := strings.Split(view, "\n")
+			if len(lines) > 24 {
+				t.Fatalf("session view is %d rows tall; must fit the 24-row terminal", len(lines))
+			}
+			if !strings.Contains(view, "postgres") {
+				t.Fatalf("picker options not visible in the rendered view:\n%s", view)
+			}
+			if !strings.Contains(view, "other…") {
+				t.Fatalf("picker 'other…' escape not visible in the rendered view:\n%s", view)
+			}
+		})
 	}
 }
