@@ -102,7 +102,7 @@
 | [0097](backlog/0097-sendinput-answer-ignores-a-pending-batch-multi-que.md) | SendInput/Answer ignores a pending batch (multi-question) ask_user | done | 4 | — |
 | [0098](backlog/0098-work-loop-batch-digest-here-s-what-happened-while.md) | Work-loop batch digest: "here's what happened while you were gone" | done | 2 | — |
 | [0099](backlog/0099-tui-backlog-grooming-edit-reprioritize-status-open.md) | TUI backlog grooming: edit/reprioritize/status + open task in $EDITOR | done | 3 | — |
-| [0100](backlog/0100-spec-doctor-detect-spec-code-drift-coverage-gaps-d.md) | Spec-doctor: detect spec/code drift + coverage gaps | todo | 3 | — |
+| [0100](backlog/0100-spec-doctor-detect-spec-code-drift-coverage-gaps-d.md) | Spec-doctor: detect spec/code drift + coverage gaps | done | 3 | — |
 | [0101](backlog/0101-home-menu-notify-when-tasks-are-blocked-and-waitin.md) | Home menu: notify when tasks are blocked and waiting on the user | done | 2 | — |
 | [0102](backlog/0102-tui-ctrl-left-right-for-word-wise-cursor-movement.md) | TUI: Ctrl+Left/Right for word-wise cursor movement in prompt input | done | 3 | — |
 | [0103](backlog/0103-deliver-mid-run-user-input-at-the-next-safe-checkp.md) | Deliver mid-run user input at the next safe checkpoint (steer-by-default) | done | 2 | — |
@@ -126,3 +126,5 @@
 | [0120](backlog/0120-tui-render-ask-user-q-a-as-a-single-block-hide-too.md) | TUI: render ask_user Q&A as a single block; hide tool plumbing rows | done | 2 | — |
 | [0121](backlog/0121-generalize-the-spec-surface-respect-existing-docs.md) | Generalize the spec surface: respect existing docs layouts, allow multi-file specs behind a single entry point | done | 2 | — |
 | [0122](backlog/0122-tui-needsonboarding-should-respect-the-configured.md) | TUI needsOnboarding should respect the configured spec entry point | todo | 4 | 0121 |
+| [0123](backlog/0123-stop-generating-the-backlog-md-index-file-duplicat.md) | Stop generating the backlog.md index file (duplicate of backlog/ task files) | todo | 3 | — |
+| [0124](backlog/0124-create-task-duplicates-the-description-header-in-t.md) | create_task duplicates the "## Description" header in task bodies | todo | 4 | — |

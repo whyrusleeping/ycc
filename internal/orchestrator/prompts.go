@@ -304,6 +304,47 @@ BROWNFIELD (substantial existing code, but no docs — "spec the work, not the r
 Guiding principle: spec the work, not the repo — coverage grows incrementally, and follow the project's existing ` +
 	`docs layout. Use ask_user when intent is unclear; finish when the docs and backlog reflect the agreed state.`
 
+// specDoctorPresetPrompt drives the on-demand spec-doctor flow (task 0100; spec
+// §6.4): a deterministic reference-check pre-pass grounds an LLM comparison of
+// the spec against the code to surface drift and coverage gaps, then drafts
+// backlog tasks and spec edits for the user's approval. It is on-demand only —
+// there is no scheduling or auto-trigger — and it holds a hard false-positive
+// discipline: the spec is intentionally higher-level than the code, so it flags
+// only genuine contradictions, never missing low-level detail.
+const specDoctorPresetPrompt = `This is the SPEC-DOCTOR flow: check the project's design docs against the actual code to find ` +
+	`drift and coverage gaps. Founding principle: "the durable state of a project lives in documents" and "a ` +
+	`drifted spec is a bug" — your job is to find where the spec and the code have diverged, and where the code ` +
+	`has grown surface the spec never described.
+
+Run it in TWO phases:
+
+PHASE 1 — DETERMINISTIC PRE-PASS. Call spec_check FIRST. It mechanically extracts the file paths, package ` +
+	`directories, and code symbols the docs mention and reports any that no longer exist in the repo (zero false ` +
+	`positives). Treat every stale reference it reports as confirmed drift, and use its output to GROUND phase 2 — ` +
+	`it points you at the doc sections most likely to have drifted.
+
+PHASE 2 — LLM COMPARISON. Walk the spec section by section (Read the spec entry point and any linked docs), and ` +
+	`for each section read the RELEVANT code (Read + ripgrep) to compare what the spec claims against what the code ` +
+	`actually does. Flag exactly two things:
+  - DRIFT: the spec states behavior, an interface, a name, or a flow that the code now CONTRADICTS (does ` +
+	`differently, no longer does, or renamed).
+  - COVERAGE GAPS: a SIGNIFICANT part of the system with no spec section at all — e.g. an internal/* package, an ` +
+	`RPC, or a user-facing tool that carries real behavior yet is undocumented.
+
+FALSE-POSITIVE DISCIPLINE (critical): the spec is INTENTIONALLY higher-level than the code. Do NOT flag the spec ` +
+	`for omitting implementation detail, helper functions, private fields, or exhaustive lists — that is by design, ` +
+	`not drift. Flag only genuine CONTRADICTIONS and genuinely undocumented significant surface. When unsure, do ` +
+	`not flag.
+
+OUTPUT. Present the user a single consolidated report with three parts: (1) stale references (from spec_check), ` +
+	`(2) drift findings, (3) coverage gaps — each with the doc section and the code it concerns. Then, for the ` +
+	`actionable findings, OFFER to: create a backlog task per finding (create_task, well-scoped with clear ` +
+	`acceptance criteria and spec_refs), and DRAFT concrete spec edits. Apply spec edits only with the user's ` +
+	`explicit approval (ask_user) — draft first, then edit on approval; never rewrite the spec unprompted.
+
+This is ON-DEMAND: run the check now, report, and act on approval. Do not set up any scheduling. Use ask_user ` +
+	`when intent is unclear; finish when the report is delivered and the approved tasks/edits are recorded.`
+
 func levelGuidance(level string) string {
 	switch level {
 	case "interactive":

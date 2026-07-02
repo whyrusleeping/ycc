@@ -118,6 +118,79 @@ func TestIsDocDefault(t *testing.T) {
 	}
 }
 
+// DocFiles enumerates the spec entry point plus every doc_globs match, deduped
+// and sorted; it skips directories, .git, and non-matching files.
+func TestDocFiles(t *testing.T) {
+	ws := t.TempDir()
+	writeYCCConfig(t, ws, "doc_globs = [\"docs/**\", \"ARCHITECTURE.md\"]\n")
+	write := func(rel, body string) {
+		abs := filepath.Join(ws, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(abs, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("spec.md", "# spec\n")
+	write("docs/design.md", "d\n")
+	write("docs/api/rpc.md", "r\n")
+	write("ARCHITECTURE.md", "a\n")
+	write("README.md", "not a doc\n")
+	write(".git/config", "x\n")
+
+	s := NewStore(ws)
+	files, err := s.DocFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, f := range files {
+		rel, _ := filepath.Rel(ws, f)
+		got[filepath.ToSlash(rel)] = true
+	}
+	for _, want := range []string{"spec.md", "docs/design.md", "docs/api/rpc.md", "ARCHITECTURE.md"} {
+		if !got[want] {
+			t.Fatalf("DocFiles() missing %q; got %v", want, files)
+		}
+	}
+	for _, bad := range []string{"README.md", ".git/config"} {
+		if got[bad] {
+			t.Fatalf("DocFiles() should not include %q", bad)
+		}
+	}
+	// Stable sorted order.
+	for i := 1; i < len(files); i++ {
+		if files[i-1] > files[i] {
+			t.Fatalf("DocFiles() not sorted: %v", files)
+		}
+	}
+}
+
+// With no config the docs set is exactly the spec entry point (when present).
+func TestDocFilesDefault(t *testing.T) {
+	ws := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ws, "spec.md"), []byte("# spec\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files, err := NewStore(ws).DocFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || filepath.Base(files[0]) != "spec.md" {
+		t.Fatalf("DocFiles() = %v, want just spec.md", files)
+	}
+
+	// No spec.md and no globs → empty docs set.
+	empty, err := NewStore(t.TempDir()).DocFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("DocFiles() on empty workspace = %v, want none", empty)
+	}
+}
+
 func TestMatchGlob(t *testing.T) {
 	cases := []struct {
 		pattern, name string

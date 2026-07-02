@@ -32,8 +32,9 @@ func Modes() []ModeInfo {
 }
 
 // Preset is a home-menu entry that opens a pm session with a tailored opening
-// prompt (spec §9). Today the only preset is onboard, the distinct first-run flow;
-// the former spec/backlog/feature/bug framings are just ordinary pm work.
+// prompt (spec §9). Today there are two presets: onboard, the distinct first-run
+// flow, and spec-doctor, the on-demand spec/code drift & coverage check; the
+// former spec/backlog/feature/bug framings are just ordinary pm work.
 type Preset struct {
 	Name        string // menu key (distinct from the mode)
 	Title       string
@@ -44,10 +45,12 @@ type Preset struct {
 
 // Presets returns the opening-prompt presets the home menu offers under pm. The
 // former spec/feature/bug/backlog framings have been dropped as separate presets
-// (they are all ordinary pm work); onboard, the first-run flow, is the only one.
+// (they are all ordinary pm work); onboard (the first-run flow) and spec-doctor
+// (on-demand drift & coverage checking) remain.
 func Presets() []Preset {
 	return []Preset{
 		{"onboard", "Onboard this project", "Orient from existing project docs (spec entry point, any docs/ tree) and backlog, then establish or refresh them — greenfield (full spec) or brownfield (adopt existing docs, scoped to your work).", "pm", onboardPresetPrompt},
+		{"spec-doctor", "Spec doctor (drift & coverage)", "Check the spec against the code: run the deterministic reference check, then compare spec sections to the code to surface drift and coverage gaps — with proposed backlog tasks and suggested spec edits for your approval.", "pm", specDoctorPresetPrompt},
 	}
 }
 
@@ -84,7 +87,7 @@ func BuildMode(mode string, d *Deps, level string) (*tools.Registry, string) {
 		// prompt enforces a soft "no code edits" boundary (hard enforcement is
 		// future work).
 		reg.Add(tools.Editing(ws)...)
-		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d), proposePlan(d), listPlans(d), runPlan(d), savePlan(d), switchToWork(d), askUser(d), tools.Finish())
+		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d), proposePlan(d), listPlans(d), runPlan(d), savePlan(d), specCheck(d), switchToWork(d), askUser(d), tools.Finish())
 		return reg, sys(pmModeSystem, level, d.Workspace)
 	default: // work
 		return CoordinatorTools(d, ws), sys(coordinatorSystem, level, d.Workspace)

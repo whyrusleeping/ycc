@@ -1,8 +1,10 @@
 package docs
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -58,4 +60,65 @@ func (s *Store) IsDoc(absPath string) bool {
 		}
 	}
 	return false
+}
+
+// DocFiles enumerates the project's docs set (spec §6.1) as absolute paths: the
+// spec entry point (when it exists) plus every workspace file matching a
+// configured `doc_glob`. It walks the workspace once (skipping .git), matches the
+// workspace-relative slash path with the same glob rules as IsDoc, dedupes, and
+// returns a stable (sorted) order. Directories and the backlog are not included.
+func (s *Store) DocFiles() ([]string, error) {
+	root := filepath.Dir(s.dir)
+	seen := map[string]bool{}
+	var out []string
+	add := func(abs string) {
+		if !seen[abs] {
+			seen[abs] = true
+			out = append(out, abs)
+		}
+	}
+
+	if sp := s.SpecPath(); sp != "" {
+		if fi, err := os.Stat(sp); err == nil && !fi.IsDir() {
+			add(sp)
+		}
+	}
+
+	globs := make([]string, 0, len(s.cfg.DocGlobs))
+	for _, g := range s.cfg.DocGlobs {
+		if g = strings.TrimSpace(filepath.ToSlash(g)); g != "" {
+			globs = append(globs, g)
+		}
+	}
+	if len(globs) > 0 {
+		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if d.IsDir() {
+				if d.Name() == ".git" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return nil
+			}
+			rel = filepath.ToSlash(rel)
+			for _, g := range globs {
+				if matchGlob(g, rel) {
+					add(path)
+					break
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	sort.Strings(out)
+	return out, nil
 }

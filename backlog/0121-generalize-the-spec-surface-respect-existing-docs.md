@@ -97,3 +97,7 @@ Out of scope (deliberate): TUI needsOnboarding/specIsEmpty still checks root spe
 …[truncated]
 - 2026-07-02 decision: accept — commit: Generalize spec surface: configurable entry point + docs set (task 0121)  - docs: optional .ycc/config.toml (spec_path, doc_globs); SpecPath honors it,   new IsDoc matches the whole docs set (dep-free
 …[truncated]
+- 2026-07-02 usage: 33,244 tok (in 140, out 33,104, cache_r 3,632,255, cache_w 188,635) · cost n/a (unpriced)
+  implementer: 22,644 tok (in 82, out 22,562, cache_r 2,658,945, cache_w 81,727) · cost n/a (unpriced)
+  reviewer:Claude: 5,542 tok (in 38, out 5,504, cache_r 385,359, cache_w 30,289) · cost n/a (unpriced)
+  coordinator: 5,058 tok (in 20, out 5,038, cache_r 587,951, cache_w 76,619) · cost n/a (unpriced)

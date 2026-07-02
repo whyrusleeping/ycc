@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -44,7 +46,7 @@ func TestModesListed(t *testing.T) {
 }
 
 func TestPresetsOpenPM(t *testing.T) {
-	want := map[string]bool{"onboard": false}
+	want := map[string]bool{"onboard": false, "spec-doctor": false}
 	for _, p := range Presets() {
 		if _, ok := want[p.Name]; !ok {
 			t.Fatalf("unexpected preset %q", p.Name)
@@ -63,13 +65,28 @@ func TestPresetsOpenPM(t *testing.T) {
 		}
 	}
 	// The former spec/feature/bug/backlog framings were dropped as separate
-	// presets (they are just ordinary pm work); only onboard remains.
+	// presets (they are just ordinary pm work); onboard and spec-doctor remain.
 	for _, p := range Presets() {
 		for _, gone := range []string{"spec", "feature", "bug", "backlog"} {
 			if p.Name == gone {
 				t.Fatalf("preset %q should have been removed", gone)
 			}
 		}
+	}
+}
+
+// The spec-doctor preset must drive the two-phase flow: the deterministic
+// spec_check pre-pass, then a grounded drift/coverage comparison, with the
+// false-positive discipline and on-demand-only cadence.
+func TestSpecDoctorPresetPrompt(t *testing.T) {
+	lower := strings.ToLower(specDoctorPresetPrompt)
+	for _, want := range []string{"spec_check", "drift", "coverage", "create_task", "approval"} {
+		if !strings.Contains(lower, want) {
+			t.Fatalf("specDoctorPresetPrompt does not mention %q", want)
+		}
+	}
+	if !strings.Contains(lower, "false-positive") && !strings.Contains(lower, "contradict") {
+		t.Fatalf("specDoctorPresetPrompt does not enforce the false-positive discipline")
 	}
 }
 
@@ -95,7 +112,7 @@ func TestBuildModeToolsets(t *testing.T) {
 	// pm exposes planning/docs/backlog tools and switch_to_work, but NO
 	// implementation tools (no spawn_implementer / commit).
 	pmReg, _ := BuildMode("pm", d, "judgement")
-	for _, want := range []string{"Read", "Edit", "Write", "Bash", "list_backlog", "get_task", "create_task", "update_task", "propose_plan", "switch_to_work", "ask_user", "finish"} {
+	for _, want := range []string{"Read", "Edit", "Write", "Bash", "list_backlog", "get_task", "create_task", "update_task", "propose_plan", "switch_to_work", "spec_check", "ask_user", "finish"} {
 		if !hasTool(pmReg, want) {
 			t.Fatalf("pm mode missing %s", want)
 		}
@@ -188,10 +205,40 @@ func TestSwitchToWorkRequiresApproval(t *testing.T) {
 	}
 }
 
+// spec_check runs the deterministic reference pre-pass over the docs set and
+// returns a markdown report. With an accurate spec its references resolve; a
+// stale reference to a removed repo path is flagged.
+func TestSpecCheckTool(t *testing.T) {
+	ws := t.TempDir()
+	d := &Deps{
+		Workspace: ws,
+		Docs:      docs.NewStore(ws),
+		Emitter:   event.NewEmitter(event.NewStdoutRecorder(io.Discard), "coordinator"),
+		Asker:     noopAsker{},
+	}
+	if err := os.MkdirAll(filepath.Join(ws, "internal", "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "internal", "docs", "x.go"), []byte("package docs\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spec := "# Spec\n\nThe `internal/docs` package exists but `internal/removed` was deleted.\n"
+	if err := os.WriteFile(filepath.Join(ws, "spec.md"), []byte(spec), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := specCheck(d).Call(context.Background(), map[string]any{})
+	if err != nil || res.IsError {
+		t.Fatalf("spec_check: %v %s", err, res.Content)
+	}
+	if !strings.Contains(res.Content, "internal/removed") {
+		t.Fatalf("spec_check should flag the removed package:\n%s", res.Content)
+	}
+}
+
 func TestCreateTask(t *testing.T) {
 	d := depsFor(t)
 	ctx := context.Background()
-
 	r, err := createTask(d).Call(ctx, map[string]any{
 		"title": "Wire the TUI", "description": "build it", "priority": float64(2),
 		"depends_on": []any{"0003"},

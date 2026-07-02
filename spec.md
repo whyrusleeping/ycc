@@ -283,6 +283,37 @@ Separately, `propose_plan` now persists the FULL coordinator plan to the task's 
 section (a durable, human-browsable artifact) in addition to the dated one-line work-log
 breadcrumb — the complete plan lives next to its task, not just buried in a session event.
 
+### 6.4 Spec doctor — drift & coverage checking
+
+The founding principle is that the durable state of a project lives in documents and **a
+drifted spec is a bug** (§1). The **spec doctor** actively detects that drift instead of
+merely trusting agents to keep the docs true. It is an **on-demand `pm` preset** (`spec-doctor`,
+§9) — there is no scheduling or auto-trigger — and it runs in two phases:
+
+1. **Deterministic pre-pass** (`internal/specdoctor`, surfaced as the `spec_check` tool). It
+   extracts the concrete file paths, package directories, and code symbols the docs set
+   mentions in *inline code spans* (fenced code blocks are skipped — they hold illustrative
+   examples) and verifies each still exists: paths via `os.Stat` (a file or a directory both
+   resolve, covering package dirs like `internal/docs`); symbols via a word-boundary search
+   across the workspace source, excluding the docs set itself and `backlog/` so a reference
+   never resolves against its own mention. It holds a strict **zero-false-positive**
+   discipline — any span that is ambiguous (a glob pattern, a multi-word command, a bare
+   lowercase or ALL-CAPS word) is *skipped, never flagged*. Its markdown report of stale
+   references is confirmed drift and seeds/grounds phase 2.
+2. **LLM comparison pass.** Grounded by the pre-pass, the agent walks the spec section by
+   section, reads the relevant code, and flags only two things: **drift** (the spec states
+   behavior, an interface, a name, or a flow the code now *contradicts*) and **coverage gaps**
+   (a significant `internal/*` package, RPC, or user-facing tool with no spec section). The
+   spec is *intentionally* higher-level than the code, so the pass flags genuine
+   contradictions and undocumented significant surface only — never mere missing implementation
+   detail.
+
+**Output** is all three: a consolidated **report** (stale refs + drift + coverage gaps), a
+**proposed backlog task** per actionable finding (`create_task`), and **suggested spec edits**
+drafted for the user — applied only with explicit approval (the flow reuses `pm`'s existing
+`create_task` and Edit/Write tools; it drafts, the user approves). Cost is intentionally
+unbounded for now; sampling or git-driven targeting can be added later if it proves expensive.
+
 ## 7. Agent engine
 
 ### 7.1 gollama integration (and the one addition we need)
@@ -416,14 +447,15 @@ Each mode = a coordinator system prompt + a tool subset + a state machine. There
   code. That boundary is *soft* (prompt-enforced): `pm` holds `Read`/`Write`/`Edit`/`Bash`
   so it can maintain `spec.md`, and is told not to touch code; a hard boundary (path
   scoping / isolation) is future work. Tools: `Read`/`Write`/`Edit`/`Bash`,
-  `list_backlog`/`get_task`/`create_task`/`update_task`, `propose_plan`, `switch_to_work`,
-  `ask_user`, `finish`. This **replaces** the former `spec`, `backlog`, `feature`, and `bug` modes —
+  `list_backlog`/`get_task`/`create_task`/`update_task`, `propose_plan`, `spec_check`
+  (§6.4), `switch_to_work`, `ask_user`, `finish`. This **replaces** the former `spec`, `backlog`, `feature`, and `bug` modes —
   they were one capability set under four prompt framings, and are now simply ordinary
   `pm` work rather than distinct menu entries. The home menu no longer lists those framings
   as separate presets (they added redundant clutter for what is all planning/intake work);
   `pm`'s own description signals it covers spec authoring, backlog grooming, new features,
-  and bug intake. The sole remaining opening-prompt preset is **`onboard`** (§19.2), the
-  distinct first-run flow. A prompt typed alongside a selected preset **composes** with it —
+  and bug intake. The remaining opening-prompt presets are **`onboard`** (§19.2), the
+  distinct first-run flow, and **`spec-doctor`** (§6.4), the on-demand spec/code drift &
+  coverage check. A prompt typed alongside a selected preset **composes** with it —
   the preset supplies the framing and the typed text is appended as the user's upfront
   context — rather than replacing it.
 - **`chat`** — open-ended assistant that *can* edit code directly, with no fixed workflow.
@@ -805,6 +837,7 @@ ycc/
     tools/           # worker + coordinator tool implementations
     config/          # model/role config + registry (gollama client wiring)
     docs/            # spec + backlog (structured) read/write/render
+    specdoctor/      # deterministic spec/code reference checker (drift pre-pass, §6.4)
     event/           # event types, JSONL store, reducer/projection
     session/         # session lifecycle + state
     server/          # connect handlers, auth
@@ -1263,8 +1296,8 @@ project" entry can route to the right behaviour; the prompt encodes both branche
 feature/bug intake (explore → propose) but differs in intent: it is the *first* time ycc
 sees the project and it also establishes the initial spec slice + backlog conventions,
 whereas ordinary `pm` work assumes those already exist. Keeping `onboard` a distinct,
-prominently-surfaced preset — the sole remaining preset — is what makes onboarding
-discoverable.
+prominently-surfaced preset — one of the two pm presets, alongside `spec-doctor` (§6.4) —
+is what makes onboarding discoverable.
 
 ## 20. Token usage & cost accounting
 
