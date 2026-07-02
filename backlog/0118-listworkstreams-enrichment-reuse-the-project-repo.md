@@ -53,3 +53,7 @@ Acceptance: enrichment opens each project's repo at most once per ListWorkstream
 - 2026-07-02 review (Claude): accept — The change adds a batch Manager.WorkstreamCommitCounts that resolves/opens each project's primary repo at most once per call (caching a nil repo for failed resolves so broken projects aren't retried),
 …[truncated]
 - 2026-07-02 decision: accept — commit: session: batch commit-count enrichment so ListWorkstreams opens each project repo once (task 0118)
+- 2026-07-02 usage: 10,753 tok (in 70, out 10,683, cache_r 429,016, cache_w 39,325) · cost n/a (unpriced)
+  implementer: 5,627 tok (in 36, out 5,591, cache_r 234,312, cache_w 17,385) · cost n/a (unpriced)
+  coordinator: 4,025 tok (in 18, out 4,007, cache_r 145,256, cache_w 14,052) · cost n/a (unpriced)
+  reviewer:Claude: 1,101 tok (in 16, out 1,085, cache_r 49,448, cache_w 7,888) · cost n/a (unpriced)

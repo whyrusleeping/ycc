@@ -157,6 +157,7 @@ func applyTheme(t theme) {
 	selStyle = lipgloss.NewStyle().Bold(true).Foreground(c(t.sel))
 	recoStyle = lipgloss.NewStyle().Bold(true).Foreground(c(t.reco))
 	selBarStyle = lipgloss.NewStyle().Foreground(c(t.selBar))
+	histHighlightStyle = lipgloss.NewStyle().Reverse(true)
 	dimStyle = lipgloss.NewStyle().Foreground(c(t.dim))
 	thinkStyle = lipgloss.NewStyle().Foreground(c(t.think))
 	typeStyle = lipgloss.NewStyle().Foreground(c(t.typ))

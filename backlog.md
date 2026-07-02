@@ -121,4 +121,4 @@
 | [0116](backlog/0116-transcript-search-and-jump-to-event-navigation.md) | Transcript search (/) and jump-to-event navigation | done | 4 | — |
 | [0117](backlog/0117-preserve-workstream-session-transcripts-after-merg.md) | Preserve workstream session transcripts after merge/discard removes the worktree | done | 5 | 0085 |
 | [0118](backlog/0118-listworkstreams-enrichment-reuse-the-project-repo.md) | ListWorkstreams enrichment: reuse the project repo instead of re-opening per workstream | done | 5 | 0085 |
-| [0119](backlog/0119-search-jump-navigation-in-the-histmodal-transcript.md) | Search + jump navigation in the histModal transcript (session browser over a live session) | todo | 5 | 0116 |
+| [0119](backlog/0119-search-jump-navigation-in-the-histmodal-transcript.md) | Search + jump navigation in the histModal transcript (session browser over a live session) | done | 5 | 0116 |

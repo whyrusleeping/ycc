@@ -144,6 +144,17 @@ type model struct {
 	histModalTranscript bool           // true => a transcript is drilled into (over the list)
 	histModalID         string         // session id whose transcript is shown
 	histModalVP         viewport.Model // scroll viewport for the modal transcript (never m.vp)
+	// Line-based search + jump navigation for the modal transcript (task 0119).
+	// It mirrors the live-session transcript's / n/N and {}()<>[] keys but operates
+	// over the rendered string lines — it MUST NOT touch the live session's
+	// m.evs/m.vp or live search state (m.searching/m.searchQuery). histModalEvents
+	// retains the replayed events so a resize can re-render at the new width.
+	histModalEvents     []*v1.Event     // replayed events kept alongside the viewport
+	histModalLines      []string        // rendered content lines (with ansi) for matching/highlight
+	histModalEventLines []histEventLine // per visible event: start line + Type (jump targets)
+	histModalSearching  bool            // true while the `/` search bar owns input
+	histModalQuery      string          // active search query (kept for n/N after enter)
+	histModalCurLine    int             // current match/cursor line, or -1 for none
 
 	// waitingSessions holds the live sessions that need the user right now — a
 	// pending ask_user question or a paused-mid-steer session (task 0107). The home
@@ -1951,7 +1962,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.relayout()
 		m.refreshBacklogDetailVP()
 		m.refreshWsMergeVP()
-		// Keep the modal transcript viewport (task 0112) sized to the terminal.
+		// Keep the modal transcript viewport (task 0112) sized to the terminal, and
+		// re-wrap its retained events to the new width (task 0119). Preserve the
+		// current line highlight / scroll position when a search or jump is active.
 		if m.histModalVP.Height() != 0 || m.histModalVP.Width() != 0 {
 			h := msg.Height - 2
 			if h < 3 {
@@ -1959,6 +1972,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.histModalVP.SetWidth(msg.Width)
 			m.histModalVP.SetHeight(h)
+			if m.histModalTranscript && m.histModalEvents != nil {
+				off := m.histModalVP.YOffset()
+				content, lines, eventLines := m.renderTranscript(m.histModalEvents)
+				m.histModalLines = lines
+				m.histModalEventLines = eventLines
+				// A re-wrap shifts every line offset, so a stale highlight line would
+				// point at the wrong text; clear the cursor and restore raw scroll.
+				m.histModalCurLine = -1
+				m.histModalVP.SetContent(content)
+				m.histModalVP.SetYOffset(off)
+			}
 		}
 		return m, nil
 
@@ -2109,6 +2133,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.histModal {
 			m.histModalTranscript = true
 			m.histModalID = msg.id
+			m.resetHistModalNav()
 			m.refreshHistModalVP(msg.events)
 			return m, nil
 		}
@@ -2788,22 +2813,102 @@ func (m *model) openHistModal() {
 // updateHistoryModal handles the session browser when it is open as a modal over
 // a live session (task 0112). It mirrors updateHistory's navigation but is
 // strictly read-only: there is no `o`/enter reopen (reopening over a live session
-// is a footgun), and transcripts scroll a separate viewport so the live session
-// behind the modal is never disturbed.
+// is a footgun). Transcripts scroll a separate viewport and support line-based
+// `/` search (n/N, esc) plus {}()<>[] jump-to-event keys (task 0119), so the live
+// session behind the modal is never disturbed.
 func (m model) updateHistoryModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Transcript drill-in: a read-only replayed view that scrolls its own viewport.
+	// It supports the same `/` search (n/N, esc) and {}()<>[] jump-to-event keys as
+	// the live transcript, but line-based over the rendered content so the live
+	// session behind the modal (m.evs/m.vp/search state) is never touched (0119).
 	if m.histModalTranscript {
 		key, ok := msg.(tea.KeyMsg)
 		if !ok {
 			return m, nil
 		}
+		// While the search bar owns input, keystrokes edit the query and
+		// incrementally re-jump the current line.
+		if m.histModalSearching {
+			switch key.String() {
+			case "ctrl+c":
+				return m.confirmQuit()
+			case "esc":
+				m.histModalSearching = false
+				m.histModalQuery = ""
+				m.histModalCurLine = -1
+				m.applyHistModalContent()
+				return m, nil
+			case "enter":
+				// Confirm: keep the query active for n/N.
+				m.histModalSearching = false
+				return m, nil
+			case "backspace":
+				if r := []rune(m.histModalQuery); len(r) > 0 {
+					m.histModalQuery = string(r[:len(r)-1])
+				}
+				m.histRunSearch()
+				return m, nil
+			default:
+				if t := key.Key().Text; t != "" {
+					m.histModalQuery += t
+					m.histRunSearch()
+				}
+				return m, nil
+			}
+		}
 		switch key.String() {
 		case "ctrl+c":
 			return m.confirmQuit()
-		case "esc", "q", "backspace", "left":
-			// Back to the list; drop the transient transcript state.
+		case "esc":
+			// A transcript search intercepts the first esc: clear it and stay in the
+			// transcript. A second esc backs out to the list.
+			if m.histModalQuery != "" {
+				m.histModalQuery = ""
+				m.histModalCurLine = -1
+				m.applyHistModalContent()
+				return m, nil
+			}
+			fallthrough
+		case "q", "backspace", "left":
+			// Back to the list; drop the transient transcript + nav state.
 			m.histModalTranscript = false
 			m.histModalID = ""
+			m.resetHistModalNav()
+			return m, nil
+		case "/":
+			// Enter transcript search (unconditional in the read-only transcript).
+			m.histModalSearching = true
+			m.histModalQuery = ""
+			return m, nil
+		case "n":
+			m.histSearchStep(1, m.histModalCurLine+1)
+			return m, nil
+		case "N":
+			m.histSearchStep(-1, m.histModalCurLine-1)
+			return m, nil
+		case "{":
+			m.histJump(-1, "question_asked")
+			return m, nil
+		case "}":
+			m.histJump(1, "question_asked")
+			return m, nil
+		case "(":
+			m.histJump(-1, "review_submitted")
+			return m, nil
+		case ")":
+			m.histJump(1, "review_submitted")
+			return m, nil
+		case "<":
+			m.histJump(-1, "commit_made")
+			return m, nil
+		case ">":
+			m.histJump(1, "commit_made")
+			return m, nil
+		case "[":
+			m.histJump(-1, "session_error")
+			return m, nil
+		case "]":
+			m.histJump(1, "session_error")
 			return m, nil
 		}
 		// Everything else (↑/↓, pgup/pgdn, wheel) scrolls the transcript viewport.
@@ -2823,6 +2928,7 @@ func (m model) updateHistoryModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "esc", "q":
 		// Close the modal and return to the live session behind it.
 		m.histModal = false
+		m.resetHistModalNav()
 		return m, nil
 	case "r":
 		m.historyMsgTxt = "loading…"
@@ -4568,7 +4674,9 @@ func (m *model) refreshBacklogDetailVP() {
 
 // refreshHistModalVP (re)sizes the modal session-browser transcript viewport and
 // loads a stateless render of the replayed events into it (task 0112). It never
-// touches the live session's m.vp/m.evs.
+// touches the live session's m.vp/m.evs. It also captures the rendered lines and
+// per-event start-line metadata used by the modal's line-based search/jump
+// navigation (task 0119).
 func (m *model) refreshHistModalVP(events []*v1.Event) {
 	if !m.ready {
 		return
@@ -4583,8 +4691,21 @@ func (m *model) refreshHistModalVP(events []*v1.Event) {
 		m.histModalVP.SetWidth(m.w)
 		m.histModalVP.SetHeight(h)
 	}
-	m.histModalVP.SetContent(m.renderTranscriptContent(events))
+	m.histModalEvents = events
+	content, lines, eventLines := m.renderTranscript(events)
+	m.histModalLines = lines
+	m.histModalEventLines = eventLines
+	m.histModalVP.SetContent(content)
 	m.histModalVP.GotoTop()
+}
+
+// histEventLine records, per VISIBLE event block in a modal transcript render,
+// the content line its block starts on plus its event Type — the metadata that
+// lets the {}()<>[] jump keys land on the right event without the live event
+// pipeline (task 0119).
+type histEventLine struct {
+	line int    // start content line of the event block
+	typ  string // event Type
 }
 
 // renderTranscriptContent renders a replayed event log to a string using the same
@@ -4593,6 +4714,15 @@ func (m *model) refreshHistModalVP(events []*v1.Event) {
 // caches are freshly allocated, so renderBlock's cache mutations never leak into
 // the live session's shared maps.
 func (m model) renderTranscriptContent(events []*v1.Event) string {
+	content, _, _ := m.renderTranscript(events)
+	return content
+}
+
+// renderTranscript renders a replayed event log statelessly (like
+// renderTranscriptContent) and additionally returns the rendered content lines
+// and per-event start-line metadata used by the modal transcript's line-based
+// search + jump navigation (task 0119). It never mutates the live model.
+func (m model) renderTranscript(events []*v1.Event) (content string, lines []string, eventLines []histEventLine) {
 	scratch := m
 	scratch.evs = events
 	scratch.expanded = map[int]bool{}
@@ -4602,14 +4732,22 @@ func (m model) renderTranscriptContent(events []*v1.Event) string {
 	scratch.selected = -1
 	scratch.follow = false
 	var b strings.Builder
+	line := 0
 	for i, ev := range events {
 		if scratch.hiddenRow(i) {
 			continue
 		}
-		b.WriteString(scratch.renderBlock(i, ev))
+		block := scratch.renderBlock(i, ev)
+		eventLines = append(eventLines, histEventLine{line: line, typ: ev.Type})
+		b.WriteString(block)
 		b.WriteByte('\n')
+		line += strings.Count(block, "\n") + 1
 	}
-	return b.String()
+	content = b.String()
+	if content != "" {
+		lines = strings.Split(strings.TrimSuffix(content, "\n"), "\n")
+	}
+	return content, lines, eventLines
 }
 
 // taskDetailView renders a single task's full, read-only detail (spec §18.5) as a
@@ -5943,6 +6081,168 @@ func (m *model) clearSearch() {
 	m.searchQuery = ""
 }
 
+// --- modal transcript search & jump-to-event navigation (task 0119) ---
+//
+// The session browser opened as a modal OVER a live session (task 0112) renders
+// transcripts statelessly into histModalVP and does NOT use the live event
+// pipeline. These helpers give it the same `/` search (n/N, esc) and {}()<>[]
+// jump keys as the live transcript, but line-based over the rendered content —
+// they never touch m.evs/m.vp or the live search state (m.searching/m.searchQuery).
+
+// resetHistModalNav clears all modal-transcript search/jump state. Called when a
+// transcript loads, when backing out to the list, and when closing the modal.
+func (m *model) resetHistModalNav() {
+	m.histModalSearching = false
+	m.histModalQuery = ""
+	m.histModalCurLine = -1
+	m.histModalEvents = nil
+	m.histModalLines = nil
+	m.histModalEventLines = nil
+}
+
+// histLineMatches reports whether content line i (ansi-stripped, lower-cased)
+// contains q, which must already be lower-cased.
+func (m *model) histLineMatches(i int, q string) bool {
+	if q == "" || i < 0 || i >= len(m.histModalLines) {
+		return false
+	}
+	return strings.Contains(strings.ToLower(ansi.Strip(m.histModalLines[i])), q)
+}
+
+// histSearchStep moves histModalCurLine to the nearest content line matching the
+// active query, scanning in direction dir (+1 forward / -1 backward) from `from`
+// and wrapping around all lines. No-op when there is no query or no match. Drives
+// both incremental typing (dir +1 from the current line, inclusive) and n/N.
+func (m *model) histSearchStep(dir, from int) {
+	q := strings.ToLower(m.histModalQuery)
+	n := len(m.histModalLines)
+	if q == "" || n == 0 {
+		return
+	}
+	if from < 0 {
+		from = 0
+	}
+	for k := 0; k < n; k++ {
+		i := ((from+dir*k)%n + n) % n
+		if m.histLineMatches(i, q) {
+			m.histModalCurLine = i
+			m.applyHistModalContent()
+			return
+		}
+	}
+}
+
+// histRunSearch re-jumps the current line to the first match at or after the
+// current line after each incremental edit of the query.
+func (m *model) histRunSearch() {
+	from := m.histModalCurLine
+	if from < 0 {
+		from = 0
+	}
+	m.histSearchStep(1, from)
+}
+
+// histSearchCount returns the total number of matching content lines and the
+// 1-based ordinal of the match at or before the current line (0 when the current
+// line isn't on a match). Feeds the footer counter ⌕ "q" k/N.
+func (m *model) histSearchCount() (total, cur int) {
+	q := strings.ToLower(m.histModalQuery)
+	if q == "" {
+		return 0, 0
+	}
+	for i := range m.histModalLines {
+		if m.histLineMatches(i, q) {
+			total++
+			if i <= m.histModalCurLine {
+				cur = total
+			}
+		}
+	}
+	return total, cur
+}
+
+// histJump moves histModalCurLine to the nearest event block start line in
+// direction dir (+1 forward / -1 backward) whose Type is one of types. Unlike
+// search it does NOT wrap: a no-op when there is no such event past the current
+// line. Drives the {}()<>[] jump keys.
+func (m *model) histJump(dir int, types ...string) {
+	if len(m.histModalEventLines) == 0 {
+		return
+	}
+	cur := m.histModalCurLine
+	if cur < 0 {
+		// No cursor yet: start just before the first / just past the last line so
+		// the first forward/backward match is found (mirrors jumpToEvent).
+		if dir > 0 {
+			cur = -1
+		} else {
+			cur = len(m.histModalLines)
+		}
+	}
+	if dir > 0 {
+		for _, el := range m.histModalEventLines {
+			if el.line <= cur {
+				continue
+			}
+			if typeMatches(el.typ, types) {
+				m.histModalCurLine = el.line
+				m.applyHistModalContent()
+				return
+			}
+		}
+		return
+	}
+	for i := len(m.histModalEventLines) - 1; i >= 0; i-- {
+		el := m.histModalEventLines[i]
+		if el.line >= cur {
+			continue
+		}
+		if typeMatches(el.typ, types) {
+			m.histModalCurLine = el.line
+			m.applyHistModalContent()
+			return
+		}
+	}
+}
+
+// typeMatches reports whether t is one of types.
+func typeMatches(t string, types []string) bool {
+	for _, want := range types {
+		if t == want {
+			return true
+		}
+	}
+	return false
+}
+
+// applyHistModalContent re-sets the modal viewport content, highlighting the
+// current line (histModalCurLine) with a reverse style and scrolling it roughly
+// centered into view. With no current line it renders the plain content.
+func (m *model) applyHistModalContent() {
+	if len(m.histModalLines) == 0 {
+		return
+	}
+	cur := m.histModalCurLine
+	if cur < 0 || cur >= len(m.histModalLines) {
+		m.histModalVP.SetContent(strings.Join(m.histModalLines, "\n"))
+		return
+	}
+	lines := make([]string, len(m.histModalLines))
+	copy(lines, m.histModalLines)
+	// Strip the matched line's own ansi so the reverse highlight reads cleanly.
+	lines[cur] = histHighlightStyle.Render(ansi.Strip(lines[cur]))
+	m.histModalVP.SetContent(strings.Join(lines, "\n"))
+	// Center the current line in the viewport, clamped to valid offsets.
+	off := cur - m.histModalVP.Height()/2
+	if max := len(m.histModalLines) - m.histModalVP.Height(); off > max {
+		off = max
+	}
+	if off < 0 {
+		off = 0
+	}
+	m.histModalVP.SetYOffset(off)
+}
+
 func (m *model) toggle(i int) {
 	if i < 0 || i >= len(m.evs) {
 		return
@@ -6551,7 +6851,16 @@ func (m model) histModalView() string {
 		if m.ready {
 			body = m.histModalVP.View()
 		}
-		help := m.footerBar(" ↑↓/pgup/pgdn scroll · esc/q back · read-only")
+		var help string
+		switch {
+		case m.histModalSearching:
+			help = m.histModalSearchBar()
+		case m.histModalQuery != "":
+			total, cur := m.histSearchCount()
+			help = m.footerBar(fmt.Sprintf(" ⌕ %q %d/%d · n/N next/prev · esc clear · esc/q back", m.histModalQuery, cur, total))
+		default:
+			help = m.footerBar(" ↑↓/pgup/pgdn scroll · / search · {}()<>[] jump · esc/q back · read-only")
+		}
 		return top + "\n" + body + "\n" + help
 	}
 	emptyMsg := m.historyMsgTxt
@@ -6936,6 +7245,18 @@ func (m model) searchBar() string {
 		counter = fmt.Sprintf("%d/%d", cur, total)
 	}
 	return m.footerBar(" ⌕ " + m.searchQuery + "▌ · " + counter + dimStyle.Render(" · enter keep · esc cancel"))
+}
+
+// histModalSearchBar renders the modal session-browser transcript's search-entry
+// line while `/` search is being typed (task 0119) — the line-based analogue of
+// searchBar, counting matching content lines rather than events.
+func (m model) histModalSearchBar() string {
+	total, cur := m.histSearchCount()
+	counter := dimStyle.Render("no matches")
+	if total > 0 {
+		counter = fmt.Sprintf("%d/%d", cur, total)
+	}
+	return m.footerBar(" ⌕ " + m.histModalQuery + "▌ · " + counter + dimStyle.Render(" · enter keep · esc cancel"))
 }
 
 // questionPrompt renders the shared interactive-question badge used by the main
@@ -8052,21 +8373,24 @@ func styleLines(s string, st lipgloss.Style) string {
 // (see theme.go); init() populates them with the dark theme. No raw color
 // literals live here — every color is a named role in theme.go.
 var (
-	titleStyle    lipgloss.Style
-	headerStyle   lipgloss.Style
-	selStyle      lipgloss.Style
-	recoStyle     lipgloss.Style
-	selBarStyle   lipgloss.Style
-	dimStyle      lipgloss.Style
-	thinkStyle    lipgloss.Style
-	typeStyle     lipgloss.Style
-	askStyle      lipgloss.Style
-	errStyle      lipgloss.Style
-	warnStyle     lipgloss.Style
-	diffAddStyle  lipgloss.Style
-	diffDelStyle  lipgloss.Style
-	diffHunkStyle lipgloss.Style
-	diffMetaStyle lipgloss.Style
+	titleStyle  lipgloss.Style
+	headerStyle lipgloss.Style
+	selStyle    lipgloss.Style
+	recoStyle   lipgloss.Style
+	selBarStyle lipgloss.Style
+	dimStyle    lipgloss.Style
+	// histHighlightStyle marks the current search-match / jump-target line in the
+	// modal session-browser transcript (task 0119): a reverse-video bar.
+	histHighlightStyle lipgloss.Style
+	thinkStyle         lipgloss.Style
+	typeStyle          lipgloss.Style
+	askStyle           lipgloss.Style
+	errStyle           lipgloss.Style
+	warnStyle          lipgloss.Style
+	diffAddStyle       lipgloss.Style
+	diffDelStyle       lipgloss.Style
+	diffHunkStyle      lipgloss.Style
+	diffMetaStyle      lipgloss.Style
 
 	borderStyle    lipgloss.Style
 	borderSelStyle lipgloss.Style

@@ -16,6 +16,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"connectrpc.com/connect"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/whyrusleeping/ycc/internal/clientconfig"
 	"github.com/whyrusleeping/ycc/internal/config"
@@ -2381,6 +2382,198 @@ func TestSessionBrowseParity(t *testing.T) {
 	if len(m.evs) != 2 {
 		t.Fatalf("live session events must be intact after browsing (evs=%d, want 2)", len(m.evs))
 	}
+}
+
+// TestSessionBrowserModalTranscriptNav verifies task 0119: the session-browser
+// modal transcript (opened OVER a live session) supports line-based `/` search
+// (n/N wrap, esc-clear) and {}()<>[] jump-to-event keys, and NONE of it disturbs
+// the live session behind the modal (m.evs/m.vp/m.searching/m.searchQuery).
+func TestSessionBrowserModalTranscriptNav(t *testing.T) {
+	f := newFakeClient()
+	f.history = []*v1.SessionSummary{
+		{SessionId: "s_hist", Mode: "chat", Status: "idle", Title: "old chat", LastActivity: "2024-01-01T10:00:00Z"},
+	}
+	f.transcript = []*v1.Event{
+		{Seq: 1, Type: "model_turn", Actor: "coordinator", DataJson: `{"text":"intro alpha line"}`},
+		{Seq: 2, Type: "question_asked", Actor: "coordinator", DataJson: `{"question":"pick something"}`},
+		{Seq: 3, Type: "model_turn", Actor: "coordinator", DataJson: `{"text":"middle beta content"}`},
+		{Seq: 4, Type: "review_submitted", Actor: "reviewer", DataJson: `{"model":"claude","verdict":"approve","summary":"looks good"}`},
+		{Seq: 5, Type: "commit_made", Actor: "coordinator", DataJson: `{"sha":"abc123","message":"do the thing"}`},
+		{Seq: 6, Type: "session_error", Actor: "coordinator", DataJson: `{"msg":"boom failure"}`},
+		{Seq: 7, Type: "model_turn", Actor: "coordinator", DataJson: `{"text":"tail alpha zebra"}`},
+	}
+	m := model{
+		client: f, ctx: context.Background(),
+		state: stateSession, status: "running", sessionID: "s_live", mode: "work", follow: true,
+		input:    newSessionInput(),
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+	}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(model)
+	m.appendEvent(&v1.Event{Seq: 1, Type: "model_turn", Actor: "coordinator", DataJson: `{"text":"live one"}`})
+	m.appendEvent(&v1.Event{Seq: 2, Type: "model_turn", Actor: "coordinator", DataJson: `{"text":"live two"}`})
+	m.rebuild()
+	// Seed a kept LIVE-session search + selection to prove they survive the modal.
+	m.searchQuery = "live"
+	m.selected = 1
+	liveOffset := m.vp.YOffset()
+
+	assertLiveIntact := func(where string) {
+		t.Helper()
+		if len(m.evs) != 2 {
+			t.Fatalf("%s: live evs = %d, want 2", where, len(m.evs))
+		}
+		if m.searchQuery != "live" || m.searching {
+			t.Fatalf("%s: live search clobbered (query=%q searching=%v)", where, m.searchQuery, m.searching)
+		}
+		if m.selected != 1 {
+			t.Fatalf("%s: live selection clobbered (selected=%d, want 1)", where, m.selected)
+		}
+		if m.vp.YOffset() != liveOffset {
+			t.Fatalf("%s: live viewport offset moved (%d, want %d)", where, m.vp.YOffset(), liveOffset)
+		}
+	}
+
+	// Open the modal and drill into the transcript.
+	m = drive(t, m, "ctrl+r")
+	m = drive(t, m, "enter")
+	if !m.histModalTranscript {
+		t.Fatal("enter should drill into the modal transcript")
+	}
+	if len(m.histModalLines) == 0 {
+		t.Fatal("modal transcript should capture rendered lines")
+	}
+	if len(m.histModalEventLines) != 7 {
+		t.Fatalf("modal transcript should record 7 event start lines, got %d", len(m.histModalEventLines))
+	}
+	if m.histModalCurLine != -1 {
+		t.Fatalf("a fresh transcript has no cursor line (got %d)", m.histModalCurLine)
+	}
+	assertLiveIntact("after loading the modal transcript")
+
+	lineForType := func(typ string) int {
+		for _, el := range m.histModalEventLines {
+			if el.typ == typ {
+				return el.line
+			}
+		}
+		return -2
+	}
+	curText := func() string { return ansi.Strip(m.histModalLines[m.histModalCurLine]) }
+
+	// Jump keys land on the recorded start line of the right event type.
+	m = drive(t, m, "}") // forward to question_asked
+	if m.histModalCurLine != lineForType("question_asked") {
+		t.Fatalf("} should jump to question_asked (line=%d, want %d)", m.histModalCurLine, lineForType("question_asked"))
+	}
+	m = drive(t, m, ")") // forward to review_submitted
+	if m.histModalCurLine != lineForType("review_submitted") {
+		t.Fatalf(") should jump to review_submitted (line=%d, want %d)", m.histModalCurLine, lineForType("review_submitted"))
+	}
+	m = drive(t, m, ">") // forward to commit_made
+	if m.histModalCurLine != lineForType("commit_made") {
+		t.Fatalf("> should jump to commit_made (line=%d, want %d)", m.histModalCurLine, lineForType("commit_made"))
+	}
+	m = drive(t, m, "]") // forward to session_error
+	if m.histModalCurLine != lineForType("session_error") {
+		t.Fatalf("] should jump to session_error (line=%d, want %d)", m.histModalCurLine, lineForType("session_error"))
+	}
+	// No-wrap: another forward session_error jump is a no-op.
+	atError := m.histModalCurLine
+	m = drive(t, m, "]")
+	if m.histModalCurLine != atError {
+		t.Fatalf("] with no further error should be a no-op (line=%d, want %d)", m.histModalCurLine, atError)
+	}
+	// Backward jump to the (earlier) question_asked.
+	m = drive(t, m, "{")
+	if m.histModalCurLine != lineForType("question_asked") {
+		t.Fatalf("{ should jump back to question_asked (line=%d)", m.histModalCurLine)
+	}
+	assertLiveIntact("after jump keys")
+
+	// `/` search: "alpha" matches exactly two lines (intro + tail).
+	var matchLines []int
+	for i, ln := range m.histModalLines {
+		if strings.Contains(strings.ToLower(ansi.Strip(ln)), "alpha") {
+			matchLines = append(matchLines, i)
+		}
+	}
+	if len(matchLines) != 2 {
+		t.Fatalf("expected 2 lines containing alpha, got %v", matchLines)
+	}
+	inMatches := func(l int) bool { return l == matchLines[0] || l == matchLines[1] }
+
+	m = drive(t, m, "/")
+	if !m.histModalSearching {
+		t.Fatal("`/` should start the modal search")
+	}
+	for _, r := range "alpha" {
+		m = drive(t, m, string(r))
+	}
+	first := m.histModalCurLine
+	if !inMatches(first) || !strings.Contains(curText(), "alpha") {
+		t.Fatalf("typing should jump to a matching line (line=%d text=%q)", first, curText())
+	}
+	m = drive(t, m, "enter") // keep the query for n/N
+	if m.histModalSearching {
+		t.Fatal("enter should confirm and stop owning input")
+	}
+	m = drive(t, m, "n")
+	second := m.histModalCurLine
+	if second == first || !inMatches(second) {
+		t.Fatalf("n should advance to the other match (first=%d second=%d)", first, second)
+	}
+	m = drive(t, m, "n")
+	if m.histModalCurLine != first {
+		t.Fatalf("n should wrap back to the first match (got %d, want %d)", m.histModalCurLine, first)
+	}
+	m = drive(t, m, "N")
+	if m.histModalCurLine != second {
+		t.Fatalf("N should wrap back to the other match (got %d, want %d)", m.histModalCurLine, second)
+	}
+	assertLiveIntact("after search n/N")
+
+	// esc with a kept query clears it but stays in the transcript.
+	m = drive(t, m, "esc")
+	if m.histModalQuery != "" {
+		t.Fatalf("esc should clear the kept query (got %q)", m.histModalQuery)
+	}
+	if !m.histModalTranscript {
+		t.Fatal("esc with an active query should NOT back out of the transcript")
+	}
+	// A second esc backs out to the list.
+	m = drive(t, m, "esc")
+	if m.histModalTranscript {
+		t.Fatal("a second esc should back out of the transcript to the list")
+	}
+	if !m.histModal {
+		t.Fatal("backing out of the transcript should stay in the modal list")
+	}
+	if len(m.histModalLines) != 0 {
+		t.Fatal("backing out should reset the modal transcript nav state")
+	}
+	assertLiveIntact("after backing out of the transcript")
+
+	// esc-cancel while typing: re-enter the transcript, type, then esc cancels.
+	m = drive(t, m, "enter")
+	m = drive(t, m, "/")
+	m = drive(t, m, "z")
+	m = drive(t, m, "esc")
+	if m.histModalSearching || m.histModalQuery != "" {
+		t.Fatalf("esc should cancel search entry (searching=%v query=%q)", m.histModalSearching, m.histModalQuery)
+	}
+	if !m.histModalTranscript {
+		t.Fatal("esc-cancel should stay in the transcript")
+	}
+	assertLiveIntact("after esc-cancel while typing")
+
+	// Close the whole modal; the live session behind it is fully intact.
+	m = drive(t, m, "esc") // transcript → list
+	m = drive(t, m, "esc") // list → close
+	if m.histModal {
+		t.Fatal("esc from the list should close the modal")
+	}
+	assertLiveIntact("after closing the modal")
 }
 
 // TestPlansBrowser verifies the plan library browser (task 0077): the browse
