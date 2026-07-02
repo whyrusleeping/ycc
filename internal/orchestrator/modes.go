@@ -46,7 +46,7 @@ type Preset struct {
 // (they are all ordinary pm work); onboard, the first-run flow, is the only one.
 func Presets() []Preset {
 	return []Preset{
-		{"onboard", "Onboard this project", "Establish spec.md + backlog — greenfield (full spec) or brownfield (scoped to your work).", "pm", onboardPresetPrompt},
+		{"onboard", "Onboard this project", "Orient from any existing spec.md + backlog, then establish or refresh them — greenfield (full spec) or brownfield (scoped to your work).", "pm", onboardPresetPrompt},
 	}
 }
 

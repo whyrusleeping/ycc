@@ -76,3 +76,7 @@ Drop the spec/feature/bug/backlog home-menu presets, keeping only `onboard`, and
 - 2026-07-02 review (Claude): accept — The change correctly drops the spec/feature/bug/backlog home-menu presets while retaining onboard (as confirmed with the user). Presets() now returns only onboard, the pm ModeInfo description is updat
 …[truncated]
 - 2026-07-02 decision: accept — commit: orchestrator: drop spec/feature/bug/backlog home-menu presets — pm is the catch-all planning/intake mode; onboard remains the sole preset (0091)
+- 2026-07-02 usage: 12,441 tok (in 70, out 12,371, cache_r 650,532, cache_w 62,338) · cost n/a (unpriced)
+  implementer: 6,244 tok (in 28, out 6,216, cache_r 302,622, cache_w 29,433) · cost n/a (unpriced)
+  coordinator: 4,891 tok (in 28, out 4,863, cache_r 303,079, cache_w 23,577) · cost n/a (unpriced)
+  reviewer:Claude: 1,306 tok (in 14, out 1,292, cache_r 44,831, cache_w 9,328) · cost n/a (unpriced)

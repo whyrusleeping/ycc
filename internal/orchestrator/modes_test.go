@@ -82,6 +82,12 @@ func TestOnboardPromptCoversBothBranches(t *testing.T) {
 			t.Fatalf("onboardPresetPrompt does not mention %q", want)
 		}
 	}
+	// It must first orient from any existing docs before deciding.
+	for _, want := range []string{"spec.md", "list_backlog", "list_plans"} {
+		if !strings.Contains(lower, strings.ToLower(want)) {
+			t.Fatalf("onboardPresetPrompt does not instruct checking existing docs (%q)", want)
+		}
+	}
 }
 
 func TestBuildModeToolsets(t *testing.T) {

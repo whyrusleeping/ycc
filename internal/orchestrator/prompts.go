@@ -229,13 +229,23 @@ Ask the user (ask_user) when intent is unclear, as your interaction level allows
 question has a small set of likely answers, pass them as ask_user 'options'. Call finish when
 the docs/backlog reflect the agreed state.`
 
-// onboardPresetPrompt drives FIRST-TIME per-project onboarding (spec §19.2): this
-// workspace has no ycc docs yet, so help the user establish spec.md and a backlog.
-// Greenfield (empty repo) and brownfield (substantial code, no docs) are handled
-// very differently — the agent decides which from the workspace itself.
-const onboardPresetPrompt = `This is the FIRST-TIME ONBOARDING for this project: the workspace has no ycc docs yet ` +
-	`(no spec.md, or only an empty one, and no backlog tasks). Your job is to help me establish the project's ` +
-	`spec.md and backlog. Two very different situations — decide which from the workspace ITSELF, then proceed:
+// onboardPresetPrompt drives per-project onboarding (spec §19.2): help the user
+// establish (or refresh) spec.md and a backlog. STEP 0 always orients from any
+// existing ycc docs (spec.md, backlog tasks, saved plans) first; only when none
+// exist does it fall through to the FIRST-TIME greenfield (empty repo) vs
+// brownfield (substantial code, no docs) flow, which the agent decides from the
+// workspace itself.
+const onboardPresetPrompt = `This is the ONBOARDING flow for this project: help me establish (or refresh) the project's ` +
+	`spec.md and backlog.
+
+STEP 0 — ORIENT FROM WHAT ALREADY EXISTS. Before deciding anything, check for existing ycc docs: Read spec.md at ` +
+	`the workspace root, list_backlog (and get_task on anything relevant) for existing tasks, and list_plans for saved ` +
+	`plans. If usable docs exist (a non-empty spec.md, or any backlog tasks/plans), DO NOT treat this as a blank slate: ` +
+	`read them, summarize the current documented state back to me, and continue onboarding FROM THAT BASE — extend and ` +
+	`refresh the spec and backlog rather than re-establishing from scratch or creating duplicate tasks. Only when there ` +
+	`are NO usable docs (no spec.md or only an empty one, and no backlog tasks) do you proceed to the first-time flow below.
+
+FIRST-TIME (no existing docs). Two very different situations — decide which from the workspace ITSELF, then proceed:
 
 First, determine GREENFIELD vs BROWNFIELD by inspecting the workspace (Read + Bash with ripgrep: look for ` +
 	"source files and meaningful git history versus an essentially empty repo). If it's ambiguous, ask me to confirm " +
