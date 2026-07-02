@@ -82,3 +82,7 @@ Verify with go build ./... && go test ./... and gofmt.
 - 2026-07-02 review (Claude): accept — The change adds transcript incremental search (`/`, n/N with wrap, esc-cancel) and jump-to-event navigation ({}()<>[]) to both the live session view and the read-only history transcript, exactly as sp
 …[truncated]
 - 2026-07-02 decision: accept — commit: tui: transcript search (/) with n/N cycling and jump-to-event keys (task 0116)
+- 2026-07-02 usage: 61,424 tok (in 204, out 61,220, cache_r 5,687,274, cache_w 232,934) · cost n/a (unpriced)
+  implementer: 47,697 tok (in 150, out 47,547, cache_r 4,413,520, cache_w 100,031) · cost n/a (unpriced)
+  reviewer:Claude: 7,082 tok (in 30, out 7,052, cache_r 236,478, cache_w 29,619) · cost n/a (unpriced)
+  coordinator: 6,645 tok (in 24, out 6,621, cache_r 1,037,276, cache_w 103,284) · cost n/a (unpriced)

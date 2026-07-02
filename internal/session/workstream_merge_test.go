@@ -294,3 +294,78 @@ func TestDiscardWorkstream(t *testing.T) {
 		t.Fatal("no workstream_discarded event")
 	}
 }
+
+// transcriptHasEvent reports whether a slice of events contains the given type.
+func transcriptHasEvent(events []event.Event, t event.Type) bool {
+	for _, ev := range events {
+		if ev.Type == t {
+			return true
+		}
+	}
+	return false
+}
+
+// TestMergeWorkstreamPreservesTranscript: after a merge removes the worktree, the
+// session's event log is preserved into the primary workspace so its transcript
+// (including the workstream_merged event) is still viewable via SessionTranscript.
+func TestMergeWorkstreamPreservesTranscript(t *testing.T) {
+	m, proj := newWorkstreamManager(t)
+	ws, s, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo", InteractionLevel: "autonomous"})
+	if err != nil {
+		t.Fatalf("SpawnWorkstream: %v", err)
+	}
+	sessionID := s.ID
+
+	commitInto(t, ws.WorktreePath, "feature.txt", "hello\n", "add feature")
+
+	if out, err := m.MergeWorkstream(ws.ID, false); err != nil || !out.Merged {
+		t.Fatalf("MergeWorkstream: out=%+v err=%v", out, err)
+	}
+
+	// The worktree log is gone with the worktree...
+	if _, err := os.Stat(ws.WorktreePath); !os.IsNotExist(err) {
+		t.Fatalf("worktree still present: %v", err)
+	}
+	// ...but a copy landed in the primary workspace.
+	preserved := filepath.Join(proj, ".ycc", "sessions", sessionID, "events.jsonl")
+	if _, err := os.Stat(preserved); err != nil {
+		t.Fatalf("preserved log missing at %s: %v", preserved, err)
+	}
+	// And the transcript is viewable (session no longer live), including the merge.
+	events, err := m.SessionTranscript("demo", sessionID)
+	if err != nil {
+		t.Fatalf("SessionTranscript after merge: %v", err)
+	}
+	if !transcriptHasEvent(events, event.WorkstreamMerged) {
+		t.Fatal("preserved transcript missing workstream_merged event")
+	}
+}
+
+// TestDiscardWorkstreamPreservesTranscript: discarding likewise preserves the
+// session log so the transcript (including workstream_discarded) stays viewable.
+func TestDiscardWorkstreamPreservesTranscript(t *testing.T) {
+	m, proj := newWorkstreamManager(t)
+	ws, s, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
+	if err != nil {
+		t.Fatalf("SpawnWorkstream: %v", err)
+	}
+	sessionID := s.ID
+
+	if err := m.DiscardWorkstream(ws.ID); err != nil {
+		t.Fatalf("DiscardWorkstream: %v", err)
+	}
+	if _, err := os.Stat(ws.WorktreePath); !os.IsNotExist(err) {
+		t.Fatalf("worktree still present after discard: %v", err)
+	}
+	preserved := filepath.Join(proj, ".ycc", "sessions", sessionID, "events.jsonl")
+	if _, err := os.Stat(preserved); err != nil {
+		t.Fatalf("preserved log missing at %s: %v", preserved, err)
+	}
+	events, err := m.SessionTranscript("demo", sessionID)
+	if err != nil {
+		t.Fatalf("SessionTranscript after discard: %v", err)
+	}
+	if !transcriptHasEvent(events, event.WorkstreamDiscarded) {
+		t.Fatal("preserved transcript missing workstream_discarded event")
+	}
+}

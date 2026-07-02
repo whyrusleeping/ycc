@@ -2,6 +2,8 @@ package session
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 
 	"github.com/whyrusleeping/ycc/internal/event"
@@ -173,7 +175,9 @@ func (m *Manager) PreviewWorkstreamMerge(id string) (MergePreview, error) {
 //     worktree + active status kept so the conflict can be resolved.
 //   - clean, autonomous level (or accept=true) → the branch is merged --no-ff,
 //     a workstream_merged event recorded, the session stopped, and the
-//     worktree + branch cleaned up; registry status set to merged.
+//     worktree + branch cleaned up; registry status set to merged. The session
+//     log is preserved into the primary workspace before cleanup so its
+//     transcript stays viewable afterwards.
 //   - clean, interactive/judgement level and accept=false → NeedsAccept with the
 //     integrated diff; nothing is mutated and no event is recorded.
 func (m *Manager) MergeWorkstream(id string, accept bool) (MergeOutcome, error) {
@@ -234,6 +238,7 @@ func (m *Manager) MergeWorkstream(id string, accept bool) (MergeOutcome, error) 
 	if ws.SessionID != "" {
 		m.Stop(ws.SessionID)
 	}
+	m.preserveWorkstreamSession(ws)
 	m.cleanupWorktree(repo, ws)
 	if err := m.workstreams.SetStatus(ws.ID, workstream.StatusMerged); err != nil {
 		return MergeOutcome{}, err
@@ -254,6 +259,78 @@ func (m *Manager) surfaceConflict(ws workstream.Workstream, conflicts []string) 
 	return MergeOutcome{Conflicts: conflicts}
 }
 
+// preserveWorkstreamSession copies a workstream's durable session log out of its
+// worktree into the project's primary workspace so the transcript remains
+// viewable (panel drill-in / session browser) after the worktree is removed at
+// merge/discard time. Session logs are resolved against the primary workspace at
+// <primary>/.ycc/sessions/<id>/events.jsonl, but a workstream's live log lives at
+// <worktree>/.ycc/sessions/<id>/events.jsonl, which cleanup destroys.
+//
+// It is entirely best-effort: any error is swallowed so preservation never
+// blocks the lifecycle transition, matching the best-effort cleanup philosophy.
+// An existing destination is left untouched (session ids are unique, so a
+// collision means the log was already preserved).
+func (m *Manager) preserveWorkstreamSession(ws workstream.Workstream) {
+	if ws.SessionID == "" || ws.WorktreePath == "" {
+		return
+	}
+	primary, ok := m.projects.Resolve(ws.Project)
+	if !ok {
+		return
+	}
+	src := filepath.Join(ws.WorktreePath, ".ycc", "sessions", ws.SessionID)
+	if info, err := os.Stat(src); err != nil || !info.IsDir() {
+		return
+	}
+	dst := filepath.Join(primary, ".ycc", "sessions", ws.SessionID)
+	if _, err := os.Stat(dst); err == nil {
+		return // already preserved
+	}
+	copyDir(src, dst)
+}
+
+// copyDir recursively copies the directory at src to dst, best-effort. It does
+// not overwrite files that already exist at the destination.
+func copyDir(src, dst string) error {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return err
+	}
+	for _, e := range entries {
+		sp := filepath.Join(src, e.Name())
+		dp := filepath.Join(dst, e.Name())
+		if e.IsDir() {
+			copyDir(sp, dp)
+			continue
+		}
+		copyFile(sp, dp)
+	}
+	return nil
+}
+
+// copyFile copies a single file, best-effort, without overwriting an existing
+// destination.
+func copyFile(src, dst string) error {
+	if _, err := os.Stat(dst); err == nil {
+		return nil
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, in)
+	return err
+}
+
 // cleanupWorktree tears down a workstream's worktree + branch after a successful
 // merge or a discard (design §5 step 4). Every git step is best-effort: a failure
 // to remove a tree/branch must not block the lifecycle transition.
@@ -272,10 +349,11 @@ func (m *Manager) cleanupWorktree(repo *git.Repo, ws workstream.Workstream) {
 }
 
 // DiscardWorkstream abandons a workstream without merging: it records a
-// workstream_discarded event, stops the session, cleans up the worktree +
-// branch, and marks the registry entry discarded (design §6, §5 step 4). It is
-// allowed for active or stale workstreams; git cleanup is best-effort so a stale
-// entry whose tree is already gone still transitions cleanly.
+// workstream_discarded event, stops the session, preserves the session log into
+// the primary workspace (so its transcript stays viewable), cleans up the
+// worktree + branch, and marks the registry entry discarded (design §6, §5 step
+// 4). It is allowed for active or stale workstreams; git cleanup is best-effort
+// so a stale entry whose tree is already gone still transitions cleanly.
 func (m *Manager) DiscardWorkstream(id string) error {
 	ws, ok := m.workstreams.Get(id)
 	if !ok {
@@ -291,6 +369,7 @@ func (m *Manager) DiscardWorkstream(id string) error {
 	if ws.SessionID != "" {
 		m.Stop(ws.SessionID)
 	}
+	m.preserveWorkstreamSession(ws)
 	// Cleanup is best-effort; a stale entry's tree may already be gone.
 	if repo, err := m.primaryRepo(ws); err == nil {
 		if ws.WorktreePath != "" {
