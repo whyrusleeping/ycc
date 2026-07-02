@@ -92,3 +92,7 @@ Concurrency: the docs store already serializes writes per backlog dir (lockFor);
 - 2026-07-02 review (Claude): accept — The change correctly implements TUI backlog grooming for task 0099. Proto adds UpdateTask RPC (with optional status/priority/title mutation fields and a no-field refresh semantics) plus a Path field o
 …[truncated]
 - 2026-07-02 decision: accept — commit: tui: backlog grooming — status/priority edits via new UpdateTask RPC + open task in $EDITOR (0099)
+- 2026-07-02 usage: 40,528 tok (in 184, out 40,344, cache_r 3,690,942, cache_w 159,375) · cost n/a (unpriced)
+  implementer: 30,332 tok (in 132, out 30,200, cache_r 2,867,907, cache_w 68,007) · cost n/a (unpriced)
+  coordinator: 5,932 tok (in 22, out 5,910, cache_r 567,039, cache_w 64,720) · cost n/a (unpriced)
+  reviewer:Claude: 4,264 tok (in 30, out 4,234, cache_r 255,996, cache_w 26,648) · cost n/a (unpriced)

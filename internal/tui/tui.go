@@ -1369,6 +1369,12 @@ func newChatInput(placeholder string) textarea.Model {
 	input.DynamicHeight = true
 	input.SetHeight(1)
 	input.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("shift+enter", "ctrl+j"))
+	// bubbles v2 textarea only binds word motions to alt+arrows/alt+b/alt+f by
+	// default; add ctrl+left/ctrl+right so word-wise cursor movement matches
+	// common terminal/editor behavior (and the single-line textinput, which
+	// already binds them). Keep the alt defaults so nothing regresses.
+	input.KeyMap.WordBackward = key.NewBinding(key.WithKeys("alt+left", "alt+b", "ctrl+left"), key.WithHelp("alt+left", "word backward"))
+	input.KeyMap.WordForward = key.NewBinding(key.WithKeys("alt+right", "alt+f", "ctrl+right"), key.WithHelp("alt+right", "word forward"))
 	styleChatInput(&input)
 	return input
 }

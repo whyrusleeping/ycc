@@ -3528,3 +3528,54 @@ func TestEditorCommand(t *testing.T) {
 		t.Fatalf("EDITOR editor = %q, want emacs (takes precedence over VISUAL)", got)
 	}
 }
+
+// TestChatInputWordMotion verifies Ctrl+Left/Ctrl+Right perform word-wise
+// cursor movement in the multi-line chat-input textarea (task 0102). The
+// bubbles v2 textarea binds word motions to alt-arrows by default; newChatInput
+// additionally binds ctrl+left/ctrl+right (matching the single-line textinput).
+func TestChatInputWordMotion(t *testing.T) {
+	ta := newChatInput("")
+	ta.Focus()
+	ta.SetWidth(80) // wide enough that the value never soft-wraps
+	// "hello world foo": hello=[0,4], space 5, world=[6,10], space 11, foo=[12,14]
+	ta.SetValue("hello world foo")
+	ta.CursorEnd()
+
+	col := func() int {
+		li := ta.LineInfo()
+		return li.StartColumn + li.ColumnOffset
+	}
+	ctrlLeft := tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModCtrl}
+	ctrlRight := tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModCtrl}
+
+	// Ctrl+Left steps back to the start of each previous word.
+	for _, want := range []int{12, 6, 0} {
+		ta, _ = ta.Update(ctrlLeft)
+		if got := col(); got != want {
+			t.Fatalf("ctrl+left cursor col = %d, want %d", got, want)
+		}
+	}
+	// Extra Ctrl+Left at the start of the buffer must not crash or move.
+	ta, _ = ta.Update(ctrlLeft)
+	if got := col(); got != 0 {
+		t.Fatalf("ctrl+left at buffer start moved cursor to %d, want 0", got)
+	}
+
+	// Ctrl+Right steps forward to each next word boundary (end of word).
+	for _, want := range []int{5, 11, 15} {
+		ta, _ = ta.Update(ctrlRight)
+		if got := col(); got != want {
+			t.Fatalf("ctrl+right cursor col = %d, want %d", got, want)
+		}
+	}
+	// Extra Ctrl+Right at the end of the buffer must not crash or move.
+	ta, _ = ta.Update(ctrlRight)
+	if got := col(); got != 15 {
+		t.Fatalf("ctrl+right at buffer end moved cursor to %d, want 15", got)
+	}
+
+	// Word motion left the text untouched.
+	if got := ta.Value(); got != "hello world foo" {
+		t.Fatalf("word motion mutated value: %q", got)
+	}
+}
