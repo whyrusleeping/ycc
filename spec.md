@@ -390,12 +390,14 @@ Each mode = a coordinator system prompt + a tool subset + a state machine. There
   scoping / isolation) is future work. Tools: `Read`/`Write`/`Edit`/`Bash`,
   `list_backlog`/`get_task`/`create_task`/`update_task`, `propose_plan`, `switch_to_work`,
   `ask_user`, `finish`. This **replaces** the former `spec`, `backlog`, `feature`, and `bug` modes —
-  they were one capability set under four prompt framings. The home menu keeps those
-  framings as **opening-prompt presets** that drop into `pm` ("New feature" → explore then
-  propose; "Bug report" → reproduce then localize; "Author spec"; "Build backlog"), so the
-  affordances survive without four modes. A prompt typed alongside a selected preset
-  **composes** with it — the preset supplies the framing and the typed text is appended as
-  the user's upfront context — rather than replacing it.
+  they were one capability set under four prompt framings, and are now simply ordinary
+  `pm` work rather than distinct menu entries. The home menu no longer lists those framings
+  as separate presets (they added redundant clutter for what is all planning/intake work);
+  `pm`'s own description signals it covers spec authoring, backlog grooming, new features,
+  and bug intake. The sole remaining opening-prompt preset is **`onboard`** (§19.2), the
+  distinct first-run flow. A prompt typed alongside a selected preset **composes** with it —
+  the preset supplies the framing and the typed text is appended as the user's upfront
+  context — rather than replacing it.
 - **`chat`** — open-ended assistant that *can* edit code directly, with no fixed workflow.
   Kept as the freeform "just do it" counterpart to `pm`'s "just plan it."
 - **`work`** — the orchestrated implementation pipeline (§10): pick/accept a task, plan,
@@ -1134,9 +1136,10 @@ offers the appropriate onboarding entry prominently in the home menu (it remains
 a preset thereafter, since "onboard later" is valid).
 
 This flow is **agent-driven**, and it is a `pm`-mode flow (planning/intake/docs — §9), so it
-slots in as two new **pm presets** (opening-prompt + first message), alongside the existing
-`feature` / `bug` / `spec` / `backlog` presets. The agent itself distinguishes new vs.
-existing:
+is exposed as a single **pm preset** (opening-prompt + first message): `onboard`, now the
+**only** home-menu preset (the former `feature` / `bug` / `spec` / `backlog` presets have
+been dropped — they were just ordinary `pm` work; see §9). The agent itself distinguishes
+new vs. existing:
 
 **New project (empty / greenfield).** Signal: the workspace is essentially empty of code
 (e.g. no source files / no meaningful git history) in addition to lacking docs. The agent
@@ -1164,10 +1167,11 @@ before ycc is useful. The agent should make the new-vs-existing determination it
 workspace contents (and may confirm with the user when ambiguous), so a single "Onboard this
 project" entry can route to the right behaviour; the prompt encodes both branches.
 
-**Relation to existing presets.** The brownfield path overlaps the `feature` preset (explore
-→ propose) but differs in intent: it is the *first* time ycc sees the project and it also
-establishes the initial spec slice + backlog conventions, whereas `feature` assumes those
-already exist. Keeping it a distinct, prominently-surfaced preset is what makes onboarding
+**Onboarding vs. ordinary pm work.** The brownfield path resembles ordinary `pm`
+feature/bug intake (explore → propose) but differs in intent: it is the *first* time ycc
+sees the project and it also establishes the initial spec slice + backlog conventions,
+whereas ordinary `pm` work assumes those already exist. Keeping `onboard` a distinct,
+prominently-surfaced preset — the sole remaining preset — is what makes onboarding
 discoverable.
 
 ## 20. Token usage & cost accounting

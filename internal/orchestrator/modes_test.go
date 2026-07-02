@@ -44,7 +44,7 @@ func TestModesListed(t *testing.T) {
 }
 
 func TestPresetsOpenPM(t *testing.T) {
-	want := map[string]bool{"onboard": false, "feature": false, "bug": false, "spec": false, "backlog": false}
+	want := map[string]bool{"onboard": false}
 	for _, p := range Presets() {
 		if _, ok := want[p.Name]; !ok {
 			t.Fatalf("unexpected preset %q", p.Name)
@@ -60,6 +60,15 @@ func TestPresetsOpenPM(t *testing.T) {
 	for name, seen := range want {
 		if !seen {
 			t.Fatalf("preset %q missing", name)
+		}
+	}
+	// The former spec/feature/bug/backlog framings were dropped as separate
+	// presets (they are just ordinary pm work); only onboard remains.
+	for _, p := range Presets() {
+		for _, gone := range []string{"spec", "feature", "bug", "backlog"} {
+			if p.Name == gone {
+				t.Fatalf("preset %q should have been removed", gone)
+			}
 		}
 	}
 }

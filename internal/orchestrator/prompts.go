@@ -229,28 +229,6 @@ Ask the user (ask_user) when intent is unclear, as your interaction level allows
 question has a small set of likely answers, pass them as ask_user 'options'. Call finish when
 the docs/backlog reflect the agreed state.`
 
-// Opening-prompt presets the home menu offers under pm (spec §9). Each starts a
-// pm session with a tailored first message; there are no separate modes for them.
-const featurePresetPrompt = `I'd like to add a NEW FEATURE. Before proposing work, ask me what it should do, then ` +
-	`explore the codebase (Read + ripgrep) to understand how it fits and read spec.md for the intended design. ` +
-	`Update the relevant spec.md section(s) if the design changes, break the work into backlog tasks with ` +
-	`create_task, and record a concrete plan with propose_plan. When the plan is agreed, offer to hand a specific ` +
-	`task to work via switch_to_work, or finish to hand back.`
-
-const bugPresetPrompt = `There's a BUG to look into. Ask me for the details, then reproduce and localize it: explore ` +
-	`the codebase (Read + ripgrep) and read spec.md for the intended behavior. Add a task for the fix with ` +
-	`create_task (note the root cause), record your diagnosis and fix plan with propose_plan, and edit spec.md only ` +
-	`if the bug reveals a spec error. When ready, offer to hand the fix to work via switch_to_work, or finish.`
-
-const specPresetPrompt = `Let's author and maintain spec.md. Read it (and the codebase, via Read + ripgrep) to ground ` +
-	`yourself, then work WITH me to capture intent accurately — apply focused Edit/Write changes and surface any ` +
-	`places where the code and spec disagree. Ask me when intent is unclear. Finish when the spec reflects the agreed state.`
-
-const backlogPresetPrompt = `Let's build the backlog from the spec. Read spec.md and the existing backlog (list_backlog / ` +
-	`get_task) so you don't duplicate work, then propose a set of well-scoped tasks and create them with create_task ` +
-	`(clear title, description, acceptance criteria, sensible priority, dependencies). Use update_task to adjust ` +
-	`existing items. Finish when the backlog reflects the spec.`
-
 // onboardPresetPrompt drives FIRST-TIME per-project onboarding (spec §19.2): this
 // workspace has no ycc docs yet, so help the user establish spec.md and a backlog.
 // Greenfield (empty repo) and brownfield (substantial code, no docs) are handled

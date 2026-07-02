@@ -94,3 +94,7 @@ Scope note: full in-digest "answer + re-queue" UX is satisfied by the jump-to-ta
 …[truncated]
 - 2026-07-02 decision: accept — commit: tui: work-loop batch digest — per-run roll-up of completed/blocked/in_review/created tasks with commit, verdicts, tokens/cost; shown when a loop ends, re-openable from browse (0098); includes a ques
 …[truncated]
+- 2026-07-02 usage: 70,534 tok (in 252, out 70,282, cache_r 6,494,174, cache_w 257,457) · cost n/a (unpriced)
+  implementer: 43,314 tok (in 138, out 43,176, cache_r 4,522,942, cache_w 102,872) · cost n/a (unpriced)
+  coordinator: 19,207 tok (in 66, out 19,141, cache_r 1,327,287, cache_w 113,271) · cost n/a (unpriced)
+  reviewer:Claude: 8,013 tok (in 48, out 7,965, cache_r 643,945, cache_w 41,314) · cost n/a (unpriced)

@@ -19,20 +19,20 @@ type ModeInfo struct {
 
 // Modes returns the selectable session modes (spec §9). There are three: chat
 // (freeform, can edit code — the default first option), work (the orchestrated
-// implementation pipeline), and pm (planning / intake / docs, no implementation).
-// The home menu additionally offers opening-prompt presets that drop into pm (see
-// Presets).
+// implementation pipeline), and pm (the catch-all planning / intake / docs mode,
+// no implementation). The home menu additionally offers the onboard opening-prompt
+// preset that drops into pm (see Presets).
 func Modes() []ModeInfo {
 	return []ModeInfo{
 		{"chat", "Chat", "Open-ended conversation and coding — no fixed workflow."},
 		{"work", "Work on backlog", "Pick a backlog task, implement it, review it across models, and commit."},
-		{"pm", "Project manager", "Plan, document, and groom the backlog — spec.md, tasks, plans. No implementation."},
+		{"pm", "Project manager", "Plan and intake — spec authoring, backlog grooming, new features, and bug reports. No implementation."},
 	}
 }
 
 // Preset is a home-menu entry that opens a pm session with a tailored opening
-// prompt — preserving the old spec/backlog/feature/bug framings as one mode with
-// different first prompts (spec §9).
+// prompt (spec §9). Today the only preset is onboard, the distinct first-run flow;
+// the former spec/backlog/feature/bug framings are just ordinary pm work.
 type Preset struct {
 	Name        string // menu key (distinct from the mode)
 	Title       string
@@ -41,14 +41,12 @@ type Preset struct {
 	Prompt      string // verbatim opening prompt seeded into the pm session
 }
 
-// Presets returns the opening-prompt presets the home menu offers under pm.
+// Presets returns the opening-prompt presets the home menu offers under pm. The
+// former spec/feature/bug/backlog framings have been dropped as separate presets
+// (they are all ordinary pm work); onboard, the first-run flow, is the only one.
 func Presets() []Preset {
 	return []Preset{
 		{"onboard", "Onboard this project", "Establish spec.md + backlog — greenfield (full spec) or brownfield (scoped to your work).", "pm", onboardPresetPrompt},
-		{"feature", "New feature", "Explore the codebase, then propose a plan and backlog tasks.", "pm", featurePresetPrompt},
-		{"bug", "Bug report", "Reproduce and localize a bug, then propose a fix plan.", "pm", bugPresetPrompt},
-		{"spec", "Author spec", "Collaboratively write and maintain spec.md.", "pm", specPresetPrompt},
-		{"backlog", "Build backlog", "Turn the spec into concrete backlog tasks.", "pm", backlogPresetPrompt},
 	}
 }
 
