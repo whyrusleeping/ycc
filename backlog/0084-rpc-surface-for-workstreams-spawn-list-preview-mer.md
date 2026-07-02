@@ -75,3 +75,7 @@ Scope note: TUI wiring is task 0085; no client/TUI changes here.
 - 2026-07-02 review (Claude): accept — The change exposes the full workstream lifecycle (spawn/list/preview/merge/discard) over the Connect RPC surface exactly as specified. Proto messages and RPCs were added with good documentation and re
 …[truncated]
 - 2026-07-02 decision: accept — commit: rpc: expose workstream lifecycle (spawn/list/preview/merge/discard) over Connect (0084)
+- 2026-07-02 usage: 29,351 tok (in 106, out 29,245, cache_r 2,980,825, cache_w 201,216) · cost n/a (unpriced)
+  implementer: 20,390 tok (in 60, out 20,330, cache_r 2,058,667, cache_w 92,466) · cost n/a (unpriced)
+  coordinator: 6,099 tok (in 24, out 6,075, cache_r 763,690, cache_w 80,634) · cost n/a (unpriced)
+  reviewer:Claude: 2,862 tok (in 22, out 2,840, cache_r 158,468, cache_w 28,116) · cost n/a (unpriced)

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/orchestrator"
 )
 
@@ -83,6 +84,94 @@ func TestAskManyInteractive(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("AskMany did not return after AnswerAll")
+	}
+}
+
+// A plain free-form Answer (as delivered by SendInput) arriving while a batch
+// ask_user is pending must resolve the batch — the reply lands in A1 and the
+// other slots point back to it — rather than returning false and being lost.
+func TestAnswerResolvesPendingBatch(t *testing.T) {
+	in := newInteraction("interactive", discardEmitter())
+
+	qs := []orchestrator.Question{
+		{Prompt: "db?", Options: []string{"postgres", "sqlite"}},
+		{Prompt: "name?"},
+		{Prompt: "region?"},
+	}
+	got := make(chan []string, 1)
+	go func() {
+		a, _ := in.AskMany(context.Background(), qs)
+		got <- a
+	}()
+	waitBatchPending(t, in)
+
+	if !in.Answer("use sqlite and call it myproj in us-east") {
+		t.Fatal("Answer on pending batch should return true")
+	}
+	select {
+	case a := <-got:
+		if len(a) != 3 {
+			t.Fatalf("answers = %v, want 3 entries", a)
+		}
+		if a[0] != "use sqlite and call it myproj in us-east" {
+			t.Fatalf("a[0] = %q, want the free-form text", a[0])
+		}
+		for i := 1; i < len(a); i++ {
+			if a[i] != batchFreeTextMarker {
+				t.Fatalf("a[%d] = %q, want marker %q", i, a[i], batchFreeTextMarker)
+			}
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("AskMany did not return after Answer")
+	}
+
+	// The batch is fully claimed: nothing pending and a second Answer is a no-op.
+	if in.pending() {
+		t.Fatal("pending() should be false after batch answered")
+	}
+	if in.Answer("late") {
+		t.Fatal("second Answer with nothing pending should return false")
+	}
+}
+
+// Session.SendInput arriving while a batch ask_user is pending must answer the
+// batch, not silently buffer the text into inputCh (where the AskMany-blocked
+// loop would never drain it).
+func TestSendInputAnswersPendingBatch(t *testing.T) {
+	rec := &captureRecorder{}
+	s := &Session{
+		ID:      "test",
+		emitter: event.NewEmitter(rec, "coordinator"),
+		inter:   newInteraction("interactive", event.NewEmitter(rec, "coordinator")),
+		inputCh: make(chan string, 4),
+	}
+
+	qs := []orchestrator.Question{{Prompt: "q1"}, {Prompt: "q2"}}
+	got := make(chan []string, 1)
+	go func() {
+		a, _ := s.inter.AskMany(context.Background(), qs)
+		got <- a
+	}()
+	waitBatchPending(t, s.inter)
+
+	if err := s.SendInput("here is my reply"); err != nil {
+		t.Fatalf("SendInput: %v", err)
+	}
+
+	select {
+	case a := <-got:
+		if len(a) != 2 || a[0] != "here is my reply" || a[1] != batchFreeTextMarker {
+			t.Fatalf("answers = %v", a)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("AskMany did not return after SendInput")
+	}
+
+	// The text must NOT have been buffered onto inputCh.
+	select {
+	case text := <-s.inputCh:
+		t.Fatalf("text was buffered onto inputCh (%q); it should have answered the batch", text)
+	default:
 	}
 }
 

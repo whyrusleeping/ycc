@@ -232,18 +232,50 @@ func askManyData(questions []orchestrator.Question, auto bool) map[string]any {
 	return d
 }
 
+// batchFreeTextMarker is placed in every batch answer slot after the first when
+// a plain free-form Answer (SendInput) resolves a pending multi-question ask_user:
+// the user's whole reply lands in A1 and the remaining slots point back to it, so
+// the model sees the message once, unambiguously, and knows the other questions
+// weren't answered individually.
+const batchFreeTextMarker = "(the user replied with a single free-form message; see the answer to Q1)"
+
 // Answer delivers a user answer to the pending question, returning true if one
 // was pending and accepted. It claims the pending channel under the lock so a
 // duplicate or racing answer can't double-deliver.
+//
+// If a batch (multi-question) ask_user is pending instead of a single question,
+// the free-form text is delivered as the answer to the first question and the
+// remaining questions get batchFreeTextMarker pointing back to it. This keeps
+// scripted / non-TUI clients (e.g. `ycc send`) from having their reply silently
+// buffered into inputCh and lost while the loop is blocked inside AskMany.
 func (in *interaction) Answer(text string) bool {
 	in.mu.Lock()
 	ch := in.waiting
 	in.waiting = nil
 	in.options = nil
-	in.mu.Unlock()
 	if ch == nil {
-		return false
+		// No single question pending; fall back to a pending batch, if any.
+		bch := in.batchWaiting
+		qs := in.batchQuestions
+		if bch == nil {
+			in.mu.Unlock()
+			return false
+		}
+		in.batchWaiting = nil
+		in.batchQuestions = nil
+		in.mu.Unlock()
+		out := make([]string, len(qs))
+		for i := range out {
+			if i == 0 {
+				out[i] = text
+			} else {
+				out[i] = batchFreeTextMarker
+			}
+		}
+		bch <- out // buffered(1), single sender, single use: never blocks
+		return true
 	}
+	in.mu.Unlock()
 	ch <- text // buffered(1), single sender, single use: never blocks
 	return true
 }

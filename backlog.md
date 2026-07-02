@@ -99,7 +99,7 @@
 | [0094](backlog/0094-fix-box-border-alignment-when-spinner-is-at-bottom.md) | Fix box border alignment when spinner is at bottom near text input | done | 3 | — |
 | [0095](backlog/0095-onboarding-mode-should-read-existing-spec-backlog.md) | Onboarding mode should read existing spec/backlog first and orient from them | done | 3 | — |
 | [0096](backlog/0096-connection-centric-model-config-multi-model-id-ent.md) | Connection-centric model config: multi model-id entry + backend model discovery | done | 2 | — |
-| [0097](backlog/0097-sendinput-answer-ignores-a-pending-batch-multi-que.md) | SendInput/Answer ignores a pending batch (multi-question) ask_user | todo | 4 | — |
+| [0097](backlog/0097-sendinput-answer-ignores-a-pending-batch-multi-que.md) | SendInput/Answer ignores a pending batch (multi-question) ask_user | done | 4 | — |
 | [0098](backlog/0098-work-loop-batch-digest-here-s-what-happened-while.md) | Work-loop batch digest: "here's what happened while you were gone" | done | 2 | — |
 | [0099](backlog/0099-tui-backlog-grooming-edit-reprioritize-status-open.md) | TUI backlog grooming: edit/reprioritize/status + open task in $EDITOR | done | 3 | — |
 | [0100](backlog/0100-spec-doctor-detect-spec-code-drift-coverage-gaps-d.md) | Spec-doctor: detect spec/code drift + coverage gaps (design with user first) | blocked | 3 | — |

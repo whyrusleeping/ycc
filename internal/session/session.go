@@ -154,7 +154,10 @@ func (s *Session) setLoop(l *engine.Loop) {
 }
 
 // SendInput delivers user text. If the agent is currently blocked on a question,
-// the text answers it. If a run is in flight (or the loop is paused/pausing at a
+// the text answers it — including a pending batch (multi-question) ask_user, where
+// the free-form text becomes the answer to the first question and the rest point
+// back to it (see interaction.Answer), so a scripted reply is never silently
+// buffered and lost. If a run is in flight (or the loop is paused/pausing at a
 // steer checkpoint) the text is queued as a correction and delivered at the next
 // safe checkpoint (steer-by-default, spec §18.7) — its echo carries queued:true
 // so the transcript never claims delivery before it happens. Otherwise (idle) it
