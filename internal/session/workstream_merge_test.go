@@ -369,3 +369,53 @@ func TestDiscardWorkstreamPreservesTranscript(t *testing.T) {
 		t.Fatal("preserved transcript missing workstream_discarded event")
 	}
 }
+
+// TestWorkstreamCommitCountsMatchesSingle verifies the batch counter returns the
+// same per-workstream counts as the single-workstream method for multiple
+// workstreams sharing a project, and that best-effort behaviour is unchanged for
+// unknown projects and workstreams with no branch/base (0, no error).
+func TestWorkstreamCommitCountsMatchesSingle(t *testing.T) {
+	m, _ := newWorkstreamManager(t)
+
+	ws1, s1, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo", InteractionLevel: "autonomous"})
+	if err != nil {
+		t.Fatalf("SpawnWorkstream 1: %v", err)
+	}
+	defer m.Stop(s1.ID)
+	ws2, s2, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo", InteractionLevel: "autonomous"})
+	if err != nil {
+		t.Fatalf("SpawnWorkstream 2: %v", err)
+	}
+	defer m.Stop(s2.ID)
+
+	// Diverge the two branches by different amounts.
+	commitInto(t, ws1.WorktreePath, "a.txt", "1\n", "c1")
+	commitInto(t, ws2.WorktreePath, "b.txt", "1\n", "c1")
+	commitInto(t, ws2.WorktreePath, "b.txt", "2\n", "c2")
+
+	// A workstream with no branch/base must count as 0.
+	empty := workstream.Workstream{ID: "empty", Project: "demo"}
+	// A workstream referencing an unknown project must count as 0, not error.
+	unknown := workstream.Workstream{ID: "unknown", Project: "nope", Branch: ws1.Branch, BaseCommit: ws1.BaseCommit}
+
+	batch := m.WorkstreamCommitCounts([]workstream.Workstream{ws1, ws2, empty, unknown})
+
+	if got, want := batch[ws1.ID], m.WorkstreamCommitCount(ws1); got != want {
+		t.Fatalf("batch[ws1]=%d, single=%d", got, want)
+	}
+	if got, want := batch[ws2.ID], m.WorkstreamCommitCount(ws2); got != want {
+		t.Fatalf("batch[ws2]=%d, single=%d", got, want)
+	}
+	if batch[ws1.ID] != 1 {
+		t.Fatalf("ws1 count = %d, want 1", batch[ws1.ID])
+	}
+	if batch[ws2.ID] != 2 {
+		t.Fatalf("ws2 count = %d, want 2", batch[ws2.ID])
+	}
+	if batch["empty"] != 0 {
+		t.Fatalf("empty count = %d, want 0", batch["empty"])
+	}
+	if batch["unknown"] != 0 {
+		t.Fatalf("unknown count = %d, want 0", batch["unknown"])
+	}
+}

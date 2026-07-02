@@ -79,10 +79,21 @@ func (s *Server) SpawnWorkstream(_ context.Context, req *connect.Request[v1.Spaw
 // progress; enrichment is best-effort (0 / empty on error).
 func (s *Server) ListWorkstreams(_ context.Context, req *connect.Request[v1.ListWorkstreamsRequest]) (*connect.Response[v1.ListWorkstreamsResponse], error) {
 	var out []*v1.WorkstreamInfo
-	for _, w := range s.mgr.Workstreams(req.Msg.Project) {
+	all := s.mgr.Workstreams(req.Msg.Project)
+	// Compute commit counts for the non-terminal workstreams in one batch so
+	// each project's primary repo is opened at most once per call (the TUI
+	// polls this ~every 3s).
+	var nonTerminal []workstream.Workstream
+	for _, w := range all {
+		if !w.Status.Terminal() {
+			nonTerminal = append(nonTerminal, w)
+		}
+	}
+	counts := s.mgr.WorkstreamCommitCounts(nonTerminal)
+	for _, w := range all {
 		info := toWorkstreamInfo(w)
 		if !w.Status.Terminal() {
-			info.CommitCount = int64(s.mgr.WorkstreamCommitCount(w))
+			info.CommitCount = int64(counts[w.ID])
 			info.SessionStatus = s.mgr.WorkstreamSessionStatus(w)
 		}
 		out = append(out, info)

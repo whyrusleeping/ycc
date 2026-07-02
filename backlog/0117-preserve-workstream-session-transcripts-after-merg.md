@@ -61,3 +61,7 @@ Verification: go build ./... && go vet ./... && go test ./...
 - 2026-07-02 review (Claude): accept — The change correctly implements Task 0117. A best-effort `preserveWorkstreamSession` helper copies the session directory from the worktree (`<worktree>/.ycc/sessions/<id>/`) into the primary workspace
 …[truncated]
 - 2026-07-02 decision: accept — commit: session: preserve workstream session transcripts across merge/discard (task 0117)
+- 2026-07-02 usage: 15,065 tok (in 90, out 14,975, cache_r 855,789, cache_w 74,760) · cost n/a (unpriced)
+  coordinator: 6,761 tok (in 38, out 6,723, cache_r 534,338, cache_w 38,864) · cost n/a (unpriced)
+  implementer: 6,521 tok (in 32, out 6,489, cache_r 249,876, cache_w 26,345) · cost n/a (unpriced)
+  reviewer:Claude: 1,783 tok (in 20, out 1,763, cache_r 71,575, cache_w 9,551) · cost n/a (unpriced)

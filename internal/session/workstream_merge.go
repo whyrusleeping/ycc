@@ -118,6 +118,20 @@ func (m *Manager) WorkstreamSessionStatus(ws workstream.Workstream) string {
 	return string(event.StatusStopped)
 }
 
+// commitCount computes how many commits ws.Branch has added since ws.BaseCommit
+// using an already-opened repo. Best-effort: returns 0 when the workstream has
+// no branch/base or on any git error.
+func commitCount(repo *git.Repo, ws workstream.Workstream) int {
+	if repo == nil || ws.Branch == "" || ws.BaseCommit == "" {
+		return 0
+	}
+	n, err := repo.CountCommits(ws.BaseCommit, ws.Branch)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
 // WorkstreamCommitCount reports how many commits the workstream's branch has
 // added since its base commit (design §8). Best-effort: it returns 0 on any git
 // error so a transient failure never blocks listing.
@@ -129,11 +143,36 @@ func (m *Manager) WorkstreamCommitCount(ws workstream.Workstream) int {
 	if err != nil {
 		return 0
 	}
-	n, err := repo.CountCommits(ws.BaseCommit, ws.Branch)
-	if err != nil {
-		return 0
+	return commitCount(repo, ws)
+}
+
+// WorkstreamCommitCounts computes WorkstreamCommitCount for a batch of
+// workstreams while opening each project's primary repo at most once per call.
+// The result is keyed by workstream ID. Enrichment is best-effort: a workstream
+// whose project cannot be resolved/opened, or whose count fails, maps to 0
+// (same as WorkstreamCommitCount). This deduplicates the git.Open subprocess
+// cost when a single ListWorkstreams call enriches many workstreams that share
+// a project.
+func (m *Manager) WorkstreamCommitCounts(wss []workstream.Workstream) map[string]int {
+	counts := make(map[string]int, len(wss))
+	// Cache resolved/opened repos per project name. A nil entry records a
+	// project that failed to resolve/open so it is not retried per workstream.
+	repos := make(map[string]*git.Repo)
+	for _, ws := range wss {
+		if ws.Branch == "" || ws.BaseCommit == "" {
+			counts[ws.ID] = 0
+			continue
+		}
+		repo, cached := repos[ws.Project]
+		if !cached {
+			if primary, ok := m.projects.Resolve(ws.Project); ok {
+				repo, _ = git.Open(primary)
+			}
+			repos[ws.Project] = repo
+		}
+		counts[ws.ID] = commitCount(repo, ws)
 	}
-	return n
+	return counts
 }
 
 // PreviewWorkstreamMerge trial-merges a workstream's branch into its project's
