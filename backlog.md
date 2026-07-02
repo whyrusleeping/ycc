@@ -102,7 +102,7 @@
 | [0097](backlog/0097-sendinput-answer-ignores-a-pending-batch-multi-que.md) | SendInput/Answer ignores a pending batch (multi-question) ask_user | done | 4 | — |
 | [0098](backlog/0098-work-loop-batch-digest-here-s-what-happened-while.md) | Work-loop batch digest: "here's what happened while you were gone" | done | 2 | — |
 | [0099](backlog/0099-tui-backlog-grooming-edit-reprioritize-status-open.md) | TUI backlog grooming: edit/reprioritize/status + open task in $EDITOR | done | 3 | — |
-| [0100](backlog/0100-spec-doctor-detect-spec-code-drift-coverage-gaps-d.md) | Spec-doctor: detect spec/code drift + coverage gaps (design with user first) | blocked | 3 | — |
+| [0100](backlog/0100-spec-doctor-detect-spec-code-drift-coverage-gaps-d.md) | Spec-doctor: detect spec/code drift + coverage gaps | todo | 3 | — |
 | [0101](backlog/0101-home-menu-notify-when-tasks-are-blocked-and-waitin.md) | Home menu: notify when tasks are blocked and waiting on the user | done | 2 | — |
 | [0102](backlog/0102-tui-ctrl-left-right-for-word-wise-cursor-movement.md) | TUI: Ctrl+Left/Right for word-wise cursor movement in prompt input | done | 3 | — |
 | [0103](backlog/0103-deliver-mid-run-user-input-at-the-next-safe-checkp.md) | Deliver mid-run user input at the next safe checkpoint (steer-by-default) | done | 2 | — |
@@ -116,7 +116,7 @@
 | [0111](backlog/0111-tui-help-modal-listing-keybindings-per-state.md) | TUI help modal (?) listing keybindings per state | done | 4 | — |
 | [0112](backlog/0112-key-parity-browse-selector-session-browser-reachab.md) | Key parity: browse selector + session browser reachable from within a session | done | 4 | — |
 | [0113](backlog/0113-home-menu-choose-the-interaction-level-at-session.md) | Home menu: choose the interaction level at session start | done | 4 | — |
-| [0114](backlog/0114-stream-model-output-incrementally-into-the-session.md) | Stream model output incrementally into the session view | blocked | 3 | — |
+| [0114](backlog/0114-stream-model-output-incrementally-into-the-session.md) | Stream model output incrementally into the session view | todo | 3 | 0120 |
 | [0115](backlog/0115-structured-blocked-escalation-from-the-implementer.md) | Structured "blocked" escalation from the implementer to the coordinator | done | 4 | — |
 | [0116](backlog/0116-transcript-search-and-jump-to-event-navigation.md) | Transcript search (/) and jump-to-event navigation | done | 4 | — |
 | [0117](backlog/0117-preserve-workstream-session-transcripts-after-merg.md) | Preserve workstream session transcripts after merge/discard removes the worktree | done | 5 | 0085 |
@@ -124,3 +124,4 @@
 | [0119](backlog/0119-search-jump-navigation-in-the-histmodal-transcript.md) | Search + jump navigation in the histModal transcript (session browser over a live session) | done | 5 | 0116 |
 | [0120](backlog/0120-tui-render-ask-user-q-a-as-a-single-block-hide-too.md) | TUI: render ask_user Q&A as a single block; hide tool plumbing rows | done | 2 | — |
 | [0120](backlog/0120-gollama-streaming-turn-api-turnstream-across-provi.md) | gollama: streaming turn API (TurnStream) across providers | todo | 3 | — |
+| [0121](backlog/0121-generalize-the-spec-surface-respect-existing-docs.md) | Generalize the spec surface: respect existing docs layouts, allow multi-file specs behind a single entry point | todo | 2 | — |
