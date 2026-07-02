@@ -68,3 +68,7 @@ Goal: the home menu surfaces live sessions that need the user (pending ask_user 
 - 2026-07-02 review (Claude): accept — The change fully and correctly implements Task 0107. It adds the `waiting_input` proto field (regenerated cleanly), a nil-safe `PendingQuestion()` accessor, populates `Waiting` on both live-overlay pa
 …[truncated]
 - 2026-07-02 decision: accept — commit: tui: home menu surfaces live sessions waiting for the user; 's' attaches directly or opens a filtered picker (0107)
+- 2026-07-02 usage: 42,843 tok (in 248, out 42,595, cache_r 5,491,663, cache_w 199,924) · cost n/a (unpriced)
+  implementer: 25,917 tok (in 168, out 25,749, cache_r 4,445,421, cache_w 84,136) · cost n/a (unpriced)
+  coordinator: 12,702 tok (in 56, out 12,646, cache_r 893,583, cache_w 92,973) · cost n/a (unpriced)
+  reviewer:Claude: 4,224 tok (in 24, out 4,200, cache_r 152,659, cache_w 22,815) · cost n/a (unpriced)

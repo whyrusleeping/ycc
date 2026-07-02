@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -169,6 +170,7 @@ type model struct {
 	usageByModel map[string]event.Usage    // logical model_name -> summed usage
 	pricing      map[string]config.Pricing // logical model_name -> pricing ($/Mtok)
 	sessionStart time.Time                 // when the current session view started
+	notifyAfter  time.Time                 // events with Ts before this are replays; no bell
 	spin         spinner.Model
 	spinning     bool // a spinner.Tick command is already in flight
 
@@ -1903,6 +1905,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// reopened) session — usage accumulates only over the current view (task 0062).
 		m.usageByModel = map[string]event.Usage{}
 		m.sessionStart = time.Now()
+		// Events already persisted before we subscribed are replayed by the daemon
+		// on reopen; only events genuinely newer than this instant should ring the
+		// terminal bell / raise a desktop notification (task 0108).
+		m.notifyAfter = m.sessionStart
 		m.input.SetValue("")
 		fc := m.input.Focus()
 		m.relayout()
@@ -1943,6 +1949,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case evMsg:
 		m.markConnected()
 		m.appendEvent(msg.ev)
+		m.maybeNotify(msg.ev)
 		// Coalesce a burst into one rebuild. On reopen the daemon replays the whole
 		// persisted log (N events) which arrive buffered in m.events essentially at
 		// once; draining them here and rebuilding a single time keeps reload O(N)
@@ -1959,6 +1966,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					break drain
 				}
 				m.appendEvent(ev)
+				m.maybeNotify(ev)
 			default:
 				break drain
 			}
@@ -3688,6 +3696,8 @@ const (
 	ovTheme
 	ovFollow
 	ovAutoExpand
+	ovNotifyBell
+	ovNotifyDesktop
 	ovInterrupt
 	ovBackHome
 	ovQuit
@@ -3788,6 +3798,14 @@ func (m model) overlayAdjust(d int) (tea.Model, tea.Cmd) {
 	case ovAutoExpand:
 		m.toggleAutoExpand()
 		return m, nil
+	case ovNotifyBell:
+		m.prefs.NotifyBell = !m.prefs.NotifyBell
+		clientconfig.Save(m.prefs)
+		return m, nil
+	case ovNotifyDesktop:
+		m.prefs.NotifyDesktop = !m.prefs.NotifyDesktop
+		clientconfig.Save(m.prefs)
+		return m, nil
 	}
 	return m, nil
 }
@@ -3853,6 +3871,14 @@ func (m model) overlayActivate() (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case ovAutoExpand:
 		m.toggleAutoExpand()
+		return m, nil
+	case ovNotifyBell:
+		m.prefs.NotifyBell = !m.prefs.NotifyBell
+		clientconfig.Save(m.prefs)
+		return m, nil
+	case ovNotifyDesktop:
+		m.prefs.NotifyDesktop = !m.prefs.NotifyDesktop
+		clientconfig.Save(m.prefs)
 		return m, nil
 	}
 	return m, nil
@@ -3963,6 +3989,8 @@ func (m model) overlayView() string {
 		{"theme", m.prefs.Theme},
 		{"follow / auto-scroll", boolStr(m.prefs.Follow)},
 		{"auto-expand agent logs", boolStr(m.prefs.AutoExpandLogs)},
+		{"notify: terminal bell", boolStr(m.prefs.NotifyBell)},
+		{"notify: desktop (OSC 9)", boolStr(m.prefs.NotifyDesktop)},
 		{interruptLabel, interruptVal},
 		{"back to home menu", ""},
 		{"quit", ""},
@@ -7100,6 +7128,120 @@ func deliveredSeqSet(evs []*v1.Event) map[int64]bool {
 		}
 	}
 	return set
+}
+
+// notifyOut is where terminal notifications (BEL / OSC 9) are written. It is a
+// package-level var so tests can capture the emitted bytes; in production it is
+// the real stdout the TUI already renders to.
+var notifyOut io.Writer = os.Stdout
+
+// notifyTrigger reports whether a live event type warrants a bell / desktop
+// notification when the user may be looking elsewhere (task 0108).
+func notifyTrigger(t string) bool {
+	switch t {
+	case "question_asked", "session_idle", "session_error", "interrupted":
+		return true
+	}
+	return false
+}
+
+// maybeNotify emits a terminal bell and/or OSC 9 desktop notification for a
+// genuinely-new live event, gated by client prefs. It is called only from the
+// live subscription path (evMsg) — never from transcript/replay loads — and it
+// suppresses events whose timestamp predates the subscribe instant so the
+// daemon's full-log replay on reopen stays silent (task 0108).
+func (m *model) maybeNotify(ev *v1.Event) {
+	if ev == nil || (!m.prefs.NotifyBell && !m.prefs.NotifyDesktop) {
+		return
+	}
+	if !notifyTrigger(ev.Type) {
+		return
+	}
+	// While auto-looping, session_idle just means the current task finished and
+	// the loop will advance itself — a bell per task would be noise. Keep the
+	// attention-worthy events (question/error/interrupt).
+	if m.looping && ev.Type == "session_idle" {
+		return
+	}
+	// Auto-answered questions (autonomous mode) never need the user, so a bell
+	// would be a false alarm.
+	if ev.Type == "question_asked" && dataField(ev, "auto") == "true" {
+		return
+	}
+	// Only notify for events newer than the subscribe instant; earlier ones are
+	// the daemon replaying the persisted log on reopen.
+	ts, err := time.Parse(time.RFC3339, ev.Ts)
+	if err != nil {
+		return
+	}
+	if !m.notifyAfter.IsZero() && ts.Before(m.notifyAfter) {
+		return
+	}
+
+	var b []byte
+	if m.prefs.NotifyBell {
+		b = append(b, '\a')
+	}
+	if m.prefs.NotifyDesktop {
+		b = append(b, notifyOSC9(ev)...)
+	}
+	if len(b) > 0 {
+		// Single Write so the escape bytes can't interleave mid-frame with the
+		// renderer's output to the same file.
+		_, _ = notifyOut.Write(b)
+	}
+}
+
+// notifyOSC9 builds an OSC 9 desktop-notification escape sequence for an event:
+// ESC ] 9 ; <text> BEL.
+func notifyOSC9(ev *v1.Event) []byte {
+	return []byte("\x1b]9;" + notifyText(ev) + "\x07")
+}
+
+// notifyText picks the desktop-notification body for an event: the question
+// text for question_asked (truncated, control chars stripped), else a short
+// labelled status line.
+func notifyText(ev *v1.Event) string {
+	switch ev.Type {
+	case "question_asked":
+		q := sanitizeNotify(dataField(ev, "question"))
+		if q == "" {
+			// Batch (multi-question) asks carry their prompts under "questions"
+			// rather than "question"; surface the first one.
+			if qs := dataQuestions(ev); len(qs) > 0 {
+				q = sanitizeNotify(qs[0].prompt)
+			}
+		}
+		if q == "" {
+			return "ycc: question waiting"
+		}
+		return "ycc: " + q
+	case "session_idle":
+		return "ycc: session idle"
+	case "session_error":
+		return "ycc: session error"
+	case "interrupted":
+		return "ycc: interrupted"
+	}
+	return "ycc"
+}
+
+// sanitizeNotify strips control characters (which would corrupt the escape
+// sequence) and truncates to a sane length for a notification body.
+func sanitizeNotify(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, s)
+	s = strings.TrimSpace(s)
+	const max = 120
+	// Truncate on a rune boundary so a multibyte rune can't be split.
+	if r := []rune(s); len(r) > max {
+		s = strings.TrimSpace(string(r[:max]))
+	}
+	return s
 }
 
 func dataField(ev *v1.Event, key string) string {

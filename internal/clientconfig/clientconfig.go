@@ -14,10 +14,12 @@ type Prefs struct {
 	Theme          string `json:"theme"`          // "dark" | "light"
 	Follow         bool   `json:"follow"`         // auto-scroll + auto-select latest
 	AutoExpandLogs bool   `json:"autoExpandLogs"` // expand all agent log events by default
+	NotifyBell     bool   `json:"notifyBell"`     // terminal bell (BEL) on question/idle/error/interrupt
+	NotifyDesktop  bool   `json:"notifyDesktop"`  // OSC 9 desktop notification on those events
 }
 
 // Default returns the built-in defaults.
-func Default() Prefs { return Prefs{Theme: "dark", Follow: true} }
+func Default() Prefs { return Prefs{Theme: "dark", Follow: true, NotifyBell: true} }
 
 // path returns the prefs file location (best-effort).
 func path() string {

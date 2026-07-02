@@ -9,12 +9,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"connectrpc.com/connect"
 
+	"github.com/whyrusleeping/ycc/internal/clientconfig"
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/event"
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
@@ -3882,5 +3884,100 @@ func TestChatInputWordMotion(t *testing.T) {
 	// Word motion left the text untouched.
 	if got := ta.Value(); got != "hello world foo" {
 		t.Fatalf("word motion mutated value: %q", got)
+	}
+}
+
+// TestMaybeNotify covers the terminal-bell / OSC 9 notification gate (task
+// 0108): bell/desktop emitted for genuinely-new trigger events when enabled,
+// suppressed for replayed events, disabled prefs, non-trigger types, and for
+// session_idle while looping.
+func TestMaybeNotify(t *testing.T) {
+	base := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+	after := base.Add(time.Second)   // newer than notifyAfter → genuine
+	before := base.Add(-time.Second) // older → replay
+
+	// swap notifyOut and restore.
+	orig := notifyOut
+	defer func() { notifyOut = orig }()
+	run := func(m *model, ev *v1.Event) string {
+		var buf strings.Builder
+		notifyOut = &buf
+		m.maybeNotify(ev)
+		return buf.String()
+	}
+
+	newModel := func(bell, desktop, looping bool) *model {
+		return &model{
+			prefs:       clientconfig.Prefs{NotifyBell: bell, NotifyDesktop: desktop},
+			notifyAfter: base,
+			looping:     looping,
+		}
+	}
+	ev := func(typ, ts, dataJSON string) *v1.Event {
+		return &v1.Event{Type: typ, Ts: ts, DataJson: dataJSON}
+	}
+
+	// Bell on, question after subscribe → BEL.
+	if got := run(newModel(true, false, false), ev("question_asked", after.Format(time.RFC3339), `{"question":"proceed?"}`)); got != "\a" {
+		t.Fatalf("bell on question_asked = %q, want BEL", got)
+	}
+	// Desktop on (bell off) → OSC 9 with question text, no BEL.
+	if got := run(newModel(false, true, false), ev("question_asked", after.Format(time.RFC3339), `{"question":"proceed?"}`)); got != "\x1b]9;ycc: proceed?\x07" {
+		t.Fatalf("desktop on question_asked = %q", got)
+	}
+	// Both on → BEL then OSC 9, single write.
+	if got := run(newModel(true, true, false), ev("question_asked", after.Format(time.RFC3339), `{"question":"proceed?"}`)); got != "\a\x1b]9;ycc: proceed?\x07" {
+		t.Fatalf("both on = %q", got)
+	}
+	// Replayed event (ts before notifyAfter) → nothing.
+	if got := run(newModel(true, true, false), ev("question_asked", before.Format(time.RFC3339), `{"question":"proceed?"}`)); got != "" {
+		t.Fatalf("replayed event should be silent, got %q", got)
+	}
+	// Both prefs off → nothing.
+	if got := run(newModel(false, false, false), ev("question_asked", after.Format(time.RFC3339), "")); got != "" {
+		t.Fatalf("prefs off should be silent, got %q", got)
+	}
+	// Non-trigger type → nothing.
+	if got := run(newModel(true, true, false), ev("model_turn", after.Format(time.RFC3339), "")); got != "" {
+		t.Fatalf("non-trigger type should be silent, got %q", got)
+	}
+	// Looping suppresses session_idle bell.
+	if got := run(newModel(true, false, true), ev("session_idle", after.Format(time.RFC3339), "")); got != "" {
+		t.Fatalf("looping session_idle should be silent, got %q", got)
+	}
+	// Looping does NOT suppress session_error.
+	if got := run(newModel(true, false, true), ev("session_error", after.Format(time.RFC3339), "")); got != "\a" {
+		t.Fatalf("looping session_error should ring, got %q", got)
+	}
+	// question_asked with no question text → generic desktop label.
+	if got := run(newModel(false, true, false), ev("question_asked", after.Format(time.RFC3339), "")); got != "\x1b]9;ycc: question waiting\x07" {
+		t.Fatalf("empty question desktop = %q", got)
+	}
+	// Auto-answered question (autonomous mode) → silent.
+	if got := run(newModel(true, true, false), ev("question_asked", after.Format(time.RFC3339), `{"question":"proceed?","auto":true}`)); got != "" {
+		t.Fatalf("auto:true question should be silent, got %q", got)
+	}
+	// Batch (multi-question) ask carries prompts under "questions"; desktop text
+	// uses the first prompt.
+	if got := run(newModel(false, true, false), ev("question_asked", after.Format(time.RFC3339), `{"questions":[{"question":"first?"},{"question":"second?"}]}`)); got != "\x1b]9;ycc: first?\x07" {
+		t.Fatalf("batch questions desktop = %q", got)
+	}
+	// Unparseable timestamp → nothing (can't tell replay from live).
+	if got := run(newModel(true, true, false), ev("question_asked", "not-a-time", "")); got != "" {
+		t.Fatalf("bad ts should be silent, got %q", got)
+	}
+}
+
+// TestSanitizeNotifyRuneBoundary verifies truncation happens on a rune boundary
+// so a multibyte rune is never split (task 0108 polish).
+func TestSanitizeNotifyRuneBoundary(t *testing.T) {
+	// 130 multibyte runes (é is 2 bytes) — must truncate to 120 whole runes.
+	in := strings.Repeat("é", 130)
+	got := sanitizeNotify(in)
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncation split a rune: %q", got)
+	}
+	if n := utf8.RuneCountInString(got); n != 120 {
+		t.Fatalf("rune count after truncation = %d, want 120", n)
 	}
 }
