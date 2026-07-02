@@ -100,3 +100,7 @@ Implement spec-doctor per the decided design: a pm preset/flow backed by a deter
 …[truncated]
 - 2026-07-02 decision: accept — commit: Spec-doctor: deterministic reference check + pm drift/coverage flow (task 0100)  - internal/specdoctor: extracts inline-code-span refs (paths, package dirs,   Go-ish symbols) from the docs set and ver
 …[truncated]
+- 2026-07-02 usage: 73,630 tok (in 252, out 73,378, cache_r 7,767,539, cache_w 248,286) · cost n/a (unpriced)
+  implementer: 57,267 tok (in 188, out 57,079, cache_r 6,618,871, cache_w 102,834) · cost n/a (unpriced)
+  coordinator: 11,663 tok (in 36, out 11,627, cache_r 829,844, cache_w 108,174) · cost n/a (unpriced)
+  reviewer:Claude: 4,700 tok (in 28, out 4,672, cache_r 318,824, cache_w 37,278) · cost n/a (unpriced)
