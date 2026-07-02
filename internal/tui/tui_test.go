@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1314,6 +1315,151 @@ func TestOverlayCoordinatorAppliesImmediately(t *testing.T) {
 
 // t_tempWorkspace is an empty path; the modal tests don't touch the filesystem.
 const t_tempWorkspace = ""
+
+// overlayToReviewers opens the settings overlay on a client with the given
+// models and moves the cursor to the reviewers row.
+func overlayToReviewers(t *testing.T, extra ...*v1.ModelConfig) model {
+	t.Helper()
+	cfgs := []*v1.ModelConfig{
+		{Name: "claude", Backend: "anthropic", Model: "claude-x"},
+		{Name: "fable", Backend: "anthropic", Model: "claude-fable-5"},
+		{Name: "gpt", Backend: "openai", Model: "gpt-5"},
+	}
+	cfgs = append(cfgs, extra...)
+	f := newFakeClient(cfgs...)
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	m = runCmds(t, m, m.fetchModels)
+	m.openOverlay()
+	m = drive(t, m, "down") // level -> coord
+	m = drive(t, m, "down") // coord -> impl
+	m = drive(t, m, "down") // impl -> reviewers
+	if m.ovCursor != ovReviewers {
+		t.Fatalf("cursor = %d, want ovReviewers(%d)", m.ovCursor, ovReviewers)
+	}
+	return m
+}
+
+func reviewerNames(m model) []string { return append([]string(nil), m.roleReviewrs...) }
+
+// TestOverlayReviewerSubCursorMoves verifies that ←/→ on the reviewers row moves
+// the visible sub-cursor with wraparound and does not change the reviewer set.
+func TestOverlayReviewerSubCursorMoves(t *testing.T) {
+	m := overlayToReviewers(t)
+	if m.reviewerSub != 0 {
+		t.Fatalf("initial reviewerSub = %d, want 0", m.reviewerSub)
+	}
+	before := reviewerNames(m)
+	m = drive(t, m, "right")
+	if m.reviewerSub != 1 {
+		t.Fatalf("after right reviewerSub = %d, want 1", m.reviewerSub)
+	}
+	m = drive(t, m, "right")
+	if m.reviewerSub != 2 {
+		t.Fatalf("after right reviewerSub = %d, want 2", m.reviewerSub)
+	}
+	m = drive(t, m, "right") // wrap 2 -> 0
+	if m.reviewerSub != 0 {
+		t.Fatalf("after wrap reviewerSub = %d, want 0", m.reviewerSub)
+	}
+	m = drive(t, m, "left") // wrap 0 -> 2
+	if m.reviewerSub != 2 {
+		t.Fatalf("after left wrap reviewerSub = %d, want 2", m.reviewerSub)
+	}
+	if got := reviewerNames(m); !reflect.DeepEqual(got, before) {
+		t.Fatalf("moving the sub-cursor changed reviewers: %v -> %v", before, got)
+	}
+}
+
+// TestOverlayReviewerSpaceToggles verifies that space toggles exactly the
+// highlighted model, the highlight does not advance, and the change persists.
+func TestOverlayReviewerSpaceToggles(t *testing.T) {
+	m := overlayToReviewers(t)
+	f := m.client.(*fakeClient)
+	// Default reviewer set is the first model ("claude") via openOverlay.
+	if !m.contains("claude") {
+		t.Fatalf("expected default reviewers to contain claude, got %v", m.roleReviewrs)
+	}
+	// Highlight the second model and add it.
+	m = drive(t, m, "right") // sub -> 1 (fable)
+	m = drive(t, m, "space")
+	if m.reviewerSub != 1 {
+		t.Fatalf("highlight advanced after toggle: reviewerSub = %d, want 1", m.reviewerSub)
+	}
+	if !m.contains("fable") {
+		t.Fatalf("space did not add fable: %v", m.roleReviewrs)
+	}
+	if f.lastRoleReq == nil {
+		t.Fatal("toggling reviewer did not persist via SetRoleConfig")
+	}
+	if !reflect.DeepEqual(f.lastRoleReq.Reviewers, m.roleReviewrs) {
+		t.Fatalf("persisted reviewers = %v, want %v", f.lastRoleReq.Reviewers, m.roleReviewrs)
+	}
+	// Toggle it off again — highlight stays on fable.
+	m = drive(t, m, "space")
+	if m.contains("fable") {
+		t.Fatalf("second space did not remove fable: %v", m.roleReviewrs)
+	}
+	if m.reviewerSub != 1 {
+		t.Fatalf("highlight moved: reviewerSub = %d, want 1", m.reviewerSub)
+	}
+}
+
+// TestOverlayReviewerInvariant verifies untoggling the last reviewer restores a
+// model so a session never points at zero reviewers.
+func TestOverlayReviewerInvariant(t *testing.T) {
+	m := overlayToReviewers(t)
+	f := m.client.(*fakeClient)
+	// Default set is just ["claude"], highlighted at index 0. Untoggle it.
+	m = drive(t, m, "space")
+	if len(m.roleReviewrs) == 0 {
+		t.Fatal("non-empty reviewer invariant violated: reviewers is empty")
+	}
+	if f.lastRoleReq == nil || len(f.lastRoleReq.Reviewers) == 0 {
+		t.Fatalf("invariant restore did not persist a non-empty set: %+v", f.lastRoleReq)
+	}
+}
+
+// TestOverlayReviewerEnterPersists is a regression test: enter on the reviewers
+// row must both toggle and persist (previously it toggled without persisting).
+func TestOverlayReviewerEnterPersists(t *testing.T) {
+	m := overlayToReviewers(t)
+	f := m.client.(*fakeClient)
+	m = drive(t, m, "right") // highlight fable
+	m = drive(t, m, "enter")
+	if !m.contains("fable") {
+		t.Fatalf("enter did not toggle fable: %v", m.roleReviewrs)
+	}
+	if f.lastRoleReq == nil {
+		t.Fatal("enter on reviewers row did not persist via SetRoleConfig")
+	}
+	if !reflect.DeepEqual(f.lastRoleReq.Reviewers, m.roleReviewrs) {
+		t.Fatalf("persisted reviewers = %v, want %v", f.lastRoleReq.Reviewers, m.roleReviewrs)
+	}
+}
+
+// TestOverlayReviewerHighlightVisible verifies overlayView highlights the chip
+// the next toggle affects when the cursor is on the reviewers row, and renders
+// the chips plain when it is not.
+func TestOverlayReviewerHighlightVisible(t *testing.T) {
+	m := overlayToReviewers(t)
+	m = drive(t, m, "right") // highlight fable (index 1)
+	// Distinct styling means the raw view differs from the ANSI-stripped view
+	// around the highlighted chip.
+	view := m.overlayView()
+	if !strings.Contains(stripANSI(view), "[ ] fable") {
+		t.Fatalf("reviewers row missing fable chip:\n%s", stripANSI(view))
+	}
+	styled := selStyle.Render("[ ] fable")
+	if !strings.Contains(view, styled) {
+		t.Fatalf("highlighted chip not styled with selStyle when cursor on reviewers row:\n%s", view)
+	}
+	// Move the cursor off the reviewers row: the chip should no longer be styled.
+	m = drive(t, m, "up") // reviewers -> impl
+	view = m.overlayView()
+	if strings.Contains(view, styled) {
+		t.Fatalf("chip still highlighted when cursor is off the reviewers row:\n%s", view)
+	}
+}
 
 func TestModelBackendsAdd(t *testing.T) {
 	f := newFakeClient(&v1.ModelConfig{Name: "claude", Backend: "anthropic", Model: "claude-3"})

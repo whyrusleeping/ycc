@@ -69,3 +69,6 @@ Verification: re-read the diff for consistency with the design doc's §5–§8 a
 …[truncated]
 - 2026-07-02 review tier: simple (coordinator self-review)
 - 2026-07-02 decision: accept — commit: spec: document workstream concept + record worktree decision (§14.1, §17, §12 RPCs)
+- 2026-07-02 usage: 12,399 tok (in 52, out 12,347, cache_r 613,216, cache_w 61,554) · cost n/a (unpriced)
+  coordinator: 8,260 tok (in 30, out 8,230, cache_r 382,499, cache_w 31,419) · cost n/a (unpriced)
+  implementer: 4,139 tok (in 22, out 4,117, cache_r 230,717, cache_w 30,135) · cost n/a (unpriced)

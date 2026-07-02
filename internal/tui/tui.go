@@ -245,7 +245,7 @@ type model struct {
 	roleCoord    string            // logical model driving the coordinator
 	roleImpl     string            // logical model for the implementer
 	roleReviewrs []string          // logical models for reviewers (multi-select)
-	reviewerSub  int               // rotating sub-index for toggling reviewer membership
+	reviewerSub  int               // visible sub-cursor: which reviewer chip the next toggle affects
 	prefs        clientconfig.Prefs
 
 	// backlog browser (spec §18.5): modal over menu/session, opened with ctrl+b.
@@ -1946,6 +1946,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case modelsMsg:
 		m.rpcOK()
 		m.models = msg.models
+		// The reviewer sub-cursor indexes m.models; the backend set can shrink,
+		// so clamp it back into range defensively.
+		if m.reviewerSub >= len(m.models) {
+			m.reviewerSub = 0
+		}
 		// Seed the per-role pickers with the daemon's CURRENT default assignment
 		// (config.Roles) so the settings overlay shows the real selection — even
 		// when opened from the home menu with no live session. A live session keeps
@@ -4340,17 +4345,7 @@ func (m model) updateOverlay(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.overlayAdjustThinking(-1)
 	case " ", "space":
 		if m.ovCursor == ovReviewers {
-			m.toggleReviewer()
-			// Persist the new reviewer set immediately, guarding the non-empty
-			// invariant so a session never points at zero reviewers.
-			revs := m.roleReviewrs
-			if len(revs) == 0 && len(m.models) > 0 {
-				revs = []string{m.models[0].Name}
-				m.roleReviewrs = revs
-			}
-			if len(revs) > 0 {
-				return m, m.setRoleConfig("", "", revs)
-			}
+			return m.toggleReviewerAndPersist()
 		}
 		return m, nil
 	case "enter":
@@ -4373,6 +4368,13 @@ func (m model) overlayAdjust(d int) (tea.Model, tea.Cmd) {
 	case ovImpl:
 		m.roleImpl = cycleModel(m.models, m.roleImpl, d)
 		return m, m.setRoleConfig("", m.roleImpl, nil)
+	case ovReviewers:
+		// Move the visible sub-cursor across the reviewer chips (no toggle, no
+		// persist) so the user can see which model the next space/enter affects.
+		if n := len(m.models); n > 0 {
+			m.reviewerSub = (m.reviewerSub + d + n) % n
+		}
+		return m, nil
 	case ovTheme:
 		m.prefs.Theme = cycle(themes, m.prefs.Theme, d)
 		clientconfig.Save(m.prefs)
@@ -4427,8 +4429,7 @@ func (m model) overlayAdjustThinking(d int) (tea.Model, tea.Cmd) {
 func (m model) overlayActivate() (tea.Model, tea.Cmd) {
 	switch m.ovCursor {
 	case ovReviewers:
-		m.toggleReviewer()
-		return m, nil
+		return m.toggleReviewerAndPersist()
 	case ovBackends:
 		// Open the model-backends management modal (task 0044) and refresh the
 		// model list so it lists the current backends.
@@ -4497,21 +4498,39 @@ func (m *model) eventExpanded(seq int, typ string) bool {
 	return m.prefs.AutoExpandLogs || autoExpand(typ)
 }
 
-// toggleReviewer flips the reviewers row's multi-select membership. Each
-// space/enter toggles inclusion of one model, advancing a rotating sub-index so
-// repeated presses walk through every configured model in turn.
+// toggleReviewer flips membership of the model under the visible sub-cursor
+// (m.reviewerSub). The sub-cursor stays put so the next toggle's target remains
+// exactly what the user sees highlighted; it is moved explicitly with ←/→.
 func (m *model) toggleReviewer() {
 	if len(m.models) == 0 {
 		return
 	}
-	// Rotate a hidden sub-index across the model list, toggling membership.
+	if m.reviewerSub >= len(m.models) {
+		m.reviewerSub = 0
+	}
 	name := m.models[m.reviewerSub].Name
 	if m.contains(name) {
 		m.roleReviewrs = remove(m.roleReviewrs, name)
 	} else {
 		m.roleReviewrs = append(m.roleReviewrs, name)
 	}
-	m.reviewerSub = (m.reviewerSub + 1) % len(m.models)
+}
+
+// toggleReviewerAndPersist toggles the highlighted reviewer, guards the
+// non-empty invariant (a session never points at zero reviewers), and persists
+// the new set immediately via SetRoleConfig. Shared by the space and enter key
+// paths on the reviewers row.
+func (m model) toggleReviewerAndPersist() (tea.Model, tea.Cmd) {
+	m.toggleReviewer()
+	revs := m.roleReviewrs
+	if len(revs) == 0 && len(m.models) > 0 {
+		revs = []string{m.models[0].Name}
+		m.roleReviewrs = revs
+	}
+	if len(revs) > 0 {
+		return m, m.setRoleConfig("", "", revs)
+	}
+	return m, nil
 }
 
 func (m model) contains(name string) bool {
@@ -4598,25 +4617,34 @@ func (m model) overlayView() string {
 		}
 		val := r.val
 		if i == ovReviewers && len(m.models) > 0 {
-			val = "(" + m.thinkLevels["reviewers"] + ")  " + m.reviewerSummary()
+			// Highlight the chip the next toggle affects only while the cursor is
+			// on this row, so the target is always visible before pressing space.
+			val = "(" + m.thinkLevels["reviewers"] + ")  " + m.reviewerSummary(i == m.ovCursor)
 		}
 		b.WriteString(cursor + label + dimStyle.Render(val) + "\n")
 	}
 	if m.sessionID == "" {
 		b.WriteString("\n" + dimStyle.Render("(no active session: role changes are saved as defaults; interaction/thinking level apply only within a session)"))
 	}
-	help := "↑/↓ move · ←/→ change · +/- thinking · space toggle reviewer · enter activate · esc close"
+	help := "↑/↓ move · ←/→ change · +/- thinking · enter activate · esc close"
+	if m.ovCursor == ovReviewers {
+		help = "←/→ highlight model · space/enter toggle · +/- thinking · esc close"
+	}
 	return m.modalCard(" settings ", strings.TrimRight(b.String(), "\n"), help)
 }
 
-func (m model) reviewerSummary() string {
+func (m model) reviewerSummary(highlight bool) string {
 	var parts []string
-	for _, mm := range m.models {
+	for i, mm := range m.models {
 		mark := "[ ]"
 		if m.contains(mm.Name) {
 			mark = "[x]"
 		}
-		parts = append(parts, mark+" "+mm.Name)
+		chip := mark + " " + mm.Name
+		if highlight && i == m.reviewerSub {
+			chip = selStyle.Render(chip)
+		}
+		parts = append(parts, chip)
 	}
 	return strings.Join(parts, "  ")
 }
