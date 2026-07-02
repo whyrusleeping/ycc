@@ -1440,7 +1440,12 @@ func (m *model) recordWizAnswer(idx int, text string, viaPicker bool) tea.Cmd {
 	m.pickerOpts = nil
 	m.follow = true
 	m.relayout() // picker rows collapse back to the input box while awaiting question_answered
-	return m.answerQuestions(answers)
+	// Re-focus the textarea: when the final question was a picker it blurred the
+	// input, and nothing else focuses it again — leaving the session's input box
+	// dead once the agent finishes. Focus() flips the typable state synchronously;
+	// the returned cmd is only the cosmetic cursor blink.
+	fc := m.input.Focus()
+	return tea.Batch(fc, m.answerQuestions(answers))
 }
 
 // answerQuestion sends a structured answer to a pending question: optIdx >= 0
@@ -1471,7 +1476,11 @@ func (m *model) choosePickerOption(idx int) tea.Cmd {
 	m.pickerOpts = nil
 	m.follow = true
 	m.relayout()
-	return m.answerQuestion(idx, "")
+	// The picker blurred the textarea when the question arrived; give focus back
+	// now that the picker collapses into the input box, or typing stays dead
+	// after the agent moves on (the blurred textarea drops every key).
+	fc := m.input.Focus()
+	return tea.Batch(fc, m.answerQuestion(idx, ""))
 }
 
 // setLevel issues SetInteractionLevel for the current session (spec §18.2).
@@ -6425,8 +6434,34 @@ func (m *model) appendEvent(ev *v1.Event) {
 		// clearWizard also wipes the body cache, which the single-question path
 		// needs too: the answer now folds into the question_asked row's body.
 		m.clearWizard()
+		// Safety net: a picker question blurred the textarea; make sure the
+		// confirmed answer hands focus back so the input box is typable again.
+		// Focus() flips the state synchronously — the discarded cmd is only the
+		// cursor blink. Skip while the transcript search bar owns input.
+		if !m.searching {
+			m.input.Focus()
+		}
 	case "session_idle":
 		m.status = "idle"
+	case "session_reopened":
+		// Reopen marker: the daemon reconstructed the model history and repaired
+		// any dangling ask_user tool call with a synthetic result (engine replay),
+		// so a question_asked replayed just before this marker is stale — no
+		// answer can ever be delivered to it. Drop the picker/wizard and give the
+		// input box back, or the reopened session starts with dead input.
+		if m.pending != "" || m.picking || m.wizActive {
+			m.pending = ""
+			m.pendingSeq = 0
+			m.pickerOpts = nil
+			m.picking = false
+			m.clearWizard()
+			// The stale question also latched "waiting for your answer"; the
+			// daemon follows up with its real state (session_idle / activity).
+			m.status = "running"
+			if !m.searching {
+				m.input.Focus()
+			}
+		}
 	case "session_error":
 		m.status = "error"
 	case "interrupted":

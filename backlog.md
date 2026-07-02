@@ -128,3 +128,5 @@
 | [0122](backlog/0122-tui-needsonboarding-should-respect-the-configured.md) | TUI needsOnboarding should respect the configured spec entry point | todo | 4 | 0121 |
 | [0123](backlog/0123-stop-generating-the-backlog-md-index-file-duplicat.md) | Stop generating the backlog.md index file (duplicate of backlog/ task files) | todo | 3 | — |
 | [0124](backlog/0124-create-task-duplicates-the-description-header-in-t.md) | create_task duplicates the "## Description" header in task bodies | todo | 4 | — |
+| [0125](backlog/0125-tui-input-box-dead-after-answering-the-final-picke.md) | TUI: input box dead after answering the final picker question (onboarding) | done | 2 | — |
+| [0126](backlog/0126-tui-reopening-a-session-with-a-dangling-question-a.md) | TUI: reopening a session with a dangling question_asked re-arms a dead picker | done | 2 | — |

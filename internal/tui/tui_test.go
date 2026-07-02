@@ -3009,6 +3009,148 @@ func TestPickerNumberKeySelectsOption(t *testing.T) {
 	}
 }
 
+// TestPickerAnswerRefocusesInput guards the dead-input regression: answering a
+// single options question via the picker blurs the textarea when the question
+// arrives; committing the answer must hand focus back, or the input box drops
+// every keystroke once the agent finishes (e.g. after onboarding).
+func TestPickerAnswerRefocusesInput(t *testing.T) {
+	f := newFakeClient()
+	m := newPickerModel(t, f)
+	if m.input.Focused() {
+		t.Fatal("precondition: the picker should have blurred the textarea")
+	}
+
+	updated, _ := m.Update(keyMsg("enter"))
+	m = updated.(model)
+	if m.picking {
+		t.Fatal("enter should have dismissed the picker")
+	}
+	if !m.input.Focused() {
+		t.Fatal("textarea must be focused again after answering via the picker")
+	}
+}
+
+// TestWizardFinalPickerAnswerRefocusesInput is the wizard variant: when the LAST
+// question of a multi-question batch is a picker, submitting the batch must
+// re-focus the textarea (the mixed picker→free-text case is covered by
+// TestWizardFreeTextAfterPickerFocusesInput; this guards the picker-last case).
+func TestWizardFinalPickerAnswerRefocusesInput(t *testing.T) {
+	f := newFakeClient()
+	m := model{
+		client: f, ctx: context.Background(),
+		state: stateSession, status: "running", sessionID: "s1", follow: true,
+		input:    newSessionInput(),
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+	}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(model)
+
+	// Free-text question first, picker question last.
+	m.appendEvent(&v1.Event{
+		Seq: 1, Type: "question_asked", Actor: "coordinator",
+		DataJson: `{"questions":[{"question":"name?"},{"question":"db?","options":["postgres","sqlite"]}]}`,
+	})
+	if !m.wizActive || m.picking {
+		t.Fatalf("Q1 should be free text (active=%v picking=%v)", m.wizActive, m.picking)
+	}
+
+	// Answer Q1 as free text, landing on the final picker question.
+	m.input.SetValue("svc")
+	updated, _ = m.Update(keyMsg("enter"))
+	m = updated.(model)
+	if !m.picking || m.wizIdx != 1 {
+		t.Fatalf("Q2 should be the active picker (picking=%v idx=%d)", m.picking, m.wizIdx)
+	}
+	if m.input.Focused() {
+		t.Fatal("precondition: the picker question should have blurred the textarea")
+	}
+
+	// Answer the final picker question: the batch submits and the input box
+	// replaces the picker — it must be typable. (wizActive stays set until the
+	// daemon confirms with question_answered.)
+	updated, _ = m.Update(keyMsg("enter"))
+	m = updated.(model)
+	if m.picking {
+		t.Fatal("picker should collapse once the batch submits")
+	}
+	if !m.input.Focused() {
+		t.Fatal("textarea must be focused after the final picker answer submits the batch")
+	}
+}
+
+// TestQuestionAnsweredEventRefocusesInput: the daemon's question_answered
+// confirmation is the safety net — even if local state missed the re-focus,
+// the event must leave the textarea typable.
+func TestQuestionAnsweredEventRefocusesInput(t *testing.T) {
+	f := newFakeClient()
+	m := newPickerModel(t, f)
+	if m.input.Focused() {
+		t.Fatal("precondition: the picker should have blurred the textarea")
+	}
+
+	m.appendEvent(&v1.Event{Seq: 2, Type: "question_answered", Actor: "user"})
+	if m.picking || m.pending != "" {
+		t.Fatalf("question_answered should clear the picker (picking=%v pending=%q)", m.picking, m.pending)
+	}
+	if !m.input.Focused() {
+		t.Fatal("question_answered must re-focus the textarea")
+	}
+}
+
+// TestReopenClearsStaleQuestion guards the reopen-replay variant of the dead
+// input regression: a session whose log ends with an unanswered question_asked
+// (e.g. it was stopped while blocked on ask_user) is repaired on reopen — the
+// daemon gives the dangling ask_user call a synthetic tool result, so the
+// question is no longer answerable. The session_reopened marker replayed after
+// it must dismiss the stale picker/wizard and re-focus the textarea instead of
+// leaving the TUI stuck on a question that can never be answered.
+func TestReopenClearsStaleQuestion(t *testing.T) {
+	f := newFakeClient()
+	m := newPickerModel(t, f) // replayed log ends with an options question_asked
+	if m.input.Focused() {
+		t.Fatal("precondition: the replayed picker question should have blurred the textarea")
+	}
+
+	m.appendEvent(&v1.Event{Seq: 2, Type: "session_reopened", Actor: "system"})
+	if m.picking || m.pending != "" || m.pickerOpts != nil {
+		t.Fatalf("session_reopened should drop the stale picker (picking=%v pending=%q opts=%v)",
+			m.picking, m.pending, m.pickerOpts)
+	}
+	if !m.input.Focused() {
+		t.Fatal("session_reopened must re-focus the textarea")
+	}
+}
+
+// The wizard (multi-question batch) variant of the stale-question reopen.
+func TestReopenClearsStaleWizard(t *testing.T) {
+	f := newFakeClient()
+	m := model{
+		client: f, ctx: context.Background(),
+		state: stateSession, status: "running", sessionID: "s1", follow: true,
+		input:    newSessionInput(),
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+	}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(model)
+
+	m.appendEvent(&v1.Event{
+		Seq: 1, Type: "question_asked", Actor: "coordinator",
+		DataJson: `{"questions":[{"question":"db?","options":["postgres","sqlite"]},{"question":"name?"}]}`,
+	})
+	if !m.wizActive || !m.picking {
+		t.Fatalf("precondition: wizard picker should be active (active=%v picking=%v)", m.wizActive, m.picking)
+	}
+
+	m.appendEvent(&v1.Event{Seq: 2, Type: "session_reopened", Actor: "system"})
+	if m.wizActive || m.picking || m.pending != "" {
+		t.Fatalf("session_reopened should drop the stale wizard (active=%v picking=%v pending=%q)",
+			m.wizActive, m.picking, m.pending)
+	}
+	if !m.input.Focused() {
+		t.Fatal("session_reopened must re-focus the textarea")
+	}
+}
+
 // In a multi-question wizard a number key selects the active question's option
 // and advances to the next question.
 func TestWizardNumberKeyAdvances(t *testing.T) {
