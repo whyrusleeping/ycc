@@ -147,6 +147,11 @@ type model struct {
 	browse       bool
 	browseCursor int
 
+	// help modal (task 0111): a scrollable keybinding cheat-sheet, modal over both
+	// the menu and a session. See help.go for the binding catalog.
+	helpOpen   bool
+	helpScroll int
+
 	sessionID string
 	mode      string
 	events    chan *v1.Event
@@ -2428,6 +2433,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateHistory(msg)
 	}
 
+	// The keybinding help modal (?) is modal over both the menu and a session
+	// (task 0111). It owns input while open — scroll + close.
+	if m.helpOpen {
+		return m.updateHelp(msg)
+	}
+
 	// The quick-add backlog capture overlay (ctrl+n) is modal over both the menu
 	// and a session (spec §18.2, task 0016). It runs entirely server-side so the
 	// session keeps streaming behind it.
@@ -2698,6 +2709,18 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Open the browse selector (backlog / sessions / cost) — spec §18.6/§20.5.
 			m.openBrowse()
 			return m, nil
+		case "?", "ctrl+h":
+			// Open the keybinding help modal (task 0111). Gated on an empty prompt so
+			// a bare "?" still types into a composition and ctrl+h (== the legacy BS
+			// byte 0x08, bound by the textarea to delete-char-backward) keeps deleting
+			// mid-edit; fall through to the textarea otherwise. ctrl+_ is unconditional.
+			if strings.TrimSpace(m.prompt.Value()) == "" {
+				m.openHelp()
+				return m, nil
+			}
+		case "ctrl+_":
+			m.openHelp()
+			return m, nil
 		case "up":
 			if m.cursor > 0 {
 				m.cursor--
@@ -2826,6 +2849,11 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.backlogShowDone = false
 				m.backlogBlockedOnly = false
 				return m, m.fetchBacklog
+			case "?", "ctrl+h", "ctrl+_":
+				// Open the keybinding help modal (task 0111). No free-text input is
+				// focused in the picker, so "?"/ctrl+h open unconditionally here.
+				m.openHelp()
+				return m, nil
 			}
 			return m, nil
 		}
@@ -2842,6 +2870,18 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.backlogShowDone = false
 			m.backlogBlockedOnly = false
 			return m, m.fetchBacklog
+		case "?", "ctrl+h":
+			// Open the keybinding help modal (task 0111). Gated on empty input so a
+			// bare "?" still types and ctrl+h (== legacy BS byte 0x08, bound by the
+			// textarea to delete-char-backward) keeps deleting mid-edit; fall through
+			// to the textarea otherwise. ctrl+_ is the unconditional chord.
+			if strings.TrimSpace(m.input.Value()) == "" {
+				m.openHelp()
+				return m, nil
+			}
+		case "ctrl+_":
+			m.openHelp()
+			return m, nil
 		case "ctrl+i", "ctrl+x":
 			// Gracefully interrupt the running agent to steer it (spec §18.7).
 			// ctrl+i is the historical chord but is byte-identical to Tab (0x09)
@@ -5773,6 +5813,9 @@ func (m model) render() string {
 		// never reaches here; it surfaces inline via flashErr (task 0104).
 		return fmt.Sprintf("\n  error: %v\n\n  (r to retry · ctrl+c to quit)\n", m.err)
 	}
+	if m.helpOpen {
+		return m.helpView()
+	}
 	if m.capture {
 		return m.captureView()
 	}
@@ -5887,7 +5930,7 @@ func (m model) menuView() string {
 		b.WriteString("  " + cursor + label + "\n")
 	}
 	b.WriteString("\n" + framedInput(m.prompt, 2) + "\n")
-	footer := "  ↑/↓ choose mode · tab loop (work) · type a prompt · enter start · ctrl+o browse · ctrl+r sessions · esc settings · ctrl+b backlog · ctrl+n new task"
+	footer := "  ? help · ↑/↓ choose mode · tab loop (work) · type a prompt · enter start · ctrl+o browse · ctrl+r sessions · esc settings · ctrl+b backlog · ctrl+n new task"
 	if m.blockedTaskCount() > 0 {
 		footer += " · w view blocked"
 	}
@@ -6268,14 +6311,14 @@ func (m model) sessionView() string {
 		help := m.footer(" ⏸ paused — type a correction + enter to steer · enter to resume · esc settings")
 		return top + "\n" + body + "\n" + m.inputRow() + "\n" + help
 	}
-	help := m.footer(" enter send/expand · shift+enter newline · ↑↓ select · click expand · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings · ctrl+b backlog · ctrl+n new task")
+	help := m.footer(" ? help · enter send/expand · shift+enter newline · ↑↓ select · click expand · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings · ctrl+b backlog · ctrl+n new task")
 	if m.mode == "work" {
 		// Surface the loop toggle on work sessions: shift+tab halts a running loop
 		// gracefully (current task finishes) or rolls a single session into a loop.
 		if m.looping {
-			help = m.footer(" shift+tab halt loop · enter send/expand · ↑↓ select · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings")
+			help = m.footer(" ? help · shift+tab halt loop · enter send/expand · ↑↓ select · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings")
 		} else {
-			help = m.footer(" shift+tab loop · enter send/expand · ↑↓ select · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings")
+			help = m.footer(" ? help · shift+tab loop · enter send/expand · ↑↓ select · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings")
 		}
 	}
 	return top + "\n" + body + "\n" + m.inputRow() + "\n" + help

@@ -1242,6 +1242,10 @@ func keyMsg(key string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl}
 	case "ctrl+o":
 		return tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl}
+	case "ctrl+h":
+		return tea.KeyPressMsg{Code: 'h', Mod: tea.ModCtrl}
+	case "ctrl+_":
+		return tea.KeyPressMsg{Code: '_', Mod: tea.ModCtrl}
 	default:
 		return tea.KeyPressMsg{Code: []rune(key)[0], Text: key}
 	}
@@ -4561,5 +4565,115 @@ func TestBrowseWorkstreamsRoute(t *testing.T) {
 	m = drive(t, m, "enter")
 	if !m.ws {
 		t.Fatal("workstreams route should open the Workstreams panel")
+	}
+}
+
+// TestHelpModalOpensAndCloses verifies `?` opens the keybinding help modal over
+// the menu (empty prompt), the card shows the title and several section
+// headings, and esc closes it back to the menu (task 0111).
+func TestHelpModalOpensAndCloses(t *testing.T) {
+	f := newFakeClient()
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+	m = updated.(model)
+
+	m = drive(t, m, "?")
+	if !m.helpOpen {
+		t.Fatal("`?` on the menu with an empty prompt should open the help modal")
+	}
+	view := m.render()
+	if !strings.Contains(view, "keybindings") {
+		t.Fatalf("help view missing the title:\n%s", view)
+	}
+	for _, want := range []string{"global", "home menu", "session", "question picker"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("help view missing section %q:\n%s", want, view)
+		}
+	}
+	if !strings.ContainsAny(view, "╭╰│╮╯") {
+		t.Fatalf("help modal does not render a rounded card:\n%s", view)
+	}
+	for i, ln := range strings.Split(view, "\n") {
+		if w := lipgloss.Width(ln); w > 80 {
+			t.Fatalf("help view line %d width %d exceeds terminal width 80: %q", i, w, ln)
+		}
+	}
+
+	m = drive(t, m, "esc")
+	if m.helpOpen {
+		t.Fatal("esc should close the help modal")
+	}
+	if m.state != stateMenu {
+		t.Fatalf("closing help should return to the menu, state = %v", m.state)
+	}
+}
+
+// TestHelpKeyTypesIntoNonEmptyInput verifies `?` types a literal '?' rather than
+// opening the modal when the focused input is non-empty — on both the menu and a
+// session (task 0111).
+func TestHelpKeyTypesIntoNonEmptyInput(t *testing.T) {
+	// Menu: prompt has text, so `?` types.
+	f := newFakeClient()
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+	m = updated.(model)
+	m = typeText(t, m, "write a")
+	m = typeText(t, m, "?")
+	if m.helpOpen {
+		t.Fatal("`?` should not open help while the menu prompt is non-empty")
+	}
+	if got := m.prompt.Value(); got != "write a?" {
+		t.Fatalf("`?` did not type into the prompt: value = %q", got)
+	}
+
+	// Session: input has text, so `?` types.
+	s := newSessionTextareaModel(t)
+	s = typeText(t, s, "fix the")
+	s = typeText(t, s, "?")
+	if s.helpOpen {
+		t.Fatal("`?` should not open help while the session input is non-empty")
+	}
+	if got := s.input.Value(); got != "fix the?" {
+		t.Fatalf("`?` did not type into the session input: value = %q", got)
+	}
+}
+
+// TestHelpCtrlUnderscoreOpensUnconditionally verifies ctrl+_ opens help even with
+// a non-empty session input, and that `?` opens help from the question picker
+// (no free-text input focused there) — task 0111.
+func TestHelpCtrlUnderscoreOpensUnconditionally(t *testing.T) {
+	s := newSessionTextareaModel(t)
+	s = typeText(t, s, "some text")
+	s = drive(t, s, "ctrl+_")
+	if !s.helpOpen {
+		t.Fatal("ctrl+_ should open help even with a non-empty session input")
+	}
+
+	// Picking state: `?` opens help.
+	p := newSessionTextareaModel(t)
+	p.picking = true
+	p.pickerOpts = []string{"a", "b"}
+	p = drive(t, p, "?")
+	if !p.helpOpen {
+		t.Fatal("`?` should open help from the question picker")
+	}
+}
+
+// TestFootersMentionHelp verifies the menu and default session footers advertise
+// the help key (task 0111).
+func TestFootersMentionHelp(t *testing.T) {
+	f := newFakeClient()
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
+	m = updated.(model)
+	if !strings.Contains(m.menuView(), "? help") {
+		t.Fatalf("menu footer should mention the help key:\n%s", m.menuView())
+	}
+
+	s := newSessionTextareaModel(t)
+	updated, _ = s.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
+	s = updated.(model)
+	if !strings.Contains(s.sessionView(), "? help") {
+		t.Fatalf("session footer should mention the help key:\n%s", s.sessionView())
 	}
 }

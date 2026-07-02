@@ -65,3 +65,7 @@ Verify: go build ./... && go test ./internal/tui/... (plus go vet).
 - 2026-07-02 review (Claude): accept — The change replaces the hidden rotating reviewer toggle with an explicit, visible inline sub-cursor exactly as planned. ←/→ (overlayAdjust ovReviewers) moves m.reviewerSub with wraparound and no s
 …[truncated]
 - 2026-07-02 decision: accept — commit: tui: replace hidden rotating reviewer toggle with visible inline sub-cursor (task 0110)
+- 2026-07-02 usage: 18,582 tok (in 112, out 18,470, cache_r 1,135,666, cache_w 61,397) · cost n/a (unpriced)
+  implementer: 13,398 tok (in 74, out 13,324, cache_r 846,128, cache_w 34,747) · cost n/a (unpriced)
+  reviewer:Claude: 2,818 tok (in 24, out 2,794, cache_r 102,959, cache_w 14,237) · cost n/a (unpriced)
+  coordinator: 2,366 tok (in 14, out 2,352, cache_r 186,579, cache_w 12,413) · cost n/a (unpriced)
