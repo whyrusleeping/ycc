@@ -1179,6 +1179,8 @@ func keyMsg(key string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: tea.KeyRight}
 	case "ctrl+n":
 		return tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl}
+	case "ctrl+c":
+		return tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
 	case "ctrl+p":
 		return tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl}
 	case "ctrl+r":
@@ -3979,5 +3981,142 @@ func TestSanitizeNotifyRuneBoundary(t *testing.T) {
 	}
 	if n := utf8.RuneCountInString(got); n != 120 {
 		t.Fatalf("rune count after truncation = %d, want 120", n)
+	}
+}
+
+// isQuit reports whether cmd (or a batch containing it) yields tea.QuitMsg.
+func isQuit(cmd tea.Cmd) bool {
+	if cmd == nil {
+		return false
+	}
+	msg := cmd()
+	if _, ok := msg.(tea.QuitMsg); ok {
+		return true
+	}
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, c := range batch {
+			if isQuit(c) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// TestQuitGuardOneShotRunning covers task 0109: on a one-shot daemon with a live
+// running session, the first ctrl+c arms the guard (no quit) and shows a warning;
+// a second ctrl+c quits.
+func TestQuitGuardOneShotRunning(t *testing.T) {
+	f := newFakeClient()
+	m := initialModel(context.Background(), f, t_tempWorkspace, false) // one-shot
+	m.w, m.h = 80, 24
+	m.state, m.status, m.sessionID = stateSession, "running", "sess-1"
+
+	updated, cmd := m.Update(keyMsg("ctrl+c"))
+	m = updated.(model)
+	if isQuit(cmd) {
+		t.Fatal("first ctrl+c on a running one-shot session should NOT quit")
+	}
+	if !m.quitArmed {
+		t.Fatal("first ctrl+c should arm the quit guard")
+	}
+	if view := m.render(); !strings.Contains(view, quitGuardHint) {
+		t.Fatalf("armed view should show the quit-guard warning; got:\n%s", view)
+	}
+
+	_, cmd = m.Update(keyMsg("ctrl+c"))
+	if !isQuit(cmd) {
+		t.Fatal("second ctrl+c should quit")
+	}
+}
+
+// TestQuitGuardIdleImmediate: no live work → ctrl+c quits at once.
+func TestQuitGuardIdleImmediate(t *testing.T) {
+	f := newFakeClient()
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	m.state, m.status, m.sessionID = stateSession, "idle", "sess-1"
+	if _, cmd := m.Update(keyMsg("ctrl+c")); !isQuit(cmd) {
+		t.Fatal("ctrl+c on an idle session should quit immediately")
+	}
+}
+
+// TestQuitGuardPersistentImmediate: on a persistent daemon the work survives, so
+// quit stays immediate even while running.
+func TestQuitGuardPersistentImmediate(t *testing.T) {
+	f := newFakeClient()
+	m := initialModel(context.Background(), f, t_tempWorkspace, true) // persistent
+	m.state, m.status, m.sessionID = stateSession, "running", "sess-1"
+	if _, cmd := m.Update(keyMsg("ctrl+c")); !isQuit(cmd) {
+		t.Fatal("ctrl+c on a persistent daemon should quit immediately")
+	}
+}
+
+// TestQuitGuardMenuImmediate: home menu with no live session → immediate quit.
+func TestQuitGuardMenuImmediate(t *testing.T) {
+	f := newFakeClient()
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	m.state, m.status = stateMenu, "idle"
+	if _, cmd := m.Update(keyMsg("ctrl+c")); !isQuit(cmd) {
+		t.Fatal("ctrl+c on the home menu with no live session should quit immediately")
+	}
+}
+
+// TestQuitGuardOverlayRow: the settings-overlay Quit row uses the same guard.
+func TestQuitGuardOverlayRow(t *testing.T) {
+	f := newFakeClient()
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	m.w, m.h = 80, 24
+	m.state, m.status, m.sessionID = stateSession, "running", "sess-1"
+	m.openOverlay()
+	// Point the cursor at the Quit row.
+	m.ovCursor = ovQuit
+
+	updated, cmd := m.Update(keyMsg("enter"))
+	m = updated.(model)
+	if isQuit(cmd) {
+		t.Fatal("first activation of the overlay Quit row should NOT quit while running")
+	}
+	if !m.quitArmed {
+		t.Fatal("first overlay Quit activation should arm the guard")
+	}
+
+	_, cmd = m.Update(keyMsg("enter"))
+	if !isQuit(cmd) {
+		t.Fatal("second overlay Quit activation should quit")
+	}
+}
+
+// TestQuitGuardDisarm: a matching quitDisarmMsg clears the armed state (so the
+// next ctrl+c re-arms instead of quitting), while a stale seq is ignored.
+func TestQuitGuardDisarm(t *testing.T) {
+	f := newFakeClient()
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	m.state, m.status, m.sessionID = stateSession, "running", "sess-1"
+
+	updated, _ := m.Update(keyMsg("ctrl+c"))
+	m = updated.(model)
+	if !m.quitArmed {
+		t.Fatal("ctrl+c should arm the guard")
+	}
+	seq := m.quitSeq
+
+	// Stale seq: ignored.
+	updated, _ = m.Update(quitDisarmMsg{seq: seq - 1})
+	m = updated.(model)
+	if !m.quitArmed {
+		t.Fatal("stale quitDisarmMsg must not disarm the guard")
+	}
+
+	// Matching seq: disarms.
+	updated, _ = m.Update(quitDisarmMsg{seq: seq})
+	m = updated.(model)
+	if m.quitArmed {
+		t.Fatal("matching quitDisarmMsg should disarm the guard")
+	}
+
+	// Next ctrl+c re-arms (does not quit).
+	_, cmd := m.Update(keyMsg("ctrl+c"))
+	if isQuit(cmd) {
+		t.Fatal("after disarm, next ctrl+c should re-arm, not quit")
 	}
 }

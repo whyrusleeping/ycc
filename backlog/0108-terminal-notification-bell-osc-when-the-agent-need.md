@@ -69,3 +69,7 @@ Goal: emit a terminal bell (BEL) and optional OSC 9 desktop notification when a 
 - 2026-07-02 review (Claude): accept — The revision addresses all previous nits correctly. sanitizeNotify now truncates on rune boundaries (verified by TestSanitizeNotifyRuneBoundary), notifyText falls back to the first prompt of a batch a
 …[truncated]
 - 2026-07-02 decision: accept — commit: tui: terminal bell + optional OSC 9 desktop notification when the agent needs the user or goes idle/errors (0108)
+- 2026-07-02 usage: 34,474 tok (in 214, out 34,260, cache_r 2,758,845, cache_w 116,707) · cost n/a (unpriced)
+  implementer: 17,044 tok (in 108, out 16,936, cache_r 1,379,197, cache_w 39,367) · cost n/a (unpriced)
+  coordinator: 11,468 tok (in 66, out 11,402, cache_r 1,066,654, cache_w 49,040) · cost n/a (unpriced)
+  reviewer:Claude: 5,962 tok (in 40, out 5,922, cache_r 312,994, cache_w 28,300) · cost n/a (unpriced)

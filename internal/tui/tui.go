@@ -55,6 +55,13 @@ const headerHeight = 1 // the session status bar occupies the first row
 
 const maxInputRows = 6 // session input grows up to this many rows, then scrolls
 
+// quitGuardWindow is how long the first ctrl+c stays "armed": a second ctrl+c
+// within this window quits, otherwise the guard disarms silently (task 0109).
+const quitGuardWindow = 2 * time.Second
+
+// quitGuardHint is the warning shown while the quit guard is armed (task 0109).
+const quitGuardHint = "agent running — ctrl+c again to quit"
+
 type model struct {
 	client    yccv1connect.SessionServiceClient
 	ctx       context.Context
@@ -214,6 +221,13 @@ type model struct {
 	// clear timer so a stale timeout never wipes a newer error (task 0104).
 	flashErr string
 	flashSeq int
+	// quitArmed is set by the first ctrl+c while a one-shot daemon has live agent
+	// work (a running/paused/pending session, a loop, a waiting background session,
+	// or a capture in flight). A second ctrl+c within quitGuardWindow quits; the
+	// quitSeq-guarded disarm timer clears it otherwise, so an accidental keypress
+	// can't tear down in-flight work (task 0109).
+	quitArmed bool
+	quitSeq   int
 	// connected records that the client has successfully talked to the daemon at
 	// least once. Until then an RPC error is treated as a fatal startup failure;
 	// afterwards every RPC failure is transient (task 0104).
@@ -446,6 +460,11 @@ type errMsg struct{ err error }
 // flashErr only when seq still matches the current flash so a stale timer never
 // wipes a newer error (task 0104).
 type flashClearMsg struct{ seq int }
+
+// quitDisarmMsg fires quitGuardWindow after the first ctrl+c armed the quit
+// guard; the handler clears quitArmed only when seq still matches so a stale
+// timer never disarms a freshly re-armed guard (task 0109).
+type quitDisarmMsg struct{ seq int }
 type backlogMsg struct{ tasks []*v1.BacklogTaskSummary }
 type taskDetailMsg struct{ task *v1.TaskDetail }
 
@@ -542,6 +561,39 @@ func (m *model) flash(err error) tea.Cmd {
 func (m *model) clearFlash() {
 	m.flashErr = ""
 	m.flashSeq++
+}
+
+// quitGuardActive reports whether quitting right now would tear down live agent
+// work on a one-shot in-process daemon. On a persistent daemon (showPicker) the
+// work survives the client disconnecting, so the guard never applies (task 0109).
+func (m *model) quitGuardActive() bool {
+	if m.showPicker {
+		return false
+	}
+	if m.looping || m.captureBusy || len(m.waitingSessions) > 0 {
+		return true
+	}
+	if m.sessionID != "" {
+		switch m.status {
+		case "running", "paused", "waiting for your answer":
+			return true
+		}
+	}
+	return false
+}
+
+// confirmQuit implements the two-step ctrl+c guard: when live agent work would
+// be killed, the first press arms the guard (and shows a warning) while a second
+// press within quitGuardWindow quits. When no work is at risk it quits at once
+// (task 0109).
+func (m model) confirmQuit() (tea.Model, tea.Cmd) {
+	if !m.quitGuardActive() || m.quitArmed {
+		return m, tea.Quit
+	}
+	m.quitArmed = true
+	m.quitSeq++
+	seq := m.quitSeq
+	return m, tea.Tick(quitGuardWindow, func(time.Time) tea.Msg { return quitDisarmMsg{seq} })
 }
 
 // markConnected records that the client has reached the daemon at least once,
@@ -1880,6 +1932,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.flashErr = ""
 		}
 		return m, nil
+	case quitDisarmMsg:
+		if msg.seq == m.quitSeq {
+			m.quitArmed = false
+		}
+		return m, nil
 	case startedMsg:
 		m.rpcOK()
 		// Reset any stale event/view state from a prior session so a reopened
@@ -2215,7 +2272,7 @@ func (m model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	switch key.String() {
 	case "ctrl+c", "q":
-		return m, tea.Quit
+		return m.confirmQuit()
 	case "up":
 		if m.projectCur > 0 {
 			m.projectCur--
@@ -2256,7 +2313,7 @@ func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch key.String() {
 		case "ctrl+c":
-			return m, tea.Quit
+			return m.confirmQuit()
 		case "esc", "q", "backspace", "left":
 			// Back to the list: drop the transient transcript event state.
 			m.historyTranscript = false
@@ -2288,7 +2345,7 @@ func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	switch key.String() {
 	case "ctrl+c":
-		return m, tea.Quit
+		return m.confirmQuit()
 	case "esc", "q":
 		m.state = stateMenu
 		m.historyWaitingOnly = false
@@ -2340,7 +2397,7 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyMsg); ok {
 		switch key.String() {
 		case "ctrl+c":
-			return m, tea.Quit
+			return m.confirmQuit()
 		case "ctrl+n":
 			// Quick-add a backlog item (spec §18.2, task 0016).
 			m.openCapture()
@@ -2477,7 +2534,7 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.picking {
 			switch msg.String() {
 			case "ctrl+c":
-				return m, tea.Quit
+				return m.confirmQuit()
 			case "up":
 				if m.pickerCursor > 0 {
 					m.pickerCursor--
@@ -2531,7 +2588,7 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.String() {
 		case "ctrl+c":
-			return m, tea.Quit
+			return m.confirmQuit()
 		case "ctrl+n":
 			// Quick-add a backlog item without pausing the session (task 0016).
 			m.openCapture()
@@ -2645,7 +2702,7 @@ func (m model) updateCapture(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	switch key.String() {
 	case "ctrl+c":
-		return m, tea.Quit
+		return m.confirmQuit()
 	case "esc":
 		m.capture = false
 		return m, nil
@@ -2950,7 +3007,7 @@ func (m model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	switch key.String() {
 	case "ctrl+c":
-		return m, tea.Quit
+		return m.confirmQuit()
 	case "esc", "q":
 		m.browse = false
 		return m, nil
@@ -3025,7 +3082,7 @@ func (m model) updateCost(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	switch key.String() {
 	case "ctrl+c":
-		return m, tea.Quit
+		return m.confirmQuit()
 	case "esc", "q":
 		m.cost = false
 		return m, nil
@@ -3299,7 +3356,7 @@ func (m model) updateDigest(msg tea.Msg) (tea.Model, tea.Cmd) {
 	_, nav := m.digestRows()
 	switch key.String() {
 	case "ctrl+c":
-		return m, tea.Quit
+		return m.confirmQuit()
 	case "esc", "q":
 		m.digest = false
 		return m, nil
@@ -3344,7 +3401,7 @@ func (m model) updateBacklog(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Detail view: grooming keys, editor escape hatch, then scroll.
 		switch key.String() {
 		case "ctrl+c", "q":
-			return m, tea.Quit
+			return m.confirmQuit()
 		case "esc", "backspace", "left":
 			m.backlogDetail = nil
 			m.backlogNotice = ""
@@ -3367,7 +3424,7 @@ func (m model) updateBacklog(msg tea.Msg) (tea.Model, tea.Cmd) {
 	vis := m.visibleBacklogTasks()
 	switch key.String() {
 	case "ctrl+c":
-		return m, tea.Quit
+		return m.confirmQuit()
 	case "esc", "q":
 		m.backlog = false
 		m.backlogBlockedOnly = false
@@ -3624,7 +3681,7 @@ func (m model) updatePlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Detail view: back returns to the list.
 		switch key.String() {
 		case "ctrl+c", "q":
-			return m, tea.Quit
+			return m.confirmQuit()
 		case "esc", "backspace", "left":
 			m.planDetail = nil
 		}
@@ -3633,7 +3690,7 @@ func (m model) updatePlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// List view.
 	switch key.String() {
 	case "ctrl+c":
-		return m, tea.Quit
+		return m.confirmQuit()
 	case "esc", "q":
 		m.plans = false
 		return m, nil
@@ -3721,7 +3778,7 @@ func (m model) updateOverlay(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.overlay = false
 		return m, nil
 	case "ctrl+c":
-		return m, tea.Quit
+		return m.confirmQuit()
 	case "up":
 		if m.ovCursor > 0 {
 			m.ovCursor--
@@ -3868,7 +3925,7 @@ func (m model) overlayActivate() (tea.Model, tea.Cmd) {
 		m.state = stateMenu
 		return m, m.refreshMenu()
 	case ovQuit:
-		return m, tea.Quit
+		return m.confirmQuit()
 	case ovAutoExpand:
 		m.toggleAutoExpand()
 		return m, nil
@@ -4312,7 +4369,7 @@ func (m model) updateModelBackends(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) mbUpdateList(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
 	case "ctrl+c":
-		return m, tea.Quit
+		return m.confirmQuit()
 	case "esc":
 		// Back to the settings overlay.
 		m.mbOpen = false
@@ -4357,7 +4414,7 @@ func (m model) mbUpdateList(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m model) mbUpdateForm(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
 	case "ctrl+c":
-		return m, tea.Quit
+		return m.confirmQuit()
 	case "esc":
 		m.mbView = 0
 		m.mbErr, m.mbInfo = "", ""
@@ -4535,7 +4592,7 @@ func mbModelNames(ids []string, formMode int, origName, origModel, explicitName 
 func (m model) mbUpdateConfirm(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
 	case "ctrl+c":
-		return m, tea.Quit
+		return m.confirmQuit()
 	case "esc":
 		m.mbView = 0
 		return m, nil
@@ -5061,6 +5118,20 @@ func (m model) titleBar(text string) string {
 // row (which would corrupt Bubble Tea's line accounting / overflow the frame). A
 // zero width (before the first WindowSizeMsg) is a no-op.
 func (m model) footerBar(text string) string {
+	// When the quit guard is armed, lead with the warning so it survives the
+	// width clamp and is visible wherever the user is looking (task 0109).
+	if m.quitArmed {
+		warn := errStyle.Render("⚠ " + quitGuardHint)
+		if strings.TrimSpace(text) == "" {
+			text = warn
+		} else {
+			text = warn + dimStyle.Render(" · ") + text
+		}
+		if m.w > 0 {
+			text = ansi.Truncate(strings.ReplaceAll(text, "\n", " "), m.w-1, "…")
+		}
+		return text
+	}
 	if m.w > 0 {
 		// trunc may append a 1-col ellipsis, so clamp to m.w-1 to stay within m.w.
 		text = trunc(strings.ReplaceAll(text, "\n", " "), m.w-1)
@@ -5200,6 +5271,9 @@ func (m model) pickerScreenView() string {
 func (m model) menuView() string {
 	var b strings.Builder
 	b.WriteString(m.titleBar(" ycc — home ") + "\n\n")
+	if m.quitArmed {
+		b.WriteString("  " + errStyle.Render("⚠ "+quitGuardHint) + "\n\n")
+	}
 	if m.flashErr != "" {
 		b.WriteString("  " + errStyle.Render("✗ "+m.flashErr) + "\n\n")
 	}
@@ -5450,6 +5524,11 @@ func (m model) statusBar() string {
 	}
 	var segs []seg
 
+	// The quit guard warning rides at the very highest priority so it's never
+	// dropped — the user pressed ctrl+c and needs to see why nothing quit (task 0109).
+	if m.quitArmed {
+		segs = append(segs, seg{errStyle.Render("⚠ " + quitGuardHint), -2})
+	}
 	// A transient inline error (failed RPC on an otherwise-live session) rides at
 	// the highest priority so the width-greedy fitter never drops it (task 0104).
 	if m.flashErr != "" {
