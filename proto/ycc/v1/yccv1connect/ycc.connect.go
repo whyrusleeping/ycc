@@ -122,6 +122,21 @@ const (
 	SessionServiceCaptureBacklogItemProcedure = "/ycc.v1.SessionService/CaptureBacklogItem"
 	// SessionServiceGetUsageProcedure is the fully-qualified name of the SessionService's GetUsage RPC.
 	SessionServiceGetUsageProcedure = "/ycc.v1.SessionService/GetUsage"
+	// SessionServiceSpawnWorkstreamProcedure is the fully-qualified name of the SessionService's
+	// SpawnWorkstream RPC.
+	SessionServiceSpawnWorkstreamProcedure = "/ycc.v1.SessionService/SpawnWorkstream"
+	// SessionServiceListWorkstreamsProcedure is the fully-qualified name of the SessionService's
+	// ListWorkstreams RPC.
+	SessionServiceListWorkstreamsProcedure = "/ycc.v1.SessionService/ListWorkstreams"
+	// SessionServicePreviewMergeProcedure is the fully-qualified name of the SessionService's
+	// PreviewMerge RPC.
+	SessionServicePreviewMergeProcedure = "/ycc.v1.SessionService/PreviewMerge"
+	// SessionServiceMergeWorkstreamProcedure is the fully-qualified name of the SessionService's
+	// MergeWorkstream RPC.
+	SessionServiceMergeWorkstreamProcedure = "/ycc.v1.SessionService/MergeWorkstream"
+	// SessionServiceDiscardWorkstreamProcedure is the fully-qualified name of the SessionService's
+	// DiscardWorkstream RPC.
+	SessionServiceDiscardWorkstreamProcedure = "/ycc.v1.SessionService/DiscardWorkstream"
 )
 
 // SessionServiceClient is a client for the ycc.v1.SessionService service.
@@ -192,6 +207,16 @@ type SessionServiceClient interface {
 	// Usage/cost breakdown (spec §20): aggregated, priced token usage by task ×
 	// model × day so clients can render the cost breakdown.
 	GetUsage(context.Context, *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error)
+	// Parallel workstreams (docs/design/parallel-workstreams.md §6, §8): spawn a
+	// worktree+session, list them, preview/merge a branch back to base with the
+	// conflict-aware review gate, or discard one. Subscribe(session_id) is reused
+	// verbatim for per-workstream event streaming (the session_id rides inside
+	// WorkstreamInfo).
+	SpawnWorkstream(context.Context, *connect.Request[v1.SpawnWorkstreamRequest]) (*connect.Response[v1.SpawnWorkstreamResponse], error)
+	ListWorkstreams(context.Context, *connect.Request[v1.ListWorkstreamsRequest]) (*connect.Response[v1.ListWorkstreamsResponse], error)
+	PreviewMerge(context.Context, *connect.Request[v1.PreviewMergeRequest]) (*connect.Response[v1.PreviewMergeResponse], error)
+	MergeWorkstream(context.Context, *connect.Request[v1.MergeWorkstreamRequest]) (*connect.Response[v1.MergeWorkstreamResponse], error)
+	DiscardWorkstream(context.Context, *connect.Request[v1.DiscardWorkstreamRequest]) (*connect.Response[v1.DiscardWorkstreamResponse], error)
 }
 
 // NewSessionServiceClient constructs a client for the ycc.v1.SessionService service. By default, it
@@ -391,6 +416,36 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("GetUsage")),
 			connect.WithClientOptions(opts...),
 		),
+		spawnWorkstream: connect.NewClient[v1.SpawnWorkstreamRequest, v1.SpawnWorkstreamResponse](
+			httpClient,
+			baseURL+SessionServiceSpawnWorkstreamProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("SpawnWorkstream")),
+			connect.WithClientOptions(opts...),
+		),
+		listWorkstreams: connect.NewClient[v1.ListWorkstreamsRequest, v1.ListWorkstreamsResponse](
+			httpClient,
+			baseURL+SessionServiceListWorkstreamsProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("ListWorkstreams")),
+			connect.WithClientOptions(opts...),
+		),
+		previewMerge: connect.NewClient[v1.PreviewMergeRequest, v1.PreviewMergeResponse](
+			httpClient,
+			baseURL+SessionServicePreviewMergeProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("PreviewMerge")),
+			connect.WithClientOptions(opts...),
+		),
+		mergeWorkstream: connect.NewClient[v1.MergeWorkstreamRequest, v1.MergeWorkstreamResponse](
+			httpClient,
+			baseURL+SessionServiceMergeWorkstreamProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("MergeWorkstream")),
+			connect.WithClientOptions(opts...),
+		),
+		discardWorkstream: connect.NewClient[v1.DiscardWorkstreamRequest, v1.DiscardWorkstreamResponse](
+			httpClient,
+			baseURL+SessionServiceDiscardWorkstreamProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("DiscardWorkstream")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -427,6 +482,11 @@ type sessionServiceClient struct {
 	getPlan              *connect.Client[v1.GetPlanRequest, v1.GetPlanResponse]
 	captureBacklogItem   *connect.Client[v1.CaptureBacklogItemRequest, v1.Event]
 	getUsage             *connect.Client[v1.GetUsageRequest, v1.GetUsageResponse]
+	spawnWorkstream      *connect.Client[v1.SpawnWorkstreamRequest, v1.SpawnWorkstreamResponse]
+	listWorkstreams      *connect.Client[v1.ListWorkstreamsRequest, v1.ListWorkstreamsResponse]
+	previewMerge         *connect.Client[v1.PreviewMergeRequest, v1.PreviewMergeResponse]
+	mergeWorkstream      *connect.Client[v1.MergeWorkstreamRequest, v1.MergeWorkstreamResponse]
+	discardWorkstream    *connect.Client[v1.DiscardWorkstreamRequest, v1.DiscardWorkstreamResponse]
 }
 
 // ListModes calls ycc.v1.SessionService.ListModes.
@@ -584,6 +644,31 @@ func (c *sessionServiceClient) GetUsage(ctx context.Context, req *connect.Reques
 	return c.getUsage.CallUnary(ctx, req)
 }
 
+// SpawnWorkstream calls ycc.v1.SessionService.SpawnWorkstream.
+func (c *sessionServiceClient) SpawnWorkstream(ctx context.Context, req *connect.Request[v1.SpawnWorkstreamRequest]) (*connect.Response[v1.SpawnWorkstreamResponse], error) {
+	return c.spawnWorkstream.CallUnary(ctx, req)
+}
+
+// ListWorkstreams calls ycc.v1.SessionService.ListWorkstreams.
+func (c *sessionServiceClient) ListWorkstreams(ctx context.Context, req *connect.Request[v1.ListWorkstreamsRequest]) (*connect.Response[v1.ListWorkstreamsResponse], error) {
+	return c.listWorkstreams.CallUnary(ctx, req)
+}
+
+// PreviewMerge calls ycc.v1.SessionService.PreviewMerge.
+func (c *sessionServiceClient) PreviewMerge(ctx context.Context, req *connect.Request[v1.PreviewMergeRequest]) (*connect.Response[v1.PreviewMergeResponse], error) {
+	return c.previewMerge.CallUnary(ctx, req)
+}
+
+// MergeWorkstream calls ycc.v1.SessionService.MergeWorkstream.
+func (c *sessionServiceClient) MergeWorkstream(ctx context.Context, req *connect.Request[v1.MergeWorkstreamRequest]) (*connect.Response[v1.MergeWorkstreamResponse], error) {
+	return c.mergeWorkstream.CallUnary(ctx, req)
+}
+
+// DiscardWorkstream calls ycc.v1.SessionService.DiscardWorkstream.
+func (c *sessionServiceClient) DiscardWorkstream(ctx context.Context, req *connect.Request[v1.DiscardWorkstreamRequest]) (*connect.Response[v1.DiscardWorkstreamResponse], error) {
+	return c.discardWorkstream.CallUnary(ctx, req)
+}
+
 // SessionServiceHandler is an implementation of the ycc.v1.SessionService service.
 type SessionServiceHandler interface {
 	ListModes(context.Context, *connect.Request[v1.ListModesRequest]) (*connect.Response[v1.ListModesResponse], error)
@@ -652,6 +737,16 @@ type SessionServiceHandler interface {
 	// Usage/cost breakdown (spec §20): aggregated, priced token usage by task ×
 	// model × day so clients can render the cost breakdown.
 	GetUsage(context.Context, *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error)
+	// Parallel workstreams (docs/design/parallel-workstreams.md §6, §8): spawn a
+	// worktree+session, list them, preview/merge a branch back to base with the
+	// conflict-aware review gate, or discard one. Subscribe(session_id) is reused
+	// verbatim for per-workstream event streaming (the session_id rides inside
+	// WorkstreamInfo).
+	SpawnWorkstream(context.Context, *connect.Request[v1.SpawnWorkstreamRequest]) (*connect.Response[v1.SpawnWorkstreamResponse], error)
+	ListWorkstreams(context.Context, *connect.Request[v1.ListWorkstreamsRequest]) (*connect.Response[v1.ListWorkstreamsResponse], error)
+	PreviewMerge(context.Context, *connect.Request[v1.PreviewMergeRequest]) (*connect.Response[v1.PreviewMergeResponse], error)
+	MergeWorkstream(context.Context, *connect.Request[v1.MergeWorkstreamRequest]) (*connect.Response[v1.MergeWorkstreamResponse], error)
+	DiscardWorkstream(context.Context, *connect.Request[v1.DiscardWorkstreamRequest]) (*connect.Response[v1.DiscardWorkstreamResponse], error)
 }
 
 // NewSessionServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -847,6 +942,36 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("GetUsage")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceSpawnWorkstreamHandler := connect.NewUnaryHandler(
+		SessionServiceSpawnWorkstreamProcedure,
+		svc.SpawnWorkstream,
+		connect.WithSchema(sessionServiceMethods.ByName("SpawnWorkstream")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceListWorkstreamsHandler := connect.NewUnaryHandler(
+		SessionServiceListWorkstreamsProcedure,
+		svc.ListWorkstreams,
+		connect.WithSchema(sessionServiceMethods.ByName("ListWorkstreams")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServicePreviewMergeHandler := connect.NewUnaryHandler(
+		SessionServicePreviewMergeProcedure,
+		svc.PreviewMerge,
+		connect.WithSchema(sessionServiceMethods.ByName("PreviewMerge")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceMergeWorkstreamHandler := connect.NewUnaryHandler(
+		SessionServiceMergeWorkstreamProcedure,
+		svc.MergeWorkstream,
+		connect.WithSchema(sessionServiceMethods.ByName("MergeWorkstream")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceDiscardWorkstreamHandler := connect.NewUnaryHandler(
+		SessionServiceDiscardWorkstreamProcedure,
+		svc.DiscardWorkstream,
+		connect.WithSchema(sessionServiceMethods.ByName("DiscardWorkstream")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/ycc.v1.SessionService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case SessionServiceListModesProcedure:
@@ -911,6 +1036,16 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceCaptureBacklogItemHandler.ServeHTTP(w, r)
 		case SessionServiceGetUsageProcedure:
 			sessionServiceGetUsageHandler.ServeHTTP(w, r)
+		case SessionServiceSpawnWorkstreamProcedure:
+			sessionServiceSpawnWorkstreamHandler.ServeHTTP(w, r)
+		case SessionServiceListWorkstreamsProcedure:
+			sessionServiceListWorkstreamsHandler.ServeHTTP(w, r)
+		case SessionServicePreviewMergeProcedure:
+			sessionServicePreviewMergeHandler.ServeHTTP(w, r)
+		case SessionServiceMergeWorkstreamProcedure:
+			sessionServiceMergeWorkstreamHandler.ServeHTTP(w, r)
+		case SessionServiceDiscardWorkstreamProcedure:
+			sessionServiceDiscardWorkstreamHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1042,4 +1177,24 @@ func (UnimplementedSessionServiceHandler) CaptureBacklogItem(context.Context, *c
 
 func (UnimplementedSessionServiceHandler) GetUsage(context.Context, *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetUsage is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) SpawnWorkstream(context.Context, *connect.Request[v1.SpawnWorkstreamRequest]) (*connect.Response[v1.SpawnWorkstreamResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.SpawnWorkstream is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) ListWorkstreams(context.Context, *connect.Request[v1.ListWorkstreamsRequest]) (*connect.Response[v1.ListWorkstreamsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ListWorkstreams is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) PreviewMerge(context.Context, *connect.Request[v1.PreviewMergeRequest]) (*connect.Response[v1.PreviewMergeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.PreviewMerge is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) MergeWorkstream(context.Context, *connect.Request[v1.MergeWorkstreamRequest]) (*connect.Response[v1.MergeWorkstreamResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.MergeWorkstream is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) DiscardWorkstream(context.Context, *connect.Request[v1.DiscardWorkstreamRequest]) (*connect.Response[v1.DiscardWorkstreamResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.DiscardWorkstream is not implemented"))
 }

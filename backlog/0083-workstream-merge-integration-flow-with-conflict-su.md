@@ -88,3 +88,7 @@ Scope guard: no proto/server/TUI changes (0084/0085); no resolve-mode session sp
 - 2026-07-02 review (Claude): accept — The change implements the §6 workstream merge/integration flow at the manager level exactly as planned. Event model (4 new types + reducer projection fields + strSlice handling both []string and []an
 …[truncated]
 - 2026-07-02 decision: accept — commit: session: conflict-aware, review-gated workstream merge/discard flow + lifecycle events (0083)
+- 2026-07-02 usage: 39,460 tok (in 124, out 39,336, cache_r 2,390,827, cache_w 160,548) · cost n/a (unpriced)
+  implementer: 20,035 tok (in 52, out 19,983, cache_r 1,105,390, cache_w 63,719) · cost n/a (unpriced)
+  coordinator: 15,912 tok (in 46, out 15,866, cache_r 1,088,738, cache_w 67,982) · cost n/a (unpriced)
+  reviewer:Claude: 3,513 tok (in 26, out 3,487, cache_r 196,699, cache_w 28,847) · cost n/a (unpriced)

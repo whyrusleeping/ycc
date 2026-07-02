@@ -403,6 +403,73 @@ message GetUsageResponse {
   string workspace = 3;
 }
 
+// Parallel workstreams (docs/design/parallel-workstreams.md §5–§8): a workstream
+// is a linked git worktree + branch plus the `work` session scoped to it, tracked
+// as a child of a project. WorkstreamInfo mirrors workstream.Workstream.
+message WorkstreamInfo {
+  string id = 1;            // stable short id (ws_<8-hex>)
+  string project = 2;       // parent project NAME
+  string base_commit = 3;   // commit the branch was created from
+  string branch = 4;        // worktree branch ref (ycc/ws/<id>[-<task>])
+  string worktree_path = 5; // absolute worktree directory
+  string session_id = 6;    // session scoped to the worktree (Subscribe target)
+  string task_id = 7;       // optional backlog task this workstream targets
+  string status = 8;        // active | merged | discarded | stale
+  string created_at = 9;    // RFC3339
+}
+
+// SpawnWorkstream creates a worktree + branch off the project's base and starts a
+// `work` session inside it (design §5, §8). The session_id for Subscribe rides
+// inside the returned WorkstreamInfo.
+message SpawnWorkstreamRequest {
+  string project = 1;           // parent project name (required)
+  string base_ref = 2;          // ref/commit to branch from; empty => HEAD
+  string task_id = 3;           // optional backlog task id (appended to branch)
+  string prompt = 4;            // optional initial prompt for the session
+  string interaction_level = 5; // interactive | judgement | autonomous (default judgement)
+}
+message SpawnWorkstreamResponse { WorkstreamInfo workstream = 1; }
+
+// ListWorkstreams returns the workstreams for a project (empty project => all).
+message ListWorkstreamsRequest { string project = 1; }
+message ListWorkstreamsResponse { repeated WorkstreamInfo workstreams = 1; }
+
+// PreviewMerge trial-merges a workstream's branch into its project's current base
+// WITHOUT mutating anything (design §6 step 1): clean reports whether the merge
+// applies without conflict, conflicts lists the conflicted paths otherwise, and
+// diff holds the integrated diff preview when clean.
+message PreviewMergeRequest { string workstream_id = 1; }
+message PreviewMergeResponse {
+  bool clean = 1;
+  repeated string conflicts = 2;
+  string diff = 3;
+}
+
+// MergeWorkstream integrates a workstream's branch back to base with the
+// conflict-aware, review-gated flow (design §6). The design §8 sketch calls the
+// second field "strategy", but that sketch is explicitly non-final; the manager's
+// real gate is `accept`: under interactive/judgement a clean trial merge returns
+// needs_accept + the integrated diff (nothing mutated) until accept=true, while
+// autonomous integrates clean merges immediately. A conflict returns the
+// conflicted paths with base untouched and the worktree kept.
+message MergeWorkstreamRequest {
+  string workstream_id = 1;
+  bool accept = 2; // accept a review-gated clean merge (design §6 step 2)
+}
+message MergeWorkstreamResponse {
+  bool merged = 1;            // branch integrated (commit holds the merge sha)
+  string commit = 2;
+  bool needs_accept = 3;      // clean but gated: review diff, then re-call accept=true
+  string diff = 4;            // integrated diff when needs_accept
+  repeated string conflicts = 5; // conflicted paths when the merge conflicted
+}
+
+// DiscardWorkstream abandons a workstream without merging: it stops the session,
+// cleans up the worktree + branch, and marks the registry entry discarded
+// (design §6).
+message DiscardWorkstreamRequest { string workstream_id = 1; }
+message DiscardWorkstreamResponse {}
+
 // SessionService is the daemon's RPC surface (spec §12). M1 implements the core
 // four; mode/question RPCs arrive in later milestones.
 service SessionService {
@@ -481,4 +548,15 @@ service SessionService {
   // Usage/cost breakdown (spec §20): aggregated, priced token usage by task ×
   // model × day so clients can render the cost breakdown.
   rpc GetUsage(GetUsageRequest) returns (GetUsageResponse);
+
+  // Parallel workstreams (docs/design/parallel-workstreams.md §6, §8): spawn a
+  // worktree+session, list them, preview/merge a branch back to base with the
+  // conflict-aware review gate, or discard one. Subscribe(session_id) is reused
+  // verbatim for per-workstream event streaming (the session_id rides inside
+  // WorkstreamInfo).
+  rpc SpawnWorkstream(SpawnWorkstreamRequest) returns (SpawnWorkstreamResponse);
+  rpc ListWorkstreams(ListWorkstreamsRequest) returns (ListWorkstreamsResponse);
+  rpc PreviewMerge(PreviewMergeRequest) returns (PreviewMergeResponse);
+  rpc MergeWorkstream(MergeWorkstreamRequest) returns (MergeWorkstreamResponse);
+  rpc DiscardWorkstream(DiscardWorkstreamRequest) returns (DiscardWorkstreamResponse);
 }

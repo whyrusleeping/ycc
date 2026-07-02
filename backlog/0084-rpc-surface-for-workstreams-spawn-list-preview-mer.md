@@ -1,10 +1,10 @@
 ---
 id: "0084"
 title: RPC surface for workstreams (spawn/list/preview/merge/discard)
-status: todo
+status: done
 priority: 4
 created: "2026-06-30"
-updated: "2026-06-30"
+updated: "2026-07-02"
 depends_on:
     - "0082"
     - "0083"
@@ -30,4 +30,48 @@ Fourth step of the parallel-workstreams design (see `docs/design/parallel-workst
 
 ## Acceptance criteria
 
+## Plan
+
+Expose the existing workstream lifecycle (Manager.SpawnWorkstream / Workstreams / PreviewWorkstreamMerge / MergeWorkstream / DiscardWorkstream — all implemented in tasks 0082/0083) over the Connect RPC surface.
+
+1. Proto (proto/ycc/v1/ycc.proto):
+   - `WorkstreamInfo` message mirroring workstream.Workstream: id, project, base_commit, branch, worktree_path, session_id, task_id, status, created_at (RFC3339).
+   - `SpawnWorkstreamRequest{project, base_ref, task_id, prompt, interaction_level}` → `SpawnWorkstreamResponse{WorkstreamInfo workstream}` (session_id is inside the info, per design §8 sketch).
+   - `ListWorkstreamsRequest{project}` → `ListWorkstreamsResponse{repeated WorkstreamInfo}`.
+   - `PreviewMergeRequest{workstream_id}` → `PreviewMergeResponse{clean, repeated conflicts, diff}`.
+   - `MergeWorkstreamRequest{workstream_id, accept}` → `MergeWorkstreamResponse{merged, commit, needs_accept, diff, repeated conflicts}`. NOTE: the design §8 sketch says "strategy" but explicitly calls itself a sketch; the manager's real gate is the accept bool (review-gated clean merge under interactive/judgement levels), so the proto carries `accept`. Document this in a comment.
+   - `DiscardWorkstreamRequest{workstream_id}` → `DiscardWorkstreamResponse{}`.
+   - Add the five rpcs to SessionService with doc comments referencing docs/design/parallel-workstreams.md §6/§8. Subscribe(session_id) is reused as-is for per-workstream streams — say so in the comment.
+2. Regenerate: `buf generate` (and `buf lint proto`) — protoc-gen-go / protoc-gen-connect-go are installed at ~/go/bin.
+3. Server handlers (internal/server/server.go): thin delegation to the manager. Error mapping: empty required fields → CodeInvalidArgument; "unknown workstream"/"unknown project" → CodeNotFound; workstream.ErrWorktreeInUse → CodeFailedPrecondition; not-active status → CodeFailedPrecondition; other errors → CodeInternal (follow the file's existing conventions). Add a toWorkstreamInfo converter.
+4. Tests:
+   a. internal/server: an end-to-end scripted-client test that stands up the real Connect handler on an httptest h2c server with a yccv1connect client (this simultaneously proves the HTTP path): register a temp git project (reuse the newWorkstreamManager idiom from internal/session/workstream_test.go, adapted locally), spawn 2 workstreams over RPC, commit a clean change in ws1's worktree and a conflicting change (same file changed on base + ws2), Subscribe(session_id) for each and observe events (at least workstream_created replayed; merged/conflict after the merge call), PreviewMerge for both (ws1 clean+diff, ws2 conflicts, and verify base HEAD unchanged after preview), MergeWorkstream both with accept (ws1 merged with commit; ws2 returns conflicts and base HEAD untouched, worktree kept, registry still active).
+   b. An explicit HTTP/JSON test: POST application/json to /ycc.v1.SessionService/ListWorkstreams (and/or SpawnWorkstream) on the httptest server and assert a JSON response decodes — proving the Connect JSON codec path.
+   c. Unit-ish error mapping tests: unknown workstream id → NotFound for Preview/Merge/Discard; missing project → InvalidArgument for Spawn.
+5. Verify: go build ./... && go vet ./... && go test ./...
+
+Scope note: TUI wiring is task 0085; no client/TUI changes here.
+
+### Starting points
+- proto/ycc/v1/ycc.proto — add messages + rpcs; regenerate with `buf generate`
+- internal/server/server.go — handler conventions (connect codes, toProto, errNoSession)
+- internal/session/session.go: SpawnWorkstreamConfig, Manager.SpawnWorkstream, Manager.Workstreams
+- internal/session/workstream_merge.go: MergePreview, MergeOutcome, PreviewWorkstreamMerge, MergeWorkstream(id, accept), DiscardWorkstream
+- internal/workstream/registry.go: Workstream struct, Status, ErrWorktreeInUse
+- internal/session/workstream_test.go: newWorkstreamManager test idiom (temp git repo + project.NewMemory + workstream.NewMemory)
+- internal/session/workstream_merge_test.go: commitInto helper for making branches diverge
+- internal/daemon/serve.go: buildHandler shows h2c + NewSessionServiceHandler wiring for an httptest server
+- git.Open(dir) auto-inits? see internal/git/worktree.go + tests for how temp repos get an initial commit
+
 ## Work log
+- 2026-07-02 plan: Expose the existing workstream lifecycle (Manager.SpawnWorkstream / Workstreams / PreviewWorkstreamMerge / MergeWorkstream / DiscardWorkstream — all implemented in tasks 0082/0083) over the Connect 
+…[truncated]
+- 2026-07-02 context hints: 9 recorded with plan
+- 2026-07-02 context hints: proto/ycc/v1/ycc.proto — add messages + rpcs; regenerate with `buf generate` (run from repo root; plugins at ~/go/bin); internal/server/server.go — handler conventions (connect codes, toProto, err
+…[truncated]
+- 2026-07-02 implementer report: Exposed the workstream lifecycle over the Connect RPC surface (task 0084).  ## Changes - **proto/ycc/v1/ycc.proto**: Added `WorkstreamInfo` (mirrors `workstream.Workstream`: id, project, base_commit, 
+…[truncated]
+- 2026-07-02 review tier: single-opus — reviewers: Claude
+- 2026-07-02 review (Claude): accept — The change exposes the full workstream lifecycle (spawn/list/preview/merge/discard) over the Connect RPC surface exactly as specified. Proto messages and RPCs were added with good documentation and re
+…[truncated]
+- 2026-07-02 decision: accept — commit: rpc: expose workstream lifecycle (spawn/list/preview/merge/discard) over Connect (0084)
