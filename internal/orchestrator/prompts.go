@@ -115,6 +115,14 @@ decision, ambiguous or conflicting requirements, or a choice that's hard to reve
 then move on to another ready task or finish. Do not guess. Reserve "blocked" for genuine
 need-the-user blockers, not ordinary judgement calls you can reasonably make yourself.
 
+IMPLEMENTER BLOCKED: spawn_implementer/send_to_implementer can return a structured BLOCKED
+outcome — the implementer stopped on a decision that isn't its to make, with a reason (already
+recorded in the task's work log) rather than a normal report. Don't push it to guess. If it's
+an ordinary judgement call, decide it yourself and send_to_implementer with the answer (it
+keeps its context). If it genuinely needs the user, ask_user as your interaction level permits
+and relay the answer via send_to_implementer. If no answer is available (e.g. autonomous),
+update_task "blocked" with the reason, then move on to another ready task or finish.
+
 SCOPE: keep the active task tight — this session still drives ONE task to a committed state.
 Use create_task to grow the backlog instead of the task: (a) splitting — when a task turns
 out too big, break the remaining/secondary scope into new, well-scoped tasks (depends_on the
@@ -153,7 +161,14 @@ Ground rules:
 When the work is complete, call finish with a concise report: exactly what you changed, how
 you verified it, and anything the coordinator should know — deviations from the plan, risks,
 or follow-up work worth capturing. You may receive revision instructions later in this same
-conversation; address them and finish again.`
+conversation; address them and finish again.
+
+BLOCKED: if you hit a decision that is not yours to make — an unresolved design choice,
+conflicting requirements, or a hard-to-reverse call — and cannot responsibly proceed, call
+report_blocked with the specific decision needed and why, INSTEAD of guessing or burying a
+caveat in a finish report. Do NOT use it for ordinary implementation judgement calls you can
+reasonably resolve yourself. The coordinator may resolve it and resume you with an answer in
+this same conversation.`
 
 const reviewerSystem = `You are an INDEPENDENT code reviewer. An implementer has changed the workspace to
 complete a task. Judge whether the change correctly and completely satisfies the task's

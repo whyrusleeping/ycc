@@ -205,6 +205,11 @@ type Result struct {
 	// with substance from a degenerate empty yield (e.g. the implementer no-op
 	// guard).
 	NoContent bool
+	// Blocked is set when the run ended via a control tool declaring the agent
+	// blocked on a decision that isn't its to make (report_blocked). Report holds
+	// the reason. Callers treat this distinctly from a normal finish: resolve the
+	// decision, escalate to the user, or mark the work blocked — not as done.
+	Blocked bool
 }
 
 // Seed appends an initial user message (the task prompt) before Run.
@@ -514,7 +519,7 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 				if report == "" {
 					report = msg.Content
 				}
-				return &Result{Report: report, Turns: turn, NextMode: ctrl.Mode, NextPrompt: ctrl.Prompt}, nil
+				return &Result{Report: report, Turns: turn, NextMode: ctrl.Mode, NextPrompt: ctrl.Prompt, Blocked: ctrl.Blocked}, nil
 			}
 
 			// Safe checkpoint after a tool result: pause-to-steer if requested

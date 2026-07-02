@@ -169,6 +169,24 @@ func TestUnknownTool(t *testing.T) {
 	}
 }
 
+func TestReportBlockedIsControl(t *testing.T) {
+	root := t.TempDir()
+	reg := workerReg(root)
+
+	// report_blocked with a reason stops the loop and marks the run blocked.
+	res := dispatch(t, reg, "report_blocked", `{"reason":"which auth scheme?"}`)
+	ctrl := ControlOf(res)
+	if ctrl == nil || !ctrl.Stop || !ctrl.Blocked || ctrl.Report != "which auth scheme?" {
+		t.Fatalf("report_blocked control = %+v", ctrl)
+	}
+
+	// Missing/empty reason is an error result, not a control stop.
+	res = dispatch(t, reg, "report_blocked", `{}`)
+	if !res.IsError || ControlOf(res) != nil {
+		t.Fatalf("report_blocked without reason = %q (err=%v, ctrl=%+v)", res.Content, res.IsError, ControlOf(res))
+	}
+}
+
 // 1x1 transparent PNG.
 var tinyPNG = []byte{
 	0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,

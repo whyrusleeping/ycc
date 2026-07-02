@@ -327,9 +327,12 @@ turn returns a reasoning summary, the loop emits a dedicated `thinking` event (b
 
 **Worker tools** (implementer; read/write the workspace):
 `Read`, `Write`, `Edit`, `Bash`, `web_search`/`fetch_page` (Exa-backed; no-op without a
-key), and `finish(report)` — the control tool that ends the run and returns the report to
-the coordinator. There are no separate `list_dir`/`grep`/`glob` tools: `Read` on a
-directory lists it, and searching goes through `Bash` + ripgrep.
+key), `finish(report)` — the control tool that ends the run and returns the report to
+the coordinator — and `report_blocked(reason)` — a structured escalation control tool the
+implementer calls INSTEAD of `finish` when it cannot responsibly proceed without a decision
+that isn't its to make; it ends the run with a distinct BLOCKED outcome (the reason lands in
+the task work log) rather than a normal report. There are no separate `list_dir`/`grep`/`glob`
+tools: `Read` on a directory lists it, and searching goes through `Bash` + ripgrep.
 
 **Multimodal `Read`.** The `Read` tool is multimodal, mirroring Claude Code: there is **no
 separate "view image" tool**. When `Read` is given an image (PNG, JPEG, GIF, WebP) or a PDF
@@ -450,6 +453,12 @@ coordinator (FRESH context, mode=work)
 
 Fresh context in step 0 is important: each `work` session starts clean so the
 coordinator reasons from the durable docs, not from stale conversation.
+
+**Blocked implementer (step 4).** Instead of a normal report, the implementer can end its
+run BLOCKED (via `report_blocked`) with a reason — a decision that isn't its to make. The
+coordinator then resolves the decision itself (an ordinary judgement call), asks the user
+per the interaction level, or marks the task `blocked`; the reason is recorded in the task's
+work log, and a subsequent `send_to_implementer` resumes the same context with the answer.
 
 A `work` session drives **one** task to a committed state, but the coordinator may
 **grow the backlog** while doing so via `create_task` (the same tool `pm` uses):

@@ -123,6 +123,49 @@ func TestSpawnImplementerNoOpGuard(t *testing.T) {
 	}
 }
 
+// An implementer that ends its run via report_blocked (a decision it can't make)
+// must surface a distinct BLOCKED outcome to the coordinator — an OK result the
+// coordinator can act on, NOT the no-op error — with the reason recorded in the
+// task work log, even when no workspace changes were made.
+func TestSpawnImplementerBlocked(t *testing.T) {
+	ws := t.TempDir()
+	repo, err := git.Open(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := docs.NewStore(ws)
+	if _, err := store.Create("a task", "## Work log\n", 1, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	// Blocks immediately with a reason and no workspace changes.
+	implTurner := &scripted{resp: []*gollama.ResponseMessageGenerate{
+		call("report_blocked", `{"reason":"which storage backend should this use?"}`),
+	}}
+	d := &Deps{
+		Workspace:   ws,
+		Docs:        store,
+		Repo:        repo,
+		Emitter:     event.NewEmitter(&captureRec{}, "coordinator"),
+		Implementer: AgentSpec{Name: "impl", Model: "m", NewClient: func() engine.Turner { return implTurner }},
+		Asker:       noopAsker{},
+	}
+	res, err := spawnImplementer(d).Call(context.Background(), map[string]any{"task_id": "0001", "plan": "go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Must NOT trip the no-op error path even though nothing changed.
+	if res.IsError {
+		t.Fatalf("blocked outcome should be an OK result, got error: %q", res.Content)
+	}
+	if !strings.Contains(res.Content, "BLOCKED") || !strings.Contains(res.Content, "which storage backend should this use?") {
+		t.Fatalf("blocked result missing header/reason:\n%s", res.Content)
+	}
+	if !workLogContains(t, store, "0001", "BLOCKED — which storage backend should this use?") {
+		task, _ := store.Get("0001")
+		t.Fatalf("work log missing BLOCKED line:\n%s", task.Body)
+	}
+}
+
 type noopAsker struct{}
 
 func (noopAsker) Ask(context.Context, string, []string) (string, error) { return "ok", nil }

@@ -75,6 +75,24 @@ func TestLoopStopsOnFinish(t *testing.T) {
 	}
 }
 
+// report_blocked is a control tool that ends the loop AND marks the run blocked,
+// carrying the reason in Report so callers can escalate distinctly from a finish.
+func TestLoopStopsOnReportBlocked(t *testing.T) {
+	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{
+		assistantToolCall("report_blocked", `{"reason":"need a decision on the schema"}`),
+	}}
+	res, err := newLoop(t, turner).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Blocked {
+		t.Fatalf("Blocked = false, want true")
+	}
+	if res.Report != "need a decision on the schema" {
+		t.Fatalf("report = %q", res.Report)
+	}
+}
+
 // A turn with no tool calls yields, returning the assistant text as the report.
 func TestLoopYieldsOnNoToolCalls(t *testing.T) {
 	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{

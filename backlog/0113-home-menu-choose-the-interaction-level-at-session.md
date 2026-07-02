@@ -67,3 +67,7 @@ Add an interaction-level selector to the TUI home menu (spec §9, §11):
 - 2026-07-02 review (Claude): accept — The change correctly and completely implements the home-menu interaction-level selector. A separate non-persisted `menuLevel` field defaults to "judgement" each launch, ←/→ cycle it via the existi
 …[truncated]
 - 2026-07-02 decision: accept — commit: tui: add interaction-level selector (←/→) to the home menu (task 0113)
+- 2026-07-02 usage: 19,266 tok (in 140, out 19,126, cache_r 1,323,640, cache_w 75,134) · cost n/a (unpriced)
+  implementer: 10,243 tok (in 82, out 10,161, cache_r 846,673, cache_w 33,269) · cost n/a (unpriced)
+  coordinator: 6,174 tok (in 34, out 6,140, cache_r 366,260, cache_w 26,654) · cost n/a (unpriced)
+  reviewer:Claude: 2,849 tok (in 24, out 2,825, cache_r 110,707, cache_w 15,211) · cost n/a (unpriced)

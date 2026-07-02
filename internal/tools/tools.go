@@ -21,11 +21,18 @@ import (
 // Prompt, if set, is the verbatim seed prompt for the new mode's loop (used by the
 // pm → work hand-off to carry the target task + planning context instead of letting
 // the work coordinator re-pick a task).
+//
+// Blocked marks a run that ended because the agent declared it cannot responsibly
+// proceed without a decision that isn't its to make (see report_blocked). It is
+// distinct from a normal finish: Report holds the reason, and the caller (e.g. the
+// work coordinator) is expected to resolve the decision, escalate to the user, or
+// mark the task blocked rather than treat it as completed work.
 type Control struct {
-	Stop   bool
-	Report string
-	Mode   string
-	Prompt string
+	Stop    bool
+	Report  string
+	Mode    string
+	Prompt  string
+	Blocked bool
 }
 
 // ControlOf returns the *Control carried by a tool result, or nil.

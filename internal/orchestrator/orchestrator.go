@@ -451,7 +451,11 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 				d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "implementer", "error": err.Error()})
 				return tools.ErrResult("implementer failed: %v", err), nil
 			}
-			d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "implementer"})
+			if res.Blocked {
+				d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "implementer", "blocked": true})
+			} else {
+				d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "implementer"})
+			}
 			return implementerOutcome(d, id, "implementer report", before, res), nil
 		},
 	}
@@ -483,7 +487,11 @@ func sendToImplementer(d *Deps) *gollama.Tool {
 				d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "implementer", "error": err.Error()})
 				return tools.ErrResult("implementer failed: %v", err), nil
 			}
-			d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "implementer"})
+			if res.Blocked {
+				d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "implementer", "blocked": true})
+			} else {
+				d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "implementer"})
+			}
 			return implementerOutcome(d, id, "revision", before, res), nil
 		},
 	}
@@ -758,6 +766,29 @@ func runReviewers(ctx context.Context, d *Deps, handles []*reviewerHandle, taskI
 // already turns that into a Run error, and this is the backstop for any other
 // way the implementer yields without doing work.
 func implementerOutcome(d *Deps, id, label, before string, res *engine.Result) *gollama.ToolResult {
+	// A structured blocked escalation is handled FIRST — before the no-progress
+	// guard, which must not fire for a legitimate blocked report even when there
+	// are no workspace changes. The reason lands in the work log; the coordinator
+	// is told to resolve it, escalate, or mark the task blocked rather than push
+	// the implementer to guess.
+	if res.Blocked {
+		reason := strings.TrimSpace(res.Report)
+		if reason == "" {
+			reason = "(no reason given)"
+		}
+		d.Docs.AppendWorkLog(id, label+": BLOCKED — "+oneLine(reason))
+		diff, _ := d.Repo.Diff()
+		out := "IMPLEMENTER BLOCKED (not finished): it cannot proceed without a decision.\n\nREASON: " + reason +
+			"\n\n=== STAGED DIFF (partial work may exist) ===\n" + truncate(diff, maxDiffChars)
+		if strings.TrimSpace(diff) == "" {
+			out += "(no changes in the workspace)"
+		}
+		out += "\n\nDo not push it to guess. If this is an ordinary judgement call, decide it yourself and " +
+			"send_to_implementer with the answer (it keeps its context). If the user is genuinely needed, ask_user as " +
+			"your interaction level permits and relay the answer via send_to_implementer. If no answer is available, " +
+			"update_task 'blocked' with the reason (already recorded in the work log)."
+		return tools.OkResult(out)
+	}
 	after, _ := d.Repo.Diff()
 	noReport := strings.TrimSpace(res.Report) == "" || res.NoContent
 	if noReport && strings.TrimSpace(after) == strings.TrimSpace(before) {

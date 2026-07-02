@@ -117,7 +117,7 @@
 | [0112](backlog/0112-key-parity-browse-selector-session-browser-reachab.md) | Key parity: browse selector + session browser reachable from within a session | done | 4 | — |
 | [0113](backlog/0113-home-menu-choose-the-interaction-level-at-session.md) | Home menu: choose the interaction level at session start | done | 4 | — |
 | [0114](backlog/0114-stream-model-output-incrementally-into-the-session.md) | Stream model output incrementally into the session view | blocked | 3 | — |
-| [0115](backlog/0115-structured-blocked-escalation-from-the-implementer.md) | Structured "blocked" escalation from the implementer to the coordinator | todo | 4 | — |
+| [0115](backlog/0115-structured-blocked-escalation-from-the-implementer.md) | Structured "blocked" escalation from the implementer to the coordinator | done | 4 | — |
 | [0116](backlog/0116-transcript-search-and-jump-to-event-navigation.md) | Transcript search (/) and jump-to-event navigation | todo | 4 | — |
 | [0117](backlog/0117-preserve-workstream-session-transcripts-after-merg.md) | Preserve workstream session transcripts after merge/discard removes the worktree | todo | 5 | 0085 |
 | [0118](backlog/0118-listworkstreams-enrichment-reuse-the-project-repo.md) | ListWorkstreams enrichment: reuse the project repo instead of re-opening per workstream | todo | 5 | 0085 |

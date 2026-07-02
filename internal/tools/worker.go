@@ -49,9 +49,11 @@ func Editing(ws *Workspace) []*gollama.Tool {
 }
 
 // Worker returns the standard worker tool set scoped to ws (spec §8): the editing
-// tools plus finish, the control tool that ends the agent loop with a report.
+// tools plus finish, the control tool that ends the agent loop with a report, and
+// report_blocked, the structured escalation control tool for when the agent cannot
+// responsibly proceed without a decision that isn't its to make.
 func Worker(ws *Workspace) []*gollama.Tool {
-	return append(Editing(ws), Finish())
+	return append(Editing(ws), Finish(), ReportBlocked())
 }
 
 func readFile(ws *Workspace) *gollama.Tool {
@@ -359,10 +361,31 @@ func Finish() *gollama.Tool {
 		Description: "Call when your assigned work is complete. Provide a concise report of what was done " +
 			"and how it was verified. This ends your run and returns the report to whoever is waiting on " +
 			"you (the user, or the coordinator that spawned you).",
-		Params:      obj(map[string]any{"report": strProp("summary of the work performed and its outcome")}, "report"),
+		Params: obj(map[string]any{"report": strProp("summary of the work performed and its outcome")}, "report"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			report, _ := getString(params, "report")
 			return &gollama.ToolResult{Content: "session finished", Structured: &Control{Stop: true, Report: report}}, nil
+		},
+	}
+}
+
+// ReportBlocked is a control tool: it ends the agent loop and escalates a
+// blocking decision to whoever spawned the agent, distinct from a normal finish.
+func ReportBlocked() *gollama.Tool {
+	return &gollama.Tool{
+		Name: "report_blocked",
+		Description: "Call INSTEAD of finish when you cannot responsibly proceed without a decision that is not " +
+			"yours to make — an unresolved design choice, conflicting requirements, or a hard-to-reverse call. " +
+			"State the specific decision needed and why. This ends your run and escalates to the coordinator, which " +
+			"may resolve it and resume you with an answer. Do NOT use this for ordinary implementation judgement " +
+			"calls you can reasonably make yourself.",
+		Params: obj(map[string]any{"reason": strProp("the specific decision needed and why you cannot proceed without it")}, "reason"),
+		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
+			reason, ok := getString(params, "reason")
+			if !ok {
+				return errResult("report_blocked: missing 'reason' — state the specific decision needed and why"), nil
+			}
+			return &gollama.ToolResult{Content: "blocked; escalating", Structured: &Control{Stop: true, Blocked: true, Report: reason}}, nil
 		},
 	}
 }
