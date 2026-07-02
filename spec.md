@@ -511,6 +511,13 @@ service SessionService {
   rpc AddProject(AddProjectRequest) returns (AddProjectResponse);
   rpc RemoveProject(RemoveProjectRequest) returns (RemoveProjectResponse);
 
+  // Parallel workstreams — git worktrees, child of a project (§14.1).
+  rpc SpawnWorkstream(SpawnWorkstreamRequest) returns (SpawnWorkstreamResponse);
+  rpc ListWorkstreams(ListWorkstreamsRequest) returns (ListWorkstreamsResponse);
+  rpc PreviewMerge(PreviewMergeRequest) returns (PreviewMergeResponse);   // non-mutating trial merge
+  rpc MergeWorkstream(MergeWorkstreamRequest) returns (MergeWorkstreamResponse);
+  rpc DiscardWorkstream(DiscardWorkstreamRequest) returns (DiscardWorkstreamResponse);
+
   // Settings overlay (§18.2) — change session config mid-flight.
   rpc ListModels(ListModelsRequest) returns (ListModelsResponse);       // available logical models
   rpc UpsertModel(UpsertModelRequest) returns (UpsertModelResponse);    // add/edit a model backend (§18.2, task 0041)
@@ -707,6 +714,41 @@ or a `reviews.default` naming no tier are rejected); the built-ins are always va
   workspace mutations; remote clients only append *input* events, which the workspace
   daemon serializes).
 
+### 14.1 Parallel workstreams (git worktrees)
+
+To run multiple agent tasks at once without them clobbering each other's working tree,
+ycc adopts **git worktrees** (design spike task 0078; full rationale/alternatives in
+`docs/design/parallel-workstreams.md`).
+
+- **Concept.** A **workstream** = a linked git worktree + a branch
+  `ycc/ws/<workstream-id>[-<task>]` + a `work` session scoped to the worktree's absolute
+  path. A workstream is a **child of a project**, never a top-level project entry — this
+  keeps the project picker free of ephemeral worktrees.
+- **Worktree location.** Out of the primary tree, under the daemon state dir:
+  `<state>/ycc/worktrees/<project>/<workstream-id>`. Each worktree keeps its own
+  `.ycc/sessions/<id>/events.jsonl` (git-ignored, so it never travels into a merge).
+- **Single-writer, per tree.** The single-writer invariant (§14) holds verbatim: exactly
+  one daemon/coordinator writes each worktree. Parallelism is *across* trees, each
+  internally single-writer — the invariant itself is unchanged.
+- **Workstream registry.** The daemon owns a serialized `workstreams.json` in the state
+  dir (beside `projects.json`), mapping id → `{ project, base commit, branch, worktree
+  path, session id, status }`. This is metadata, not workspace mutation, so it doesn't
+  violate single-writer. Startup recovery reconciles stale worktrees via `git worktree
+  list`/`prune`.
+- **Merge flow — conflict-aware, sequential, review-gated.** A **non-mutating trial
+  merge** detects conflicts first. **Clean** → auto-merged under the *autonomous*
+  interaction level, otherwise gated behind an explicit acceptance with the integrated
+  diff shown. **Conflicted** → emit `workstream_conflict` listing the conflicted paths and
+  stop; the base branch is **never** left conflicted, and the worktree is kept for
+  resolution. On merge or discard, cleanup runs `git worktree remove`, deletes the branch,
+  and `git worktree prune`.
+- **Lifecycle events** on the workstream's own session stream: `workstream_created`,
+  `workstream_merged`, `workstream_conflict`, `workstream_discarded` — clients render them
+  like any other session event.
+- **RPC surface** (§12): `SpawnWorkstream`, `ListWorkstreams`, `PreviewMerge`,
+  `MergeWorkstream`, `DiscardWorkstream`; `Subscribe` is reused verbatim for the
+  workstream's session stream.
+
 ## 15. Package layout
 
 **Single binary.** There is one `ycc` binary that is client, TUI, and daemon.
@@ -768,8 +810,11 @@ ycc/
   `git diff`, read touched files, etc. They are **prompted** not to modify the
   workspace. Hard prevention is impractical while they have bash; **sandboxing reviewer
   bash is deferred future work** (see task 0008).
-- **Implementer isolation:** *Decided.* Implementers work **directly on the codebase**
-  (single task at a time). Git worktrees revisited only if/when we want parallel tasks.
+- **Implementer isolation:** *Decided.* A single-task implementer works **directly on the
+  primary codebase**. For **parallel** work, git worktrees are **adopted**: each parallel
+  workstream gets its own linked worktree so the single-writer invariant holds *per tree*
+  (design spike task 0078; `docs/design/parallel-workstreams.md`). The previously deferred
+  revisit is now resolved — see §14.1 for the workstream concept, registry, and merge flow.
 - **Commit granularity:** one commit per accepted task vs. checkpoints during work.
 - **TUI framework:** Bubble Tea is the obvious Go choice for the client.
 - **Session GC / retention** of `.ycc/sessions`.

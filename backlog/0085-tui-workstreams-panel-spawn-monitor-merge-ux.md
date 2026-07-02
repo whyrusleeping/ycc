@@ -86,3 +86,7 @@ Out of scope (keep tight): "Merge all clean" bulk action, home-menu spawn entry 
 …[truncated]
 - 2026-07-02 decision: accept — commit: tui: workstreams panel — multi-select parallel spawn from the backlog browser, live status rows (running/idle/awaiting-review/conflict + commit count via enriched ListWorkstreams), session drill-in,
 …[truncated]
+- 2026-07-02 usage: 66,511 tok (in 378, out 66,133, cache_r 16,403,758, cache_w 254,775) · cost n/a (unpriced)
+  implementer: 51,675 tok (in 314, out 51,361, cache_r 15,400,098, cache_w 160,676) · cost n/a (unpriced)
+  reviewer:Claude: 7,474 tok (in 40, out 7,434, cache_r 450,605, cache_w 36,725) · cost n/a (unpriced)
+  coordinator: 7,362 tok (in 24, out 7,338, cache_r 553,055, cache_w 57,374) · cost n/a (unpriced)

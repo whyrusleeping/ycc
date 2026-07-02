@@ -88,7 +88,7 @@
 | [0083](backlog/0083-workstream-merge-integration-flow-with-conflict-su.md) | Workstream merge/integration flow with conflict surfacing | done | 4 | 0082 |
 | [0084](backlog/0084-rpc-surface-for-workstreams-spawn-list-preview-mer.md) | RPC surface for workstreams (spawn/list/preview/merge/discard) | done | 4 | 0082, 0083 |
 | [0085](backlog/0085-tui-workstreams-panel-spawn-monitor-merge-ux.md) | TUI: Workstreams panel + spawn/monitor/merge UX | done | 4 | 0084 |
-| [0086](backlog/0086-spec-document-workstream-concept-worktree-decision.md) | Spec: document workstream concept + worktree decision | todo | 4 | 0078 |
+| [0086](backlog/0086-spec-document-workstream-concept-worktree-decision.md) | Spec: document workstream concept + worktree decision | done | 4 | 0078 |
 | [0087](backlog/0087-add-web-search-fetch-page-agent-tools-via-exa.md) | Add web search + fetch-page agent tools (via Exa) | done | 3 | — |
 | [0088](backlog/0088-make-read-tool-list-directory-contents-when-given.md) | Make Read tool list directory contents when given a directory path | done | 3 | — |
 | [0089](backlog/0089-break-down-per-task-work-log-token-usage-by-agent.md) | Break down per-task work-log token usage by agent role | done | 3 | 0038 |
