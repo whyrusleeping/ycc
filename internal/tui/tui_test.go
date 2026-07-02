@@ -2238,6 +2238,188 @@ func TestWizardPickerAndFooterAffordances(t *testing.T) {
 	}
 }
 
+// newPickerModel builds a session model with a single pending options question so
+// the picker footer (m.picking) is active. Returned ready to feed keys/mouse.
+func newPickerModel(t *testing.T, f *fakeClient) model {
+	t.Helper()
+	m := model{
+		client: f, ctx: context.Background(),
+		state: stateSession, status: "running", sessionID: "s1", follow: true,
+		input:    newSessionInput(),
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+	}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(model)
+	m.appendEvent(&v1.Event{
+		Seq: 1, Type: "question_asked", Actor: "coordinator",
+		DataJson: `{"question":"db?","options":["postgres","sqlite","mysql"]}`,
+	})
+	if !m.picking || m.wizActive {
+		t.Fatalf("expected a single-question picker (picking=%v wizActive=%v)", m.picking, m.wizActive)
+	}
+	return m
+}
+
+// A number key selects the corresponding option directly (spec §18.3): the
+// pending question clears and an answer command is issued without touching the
+// highlighted cursor first.
+func TestPickerNumberKeySelectsOption(t *testing.T) {
+	f := newFakeClient()
+	m := newPickerModel(t, f)
+
+	// Press "2" → selects the 2nd option (index 1). The answer cmd is not run
+	// here (the fake has no AnswerQuestion), only the state transition is checked.
+	updated, cmd := m.Update(keyMsg("2"))
+	m = updated.(model)
+	if m.picking {
+		t.Fatal("number key should have dismissed the picker")
+	}
+	if m.pending != "" || m.pickerOpts != nil {
+		t.Fatalf("selecting an option should clear pending/pickerOpts, got pending=%q opts=%v", m.pending, m.pickerOpts)
+	}
+	if cmd == nil {
+		t.Fatal("selecting an option should return an answer command")
+	}
+}
+
+// In a multi-question wizard a number key selects the active question's option
+// and advances to the next question.
+func TestWizardNumberKeyAdvances(t *testing.T) {
+	f := newFakeClient()
+	m := model{
+		client: f, ctx: context.Background(),
+		state: stateSession, status: "running", sessionID: "s1", follow: true,
+		input:    newSessionInput(),
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+	}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(model)
+	m.appendEvent(&v1.Event{
+		Seq: 1, Type: "question_asked", Actor: "coordinator",
+		DataJson: `{"questions":[{"question":"db?","options":["postgres","sqlite"]},{"question":"name?","options":["a","b"]}]}`,
+	})
+	if !m.wizActive || !m.picking || m.wizIdx != 0 {
+		t.Fatalf("expected wizard picker at idx 0 (active=%v picking=%v idx=%d)", m.wizActive, m.picking, m.wizIdx)
+	}
+
+	updated, _ = m.Update(keyMsg("1"))
+	m = updated.(model)
+	if m.wizIdx != 1 {
+		t.Fatalf("number key should advance the wizard: wizIdx=%d, want 1", m.wizIdx)
+	}
+	if got := m.wizAnswers[0]; !got.done || got.idx != 0 {
+		t.Fatalf("Q1 answer should record option 0: %+v", got)
+	}
+}
+
+// A digit past the number of options is ignored: the picker stays open and the
+// cursor doesn't move.
+func TestPickerNumberBeyondOptionsNoop(t *testing.T) {
+	f := newFakeClient()
+	m := newPickerModel(t, f) // 3 options
+	updated, cmd := m.Update(keyMsg("7"))
+	m = updated.(model)
+	if !m.picking {
+		t.Fatal("a digit beyond the option count must not dismiss the picker")
+	}
+	if m.pickerCursor != 0 {
+		t.Fatalf("stray digit moved the cursor to %d", m.pickerCursor)
+	}
+	if cmd != nil {
+		t.Fatal("stray digit should not return a command")
+	}
+}
+
+// pgup/pgdown scroll the transcript while a picker is active instead of being
+// swallowed, so the question's context can be re-read.
+func TestPickerScrollsTranscript(t *testing.T) {
+	f := newFakeClient()
+	m := newPickerModel(t, f)
+	// Overflow the viewport so there is something to scroll.
+	for i := 2; i < 60; i++ {
+		m.appendEvent(&v1.Event{Seq: int64(i), Type: "model_turn", Actor: "coordinator", DataJson: `{"text":"line"}`})
+	}
+	m.rebuild()
+	m.vp.GotoBottom()
+	m.follow = m.vp.AtBottom()
+	if !m.follow {
+		t.Fatal("setup: viewport should start at bottom (following)")
+	}
+
+	updated, _ := m.Update(keyMsg("pgup"))
+	m = updated.(model)
+	if m.follow {
+		t.Fatal("pgup while picking should scroll up (follow=false), not be swallowed")
+	}
+	if !m.picking {
+		t.Fatal("scrolling must not dismiss the picker")
+	}
+}
+
+// A mouse wheel scroll reaches the viewport even while the picker is active.
+func TestPickerMouseWheelScrolls(t *testing.T) {
+	f := newFakeClient()
+	m := newPickerModel(t, f)
+	for i := 2; i < 60; i++ {
+		m.appendEvent(&v1.Event{Seq: int64(i), Type: "model_turn", Actor: "coordinator", DataJson: `{"text":"line"}`})
+	}
+	m.rebuild()
+	m.vp.GotoBottom()
+	m.follow = m.vp.AtBottom()
+
+	before := m.vp.YOffset()
+	updated, _ := m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	m = updated.(model)
+	if m.vp.YOffset() >= before {
+		t.Fatalf("mouse wheel should scroll the viewport up: before=%d after=%d", before, m.vp.YOffset())
+	}
+	if !m.picking {
+		t.Fatal("mouse wheel must not dismiss the picker")
+	}
+}
+
+// ctrl+b opens the backlog browser while a question is pending, and the picker
+// state survives so sessionView restores it when the browser closes.
+func TestPickerCtrlBOpensBacklog(t *testing.T) {
+	f := newFakeClient()
+	m := newPickerModel(t, f)
+	updated, cmd := m.Update(keyMsg("ctrl+b"))
+	m = updated.(model)
+	if !m.backlog {
+		t.Fatal("ctrl+b while picking should open the backlog browser")
+	}
+	if !m.picking {
+		t.Fatal("opening the backlog browser must not drop the pending picker")
+	}
+	if cmd == nil {
+		t.Fatal("ctrl+b should return the fetchBacklog command")
+	}
+}
+
+// ctrl+n opens the quick-capture overlay while a question is pending; the picker
+// state survives underneath.
+func TestPickerCtrlNOpensCapture(t *testing.T) {
+	f := newFakeClient()
+	m := newPickerModel(t, f)
+	updated, _ := m.Update(keyMsg("ctrl+n"))
+	m = updated.(model)
+	if !m.capture {
+		t.Fatal("ctrl+n while picking should open the capture overlay")
+	}
+	if !m.picking {
+		t.Fatal("opening capture must not drop the pending picker")
+	}
+}
+
+// The picker footer advertises number selection (spec §18.3).
+func TestPickerFooterMentionsNumbers(t *testing.T) {
+	f := newFakeClient()
+	m := newPickerModel(t, f)
+	if view := m.sessionView(); !strings.Contains(view, "1–9") {
+		t.Fatalf("picker footer should advertise number selection, got:\n%s", view)
+	}
+}
+
 // The quick-add capture overlay (task 0049) streams the capture agent's action
 // log live: each captureEvMsg appends to captureLog and is rendered in
 // captureView, and a terminal capture_result event drives the overlay to its

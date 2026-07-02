@@ -63,3 +63,7 @@ Verify: go build ./... && go test ./internal/tui/... (and full go test ./... at 
 - 2026-07-02 review (Claude): accept — The implementation satisfies all four acceptance criteria. ctrl+x is added as the universal interrupt chord (combined into the existing ctrl+i case in updateSession), and does not collide with any bub
 …[truncated]
 - 2026-07-02 decision: accept — commit: tui: add ctrl+x interrupt fallback + effective-binding footer hint (0105)
+- 2026-07-02 usage: 21,381 tok (in 154, out 21,227, cache_r 1,320,930, cache_w 67,458) · cost n/a (unpriced)
+  implementer: 11,835 tok (in 86, out 11,749, cache_r 773,770, cache_w 28,700) · cost n/a (unpriced)
+  coordinator: 6,972 tok (in 44, out 6,928, cache_r 450,332, cache_w 26,486) · cost n/a (unpriced)
+  reviewer:Claude: 2,574 tok (in 24, out 2,550, cache_r 96,828, cache_w 12,272) · cost n/a (unpriced)

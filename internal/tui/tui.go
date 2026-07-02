@@ -1218,6 +1218,22 @@ func (m model) answerQuestion(optIdx int, text string) tea.Cmd {
 	}
 }
 
+// choosePickerOption commits the picker selection at idx (a valid index into
+// m.pickerOpts). In a wizard it records the answer and advances; otherwise it
+// clears the pending question and sends the answer. Shared by the enter and
+// number-key paths.
+func (m *model) choosePickerOption(idx int) tea.Cmd {
+	m.picking = false
+	if m.wizActive {
+		return m.recordWizAnswer(idx, m.pickerOpts[idx], true)
+	}
+	m.pending = ""
+	m.pickerOpts = nil
+	m.follow = true
+	m.relayout()
+	return m.answerQuestion(idx, "")
+}
+
 // setLevel issues SetInteractionLevel for the current session (spec §18.2).
 func (m model) setLevel(level string) tea.Cmd {
 	return func() tea.Msg {
@@ -2348,17 +2364,37 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.relayout()
 					return m, m.input.Focus()
 				}
-				idx := m.pickerCursor
-				m.picking = false
-				if m.wizActive {
-					cmd := m.recordWizAnswer(idx, m.pickerOpts[idx], true)
-					return m, cmd
+				return m, m.choosePickerOption(m.pickerCursor)
+			case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+				// Number keys select an option directly (spec §18.3); digits past
+				// the option count are ignored so a stray press stays on the picker.
+				if idx := int(msg.String()[0] - '1'); idx < len(m.pickerOpts) {
+					return m, m.choosePickerOption(idx)
 				}
-				m.pending = ""
-				m.pickerOpts = nil
-				m.follow = true
-				m.relayout()
-				return m, m.answerQuestion(idx, "")
+				return m, nil
+			case "pgup":
+				// Keep the transcript scrollable so the question's context can be
+				// re-read without dismissing the picker.
+				m.vp.HalfPageUp()
+				m.follow = m.vp.AtBottom()
+				return m, nil
+			case "pgdown":
+				m.vp.HalfPageDown()
+				m.follow = m.vp.AtBottom()
+				return m, nil
+			case "ctrl+n":
+				// Quick-add a backlog item without answering yet (task 0016); the
+				// picker re-renders once the capture overlay closes.
+				m.openCapture()
+				return m, nil
+			case "ctrl+b":
+				// Open the read-only backlog browser (spec §18.5) — often exactly
+				// what's needed to answer "which task next?". m.picking is left set
+				// so sessionView restores the picker on return.
+				m.backlog, m.backlogCursor, m.backlogDetail = true, 0, nil
+				m.backlogShowDone = false
+				m.backlogBlockedOnly = false
+				return m, m.fetchBacklog
 			}
 			return m, nil
 		}
@@ -5392,14 +5428,14 @@ func (m model) sessionView() string {
 	if m.wizActive {
 		overview := m.wizardView()
 		if m.picking {
-			help := m.footer(" ↑↓ choose · enter select · ‹other…› to type · esc settings")
+			help := m.footer(" ↑↓/1–9 choose · enter select · ‹other…› to type · pgup/pgdn scroll · ctrl+b backlog · esc settings")
 			return top + "\n" + body + "\n" + overview + "\n" + m.pickerView() + "\n" + help
 		}
 		help := m.footer(" type your answer + enter · esc settings")
 		return top + "\n" + body + "\n" + overview + "\n" + m.inputRow() + "\n" + help
 	}
 	if m.picking {
-		help := m.footer(" ↑↓ choose · enter select · esc settings")
+		help := m.footer(" ↑↓/1–9 choose · enter select · pgup/pgdn scroll · ctrl+b backlog · esc settings")
 		return top + "\n" + body + "\n" + m.pickerView() + "\n" + help
 	}
 	if m.paused {
