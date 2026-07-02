@@ -416,6 +416,8 @@ message WorkstreamInfo {
   string task_id = 7;       // optional backlog task this workstream targets
   string status = 8;        // active | merged | discarded | stale
   string created_at = 9;    // RFC3339
+  int64 commit_count = 10;  // commits on the branch since base_commit (0 if unknown)
+  string session_status = 11; // live session status: running|idle|paused|stopped|error (empty if unknown)
 }
 
 // SpawnWorkstream creates a worktree + branch off the project's base and starts a

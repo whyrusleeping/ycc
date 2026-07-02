@@ -98,6 +98,42 @@ func (m *Manager) primaryRepo(ws workstream.Workstream) (*git.Repo, error) {
 	return git.Open(primary)
 }
 
+// WorkstreamSessionStatus reports the live status of a workstream's session as a
+// string (running | idle | paused | stopped | error), for the Workstreams panel
+// (design §8). It returns the in-memory status when the session is live; when
+// the session is not live it returns "stopped" for a session that exists on
+// disk, and "" (unknown) when there is no session at all.
+func (m *Manager) WorkstreamSessionStatus(ws workstream.Workstream) string {
+	if ws.SessionID == "" {
+		return ""
+	}
+	m.mu.Lock()
+	s, live := m.sessions[ws.SessionID]
+	m.mu.Unlock()
+	if live {
+		return string(s.Status())
+	}
+	return string(event.StatusStopped)
+}
+
+// WorkstreamCommitCount reports how many commits the workstream's branch has
+// added since its base commit (design §8). Best-effort: it returns 0 on any git
+// error so a transient failure never blocks listing.
+func (m *Manager) WorkstreamCommitCount(ws workstream.Workstream) int {
+	if ws.Branch == "" || ws.BaseCommit == "" {
+		return 0
+	}
+	repo, err := m.primaryRepo(ws)
+	if err != nil {
+		return 0
+	}
+	n, err := repo.CountCommits(ws.BaseCommit, ws.Branch)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
 // PreviewWorkstreamMerge trial-merges a workstream's branch into its project's
 // current base without mutating anything (design §6 step 1). On a clean trial it
 // also computes the integrated diff. It emits no events and changes no state.
@@ -136,8 +172,8 @@ func (m *Manager) PreviewWorkstreamMerge(id string) (MergePreview, error) {
 //   - conflict → a workstream_conflict event listing the paths; base untouched,
 //     worktree + active status kept so the conflict can be resolved.
 //   - clean, autonomous level (or accept=true) → the branch is merged --no-ff,
-//     a workstream_merged event recorded, the session stopped, and the worktree
-//     + branch cleaned up; registry status set to merged.
+//     a workstream_merged event recorded, the session stopped, and the
+//     worktree + branch cleaned up; registry status set to merged.
 //   - clean, interactive/judgement level and accept=false → NeedsAccept with the
 //     integrated diff; nothing is mutated and no event is recorded.
 func (m *Manager) MergeWorkstream(id string, accept bool) (MergeOutcome, error) {

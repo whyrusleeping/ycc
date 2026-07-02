@@ -4202,15 +4202,17 @@ func (x *GetUsageResponse) GetWorkspace() string {
 // as a child of a project. WorkstreamInfo mirrors workstream.Workstream.
 type WorkstreamInfo struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                                         // stable short id (ws_<8-hex>)
-	Project       string                 `protobuf:"bytes,2,opt,name=project,proto3" json:"project,omitempty"`                               // parent project NAME
-	BaseCommit    string                 `protobuf:"bytes,3,opt,name=base_commit,json=baseCommit,proto3" json:"base_commit,omitempty"`       // commit the branch was created from
-	Branch        string                 `protobuf:"bytes,4,opt,name=branch,proto3" json:"branch,omitempty"`                                 // worktree branch ref (ycc/ws/<id>[-<task>])
-	WorktreePath  string                 `protobuf:"bytes,5,opt,name=worktree_path,json=worktreePath,proto3" json:"worktree_path,omitempty"` // absolute worktree directory
-	SessionId     string                 `protobuf:"bytes,6,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`          // session scoped to the worktree (Subscribe target)
-	TaskId        string                 `protobuf:"bytes,7,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`                   // optional backlog task this workstream targets
-	Status        string                 `protobuf:"bytes,8,opt,name=status,proto3" json:"status,omitempty"`                                 // active | merged | discarded | stale
-	CreatedAt     string                 `protobuf:"bytes,9,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`          // RFC3339
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                                             // stable short id (ws_<8-hex>)
+	Project       string                 `protobuf:"bytes,2,opt,name=project,proto3" json:"project,omitempty"`                                   // parent project NAME
+	BaseCommit    string                 `protobuf:"bytes,3,opt,name=base_commit,json=baseCommit,proto3" json:"base_commit,omitempty"`           // commit the branch was created from
+	Branch        string                 `protobuf:"bytes,4,opt,name=branch,proto3" json:"branch,omitempty"`                                     // worktree branch ref (ycc/ws/<id>[-<task>])
+	WorktreePath  string                 `protobuf:"bytes,5,opt,name=worktree_path,json=worktreePath,proto3" json:"worktree_path,omitempty"`     // absolute worktree directory
+	SessionId     string                 `protobuf:"bytes,6,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`              // session scoped to the worktree (Subscribe target)
+	TaskId        string                 `protobuf:"bytes,7,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`                       // optional backlog task this workstream targets
+	Status        string                 `protobuf:"bytes,8,opt,name=status,proto3" json:"status,omitempty"`                                     // active | merged | discarded | stale
+	CreatedAt     string                 `protobuf:"bytes,9,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`              // RFC3339
+	CommitCount   int64                  `protobuf:"varint,10,opt,name=commit_count,json=commitCount,proto3" json:"commit_count,omitempty"`      // commits on the branch since base_commit (0 if unknown)
+	SessionStatus string                 `protobuf:"bytes,11,opt,name=session_status,json=sessionStatus,proto3" json:"session_status,omitempty"` // live session status: running|idle|paused|stopped|error (empty if unknown)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4304,6 +4306,20 @@ func (x *WorkstreamInfo) GetStatus() string {
 func (x *WorkstreamInfo) GetCreatedAt() string {
 	if x != nil {
 		return x.CreatedAt
+	}
+	return ""
+}
+
+func (x *WorkstreamInfo) GetCommitCount() int64 {
+	if x != nil {
+		return x.CommitCount
+	}
+	return 0
+}
+
+func (x *WorkstreamInfo) GetSessionStatus() string {
+	if x != nil {
+		return x.SessionStatus
 	}
 	return ""
 }
@@ -5148,7 +5164,7 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x10GetUsageResponse\x12$\n" +
 	"\x04rows\x18\x01 \x03(\v2\x10.ycc.v1.UsageRowR\x04rows\x12&\n" +
 	"\x05total\x18\x02 \x01(\v2\x10.ycc.v1.UsageRowR\x05total\x12\x1c\n" +
-	"\tworkspace\x18\x03 \x01(\tR\tworkspace\"\x87\x02\n" +
+	"\tworkspace\x18\x03 \x01(\tR\tworkspace\"\xd1\x02\n" +
 	"\x0eWorkstreamInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
 	"\aproject\x18\x02 \x01(\tR\aproject\x12\x1f\n" +
@@ -5161,7 +5177,10 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\atask_id\x18\a \x01(\tR\x06taskId\x12\x16\n" +
 	"\x06status\x18\b \x01(\tR\x06status\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\t \x01(\tR\tcreatedAt\"\xab\x01\n" +
+	"created_at\x18\t \x01(\tR\tcreatedAt\x12!\n" +
+	"\fcommit_count\x18\n" +
+	" \x01(\x03R\vcommitCount\x12%\n" +
+	"\x0esession_status\x18\v \x01(\tR\rsessionStatus\"\xab\x01\n" +
 	"\x16SpawnWorkstreamRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12\x19\n" +
 	"\bbase_ref\x18\x02 \x01(\tR\abaseRef\x12\x17\n" +

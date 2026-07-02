@@ -87,7 +87,7 @@
 | [0082](backlog/0082-workstream-registry-lifecycle-in-the-daemon-sessio.md) | Workstream registry + lifecycle in the daemon/session manager | done | 4 | 0081 |
 | [0083](backlog/0083-workstream-merge-integration-flow-with-conflict-su.md) | Workstream merge/integration flow with conflict surfacing | done | 4 | 0082 |
 | [0084](backlog/0084-rpc-surface-for-workstreams-spawn-list-preview-mer.md) | RPC surface for workstreams (spawn/list/preview/merge/discard) | done | 4 | 0082, 0083 |
-| [0085](backlog/0085-tui-workstreams-panel-spawn-monitor-merge-ux.md) | TUI: Workstreams panel + spawn/monitor/merge UX | todo | 4 | 0084 |
+| [0085](backlog/0085-tui-workstreams-panel-spawn-monitor-merge-ux.md) | TUI: Workstreams panel + spawn/monitor/merge UX | done | 4 | 0084 |
 | [0086](backlog/0086-spec-document-workstream-concept-worktree-decision.md) | Spec: document workstream concept + worktree decision | todo | 4 | 0078 |
 | [0087](backlog/0087-add-web-search-fetch-page-agent-tools-via-exa.md) | Add web search + fetch-page agent tools (via Exa) | done | 3 | — |
 | [0088](backlog/0088-make-read-tool-list-directory-contents-when-given.md) | Make Read tool list directory contents when given a directory path | done | 3 | — |
@@ -119,3 +119,5 @@
 | [0114](backlog/0114-stream-model-output-incrementally-into-the-session.md) | Stream model output incrementally into the session view | blocked | 3 | — |
 | [0115](backlog/0115-structured-blocked-escalation-from-the-implementer.md) | Structured "blocked" escalation from the implementer to the coordinator | todo | 4 | — |
 | [0116](backlog/0116-transcript-search-and-jump-to-event-navigation.md) | Transcript search (/) and jump-to-event navigation | todo | 4 | — |
+| [0117](backlog/0117-preserve-workstream-session-transcripts-after-merg.md) | Preserve workstream session transcripts after merge/discard removes the worktree | todo | 5 | 0085 |
+| [0118](backlog/0118-listworkstreams-enrichment-reuse-the-project-repo.md) | ListWorkstreams enrichment: reuse the project repo instead of re-opening per workstream | todo | 5 | 0085 |

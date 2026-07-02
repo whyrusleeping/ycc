@@ -194,3 +194,39 @@ func TestTrialMergeAndMergeConflict(t *testing.T) {
 		t.Fatalf("base left mid-merge/dirty after conflict: %q", status)
 	}
 }
+
+func TestCountCommits(t *testing.T) {
+	base := t.TempDir()
+	r, err := Open(base)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	writeFile(t, filepath.Join(base, "file.txt"), "seed\n")
+	if _, err := r.Commit("seed file"); err != nil {
+		t.Fatalf("seed commit: %v", err)
+	}
+	baseCommit := gitAt(t, base, "rev-parse", "HEAD")
+
+	wtDir := filepath.Join(t.TempDir(), "ws")
+	branch := "ycc/ws/count"
+	if err := r.AddWorktree(wtDir, branch, "HEAD"); err != nil {
+		t.Fatalf("AddWorktree: %v", err)
+	}
+
+	// No commits yet on the branch.
+	if n, err := r.CountCommits(baseCommit, branch); err != nil || n != 0 {
+		t.Fatalf("CountCommits (empty) = %d, %v; want 0, nil", n, err)
+	}
+
+	// Two commits on the branch.
+	writeFile(t, filepath.Join(wtDir, "a.txt"), "a\n")
+	gitAt(t, wtDir, "add", "-A")
+	gitAt(t, wtDir, "commit", "-m", "add a")
+	writeFile(t, filepath.Join(wtDir, "b.txt"), "b\n")
+	gitAt(t, wtDir, "add", "-A")
+	gitAt(t, wtDir, "commit", "-m", "add b")
+
+	if n, err := r.CountCommits(baseCommit, branch); err != nil || n != 2 {
+		t.Fatalf("CountCommits (two) = %d, %v; want 2, nil", n, err)
+	}
+}

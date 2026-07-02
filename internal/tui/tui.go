@@ -298,6 +298,39 @@ type model struct {
 	captureEvents   chan *v1.Event // live capture agent action-log stream
 	captureLog      []*v1.Event    // accumulated capture agent events for display
 
+	// workstreams panel (task 0085, design §8): a modal browser over menu/session,
+	// reached from the browse selector and opened after a multi-select spawn. It
+	// lists a project's workstreams with live per-workstream status, drills into
+	// the session view (reusing reopenSession), and hosts the merge/accept + discard
+	// overlays.
+	ws       bool
+	wsList   []*v1.WorkstreamInfo
+	wsCursor int
+	// wsNotice is a transient footer message (spawn result, merge outcome, RPC
+	// errors); cleared on the next successful action.
+	wsNotice string
+	// wsLocal overlays a locally-known state on a workstream row keyed by id:
+	// "conflict" (a preview/merge returned conflicts) or "awaiting-review" (a clean
+	// but review-gated merge). Fed by PreviewMerge/MergeWorkstream responses so a
+	// conflict is a loud, sticky row state rather than a silent failure.
+	wsLocal map[string]string
+	// wsTick guards the panel's live-refresh tick so a stale tick from a previous
+	// panel visit is dropped rather than compounding timers (mirrors waitingSeq).
+	wsTick int
+	// merge/accept overlay: wsMerge holds the PreviewMerge result for wsMergeID
+	// (nil => no overlay). wsMergeVP scrolls the integrated diff / conflict list.
+	wsMerge   *v1.PreviewMergeResponse
+	wsMergeID string
+	wsMergeVP viewport.Model
+	// wsDiscardID is the workstream awaiting a two-step discard confirm (footer
+	// prompt); "" => no pending confirm.
+	wsDiscardID string
+
+	// backlog multi-select spawn (task 0085): the set of selected task ids in the
+	// backlog browser LIST view (todo tasks only), toggled with space and cleared
+	// when the browser closes. `P` spawns one workstream per selected task.
+	backlogSelected map[string]bool
+
 	// model-backends management modal (spec §18.2, task 0044): list / add / edit /
 	// duplicate / remove logical model backends, wired to the 0041 RPCs
 	// (ListModels/GetModelConfig/UpsertModel/RemoveModel). Opened from the settings
@@ -491,6 +524,45 @@ type usageMsg struct {
 	total     *v1.UsageRow
 	workspace string
 }
+
+// workstreamsMsg carries the ListWorkstreams result for the panel (task 0085),
+// or an error to surface in the panel footer.
+type workstreamsMsg struct {
+	list []*v1.WorkstreamInfo
+	err  error
+}
+
+// wsSpawnedMsg reports the result of a multi-select "run in parallel" spawn (task
+// 0085): count is how many workstreams were created before err (if any).
+type wsSpawnedMsg struct {
+	count int
+	err   error
+}
+
+// wsPreviewMsg carries a PreviewMerge result for the merge overlay (task 0085).
+type wsPreviewMsg struct {
+	id      string
+	preview *v1.PreviewMergeResponse
+	err     error
+}
+
+// wsMergedMsg carries a MergeWorkstream result (task 0085): merged (with commit),
+// still-conflicted (paths), or a review-gated needs_accept.
+type wsMergedMsg struct {
+	id  string
+	res *v1.MergeWorkstreamResponse
+	err error
+}
+
+// wsDiscardedMsg reports the result of a DiscardWorkstream (task 0085).
+type wsDiscardedMsg struct {
+	id  string
+	err error
+}
+
+// wsTickMsg is the panel's live-refresh tick (task 0085); seq guards against
+// compounding timers across panel visits.
+type wsTickMsg struct{ seq int }
 
 // captureEvMsg carries one streamed capture-agent action-log event. A terminal
 // event of type "capture_result" carries the outcome of a CaptureBacklogItem RPC
@@ -1491,6 +1563,80 @@ func (m model) fetchUsage() tea.Msg {
 	return usageMsg{rows: resp.Msg.Rows, total: resp.Msg.Total, workspace: resp.Msg.Workspace}
 }
 
+// fetchWorkstreams loads the workstreams for the current project for the panel
+// (task 0085, design §8).
+func (m model) fetchWorkstreams() tea.Msg {
+	resp, err := m.client.ListWorkstreams(m.ctx, connect.NewRequest(&v1.ListWorkstreamsRequest{Project: m.project}))
+	if err != nil {
+		return workstreamsMsg{err: err}
+	}
+	return workstreamsMsg{list: resp.Msg.Workstreams}
+}
+
+// wsRefreshTick arms the next workstreams-panel refresh, tagged with the current
+// wsTick so a stale tick (from a previous panel visit) is dropped rather than
+// compounding timers (mirrors menuRefreshTick, task 0085).
+func (m model) wsRefreshTick() tea.Cmd {
+	seq := m.wsTick
+	return tea.Tick(3*time.Second, func(time.Time) tea.Msg { return wsTickMsg{seq} })
+}
+
+// spawnWorkstreamsCmd fires one SpawnWorkstream per selected backlog task (task
+// 0085, design §8), stopping at the first error. Each session is seeded with a
+// prompt naming the task and runs at the default (judgement) interaction level.
+func (m model) spawnWorkstreamsCmd(tasks []*v1.BacklogTaskSummary) tea.Cmd {
+	project := m.project
+	ctx := m.ctx
+	client := m.client
+	return func() tea.Msg {
+		n := 0
+		for _, t := range tasks {
+			prompt := fmt.Sprintf("Work on backlog task %s: %s", t.Id, t.Title)
+			if _, err := client.SpawnWorkstream(ctx, connect.NewRequest(&v1.SpawnWorkstreamRequest{
+				Project: project, TaskId: t.Id, Prompt: prompt, InteractionLevel: "judgement",
+			})); err != nil {
+				return wsSpawnedMsg{count: n, err: err}
+			}
+			n++
+		}
+		return wsSpawnedMsg{count: n}
+	}
+}
+
+// previewMergeCmd trial-merges a workstream for the merge overlay (task 0085,
+// design §6 step 1): clean + integrated diff, or the conflicted paths.
+func (m model) previewMergeCmd(id string) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := m.client.PreviewMerge(m.ctx, connect.NewRequest(&v1.PreviewMergeRequest{WorkstreamId: id}))
+		if err != nil {
+			return wsPreviewMsg{id: id, err: err}
+		}
+		return wsPreviewMsg{id: id, preview: resp.Msg}
+	}
+}
+
+// mergeWorkstreamCmd integrates a workstream's branch back to base with accept=true
+// (task 0085, design §6). A conflict returns the conflicted paths; base untouched.
+func (m model) mergeWorkstreamCmd(id string) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := m.client.MergeWorkstream(m.ctx, connect.NewRequest(&v1.MergeWorkstreamRequest{WorkstreamId: id, Accept: true}))
+		if err != nil {
+			return wsMergedMsg{id: id, err: err}
+		}
+		return wsMergedMsg{id: id, res: resp.Msg}
+	}
+}
+
+// discardWorkstreamCmd abandons a workstream without merging (task 0085, design §6).
+func (m model) discardWorkstreamCmd(id string) tea.Cmd {
+	return func() tea.Msg {
+		if _, err := m.client.DiscardWorkstream(m.ctx, connect.NewRequest(&v1.DiscardWorkstreamRequest{WorkstreamId: id})); err != nil {
+			return wsDiscardedMsg{id: id, err: err}
+		}
+		return wsDiscardedMsg{id: id}
+	}
+}
+
 // newSessionInput builds the multi-line session input textarea (task 0011).
 func newSessionInput() textarea.Model {
 	return newChatInput("type to prod / answer · enter sends · shift+enter newline · ↑↓ select · click to expand")
@@ -1770,6 +1916,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.rebuild()
 		m.relayout()
 		m.refreshBacklogDetailVP()
+		m.refreshWsMergeVP()
 		return m, nil
 
 	case modesMsg:
@@ -2108,6 +2255,91 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.costMsg = ""
 		}
 		return m, nil
+	case workstreamsMsg:
+		if msg.err != nil {
+			m.wsNotice = "list failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.rpcOK()
+		m.wsList = msg.list
+		m.wsCursor = clampCursor(m.wsCursor, len(m.wsList))
+		return m, nil
+	case wsTickMsg:
+		// Drop a stale tick from a previous panel visit; re-poll only while the
+		// panel is open (guards against compounding timers, task 0085).
+		if msg.seq != m.wsTick {
+			return m, nil
+		}
+		if !m.ws {
+			return m, nil
+		}
+		return m, tea.Batch(m.fetchWorkstreams, m.wsRefreshTick())
+	case wsSpawnedMsg:
+		if msg.err != nil {
+			m.wsNotice = fmt.Sprintf("spawned %d, then failed: %s", msg.count, msg.err.Error())
+		} else {
+			m.wsNotice = fmt.Sprintf("spawned %d workstream(s)", msg.count)
+		}
+		// Open the Workstreams panel to monitor what was spawned.
+		m.backlog = false
+		m.backlogSelected = nil
+		m.openWorkstreams()
+		return m, tea.Batch(m.fetchWorkstreams, m.wsRefreshTick())
+	case wsPreviewMsg:
+		if msg.err != nil {
+			m.wsMerge, m.wsMergeID = nil, ""
+			m.wsNotice = "preview failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.rpcOK()
+		m.wsMerge, m.wsMergeID = msg.preview, msg.id
+		if m.wsLocal == nil {
+			m.wsLocal = map[string]string{}
+		}
+		if msg.preview.GetClean() {
+			delete(m.wsLocal, msg.id)
+		} else {
+			// A conflict is a loud, sticky row state — never a silent failure.
+			m.wsLocal[msg.id] = "conflict"
+		}
+		m.refreshWsMergeVP()
+		return m, nil
+	case wsMergedMsg:
+		if msg.err != nil {
+			m.wsNotice = "merge failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.rpcOK()
+		if m.wsLocal == nil {
+			m.wsLocal = map[string]string{}
+		}
+		switch {
+		case msg.res.GetMerged():
+			delete(m.wsLocal, msg.id)
+			m.wsMerge, m.wsMergeID = nil, ""
+			m.wsNotice = "merged " + short(msg.id) + " → " + msg.res.GetCommit()
+		case len(msg.res.GetConflicts()) > 0:
+			m.wsLocal[msg.id] = "conflict"
+			m.wsNotice = "conflict merging " + short(msg.id) + ": " + strings.Join(msg.res.GetConflicts(), ", ")
+			// Reflect the conflict in the open overlay too.
+			m.wsMerge = &v1.PreviewMergeResponse{Clean: false, Conflicts: msg.res.GetConflicts()}
+			m.refreshWsMergeVP()
+		case msg.res.GetNeedsAccept():
+			m.wsLocal[msg.id] = "awaiting-review"
+			m.wsNotice = "awaiting review for " + short(msg.id)
+		}
+		return m, m.fetchWorkstreams
+	case wsDiscardedMsg:
+		if msg.err != nil {
+			m.wsNotice = "discard failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.rpcOK()
+		if m.wsLocal != nil {
+			delete(m.wsLocal, msg.id)
+		}
+		m.wsNotice = "discarded " + short(msg.id)
+		return m, m.fetchWorkstreams
 	case captureEvMsg:
 		ev := msg.ev
 		if ev.Type == "capture_result" {
@@ -2214,6 +2446,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// session (spec §20.5, task 0039).
 	if m.cost {
 		return m.updateCost(msg)
+	}
+
+	// The Workstreams panel (browse selector → workstreams, or opened after a
+	// multi-select spawn) is modal over both the menu and a session (task 0085).
+	if m.ws {
+		return m.updateWorkstreams(msg)
 	}
 
 	// The work-loop batch digest (shown when a loop ends, re-opened from the
@@ -2989,6 +3227,7 @@ var browseTargets = []struct{ label, desc string }{
 	{"plans", "saved runbooks · view markdown"},
 	{"sessions", "previous + live · transcript · reopen"},
 	{"cost", "token/cost breakdown by task × model × day"},
+	{"workstreams", "parallel worktrees · status · merge/discard"},
 	{"digest", "last work-loop run — done · blocked · cost"},
 }
 
@@ -3042,6 +3281,9 @@ func (m model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.costRows, m.costTotal = nil, nil
 			m.costMsg = "loading…"
 			return m, m.fetchUsage
+		case "workstreams":
+			m.openWorkstreams()
+			return m, tea.Batch(m.fetchWorkstreams, m.wsRefreshTick())
 		case "digest":
 			// Reopen the last work-loop batch digest (task 0098). When no loop has
 			// finished yet the digest surface shows its empty-state message.
@@ -3065,6 +3307,240 @@ func (m model) browseView() string {
 		b.rows = append(b.rows, browserRow{text: fmt.Sprintf("%-10s", t.label), suffix: dimStyle.Render(t.desc)})
 	}
 	return m.browserCard(b)
+}
+
+// --- workstreams panel (task 0085, design §8) ---
+
+// openWorkstreams enters the modal Workstreams panel, resetting its transient
+// state and bumping the refresh-tick generation so an older tick can't multiply
+// the in-flight timers.
+func (m *model) openWorkstreams() {
+	m.ws = true
+	m.wsCursor = 0
+	m.wsMerge, m.wsMergeID = nil, ""
+	m.wsDiscardID = ""
+	m.wsTick++
+	if m.wsList == nil {
+		m.wsNotice = "loading…"
+	}
+}
+
+// wsRowStatus resolves the status cell for a workstream row. Precedence (design
+// §8): a terminal registry status (merged/discarded/stale) wins; then a
+// locally-known conflict (loud, distinct); then awaiting-review; else the live
+// session status (running/idle/…). Returns the label and whether it is a
+// conflict (so the view can render it in the error style).
+func (m model) wsRowStatus(w *v1.WorkstreamInfo) (string, bool) {
+	switch w.GetStatus() {
+	case "merged", "discarded", "stale":
+		return w.GetStatus(), false
+	}
+	switch m.wsLocal[w.GetId()] {
+	case "conflict":
+		return "conflict", true
+	case "awaiting-review":
+		return "awaiting-review", false
+	}
+	if s := w.GetSessionStatus(); s != "" {
+		return s, false
+	}
+	return w.GetStatus(), false
+}
+
+// updateWorkstreams handles the modal Workstreams panel: list navigation, drill
+// into the session (enter), merge overlay (m), discard confirm (d), refresh (r).
+// The merge overlay and the discard confirm own input while active.
+func (m model) updateWorkstreams(msg tea.Msg) (tea.Model, tea.Cmd) {
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+
+	// Merge/accept overlay owns input while open (task 0085, design §6).
+	if m.wsMerge != nil {
+		switch key.String() {
+		case "ctrl+c":
+			return m.confirmQuit()
+		case "esc", "q", "backspace", "left":
+			m.wsMerge, m.wsMergeID = nil, ""
+			return m, nil
+		case "enter", "y":
+			if m.wsMerge.GetClean() {
+				id := m.wsMergeID
+				m.wsNotice = "merging " + short(id) + "…"
+				return m, m.mergeWorkstreamCmd(id)
+			}
+			// A conflicted preview cannot be accepted; keep it surfaced.
+			m.wsNotice = "cannot merge: conflicts must be resolved first"
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.wsMergeVP, cmd = m.wsMergeVP.Update(msg)
+		return m, cmd
+	}
+
+	// Two-step discard confirm (footer prompt).
+	if m.wsDiscardID != "" {
+		id := m.wsDiscardID
+		m.wsDiscardID = ""
+		switch key.String() {
+		case "y":
+			m.wsNotice = "discarding " + short(id) + "…"
+			return m, m.discardWorkstreamCmd(id)
+		default:
+			m.wsNotice = "discard cancelled"
+			return m, nil
+		}
+	}
+
+	switch key.String() {
+	case "ctrl+c":
+		return m.confirmQuit()
+	case "esc", "q":
+		m.ws = false
+		m.wsTick++ // invalidate any in-flight refresh tick
+		m.wsNotice = ""
+		return m, nil
+	case "up":
+		m.wsCursor = navUp(m.wsCursor)
+		return m, nil
+	case "down":
+		m.wsCursor = navDown(m.wsCursor, len(m.wsList))
+		return m, nil
+	case "r":
+		m.wsNotice = "refreshing…"
+		return m, m.fetchWorkstreams
+	case "enter":
+		// Drill into the workstream's session (design §8): ResumeSession is
+		// idempotent for a live session, so this attaches rather than restarts.
+		if w := m.wsCurrent(); w != nil && w.GetSessionId() != "" {
+			m.status = "reopening " + short(w.GetSessionId()) + "…"
+			return m, m.reopenSession(w.GetSessionId())
+		}
+		return m, nil
+	case "m":
+		if w := m.wsCurrent(); w != nil {
+			if w.GetStatus() != "active" {
+				m.wsNotice = "cannot merge: workstream is " + w.GetStatus()
+				return m, nil
+			}
+			m.wsNotice = "previewing merge…"
+			return m, m.previewMergeCmd(w.GetId())
+		}
+		return m, nil
+	case "d":
+		if w := m.wsCurrent(); w != nil {
+			m.wsDiscardID = w.GetId()
+			return m, nil
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+// wsCurrent returns the workstream under the cursor, or nil when the list is empty.
+func (m model) wsCurrent() *v1.WorkstreamInfo {
+	if m.wsCursor >= 0 && m.wsCursor < len(m.wsList) {
+		return m.wsList[m.wsCursor]
+	}
+	return nil
+}
+
+// shortBranch trims the ycc/ws/ namespace prefix for a compact row cell.
+func shortBranch(b string) string {
+	return strings.TrimPrefix(b, "ycc/ws/")
+}
+
+// workstreamsView renders the Workstreams panel: the merge overlay when open,
+// otherwise the list of workstreams with a live status cell (conflicts loud).
+func (m model) workstreamsView() string {
+	if m.wsMerge != nil {
+		return m.wsMergeView()
+	}
+	b := browser{
+		title:  " ycc — workstreams ",
+		cursor: m.wsCursor,
+		hint:   "↑/↓ select · enter open session · m merge · d discard · r refresh · esc close",
+		empty:  "(no workstreams — spawn from the backlog with space + P)",
+	}
+	if m.wsDiscardID != "" {
+		b.hint = "discard " + short(m.wsDiscardID) + "? y confirm · any other key cancel"
+	} else if m.wsNotice != "" {
+		b.hint = m.wsNotice
+	}
+	for _, w := range m.wsList {
+		status, conflict := m.wsRowStatus(w)
+		statusCell := fmt.Sprintf("%-15s", status)
+		if conflict {
+			statusCell = errStyle.Render(fmt.Sprintf("%-15s", "⚠ conflict"))
+		}
+		task := w.GetTaskId()
+		if task == "" {
+			task = "—"
+		}
+		row := fmt.Sprintf("%-10s %-6s %-18s %2d↑ ", short(w.GetId()), task, shortBranch(w.GetBranch()), w.GetCommitCount())
+		b.rows = append(b.rows, browserRow{text: row, suffix: statusCell})
+	}
+	return m.browserCard(b)
+}
+
+// refreshWsMergeVP (re)sizes the merge overlay viewport and loads its content:
+// a clean integrated diff, or the conflicted paths rendered distinctly.
+func (m *model) refreshWsMergeVP() {
+	if m.wsMerge == nil || !m.ready {
+		return
+	}
+	h := m.h - 2
+	if h < 3 {
+		h = 3
+	}
+	if m.wsMergeVP.Height() == 0 && m.wsMergeVP.Width() == 0 {
+		m.wsMergeVP = viewport.New(viewport.WithWidth(m.w), viewport.WithHeight(h))
+	} else {
+		m.wsMergeVP.SetWidth(m.w)
+		m.wsMergeVP.SetHeight(h)
+	}
+	m.wsMergeVP.SetContent(m.wsMergeContent())
+}
+
+// wsMergeContent builds the scrollable body of the merge overlay (task 0085).
+func (m model) wsMergeContent() string {
+	var b strings.Builder
+	if m.wsMerge.GetClean() {
+		b.WriteString(successStyle.Render("✓ clean — no conflicts") + "\n\n")
+		diff := m.wsMerge.GetDiff()
+		if strings.TrimSpace(diff) == "" {
+			b.WriteString(dimStyle.Render("(no changes to integrate)"))
+		} else {
+			b.WriteString(colorizeDiff(diff))
+		}
+	} else {
+		b.WriteString(errStyle.Render("⚠ conflict — merge blocked until resolved") + "\n\n")
+		b.WriteString(dimStyle.Render("conflicted paths:") + "\n")
+		for _, p := range m.wsMerge.GetConflicts() {
+			b.WriteString("  " + errStyle.Render(p) + "\n")
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// wsMergeView renders the merge/accept overlay as a full-screen scrollable view.
+func (m model) wsMergeView() string {
+	top := m.titleBar(" merge " + short(m.wsMergeID) + " ")
+	body := ""
+	if m.ready {
+		body = m.wsMergeVP.View()
+	}
+	var hint string
+	if m.wsMerge.GetClean() {
+		hint = " enter/y merge · ↑↓ scroll · esc/← cancel · ctrl+c quit "
+	} else {
+		hint = " conflict — resolve in the worktree first · esc/← back · ctrl+c quit "
+	}
+	if m.wsNotice != "" {
+		hint = " " + m.wsNotice + " "
+	}
+	return top + "\n" + body + "\n" + m.footerBar(hint)
 }
 
 // --- cost view (spec §20.5, task 0039) ---
@@ -3429,6 +3905,7 @@ func (m model) updateBacklog(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.backlog = false
 		m.backlogBlockedOnly = false
 		m.backlogNotice = ""
+		m.backlogSelected = nil
 		return m, nil
 	case "up":
 		m.backlogCursor = navUp(m.backlogCursor)
@@ -3462,8 +3939,55 @@ func (m model) updateBacklog(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.fetchTask(vis[m.backlogCursor].Id)
 		}
 		return m, nil
+	case "space", " ":
+		// Toggle multi-select for a spawnable (todo) task (task 0085). Selection is
+		// a set of task ids, cleared when the browser closes.
+		if len(vis) > 0 {
+			t := vis[m.backlogCursor]
+			if t.Status == "todo" {
+				if m.backlogSelected == nil {
+					m.backlogSelected = map[string]bool{}
+				}
+				if m.backlogSelected[t.Id] {
+					delete(m.backlogSelected, t.Id)
+				} else {
+					m.backlogSelected[t.Id] = true
+				}
+			}
+		}
+		return m, nil
+	case "P":
+		// Run the selected tasks in parallel workstreams (task 0085, design §8).
+		// Workstreams need a registered project (daemon-registry mode); a one-shot
+		// (empty project) can't spawn them.
+		sel := m.selectedBacklogTasks()
+		if len(sel) == 0 {
+			m.backlogNotice = "select tasks with space, then P to run in parallel"
+			return m, nil
+		}
+		if strings.TrimSpace(m.project) == "" {
+			m.backlogNotice = "workstreams need a registered project (open ycc on a project)"
+			return m, nil
+		}
+		m.backlogNotice = fmt.Sprintf("spawning %d workstream(s)…", len(sel))
+		return m, m.spawnWorkstreamsCmd(sel)
 	}
 	return m, nil
+}
+
+// selectedBacklogTasks returns the currently multi-selected backlog tasks (task
+// 0085), restricted to those still visible and todo.
+func (m model) selectedBacklogTasks() []*v1.BacklogTaskSummary {
+	if len(m.backlogSelected) == 0 {
+		return nil
+	}
+	var out []*v1.BacklogTaskSummary
+	for _, t := range m.backlogTasks {
+		if m.backlogSelected[t.Id] {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // backlogTargetID returns the task the grooming keys act on: the open detail task,
@@ -3581,9 +4105,22 @@ func (m model) backlogView() string {
 		b.hint = "set status: 1 todo · 2 in_progress · 3 in_review · 4 done · 5 blocked · esc cancel"
 	} else if m.backlogNotice != "" {
 		b.hint = m.backlogNotice
+	} else if n := len(m.backlogSelected); n > 0 {
+		b.hint = fmt.Sprintf("%d selected · space toggle · P run in parallel (%d workstreams) · esc close", n, n)
+	} else {
+		b.hint += " · space select · P run in parallel"
 	}
 	for _, t := range m.visibleBacklogTasks() {
-		row := fmt.Sprintf("%-5s %-12s p%d  %s", t.Id, t.Status, t.Priority, t.Title)
+		// Multi-select checkbox for spawnable (todo) tasks (task 0085).
+		mark := "   "
+		if t.Status == "todo" {
+			if m.backlogSelected[t.Id] {
+				mark = "[x]"
+			} else {
+				mark = "[ ]"
+			}
+		}
+		row := fmt.Sprintf("%s %-5s %-12s p%d  %s", mark, t.Id, t.Status, t.Priority, t.Title)
 		var tag string
 		if t.Status != "done" {
 			if t.Ready {
@@ -5219,6 +5756,9 @@ func (m model) render() string {
 	}
 	if m.cost {
 		return m.costView()
+	}
+	if m.ws {
+		return m.workstreamsView()
 	}
 	if m.digest {
 		return m.digestView()

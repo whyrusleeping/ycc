@@ -74,11 +74,18 @@ func (s *Server) SpawnWorkstream(_ context.Context, req *connect.Request[v1.Spaw
 }
 
 // ListWorkstreams returns the workstreams for a project (empty project => all)
-// for the Workstreams panel (design §8).
+// for the Workstreams panel (design §8). Non-terminal entries are enriched with
+// a live commit count and session status so the panel can render per-workstream
+// progress; enrichment is best-effort (0 / empty on error).
 func (s *Server) ListWorkstreams(_ context.Context, req *connect.Request[v1.ListWorkstreamsRequest]) (*connect.Response[v1.ListWorkstreamsResponse], error) {
 	var out []*v1.WorkstreamInfo
 	for _, w := range s.mgr.Workstreams(req.Msg.Project) {
-		out = append(out, toWorkstreamInfo(w))
+		info := toWorkstreamInfo(w)
+		if !w.Status.Terminal() {
+			info.CommitCount = int64(s.mgr.WorkstreamCommitCount(w))
+			info.SessionStatus = s.mgr.WorkstreamSessionStatus(w)
+		}
+		out = append(out, info)
 	}
 	return connect.NewResponse(&v1.ListWorkstreamsResponse{Workstreams: out}), nil
 }

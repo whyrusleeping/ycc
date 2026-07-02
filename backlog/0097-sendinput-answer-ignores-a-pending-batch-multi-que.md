@@ -62,3 +62,7 @@ Fix (apply-to-batch, not reject — friendlier for scripted/CLI clients like `yc
 - 2026-07-02 review (Claude): accept — The change correctly fixes the bug: interaction.Answer now claims a pending batch (batchWaiting) when no single question is waiting, delivering the free-form text to the first answer slot with a clear
 …[truncated]
 - 2026-07-02 decision: accept — commit: session: deliver free-text answers to a pending batch ask_user instead of losing them (0097)
+- 2026-07-02 usage: 13,417 tok (in 76, out 13,341, cache_r 614,082, cache_w 57,148) · cost n/a (unpriced)
+  coordinator: 6,596 tok (in 26, out 6,570, cache_r 324,305, cache_w 26,156) · cost n/a (unpriced)
+  implementer: 4,428 tok (in 26, out 4,402, cache_r 179,539, cache_w 17,819) · cost n/a (unpriced)
+  reviewer:Claude: 2,393 tok (in 24, out 2,369, cache_r 110,238, cache_w 13,173) · cost n/a (unpriced)

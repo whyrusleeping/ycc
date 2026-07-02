@@ -1,6 +1,7 @@
 package git
 
 import (
+	"strconv"
 	"strings"
 )
 
@@ -54,6 +55,22 @@ func (r *Repo) DeleteBranch(name string, force bool) error {
 	}
 	_, err := r.run("branch", flag, name)
 	return err
+}
+
+// CountCommits returns the number of commits reachable from head but not from
+// base (`git rev-list --count base..head`) — i.e. how many commits the branch
+// has added since it was created. Used to surface a workstream's commit count
+// in the Workstreams panel (design §8). Returns 0 on any error.
+func (r *Repo) CountCommits(base, head string) (int, error) {
+	out, err := r.run("rev-list", "--count", base+".."+head)
+	if err != nil {
+		return 0, err
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(out))
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // ListWorktrees returns all worktrees known to the repo, including the primary

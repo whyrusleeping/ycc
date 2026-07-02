@@ -172,6 +172,23 @@ func TestWorkstreamRPCEndToEnd(t *testing.T) {
 
 	baseBeforePreview := headOf(t, proj)
 
+	// ListWorkstreams enriches non-terminal rows: ws1 now has one commit on its
+	// branch and a live session status (design §8).
+	listEnriched, err := client.ListWorkstreams(ctx, connect.NewRequest(&v1.ListWorkstreamsRequest{Project: "demo"}))
+	if err != nil {
+		t.Fatalf("ListWorkstreams (enriched): %v", err)
+	}
+	for _, w := range listEnriched.Msg.GetWorkstreams() {
+		if w.GetId() == ws1.GetId() {
+			if w.GetCommitCount() != 1 {
+				t.Fatalf("ws1 commit_count = %d, want 1", w.GetCommitCount())
+			}
+			if w.GetSessionStatus() == "" {
+				t.Fatal("ws1 session_status empty, want a live status")
+			}
+		}
+	}
+
 	// PreviewMerge ws1: clean with a non-empty diff.
 	pv1, err := client.PreviewMerge(ctx, connect.NewRequest(&v1.PreviewMergeRequest{WorkstreamId: ws1.GetId()}))
 	if err != nil {

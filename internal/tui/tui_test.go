@@ -974,6 +974,17 @@ type fakeClient struct {
 	// canned list a post-update ListBacklog refresh returns.
 	lastUpdateTask *v1.UpdateTaskRequest
 	backlogList    []*v1.BacklogTaskSummary
+
+	// workstreams panel (task 0085): canned list returned by ListWorkstreams, the
+	// SpawnWorkstream requests recorded in order, canned PreviewMerge/MergeWorkstream
+	// responses, and the last discard id.
+	workstreams   []*v1.WorkstreamInfo
+	spawnReqs     []*v1.SpawnWorkstreamRequest
+	previewResp   *v1.PreviewMergeResponse
+	mergeResp     *v1.MergeWorkstreamResponse
+	lastPreviewID string
+	lastMergeID   string
+	lastDiscardID string
 }
 
 func newFakeClient(cfgs ...*v1.ModelConfig) *fakeClient {
@@ -1135,6 +1146,49 @@ func (f *fakeClient) ListPlans(_ context.Context, _ *connect.Request[v1.ListPlan
 
 func (f *fakeClient) GetPlan(_ context.Context, req *connect.Request[v1.GetPlanRequest]) (*connect.Response[v1.GetPlanResponse], error) {
 	return connect.NewResponse(&v1.GetPlanResponse{Name: req.Msg.Name, Title: req.Msg.Name, Content: "# " + req.Msg.Name + "\nbody"}), nil
+}
+
+// --- workstreams panel RPCs (task 0085, design §8) ---
+
+func (f *fakeClient) ListWorkstreams(_ context.Context, _ *connect.Request[v1.ListWorkstreamsRequest]) (*connect.Response[v1.ListWorkstreamsResponse], error) {
+	return connect.NewResponse(&v1.ListWorkstreamsResponse{Workstreams: f.workstreams}), nil
+}
+
+func (f *fakeClient) SpawnWorkstream(_ context.Context, req *connect.Request[v1.SpawnWorkstreamRequest]) (*connect.Response[v1.SpawnWorkstreamResponse], error) {
+	f.spawnReqs = append(f.spawnReqs, req.Msg)
+	ws := &v1.WorkstreamInfo{
+		Id:        fmt.Sprintf("ws_%d", len(f.spawnReqs)),
+		Project:   req.Msg.Project,
+		TaskId:    req.Msg.TaskId,
+		Branch:    "ycc/ws/spawn-" + req.Msg.TaskId,
+		SessionId: fmt.Sprintf("s-ws-%d", len(f.spawnReqs)),
+		Status:    "active",
+	}
+	f.workstreams = append(f.workstreams, ws)
+	return connect.NewResponse(&v1.SpawnWorkstreamResponse{Workstream: ws}), nil
+}
+
+func (f *fakeClient) PreviewMerge(_ context.Context, req *connect.Request[v1.PreviewMergeRequest]) (*connect.Response[v1.PreviewMergeResponse], error) {
+	f.lastPreviewID = req.Msg.WorkstreamId
+	resp := f.previewResp
+	if resp == nil {
+		resp = &v1.PreviewMergeResponse{Clean: true, Diff: "diff --git a/x b/x\n+added\n"}
+	}
+	return connect.NewResponse(resp), nil
+}
+
+func (f *fakeClient) MergeWorkstream(_ context.Context, req *connect.Request[v1.MergeWorkstreamRequest]) (*connect.Response[v1.MergeWorkstreamResponse], error) {
+	f.lastMergeID = req.Msg.WorkstreamId
+	resp := f.mergeResp
+	if resp == nil {
+		resp = &v1.MergeWorkstreamResponse{Merged: true, Commit: "abc1234"}
+	}
+	return connect.NewResponse(resp), nil
+}
+
+func (f *fakeClient) DiscardWorkstream(_ context.Context, req *connect.Request[v1.DiscardWorkstreamRequest]) (*connect.Response[v1.DiscardWorkstreamResponse], error) {
+	f.lastDiscardID = req.Msg.WorkstreamId
+	return connect.NewResponse(&v1.DiscardWorkstreamResponse{}), nil
 }
 
 // GetUsage backs the cost view route (spec §20.5, task 0039). It records the
@@ -4118,5 +4172,248 @@ func TestQuitGuardDisarm(t *testing.T) {
 	_, cmd := m.Update(keyMsg("ctrl+c"))
 	if isQuit(cmd) {
 		t.Fatal("after disarm, next ctrl+c should re-arm, not quit")
+	}
+}
+
+// TestBacklogMultiSelectSpawn covers the multi-select "run in parallel" flow
+// (task 0085): space toggles selection on todo tasks, P spawns one workstream per
+// selected task with the right project/task ids and opens the Workstreams panel.
+func TestBacklogMultiSelectSpawn(t *testing.T) {
+	f := newFakeClient()
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	m.project = "demo"
+	m.backlog = true
+	m.backlogTasks = []*v1.BacklogTaskSummary{
+		{Id: "0001", Status: "todo", Title: "alpha"},
+		{Id: "0002", Status: "todo", Title: "beta"},
+		{Id: "0003", Status: "in_progress", Title: "gamma"},
+	}
+
+	// Select the first todo task, move down, select the second.
+	m = drive(t, m, "space")
+	m = drive(t, m, "down")
+	m = drive(t, m, "space")
+	if len(m.backlogSelected) != 2 || !m.backlogSelected["0001"] || !m.backlogSelected["0002"] {
+		t.Fatalf("selection = %v, want {0001,0002}", m.backlogSelected)
+	}
+
+	// Move to the in_progress task and try to select it — not spawnable.
+	m = drive(t, m, "down")
+	m = drive(t, m, "space")
+	if m.backlogSelected["0003"] {
+		t.Fatal("non-todo task should not be selectable")
+	}
+
+	// P spawns one workstream per selected task and opens the panel.
+	m = drive(t, m, "P")
+	if len(f.spawnReqs) != 2 {
+		t.Fatalf("SpawnWorkstream calls = %d, want 2", len(f.spawnReqs))
+	}
+	gotTasks := map[string]bool{}
+	for _, r := range f.spawnReqs {
+		if r.Project != "demo" {
+			t.Fatalf("spawn project = %q, want demo", r.Project)
+		}
+		if r.InteractionLevel != "judgement" {
+			t.Fatalf("spawn level = %q, want judgement", r.InteractionLevel)
+		}
+		gotTasks[r.TaskId] = true
+	}
+	if !gotTasks["0001"] || !gotTasks["0002"] {
+		t.Fatalf("spawned task ids = %v, want {0001,0002}", gotTasks)
+	}
+	if !m.ws {
+		t.Fatal("spawn should open the Workstreams panel")
+	}
+	if m.backlog {
+		t.Fatal("spawn should close the backlog browser")
+	}
+}
+
+// TestSpawnRequiresProject covers the daemon-registry guard: with no project the
+// spawn is refused with an explanatory notice and no RPC fires (task 0085).
+func TestSpawnRequiresProject(t *testing.T) {
+	f := newFakeClient()
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	m.project = "" // one-shot: no registered project
+	m.backlog = true
+	m.backlogTasks = []*v1.BacklogTaskSummary{{Id: "0001", Status: "todo", Title: "alpha"}}
+
+	m = drive(t, m, "space")
+	m = drive(t, m, "P")
+	if len(f.spawnReqs) != 0 {
+		t.Fatalf("SpawnWorkstream should not fire without a project, got %d", len(f.spawnReqs))
+	}
+	if !strings.Contains(m.backlogNotice, "project") {
+		t.Fatalf("notice = %q, want an explanation about needing a project", m.backlogNotice)
+	}
+}
+
+// TestWorkstreamsPanelConflictRow proves a conflict is a visually distinct row
+// state (design §8): a workstream with a locally-known conflict renders loudly,
+// never a silent normal status.
+func TestWorkstreamsPanelConflictRow(t *testing.T) {
+	m := model{
+		ws: true,
+		wsList: []*v1.WorkstreamInfo{
+			{Id: "ws_1", TaskId: "0001", Branch: "ycc/ws/ws_1", CommitCount: 3, SessionStatus: "running", Status: "active"},
+			{Id: "ws_2", TaskId: "0002", Branch: "ycc/ws/ws_2", CommitCount: 1, SessionStatus: "idle", Status: "active"},
+		},
+		wsLocal: map[string]string{"ws_2": "conflict"},
+	}
+
+	// wsRowStatus precedence: normal running for ws_1, conflict for ws_2.
+	if s, conflict := m.wsRowStatus(m.wsList[0]); conflict || s != "running" {
+		t.Fatalf("ws_1 status = (%q,%v), want (running,false)", s, conflict)
+	}
+	if s, conflict := m.wsRowStatus(m.wsList[1]); !conflict || s != "conflict" {
+		t.Fatalf("ws_2 status = (%q,%v), want (conflict,true)", s, conflict)
+	}
+
+	view := m.workstreamsView()
+	if !strings.Contains(view, "conflict") {
+		t.Fatalf("panel view missing a conflict row:\n%s", view)
+	}
+	if !strings.Contains(view, "running") {
+		t.Fatalf("panel view missing the running row:\n%s", view)
+	}
+}
+
+// TestWorkstreamMergeFlow covers preview → accept → merged (task 0085, design §6).
+func TestWorkstreamMergeFlow(t *testing.T) {
+	f := newFakeClient()
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	m.ws = true
+	m.wsList = []*v1.WorkstreamInfo{{Id: "ws_1", Branch: "ycc/ws/ws_1", SessionId: "s1", Status: "active"}}
+
+	// m opens the merge overlay via PreviewMerge (clean by default).
+	m = drive(t, m, "m")
+	if f.lastPreviewID != "ws_1" {
+		t.Fatalf("PreviewMerge id = %q, want ws_1", f.lastPreviewID)
+	}
+	if m.wsMerge == nil || !m.wsMerge.GetClean() {
+		t.Fatalf("expected a clean merge overlay, got %+v", m.wsMerge)
+	}
+
+	// enter accepts the clean merge; the row merges with a commit sha.
+	m = drive(t, m, "enter")
+	if f.lastMergeID != "ws_1" {
+		t.Fatalf("MergeWorkstream id = %q, want ws_1", f.lastMergeID)
+	}
+	if m.wsMerge != nil {
+		t.Fatal("merge overlay should close after a successful merge")
+	}
+	if !strings.Contains(m.wsNotice, "merged") {
+		t.Fatalf("notice = %q, want a merged confirmation", m.wsNotice)
+	}
+}
+
+// TestWorkstreamMergeConflict proves a conflicted preview cannot be silently
+// merged: the overlay stays, the row is marked conflict, and enter is refused.
+func TestWorkstreamMergeConflict(t *testing.T) {
+	f := newFakeClient()
+	f.previewResp = &v1.PreviewMergeResponse{Clean: false, Conflicts: []string{"shared.txt"}}
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	m.ws = true
+	m.wsList = []*v1.WorkstreamInfo{{Id: "ws_1", Branch: "ycc/ws/ws_1", SessionId: "s1", Status: "active"}}
+
+	m = drive(t, m, "m")
+	if m.wsMerge == nil || m.wsMerge.GetClean() {
+		t.Fatalf("expected a conflicted overlay, got %+v", m.wsMerge)
+	}
+	if m.wsLocal["ws_1"] != "conflict" {
+		t.Fatalf("wsLocal[ws_1] = %q, want conflict", m.wsLocal["ws_1"])
+	}
+
+	// enter must not merge a conflicted preview.
+	m = drive(t, m, "enter")
+	if f.lastMergeID != "" {
+		t.Fatalf("MergeWorkstream fired on a conflicted preview (id=%q)", f.lastMergeID)
+	}
+}
+
+// TestWorkstreamDiscardConfirm covers the two-step discard confirm (task 0085).
+func TestWorkstreamDiscardConfirm(t *testing.T) {
+	f := newFakeClient()
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	m.ws = true
+	m.wsList = []*v1.WorkstreamInfo{{Id: "ws_1", Branch: "ycc/ws/ws_1", SessionId: "s1", Status: "active"}}
+
+	// d arms the confirm; no RPC yet.
+	m = drive(t, m, "d")
+	if m.wsDiscardID != "ws_1" {
+		t.Fatalf("wsDiscardID = %q, want ws_1", m.wsDiscardID)
+	}
+	if f.lastDiscardID != "" {
+		t.Fatal("discard fired before confirmation")
+	}
+
+	// y confirms the discard.
+	m = drive(t, m, "y")
+	if f.lastDiscardID != "ws_1" {
+		t.Fatalf("DiscardWorkstream id = %q, want ws_1", f.lastDiscardID)
+	}
+	if m.wsDiscardID != "" {
+		t.Fatal("discard confirm should clear after firing")
+	}
+}
+
+// TestWorkstreamDiscardCancel proves any non-y key cancels the discard confirm.
+func TestWorkstreamDiscardCancel(t *testing.T) {
+	f := newFakeClient()
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	m.ws = true
+	m.wsList = []*v1.WorkstreamInfo{{Id: "ws_1", Branch: "ycc/ws/ws_1", SessionId: "s1", Status: "active"}}
+
+	m = drive(t, m, "d")
+	m = drive(t, m, "n")
+	if f.lastDiscardID != "" {
+		t.Fatal("discard should not fire when cancelled")
+	}
+	if m.wsDiscardID != "" {
+		t.Fatal("discard confirm should clear on cancel")
+	}
+}
+
+// TestWorkstreamDrillIntoSession proves enter on a row attaches to its session
+// via ResumeSession (task 0085, design §8).
+func TestWorkstreamDrillIntoSession(t *testing.T) {
+	f := newFakeClient()
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	m.ws = true
+	m.wsList = []*v1.WorkstreamInfo{{Id: "ws_1", Branch: "ycc/ws/ws_1", SessionId: "s-ws-1", Status: "active"}}
+
+	updated, cmd := m.updateWorkstreams(keyMsg("enter"))
+	m = updated.(model)
+	_ = runCmds(t, m, cmd)
+	if f.lastReopened != "s-ws-1" {
+		t.Fatalf("ResumeSession id = %q, want s-ws-1", f.lastReopened)
+	}
+}
+
+// TestBrowseWorkstreamsRoute proves the browse selector routes to the panel.
+func TestBrowseWorkstreamsRoute(t *testing.T) {
+	f := newFakeClient()
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	m = drive(t, m, "ctrl+o")
+	if !m.browse {
+		t.Fatal("ctrl+o should open the browse selector")
+	}
+	// Navigate to the "workstreams" route.
+	idx := -1
+	for i, t := range browseTargets {
+		if t.label == "workstreams" {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		t.Fatal("workstreams route missing from browseTargets")
+	}
+	for i := 0; i < idx; i++ {
+		m = drive(t, m, "down")
+	}
+	m = drive(t, m, "enter")
+	if !m.ws {
+		t.Fatal("workstreams route should open the Workstreams panel")
 	}
 }
