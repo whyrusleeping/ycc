@@ -71,3 +71,7 @@ Design:
 - 2026-07-02 review (Claude): accept — The change correctly implements a two-step ctrl+c guard for one-shot daemons. quitGuardActive() gates the guard to live one-shot work (running/paused/pending session, loop, waiting background sessions
 …[truncated]
 - 2026-07-02 decision: accept — commit: tui: two-step ctrl+c guard so an accidental keypress can't kill a one-shot daemon mid-work (0109)
+- 2026-07-02 usage: 30,705 tok (in 192, out 30,513, cache_r 2,208,251, cache_w 136,537) · cost n/a (unpriced)
+  implementer: 16,301 tok (in 118, out 16,183, cache_r 1,412,487, cache_w 40,847) · cost n/a (unpriced)
+  coordinator: 11,300 tok (in 50, out 11,250, cache_r 663,244, cache_w 78,009) · cost n/a (unpriced)
+  reviewer:Claude: 3,104 tok (in 24, out 3,080, cache_r 132,520, cache_w 17,681) · cost n/a (unpriced)
