@@ -273,6 +273,18 @@ func (s *Session) reapable() bool {
 	return !s.inter.pending()
 }
 
+// PendingQuestion reports whether the session is currently blocked on an
+// unanswered ask_user question (single or batch) — the same gate the idle
+// reaper uses. Exposed so ListSessionHistory can surface sessions that are
+// waiting on the user in the home menu. Nil-safe for minimally-constructed
+// sessions (no interaction wired) so it can be called on any live row.
+func (s *Session) PendingQuestion() bool {
+	if s.inter == nil {
+		return false
+	}
+	return s.inter.pending()
+}
+
 // Checkpoint implements engine.Steer (spec §18.7). At a safe checkpoint the
 // loop calls it. If no pause is pending it drains any mid-run corrections queued
 // since the last checkpoint (steer-by-default) and returns their texts to append

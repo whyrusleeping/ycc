@@ -30,6 +30,10 @@ type SessionSummary struct {
 	Turns        int
 	ToolCalls    int
 	Live         bool
+	// Waiting is true when a live session is blocked on an unanswered ask_user
+	// question. Only ever set on live rows — a persisted-only session holds no
+	// in-memory pending question.
+	Waiting bool
 }
 
 // scanSessionHistory scans a workspace's persisted session logs at
@@ -191,14 +195,15 @@ func (m *Manager) ListSessionHistory(project string) ([]SessionSummary, error) {
 	// Snapshot the live sessions for this workspace under lock.
 	m.mu.Lock()
 	type liveInfo struct {
-		id     string
-		mode   string
-		status event.Status
+		id      string
+		mode    string
+		status  event.Status
+		waiting bool
 	}
 	var live []liveInfo
 	for _, s := range m.sessions {
 		if s.Workspace == absWS {
-			live = append(live, liveInfo{id: s.ID, mode: s.Mode, status: s.Status()})
+			live = append(live, liveInfo{id: s.ID, mode: s.Mode, status: s.Status(), waiting: s.PendingQuestion()})
 		}
 	}
 	m.mu.Unlock()
@@ -209,6 +214,7 @@ func (m *Manager) ListSessionHistory(project string) ([]SessionSummary, error) {
 			summaries[idx].Status = li.status
 			summaries[idx].Mode = li.mode
 			summaries[idx].Live = true
+			summaries[idx].Waiting = li.waiting
 			continue
 		}
 		// Live session with no on-disk snapshot yet (log just opened): include it
@@ -221,6 +227,7 @@ func (m *Manager) ListSessionHistory(project string) ([]SessionSummary, error) {
 			StartedAt:    now,
 			LastActivity: now,
 			Live:         true,
+			Waiting:      li.waiting,
 		})
 	}
 

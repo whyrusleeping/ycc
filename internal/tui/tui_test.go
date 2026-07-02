@@ -1767,6 +1767,89 @@ func TestBlockedIndicatorWNoOpWhenNothingBlocked(t *testing.T) {
 	}
 }
 
+// TestWaitingSessionIndicator verifies the home-menu "session waiting for you"
+// indicator: absent when nothing needs the user, present with a count when a
+// live session has a pending question or is paused, and that pressing "s"
+// attaches directly (one session) or opens the filtered browser (several), while
+// a bare "s" typed into a non-empty prompt is never hijacked (task 0107).
+func TestWaitingSessionIndicator(t *testing.T) {
+	// (a) No waiting sessions: line absent.
+	m := model{state: stateMenu}
+	m.prompt = newChatInput("test")
+	if strings.Contains(m.menuView(), "waiting for you") || strings.Contains(m.menuView(), "waiting for your answer") {
+		t.Fatalf("menu shows waiting-session line when nothing needs the user:\n%s", m.menuView())
+	}
+
+	// (b) One session with a pending question: line present with count + "press s".
+	m.waitingSessions = []*v1.SessionSummary{
+		{SessionId: "s_q", Mode: "work", Status: "running", Live: true, WaitingInput: true},
+	}
+	view := m.menuView()
+	if !strings.Contains(view, "1 session waiting for your answer") {
+		t.Fatalf("menu missing waiting-session line:\n%s", view)
+	}
+	if !strings.Contains(view, "press s to open") {
+		t.Fatalf("menu missing 's' route hint:\n%s", view)
+	}
+	if !strings.Contains(view, "s open waiting session") {
+		t.Fatalf("footer missing 's' affordance:\n%s", view)
+	}
+
+	// (c) "s" with exactly one waiting session attaches directly (reopen).
+	f := newFakeClient()
+	f.history = []*v1.SessionSummary{
+		{SessionId: "s_q", Mode: "work", Status: "running", Live: true, WaitingInput: true},
+	}
+	one := initialModel(context.Background(), f, t_tempWorkspace, false)
+	one.waitingSessions = f.history
+	one = drive(t, one, "s")
+	if f.lastReopened != "s_q" {
+		t.Fatalf("s with one waiting session reopened %q, want s_q", f.lastReopened)
+	}
+	if one.state != stateSession || one.sessionID != "s_q" {
+		t.Fatalf("s did not attach to the waiting session: state=%v id=%q", one.state, one.sessionID)
+	}
+
+	// (d) "s" with two waiting sessions opens the browser filtered to them.
+	f2 := newFakeClient()
+	f2.history = []*v1.SessionSummary{
+		{SessionId: "s_q", Mode: "work", Status: "running", Live: true, WaitingInput: true, LastActivity: "2024-01-02T10:00:00Z"},
+		{SessionId: "s_p", Mode: "chat", Status: "paused", Live: true, LastActivity: "2024-01-01T10:00:00Z"},
+		{SessionId: "s_done", Mode: "work", Status: "idle", Live: false, LastActivity: "2024-01-03T10:00:00Z"},
+	}
+	two := initialModel(context.Background(), f2, t_tempWorkspace, false)
+	two.waitingSessions = []*v1.SessionSummary{f2.history[0], f2.history[1]}
+	two = drive(t, two, "s")
+	if two.state != stateHistory {
+		t.Fatalf("s with two waiting sessions state=%v, want stateHistory", two.state)
+	}
+	if !two.historyWaitingOnly {
+		t.Fatalf("s with two waiting sessions did not set historyWaitingOnly")
+	}
+	if len(two.history) != 2 {
+		t.Fatalf("waiting-only browser shows %d rows, want 2 (filtered): %+v", len(two.history), two.history)
+	}
+	for _, s := range two.history {
+		if !s.Live || (!s.WaitingInput && s.Status != "paused") {
+			t.Fatalf("waiting-only browser shows a non-waiting session: %+v", s)
+		}
+	}
+
+	// (e) "s" typed into a non-empty prompt is not hijacked.
+	typing := model{state: stateMenu, waitingSessions: f.history}
+	typing.prompt = newChatInput("test")
+	typing.prompt.Focus()
+	typing = typeText(t, typing, "ba")
+	updated, _ := typing.updateMenu(keyMsg("s"))
+	typing = updated.(model)
+	if typing.state != stateMenu {
+		t.Fatalf("s hijacked typing: state=%v", typing.state)
+	}
+	if typing.prompt.Value() != "bas" {
+		t.Fatalf("s not typed into prompt, got %q", typing.prompt.Value())
+	}
+}
+
 // TestPreviousSessionsReopen drives the menu -> session browser -> reopen flow
 // (spec §18.6): ctrl+r opens the browser and loads the list, ↓ moves the cursor,
 // and `o` reopens the selected session via ResumeSession, entering the session

@@ -69,3 +69,7 @@ Verify: `go build ./... && go test ./internal/tui/ ./...`.
 - 2026-07-02 review (Claude): accept — The change fully satisfies task 0106. A shared choosePickerOption helper is extracted and used by both the enter and new digit-key paths; digits 1–9 select options (with out-of-range digits ignored)
 …[truncated]
 - 2026-07-02 decision: accept — commit: tui: number-key picker selection; keep scrolling and backlog/capture live while a question is pending (0106)
+- 2026-07-02 usage: 20,401 tok (in 114, out 20,287, cache_r 1,093,389, cache_w 74,285) · cost n/a (unpriced)
+  implementer: 12,361 tok (in 64, out 12,297, cache_r 643,377, cache_w 31,237) · cost n/a (unpriced)
+  coordinator: 5,943 tok (in 32, out 5,911, cache_r 390,332, cache_w 29,379) · cost n/a (unpriced)
+  reviewer:Claude: 2,097 tok (in 18, out 2,079, cache_r 59,680, cache_w 13,669) · cost n/a (unpriced)

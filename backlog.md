@@ -109,7 +109,7 @@
 | [0104](backlog/0104-tui-transient-rpc-errors-must-not-replace-the-ui-w.md) | TUI: transient RPC errors must not replace the UI with a fatal error screen | done | 2 | — |
 | [0105](backlog/0105-interrupt-keybinding-that-works-without-kitty-keyb.md) | Interrupt keybinding that works without kitty keyboard protocol (ctrl+i == tab) | done | 3 | — |
 | [0106](backlog/0106-question-picker-number-key-selection-don-t-lock-ou.md) | Question picker: number-key selection + don't lock out scrolling/browsers | done | 3 | — |
-| [0107](backlog/0107-home-menu-surface-live-sessions-that-are-waiting-f.md) | Home menu: surface live sessions that are waiting for the user | todo | 3 | — |
+| [0107](backlog/0107-home-menu-surface-live-sessions-that-are-waiting-f.md) | Home menu: surface live sessions that are waiting for the user | done | 3 | — |
 | [0108](backlog/0108-terminal-notification-bell-osc-when-the-agent-need.md) | Terminal notification (bell/OSC) when the agent needs the user or finishes | todo | 3 | — |
 | [0109](backlog/0109-guard-ctrl-c-don-t-instantly-kill-a-running-sessio.md) | Guard ctrl+c: don't instantly kill a running session on a one-shot daemon | todo | 3 | — |
 | [0110](backlog/0110-settings-overlay-replace-rotating-reviewer-toggle.md) | Settings overlay: replace rotating reviewer toggle with an explicit multi-select | todo | 4 | — |

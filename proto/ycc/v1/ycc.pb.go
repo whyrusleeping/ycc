@@ -1713,18 +1713,22 @@ func (x *ListSessionHistoryRequest) GetProject() string {
 }
 
 type SessionSummary struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Mode          string                 `protobuf:"bytes,2,opt,name=mode,proto3" json:"mode,omitempty"`
-	Status        string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"` // running | idle | error | paused | stopped
-	Workspace     string                 `protobuf:"bytes,4,opt,name=workspace,proto3" json:"workspace,omitempty"`
-	Title         string                 `protobuf:"bytes,5,opt,name=title,proto3" json:"title,omitempty"`                                   // derived from the first user prompt
-	StartedAt     string                 `protobuf:"bytes,6,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`          // RFC3339
-	LastActivity  string                 `protobuf:"bytes,7,opt,name=last_activity,json=lastActivity,proto3" json:"last_activity,omitempty"` // RFC3339
-	FocusTasks    []string               `protobuf:"bytes,8,rep,name=focus_tasks,json=focusTasks,proto3" json:"focus_tasks,omitempty"`
-	Turns         int64                  `protobuf:"varint,9,opt,name=turns,proto3" json:"turns,omitempty"`
-	ToolCalls     int64                  `protobuf:"varint,10,opt,name=tool_calls,json=toolCalls,proto3" json:"tool_calls,omitempty"`
-	Live          bool                   `protobuf:"varint,11,opt,name=live,proto3" json:"live,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	SessionId    string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Mode         string                 `protobuf:"bytes,2,opt,name=mode,proto3" json:"mode,omitempty"`
+	Status       string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"` // running | idle | error | paused | stopped
+	Workspace    string                 `protobuf:"bytes,4,opt,name=workspace,proto3" json:"workspace,omitempty"`
+	Title        string                 `protobuf:"bytes,5,opt,name=title,proto3" json:"title,omitempty"`                                   // derived from the first user prompt
+	StartedAt    string                 `protobuf:"bytes,6,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`          // RFC3339
+	LastActivity string                 `protobuf:"bytes,7,opt,name=last_activity,json=lastActivity,proto3" json:"last_activity,omitempty"` // RFC3339
+	FocusTasks   []string               `protobuf:"bytes,8,rep,name=focus_tasks,json=focusTasks,proto3" json:"focus_tasks,omitempty"`
+	Turns        int64                  `protobuf:"varint,9,opt,name=turns,proto3" json:"turns,omitempty"`
+	ToolCalls    int64                  `protobuf:"varint,10,opt,name=tool_calls,json=toolCalls,proto3" json:"tool_calls,omitempty"`
+	Live         bool                   `protobuf:"varint,11,opt,name=live,proto3" json:"live,omitempty"`
+	// waiting_input is true when a live session is blocked on an unanswered
+	// ask_user question (single or batch) and needs the user to reply. Only ever
+	// set on live rows — a persisted-only session holds no in-memory question.
+	WaitingInput  bool `protobuf:"varint,12,opt,name=waiting_input,json=waitingInput,proto3" json:"waiting_input,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1832,6 +1836,13 @@ func (x *SessionSummary) GetToolCalls() int64 {
 func (x *SessionSummary) GetLive() bool {
 	if x != nil {
 		return x.Live
+	}
+	return false
+}
+
+func (x *SessionSummary) GetWaitingInput() bool {
+	if x != nil {
+		return x.WaitingInput
 	}
 	return false
 }
@@ -4290,7 +4301,7 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x14ListSessionsResponse\x12/\n" +
 	"\bsessions\x18\x01 \x03(\v2\x13.ycc.v1.SessionInfoR\bsessions\"5\n" +
 	"\x19ListSessionHistoryRequest\x12\x18\n" +
-	"\aproject\x18\x01 \x01(\tR\aproject\"\xbd\x02\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\"\xe2\x02\n" +
 	"\x0eSessionSummary\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
@@ -4307,7 +4318,8 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\n" +
 	"tool_calls\x18\n" +
 	" \x01(\x03R\ttoolCalls\x12\x12\n" +
-	"\x04live\x18\v \x01(\bR\x04live\"P\n" +
+	"\x04live\x18\v \x01(\bR\x04live\x12#\n" +
+	"\rwaiting_input\x18\f \x01(\bR\fwaitingInput\"P\n" +
 	"\x1aListSessionHistoryResponse\x122\n" +
 	"\bsessions\x18\x01 \x03(\v2\x16.ycc.v1.SessionSummaryR\bsessions\"V\n" +
 	"\x1bGetSessionTranscriptRequest\x12\x18\n" +

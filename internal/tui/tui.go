@@ -120,6 +120,19 @@ type model struct {
 	// the shared event-rendering pipeline: m.evs + m.vp) instead of the list.
 	historyTranscript bool
 	historyTransID    string // session id whose transcript is currently shown
+	// historyWaitingOnly restricts the session browser to live sessions that need
+	// the user (pending question or paused). Set when the browser is opened from
+	// the home menu's "session waiting for you" indicator (task 0107).
+	historyWaitingOnly bool
+
+	// waitingSessions holds the live sessions that need the user right now — a
+	// pending ask_user question or a paused-mid-steer session (task 0107). The home
+	// menu surfaces a count + a one-key route in ("s"); refreshed on entry to the
+	// menu and on a modest tick so a background question appears without a keypress.
+	waitingSessions []*v1.SessionSummary
+	// waitingSeq guards the menu refresh tick so a stale tick from a previous menu
+	// visit can't multiply the in-flight timers.
+	waitingSeq int
 
 	// browse selector (spec §18.6/§20.5): a small modal routing to the list+detail
 	// browsers — backlog, sessions, and cost (spec §18.6/§20.5).
@@ -402,6 +415,20 @@ type historyMsg struct {
 	err      error
 }
 
+// waitingSessionsMsg carries the live sessions that need the user (pending
+// question or paused) for the home-menu awareness line (task 0107). It is an
+// awareness signal, not a screen: errors are ignored silently so a transient
+// RPC hiccup never flashes on the menu.
+type waitingSessionsMsg struct {
+	sessions []*v1.SessionSummary
+	err      error
+}
+
+// menuRefreshMsg is the modest tick that re-polls waiting sessions while the
+// home menu is showing (task 0107), so a question raised in a background
+// session surfaces without the user pressing a key. seq disarms stale ticks.
+type menuRefreshMsg struct{ seq int }
+
 // transcriptMsg carries a session's replayed event log for the read-only
 // transcript drill-in (spec §18.6), or an error if the fetch failed.
 type transcriptMsg struct {
@@ -482,7 +509,7 @@ type mbDiscoverMsg struct {
 }
 
 func (m model) Init() tea.Cmd {
-	cmds := []tea.Cmd{m.fetchModes, m.fetchModels, m.fetchBacklog}
+	cmds := []tea.Cmd{m.fetchModes, m.fetchModels, m.fetchBacklog, m.fetchWaitingSessions, m.menuRefreshTick()}
 	if m.showPicker {
 		cmds = append(cmds, m.fetchProjects)
 	}
@@ -938,11 +965,11 @@ func (m model) applyLoopDecision(msg loopDecisionMsg) (tea.Model, tea.Cmd) {
 		m.loopRun = nil
 		m.state, m.status = stateMenu, outcome
 		if run == nil || len(run.sessions) == 0 {
-			return m, m.fetchBacklog
+			return m, m.refreshMenu()
 		}
 		m.loopDigest = buildLoopDigest(run, msg.tasks, outcome)
 		m.digest, m.digestCursor = true, 0
-		cmds := []tea.Cmd{m.fetchBacklog, m.fetchLoopUsage}
+		cmds := []tea.Cmd{m.fetchLoopUsage, m.refreshMenu()}
 		for _, bt := range m.loopDigest.blocked {
 			cmds = append(cmds, m.fetchDigestTask(bt.id))
 		}
@@ -1004,6 +1031,48 @@ func (m model) fetchHistory() tea.Msg {
 		return historyMsg{err: err}
 	}
 	return historyMsg{sessions: resp.Msg.Sessions}
+}
+
+// fetchWaitingSessions loads the session history and delivers just the live
+// sessions that need the user — a pending ask_user question or a paused
+// (mid-steer) session (task 0107). It reuses ListSessionHistory (which carries
+// status + waiting_input for both one-shot and persistent daemons) but delivers
+// to its own message so the session-browser list state is never clobbered.
+func (m model) fetchWaitingSessions() tea.Msg {
+	resp, err := m.client.ListSessionHistory(m.ctx, connect.NewRequest(&v1.ListSessionHistoryRequest{Project: m.project}))
+	if err != nil {
+		return waitingSessionsMsg{err: err}
+	}
+	var waiting []*v1.SessionSummary
+	for _, s := range resp.Msg.Sessions {
+		if sessionNeedsUser(s) {
+			waiting = append(waiting, s)
+		}
+	}
+	return waitingSessionsMsg{sessions: waiting}
+}
+
+// sessionNeedsUser reports whether a live session is waiting on the user: it is
+// blocked on an unanswered ask_user question, or it is paused mid-steer. Only
+// live sessions can hold either state (task 0107).
+func sessionNeedsUser(s *v1.SessionSummary) bool {
+	return s.Live && (s.WaitingInput || s.Status == "paused")
+}
+
+// menuRefreshTick arms the next home-menu refresh of waiting sessions, tagged
+// with the current waitingSeq so a stale tick (from a previous menu visit) is
+// dropped rather than compounding timers (task 0107).
+func (m model) menuRefreshTick() tea.Cmd {
+	seq := m.waitingSeq
+	return tea.Tick(5*time.Second, func(time.Time) tea.Msg { return menuRefreshMsg{seq} })
+}
+
+// refreshMenu re-polls the home-menu awareness data (backlog + waiting sessions)
+// and (re)arms the waiting-session refresh tick, bumping waitingSeq so an older
+// tick can't multiply the in-flight timers (task 0107).
+func (m *model) refreshMenu() tea.Cmd {
+	m.waitingSeq++
+	return tea.Batch(m.fetchBacklog, m.fetchWaitingSessions, m.menuRefreshTick())
 }
 
 // fetchTranscript loads a session's full replayed event log for the read-only
@@ -1740,6 +1809,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.rpcOK()
 		m.history = msg.sessions
+		if m.historyWaitingOnly {
+			// Opened from the home-menu "session waiting for you" indicator: show
+			// only the live sessions that need the user (task 0107).
+			filtered := m.history[:0:0]
+			for _, s := range msg.sessions {
+				if sessionNeedsUser(s) {
+					filtered = append(filtered, s)
+				}
+			}
+			m.history = filtered
+		}
 		if m.historyCursor >= len(m.history) {
 			m.historyCursor = 0
 		}
@@ -1749,6 +1829,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.historyMsgTxt = ""
 		}
 		return m, nil
+	case waitingSessionsMsg:
+		// Awareness signal only: on error keep the last-known set and stay quiet
+		// (never flash) — a transient RPC hiccup must not blank the menu line.
+		if msg.err != nil {
+			return m, nil
+		}
+		m.waitingSessions = msg.sessions
+		return m, nil
+	case menuRefreshMsg:
+		// Drop a stale tick from a previous menu visit (seq guards against
+		// compounding timers). Re-poll only while the menu is actually showing.
+		if msg.seq != m.waitingSeq {
+			return m, nil
+		}
+		if m.state != stateMenu {
+			return m, m.menuRefreshTick()
+		}
+		return m, tea.Batch(m.fetchWaitingSessions, m.menuRefreshTick())
 	case transcriptMsg:
 		if msg.err != nil {
 			m.historyMsgTxt = "error: " + msg.err.Error()
@@ -2132,7 +2230,7 @@ func (m model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.project = p.Name
 		m.workspace = p.Path
 		m.state = stateMenu
-		return m, nil
+		return m, m.refreshMenu()
 	}
 	return m, nil
 }
@@ -2185,7 +2283,8 @@ func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "esc", "q":
 		m.state = stateMenu
-		return m, nil
+		m.historyWaitingOnly = false
+		return m, m.refreshMenu()
 	case "r":
 		m.historyMsgTxt = "loading…"
 		return m, m.fetchHistory
@@ -2255,12 +2354,36 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.backlogBlockedOnly = true
 				return m, m.fetchBacklog
 			}
+		case "s":
+			// Jump straight to a live session that needs the user — a pending
+			// ask_user question or a paused-mid-steer session (task 0107). Same
+			// guard as "w": only intercept when a session actually needs the user
+			// AND the prompt is empty, so a bare "s" never hijacks typing.
+			if len(m.waitingSessions) > 0 && strings.TrimSpace(m.prompt.Value()) == "" {
+				if len(m.waitingSessions) == 1 {
+					// Exactly one: attach directly (ResumeSession is idempotent for a
+					// live session, so this reopens/attaches rather than restarts).
+					id := m.waitingSessions[0].SessionId
+					m.status = "reopening " + short(id) + "…"
+					return m, m.reopenSession(id)
+				}
+				// Several: open the session browser filtered to just the waiting
+				// sessions so the user picks which to attach.
+				m.state = stateHistory
+				m.historyCursor = 0
+				m.history = nil
+				m.historyTranscript = false
+				m.historyWaitingOnly = true
+				m.historyMsgTxt = "loading…"
+				return m, m.fetchHistory
+			}
 		case "ctrl+r":
 			// Open the session browser to inspect/reopen a session (spec §18.6).
 			m.state = stateHistory
 			m.historyCursor = 0
 			m.history = nil
 			m.historyTranscript = false
+			m.historyWaitingOnly = false
 			m.historyMsgTxt = "loading…"
 			return m, m.fetchHistory
 		case "ctrl+o":
@@ -3725,7 +3848,7 @@ func (m model) overlayActivate() (tea.Model, tea.Cmd) {
 		// Explicit, intentional exit from the session (spec §18.2).
 		m.overlay = false
 		m.state = stateMenu
-		return m, m.fetchBacklog
+		return m, m.refreshMenu()
 	case ovQuit:
 		return m, tea.Quit
 	case ovAutoExpand:
@@ -5060,6 +5183,10 @@ func (m model) menuView() string {
 		b.WriteString("  " + warnStyle.Render(fmt.Sprintf("⚠ %d %s blocked — waiting on you", n, noun)) +
 			dimStyle.Render(" · press w to view") + "\n\n")
 	}
+	if n := len(m.waitingSessions); n > 0 {
+		b.WriteString("  " + warnStyle.Render(waitingSessionsLine(m.waitingSessions)) +
+			dimStyle.Render(" · press s to open") + "\n\n")
+	}
 	if len(m.entries) == 0 {
 		b.WriteString("  loading modes…\n")
 	}
@@ -5094,8 +5221,26 @@ func (m model) menuView() string {
 	if m.blockedTaskCount() > 0 {
 		footer += " · w view blocked"
 	}
+	if len(m.waitingSessions) > 0 {
+		footer += " · s open waiting session"
+	}
 	b.WriteString("\n" + m.footerBar(footer))
 	return b.String()
+}
+
+// waitingSessionsLine builds the home-menu awareness line for live sessions that
+// need the user (task 0107). A single session waiting on an unanswered question
+// gets the pointed "waiting for your answer"; a paused session (or a mix) reads
+// "waiting for you". For several sessions the line invites a pick.
+func waitingSessionsLine(ws []*v1.SessionSummary) string {
+	n := len(ws)
+	if n == 1 {
+		if ws[0].WaitingInput {
+			return "⚠ 1 session waiting for your answer"
+		}
+		return "⚠ 1 session waiting for you"
+	}
+	return fmt.Sprintf("⚠ %d sessions waiting for you", n)
 }
 
 // historyView renders the session browser (spec §18.6): a navigable list of
@@ -5114,6 +5259,12 @@ func (m model) historyView() string {
 		cursor: m.historyCursor,
 		hint:   "↑/↓ choose · enter transcript · o reopen · r refresh · esc/q back",
 		empty:  emptyMsg,
+	}
+	if m.historyWaitingOnly {
+		b.title = " ycc — sessions waiting for you "
+		if emptyMsg == "no previous sessions" {
+			b.empty = "(no sessions waiting)"
+		}
 	}
 	// Clamp the title column so a row stays on a single physical line.
 	tw := 48

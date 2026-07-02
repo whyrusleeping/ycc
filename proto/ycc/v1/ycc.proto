@@ -152,6 +152,10 @@ message SessionSummary {
   int64 turns = 9;
   int64 tool_calls = 10;
   bool live = 11;
+  // waiting_input is true when a live session is blocked on an unanswered
+  // ask_user question (single or batch) and needs the user to reply. Only ever
+  // set on live rows — a persisted-only session holds no in-memory question.
+  bool waiting_input = 12;
 }
 message ListSessionHistoryResponse { repeated SessionSummary sessions = 1; }
 

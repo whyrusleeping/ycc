@@ -134,6 +134,7 @@ func (s *Server) ListSessionHistory(_ context.Context, req *connect.Request[v1.L
 			Turns:        int64(su.Turns),
 			ToolCalls:    int64(su.ToolCalls),
 			Live:         su.Live,
+			WaitingInput: su.Waiting,
 		})
 	}
 	return connect.NewResponse(&v1.ListSessionHistoryResponse{Sessions: out}), nil

@@ -226,3 +226,43 @@ func TestListSessionHistoryUnknownProject(t *testing.T) {
 		t.Fatal("want error for unknown project")
 	}
 }
+
+// A live session blocked on a pending ask_user question has Waiting=true in its
+// history row; without a pending question it stays false (task 0107). Only live
+// sessions carry the flag.
+func TestListSessionHistoryWaiting(t *testing.T) {
+	ws := t.TempDir()
+	m := NewManager(config.NewRegistry(nil), ws)
+	s := newStopSession(t)
+	s.ID = "s_wait"
+	absWS, _ := filepath.Abs(ws)
+	s.Workspace = absWS
+	m.mu.Lock()
+	m.sessions["s_wait"] = s
+	m.mu.Unlock()
+
+	// No pending question: Waiting=false.
+	got, err := m.ListSessionHistory("")
+	if err != nil {
+		t.Fatalf("ListSessionHistory: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 summary, got %d", len(got))
+	}
+	if got[0].Waiting {
+		t.Fatalf("want Waiting=false with no pending question")
+	}
+
+	// Simulate a blocked ask_user (as reaper_test does): a pending waiting channel.
+	s.inter.mu.Lock()
+	s.inter.waiting = make(chan string, 1)
+	s.inter.mu.Unlock()
+
+	got, err = m.ListSessionHistory("")
+	if err != nil {
+		t.Fatalf("ListSessionHistory: %v", err)
+	}
+	if len(got) != 1 || !got[0].Waiting {
+		t.Fatalf("want Waiting=true with a pending question, got %+v", got)
+	}
+}
