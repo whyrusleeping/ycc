@@ -52,3 +52,6 @@ The prompt is built on `charm.land/bubbles/v2/textarea` (and there is also a `te
 …[truncated]
 - 2026-07-02 review tier: simple (coordinator self-review)
 - 2026-07-02 decision: accept — commit: tui: bind ctrl+left/ctrl+right to word-wise cursor motion in chat inputs (0102)
+- 2026-07-02 usage: 9,695 tok (in 52, out 9,643, cache_r 671,128, cache_w 55,746) · cost n/a (unpriced)
+  implementer: 5,286 tok (in 30, out 5,256, cache_r 488,988, cache_w 41,503) · cost n/a (unpriced)
+  coordinator: 4,409 tok (in 22, out 4,387, cache_r 182,140, cache_w 14,243) · cost n/a (unpriced)

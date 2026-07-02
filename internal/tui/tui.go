@@ -167,6 +167,13 @@ type model struct {
 	// (see dropMouseFragment).
 	lastMouse time.Time
 
+	// keyEnhanced is true once the terminal reports support for the kitty
+	// keyboard protocol's disambiguation (bubbletea delivers a
+	// KeyboardEnhancementsMsg at startup). Only then can ctrl+i be told apart
+	// from Tab (both are byte 0x09); we use this to show the effective interrupt
+	// hint in the footer (ctrl+i where distinguishable, ctrl+x everywhere else).
+	keyEnhanced bool
+
 	// picker state: when the pending question carries options, the footer shows
 	// a navigable list instead of the textinput until the user picks "other…".
 	pickerOpts   []string // suggested answers ("" sentinel handled separately)
@@ -1543,13 +1550,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Track mouse activity and swallow keystrokes that are really the leaked
 	// bytes of a split mouse report (bubbletea v1 input-parser bug). This runs
 	// ahead of all state dispatch so it protects every input box uniformly.
-	switch msg.(type) {
+	switch msg := msg.(type) {
 	case tea.MouseMsg:
 		m.lastMouse = time.Now()
 	case tea.KeyMsg:
-		if m.dropMouseFragment(msg.(tea.KeyMsg)) {
+		if m.dropMouseFragment(msg) {
 			return m, nil
 		}
+	case tea.KeyboardEnhancementsMsg:
+		// The terminal told us whether it can disambiguate keys via the kitty
+		// keyboard protocol. Remember it so the footer advertises the interrupt
+		// chord that actually works: ctrl+i (== Tab byte-wise) only survives
+		// where disambiguation is available; ctrl+x works everywhere.
+		m.keyEnhanced = msg.SupportsKeyDisambiguation()
 	}
 
 	// A fatal startup failure owns the screen (render short-circuits to it). Only
@@ -2362,8 +2375,13 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.backlogShowDone = false
 			m.backlogBlockedOnly = false
 			return m, m.fetchBacklog
-		case "ctrl+i":
+		case "ctrl+i", "ctrl+x":
 			// Gracefully interrupt the running agent to steer it (spec §18.7).
+			// ctrl+i is the historical chord but is byte-identical to Tab (0x09)
+			// and only distinguishable on terminals with the kitty keyboard
+			// protocol; ctrl+x (0x18) is a distinct control byte delivered on
+			// every terminal (and unused by the textarea keymap), so it is the
+			// universal fallback.
 			if !m.paused {
 				return m, m.interrupt()
 			}
@@ -3652,7 +3670,8 @@ func (m model) overlayActivate() (tea.Model, tea.Cmd) {
 	case ovInterrupt:
 		// Interrupt the running agent (or resume a paused one) — the overlay
 		// route promised by spec §18.7, and the reliable path on terminals where
-		// ctrl+i can't be distinguished from tab. Close the overlay so the user
+		// ctrl+i can't be distinguished from tab (ctrl+x is the universal direct
+		// chord for the same action). Close the overlay so the user
 		// sees the paused/running state and can steer immediately.
 		if m.sessionID == "" || m.state != stateSession {
 			return m, nil
@@ -5387,17 +5406,28 @@ func (m model) sessionView() string {
 		help := m.footer(" ⏸ paused — type a correction + enter to steer · enter to resume · esc settings")
 		return top + "\n" + body + "\n" + m.inputRow() + "\n" + help
 	}
-	help := m.footer(" enter send/expand · shift+enter newline · ↑↓ select · click expand · pgup/pgdn scroll · ctrl+i interrupt · esc settings · ctrl+b backlog · ctrl+n new task")
+	help := m.footer(" enter send/expand · shift+enter newline · ↑↓ select · click expand · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings · ctrl+b backlog · ctrl+n new task")
 	if m.mode == "work" {
 		// Surface the loop toggle on work sessions: shift+tab halts a running loop
 		// gracefully (current task finishes) or rolls a single session into a loop.
 		if m.looping {
-			help = m.footer(" shift+tab halt loop · enter send/expand · ↑↓ select · pgup/pgdn scroll · ctrl+i interrupt · esc settings")
+			help = m.footer(" shift+tab halt loop · enter send/expand · ↑↓ select · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings")
 		} else {
-			help = m.footer(" shift+tab loop · enter send/expand · ↑↓ select · pgup/pgdn scroll · ctrl+i interrupt · esc settings")
+			help = m.footer(" shift+tab loop · enter send/expand · ↑↓ select · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings")
 		}
 	}
 	return top + "\n" + body + "\n" + m.inputRow() + "\n" + help
+}
+
+// interruptKeyHint returns the interrupt chord to advertise in the footer. ctrl+i
+// is byte-identical to Tab (0x09), so it only reaches the runtime on terminals
+// that report kitty keyboard-protocol disambiguation; everywhere else we show
+// ctrl+x, the universal fallback that is always delivered as a distinct byte.
+func (m model) interruptKeyHint() string {
+	if m.keyEnhanced {
+		return "ctrl+i"
+	}
+	return "ctrl+x"
 }
 
 // footer renders a single-row help/status line, clamped to the terminal width so
