@@ -204,8 +204,13 @@ type model struct {
 	input   textarea.Model
 	glam    *glamour.TermRenderer
 	pending string
-	status  string
-	paused  bool // session is paused-to-steer (spec §18.7)
+	// pendingSeq is the seq of the question_asked event whose (single) question
+	// is currently awaiting an answer; 0 when none. It lets the transcript row
+	// collapse to a pointer while the footer picker shows the same prompt, so
+	// the question is never rendered twice on screen at once.
+	pendingSeq int64
+	status     string
+	paused     bool // session is paused-to-steer (spec §18.7)
 
 	// live status-bar state (task 0062): a running per-model token tally summed
 	// from model_turn usage blocks, per-model pricing surfaced via ListModels, the
@@ -3170,9 +3175,14 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "enter":
 				if m.pickerCursor >= len(m.pickerOpts) {
-					// "other…": drop into the free-text textarea.
+					// "other…": drop into the free-text textarea. The question row's
+					// body was collapsed to an "answer below ↓" pointer while the
+					// picker echoed the prompt; the plain textarea doesn't, so
+					// restore the full question in the transcript.
 					m.picking = false
+					m.bodyCache = map[int]string{}
 					m.relayout()
+					m.rebuild()
 					return m, m.input.Focus()
 				}
 				return m, m.choosePickerOption(m.pickerCursor)
@@ -4731,6 +4741,12 @@ func (m model) renderTranscript(events []*v1.Event) (content string, lines []str
 	scratch.eventStart = nil
 	scratch.selected = -1
 	scratch.follow = false
+	// The live session's pending-question UI state (footer picker / wizard) must
+	// not leak into a replayed transcript: there is no picker below it, so its
+	// question rows always render in full, never as an "answer below ↓" pointer.
+	scratch.picking = false
+	scratch.pendingSeq = 0
+	scratch.wizActive = false
 	var b strings.Builder
 	line := 0
 	for i, ev := range events {
@@ -6295,6 +6311,7 @@ func (m *model) appendEvent(ev *v1.Event) {
 			break
 		}
 		m.pending = dataField(ev, "question")
+		m.pendingSeq = ev.Seq
 		m.status = "waiting for your answer"
 		m.pickerOpts = dataList(ev, "options")
 		if len(m.pickerOpts) > 0 {
@@ -6306,9 +6323,12 @@ func (m *model) appendEvent(ev *v1.Event) {
 		}
 	case "question_answered":
 		m.pending = ""
+		m.pendingSeq = 0
 		m.status = "running"
 		m.pickerOpts = nil
 		m.picking = false
+		// clearWizard also wipes the body cache, which the single-question path
+		// needs too: the answer now folds into the question_asked row's body.
 		m.clearWizard()
 	case "session_idle":
 		m.status = "idle"
@@ -6398,6 +6418,165 @@ func (m *model) isMergedResult(j int) bool {
 	return j > 0 && m.mergedResultIdx(j-1) == j
 }
 
+// --- ask_user Q&A folding ---
+//
+// One ask_user round-trip produces four events: the engine's tool_call, the
+// interaction gate's question_asked + question_answered, and the engine's
+// tool_result (whose payload repeats the answer). Rendering all four shows the
+// question up to three times and the answer up to four. The transcript instead
+// treats question_asked as the canonical row for the whole exchange: the answer
+// folds into it (see questionBody), while the tool plumbing rows and the
+// question_answered row are hidden. The helpers below do the (non-adjacent)
+// pairing; every scan matches only same-actor events, so interleaved user input
+// or sub-agent activity never breaks a pair.
+
+// askQuestionIdx returns the index of the question_asked event produced by the
+// ask_user tool_call at i, or -1. The interaction gate emits question_asked
+// while the tool call is executing, so it is the next same-actor question
+// event; hitting any other same-actor tool_call/tool_result first means the
+// call never asked (e.g. a validation error) and it must stay visible.
+func (m *model) askQuestionIdx(i int) int {
+	if i < 0 || i >= len(m.evs) {
+		return -1
+	}
+	call := m.evs[i]
+	if call.Type != "tool_call" || dataField(call, "name") != "ask_user" {
+		return -1
+	}
+	for j := i + 1; j < len(m.evs); j++ {
+		ev := m.evs[j]
+		if ev.Actor != call.Actor {
+			continue
+		}
+		switch ev.Type {
+		case "question_asked":
+			return j
+		case "tool_call", "tool_result":
+			return -1
+		}
+	}
+	return -1
+}
+
+// resultCallIdx returns the index of the tool_call that produced the
+// tool_result at i, scanning backward over the interleaved question events an
+// ask_user call emits (so, unlike mergedResultIdx, it does not require
+// adjacency). A same-actor tool_result encountered first means the result at i
+// belongs to some earlier call and pairing fails.
+func (m *model) resultCallIdx(i int) int {
+	if i < 0 || i >= len(m.evs) || m.evs[i].Type != "tool_result" {
+		return -1
+	}
+	res := m.evs[i]
+	for j := i - 1; j >= 0; j-- {
+		ev := m.evs[j]
+		if ev.Actor != res.Actor {
+			continue
+		}
+		switch ev.Type {
+		case "tool_call":
+			cid, rid := dataField(ev, "id"), dataField(res, "id")
+			if cid != "" && rid != "" && cid != rid {
+				return -1
+			}
+			return j
+		case "tool_result":
+			return -1
+		}
+	}
+	return -1
+}
+
+// answerIdxFor returns the index of the question_answered event that resolved
+// the question_asked at qi, or -1 while it is still unanswered. Questions are
+// strictly serialized per actor (the interaction gate holds one pending
+// question at a time), so the next same-actor question event decides.
+func (m *model) answerIdxFor(qi int) int {
+	if qi < 0 || qi >= len(m.evs) || m.evs[qi].Type != "question_asked" {
+		return -1
+	}
+	for j := qi + 1; j < len(m.evs); j++ {
+		ev := m.evs[j]
+		if ev.Actor != m.evs[qi].Actor {
+			continue
+		}
+		switch ev.Type {
+		case "question_answered":
+			return j
+		case "question_asked":
+			return -1
+		}
+	}
+	return -1
+}
+
+// questionIdxForAnswer is the inverse of answerIdxFor: the index of the
+// question_asked that the question_answered at i resolves, or -1.
+func (m *model) questionIdxForAnswer(i int) int {
+	if i < 0 || i >= len(m.evs) || m.evs[i].Type != "question_answered" {
+		return -1
+	}
+	for j := i - 1; j >= 0; j-- {
+		ev := m.evs[j]
+		if ev.Actor != m.evs[i].Actor {
+			continue
+		}
+		switch ev.Type {
+		case "question_asked":
+			return j
+		case "question_answered":
+			return -1
+		}
+	}
+	return -1
+}
+
+// answerEventFor returns the question_answered event paired with the given
+// question_asked event, or nil while it is unanswered. Used by questionBody to
+// fold the answer into the question's rendered block.
+func (m *model) answerEventFor(q *v1.Event) *v1.Event {
+	for i, ev := range m.evs {
+		if ev.Seq == q.Seq && ev.Type == "question_asked" {
+			if ai := m.answerIdxFor(i); ai >= 0 {
+				return m.evs[ai]
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
+// isAskUserPlumbing reports whether event i is ask_user tool plumbing already
+// represented by its question_asked row: the ask_user tool_call itself (once
+// its question_asked exists) or that call's tool_result (whose payload just
+// repeats the answer). An errored result (e.g. the ask was cancelled) stays
+// visible so failures are never silently swallowed.
+func (m *model) isAskUserPlumbing(i int) bool {
+	if i < 0 || i >= len(m.evs) {
+		return false
+	}
+	switch m.evs[i].Type {
+	case "tool_call":
+		return m.askQuestionIdx(i) >= 0
+	case "tool_result":
+		if dataField(m.evs[i], "error") == "true" {
+			return false
+		}
+		ci := m.resultCallIdx(i)
+		return ci >= 0 && m.askQuestionIdx(ci) >= 0
+	}
+	return false
+}
+
+// isFoldedAnswer reports whether event i is a question_answered folded into its
+// preceding question_asked row (which renders the Q and the A as one block).
+func (m *model) isFoldedAnswer(i int) bool {
+	if i < 0 || i >= len(m.evs) || m.evs[i].Type != "question_answered" {
+		return false
+	}
+	return m.questionIdxForAnswer(i) >= 0
+}
+
 // isEmptyModelTurn reports whether the event at index i is a model_turn that
 // carries no text — i.e. an agent turn whose only payload was tool calls. Such a
 // turn would otherwise render as a bare row showing just its timing/usage
@@ -6427,8 +6606,10 @@ func (m *model) isEchoedIdle(i int) bool {
 
 // hiddenRow reports whether event i renders no block of its own and instead
 // shares the previous rendered row's start line: a tool_result folded into its
-// preceding tool_call, an empty (tool-calls-only) model_turn, or a session_idle
-// whose report just echoes the final model_turn.
+// preceding tool_call, an empty (tool-calls-only) model_turn, a session_idle
+// whose report just echoes the final model_turn, ask_user tool plumbing (the
+// question_asked row is the canonical rendering of the exchange), or a
+// question_answered folded into its question_asked row.
 func (m *model) hiddenRow(i int) bool {
 	if i >= 0 && i < len(m.evs) && m.evs[i].Type == "user_input_delivered" {
 		// The delivery marker is a bookkeeping event, not a message: its text is
@@ -6436,7 +6617,8 @@ func (m *model) hiddenRow(i int) bool {
 		// no block of its own — otherwise the message would appear twice (§18.7).
 		return true
 	}
-	return m.isMergedResult(i) || m.isEmptyModelTurn(i) || m.isEchoedIdle(i)
+	return m.isMergedResult(i) || m.isEmptyModelTurn(i) || m.isEchoedIdle(i) ||
+		m.isAskUserPlumbing(i) || m.isFoldedAnswer(i)
 }
 
 // eventAt returns the index of the event whose rendered block contains content
@@ -7645,35 +7827,138 @@ func dropDuplicatePrefix(s, prev string) string {
 	return s
 }
 
+// questionBody renders a question_asked event as the canonical block for the
+// whole ask_user exchange (the tool plumbing rows and the question_answered
+// row are hidden — see isAskUserPlumbing / isFoldedAnswer). While the footer
+// picker/wizard is collecting the answer it collapses to a pointer (the footer
+// already shows the prompt); once the paired question_answered event exists the
+// answer folds in beneath the question; and an autonomous auto-answer compacts
+// to one dim line instead of the canned "no human available" paragraph.
+func (m *model) questionBody(ev *v1.Event) string {
+	ansEv := m.answerEventFor(ev)
+	if qs := dataQuestions(ev); len(qs) > 0 {
+		return m.batchQuestionBody(ev, qs, ansEv)
+	}
+	txt := firstField(ev, "question")
+	if txt == "" {
+		return ""
+	}
+	// While the single-question picker below echoes this prompt, point at it
+	// instead of repeating it (mirrors the wizard's condensed form).
+	if ansEv == nil && m.picking && ev.Seq == m.pendingSeq {
+		return indentLines(dimStyle.Render("answer below ↓"), "  ")
+	}
+	body := strings.TrimRight(m.markdown(txt), "\n")
+	if ansEv != nil {
+		// The extra two-space indent aligns the answer under the question text,
+		// which carries glamour's own left margin.
+		if dataField(ansEv, "auto") == "true" {
+			body += "\n" + autoAnswerLine("  ")
+		} else {
+			body += "\n" + answerLines(dataField(ansEv, "answer"), m.bodyWrapWidth(), "  ")
+		}
+	}
+	return indentLines(body, "  ")
+}
+
+// batchQuestionBody renders a multi-question ask_user batch: each prompt with
+// its suggested options while unanswered, or with its folded answer once the
+// paired question_answered event exists. While the wizard is actively
+// collecting this batch it collapses to a pointer at the wizard below.
+func (m *model) batchQuestionBody(ev *v1.Event, qs []wizQuestion, ansEv *v1.Event) string {
+	if m.wizActive && ev.Seq == m.wizSeq {
+		noun := "questions"
+		if len(qs) == 1 {
+			noun = "question"
+		}
+		return indentLines(dimStyle.Render(fmt.Sprintf("%d %s — answer below ↓", len(qs), noun)), "  ")
+	}
+	auto := ansEv != nil && dataField(ansEv, "auto") == "true"
+	var answers []string
+	if ansEv != nil && !auto {
+		answers = dataList(ansEv, "answers")
+	}
+	w := m.bodyWrapWidth()
+	var b strings.Builder
+	for i, q := range qs {
+		b.WriteString(wrapTo(fmt.Sprintf("%d. %s", i+1, q.prompt), w) + "\n")
+		switch {
+		case ansEv == nil:
+			// Unanswered: keep the suggested options visible. Once answered only
+			// the chosen answer matters, so the options drop away.
+			for _, o := range q.options {
+				b.WriteString(indentLines(dimStyle.Render(wrapTo("- "+o, w-3)), "   ") + "\n")
+			}
+		case !auto:
+			a := ""
+			if i < len(answers) {
+				a = answers[i]
+			}
+			b.WriteString(answerLines(a, w-3, "   ") + "\n")
+		}
+	}
+	if auto {
+		b.WriteString(autoAnswerLine(""))
+	}
+	// Four-space indent matches the left margin glamour gives markdown-rendered
+	// bodies (2 from indentLines + 2 of its own), so batch and single-question
+	// blocks line up.
+	return indentLines(strings.TrimRight(b.String(), "\n"), "    ")
+}
+
+// bodyWrapWidth is the wrap width for hand-assembled (non-markdown) body text,
+// accounting for the two-space body indent with a little slack for prefixes.
+func (m *model) bodyWrapWidth() int {
+	w := m.w - 8
+	if w < 20 {
+		w = 20
+	}
+	return w
+}
+
+// wrapTo wraps s to width w: word-aware first, then hard-wrapped so an unbroken
+// token can never overflow the line (the same pairing the thinking body uses).
+func wrapTo(s string, w int) string {
+	if w < 1 {
+		return s
+	}
+	return wrap.String(wordwrap.String(s, w), w)
+}
+
+// answerLines renders a user answer folded beneath its question: a dim "→ "
+// arrow followed by the wrapped answer text, continuation lines aligned under
+// the text. indent is prepended to every line.
+func answerLines(a string, w int, indent string) string {
+	a = strings.TrimSpace(a)
+	if a == "" {
+		return indent + dimStyle.Render("→ (no answer)")
+	}
+	lines := strings.Split(wrapTo(a, w-2), "\n")
+	for i, ln := range lines {
+		if i == 0 {
+			lines[i] = indent + dimStyle.Render("→ ") + ln
+		} else {
+			lines[i] = indent + "  " + ln
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// autoAnswerLine is the compact rendering of an autonomous-mode auto-answer:
+// the canned "no human is available…" paragraph the agent receives adds
+// nothing for the human reading the log, so one dim line carries the fact.
+func autoAnswerLine(indent string) string {
+	return indent + dimStyle.Render("→ auto-answered (autonomous mode): agent proceeds on its own judgement")
+}
+
 func (m *model) renderBody(ev *v1.Event) string {
 	switch ev.Type {
 	case "question_asked":
-		if qs := dataQuestions(ev); len(qs) > 0 {
-			// While the wizard is actively collecting answers for this batch, don't
-			// dump every question inline — the one-at-a-time wizard below is the
-			// focal point. Render a single concise summary pointing at it.
-			if m.wizActive && ev.Seq == m.wizSeq {
-				noun := "questions"
-				if len(qs) == 1 {
-					noun = "question"
-				}
-				return indentLines(dimStyle.Render(fmt.Sprintf("%d %s — answer below ↓", len(qs), noun)), "  ")
-			}
-			var b strings.Builder
-			for i, q := range qs {
-				fmt.Fprintf(&b, "%d. %s\n", i+1, q.prompt)
-				for _, o := range q.options {
-					b.WriteString("   - " + o + "\n")
-				}
-			}
-			return indentLines(m.markdown(strings.TrimRight(b.String(), "\n")), "  ")
-		}
-		txt := firstField(ev, "question")
-		if txt == "" {
-			return ""
-		}
-		return indentLines(m.markdown(txt), "  ")
+		return m.questionBody(ev)
 	case "question_answered":
+		// Normally folded into its question_asked row (isFoldedAnswer) and never
+		// rendered standalone; this remains only for an orphaned answer whose
+		// question isn't in the log.
 		if ans := dataList(ev, "answers"); len(ans) > 0 {
 			var b strings.Builder
 			for i, a := range ans {

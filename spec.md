@@ -955,6 +955,19 @@ the positional answers (per-question option index or free text); one `question_a
 event carries the `answers` list, returned to the model mapped to each question. The
 single-question wire path above is unchanged.
 
+**Transcript rendering (one block per exchange).** One ask_user round-trip produces four
+events on the wire — the engine's `tool_call`, the gate's `question_asked` +
+`question_answered`, and the engine's `tool_result` (whose payload repeats the answer) —
+but the TUI renders the exchange **once**: the `question_asked` row is the canonical
+block, the answer folds into it (`→ answer`, per-question for batches, options dropped
+once answered), and the tool plumbing rows plus the `question_answered` row are hidden.
+An ask_user call that errored without asking (or whose result is an error, e.g. cancelled
+mid-question) keeps its error row visible. While the footer picker/wizard is collecting
+the answer, the question row's body collapses to an "answer below ↓" pointer so the
+prompt never shows twice on screen at once. Autonomous auto-answers render as a single
+dim "auto-answered (autonomous mode)" line instead of the canned no-human paragraph the
+model receives.
+
 ### 18.4 Reasoning (thinking) in the event stream
 
 When a model turn returns a reasoning summary, the engine emits a `thinking` event (§7.4)

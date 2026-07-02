@@ -5320,3 +5320,204 @@ func TestSessionViewFitsWhileSearching(t *testing.T) {
 		}
 	}
 }
+
+// --- ask_user Q&A folding (task 0120) ---
+
+// One ask_user round-trip emits four events (tool_call, question_asked,
+// question_answered, tool_result); the transcript must render them as ONE
+// block: the plumbing rows fold away and the question_asked body carries the
+// question plus the folded answer.
+func TestAskUserExchangeFoldsToSingleBlock(t *testing.T) {
+	m := &model{
+		expanded: map[int]bool{}, bodyCache: map[int]string{},
+		evs: []*v1.Event{
+			{Seq: 1, Type: "tool_call", Actor: "coordinator", DataJson: `{"id":"t1","name":"ask_user","args":"{\"question\":\"which db?\"}"}`},
+			{Seq: 2, Type: "question_asked", Actor: "coordinator", DataJson: `{"question":"which db?","options":["postgres","sqlite"]}`},
+			{Seq: 3, Type: "question_answered", Actor: "coordinator", DataJson: `{"answer":"postgres"}`},
+			{Seq: 4, Type: "tool_result", Actor: "coordinator", DataJson: `{"id":"t1","result":"postgres"}`},
+		},
+	}
+	if !m.hiddenRow(0) {
+		t.Fatal("ask_user tool_call should be hidden once its question_asked exists")
+	}
+	if m.hiddenRow(1) {
+		t.Fatal("question_asked row must stay visible (it is the canonical Q&A block)")
+	}
+	if !m.hiddenRow(2) {
+		t.Fatal("question_answered should fold into the question_asked row")
+	}
+	if !m.hiddenRow(3) {
+		t.Fatal("ask_user tool_result (a duplicate of the answer) should be hidden")
+	}
+	body := stripANSI(m.bodyFor(m.evs[1]))
+	if !strings.Contains(body, "which db?") {
+		t.Fatalf("question body should contain the question, got:\n%s", body)
+	}
+	if !strings.Contains(body, "→ postgres") {
+		t.Fatalf("question body should fold in the answer, got:\n%s", body)
+	}
+}
+
+// While a question is still unanswered, the question row stays visible with no
+// answer line, and the (blocked, still-running) ask_user tool_call is already
+// hidden — otherwise it would sit there showing a stuck in-flight glyph.
+func TestAskUserPendingQuestionVisibleWithoutAnswer(t *testing.T) {
+	m := &model{
+		expanded: map[int]bool{}, bodyCache: map[int]string{},
+		evs: []*v1.Event{
+			{Seq: 1, Type: "tool_call", Actor: "coordinator", DataJson: `{"id":"t1","name":"ask_user","args":"{\"question\":\"which db?\"}"}`},
+			{Seq: 2, Type: "question_asked", Actor: "coordinator", DataJson: `{"question":"which db?"}`},
+		},
+	}
+	if !m.hiddenRow(0) {
+		t.Fatal("pending ask_user tool_call should be hidden")
+	}
+	if m.hiddenRow(1) {
+		t.Fatal("pending question_asked must be visible")
+	}
+	body := stripANSI(m.bodyFor(m.evs[1]))
+	if !strings.Contains(body, "which db?") {
+		t.Fatalf("pending question body should show the question, got:\n%s", body)
+	}
+	if strings.Contains(body, "→") {
+		t.Fatalf("pending question body must not show an answer arrow, got:\n%s", body)
+	}
+}
+
+// An ask_user call that never asked (validation error: no question_asked event)
+// must NOT be treated as plumbing — the call and its errored result render via
+// the normal adjacent-fold tool card so the failure stays visible. An ask that
+// was cancelled mid-question keeps its errored result visible too.
+func TestAskUserErrorStaysVisible(t *testing.T) {
+	bad := &model{evs: []*v1.Event{
+		{Seq: 1, Type: "tool_call", Actor: "coordinator", DataJson: `{"id":"t1","name":"ask_user","args":"{}"}`},
+		{Seq: 2, Type: "tool_result", Actor: "coordinator", DataJson: `{"id":"t1","result":"ask_user: provide a 'question'","error":"true"}`},
+	}}
+	if bad.isAskUserPlumbing(0) || bad.isAskUserPlumbing(1) {
+		t.Fatal("an ask_user call with no question_asked is not plumbing")
+	}
+	// The adjacent pair still folds into one visible tool card (isMergedResult),
+	// which is the normal errored-tool rendering.
+	if !bad.hiddenRow(1) || bad.hiddenRow(0) {
+		t.Fatal("errored ask_user should render as a normal merged tool card")
+	}
+
+	cancelled := &model{evs: []*v1.Event{
+		{Seq: 1, Type: "tool_call", Actor: "coordinator", DataJson: `{"id":"t1","name":"ask_user","args":"{\"question\":\"q?\"}"}`},
+		{Seq: 2, Type: "question_asked", Actor: "coordinator", DataJson: `{"question":"q?"}`},
+		{Seq: 3, Type: "tool_result", Actor: "coordinator", DataJson: `{"id":"t1","result":"ask_user: context canceled","error":"true"}`},
+	}}
+	if !cancelled.hiddenRow(0) {
+		t.Fatal("cancelled ask_user call should still be hidden (its question row shows the ask)")
+	}
+	if cancelled.hiddenRow(2) {
+		t.Fatal("an errored ask_user result must stay visible so the failure is not swallowed")
+	}
+}
+
+// Autonomous-mode auto-answers must render as one compact dim line, not the
+// full canned "no human is available…" paragraph the agent receives.
+func TestAutoAnsweredQuestionRendersCompact(t *testing.T) {
+	canned := "You are in autonomous mode and no human is available, so this question cannot be answered."
+	m := &model{
+		expanded: map[int]bool{}, bodyCache: map[int]string{},
+		evs: []*v1.Event{
+			{Seq: 1, Type: "question_asked", Actor: "coordinator", DataJson: `{"question":"should I?","auto":true}`},
+			{Seq: 2, Type: "question_answered", Actor: "coordinator", DataJson: fmt.Sprintf(`{"answer":%q,"auto":true}`, canned)},
+		},
+	}
+	if !m.hiddenRow(1) {
+		t.Fatal("auto question_answered should fold into the question row")
+	}
+	body := stripANSI(m.bodyFor(m.evs[0]))
+	if !strings.Contains(body, "auto-answered (autonomous mode)") {
+		t.Fatalf("auto answer should render the compact marker, got:\n%s", body)
+	}
+	if strings.Contains(body, "no human is available") {
+		t.Fatalf("auto answer must not dump the canned paragraph, got:\n%s", body)
+	}
+}
+
+// A multi-question batch folds each answer beneath its own question in one
+// block; the suggested options drop away once answered (only the chosen answer
+// matters), and the tool_result's "Q1/A1" dump stays hidden.
+func TestBatchQuestionBodyInterleavesAnswers(t *testing.T) {
+	m := &model{
+		expanded: map[int]bool{}, bodyCache: map[int]string{},
+		evs: []*v1.Event{
+			{Seq: 1, Type: "tool_call", Actor: "coordinator", DataJson: `{"id":"t1","name":"ask_user","args":"{}"}`},
+			{Seq: 2, Type: "question_asked", Actor: "coordinator", DataJson: `{"questions":[{"question":"which database?","options":["postgres","sqlite"]},{"question":"service name?"}]}`},
+			{Seq: 3, Type: "question_answered", Actor: "coordinator", DataJson: `{"answers":["postgres","ycc"]}`},
+			{Seq: 4, Type: "tool_result", Actor: "coordinator", DataJson: `{"id":"t1","result":"Q1: which database?\nA1: postgres\n\nQ2: service name?\nA2: ycc"}`},
+		},
+	}
+	if !m.hiddenRow(0) || !m.hiddenRow(2) || !m.hiddenRow(3) {
+		t.Fatal("batch ask_user plumbing and answer rows should be hidden")
+	}
+	body := stripANSI(m.bodyFor(m.evs[1]))
+	for _, want := range []string{"1. which database?", "→ postgres", "2. service name?", "→ ycc"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("batch body missing %q, got:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "sqlite") {
+		t.Fatalf("answered batch body should drop the unchosen options, got:\n%s", body)
+	}
+
+	// Unanswered: options stay visible, no answer arrows yet.
+	pending := &model{
+		expanded: map[int]bool{}, bodyCache: map[int]string{},
+		evs: m.evs[:2],
+	}
+	body = stripANSI(pending.bodyFor(pending.evs[1]))
+	if !strings.Contains(body, "sqlite") {
+		t.Fatalf("unanswered batch body should keep the options, got:\n%s", body)
+	}
+	if strings.Contains(body, "→") {
+		t.Fatalf("unanswered batch body must not show answer arrows, got:\n%s", body)
+	}
+}
+
+// While the single-question footer picker is echoing the pending prompt, the
+// question row's body collapses to a pointer (mirroring the wizard) so the
+// question never renders twice on screen at once; choosing "other…" (free
+// text) restores the full question since the plain textarea shows no prompt.
+func TestPendingPickerCondensesQuestionBody(t *testing.T) {
+	f := newFakeClient()
+	m := model{
+		client: f, ctx: context.Background(),
+		state: stateSession, status: "running", sessionID: "s1", follow: true,
+		input:    newSessionInput(),
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+	}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(model)
+
+	ev := &v1.Event{
+		Seq: 5, Type: "question_asked", Actor: "coordinator",
+		DataJson: `{"question":"which database?","options":["postgres","sqlite"]}`,
+	}
+	m.appendEvent(ev)
+	if !m.picking || m.pendingSeq != 5 {
+		t.Fatalf("picker should be active for seq 5 (picking=%v pendingSeq=%d)", m.picking, m.pendingSeq)
+	}
+	body := stripANSI(m.bodyFor(ev))
+	if !strings.Contains(body, "answer below") {
+		t.Fatalf("pending picker body should be a pointer, got:\n%s", body)
+	}
+	if strings.Contains(body, "which database?") {
+		t.Fatalf("pending picker body should not repeat the prompt, got:\n%s", body)
+	}
+
+	// "other…" drops to the free-text textarea: the prompt must come back.
+	m.pickerCursor = len(m.pickerOpts) // the "other…" row
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = updated.(model)
+	if m.picking {
+		t.Fatal("enter on other… should leave picker mode")
+	}
+	body = stripANSI(m.bodyFor(ev))
+	if !strings.Contains(body, "which database?") {
+		t.Fatalf("free-text mode should restore the full question body, got:\n%s", body)
+	}
+}
