@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -222,6 +223,12 @@ type model struct {
 	// is opened from the home menu's "blocked — waiting on you" indicator (task 0101).
 	backlogBlockedOnly bool
 	backlogVP          viewport.Model // scrollable viewport for the detail view
+	// backlogStatusPrompt is set while the browser waits for a status-choice digit
+	// (spec §18.5 grooming, task 0099): 1..5 map to todo/in_progress/in_review/done/blocked.
+	backlogStatusPrompt bool
+	// backlogNotice is a transient message shown in the browser footer (update
+	// errors, "workspace not local", etc.); cleared on the next successful action.
+	backlogNotice string
 
 	// plan library browser (task 0020/0077): modal over menu/session, reached
 	// from the browse selector (ctrl+o). Read-only: lists saved plans (plans/*.md)
@@ -405,6 +412,21 @@ type errMsg struct{ err error }
 type flashClearMsg struct{ seq int }
 type backlogMsg struct{ tasks []*v1.BacklogTaskSummary }
 type taskDetailMsg struct{ task *v1.TaskDetail }
+
+// taskUpdatedMsg carries the result of an UpdateTask grooming RPC (task 0099):
+// a refreshed TaskDetail on success, or an error to surface in the browser footer.
+type taskUpdatedMsg struct {
+	task *v1.TaskDetail
+	err  error
+}
+
+// editorClosedMsg fires when the external $EDITOR spawned for a task exits (task
+// 0099). The browser then reloads the task (regenerating backlog.md) so hand-edits
+// are reflected.
+type editorClosedMsg struct {
+	id  string
+	err error
+}
 type plansMsg struct{ plans []*v1.PlanSummary }
 type planDetailMsg struct{ plan *v1.GetPlanResponse }
 
@@ -1254,6 +1276,43 @@ func (m model) fetchTask(id string) tea.Cmd {
 	}
 }
 
+// updateTaskCmd grooms a backlog task via the daemon UpdateTask RPC (spec §18.5,
+// task 0099). status/priority are nil-passthrough (leave field untouched); a call
+// with both nil is a "refresh" that re-reads the file and regenerates backlog.md.
+func (m model) updateTaskCmd(id string, status *string, priority *int32) tea.Cmd {
+	return func() tea.Msg {
+		req := &v1.UpdateTaskRequest{Project: m.project, Id: id, Status: status, Priority: priority}
+		resp, err := m.client.UpdateTask(m.ctx, connect.NewRequest(req))
+		if err != nil {
+			return taskUpdatedMsg{err: err}
+		}
+		return taskUpdatedMsg{task: resp.Msg.Task}
+	}
+}
+
+// editorCommand resolves the user's preferred editor: $EDITOR, then $VISUAL, then
+// "vi" (task 0099). Kept small and side-effect-free so it is unit-testable.
+func editorCommand() string {
+	if e := strings.TrimSpace(os.Getenv("EDITOR")); e != "" {
+		return e
+	}
+	if e := strings.TrimSpace(os.Getenv("VISUAL")); e != "" {
+		return e
+	}
+	return "vi"
+}
+
+// openEditorCmd suspends the Bubble Tea program and opens path in the user's
+// $EDITOR, returning an editorClosedMsg when it exits (task 0099).
+func (m model) openEditorCmd(id, path string) tea.Cmd {
+	fields := strings.Fields(editorCommand())
+	name := fields[0]
+	args := append(append([]string{}, fields[1:]...), path)
+	return tea.ExecProcess(exec.Command(name, args...), func(err error) tea.Msg {
+		return editorClosedMsg{id: id, err: err}
+	})
+}
+
 // fetchPlans loads the saved plan library list for the plans browser (task 0077).
 func (m model) fetchPlans() tea.Msg {
 	resp, err := m.client.ListPlans(m.ctx, connect.NewRequest(&v1.ListPlansRequest{Project: m.project}))
@@ -1805,6 +1864,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshBacklogDetailVP()
 		m.backlogVP.GotoTop()
 		return m, nil
+	case taskUpdatedMsg:
+		// Backlog grooming result (task 0099): surface failures in the browser
+		// footer, otherwise adopt the refreshed detail and re-read the list.
+		if msg.err != nil {
+			m.backlogNotice = "update failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.rpcOK()
+		m.backlogNotice = ""
+		if m.backlogDetail != nil && msg.task != nil && m.backlogDetail.Id == msg.task.Id {
+			m.backlogDetail = msg.task
+			m.refreshBacklogDetailVP()
+		}
+		return m, m.fetchBacklog
+	case editorClosedMsg:
+		// The external $EDITOR exited (task 0099): reload the task (a no-mutation
+		// UpdateTask re-reads the file and regenerates backlog.md) and the list.
+		if msg.err != nil {
+			m.backlogNotice = "editor: " + msg.err.Error()
+		} else {
+			m.backlogNotice = ""
+		}
+		return m, tea.Batch(m.updateTaskCmd(msg.id, nil, nil), m.fetchBacklog)
 	case plansMsg:
 		m.rpcOK()
 		m.plansList = msg.plans
@@ -3055,15 +3137,36 @@ func (m model) updateBacklog(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
+	// Status-choice mode (spec §18.5 grooming, task 0099): the next digit picks a
+	// status; esc/any other key cancels. Applies to the cursor row (list) or the
+	// open detail task.
+	if m.backlogStatusPrompt {
+		m.backlogStatusPrompt = false
+		if st, ok := statusForDigit(key.String()); ok {
+			if id := m.backlogTargetID(); id != "" {
+				return m, m.updateTaskCmd(id, &st, nil)
+			}
+		}
+		return m, nil
+	}
 	if m.backlogDetail != nil {
-		// Detail view: back returns to the list; all other keys scroll the
-		// detail viewport.
+		// Detail view: grooming keys, editor escape hatch, then scroll.
 		switch key.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
 		case "esc", "backspace", "left":
 			m.backlogDetail = nil
+			m.backlogNotice = ""
 			return m, nil
+		case "+", "=":
+			return m, m.reprioritizeCmd(m.backlogDetail.Id, int(m.backlogDetail.Priority), -1)
+		case "-", "_":
+			return m, m.reprioritizeCmd(m.backlogDetail.Id, int(m.backlogDetail.Priority), +1)
+		case "s":
+			m.backlogStatusPrompt = true
+			return m, nil
+		case "e":
+			return m.openTaskInEditor(m.backlogDetail.Id, m.backlogDetail.Path)
 		}
 		var cmd tea.Cmd
 		m.backlogVP, cmd = m.backlogVP.Update(msg)
@@ -3077,6 +3180,7 @@ func (m model) updateBacklog(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "esc", "q":
 		m.backlog = false
 		m.backlogBlockedOnly = false
+		m.backlogNotice = ""
 		return m, nil
 	case "up":
 		m.backlogCursor = navUp(m.backlogCursor)
@@ -3088,6 +3192,23 @@ func (m model) updateBacklog(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.backlogShowDone = !m.backlogShowDone
 		m.backlogCursor = clampCursor(m.backlogCursor, len(m.visibleBacklogTasks()))
 		return m, nil
+	case "+", "=":
+		if len(vis) > 0 {
+			t := vis[m.backlogCursor]
+			return m, m.reprioritizeCmd(t.Id, int(t.Priority), -1)
+		}
+		return m, nil
+	case "-", "_":
+		if len(vis) > 0 {
+			t := vis[m.backlogCursor]
+			return m, m.reprioritizeCmd(t.Id, int(t.Priority), +1)
+		}
+		return m, nil
+	case "s":
+		if len(vis) > 0 {
+			m.backlogStatusPrompt = true
+		}
+		return m, nil
 	case "enter":
 		if len(vis) > 0 {
 			return m, m.fetchTask(vis[m.backlogCursor].Id)
@@ -3095,6 +3216,76 @@ func (m model) updateBacklog(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+// backlogTargetID returns the task the grooming keys act on: the open detail task,
+// else the cursor row in the list (task 0099).
+func (m model) backlogTargetID() string {
+	if m.backlogDetail != nil {
+		return m.backlogDetail.Id
+	}
+	vis := m.visibleBacklogTasks()
+	if len(vis) > 0 && m.backlogCursor < len(vis) {
+		return vis[m.backlogCursor].Id
+	}
+	return ""
+}
+
+// statusForDigit maps a status-prompt digit to a docs status (task 0099).
+func statusForDigit(k string) (string, bool) {
+	switch k {
+	case "1":
+		return "todo", true
+	case "2":
+		return "in_progress", true
+	case "3":
+		return "in_review", true
+	case "4":
+		return "done", true
+	case "5":
+		return "blocked", true
+	}
+	return "", false
+}
+
+// reprioritizeCmd nudges a task's priority toward p1 (dir<0) or p5 (dir>0), clamped
+// to 1..5; it is a no-op at the clamp edge to avoid a needless RPC (task 0099).
+func (m model) reprioritizeCmd(id string, cur, dir int) tea.Cmd {
+	next := cur + dir
+	if next < 1 {
+		next = 1
+	}
+	if next > 5 {
+		next = 5
+	}
+	if next == cur {
+		return nil
+	}
+	p := int32(next)
+	return m.updateTaskCmd(id, nil, &p)
+}
+
+// openTaskInEditor opens the task's markdown file in $EDITOR when the workspace is
+// local to the client (the task file exists on this filesystem — the common
+// in-process/loopback case). Remote clients can't reach the workspace editor, so
+// the affordance degrades to a footer notice (task 0099).
+func (m model) openTaskInEditor(id, path string) (tea.Model, tea.Cmd) {
+	if !taskFileLocal(path) {
+		m.backlogNotice = "open-in-editor unavailable: workspace not local"
+		return m, nil
+	}
+	m.backlogNotice = ""
+	return m, m.openEditorCmd(id, path)
+}
+
+// taskFileLocal reports whether the task's file is reachable on the client's
+// filesystem (gates the open-in-editor affordance, task 0099).
+func taskFileLocal(path string) bool {
+	if path == "" {
+		return false
+	}
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // visibleBacklogTasks returns the backlog rows to display: all tasks when
@@ -3130,13 +3321,18 @@ func (m model) backlogView() string {
 	b := browser{
 		title:  " ycc — backlog ",
 		cursor: m.backlogCursor,
-		hint:   "↑/↓ select · enter inspect · d show/hide done · esc close",
+		hint:   "↑/↓ select · enter inspect · +/- priority · s status · d show/hide done · esc close",
 		empty:  "(no backlog tasks)",
 	}
 	if m.backlogBlockedOnly {
 		b.title = " ycc — blocked tasks "
-		b.hint = "↑/↓ select · enter inspect (see why) · esc close"
+		b.hint = "↑/↓ select · enter inspect (see why) · +/- priority · s status · esc close"
 		b.empty = "(no blocked tasks)"
+	}
+	if m.backlogStatusPrompt {
+		b.hint = "set status: 1 todo · 2 in_progress · 3 in_review · 4 done · 5 blocked · esc cancel"
+	} else if m.backlogNotice != "" {
+		b.hint = m.backlogNotice
 	}
 	for _, t := range m.visibleBacklogTasks() {
 		row := fmt.Sprintf("%-5s %-12s p%d  %s", t.Id, t.Status, t.Priority, t.Title)
@@ -3210,7 +3406,19 @@ func (m model) taskDetailView(t *v1.TaskDetail) string {
 	if m.ready {
 		body = m.backlogVP.View()
 	}
-	help := m.footerBar(" ↑↓/pgup/pgdn scroll · esc/← back · ctrl+c quit ")
+	// Grooming footer (task 0099): the status prompt and transient notices take
+	// precedence; the "e edit" affordance shows only when the file is local.
+	hint := " ↑↓/pgup/pgdn scroll · +/- priority · s status"
+	if taskFileLocal(t.Path) {
+		hint += " · e edit"
+	}
+	hint += " · esc/← back · ctrl+c quit "
+	if m.backlogStatusPrompt {
+		hint = " set status: 1 todo · 2 in_progress · 3 in_review · 4 done · 5 blocked · esc cancel "
+	} else if m.backlogNotice != "" {
+		hint = " " + m.backlogNotice + " "
+	}
+	help := m.footerBar(hint)
 	return top + "\n" + body + "\n" + help
 }
 

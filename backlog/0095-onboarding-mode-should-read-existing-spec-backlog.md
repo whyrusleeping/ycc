@@ -63,3 +63,6 @@ Revise `onboardPresetPrompt` in internal/orchestrator/prompts.go (and its doc co
 …[truncated]
 - 2026-07-02 review tier: simple (coordinator self-review)
 - 2026-07-02 decision: accept — commit: orchestrator: onboarding orients from existing spec/backlog/plans first, falling back to greenfield/brownfield only when no docs exist (0095)
+- 2026-07-02 usage: 6,748 tok (in 38, out 6,710, cache_r 237,860, cache_w 23,878) · cost n/a (unpriced)
+  coordinator: 3,774 tok (in 22, out 3,752, cache_r 171,586, cache_w 13,940) · cost n/a (unpriced)
+  implementer: 2,974 tok (in 16, out 2,958, cache_r 66,274, cache_w 9,938) · cost n/a (unpriced)

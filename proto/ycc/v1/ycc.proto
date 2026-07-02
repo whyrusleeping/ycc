@@ -320,8 +320,22 @@ message TaskDetail {
   string body = 9; // markdown: description, acceptance criteria, work log
   bool ready = 10;
   repeated string blocked_by = 11;
+  string path = 12; // absolute task file path; lets a local client open it in $EDITOR
 }
 message GetTaskResponse { TaskDetail task = 1; }
+
+// Backlog grooming (spec §18.5, task 0099): direct mutation of a task from the
+// browser. Unset optional fields are left untouched; a request with NO mutation
+// fields set is a valid "refresh" that re-reads the task file and regenerates
+// backlog.md (used after hand-edits in $EDITOR).
+message UpdateTaskRequest {
+  string project = 1;       // optional registered project; empty => daemon default workspace
+  string id = 2;
+  optional string status = 3;   // todo | in_progress | in_review | done | blocked
+  optional int32 priority = 4;  // 1..5
+  optional string title = 5;
+}
+message UpdateTaskResponse { TaskDetail task = 1; }
 
 // Plan library (reusable runbooks, task 0020/0077): read-only access to the
 // in-repo plans/*.md so clients can browse and view saved plans.
@@ -441,6 +455,9 @@ service SessionService {
   // Backlog browser (spec §18.5): read-only access to the durable backlog.
   rpc ListBacklog(ListBacklogRequest) returns (ListBacklogResponse);
   rpc GetTask(GetTaskRequest) returns (GetTaskResponse);
+  // UpdateTask grooms a backlog task in place (spec §18.5, task 0099): change
+  // status/priority/title, or (no mutation fields) refresh + regenerate the index.
+  rpc UpdateTask(UpdateTaskRequest) returns (UpdateTaskResponse);
   // Plan library (reusable runbooks, task 0020/0077): read-only access to the
   // in-repo plans/*.md so clients can browse and view saved plans.
   rpc ListPlans(ListPlansRequest) returns (ListPlansResponse);

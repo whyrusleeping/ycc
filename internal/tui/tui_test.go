@@ -967,6 +967,11 @@ type fakeClient struct {
 	// digest can surface a blocked task's reason, plus the last id requested.
 	taskDetails map[string]*v1.TaskDetail
 	lastGetTask string
+	// backlog grooming (task 0099): records the last UpdateTask request so keypress
+	// tests can assert the grooming RPC fired with the expected mutation, plus the
+	// canned list a post-update ListBacklog refresh returns.
+	lastUpdateTask *v1.UpdateTaskRequest
+	backlogList    []*v1.BacklogTaskSummary
 }
 
 func newFakeClient(cfgs ...*v1.ModelConfig) *fakeClient {
@@ -1084,9 +1089,10 @@ func (f *fakeClient) GetSessionTranscript(_ context.Context, req *connect.Reques
 }
 
 // ListBacklog backs the backlog browser route from the browse selector; the
-// browse tests only need it to not panic, so it returns an empty list.
+// browse tests only need it to not panic, so it returns f.backlogList (empty by
+// default; grooming tests set it so a post-update refresh has something to return).
 func (f *fakeClient) ListBacklog(_ context.Context, _ *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error) {
-	return connect.NewResponse(&v1.ListBacklogResponse{}), nil
+	return connect.NewResponse(&v1.ListBacklogResponse{Tasks: f.backlogList}), nil
 }
 
 // GetTask backs the backlog detail drill-in and the batch digest's blocked-reason
@@ -1097,6 +1103,26 @@ func (f *fakeClient) GetTask(_ context.Context, req *connect.Request[v1.GetTaskR
 		return connect.NewResponse(&v1.GetTaskResponse{Task: t}), nil
 	}
 	return connect.NewResponse(&v1.GetTaskResponse{Task: &v1.TaskDetail{Id: req.Msg.Id}}), nil
+}
+
+// UpdateTask backs the backlog grooming keys (task 0099). It records the request
+// and returns the (optionally canned) task detail with the mutation applied.
+func (f *fakeClient) UpdateTask(_ context.Context, req *connect.Request[v1.UpdateTaskRequest]) (*connect.Response[v1.UpdateTaskResponse], error) {
+	f.lastUpdateTask = req.Msg
+	t := f.taskDetails[req.Msg.Id]
+	if t == nil {
+		t = &v1.TaskDetail{Id: req.Msg.Id}
+	}
+	if req.Msg.Status != nil {
+		t.Status = req.Msg.GetStatus()
+	}
+	if req.Msg.Priority != nil {
+		t.Priority = req.Msg.GetPriority()
+	}
+	if req.Msg.Title != nil {
+		t.Title = req.Msg.GetTitle()
+	}
+	return connect.NewResponse(&v1.UpdateTaskResponse{Task: t}), nil
 }
 
 // ListPlans / GetPlan back the plan library browser route (task 0077). They
@@ -3355,5 +3381,150 @@ func TestQuestionPickerFitsOnScreen(t *testing.T) {
 				t.Fatalf("picker 'other…' escape not visible in the rendered view:\n%s", view)
 			}
 		})
+	}
+}
+
+// driveBacklog feeds a key through the backlog browser handler and runs any
+// resulting commands (task 0099 grooming keys).
+func driveBacklog(t *testing.T, m model, key string) model {
+	t.Helper()
+	updated, cmd := m.updateBacklog(keyMsg(key))
+	m = updated.(model)
+	return runCmds(t, m, cmd)
+}
+
+func newBacklogModel(f *fakeClient, tasks []*v1.BacklogTaskSummary) model {
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	m.backlog = true
+	m.backlogTasks = tasks
+	m.backlogCursor = 0
+	f.backlogList = tasks
+	return m
+}
+
+// TestBacklogPriorityKeys verifies +/- reprioritize the cursor row via UpdateTask,
+// clamped to 1..5 (no RPC at the clamp edge) — task 0099.
+func TestBacklogPriorityKeys(t *testing.T) {
+	f := newFakeClient()
+	m := newBacklogModel(f, []*v1.BacklogTaskSummary{{Id: "0001", Status: "todo", Priority: 3, Title: "a"}})
+
+	// "+" raises priority toward p1 (3 -> 2).
+	driveBacklog(t, m, "+")
+	if f.lastUpdateTask == nil || f.lastUpdateTask.GetId() != "0001" {
+		t.Fatalf("+ did not fire UpdateTask for the cursor row: %+v", f.lastUpdateTask)
+	}
+	if f.lastUpdateTask.Priority == nil || f.lastUpdateTask.GetPriority() != 2 {
+		t.Fatalf("+ priority = %v, want 2", f.lastUpdateTask.Priority)
+	}
+
+	// "-" lowers priority toward p5 (3 -> 4).
+	f.lastUpdateTask = nil
+	m = newBacklogModel(f, []*v1.BacklogTaskSummary{{Id: "0001", Status: "todo", Priority: 3, Title: "a"}})
+	driveBacklog(t, m, "-")
+	if f.lastUpdateTask == nil || f.lastUpdateTask.GetPriority() != 4 {
+		t.Fatalf("- priority = %v, want 4", f.lastUpdateTask)
+	}
+
+	// Clamp edges: p1 "+" and p5 "-" are no-ops (no RPC).
+	f.lastUpdateTask = nil
+	m = newBacklogModel(f, []*v1.BacklogTaskSummary{{Id: "0001", Priority: 1, Title: "a"}})
+	driveBacklog(t, m, "+")
+	if f.lastUpdateTask != nil {
+		t.Fatalf("+ at p1 fired an RPC, want no-op: %+v", f.lastUpdateTask)
+	}
+	m = newBacklogModel(f, []*v1.BacklogTaskSummary{{Id: "0001", Priority: 5, Title: "a"}})
+	driveBacklog(t, m, "-")
+	if f.lastUpdateTask != nil {
+		t.Fatalf("- at p5 fired an RPC, want no-op: %+v", f.lastUpdateTask)
+	}
+}
+
+// TestBacklogStatusPrompt verifies "s" then a digit changes status via UpdateTask,
+// and "s" then esc cancels without an RPC (task 0099).
+func TestBacklogStatusPrompt(t *testing.T) {
+	f := newFakeClient()
+	m := newBacklogModel(f, []*v1.BacklogTaskSummary{{Id: "0001", Status: "todo", Priority: 3, Title: "a"}})
+
+	m = driveBacklog(t, m, "s")
+	if !m.backlogStatusPrompt {
+		t.Fatal("s did not enter the status prompt")
+	}
+	if f.lastUpdateTask != nil {
+		t.Fatalf("s alone fired an RPC: %+v", f.lastUpdateTask)
+	}
+	m = driveBacklog(t, m, "3") // in_review
+	if m.backlogStatusPrompt {
+		t.Fatal("status prompt still active after selecting a digit")
+	}
+	if f.lastUpdateTask == nil || f.lastUpdateTask.GetStatus() != "in_review" {
+		t.Fatalf("status digit = %+v, want status=in_review", f.lastUpdateTask)
+	}
+
+	// esc cancels the prompt without an RPC.
+	f.lastUpdateTask = nil
+	m = newBacklogModel(f, []*v1.BacklogTaskSummary{{Id: "0001", Status: "todo", Title: "a"}})
+	m = driveBacklog(t, m, "s")
+	m = driveBacklog(t, m, "esc")
+	if m.backlogStatusPrompt {
+		t.Fatal("esc did not cancel the status prompt")
+	}
+	if f.lastUpdateTask != nil {
+		t.Fatalf("esc after s fired an RPC: %+v", f.lastUpdateTask)
+	}
+}
+
+// TestBacklogEditorGating verifies the open-in-editor affordance is only offered
+// when the task file is local, and degrades to a footer notice otherwise (task 0099).
+func TestBacklogEditorGating(t *testing.T) {
+	// A remote/non-local path: taskFileLocal is false, "e" degrades to a notice
+	// (and never execs an editor).
+	f := newFakeClient()
+	m := newBacklogModel(f, nil)
+	m.backlogDetail = &v1.TaskDetail{Id: "0001", Title: "a", Path: "/no/such/task/file.md"}
+	if taskFileLocal(m.backlogDetail.Path) {
+		t.Fatal("taskFileLocal true for a nonexistent path")
+	}
+	updated, cmd := m.updateBacklog(keyMsg("e"))
+	m = updated.(model)
+	if cmd != nil {
+		t.Fatal("e on a non-local task returned a command (would exec an editor)")
+	}
+	if m.backlogNotice == "" {
+		t.Fatal("e on a non-local task did not set a footer notice")
+	}
+
+	// A real file: taskFileLocal is true and the detail footer advertises "e edit".
+	dir := t.TempDir()
+	p := filepath.Join(dir, "0001-x.md")
+	if err := os.WriteFile(p, []byte("# task\n"), 0o644); err != nil {
+		t.Fatalf("write task file: %v", err)
+	}
+	if !taskFileLocal(p) {
+		t.Fatal("taskFileLocal false for an existing file")
+	}
+	m2 := model{ready: true}
+	m2.w, m2.h = 80, 24
+	if got := m2.taskDetailView(&v1.TaskDetail{Id: "0001", Title: "a", Path: p}); !strings.Contains(got, "e edit") {
+		t.Fatalf("detail footer missing 'e edit' for a local task:\n%s", got)
+	}
+	if got := m2.taskDetailView(&v1.TaskDetail{Id: "0001", Title: "a", Path: "/nope.md"}); strings.Contains(got, "e edit") {
+		t.Fatalf("detail footer advertised 'e edit' for a non-local task:\n%s", got)
+	}
+}
+
+// TestEditorCommand covers the $EDITOR → $VISUAL → vi resolution order (task 0099).
+func TestEditorCommand(t *testing.T) {
+	t.Setenv("EDITOR", "")
+	t.Setenv("VISUAL", "")
+	if got := editorCommand(); got != "vi" {
+		t.Fatalf("default editor = %q, want vi", got)
+	}
+	t.Setenv("VISUAL", "nano")
+	if got := editorCommand(); got != "nano" {
+		t.Fatalf("VISUAL editor = %q, want nano", got)
+	}
+	t.Setenv("EDITOR", "emacs")
+	if got := editorCommand(); got != "emacs" {
+		t.Fatalf("EDITOR editor = %q, want emacs (takes precedence over VISUAL)", got)
 	}
 }

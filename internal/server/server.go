@@ -521,7 +521,68 @@ func (s *Server) GetTask(_ context.Context, req *connect.Request[v1.GetTaskReque
 	return connect.NewResponse(&v1.GetTaskResponse{Task: &v1.TaskDetail{
 		Id: t.ID, Title: t.Title, Status: string(t.Status), Priority: int32(t.Priority),
 		DependsOn: t.DependsOn, SpecRefs: t.SpecRefs, Created: t.Created, Updated: t.Updated,
-		Body: t.Body, Ready: len(blocking) == 0, BlockedBy: blocking,
+		Body: t.Body, Ready: len(blocking) == 0, BlockedBy: blocking, Path: t.Path,
+	}}), nil
+}
+
+// UpdateTask grooms a backlog task in place from the browser (spec §18.5, task
+// 0099): change status/priority/title. Unset optional fields are left untouched;
+// a request with NO mutation fields set is a valid "refresh" that re-reads the
+// task file and regenerates backlog.md (used after hand-edits in $EDITOR). The
+// docs Store serializes writes per backlog dir, so this shares the same locking
+// path as work sessions and the capture agent.
+func (s *Server) UpdateTask(_ context.Context, req *connect.Request[v1.UpdateTaskRequest]) (*connect.Response[v1.UpdateTaskResponse], error) {
+	store, err := s.mgr.Backlog(req.Msg.Project)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	m := req.Msg
+	if m.Id == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("id required"))
+	}
+	// Validate mutations up front so a bad request never touches the store.
+	if m.Status != nil {
+		switch docs.Status(m.GetStatus()) {
+		case docs.StatusTodo, docs.StatusInProgress, docs.StatusInReview, docs.StatusDone, docs.StatusBlocked:
+		default:
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid status %q", m.GetStatus()))
+		}
+	}
+	if m.Priority != nil {
+		if p := m.GetPriority(); p < 1 || p > 5 {
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("priority %d out of range (1..5)", p))
+		}
+	}
+	if m.Title != nil && strings.TrimSpace(m.GetTitle()) == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("title must not be blank"))
+	}
+	t, err := store.Update(m.Id, func(t *docs.Task) {
+		if m.Status != nil {
+			t.Status = docs.Status(m.GetStatus())
+		}
+		if m.Priority != nil {
+			t.Priority = int(m.GetPriority())
+		}
+		if m.Title != nil {
+			t.Title = strings.TrimSpace(m.GetTitle())
+		}
+	})
+	if err != nil {
+		return nil, connect.NewError(connect.CodeNotFound, err)
+	}
+	// Update alone does not regenerate the generated index; do so now (spec §6.2).
+	if err := store.RenderIndex(); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	tasks, err := store.List()
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	blocking := docs.BlockingDeps(t, docs.StatusByID(tasks))
+	return connect.NewResponse(&v1.UpdateTaskResponse{Task: &v1.TaskDetail{
+		Id: t.ID, Title: t.Title, Status: string(t.Status), Priority: int32(t.Priority),
+		DependsOn: t.DependsOn, SpecRefs: t.SpecRefs, Created: t.Created, Updated: t.Updated,
+		Body: t.Body, Ready: len(blocking) == 0, BlockedBy: blocking, Path: t.Path,
 	}}), nil
 }
 
