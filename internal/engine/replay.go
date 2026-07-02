@@ -143,7 +143,9 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			// doesn't reject it on the next request).
 			var blocks []gollama.ThinkingBlock
 			if !truncated {
-				blocks = parseThinkingBlocks(ev.Data["thinking_blocks"])
+				// Drop empty, unreplayable "thinking" blocks recorded by older
+				// logs (matches the live loop's sanitize) so reopen doesn't 400.
+				blocks = sanitizeThinkingBlocks(parseThinkingBlocks(ev.Data["thinking_blocks"]))
 			} else if strings.TrimSpace(text) == "" {
 				// Guarantee non-empty content for a truncated turn (empty assistant
 				// messages are rejected by backends), matching the live sanitized stub.

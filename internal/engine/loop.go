@@ -215,6 +215,34 @@ type Result struct {
 // Seed appends an initial user message (the task prompt) before Run.
 func (l *Loop) Seed(prompt string) { l.Post(prompt) }
 
+// sanitizeThinkingBlocks drops reasoning blocks that cannot be legally replayed
+// to the backend. A non-redacted "thinking" block whose text is empty makes
+// Anthropic reject the NEXT request with
+// "messages.N.content.0.thinking.thinking: field required" — an empty-text but
+// signed block can come back from a summarized-display reasoning turn (a very
+// short thought whose summary is blank), and echoing it verbatim is invalid.
+// Redacted blocks (which carry opaque Data instead of text) and normal blocks
+// with text are kept. Filtering the blocks the moment we receive them keeps both
+// the live history we replay AND the thinking_blocks recorded on the model_turn
+// event (used by reopen/replay) valid, so no separate replay fix is needed for
+// freshly written logs.
+func sanitizeThinkingBlocks(blocks []gollama.ThinkingBlock) []gollama.ThinkingBlock {
+	if len(blocks) == 0 {
+		return blocks
+	}
+	kept := make([]gollama.ThinkingBlock, 0, len(blocks))
+	for _, b := range blocks {
+		if b.Redacted == "" && strings.TrimSpace(b.Thinking) == "" {
+			continue // empty, unreplayable "thinking" block
+		}
+		kept = append(kept, b)
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	return kept
+}
+
 // toEventThinking maps gollama reasoning blocks to the serializable event shape
 // so they round-trip through the JSONL log (and back, for reopen replay).
 func toEventThinking(blocks []gollama.ThinkingBlock) []event.ThinkingBlock {
@@ -374,6 +402,11 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			return nil, errors.New("model returned no choices")
 		}
 		msg := resp.Choices[0].Message
+
+		// Strip empty, unreplayable "thinking" blocks before this turn enters the
+		// history we echo back and the event log we replay from (see
+		// sanitizeThinkingBlocks). Anthropic 400s on a thinking block with no text.
+		msg.ThinkingBlocks = sanitizeThinkingBlocks(msg.ThinkingBlocks)
 
 		// Surface the model's reasoning summary (if any) as its own event so the
 		// TUI can show it distinctly, collapsed by default (spec §18). The

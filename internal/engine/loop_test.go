@@ -363,6 +363,50 @@ func TestLoopNoThinkingEventWhenEmpty(t *testing.T) {
 	}
 }
 
+// An empty-text, non-redacted thinking block must be stripped from the history
+// (and the recorded thinking_blocks) before the loop echoes the turn back:
+// Anthropic 400s on "content.N.thinking.thinking: field required" if it isn't.
+// Redacted blocks and real text blocks in the same turn are preserved so a
+// legitimately signed reasoning turn still round-trips.
+func TestLoopStripsEmptyThinkingBlocks(t *testing.T) {
+	// Turn 1: a tool call carrying a mix of blocks — one empty (illegal to
+	// replay), one real, one redacted. Turn 2: yield.
+	call := assistantToolCall("ls", `{}`)
+	call.Choices[0].Message.ThinkingBlocks = []gollama.ThinkingBlock{
+		{Thinking: "   ", Signature: "sig-empty"}, // whitespace-only ⇒ dropped
+		{Thinking: "real reasoning", Signature: "sig-ok"},
+		{Redacted: "opaque-data"},
+	}
+	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{
+		call,
+		assistantText("done"),
+	}}
+	loop := newLoop(t, turner)
+	if _, err := loop.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// The assistant turn stored in history is history[1] (history[0] is the tool
+	// result-bearing exchange is not relevant here; find the assistant turn).
+	var asst *gollama.Message
+	for i := range loop.history {
+		if loop.history[i].Role == "assistant" && len(loop.history[i].ToolCalls) > 0 {
+			asst = &loop.history[i]
+			break
+		}
+	}
+	if asst == nil {
+		t.Fatalf("no assistant tool-call turn in history: %+v", loop.history)
+	}
+	if len(asst.ThinkingBlocks) != 2 {
+		t.Fatalf("kept %d thinking blocks, want 2 (empty one dropped): %+v", len(asst.ThinkingBlocks), asst.ThinkingBlocks)
+	}
+	for _, b := range asst.ThinkingBlocks {
+		if b.Redacted == "" && strings.TrimSpace(b.Thinking) == "" {
+			t.Fatalf("an empty thinking block survived: %+v", b)
+		}
+	}
+}
+
 // model_turn events carry per-turn token usage and model identity sourced from
 // resp.Usage and the loop's model labelling (spec §20.1).
 func TestLoopModelTurnCarriesUsage(t *testing.T) {
