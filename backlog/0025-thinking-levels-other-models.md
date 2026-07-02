@@ -1,7 +1,7 @@
 ---
 id: "0025"
 title: Verify thinking levels (effort) across backends as models are added
-status: blocked
+status: todo
 priority: 3
 created: "2026-06-26"
 updated: "2026-07-02"
@@ -45,4 +45,9 @@ engine and to surface returned thinking in the event log/TUI.
       ignore vs. error) so a per-role effort setting degrades gracefully across mixed backends
 
 ## Work log
+- 2026-07-05 unblocked (pm grooming with user): scope narrowed to the backends the user
+  has live access to right now — **OpenAI + Ollama** (Anthropic already done). GLM is
+  deferred: keep its bullet in the description but treat it as out of scope for this
+  pass; verify it later when an endpoint is available. Live smoke tests for OpenAI and
+  Ollama are in scope since the user can attend/supply keys.
 - 2026-07-02 blocked: parked for the overnight autonomous run — requires live smoke tests against OpenAI/GLM/Ollama backends (keys/endpoints not available unattended) and edits in the separate gollama repo; user wants to be present. Unblock when the user can supply/verify backend access.

@@ -317,6 +317,7 @@ type model struct {
 	plansCursor int
 	plansList   []*v1.PlanSummary
 	planDetail  *v1.GetPlanResponse // nil => list view; set => detail view
+	plansVP     viewport.Model      // scroll viewport for the plan detail markdown
 
 	// cost view (spec §20.5, task 0039): modal over menu/session, reached from the
 	// browse selector (ctrl+o). Read-only: shows the GetUsage token/cost breakdown
@@ -1966,6 +1967,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.rebuild()
 		m.relayout()
 		m.refreshBacklogDetailVP()
+		m.refreshPlanDetailVP()
 		m.refreshWsMergeVP()
 		// Keep the modal transcript viewport (task 0112) sized to the terminal, and
 		// re-wrap its retained events to the new width (task 0119). Preserve the
@@ -2331,6 +2333,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case planDetailMsg:
 		m.rpcOK()
 		m.planDetail = msg.plan
+		m.refreshPlanDetailVP()
+		m.plansVP.GotoTop()
 		return m, nil
 	case usageMsg:
 		m.rpcOK()
@@ -4216,22 +4220,44 @@ func (m model) costView() string {
 	tw.Flush()
 
 	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
-	var sb strings.Builder
-	for i, line := range lines {
-		switch {
-		case i == 0:
-			// Header row.
-			sb.WriteString(dimStyle.Render(line) + "\n")
-		case i == len(lines)-1 && m.costTotal != nil:
-			// TOTAL row.
-			sb.WriteString(dimStyle.Render(line) + "\n")
-		case i-1 == m.costCursor:
-			// Data rows start at index 1; highlight the cursor row.
-			marked := "▸" + line[1:]
-			sb.WriteString(selStyle.Render(marked) + "\n")
-		default:
-			sb.WriteString(line + "\n")
+	headerLine, dataLines := lines[0], lines[1:]
+	totalLine := ""
+	if m.costTotal != nil && len(dataLines) > 0 {
+		totalLine, dataLines = dataLines[len(dataLines)-1], dataLines[:len(dataLines)-1]
+	}
+	// Window the data rows around the cursor so the card never overruns the
+	// terminal vertically (mirrors browserCard). Fixed chrome: modalCard's 6
+	// non-content rows plus the pinned header, TOTAL, and footnote lines.
+	budget := len(dataLines)
+	if m.h > 0 {
+		chrome := 6 + 1 // modalCard chrome + header row
+		if totalLine != "" {
+			chrome++
 		}
+		if partial {
+			chrome++
+		}
+		budget = m.h - chrome
+		if budget < 1 {
+			budget = 1
+		}
+	}
+	start, end := listWindow(m.costCursor, len(dataLines), budget)
+	if start > 0 || end < len(dataLines) {
+		hint = fmt.Sprintf("%s · %d–%d/%d", hint, start+1, end, len(dataLines))
+	}
+	var sb strings.Builder
+	sb.WriteString(dimStyle.Render(headerLine) + "\n")
+	for i, line := range dataLines[start:end] {
+		if start+i == m.costCursor {
+			// Highlight the cursor row.
+			sb.WriteString(selStyle.Render("▸"+line[1:]) + "\n")
+			continue
+		}
+		sb.WriteString(line + "\n")
+	}
+	if totalLine != "" {
+		sb.WriteString(dimStyle.Render(totalLine) + "\n")
 	}
 	if partial {
 		sb.WriteString(dimStyle.Render("  * partial pricing (some models unpriced)") + "\n")
@@ -4798,14 +4824,18 @@ func (m model) updatePlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.planDetail != nil {
-		// Detail view: back returns to the list.
+		// Detail view: back returns to the list; everything else scrolls the
+		// markdown viewport.
 		switch key.String() {
 		case "ctrl+c", "q":
 			return m.confirmQuit()
 		case "esc", "backspace", "left":
 			m.planDetail = nil
+			return m, nil
 		}
-		return m, nil
+		var cmd tea.Cmd
+		m.plansVP, cmd = m.plansVP.Update(msg)
+		return m, cmd
 	}
 	// List view.
 	switch key.String() {
@@ -4849,16 +4879,48 @@ func (m model) plansView() string {
 	return m.browserCard(b)
 }
 
-// planDetailView renders a single saved plan's markdown content (task 0077) as a card.
+// planDetailView renders a single saved plan's markdown content (task 0077) as a
+// full-screen scrollable viewport (mirroring the backlog task detail drill-in).
 func (m model) planDetailView(p *v1.GetPlanResponse) string {
+	top := m.titleBar(" " + p.Name + " — " + p.Title + " ")
+	body := ""
+	if m.ready {
+		body = m.plansVP.View()
+	}
+	help := m.footerBar(" ↑↓/pgup/pgdn scroll · esc/← back · ctrl+c quit · (run via the run_plan tool in a session) ")
+	return top + "\n" + body + "\n" + help
+}
+
+// planDetailContent builds the glamour-rendered markdown body placed into the
+// plan detail viewport (m.plansVP).
+func (m model) planDetailContent(p *v1.GetPlanResponse) string {
 	body := p.Content
 	if m.glam != nil {
 		if out, err := m.glam.Render(body); err == nil {
 			body = strings.Trim(out, "\n")
 		}
 	}
-	return m.modalCard(" "+p.Name+" — "+p.Title+" ", body,
-		"esc/← back · ctrl+c quit · (run via the run_plan tool in a session)")
+	return body
+}
+
+// refreshPlanDetailVP (re)sizes the plan detail viewport to the current terminal
+// dimensions and loads the open plan's content. It is a no-op when no plan is
+// open or the terminal size is not yet known.
+func (m *model) refreshPlanDetailVP() {
+	if m.planDetail == nil || !m.ready {
+		return
+	}
+	h := m.h - 2 // one row for the title bar, one for the footer
+	if h < 3 {
+		h = 3
+	}
+	if m.plansVP.Height() == 0 && m.plansVP.Width() == 0 {
+		m.plansVP = viewport.New(viewport.WithWidth(m.w), viewport.WithHeight(h))
+	} else {
+		m.plansVP.SetWidth(m.w)
+		m.plansVP.SetHeight(h)
+	}
+	m.plansVP.SetContent(m.planDetailContent(m.planDetail))
 }
 
 // --- settings overlay (spec §18.2) ---
@@ -5186,18 +5248,33 @@ func (m model) overlayView() string {
 		{"back to home menu", ""},
 		{"quit", ""},
 	}
-	for i, r := range rows {
+	// Window the rows around the cursor so the card fits short terminals
+	// (mirrors browserCard). Fixed chrome: modalCard's 6 non-content rows plus
+	// the no-session note (2 lines) when shown.
+	budget := len(rows)
+	if m.h > 0 {
+		chrome := 6
+		if m.sessionID == "" {
+			chrome += 2
+		}
+		budget = m.h - chrome
+		if budget < 1 {
+			budget = 1
+		}
+	}
+	start, end := listWindow(m.ovCursor, len(rows), budget)
+	for i, r := range rows[start:end] {
 		cursor := "  "
 		label := fmt.Sprintf("%-22s", r.label)
-		if i == m.ovCursor {
+		if start+i == m.ovCursor {
 			cursor = selStyle.Render("▸ ")
 			label = selStyle.Render(label)
 		}
 		val := r.val
-		if i == ovReviewers && len(m.models) > 0 {
+		if start+i == ovReviewers && len(m.models) > 0 {
 			// Highlight the chip the next toggle affects only while the cursor is
 			// on this row, so the target is always visible before pressing space.
-			val = "(" + m.thinkLevels["reviewers"] + ")  " + m.reviewerSummary(i == m.ovCursor)
+			val = "(" + m.thinkLevels["reviewers"] + ")  " + m.reviewerSummary(start+i == m.ovCursor)
 		}
 		b.WriteString(cursor + label + dimStyle.Render(val) + "\n")
 	}
@@ -5834,10 +5911,29 @@ func (m model) mbListView() string {
 	if len(m.models) == 0 {
 		b.WriteString(dimStyle.Render("(no model backends configured)") + "\n")
 	}
-	for i, mm := range m.models {
+	// Window the rows around the cursor so the card never overruns the terminal
+	// vertically (mirrors browserCard). Fixed chrome: modalCard's 6 non-content
+	// rows plus the trailing note (2) and the error block (2) when present.
+	hint := "a add · e/enter edit · d duplicate · x remove · esc back"
+	budget := len(m.models)
+	if m.h > 0 {
+		chrome := 6 + 2
+		if m.mbErr != "" {
+			chrome += 2
+		}
+		budget = m.h - chrome
+		if budget < 1 {
+			budget = 1
+		}
+	}
+	start, end := listWindow(m.mbCursor, len(m.models), budget)
+	if start > 0 || end < len(m.models) {
+		hint = fmt.Sprintf("%s · %d–%d/%d", hint, start+1, end, len(m.models))
+	}
+	for i, mm := range m.models[start:end] {
 		cursor := "  "
 		row := fmt.Sprintf("%-16s %-12s %s", mm.Name, mm.Backend, mm.Model)
-		if i == m.mbCursor {
+		if start+i == m.mbCursor {
 			cursor = selStyle.Render("▸ ")
 			row = selStyle.Render(row)
 		}
@@ -5847,8 +5943,7 @@ func (m model) mbListView() string {
 		b.WriteString("\n" + errStyle.Render(m.mbErr) + "\n")
 	}
 	b.WriteString("\n" + dimStyle.Render("changes are saved to ycc.toml automatically"))
-	return m.modalCard(" model backends ", strings.TrimRight(b.String(), "\n"),
-		"a add · e/enter edit · d duplicate · x remove · esc back")
+	return m.modalCard(" model backends ", strings.TrimRight(b.String(), "\n"), hint)
 }
 
 func (m model) mbFormView() string {
@@ -6772,6 +6867,31 @@ func (m model) modalCard(title, content, hint string) string {
 
 	if m.w == 0 || m.h == 0 {
 		return body
+	}
+
+	// Vertical backstop: a card taller than the terminal renders as garbage, so
+	// clamp the body to fit within m.h (minus the 2 border rows). Views with a
+	// cursor window their own rows around it (browserCard, costView, …); this
+	// clip only protects fixed-content cards on very short terminals. Keep the
+	// footer hint visible by clipping content above it.
+	if maxLines := m.h - 2; maxLines >= 3 {
+		lines := strings.Split(body, "\n")
+		if len(lines) > maxLines {
+			keepTail := 0
+			if hint != "" {
+				keepTail = 2 // the blank spacer + footer bar
+			}
+			head := maxLines - keepTail - 1 // -1 for the clip marker
+			if head < 1 {
+				head = 1
+			}
+			clipped := append([]string{}, lines[:head]...)
+			clipped = append(clipped, dimStyle.Render("…"))
+			if keepTail > 0 {
+				clipped = append(clipped, lines[len(lines)-keepTail:]...)
+			}
+			body = strings.Join(clipped, "\n")
+		}
 	}
 
 	// Inner width budget: subtract the rounded border (2 cols) and padding (2 cols)

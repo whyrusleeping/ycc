@@ -25,4 +25,6 @@ Connect already provides so a phone app can talk to it without a gRPC stack.
 - [ ] documented HTTP/JSON endpoints for the future phone app
 
 ## Work log
+- 2026-07-05 pm grooming with user: confirmed keep parked — not a priority yet. Stays
+  blocked deliberately; revisit when remote/phone access becomes a goal.
 - 2026-07-02 blocked: parked for the overnight autonomous run — milestone-sized (M5) and underspecified (sync target/protocol undecided); needs a scoping/design pass with the user before implementation. Unblock after that pass splits it into concrete tasks.

@@ -11,7 +11,7 @@
 | [0005](backlog/0005-multimodel-review-revise-levels.md) | Multi-model review, revise loop, interaction levels (M3) | done | 3 | 0004 |
 | [0006](backlog/0006-home-menu-modes-tui.md) | Home menu, spec/backlog/feature/bug modes, TUI (M4) | done | 4 | 0005 |
 | [0007](backlog/0007-remote-sync.md) | Remote session sync + phone-facing surface (M5) | blocked | 5 | 0006 |
-| [0008](backlog/0008-reviewer-sandboxing.md) | Sandbox reviewer bash to prevent workspace mutation | blocked | 6 | 0005 |
+| [0008](backlog/0008-reviewer-sandboxing.md) | Sandbox reviewer bash to prevent workspace mutation | todo | 6 | 0005 |
 | [0009](backlog/0009-session-lifecycle-interrupt.md) | Session lifecycle — Interrupt RPC and stop/GC | done | 3 | 0003 |
 | [0010](backlog/0010-context-window-management.md) | Context-window management for long sessions | done | 3 | 0002 |
 | [0011](backlog/0011-multiline-input.md) | Multiline session input (textarea) | done | 3 | 0006 |
@@ -27,7 +27,7 @@
 | [0022](backlog/0022-config-save-write-ycc-toml-from-a-config.md) | config.Save — write ycc.toml from a Config | done | 2 | — |
 | [0023](backlog/0023-first-run-setup-wizard-configure-model-providers-r.md) | First-run setup wizard — configure model providers & roles (write ycc.toml) | done | 2 | 0022 |
 | [0024](backlog/0024-per-project-onboarding-greenfield-full-spec-vs-bro.md) | Per-project onboarding — greenfield (full spec) vs brownfield (scoped) pm presets | done | 2 | — |
-| [0025](backlog/0025-thinking-levels-other-models.md) | Verify thinking levels (effort) across backends as models are added | blocked | 3 | 0005 |
+| [0025](backlog/0025-thinking-levels-other-models.md) | Verify thinking levels (effort) across backends as models are added | todo | 3 | 0005 |
 | [0026](backlog/0026-capture-per-turn-token-usage-on-model-turn-events.md) | Capture per-turn token usage on model_turn events | done | 2 | 0002 |
 | [0027](backlog/0027-record-session-task-focus-for-cost-attribution.md) | Record session→task focus for cost attribution | done | 2 | 0004 |
 | [0028](backlog/0028-per-model-pricing-config-cost-computation.md) | Per-model pricing config + cost computation | done | 3 | — |
@@ -123,3 +123,4 @@
 | [0118](backlog/0118-listworkstreams-enrichment-reuse-the-project-repo.md) | ListWorkstreams enrichment: reuse the project repo instead of re-opening per workstream | done | 5 | 0085 |
 | [0119](backlog/0119-search-jump-navigation-in-the-histmodal-transcript.md) | Search + jump navigation in the histModal transcript (session browser over a live session) | done | 5 | 0116 |
 | [0120](backlog/0120-tui-render-ask-user-q-a-as-a-single-block-hide-too.md) | TUI: render ask_user Q&A as a single block; hide tool plumbing rows | done | 2 | — |
+| [0120](backlog/0120-gollama-streaming-turn-api-turnstream-across-provi.md) | gollama: streaming turn API (TurnStream) across providers | todo | 3 | — |

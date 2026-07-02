@@ -76,3 +76,7 @@ Verify: go build ./... && go test ./internal/tui/... (then go test ./...).
 - 2026-07-02 review (Claude): accept — The change adds line-based `/` search (incremental, n/N with wrap, esc-clear) and full {}()<>[] jump-to-event navigation to the histModal transcript using dedicated state (histModalEvents/Lines/EventL
 …[truncated]
 - 2026-07-02 decision: accept — commit: tui: line-based search (/ n/N esc) and {}()<>[] jump navigation in the histModal transcript (task 0119)
+- 2026-07-02 usage: 47,468 tok (in 198, out 47,270, cache_r 4,469,368, cache_w 166,865) · cost n/a (unpriced)
+  implementer: 34,973 tok (in 150, out 34,823, cache_r 3,742,120, cache_w 79,723) · cost n/a (unpriced)
+  reviewer:Claude: 7,246 tok (in 24, out 7,222, cache_r 182,573, cache_w 31,262) · cost n/a (unpriced)
+  coordinator: 5,249 tok (in 24, out 5,225, cache_r 544,675, cache_w 55,880) · cost n/a (unpriced)

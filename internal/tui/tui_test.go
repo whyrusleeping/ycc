@@ -2710,6 +2710,120 @@ func TestCostView(t *testing.T) {
 	}
 }
 
+// TestCostViewScrollsWithinTerminal guards the cost-view overflow regression:
+// with more usage rows than the terminal is tall, the table must window around
+// the cursor (keeping it visible) instead of overrunning the screen, with the
+// header and TOTAL rows pinned and a position indicator in the hint.
+func TestCostViewScrollsWithinTerminal(t *testing.T) {
+	m := model{cost: true, costGroupBy: []string{"task"}}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 14})
+	m = updated.(model)
+	for i := 0; i < 40; i++ {
+		m.costRows = append(m.costRows, &v1.UsageRow{
+			Task: fmt.Sprintf("task-%04d", i), Input: 10, Output: 5, Total: 15,
+			Cost: 0.01, PriceStatus: "priced",
+		})
+	}
+	m.costTotal = &v1.UsageRow{Input: 400, Output: 200, Total: 600, Cost: 0.4, PriceStatus: "priced"}
+	m.costCursor = len(m.costRows) - 1
+
+	view := m.costView()
+	lines := strings.Split(view, "\n")
+	if len(lines) > 14 {
+		t.Fatalf("costView produced %d lines for a 14-row terminal:\n%s", len(lines), view)
+	}
+	if !strings.Contains(view, "task-0039") {
+		t.Errorf("cursor row (last) should stay visible in the window:\n%s", view)
+	}
+	if !strings.Contains(view, "TOTAL") {
+		t.Errorf("TOTAL row should stay pinned when scrolled:\n%s", view)
+	}
+	if !strings.Contains(view, "/40") {
+		t.Errorf("hint should show the scroll position indicator:\n%s", view)
+	}
+	// Scrolling back to the top brings the first row into view.
+	m.costCursor = 0
+	if view := m.costView(); !strings.Contains(view, "task-0000") {
+		t.Errorf("first row should be visible with the cursor at 0:\n%s", view)
+	}
+}
+
+// TestModelBackendsListScrollsWithinTerminal guards the same overflow for the
+// model-backends list card.
+func TestModelBackendsListScrollsWithinTerminal(t *testing.T) {
+	m := model{mbOpen: true}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	m = updated.(model)
+	for i := 0; i < 30; i++ {
+		m.models = append(m.models, &v1.ModelInfo{
+			Name: fmt.Sprintf("backend-%02d", i), Backend: "openai", Model: "gpt",
+		})
+	}
+	m.mbCursor = len(m.models) - 1
+
+	view := m.mbListView()
+	lines := strings.Split(view, "\n")
+	if len(lines) > 12 {
+		t.Fatalf("mbListView produced %d lines for a 12-row terminal:\n%s", len(lines), view)
+	}
+	if !strings.Contains(view, "backend-29") {
+		t.Errorf("cursor row (last) should stay visible in the window:\n%s", view)
+	}
+}
+
+// TestSettingsOverlayFitsShortTerminal verifies the settings card windows its
+// rows around the cursor on terminals shorter than the row list.
+func TestSettingsOverlayFitsShortTerminal(t *testing.T) {
+	m := model{overlay: true, thinkLevels: map[string]string{}, prefs: clientconfig.Prefs{Theme: "dark"}}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
+	m = updated.(model)
+	m.ovCursor = ovQuit // last row
+
+	view := m.overlayView()
+	lines := strings.Split(view, "\n")
+	if len(lines) > 10 {
+		t.Fatalf("overlayView produced %d lines for a 10-row terminal:\n%s", len(lines), view)
+	}
+	if !strings.Contains(view, "quit") {
+		t.Errorf("cursor row (quit) should stay visible in the window:\n%s", view)
+	}
+}
+
+// TestPlanDetailScrolls verifies the plan detail view renders through a
+// viewport sized to the terminal so long plans scroll instead of overflowing.
+func TestPlanDetailScrolls(t *testing.T) {
+	m := model{}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	m = updated.(model)
+	var body strings.Builder
+	for i := 0; i < 60; i++ {
+		fmt.Fprintf(&body, "- plan item %d\n", i)
+	}
+	m.plans = true
+	upd2, _ := m.Update(planDetailMsg{plan: &v1.GetPlanResponse{Name: "big", Title: "Big plan", Content: body.String()}})
+	m = upd2.(model)
+
+	view := ansi.Strip(m.plansView())
+	lines := strings.Split(view, "\n")
+	if len(lines) > 12 {
+		t.Fatalf("planDetailView produced %d lines for a 12-row terminal:\n%s", len(lines), view)
+	}
+	if !strings.Contains(view, "plan item 0") {
+		t.Errorf("plan detail should start at the top:\n%s", view)
+	}
+	if strings.Contains(view, "plan item 59") {
+		t.Errorf("the tail of a long plan should be off-screen before scrolling:\n%s", view)
+	}
+	// Scrolling down moves the window: the top line leaves the viewport.
+	for i := 0; i < 10; i++ {
+		m2, _ := m.updatePlans(tea.KeyPressMsg{Code: tea.KeyPgDown})
+		m = m2.(model)
+	}
+	if view := ansi.Strip(m.plansView()); strings.Contains(view, "plan item 0\n") {
+		t.Errorf("pgdown should scroll the plan detail viewport:\n%s", view)
+	}
+}
+
 // TestPreviousSessionsEscReturnsToMenu verifies Esc on the history screen returns
 // to the menu rather than opening the settings overlay.
 func TestPreviousSessionsEscReturnsToMenu(t *testing.T) {
