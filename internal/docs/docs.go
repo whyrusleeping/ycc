@@ -75,12 +75,16 @@ type Store struct {
 	// serialize their writes. It is NON-reentrant: public methods acquire it once
 	// and delegate to lock-free *Locked helpers to avoid self-deadlock.
 	mu *sync.Mutex
+	// cfg is the workspace docs configuration (task 0121): the spec entry-point
+	// path and docs-set globs, loaded once at construction from
+	// <workspace>/.ycc/config.toml (defaults when absent/malformed).
+	cfg specConfig
 }
 
 // NewStore returns a Store for the backlog under workspaceRoot.
 func NewStore(workspaceRoot string) *Store {
 	dir := filepath.Clean(filepath.Join(workspaceRoot, "backlog"))
-	return &Store{dir: dir, mu: lockFor(dir)}
+	return &Store{dir: dir, mu: lockFor(dir), cfg: loadSpecConfig(workspaceRoot)}
 }
 
 // Dir returns the backlog directory path.

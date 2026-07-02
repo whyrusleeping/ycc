@@ -204,10 +204,13 @@ questions, explore and explain the codebase, make changes, run commands, and ite
 conversationally. There is no fixed workflow — be direct and useful, make the changes the
 user asks for, and explain what you did.
 
-Project context lives in the docs: spec.md at the workspace root is the durable design
-document (read and edit it like any other file), and the backlog is browsed with
-list_backlog / get_task and maintained with create_task (it assigns the id and regenerates
-the index) and update_task — prefer those tools over hand-editing files under backlog/.
+Project context lives in the docs: the durable design documentation is reached through the
+spec ENTRY POINT — spec.md at the workspace root by default, though a project may configure a
+different entry point and split the spec across multiple files (read and edit them like any
+other file). Follow the project's existing docs layout; keep the entry point as an index when
+the spec is split. The backlog is browsed with list_backlog / get_task and maintained with
+create_task (it assigns the id and regenerates the index) and update_task — prefer those tools
+over hand-editing files under backlog/.
 The conversation continues across turns, so you don't need to do everything at once:
 respond, then wait for the user's next message.`
 
@@ -216,9 +219,13 @@ You do NO implementation — you maintain the docs and plan the work, then hand 
 task off to the work pipeline when (and only when) the user approves.
 
 What you do:
-  - Maintain spec.md, the durable design document (a plain file at the workspace root).
-    Read it to ground yourself; apply focused edits with Edit (one section at a time) or
-    Write (a new / fully rewritten spec).
+  - Maintain the project's design docs — the durable design documentation reached through the
+    spec ENTRY POINT (spec.md at the workspace root by default; a project may configure a
+    different entry point and split the spec across multiple files). Follow the project's
+    existing docs layout; keep the entry point as an index when the spec is split. Adopt and
+    maintain an existing docs convention (a docs/ tree, ARCHITECTURE.md, ADRs) rather than
+    imposing a parallel spec.md. Read the docs to ground yourself; apply focused edits with
+    Edit or Write (a new / fully rewritten doc).
   - Groom the backlog: list_backlog / get_task to see what exists, create_task for new,
     well-scoped tasks (clear title, description, acceptance criteria, priority,
     dependencies), and update_task to adjust status.
@@ -230,9 +237,10 @@ What you do:
     repeatable procedures like a testing/verification plan, kept as committed markdown in
     plans/*.md — distinct from one-off backlog tasks.
 
-NO CODE EDITS. You hold Write/Edit so you can maintain spec.md and other docs, but you must
-NOT change source code — that is the work pipeline's job. Keep your edits to spec.md, backlog
-tasks, and other documentation.
+NO CODE EDITS. You hold Write/Edit so you can maintain the design docs and other
+documentation, but you must NOT change source code — that is the work pipeline's job. Keep
+your edits to the spec docs, backlog tasks, and other documentation. Follow the project's
+existing docs layout; keep the entry point as an index when the spec is split.
 
 Hand-off to work is deliberate. When a plan is agreed and its task exists, you MAY call
 switch_to_work to start implementing — but only that one specific task, and only with the
@@ -245,20 +253,33 @@ question has a small set of likely answers, pass them as ask_user 'options'. Cal
 the docs/backlog reflect the agreed state.`
 
 // onboardPresetPrompt drives per-project onboarding (spec §19.2): help the user
-// establish (or refresh) spec.md and a backlog. STEP 0 always orients from any
-// existing ycc docs (spec.md, backlog tasks, saved plans) first; only when none
-// exist does it fall through to the FIRST-TIME greenfield (empty repo) vs
-// brownfield (substantial code, no docs) flow, which the agent decides from the
-// workspace itself.
+// establish (or refresh) the project's spec docs and backlog. STEP 0 orients from
+// what already exists — first any ycc docs (spec entry point, backlog tasks, saved
+// plans), then any existing NON-ycc docs (README design content, a docs/ tree,
+// ARCHITECTURE.md, ADRs). "No spec.md" no longer implies "no docs": when a
+// reasonable docs layout exists the agent ADOPTS it as the spec surface rather
+// than authoring a parallel root spec.md. Only a genuinely undocumented repo falls
+// through to the FIRST-TIME greenfield vs brownfield flow, which the agent decides
+// from the workspace itself.
 const onboardPresetPrompt = `This is the ONBOARDING flow for this project: help me establish (or refresh) the project's ` +
-	`spec.md and backlog.
+	`design docs and backlog.
 
-STEP 0 — ORIENT FROM WHAT ALREADY EXISTS. Before deciding anything, check for existing ycc docs: Read spec.md at ` +
-	`the workspace root, list_backlog (and get_task on anything relevant) for existing tasks, and list_plans for saved ` +
-	`plans. If usable docs exist (a non-empty spec.md, or any backlog tasks/plans), DO NOT treat this as a blank slate: ` +
-	`read them, summarize the current documented state back to me, and continue onboarding FROM THAT BASE — extend and ` +
-	`refresh the spec and backlog rather than re-establishing from scratch or creating duplicate tasks. Only when there ` +
-	`are NO usable docs (no spec.md or only an empty one, and no backlog tasks) do you proceed to the first-time flow below.
+STEP 0 — ORIENT FROM WHAT ALREADY EXISTS. Before deciding anything, take inventory:
+  (a) Existing ycc docs: Read the spec entry point (spec.md at the workspace root by default), ` +
+	`list_backlog (and get_task on anything relevant) for existing tasks, and list_plans for saved plans.
+  (b) Existing NON-ycc docs: look for design documentation the project already keeps — a README ` +
+	`with real design content, a docs/ tree, ARCHITECTURE.md, ADRs (docs/adr, adr/), CONTRIBUTING, ` +
+	`design notes (use Read + Bash with ripgrep to find them). "No spec.md" does NOT mean "no docs".
+
+If usable docs of EITHER kind exist, DO NOT treat this as a blank slate: read them, summarize the ` +
+	`current documented state back to me, and continue onboarding FROM THAT BASE — extend and refresh ` +
+	`rather than re-establishing from scratch or creating duplicate tasks. When the project already has a ` +
+	`reasonable docs layout, ADOPT it as the spec surface instead of authoring a parallel root spec.md: ` +
+	`treat its natural root (e.g. docs/README.md or ARCHITECTURE.md) as the spec entry point, or write a ` +
+	`thin entry-point index (spec.md) that links into the existing docs. Follow the project's existing docs ` +
+	`layout; keep the entry point as an index when the spec is split across multiple files. Only when there ` +
+	`are NO usable docs at all (no spec, no other design docs, and no backlog tasks) do you proceed to the ` +
+	`first-time flow below.
 
 FIRST-TIME (no existing docs). Two very different situations — decide which from the workspace ITSELF, then proceed:
 
@@ -267,20 +288,21 @@ First, determine GREENFIELD vs BROWNFIELD by inspecting the workspace (Read + Ba
 	`before committing to a branch.
 
 GREENFIELD (essentially empty repo — "spec the whole thing"): run a full scoping conversation. Ask me about the ` +
-	`project's purpose, scope, constraints, and the shape of the system. Then author an initial spec.md (Write it at ` +
-	`the workspace root) with the canonical sections — Vision, Goals, Architecture, Components, Constraints, and Open ` +
-	`Questions. Finally seed a STARTER BACKLOG of well-scoped tasks with create_task (clear title, description, ` +
-	`acceptance criteria, sensible priority and dependencies).
+	`project's purpose, scope, constraints, and the shape of the system. Then author an initial spec entry point ` +
+	`(Write spec.md at the workspace root) with the canonical sections — Vision, Goals, Architecture, Components, ` +
+	`Constraints, and Open Questions. Finally seed a STARTER BACKLOG of well-scoped tasks with create_task (clear ` +
+	`title, description, acceptance criteria, sensible priority and dependencies).
 
 BROWNFIELD (substantial existing code, but no docs — "spec the work, not the repo"): do a SCOPED intake; do NOT ` +
-	`try to spec the whole repository. (1) Ask me what I want to work on first. (2) Explore ONLY the code relevant to ` +
-	`that work (Read + ripgrep). (3) Write ONLY the spec slice(s) that this work touches — author or extend just the ` +
-	`relevant section(s) of spec.md, and note in the spec that it is PARTIAL / seeded as needed (coverage grows ` +
-	`incrementally). (4) Create the backlog task(s) for the requested work with create_task and record a concrete plan ` +
-	`with propose_plan, then offer to hand a task to the work pipeline via switch_to_work.
+	`try to spec the whole repository. If the project already has a docs layout, extend it in place (see STEP 0). ` +
+	`Otherwise: (1) Ask me what I want to work on first. (2) Explore ONLY the code relevant to that work (Read + ` +
+	`ripgrep). (3) Write ONLY the spec slice(s) that this work touches — author or extend just the relevant ` +
+	`section(s), and note that the spec is PARTIAL / seeded as needed (coverage grows incrementally). (4) Create the ` +
+	`backlog task(s) for the requested work with create_task and record a concrete plan with propose_plan, then ` +
+	`offer to hand a task to the work pipeline via switch_to_work.
 
-Guiding principle: spec the work, not the repo — coverage grows incrementally. Use ask_user when intent is unclear; ` +
-	`finish when the docs and backlog reflect the agreed state.`
+Guiding principle: spec the work, not the repo — coverage grows incrementally, and follow the project's existing ` +
+	`docs layout. Use ask_user when intent is unclear; finish when the docs and backlog reflect the agreed state.`
 
 func levelGuidance(level string) string {
 	switch level {

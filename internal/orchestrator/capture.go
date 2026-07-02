@@ -91,7 +91,7 @@ func captureCreateTask(d *Deps) *gollama.Tool {
 			"description": tools.StrProp("description and acceptance criteria (markdown)"),
 			"priority":    map[string]any{"type": "integer", "description": "1 (highest) .. 5; default 3"},
 			"depends_on":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "task ids this depends on"},
-			"spec_refs":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "spec section titles this relates to"},
+			"spec_refs":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "spec references this relates to: a bare section title refers to the spec entry point; `path#Section` references a section of another doc in the docs set"},
 		}, "title"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			title, _ := tools.GetString(params, "title")
@@ -129,10 +129,10 @@ func RunCapture(ctx context.Context, cd CaptureDeps, rec event.Recorder, descrip
 	reg.Add(listBacklog(d), getTask(d), captureCreateTask(d), captureClarify())
 
 	loop := &engine.Loop{
-		Client:          cd.Client,
-		Model:           cd.Model,
-		ModelName:       cd.ModelName,
-		Backend:         cd.Backend,
+		Client:    cd.Client,
+		Model:     cd.Model,
+		ModelName: cd.ModelName,
+		Backend:   cd.Backend,
 		System: captureSystem +
 			fmt.Sprintf("\n\nYou have a budget of %d turns (each is one model step that may include tool calls); "+
 				"pace your quick investigation so you finish by calling create_task (or ask_clarification) "+

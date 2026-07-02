@@ -193,12 +193,33 @@ child stream id); the client can drill into an implementer/reviewer's transcript
 
 ## 6. Document model
 
-### 6.1 spec.md
+### 6.1 Design docs — entry point + docs set
 
-Structured-by-section markdown the coordinator edits section-by-section. Canonical
-sections (others allowed): Vision, Goals, Architecture, Components, Constraints,
-Open Questions. The `update_spec` tool edits a named section (so two concurrent edits
-don't clobber the whole file, and diffs stay legible). The spec is committed with code.
+The project keeps a committed, agent-maintained set of design documents reached through a
+single well-known **entry point** — the one file an agent reads first to orient. By default
+the entry point is `spec.md` at the workspace root (alongside `backlog/`). The entry point may
+be, or grow into, an **index** into other docs: a large spec is better split across several
+logically decomposed files, with the entry point linking them together.
+
+Projects that already keep a reasonable documentation convention (a `docs/` tree,
+`ARCHITECTURE.md`, ADRs) keep it: agents **adopt and maintain the existing docs** — treating
+their natural root as the entry point, or writing a thin index that links into them — rather
+than imposing a parallel `spec.md`. The durable invariants are only these two: a committed,
+agent-maintained design doc set, and a single well-known entry point for orientation.
+
+An optional per-workspace `.ycc/config.toml` names the surface:
+
+```toml
+spec_path = "docs/index.md"          # entry point, relative to the workspace root (default "spec.md")
+doc_globs = ["docs/**", "adr/*.md"]  # the rest of the docs set (slash globs, relative to root)
+```
+
+Missing or malformed config falls back to the default (`spec.md`, no extra globs); a
+`spec_path` that escapes the workspace is ignored. A `doc_updated` event fires for an edit
+anywhere in the docs set (the entry point or any file matching a `doc_globs` pattern), not
+just the entry point. Canonical spec sections (others allowed): Vision, Goals, Architecture,
+Components, Constraints, Open Questions. Docs are plain markdown edited with the ordinary
+Read/Edit/Write tools — there is no dedicated spec tool. The spec docs are committed with code.
 
 ### 6.2 Backlog — structured items, markdown-rendered
 
@@ -218,7 +239,7 @@ priority: 2             # 1 highest
 created: 2026-06-25
 updated: 2026-06-25
 depends_on: ["0003"]
-spec_refs: ["Architecture", "RPC protocol"]
+spec_refs: ["Architecture", "docs/rpc.md#Protocol"]
 ---
 
 ## Description
@@ -239,6 +260,10 @@ Why this exists and what "done" means in prose.
 `docs` package responsibilities: parse/write task files, validate frontmatter, render
 `backlog.md`, append to a task's work log, and provide `list/get/create/update` used by
 the coordinator tools.
+
+`spec_refs` are free-form strings: a bare section title (e.g. `"Architecture"`) refers to the
+spec entry point, while `path#Section` (e.g. `"docs/rpc.md#Protocol"`) references a section of
+another doc in the docs set. Bare titles keep their meaning, so existing refs stay valid.
 
 ### 6.3 Reusable plans (runbooks)
 

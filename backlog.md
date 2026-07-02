@@ -122,6 +122,7 @@
 | [0117](backlog/0117-preserve-workstream-session-transcripts-after-merg.md) | Preserve workstream session transcripts after merge/discard removes the worktree | done | 5 | 0085 |
 | [0118](backlog/0118-listworkstreams-enrichment-reuse-the-project-repo.md) | ListWorkstreams enrichment: reuse the project repo instead of re-opening per workstream | done | 5 | 0085 |
 | [0119](backlog/0119-search-jump-navigation-in-the-histmodal-transcript.md) | Search + jump navigation in the histModal transcript (session browser over a live session) | done | 5 | 0116 |
-| [0120](backlog/0120-tui-render-ask-user-q-a-as-a-single-block-hide-too.md) | TUI: render ask_user Q&A as a single block; hide tool plumbing rows | done | 2 | — |
 | [0120](backlog/0120-gollama-streaming-turn-api-turnstream-across-provi.md) | gollama: streaming turn API (TurnStream) across providers | todo | 3 | — |
-| [0121](backlog/0121-generalize-the-spec-surface-respect-existing-docs.md) | Generalize the spec surface: respect existing docs layouts, allow multi-file specs behind a single entry point | todo | 2 | — |
+| [0120](backlog/0120-tui-render-ask-user-q-a-as-a-single-block-hide-too.md) | TUI: render ask_user Q&A as a single block; hide tool plumbing rows | done | 2 | — |
+| [0121](backlog/0121-generalize-the-spec-surface-respect-existing-docs.md) | Generalize the spec surface: respect existing docs layouts, allow multi-file specs behind a single entry point | done | 2 | — |
+| [0122](backlog/0122-tui-needsonboarding-should-respect-the-configured.md) | TUI needsOnboarding should respect the configured spec entry point | todo | 4 | 0121 |

@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/whyrusleeping/gollama"
@@ -46,24 +47,28 @@ type Preset struct {
 // (they are all ordinary pm work); onboard, the first-run flow, is the only one.
 func Presets() []Preset {
 	return []Preset{
-		{"onboard", "Onboard this project", "Orient from any existing spec.md + backlog, then establish or refresh them — greenfield (full spec) or brownfield (scoped to your work).", "pm", onboardPresetPrompt},
+		{"onboard", "Onboard this project", "Orient from existing project docs (spec entry point, any docs/ tree) and backlog, then establish or refresh them — greenfield (full spec) or brownfield (adopt existing docs, scoped to your work).", "pm", onboardPresetPrompt},
 	}
 }
 
 // BuildMode returns the tool registry and system prompt for a session mode. The
 // "work" mode is the full coordinator (CoordinatorTools); "pm" is the planning /
 // intake / docs coordinator (no implementation); "chat" is the freeform assistant.
-// spec.md and code are plain files: pm/chat read them with Read and edit them with
-// Edit/Write — there is no dedicated spec tool. An OnWrite hook surfaces an edit to
-// spec.md as a doc_updated event.
+// The spec docs and code are plain files: pm/chat read them with Read and edit
+// them with Edit/Write — there is no dedicated spec tool. An OnWrite hook surfaces
+// an edit anywhere in the docs set (the spec entry point plus any configured
+// doc_globs — spec §6.1) as a doc_updated event.
 func BuildMode(mode string, d *Deps, level string) (*tools.Registry, string) {
-	specPath := d.Docs.SpecPath()
 	ws := &tools.Workspace{
 		Root:      d.Workspace,
 		ReadRoots: tools.ReadRoots(d.ReadRoots),
 		OnWrite: func(path string) {
-			if path == specPath {
-				d.Emitter.Emit(event.DocUpdated, map[string]any{"doc": "spec"})
+			if d.Docs.IsDoc(path) {
+				data := map[string]any{"doc": "spec"}
+				if rel, err := filepath.Rel(d.Workspace, path); err == nil {
+					data["path"] = filepath.ToSlash(rel)
+				}
+				d.Emitter.Emit(event.DocUpdated, data)
 			}
 		},
 	}
@@ -74,9 +79,10 @@ func BuildMode(mode string, d *Deps, level string) (*tools.Registry, string) {
 		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d), askUser(d))
 		return reg, sys(chatModeSystem, level, d.Workspace)
 	case "pm":
-		// pm maintains spec.md (a plain file) so it keeps Write/Edit, but it does
-		// no implementation: no spawn_* / commit, and the prompt enforces a soft
-		// "no code edits" boundary (hard enforcement is future work).
+		// pm maintains the project's design docs (plain files) so it keeps
+		// Write/Edit, but it does no implementation: no spawn_* / commit, and the
+		// prompt enforces a soft "no code edits" boundary (hard enforcement is
+		// future work).
 		reg.Add(tools.Editing(ws)...)
 		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d), proposePlan(d), listPlans(d), runPlan(d), savePlan(d), switchToWork(d), askUser(d), tools.Finish())
 		return reg, sys(pmModeSystem, level, d.Workspace)
@@ -140,7 +146,7 @@ func createTask(d *Deps) *gollama.Tool {
 			"description": tools.StrProp("description and acceptance criteria (markdown)"),
 			"priority":    map[string]any{"type": "integer", "description": "1 (highest) .. 5; default 3"},
 			"depends_on":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "task ids this depends on"},
-			"spec_refs":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "spec section titles this relates to"},
+			"spec_refs":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "spec references this relates to: a bare section title refers to the spec entry point; `path#Section` references a section of another doc in the docs set"},
 		}, "title"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			title, _ := tools.GetString(params, "title")

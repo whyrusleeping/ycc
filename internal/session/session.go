@@ -792,7 +792,7 @@ func defaultPrompt(mode string) string {
 	case "chat":
 		return "Briefly introduce yourself as the ycc assistant and ask what I'd like to work on."
 	case "pm":
-		return "Review spec.md and the existing backlog against the current codebase, and ask me what I'd like to plan, document, or groom."
+		return "Review the project's design docs (start from the spec entry point) and the existing backlog against the current codebase, and ask me what I'd like to plan, document, or groom."
 	default: // work
 		return "Work on the backlog: choose the next ready task (one whose dependencies are all done) and complete it."
 	}
