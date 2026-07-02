@@ -76,6 +76,22 @@ const (
 	// the log, and new activity appends to the same continuous stream. It does not
 	// change status (see Reduce).
 	SessionReopened Type = "session_reopened"
+	// Parallel workstreams lifecycle (docs/design/parallel-workstreams.md §6, §8).
+	// These are recorded on the workstream's own session stream so the merge flow
+	// is auditable in the log and projectable by the reducer.
+	//
+	// WorkstreamCreated marks a linked worktree + branch being spawned off a
+	// project's base (data: { workstream, branch, base, worktree, project, task }).
+	WorkstreamCreated Type = "workstream_created"
+	// WorkstreamMerged marks a clean, review-gated integration back to base and
+	// subsequent cleanup (data: { workstream, branch, commit }).
+	WorkstreamMerged Type = "workstream_merged"
+	// WorkstreamConflict marks a trial/real merge that conflicted; the base branch
+	// is never left conflicted (data: { workstream, branch, conflicts: []string }).
+	WorkstreamConflict Type = "workstream_conflict"
+	// WorkstreamDiscarded marks a workstream abandoned without merging, its
+	// worktree + branch cleaned up (data: { workstream, branch }).
+	WorkstreamDiscarded Type = "workstream_discarded"
 )
 
 // ThinkingBlock mirrors gollama.ThinkingBlock for lossless serialization in the

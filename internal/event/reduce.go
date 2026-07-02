@@ -36,6 +36,14 @@ type Projection struct {
 	// key holds turns that occurred before any focus ("unattributed").
 	FocusTask   string
 	TurnsByTask map[string]int
+	// Parallel-workstream projection (docs/design/parallel-workstreams.md §6, §8):
+	// the workstream lifecycle folded from its own session stream. WorkstreamID is
+	// set once created; WorkstreamState is one of created/merged/conflict/discarded;
+	// WorkstreamConflicts lists the conflicted paths from the most recent conflict
+	// (cleared on a subsequent merge/discard).
+	WorkstreamID        string
+	WorkstreamState     string
+	WorkstreamConflicts []string
 }
 
 // Reduce folds an event slice into a Projection.
@@ -93,6 +101,26 @@ func Reduce(events []Event) Projection {
 			// its existing log. It does NOT change status — the reopened session's
 			// status is whatever its prior events established (it resumes idle,
 			// awaiting the first new input).
+		case InteractionLevelChanged:
+			// A mid-session settings overlay (spec §18.2): keep the projection's
+			// interaction level current so consumers (e.g. the merge accept gate,
+			// design §6) read the effective level of a non-live session.
+			if to := str(ev.Data, "to"); to != "" {
+				p.InteractionLevel = to
+			}
+		case WorkstreamCreated:
+			p.WorkstreamID = str(ev.Data, "workstream")
+			p.WorkstreamState = "created"
+			p.WorkstreamConflicts = nil
+		case WorkstreamConflict:
+			p.WorkstreamState = "conflict"
+			p.WorkstreamConflicts = strSlice(ev.Data, "conflicts")
+		case WorkstreamMerged:
+			p.WorkstreamState = "merged"
+			p.WorkstreamConflicts = nil
+		case WorkstreamDiscarded:
+			p.WorkstreamState = "discarded"
+			p.WorkstreamConflicts = nil
 		}
 	}
 	return p
@@ -106,4 +134,32 @@ func str(m map[string]any, k string) string {
 		return s
 	}
 	return ""
+}
+
+// strSlice extracts a []string from event data, accepting both a freshly-emitted
+// []string and a JSONL-decoded []any (where each element decodes to a string).
+// Returns nil when absent or unparsable.
+func strSlice(m map[string]any, k string) []string {
+	if m == nil {
+		return nil
+	}
+	switch v := m[k].(type) {
+	case []string:
+		if len(v) == 0 {
+			return nil
+		}
+		return append([]string(nil), v...)
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, e := range v {
+			if s, ok := e.(string); ok {
+				out = append(out, s)
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	}
+	return nil
 }

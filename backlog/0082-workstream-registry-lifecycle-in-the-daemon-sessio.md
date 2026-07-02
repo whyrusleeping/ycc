@@ -90,3 +90,7 @@ Scope note: merge/discard flows, RPC surface, and TUI are tasks 0083–0085 — 
 - 2026-07-02 review (Claude): accept — The change fully implements task 0082: a daemon-owned, persistent workstream registry (mirroring project.Registry with atomic saves and single-writer enforcement via ErrWorktreeInUse), Manager.SpawnWo
 …[truncated]
 - 2026-07-02 decision: accept — commit: session: daemon-owned workstream registry + spawn/reconcile lifecycle on git worktrees (0082)
+- 2026-07-02 usage: 29,978 tok (in 124, out 29,854, cache_r 2,594,158, cache_w 167,997) · cost n/a (unpriced)
+  implementer: 22,035 tok (in 82, out 21,953, cache_r 1,689,293, cache_w 57,801) · cost n/a (unpriced)
+  coordinator: 4,987 tok (in 24, out 4,963, cache_r 718,315, cache_w 78,392) · cost n/a (unpriced)
+  reviewer:Claude: 2,956 tok (in 18, out 2,938, cache_r 186,550, cache_w 31,804) · cost n/a (unpriced)

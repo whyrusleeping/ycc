@@ -879,6 +879,10 @@ type Manager struct {
 	projects         *project.Registry
 	workstreams      *workstream.Registry
 	worktreesRoot    string
+	// mergeMu serializes MergeWorkstream across all workstreams so integrations
+	// happen one at a time and each trial-merges against the latest base HEAD
+	// (sequential reconciliation, design §6).
+	mergeMu sync.Mutex
 }
 
 // NewManager creates a session manager backed by the given model registry. It
@@ -1115,6 +1119,16 @@ func (m *Manager) SpawnWorkstream(cfg SpawnWorkstreamConfig) (workstream.Workstr
 		cleanup()
 		return workstream.Workstream{}, nil, fmt.Errorf("register workstream: %w", err)
 	}
+	// Record the workstream's creation on its own session stream so the merge
+	// flow is auditable and projectable (design §6, §8).
+	m.emitWorkstreamEvent(ws, event.WorkstreamCreated, map[string]any{
+		"workstream": ws.ID,
+		"branch":     ws.Branch,
+		"base":       ws.BaseCommit,
+		"worktree":   ws.WorktreePath,
+		"project":    ws.Project,
+		"task":       ws.TaskID,
+	})
 	return ws, s, nil
 }
 

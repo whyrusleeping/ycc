@@ -138,3 +138,11 @@ func (r *Repo) Merge(branch string, strategy MergeStrategy) (MergeResult, error)
 	}
 	return MergeResult{Clean: true, Commit: strings.TrimSpace(sha)}, nil
 }
+
+// DiffMergeBase returns the integrated diff branch would introduce relative to
+// the repo's current HEAD (`git diff HEAD...branch`, i.e. the changes on branch
+// since its merge base with HEAD). It is the review preview surfaced by the
+// accept gate under interactive/judgement levels (design §6). Read-only.
+func (r *Repo) DiffMergeBase(branch string) (string, error) {
+	return r.run("diff", "HEAD..."+branch)
+}
