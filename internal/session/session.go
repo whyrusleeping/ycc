@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -25,6 +26,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/orchestrator"
 	"github.com/whyrusleeping/ycc/internal/project"
 	"github.com/whyrusleeping/ycc/internal/usage"
+	"github.com/whyrusleeping/ycc/internal/workstream"
 )
 
 // Config parameterizes a new session.
@@ -875,22 +877,37 @@ type Manager struct {
 	reg              *config.Registry
 	defaultWorkspace string
 	projects         *project.Registry
+	workstreams      *workstream.Registry
+	worktreesRoot    string
 }
 
 // NewManager creates a session manager backed by the given model registry. It
 // starts with an in-memory project registry; call SetProjects to back it with a
-// persistent one (spec §3.1).
+// persistent one (spec §3.1). The workstream registry likewise defaults to an
+// in-memory one; SetWorkstreams backs it with durable state.
 func NewManager(reg *config.Registry, defaultWorkspace string) *Manager {
 	return &Manager{
 		sessions:         map[string]*Session{},
 		reg:              reg,
 		defaultWorkspace: defaultWorkspace,
 		projects:         project.NewMemory(),
+		workstreams:      workstream.NewMemory(),
+		worktreesRoot:    workstream.DefaultWorktreesRoot(),
 	}
 }
 
 // SetProjects backs the manager with a (persistent) project registry.
 func (m *Manager) SetProjects(p *project.Registry) { m.projects = p }
+
+// SetWorkstreams backs the manager with a (persistent) workstream registry and
+// sets the root directory under which linked worktrees are created. An empty
+// root keeps the current default.
+func (m *Manager) SetWorkstreams(w *workstream.Registry, root string) {
+	m.workstreams = w
+	if root != "" {
+		m.worktreesRoot = root
+	}
+}
 
 // Projects returns the registered projects (name + path) for ListProjects.
 func (m *Manager) Projects() []project.Project { return m.projects.List() }
@@ -905,6 +922,14 @@ func (m *Manager) RemoveProject(name string) error { return m.projects.Remove(na
 
 // Start creates, persists, and launches a new session.
 func (m *Manager) Start(cfg Config) (*Session, error) {
+	return m.start(cfg, true)
+}
+
+// start is the shared session-launch body. When autoRegisterProject is true a
+// not-yet-known workspace is auto-registered as a first-class project (spec
+// §3.1). Workstream sessions pass false so an ephemeral worktree path never
+// pollutes the user-facing project picker (design §7).
+func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) {
 	ws := cfg.Workspace
 	// A named project resolves to its registered workspace, overriding ws.
 	if cfg.Project != "" {
@@ -922,9 +947,11 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 		return nil, fmt.Errorf("resolve workspace: %w", err)
 	}
 	// Auto-register a not-yet-known workspace so it becomes a first-class,
-	// listable project (spec §3.1).
-	if _, err := m.projects.EnsureWorkspace(absWS); err != nil {
-		return nil, fmt.Errorf("register project: %w", err)
+	// listable project (spec §3.1) — unless this is a workstream worktree.
+	if autoRegisterProject {
+		if _, err := m.projects.EnsureWorkspace(absWS); err != nil {
+			return nil, fmt.Errorf("register project: %w", err)
+		}
 	}
 	mode := cfg.Mode
 	if mode == "" {
@@ -967,6 +994,186 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 
 	go s.run()
 	return s, nil
+}
+
+// SpawnWorkstreamConfig parameterizes SpawnWorkstream.
+type SpawnWorkstreamConfig struct {
+	// Project is the parent project name (required). Its primary tree supplies
+	// the base commit and object store.
+	Project string
+	// BaseRef is the ref/commit the worktree branch is created from; defaults to
+	// HEAD.
+	BaseRef string
+	// TaskID optionally records the backlog task this workstream targets and is
+	// appended to the branch name.
+	TaskID string
+	// Prompt seeds the work session (optional).
+	Prompt string
+	// InteractionLevel selects the interaction tier (default "judgement").
+	InteractionLevel string
+}
+
+// SpawnWorkstream creates a linked git worktree + branch (ycc/ws/<id>) off the
+// parent project's primary tree and starts a `work` session scoped to that
+// worktree, recording the pair in the workstream registry (design §5, §7). It
+// preserves the single-writer invariant: at most one active workstream per
+// worktree path, and no second live session for the same path. On any failure
+// after the worktree exists it best-effort tears it down (remove + delete
+// branch + prune).
+func (m *Manager) SpawnWorkstream(cfg SpawnWorkstreamConfig) (workstream.Workstream, *Session, error) {
+	if cfg.Project == "" {
+		return workstream.Workstream{}, nil, fmt.Errorf("project required")
+	}
+	primary, ok := m.projects.Resolve(cfg.Project)
+	if !ok {
+		return workstream.Workstream{}, nil, fmt.Errorf("unknown project %q", cfg.Project)
+	}
+	repo, err := git.Open(primary)
+	if err != nil {
+		return workstream.Workstream{}, nil, fmt.Errorf("open project repo: %w", err)
+	}
+	baseRef := cfg.BaseRef
+	if baseRef == "" {
+		baseRef = "HEAD"
+	}
+	baseCommit, err := repo.RevParse(baseRef)
+	if err != nil {
+		return workstream.Workstream{}, nil, fmt.Errorf("resolve base ref %q: %w", baseRef, err)
+	}
+
+	id, err := newWorkstreamID()
+	if err != nil {
+		return workstream.Workstream{}, nil, err
+	}
+	branch := "ycc/ws/" + id
+	if cfg.TaskID != "" {
+		branch += "-" + cfg.TaskID
+	}
+	dir, err := filepath.Abs(filepath.Join(m.worktreesRoot, cfg.Project, id))
+	if err != nil {
+		return workstream.Workstream{}, nil, fmt.Errorf("resolve worktree path: %w", err)
+	}
+
+	// Single-writer guard: reject if a live session already writes to this path.
+	// (The registry's Add enforces the persistent side of the invariant.)
+	m.mu.Lock()
+	for _, s := range m.sessions {
+		if s.Workspace == dir {
+			m.mu.Unlock()
+			return workstream.Workstream{}, nil, fmt.Errorf("%w: %s", workstream.ErrWorktreeInUse, dir)
+		}
+	}
+	m.mu.Unlock()
+
+	// Pre-check the registry so we don't create a worktree we'll have to reap.
+	for _, ex := range m.workstreams.ListByProject(cfg.Project) {
+		if ex.WorktreePath == dir && !ex.Status.Terminal() {
+			return workstream.Workstream{}, nil, fmt.Errorf("%w: %s", workstream.ErrWorktreeInUse, dir)
+		}
+	}
+
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		return workstream.Workstream{}, nil, fmt.Errorf("create worktrees root: %w", err)
+	}
+	if err := repo.AddWorktree(dir, branch, baseCommit); err != nil {
+		return workstream.Workstream{}, nil, fmt.Errorf("add worktree: %w", err)
+	}
+	cleanup := func() {
+		repo.RemoveWorktree(dir)
+		repo.DeleteBranch(branch, true)
+		repo.PruneWorktrees()
+	}
+
+	level := cfg.InteractionLevel
+	if level == "" {
+		level = "judgement"
+	}
+	s, err := m.start(Config{
+		Workspace:        dir,
+		Mode:             "work",
+		InteractionLevel: level,
+		Prompt:           cfg.Prompt,
+	}, false)
+	if err != nil {
+		cleanup()
+		return workstream.Workstream{}, nil, fmt.Errorf("start workstream session: %w", err)
+	}
+
+	ws := workstream.Workstream{
+		ID:           id,
+		Project:      cfg.Project,
+		BaseCommit:   baseCommit,
+		Branch:       branch,
+		WorktreePath: dir,
+		SessionID:    s.ID,
+		TaskID:       cfg.TaskID,
+		Status:       workstream.StatusActive,
+		CreatedAt:    time.Now(),
+	}
+	if err := m.workstreams.Add(ws); err != nil {
+		m.Stop(s.ID)
+		cleanup()
+		return workstream.Workstream{}, nil, fmt.Errorf("register workstream: %w", err)
+	}
+	return ws, s, nil
+}
+
+// Workstreams returns the workstreams for a project (empty name => all).
+func (m *Manager) Workstreams(project string) []workstream.Workstream {
+	return m.workstreams.ListByProject(project)
+}
+
+// ReconcileWorkstreams reconciles the workstream registry against the git state
+// on startup, recovering from a crashed daemon (design §5, §7). For each project
+// with active workstreams it prunes stale worktree admin entries and marks any
+// active workstream whose worktree directory is missing (or absent from
+// `git worktree list`) as stale. It is conservative: it never deletes unknown or
+// dirty worktrees; prune only reaps git's own stale admin entries.
+func (m *Manager) ReconcileWorkstreams() error {
+	all := m.workstreams.List()
+	// Group active workstreams by project.
+	byProject := map[string][]workstream.Workstream{}
+	for _, w := range all {
+		if w.Status == workstream.StatusActive {
+			byProject[w.Project] = append(byProject[w.Project], w)
+		}
+	}
+	for proj, list := range byProject {
+		primary, ok := m.projects.Resolve(proj)
+		if !ok {
+			// Parent project is gone: its worktrees are unrecoverable.
+			for _, w := range list {
+				m.workstreams.SetStatus(w.ID, workstream.StatusStale)
+			}
+			continue
+		}
+		repo, err := git.Open(primary)
+		if err != nil {
+			// Cannot inspect the repo; leave entries as-is for the next attempt.
+			continue
+		}
+		repo.PruneWorktrees()
+		trees, err := repo.ListWorktrees()
+		if err != nil {
+			continue
+		}
+		known := map[string]bool{}
+		for _, t := range trees {
+			abs, err := filepath.Abs(t.Path)
+			if err != nil {
+				abs = t.Path
+			}
+			known[filepath.Clean(abs)] = true
+		}
+		for _, w := range list {
+			path := filepath.Clean(w.WorktreePath)
+			_, statErr := os.Stat(path)
+			if os.IsNotExist(statErr) || !known[path] {
+				m.workstreams.SetStatus(w.ID, workstream.StatusStale)
+			}
+		}
+	}
+	return nil
 }
 
 // newSession assembles a Session (emitter, interaction, deps, role specs, the
@@ -1475,4 +1682,14 @@ func newID() (string, error) {
 		return "", err
 	}
 	return "s_" + hex.EncodeToString(b), nil
+}
+
+// newWorkstreamID mints a stable short workstream id (ws_<8-hex>), mirroring
+// newID (design §5).
+func newWorkstreamID() (string, error) {
+	b := make([]byte, 4)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return "ws_" + hex.EncodeToString(b), nil
 }

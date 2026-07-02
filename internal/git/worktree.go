@@ -43,6 +43,19 @@ func (r *Repo) PruneWorktrees() error {
 	return err
 }
 
+// DeleteBranch deletes a local branch. When force is true it uses `git branch
+// -D` (discard even if unmerged); otherwise `git branch -d` (refuse to drop
+// unmerged work). Used to clean up a workstream's branch after its worktree is
+// removed (design §5 step 4).
+func (r *Repo) DeleteBranch(name string, force bool) error {
+	flag := "-d"
+	if force {
+		flag = "-D"
+	}
+	_, err := r.run("branch", flag, name)
+	return err
+}
+
 // ListWorktrees returns all worktrees known to the repo, including the primary
 // tree, by parsing `git worktree list --porcelain`.
 func (r *Repo) ListWorktrees() ([]Worktree, error) {

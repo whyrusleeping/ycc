@@ -84,7 +84,7 @@
 | [0079](backlog/0079-let-coordinator-preload-worker-agent-with-file-sni.md) | Let coordinator preload worker agent with file/snippet context hints from the plan | done | 3 | — |
 | [0080](backlog/0080-give-capture-agent-bounded-read-access-to-ground-b.md) | Give capture agent bounded read access to ground backlog items in the codebase | done | 3 | — |
 | [0081](backlog/0081-worktree-primitives-in-internal-git.md) | Worktree primitives in internal/git | done | 4 | 0078 |
-| [0082](backlog/0082-workstream-registry-lifecycle-in-the-daemon-sessio.md) | Workstream registry + lifecycle in the daemon/session manager | todo | 4 | 0081 |
+| [0082](backlog/0082-workstream-registry-lifecycle-in-the-daemon-sessio.md) | Workstream registry + lifecycle in the daemon/session manager | done | 4 | 0081 |
 | [0083](backlog/0083-workstream-merge-integration-flow-with-conflict-su.md) | Workstream merge/integration flow with conflict surfacing | todo | 4 | 0082 |
 | [0084](backlog/0084-rpc-surface-for-workstreams-spawn-list-preview-mer.md) | RPC surface for workstreams (spawn/list/preview/merge/discard) | todo | 4 | 0082, 0083 |
 | [0085](backlog/0085-tui-workstreams-panel-spawn-monitor-merge-ux.md) | TUI: Workstreams panel + spawn/monitor/merge UX | todo | 4 | 0084 |

@@ -70,3 +70,7 @@ Extend internal/git with worktree + merge primitives per docs/design/parallel-wo
 - 2026-07-02 review (Claude): accept — The change adds thin, well-documented worktree primitives (AddWorktree/RemoveWorktree/ListWorktrees/PruneWorktrees) and merge primitives (TrialMerge/Merge) to internal/git, consistent with the existin
 …[truncated]
 - 2026-07-02 decision: accept — commit: git: worktree + trial-merge/merge primitives for parallel workstreams (0081)
+- 2026-07-02 usage: 15,437 tok (in 48, out 15,389, cache_r 368,488, cache_w 46,928) · cost n/a (unpriced)
+  implementer: 8,504 tok (in 18, out 8,486, cache_r 92,737, cache_w 15,290) · cost n/a (unpriced)
+  coordinator: 4,688 tok (in 16, out 4,672, cache_r 208,359, cache_w 17,380) · cost n/a (unpriced)
+  reviewer:Claude: 2,245 tok (in 14, out 2,231, cache_r 67,392, cache_w 14,258) · cost n/a (unpriced)

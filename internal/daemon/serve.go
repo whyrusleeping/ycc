@@ -23,6 +23,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/project"
 	"github.com/whyrusleeping/ycc/internal/server"
 	"github.com/whyrusleeping/ycc/internal/session"
+	"github.com/whyrusleeping/ycc/internal/workstream"
 	"github.com/whyrusleeping/ycc/proto/ycc/v1/yccv1connect"
 )
 
@@ -74,6 +75,18 @@ func buildHandler(o Options) (http.Handler, error) {
 			return nil, fmt.Errorf("load project registry: %w", err)
 		}
 		mgr.SetProjects(preg)
+		// The workstream registry (parallel worktrees, design §5/§7) is likewise
+		// durable and reconciled on startup: prune stale worktrees left by a
+		// crashed daemon and mark orphaned workstreams stale. A reconcile error is
+		// non-fatal (log and continue).
+		wreg, err := workstream.Open(workstream.StateFile())
+		if err != nil {
+			return nil, fmt.Errorf("load workstream registry: %w", err)
+		}
+		mgr.SetWorkstreams(wreg, workstream.DefaultWorktreesRoot())
+		if err := mgr.ReconcileWorkstreams(); err != nil {
+			log.Printf("workstream reconcile: %v", err)
+		}
 		// A persistent daemon outlives any single session, so it runs the
 		// background GC reaper (task 0054) when enabled in config: idle-session
 		// reaping and/or on-disk log retention. Both default to 0 (disabled), so

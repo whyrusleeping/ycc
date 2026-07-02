@@ -68,6 +68,15 @@ func (r *Repo) Commit(message string) (string, error) {
 	return strings.TrimSpace(sha), err
 }
 
+// RevParse resolves a ref (branch, tag, or commit-ish) to its full commit sha.
+func (r *Repo) RevParse(ref string) (string, error) {
+	out, err := r.run("rev-parse", ref)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
 func (r *Repo) run(args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = r.Dir
