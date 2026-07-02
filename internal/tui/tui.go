@@ -179,6 +179,16 @@ type model struct {
 	// queued echo renders "(queued)" only until its delivery point.
 	deliveredSeqs map[int64]bool
 
+	// transcript search (task 0116): `/` starts an incremental case-insensitive
+	// search over the rendered event stream (headlines + expanded bodies), shared
+	// by the live session view and the read-only history transcript. searching is
+	// true while the query is being typed in the footer search bar; searchQuery
+	// stays non-empty after enter so n/N can keep cycling matches. Matches are
+	// computed on demand (never cached as indices) so appended live events can
+	// never leave stale positions behind. esc clears it.
+	searching   bool
+	searchQuery string
+
 	vp      viewport.Model
 	input   textarea.Model
 	glam    *glamour.TermRenderer
@@ -1811,6 +1821,12 @@ func (m *model) relayout() {
 // strings sessionView emits keeps this in lockstep with the actual layout, so
 // the picker and help line can never be pushed off the bottom of the screen.
 func (m model) footerStackHeight() int {
+	// While the transcript search bar is active it replaces the whole footer
+	// stack AND the help line with a single row (see sessionView), so nothing is
+	// stacked above the one search-bar row (task 0116).
+	if m.searching {
+		return 0
+	}
 	h := 0
 	if m.wizActive {
 		h += lipgloss.Height(m.wizardView())
@@ -2108,6 +2124,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.eventStart = nil
 		m.selected = -1
 		m.follow = false
+		m.clearSearch()
 		if m.ready {
 			m.rebuild()
 			m.vp.GotoTop()
@@ -2140,6 +2157,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pickerOpts, m.pickerCursor = nil, 0
 		m.loopStopping = false
 		m.clearWizard()
+		m.clearSearch()
 		// Allocate a fresh event channel for this session. The subscribe goroutine
 		// closes its channel when the stream ends; in a loop run the next session
 		// must not reuse (and send on) that already-closed channel — doing so panics
@@ -2531,6 +2549,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateOverlay(msg)
 	}
 	if key, ok := msg.(tea.KeyMsg); ok && key.String() == "esc" {
+		// A live transcript search intercepts esc: clear it (and re-focus the
+		// input) instead of opening settings (task 0116). A second esc then opens
+		// the overlay as usual.
+		if m.state == stateSession && (m.searching || m.searchQuery != "") {
+			m.clearSearch()
+			m.relayout()
+			return m, m.input.Focus()
+		}
 		// Esc opens the overlay rather than leaving the session (spec §18.2).
 		m.openOverlay()
 		return m, nil
@@ -2603,10 +2629,46 @@ func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
+		// While the search bar owns input (task 0116), keystrokes edit the query
+		// and incrementally re-jump the selection. Unconditional here (no input
+		// textarea to protect).
+		if m.searching {
+			switch key.String() {
+			case "ctrl+c":
+				return m.confirmQuit()
+			case "esc":
+				m.clearSearch()
+				return m, nil
+			case "enter":
+				// Confirm: keep the query active for n/N.
+				m.searching = false
+				return m, nil
+			case "backspace":
+				if r := []rune(m.searchQuery); len(r) > 0 {
+					m.searchQuery = string(r[:len(r)-1])
+				}
+				m.runSearch()
+				return m, nil
+			default:
+				if t := key.Key().Text; t != "" {
+					m.searchQuery += t
+					m.runSearch()
+				}
+				return m, nil
+			}
+		}
 		switch key.String() {
 		case "ctrl+c":
 			return m.confirmQuit()
-		case "esc", "q", "backspace", "left":
+		case "esc":
+			// A transcript search intercepts the first esc: clear it and stay in
+			// the transcript. A second esc backs out to the list.
+			if m.searchQuery != "" {
+				m.clearSearch()
+				return m, nil
+			}
+			fallthrough
+		case "q", "backspace", "left":
 			// Back to the list: drop the transient transcript event state.
 			m.historyTranscript = false
 			m.historyTransID = ""
@@ -2615,13 +2677,51 @@ func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.bodyCache = map[int]string{}
 			m.deliveredSeqs = map[int64]bool{}
 			m.eventStart = nil
+			m.selected = -1
+			m.clearSearch()
 			if m.ready {
 				m.rebuild()
 			}
 			return m, nil
+		case "/":
+			// Enter transcript search (unconditional in the read-only transcript).
+			m.searching = true
+			m.searchQuery = ""
+			return m, nil
+		case "n":
+			m.searchStep(1, m.selected+1)
+			return m, nil
+		case "N":
+			m.searchStep(-1, m.selected-1)
+			return m, nil
+		case "{":
+			m.jumpToEvent(-1, "question_asked")
+			return m, nil
+		case "}":
+			m.jumpToEvent(1, "question_asked")
+			return m, nil
+		case "(":
+			m.jumpToEvent(-1, "review_submitted")
+			return m, nil
+		case ")":
+			m.jumpToEvent(1, "review_submitted")
+			return m, nil
+		case "<":
+			m.jumpToEvent(-1, "commit_made")
+			return m, nil
+		case ">":
+			m.jumpToEvent(1, "commit_made")
+			return m, nil
+		case "[":
+			m.jumpToEvent(-1, "session_error")
+			return m, nil
+		case "]":
+			m.jumpToEvent(1, "session_error")
+			return m, nil
 		case "o", "enter":
 			// Reopen the session whose transcript we're viewing (resume = replay).
 			m.historyTranscript = false
+			m.clearSearch()
 			m.historyMsgTxt = "reopening " + short(m.historyTransID) + "…"
 			return m, m.reopenSession(m.historyTransID)
 		}
@@ -2919,6 +3019,33 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// While the transcript search bar owns input (task 0116), keystrokes edit
+		// the query and incrementally re-jump the selection to the nearest match.
+		// It is entered by `/` below (only when the input textarea is empty) and
+		// blurs the input; esc/enter (handled at the top level / here) leave it.
+		if m.searching {
+			switch msg.String() {
+			case "ctrl+c":
+				return m.confirmQuit()
+			case "enter":
+				// Confirm: keep the query active for n/N, restore the input row.
+				m.searching = false
+				m.relayout()
+				return m, m.input.Focus()
+			case "backspace":
+				if r := []rune(m.searchQuery); len(r) > 0 {
+					m.searchQuery = string(r[:len(r)-1])
+				}
+				m.runSearch()
+				return m, nil
+			default:
+				if t := msg.Key().Text; t != "" {
+					m.searchQuery += t
+					m.runSearch()
+				}
+				return m, nil
+			}
+		}
 		// When a question with options is pending, the footer is a picker that
 		// owns ↑/↓/enter until the user chooses "other…" to free-type.
 		if m.picking {
@@ -3055,6 +3182,68 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "down":
 			m.moveSelection(1)
 			return m, nil
+		case "/":
+			// Enter transcript search (task 0116). Gated on empty input so a bare
+			// "/" still types into the textarea mid-compose; falls through otherwise.
+			if strings.TrimSpace(m.input.Value()) == "" {
+				m.searching = true
+				m.searchQuery = ""
+				m.input.Blur()
+				m.relayout()
+				return m, nil
+			}
+		case "n":
+			// Cycle to the next search match. Only hijacks 'n' when a search is
+			// active AND the input is empty; otherwise it types normally.
+			if m.searchQuery != "" && strings.TrimSpace(m.input.Value()) == "" {
+				m.searchStep(1, m.selected+1)
+				return m, nil
+			}
+		case "N":
+			if m.searchQuery != "" && strings.TrimSpace(m.input.Value()) == "" {
+				m.searchStep(-1, m.selected-1)
+				return m, nil
+			}
+		case "{":
+			if strings.TrimSpace(m.input.Value()) == "" {
+				m.jumpToEvent(-1, "question_asked")
+				return m, nil
+			}
+		case "}":
+			if strings.TrimSpace(m.input.Value()) == "" {
+				m.jumpToEvent(1, "question_asked")
+				return m, nil
+			}
+		case "(":
+			if strings.TrimSpace(m.input.Value()) == "" {
+				m.jumpToEvent(-1, "review_submitted")
+				return m, nil
+			}
+		case ")":
+			if strings.TrimSpace(m.input.Value()) == "" {
+				m.jumpToEvent(1, "review_submitted")
+				return m, nil
+			}
+		case "<":
+			if strings.TrimSpace(m.input.Value()) == "" {
+				m.jumpToEvent(-1, "commit_made")
+				return m, nil
+			}
+		case ">":
+			if strings.TrimSpace(m.input.Value()) == "" {
+				m.jumpToEvent(1, "commit_made")
+				return m, nil
+			}
+		case "[":
+			if strings.TrimSpace(m.input.Value()) == "" {
+				m.jumpToEvent(-1, "session_error")
+				return m, nil
+			}
+		case "]":
+			if strings.TrimSpace(m.input.Value()) == "" {
+				m.jumpToEvent(1, "session_error")
+				return m, nil
+			}
 		case "pgup":
 			m.vp.HalfPageUp()
 			m.follow = m.vp.AtBottom()
@@ -5628,6 +5817,132 @@ func (m *model) moveSelection(d int) {
 	m.ensureVisible()
 }
 
+// --- transcript search & jump-to-event navigation (task 0116) ---
+
+// searchableText returns the plain-text (ansi-stripped) rendering of event i as
+// it appears on screen: its type/actor labels and detail-line headline plus,
+// when the row is expanded, its rendered body. Hidden rows (folded tool_results,
+// empty model_turns, echoed idles, delivery markers) return "" so a folded row
+// never matches on its own — its text participates via the owning visible row.
+// Used for case-insensitive substring matching by the transcript search.
+func (m *model) searchableText(i int) string {
+	if i < 0 || i >= len(m.evs) || m.hiddenRow(i) {
+		return ""
+	}
+	ev := m.evs[i]
+	var b strings.Builder
+	b.WriteString(ev.Type)
+	b.WriteByte(' ')
+	b.WriteString(ev.Actor)
+	b.WriteByte(' ')
+	b.WriteString(ansi.Strip(m.detailLineFor(ev)))
+	if m.eventExpanded(int(ev.Seq), ev.Type) {
+		b.WriteByte(' ')
+		b.WriteString(ansi.Strip(m.bodyFor(ev)))
+	}
+	return b.String()
+}
+
+// matchesQuery reports whether event i's searchable text contains q, which must
+// already be lower-cased.
+func (m *model) matchesQuery(i int, q string) bool {
+	if q == "" {
+		return false
+	}
+	return strings.Contains(strings.ToLower(m.searchableText(i)), q)
+}
+
+// searchStep moves the selection to the nearest event matching the active query,
+// scanning in direction dir (+1 forward / -1 backward) from index `from` and
+// wrapping around the whole stream. It is a no-op when there is no query or no
+// match. It drives both incremental typing (dir +1 from the current selection,
+// which includes it) and n/N cycling (dir ±1 from one past the current match).
+func (m *model) searchStep(dir, from int) {
+	q := strings.ToLower(m.searchQuery)
+	n := len(m.evs)
+	if q == "" || n == 0 {
+		return
+	}
+	for k := 0; k < n; k++ {
+		i := ((from+dir*k)%n + n) % n
+		if m.matchesQuery(i, q) {
+			m.selected = i
+			m.follow = false
+			m.rebuild()
+			m.ensureVisible()
+			return
+		}
+	}
+}
+
+// runSearch re-jumps the selection to the first match at or after the current
+// selection after each incremental edit of the query.
+func (m *model) runSearch() {
+	from := m.selected
+	if from < 0 {
+		from = 0
+	}
+	m.searchStep(1, from)
+}
+
+// searchCount returns the total number of matches for the active query and the
+// 1-based ordinal of the match at or before the current selection (0 when the
+// selection isn't on a match). Feeds the footer counter ⌕ "q" k/N.
+func (m *model) searchCount() (total, cur int) {
+	q := strings.ToLower(m.searchQuery)
+	if q == "" {
+		return 0, 0
+	}
+	for i := range m.evs {
+		if m.matchesQuery(i, q) {
+			total++
+			if i <= m.selected {
+				cur = total
+			}
+		}
+	}
+	return total, cur
+}
+
+// jumpToEvent moves the selection to the nearest non-hidden event in direction
+// dir (+1 forward / -1 backward) whose Type is one of types. Unlike search it
+// does NOT wrap: a no-op when there is no such event past the current selection.
+// Drives the {}()<>[] jump keys.
+func (m *model) jumpToEvent(dir int, types ...string) {
+	if len(m.evs) == 0 {
+		return
+	}
+	start := m.selected
+	if start < 0 {
+		if dir > 0 {
+			start = -1
+		} else {
+			start = len(m.evs)
+		}
+	}
+	for i := start + dir; i >= 0 && i < len(m.evs); i += dir {
+		if m.hiddenRow(i) {
+			continue
+		}
+		for _, t := range types {
+			if m.evs[i].Type == t {
+				m.selected = i
+				m.follow = false
+				m.rebuild()
+				m.ensureVisible()
+				return
+			}
+		}
+	}
+}
+
+// clearSearch resets all transcript-search state. Shared by esc-cancel and the
+// pipeline resets (started/transcript load, leaving a transcript).
+func (m *model) clearSearch() {
+	m.searching = false
+	m.searchQuery = ""
+}
+
 func (m *model) toggle(i int) {
 	if i < 0 || i >= len(m.evs) {
 		return
@@ -6268,7 +6583,16 @@ func (m model) transcriptView() string {
 	if m.ready {
 		body = m.vp.View()
 	}
-	help := m.footerBar(" ↑↓/pgup/pgdn scroll · o reopen · esc/q back")
+	var help string
+	switch {
+	case m.searching:
+		help = m.searchBar()
+	case m.searchQuery != "":
+		total, cur := m.searchCount()
+		help = m.footerBar(fmt.Sprintf(" ⌕ %q %d/%d · n/N next/prev · esc clear · o reopen · esc/q back", m.searchQuery, cur, total))
+	default:
+		help = m.footerBar(" ↑↓/pgup/pgdn scroll · / search · {}()<>[] jump · o reopen · esc/q back")
+	}
 	return top + "\n" + body + "\n" + help
 }
 
@@ -6536,6 +6860,19 @@ func (m model) sessionView() string {
 	if m.ready {
 		body = m.vp.View()
 	}
+	// While `/` search is being typed, a single-row search bar replaces the whole
+	// footer stack (input/picker/wizard) and help line (task 0116). footerStackHeight
+	// returns 0 so relayout leaves exactly one row for it below the viewport.
+	if m.searching {
+		return top + "\n" + body + "\n" + m.searchBar()
+	}
+	// A confirmed (non-entry) query leads the help line with a live match counter
+	// and the n/N · esc-clear hint.
+	searchHint := ""
+	if m.searchQuery != "" {
+		total, cur := m.searchCount()
+		searchHint = fmt.Sprintf(" ⌕ %q %d/%d · n/N next/prev · esc clear ·", m.searchQuery, cur, total)
+	}
 	if m.wizActive {
 		overview := m.wizardView()
 		if m.picking {
@@ -6553,14 +6890,14 @@ func (m model) sessionView() string {
 		help := m.footer(" ⏸ paused — type a correction + enter to steer · enter to resume · esc settings")
 		return top + "\n" + body + "\n" + m.inputRow() + "\n" + help
 	}
-	help := m.footer(" ? help · enter send/expand · shift+enter newline · ↑↓ select · click expand · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings · ctrl+b backlog · ctrl+o browse · ctrl+n new task")
+	help := m.footer(searchHint + " ? help · enter send/expand · shift+enter newline · ↑↓ select · click expand · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings · ctrl+b backlog · ctrl+o browse · ctrl+n new task")
 	if m.mode == "work" {
 		// Surface the loop toggle on work sessions: shift+tab halts a running loop
 		// gracefully (current task finishes) or rolls a single session into a loop.
 		if m.looping {
-			help = m.footer(" ? help · shift+tab halt loop · enter send/expand · ↑↓ select · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings")
+			help = m.footer(searchHint + " ? help · shift+tab halt loop · enter send/expand · ↑↓ select · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings")
 		} else {
-			help = m.footer(" ? help · shift+tab loop · enter send/expand · ↑↓ select · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings")
+			help = m.footer(searchHint + " ? help · shift+tab loop · enter send/expand · ↑↓ select · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings")
 		}
 	}
 	return top + "\n" + body + "\n" + m.inputRow() + "\n" + help
@@ -6587,6 +6924,18 @@ func (m model) interruptKeyHint() string {
 // byte-identical to the one shared by every other screen.
 func (m model) footer(text string) string {
 	return m.footerBar(text)
+}
+
+// searchBar renders the one-row transcript search-entry line shown in place of
+// the input/footer while `/` search is being typed (task 0116). It is width-
+// clamped like the footer so it can never wrap to a second physical row.
+func (m model) searchBar() string {
+	total, cur := m.searchCount()
+	counter := dimStyle.Render("no matches")
+	if total > 0 {
+		counter = fmt.Sprintf("%d/%d", cur, total)
+	}
+	return m.footerBar(" ⌕ " + m.searchQuery + "▌ · " + counter + dimStyle.Render(" · enter keep · esc cancel"))
 }
 
 // questionPrompt renders the shared interactive-question badge used by the main

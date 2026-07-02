@@ -76,3 +76,7 @@ Verify with `go build ./... && go test ./...`.
 - 2026-07-02 review (Claude): accept — The change implements a structured "blocked" escalation exactly as planned. A new `report_blocked(reason)` control tool is added to the worker tool set only (Blocked flag on Control), propagated throu
 …[truncated]
 - 2026-07-02 decision: accept — commit: orchestrator: structured blocked escalation from implementer via report_blocked (task 0115)
+- 2026-07-02 usage: 27,736 tok (in 166, out 27,570, cache_r 3,244,495, cache_w 152,328) · cost n/a (unpriced)
+  implementer: 14,289 tok (in 94, out 14,195, cache_r 1,731,572, cache_w 53,092) · cost n/a (unpriced)
+  coordinator: 11,231 tok (in 52, out 11,179, cache_r 1,390,432, cache_w 79,023) · cost n/a (unpriced)
+  reviewer:Claude: 2,216 tok (in 20, out 2,196, cache_r 122,491, cache_w 20,213) · cost n/a (unpriced)
