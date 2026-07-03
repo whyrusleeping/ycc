@@ -1,10 +1,10 @@
 ---
 id: "0114"
 title: Stream model output incrementally into the session view
-status: todo
+status: blocked
 priority: 3
 created: "2026-07-01"
-updated: "2026-07-05"
+updated: "2026-07-03"
 depends_on:
     - "0120"
     - "0128"
@@ -45,6 +45,16 @@ non-persisted events through the existing Subscribe pipe.**
 - [ ] Graceful fallback for backends without streaming (via gollama 0120 fallback)
 
 ## Work log
+- 2026-07-07 blocked (autonomous coordinator): all gollama-independent scope is done
+  (0128 transient broadcast path + 0129 engine StreamTurner seam/TUI tail row are done;
+  the loop already type-asserts StreamTurner and emits throttled transient turn_delta).
+  The only remaining work — making the real gollama client implement TurnStream (task
+  0120) and live end-to-end verification — is gated on the gollama working repo at
+  /home/why/code/gollama, which is still absent in this environment. Verified upstream
+  gollama HEAD is still the pinned 567eebc with no TurnStream, so nothing can be adopted
+  from the module cache either. Note: list_backlog shows this task [READY] because dep
+  0120 is "blocked" rather than an undone todo — do not start it until 0120 is done.
+  Unblock together with 0120 once the gollama working repo is available.
 - 2026-07-06 (autonomous coordinator): 0120 remains blocked (gollama working repo still
   unavailable in this environment), so split the remaining gollama-independent scope into
   task 0129: engine StreamTurner seam (snapshot-semantics onDelta, throttled transient
@@ -63,3 +73,4 @@ non-persisted events through the existing Subscribe pipe.**
   0120 (gollama TurnStream, cross-repo prerequisite) and this one (ycc plumbing + TUI
   tail row). Unblocked; now depends on 0120.
 - 2026-07-02 blocked: parked for the overnight autonomous work-loop run — design-first task (streaming seam + append-only-log invariant + cross-repo gollama work) that the user wants to decide interactively. Unblock after a design discussion records the chosen seam in this task/spec.
+- 2026-07-03 decision: accept — commit: backlog: park 0114 as blocked on gollama TurnStream (0120); record 0129 usage note

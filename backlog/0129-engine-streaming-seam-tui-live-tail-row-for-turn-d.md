@@ -101,3 +101,7 @@ Build the ycc-side streaming pipeline end to end, behind an optional engine capa
 …[truncated]
 - 2026-07-03 decision: accept — commit: engine streaming seam + TUI live tail row for turn_delta (task 0129)  Adds the ycc-side streaming pipeline behind an optional StreamTurner capability: the loop broadcasts throttled transient turn_delt
 …[truncated]
+- 2026-07-03 usage: 56,363 tok (in 252, out 56,111, cache_r 7,513,519, cache_w 201,446) · cost n/a (unpriced)
+  implementer: 45,070 tok (in 200, out 44,870, cache_r 6,739,381, cache_w 110,612) · cost n/a (unpriced)
+  reviewer:Claude: 6,486 tok (in 34, out 6,452, cache_r 374,743, cache_w 34,155) · cost n/a (unpriced)
+  coordinator: 4,807 tok (in 18, out 4,789, cache_r 399,395, cache_w 56,679) · cost n/a (unpriced)
