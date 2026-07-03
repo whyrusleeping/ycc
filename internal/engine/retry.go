@@ -39,17 +39,28 @@ func DefaultRetryPolicy() RetryPolicy {
 // Non-retryable errors (auth/4xx bad request) surface immediately. When the
 // policy disables retry (MaxAttempts <= 1) the inner Turner is returned
 // unchanged so there is no overhead.
+//
+// The wrapper is capability-preserving: when inner also implements StreamTurner
+// the returned value implements StreamTurner too (so the loop's type assertion
+// stays accurate and streaming keeps working under retry); otherwise a plain
+// retrying Turner is returned. Because turn_delta payloads are snapshots (the
+// full accumulated text so far), a retried streaming attempt simply restarts
+// from a short snapshot with no reset protocol needed.
 func WithRetry(inner Turner, policy RetryPolicy) Turner {
 	if policy.MaxAttempts <= 1 {
 		return inner
 	}
-	return &retryTurner{
+	rt := &retryTurner{
 		inner:  inner,
 		policy: policy,
 		sleep:  time.Sleep,
 		rand:   rand.New(rand.NewSource(time.Now().UnixNano())),
 		logf:   log.Printf,
 	}
+	if st, ok := inner.(StreamTurner); ok {
+		return &streamRetryTurner{retryTurner: rt, stream: st}
+	}
+	return rt
 }
 
 // retryTurner is the WithRetry implementation. sleep, rand and logf are fields
@@ -84,7 +95,39 @@ func (r *retryTurner) Turn(opts gollama.RequestOptions) (*gollama.ResponseMessag
 	return nil, lastErr
 }
 
-// statusCodeRe extracts an HTTP status code from a gollama error message such as
+// streamRetryTurner is the capability-preserving variant of retryTurner returned
+// by WithRetry when the inner Turner also streams. It embeds retryTurner (so Turn
+// is inherited unchanged) and adds a TurnStream that retries the inner
+// TurnStream under the same policy. A retried attempt restarts snapshots
+// cleanly: onDelta always carries the full accumulated text so far, so the
+// caller's live tail is simply replaced when a fresh attempt begins.
+type streamRetryTurner struct {
+	*retryTurner
+	stream StreamTurner
+}
+
+// TurnStream runs the inner TurnStream, retrying transient failures with backoff
+// exactly like Turn. onDelta is forwarded to each attempt as-is; because deltas
+// are snapshots, no cross-attempt reset is required.
+func (r *streamRetryTurner) TurnStream(opts gollama.RequestOptions, onDelta func(text string)) (*gollama.ResponseMessageGenerate, error) {
+	var lastErr error
+	for attempt := 1; attempt <= r.policy.MaxAttempts; attempt++ {
+		resp, err := r.stream.TurnStream(opts, onDelta)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if !isRetryable(err) || attempt == r.policy.MaxAttempts {
+			return nil, err
+		}
+		delay := r.backoff(attempt)
+		r.logf("ycc: LLM API call failed (attempt %d/%d), retrying in %v: %v",
+			attempt, r.policy.MaxAttempts, delay, err)
+		r.sleep(delay)
+	}
+	return nil, lastErr
+}
+
 // "API returned non-200 status code 503: ...".
 var statusCodeRe = regexp.MustCompile(`status code (\d+)`)
 

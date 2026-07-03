@@ -23,6 +23,25 @@ type Turner interface {
 	Turn(gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error)
 }
 
+// StreamTurner is the optional capability of a backend client that can stream a
+// turn's output incrementally (spec §5.2/§18.4, task 0114/0129). When a client
+// implements it, the loop uses TurnStream instead of Turn so live subscribers
+// see the model's output as it is produced.
+//
+// CONTRACT: onDelta receives SNAPSHOTS — the full accumulated assistant text so
+// far — NOT increments. Snapshot semantics are what make transient delivery safe
+// to be lossy (bounded queues drop the oldest under backpressure) and mid-turn
+// retries harmless: a client just replaces its live tail with the latest
+// snapshot, and a retried attempt simply restarts from a short snapshot with no
+// reset protocol. onDelta is assumed to be invoked serially (never concurrently
+// with itself) for a single TurnStream call, and may be called zero times (e.g.
+// a turn that produces only tool calls). The returned response is equivalent to
+// what Turn would have returned for the same options.
+type StreamTurner interface {
+	Turner
+	TurnStream(opts gollama.RequestOptions, onDelta func(text string)) (*gollama.ResponseMessageGenerate, error)
+}
+
 // Steer lets a session pause and steer a running loop at safe checkpoints
 // (spec §18.7). Checkpoint is consulted between turns and after each tool
 // result. When a pause is pending it blocks until resume (or ctx
@@ -343,6 +362,51 @@ func (l *Loop) appendToolResult(callID string, res *gollama.ToolResult) {
 	l.history = append(l.history, gollama.Message{Role: "user", MultiContent: blocks})
 }
 
+// turnDeltaInterval throttles streaming turn_delta broadcasts to at most one per
+// this interval (plus an always-delivered first snapshot). Snapshots are lossy
+// by design, so a coarse rate keeps the UI lively without flooding subscribers.
+const turnDeltaInterval = 100 * time.Millisecond
+
+// runTurn executes a single model turn against client. When client implements
+// StreamTurner AND the loop's emitter can broadcast, it streams the turn and
+// broadcasts transient turn_delta events (data {"text": <snapshot>}) throttled
+// to ~10/s, then broadcasts a clearing delta ({"text": "", "done": true}) on
+// turn end — success OR error — so no stale live tail survives. Otherwise it
+// calls Turn exactly as before, emitting no deltas. The returned response/error
+// is identical in both paths; final model_turn emission is handled by the caller.
+func (l *Loop) runTurn(client Turner, opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+	streamer, ok := client.(StreamTurner)
+	if !ok || l.Emitter == nil {
+		return client.Turn(opts)
+	}
+	// Probe broadcast support once; if the recorder can't broadcast (e.g. a
+	// stdout/func recorder), fall back to a plain non-streaming turn so we don't
+	// pay the streaming callback cost for output nobody can see.
+	if !l.Emitter.CanBroadcast() {
+		return client.Turn(opts)
+	}
+
+	// onDelta is assumed to be invoked serially (see StreamTurner), so lastSent
+	// needs no synchronization; Broadcast itself is safe for concurrent use.
+	var lastSent time.Time
+	var sentAny bool
+	onDelta := func(text string) {
+		now := time.Now()
+		if sentAny && now.Sub(lastSent) < turnDeltaInterval {
+			return
+		}
+		lastSent = now
+		sentAny = true
+		l.Emitter.Broadcast(event.TurnDelta, map[string]any{"text": text})
+	}
+	// Clear the live tail on turn end (success OR error): a done delta tells
+	// subscribers to drop their tail row even if the turn failed before any
+	// model_turn is emitted. Sent unconditionally so a retried attempt that
+	// restarts snapshots still ends cleanly.
+	defer l.Emitter.Broadcast(event.TurnDelta, map[string]any{"text": "", "done": true})
+	return streamer.TurnStream(opts, onDelta)
+}
+
 // Run executes the loop to completion. It returns when a control tool signals
 // stop, the model produces a turn with no tool calls, or MaxTurns is reached.
 func (l *Loop) Run(ctx context.Context) (*Result, error) {
@@ -382,7 +446,7 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		}
 
 		start := time.Now()
-		resp, err := client.Turn(opts)
+		resp, err := l.runTurn(client, opts)
 		elapsedMS := time.Since(start).Milliseconds()
 		if err != nil {
 			// A context-window-exceeded failure (history too large for the model)

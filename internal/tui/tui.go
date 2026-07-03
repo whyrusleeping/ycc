@@ -186,6 +186,14 @@ type model struct {
 	eventStart []int          // content line index where each event begins
 	selected   int            // index into evs, or -1
 	follow     bool           // auto-scroll + auto-select latest
+	// liveTails holds the in-progress streamed output per actor, keyed by actor,
+	// fed by transient turn_delta events (spec §5.2/§18.4, task 0114/0129). Values
+	// are SNAPSHOTS (the full accumulated turn text so far), so a new delta simply
+	// replaces the actor's entry. An entry is cleared by a done/empty delta or when
+	// that actor's persisted model_turn / session_error arrives (the durable event
+	// supersedes the live row). Transient turn_deltas NEVER enter m.evs / reducers /
+	// seq tracking — they only drive this ephemeral tail row.
+	liveTails map[string]string
 	// deliveredSeqs holds the seqs of queued mid-run user_input echoes that a
 	// later user_input_delivered event has marked as delivered (spec §18.7), so a
 	// queued echo renders "(queued)" only until its delivery point.
@@ -440,6 +448,7 @@ func initialModel(ctx context.Context, client yccv1connect.SessionServiceClient,
 		events:       make(chan *v1.Event, 256), status: "starting",
 		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1, follow: prefs.Follow,
 		deliveredSeqs: map[int64]bool{},
+		liveTails:     map[string]string{},
 		prefs:         prefs, level: "judgement", menuLevel: "judgement",
 		thinkLevels:  map[string]string{"coordinator": "high", "implementer": "high", "reviewers": "high"},
 		spin:         spin,
@@ -2174,6 +2183,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.expanded = map[int]bool{}
 		m.bodyCache = map[int]string{}
 		m.deliveredSeqs = deliveredSeqSet(msg.events)
+		m.liveTails = map[string]string{}
 		m.eventStart = nil
 		m.selected = -1
 		m.follow = false
@@ -2203,6 +2213,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.expanded = map[int]bool{}
 		m.bodyCache = map[int]string{}
 		m.deliveredSeqs = map[int64]bool{}
+		m.liveTails = map[string]string{}
 		m.eventStart = nil
 		m.selected = -1
 		m.follow = m.prefs.Follow
@@ -2265,10 +2276,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case evMsg:
 		m.markConnected()
 		// Transient events (Seq=0, broadcast-only, e.g. turn_delta) are ephemeral
-		// UI hints that are never persisted and carry no sequence number. Skip them
-		// before appendEvent so they never enter the reducers or corrupt seq
-		// tracking. No rendering yet — that arrives with task 0114.
-		if !(msg.ev != nil && msg.ev.Transient) {
+		// UI hints that are never persisted and carry no sequence number. Route them
+		// into live tail state (applyTransient) but NEVER through appendEvent /
+		// maybeNotify, so they can't enter the reducers, replay, or seq tracking
+		// (task 0129).
+		if msg.ev != nil && msg.ev.Transient {
+			m.applyTransient(msg.ev)
+		} else {
 			m.appendEvent(msg.ev)
 			m.maybeNotify(msg.ev)
 		}
@@ -2288,7 +2302,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					break drain
 				}
 				if ev != nil && ev.Transient {
-					continue // ignore transient events (see above)
+					m.applyTransient(ev) // live tail only; never persisted (see above)
+					continue
 				}
 				m.appendEvent(ev)
 				m.maybeNotify(ev)
@@ -6427,6 +6442,38 @@ func (m *model) toggle(i int) {
 	m.ensureVisible()
 }
 
+// applyTransient routes a transient (broadcast-only) event into ephemeral live
+// UI state and reports whether that state changed. Transients NEVER enter m.evs,
+// the reducers, or seq tracking (task 0129) — they only drive the live tail row.
+//
+// Only turn_delta is handled today; other (future) transient types are ignored.
+// Its data carries {"text": <snapshot>} where text is the FULL accumulated turn
+// output so far (snapshot semantics), so a new delta simply replaces the actor's
+// tail. A done/empty delta ({"text":"","done":true}) clears it so no stale tail
+// survives the end of a turn.
+func (m *model) applyTransient(ev *v1.Event) bool {
+	if ev == nil || ev.Type != "turn_delta" {
+		return false
+	}
+	if m.liveTails == nil {
+		m.liveTails = map[string]string{}
+	}
+	text := dataField(ev, "text")
+	done := dataField(ev, "done") == "true"
+	if done || strings.TrimSpace(text) == "" {
+		if _, ok := m.liveTails[ev.Actor]; ok {
+			delete(m.liveTails, ev.Actor)
+			return true
+		}
+		return false
+	}
+	if m.liveTails[ev.Actor] == text {
+		return false
+	}
+	m.liveTails[ev.Actor] = text
+	return true
+}
+
 func (m *model) appendEvent(ev *v1.Event) {
 	m.evs = append(m.evs, ev)
 	if ev.Type == "user_input_delivered" {
@@ -6441,6 +6488,11 @@ func (m *model) appendEvent(ev *v1.Event) {
 	}
 	switch ev.Type {
 	case "model_turn":
+		// The durable turn supersedes any live streamed tail for this actor: drop
+		// it so the persisted row replaces the in-progress row with no stale tail
+		// (task 0129). A clearing turn_delta usually arrives too, but clearing here
+		// makes the swap deterministic even if that transient is lost.
+		delete(m.liveTails, ev.Actor)
 		// Accumulate the turn's usage into the running per-model tally that feeds
 		// the live token/cost readout (task 0062, spec §20.1). Parsing is best-effort:
 		// a turn without a usage block contributes nothing.
@@ -6512,6 +6564,9 @@ func (m *model) appendEvent(ev *v1.Event) {
 		}
 	case "session_error":
 		m.status = "error"
+		// A failed turn ends any in-progress stream: drop the actor's live tail so
+		// no stale streamed text lingers below the error (task 0129).
+		delete(m.liveTails, ev.Actor)
 	case "interrupted":
 		m.status = "paused"
 		m.paused = true
@@ -6869,10 +6924,64 @@ func (m *model) rebuild() {
 		b.WriteByte('\n')
 		line += strings.Count(block, "\n") + 1
 	}
+	// Append the in-progress streamed tail rows (transient turn_delta output)
+	// after the persisted conversation. They are ephemeral and carry no seq, so
+	// they are NOT added to m.eventStart / selection tracking (task 0129).
+	if tail := m.renderLiveTails(); tail != "" {
+		b.WriteString(tail)
+		b.WriteByte('\n')
+	}
 	m.vp.SetContent(b.String())
 	if m.follow {
 		m.vp.GotoBottom()
 	}
+}
+
+// liveTailMaxLines caps how many trailing lines of an in-progress streamed turn
+// the live tail row shows, so a long streaming turn can't dominate the viewport.
+const liveTailMaxLines = 6
+
+// renderLiveTails renders the in-progress streamed output (fed by transient
+// turn_delta snapshots, task 0129) as dim, visibly in-progress tail rows appended
+// after the persisted conversation. Values are the full accumulated turn text so
+// far, so each render just reflects the latest snapshot; the durable model_turn
+// replaces the tail seamlessly (appendEvent clears the actor's entry when it
+// arrives). Returns "" when nothing is streaming.
+func (m *model) renderLiveTails() string {
+	if len(m.liveTails) == 0 {
+		return ""
+	}
+	actors := make([]string, 0, len(m.liveTails))
+	for a := range m.liveTails {
+		actors = append(actors, a)
+	}
+	sort.Strings(actors)
+	var b strings.Builder
+	for _, actor := range actors {
+		text := strings.TrimRight(m.liveTails[actor], "\n")
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		w := m.w - lipgloss.Width(bodyBar)
+		if w < 1 {
+			w = 1
+		}
+		lines := strings.Split(wrapTo(text, w), "\n")
+		if len(lines) > liveTailMaxLines {
+			lines = lines[len(lines)-liveTailMaxLines:]
+		}
+		body := indentLines(styleLines(strings.Join(lines, "\n"), dimStyle), bodyBar)
+		header := "  " + dimStyle.Render("▸ ") +
+			actorStyle(actor).Render(fmt.Sprintf("%-13s", actor)) +
+			dimStyle.Render("streaming…")
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(header)
+		b.WriteByte('\n')
+		b.WriteString(body)
+	}
+	return b.String()
 }
 
 // --- shared screen chrome (task 0061) ---

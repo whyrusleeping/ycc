@@ -8,6 +8,7 @@ updated: "2026-07-05"
 depends_on:
     - "0120"
     - "0128"
+    - "0129"
 spec_refs:
     - 7. Agent engine
     - 18.4 Reasoning (thinking) in the event stream
@@ -44,6 +45,14 @@ non-persisted events through the existing Subscribe pipe.**
 - [ ] Graceful fallback for backends without streaming (via gollama 0120 fallback)
 
 ## Work log
+- 2026-07-06 (autonomous coordinator): 0120 remains blocked (gollama working repo still
+  unavailable in this environment), so split the remaining gollama-independent scope into
+  task 0129: engine StreamTurner seam (snapshot-semantics onDelta, throttled transient
+  turn_delta broadcasts, retry-capability forwarding, graceful non-streaming fallback) +
+  the TUI live tail row, all testable with fakes. Added 0129 as a dependency. What
+  remains here after 0129: a small adapter wiring gollama TurnStream to the engine
+  StreamTurner seam once 0120 lands, plus live end-to-end verification of incremental
+  output in the TUI.
 - 2026-07-05 (autonomous coordinator): split out the gollama-independent transport
   groundwork into task 0128 (event.Log transient broadcast path, transient/turn_delta
   marker, Server.Subscribe pass-through, TUI tolerance, spec design note) and added it

@@ -151,6 +151,14 @@ type Recorder interface {
 	Record(actor string, t Type, data map[string]any) Event
 }
 
+// Broadcaster is the optional capability of a Recorder that can deliver
+// transient, non-persisted events to live subscribers (spec §5, task 0114).
+// *event.Log satisfies it; recorders without a live subscriber notion (e.g.
+// StdoutRecorder, FuncRecorder) do not, so streaming hints degrade to no-ops.
+type Broadcaster interface {
+	Broadcast(actor string, t Type, data map[string]any) Event
+}
+
 // Emitter binds a default actor to a Recorder. It is the handle the engine and
 // tools hold. Multiple emitters (one per agent) can share one Recorder so their
 // events interleave in a single ordered stream.
@@ -181,6 +189,33 @@ func (e *Emitter) EmitAs(actor string, t Type, data map[string]any) Event {
 		return Event{Actor: actor, Type: t, Data: data}
 	}
 	return e.rec.Record(actor, t, data)
+}
+
+// Broadcast delivers a transient, non-persisted event tagged with the emitter's
+// default actor to live subscribers, and reports whether it was delivered. It
+// no-ops (returns ok=false) when the underlying Recorder is not a Broadcaster
+// (e.g. StdoutRecorder, FuncRecorder, or a nil recorder), so streaming callers
+// can attempt a broadcast unconditionally and fall back gracefully. Transient
+// events are never persisted (see Broadcaster / Log.Broadcast).
+func (e *Emitter) Broadcast(t Type, data map[string]any) (Event, bool) {
+	return e.BroadcastAs(e.actor, t, data)
+}
+
+// BroadcastAs is like Broadcast but overrides the actor.
+func (e *Emitter) BroadcastAs(actor string, t Type, data map[string]any) (Event, bool) {
+	b, ok := e.rec.(Broadcaster)
+	if !ok || b == nil {
+		return Event{Actor: actor, Type: t, Data: data, Transient: true}, false
+	}
+	return b.Broadcast(actor, t, data), true
+}
+
+// CanBroadcast reports whether this emitter's Recorder supports transient
+// broadcasts, without emitting anything. Streaming callers use it to decide
+// whether to bother producing deltas at all.
+func (e *Emitter) CanBroadcast() bool {
+	b, ok := e.rec.(Broadcaster)
+	return ok && b != nil
 }
 
 // StdoutRecorder renders events to a writer for the M0 spike, assigning its own

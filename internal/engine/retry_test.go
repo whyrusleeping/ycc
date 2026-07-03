@@ -137,3 +137,65 @@ func TestWithRetryDisabledReturnsInner(t *testing.T) {
 		t.Fatalf("expected inner returned unchanged when MaxAttempts 0")
 	}
 }
+
+// WithRetry preserves the streaming capability accurately: a plain Turner stays
+// non-streaming, a StreamTurner stays a StreamTurner (so the loop's type
+// assertion keeps working under retry).
+func TestWithRetryPreservesStreamCapability(t *testing.T) {
+	plain := &retryFakeTurner{}
+	if _, ok := WithRetry(plain, DefaultRetryPolicy()).(StreamTurner); ok {
+		t.Fatal("wrapping a plain Turner should NOT yield a StreamTurner")
+	}
+
+	stream := &scriptStreamTurner{attempts: []streamAttempt{{resp: assistantText("ok")}}}
+	if _, ok := WithRetry(stream, DefaultRetryPolicy()).(StreamTurner); !ok {
+		t.Fatal("wrapping a StreamTurner should yield a StreamTurner")
+	}
+
+	// With retry disabled the inner is returned unchanged, so a StreamTurner
+	// remains streamable and a plain Turner remains non-streamable.
+	if _, ok := WithRetry(stream, RetryPolicy{MaxAttempts: 1}).(StreamTurner); !ok {
+		t.Fatal("disabled retry should preserve the inner StreamTurner")
+	}
+	if _, ok := WithRetry(plain, RetryPolicy{MaxAttempts: 1}).(StreamTurner); ok {
+		t.Fatal("disabled retry should not fabricate a StreamTurner")
+	}
+}
+
+// A retried streaming attempt restarts snapshots cleanly: onDelta receives the
+// fresh attempt's snapshots (which begin anew as full snapshots), with no reset
+// protocol needed.
+func TestWithRetryStreamRestartsSnapshots(t *testing.T) {
+	inner := &scriptStreamTurner{attempts: []streamAttempt{
+		{snaps: []string{"a1"}, err: errors.New("timeout talking to API")}, // retryable
+		{snaps: []string{"b1", "b1b2"}, resp: assistantText("b1b2")},
+	}}
+	wrapped := WithRetry(inner, RetryPolicy{MaxAttempts: 3, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond})
+	st, ok := wrapped.(*streamRetryTurner)
+	if !ok {
+		t.Fatalf("wrapped is %T, want *streamRetryTurner", wrapped)
+	}
+	st.sleep = func(time.Duration) {}
+	st.logf = func(string, ...any) {}
+
+	var got []string
+	resp, err := st.TurnStream(gollama.RequestOptions{}, func(text string) { got = append(got, text) })
+	if err != nil {
+		t.Fatalf("TurnStream: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("want non-nil resp after retry")
+	}
+	if inner.streamCalls != 2 {
+		t.Fatalf("streamCalls = %d, want 2 (one retry)", inner.streamCalls)
+	}
+	want := []string{"a1", "b1", "b1b2"}
+	if len(got) != len(want) {
+		t.Fatalf("snapshots = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("snapshot[%d] = %q, want %q (got %v)", i, got[i], want[i], got)
+		}
+	}
+}

@@ -209,6 +209,17 @@ The motivating use is streaming a model's partial output: `turn_delta` events ta
 in-progress turn text to live clients while the durable `model_turn` event (written on
 turn completion) remains the source of truth for the turn (see §18.4, task 0114).
 
+**`turn_delta` payload contract (snapshot semantics).** Each `turn_delta` carries
+`{"text": <full-accumulated-turn-text-so-far>}` — a **snapshot**, not an increment. A
+client replaces its live tail row with the latest snapshot, so lossy transient delivery
+and mid-turn retries are harmless (a retried attempt simply restarts from a short
+snapshot). The engine throttles snapshots to ~10/s. A turn's tail is cleared by a
+terminating delta `{"text": "", "done": true}` broadcast on turn end (success **or**
+error, so no stale tail survives a failed turn) and, redundantly, by the arrival of the
+turn's persisted `model_turn`. The engine emits deltas only when the backend client
+implements a streaming capability *and* the recorder supports broadcast; otherwise the
+turn runs non-streaming with identical semantics and no deltas.
+
 ## 6. Document model
 
 ### 6.1 Design docs — entry point + docs set
@@ -1077,7 +1088,13 @@ history automatically and are not re-displayed.)
 Partial model output is streamed incrementally to live clients as **transient
 `turn_delta` events** (broadcast-only, seq-less, never persisted — see §5.2) and the
 durable `model_turn` event written on completion remains the turn's source of truth
-(task 0114).
+(task 0114). Each delta's `text` is the **full accumulated turn text so far** (a
+snapshot), so the TUI renders a single dim, in-progress "streaming…" tail row per
+streaming actor that is *replaced* by every fresh snapshot and *removed* by a
+terminating `{"text":"","done":true}` delta or the actor's persisted `model_turn`
+(whichever comes first) — leaving no stale tail even if a turn errors. Backends without
+a streaming capability run the turn non-streaming with identical semantics and no
+deltas.
 
 ### 18.5 Backlog browser
 

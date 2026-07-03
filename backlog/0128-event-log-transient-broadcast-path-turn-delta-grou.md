@@ -84,3 +84,7 @@ Goal: add a transient (never-persisted) event path through the existing event pi
 …[truncated]
 - 2026-07-03 decision: accept — commit: event.Log transient broadcast path: seq-less turn_delta groundwork for streaming (task 0128)  Adds Broadcast() on event.Log delivering transient (never-persisted) events to live subscribers only — n
 …[truncated]
+- 2026-07-03 usage: 42,186 tok (in 208, out 41,978, cache_r 4,163,358, cache_w 168,310) · cost n/a (unpriced)
+  implementer: 30,757 tok (in 124, out 30,633, cache_r 2,580,991, cache_w 65,313) · cost n/a (unpriced)
+  coordinator: 7,508 tok (in 44, out 7,464, cache_r 1,295,097, cache_w 77,598) · cost n/a (unpriced)
+  reviewer:Claude: 3,921 tok (in 40, out 3,881, cache_r 287,270, cache_w 25,399) · cost n/a (unpriced)
