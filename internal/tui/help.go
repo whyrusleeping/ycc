@@ -80,6 +80,7 @@ func (m model) helpSections() []helpSection {
 			{"[ / ]", "jump to previous / next error"},
 			{m.interruptKeyHint(), "interrupt the running agent to steer it"},
 			{"shift+tab", "toggle work (loop) mid-session (work mode)"},
+			{"q", "return to the menu when the session has finished (input empty; stops the session cleanly)"},
 		}},
 		{"question picker", []helpBind{
 			{"↑ / ↓", "move between options"},

@@ -1,10 +1,10 @@
 ---
 id: "0120"
 title: 'gollama: streaming turn API (TurnStream) across providers'
-status: todo
+status: blocked
 priority: 3
 created: "2026-07-02"
-updated: "2026-07-02"
+updated: "2026-07-03"
 depends_on: []
 spec_refs:
     - 7. Agent engine
@@ -41,3 +41,8 @@ that:
 ## Acceptance criteria
 
 ## Work log
+- 2026-07-05 blocked (coordinator): the work lives in the separate gollama repo at
+  /home/why/code/gollama, which does not exist in this environment (gollama is only
+  present as a read-only module-cache dependency). Cloning/forking gollama into the ycc
+  workspace would be a hard-to-reverse structural decision the task explicitly avoids.
+  Unblock when the gollama working repo is available alongside ycc.

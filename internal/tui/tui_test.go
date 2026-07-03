@@ -943,6 +943,7 @@ type fakeClient struct {
 	lastPersist bool
 	lastRemove  string
 	lastStopped string
+	stopCount   int
 
 	discoverIDs  []string // returned by DiscoverModels
 	discoverNote string
@@ -1018,6 +1019,7 @@ func (f *fakeClient) SetRoleConfig(_ context.Context, req *connect.Request[v1.Se
 // without dialing a real daemon.
 func (f *fakeClient) StopSession(_ context.Context, req *connect.Request[v1.StopSessionRequest]) (*connect.Response[v1.StopSessionResponse], error) {
 	f.lastStopped = req.Msg.SessionId
+	f.stopCount++
 	return connect.NewResponse(&v1.StopSessionResponse{}), nil
 }
 
@@ -4202,6 +4204,163 @@ func TestSessionInputCtrlJInsertsNewline(t *testing.T) {
 	}
 }
 
+// --- return to menu from a finished session (task 0127) ---
+
+// runBatch executes a command and every sub-command a tea.BatchMsg fans out,
+// discarding follow-up messages. It exists so tests can observe RPC side effects
+// (e.g. StopSession) issued inside a tea.Batch returned by Update.
+func runBatch(cmd tea.Cmd) {
+	if cmd == nil {
+		return
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, c := range batch {
+			runBatch(c)
+		}
+	}
+}
+
+// A finished, idle (non-looping) session offers `q` as a clean way back to the
+// menu: it flips to stateMenu and stops the still-alive daemon session exactly
+// once with the old id (so no orphaned session is left behind).
+func TestSessionQReturnsToMenuAndStopsIdle(t *testing.T) {
+	m := newSessionTextareaModel(t)
+	m.status = "idle"
+	m.sessionID = "s1"
+	fc := newFakeClient()
+	m.client = fc
+	m.ctx = context.Background()
+
+	if !m.sessionFinished() {
+		t.Fatal("setup: expected an idle non-looping session to be finished")
+	}
+	updated, cmd := m.Update(keyMsg("q"))
+	m = updated.(model)
+	if m.state != stateMenu {
+		t.Fatalf("q on a finished idle session: state = %v, want stateMenu", m.state)
+	}
+	if m.sessionID != "" || m.status != "" {
+		t.Fatalf("q should clear session id/status, got id=%q status=%q", m.sessionID, m.status)
+	}
+	runBatch(cmd)
+	if fc.stopCount != 1 {
+		t.Fatalf("expected StopSession issued exactly once, got %d", fc.stopCount)
+	}
+	if fc.lastStopped != "s1" {
+		t.Fatalf("expected StopSession for s1, got %q", fc.lastStopped)
+	}
+}
+
+// A finished session whose stream already closed needs no StopSession — the
+// session is already gone, so `q` returns to the menu without an RPC.
+func TestSessionQReturnsToMenuStreamClosedNoStop(t *testing.T) {
+	m := newSessionTextareaModel(t)
+	m.status = "stream closed"
+	m.sessionID = "s1"
+	fc := newFakeClient()
+	m.client = fc
+	m.ctx = context.Background()
+
+	updated, cmd := m.Update(keyMsg("q"))
+	m = updated.(model)
+	if m.state != stateMenu {
+		t.Fatalf("q on a stream-closed session: state = %v, want stateMenu", m.state)
+	}
+	runBatch(cmd)
+	if fc.stopCount != 0 {
+		t.Fatalf("stream-closed session should not issue StopSession, got %d calls", fc.stopCount)
+	}
+}
+
+// While the session is still running, `q` is not a menu-exit — it types into the
+// input like any other character and leaves the session untouched.
+func TestSessionQTypesWhileRunning(t *testing.T) {
+	m := newSessionTextareaModel(t) // status defaults to "running"
+	m.sessionID = "s1"
+	fc := newFakeClient()
+	m.client = fc
+	m.ctx = context.Background()
+
+	if m.sessionFinished() {
+		t.Fatal("setup: a running session must not be considered finished")
+	}
+	updated, _ := m.Update(keyMsg("q"))
+	m = updated.(model)
+	if m.state != stateSession {
+		t.Fatalf("q while running: state = %v, want stateSession", m.state)
+	}
+	if m.input.Value() != "q" {
+		t.Fatalf("q while running should type into the input, got %q", m.input.Value())
+	}
+	if fc.stopCount != 0 {
+		t.Fatalf("q while running must not issue StopSession, got %d calls", fc.stopCount)
+	}
+}
+
+// Even on a finished session, `q` types normally when the input is non-empty so
+// it never hijacks composition mid-message.
+func TestSessionQTypesWhenInputNonEmpty(t *testing.T) {
+	m := newSessionTextareaModel(t)
+	m.status = "idle"
+	m.sessionID = "s1"
+	fc := newFakeClient()
+	m.client = fc
+	m.ctx = context.Background()
+	m = typeText(t, m, "hi")
+
+	updated, _ := m.Update(keyMsg("q"))
+	m = updated.(model)
+	if m.state != stateSession {
+		t.Fatalf("q with non-empty input: state = %v, want stateSession", m.state)
+	}
+	if m.input.Value() != "hiq" {
+		t.Fatalf("q with non-empty input should type, got %q", m.input.Value())
+	}
+	if fc.stopCount != 0 {
+		t.Fatalf("q with non-empty input must not issue StopSession, got %d calls", fc.stopCount)
+	}
+}
+
+// A looping (idle) session belongs to the work-loop driver, which owns the
+// idle→stop→advance transition. The `q` binding must NOT hijack it back to menu.
+func TestSessionQIgnoredWhileLooping(t *testing.T) {
+	m := newSessionTextareaModel(t)
+	m.status = "idle"
+	m.looping = true
+	m.mode = "work"
+	m.sessionID = "s1"
+	fc := newFakeClient()
+	m.client = fc
+	m.ctx = context.Background()
+
+	if m.sessionFinished() {
+		t.Fatal("a looping session must never be considered finished (loop owns it)")
+	}
+	updated, _ := m.Update(keyMsg("q"))
+	m = updated.(model)
+	if m.state != stateSession {
+		t.Fatalf("q while looping: state = %v, want stateSession", m.state)
+	}
+}
+
+// The footer surfaces the "return to menu" affordance only once the session is
+// finished — never while it is still running.
+func TestSessionViewFinishedHint(t *testing.T) {
+	m := newSessionTextareaModel(t)
+
+	m.status = "running"
+	if strings.Contains(m.sessionView(), "return to menu") {
+		t.Fatalf("running session must not show the return-to-menu hint:\n%s", m.sessionView())
+	}
+
+	m.status = "idle"
+	view := m.sessionView()
+	if !strings.Contains(view, "session finished") || !strings.Contains(view, "q return to menu") {
+		t.Fatalf("finished session should show the return-to-menu hint, got:\n%s", view)
+	}
+}
+
 // TestInterruptKeyHintReflectsEnhancement checks the footer advertises ctrl+x
 // (the universal chord) until the terminal reports kitty keyboard disambiguation,
 // after which it shows ctrl+i (byte-identical to Tab, so only usable there).
@@ -5238,7 +5397,10 @@ func TestBrowseWorkstreamsRoute(t *testing.T) {
 func TestHelpModalOpensAndCloses(t *testing.T) {
 	f := newFakeClient()
 	m := initialModel(context.Background(), f, t_tempWorkspace, false)
-	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+	// Tall enough for the first four catalog sections to render without scrolling;
+	// the catalog grows over time (task 0127 added a session binding), so keep
+	// headroom above the "question picker" row.
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 44})
 	m = updated.(model)
 
 	m = drive(t, m, "?")

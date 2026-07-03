@@ -795,6 +795,18 @@ func (m model) stopSession() tea.Cmd {
 	}
 }
 
+// sessionFinished reports whether the current session view has reached a terminal
+// state the user should be offered a clean exit from (task 0127): the agent went
+// idle after finishing ("idle" — it now blocks in the daemon waiting for input, so
+// leaving must StopSession to avoid an orphan) or the event stream already ended
+// ("stream closed" — nothing left to stop). It deliberately EXCLUDES looping
+// sessions (the work-loop driver already auto-stops idle sessions and advances —
+// this must not interfere) and the recoverable "error"/"paused" states (esc →
+// settings overlay → "back home" remains the escape hatch there).
+func (m model) sessionFinished() bool {
+	return m.state == stateSession && !m.looping && (m.status == "idle" || m.status == "stream closed")
+}
+
 // loopNext drives the "work (loop)" run: it loads the backlog, picks the next
 // ready task, and decides whether to start another work session (spec §9). The
 // decision is returned as a loopDecisionMsg so Update can apply it on the main loop.
@@ -3310,6 +3322,33 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "down":
 			m.moveSelection(1)
 			return m, nil
+		case "q":
+			// Return to the main menu from a finished (idle / stream-closed) session
+			// (task 0127). Gated on empty input so a bare "q" still types into the
+			// textarea mid-compose; falls through otherwise. Only fires on a finished,
+			// non-looping session (sessionFinished): the loop driver owns the idle→stop
+			// transition for its own sessions.
+			if m.sessionFinished() && strings.TrimSpace(m.input.Value()) == "" {
+				// Build the stop command FIRST so it captures the current m.sessionID.
+				stop := m.stopSession()
+				status := m.status
+				// Clear transient session-footer state so the menu starts clean.
+				m.pending, m.pendingSeq = "", 0
+				m.pickerOpts, m.picking = nil, false
+				m.clearWizard()
+				m.clearSearch()
+				m.selected = -1
+				m.sessionID = ""
+				m.status = ""
+				m.state = stateMenu
+				// StopSession only when the session went idle (it is still alive in the
+				// daemon). A "stream closed" session is already gone — stopping it would
+				// return NotFound and flash a needless error.
+				if status == "idle" {
+					return m, tea.Batch(stop, m.refreshMenu())
+				}
+				return m, m.refreshMenu()
+			}
 		case "/":
 			// Enter transcript search (task 0116). Gated on empty input so a bare
 			// "/" still types into the textarea mid-compose; falls through otherwise.
@@ -7543,6 +7582,12 @@ func (m model) sessionView() string {
 		} else {
 			help = m.footer(searchHint + " ? help · shift+tab loop · enter send/expand · ↑↓ select · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings")
 		}
+	}
+	if m.sessionFinished() {
+		// A finished (idle / stream-closed), non-looping session leads the footer with
+		// a clean way back to the menu (task 0127). This takes precedence over the
+		// work-mode loop-toggle hints above.
+		help = m.footer(searchHint + " ✔ session finished — q return to menu · ? help · enter expand · ↑↓ select · pgup/pgdn scroll · esc settings")
 	}
 	return top + "\n" + body + "\n" + m.inputRow() + "\n" + help
 }
