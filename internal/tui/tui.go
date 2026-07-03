@@ -39,6 +39,7 @@ import (
 
 	"github.com/whyrusleeping/ycc/internal/clientconfig"
 	"github.com/whyrusleeping/ycc/internal/config"
+	"github.com/whyrusleeping/ycc/internal/docs"
 	"github.com/whyrusleeping/ycc/internal/event"
 )
 
@@ -7307,10 +7308,12 @@ func needsOnboarding(workspace string) bool {
 	return specIsEmpty(workspace) && !hasBacklogTasks(workspace)
 }
 
-// specIsEmpty reports whether spec.md is missing or trivially empty (only blank
-// lines and markdown headings, no real content).
+// specIsEmpty reports whether the configured spec entry point is missing or
+// trivially empty (only blank lines and markdown headings, no real content).
+// The entry point is resolved via the workspace's .ycc/config.toml (spec_path),
+// falling back to <workspace>/spec.md when unconfigured.
 func specIsEmpty(workspace string) bool {
-	data, err := os.ReadFile(filepath.Join(workspace, "spec.md"))
+	data, err := os.ReadFile(docs.NewStore(workspace).SpecPath())
 	if err != nil {
 		if os.IsNotExist(err) {
 			return true

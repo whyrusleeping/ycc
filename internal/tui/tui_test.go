@@ -781,6 +781,29 @@ func TestNeedsOnboarding(t *testing.T) {
 			t.Fatal("stray non-task .md without tasks should still need onboarding")
 		}
 	})
+	t.Run("configured spec entry point with content", func(t *testing.T) {
+		ws := t.TempDir()
+		writeFile(t, ws, ".ycc/config.toml", "spec_path = \"docs/index.md\"\n")
+		writeFile(t, ws, "docs/index.md", "# Spec\n\n## Goals\nship it\n")
+		if specIsEmpty(ws) {
+			t.Fatal("configured entry point with real content should not be empty")
+		}
+		if needsOnboarding(ws) {
+			t.Fatal("workspace with a real configured spec should not need onboarding")
+		}
+	})
+	t.Run("configured spec entry point missing", func(t *testing.T) {
+		ws := t.TempDir()
+		writeFile(t, ws, ".ycc/config.toml", "spec_path = \"docs/index.md\"\n")
+		// Root spec.md exists but is not the configured entry point.
+		writeFile(t, ws, "spec.md", "# Real spec\n\ncontent\n")
+		if !specIsEmpty(ws) {
+			t.Fatal("missing configured entry point should be empty (root spec.md must not count)")
+		}
+		if !needsOnboarding(ws) {
+			t.Fatal("missing configured spec + no backlog should need onboarding")
+		}
+	})
 }
 
 func writeFile(t *testing.T, dir, rel, content string) {

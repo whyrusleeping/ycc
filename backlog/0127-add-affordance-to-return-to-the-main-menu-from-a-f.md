@@ -84,3 +84,7 @@ Design (all in internal/tui/tui.go + help.go):
 - 2026-07-03 review (Claude): accept — The change cleanly implements a single-key (`q`) path back to the main menu from a finished (idle / stream-closed) work session. It adds a well-documented `sessionFinished()` helper, a properly gated 
 …[truncated]
 - 2026-07-03 decision: accept — commit: tui: add `q` to return to the menu from a finished session (task 0127); block task 0120 (gollama repo unavailable)
+- 2026-07-03 usage: 33,240 tok (in 170, out 33,070, cache_r 2,740,833, cache_w 197,648) · cost n/a (unpriced)
+  implementer: 16,690 tok (in 82, out 16,608, cache_r 1,322,428, cache_w 53,652) · cost n/a (unpriced)
+  coordinator: 13,037 tok (in 60, out 12,977, cache_r 1,264,925, cache_w 125,168) · cost n/a (unpriced)
+  reviewer:Claude: 3,513 tok (in 28, out 3,485, cache_r 153,480, cache_w 18,828) · cost n/a (unpriced)
