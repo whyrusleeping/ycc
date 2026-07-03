@@ -774,11 +774,11 @@ func TestNeedsOnboarding(t *testing.T) {
 			t.Fatal("trivially-empty spec + no backlog should need onboarding")
 		}
 	})
-	t.Run("only generated index, no tasks", func(t *testing.T) {
+	t.Run("only stray non-task .md, no tasks", func(t *testing.T) {
 		ws := t.TempDir()
-		writeFile(t, ws, "backlog/backlog.md", "# Backlog\n")
+		writeFile(t, ws, "backlog/notes.md", "# Notes\n")
 		if !needsOnboarding(ws) {
-			t.Fatal("generated backlog index without tasks should still need onboarding")
+			t.Fatal("stray non-task .md without tasks should still need onboarding")
 		}
 	})
 }

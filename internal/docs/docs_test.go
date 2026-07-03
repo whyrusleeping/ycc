@@ -2,7 +2,6 @@ package docs
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -113,31 +112,9 @@ func byID2task(tasks []*Task, id string) *Task {
 	return nil
 }
 
-func TestRenderIndex(t *testing.T) {
-	ws := t.TempDir()
-	s := NewStore(ws)
-	s.Create("alpha", "", 1, nil, nil)
-	s.Create("beta", "", 3, []string{"0001"}, nil)
-	if err := s.RenderIndex(); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(filepath.Join(ws, "backlog.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	idx := string(data)
-	if !strings.Contains(idx, "alpha") || !strings.Contains(idx, "beta") {
-		t.Fatalf("index missing tasks:\n%s", idx)
-	}
-	if !strings.Contains(idx, "backlog/0002-beta.md") {
-		t.Fatalf("index link wrong:\n%s", idx)
-	}
-}
-
 // TestConcurrentCreateSerializes launches many goroutines that each Create a task
-// and regenerate the index on the same Store. The per-directory lock must
-// serialize them so ids are unique and sequential and the index never renders
-// from a half-written state. Run with -race to catch data races.
+// on the same Store. The per-directory lock must serialize them so ids are unique
+// and sequential. Run with -race to catch data races.
 func TestConcurrentCreateSerializes(t *testing.T) {
 	ws := t.TempDir()
 	s := NewStore(ws)
@@ -152,8 +129,8 @@ func TestConcurrentCreateSerializes(t *testing.T) {
 				t.Errorf("create: %v", err)
 				return
 			}
-			if err := s.RenderIndex(); err != nil {
-				t.Errorf("render: %v", err)
+			if _, err := s.List(); err != nil {
+				t.Errorf("list: %v", err)
 			}
 		}(i)
 	}
@@ -171,8 +148,5 @@ func TestConcurrentCreateSerializes(t *testing.T) {
 		if task.ID != want {
 			t.Fatalf("task %d has id %q, want %q (ids not unique/sequential)", i, task.ID, want)
 		}
-	}
-	if err := s.RenderIndex(); err != nil {
-		t.Fatalf("final render: %v", err)
 	}
 }

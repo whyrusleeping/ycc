@@ -104,7 +104,6 @@ func captureCreateTask(d *Deps) *gollama.Tool {
 			if err != nil {
 				return tools.ErrResult("create_task: %v", err), nil
 			}
-			d.Docs.RenderIndex()
 			d.Emitter.Emit(event.DocUpdated, map[string]any{"task": t.ID, "created": true})
 			payload, _ := json.Marshal(capturePayload{Kind: "created", TaskID: t.ID, Title: t.Title})
 			return &gollama.ToolResult{Content: "created task " + t.ID + ": " + t.Title, Structured: &tools.Control{Stop: true, Report: string(payload)}}, nil

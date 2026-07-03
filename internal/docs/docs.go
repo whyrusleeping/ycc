@@ -1,6 +1,6 @@
 // Package docs implements the structured backlog (spec §6.2): one markdown file
-// per task with YAML frontmatter under backlog/, plus a generated backlog.md
-// index. It is the canonical store the coordinator reads and updates.
+// per task with YAML frontmatter under backlog/. It is the canonical store the
+// coordinator reads and updates.
 package docs
 
 import (
@@ -20,8 +20,8 @@ import (
 // dirLocks serializes backlog mutations per directory. A work session and a
 // capture agent (task 0016) use SEPARATE Store instances over the same backlog
 // dir, so a per-instance mutex would not serialize them; a package-level
-// registry of per-directory locks does. This keeps the generated index from
-// being regenerated from a half-written set of task files.
+// registry of per-directory locks does. This keeps concurrent mutations (e.g.
+// next-id assignment) from racing and corrupting the task files.
 var (
 	dirLocksMu sync.Mutex
 	dirLocks   = map[string]*sync.Mutex{}
@@ -69,7 +69,7 @@ type Task struct {
 // Store is the backlog directory accessor.
 type Store struct {
 	dir string // <workspace>/backlog
-	// mu serializes mutations (and index regeneration) for this backlog dir. It is
+	// mu serializes mutations for this backlog dir. It is
 	// shared across all Store instances for the same dir via lockFor, so concurrent
 	// sessions (e.g. a work session and a quick-add capture agent, task 0016)
 	// serialize their writes. It is NON-reentrant: public methods acquire it once
@@ -310,33 +310,6 @@ func upsertSection(body, header, content string) string {
 		out += "\n\n"
 	}
 	return out + section
-}
-
-// RenderIndex regenerates backlog.md (in the workspace root) from the task files.
-func (s *Store) RenderIndex() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.renderIndexLocked()
-}
-
-func (s *Store) renderIndexLocked() error {
-	tasks, err := s.listLocked()
-	if err != nil {
-		return err
-	}
-	var b strings.Builder
-	b.WriteString("# Backlog\n\n> Generated index. Canonical task data lives in `backlog/<id>-<slug>.md`.\n\n")
-	b.WriteString("| id | title | status | pri | depends on |\n|----|-------|--------|-----|------------|\n")
-	for _, t := range tasks {
-		dep := strings.Join(t.DependsOn, ", ")
-		if dep == "" {
-			dep = "—"
-		}
-		rel := filepath.Join("backlog", filepath.Base(t.Path))
-		b.WriteString(fmt.Sprintf("| [%s](%s) | %s | %s | %d | %s |\n", t.ID, rel, t.Title, t.Status, t.Priority, dep))
-	}
-	indexPath := filepath.Join(filepath.Dir(s.dir), "backlog.md")
-	return os.WriteFile(indexPath, []byte(b.String()), 0o644)
 }
 
 func (s *Store) nextID() (string, error) {

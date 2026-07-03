@@ -224,9 +224,8 @@ Read/Edit/Write tools — there is no dedicated spec tool. The spec docs are com
 ### 6.2 Backlog — structured items, markdown-rendered
 
 Canonical store: **one markdown file per task** with YAML frontmatter, under
-`backlog/`. A generated `backlog.md` index gives a human-readable overview. Per-file
-storage means git diffs are per-task, the agent edits one task without rewriting the
-whole backlog, and a UI can manipulate items reliably.
+`backlog/`. Per-file storage means git diffs are per-task, the agent edits one task
+without rewriting the whole backlog, and a UI can manipulate items reliably.
 
 Task file: `backlog/0007-add-token-auth.md`
 
@@ -257,8 +256,8 @@ Why this exists and what "done" means in prose.
 - 2026-06-25 decision: accept; commit abc1234
 ```
 
-`docs` package responsibilities: parse/write task files, validate frontmatter, render
-`backlog.md`, append to a task's work log, and provide `list/get/create/update` used by
+`docs` package responsibilities: parse/write task files, validate frontmatter,
+append to a task's work log, and provide `list/get/create/update` used by
 the coordinator tools.
 
 `spec_refs` are free-form strings: a bare section title (e.g. `"Architecture"`) refers to the
@@ -505,7 +504,7 @@ coordinator (FRESH context, mode=work)
         else          → send_to_implementer(consolidated instructions)
                         → re_review()   (reuse reviewer contexts)
                         → back to 6
-  7. on finish: regenerate backlog.md, emit session_idle, return to user
+  7. on finish: emit session_idle, return to user
 ```
 
 Fresh context in step 0 is important: each `work` session starts clean so the

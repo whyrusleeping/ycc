@@ -554,8 +554,7 @@ type taskUpdatedMsg struct {
 }
 
 // editorClosedMsg fires when the external $EDITOR spawned for a task exits (task
-// 0099). The browser then reloads the task (regenerating backlog.md) so hand-edits
-// are reflected.
+// 0099). The browser then reloads the task so hand-edits are reflected.
 type editorClosedMsg struct {
 	id  string
 	err error
@@ -1550,7 +1549,7 @@ func (m model) fetchTask(id string) tea.Cmd {
 
 // updateTaskCmd grooms a backlog task via the daemon UpdateTask RPC (spec §18.5,
 // task 0099). status/priority are nil-passthrough (leave field untouched); a call
-// with both nil is a "refresh" that re-reads the file and regenerates backlog.md.
+// with both nil is a "refresh" that re-reads the file.
 func (m model) updateTaskCmd(id string, status *string, priority *int32) tea.Cmd {
 	return func() tea.Msg {
 		req := &v1.UpdateTaskRequest{Project: m.project, Id: id, Status: status, Priority: priority}
@@ -2325,7 +2324,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.fetchBacklog
 	case editorClosedMsg:
 		// The external $EDITOR exited (task 0099): reload the task (a no-mutation
-		// UpdateTask re-reads the file and regenerates backlog.md) and the list.
+		// UpdateTask re-reads the file) and the list.
 		if msg.err != nil {
 			m.backlogNotice = "editor: " + msg.err.Error()
 		} else {
@@ -7290,8 +7289,7 @@ func specIsEmpty(workspace string) bool {
 }
 
 // hasBacklogTasks reports whether backlog/ exists and contains at least one task
-// file matching the NNNN-*.md pattern (the generated backlog.md index doesn't
-// count).
+// file matching the NNNN-*.md pattern (stray non-task .md files don't count).
 func hasBacklogTasks(workspace string) bool {
 	entries, err := os.ReadDir(filepath.Join(workspace, "backlog"))
 	if err != nil {

@@ -700,7 +700,7 @@ func commitTool(d *Deps) *gollama.Tool {
 func updateTask(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name:        "update_task",
-		Description: "Update a task's status (todo, in_progress, in_review, done, blocked) and regenerate the backlog index.",
+		Description: "Update a task's status (todo, in_progress, in_review, done, blocked).",
 		Params: tools.Obj(map[string]any{
 			"task_id": tools.StrProp("task id"),
 			"status":  map[string]any{"type": "string", "enum": []string{"todo", "in_progress", "in_review", "done", "blocked"}, "description": "new status"},
@@ -716,7 +716,6 @@ func updateTask(d *Deps) *gollama.Tool {
 			if status == "in_progress" {
 				d.emitFocus(id)
 			}
-			d.Docs.RenderIndex()
 			d.Emitter.Emit(event.DocUpdated, map[string]any{"task": id, "status": status})
 			return tools.OkResult(fmt.Sprintf("task %s -> %s", id, status)), nil
 		},

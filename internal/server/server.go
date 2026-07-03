@@ -529,7 +529,7 @@ func (s *Server) GetTask(_ context.Context, req *connect.Request[v1.GetTaskReque
 // UpdateTask grooms a backlog task in place from the browser (spec §18.5, task
 // 0099): change status/priority/title. Unset optional fields are left untouched;
 // a request with NO mutation fields set is a valid "refresh" that re-reads the
-// task file and regenerates backlog.md (used after hand-edits in $EDITOR). The
+// task file (used after hand-edits in $EDITOR). The
 // docs Store serializes writes per backlog dir, so this shares the same locking
 // path as work sessions and the capture agent.
 func (s *Server) UpdateTask(_ context.Context, req *connect.Request[v1.UpdateTaskRequest]) (*connect.Response[v1.UpdateTaskResponse], error) {
@@ -570,10 +570,6 @@ func (s *Server) UpdateTask(_ context.Context, req *connect.Request[v1.UpdateTas
 	})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeNotFound, err)
-	}
-	// Update alone does not regenerate the generated index; do so now (spec §6.2).
-	if err := store.RenderIndex(); err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	tasks, err := store.List()
 	if err != nil {

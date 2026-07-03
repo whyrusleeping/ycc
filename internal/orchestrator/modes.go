@@ -143,7 +143,7 @@ func assemble(base, level, root string, editing bool) string {
 func createTask(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name:        "create_task",
-		Description: "Create a new backlog task. Returns the assigned id. Regenerates the backlog index.",
+		Description: "Create a new backlog task. Returns the assigned id.",
 		Params: tools.Obj(map[string]any{
 			"title":       tools.StrProp("short task title"),
 			"description": tools.StrProp("description and acceptance criteria (markdown)"),
@@ -162,7 +162,6 @@ func createTask(d *Deps) *gollama.Tool {
 			if err != nil {
 				return tools.ErrResult("create_task: %v", err), nil
 			}
-			d.Docs.RenderIndex()
 			d.Emitter.Emit(event.DocUpdated, map[string]any{"task": t.ID, "created": true})
 			return tools.OkResult("created task " + t.ID + ": " + t.Title), nil
 		},

@@ -3475,8 +3475,8 @@ func (x *GetTaskResponse) GetTask() *TaskDetail {
 
 // Backlog grooming (spec §18.5, task 0099): direct mutation of a task from the
 // browser. Unset optional fields are left untouched; a request with NO mutation
-// fields set is a valid "refresh" that re-reads the task file and regenerates
-// backlog.md (used after hand-edits in $EDITOR).
+// fields set is a valid "refresh" that re-reads the task file (used after
+// hand-edits in $EDITOR).
 type UpdateTaskRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"` // optional registered project; empty => daemon default workspace
