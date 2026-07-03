@@ -135,7 +135,7 @@ func (l *Loop) backend() (Turner, string, modelIdentity, Thinking) {
 }
 
 // defaultMaxTurns is the per-Run backstop applied when Loop.MaxTurns is unset
-// (0). It is deliberately high (200) so that normal multi-step work — the
+// (0). It is deliberately high (1000) so that normal multi-step work — the
 // implementer's read → edit → build → test → fix cycles across several files —
 // is not guillotined mid-task. It is NOT removed entirely: it remains as a
 // runaway/cost guard so a model stuck in a degenerate infinite tool-call loop
@@ -151,7 +151,7 @@ func (l *Loop) backend() (Turner, string, modelIdentity, Thinking) {
 // a high turn cap can trade a turn-limit abort for a context-window-limit abort
 // on a very long run. The turn cap is the runaway backstop; context budgeting is
 // 0010's concern.
-const defaultMaxTurns = 200
+const defaultMaxTurns = 1000
 
 // maxTruncRetries bounds how many consecutive times the loop will nudge the
 // model to continue after a turn was cut off at the output token cap before it

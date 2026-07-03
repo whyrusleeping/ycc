@@ -663,7 +663,7 @@ implementer = "low"
 reviewers   = "high"           # one level for the whole reviewer fan-out
 
 max_tokens  = 32000  # per-turn output token cap (0 => backend default)
-max_turns   = 200    # per-Run tool-call turn cap; runaway/cost backstop (0 => engine default, 200)
+max_turns   = 1000   # per-Run tool-call turn cap; runaway/cost backstop (0 => engine default, 1000)
 ```
 
 The registry hands the engine a configured gollama `Client` + model string for any
@@ -713,7 +713,7 @@ implementer, and each reviewer (a reviewer resolves its model fallback independe
 `reviewers` role override/config applies to all reviewers uniformly).
 
 `max_turns` bounds how many tool-call turns a single engine `Run` may take. It is a
-**runaway backstop**, not a normal stopping condition: the high default (200) keeps the
+**runaway backstop**, not a normal stopping condition: the high default (1000) keeps the
 implementer's read → edit → build → test → fix cycles from being cut off mid-task while
 still stopping a degenerate infinite tool-call loop. The cap is **per `Run`**, so each
 `send_to_implementer` revise round gets a fresh budget rather than accumulating across
