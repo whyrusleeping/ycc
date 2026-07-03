@@ -79,3 +79,7 @@ Note: the currently running ycc daemon (old binary) may re-create backlog.md whe
 - 2026-07-03 review (Claude): accept — The change fully removes the generated backlog.md index: RenderIndex/renderIndexLocked are deleted from the docs store, all call sites (orchestrator create_task/update_task tools, capture agent, serve
 …[truncated]
 - 2026-07-03 decision: accept — commit: Remove generated backlog.md index; backlog/ task files are the sole store (task 0123)
+- 2026-07-03 usage: 25,383 tok (in 154, out 25,229, cache_r 2,032,508, cache_w 98,500) · cost n/a (unpriced)
+  implementer: 15,433 tok (in 104, out 15,329, cache_r 1,425,156, cache_w 40,395) · cost n/a (unpriced)
+  coordinator: 7,311 tok (in 36, out 7,275, cache_r 545,000, cache_w 39,494) · cost n/a (unpriced)
+  reviewer:Claude: 2,639 tok (in 14, out 2,625, cache_r 62,352, cache_w 18,611) · cost n/a (unpriced)
