@@ -37,6 +37,7 @@ import (
 
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/daemon"
+	"github.com/whyrusleeping/ycc/internal/sandbox"
 	"github.com/whyrusleeping/ycc/internal/secrets"
 	"github.com/whyrusleeping/ycc/internal/setup"
 	"github.com/whyrusleeping/ycc/internal/tui"
@@ -56,6 +57,11 @@ type app struct {
 }
 
 func main() {
+	// If this process was re-executed as a sandbox helper (reviewer bash
+	// confinement, see internal/sandbox), apply the policy and exec the wrapped
+	// command before any CLI parsing. This never returns in the helper case.
+	sandbox.MaybeHelper()
+
 	a := &app{}
 	root := newRootCommand(a)
 	if err := root.Run(context.Background(), os.Args); err != nil {

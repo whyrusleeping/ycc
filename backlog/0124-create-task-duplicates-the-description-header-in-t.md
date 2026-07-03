@@ -48,3 +48,6 @@ Fix duplicate section headers in generated task bodies.
 - 2026-07-03 review tier: simple (coordinator self-review)
 - 2026-07-03 decision: accept — commit: orchestrator: don't duplicate section headers in create_task bodies (task 0124)  Extract a shared taskBody helper used by both create_task and the capture path; it only adds "## Description" / "## Acc
 …[truncated]
+- 2026-07-03 usage: 13,637 tok (in 68, out 13,569, cache_r 509,143, cache_w 30,823) · cost n/a (unpriced)
+  implementer: 8,329 tok (in 50, out 8,279, cache_r 322,304, cache_w 16,840) · cost n/a (unpriced)
+  coordinator: 5,308 tok (in 18, out 5,290, cache_r 186,839, cache_w 13,983) · cost n/a (unpriced)

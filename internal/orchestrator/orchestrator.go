@@ -20,6 +20,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/git"
+	"github.com/whyrusleeping/ycc/internal/sandbox"
 	"github.com/whyrusleeping/ycc/internal/tools"
 )
 
@@ -557,6 +558,14 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 			specs := plan.Specs
 			if len(specs) == 0 {
 				specs = d.reviewerSpecs()
+			}
+			// Reviewer Bash is sandboxed read-only where the host supports it; warn
+			// once per spawn when it isn't so operators know reviewer non-mutation is
+			// only prompt-enforced on this platform.
+			if sandbox.Available() == sandbox.None {
+				d.Emitter.Emit(event.Narration, map[string]any{
+					"msg": "reviewer bash sandbox unavailable on this platform; reviewer non-mutation is prompt-enforced only",
+				})
 			}
 			d.mu.Lock()
 			d.reviewers = nil

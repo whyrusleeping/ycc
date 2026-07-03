@@ -256,14 +256,16 @@ type Workspace struct {
 	OnWrite func(path string)
 }
 
-// resolve cleans a user-supplied path and confines it to the workspace. Absolute
-// paths (the Claude-Code convention) are accepted when they fall within the
-// workspace root; relative paths are joined to the root.
+// resolve cleans a user-supplied path and confines it to the workspace, for
+// WRITE access (Write/Edit). Absolute paths (the Claude-Code convention) are
+// accepted when they fall within the workspace root; relative paths are joined to
+// the root.
 //
-// Confinement is best-effort and TEXTUAL: it rejects "../" escapes but does NOT
-// resolve symlinks, so a symlink already inside the workspace that points outside
-// it would not be caught here. Hard isolation (incl. symlinks) is the job of the
-// sandboxing work (task 0008); agents also have unrestricted Bash regardless.
+// Confinement is enforced in two stages: a fast TEXTUAL check that rejects "../"
+// escapes, then a symlink-aware containment check (withinRoot/evalExisting) that
+// resolves symlinks so a symlink already inside the workspace pointing outside it
+// cannot be used to write out of the root. (Agents may still have unrestricted
+// Bash; reviewer Bash is sandboxed separately — see internal/sandbox.)
 func (w *Workspace) resolve(p string) (string, error) {
 	if p == "" {
 		p = "."
@@ -280,6 +282,11 @@ func (w *Workspace) resolve(p string) (string, error) {
 	}
 	if relToRoot == ".." || strings.HasPrefix(relToRoot, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path %q is outside the workspace", p)
+	}
+	// Symlink-aware check: reject a path that, once symlinks are resolved, lands
+	// outside the workspace (e.g. an in-workspace symlink dir pointing elsewhere).
+	if !withinRoot(clean, w.Root) {
+		return "", fmt.Errorf("path %q resolves outside the workspace via a symlink", p)
 	}
 	return clean, nil
 }

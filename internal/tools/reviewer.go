@@ -23,12 +23,14 @@ func ReadOnly(ws *Workspace) []*gollama.Tool {
 	return []*gollama.Tool{readFile(ws)}
 }
 
-// Reviewer returns the tool set for a review subagent: the inspect tools plus
-// submit_review, a control tool that ends the review with a structured verdict.
-// Reviewers are prompted not to modify the workspace; hard enforcement is
-// deferred (task 0008).
+// Reviewer returns the tool set for a review subagent: the file Read tool, a
+// sandboxed Bash (see internal/sandbox), and submit_review, a control tool that
+// ends the review with a structured verdict. Reviewers must not modify the change
+// under review: on supported hosts the sandboxed Bash mounts the workspace
+// read-only so mutation is hard-enforced; where no sandbox mechanism is available
+// it degrades to prompt-only enforcement (the orchestrator warns once per spawn).
 func Reviewer(ws *Workspace) []*gollama.Tool {
-	return append(Inspect(ws), submitReview())
+	return []*gollama.Tool{readFile(ws), sandboxedBash(ws), submitReview()}
 }
 
 // submitReview is a control tool. It serializes the reviewer's structured verdict

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/whyrusleeping/gollama"
+	"github.com/whyrusleeping/ycc/internal/sandbox"
 )
 
 const (
@@ -312,45 +313,83 @@ func bash(ws *Workspace) *gollama.Tool {
 			"and inspect: search with ripgrep (`rg 'pattern'`, `rg --files -g '*.go'`), list with `ls`, and run " +
 			"builds/tests. Prefer the Read tool over `cat` for viewing files. Times out after 2 minutes.",
 		Params: obj(map[string]any{"command": strProp("shell command to execute via 'sh -c'")}, "command"),
-		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
-			cmdStr, ok := getString(params, "command")
-			if !ok {
-				return errResult("bash: missing 'command'"), nil
-			}
-			cctx, cancel := context.WithTimeout(ctx, bashTimeout)
-			defer cancel()
-			cmd := exec.CommandContext(cctx, "sh", "-c", cmdStr)
-			cmd.Dir = ws.Root
-			// Run the command in its own process group so a timeout kills the whole
-			// tree (the shell plus every pipeline child), not just the direct `sh`
-			// child — exec's default cancel only signals the leader, leaving
-			// grandchildren alive.
-			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-			cmd.Cancel = func() error {
-				// Negative pid => signal the entire process group.
-				return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			}
-			// A grandchild that escapes the kill (e.g. a daemon that calls setsid)
-			// can inherit and hold the output pipe open, so CombinedOutput's read
-			// never reaches EOF and blocks forever despite the timeout
-			// (golang/go#23019). WaitDelay bounds that wait: once the process has
-			// exited, Wait force-closes the pipe after this delay and returns.
-			cmd.WaitDelay = 10 * time.Second
-			out, err := cmd.CombinedOutput()
-			if len(out) > maxBashBytes {
-				out = append(out[:maxBashBytes], []byte("\n…[truncated]")...)
-			}
-			result := string(out)
-			if cctx.Err() == context.DeadlineExceeded {
-				result += "\n[command timed out after 2m]"
-			} else if err != nil {
-				result += fmt.Sprintf("\n[exit: %v]", err)
-			}
-			if strings.TrimSpace(result) == "" {
-				result = "(no output)"
-			}
-			return okResult(result), nil
-		},
+		Call:   bashCall(ws, false),
+	}
+}
+
+// sandboxedBash is the reviewer's Bash tool: identical to bash() but its command
+// runs inside a sandbox (see internal/sandbox) that makes the workspace read-only
+// so a reviewer cannot mutate the change under review. Read-only inspection (git
+// diff, cat, grep, ls, builds) still works. When no sandbox mechanism is
+// available on the host, it degrades to the same unconfined behavior as bash()
+// (reviewer non-mutation is then prompt-enforced only).
+func sandboxedBash(ws *Workspace) *gollama.Tool {
+	desc := "Run a shell command and return its combined stdout+stderr (truncated if large). Each call runs " +
+		"in a fresh shell already rooted at the workspace, and shell state (including the working directory) does " +
+		"NOT persist between calls — so there is never a need to `cd` into the workspace root; just run " +
+		"the command directly (write `rg 'pattern'`, not `cd <workspace> && rg 'pattern'`). Use this to inspect " +
+		"the change: run `git diff`, search with ripgrep (`rg 'pattern'`), list with `ls`, read files, and run " +
+		"builds/tests. Prefer the Read tool over `cat` for viewing files. Times out after 2 minutes."
+	if sandbox.Available() != sandbox.None {
+		desc += " NOTE: the workspace is mounted READ-ONLY for you — commands that try to write to or delete from " +
+			"the workspace will fail. That is expected; you are a reviewer, not an editor."
+	}
+	return &gollama.Tool{
+		Name:        "Bash",
+		Description: desc,
+		Params:      obj(map[string]any{"command": strProp("shell command to execute via 'sh -c'")}, "command"),
+		Call:        bashCall(ws, true),
+	}
+}
+
+// bashCall builds the Call closure shared by bash() and sandboxedBash(). When
+// sandboxed is true the command is wrapped by sandbox.Command so the workspace is
+// read-only; otherwise it runs as a plain `sh -c`. The process-group/timeout/
+// truncation handling is identical in both cases.
+func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollama.ToolResult, error) {
+	return func(ctx context.Context, params any) (*gollama.ToolResult, error) {
+		cmdStr, ok := getString(params, "command")
+		if !ok {
+			return errResult("bash: missing 'command'"), nil
+		}
+		cctx, cancel := context.WithTimeout(ctx, bashTimeout)
+		defer cancel()
+		var cmd *exec.Cmd
+		if sandboxed {
+			cmd, _ = sandbox.Command(cctx, ws.Root, cmdStr)
+		} else {
+			cmd = exec.CommandContext(cctx, "sh", "-c", cmdStr)
+		}
+		cmd.Dir = ws.Root
+		// Run the command in its own process group so a timeout kills the whole
+		// tree (the shell plus every pipeline child), not just the direct `sh`
+		// child — exec's default cancel only signals the leader, leaving
+		// grandchildren alive.
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Cancel = func() error {
+			// Negative pid => signal the entire process group.
+			return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		// A grandchild that escapes the kill (e.g. a daemon that calls setsid)
+		// can inherit and hold the output pipe open, so CombinedOutput's read
+		// never reaches EOF and blocks forever despite the timeout
+		// (golang/go#23019). WaitDelay bounds that wait: once the process has
+		// exited, Wait force-closes the pipe after this delay and returns.
+		cmd.WaitDelay = 10 * time.Second
+		out, err := cmd.CombinedOutput()
+		if len(out) > maxBashBytes {
+			out = append(out[:maxBashBytes], []byte("\n…[truncated]")...)
+		}
+		result := string(out)
+		if cctx.Err() == context.DeadlineExceeded {
+			result += "\n[command timed out after 2m]"
+		} else if err != nil {
+			result += fmt.Sprintf("\n[exit: %v]", err)
+		}
+		if strings.TrimSpace(result) == "" {
+			result = "(no output)"
+		}
+		return okResult(result), nil
 	}
 }
 

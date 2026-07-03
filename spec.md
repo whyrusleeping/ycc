@@ -435,6 +435,24 @@ questions (`Q1/A1`, `Q2/A2`, …). This is wired end-to-end via `Asker.AskMany` 
 Tools are gollama `Tool` values (`Params` is JSON schema, `Call` does the work + emits
 events). Worker and orchestration tools are the same kind of object.
 
+**Reviewer bash sandbox.** Reviewers get `Read`, `Bash`, and `submit_review` and are
+told not to mutate the change under review. Their `Bash` is hard-enforced read-only via
+`internal/sandbox` where the host supports it. Mechanism order (probed once, cached):
+**Landlock** (preferred — Linux ≥ 5.13, no external dependency, symlink-proof because the
+kernel evaluates the real inode), then **bubblewrap** (`bwrap`, re-binding the workspace
+read-only), else **none**. The Landlock path re-execs the `ycc` binary as a hidden helper
+(`__ycc-sandbox-exec`, dispatched at the very top of `main` before CLI parsing) that
+installs a ruleset denying all filesystem writes by default and re-allowing writes only
+under a small allowlist (temp dirs, `/dev`, `/run`, the Go build/module caches) that
+**excludes** the workspace; reads and execs are permitted everywhere, so `git diff`, `cat`,
+`grep`, `ls`, and builds still work. It **fails closed**: if the policy cannot be applied
+the helper exits non-zero rather than running unsandboxed. When no mechanism is available
+(non-Linux, or kernel/tool support missing) it degrades to prompt-only enforcement and the
+orchestrator emits a one-off `log` (Narration) warning per `spawn_reviewers`. Relatedly,
+`Workspace.resolve` (the Write/Edit path confinement) is now **symlink-aware**: after the
+textual `../` check it resolves symlinks and rejects a path that lands outside the root
+through an in-workspace symlink.
+
 ## 9. Modes (the home menu)
 
 Each mode = a coordinator system prompt + a tool subset + a state machine. There are three:
@@ -874,8 +892,11 @@ ycc/
 - **Diff capture for reviewers:** *Decided.* Reviewers get the full read/inspect tool
   set (read_file, list_dir, grep, glob, bash) and explore as they see fit — run
   `git diff`, read touched files, etc. They are **prompted** not to modify the
-  workspace. Hard prevention is impractical while they have bash; **sandboxing reviewer
-  bash is deferred future work** (see task 0008).
+  workspace, and their `Bash` is now **sandboxed read-only on Linux** (Landlock,
+  falling back to bubblewrap; see §8), which hard-enforces non-mutation while keeping
+  read-only inspection working. Where no sandbox mechanism is available (non-Linux, or
+  missing kernel/tool support) it degrades gracefully to prompt-only enforcement with a
+  logged warning. Implemented in task 0008.
 - **Implementer isolation:** *Decided.* A single-task implementer works **directly on the
   primary codebase**. For **parallel** work, git worktrees are **adopted**: each parallel
   workstream gets its own linked worktree so the single-writer invariant holds *per tree*
