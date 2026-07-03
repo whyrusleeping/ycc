@@ -47,3 +47,6 @@ Route the check through the configured entry point (e.g. `docs.NewStore(ws).Spec
 …[truncated]
 - 2026-07-03 review tier: simple (coordinator self-review)
 - 2026-07-03 decision: accept — commit: tui: route needsOnboarding/specIsEmpty through the configured spec entry point (task 0122)
+- 2026-07-03 usage: 5,890 tok (in 38, out 5,852, cache_r 227,909, cache_w 17,759) · cost n/a (unpriced)
+  coordinator: 3,126 tok (in 18, out 3,108, cache_r 150,016, cache_w 9,262) · cost n/a (unpriced)
+  implementer: 2,764 tok (in 20, out 2,744, cache_r 77,893, cache_w 8,497) · cost n/a (unpriced)

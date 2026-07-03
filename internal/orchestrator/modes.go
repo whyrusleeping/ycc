@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/whyrusleeping/gollama"
@@ -140,6 +141,62 @@ func assemble(base, level, root string, editing bool) string {
 	return s
 }
 
+// taskBody assembles a backlog task file body from a caller-supplied
+// description. Agents often pass fully-structured markdown that already
+// contains its own "## Description" / "## Acceptance criteria" headers, so
+// each canonical section header is only added when the description does not
+// already provide it — otherwise the header would be duplicated.
+func taskBody(desc string) string {
+	if strings.TrimSpace(desc) == "" {
+		return ""
+	}
+	var b strings.Builder
+	if !startsWithDescriptionHeader(desc) {
+		b.WriteString("## Description\n")
+	}
+	b.WriteString(desc)
+	if !hasHeaderLine(desc, "acceptance criteria") {
+		b.WriteString("\n\n## Acceptance criteria")
+	}
+	if !hasHeaderLine(desc, "work log") {
+		b.WriteString("\n\n## Work log\n")
+	}
+	return b.String()
+}
+
+// startsWithDescriptionHeader reports whether the first non-empty line of desc
+// is a "## Description" header (case-insensitive, tolerating leading whitespace).
+func startsWithDescriptionHeader(desc string) bool {
+	for _, line := range strings.Split(desc, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		return headerLineRe.MatchString(trimmed) &&
+			strings.EqualFold(headerTitle(trimmed), "description")
+	}
+	return false
+}
+
+// hasHeaderLine reports whether desc contains a "## <title>" header on its own
+// line (case-insensitive on the title, tolerating surrounding whitespace).
+func hasHeaderLine(desc, title string) bool {
+	for _, line := range strings.Split(desc, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if headerLineRe.MatchString(trimmed) && strings.EqualFold(headerTitle(trimmed), title) {
+			return true
+		}
+	}
+	return false
+}
+
+var headerLineRe = regexp.MustCompile(`^##\s+\S`)
+
+// headerTitle returns the trimmed text of a "## ..." header line.
+func headerTitle(line string) string {
+	return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "##"))
+}
+
 func createTask(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name:        "create_task",
@@ -154,10 +211,7 @@ func createTask(d *Deps) *gollama.Tool {
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			title, _ := tools.GetString(params, "title")
 			desc, _ := tools.GetString(params, "description")
-			body := ""
-			if desc != "" {
-				body = "## Description\n" + desc + "\n\n## Acceptance criteria\n\n## Work log\n"
-			}
+			body := taskBody(desc)
 			t, err := d.Docs.Create(title, body, getInt(params, "priority", 3), getStrings(params, "depends_on"), getStrings(params, "spec_refs"))
 			if err != nil {
 				return tools.ErrResult("create_task: %v", err), nil

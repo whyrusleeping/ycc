@@ -12,7 +12,6 @@ spec_refs:
 ---
 
 ## Description
-## Description
 Prerequisite for ycc task 0114 (incremental model-output streaming in the session view).
 Work happens in the separate gollama repo (/home/why/code/gollama); this task tracks it
 from the ycc backlog, like earlier gollama thinking-levels work.
@@ -37,8 +36,6 @@ that:
 - [ ] final message from a streamed turn is byte-equivalent (content/tool calls/thinking blocks) to the non-streaming shape for the same response
 - [ ] ycc can adopt it by swapping the `engine.Turner` call site (no other API churn)
 
-
-## Acceptance criteria
 
 ## Work log
 - 2026-07-05 blocked (coordinator): the work lives in the separate gollama repo at

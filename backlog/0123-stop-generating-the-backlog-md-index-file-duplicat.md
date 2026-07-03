@@ -11,7 +11,6 @@ spec_refs:
 ---
 
 ## Description
-## Description
 
 The docs store (`internal/docs`, spec §6.2) renders the entire backlog into a single generated `backlog.md` index at the repo root on every mutation. The canonical data already lives in `backlog/<id>-<slug>.md` (one file per task with YAML frontmatter), so the index is just duplicated content that churns in git on every backlog change and requires per-directory locking to keep it consistent.
 
@@ -30,8 +29,6 @@ Remove the generated index:
 - [ ] Spec/prompt references to the generated index are updated accordingly.
 - [ ] Existing backlog listing features (ListBacklog RPC, TUI backlog browser, list_backlog tool) still work from the canonical `backlog/` files.
 - [ ] Tests covering index generation are updated/removed; `go test ./...` passes.
-
-## Acceptance criteria
 
 ## Plan
 
