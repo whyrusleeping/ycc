@@ -15,6 +15,10 @@ import (
 // It implements Sink (so an Emitter writes through it), persists every event to
 // an events.jsonl file, mirrors them in memory, and fans them out losslessly to
 // any number of subscribers — including late ones, via replay-from-offset.
+//
+// Alongside the lossless persisted stream it also fans out transient,
+// broadcast-only events (Broadcast): these are delivered to live subscribers
+// but never persisted, replayed, or seq-numbered (spec §5, task 0114).
 type Log struct {
 	mu     sync.Mutex
 	cond   *sync.Cond
@@ -23,6 +27,24 @@ type Log struct {
 	events []Event
 	seq    int
 	closed bool
+
+	// subs tracks live subscribers so Broadcast can deliver transient events to
+	// them. Each subscriber owns a small bounded queue that Broadcast appends to
+	// under mu; the subscriber's pump drains it after the persisted tail.
+	subs   map[int]*subscriber
+	nextID int
+}
+
+// transientQueueMax bounds each subscriber's pending transient events. Transient
+// events are ephemeral UI hints (e.g. turn_delta), so when a subscriber falls
+// behind we drop the OLDEST queued transient to keep the freshest output flowing
+// rather than block the log or grow unboundedly. Persisted events are never
+// dropped; only transients are lossy under backpressure.
+const transientQueueMax = 256
+
+// subscriber holds a live subscriber's transient delivery queue.
+type subscriber struct {
+	transient []Event
 }
 
 // OpenLog opens (creating if needed) the JSONL log at path, loading any existing
@@ -39,7 +61,7 @@ func OpenLog(path string) (*Log, error) {
 	if err != nil {
 		return nil, err
 	}
-	l := &Log{path: path, f: f, events: existing}
+	l := &Log{path: path, f: f, events: existing, subs: map[int]*subscriber{}}
 	if n := len(existing); n > 0 {
 		l.seq = existing[n-1].Seq
 	}
@@ -125,6 +147,37 @@ func (l *Log) Record(actor string, t Type, data map[string]any) Event {
 	return ev
 }
 
+// Broadcast delivers a transient, non-persisted event to live subscribers only
+// (spec §5, task 0114). Unlike Record it assigns NO sequence number (Seq stays
+// 0), never writes to events.jsonl, and never appends to the in-memory replay
+// slice — so the event is invisible to Snapshot, ReadLog, and late subscribers,
+// and it never advances a resume cursor. It is used for ephemeral UI hints such
+// as streaming turn_delta output.
+//
+// Delivery is best-effort: it enqueues onto each live subscriber's bounded
+// transient queue and wakes the pumps. A slow or cancelled subscriber can never
+// wedge the log or other subscribers — under backpressure the oldest queued
+// transient is dropped (see transientQueueMax). Broadcast on a closed log is a
+// no-op. The persisted stream's losslessness and ordering are unaffected.
+func (l *Log) Broadcast(actor string, t Type, data map[string]any) Event {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	ev := Event{TS: time.Now(), Actor: actor, Type: t, Data: data, Transient: true}
+	if l.closed {
+		return ev
+	}
+	for _, sub := range l.subs {
+		if len(sub.transient) >= transientQueueMax {
+			// Drop the oldest queued transient to bound memory and keep the
+			// freshest output flowing; transients are lossy by design.
+			sub.transient = sub.transient[1:]
+		}
+		sub.transient = append(sub.transient, ev)
+	}
+	l.cond.Broadcast()
+	return ev
+}
+
 // Close stops the log and wakes all subscribers so they terminate.
 func (l *Log) Close() error {
 	l.mu.Lock()
@@ -139,16 +192,31 @@ func (l *Log) Close() error {
 
 // Subscribe streams events with Seq > fromSeq, first replaying any already
 // persisted and then delivering live ones, until the returned cancel func is
-// called or the log is closed. Delivery is lossless and ordered. The caller must
-// drain the channel; cancel unblocks the pump.
+// called or the log is closed. Persisted delivery is lossless and ordered.
+//
+// Transient events broadcast via Broadcast are also delivered to this stream
+// (interleaved after each persisted tail), but only those emitted while this
+// subscriber is live — they are never replayed, carry Seq=0, and are lossy under
+// backpressure. The caller must drain the channel; cancel unblocks the pump and
+// deregisters the subscriber.
 func (l *Log) Subscribe(fromSeq int) (<-chan Event, func()) {
 	ch := make(chan Event)
 	done := make(chan struct{})
+
+	// Register this subscriber so Broadcast can queue transient events for it.
+	l.mu.Lock()
+	id := l.nextID
+	l.nextID++
+	sub := &subscriber{}
+	l.subs[id] = sub
+	l.mu.Unlock()
+
 	var once sync.Once
 	cancel := func() {
 		once.Do(func() {
 			close(done)
 			l.mu.Lock()
+			delete(l.subs, id)
 			l.cond.Broadcast()
 			l.mu.Unlock()
 		})
@@ -156,10 +224,15 @@ func (l *Log) Subscribe(fromSeq int) (<-chan Event, func()) {
 
 	go func() {
 		defer close(ch)
-		cursor := 0 // index into l.events of the next event to consider
+		defer func() {
+			l.mu.Lock()
+			delete(l.subs, id)
+			l.mu.Unlock()
+		}()
+		cursor := 0 // index into l.events of the next persisted event to consider
 		for {
 			l.mu.Lock()
-			for !l.closed && cursor >= len(l.events) {
+			for !l.closed && cursor >= len(l.events) && len(sub.transient) == 0 {
 				select {
 				case <-done:
 					l.mu.Unlock()
@@ -168,17 +241,32 @@ func (l *Log) Subscribe(fromSeq int) (<-chan Event, func()) {
 				}
 				l.cond.Wait()
 			}
-			// Snapshot the new tail under lock, then release before sending.
+			// Snapshot the new persisted tail under lock, then release before
+			// sending. Persisted events go first so their order/losslessness is
+			// unaffected by transient delivery.
 			batch := make([]Event, 0, len(l.events)-cursor)
 			for ; cursor < len(l.events); cursor++ {
 				if l.events[cursor].Seq > int(fromSeq) {
 					batch = append(batch, l.events[cursor])
 				}
 			}
+			// Drain any queued transients after the persisted tail.
+			var transients []Event
+			if len(sub.transient) > 0 {
+				transients = sub.transient
+				sub.transient = nil
+			}
 			closed := l.closed
 			l.mu.Unlock()
 
 			for _, ev := range batch {
+				select {
+				case ch <- ev:
+				case <-done:
+					return
+				}
+			}
+			for _, ev := range transients {
 				select {
 				case ch <- ev:
 				case <-done:

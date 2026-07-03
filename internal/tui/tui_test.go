@@ -4183,6 +4183,49 @@ func newSessionTextareaModel(t *testing.T) model {
 	return m
 }
 
+// A transient (broadcast-only) event — Seq=0, Transient=true, e.g. turn_delta —
+// must be ignored by the event loop: it never enters m.evs, never advances seq
+// tracking, and never corrupts reducer-fed state. There is no rendering yet
+// (task 0114); the TUI just tolerates the seq-less event safely.
+func TestEvMsgIgnoresTransientEvents(t *testing.T) {
+	m := newSessionTextareaModel(t)
+	m.sessionID = "s1"
+	m.client = newFakeClient()
+	m.ctx = context.Background()
+	m.events = make(chan *v1.Event, 4)
+
+	// A normal persisted event is recorded.
+	real := &v1.Event{Seq: 1, Type: "model_turn", DataJson: `{"text":"hi"}`}
+	nm, _ := m.Update(evMsg{real})
+	m = nm.(model)
+	if len(m.evs) != 1 {
+		t.Fatalf("after persisted event len(evs) = %d, want 1", len(m.evs))
+	}
+
+	// A transient event must be dropped: len(evs) stays 1.
+	trans := &v1.Event{Seq: 0, Type: "turn_delta", Transient: true, DataJson: `{"text":"par"}`}
+	nm, _ = m.Update(evMsg{trans})
+	m = nm.(model)
+	if len(m.evs) != 1 {
+		t.Fatalf("transient event was not ignored: len(evs) = %d, want 1", len(m.evs))
+	}
+	if m.evs[0].Seq != 1 || m.evs[0].Type != "model_turn" {
+		t.Fatalf("transient event corrupted event list: %+v", m.evs[0])
+	}
+
+	// Transient events queued on the stream (batched drain path) are also skipped.
+	m.events <- &v1.Event{Seq: 0, Type: "turn_delta", Transient: true}
+	m.events <- &v1.Event{Seq: 2, Type: "tool_call", DataJson: `{"name":"x"}`}
+	nm, _ = m.Update(evMsg{&v1.Event{Seq: 0, Type: "turn_delta", Transient: true}})
+	m = nm.(model)
+	if len(m.evs) != 2 {
+		t.Fatalf("batched drain mishandled transients: len(evs) = %d, want 2", len(m.evs))
+	}
+	if m.evs[1].Seq != 2 || m.evs[1].Type != "tool_call" {
+		t.Fatalf("persisted event lost/corrupted in batched drain: %+v", m.evs[1])
+	}
+}
+
 func TestSessionInputEnterSendsAndClears(t *testing.T) {
 	m := newSessionTextareaModel(t)
 	m = typeText(t, m, "hello agent")

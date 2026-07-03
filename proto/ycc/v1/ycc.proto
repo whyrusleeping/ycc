@@ -13,6 +13,7 @@ message Event {
   string actor = 3;
   string type = 4;
   string data_json = 5;
+  bool transient = 6; // broadcast-only, never persisted; seq is 0 (task 0114)
 }
 
 message StartSessionRequest {

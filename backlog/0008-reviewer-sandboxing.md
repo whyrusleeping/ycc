@@ -94,3 +94,7 @@ Mechanism (Linux; graceful no-op elsewhere), in a new `internal/sandbox` package
 …[truncated]
 - 2026-07-03 decision: accept — commit: sandbox reviewer bash via Landlock/bwrap; symlink-aware Workspace.resolve (task 0008)  New internal/sandbox package hard-enforces reviewer non-mutation of the workspace: Landlock preferred (deny-by-de
 …[truncated]
+- 2026-07-03 usage: 76,556 tok (in 216, out 76,340, cache_r 6,407,089, cache_w 290,041) · cost n/a (unpriced)
+  implementer: 44,293 tok (in 108, out 44,185, cache_r 3,924,878, cache_w 101,190) · cost n/a (unpriced)
+  coordinator: 24,166 tok (in 64, out 24,102, cache_r 1,715,469, cache_w 132,239) · cost n/a (unpriced)
+  reviewer:Claude: 8,097 tok (in 44, out 8,053, cache_r 766,742, cache_w 56,612) · cost n/a (unpriced)

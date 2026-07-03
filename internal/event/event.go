@@ -92,6 +92,13 @@ const (
 	// WorkstreamDiscarded marks a workstream abandoned without merging, its
 	// worktree + branch cleaned up (data: { workstream, branch }).
 	WorkstreamDiscarded Type = "workstream_discarded"
+	// TurnDelta carries a partial chunk of a model's in-progress turn output,
+	// streamed to live subscribers as a transient (non-persisted) event so the
+	// UI can tail model output incrementally (spec §5, task 0114). It is only
+	// ever emitted via Log.Broadcast: it carries Transient=true and Seq=0, is
+	// never written to events.jsonl / the in-memory replay / transcripts, and
+	// the durable ModelTurn event remains the source of truth for the turn.
+	TurnDelta Type = "turn_delta"
 )
 
 // ThinkingBlock mirrors gollama.ThinkingBlock for lossless serialization in the
@@ -128,6 +135,13 @@ type Event struct {
 	Actor string         `json:"actor"` // coordinator | implementer | reviewer:<model> | user | system
 	Type  Type           `json:"type"`
 	Data  map[string]any `json:"data,omitempty"`
+	// Transient marks a broadcast-only event that is delivered to live
+	// subscribers but never persisted: it carries Seq=0, is never written to
+	// events.jsonl, never appended to the in-memory replay slice, and is invisible
+	// to Snapshot / ReadLog / late subscribers. Used for streaming UI hints such
+	// as turn_delta (spec §5, task 0114). Subscribers must tolerate seq-less
+	// events and must not use them to advance a resume cursor.
+	Transient bool `json:"transient,omitempty"`
 }
 
 // Recorder is the sequence authority for a session: it stamps an event with the

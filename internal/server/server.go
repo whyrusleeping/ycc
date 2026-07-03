@@ -733,10 +733,11 @@ func toProto(ev event.Event) *v1.Event {
 		}
 	}
 	return &v1.Event{
-		Seq:      int64(ev.Seq),
-		Ts:       ev.TS.Format("2006-01-02T15:04:05.000Z07:00"),
-		Actor:    ev.Actor,
-		Type:     string(ev.Type),
-		DataJson: dataJSON,
+		Seq:       int64(ev.Seq),
+		Ts:        ev.TS.Format("2006-01-02T15:04:05.000Z07:00"),
+		Actor:     ev.Actor,
+		Type:      string(ev.Type),
+		DataJson:  dataJSON,
+		Transient: ev.Transient,
 	}
 }

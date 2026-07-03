@@ -191,6 +191,24 @@ Event `type`s (initial set):
 Subagents get their own session-scoped event substreams (`subagent_spawned` carries a
 child stream id); the client can drill into an implementer/reviewer's transcript.
 
+#### Transient (broadcast-only) events
+
+Some events are **ephemeral UI hints** rather than durable facts. A transient event is
+marked `transient: true`, carries **`seq: 0`** (it is *not* assigned a sequence number),
+and is **broadcast to live subscribers only**: it is never written to `events.jsonl`,
+never appended to the in-memory replay slice, and is invisible to `Snapshot` / `ReadLog`
+/ transcripts / late subscribers. Because it never gets a seq, it never advances a
+subscriber's `from_seq` resume cursor — a reconnect resumes strictly from persisted seqs,
+so transient delivery cannot corrupt or reorder the append-only log/replay. Delivery is
+**best-effort and lossy under backpressure** (a slow subscriber may drop transients),
+whereas persisted events stay lossless and ordered. The `Subscribe` RPC forwards
+transient events unchanged; every subscriber (including the TUI) must tolerate seq-less
+events safely.
+
+The motivating use is streaming a model's partial output: `turn_delta` events tail the
+in-progress turn text to live clients while the durable `model_turn` event (written on
+turn completion) remains the source of truth for the turn (see §18.4, task 0114).
+
 ## 6. Document model
 
 ### 6.1 Design docs — entry point + docs set
@@ -1055,6 +1073,11 @@ default** with a one-line `(reasoning) …` preview, click/Enter to expand — s
 **dimmed + italic** to read distinctly from the model's actual response. Empty summaries
 produce no event. (The provider reasoning blocks themselves round-trip in conversation
 history automatically and are not re-displayed.)
+
+Partial model output is streamed incrementally to live clients as **transient
+`turn_delta` events** (broadcast-only, seq-less, never persisted — see §5.2) and the
+durable `model_turn` event written on completion remains the turn's source of truth
+(task 0114).
 
 ### 18.5 Backlog browser
 

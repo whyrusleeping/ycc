@@ -2264,8 +2264,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case evMsg:
 		m.markConnected()
-		m.appendEvent(msg.ev)
-		m.maybeNotify(msg.ev)
+		// Transient events (Seq=0, broadcast-only, e.g. turn_delta) are ephemeral
+		// UI hints that are never persisted and carry no sequence number. Skip them
+		// before appendEvent so they never enter the reducers or corrupt seq
+		// tracking. No rendering yet — that arrives with task 0114.
+		if !(msg.ev != nil && msg.ev.Transient) {
+			m.appendEvent(msg.ev)
+			m.maybeNotify(msg.ev)
+		}
 		// Coalesce a burst into one rebuild. On reopen the daemon replays the whole
 		// persisted log (N events) which arrive buffered in m.events essentially at
 		// once; draining them here and rebuilding a single time keeps reload O(N)
@@ -2280,6 +2286,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if !ok {
 					closed = true
 					break drain
+				}
+				if ev != nil && ev.Transient {
+					continue // ignore transient events (see above)
 				}
 				m.appendEvent(ev)
 				m.maybeNotify(ev)

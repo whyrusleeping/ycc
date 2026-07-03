@@ -31,6 +31,7 @@ type Event struct {
 	Actor         string                 `protobuf:"bytes,3,opt,name=actor,proto3" json:"actor,omitempty"`
 	Type          string                 `protobuf:"bytes,4,opt,name=type,proto3" json:"type,omitempty"`
 	DataJson      string                 `protobuf:"bytes,5,opt,name=data_json,json=dataJson,proto3" json:"data_json,omitempty"`
+	Transient     bool                   `protobuf:"varint,6,opt,name=transient,proto3" json:"transient,omitempty"` // broadcast-only, never persisted; seq is 0 (task 0114)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -98,6 +99,13 @@ func (x *Event) GetDataJson() string {
 		return x.DataJson
 	}
 	return ""
+}
+
+func (x *Event) GetTransient() bool {
+	if x != nil {
+		return x.Transient
+	}
+	return false
 }
 
 type StartSessionRequest struct {
@@ -4866,13 +4874,14 @@ var File_ycc_v1_ycc_proto protoreflect.FileDescriptor
 
 const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\n" +
-	"\x10ycc/v1/ycc.proto\x12\x06ycc.v1\"p\n" +
+	"\x10ycc/v1/ycc.proto\x12\x06ycc.v1\"\x8e\x01\n" +
 	"\x05Event\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x03R\x03seq\x12\x0e\n" +
 	"\x02ts\x18\x02 \x01(\tR\x02ts\x12\x14\n" +
 	"\x05actor\x18\x03 \x01(\tR\x05actor\x12\x12\n" +
 	"\x04type\x18\x04 \x01(\tR\x04type\x12\x1b\n" +
-	"\tdata_json\x18\x05 \x01(\tR\bdataJson\"\xa6\x01\n" +
+	"\tdata_json\x18\x05 \x01(\tR\bdataJson\x12\x1c\n" +
+	"\ttransient\x18\x06 \x01(\bR\ttransient\"\xa6\x01\n" +
 	"\x13StartSessionRequest\x12\x1c\n" +
 	"\tworkspace\x18\x01 \x01(\tR\tworkspace\x12\x12\n" +
 	"\x04mode\x18\x02 \x01(\tR\x04mode\x12+\n" +

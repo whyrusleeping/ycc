@@ -7,6 +7,7 @@ created: "2026-07-01"
 updated: "2026-07-05"
 depends_on:
     - "0120"
+    - "0128"
 spec_refs:
     - 7. Agent engine
     - 18.4 Reasoning (thinking) in the event stream
@@ -43,6 +44,11 @@ non-persisted events through the existing Subscribe pipe.**
 - [ ] Graceful fallback for backends without streaming (via gollama 0120 fallback)
 
 ## Work log
+- 2026-07-05 (autonomous coordinator): split out the gollama-independent transport
+  groundwork into task 0128 (event.Log transient broadcast path, transient/turn_delta
+  marker, Server.Subscribe pass-through, TUI tolerance, spec design note) and added it
+  as a dependency; this task now covers consuming gollama TurnStream in the engine loop
+  (emitting turn_delta) + the TUI live tail row, once 0120 lands.
 - 2026-07-05 design pass with user (pm session): seam decided — Option A (transient
   non-persisted events through the existing Subscribe stream), split into two tasks:
   0120 (gollama TurnStream, cross-repo prerequisite) and this one (ycc plumbing + TUI

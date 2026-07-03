@@ -1,10 +1,10 @@
 ---
 id: "0025"
 title: Verify thinking levels (effort) across backends as models are added
-status: todo
+status: blocked
 priority: 3
 created: "2026-06-26"
-updated: "2026-07-02"
+updated: "2026-07-03"
 depends_on:
     - "0005"
 spec_refs:
@@ -45,6 +45,26 @@ engine and to surface returned thinking in the event log/TUI.
       ignore vs. error) so a per-role effort setting degrades gracefully across mixed backends
 
 ## Work log
+- 2026-07-05 re-blocked (autonomous coordinator): this session cannot complete the
+  narrowed scope — the gollama working repo (/home/why/code/gollama) is still absent
+  (only the read-only module cache exists) and no OPENAI_API_KEY is available, so the
+  missing OpenAI translation cannot be implemented or smoke-tested. Verification done
+  meanwhile against the pinned gollama (v0.0.0-20260628184513):
+  - anthropic: `Thinking`/`Effort`/`ThinkingDisplay` → `thinking` + `output_config.effort`
+    confirmed in anthropic.go (done, as recorded).
+  - openai/openai-compatible/glm: `ChatCompletion`'s openaiRequest has NO
+    `reasoning_effort` field; `Thinking`/`Effort` are `json:"-"` so they are silently
+    dropped → degrade today is "silently ignore" (safe, but no reasoning control).
+  - ollama: `Turn` routes Ollama through the OpenAI-compatible /v1 path, so the
+    `Think` bool is also dropped (native /api/chat would carry it, but Turn never uses
+    it). Local live check: Ollama /api/chat with `think:true` on gemma4:26b succeeds and
+    returns a `thinking` field — the live smoke is ready to run once gollama plumbs it.
+  Remaining (needs gollama repo + OpenAI key, user present): implement OpenAI
+  `reasoning_effort` + Ollama `think` translation in gollama Turn path, live smokes,
+  then the mapping doc + explicit degrade decision here. Note ycc already passes
+  Effort/Thinking on every request regardless of backend, so gollama-side translation
+  lights up without further ycc plumbing (spec §7.4, §13 already document
+  ignored-harmlessly semantics).
 - 2026-07-05 unblocked (pm grooming with user): scope narrowed to the backends the user
   has live access to right now — **OpenAI + Ollama** (Anthropic already done). GLM is
   deferred: keep its bullet in the description but treat it as out of scope for this
