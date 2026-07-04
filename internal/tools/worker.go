@@ -456,7 +456,11 @@ func bgAutoDelivered(ws *Workspace) bool {
 // the job was not killed first), emits job_finished exactly once.
 func startBackgroundBash(ws *Workspace, cmdStr string) *jobs.Job {
 	owner := ws.Emitter.Actor()
-	job := ws.Jobs.Start("bash", cmdStr, owner)
+	// Unsandboxed background bash may write to the worktree, so it counts as a
+	// mutating job for the single-writer guard (design §3.4): a background
+	// implementer is refused while one is live. Conservative — a read-only
+	// command is still marked mutating — but safe.
+	job := ws.Jobs.StartMutating("bash", cmdStr, owner)
 	ws.Emitter.EmitAs(owner, event.JobStarted, map[string]any{
 		"id": job.ID(), "kind": job.Kind(), "label": cmdStr,
 	})

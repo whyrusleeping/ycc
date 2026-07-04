@@ -38,7 +38,15 @@ func jobOutputTool(ws *Workspace) *gollama.Tool {
 			out, status := job.Read()
 			body := out
 			if strings.TrimSpace(body) == "" {
-				body = "(no new output since last read)"
+				// An agent job has no incremental output stream (its child-loop
+				// events go to the log, not the job buffer); its report is delivered
+				// exactly once via wait or checkpoint injection. Say so rather than
+				// the bash-flavored "no new output" note.
+				if job.Kind() == "agent" {
+					body = "(agent job — no incremental output; its report arrives via wait or automatically)"
+				} else {
+					body = "(no new output since last read)"
+				}
 			}
 			return okResult(fmt.Sprintf("job %s [%s]\n%s", id, status, body)), nil
 		},

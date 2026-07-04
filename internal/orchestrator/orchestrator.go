@@ -112,8 +112,10 @@ type Deps struct {
 
 	mu        sync.Mutex
 	impl      *engine.Loop
+	implJob   *jobs.Job // live/last background implementer job (nil if last spawn was foreground)
 	reviewers []*reviewerHandle
-	focus     string // backlog task currently in focus (spec §20.2); guarded by mu
+	reviewJob *jobs.Job // live/last background reviewers job
+	focus     string    // backlog task currently in focus (spec §20.2); guarded by mu
 }
 
 // emitFocus records a task_focus event when the session's active focus moves to a
@@ -421,19 +423,40 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 		Description: "Delegate implementation of a task to a coding subagent. It edits the workspace and returns a " +
 			"report plus the staged diff. Provide the task id and your plan. Optionally attach concise, advisory " +
 			"context_hints (relevant file paths, function/symbol refs, or small snippets) surfaced to the worker as " +
-			"non-prescriptive 'starting points'. Call once per task; use send_to_implementer for follow-up revisions.",
+			"non-prescriptive 'starting points'. Call once per task; use send_to_implementer for follow-up revisions. " +
+			"Pass background:true to run it as a background job (returns a job_id immediately, report arrives via wait " +
+			"or automatically) — only when you have genuinely independent work to do meanwhile; at most one mutating " +
+			"job per tree.",
 		Params: tools.Obj(map[string]any{
 			"task_id":       tools.StrProp("task id"),
 			"plan":          tools.StrProp("the plan the implementer should follow"),
 			"context_hints": tools.StrArrProp("optional, concise advisory starting points — relevant file paths, function/symbol refs, or small snippets — surfaced to the worker as non-prescriptive hints to cut redundant exploration; keep them short, no full-file dumps"),
+			"background":    tools.BoolProp("run as a background job: return a job_id immediately instead of blocking; its report arrives automatically or via wait. Use only for genuinely independent work — refused while another mutating job is live in this tree (route parallel mutating work through a workstream)"),
 		}, "task_id", "plan"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			id, _ := tools.GetString(params, "task_id")
 			plan, _ := tools.GetString(params, "plan")
+			background := tools.GetBool(params, "background", false)
 			hints := boundHints(tools.GetStringSlice(params, "context_hints"))
 			t, err := d.Docs.Get(id)
 			if err != nil {
 				return tools.ErrResult("spawn_implementer: %v", err), nil
+			}
+			// Single-writer guard (design §3.4). A BACKGROUND spawn is refused while
+			// ANY mutating job (implementer or mutating background bash) is live in
+			// this tree. A FOREGROUND spawn is refused only while another mutating
+			// AGENT job (a background implementer) is live — two implementers can
+			// never share a tree — but runs fine alongside a background bash job, as
+			// it does today.
+			if background {
+				if d.Jobs == nil {
+					return tools.ErrResult("spawn_implementer: background subagents are not available in this session"), nil
+				}
+				if live := d.Jobs.LiveMutating(); live != nil {
+					return tools.ErrResult("spawn_implementer: another mutating job (%s: %s) is live in this tree; wait for it or kill_job it, or route parallel mutating work through a separate workstream (spec §14.1)", live.ID(), live.Label()), nil
+				}
+			} else if live := d.liveImplJob(); live != nil {
+				return tools.ErrResult("spawn_implementer: a background implementer (%s: %s) is still running in this tree; wait for it or kill_job it before spawning another implementer, or route parallel mutating work through a separate workstream (spec §14.1)", live.ID(), live.Label()), nil
 			}
 			// Delegating a task is an unambiguous focus signal (spec §20.2).
 			d.emitFocus(id)
@@ -462,23 +485,86 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 			loop.Seed(implementerPrompt(t, plan, hints))
 			d.mu.Lock()
 			d.impl = loop
+			d.implJob = nil // cleared for a foreground spawn; set below for background
 			d.mu.Unlock()
 
 			before, _ := d.Repo.Diff()
+
+			if background {
+				// Register a mutating agent job and run the child loop under its
+				// context (so kill_job / session-end KillAll cancel it). The final
+				// report is the SAME text the synchronous path returns, delivered
+				// exactly once via wait or checkpoint injection.
+				job := d.Jobs.StartMutating("agent", "implementer "+id, d.Emitter.Actor())
+				d.mu.Lock()
+				d.implJob = job
+				d.mu.Unlock()
+				d.Emitter.Emit(event.JobStarted, map[string]any{"id": job.ID(), "kind": job.Kind(), "label": job.Label()})
+				d.Emitter.Emit(event.SubagentSpawned, map[string]any{"role": "implementer", "model": impl.Model, "job_id": job.ID()})
+				go func() {
+					out := runImplementer(job.Context(), d, loop, id, "implementer report", before, job.ID())
+					status := jobs.Done
+					if out.IsError {
+						status = jobs.Failed
+					}
+					if job.Finish(status, out.Content) {
+						emitAgentJobFinished(d.Emitter, job)
+					}
+				}()
+				return tools.OkResult(fmt.Sprintf("started background job %s: implementer on task %s. "+
+					"It runs in the background — do NOT poll it. Its report arrives automatically when it "+
+					"finishes, or call wait([%q]) when its result gates your next step.", job.ID(), id, job.ID())), nil
+			}
+
 			d.Emitter.Emit(event.SubagentSpawned, map[string]any{"role": "implementer", "model": impl.Model})
-			res, err := loop.Run(ctx)
-			if err != nil {
-				d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "implementer", "error": err.Error()})
-				return tools.ErrResult("implementer failed: %v", err), nil
-			}
-			if res.Blocked {
-				d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "implementer", "blocked": true})
-			} else {
-				d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "implementer"})
-			}
-			return implementerOutcome(d, id, "implementer report", before, res), nil
+			return runImplementer(ctx, d, loop, id, "implementer report", before, ""), nil
 		},
 	}
+}
+
+// liveImplJob returns the background implementer job if one is still running,
+// else nil. The single-writer guard uses it to refuse a second implementer in the
+// same tree (foreground or background).
+func (d *Deps) liveImplJob() *jobs.Job {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.implJob != nil && d.implJob.Status() == jobs.Running {
+		return d.implJob
+	}
+	return nil
+}
+
+// runImplementer runs an implementer loop to completion, emits subagent_finished
+// (tagged with jobID when the run is a background job), and returns the
+// coordinator-facing outcome — identical whether the loop runs synchronously or in
+// a background goroutine, so both delivery paths carry the same report text.
+func runImplementer(ctx context.Context, d *Deps, loop *engine.Loop, id, label, before, jobID string) *gollama.ToolResult {
+	res, err := loop.Run(ctx)
+	fin := map[string]any{"role": "implementer"}
+	if jobID != "" {
+		fin["job_id"] = jobID
+	}
+	if err != nil {
+		fin["error"] = err.Error()
+		d.Emitter.Emit(event.SubagentFinished, fin)
+		return tools.ErrResult("implementer failed: %v", err)
+	}
+	if res.Blocked {
+		fin["blocked"] = true
+	}
+	d.Emitter.Emit(event.SubagentFinished, fin)
+	return implementerOutcome(d, id, label, before, res)
+}
+
+// emitAgentJobFinished records a job_finished event for an agent job, tagged with
+// the coordinator actor and carrying its final status and report tail. Mirrors
+// tools.emitJobFinished for the bash-job path.
+func emitAgentJobFinished(em *event.Emitter, job *jobs.Job) {
+	rep := job.Report()
+	em.Emit(event.JobFinished, map[string]any{
+		"id": rep.ID, "kind": rep.Kind, "label": rep.Label,
+		"status": string(rep.Status), "tail": rep.Result,
+	})
 }
 
 func sendToImplementer(d *Deps) *gollama.Tool {
@@ -495,9 +581,16 @@ func sendToImplementer(d *Deps) *gollama.Tool {
 			instr, _ := tools.GetString(params, "instructions")
 			d.mu.Lock()
 			loop := d.impl
+			job := d.implJob
 			d.mu.Unlock()
 			if loop == nil {
 				return tools.ErrResult("send_to_implementer: no implementer yet; call spawn_implementer first"), nil
+			}
+			// A background implementer's loop is only addressable once it has
+			// finished — resuming a still-running loop would run two turns of the
+			// same conversation concurrently.
+			if job != nil && job.Status() == jobs.Running {
+				return tools.ErrResult("send_to_implementer: implementer job %s is still running; wait for its report first", job.ID()), nil
 			}
 			loop.Post(revisePrompt(instr))
 			before, _ := d.Repo.Diff()
@@ -526,10 +619,13 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 			"the sensible default for ordinary changes), or 'high-powered' (parallel multi-model review when " +
 			"configured with multiple models — for large, risky, security-sensitive, or hard-to-reverse changes). " +
 			"Omit review_tier to use the configured default. " +
-			"Returns each verdict (accept/revise) and findings; the chosen tier is recorded in the work log.",
+			"Returns each verdict (accept/revise) and findings; the chosen tier is recorded in the work log. " +
+			"Pass background:true to run the review set as a background job (returns a job_id immediately; verdicts " +
+			"arrive via wait or automatically). Reviewers are read-only and run freely in parallel with other work.",
 		Params: tools.Obj(map[string]any{
 			"task_id":     tools.StrProp("task id"),
 			"review_tier": tools.StrProp("review tier to use (e.g. simple, single-opus, high-powered); default is the configured default"),
+			"background":  tools.BoolProp("run the reviewers as a background job: return a job_id immediately instead of blocking; verdicts arrive automatically or via wait. Reviewers are read-only so this is always allowed"),
 		}, "task_id"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			id, _ := tools.GetString(params, "task_id")
@@ -596,7 +692,30 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 				d.reviewers = append(d.reviewers, &reviewerHandle{name: spec.Name, loop: loop})
 			}
 			handles := d.reviewers
+			d.reviewJob = nil // cleared for a foreground run; set below for background
 			d.mu.Unlock()
+
+			if tools.GetBool(params, "background", false) {
+				if d.Jobs == nil {
+					return tools.ErrResult("spawn_reviewers: background subagents are not available in this session"), nil
+				}
+				// Reviewers are read-only, so a reviewer job is non-mutating and runs
+				// freely in parallel with anything (no single-writer guard).
+				job := d.Jobs.Start("agent", "reviewers "+id, d.Emitter.Actor())
+				d.mu.Lock()
+				d.reviewJob = job
+				d.mu.Unlock()
+				d.Emitter.Emit(event.JobStarted, map[string]any{"id": job.ID(), "kind": job.Kind(), "label": job.Label()})
+				go func() {
+					results := runReviewers(job.Context(), d, handles, id)
+					if job.Finish(jobs.Done, aggregateReviews(results)) {
+						emitAgentJobFinished(d.Emitter, job)
+					}
+				}()
+				return tools.OkResult(fmt.Sprintf("started background job %s: reviewers on task %s. "+
+					"Their verdicts arrive automatically when the review finishes, or call wait([%q]).", job.ID(), id, job.ID())), nil
+			}
+
 			results := runReviewers(ctx, d, handles, id)
 			return tools.OkResultView(aggregateReviews(results), aggregateReviewsView(results)), nil
 		},
@@ -613,9 +732,13 @@ func reReview(d *Deps) *gollama.Tool {
 			id, _ := tools.GetString(params, "task_id")
 			d.mu.Lock()
 			handles := d.reviewers
+			job := d.reviewJob
 			d.mu.Unlock()
 			if len(handles) == 0 {
 				return tools.ErrResult("re_review: no reviewers yet; call spawn_reviewers first"), nil
+			}
+			if job != nil && job.Status() == jobs.Running {
+				return tools.ErrResult("re_review: reviewers job %s is still running; wait for its verdicts first", job.ID()), nil
 			}
 			for _, h := range handles {
 				h.loop.Post(reReviewPrompt)

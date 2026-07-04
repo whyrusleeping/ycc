@@ -146,7 +146,17 @@ CONTEXT HINTS: propose_plan and spawn_implementer accept optional context_hints 
 advisory list of likely-relevant file paths, function/symbol refs, or small snippets,
 surfaced to the implementer as non-prescriptive starting points to cut redundant
 exploration. Keep them concise (no full-file dumps) and supply them only when they genuinely
-help; they are hints, not mandated steps.`
+help; they are hints, not mandated steps.
+
+BACKGROUND SUBAGENTS: spawn_implementer and spawn_reviewers accept background:true — they
+return a job_id immediately and the subagent runs as a background job. Run FOREGROUND (the
+default) when the result gates your next step (the usual case: you spawn the implementer, then
+review its diff). Use background ONLY when you have genuinely independent work to do meanwhile.
+Never poll a background job: its report is delivered to you automatically at a checkpoint, or
+you call wait([job_id]) when its result finally gates your next step (job_output only peeks at
+progress). One MUTATING job per tree: a background implementer is refused while another
+implementer or a mutating background bash job is live here — route truly parallel mutating work
+through a separate workstream (spec §14.1). Reviewers are read-only and run freely in parallel.`
 
 const implementerSystem = `You are the IMPLEMENTER: an autonomous coding agent. The coordinator assigns you one
 task with a plan; you make the change in the workspace and report back.

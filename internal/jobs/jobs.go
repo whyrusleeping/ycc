@@ -49,10 +49,11 @@ type Report struct {
 
 // Job is one unit of background work.
 type Job struct {
-	id    string
-	kind  string
-	label string
-	owner string // actor that started it (checkpoint drain filters on this)
+	id      string
+	kind    string
+	label   string
+	owner   string // actor that started it (checkpoint drain filters on this)
+	mutates bool   // writes to the worktree (single-writer guard, design §3.4)
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -78,6 +79,11 @@ func (j *Job) Label() string { return j.label }
 
 // Owner returns the actor that started the job.
 func (j *Job) Owner() string { return j.owner }
+
+// Mutates reports whether the job may write to the worktree. The single-writer
+// guard (design §3.4) refuses a background implementer while any mutating job is
+// live in the same tree; read-only jobs (reviewers) never set this.
+func (j *Job) Mutates() bool { return j.mutates }
 
 // Context returns the job's context: cancelled when the job is killed or the
 // session ends. Background processes should run under it.
@@ -224,19 +230,46 @@ func NewRegistry() *Registry {
 // Start allocates a new job id, registers a running job whose context derives
 // from the registry root, and returns it.
 func (r *Registry) Start(kind, label, owner string) *Job {
+	return r.start(kind, label, owner, false)
+}
+
+// StartMutating is like Start but marks the job as writing to the worktree, so
+// the single-writer guard (design §3.4) can refuse a second mutating job in the
+// same tree. Used for background implementers and (conservatively) unsandboxed
+// background bash.
+func (r *Registry) StartMutating(kind, label, owner string) *Job {
+	return r.start(kind, label, owner, true)
+}
+
+func (r *Registry) start(kind, label, owner string, mutates bool) *Job {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.seq++
 	id := fmt.Sprintf("job_%d", r.seq)
 	ctx, cancel := context.WithCancel(r.ctx)
 	j := &Job{
-		id: id, kind: kind, label: label, owner: owner,
+		id: id, kind: kind, label: label, owner: owner, mutates: mutates,
 		ctx: ctx, cancel: cancel, done: make(chan struct{}),
 		status: Running,
 	}
 	r.jobs[id] = j
 	r.order = append(r.order, id)
 	return j
+}
+
+// LiveMutating returns a currently-running mutating job, or nil if none. Used by
+// the single-writer guard to refuse a second mutating job in the same tree
+// (design §3.4). When several are somehow live it returns the earliest-started.
+func (r *Registry) LiveMutating() *Job {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, id := range r.order {
+		j := r.jobs[id]
+		if j.mutates && j.Status() == Running {
+			return j
+		}
+	}
+	return nil
 }
 
 // Get returns the job with id, or ok=false.
