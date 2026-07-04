@@ -183,9 +183,23 @@ type model struct {
 	evs        []*v1.Event
 	expanded   map[int]bool   // seq -> manually expanded
 	bodyCache  map[int]string // seq -> rendered multi-line body
-	eventStart []int          // content line index where each event begins
-	selected   int            // index into evs, or -1
-	follow     bool           // auto-scroll + auto-select latest
+	// blockCache holds each event's FULLY rendered block (header + body/card,
+	// keyed by event index) so rebuild() doesn't re-render the whole transcript
+	// on every keypress/event — for a long session that repeated per-row work
+	// (JSON re-parsing via dataField, diff/highlight rendering, lipgloss framing)
+	// is what made the log view slow. Rows rendered in their selected state are
+	// never stored (selection moves constantly), and entries are invalidated
+	// surgically when a later event changes an earlier row's rendering (see
+	// appendEvent) or wholesale when a global input changes (invalidateRender).
+	blockCache map[int]string
+	// hiddenCache memoizes hiddenRow(i) by event index: the fold scans behind it
+	// (ask_user plumbing pairing, echoed-idle detection) re-parse event JSON and
+	// can walk the whole log, so computing them for every row on every rebuild
+	// was O(N²). Invalidated together with blockCache.
+	hiddenCache map[int]bool
+	eventStart  []int // content line index where each event begins
+	selected    int   // index into evs, or -1
+	follow      bool  // auto-scroll + auto-select latest
 	// liveTails holds the in-progress streamed output per actor, keyed by actor,
 	// fed by transient turn_delta events (spec §5.2/§18.4, task 0114/0129). Values
 	// are SNAPSHOTS (the full accumulated turn text so far), so a new delta simply
@@ -446,7 +460,9 @@ func initialModel(ctx context.Context, client yccv1connect.SessionServiceClient,
 		state:      initState, prompt: prompt, input: input,
 		captureInput: captureInput,
 		events:       make(chan *v1.Event, 256), status: "starting",
-		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1, follow: prefs.Follow,
+		expanded: map[int]bool{}, bodyCache: map[int]string{},
+		blockCache: map[int]string{}, hiddenCache: map[int]bool{},
+		selected: -1, follow: prefs.Follow,
 		deliveredSeqs: map[int64]bool{},
 		liveTails:     map[string]string{},
 		prefs:         prefs, level: "judgement", menuLevel: "judgement",
@@ -1396,7 +1412,7 @@ func (m *model) startWizard(qs []wizQuestion, seq int64) {
 	// Invalidate the body cache so the active question_asked entry re-renders in
 	// its condensed form (the wizard below is now the focal point, not the inline
 	// log dump of every question).
-	m.bodyCache = map[int]string{}
+	m.invalidateRender()
 	m.loadWizQuestion()
 }
 
@@ -1436,7 +1452,7 @@ func (m *model) clearWizard() {
 	m.wizSeq = 0
 	// Invalidate the body cache so the (now answered) entry re-renders its full
 	// enumerated form once the wizard is dismissed.
-	m.bodyCache = map[int]string{}
+	m.invalidateRender()
 	m.relayout() // the wizard overview rows are gone; give them back to the viewport
 }
 
@@ -1993,7 +2009,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input.SetWidth(inputW)
 		m.captureInput.SetWidth(inputW)
 		m.makeRenderer()
-		m.bodyCache = map[int]string{} // re-render bodies at the new width
+		m.invalidateRender() // re-render bodies at the new width
 		m.rebuild()
 		m.relayout()
 		m.refreshBacklogDetailVP()
@@ -2181,7 +2197,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.historyTransID = msg.id
 		m.evs = msg.events
 		m.expanded = map[int]bool{}
-		m.bodyCache = map[int]string{}
+		m.invalidateRender()
 		m.deliveredSeqs = deliveredSeqSet(msg.events)
 		m.liveTails = map[string]string{}
 		m.eventStart = nil
@@ -2211,7 +2227,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// session renders cleanly from its replayed log (spec §18.6).
 		m.evs = nil
 		m.expanded = map[int]bool{}
-		m.bodyCache = map[int]string{}
+		m.invalidateRender()
 		m.deliveredSeqs = map[int64]bool{}
 		m.liveTails = map[string]string{}
 		m.eventStart = nil
@@ -2753,7 +2769,7 @@ func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.historyTransID = ""
 			m.evs = nil
 			m.expanded = map[int]bool{}
-			m.bodyCache = map[int]string{}
+			m.invalidateRender()
 			m.deliveredSeqs = map[int64]bool{}
 			m.eventStart = nil
 			m.selected = -1
@@ -3229,7 +3245,7 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// picker echoed the prompt; the plain textarea doesn't, so
 					// restore the full question in the transcript.
 					m.picking = false
-					m.bodyCache = map[int]string{}
+					m.invalidateRender()
 					m.relayout()
 					m.rebuild()
 					return m, m.input.Focus()
@@ -4835,6 +4851,8 @@ func (m model) renderTranscript(events []*v1.Event) (content string, lines []str
 	scratch.evs = events
 	scratch.expanded = map[int]bool{}
 	scratch.bodyCache = map[int]string{}
+	scratch.blockCache = map[int]string{}
+	scratch.hiddenCache = map[int]bool{}
 	scratch.deliveredSeqs = deliveredSeqSet(events)
 	scratch.eventStart = nil
 	scratch.selected = -1
@@ -5095,7 +5113,7 @@ func (m model) overlayAdjust(d int) (tea.Model, tea.Cmd) {
 		applyTheme(themeByName(m.prefs.Theme))
 		m.restyleInputs()
 		m.makeRenderer()
-		m.bodyCache = map[int]string{}
+		m.invalidateRender()
 		m.rebuild()
 		return m, nil
 	case ovFollow:
@@ -5196,7 +5214,7 @@ func (m model) overlayActivate() (tea.Model, tea.Cmd) {
 func (m *model) toggleAutoExpand() {
 	m.prefs.AutoExpandLogs = !m.prefs.AutoExpandLogs
 	clientconfig.Save(m.prefs)
-	m.bodyCache = map[int]string{}
+	m.invalidateRender()
 	m.rebuild()
 }
 
@@ -6438,6 +6456,7 @@ func (m *model) toggle(i int) {
 	seq := int(m.evs[i].Seq)
 	cur := m.eventExpanded(seq, m.evs[i].Type)
 	m.expanded[seq] = !cur
+	m.invalidateRow(i) // expansion changes this row's rendered block
 	m.rebuild()
 	m.ensureVisible()
 }
@@ -6476,6 +6495,17 @@ func (m *model) applyTransient(ev *v1.Event) bool {
 
 func (m *model) appendEvent(ev *v1.Event) {
 	m.evs = append(m.evs, ev)
+	n := len(m.evs) - 1
+	// A new event can change how the rows just before it render: the previous
+	// rendered row's └─/├─ sub-run connector, or a tool_call's collapsed summary
+	// once this tool_result folds into it (in-flight ○ becomes ✓/✗ + response).
+	// Drop that row's cached block so only IT re-renders, not the whole log.
+	for j := n - 1; j >= 0; j-- {
+		if !m.hiddenRow(j) {
+			m.invalidateRow(j)
+			break
+		}
+	}
 	if ev.Type == "user_input_delivered" {
 		// Mark the queued echo this delivery pairs with as delivered so it stops
 		// rendering "(queued)" once it actually entered the conversation (§18.7).
@@ -6484,6 +6514,14 @@ func (m *model) appendEvent(ev *v1.Event) {
 				m.deliveredSeqs = map[int64]bool{}
 			}
 			m.deliveredSeqs[seq] = true
+			// The queued echo row (possibly far back) now drops its "(queued)"
+			// tag — invalidate its cached block so it re-renders.
+			for j := n - 1; j >= 0; j-- {
+				if m.evs[j].Seq == seq {
+					m.invalidateRow(j)
+					break
+				}
+			}
 		}
 	}
 	switch ev.Type {
@@ -6509,6 +6547,23 @@ func (m *model) appendEvent(ev *v1.Event) {
 			m.usageByModel[name] = cur
 		}
 	case "question_asked":
+		// This question is now the canonical row for its ask_user exchange: the
+		// tool_call that produced it (rendered while in flight, possibly with
+		// other-actor rows in between) folds away. Drop its cached block/fold
+		// state — and its rendered neighbors', whose run boundaries shift.
+		for j := len(m.evs) - 2; j >= 0; j-- {
+			pv := m.evs[j]
+			if pv.Actor != ev.Actor {
+				continue
+			}
+			if pv.Type == "tool_call" && dataField(pv, "name") == "ask_user" {
+				m.invalidateRow(j)
+				m.invalidateNeighbors(j)
+			}
+			if pv.Type == "tool_call" || pv.Type == "tool_result" || pv.Type == "question_asked" {
+				break
+			}
+		}
 		if qs := dataQuestions(ev); len(qs) > 0 {
 			// Multi-question form: start the questionnaire wizard.
 			m.startWizard(qs, ev.Seq)
@@ -6842,8 +6897,24 @@ func (m *model) isEchoedIdle(i int) bool {
 // preceding tool_call, an empty (tool-calls-only) model_turn, a session_idle
 // whose report just echoes the final model_turn, ask_user tool plumbing (the
 // question_asked row is the canonical rendering of the exchange), or a
-// question_answered folded into its question_asked row.
+// question_answered folded into its question_asked row. The result is memoized
+// per index (see hiddenCache): the pairing scans behind it re-parse event JSON
+// and can walk the log, so recomputing them for every row on every rebuild made
+// long sessions quadratic. Entries are invalidated when a later event can flip
+// an earlier row's fold (appendEvent) or wholesale via invalidateRender.
 func (m *model) hiddenRow(i int) bool {
+	if v, ok := m.hiddenCache[i]; ok {
+		return v
+	}
+	h := m.computeHiddenRow(i)
+	if m.hiddenCache == nil {
+		m.hiddenCache = map[int]bool{}
+	}
+	m.hiddenCache[i] = h
+	return h
+}
+
+func (m *model) computeHiddenRow(i int) bool {
 	if i >= 0 && i < len(m.evs) && m.evs[i].Type == "user_input_delivered" {
 		// The delivery marker is a bookkeeping event, not a message: its text is
 		// already shown by the (now-upgraded) queued user_input row, so it renders
@@ -6899,11 +6970,51 @@ func (m *model) makeRenderer() {
 	}
 }
 
+// invalidateRender drops every render cache: per-event bodies, whole rendered
+// blocks, and memoized hidden-row folds. Called whenever a global rendering
+// input changes (width, theme, auto-expand pref, picker/wizard state, or the
+// event log being swapped out) so every row re-renders under the new inputs.
+func (m *model) invalidateRender() {
+	m.bodyCache = map[int]string{}
+	m.blockCache = map[int]string{}
+	m.hiddenCache = map[int]bool{}
+}
+
+// invalidateRow drops the cached block + hidden-fold state for event index i,
+// forcing that single row to re-render on the next rebuild.
+func (m *model) invalidateRow(i int) {
+	delete(m.blockCache, i)
+	delete(m.hiddenCache, i)
+}
+
+// invalidateNeighbors drops the cached blocks of the rendered rows immediately
+// before and after index i. Used when row i's visibility flips (e.g. an
+// ask_user tool_call folding away once its question_asked arrives): the
+// neighbors' run-boundary rendering (actor name spelled vs glyph-only,
+// └─ vs ├─ connectors) depends on which rows around them are visible.
+func (m *model) invalidateNeighbors(i int) {
+	for j := i - 1; j >= 0; j-- {
+		if !m.hiddenRow(j) {
+			m.invalidateRow(j)
+			break
+		}
+	}
+	for j := i + 1; j < len(m.evs); j++ {
+		if !m.hiddenRow(j) {
+			m.invalidateRow(j)
+			break
+		}
+	}
+}
+
 // rebuild re-renders the whole event stream into the viewport, tracking the line
 // offset of each event for click mapping.
 func (m *model) rebuild() {
 	if !m.ready {
 		return
+	}
+	if m.blockCache == nil {
+		m.blockCache = map[int]string{}
 	}
 	var b strings.Builder
 	m.eventStart = m.eventStart[:0]
@@ -6919,7 +7030,18 @@ func (m *model) rebuild() {
 			}
 			continue
 		}
-		block := m.renderBlock(i, ev)
+		// A row rendered in its selected state (either directly or because the
+		// tool_result merged into it is selected) is drawn fresh and never cached:
+		// selection moves constantly, and skipping the store means the previously
+		// selected row simply re-renders once after the cursor leaves it.
+		sel := i == m.selected || (i+1 == m.selected && m.mergedResultIdx(i) == i+1)
+		block, ok := m.blockCache[i]
+		if !ok || sel {
+			block = m.renderBlock(i, ev)
+			if !sel {
+				m.blockCache[i] = block
+			}
+		}
 		b.WriteString(block)
 		b.WriteByte('\n')
 		line += strings.Count(block, "\n") + 1

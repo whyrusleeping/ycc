@@ -1278,6 +1278,32 @@ when the `YCC_TUI_SNAPSHOT_DIR` env var is set, so ordinary `go test ./...` neve
 tree; with the var set, a maintainer or the agent (via the multimodal `Read` tool, §8) can
 open the PNG to visually inspect the rendered screen.
 
+### 18.9 Transcript rendering is incremental (render caches)
+
+The session view redraws by `rebuild()`, which concatenates every event's rendered block
+into the viewport. Rendering a block is expensive (JSON re-parsing of event payloads, diff
+generation, syntax highlighting, glamour markdown, lipgloss framing) and the fold logic
+(`hiddenRow`: merged tool results, ask_user plumbing, echoed idles) does backward/forward
+scans — so naively re-rendering every row on every keypress/event is O(N²)-ish and made
+long sessions visibly slow. The invariant: **rebuild must be O(changed rows), not O(all
+rows)**. Three caches enforce it, all owned by the model:
+
+- `bodyCache` (seq → rendered body) — expanded prose/markdown bodies.
+- `blockCache` (index → fully rendered block) — the whole row as concatenated by
+  `rebuild()`. Rows rendered in their *selected* state are never stored, so the cursor can
+  move without invalidation.
+- `hiddenCache` (index → bool) — memoized `hiddenRow` fold decisions.
+
+Invalidation is surgical: appending an event invalidates only the rows whose rendering can
+depend on it (the previous visible row's └─/├─ connector and in-flight tool glyph; the
+ask_user `tool_call` that folds away when its `question_asked` arrives, plus that row's
+rendered neighbors; the queued `user_input` echo when its `user_input_delivered` marker
+lands). Toggling a row's expansion invalidates that row. Anything that changes a global
+rendering input — width, theme, auto-expand pref, picker/wizard state, swapping the event
+log — clears all three via `invalidateRender()`. New code that makes an *earlier* row's
+rendering depend on a *later* event must add a matching invalidation in `appendEvent`.
+`BenchmarkRebuildWarm`/`Cold` (internal/tui) track the win (~ms vs ~seconds at 1500 events).
+
 ## 19. Onboarding flows
 
 ycc has two onboarding moments. They are independent and triggered by different signals:
