@@ -391,6 +391,12 @@ the coordinator's perspective (it awaits a structured report) but reviewers fan 
 **concurrently** (goroutines + a barrier). Reviewer contexts are *retained* so a revise
 round can reuse them (`re-review` sends the new diff into the existing reviewer history).
 
+**Async jobs (planned).** Spawns and long shell commands will also be runnable in the
+background under a unified **job** abstraction (`background: true` on spawn tools /
+`run_in_background` on Bash → a job id; `wait`/`job_output`/`kill_job`; completed-job
+reports pushed into the conversation at loop checkpoints so the model never polls).
+Design: `docs/design/async-jobs.md`; backlog 0131/0132.
+
 ### 7.4 Reasoning (extended/adaptive thinking + effort)
 
 Every agent's request carries reasoning settings (Anthropic extended/adaptive
@@ -404,8 +410,6 @@ summaries. The provider's reasoning blocks round-trip automatically because the 
 appends the returned assistant `Message` (which carries `ThinkingBlocks`) to history. When a
 turn returns a reasoning summary, the loop emits a dedicated `thinking` event (before the
 `model_turn`) for the UI (§18). Non-Anthropic backends ignore these fields.
-
-## 8. Tools
 
 ## 8. Tools
 
@@ -576,8 +580,6 @@ appropriate dependencies. It is the mechanism, not an invitation to scope-creep.
 
 ## 11. Interaction levels
 
-## 11. Interaction levels
-
 One policy value, enforced at the `ask_user` gate and baked into the coordinator prompt:
 
 - **`interactive`** — ask freely; confirm the plan, surface meaningful choices.
@@ -679,8 +681,10 @@ Notable message shapes for the settings + structured-question work:
   pause to steer*, distinct from `Stop` (terminate, task 0009).
 
 `Subscribe` takes a `from_seq` so a reconnecting client replays from an offset. Auth: a
-bearer token (config/env), TLS for non-loopback. The TUI talks to the loopback daemon;
-remote clients dial in over TLS.
+bearer token (config/env) — **required** for any non-loopback bind (the daemon refuses to
+start without one). The TUI talks to the loopback daemon; remote clients dial in over a
+private network (Tailscale/VPN), with TLS optional (`TLSCert`/`TLSKey`) for direct
+exposure (§14).
 
 (Mode switching is currently **agent-driven** via the `switch_to_work` control tool +
 `StartSession` from the home menu rather than a client `ChooseMode` RPC; revisit if
@@ -819,12 +823,19 @@ or a `reviews.default` naming no tier are rejected); the built-ins are always va
 - A persistent daemon's **project registry** (name → path) is durable state in the
   daemon's state dir (`~/.local/state/ycc/projects.json`), separate from each project's
   per-workspace `.ycc/`. One-shot daemons keep no registry (one implicit project = cwd).
-- Remote sync (later milestone): the daemon can push/pull session logs to a remote
-  endpoint so another machine's daemon — or a phone app — can observe and prod. Because
-  the log is append-only and seq-numbered, sync is "ship events after seq N" + conflict
-  is impossible for a single-writer session (the workspace daemon is the only writer of
-  workspace mutations; remote clients only append *input* events, which the workspace
-  daemon serializes).
+- **Remote access (M5) — direct dial, no log replication.** *Decided:* the earlier
+  daemon-to-daemon push/pull replication idea is **dropped**. Remote observation and
+  prodding happen by dialing the workspace daemon's Connect endpoint directly — another
+  machine runs `ycc -addr <url>`, and a phone app speaks the same Connect HTTP/JSON
+  protocol (via connect-swift / connect-kotlin / connect-es; it is also curl-able). No
+  separate REST/SSE facade. `Subscribe(from_seq)` already *is* "ship events after seq N",
+  and the single-writer invariant holds trivially: remote clients only issue RPCs
+  (input/commands), which the workspace daemon serializes; nothing else ever writes the
+  log. Deployment model: a private network (Tailscale/VPN) with the **bearer token
+  required on any non-loopback bind** (the daemon refuses to bind otherwise); TLS is
+  optional (`TLSCert`/`TLSKey` flags exist) since the tailnet provides transport
+  encryption — the daemon logs a cleartext warning when bound non-loopback without TLS.
+  The phone-facing surface is the **documented** HTTP/JSON endpoint set (see task 0130).
 
 ### 14.1 Parallel workstreams (git worktrees)
 
@@ -894,8 +905,6 @@ ycc/
 
 ## 16. Build plan / milestones
 
-## 16. Build plan / milestones
-
 - **M0 — Engine spike.** gollama `Turn` dispatch + the agent loop + worker tools
   (read/write/edit/bash/grep/glob). One agent does a real task end-to-end. Events to
   stdout. *Proves the atom.* — **done**
@@ -908,7 +917,10 @@ ycc/
   across Claude/GPT/GLM/local, `send_to_implementer`/`re_review`, the three autonomy
   gates. — **done**
 - **M4 — Home menu + `spec`/`backlog`/`feature`/`bug` modes + TUI.** — **done**
-- **M5 — Remote sync** (push/pull session logs; phone-facing HTTP/JSON surface).
+- **M5 — Remote access.** Direct-dial remote clients over a private network
+  (Tailscale/VPN): bearer token required on non-loopback binds, TLS optional; verified
+  end-to-end remote Subscribe/prod path + a documented Connect HTTP/JSON surface for
+  phone clients. Daemon-to-daemon log sync/replication is **dropped** (§14).
 - **M6 — Interactive UX polish.** Multiline `textarea` input (Enter sends, Shift+Enter
   newline), the **settings overlay** (esc; mid-session interaction level + per-role
   model configuration + UI prefs + intentional "back to home menu"), and
@@ -935,9 +947,6 @@ ycc/
 - **TUI framework:** Bubble Tea is the obvious Go choice for the client.
 - **Session GC / retention** of `.ycc/sessions`.
 - **Secrets:** keep API keys in env only, or a daemon-side keyring?
-```
-
-## 18. Client UI (TUI)
 
 ## 18. Client UI (TUI)
 

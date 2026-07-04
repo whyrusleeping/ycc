@@ -20,6 +20,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/git"
+	"github.com/whyrusleeping/ycc/internal/jobs"
 	"github.com/whyrusleeping/ycc/internal/sandbox"
 	"github.com/whyrusleeping/ycc/internal/tools"
 )
@@ -103,6 +104,11 @@ type Deps struct {
 	// passed through to tool workspaces so the Read tool can access them (task
 	// 0068). Writes stay confined to the workspace.
 	ReadRoots []string
+
+	// Jobs is the session-scoped background-job registry (docs/design/async-jobs.md).
+	// When set it enables background bash (Bash run_in_background) and the
+	// job_output/wait/kill_job tools; the session kills all jobs on end.
+	Jobs *jobs.Registry
 
 	mu        sync.Mutex
 	impl      *engine.Loop
@@ -429,7 +435,12 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 				d.Docs.AppendWorkLog(id, "context hints: "+oneLine(strings.Join(hints, "; ")))
 			}
 			reg := tools.New()
-			reg.Add(tools.Worker(&tools.Workspace{Root: d.Workspace, ReadRoots: tools.ReadRoots(d.ReadRoots)})...)
+			reg.Add(tools.Worker(&tools.Workspace{
+				Root:      d.Workspace,
+				ReadRoots: tools.ReadRoots(d.ReadRoots),
+				Jobs:      d.Jobs,
+				Emitter:   d.Emitter.With("implementer"),
+			})...)
 			impl := d.implementer()
 			loop := d.newLoop(impl, sys(implementerSystem, "", d.Workspace), reg, "implementer")
 			// The implementer needs more output headroom than the shared cap: a

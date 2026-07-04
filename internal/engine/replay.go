@@ -98,6 +98,14 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 		}
 	}
 
+	// lostJobs tracks background jobs whose start was recorded but whose finish
+	// was not (docs/design/async-jobs.md §4): jobs do not survive a daemon
+	// restart, so on reopen we synthesize a "(job lost: daemon restarted)" note
+	// to keep histories valid. Both a recorded job_finished and a job_notified
+	// (its report already injected) clear the entry.
+	lostJobs := map[string]string{} // id -> label
+	var lostOrder []string
+
 	for _, ev := range events {
 		switch ev.Type {
 		case event.UserInput:
@@ -204,6 +212,28 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			popPending(id)
 			answered[id] = true
 			history = append(history, gollama.Message{Role: "tool", ToolCallID: id, Content: str(ev.Data, "result")})
+		case event.JobStarted:
+			id := str(ev.Data, "id")
+			if id == "" {
+				continue
+			}
+			if _, seen := lostJobs[id]; !seen {
+				lostOrder = append(lostOrder, id)
+			}
+			lostJobs[id] = str(ev.Data, "label")
+		case event.JobFinished:
+			// The job reached a terminal state before the log ended, so it is not
+			// lost. (Its report was delivered either via a wait tool_result or a
+			// job_notified event, both already reflected in the history.)
+			delete(lostJobs, str(ev.Data, "id"))
+		case event.JobNotified:
+			// A finished-job final report injected at a Steer checkpoint as a
+			// user-role message (docs/design/async-jobs.md §3.3): append it exactly
+			// where the live loop Posted it and reset turn state like a user input.
+			delete(lostJobs, str(ev.Data, "id"))
+			history = append(history, gollama.Message{Role: "user", Content: str(ev.Data, "text")})
+			assistantIdx = -1
+			lastTurnTruncated = false
 		}
 	}
 
@@ -219,6 +249,34 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 					Content:    "(no result recorded; session was reopened)",
 				})
 				answered[call.ID] = true
+			}
+		}
+	}
+
+	// Synthesize a lost-job note for any background job that started but never
+	// finished before the log ended (docs/design/async-jobs.md §4): jobs do not
+	// survive a daemon restart. Delivered as a user-role message so the model
+	// knows those jobs are gone. Merge into a trailing user message when present
+	// so we never place two consecutive user turns.
+	if len(lostOrder) > 0 {
+		var parts []string
+		for _, id := range lostOrder {
+			if _, ok := lostJobs[id]; !ok {
+				continue
+			}
+			label := lostJobs[id]
+			note := fmt.Sprintf("[job %s lost: daemon restarted]", id)
+			if strings.TrimSpace(label) != "" {
+				note += " " + label
+			}
+			parts = append(parts, note)
+		}
+		if len(parts) > 0 {
+			text := strings.Join(parts, "\n")
+			if n := len(history); n > 0 && history[n-1].Role == "user" {
+				history[n-1].Content += "\n\n" + text
+			} else {
+				history = append(history, gollama.Message{Role: "user", Content: text})
 			}
 		}
 	}

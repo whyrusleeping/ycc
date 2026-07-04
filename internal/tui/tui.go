@@ -9081,6 +9081,8 @@ func typeGlyph(t string) string {
 		return "↻"
 	case "subagent_spawned", "subagent_finished":
 		return "◇"
+	case "job_started", "job_finished", "job_notified":
+		return "◈"
 	case "question_asked":
 		return "?"
 	case "question_answered":
@@ -9175,6 +9177,12 @@ func detailLine(ev *v1.Event) string {
 		return oneLine(dataField(ev, "answer"), 100)
 	case "subagent_spawned", "subagent_finished":
 		return strings.TrimSpace(dataField(ev, "role") + " " + dataField(ev, "model"))
+	case "job_started":
+		return strings.TrimSpace(dataField(ev, "id") + " " + oneLine(dataField(ev, "label"), 100) + " · running")
+	case "job_finished":
+		return strings.TrimSpace(dataField(ev, "id") + " " + oneLine(dataField(ev, "label"), 80) + " · " + dataField(ev, "status"))
+	case "job_notified":
+		return oneLine(dataField(ev, "text"), 120)
 	case "review_submitted":
 		verdict := dataField(ev, "verdict")
 		return fmt.Sprintf("%s: %s — %s", dataField(ev, "model"), verdictStyle(verdict).Render(verdict), oneLine(dataField(ev, "summary"), 80))

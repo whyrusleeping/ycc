@@ -45,7 +45,17 @@ const (
 	Narration        Type = "log" // free-text narration line for the UI
 	SubagentSpawned  Type = "subagent_spawned"
 	SubagentFinished Type = "subagent_finished"
-	PlanProposed     Type = "plan_proposed"
+	// Background jobs (docs/design/async-jobs.md §4). JobStarted marks a job
+	// entering the registry (data: { id, kind, label }); JobFinished marks it
+	// reaching a terminal state (data: { id, kind, label, status, tail }). Both
+	// are tagged with the owning actor. JobNotified records a finished-job final
+	// report injected into the conversation at a Steer checkpoint as a user-role
+	// message (data: { id, kind, label, status, text }); recording it — like a
+	// steer correction — lets reopen replay the identical history.
+	JobStarted   Type = "job_started"
+	JobFinished  Type = "job_finished"
+	JobNotified  Type = "job_notified"
+	PlanProposed Type = "plan_proposed"
 	// ReviewTierSelected records which review tier the coordinator chose for a
 	// change (spec §13), so tier selection is auditable in the work log/events.
 	ReviewTierSelected Type = "review_tier_selected"
@@ -177,6 +187,9 @@ func NewEmitter(rec Recorder, actor string) *Emitter {
 func (e *Emitter) With(actor string) *Emitter {
 	return &Emitter{rec: e.rec, actor: actor}
 }
+
+// Actor returns the emitter's default actor label.
+func (e *Emitter) Actor() string { return e.actor }
 
 // Emit records an event with the emitter's default actor.
 func (e *Emitter) Emit(t Type, data map[string]any) Event {

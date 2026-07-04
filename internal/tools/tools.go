@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"github.com/whyrusleeping/gollama"
+	"github.com/whyrusleeping/ycc/internal/event"
+	"github.com/whyrusleeping/ycc/internal/jobs"
 )
 
 // Control is an out-of-band signal a control tool returns to the agent loop via
@@ -254,6 +256,15 @@ type Workspace struct {
 	// successful Write or Edit. Callers use it to surface document updates
 	// (e.g. an edit to spec.md) as events; it must not block.
 	OnWrite func(path string)
+	// Jobs, when set, enables background jobs (docs/design/async-jobs.md): the
+	// Bash tool accepts run_in_background, and the job_output/wait/kill_job tools
+	// are added to the Editing set. Nil ⇒ background jobs are unavailable and
+	// run_in_background is rejected with a clear error.
+	Jobs *jobs.Registry
+	// Emitter is the owning agent's emitter, used to emit job_started/job_finished
+	// events tagged with that actor (which also owns the job for checkpoint drain).
+	// Required alongside Jobs for background bash.
+	Emitter *event.Emitter
 }
 
 // resolve cleans a user-supplied path and confines it to the workspace, for

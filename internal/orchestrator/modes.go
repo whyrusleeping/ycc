@@ -66,6 +66,8 @@ func BuildMode(mode string, d *Deps, level string) (*tools.Registry, string) {
 	ws := &tools.Workspace{
 		Root:      d.Workspace,
 		ReadRoots: tools.ReadRoots(d.ReadRoots),
+		Jobs:      d.Jobs,
+		Emitter:   d.Emitter,
 		OnWrite: func(path string) {
 			if d.Docs.IsDoc(path) {
 				data := map[string]any{"doc": "spec"}

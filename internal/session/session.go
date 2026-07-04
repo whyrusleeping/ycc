@@ -23,8 +23,10 @@ import (
 	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/git"
+	"github.com/whyrusleeping/ycc/internal/jobs"
 	"github.com/whyrusleeping/ycc/internal/orchestrator"
 	"github.com/whyrusleeping/ycc/internal/project"
+	"github.com/whyrusleeping/ycc/internal/tools"
 	"github.com/whyrusleeping/ycc/internal/usage"
 	"github.com/whyrusleeping/ycc/internal/workstream"
 )
@@ -302,16 +304,18 @@ func (s *Session) PendingQuestion() bool {
 func (s *Session) Checkpoint(ctx context.Context) ([]string, error) {
 	s.steerMu.Lock()
 	if !s.pauseReq {
-		// Steer-by-default fast path: deliver any queued corrections now without a
-		// pause, or a cheap no-op when there are none.
-		if len(s.corrections) == 0 {
-			s.steerMu.Unlock()
-			return nil, nil
-		}
+		// Steer-by-default fast path: deliver any queued corrections and any
+		// finished-job notifications now without a pause, or a cheap no-op when
+		// there are none of either.
 		corr := s.corrections
 		s.corrections = nil
 		s.steerMu.Unlock()
-		return s.deliverCorrections(corr), nil
+		msgs := s.deliverCorrections(corr)
+		msgs = append(msgs, s.drainJobNotes()...)
+		if len(msgs) == 0 {
+			return nil, nil
+		}
+		return msgs, nil
 	}
 	s.pauseReq = false
 	s.paused = true
@@ -345,7 +349,42 @@ func (s *Session) Checkpoint(ctx context.Context) ([]string, error) {
 
 	s.setStatus(event.StatusRunning)
 	s.emitter.Emit(event.Resumed, map[string]any{})
-	return s.deliverCorrections(corr), nil
+	msgs := s.deliverCorrections(corr)
+	msgs = append(msgs, s.drainJobNotes()...)
+	return msgs, nil
+}
+
+// drainJobNotes delivers the final reports of finished, unconsumed coordinator
+// jobs as user-role notification messages (docs/design/async-jobs.md §3.3). Each
+// is recorded as a user-actor job_notified event — the same rule as a steer
+// correction — so reopen replays the identical history. Returns the texts for
+// the engine to Post before the next turn. Nil-safe: no registry ⇒ no notes.
+func (s *Session) drainJobNotes() []string {
+	if s.deps == nil || s.deps.Jobs == nil {
+		return nil
+	}
+	reports := s.deps.Jobs.DrainFinished("coordinator")
+	if len(reports) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(reports))
+	for _, r := range reports {
+		text := tools.FormatJobReport(r)
+		s.emitter.EmitAs("user", event.JobNotified, map[string]any{
+			"id": r.ID, "kind": r.Kind, "label": r.Label,
+			"status": string(r.Status), "text": text,
+		})
+		out = append(out, text)
+	}
+	return out
+}
+
+// killJobs terminates every background job for this session (session end). It is
+// nil-safe so minimally-constructed sessions (tests) can call it.
+func (s *Session) killJobs() {
+	if s.deps != nil && s.deps.Jobs != nil {
+		s.deps.Jobs.KillAll()
+	}
 }
 
 // deliverCorrections emits a user_input_delivered event for each queued
@@ -687,6 +726,9 @@ func (s *Session) resolveReviewTier(requested string) orchestrator.ReviewPlan {
 }
 
 func (s *Session) run() {
+	// Kill every background job when the coordinator loop's lifetime ends, so a
+	// session leaves no orphan processes (docs/design/async-jobs.md §3.1).
+	defer s.killJobs()
 	if s.resumed {
 		// Reopened session ("resume = replay", spec §4.5/§18.6): the loop already
 		// carries a history reconstructed from the existing log, so do NOT emit a
@@ -1231,6 +1273,7 @@ func (m *Manager) newSession(absWS, id, mode, level, prompt string, log *event.L
 		MaxTok:      m.reg.MaxTokens(),
 		MaxTurns:    m.reg.MaxTurns(),
 		ReadRoots:   m.reg.ReadRoots(),
+		Jobs:        jobs.NewRegistry(),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

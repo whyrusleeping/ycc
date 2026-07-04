@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/whyrusleeping/gollama"
+	"github.com/whyrusleeping/ycc/internal/event"
+	"github.com/whyrusleeping/ycc/internal/jobs"
 	"github.com/whyrusleeping/ycc/internal/sandbox"
 )
 
@@ -44,9 +46,15 @@ var imageMediaTypes = map[string]string{
 
 // Editing returns the file + shell tools (Read, Write, Edit, Bash) without a
 // control/finish tool — for open-ended modes (chat) where the agent yields
-// naturally rather than declaring the task complete.
+// naturally rather than declaring the task complete. When ws.Jobs is set, the
+// background-job tools (job_output, wait, kill_job) are included too and Bash
+// gains run_in_background (docs/design/async-jobs.md).
 func Editing(ws *Workspace) []*gollama.Tool {
-	return append([]*gollama.Tool{readFile(ws), writeFile(ws), editFile(ws), bash(ws)}, Web()...)
+	ts := append([]*gollama.Tool{readFile(ws), writeFile(ws), editFile(ws), bash(ws)}, Web()...)
+	if ws.Jobs != nil {
+		ts = append(ts, JobTools(ws)...)
+	}
+	return ts
 }
 
 // Worker returns the standard worker tool set scoped to ws (spec §8): the editing
@@ -304,16 +312,38 @@ func editFile(ws *Workspace) *gollama.Tool {
 }
 
 func bash(ws *Workspace) *gollama.Tool {
+	desc := "Run a shell command and return its combined stdout+stderr (truncated if large). Each call runs " +
+		"in a fresh shell already rooted at the workspace, and shell state (including the working directory) does " +
+		"NOT persist between calls — so there is never a need to `cd` into the workspace root; just run " +
+		"the command directly (write `rg 'pattern'`, not `cd <workspace> && rg 'pattern'`). Use this to explore " +
+		"and inspect: search with ripgrep (`rg 'pattern'`, `rg --files -g '*.go'`), list with `ls`, and run " +
+		"builds/tests. Prefer the Read tool over `cat` for viewing files. Times out after 2 minutes."
+	params := map[string]any{"command": strProp("shell command to execute via 'sh -c'")}
+	if ws.Jobs != nil {
+		// Phase 1: only the coordinator/pm/chat loop drains finished-job
+		// notifications at its session Checkpoint, so its background reports are
+		// PUSHED automatically. The implementer's loop has no drain hook, so its
+		// background jobs are wait-only — the report must be fetched with wait
+		// (docs/design/async-jobs.md §3.3). Word the guidance accordingly.
+		if bgAutoDelivered(ws) {
+			desc += " For a long-running command (a build, full test suite, or a watcher), pass run_in_background: true " +
+				"to start it as a background job and get a job_id back immediately instead of blocking (no 2-minute cap). " +
+				"Do NOT poll a background job: its report is delivered to you automatically when it finishes, or call " +
+				"wait(job_ids) when its result gates your next step. Use job_output to peek at partial output, kill_job to stop it."
+			params["run_in_background"] = BoolProp("run the command as a background job and return a job_id immediately (for builds/tests/watchers); do not poll — the report arrives automatically or via wait")
+		} else {
+			desc += " For a long-running command (a build, full test suite, or a watcher), pass run_in_background: true " +
+				"to start it as a background job and get a job_id back immediately instead of blocking (no 2-minute cap). " +
+				"Do NOT poll a background job: call wait(job_ids) to retrieve its report when its result gates your next " +
+				"step. Use job_output to peek at partial output, kill_job to stop it."
+			params["run_in_background"] = BoolProp("run the command as a background job and return a job_id immediately (for builds/tests/watchers); do not poll — retrieve its report with wait(job_ids)")
+		}
+	}
 	return &gollama.Tool{
-		Name: "Bash",
-		Description: "Run a shell command and return its combined stdout+stderr (truncated if large). Each call runs " +
-			"in a fresh shell already rooted at the workspace, and shell state (including the working directory) does " +
-			"NOT persist between calls — so there is never a need to `cd` into the workspace root; just run " +
-			"the command directly (write `rg 'pattern'`, not `cd <workspace> && rg 'pattern'`). Use this to explore " +
-			"and inspect: search with ripgrep (`rg 'pattern'`, `rg --files -g '*.go'`), list with `ls`, and run " +
-			"builds/tests. Prefer the Read tool over `cat` for viewing files. Times out after 2 minutes.",
-		Params: obj(map[string]any{"command": strProp("shell command to execute via 'sh -c'")}, "command"),
-		Call:   bashCall(ws, false),
+		Name:        "Bash",
+		Description: desc,
+		Params:      obj(params, "command"),
+		Call:        bashCall(ws, false),
 	}
 }
 
@@ -351,6 +381,22 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 		cmdStr, ok := getString(params, "command")
 		if !ok {
 			return errResult("bash: missing 'command'"), nil
+		}
+		// Background jobs (docs/design/async-jobs.md): start the command as a job
+		// and return its id immediately. Not offered to the sandboxed reviewer Bash.
+		if !sandboxed && getBool(params, "run_in_background", false) {
+			if ws.Jobs == nil || ws.Emitter == nil {
+				return errResult("bash: run_in_background is not available in this session"), nil
+			}
+			job := startBackgroundBash(ws, cmdStr)
+			if bgAutoDelivered(ws) {
+				return okResult(fmt.Sprintf("started background job %s: %s\nIt runs in the background — do NOT poll it. "+
+					"Its report arrives automatically when it finishes, or call wait([%q]) when you need the result; "+
+					"use job_output(%q) to peek at partial output.", job.ID(), cmdStr, job.ID(), job.ID())), nil
+			}
+			return okResult(fmt.Sprintf("started background job %s: %s\nIt runs in the background — do NOT poll it. "+
+				"Call wait([%q]) to retrieve its report when you need the result; "+
+				"use job_output(%q) to peek at partial output.", job.ID(), cmdStr, job.ID(), job.ID())), nil
 		}
 		cctx, cancel := context.WithTimeout(ctx, bashTimeout)
 		defer cancel()
@@ -391,6 +437,83 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 		}
 		return okResult(result), nil
 	}
+}
+
+// bgAutoDelivered reports whether a background job started under ws will have its
+// final report PUSHED automatically at a session checkpoint. In phase 1 only the
+// coordinator loop (which owns the session Steer/Checkpoint that drains finished
+// jobs) gets automatic delivery; the implementer's loop has no drain hook, so its
+// background jobs are wait-only (docs/design/async-jobs.md §3.3). Nil emitter ⇒
+// treat as not auto-delivered (safe default: tell the caller to wait).
+func bgAutoDelivered(ws *Workspace) bool {
+	return ws.Emitter != nil && ws.Emitter.Actor() == "coordinator"
+}
+
+// startBackgroundBash registers a background job for cmdStr, launches the process
+// under the job's context (so kill_job / session end kill the whole process
+// tree), streams its combined output into the job buffer, and emits job_started.
+// A goroutine waits for exit and, if it is the one that finalized the job (i.e.
+// the job was not killed first), emits job_finished exactly once.
+func startBackgroundBash(ws *Workspace, cmdStr string) *jobs.Job {
+	owner := ws.Emitter.Actor()
+	job := ws.Jobs.Start("bash", cmdStr, owner)
+	ws.Emitter.EmitAs(owner, event.JobStarted, map[string]any{
+		"id": job.ID(), "kind": job.Kind(), "label": cmdStr,
+	})
+
+	cmd := exec.CommandContext(job.Context(), "sh", "-c", cmdStr)
+	cmd.Dir = ws.Root
+	cmd.Stdout = job.Writer()
+	cmd.Stderr = job.Writer()
+	// Own process group so a kill signals the whole tree (shell + pipeline
+	// children), mirroring the foreground bashCall discipline. No 2-minute
+	// timeout: background jobs are for long runs and are bounded instead by
+	// kill_job or session-end KillAll (which cancels job.Context()).
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = 10 * time.Second
+
+	if err := cmd.Start(); err != nil {
+		result := "exit: failed to start: " + err.Error()
+		if job.Finish(jobs.Failed, result) {
+			emitJobFinished(ws.Emitter, owner, job)
+		}
+		return job
+	}
+	go func() {
+		err := cmd.Wait()
+		status := jobs.Done
+		exitInfo := "exit 0"
+		if err != nil {
+			status = jobs.Failed
+			if ee, ok := err.(*exec.ExitError); ok {
+				exitInfo = fmt.Sprintf("exit %d", ee.ExitCode())
+			} else {
+				exitInfo = "exit error: " + err.Error()
+			}
+		}
+		tail := job.Tail(20)
+		result := exitInfo
+		if strings.TrimSpace(tail) != "" {
+			result += "\n" + tail
+		}
+		// Finish returns false if the job was already killed (kill_job / session
+		// end), in which case that path owns the job_finished emission.
+		if job.Finish(status, result) {
+			emitJobFinished(ws.Emitter, owner, job)
+		}
+	}()
+	return job
+}
+
+// emitJobFinished records a job_finished event for job tagged with the owner
+// actor, carrying its final status and report tail.
+func emitJobFinished(em *event.Emitter, owner string, job *jobs.Job) {
+	rep := job.Report()
+	em.EmitAs(owner, event.JobFinished, map[string]any{
+		"id": rep.ID, "kind": rep.Kind, "label": rep.Label,
+		"status": string(rep.Status), "tail": rep.Result,
+	})
 }
 
 // Finish is a control tool: it ends the agent loop and returns the final report.
