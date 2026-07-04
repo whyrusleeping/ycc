@@ -82,3 +82,7 @@ Implement the unified async-job core with background bash as the first job kind,
 …[truncated]
 - 2026-07-04 decision: accept — commit: async jobs core + background bash: registry, run_in_background, job_output/wait/kill_job, checkpoint injection, replay (task 0131)  Adds internal/jobs (session-scoped registry, exactly-once final-repo
 …[truncated]
+- 2026-07-04 usage: 87,319 tok (in 282, out 87,037, cache_r 12,828,878, cache_w 502,989) · cost n/a (unpriced)
+  implementer: 61,101 tok (in 166, out 60,935, cache_r 10,124,001, cache_w 322,571) · cost n/a (unpriced)
+  coordinator: 14,442 tok (in 56, out 14,386, cache_r 1,286,526, cache_w 104,677) · cost n/a (unpriced)
+  reviewer:Claude: 11,776 tok (in 60, out 11,716, cache_r 1,418,351, cache_w 75,741) · cost n/a (unpriced)
