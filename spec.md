@@ -876,7 +876,9 @@ or a `reviews.default` naming no tier are rejected); the built-ins are always va
   required on any non-loopback bind** (the daemon refuses to bind otherwise); TLS is
   optional (`TLSCert`/`TLSKey` flags exist) since the tailnet provides transport
   encryption — the daemon logs a cleartext warning when bound non-loopback without TLS.
-  The phone-facing surface is the **documented** HTTP/JSON endpoint set (see task 0130).
+  The phone-facing surface is the **documented** HTTP/JSON endpoint set — see
+  [`docs/remote-api.md`](docs/remote-api.md) (connection & auth, protocol primer,
+  endpoint catalog, and the event model for client authors).
 
 ### 14.1 Parallel workstreams (git worktrees)
 

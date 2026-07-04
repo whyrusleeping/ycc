@@ -100,3 +100,7 @@ Out of scope: any push/pull replication, REST/SSE facade, cert auto-generation (
 - 2026-07-04 review (Claude): accept — The revision fixes the loopback-classification gap I flagged: internal/daemon/serve.go isLoopback now returns false for empty-host/wildcard binds (":8787", "") — so a token-free daemon can no longer
 …[truncated]
 - 2026-07-04 decision: accept — commit: remote access (M5): e2e remote-client tests, Connect HTTP/JSON verification, wildcard-bind guardrail fix, daemon help text, tailnet smoke runbook (task 0007)
+- 2026-07-04 usage: 52,032 tok (in 178, out 51,854, cache_r 4,817,622, cache_w 212,151) · cost n/a (unpriced)
+  implementer: 34,707 tok (in 112, out 34,595, cache_r 3,763,414, cache_w 93,068) · cost n/a (unpriced)
+  coordinator: 8,984 tok (in 34, out 8,950, cache_r 674,536, cache_w 80,062) · cost n/a (unpriced)
+  reviewer:Claude: 8,341 tok (in 32, out 8,309, cache_r 379,672, cache_w 39,021) · cost n/a (unpriced)
