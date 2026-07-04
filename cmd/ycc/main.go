@@ -76,13 +76,13 @@ func newRootCommand(a *app) *cli.Command {
 	globalFlags := []cli.Flag{
 		&cli.StringFlag{
 			Name:        "addr",
-			Usage:       "remote/explicit daemon `URL` to attach to",
+			Usage:       "remote/explicit daemon `URL` to attach to (e.g. http://100.64.0.1:8787)",
 			Destination: &a.addr,
 			Local:       true,
 		},
 		&cli.StringFlag{
 			Name:        "token",
-			Usage:       "bearer `token` (for --addr)",
+			Usage:       "bearer `token` for --addr (or set YCC_TOKEN)",
 			Sources:     cli.EnvVars("YCC_TOKEN"),
 			Destination: &a.token,
 			Local:       true,
@@ -537,16 +537,28 @@ func daemonCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "daemon",
 		Usage: "run the explicit, persistent, foreground daemon",
+		Description: "Runs the workspace daemon in the foreground until killed. It serves the\n" +
+			"Connect API (session control + event streaming) that clients attach to.\n\n" +
+			"Remote access (spec §12/§14): the deployment model is a private network\n" +
+			"(Tailscale/VPN). A bearer --token is REQUIRED to bind any non-loopback\n" +
+			"address — the daemon refuses to start on e.g. 0.0.0.0 or a tailnet IP\n" +
+			"without one. TLS is optional: without --tls-cert/--tls-key a non-loopback\n" +
+			"bind logs a cleartext warning (fine inside an encrypted tailnet). The token\n" +
+			"may also be supplied via the YCC_TOKEN environment variable.\n\n" +
+			"Clients attach with `ycc --addr <url> --token <t>` (or YCC_TOKEN), e.g.\n" +
+			"`ycc --addr http://100.64.0.1:8787 --token $YCC_TOKEN list`. The same\n" +
+			"endpoints are reachable over the Connect HTTP/JSON protocol with curl by\n" +
+			"presenting the `Authorization: Bearer <token>` header.",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "addr", Value: "127.0.0.1:8787", Usage: "address to listen on"},
+			&cli.StringFlag{Name: "addr", Value: "127.0.0.1:8787", Usage: "`address` to listen on (non-loopback requires --token)"},
 			&cli.StringFlag{Name: "workspace", Value: ".", Usage: "default workspace for sessions that don't specify one"},
 			&cli.StringFlag{Name: "config", Usage: "TOML config `file` (models + roles)"},
 			&cli.StringFlag{Name: "model", Value: "claude-opus-4-8", Usage: "fallback model id (when no --config)"},
 			&cli.StringFlag{Name: "base-url", Value: "https://api.anthropic.com", Usage: "fallback API base URL (when no --config)"},
 			&cli.StringFlag{Name: "key-env", Value: "ANTHROPIC_API_KEY", Usage: "fallback API key env var (when no --config)"},
 			&cli.IntFlag{Name: "max-tokens", Value: config.DefaultMaxTokens, Usage: "fallback max tokens per turn (when no --config)"},
-			&cli.StringFlag{Name: "token", Sources: cli.EnvVars("YCC_TOKEN"), Usage: "bearer token clients must present (empty disables auth)"},
-			&cli.StringFlag{Name: "tls-cert", Usage: "TLS certificate `file` (enables HTTPS)"},
+			&cli.StringFlag{Name: "token", Sources: cli.EnvVars("YCC_TOKEN"), Usage: "bearer `token` clients must present; required for non-loopback binds (empty disables auth, loopback only)"},
+			&cli.StringFlag{Name: "tls-cert", Usage: "TLS certificate `file` (enables HTTPS; optional on a private tailnet)"},
 			&cli.StringFlag{Name: "tls-key", Usage: "TLS key `file`"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {

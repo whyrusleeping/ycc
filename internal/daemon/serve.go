@@ -209,5 +209,20 @@ func isLoopback(addr string) bool {
 	if i := strings.LastIndex(addr, ":"); i >= 0 {
 		host = addr[:i]
 	}
-	return host == "" || host == "127.0.0.1" || host == "localhost" || host == "::1" || host == "[::1]"
+	// An empty host (e.g. ":8787", or an empty Addr — which http.Server treats as
+	// ":http") is a WILDCARD bind: net.Listen binds every interface, so it is
+	// network-exposed and must require a token. Only explicit loopback forms are
+	// treated as loopback.
+	if host == "" {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	// Strip brackets from an IPv6 literal like "[::1]" before parsing.
+	host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }

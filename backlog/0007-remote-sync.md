@@ -1,7 +1,7 @@
 ---
 id: "0007"
 title: Remote access (M5) — verify + harden the direct-dial remote client path
-status: todo
+status: done
 priority: 3
 created: "2026-06-25"
 updated: "2026-07-04"
@@ -88,3 +88,15 @@ Out of scope: any push/pull replication, REST/SSE facade, cert auto-generation (
 - 2026-07-04 plan: Rescoped M5 (user decisions 2026-07-07): drop daemon-to-daemon log sync entirely; remote = client dials the workspace daemon directly over a private network (Tailscale/VPN), bearer token required on n
 …[truncated]
 - 2026-07-04 context hints: 6 recorded with plan
+- 2026-07-04 context hints: internal/daemon/serve.go — buildHandler/Serve/StartInProcess, guardrails at Serve() lines ~120-128, isLoopback at bottom; internal/daemon/client.go — DialClient, bearer interceptor (unary+streamin
+…[truncated]
+- 2026-07-04 implementer report: Verified and hardened the direct-dial remote client path (M5 rescoped: no daemon-to-daemon sync; remote = dial the workspace daemon with a bearer token over a private network). All code paths already 
+…[truncated]
+- 2026-07-04 review tier: single-opus — reviewers: Claude
+- 2026-07-04 review (Claude): revise — The change is a high-quality verification/hardening pass: a thorough e2e test (Subscribe from_seq replay + live tail, SendInput, AnswerQuestion, ListSessions over daemon.DialClient with the bearer tok
+…[truncated]
+- 2026-07-04 revision: Fixed the guardrail gap the reviewers found: an empty/wildcard host was misclassified as loopback, which would let a token-free daemon bind all interfaces.  ## Changes 1. **internal/daemon/serve.go `i
+…[truncated]
+- 2026-07-04 review (Claude): accept — The revision fixes the loopback-classification gap I flagged: internal/daemon/serve.go isLoopback now returns false for empty-host/wildcard binds (":8787", "") — so a token-free daemon can no longer
+…[truncated]
+- 2026-07-04 decision: accept — commit: remote access (M5): e2e remote-client tests, Connect HTTP/JSON verification, wildcard-bind guardrail fix, daemon help text, tailnet smoke runbook (task 0007)

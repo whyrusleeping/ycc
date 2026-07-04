@@ -88,3 +88,7 @@ Verify with go build ./... && go test ./...
 - 2026-07-04 review (Claude): accept — The change correctly and completely implements Task 0132. It extends the jobs registry with a mutating flag / StartMutating / LiveMutating, adds background:true to both spawn tools with a correct sing
 …[truncated]
 - 2026-07-04 decision: accept — commit: background subagents: background:true on spawn tools, agent jobs in registry, single-writer guard, wait/checkpoint delivery (task 0132)
+- 2026-07-04 usage: 57,581 tok (in 158, out 57,423, cache_r 6,079,208, cache_w 295,750) · cost n/a (unpriced)
+  implementer: 42,094 tok (in 92, out 42,002, cache_r 4,219,201, cache_w 125,398) · cost n/a (unpriced)
+  coordinator: 8,286 tok (in 24, out 8,262, cache_r 1,188,118, cache_w 124,481) · cost n/a (unpriced)
+  reviewer:Claude: 7,201 tok (in 42, out 7,159, cache_r 671,889, cache_w 45,871) · cost n/a (unpriced)
