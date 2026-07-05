@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -76,11 +74,11 @@ func TestPresetsOpenPM(t *testing.T) {
 }
 
 // The spec-doctor preset must drive the two-phase flow: the deterministic
-// spec_check pre-pass, then a grounded drift/coverage comparison, with the
-// false-positive discipline and on-demand-only cadence.
+// `ycc spec-check` pre-pass (run via Bash), then a grounded drift/coverage
+// comparison, with the false-positive discipline and on-demand-only cadence.
 func TestSpecDoctorPresetPrompt(t *testing.T) {
 	lower := strings.ToLower(specDoctorPresetPrompt)
-	for _, want := range []string{"spec_check", "drift", "coverage", "create_task", "approval"} {
+	for _, want := range []string{"spec-check", "drift", "coverage", "create_task", "approval"} {
 		if !strings.Contains(lower, want) {
 			t.Fatalf("specDoctorPresetPrompt does not mention %q", want)
 		}
@@ -112,7 +110,7 @@ func TestBuildModeToolsets(t *testing.T) {
 	// pm exposes planning/docs/backlog tools and switch_to_work, but NO
 	// implementation tools (no spawn_implementer / commit).
 	pmReg, _ := BuildMode("pm", d, "judgement")
-	for _, want := range []string{"Read", "Edit", "Write", "Bash", "list_backlog", "get_task", "create_task", "update_task", "propose_plan", "switch_to_work", "spec_check", "ask_user", "finish"} {
+	for _, want := range []string{"Read", "Edit", "Write", "Bash", "list_backlog", "get_task", "create_task", "update_task", "propose_plan", "switch_to_work", "ask_user", "finish"} {
 		if !hasTool(pmReg, want) {
 			t.Fatalf("pm mode missing %s", want)
 		}
@@ -238,37 +236,6 @@ func TestSwitchToWorkRequiresApproval(t *testing.T) {
 	res, _ := switchToWork(d).Call(context.Background(), map[string]any{"task_id": "0021", "plan": "p"})
 	if ctrl := tools.ControlOf(res); ctrl != nil && ctrl.Mode == "work" {
 		t.Fatal("switch_to_work transitioned despite the user declining approval")
-	}
-}
-
-// spec_check runs the deterministic reference pre-pass over the docs set and
-// returns a markdown report. With an accurate spec its references resolve; a
-// stale reference to a removed repo path is flagged.
-func TestSpecCheckTool(t *testing.T) {
-	ws := t.TempDir()
-	d := &Deps{
-		Workspace: ws,
-		Docs:      docs.NewStore(ws),
-		Emitter:   event.NewEmitter(event.NewStdoutRecorder(io.Discard), "coordinator"),
-		Asker:     noopAsker{},
-	}
-	if err := os.MkdirAll(filepath.Join(ws, "internal", "docs"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(ws, "internal", "docs", "x.go"), []byte("package docs\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	spec := "# Spec\n\nThe `internal/docs` package exists but `internal/removed` was deleted.\n"
-	if err := os.WriteFile(filepath.Join(ws, "spec.md"), []byte(spec), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	res, err := specCheck(d).Call(context.Background(), map[string]any{})
-	if err != nil || res.IsError {
-		t.Fatalf("spec_check: %v %s", err, res.Content)
-	}
-	if !strings.Contains(res.Content, "internal/removed") {
-		t.Fatalf("spec_check should flag the removed package:\n%s", res.Content)
 	}
 }
 

@@ -341,10 +341,11 @@ const specDoctorPresetPrompt = `This is the SPEC-DOCTOR flow: check the project'
 
 Run it in TWO phases:
 
-PHASE 1 — DETERMINISTIC PRE-PASS. Call spec_check FIRST. It mechanically extracts the file paths, package ` +
-	`directories, and code symbols the docs mention and reports any that no longer exist in the repo (zero false ` +
-	`positives). Treat every stale reference it reports as confirmed drift, and use its output to GROUND phase 2 — ` +
-	`it points you at the doc sections most likely to have drifted.
+PHASE 1 — DETERMINISTIC PRE-PASS. Run ` + "`ycc spec-check`" + ` FIRST with the Bash tool (in a dev workspace where the ` +
+	`binary isn't on PATH, fall back to ` + "`go run ./cmd/ycc spec-check`" + `). It mechanically extracts the file paths, ` +
+	`package directories, and code symbols the docs mention and reports any that no longer exist in the repo (zero false ` +
+	`positives); it exits non-zero when it finds stale references. Treat every stale reference it reports as confirmed ` +
+	`drift, and use its output to GROUND phase 2 — it points you at the doc sections most likely to have drifted.
 
 PHASE 2 — LLM COMPARISON. Walk the spec section by section (Read the spec entry point and any linked docs), and ` +
 	`for each section read the RELEVANT code (Read + ripgrep) to compare what the spec claims against what the code ` +
@@ -359,7 +360,7 @@ FALSE-POSITIVE DISCIPLINE (critical): the spec is INTENTIONALLY higher-level tha
 	`not drift. Flag only genuine CONTRADICTIONS and genuinely undocumented significant surface. When unsure, do ` +
 	`not flag.
 
-OUTPUT. Present the user a single consolidated report with three parts: (1) stale references (from spec_check), ` +
+OUTPUT. Present the user a single consolidated report with three parts: (1) stale references (from ` + "`ycc spec-check`" + `), ` +
 	`(2) drift findings, (3) coverage gaps — each with the doc section and the code it concerns. Then, for the ` +
 	`actionable findings, OFFER to: create a backlog task per finding (create_task, well-scoped with clear ` +
 	`acceptance criteria and spec_refs), and DRAFT concrete spec edits. Apply spec edits only with the user's ` +

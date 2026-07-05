@@ -444,6 +444,11 @@ func isBinary(data []byte) bool {
 	return false
 }
 
+// Stale reports whether the check found any stale references (docs mentioning a
+// path/package or symbol that no longer exists). It is the signal a CI gate keys
+// off — `ycc spec-check` exits non-zero exactly when this is true.
+func (r *Report) Stale() bool { return len(r.Missing) > 0 }
+
 // Markdown renders the report as a human- and LLM-readable summary: counts, and
 // the stale references grouped by doc with line numbers. When nothing is stale it
 // states that all references resolve.

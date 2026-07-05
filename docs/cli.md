@@ -131,6 +131,32 @@ Columns: the group-by dimension(s), then `Input`, `Output`, `Cache`, `Total`
 (tokens) and `Cost`. A `*` marks partial pricing (some models unpriced); `—`
 marks fully unpriced rows.
 
+### `ycc spec-check` — deterministic spec/code drift check
+
+Deterministically checks the project's design docs for **stale references**: it
+resolves the docs set (the spec entry point plus any configured `doc_globs`),
+extracts the file paths, package directories, and code symbols the docs mention in
+inline code spans, and reports any that no longer exist in the repository. Ambiguous
+spans are skipped, so it holds a **zero-false-positive** discipline.
+
+This is the deterministic pre-pass of the spec-doctor flow (spec §6.4), exposed as a
+plain subcommand: it runs **locally against the workspace and needs no daemon**. It
+uses the global `--workspace DIR` flag (default: current directory).
+
+```sh
+ycc spec-check                 # check the current workspace
+ycc --workspace ../proj spec-check
+```
+
+**Exit codes** make it usable as a pre-commit / CI gate:
+
+- `0` — every reference resolves, **or** there are no design docs to check.
+- `1` — one or more stale references were found (the markdown report names them).
+
+The markdown stale-reference report is printed to stdout. The spec-doctor `pm`
+preset runs this command via `Bash` as phase 1 (falling back to
+`go run ./cmd/ycc spec-check` in a dev workspace where the binary isn't on `PATH`).
+
 ### `ycc token <set|list|rm>` — machine-local secrets store
 
 Manages the machine-local secrets store. This is a purely local operation that

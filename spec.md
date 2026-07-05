@@ -334,7 +334,7 @@ drifted spec is a bug** (§1). The **spec doctor** actively detects that drift i
 merely trusting agents to keep the docs true. It is an **on-demand `pm` preset** (`spec-doctor`,
 §9) — there is no scheduling or auto-trigger — and it runs in two phases:
 
-1. **Deterministic pre-pass** (`internal/specdoctor`, surfaced as the `spec_check` tool). It
+1. **Deterministic pre-pass** (`internal/specdoctor`, surfaced as the `ycc spec-check` subcommand). It
    extracts the concrete file paths, package directories, and code symbols the docs set
    mentions in *inline code spans* (fenced code blocks are skipped — they hold illustrative
    examples) and verifies each still exists: paths via `os.Stat` (a file or a directory both
@@ -343,7 +343,11 @@ merely trusting agents to keep the docs true. It is an **on-demand `pm` preset**
    never resolves against its own mention. It holds a strict **zero-false-positive**
    discipline — any span that is ambiguous (a glob pattern, a multi-word command, a bare
    lowercase or ALL-CAPS word) is *skipped, never flagged*. Its markdown report of stale
-   references is confirmed drift and seeds/grounds phase 2.
+   references is confirmed drift and seeds/grounds phase 2. Because it is fully deterministic
+   and daemon-free, it is a plain CLI subcommand rather than an agent tool: the spec-doctor
+   preset drives phase 1 by running `ycc spec-check` via `Bash` (it exits non-zero when it finds
+   stale references), and the same command is directly usable by humans and as a pre-commit / CI
+   gate.
 2. **LLM comparison pass.** Grounded by the pre-pass, the agent walks the spec section by
    section, reads the relevant code, and flags only two things: **drift** (the spec states
    behavior, an interface, a name, or a flow the code now *contradicts*) and **coverage gaps**
@@ -539,8 +543,9 @@ Each mode = a coordinator system prompt + a tool subset + a state machine. There
   code. That boundary is *soft* (prompt-enforced): `pm` holds `Read`/`Write`/`Edit`/`Bash`
   so it can maintain `spec.md`, and is told not to touch code; a hard boundary (path
   scoping / isolation) is future work. Tools: `Read`/`Write`/`Edit`/`Bash`,
-  `list_backlog`/`get_task`/`create_task`/`update_task`, `propose_plan`, `spec_check`
-  (§6.4), `switch_to_work`, `ask_user`, `finish`. This **replaces** the former `spec`, `backlog`, `feature`, and `bug` modes —
+  `list_backlog`/`get_task`/`create_task`/`update_task`, `propose_plan`, `switch_to_work`,
+  `ask_user`, `finish`. The spec-doctor drift check is no longer a pm tool: it is the
+  daemon-free `ycc spec-check` subcommand (§6.4) the preset runs via `Bash`. This **replaces** the former `spec`, `backlog`, `feature`, and `bug` modes —
   they were one capability set under four prompt framings, and are now simply ordinary
   `pm` work rather than distinct menu entries. The home menu no longer lists those framings
   as separate presets (they added redundant clutter for what is all planning/intake work);
