@@ -100,7 +100,7 @@ func TestOnboardPromptCoversBothBranches(t *testing.T) {
 		}
 	}
 	// It must first orient from any existing docs before deciding.
-	for _, want := range []string{"spec.md", "list_backlog", "list_plans"} {
+	for _, want := range []string{"spec.md", "list_backlog", "plans/*.md"} {
 		if !strings.Contains(lower, strings.ToLower(want)) {
 			t.Fatalf("onboardPresetPrompt does not instruct checking existing docs (%q)", want)
 		}

@@ -182,7 +182,6 @@ func CoordinatorTools(d *Deps, ws *tools.Workspace) *tools.Registry {
 	reg.Add(tools.Editing(ws)...)
 	reg.Add(
 		listBacklog(d), getTask(d), proposePlan(d),
-		listPlans(d), runPlan(d), savePlan(d),
 		spawnImplementer(d), spawnReviewers(d),
 		sendToImplementer(d), reReview(d),
 		askUser(d), commitTool(d), updateTask(d), createTask(d), tools.Finish(),
@@ -329,93 +328,10 @@ func proposePlan(d *Deps) *gollama.Tool {
 	}
 }
 
-// listPlans lists the reusable in-repo plan library (runbooks). Plans are
-// committed markdown procedures, distinct from the backlog (task 0020).
-func listPlans(d *Deps) *gollama.Tool {
-	return &gollama.Tool{
-		Name: "list_plans",
-		Description: "List the reusable saved plans (runbooks) available in the in-repo plan library (plans/*.md). " +
-			"Plans are repeatable procedures — e.g. a testing/verification plan — distinct from backlog tasks. " +
-			"Use run_plan to execute one.",
-		Params: tools.Obj(map[string]any{}),
-		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
-			plans, err := d.Docs.ListPlans()
-			if err != nil {
-				return tools.ErrResult("list_plans: %v", err), nil
-			}
-			if len(plans) == 0 {
-				return tools.OkResult("(no saved plans — use save_plan to add one to plans/*.md)"), nil
-			}
-			var b strings.Builder
-			for _, p := range plans {
-				fmt.Fprintf(&b, "%s — %s\n", p.Name, p.Title)
-			}
-			return tools.OkResult(b.String()), nil
-		},
-	}
-}
-
-// runPlan reads a saved plan and hands it back to the agent to execute, end to
-// end. The motivating case is replaying a saved testing plan (task 0020).
-func runPlan(d *Deps) *gollama.Tool {
-	return &gollama.Tool{
-		Name: "run_plan",
-		Description: "Run a saved plan (runbook) by name: returns the plan's steps for you to execute end to end. " +
-			"Use for repeatable procedures like a testing/verification plan. List available plans with list_plans.",
-		Params: tools.Obj(map[string]any{
-			"name": tools.StrProp("the plan name, e.g. build-and-test"),
-		}, "name"),
-		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
-			name, _ := tools.GetString(params, "name")
-			content, err := d.Docs.ReadPlan(name)
-			if err != nil {
-				avail := availablePlanNames(d)
-				if avail != "" {
-					return tools.ErrResult("run_plan: %v (available: %s)", err, avail), nil
-				}
-				return tools.ErrResult("run_plan: %v", err), nil
-			}
-			return tools.OkResult("Execute the following saved plan step by step, end to end. Report the outcome of each step.\n\n---\n" + content), nil
-		},
-	}
-}
-
-// savePlan writes a reusable plan into the in-repo plan library (task 0020).
-func savePlan(d *Deps) *gollama.Tool {
-	return &gollama.Tool{
-		Name: "save_plan",
-		Description: "Save a reusable plan (runbook) as committed markdown in the in-repo plan library (plans/*.md). " +
-			"Use for a repeatable procedure you want to replay later — e.g. a testing/verification plan. Plans are " +
-			"distinct from backlog tasks: a task is one-off work to do; a plan is HOW to do something, repeatably. " +
-			"Give it a short name and the full markdown (a '#' title and concrete steps).",
-		Params: tools.Obj(map[string]any{
-			"name":    tools.StrProp("short plan name, e.g. build-and-test (used as the file name)"),
-			"content": tools.StrProp("the full plan markdown: a '#' title, steps, and an expected outcome"),
-		}, "name", "content"),
-		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
-			name, _ := tools.GetString(params, "name")
-			content, _ := tools.GetString(params, "content")
-			saved, err := d.Docs.SavePlan(name, content)
-			if err != nil {
-				return tools.ErrResult("save_plan: %v", err), nil
-			}
-			return tools.OkResult("saved plan " + saved + " (plans/" + saved + ".md)"), nil
-		},
-	}
-}
-
-// availablePlanNames returns a comma-joined list of saved plan names (for error hints).
-func availablePlanNames(d *Deps) string {
-	plans, err := d.Docs.ListPlans()
-	if err != nil || len(plans) == 0 {
-		return ""
-	}
-	var names []string
-	for _, p := range plans {
-		names = append(names, p.Name)
-	}
-	return strings.Join(names, ", ")
-}
+// (The former list_plans/run_plan/save_plan tools were removed: plans are plain
+// committed markdown in plans/*.md, so agents browse them with Read/Bash and save
+// them with Write — the plan-format convention lives in the prompts and spec §6.3.
+// The docs package keeps ListPlans/ReadPlan/SavePlan for the TUI/RPC browsing surface.)
 
 func spawnImplementer(d *Deps) *gollama.Tool {
 	return &gollama.Tool{

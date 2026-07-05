@@ -84,3 +84,7 @@ Write `docs/remote-api.md` — the phone-facing Connect HTTP/JSON API doc — gr
 …[truncated]
 - 2026-07-04 decision: accept — commit: docs: remote Connect HTTP/JSON API for phone clients (task 0130)  - new docs/remote-api.md: connection/auth (tailnet + bearer token, TLS   optional, guardrails), Connect protocol primer (unary JSON + 
 …[truncated]
+- 2026-07-04 usage: 38,957 tok (in 128, out 38,829, cache_r 2,778,692, cache_w 225,681) · cost n/a (unpriced)
+  implementer: 23,474 tok (in 64, out 23,410, cache_r 1,788,527, cache_w 75,313) · cost n/a (unpriced)
+  coordinator: 10,964 tok (in 40, out 10,924, cache_r 769,096, cache_w 117,966) · cost n/a (unpriced)
+  reviewer:Claude: 4,519 tok (in 24, out 4,495, cache_r 221,069, cache_w 32,402) · cost n/a (unpriced)

@@ -4986,7 +4986,7 @@ func (m model) planDetailView(p *v1.GetPlanResponse) string {
 	if m.ready {
 		body = m.plansVP.View()
 	}
-	help := m.footerBar(" ↑↓/pgup/pgdn scroll · esc/← back · ctrl+c quit · (run via the run_plan tool in a session) ")
+	help := m.footerBar(" ↑↓/pgup/pgdn scroll · esc/← back · ctrl+c quit · (ask a session to run it) ")
 	return top + "\n" + body + "\n" + help
 }
 

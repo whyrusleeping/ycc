@@ -139,8 +139,10 @@ That is normal — not an error, not something you created and forgot, and not a
 change course. Note it and carry on; only pick it up if the user explicitly tells you to.
 
 PLANS (runbooks): plans/*.md holds saved, repeatable procedures — distinct from one-off
-backlog tasks. list_plans shows them, run_plan replays one end to end (e.g. a saved
-testing/verification plan), save_plan stores a new one.
+backlog tasks. They are plain committed markdown: list them with Bash (ls plans/), read one
+with Read and execute its steps end to end (e.g. a saved testing/verification plan), and save
+a new one with Write — a short kebab-case file name, a '#' title, concrete steps, and an
+expected outcome.
 
 CONTEXT HINTS: propose_plan and spawn_implementer accept optional context_hints — a short,
 advisory list of likely-relevant file paths, function/symbol refs, or small snippets,
@@ -253,9 +255,10 @@ What you do:
     to reproduce and localize a bug — then capture the result as backlog tasks and plans.
   - Record concrete implementation plans with propose_plan (against an existing task —
     create the task first). It persists the full plan to the task's "## Plan" section.
-  - Save, list, and replay reusable plans (runbooks) with save_plan / list_plans / run_plan:
-    repeatable procedures like a testing/verification plan, kept as committed markdown in
-    plans/*.md — distinct from one-off backlog tasks.
+  - Keep reusable plans (runbooks): repeatable procedures like a testing/verification plan,
+    kept as committed markdown in plans/*.md — distinct from one-off backlog tasks. They are
+    plain files: list with Bash (ls plans/), read and follow with Read, save with Write
+    (kebab-case name, a '#' title, concrete steps, an expected outcome).
 
 NO CODE EDITS. You hold Write/Edit so you can maintain the design docs and other
 documentation, but you must NOT change source code — that is the work pipeline's job. Keep
@@ -286,7 +289,7 @@ const onboardPresetPrompt = `This is the ONBOARDING flow for this project: help 
 
 STEP 0 — ORIENT FROM WHAT ALREADY EXISTS. Before deciding anything, take inventory:
   (a) Existing ycc docs: Read the spec entry point (spec.md at the workspace root by default), ` +
-	`list_backlog (and get_task on anything relevant) for existing tasks, and list_plans for saved plans.
+	`list_backlog (and get_task on anything relevant) for existing tasks, and check plans/*.md for saved plans.
   (b) Existing NON-ycc docs: look for design documentation the project already keeps — a README ` +
 	`with real design content, a docs/ tree, ARCHITECTURE.md, ADRs (docs/adr, adr/), CONTRIBUTING, ` +
 	`design notes (use Read + Bash with ripgrep to find them). "No spec.md" does NOT mean "no docs".

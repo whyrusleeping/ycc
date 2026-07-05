@@ -317,10 +317,11 @@ motivating case is a **testing/verification plan**: a repeatable procedure you r
 instead of re-describing. A plan is free markdown with a `#` title, concrete steps, and an
 expected outcome.
 
-Three coordinator/pm tools surface the library: `list_plans` (enumerate saved plans),
-`run_plan <name>` (read a plan and execute its steps end to end — e.g. rerun a saved
-testing plan), and `save_plan <name> <content>` (write a reusable plan into `plans/`). The
-`docs` package provides `ListPlans/ReadPlan/SavePlan/PlansDir`.
+There are no dedicated plan tools: plans are plain committed files, so agents browse the
+library with `Bash`/`Read`, execute a plan by reading it and following its steps, and save
+one with `Write` — the format convention (kebab-case name, `#` title, steps, expected
+outcome) lives in the coordinator/pm prompts. The `docs` package provides
+`ListPlans/ReadPlan/SavePlan/PlansDir`, used by the TUI/RPC plan-browsing surface (§16).
 
 Separately, `propose_plan` now persists the FULL coordinator plan to the task's `## Plan`
 section (a durable, human-browsable artifact) in addition to the dated one-line work-log
@@ -478,7 +479,7 @@ files from being inlined (the model is told to use `Bash` for those instead).
 the editing set (`Read`/`Write`/`Edit`/`Bash` — for verifying state and reviewing diffs
 first-hand; the prompt confines its own edits to tiny touch-ups),
 `list_backlog`, `get_task`, `create_task`, `update_task`,
-`propose_plan(task_id, plan, context_hints?)`, `list_plans`/`run_plan`/`save_plan` (§6.3),
+`propose_plan(task_id, plan, context_hints?)`,
 `spawn_implementer(task_id, plan, context_hints?)`,
 `spawn_reviewers(task_id, review_tier?)` (§13.1),
 `send_to_implementer(task_id, instructions)` (revise; reuses implementer ctx),
