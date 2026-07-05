@@ -180,9 +180,9 @@ type model struct {
 	mode      string
 	events    chan *v1.Event
 
-	evs        []*v1.Event
-	expanded   map[int]bool   // seq -> manually expanded
-	bodyCache  map[int]string // seq -> rendered multi-line body
+	evs       []*v1.Event
+	expanded  map[int]bool   // seq -> manually expanded
+	bodyCache map[int]string // seq -> rendered multi-line body
 	// blockCache holds each event's FULLY rendered block (header + body/card,
 	// keyed by event index) so rebuild() doesn't re-render the whole transcript
 	// on every keypress/event — for a long session that repeated per-row work
@@ -208,6 +208,13 @@ type model struct {
 	// supersedes the live row). Transient turn_deltas NEVER enter m.evs / reducers /
 	// seq tracking — they only drive this ephemeral tail row.
 	liveTails map[string]string
+	// retryNotes holds a per-actor "retrying…" note fed by transient retry
+	// events (engine loop backoff on a transient API failure, spec §7.2). Like
+	// liveTails it is ephemeral live state: a note is replaced by the next retry
+	// event for the actor, and cleared when a fresh attempt starts streaming
+	// (non-empty turn_delta) or the actor's persisted model_turn / session_error
+	// arrives (the durable outcome supersedes the wait).
+	retryNotes map[string]string
 	// deliveredSeqs holds the seqs of queued mid-run user_input echoes that a
 	// later user_input_delivered event has marked as delivered (spec §18.7), so a
 	// queued echo renders "(queued)" only until its delivery point.
@@ -6465,13 +6472,25 @@ func (m *model) toggle(i int) {
 // UI state and reports whether that state changed. Transients NEVER enter m.evs,
 // the reducers, or seq tracking (task 0129) — they only drive the live tail row.
 //
-// Only turn_delta is handled today; other (future) transient types are ignored.
-// Its data carries {"text": <snapshot>} where text is the FULL accumulated turn
-// output so far (snapshot semantics), so a new delta simply replaces the actor's
-// tail. A done/empty delta ({"text":"","done":true}) clears it so no stale tail
-// survives the end of a turn.
+// turn_delta carries {"text": <snapshot>} where text is the FULL accumulated
+// turn output so far (snapshot semantics), so a new delta simply replaces the
+// actor's tail. A done/empty delta ({"text":"","done":true}) clears it so no
+// stale tail survives the end of a turn. retry carries an API-failure backoff
+// notice ({attempt, max_attempts, delay_ms, kind, status}) rendered as a
+// per-actor note; a non-empty delta (the next attempt streaming) clears it.
+// Other (future) transient types are ignored.
 func (m *model) applyTransient(ev *v1.Event) bool {
-	if ev == nil || ev.Type != "turn_delta" {
+	if ev == nil {
+		return false
+	}
+	if ev.Type == "retry" {
+		if m.retryNotes == nil {
+			m.retryNotes = map[string]string{}
+		}
+		m.retryNotes[ev.Actor] = retryNoteText(ev)
+		return true
+	}
+	if ev.Type != "turn_delta" {
 		return false
 	}
 	if m.liveTails == nil {
@@ -6486,11 +6505,66 @@ func (m *model) applyTransient(ev *v1.Event) bool {
 		}
 		return false
 	}
+	changed := false
+	// A fresh attempt is streaming: any pending retry note for this actor is
+	// obsolete.
+	if _, ok := m.retryNotes[ev.Actor]; ok {
+		delete(m.retryNotes, ev.Actor)
+		changed = true
+	}
 	if m.liveTails[ev.Actor] == text {
-		return false
+		return changed
 	}
 	m.liveTails[ev.Actor] = text
 	return true
+}
+
+// retryNoteText renders a transient retry event's data as a one-line note, e.g.
+// "rate_limit (429): retrying in 8s — attempt 2/3".
+func retryNoteText(ev *v1.Event) string {
+	kind := dataField(ev, "kind")
+	if kind == "" {
+		kind = "api error"
+	}
+	head := kind
+	if st := dataField(ev, "status"); st != "" && st != "0" {
+		head += " (" + st + ")"
+	}
+	note := head + ": retrying"
+	if ms := dataField(ev, "delay_ms"); ms != "" {
+		if v, err := strconv.ParseFloat(ms, 64); err == nil && v > 0 {
+			note += " in " + (time.Duration(v) * time.Millisecond).Round(100*time.Millisecond).String()
+		}
+	}
+	if a, max := dataField(ev, "attempt"), dataField(ev, "max_attempts"); a != "" && max != "" {
+		note += fmt.Sprintf(" — attempt %s/%s", a, max)
+	}
+	return note
+}
+
+// sessionErrorHead renders the structured classification a session_error event
+// may carry (kind/status/attempts, emitted by the engine loop, spec §7.2) as a
+// compact lead line, plus an actionable hint for the kinds a user can act on.
+// Returns "" for legacy/unclassified errors so they render exactly as before.
+func sessionErrorHead(ev *v1.Event) string {
+	kind := dataField(ev, "kind")
+	if kind == "" || kind == "unknown" {
+		return ""
+	}
+	head := kind
+	if st := dataField(ev, "status"); st != "" && st != "0" {
+		head += " (" + st + ")"
+	}
+	if a := dataField(ev, "attempts"); a != "" && a != "1" {
+		head += " · " + a + " attempts"
+	}
+	switch kind {
+	case "auth":
+		head += " — check the model's API key / credentials"
+	case "rate_limit", "overloaded", "server", "timeout", "network":
+		head += " — transient; sending a message retries the turn"
+	}
+	return head
 }
 
 func (m *model) appendEvent(ev *v1.Event) {
@@ -6529,8 +6603,10 @@ func (m *model) appendEvent(ev *v1.Event) {
 		// The durable turn supersedes any live streamed tail for this actor: drop
 		// it so the persisted row replaces the in-progress row with no stale tail
 		// (task 0129). A clearing turn_delta usually arrives too, but clearing here
-		// makes the swap deterministic even if that transient is lost.
+		// makes the swap deterministic even if that transient is lost. Any pending
+		// retry note is likewise superseded by the turn's outcome.
 		delete(m.liveTails, ev.Actor)
+		delete(m.retryNotes, ev.Actor)
 		// Accumulate the turn's usage into the running per-model tally that feeds
 		// the live token/cost readout (task 0062, spec §20.1). Parsing is best-effort:
 		// a turn without a usage block contributes nothing.
@@ -6620,8 +6696,10 @@ func (m *model) appendEvent(ev *v1.Event) {
 	case "session_error":
 		m.status = "error"
 		// A failed turn ends any in-progress stream: drop the actor's live tail so
-		// no stale streamed text lingers below the error (task 0129).
+		// no stale streamed text lingers below the error (task 0129), and drop any
+		// pending retry note (the failure is now durable).
 		delete(m.liveTails, ev.Actor)
+		delete(m.retryNotes, ev.Actor)
 	case "interrupted":
 		m.status = "paused"
 		m.paused = true
@@ -7065,12 +7143,14 @@ const liveTailMaxLines = 6
 
 // renderLiveTails renders the in-progress streamed output (fed by transient
 // turn_delta snapshots, task 0129) as dim, visibly in-progress tail rows appended
-// after the persisted conversation. Values are the full accumulated turn text so
-// far, so each render just reflects the latest snapshot; the durable model_turn
-// replaces the tail seamlessly (appendEvent clears the actor's entry when it
-// arrives). Returns "" when nothing is streaming.
+// after the persisted conversation, followed by any per-actor retry notes (fed
+// by transient retry events — an API-failure backoff in progress, spec §7.2).
+// Values are the full accumulated turn text so far, so each render just reflects
+// the latest snapshot; the durable model_turn replaces the tail seamlessly
+// (appendEvent clears the actor's entry when it arrives). Returns "" when
+// nothing is streaming or retrying.
 func (m *model) renderLiveTails() string {
-	if len(m.liveTails) == 0 {
+	if len(m.liveTails) == 0 && len(m.retryNotes) == 0 {
 		return ""
 	}
 	actors := make([]string, 0, len(m.liveTails))
@@ -7102,6 +7182,26 @@ func (m *model) renderLiveTails() string {
 		b.WriteString(header)
 		b.WriteByte('\n')
 		b.WriteString(body)
+	}
+	// Retry notes render after the streamed tails: one warn-styled line per
+	// actor waiting out an API-failure backoff.
+	noteActors := make([]string, 0, len(m.retryNotes))
+	for a := range m.retryNotes {
+		noteActors = append(noteActors, a)
+	}
+	sort.Strings(noteActors)
+	for _, actor := range noteActors {
+		note := m.retryNotes[actor]
+		if strings.TrimSpace(note) == "" {
+			continue
+		}
+		line := "  " + warnStyle.Render("⟳ ") +
+			actorStyle(actor).Render(fmt.Sprintf("%-13s", actor)) +
+			warnStyle.Render(note)
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(line)
 	}
 	return b.String()
 }
@@ -8480,7 +8580,14 @@ func (m *model) renderBody(ev *v1.Event) string {
 		if w := m.w - lipgloss.Width(bodyBar); w > 0 {
 			msg = wrap.String(wordwrap.String(msg, w), w)
 		}
-		return indentLines(errStyle.Render(msg), bodyBar)
+		body := errStyle.Render(msg)
+		// Structured classification (engine loop failures, spec §7.2): lead with
+		// a compact "kind (status) · N attempts — hint" line so the user sees
+		// what class of failure it was without reading the provider body.
+		if head := sessionErrorHead(ev); head != "" {
+			body = errStyle.Bold(true).Render(head) + "\n" + body
+		}
+		return indentLines(body, bodyBar)
 	default:
 		return ""
 	}

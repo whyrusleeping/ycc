@@ -104,3 +104,53 @@ func TestEvMsgTransientRouting(t *testing.T) {
 		t.Fatalf("streamed text not rendered:\n%s", m.vp.View())
 	}
 }
+
+// A transient retry event drives a per-actor "retrying" note; a fresh attempt's
+// non-empty turn_delta clears it; a persisted model_turn / session_error also
+// clears it. The transient never enters m.evs.
+func TestRetryNoteLifecycle(t *testing.T) {
+	m := readyStreamModel(t)
+	changed := m.applyTransient(&v1.Event{Type: "retry", Actor: "coordinator", Transient: true,
+		DataJson: `{"attempt":1,"max_attempts":3,"delay_ms":8000,"kind":"rate_limit","status":429,"msg":"API returned non-200 status code 429: rate limited"}`})
+	if !changed {
+		t.Fatal("applyTransient reported no change for retry event")
+	}
+	if len(m.evs) != 0 {
+		t.Fatalf("transient retry leaked into m.evs: %d", len(m.evs))
+	}
+	m.rebuild()
+	view := m.vp.View()
+	for _, want := range []string{"rate_limit", "429", "retrying", "attempt 1/3"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q:\n%s", want, view)
+		}
+	}
+
+	// The next attempt starts streaming: the note is obsolete.
+	m.applyTransient(&v1.Event{Type: "turn_delta", Actor: "coordinator", Transient: true, DataJson: `{"text":"second attempt"}`})
+	if len(m.retryNotes) != 0 {
+		t.Fatalf("retry note not cleared by streaming delta: %v", m.retryNotes)
+	}
+	m.rebuild()
+	if strings.Contains(m.vp.View(), "retrying") {
+		t.Fatalf("stale retry note after new attempt streams:\n%s", m.vp.View())
+	}
+
+	// A durable session_error also clears a pending note (non-streaming path).
+	m.applyTransient(&v1.Event{Type: "retry", Actor: "coordinator", Transient: true,
+		DataJson: `{"attempt":2,"max_attempts":3,"delay_ms":1000,"kind":"overloaded","status":529}`})
+	m.appendEvent(&v1.Event{Seq: 1, Type: "session_error", Actor: "coordinator",
+		DataJson: `{"msg":"API returned non-200 status code 529: overloaded","kind":"overloaded","status":529,"attempts":3,"retryable":true}`})
+	if len(m.retryNotes) != 0 {
+		t.Fatalf("retry note not cleared by session_error: %v", m.retryNotes)
+	}
+	m.expanded[1] = true // expand the error row to render its body
+	m.rebuild()
+	view = m.vp.View()
+	// The structured head line renders kind/status/attempts plus the hint.
+	for _, want := range []string{"overloaded (529)", "3 attempts", "transient"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("session_error head missing %q:\n%s", want, view)
+		}
+	}
+}

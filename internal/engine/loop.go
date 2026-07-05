@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"math/rand"
 	"strings"
 	"sync"
 	"time"
@@ -79,6 +81,18 @@ type Loop struct {
 	// after each tool result) so a session can pause and steer the running loop
 	// (spec §18.7). Nil ⇒ a cheap no-op; the hot loop is unaffected.
 	Steer Steer
+
+	// Retry controls automatic retry of transient LLM API call failures
+	// (spec §7.2). The zero value means DefaultRetryPolicy(); set
+	// MaxAttempts: 1 to disable retries explicitly.
+	Retry RetryPolicy
+
+	// retrySleep and retryRand are test seams for the retry backoff. retrySleep
+	// waits for the given delay or ctx cancellation, reporting false when the
+	// ctx won (the retry loop then stops). Nil ⇒ real timer / seeded rand.
+	retrySleep func(ctx context.Context, d time.Duration) bool
+	retryRand  *rand.Rand
+	retryLogf  func(string, ...any)
 
 	mu      sync.Mutex // guards Client/Model swaps mid-loop (settings overlay, §18.2)
 	history []gollama.Message
@@ -367,14 +381,15 @@ func (l *Loop) appendToolResult(callID string, res *gollama.ToolResult) {
 // by design, so a coarse rate keeps the UI lively without flooding subscribers.
 const turnDeltaInterval = 100 * time.Millisecond
 
-// runTurn executes a single model turn against client. When client implements
-// StreamTurner AND the loop's emitter can broadcast, it streams the turn and
-// broadcasts transient turn_delta events (data {"text": <snapshot>}) throttled
-// to ~10/s, then broadcasts a clearing delta ({"text": "", "done": true}) on
-// turn end — success OR error — so no stale live tail survives. Otherwise it
-// calls Turn exactly as before, emitting no deltas. The returned response/error
-// is identical in both paths; final model_turn emission is handled by the caller.
-func (l *Loop) runTurn(client Turner, opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+// turnOnce executes a single model turn attempt against client. When client
+// implements StreamTurner AND the loop's emitter can broadcast, it streams the
+// turn and broadcasts transient turn_delta events (data {"text": <snapshot>})
+// throttled to ~10/s, then broadcasts a clearing delta ({"text": "", "done":
+// true}) on turn end — success OR error — so no stale live tail survives.
+// Otherwise it calls Turn exactly as before, emitting no deltas. The returned
+// response/error is identical in both paths; final model_turn emission is
+// handled by the caller.
+func (l *Loop) turnOnce(client Turner, opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
 	streamer, ok := client.(StreamTurner)
 	if !ok || l.Emitter == nil {
 		return client.Turn(opts)
@@ -401,11 +416,105 @@ func (l *Loop) runTurn(client Turner, opts gollama.RequestOptions) (*gollama.Res
 	}
 	// Clear the live tail on turn end (success OR error): a done delta tells
 	// subscribers to drop their tail row even if the turn failed before any
-	// model_turn is emitted. Sent unconditionally so a retried attempt that
-	// restarts snapshots still ends cleanly.
+	// model_turn is emitted. Sent unconditionally (once per ATTEMPT, so a failed
+	// attempt clears its partial tail before the retry restarts snapshots).
 	defer l.Emitter.Broadcast(event.TurnDelta, map[string]any{"text": "", "done": true})
 	return streamer.TurnStream(opts, onDelta)
 }
+
+// runTurn executes one model turn, retrying transient API failures (as judged
+// by ClassifyAPIError) with exponential backoff + jitter per l.Retry
+// (spec §7.2). Between attempts it broadcasts a transient "retry" event so live
+// subscribers can show the wait, and sleeps ctx-aware so a stopped session
+// cancels a pending backoff instead of sleeping it out. It returns the response,
+// the number of attempts actually made, and the FINAL attempt's error (the
+// original error — never a retry-count wrapper) once retries are exhausted, the
+// failure is not retryable, or ctx is done.
+func (l *Loop) runTurn(ctx context.Context, client Turner, opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, int, error) {
+	policy := l.Retry
+	if policy.MaxAttempts == 0 {
+		policy = DefaultRetryPolicy()
+	}
+	sleep := l.retrySleep
+	if sleep == nil {
+		sleep = sleepCtx
+	}
+	logf := l.retryLogf
+	if logf == nil {
+		logf = log.Printf
+	}
+	if l.retryRand == nil {
+		l.retryRand = rand.New(rand.NewSource(time.Now().UnixNano()))
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= policy.MaxAttempts; attempt++ {
+		resp, err := l.turnOnce(client, opts)
+		if err == nil {
+			return resp, attempt, nil
+		}
+		lastErr = err
+		info := ClassifyAPIError(err)
+		if !info.Retryable || attempt == policy.MaxAttempts || ctx.Err() != nil {
+			return nil, attempt, err
+		}
+		delay := policy.backoff(attempt, l.retryRand)
+		logf("ycc: LLM API call failed (attempt %d/%d), retrying in %v: %v",
+			attempt, policy.MaxAttempts, delay, err)
+		if l.Emitter != nil {
+			// Transient, non-persisted (like turn_delta): live subscribers show
+			// the retry wait; the durable log records nothing unless the turn
+			// ultimately fails (which emits a session_error).
+			l.Emitter.Broadcast(event.Retry, map[string]any{
+				"attempt":      attempt,
+				"max_attempts": policy.MaxAttempts,
+				"delay_ms":     delay.Milliseconds(),
+				"kind":         string(info.Kind),
+				"status":       info.Status,
+				"msg":          err.Error(),
+			})
+		}
+		if !sleep(ctx, delay) {
+			return nil, attempt, ctx.Err()
+		}
+	}
+	return nil, policy.MaxAttempts, lastErr
+}
+
+// sleepCtx waits for d or ctx cancellation, reporting false when ctx won.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return ctx.Err() == nil
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// TurnError wraps a model-turn failure that Loop.Run has ALREADY recorded as a
+// session_error event (with structured classification data). Callers that emit
+// session_error for loop failures (e.g. Session.run) must check for it with
+// errors.As and skip their own emission, or the log gets duplicate errors for
+// one failure. Turn is 0 when the message already stands alone (e.g. the
+// context-window-exceeded message).
+type TurnError struct {
+	Turn int
+	Err  error
+}
+
+func (e *TurnError) Error() string {
+	if e.Turn > 0 {
+		return fmt.Sprintf("turn %d: %v", e.Turn, e.Err)
+	}
+	return e.Err.Error()
+}
+
+func (e *TurnError) Unwrap() error { return e.Err }
 
 // Run executes the loop to completion. It returns when a control tool signals
 // stop, the model produces a turn with no tool calls, or MaxTurns is reached.
@@ -446,21 +555,45 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		}
 
 		start := time.Now()
-		resp, err := l.runTurn(client, opts)
+		resp, attempts, err := l.runTurn(ctx, client, opts)
 		elapsedMS := time.Since(start).Milliseconds()
 		if err != nil {
-			// A context-window-exceeded failure (history too large for the model)
-			// is terminal and opaque from the provider. Surface a clear, actionable
-			// message instead of the raw 400 so the user knows to start fresh or
-			// narrow scope rather than retry (task 0010). All other errors keep
-			// their existing behavior.
-			if IsContextLengthError(err) {
-				msg := fmt.Sprintf("context window exceeded for model %s: the conversation history (~%d tokens) is too large to continue. This session cannot proceed automatically — start a fresh session or narrow the task scope.", modelID, approxContextTokens(l.System, l.history))
-				l.Emitter.Emit(event.SessionError, map[string]any{"msg": msg, "duration_ms": elapsedMS})
-				return nil, errors.New(msg)
+			// A stopped/cancelled session is not an API failure: return the ctx
+			// error without recording a session_error.
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
 			}
-			l.Emitter.Emit(event.SessionError, map[string]any{"msg": err.Error(), "duration_ms": elapsedMS})
-			return nil, fmt.Errorf("turn %d: %w", turn, err)
+			// Classify the failure ONCE (apierror.go) and emit a single
+			// session_error carrying the structured classification, so consumers
+			// (TUI, projections) can render actionable state — auth vs rate limit
+			// vs invalid request — without re-parsing provider bodies. The
+			// returned TurnError marks the failure as already recorded; callers
+			// (Session.run) must not emit a duplicate.
+			info := ClassifyAPIError(err)
+			data := map[string]any{
+				"msg":         err.Error(),
+				"kind":        string(info.Kind),
+				"retryable":   info.Retryable,
+				"attempts":    attempts,
+				"duration_ms": elapsedMS,
+				"turn":        turn,
+			}
+			if info.Status != 0 {
+				data["status"] = info.Status
+			}
+			if info.Kind == KindContextLength {
+				// A context-window-exceeded failure (history too large for the
+				// model) is terminal and opaque from the provider. Surface a
+				// clear, actionable message instead of the raw 400 so the user
+				// knows to start fresh or narrow scope rather than retry
+				// (task 0010).
+				msg := fmt.Sprintf("context window exceeded for model %s: the conversation history (~%d tokens) is too large to continue. This session cannot proceed automatically — start a fresh session or narrow the task scope.", modelID, approxContextTokens(l.System, l.history))
+				data["msg"] = msg
+				l.Emitter.Emit(event.SessionError, data)
+				return nil, &TurnError{Err: errors.New(msg)}
+			}
+			l.Emitter.Emit(event.SessionError, data)
+			return nil, &TurnError{Turn: turn, Err: err}
 		}
 		if len(resp.Choices) == 0 {
 			return nil, errors.New("model returned no choices")

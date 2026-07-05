@@ -109,6 +109,14 @@ const (
 	// never written to events.jsonl / the in-memory replay / transcripts, and
 	// the durable ModelTurn event remains the source of truth for the turn.
 	TurnDelta Type = "turn_delta"
+	// Retry marks an in-progress retry of a failed LLM API call: the engine loop
+	// hit a transient failure (rate limit / overload / network) and is backing
+	// off before the next attempt (spec §7.2). Like TurnDelta it is transient —
+	// only ever emitted via Log.Broadcast (Transient=true, Seq=0), never
+	// persisted — so live UIs can show the wait while the durable log stays
+	// quiet unless the turn ultimately fails (which records a session_error).
+	// Data: { attempt, max_attempts, delay_ms, kind, status, msg }.
+	Retry Type = "retry"
 )
 
 // ThinkingBlock mirrors gollama.ThinkingBlock for lossless serialization in the

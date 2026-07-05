@@ -220,6 +220,13 @@ turn's persisted `model_turn`. The engine emits deltas only when the backend cli
 implements a streaming capability *and* the recorder supports broadcast; otherwise the
 turn runs non-streaming with identical semantics and no deltas.
 
+**`retry` (transient).** When an LLM API call fails transiently and the engine loop is
+backing off before another attempt (§7.2), it broadcasts a transient `retry` event with
+`{attempt, max_attempts, delay_ms, kind, status, msg}` so live clients can show the wait
+(the TUI renders a per-actor "retrying…" note under the live tails). Like `turn_delta`
+it is never persisted — the durable log stays quiet unless the turn ultimately fails,
+which records a `session_error`.
+
 ## 6. Document model
 
 ### 6.1 Design docs — entry point + docs set
@@ -382,6 +389,32 @@ run():
 Some tools are **control tools** that don't just return data — they change
 orchestration state (`ask_user` suspends; `finish` ends the loop; `spawn_*` runs a
 child loop). The registry marks these so the loop can react.
+
+#### API failure handling (classification, retry, session_error)
+
+All LLM API failures flow through one classifier (`engine.ClassifyAPIError`), which maps
+an error to a **kind** — `rate_limit` (429), `overloaded` (503/529), `server` (other
+5xx), `timeout` (408 / transport timeout), `network` (transport failure), `auth`
+(401/403), `invalid_request` (other 4xx), `context_length` (a 400 whose body matches the
+providers' context-window phrasings), or `unknown` — plus the parsed HTTP status and a
+**retryable** verdict. Retry decisions, context-window detection
+(`IsContextLengthError`), and error events all use this one taxonomy.
+
+**Retry lives in the loop** (`Loop.runTurn`, policy `Loop.Retry`; zero value = 3 total
+attempts, exponential backoff 500ms→30s with equal jitter). The loop is where the run
+ctx (a stopped session cancels a pending backoff instead of sleeping it out), the
+emitter (each backoff broadcasts a transient `retry` event, §5), and the classification
+meet. Non-retryable failures surface immediately; retries exhausted surface the
+original error. (Layering note: gollama's transport additionally retries 429/503/529
+internally before its error ever reaches the loop.)
+
+**A failed turn records exactly one `session_error`**, emitted by the loop with
+structured data: `{msg, kind, status, retryable, attempts, duration_ms, turn}`. The
+returned error is an `engine.TurnError` marking the failure as already recorded — outer
+layers (`Session.run`) check for it with `errors.As` and must not emit a duplicate. A
+cancelled run (session stopped) records nothing. `context_length` failures replace the
+opaque provider 400 with an actionable message (start fresh / narrow scope) since
+retrying can never succeed.
 
 ### 7.3 Subagents
 

@@ -780,7 +780,14 @@ func (s *Session) run() {
 		}
 		if err != nil {
 			s.setStatus(event.StatusError)
-			s.emitter.Emit(event.SessionError, map[string]any{"msg": err.Error()})
+			// A model-turn failure was already recorded by the engine loop as a
+			// structured session_error (engine.TurnError marks that); emitting it
+			// again here would double-log every API failure. Other Run errors
+			// (max turns, truncation give-up, ...) are recorded here.
+			var te *engine.TurnError
+			if !errors.As(err, &te) {
+				s.emitter.Emit(event.SessionError, map[string]any{"msg": err.Error()})
+			}
 		} else if res.NextMode != "" && res.NextMode != s.Mode {
 			// A control tool requested a mode transition within this session. A
 			// carried prompt (e.g. the pm → work hand-off) seeds the new loop

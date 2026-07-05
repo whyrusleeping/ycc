@@ -43,9 +43,11 @@ var toolIDInvalid = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 // (actor implementer/reviewer:*) and non-conversational events are ignored — the
 // reconstructed history is the COORDINATOR's view, mirroring what Loop builds
 // live. Dangling tool calls (a tool_call with no recorded tool_result, e.g. a
-// session reopened mid-turn) get a synthetic tool result appended so the
-// conversation stays valid for the next turn (Anthropic/OpenAI require every
-// tool_use to be answered).
+// session reopened mid-turn or closed with an ask_user pending) get a synthetic
+// tool result inserted immediately after their assistant turn — wherever that
+// turn sits in the transcript, not only at the tail — so the conversation stays
+// valid for the next turn (Anthropic/OpenAI require every tool_use to be
+// answered by the immediately following message).
 func ReplayHistory(events []event.Event) []gollama.Message {
 	var history []gollama.Message
 	// assistantIdx is the index in history of the current coordinator assistant
@@ -98,6 +100,33 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 		}
 	}
 
+	// repairDangling appends a synthetic tool result for every unanswered
+	// tool_call on the CURRENT assistant message. It runs before any new
+	// user/assistant message is appended and once more at the end of replay, so
+	// a dangling tool_use is repaired in place wherever it occurs — not just at
+	// the tail. This matters when a session is closed with a question pending,
+	// reopened (the model re-asks, appending new turns), and closed unanswered
+	// again: the original dangling tool_use is then mid-transcript, and
+	// Anthropic rejects the whole conversation with a 400 unless a tool_result
+	// immediately follows it.
+	repairDangling := func() {
+		if assistantIdx < 0 {
+			return
+		}
+		for _, call := range history[assistantIdx].ToolCalls {
+			if answered[call.ID] {
+				continue
+			}
+			history = append(history, gollama.Message{
+				Role:       "tool",
+				ToolCallID: call.ID,
+				Content:    "(no result recorded; session was reopened)",
+			})
+			answered[call.ID] = true
+			popPending(call.ID)
+		}
+	}
+
 	// lostJobs tracks background jobs whose start was recorded but whose finish
 	// was not (docs/design/async-jobs.md §4): jobs do not survive a daemon
 	// restart, so on reopen we synthesize a "(job lost: daemon restarted)" note
@@ -121,6 +150,7 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			if boolv(ev.Data, "queued") {
 				continue
 			}
+			repairDangling()
 			history = append(history, gollama.Message{Role: "user", Content: str(ev.Data, "text")})
 			assistantIdx = -1
 			lastTurnTruncated = false // a real user input breaks the truncation chain
@@ -129,6 +159,7 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			// (spec §18.7): append it exactly where the live loop Posted it so the
 			// replayed history matches what the model saw, and reset turn state like
 			// a normal user input.
+			repairDangling()
 			history = append(history, gollama.Message{Role: "user", Content: str(ev.Data, "text")})
 			assistantIdx = -1
 			lastTurnTruncated = false
@@ -136,6 +167,10 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			if ev.Actor != "coordinator" {
 				continue // subagent turn — not part of the coordinator history
 			}
+			// Repair any dangling tool calls on the previous assistant turn before
+			// starting a new one (e.g. an ask_user that was never answered because
+			// the session closed, followed on reopen by the model re-asking).
+			repairDangling()
 			truncated := boolv(ev.Data, "truncated")
 			text := str(ev.Data, "text")
 			// If the previous turn was truncated and we're about to append another
@@ -209,6 +244,13 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 				// mint a valid id so the message is at least well-formed.
 				id = canon(rawID)
 			}
+			if answered[id] {
+				// The call was already answered (e.g. a synthetic repair was inserted
+				// at a message boundary before this late result appeared). A second
+				// tool_result for the same tool_use_id would itself be rejected by
+				// the API, so drop the late one.
+				continue
+			}
 			popPending(id)
 			answered[id] = true
 			history = append(history, gollama.Message{Role: "tool", ToolCallID: id, Content: str(ev.Data, "result")})
@@ -231,6 +273,7 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			// user-role message (docs/design/async-jobs.md §3.3): append it exactly
 			// where the live loop Posted it and reset turn state like a user input.
 			delete(lostJobs, str(ev.Data, "id"))
+			repairDangling()
 			history = append(history, gollama.Message{Role: "user", Content: str(ev.Data, "text")})
 			assistantIdx = -1
 			lastTurnTruncated = false
@@ -239,19 +282,9 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 
 	// Repair dangling tool calls on the trailing assistant message: any tool_call
 	// id that never saw a matching tool_result gets a synthetic result so the
-	// reconstructed conversation is valid for the next turn.
-	if assistantIdx >= 0 {
-		for _, call := range history[assistantIdx].ToolCalls {
-			if !answered[call.ID] {
-				history = append(history, gollama.Message{
-					Role:       "tool",
-					ToolCallID: call.ID,
-					Content:    "(no result recorded; session was reopened)",
-				})
-				answered[call.ID] = true
-			}
-		}
-	}
+	// reconstructed conversation is valid for the next turn. (Mid-transcript
+	// dangling calls were already repaired at message boundaries above.)
+	repairDangling()
 
 	// Synthesize a lost-job note for any background job that started but never
 	// finished before the log ended (docs/design/async-jobs.md §4): jobs do not

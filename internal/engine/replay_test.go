@@ -115,6 +115,99 @@ func TestReplayHistoryDanglingToolCall(t *testing.T) {
 	}
 }
 
+// TestReplayHistoryDanglingToolCallMidTranscript reproduces the double-close
+// poisoning bug: a session closed with an ask_user pending (tool_call, no
+// tool_result), reopened (recovery re-asks, appending a NEW assistant turn),
+// then closed unanswered again. The original dangling tool_use is now buried
+// mid-transcript; without an in-place synthetic tool_result immediately after
+// its assistant turn, Anthropic rejects every subsequent request with a 400
+// ("tool_use ids were found without tool_result blocks immediately after").
+func TestReplayHistoryDanglingToolCallMidTranscript(t *testing.T) {
+	events := []event.Event{
+		{Seq: 1, Actor: "user", Type: event.UserInput, Data: map[string]any{"text": "go"}},
+		// First ask_user — session closed before the user answered.
+		{Seq: 2, Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{"text": "asking"}},
+		{Seq: 3, Actor: "coordinator", Type: event.ToolCall, Data: map[string]any{
+			"name": "ask_user", "args": `{"question":"pick one?"}`, "id": "toolu_first",
+		}},
+		// Reopen: the model re-asks. Second ask_user also never answered.
+		{Seq: 4, Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{"text": "asking again"}},
+		{Seq: 5, Actor: "coordinator", Type: event.ToolCall, Data: map[string]any{
+			"name": "ask_user", "args": `{"question":"pick one?"}`, "id": "toolu_second",
+		}},
+		// Reopen again, user sends a plain follow-up.
+		{Seq: 6, Actor: "user", Type: event.UserInput, Data: map[string]any{"text": "can you continue?"}},
+	}
+	got := ReplayHistory(events)
+
+	// Every tool_use must be answered by a tool message immediately following
+	// its assistant turn (before the next non-tool message) — the Anthropic
+	// validity rule that was violated mid-transcript.
+	for i, m := range got {
+		for _, call := range m.ToolCalls {
+			answered := false
+			for j := i + 1; j < len(got) && got[j].Role == "tool"; j++ {
+				if got[j].ToolCallID == call.ID {
+					answered = true
+					break
+				}
+			}
+			if !answered {
+				t.Fatalf("tool_use %q on message %d has no tool_result immediately after: %+v", call.ID, i, got)
+			}
+		}
+	}
+
+	// Shape check: user, assistant(ask#1), synthetic tool, assistant(ask#2),
+	// synthetic tool, user.
+	wantRoles := []string{"user", "assistant", "tool", "assistant", "tool", "user"}
+	if len(got) != len(wantRoles) {
+		t.Fatalf("want %d messages, got %d: %+v", len(wantRoles), len(got), got)
+	}
+	for i, r := range wantRoles {
+		if got[i].Role != r {
+			t.Fatalf("message %d: want role %q, got %q (%+v)", i, r, got[i].Role, got)
+		}
+	}
+	if got[2].ToolCallID != "toolu_first" || got[4].ToolCallID != "toolu_second" {
+		t.Fatalf("synthetic results paired to wrong calls: %q, %q", got[2].ToolCallID, got[4].ToolCallID)
+	}
+	if got[2].Content == "" || got[4].Content == "" {
+		t.Fatal("synthetic tool results should have non-empty content")
+	}
+}
+
+// TestReplayHistoryLateResultAfterRepair: once a dangling call has been
+// synthetically answered at a message boundary, a late real tool_result for the
+// same id must be dropped — two tool_result blocks for one tool_use_id are just
+// as invalid as zero.
+func TestReplayHistoryLateResultAfterRepair(t *testing.T) {
+	events := []event.Event{
+		{Seq: 1, Actor: "user", Type: event.UserInput, Data: map[string]any{"text": "go"}},
+		{Seq: 2, Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{"text": "asking"}},
+		{Seq: 3, Actor: "coordinator", Type: event.ToolCall, Data: map[string]any{
+			"name": "ask_user", "args": `{}`, "id": "toolu_x",
+		}},
+		// A new assistant turn arrives with the call still unanswered → repair
+		// inserts a synthetic result for toolu_x here.
+		{Seq: 4, Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{"text": "next"}},
+		// Pathological late result for the already-repaired call.
+		{Seq: 5, Actor: "coordinator", Type: event.ToolResult, Data: map[string]any{
+			"name": "ask_user", "result": "late", "id": "toolu_x",
+		}},
+	}
+	got := ReplayHistory(events)
+	n := 0
+	for _, m := range got {
+		if m.Role == "tool" && m.ToolCallID == "toolu_x" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("want exactly 1 tool_result for toolu_x, got %d: %+v", n, got)
+	}
+}
+
 // TestReplayHistoryCanonicalizesToolIDs covers reopening a session whose recorded
 // tool-call ids are not valid Anthropic tool_use ids (e.g. they came from a
 // different backend and contain '.'/':' or are empty). Both the assistant

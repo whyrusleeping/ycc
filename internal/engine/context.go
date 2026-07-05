@@ -1,8 +1,6 @@
 package engine
 
 import (
-	"strings"
-
 	"github.com/whyrusleeping/gollama"
 )
 
@@ -12,28 +10,11 @@ import (
 //
 // gollama surfaces these as HTTP 400 errors whose bodies carry provider-specific
 // text (Anthropic: "prompt is too long: N tokens > M maximum"; OpenAI-compatible:
-// "context_length_exceeded" / "maximum context length is N tokens"). We match on
-// those real context-window signatures only. We deliberately do NOT match generic
-// "max_tokens"/output-truncation phrasing — output truncation is a distinct,
-// recoverable condition handled in loop.go (see maxTruncRetries).
+// "context_length_exceeded" / "maximum context length is N tokens"). Detection
+// lives in the shared classifier (apierror.go, contextLengthSignatures); this is
+// a convenience predicate over it.
 func IsContextLengthError(err error) bool {
-	if err == nil {
-		return false
-	}
-	lower := strings.ToLower(err.Error())
-	for _, sig := range []string{
-		"prompt is too long",                // Anthropic
-		"context_length_exceeded",           // OpenAI-compatible error code
-		"maximum context length",            // OpenAI-compatible message
-		"reduce the length of the messages", // OpenAI-compatible hint
-		"context window",                    // generic
-		"too many total text bytes",         // some gateways
-	} {
-		if strings.Contains(lower, sig) {
-			return true
-		}
-	}
-	return false
+	return ClassifyAPIError(err).Kind == KindContextLength
 }
 
 // approxContextTokens returns a coarse, backend-agnostic estimate of the size of

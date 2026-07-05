@@ -642,7 +642,6 @@ func (r *Registry) RoleThinkingLevels() (coordinator, implementer, reviewers str
 	return pick(t.Coordinator), pick(t.Implementer), pick(t.Reviewers)
 }
 
-
 type ModelInfo struct {
 	Name    string
 	Backend string
@@ -869,8 +868,8 @@ func (r *Registry) Build(name string) (engine.Turner, string, error) {
 	default:
 		return nil, "", fmt.Errorf("model %q: unsupported backend %q", name, m.Backend)
 	}
-	// Wrap the configured client so transient (network/timeout/429/5xx) API
-	// failures are retried with exponential backoff (spec task 0050). Done after
-	// auth/mode configuration so the retry layer reuses the fully-built client.
-	return engine.WithRetry(c, engine.DefaultRetryPolicy()), m.Model, nil
+	// Retry of transient API failures is handled by the engine loop itself
+	// (engine.Loop.runTurn, spec §7.2) — ctx-aware and visible to live
+	// subscribers — so the client is returned unwrapped.
+	return c, m.Model, nil
 }

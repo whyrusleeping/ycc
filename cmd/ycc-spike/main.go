@@ -15,6 +15,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -100,7 +101,12 @@ func main() {
 
 	res, err := loop.Run(context.Background())
 	if err != nil {
-		emitter.Emit(event.SessionError, map[string]any{"msg": err.Error()})
+		// A model-turn failure was already recorded as a session_error by the
+		// engine loop (engine.TurnError marks that); only record other errors.
+		var te *engine.TurnError
+		if !errors.As(err, &te) {
+			emitter.Emit(event.SessionError, map[string]any{"msg": err.Error()})
+		}
 		fatal(err)
 	}
 	emitter.Emit(event.SessionIdle, map[string]any{"msg": fmt.Sprintf("done in %d turns", res.Turns)})
