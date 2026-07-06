@@ -115,6 +115,9 @@ const (
 	// SessionServiceUpdateTaskProcedure is the fully-qualified name of the SessionService's UpdateTask
 	// RPC.
 	SessionServiceUpdateTaskProcedure = "/ycc.v1.SessionService/UpdateTask"
+	// SessionServiceCreateTaskProcedure is the fully-qualified name of the SessionService's CreateTask
+	// RPC.
+	SessionServiceCreateTaskProcedure = "/ycc.v1.SessionService/CreateTask"
 	// SessionServiceListPlansProcedure is the fully-qualified name of the SessionService's ListPlans
 	// RPC.
 	SessionServiceListPlansProcedure = "/ycc.v1.SessionService/ListPlans"
@@ -199,6 +202,10 @@ type SessionServiceClient interface {
 	// UpdateTask grooms a backlog task in place (spec §18.5, task 0099): change
 	// status/priority/title, or (no mutation fields) refresh + regenerate the index.
 	UpdateTask(context.Context, *connect.Request[v1.UpdateTaskRequest]) (*connect.Response[v1.UpdateTaskResponse], error)
+	// CreateTask adds a new task to the backlog (task 0143): compose the canonical
+	// task scaffold around a description and assign the next id. Used by
+	// `ycc task add` when a daemon is available.
+	CreateTask(context.Context, *connect.Request[v1.CreateTaskRequest]) (*connect.Response[v1.CreateTaskResponse], error)
 	// Plan library (reusable runbooks, task 0020/0077): read-only access to the
 	// in-repo plans/*.md so clients can browse and view saved plans.
 	ListPlans(context.Context, *connect.Request[v1.ListPlansRequest]) (*connect.Response[v1.ListPlansResponse], error)
@@ -410,6 +417,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("UpdateTask")),
 			connect.WithClientOptions(opts...),
 		),
+		createTask: connect.NewClient[v1.CreateTaskRequest, v1.CreateTaskResponse](
+			httpClient,
+			baseURL+SessionServiceCreateTaskProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("CreateTask")),
+			connect.WithClientOptions(opts...),
+		),
 		listPlans: connect.NewClient[v1.ListPlansRequest, v1.ListPlansResponse](
 			httpClient,
 			baseURL+SessionServiceListPlansProcedure,
@@ -503,6 +516,7 @@ type sessionServiceClient struct {
 	listBacklog          *connect.Client[v1.ListBacklogRequest, v1.ListBacklogResponse]
 	getTask              *connect.Client[v1.GetTaskRequest, v1.GetTaskResponse]
 	updateTask           *connect.Client[v1.UpdateTaskRequest, v1.UpdateTaskResponse]
+	createTask           *connect.Client[v1.CreateTaskRequest, v1.CreateTaskResponse]
 	listPlans            *connect.Client[v1.ListPlansRequest, v1.ListPlansResponse]
 	getPlan              *connect.Client[v1.GetPlanRequest, v1.GetPlanResponse]
 	captureBacklogItem   *connect.Client[v1.CaptureBacklogItemRequest, v1.Event]
@@ -655,6 +669,11 @@ func (c *sessionServiceClient) UpdateTask(ctx context.Context, req *connect.Requ
 	return c.updateTask.CallUnary(ctx, req)
 }
 
+// CreateTask calls ycc.v1.SessionService.CreateTask.
+func (c *sessionServiceClient) CreateTask(ctx context.Context, req *connect.Request[v1.CreateTaskRequest]) (*connect.Response[v1.CreateTaskResponse], error) {
+	return c.createTask.CallUnary(ctx, req)
+}
+
 // ListPlans calls ycc.v1.SessionService.ListPlans.
 func (c *sessionServiceClient) ListPlans(ctx context.Context, req *connect.Request[v1.ListPlansRequest]) (*connect.Response[v1.ListPlansResponse], error) {
 	return c.listPlans.CallUnary(ctx, req)
@@ -759,6 +778,10 @@ type SessionServiceHandler interface {
 	// UpdateTask grooms a backlog task in place (spec §18.5, task 0099): change
 	// status/priority/title, or (no mutation fields) refresh + regenerate the index.
 	UpdateTask(context.Context, *connect.Request[v1.UpdateTaskRequest]) (*connect.Response[v1.UpdateTaskResponse], error)
+	// CreateTask adds a new task to the backlog (task 0143): compose the canonical
+	// task scaffold around a description and assign the next id. Used by
+	// `ycc task add` when a daemon is available.
+	CreateTask(context.Context, *connect.Request[v1.CreateTaskRequest]) (*connect.Response[v1.CreateTaskResponse], error)
 	// Plan library (reusable runbooks, task 0020/0077): read-only access to the
 	// in-repo plans/*.md so clients can browse and view saved plans.
 	ListPlans(context.Context, *connect.Request[v1.ListPlansRequest]) (*connect.Response[v1.ListPlansResponse], error)
@@ -966,6 +989,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("UpdateTask")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceCreateTaskHandler := connect.NewUnaryHandler(
+		SessionServiceCreateTaskProcedure,
+		svc.CreateTask,
+		connect.WithSchema(sessionServiceMethods.ByName("CreateTask")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sessionServiceListPlansHandler := connect.NewUnaryHandler(
 		SessionServiceListPlansProcedure,
 		svc.ListPlans,
@@ -1084,6 +1113,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceGetTaskHandler.ServeHTTP(w, r)
 		case SessionServiceUpdateTaskProcedure:
 			sessionServiceUpdateTaskHandler.ServeHTTP(w, r)
+		case SessionServiceCreateTaskProcedure:
+			sessionServiceCreateTaskHandler.ServeHTTP(w, r)
 		case SessionServiceListPlansProcedure:
 			sessionServiceListPlansHandler.ServeHTTP(w, r)
 		case SessionServiceGetPlanProcedure:
@@ -1223,6 +1254,10 @@ func (UnimplementedSessionServiceHandler) GetTask(context.Context, *connect.Requ
 
 func (UnimplementedSessionServiceHandler) UpdateTask(context.Context, *connect.Request[v1.UpdateTaskRequest]) (*connect.Response[v1.UpdateTaskResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.UpdateTask is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) CreateTask(context.Context, *connect.Request[v1.CreateTaskRequest]) (*connect.Response[v1.CreateTaskResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.CreateTask is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) ListPlans(context.Context, *connect.Request[v1.ListPlansRequest]) (*connect.Response[v1.ListPlansResponse], error) {

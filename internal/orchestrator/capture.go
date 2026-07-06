@@ -96,7 +96,7 @@ func captureCreateTask(d *Deps) *gollama.Tool {
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			title, _ := tools.GetString(params, "title")
 			desc, _ := tools.GetString(params, "description")
-			body := taskBody(desc)
+			body := docs.TaskBody(desc)
 			t, err := d.Docs.Create(title, body, getInt(params, "priority", 3), getStrings(params, "depends_on"), getStrings(params, "spec_refs"))
 			if err != nil {
 				return tools.ErrResult("create_task: %v", err), nil

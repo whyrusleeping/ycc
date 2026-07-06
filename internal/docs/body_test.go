@@ -1,4 +1,4 @@
-package orchestrator
+package docs
 
 import (
 	"regexp"
@@ -11,7 +11,7 @@ func countHeaders(body, title string) int {
 }
 
 func TestTaskBodyPlainText(t *testing.T) {
-	body := taskBody("Do the thing and make it work.")
+	body := TaskBody("Do the thing and make it work.")
 	if got := countHeaders(body, "Description"); got != 1 {
 		t.Fatalf("Description headers = %d, want 1\nbody:\n%s", got, body)
 	}
@@ -25,7 +25,7 @@ func TestTaskBodyPlainText(t *testing.T) {
 
 func TestTaskBodyPreStructured(t *testing.T) {
 	desc := "## Description\nThe feature does X.\n\n## Acceptance criteria\n- [ ] X works\n"
-	body := taskBody(desc)
+	body := TaskBody(desc)
 	if got := countHeaders(body, "Description"); got != 1 {
 		t.Fatalf("Description headers = %d, want 1\nbody:\n%s", got, body)
 	}
@@ -39,7 +39,7 @@ func TestTaskBodyPreStructured(t *testing.T) {
 
 func TestTaskBodyPreStructuredCaseInsensitiveAndWhitespace(t *testing.T) {
 	desc := "  ## description\nBlah.\n\n##  ACCEPTANCE CRITERIA\n- [ ] ok\n\n## Work log\n- note\n"
-	body := taskBody(desc)
+	body := TaskBody(desc)
 	if got := countHeaders(body, "description"); got != 1 {
 		t.Fatalf("description headers = %d, want 1\nbody:\n%s", got, body)
 	}
@@ -54,17 +54,17 @@ func TestTaskBodyPreStructuredCaseInsensitiveAndWhitespace(t *testing.T) {
 func TestTaskBodyInlineMentionNotTreatedAsHeader(t *testing.T) {
 	// A prose mention of the header text must not suppress the real header.
 	desc := "See the ## Description section for details."
-	body := taskBody(desc)
+	body := TaskBody(desc)
 	if got := countHeaders(body, "Description"); got != 1 {
 		t.Fatalf("Description headers = %d, want 1\nbody:\n%s", got, body)
 	}
 }
 
 func TestTaskBodyEmpty(t *testing.T) {
-	if got := taskBody(""); got != "" {
-		t.Fatalf("taskBody(\"\") = %q, want empty", got)
+	if got := TaskBody(""); got != "" {
+		t.Fatalf("TaskBody(\"\") = %q, want empty", got)
 	}
-	if got := taskBody("   \n\t "); got != "" {
-		t.Fatalf("taskBody(whitespace) = %q, want empty", got)
+	if got := TaskBody("   \n\t "); got != "" {
+		t.Fatalf("TaskBody(whitespace) = %q, want empty", got)
 	}
 }

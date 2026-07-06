@@ -355,6 +355,20 @@ message UpdateTaskRequest {
 }
 message UpdateTaskResponse { TaskDetail task = 1; }
 
+// CreateTask adds a new task to the backlog (task 0143). It mirrors the
+// docs.Store.Create path used by the capture agent, composing the canonical
+// "## Description / ## Acceptance criteria / ## Work log" scaffold around the
+// supplied body. Used by `ycc task add` when a daemon is available.
+message CreateTaskRequest {
+  string project = 1;          // optional registered project; empty => daemon default workspace
+  string title = 2;            // required
+  string body = 3;            // long description / markdown; scaffolded if it lacks the canonical headers
+  int32 priority = 4;         // 1..5; 0 => default (3)
+  repeated string depends_on = 5;
+  repeated string spec_refs = 6;
+}
+message CreateTaskResponse { TaskDetail task = 1; }
+
 // Plan library (reusable runbooks, task 0020/0077): read-only access to the
 // in-repo plans/*.md so clients can browse and view saved plans.
 message ListPlansRequest { string project = 1; }
@@ -561,6 +575,10 @@ service SessionService {
   // UpdateTask grooms a backlog task in place (spec §18.5, task 0099): change
   // status/priority/title, or (no mutation fields) refresh + regenerate the index.
   rpc UpdateTask(UpdateTaskRequest) returns (UpdateTaskResponse);
+  // CreateTask adds a new task to the backlog (task 0143): compose the canonical
+  // task scaffold around a description and assign the next id. Used by
+  // `ycc task add` when a daemon is available.
+  rpc CreateTask(CreateTaskRequest) returns (CreateTaskResponse);
   // Plan library (reusable runbooks, task 0020/0077): read-only access to the
   // in-repo plans/*.md so clients can browse and view saved plans.
   rpc ListPlans(ListPlansRequest) returns (ListPlansResponse);

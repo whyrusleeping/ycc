@@ -131,6 +131,47 @@ Columns: the group-by dimension(s), then `Input`, `Output`, `Cache`, `Total`
 (tokens) and `Cost`. A `*` marks partial pricing (some models unpriced); `—`
 marks fully unpriced rows.
 
+### `ycc task <add|list|show>` — capture & browse the backlog from the shell
+
+Jot, list, and read backlog tasks without opening the TUI — from a terminal, a
+git hook, or another tool. Like `spec-check`, it **works with no daemon**: it
+uses a running daemon when one is reachable (or `--addr`), otherwise it operates
+directly on `<workspace>/backlog` via the same store the daemon uses.
+
+Daemon resolution per invocation: explicit `--addr` daemon if given → an
+already-running local daemon if reachable → direct `docs.Store` on the workspace.
+`--project NAME` targets a registered project and therefore **requires a daemon**
+(direct-store mode errors if `--project` is set).
+
+`ycc task add "title"` — create a task (prints the assigned id):
+
+| Flag | Description |
+|------|-------------|
+| `--priority N`, `-p` | priority `1..5` (default `3`) |
+| `--desc TEXT`, `-d` | long description; use `--desc -` to read the whole description from stdin |
+| `--depends a,b` | comma-separated dependency ids, e.g. `0007,0008` |
+| `--spec-ref R` | spec reference (repeatable) |
+| `--project NAME` | registered project (requires a daemon) |
+
+The description is wrapped in the canonical `## Description` / `## Acceptance
+criteria` / `## Work log` scaffold (headers you already provide are not
+duplicated).
+
+`ycc task list` — one row per task (`id [status] pN  title  (deps: …)` with a
+`[READY]` / `[blocked by …]` mark for open todo/blocked tasks) plus a trailing
+ready-to-start summary. Completed (done) tasks are hidden unless `--all`/`-a`.
+
+`ycc task show <id>` — print the task's fields (id, title, status, priority,
+deps, spec refs, created/updated, readiness) followed by its markdown body.
+
+```sh
+ycc task add "Fix the flaky test" -p 2 --depends 0007
+git log -1 --format=%B | ycc task add "Follow-up from last commit" --desc -
+ycc task list
+ycc task list --all
+ycc task show 0007
+```
+
 ### `ycc spec-check` — deterministic spec/code drift check
 
 Deterministically checks the project's design docs for **stale references**: it

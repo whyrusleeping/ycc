@@ -74,3 +74,7 @@ The layout is safe for multi-line footers: `footerStackHeight()` (~2111) measure
 - 2026-07-06 review (Claude): accept — The change correctly fixes the footer question-clipping bug by word-wrapping the pending question in both pickerView and wizardView with proper hanging indents, using the existing wrapTo (wordwrap+har
 …[truncated]
 - 2026-07-06 decision: accept — commit: tui: word-wrap long model questions in the picker/wizard footer instead of clipping (task 0149)
+- 2026-07-06 usage: 24,770 tok (in 132, out 24,638, cache_r 1,314,416, cache_w 78,320) · cost n/a (unpriced)
+  coordinator: 11,986 tok (in 58, out 11,928, cache_r 816,824, cache_w 39,991) · cost n/a (unpriced)
+  implementer: 9,307 tok (in 48, out 9,259, cache_r 386,319, cache_w 25,044) · cost n/a (unpriced)
+  reviewer:Claude: 3,477 tok (in 26, out 3,451, cache_r 111,273, cache_w 13,285) · cost n/a (unpriced)

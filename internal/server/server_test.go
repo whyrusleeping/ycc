@@ -195,6 +195,68 @@ func TestBacklogRPCs(t *testing.T) {
 	}
 }
 
+// TestCreateTask exercises the backlog capture RPC (task 0143): a valid request
+// assigns an id, scaffolds the body with the canonical headers, and the new task
+// shows up in ListBacklog; blank title and out-of-range priority are rejected.
+func TestCreateTask(t *testing.T) {
+	reg := config.NewRegistry(&config.Config{
+		Models: map[string]config.Model{"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"}},
+		Roles:  config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
+	})
+	ws := t.TempDir()
+	srv := New(session.NewManager(reg, ws))
+	ctx := context.Background()
+
+	resp, err := srv.CreateTask(ctx, connect.NewRequest(&v1.CreateTaskRequest{
+		Title: "Wire up the widget", Body: "Do the thing.", Priority: 2,
+	}))
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	td := resp.Msg.Task
+	if td.GetId() == "" {
+		t.Fatal("CreateTask: no id assigned")
+	}
+	if td.GetPriority() != 2 || td.GetTitle() != "Wire up the widget" {
+		t.Fatalf("CreateTask detail = %+v, want title+priority set", td)
+	}
+	for _, want := range []string{"## Description", "## Acceptance criteria", "## Work log"} {
+		if !strings.Contains(td.GetBody(), want) {
+			t.Fatalf("body missing %q:\n%s", want, td.GetBody())
+		}
+	}
+
+	// Default priority: 0 => 3.
+	def, err := srv.CreateTask(ctx, connect.NewRequest(&v1.CreateTaskRequest{Title: "Defaults"}))
+	if err != nil {
+		t.Fatalf("CreateTask default priority: %v", err)
+	}
+	if def.Msg.Task.GetPriority() != 3 {
+		t.Fatalf("default priority = %d, want 3", def.Msg.Task.GetPriority())
+	}
+
+	// Both created tasks appear in the backlog.
+	list, err := srv.ListBacklog(ctx, connect.NewRequest(&v1.ListBacklogRequest{}))
+	if err != nil {
+		t.Fatalf("ListBacklog: %v", err)
+	}
+	if len(list.Msg.Tasks) != 2 {
+		t.Fatalf("ListBacklog = %d tasks, want 2", len(list.Msg.Tasks))
+	}
+
+	// Blank title and out-of-range priority are InvalidArgument.
+	if _, err := srv.CreateTask(ctx, connect.NewRequest(&v1.CreateTaskRequest{Title: "  "})); err == nil {
+		t.Fatal("CreateTask blank title: expected error")
+	} else if got := connect.CodeOf(err); got != connect.CodeInvalidArgument {
+		t.Fatalf("code = %v, want InvalidArgument", got)
+	}
+	if _, err := srv.CreateTask(ctx, connect.NewRequest(&v1.CreateTaskRequest{Title: "x", Priority: 9})); err == nil {
+		t.Fatal("CreateTask bad priority: expected error")
+	} else if got := connect.CodeOf(err); got != connect.CodeInvalidArgument {
+		t.Fatalf("code = %v, want InvalidArgument", got)
+	}
+}
+
 // TestUpdateTask exercises the backlog grooming RPC (task 0099): status/priority
 // mutations persist to the task file; invalid inputs are rejected; an unknown id
 // is NotFound; and a no-field "refresh" re-reads the task without altering it.

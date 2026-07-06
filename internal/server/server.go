@@ -615,6 +615,41 @@ func (s *Server) UpdateTask(_ context.Context, req *connect.Request[v1.UpdateTas
 	}}), nil
 }
 
+// CreateTask adds a new task to the backlog (task 0143). It composes the same
+// canonical scaffold as the capture agent (docs.TaskBody) and assigns the next
+// id via the docs Store, sharing the per-directory write lock with work sessions
+// and the capture agent. Used by `ycc task add` when a daemon is available.
+func (s *Server) CreateTask(_ context.Context, req *connect.Request[v1.CreateTaskRequest]) (*connect.Response[v1.CreateTaskResponse], error) {
+	store, err := s.mgr.Backlog(req.Msg.Project)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	m := req.Msg
+	if strings.TrimSpace(m.Title) == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("title must not be blank"))
+	}
+	prio := int(m.Priority)
+	if prio == 0 {
+		prio = 3
+	} else if prio < 1 || prio > 5 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("priority %d out of range (1..5)", prio))
+	}
+	t, err := store.Create(strings.TrimSpace(m.Title), docs.TaskBody(m.Body), prio, m.DependsOn, m.SpecRefs)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	tasks, err := store.List()
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	blocking := docs.BlockingDeps(t, docs.StatusByID(tasks))
+	return connect.NewResponse(&v1.CreateTaskResponse{Task: &v1.TaskDetail{
+		Id: t.ID, Title: t.Title, Status: string(t.Status), Priority: int32(t.Priority),
+		DependsOn: t.DependsOn, SpecRefs: t.SpecRefs, Created: t.Created, Updated: t.Updated,
+		Body: t.Body, Ready: len(blocking) == 0, BlockedBy: blocking, Path: t.Path,
+	}}), nil
+}
+
 // ListPlans returns the in-repo plan library (plans/*.md) so clients can browse
 // saved runbooks (task 0020/0077). Read-only.
 func (s *Server) ListPlans(_ context.Context, req *connect.Request[v1.ListPlansRequest]) (*connect.Response[v1.ListPlansResponse], error) {
