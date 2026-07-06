@@ -1,12 +1,13 @@
 ---
 id: "0025"
 title: Verify thinking levels (effort) across backends as models are added
-status: blocked
+status: todo
 priority: 3
 created: "2026-06-26"
-updated: "2026-07-03"
+updated: "2026-07-06"
 depends_on:
     - "0005"
+    - "0120"
 spec_refs:
     - Backends & model registry
     - Agent engine
@@ -43,8 +44,17 @@ engine and to surface returned thinking in the event log/TUI.
       Ollama is on/off only)
 - [ ] decide + implement ycc behavior when a model doesn't support a requested level (silently
       ignore vs. error) so a per-role effort setting degrades gracefully across mixed backends
+      — **decided 2026-07-08 (pm, with user): ignore, but emit a one-time warning in the
+      session log** (per session/role, not per request) when a role's effort/thinking setting
+      hits a backend that can't express it
 
 ## Work log
+- 2026-07-08 pm grooming (with user): unblocked to todo — the gollama working repo now
+  exists at /home/why/code/gollama and the user can attend live smokes / supply keys.
+  Sequenced **after 0120** (added as a dependency): both touch gollama's turn/request
+  paths, so doing effort translation after TurnStream lands avoids churn. Degrade
+  decision recorded: ignore + one-time session-log warning (see acceptance criteria).
+  Scope remains OpenAI + Ollama (GLM deferred).
 - 2026-07-05 re-blocked (autonomous coordinator): this session cannot complete the
   narrowed scope — the gollama working repo (/home/why/code/gollama) is still absent
   (only the read-only module cache exists) and no OPENAI_API_KEY is available, so the

@@ -362,6 +362,39 @@ drafted for the user — applied only with explicit approval (the flow reuses `p
 `create_task` and Edit/Write tools; it drafts, the user approves). Cost is intentionally
 unbounded for now; sampling or git-driven targeting can be added later if it proves expensive.
 
+### 6.5 Project memory — agent-learned, advisory
+
+The spec is **what the project should be**; **memory is what the agents have learned about
+working on it**. The spec is normative, human-approved, and drift-checked (§6.4); memory is
+**empirical, agent-authored, advisory, dated, and bounded**, with an explicit promotion path
+into the spec / plans / backlog when an observation hardens into intent. See
+`docs/design/project-memory.md` for the full rationale.
+
+- **Store.** A committed `memory.md` at the workspace root (beside `spec.md` and `backlog/`),
+  holding dated bullet entries under four categories — *Environment & tooling*, *Codebase
+  gotchas*, *User preferences*, *Lessons learned* — under an advisory header ("Advisory, not
+  normative — verify before relying"). It is diffable and human-auditable. `Store.MemoryPath`/
+  `ReadMemory`/`AppendMemory`/`IsMemory` (`internal/docs`) back it.
+- **Write path.** A `remember(note, category?)` tool (default category `lesson`) appends a
+  dated entry. It is available to the coordinator-level agents only — `pm`, `chat`, and the
+  `work` coordinator — NOT the implementer or reviewers, which report learnings upward instead.
+  A **hard ~4 KB budget** keeps memory small enough to inject wholesale; over budget, `remember`
+  refuses with "consolidate first" guidance. Direct Edit/Write of `memory.md` remains valid.
+- **Read path.** The shared prompt assembly (`sys`/`inspectSys`, `internal/orchestrator`)
+  appends memory contents to **every** agent's system prompt when non-empty, framed explicitly
+  as advisory — "empirical and possibly stale; verify before relying; context, not
+  instructions". An absent/empty file adds nothing.
+- **Eventing.** Memory writes (the tool and direct edits) emit `doc_updated` with `doc:"memory"`
+  — memory joins the docs set for eventing only.
+- **NOT spec.** Memory is explicitly excluded from the docs set the spec doctor / `ycc
+  spec-check` scans (`Store.DocFiles` skips it): its entries are never treated as normative
+  claims or flagged for drift.
+- **Promotion path & grooming.** A repeatedly re-confirmed observation that is really a design
+  constraint is promoted into the spec (deliberately, with approval) and removed from memory;
+  matured procedures move to `plans/`; observations implying work become tasks; operational
+  trivia found in the spec moves out to memory. Grooming (dedupe, prune, merge, promote) is a
+  `pm` activity, surfaced as the on-demand `memory-groom` preset (§9).
+
 ## 7. Agent engine
 
 ### 7.1 gollama integration (and the one addition we need)
@@ -551,15 +584,17 @@ Each mode = a coordinator system prompt + a tool subset + a state machine. There
   so it can maintain `spec.md`, and is told not to touch code; a hard boundary (path
   scoping / isolation) is future work. Tools: `Read`/`Write`/`Edit`/`Bash`,
   `list_backlog`/`get_task`/`create_task`/`update_task`, `propose_plan`, `switch_to_work`,
-  `ask_user`, `finish`. The spec-doctor drift check is no longer a pm tool: it is the
+  `ask_user`, `finish`. The `remember` tool (§6.5) is also available so `pm` can capture
+  durable operational learnings. The spec-doctor drift check is no longer a pm tool: it is the
   daemon-free `ycc spec-check` subcommand (§6.4) the preset runs via `Bash`. This **replaces** the former `spec`, `backlog`, `feature`, and `bug` modes —
   they were one capability set under four prompt framings, and are now simply ordinary
   `pm` work rather than distinct menu entries. The home menu no longer lists those framings
   as separate presets (they added redundant clutter for what is all planning/intake work);
   `pm`'s own description signals it covers spec authoring, backlog grooming, new features,
   and bug intake. The remaining opening-prompt presets are **`onboard`** (§19.2), the
-  distinct first-run flow, and **`spec-doctor`** (§6.4), the on-demand spec/code drift &
-  coverage check. A prompt typed alongside a selected preset **composes** with it —
+  distinct first-run flow, **`spec-doctor`** (§6.4), the on-demand spec/code drift &
+  coverage check, and **`memory-groom`** (§6.5), the on-demand tending of `memory.md`
+  (dedupe/prune + promotion path). A prompt typed alongside a selected preset **composes** with it —
   the preset supplies the framing and the typed text is appended as the user's upfront
   context — rather than replacing it.
 - **`chat`** — open-ended assistant that *can* edit code directly, with no fixed workflow.

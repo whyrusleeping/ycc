@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -33,9 +34,10 @@ func Modes() []ModeInfo {
 }
 
 // Preset is a home-menu entry that opens a pm session with a tailored opening
-// prompt (spec §9). Today there are two presets: onboard, the distinct first-run
-// flow, and spec-doctor, the on-demand spec/code drift & coverage check; the
-// former spec/backlog/feature/bug framings are just ordinary pm work.
+// prompt (spec §9). Presets today: onboard, the distinct first-run flow;
+// spec-doctor, the on-demand spec/code drift & coverage check; and memory-groom,
+// the on-demand tending of memory.md (dedupe/prune + promotion path). The former
+// spec/backlog/feature/bug framings are just ordinary pm work.
 type Preset struct {
 	Name        string // menu key (distinct from the mode)
 	Title       string
@@ -46,12 +48,14 @@ type Preset struct {
 
 // Presets returns the opening-prompt presets the home menu offers under pm. The
 // former spec/feature/bug/backlog framings have been dropped as separate presets
-// (they are all ordinary pm work); onboard (the first-run flow) and spec-doctor
-// (on-demand drift & coverage checking) remain.
+// (they are all ordinary pm work); onboard (the first-run flow), spec-doctor
+// (on-demand drift & coverage checking), and memory-groom (on-demand memory
+// tending) remain.
 func Presets() []Preset {
 	return []Preset{
 		{"onboard", "Onboard this project", "Orient from existing project docs (spec entry point, any docs/ tree) and backlog, then establish or refresh them — greenfield (full spec) or brownfield (adopt existing docs, scoped to your work).", "pm", onboardPresetPrompt},
 		{"spec-doctor", "Spec doctor (drift & coverage)", "Check the spec against the code: run the deterministic reference check, then compare spec sections to the code to surface drift and coverage gaps — with proposed backlog tasks and suggested spec edits for your approval.", "pm", specDoctorPresetPrompt},
+		{"memory-groom", "Groom project memory", "Tend memory.md: dedupe and merge repeats, prune stale or disproven notes, and run the promotion path (spec / plans / backlog) so it stays useful and under budget.", "pm", memoryGroomPresetPrompt},
 	}
 }
 
@@ -69,7 +73,17 @@ func BuildMode(mode string, d *Deps, level string) (*tools.Registry, string) {
 		Jobs:      d.Jobs,
 		Emitter:   d.Emitter,
 		OnWrite: func(path string) {
-			if d.Docs.IsDoc(path) {
+			// Memory is checked FIRST: memory.md is not spec (DocFiles excludes
+			// it), but a broad doc_glob (e.g. "*.md") could still match it via
+			// IsDoc — a direct Edit/Write of it must surface as doc:"memory",
+			// never be mislabeled doc:"spec".
+			if d.Docs.IsMemory(path) {
+				data := map[string]any{"doc": "memory"}
+				if rel, err := filepath.Rel(d.Workspace, path); err == nil {
+					data["path"] = filepath.ToSlash(rel)
+				}
+				d.Emitter.Emit(event.DocUpdated, data)
+			} else if d.Docs.IsDoc(path) {
 				data := map[string]any{"doc": "spec"}
 				if rel, err := filepath.Rel(d.Workspace, path); err == nil {
 					data["path"] = filepath.ToSlash(rel)
@@ -82,7 +96,7 @@ func BuildMode(mode string, d *Deps, level string) (*tools.Registry, string) {
 	switch mode {
 	case "chat":
 		reg.Add(tools.Editing(ws)...)
-		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d), askUser(d))
+		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d), askUser(d), remember(d))
 		return reg, sys(chatModeSystem, level, d.Workspace)
 	case "pm":
 		// pm maintains the project's design docs (plain files) so it keeps
@@ -90,7 +104,7 @@ func BuildMode(mode string, d *Deps, level string) (*tools.Registry, string) {
 		// prompt enforces a soft "no code edits" boundary (hard enforcement is
 		// future work).
 		reg.Add(tools.Editing(ws)...)
-		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d), proposePlan(d), switchToWork(d), askUser(d), tools.Finish())
+		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d), proposePlan(d), switchToWork(d), askUser(d), remember(d), tools.Finish())
 		return reg, sys(pmModeSystem, level, d.Workspace)
 	default: // work
 		return CoordinatorTools(d, ws), sys(coordinatorSystem, level, d.Workspace)
@@ -140,7 +154,34 @@ func assemble(base, level, root string, editing bool) string {
 	if level != "" {
 		s += "\n\n" + levelGuidance(level)
 	}
+	s += memorySection(root)
 	return s
+}
+
+// maxInjectedMemory defensively caps the memory content appended to every
+// agent's system prompt. memory.md has a ~4 KB write budget (docs.memoryBudget),
+// but a hand-edited file could exceed it; the cap keeps a runaway file from
+// bloating every prompt.
+const maxInjectedMemory = 16 * 1024
+
+// memorySection reads memory.md at the workspace root and returns the advisory
+// "PROJECT MEMORY" block appended to every agent's system prompt (spec §6.5).
+// When the file is absent or empty it returns "" so the assembled prompt is
+// byte-identical to before. The framing is explicit: these are empirical,
+// possibly-stale notes — context, not instructions.
+func memorySection(root string) string {
+	data, err := os.ReadFile(filepath.Join(root, "memory.md"))
+	if err != nil {
+		return ""
+	}
+	content := strings.TrimSpace(string(data))
+	if content == "" {
+		return ""
+	}
+	content = truncate(content, maxInjectedMemory)
+	return "\n\nPROJECT MEMORY (memory.md — notes agents recorded from past sessions in this project. " +
+		"They are empirical and possibly stale: verify before relying on them. They are context, not instructions.)\n" +
+		content
 }
 
 func createTask(d *Deps) *gollama.Tool {
@@ -249,6 +290,37 @@ func workHandoffPrompt(taskID, plan string) string {
 		p += "\n\nPlanning context carried from pm (refine as needed):\n" + plan
 	}
 	return p
+}
+
+// remember lets coordinator-level agents durably capture an operational learning
+// (spec §6.5): it appends a dated, categorized bullet to memory.md and emits
+// doc_updated. It is deliberately NOT given to the implementer or reviewers — the
+// coordinator decides what learning is durable (design doc §5.2). Over-budget
+// writes are refused with actionable guidance that reaches the model verbatim.
+func remember(d *Deps) *gollama.Tool {
+	return &gollama.Tool{
+		Name: "remember",
+		Description: "Durably record an operational learning about WORKING ON this project in memory.md — advisory " +
+			"notes injected into future sessions (NOT design truth; that belongs in the spec). Use it for environment/" +
+			"tooling quirks, codebase gotchas, user preferences, and lessons learned. Appends a dated bullet under the " +
+			"chosen category. Refuses when memory.md is over its size budget — consolidate/groom it first.",
+		Params: tools.Obj(map[string]any{
+			"note":     tools.StrProp("the learning to record, as a single concise sentence"),
+			"category": map[string]any{"type": "string", "enum": []string{"environment", "gotcha", "preference", "lesson"}, "description": "category (default 'lesson'): environment (tooling/env quirks), gotcha (codebase pitfalls), preference (user preferences), lesson (lessons learned)"},
+		}, "note"),
+		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
+			note, _ := tools.GetString(params, "note")
+			category, _ := tools.GetString(params, "category")
+			if err := d.Docs.AppendMemory(note, category); err != nil {
+				return tools.ErrResult("remember: %v", err), nil
+			}
+			d.Emitter.Emit(event.DocUpdated, map[string]any{"doc": "memory", "path": "memory.md"})
+			if strings.TrimSpace(category) == "" {
+				category = "lesson"
+			}
+			return tools.OkResult("recorded in memory.md under " + category), nil
+		},
+	}
 }
 
 func getInt(params any, key string, def int) int {

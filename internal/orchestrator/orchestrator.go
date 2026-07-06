@@ -187,7 +187,7 @@ func CoordinatorTools(d *Deps, ws *tools.Workspace) *tools.Registry {
 		listBacklog(d), getTask(d), proposePlan(d),
 		spawnImplementer(d), spawnReviewers(d),
 		sendToImplementer(d), reReview(d),
-		askUser(d), commitTool(d), updateTask(d), createTask(d), tools.Finish(),
+		askUser(d), commitTool(d), updateTask(d), createTask(d), remember(d), tools.Finish(),
 	)
 	return reg
 }

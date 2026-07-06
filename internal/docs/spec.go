@@ -72,6 +72,12 @@ func (s *Store) DocFiles() ([]string, error) {
 	seen := map[string]bool{}
 	var out []string
 	add := func(abs string) {
+		// memory.md is agent-learned, advisory notes — NOT spec (spec §6.5). It
+		// joins the docs set for eventing only; the spec doctor / spec-check must
+		// never scan it or reason over its entries as normative claims.
+		if s.IsMemory(abs) {
+			return
+		}
 		if !seen[abs] {
 			seen[abs] = true
 			out = append(out, abs)

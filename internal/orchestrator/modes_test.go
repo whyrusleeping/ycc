@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -44,7 +46,7 @@ func TestModesListed(t *testing.T) {
 }
 
 func TestPresetsOpenPM(t *testing.T) {
-	want := map[string]bool{"onboard": false, "spec-doctor": false}
+	want := map[string]bool{"onboard": false, "spec-doctor": false, "memory-groom": false}
 	for _, p := range Presets() {
 		if _, ok := want[p.Name]; !ok {
 			t.Fatalf("unexpected preset %q", p.Name)
@@ -390,5 +392,125 @@ func TestUpdateTaskInProgressEmitsFocusWithDedupe(t *testing.T) {
 	got := rec.focusTasks()
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("focus events = %v, want %v", got, want)
+	}
+}
+
+// remember is available to coordinator-level agents (chat, pm, work) but NOT to
+// the implementer or reviewers.
+func TestRememberRegisteredForCoordinatorRoles(t *testing.T) {
+	d := depsFor(t)
+	for _, mode := range []string{"chat", "pm", "work"} {
+		reg, _ := BuildMode(mode, d, "judgement")
+		if !hasTool(reg, "remember") {
+			t.Fatalf("mode %q should have the remember tool", mode)
+		}
+	}
+}
+
+// The remember tool appends a dated entry to memory.md and emits a doc_updated
+// event with doc:"memory".
+func TestRememberAppendsAndEmitsDocUpdated(t *testing.T) {
+	rec := &captureRec{}
+	d := depsFor(t)
+	d.Emitter = event.NewEmitter(rec, "coordinator")
+
+	res, err := remember(d).Call(context.Background(), map[string]any{"note": "prefers table-driven tests", "category": "preference"})
+	if err != nil || res.IsError {
+		t.Fatalf("remember: %v %s", err, res.Content)
+	}
+	body, _ := d.Docs.ReadMemory()
+	if !strings.Contains(body, "## User preferences") || !strings.Contains(body, "prefers table-driven tests") {
+		t.Fatalf("memory not written:\n%s", body)
+	}
+	var sawDocUpdated bool
+	for _, ev := range rec.events {
+		if ev.Type == event.DocUpdated && ev.Data["doc"] == "memory" {
+			sawDocUpdated = true
+		}
+	}
+	if !sawDocUpdated {
+		t.Fatalf("expected a doc_updated event with doc:memory; got %+v", rec.events)
+	}
+}
+
+// An over-budget memory.md causes remember to return an error result whose
+// guidance ("consolidate") reaches the model.
+func TestRememberOverBudgetRefused(t *testing.T) {
+	d := depsFor(t)
+	big := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 300)
+	if err := os.WriteFile(d.Docs.MemoryPath(), []byte(big), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := remember(d).Call(context.Background(), map[string]any{"note": "x"})
+	if err != nil {
+		t.Fatalf("remember returned a hard error: %v", err)
+	}
+	if !res.IsError || !strings.Contains(res.Content, "consolidate") {
+		t.Fatalf("expected an over-budget error result mentioning consolidate; got IsError=%v %q", res.IsError, res.Content)
+	}
+}
+
+// assemble injects memory.md contents (with the advisory framing) into the system
+// prompt when present, and adds nothing when absent — a byte-identical prompt.
+func TestAssembleInjectsMemory(t *testing.T) {
+	ws := t.TempDir()
+
+	base := assemble("BASE PROMPT", "", ws, true)
+	if strings.Contains(base, "PROJECT MEMORY") {
+		t.Fatalf("absent memory should add nothing:\n%s", base)
+	}
+
+	if err := os.WriteFile(filepath.Join(ws, "memory.md"), []byte("# Project memory\n\n## Lessons learned\n- 2026-01-01: use -run while iterating\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withMem := assemble("BASE PROMPT", "", ws, true)
+	if !strings.Contains(withMem, "PROJECT MEMORY") {
+		t.Fatalf("memory not injected:\n%s", withMem)
+	}
+	if !strings.Contains(withMem, "verify before relying") {
+		t.Fatalf("memory injection missing advisory framing:\n%s", withMem)
+	}
+	if !strings.Contains(withMem, "use -run while iterating") {
+		t.Fatalf("memory content not injected:\n%s", withMem)
+	}
+	// The pre-memory portion is unchanged (memory is only ever appended).
+	if !strings.HasPrefix(withMem, base) {
+		t.Fatalf("memory injection changed the base prompt")
+	}
+}
+
+// A direct Edit/Write of memory.md surfaces as a doc_updated event (doc:"memory")
+// via the Workspace OnWrite hook, even though memory is not part of the docs set.
+func TestMemoryEditEmitsDocUpdated(t *testing.T) {
+	rec := &captureRec{}
+	d := depsFor(t)
+	d.Emitter = event.NewEmitter(rec, "coordinator")
+	reg, _ := BuildMode("pm", d, "judgement")
+
+	res := reg.Dispatch(context.Background(), gollama.ToolCall{
+		Function: gollama.ToolCallFunction{
+			Name:      "Write",
+			Arguments: `{"file_path":"memory.md","content":"# Project memory\n\n## Lessons learned\n- 2026-01-01: x\n"}`,
+		},
+	})
+	if res.IsError {
+		t.Fatalf("Write memory.md: %s", res.Content)
+	}
+	var sawMemory bool
+	for _, ev := range rec.events {
+		if ev.Type == event.DocUpdated && ev.Data["doc"] == "memory" {
+			sawMemory = true
+		}
+	}
+	if !sawMemory {
+		t.Fatalf("expected doc_updated doc:memory on direct edit; got %+v", rec.events)
+	}
+}
+
+// The spec-doctor prompt must tell the agent that memory.md is NOT spec.
+func TestSpecDoctorPromptExcludesMemory(t *testing.T) {
+	lower := strings.ToLower(specDoctorPresetPrompt)
+	if !strings.Contains(lower, "memory.md") {
+		t.Fatalf("specDoctorPresetPrompt should mention memory.md exclusion")
 	}
 }

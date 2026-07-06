@@ -1,10 +1,10 @@
 ---
 id: "0120"
 title: 'gollama: streaming turn API (TurnStream) across providers'
-status: blocked
+status: todo
 priority: 3
 created: "2026-07-02"
-updated: "2026-07-03"
+updated: "2026-07-06"
 depends_on: []
 spec_refs:
     - 7. Agent engine
@@ -12,9 +12,16 @@ spec_refs:
 ---
 
 ## Description
-Prerequisite for ycc task 0114 (incremental model-output streaming in the session view).
-Work happens in the separate gollama repo (/home/why/code/gollama); this task tracks it
-from the ycc backlog, like earlier gollama thinking-levels work.
+Delivers incremental model-output streaming in the session view end to end. Originally
+the gollama-only prerequisite for ycc task 0114; per pm grooming 2026-07-08, 0114's small
+remainder (the ycc adapter + live verification) was **folded into this task** and 0114
+closed as merged. gollama work happens in the separate repo (/home/why/code/gollama);
+this task tracks it from the ycc backlog, like earlier gollama thinking-levels work.
+
+ycc-side groundwork is already done (tasks 0128/0129): the transient never-persisted
+`turn_delta` broadcast path, the engine `StreamTurner` seam (throttled, snapshot
+semantics), and the TUI live tail row. The engine loop type-asserts `StreamTurner`, so
+once the gollama client implements TurnStream, adoption is a small adapter.
 
 gollama's `Turn` is hard-wired non-streaming (`turn.go`: `opts.Stream = false`; no
 SSE/delta handling in any provider path). Add a streaming variant — e.g.
@@ -35,9 +42,15 @@ that:
 - [ ] Anthropic SSE streaming implemented and covered by offline tests (recorded stream fixtures) + a live smoke test
 - [ ] final message from a streamed turn is byte-equivalent (content/tool calls/thinking blocks) to the non-streaming shape for the same response
 - [ ] ycc can adopt it by swapping the `engine.Turner` call site (no other API churn)
-
+- [ ] (folded from 0114) ycc adapter: gollama client implements the engine `StreamTurner` seam, wiring TurnStream deltas to the existing transient `turn_delta` path
+- [ ] (folded from 0114) live end-to-end verification: model text streams incrementally in the TUI session view; final persisted `model_turn` unchanged; events.jsonl/replay contain no deltas
 
 ## Work log
+- 2026-07-08 pm grooming (with user): unblocked — the gollama working repo now exists at
+  /home/why/code/gollama (HEAD d8e738f, still no TurnStream). Scope kept Anthropic-first.
+  Folded in the remainder of 0114 (ycc StreamTurner adapter + live end-to-end
+  verification) so one cross-repo session lands streaming completely; 0114 closed as
+  merged into this task.
 - 2026-07-05 blocked (coordinator): the work lives in the separate gollama repo at
   /home/why/code/gollama, which does not exist in this environment (gollama is only
   present as a read-only module-cache dependency). Cloning/forking gollama into the ycc

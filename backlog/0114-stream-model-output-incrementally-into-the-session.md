@@ -1,10 +1,10 @@
 ---
 id: "0114"
 title: Stream model output incrementally into the session view
-status: blocked
+status: done
 priority: 3
 created: "2026-07-01"
-updated: "2026-07-03"
+updated: "2026-07-06"
 depends_on:
     - "0120"
     - "0128"
@@ -45,6 +45,12 @@ non-persisted events through the existing Subscribe pipe.**
 - [ ] Graceful fallback for backends without streaming (via gollama 0120 fallback)
 
 ## Work log
+- 2026-07-08 pm grooming (with user): closed as **merged into 0120**. The gollama
+  working repo is now available, and the only remaining scope here (StreamTurner
+  adapter for the gollama client + live end-to-end TUI verification) was folded into
+  0120's acceptance criteria so a single cross-repo session lands streaming completely.
+  All other scope (0128 transient broadcast path, 0129 engine seam + TUI tail row) was
+  already done.
 - 2026-07-07 blocked (autonomous coordinator): all gollama-independent scope is done
   (0128 transient broadcast path + 0129 engine StreamTurner seam/TUI tail row are done;
   the loop already type-asserts StreamTurner and emits throttled transient turn_delta).
