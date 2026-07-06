@@ -409,6 +409,12 @@ What it lacks and we add (in gollama, since edits are allowed):
    (name TBD) that routes to the right backend method based on the client's mode, so
    the agent loop doesn't branch per provider. Normalizes tool-call + usage shapes.
 2. Optionally, a `Backend` enum on the client so the registry can introspect.
+3. **Streaming turns** — `func (c *Client) TurnStream(opts, onDelta func(text string)) (*ResponseMessageGenerate, error)`:
+   the streaming counterpart to `Turn` that delivers the assistant text incrementally via
+   `onDelta` (snapshot semantics — each call gets the full accumulated text so far), then
+   returns the same normalized final message. Anthropic streams natively over the Messages
+   SSE API; other backends fall back to a blocking turn delivered as one whole-text delta, so
+   callers never branch. This feeds ycc's transient `turn_delta` path (§5.2).
 
 The **agent loop itself lives in `ycc`**, not gollama — gollama stays a transport.
 

@@ -54,3 +54,6 @@ Remaining work (tests + note only, no behavior change):
 - 2026-07-06 review tier: simple (coordinator self-review)
 - 2026-07-06 decision: accept — commit: Work loop: verify mid-loop task additions are picked up; lock in with tests (task 0168)  Investigation refuted the premise: the loop driver keeps no snapshot/queue — every iteration re-reads the liv
 …[truncated]
+- 2026-07-06 usage: 15,038 tok (in 78, out 14,960, cache_r 910,010, cache_w 56,040) · cost n/a (unpriced)
+  coordinator: 10,062 tok (in 52, out 10,010, cache_r 713,708, cache_w 34,369) · cost n/a (unpriced)
+  implementer: 4,976 tok (in 26, out 4,950, cache_r 196,302, cache_w 21,671) · cost n/a (unpriced)

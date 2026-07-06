@@ -8,9 +8,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/secrets"
 )
+
+// Compile-time guard: the gollama client must satisfy engine.StreamTurner so the
+// engine loop's TurnStream seam engages with zero adapter code (task 0120). If a
+// future gollama release changes the TurnStream signature, this breaks the build
+// loudly instead of silently falling back to non-streaming turns.
+var _ engine.StreamTurner = (*gollama.Client)(nil)
 
 const sample = `
 max_tokens = 4096
