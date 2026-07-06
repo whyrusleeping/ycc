@@ -564,6 +564,7 @@ func daemonCommand() *cli.Command {
 			&cli.StringFlag{Name: "token", Sources: cli.EnvVars("YCC_TOKEN"), Usage: "bearer `token` clients must present; required for non-loopback binds (empty disables auth, loopback only)"},
 			&cli.StringFlag{Name: "tls-cert", Usage: "TLS certificate `file` (enables HTTPS; optional on a private tailnet)"},
 			&cli.StringFlag{Name: "tls-key", Usage: "TLS key `file`"},
+			&cli.BoolFlag{Name: "web", Usage: "serve the embedded web client at / (static assets are unauthenticated; RPCs still require the bearer token)"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			err := daemon.Serve(daemon.Options{
@@ -577,6 +578,7 @@ func daemonCommand() *cli.Command {
 				Token:      cmd.String("token"),
 				TLSCert:    cmd.String("tls-cert"),
 				TLSKey:     cmd.String("tls-key"),
+				Web:        cmd.Bool("web"),
 				Persist:    true,
 			})
 			if err != nil {

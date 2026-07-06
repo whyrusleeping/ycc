@@ -68,3 +68,7 @@ Verification: doc reads coherently against docs/remote-api.md (endpoint names, f
 …[truncated]
 - 2026-07-06 decision: accept — commit: docs: design spike for embedded web client served by the daemon (task 0145)  Adds docs/design/web-client.md: go:embed vanilla SPA behind `ycc daemon --web`, unauthenticated assets + bearer-token RPC a
 …[truncated]
+- 2026-07-06 usage: 26,672 tok (in 78, out 26,594, cache_r 1,297,816, cache_w 122,942) · cost n/a (unpriced)
+  coordinator: 13,229 tok (in 34, out 13,195, cache_r 765,875, cache_w 50,265) · cost n/a (unpriced)
+  implementer: 11,200 tok (in 24, out 11,176, cache_r 403,290, cache_w 50,865) · cost n/a (unpriced)
+  reviewer:Claude: 2,243 tok (in 20, out 2,223, cache_r 128,651, cache_w 21,812) · cost n/a (unpriced)

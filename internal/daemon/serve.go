@@ -24,6 +24,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/project"
 	"github.com/whyrusleeping/ycc/internal/server"
 	"github.com/whyrusleeping/ycc/internal/session"
+	"github.com/whyrusleeping/ycc/internal/web"
 	"github.com/whyrusleeping/ycc/internal/workstream"
 	"github.com/whyrusleeping/ycc/proto/ycc/v1/yccv1connect"
 )
@@ -44,6 +45,13 @@ type Options struct {
 	// (spec §3.1). The one-shot in-process path leaves this false: cwd is the
 	// single implicit project and nothing is written to the state dir.
 	Persist bool
+	// Web serves the embedded web client (internal/web) at "/" alongside the
+	// Connect handler (design docs/design/web-client.md §3). The static assets
+	// are unauthenticated; the RPC surface stays behind the bearer
+	// AuthInterceptor unchanged. Off by default and forced off for the one-shot
+	// in-process path (that daemon is a private loopback backing the local TUI,
+	// not a remote-access surface).
+	Web bool
 }
 
 // buildHandler constructs the session manager and Connect HTTP handler from
@@ -111,6 +119,13 @@ func buildHandler(o Options) (http.Handler, error) {
 		connect.WithInterceptors(server.NewAuthInterceptor(o.Token)),
 	)
 	mux.Handle(path, handler)
+	// Optionally serve the embedded web client at "/". http.ServeMux
+	// longest-prefix routing keeps RPC traffic on the Connect handler's
+	// "/ycc.v1.SessionService/" prefix; everything else falls to the asset
+	// handler. The assets are unauthenticated by design (web-client.md §4).
+	if o.Web {
+		mux.Handle("/", web.Handler())
+	}
 	return h2c.NewHandler(mux, &http2.Server{}), nil
 }
 
@@ -155,6 +170,10 @@ type InProcess struct {
 // down by the caller (defer Shutdown / Close) so no listener survives exit.
 func StartInProcess(o Options) (*InProcess, error) {
 	o.Addr = "127.0.0.1:0"
+	// The one-shot in-process daemon is a private loopback backing the local
+	// TUI, not a remote-access surface, so it never serves the web client even
+	// if the caller sets Web (matching how Addr is forced above).
+	o.Web = false
 	handler, err := buildHandler(o)
 	if err != nil {
 		return nil, err

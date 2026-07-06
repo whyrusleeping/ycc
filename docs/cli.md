@@ -267,6 +267,7 @@ does not dial a client of its own.
 | `--token T` | `$YCC_TOKEN` | bearer token clients must present (empty disables auth) |
 | `--tls-cert FILE` | | TLS certificate file (enables HTTPS) |
 | `--tls-key FILE` | | TLS key file |
+| `--web` | off | serve the embedded web client at `/` — static assets are unauthenticated, RPCs still require the bearer token |
 
 ```sh
 ycc daemon
