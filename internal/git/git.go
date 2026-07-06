@@ -9,8 +9,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
+
+// shaRe matches a bare hex commit sha (short or full). Show validates against it
+// so a caller can never smuggle a flag (e.g. "--all") or a ref/pathspec into the
+// `git show` invocation.
+var shaRe = regexp.MustCompile(`^[0-9a-fA-F]{4,40}$`)
 
 // Repo is a git working tree at Dir.
 type Repo struct {
@@ -75,6 +81,18 @@ func (r *Repo) RevParse(ref string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(out), nil
+}
+
+// Show returns the full `git show` output (stat + patch) for a commit, for the
+// transcript commit-diff drill-in (task 0140). sha must be a bare hex commit id
+// (short or full) — anything else is rejected so a flag/ref/pathspec can never be
+// smuggled into the git invocation. --end-of-options additionally guards the
+// positional argument.
+func (r *Repo) Show(sha string) (string, error) {
+	if !shaRe.MatchString(sha) {
+		return "", fmt.Errorf("invalid commit sha %q", sha)
+	}
+	return r.run("show", "--no-color", "--stat", "--patch", "--end-of-options", sha)
 }
 
 func (r *Repo) run(args ...string) (string, error) {

@@ -169,6 +169,19 @@ message GetSessionTranscriptRequest {
 }
 message GetSessionTranscriptResponse { repeated Event events = 1; }
 
+// GetCommitDiff returns the `git show` output (stat + patch) for a commit, so the
+// transcript can drill into what an agent actually committed (task 0140). The
+// daemon caps the returned diff to bound the wire payload; truncated reports when
+// the cap was hit so the client can render a truncation notice.
+message GetCommitDiffRequest {
+  string project = 1; // optional registered project; empty => daemon default workspace
+  string sha = 2;     // bare hex commit sha (from a commit_made event)
+}
+message GetCommitDiffResponse {
+  string diff = 1;
+  bool truncated = 2;
+}
+
 // ListModels enumerates the configured logical models (spec §13) so the settings
 // overlay can populate the per-role pickers.
 message ListModelsRequest {}
@@ -498,6 +511,9 @@ service SessionService {
   // GetSessionTranscript returns a session's full event log (live or persisted)
   // for the read-only transcript drill-in (spec §18.6).
   rpc GetSessionTranscript(GetSessionTranscriptRequest) returns (GetSessionTranscriptResponse);
+  // GetCommitDiff returns a commit's `git show` diff so the transcript can drill
+  // into what an agent committed from a commit_made row (task 0140, spec §18.6).
+  rpc GetCommitDiff(GetCommitDiffRequest) returns (GetCommitDiffResponse);
   rpc Subscribe(SubscribeRequest) returns (stream Event);
   rpc SendInput(SendInputRequest) returns (SendInputResponse);
   rpc AnswerQuestion(AnswerQuestionRequest) returns (AnswerQuestionResponse);

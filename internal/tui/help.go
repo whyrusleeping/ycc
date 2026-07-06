@@ -22,6 +22,7 @@ import (
 //     • question picker ...... updateSession (m.picking branch)
 //     • backlog browser ...... updateBacklog (+ detail / status-choice modes)
 //     • session browser ..... updateHistory + updateHistoryModal (read-only, over a session)
+//     • commit diff .......... updateCommitDiff (git-show overlay, task 0140)
 //     • workstreams .......... updateWorkstreams (+ merge / discard prompts)
 //     • plans ................ updatePlans
 //     • cost ................. updateCost
@@ -79,6 +80,7 @@ func (m model) helpSections() []helpSection {
 			{"( / )", "jump to previous / next review verdict"},
 			{"< / >", "jump to previous / next commit"},
 			{"[ / ]", "jump to previous / next error"},
+			{"enter (on ● commit)", "view the commit's diff (git show)"},
 			{m.interruptKeyHint(), "interrupt the running agent to steer it"},
 			{"shift+tab", "toggle work (loop) mid-session (work mode)"},
 			{"q", "return to the menu when the session has finished (input empty; stops the session cleanly)"},
@@ -106,7 +108,15 @@ func (m model) helpSections() []helpSection {
 			{"r", "refresh the list"},
 			{"/  n / N", "search a transcript · next / previous match"},
 			{"{ } ( ) < > [ ]", "jump to question · review · commit · error"},
+			{"enter (on a commit)", "view the commit's diff (git show)"},
 			{"esc / q", "close · clear a search · back from a transcript"},
+		}},
+		{"commit diff", []helpBind{
+			{"tab / shift+tab", "move between files"},
+			{"enter / space", "fold / unfold the file under the cursor"},
+			{"a", "fold / unfold all files"},
+			{"↑ / ↓  pgup / pgdn", "scroll the diff"},
+			{"esc / q", "close the diff"},
 		}},
 		{"workstreams", []helpBind{
 			{"↑ / ↓", "move between workstreams"},

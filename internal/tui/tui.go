@@ -429,6 +429,23 @@ type model struct {
 	// prompt); "" => no pending confirm.
 	wsDiscardID string
 
+	// commit-diff drill-in overlay (task 0140): enter on a selected commit_made
+	// transcript row opens a full-screen `git show` overlay (its own viewport, so
+	// the §18.9 render caches are never touched). It draws over the live session,
+	// the read-only history transcript, and the histModal transcript alike.
+	cdiffOpen        bool
+	cdiffSha         string // sha being shown (guards a late/racy fetch reply)
+	cdiffMsgTxt      string // commit message for the title bar
+	cdiffLoading     bool
+	cdiffErr         string
+	cdiffTruncated   bool
+	cdiffVP          viewport.Model
+	cdiffFiles       []cdiffFile
+	cdiffPreamble    string // commit header + --stat block (rendered above the files)
+	cdiffFold        []bool // per-file fold state (parallel to cdiffFiles)
+	cdiffCursor      int    // file cursor index
+	cdiffHeaderLines []int  // content line offset of each file's header (for scroll-into-view)
+
 	// backlog multi-select spawn (task 0085): the set of selected task ids in the
 	// backlog browser LIST view (todo tasks only), toggled with space and cleared
 	// when the browser closes. `P` spawns one workstream per selected task.
@@ -635,6 +652,16 @@ type flashClearMsg struct{ seq int }
 type quitDisarmMsg struct{ seq int }
 type backlogMsg struct{ tasks []*v1.BacklogTaskSummary }
 type taskDetailMsg struct{ task *v1.TaskDetail }
+
+// commitDiffMsg carries the result of a GetCommitDiff RPC for the commit-diff
+// drill-in overlay (task 0140). sha guards a late reply arriving after the
+// overlay was closed or a different commit was opened.
+type commitDiffMsg struct {
+	sha       string
+	diff      string
+	truncated bool
+	err       error
+}
 
 // taskUpdatedMsg carries the result of an UpdateTask grooming RPC (task 0099):
 // a refreshed TaskDetail on success, or an error to surface in the browser footer.
@@ -1810,6 +1837,19 @@ func (m model) fetchPlan(name string) tea.Cmd {
 	}
 }
 
+// fetchCommitDiff loads a commit's `git show` diff for the commit-diff overlay
+// (task 0140). The result carries the sha so the handler can drop a reply that
+// arrives after the overlay closed or moved to a different commit.
+func (m model) fetchCommitDiff(sha string) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := m.client.GetCommitDiff(m.ctx, connect.NewRequest(&v1.GetCommitDiffRequest{Project: m.project, Sha: sha}))
+		if err != nil {
+			return commitDiffMsg{sha: sha, err: err}
+		}
+		return commitDiffMsg{sha: sha, diff: resp.Msg.GetDiff(), truncated: resp.Msg.GetTruncated()}
+	}
+}
+
 // fetchUsage loads the token/cost breakdown for the cost view (spec §20.5, task
 // 0039). It respects the selected project and the chosen group-by dimension.
 func (m model) fetchUsage() tea.Msg {
@@ -2183,6 +2223,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshBacklogDetailVP()
 		m.refreshPlanDetailVP()
 		m.refreshWsMergeVP()
+		m.refreshCdiffVP()
 		// Keep the modal transcript viewport (task 0112) sized to the terminal, and
 		// re-wrap its retained events to the new width (task 0119). Preserve the
 		// current line highlight / scroll position when a search or jump is active.
@@ -2609,6 +2650,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshPlanDetailVP()
 		m.plansVP.GotoTop()
 		return m, nil
+	case commitDiffMsg:
+		// Drop a reply that arrived after the overlay closed or moved on (task 0140).
+		if !m.cdiffOpen || msg.sha != m.cdiffSha {
+			return m, nil
+		}
+		m.rpcOK()
+		m.cdiffLoading = false
+		if msg.err != nil {
+			m.cdiffErr = msg.err.Error()
+			return m, nil
+		}
+		m.cdiffErr = ""
+		m.cdiffTruncated = msg.truncated
+		pre, files := parseCommitDiff(msg.diff)
+		m.cdiffPreamble = pre
+		m.cdiffFiles = files
+		m.cdiffFold = make([]bool, len(files))
+		// Large-commit safety (§18.9): open with everything folded so the overlay
+		// renders instantly; the user unfolds what they want.
+		if len(files) > cdiffFoldAllFiles || strings.Count(msg.diff, "\n") > cdiffFoldAllLines {
+			for i := range m.cdiffFold {
+				m.cdiffFold[i] = true
+			}
+		}
+		m.cdiffCursor = 0
+		m.refreshCdiffVP()
+		m.cdiffVP.GotoTop()
+		return m, nil
 	case usageMsg:
 		m.rpcOK()
 		m.costRows = msg.rows
@@ -2781,6 +2850,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// persistent/remote daemon; it owns input until a project is chosen.
 	if m.state == statePicker {
 		return m.updatePicker(msg)
+	}
+
+	// The commit-diff drill-in overlay (task 0140) is modal over EVERYTHING —
+	// the live session, the read-only history transcript, and the histModal
+	// transcript. This check must precede the stateHistory branch so enter on a
+	// commit row in the history transcript opens (and its keys drive) the overlay.
+	if m.cdiffOpen {
+		return m.updateCommitDiff(msg)
 	}
 
 	// The previous-sessions screen (ctrl+r from the menu) owns input until the
@@ -3025,7 +3102,17 @@ func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "]":
 			m.jumpToEvent(1, "session_error")
 			return m, nil
-		case "o", "enter":
+		case "enter":
+			// Enter on a selected commit_made row drills into that commit's diff
+			// overlay (task 0140); otherwise it reopens the session (like `o`).
+			if m.selected >= 0 && m.selected < len(m.evs) && m.evs[m.selected].Type == "commit_made" {
+				ev := m.evs[m.selected]
+				if cmd := m.openCommitDiff(dataField(ev, "sha"), dataField(ev, "message")); cmd != nil {
+					return m, cmd
+				}
+			}
+			fallthrough
+		case "o":
 			// Reopen the session whose transcript we're viewing (resume = replay).
 			m.historyTranscript = false
 			m.clearSearch()
@@ -3192,6 +3279,17 @@ func (m model) updateHistoryModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "]":
 			m.histJump(1, "session_error")
 			return m, nil
+		case "enter":
+			// Drill into a commit's diff when the current line is a commit_made
+			// event block (task 0140). Otherwise fall through to viewport handling.
+			for _, el := range m.histModalEventLines {
+				if el.line == m.histModalCurLine && el.typ == "commit_made" && el.idx >= 0 && el.idx < len(m.histModalEvents) {
+					ev := m.histModalEvents[el.idx]
+					if cmd := m.openCommitDiff(dataField(ev, "sha"), dataField(ev, "message")); cmd != nil {
+						return m, cmd
+					}
+				}
+			}
 		}
 		// Everything else (↑/↓, pgup/pgdn, wheel) scrolls the transcript viewport.
 		// No `o`/enter reopen: browsing from a live session is read-only.
@@ -3692,8 +3790,16 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.paused {
 					return m, m.resume()
 				}
-				// Empty input: Enter expands/collapses the selected turn.
+				// Empty input: Enter expands/collapses the selected turn — unless the
+				// selected row is a commit_made, in which case Enter drills into the
+				// commit's diff overlay (task 0140).
 				if m.selected >= 0 {
+					if m.selected < len(m.evs) && m.evs[m.selected].Type == "commit_made" {
+						ev := m.evs[m.selected]
+						if cmd := m.openCommitDiff(dataField(ev, "sha"), dataField(ev, "message")); cmd != nil {
+							return m, cmd
+						}
+					}
 					m.toggle(m.selected)
 				}
 				return m, nil
@@ -4357,6 +4463,256 @@ func (m model) wsMergeView() string {
 		hint = " " + m.wsNotice + " "
 	}
 	return top + "\n" + body + "\n" + m.footerBar(hint)
+}
+
+// --- commit-diff drill-in overlay (task 0140) ---
+
+// cdiffFile is one file section of a parsed `git show` diff.
+type cdiffFile struct {
+	path string // file path (from +++ b/… or the diff --git header)
+	body string // the raw "diff --git …" section, including its header lines
+	adds int    // added content lines (excludes the +++ marker)
+	dels int    // removed content lines (excludes the --- marker)
+}
+
+// Large-commit thresholds: past either, the overlay opens with every file folded
+// so it renders instantly (§18.9 safety) and the user unfolds what they want.
+const (
+	cdiffFoldAllLines = 1500
+	cdiffFoldAllFiles = 25
+)
+
+// parseCommitDiff splits raw `git show` output into a preamble (commit header +
+// --stat block) and per-file sections (split on "diff --git " lines), counting
+// added/removed content lines per file (excluding the +++/--- markers). It is a
+// standalone function so the parser is unit-testable.
+func parseCommitDiff(raw string) (preamble string, files []cdiffFile) {
+	var pre, body strings.Builder
+	var cur cdiffFile
+	inFile := false
+	flush := func() {
+		if inFile {
+			cur.body = strings.TrimRight(body.String(), "\n")
+			files = append(files, cur)
+		}
+		body.Reset()
+	}
+	for _, ln := range strings.Split(raw, "\n") {
+		if strings.HasPrefix(ln, "diff --git ") {
+			flush()
+			cur = cdiffFile{path: gitDiffPath(ln)}
+			inFile = true
+			body.WriteString(ln + "\n")
+			continue
+		}
+		if !inFile {
+			pre.WriteString(ln + "\n")
+			continue
+		}
+		body.WriteString(ln + "\n")
+		switch {
+		case strings.HasPrefix(ln, "+++ b/"):
+			cur.path = strings.TrimPrefix(ln, "+++ b/")
+		case strings.HasPrefix(ln, "+++"), strings.HasPrefix(ln, "---"):
+			// file markers, not content lines
+		case strings.HasPrefix(ln, "+"):
+			cur.adds++
+		case strings.HasPrefix(ln, "-"):
+			cur.dels++
+		}
+	}
+	flush()
+	return strings.TrimRight(pre.String(), "\n"), files
+}
+
+// gitDiffPath extracts the file path from a "diff --git a/path b/path" header.
+// The +++ b/… line refines it later for the common case; this is the fallback.
+func gitDiffPath(diffLine string) string {
+	h := strings.TrimPrefix(diffLine, "diff --git ")
+	if i := strings.LastIndex(h, " b/"); i >= 0 {
+		return h[i+len(" b/"):]
+	}
+	return strings.TrimSpace(h)
+}
+
+// openCommitDiff opens the commit-diff overlay for sha (with msg as its title
+// subtitle) and returns the fetch command. A blank sha is a no-op (returns nil).
+func (m *model) openCommitDiff(sha, msg string) tea.Cmd {
+	if strings.TrimSpace(sha) == "" {
+		return nil
+	}
+	m.closeCommitDiff()
+	m.cdiffOpen = true
+	m.cdiffSha = sha
+	m.cdiffMsgTxt = msg
+	m.cdiffLoading = true
+	return m.fetchCommitDiff(sha)
+}
+
+// closeCommitDiff clears all overlay state, returning to whatever surface was
+// underneath (render() simply falls through once cdiffOpen is false).
+func (m *model) closeCommitDiff() {
+	m.cdiffOpen = false
+	m.cdiffSha = ""
+	m.cdiffMsgTxt = ""
+	m.cdiffLoading = false
+	m.cdiffErr = ""
+	m.cdiffTruncated = false
+	m.cdiffFiles = nil
+	m.cdiffPreamble = ""
+	m.cdiffFold = nil
+	m.cdiffHeaderLines = nil
+	m.cdiffCursor = 0
+}
+
+// cdiffContent builds the scrollable overlay body and records each file header's
+// content-line offset (m.cdiffHeaderLines) for scroll-into-view. Folded files
+// show only their header; unfolded files render the section via colorizeDiff.
+func (m *model) cdiffContent() string {
+	var b strings.Builder
+	line := 0
+	write := func(s string) {
+		b.WriteString(s)
+		line += strings.Count(s, "\n")
+	}
+	if m.cdiffPreamble != "" {
+		write(colorizeDiff(m.cdiffPreamble) + "\n\n")
+	}
+	m.cdiffHeaderLines = make([]int, len(m.cdiffFiles))
+	for i, f := range m.cdiffFiles {
+		folded := i < len(m.cdiffFold) && m.cdiffFold[i]
+		marker := "▾"
+		if folded {
+			marker = "▸"
+		}
+		header := fmt.Sprintf("%s %s  (+%d −%d)", marker, f.path, f.adds, f.dels)
+		if i == m.cdiffCursor {
+			header = selStyle.Render(header)
+		}
+		m.cdiffHeaderLines[i] = line
+		write(header + "\n")
+		if !folded {
+			write(colorizeDiff(f.body) + "\n")
+		}
+	}
+	if m.cdiffTruncated {
+		write("\n" + dimStyle.Render("… diff truncated (showing first ~1 MiB — use a shell for the full diff)"))
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// refreshCdiffVP (re)sizes the overlay viewport and reloads its content. It
+// reserves rows for the title, the commit-message subtitle, and the footer.
+func (m *model) refreshCdiffVP() {
+	if !m.cdiffOpen || !m.ready {
+		return
+	}
+	h := m.h - 3
+	if h < 3 {
+		h = 3
+	}
+	if m.cdiffVP.Height() == 0 && m.cdiffVP.Width() == 0 {
+		m.cdiffVP = viewport.New(viewport.WithWidth(m.w), viewport.WithHeight(h))
+	} else {
+		m.cdiffVP.SetWidth(m.w)
+		m.cdiffVP.SetHeight(h)
+	}
+	m.cdiffVP.SetContent(m.cdiffContent())
+}
+
+// cdiffScrollToCursor scrolls the viewport just enough to keep the cursor file's
+// header visible after a tab/shift+tab move.
+func (m *model) cdiffScrollToCursor() {
+	if m.cdiffCursor < 0 || m.cdiffCursor >= len(m.cdiffHeaderLines) {
+		return
+	}
+	target := m.cdiffHeaderLines[m.cdiffCursor]
+	off := m.cdiffVP.YOffset()
+	h := m.cdiffVP.Height()
+	switch {
+	case target < off:
+		m.cdiffVP.SetYOffset(target)
+	case target >= off+h:
+		m.cdiffVP.SetYOffset(target - h + 1)
+	}
+}
+
+// updateCommitDiff handles keys for the commit-diff overlay: tab/shift+tab move
+// the file cursor, enter/space fold the cursor file, `a` folds/unfolds all, and
+// everything else (↑↓/pgup/pgdn/wheel) scrolls the viewport.
+func (m model) updateCommitDiff(msg tea.Msg) (tea.Model, tea.Cmd) {
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		var cmd tea.Cmd
+		m.cdiffVP, cmd = m.cdiffVP.Update(msg)
+		return m, cmd
+	}
+	switch key.String() {
+	case "ctrl+c":
+		return m.confirmQuit()
+	case "esc", "q", "backspace", "left":
+		m.closeCommitDiff()
+		return m, nil
+	case "tab":
+		if n := len(m.cdiffFiles); n > 0 {
+			m.cdiffCursor = (m.cdiffCursor + 1) % n
+			m.cdiffVP.SetContent(m.cdiffContent())
+			m.cdiffScrollToCursor()
+		}
+		return m, nil
+	case "shift+tab":
+		if n := len(m.cdiffFiles); n > 0 {
+			m.cdiffCursor = (m.cdiffCursor - 1 + n) % n
+			m.cdiffVP.SetContent(m.cdiffContent())
+			m.cdiffScrollToCursor()
+		}
+		return m, nil
+	case "enter", " ", "space":
+		if m.cdiffCursor >= 0 && m.cdiffCursor < len(m.cdiffFold) {
+			m.cdiffFold[m.cdiffCursor] = !m.cdiffFold[m.cdiffCursor]
+			m.cdiffVP.SetContent(m.cdiffContent())
+			m.cdiffScrollToCursor()
+		}
+		return m, nil
+	case "a":
+		// Toggle all: if any file is unfolded, fold everything; else unfold all.
+		anyOpen := false
+		for _, f := range m.cdiffFold {
+			if !f {
+				anyOpen = true
+				break
+			}
+		}
+		for i := range m.cdiffFold {
+			m.cdiffFold[i] = anyOpen
+		}
+		m.cdiffVP.SetContent(m.cdiffContent())
+		m.cdiffScrollToCursor()
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.cdiffVP, cmd = m.cdiffVP.Update(msg)
+	return m, cmd
+}
+
+// commitDiffView renders the full-screen commit-diff overlay.
+func (m model) commitDiffView() string {
+	top := m.titleBar(" commit " + shortSHA(m.cdiffSha) + " ")
+	sub := "  "
+	if m.cdiffMsgTxt != "" {
+		sub = "  " + dimStyle.Render(oneLine(m.cdiffMsgTxt, m.w-4))
+	}
+	body := ""
+	switch {
+	case m.cdiffLoading:
+		body = "\n  " + dimStyle.Render("loading diff…")
+	case m.cdiffErr != "":
+		body = "\n  " + errStyle.Render("✗ "+m.cdiffErr)
+	case m.ready:
+		body = m.cdiffVP.View()
+	}
+	hint := " tab/shift+tab file · enter/space fold · a fold all · ↑↓ scroll · esc close "
+	return top + "\n" + sub + "\n" + body + "\n" + m.footerBar(hint)
 }
 
 // --- cost view (spec §20.5, task 0039) ---
@@ -5057,6 +5413,7 @@ func (m *model) refreshHistModalVP(events []*v1.Event) {
 type histEventLine struct {
 	line int    // start content line of the event block
 	typ  string // event Type
+	idx  int    // index into the rendered events slice (for the commit-diff drill-in)
 }
 
 // renderTranscriptContent renders a replayed event log to a string using the same
@@ -5097,7 +5454,7 @@ func (m model) renderTranscript(events []*v1.Event) (content string, lines []str
 			continue
 		}
 		block := scratch.renderBlock(i, ev)
-		eventLines = append(eventLines, histEventLine{line: line, typ: ev.Type})
+		eventLines = append(eventLines, histEventLine{line: line, typ: ev.Type, idx: i})
 		b.WriteString(block)
 		b.WriteByte('\n')
 		line += strings.Count(block, "\n") + 1
@@ -7570,6 +7927,9 @@ func (m model) render() string {
 	if m.helpOpen {
 		return m.helpView()
 	}
+	if m.cdiffOpen {
+		return m.commitDiffView()
+	}
 	if m.capture {
 		return m.captureView()
 	}
@@ -7826,7 +8186,7 @@ func (m model) histModalView() string {
 			total, cur := m.histSearchCount()
 			help = m.footerBar(fmt.Sprintf(" ⌕ %q %d/%d · n/N next/prev · esc clear · esc/q back", m.histModalQuery, cur, total))
 		default:
-			help = m.footerBar(" ↑↓/pgup/pgdn scroll · / search · {}()<>[] jump · esc/q back · read-only")
+			help = m.footerBar(" ↑↓/pgup/pgdn scroll · / search · {}()<>[] jump · <> commit · enter diff · esc/q back · read-only")
 		}
 		return top + "\n" + body + "\n" + help
 	}
@@ -7867,7 +8227,7 @@ func (m model) transcriptView() string {
 		total, cur := m.searchCount()
 		help = m.footerBar(fmt.Sprintf(" ⌕ %q %d/%d · n/N next/prev · esc clear · o reopen · esc/q back", m.searchQuery, cur, total))
 	default:
-		help = m.footerBar(" ↑↓/pgup/pgdn scroll · / search · {}()<>[] jump · o reopen · esc/q back")
+		help = m.footerBar(" ↑↓/pgup/pgdn scroll · / search · {}()<>[] jump · <> commit · enter diff/reopen · o reopen · esc/q back")
 	}
 	return top + "\n" + body + "\n" + help
 }

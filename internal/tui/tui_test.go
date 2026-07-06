@@ -982,6 +982,13 @@ type fakeClient struct {
 	transcript   []*v1.Event // returned by GetSessionTranscript
 	lastTransID  string
 
+	// commit-diff drill-in (task 0140): canned diff returned by GetCommitDiff and
+	// the last sha requested.
+	commitDiff      string
+	commitDiffTrunc bool
+	commitDiffErr   error
+	lastCommitSha   string
+
 	// cost view (spec §20.5, task 0039)
 	usageRows   []*v1.UsageRow
 	usageTotal  *v1.UsageRow
@@ -1126,6 +1133,16 @@ func (f *fakeClient) Subscribe(_ context.Context, _ *connect.Request[v1.Subscrib
 func (f *fakeClient) GetSessionTranscript(_ context.Context, req *connect.Request[v1.GetSessionTranscriptRequest]) (*connect.Response[v1.GetSessionTranscriptResponse], error) {
 	f.lastTransID = req.Msg.SessionId
 	return connect.NewResponse(&v1.GetSessionTranscriptResponse{Events: f.transcript}), nil
+}
+
+// GetCommitDiff backs the commit-diff drill-in overlay (task 0140): it records
+// the requested sha and returns the canned diff (or a canned error).
+func (f *fakeClient) GetCommitDiff(_ context.Context, req *connect.Request[v1.GetCommitDiffRequest]) (*connect.Response[v1.GetCommitDiffResponse], error) {
+	f.lastCommitSha = req.Msg.Sha
+	if f.commitDiffErr != nil {
+		return nil, f.commitDiffErr
+	}
+	return connect.NewResponse(&v1.GetCommitDiffResponse{Diff: f.commitDiff, Truncated: f.commitDiffTrunc}), nil
 }
 
 // ListBacklog backs the backlog browser route from the browse selector; the

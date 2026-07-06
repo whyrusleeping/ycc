@@ -687,6 +687,9 @@ service SessionService {
   rpc SetInteractionLevel(SetInteractionLevelRequest) returns (SetInteractionLevelResponse);
   rpc SetRoleConfig(SetRoleConfigRequest) returns (SetRoleConfigResponse);
   rpc SetThinking(SetThinkingRequest) returns (SetThinkingResponse);    // per-role reasoning level
+
+  rpc GetSessionTranscript(GetSessionTranscriptRequest) returns (GetSessionTranscriptResponse); // read-only transcript (§18.6)
+  rpc GetCommitDiff(GetCommitDiffRequest) returns (GetCommitDiffResponse); // git show for a commit_made row (§18.6, task 0140)
 }
 ```
 
@@ -1203,6 +1206,16 @@ by a read RPC (`GetSessionTranscript`, project + session-id scoped) that returns
 full event log — the live in-memory snapshot for a running session, otherwise the persisted
 `events.jsonl` read from disk. From a selected session (in the list or the transcript) the
 human can **Reopen** it.
+
+**Commit-diff drill-in (task 0140).** A transcript renders `commit_made` as sha + message,
+and `< / >` jump between commits; pressing **Enter** on a selected `commit_made` row opens
+the commit's diff in a full-screen, syntax-highlighted overlay (`git show`, stat + patch)
+served by `GetCommitDiff` (project + sha scoped). The overlay is scrollable and foldable
+per file (tab/shift+tab move the file cursor, enter/space fold a file, `a` folds all), and
+works identically over the live session and both read-only transcripts (the session
+browser and the histModal-over-session view). Large commits open fully folded and the diff
+is capped (~1 MiB, truncated at a line boundary) so it can never blow up the render caches
+(§18.9); the overlay owns its own viewport so those caches are untouched.
 
 **Reopen / re-enter (resume = replay).** Reopening a persisted session re-instantiates its
 coordinator on the *existing* log rather than starting a fresh one: the daemon loads the

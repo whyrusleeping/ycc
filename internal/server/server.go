@@ -162,6 +162,38 @@ func (s *Server) GetSessionTranscript(_ context.Context, req *connect.Request[v1
 	return connect.NewResponse(&v1.GetSessionTranscriptResponse{Events: out}), nil
 }
 
+// GetCommitDiff returns a commit's `git show` diff (stat + patch) so the
+// transcript can drill into what an agent committed from a commit_made row (task
+// 0140, spec §18.6). The diff is capped at maxCommitDiffBytes (truncated at a
+// line boundary) to bound the wire payload and the client render; the client
+// renders a truncation notice when truncated is set.
+func (s *Server) GetCommitDiff(_ context.Context, req *connect.Request[v1.GetCommitDiffRequest]) (*connect.Response[v1.GetCommitDiffResponse], error) {
+	if strings.TrimSpace(req.Msg.Sha) == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("sha is required"))
+	}
+	diff, err := s.mgr.CommitDiff(req.Msg.Project, req.Msg.Sha)
+	if err != nil {
+		// An unknown project or a bad/unknown sha (git can't resolve it) is a
+		// not-found from the caller's perspective, not a server fault.
+		return nil, connect.NewError(connect.CodeNotFound, err)
+	}
+	truncated := false
+	if len(diff) > maxCommitDiffBytes {
+		cut := maxCommitDiffBytes
+		// Truncate at a line boundary so the client never renders a half-line.
+		if nl := strings.LastIndexByte(diff[:cut], '\n'); nl > 0 {
+			cut = nl + 1
+		}
+		diff = diff[:cut]
+		truncated = true
+	}
+	return connect.NewResponse(&v1.GetCommitDiffResponse{Diff: diff, Truncated: truncated}), nil
+}
+
+// maxCommitDiffBytes caps the diff returned by GetCommitDiff (~1 MiB) so a huge
+// commit can never blow up the wire payload or the client's render.
+const maxCommitDiffBytes = 1 << 20
+
 // rfc3339 formats a timestamp using the same precision as toProto, returning ""
 // for a zero time so absent timestamps serialize as empty rather than a sentinel.
 func rfc3339(t time.Time) string {

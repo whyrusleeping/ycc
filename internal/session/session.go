@@ -1473,6 +1473,32 @@ func (m *Manager) SessionTranscript(project, id string) ([]event.Event, error) {
 	return events, nil
 }
 
+// CommitDiff returns the `git show` output (stat + patch) for a commit in a
+// project's workspace, for the transcript commit-diff drill-in (task 0140). An
+// empty project uses the default workspace; an unknown project is
+// ErrUnknownProject. Linked-worktree (workstream) commits are visible from the
+// primary repo since they share the object database, so no special-casing is
+// needed. A bad/unknown sha surfaces as the underlying git error.
+func (m *Manager) CommitDiff(project, sha string) (string, error) {
+	ws := m.defaultWorkspace
+	if project != "" {
+		p, ok := m.projects.Resolve(project)
+		if !ok {
+			return "", fmt.Errorf("%w %q", ErrUnknownProject, project)
+		}
+		ws = p
+	}
+	absWS, err := filepath.Abs(ws)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace: %w", err)
+	}
+	repo, err := git.Open(absWS)
+	if err != nil {
+		return "", fmt.Errorf("open repo: %w", err)
+	}
+	return repo.Show(sha)
+}
+
 // agentSpec builds an orchestrator.AgentSpec for a logical model name in a role,
 // validating that it resolves now so the per-spawn closures can assume success. It
 // honors the per-role thinking config (per-role config → per-model config →

@@ -75,3 +75,7 @@ Add a project-context header to the home menu (internal/tui/tui.go) plus a "c co
 - 2026-07-06 review (Claude): accept — The change adds a project-context header to the home menu (project · git branch/dirty · ready/blocked counts · today's spend) plus a one-key "c continue last session" affordance, exactly matching t
 …[truncated]
 - 2026-07-06 decision: accept — commit: tui: home-menu project context header (branch, ready/blocked, today's spend) + c continue-last-session (task 0139)
+- 2026-07-06 usage: 39,505 tok (in 198, out 39,307, cache_r 3,788,139, cache_w 170,665) · cost n/a (unpriced)
+  implementer: 25,122 tok (in 130, out 24,992, cache_r 3,035,910, cache_w 69,791) · cost n/a (unpriced)
+  coordinator: 10,187 tok (in 44, out 10,143, cache_r 595,620, cache_w 79,745) · cost n/a (unpriced)
+  reviewer:Claude: 4,196 tok (in 24, out 4,172, cache_r 156,609, cache_w 21,129) · cost n/a (unpriced)
