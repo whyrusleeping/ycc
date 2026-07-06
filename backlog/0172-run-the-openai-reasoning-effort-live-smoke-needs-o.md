@@ -1,7 +1,7 @@
 ---
 id: "0172"
 title: Run the OpenAI reasoning_effort live smoke (needs OPENAI_API_KEY)
-status: todo
+status: blocked
 priority: 3
 created: "2026-07-06"
 updated: "2026-07-06"

@@ -130,3 +130,7 @@ ACCEPTANCE MAPPING: criterion 1 (translations) → Part A 1–3; criterion 2 (li
 …[truncated]
 - 2026-07-06 decision: accept — commit: Cross-backend thinking/effort: OpenAI + Ollama translations, graceful degrade (task 0025)  gollama c92bd8b adds the missing reasoning translations on the OpenAI-compatible path: Effort → reasoning_e
 …[truncated]
+- 2026-07-06 usage: 54,192 tok (in 222, out 53,970, cache_r 5,074,064, cache_w 205,346) · cost n/a (unpriced)
+  implementer: 29,539 tok (in 136, out 29,403, cache_r 3,539,015, cache_w 82,195) · cost n/a (unpriced)
+  coordinator: 19,358 tok (in 50, out 19,308, cache_r 1,225,055, cache_w 95,407) · cost n/a (unpriced)
+  reviewer:Claude: 5,295 tok (in 36, out 5,259, cache_r 309,994, cache_w 27,744) · cost n/a (unpriced)

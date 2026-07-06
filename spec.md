@@ -413,8 +413,11 @@ What it lacks and we add (in gollama, since edits are allowed):
    the streaming counterpart to `Turn` that delivers the assistant text incrementally via
    `onDelta` (snapshot semantics — each call gets the full accumulated text so far), then
    returns the same normalized final message. Anthropic streams natively over the Messages
-   SSE API; other backends fall back to a blocking turn delivered as one whole-text delta, so
-   callers never branch. This feeds ycc's transient `turn_delta` path (§5.2).
+   SSE API; OpenAI-compatible and Ollama backends stream natively over the
+   `/chat/completions` chunk stream (Ollama via its OpenAI-compatible `/v1` endpoint, the same
+   path `Turn` uses). Bedrock has no native streaming path and falls back to a blocking turn
+   delivered as one whole-text snapshot delta, so callers never branch. This feeds ycc's
+   transient `turn_delta` path (§5.2).
 
 The **agent loop itself lives in `ycc`**, not gollama — gollama stays a transport.
 
