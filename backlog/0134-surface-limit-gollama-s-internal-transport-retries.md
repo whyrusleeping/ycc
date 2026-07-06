@@ -66,3 +66,7 @@ Leave cmd/ycc-spike untouched (standalone tool, default gollama behavior fine).
 …[truncated]
 - 2026-07-06 decision: accept — commit: retry: disable gollama's transport retry ring; single ctx-aware loop retry (task 0134)  gollama d8e738f adds Client.SetMaxRetries; ycc bumps to v0.0.0-20260706030410-d8e738f47e06, disables the inner r
 …[truncated]
+- 2026-07-06 usage: 16,119 tok (in 92, out 16,027, cache_r 934,386, cache_w 61,847) · cost n/a (unpriced)
+  implementer: 7,819 tok (in 52, out 7,767, cache_r 407,939, cache_w 25,987) · cost n/a (unpriced)
+  coordinator: 5,258 tok (in 18, out 5,240, cache_r 398,470, cache_w 16,935) · cost n/a (unpriced)
+  reviewer:Claude: 3,042 tok (in 22, out 3,020, cache_r 127,977, cache_w 18,925) · cost n/a (unpriced)
