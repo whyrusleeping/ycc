@@ -1542,3 +1542,49 @@ vendor prices change without touching the event log.
 Relation to §10 task 0010 (context-window management): that task surfaces *context size*
 to avoid window overflow; this section tracks *spend*. They share the per-turn usage signal
 but answer different questions.
+
+### 20.6 Spend guard (budget caps)
+
+Usage/cost tracking (§20.1–§20.5) is telemetry; the **spend guard** turns it into an
+enforced ceiling so an unattended `work (loop)` never overruns silently. It is entirely
+optional — an absent `[budget]` block means unlimited, exactly the pre-guard behaviour.
+
+Config (`ycc.toml`):
+
+```toml
+[budget]
+session_cost   = 5.0     # $ cap per session       (0/unset = unlimited)
+session_tokens = 2000000 # total-token cap per session
+loop_cost      = 20.0    # $ cap per work-loop run
+loop_tokens    = 8000000 # total-token cap per work-loop run
+```
+
+All values are non-negative; 0/unset means unlimited.
+
+- **Session caps** are enforced daemon-side at the engine's safe checkpoint
+  (`Session.Checkpoint` — top of turn / after tool results), so a breach never kills a tool
+  mid-write. Spend is reduced from the session's own event log (`usage.ReduceEvents` +
+  `Aggregate`), so it tracks the same authoritative numbers as `ycc cost`.
+- **~80% warning.** When a session crosses ~80% of a configured cap it emits a
+  `budget_warning` event once; the status bar shows a visually distinct warn segment
+  ("⚠ budget NN%") and the transcript records the crossing.
+- **Attended breach → Confirm gate.** In an attended (non-autonomous) session, crossing a
+  cap raises a Confirm gate ("Session budget reached … — continue past the budget?").
+  Declining halts gracefully; confirming records `budget_exceeded{action:"continue"}` and
+  continues without asking again.
+- **Autonomous / loop breach → graceful halt.** In an autonomous or loop session (or when
+  an attended user declines), the guard records `budget_exceeded{action:"halt"}` and injects
+  a user-role wrap-up instruction: stop taking on new work, bring the current task to the
+  nearest safe stopping point (finish+commit if essentially complete, otherwise mark it
+  in_review/blocked with a work-log note), then finish. The halt event is emitted as actor
+  `user` carrying the instruction text so reopen replay reconstructs it as a user message
+  (like `job_notified`) — never a silent overrun, never a mid-write kill. The breach is
+  recorded in the event log and, for loops, in the batch digest outcome.
+- **Unpriced models.** A model with no configured pricing (§20.4) contributes tokens but no
+  dollars, so a cost-only cap never breaches on it (no invented dollars); a token cap still
+  applies.
+- **Loop cap (client-driven).** The per-loop-run cap is enforced by the TUI work-loop driver:
+  it fetches the caps once at loop start via `GetBudget`, accumulates tokens + priced cost as
+  each session closes, and stops the loop before starting the next session once a cap is
+  reached — the just-finished session having completed cleanly. An observed session-level
+  breach inside a loop session likewise halts the loop at the next decision point.

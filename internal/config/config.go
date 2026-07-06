@@ -304,6 +304,10 @@ type Config struct {
 	// logs (task 0054). All fields default to 0 (disabled) — conservative by
 	// default so nothing is reaped or pruned unless explicitly opted in.
 	GC GC `toml:"gc,omitempty"`
+	// Budget configures optional spend caps that turn the existing usage/cost
+	// telemetry into an enforced guard (task 0137, spec §20.6). All fields
+	// default to 0 (unlimited) — absent config preserves today's behaviour.
+	Budget Budget `toml:"budget,omitempty"`
 	// ReadRoots lists additional trusted read-only roots OUTSIDE the workspace
 	// that the Read tool may access (task 0068). Defaults (the Go module cache
 	// and GOROOT) are always included; these extend them. Writes stay confined
@@ -322,6 +326,20 @@ type GC struct {
 	IntervalSeconds    int `toml:"interval_seconds,omitempty"`
 	IdleTimeoutMinutes int `toml:"idle_timeout_minutes,omitempty"`
 	LogRetentionDays   int `toml:"log_retention_days,omitempty"`
+}
+
+// Budget configures optional spend caps (task 0137, spec §20.6). Session caps are
+// enforced daemon-side at safe checkpoints; loop caps are enforced client-side by
+// the TUI work-loop driver via GetBudget. Every field defaults to 0 meaning
+// "unlimited" so an absent [budget] block preserves the current no-ceiling
+// behaviour. Cost caps are in US dollars; token caps count total tokens. A model
+// with no configured pricing contributes tokens but no dollars (§20.4), so it can
+// only ever breach a token cap — never an invented-dollars cost cap.
+type Budget struct {
+	SessionCost   float64 `toml:"session_cost,omitempty"`   // $ cap per session (0 = unlimited)
+	SessionTokens int64   `toml:"session_tokens,omitempty"` // total-token cap per session (0 = unlimited)
+	LoopCost      float64 `toml:"loop_cost,omitempty"`      // $ cap per work-loop run (0 = unlimited)
+	LoopTokens    int64   `toml:"loop_tokens,omitempty"`    // total-token cap per work-loop run (0 = unlimited)
 }
 
 // Load reads and validates a TOML config file.
@@ -430,6 +448,9 @@ func (c *Config) validate() error {
 	if c.GC.IntervalSeconds < 0 || c.GC.IdleTimeoutMinutes < 0 || c.GC.LogRetentionDays < 0 {
 		return fmt.Errorf("gc: interval_seconds, idle_timeout_minutes, and log_retention_days must be non-negative")
 	}
+	if c.Budget.SessionCost < 0 || c.Budget.SessionTokens < 0 || c.Budget.LoopCost < 0 || c.Budget.LoopTokens < 0 {
+		return fmt.Errorf("budget: session_cost, session_tokens, loop_cost, and loop_tokens must be non-negative")
+	}
 	return nil
 }
 
@@ -475,6 +496,15 @@ func (r *Registry) GC() (interval, idleTimeout, logRetention time.Duration) {
 	return time.Duration(r.cfg.GC.IntervalSeconds) * time.Second,
 		time.Duration(r.cfg.GC.IdleTimeoutMinutes) * time.Minute,
 		time.Duration(r.cfg.GC.LogRetentionDays) * 24 * time.Hour
+}
+
+// Budget returns the configured spend caps (task 0137, spec §20.6). Each field is
+// zero when unset/unlimited. Guarded by the registry lock like GC/MaxTokens so a
+// runtime config edit is picked up on the next check.
+func (r *Registry) Budget() Budget {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.cfg.Budget
 }
 
 // ReadRoots returns a copy of the configured extra trusted read-only roots

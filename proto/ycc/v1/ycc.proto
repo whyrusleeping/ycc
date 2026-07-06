@@ -404,6 +404,19 @@ message GetUsageResponse {
   string workspace = 3;
 }
 
+// Spend guard budget caps (task 0137, spec §20.6). GetBudget returns the
+// configured session and loop caps so the TUI work-loop driver can enforce the
+// per-loop-run cap client-side (session caps are enforced daemon-side). Every
+// field is 0 when unset (unlimited); a cost cap is in US dollars, a token cap
+// counts total tokens.
+message GetBudgetRequest {}
+message GetBudgetResponse {
+  double session_cost = 1;  // $ cap per session (0 = unlimited)
+  int64 session_tokens = 2; // total-token cap per session (0 = unlimited)
+  double loop_cost = 3;     // $ cap per work-loop run (0 = unlimited)
+  int64 loop_tokens = 4;    // total-token cap per work-loop run (0 = unlimited)
+}
+
 // Parallel workstreams (docs/design/parallel-workstreams.md §5–§8): a workstream
 // is a linked git worktree + branch plus the `work` session scoped to it, tracked
 // as a child of a project. WorkstreamInfo mirrors workstream.Workstream.
@@ -551,6 +564,10 @@ service SessionService {
   // Usage/cost breakdown (spec §20): aggregated, priced token usage by task ×
   // model × day so clients can render the cost breakdown.
   rpc GetUsage(GetUsageRequest) returns (GetUsageResponse);
+
+  // Spend guard (task 0137, spec §20.6): return the configured budget caps so the
+  // TUI work-loop driver can enforce the per-loop-run cap client-side.
+  rpc GetBudget(GetBudgetRequest) returns (GetBudgetResponse);
 
   // Parallel workstreams (docs/design/parallel-workstreams.md §6, §8): spawn a
   // worktree+session, list them, preview/merge a branch back to base with the

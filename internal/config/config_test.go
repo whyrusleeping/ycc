@@ -716,3 +716,50 @@ func TestDefaultMaxTokens(t *testing.T) {
 		t.Fatalf("DefaultMaxTokens = %d, want 32000", DefaultMaxTokens)
 	}
 }
+
+// Budget caps round-trip through Save/Load, negatives are rejected, and the
+// Registry accessor returns the configured caps (task 0137, spec §20.6).
+func TestBudgetRoundTripAndValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ycc.toml")
+	orig := &Config{
+		Models: map[string]Model{"claude": {Backend: "anthropic", BaseURL: "u", Model: "m", KeyEnv: "K"}},
+		Roles:  Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"}},
+		Budget: Budget{SessionCost: 5.0, SessionTokens: 2_000_000, LoopCost: 20.0, LoopTokens: 8_000_000},
+	}
+	if err := Save(path, orig); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !reflect.DeepEqual(got.Budget, orig.Budget) {
+		t.Fatalf("budget round-trip mismatch: got=%+v want=%+v", got.Budget, orig.Budget)
+	}
+
+	// Registry accessor reflects the configured caps.
+	reg := NewRegistry(got)
+	if b := reg.Budget(); b != orig.Budget {
+		t.Fatalf("Registry.Budget() = %+v, want %+v", b, orig.Budget)
+	}
+
+	// Negative values are rejected by validate (via Save).
+	bad := &Config{
+		Models: orig.Models, Roles: orig.Roles,
+		Budget: Budget{SessionCost: -1},
+	}
+	if err := Save(filepath.Join(t.TempDir(), "bad.toml"), bad); err == nil {
+		t.Fatal("Save with negative budget succeeded, want error")
+	}
+}
+
+// An absent [budget] block means every cap is 0 (unlimited).
+func TestBudgetDefaultUnlimited(t *testing.T) {
+	reg := NewRegistry(&Config{
+		Models: map[string]Model{"c": {Backend: "ollama", Model: "m"}},
+		Roles:  Roles{Coordinator: "c", Implementer: "c", Reviewers: []string{"c"}},
+	})
+	if b := reg.Budget(); b != (Budget{}) {
+		t.Fatalf("default Budget = %+v, want zero (unlimited)", b)
+	}
+}

@@ -254,6 +254,19 @@ type model struct {
 	spin         spinner.Model
 	spinning     bool // a spinner.Tick command is already in flight
 
+	// Spend guard status (task 0137, spec §20.6). budgetPct is the highest
+	// fraction-of-cap the current session has crossed (from budget_warning
+	// events); budgetExceeded is set once a budget_exceeded event is seen. Both
+	// feed a visually distinct status-bar segment and reset per session view.
+	budgetPct      float64
+	budgetExceeded bool
+	// Work-loop cap state: caps fetched once at loop start via GetBudget, and a
+	// flag recording that a loop session's own budget was breached daemon-side so
+	// the loop halts at the next decision point with a distinct outcome.
+	loopCostCap    float64
+	loopTokenCap   int64
+	loopSessBreach bool
+
 	// lastMouse records when we last saw a mouse event. bubbletea v1's input
 	// parser leaks the bytes of a split SGR mouse report (common during rapid
 	// scroll, when the 256-byte read buffer fills and cuts an event in half) as
@@ -527,6 +540,14 @@ type loopDecisionMsg struct {
 type loopUsageMsg struct {
 	rows []*v1.UsageRow
 	err  error
+}
+
+// budgetCapsMsg carries the configured loop spend caps fetched once at loop start
+// via GetBudget (task 0137, spec §20.6). The loop driver enforces the per-loop-run
+// cap client-side; a fetch error just leaves the caps at 0 (unlimited).
+type budgetCapsMsg struct {
+	loopCost   float64
+	loopTokens int64
 }
 
 // digestTaskMsg carries one blocked task's full detail so the digest can surface
@@ -891,6 +912,13 @@ type loopRunState struct {
 	startedAt time.Time
 	baseline  map[string]*v1.BacklogTaskSummary
 	sessions  []loopSessRec
+	// Cumulative spend across every session the run has driven, accumulated at
+	// each session close (task 0137, spec §20.6). cumCost sums only priced
+	// models' dollars; costStatus tracks pricing coverage so an unpriced run never
+	// invents a dollar cap breach. Used by applyLoopDecision to enforce loop caps.
+	cumTokens  int64
+	cumCost    float64
+	costStatus string
 }
 
 // digestTask is one task row in the finished digest.
@@ -1127,6 +1155,18 @@ func (m model) fetchLoopUsage() tea.Msg {
 	return loopUsageMsg{rows: resp.Msg.Rows}
 }
 
+// fetchBudget loads the configured spend caps once at loop start so the loop
+// driver can enforce the per-loop-run cap client-side (task 0137, spec §20.6). A
+// fetch error is swallowed to unlimited caps — the guard is best-effort and must
+// never block starting a loop.
+func (m model) fetchBudget() tea.Msg {
+	resp, err := m.client.GetBudget(m.ctx, connect.NewRequest(&v1.GetBudgetRequest{}))
+	if err != nil {
+		return budgetCapsMsg{}
+	}
+	return budgetCapsMsg{loopCost: resp.Msg.LoopCost, loopTokens: resp.Msg.LoopTokens}
+}
+
 // fetchDigestTask loads one blocked task's detail so the digest can surface the
 // specific reason it is blocked and offer a jump-to-task (task 0098).
 func (m model) fetchDigestTask(id string) tea.Cmd {
@@ -1200,6 +1240,26 @@ func (m model) applyLoopDecision(msg loopDecisionMsg) (tea.Model, tea.Cmd) {
 		// A session ran but the backlog is byte-for-byte unchanged: it advanced
 		// nothing, so starting another would loop forever on the same state.
 		return finish("loop stopped: session made no progress")
+	case m.loopStarted && m.loopSessBreach:
+		// A loop session's own budget was breached daemon-side (task 0137): halt
+		// the loop at this safe decision point (the current session already
+		// completed) with a distinct outcome recorded in the digest.
+		return finish("loop stopped: session budget reached")
+	}
+	// Enforce the per-loop-run spend cap (task 0137, spec §20.6): once cumulative
+	// tokens or priced cost crosses a configured cap, stop before starting the
+	// next session. The just-finished session already completed so nothing is cut
+	// off mid-write. Unpriced runs contribute no dollars so a cost cap never
+	// breaches on them (§20.4).
+	if m.loopStarted && m.loopRun != nil {
+		if m.loopTokenCap > 0 && m.loopRun.cumTokens >= m.loopTokenCap {
+			return finish(fmt.Sprintf("loop stopped: budget reached (%s tokens, cap %s)",
+				fmtTokens(int(m.loopRun.cumTokens)), fmtTokens(int(m.loopTokenCap))))
+		}
+		if m.loopCostCap > 0 && m.loopRun.cumCost >= m.loopCostCap {
+			return finish(fmt.Sprintf("loop stopped: budget reached ($%.2f, cap $%.2f)",
+				m.loopRun.cumCost, m.loopCostCap))
+		}
 	}
 	m.loopStarted, m.loopPrevFP = true, msg.fp
 	// Loop sessions run autonomously: ask_user must never block an unattended run.
@@ -2255,6 +2315,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// reopened) session — usage accumulates only over the current view (task 0062).
 		m.usageByModel = map[string]event.Usage{}
 		m.sessionStart = time.Now()
+		// Reset the per-session spend-guard status for the new/reopened session
+		// view (task 0137). A reopened session that already crossed the line
+		// re-emits its budget_warning/budget_exceeded on replay, re-setting these.
+		m.budgetPct, m.budgetExceeded = 0, false
 		// Events already persisted before we subscribed are replayed by the daemon
 		// on reopen; only events genuinely newer than this instant should ring the
 		// terminal bell / raise a desktop notification (task 0108).
@@ -2271,7 +2335,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the next task rather than dropping back to an idle view.
 		if m.looping {
 			if m.loopRun != nil {
-				m.loopRun.sessions = append(m.loopRun.sessions, m.snapshotLoopSession())
+				rec := m.snapshotLoopSession()
+				m.loopRun.sessions = append(m.loopRun.sessions, rec)
+				// Accumulate loop-wide spend for the loop cost/token cap (task 0137).
+				// Cost is the priced estimate from the live per-model tally; unpriced
+				// models contribute tokens only (never invented dollars, §20.4).
+				_, cost, status := m.sessionUsage()
+				m.loopRun.cumTokens += rec.tokens
+				m.loopRun.cumCost += cost
+				m.loopRun.costStatus = mergeCostStatus(m.loopRun.costStatus, status)
+				// A daemon-side per-session budget breach observed while looping stops
+				// the loop at the next decision point with a distinct outcome.
+				if m.budgetExceeded {
+					m.loopSessBreach = true
+				}
 			}
 			m.status = "loop: session ended — checking backlog…"
 			return m, m.loopNext()
@@ -2279,6 +2356,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case loopDecisionMsg:
 		return m.applyLoopDecision(msg)
+	case budgetCapsMsg:
+		// Loop spend caps fetched at loop start (task 0137). May arrive after the
+		// first session already started — that's fine, the caps apply from here on.
+		m.loopCostCap, m.loopTokenCap = msg.loopCost, msg.loopTokens
+		return m, nil
 	case loopUsageMsg:
 		// Price the batch digest from the per-session usage breakdown (task 0098).
 		if msg.err == nil && m.loopDigest != nil {
@@ -3157,7 +3239,8 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.loop && isWorkEntry(e) {
 				m.looping, m.loopStarted, m.loopPrevFP = true, false, ""
 				m.loopRun = nil // start a fresh batch-digest accumulation (task 0098)
-				return m, m.loopNext()
+				m.loopSessBreach, m.loopCostCap, m.loopTokenCap = false, 0, 0
+				return m, tea.Batch(m.fetchBudget, m.loopNext())
 			}
 			// Compose the preset's opening prompt with any typed text: choosing a
 			// preset AND typing details means both — the preset supplies the
@@ -3361,6 +3444,8 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.loopStarted, m.loopPrevFP = false, ""
 				if m.looping {
 					m.loopRun = nil // fresh batch-digest accumulation (task 0098)
+					m.loopSessBreach, m.loopCostCap, m.loopTokenCap = false, 0, 0
+					return m, m.fetchBudget
 				}
 			}
 			return m, nil
@@ -6624,6 +6709,14 @@ func (m *model) appendEvent(ev *v1.Event) {
 			cur.Total += u.Total
 			m.usageByModel[name] = cur
 		}
+	case "budget_warning":
+		// Session crossed ~80% of a configured cap (task 0137, spec §20.6): surface
+		// a distinct status-bar warning. Track the highest pct seen.
+		if p := floatField(ev, "pct"); p > m.budgetPct {
+			m.budgetPct = p
+		}
+	case "budget_exceeded":
+		m.budgetExceeded = true
 	case "question_asked":
 		// This question is now the canonical row for its ask_user exchange: the
 		// tool_call that produced it (rendered while in flight, possibly with
@@ -7764,6 +7857,14 @@ func (m model) statusBar() string {
 	// entry); kept high-priority so the user always sees they're in a loop.
 	if m.looping {
 		segs = append(segs, seg{recoStyle.Render("⟳ loop"), 1})
+	}
+	// Spend guard (task 0137, spec §20.6): a visually distinct, high-priority
+	// segment once the session crosses ~80% (warn) or the cap (err). Kept above
+	// the normal Σ readout so a budget breach is unmistakable.
+	if m.budgetExceeded {
+		segs = append(segs, seg{errStyle.Render("⚠ budget reached"), 1})
+	} else if m.budgetPct > 0 {
+		segs = append(segs, seg{recoStyle.Render(fmt.Sprintf("⚠ budget %d%%", int(m.budgetPct*100))), 1})
 	}
 	// live token/cost readout — the headline new datum, kept at high priority.
 	if tokens, cost, st := m.sessionUsage(); tokens > 0 {
@@ -9322,6 +9423,8 @@ func typeGlyph(t string) string {
 		return "■"
 	case "session_error":
 		return "✗"
+	case "budget_warning", "budget_exceeded":
+		return "⚠"
 	default:
 		return "·"
 	}
@@ -9334,6 +9437,10 @@ func typeGlyphStyle(t string) lipgloss.Style {
 	switch t {
 	case "session_error":
 		return errStyle
+	case "budget_exceeded":
+		return errStyle
+	case "budget_warning":
+		return recoStyle
 	case "commit_made", "question_answered":
 		return successStyle
 	default:
@@ -9427,8 +9534,37 @@ func detailLine(ev *v1.Event) string {
 		return oneLine(dataField(ev, "report"), 120)
 	case "session_error":
 		return oneLine(dataField(ev, "msg"), 120)
+	case "budget_warning":
+		return "⚠ budget warning — " + budgetSummary(ev)
+	case "budget_exceeded":
+		action := dataField(ev, "action")
+		suffix := ""
+		switch action {
+		case "halt":
+			suffix = " — halting (wrap up current task)"
+		case "continue":
+			suffix = " — continuing past cap (confirmed)"
+		}
+		return "⚠ budget reached — " + budgetSummary(ev) + suffix
 	}
 	return ""
+}
+
+// budgetSummary renders the spent/cap datum carried on a budget_warning /
+// budget_exceeded event for the transcript row (task 0137).
+func budgetSummary(ev *v1.Event) string {
+	tokens := int64(floatField(ev, "tokens"))
+	tokenCap := int64(floatField(ev, "token_cap"))
+	cost := floatField(ev, "cost")
+	costCap := floatField(ev, "cost_cap")
+	var parts []string
+	if tokenCap > 0 {
+		parts = append(parts, fmt.Sprintf("%s/%s tok", fmtTokens(int(tokens)), fmtTokens(int(tokenCap))))
+	}
+	if costCap > 0 {
+		parts = append(parts, fmt.Sprintf("$%.2f/$%.2f", cost, costCap))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // appendDur appends a compact, dim-styled elapsed-duration suffix to a row's
@@ -9709,6 +9845,22 @@ func dataField(ev *v1.Event, key string) string {
 		return fmt.Sprintf("%g", v)
 	}
 	return ""
+}
+
+// floatField pulls a numeric field from an event's data JSON as a float64,
+// returning 0 when absent or non-numeric (task 0137).
+func floatField(ev *v1.Event, key string) float64 {
+	if ev.DataJson == "" {
+		return 0
+	}
+	var mp map[string]any
+	if json.Unmarshal([]byte(ev.DataJson), &mp) != nil {
+		return 0
+	}
+	if v, ok := mp[key].(float64); ok {
+		return v
+	}
+	return 0
 }
 
 // dataList pulls a list-of-strings field from an event's data JSON, dropping

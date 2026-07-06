@@ -277,6 +277,24 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			history = append(history, gollama.Message{Role: "user", Content: str(ev.Data, "text")})
 			assistantIdx = -1
 			lastTurnTruncated = false
+		case event.BudgetExceeded:
+			// A graceful spend-guard halt (task 0137, spec §20.6) injects a wrap-up
+			// instruction as a USER-actor budget_exceeded event carrying "text".
+			// Reconstruct it as a user message exactly like job_notified so the
+			// reopened history keeps user/assistant alternation. The "continue"
+			// (confirmed) variant is emitted as a coordinator-actor event with no
+			// "text" and is ignored here.
+			if ev.Actor != "user" {
+				continue
+			}
+			text := str(ev.Data, "text")
+			if text == "" {
+				continue
+			}
+			repairDangling()
+			history = append(history, gollama.Message{Role: "user", Content: text})
+			assistantIdx = -1
+			lastTurnTruncated = false
 		}
 	}
 

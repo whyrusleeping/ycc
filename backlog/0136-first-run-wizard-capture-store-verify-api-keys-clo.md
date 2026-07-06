@@ -76,3 +76,7 @@ Constraints: don't change the config schema; don't touch the TUI backend manager
 - 2026-07-06 review (Claude): accept — The change fully satisfies Task 0136. The first-run wizard now captures an optional masked API key, persists it to the machine-local secrets store (never into ycc.toml) only at completion, adds a step
 …[truncated]
 - 2026-07-06 decision: accept — commit: First-run wizard: capture, store & verify API keys; curated model defaults; secrets-aware NeedsSetup; skip guidance (task 0136)
+- 2026-07-06 usage: 38,013 tok (in 114, out 37,899, cache_r 2,210,113, cache_w 147,199) · cost n/a (unpriced)
+  implementer: 29,390 tok (in 68, out 29,322, cache_r 1,505,214, cache_w 63,220) · cost n/a (unpriced)
+  coordinator: 5,020 tok (in 24, out 4,996, cache_r 557,614, cache_w 60,584) · cost n/a (unpriced)
+  reviewer:Claude: 3,603 tok (in 22, out 3,581, cache_r 147,285, cache_w 23,395) · cost n/a (unpriced)

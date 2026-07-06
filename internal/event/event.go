@@ -117,6 +117,17 @@ const (
 	// quiet unless the turn ultimately fails (which records a session_error).
 	// Data: { attempt, max_attempts, delay_ms, kind, status, msg }.
 	Retry Type = "retry"
+	// Budget spend guard (task 0137, spec §20.6). BudgetWarning marks a session
+	// crossing ~80% of a configured cost/token cap (data: { tokens, token_cap,
+	// cost, cost_cap, pct }); it fires at most once per session. BudgetExceeded
+	// marks a cap being crossed (same data plus an "action" field): action
+	// "continue" when an attended user confirmed continuing past the cap, or
+	// "halt" when the session was told to wrap up. The halt record is emitted as
+	// actor "user" and carries the wrap-up instruction in "text" so reopen replay
+	// reconstructs it as a user message (like job_notified) — the graceful halt is
+	// durable in the log, never a silent overrun.
+	BudgetWarning  Type = "budget_warning"
+	BudgetExceeded Type = "budget_exceeded"
 )
 
 // ThinkingBlock mirrors gollama.ThinkingBlock for lossless serialization in the

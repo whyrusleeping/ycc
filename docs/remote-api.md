@@ -213,6 +213,7 @@ JSON="Content-Type: application/json"
 | [`ResumeSession`](#resumesession) | re-open a persisted session on its existing log |
 | [`ListBacklog`](#listbacklog) / [`GetTask`](#gettask) | browse the durable backlog |
 | [`GetUsage`](#getusage) | priced token-usage breakdown |
+| [`GetBudget`](#getbudget) | configured spend-guard caps |
 
 ### ListProjects
 
@@ -507,6 +508,25 @@ double; `priceStatus` is `priced` | `unpriced` | `partial`:
 ],"total":{"input":"12000","output":"3400","total":"15400","cost":0.081,"priceStatus":"priced"},
  "workspace":"/home/me/work"}
 ```
+
+### GetBudget
+
+Return the configured spend-guard caps (spec §20.6). Session caps are enforced
+daemon-side at safe checkpoints; the loop caps let a client (the TUI work-loop
+driver) enforce the per-loop-run cap. Every field is `0` when unset (unlimited);
+`sessionCost`/`loopCost` are US dollars, `sessionTokens`/`loopTokens` count total
+tokens. Empty request.
+
+```
+curl -sS -H "$AUTH" -H "$JSON" -d '{}' \
+  $B/ycc.v1.SessionService/GetBudget
+```
+
+```json
+{"sessionCost":5,"sessionTokens":"2000000","loopCost":20,"loopTokens":"8000000"}
+```
+
+An unconfigured `[budget]` returns `{}` (all fields zero / unlimited).
 
 ---
 

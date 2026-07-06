@@ -122,6 +122,9 @@ const (
 	SessionServiceCaptureBacklogItemProcedure = "/ycc.v1.SessionService/CaptureBacklogItem"
 	// SessionServiceGetUsageProcedure is the fully-qualified name of the SessionService's GetUsage RPC.
 	SessionServiceGetUsageProcedure = "/ycc.v1.SessionService/GetUsage"
+	// SessionServiceGetBudgetProcedure is the fully-qualified name of the SessionService's GetBudget
+	// RPC.
+	SessionServiceGetBudgetProcedure = "/ycc.v1.SessionService/GetBudget"
 	// SessionServiceSpawnWorkstreamProcedure is the fully-qualified name of the SessionService's
 	// SpawnWorkstream RPC.
 	SessionServiceSpawnWorkstreamProcedure = "/ycc.v1.SessionService/SpawnWorkstream"
@@ -207,6 +210,9 @@ type SessionServiceClient interface {
 	// Usage/cost breakdown (spec §20): aggregated, priced token usage by task ×
 	// model × day so clients can render the cost breakdown.
 	GetUsage(context.Context, *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error)
+	// Spend guard (task 0137, spec §20.6): return the configured budget caps so the
+	// TUI work-loop driver can enforce the per-loop-run cap client-side.
+	GetBudget(context.Context, *connect.Request[v1.GetBudgetRequest]) (*connect.Response[v1.GetBudgetResponse], error)
 	// Parallel workstreams (docs/design/parallel-workstreams.md §6, §8): spawn a
 	// worktree+session, list them, preview/merge a branch back to base with the
 	// conflict-aware review gate, or discard one. Subscribe(session_id) is reused
@@ -416,6 +422,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("GetUsage")),
 			connect.WithClientOptions(opts...),
 		),
+		getBudget: connect.NewClient[v1.GetBudgetRequest, v1.GetBudgetResponse](
+			httpClient,
+			baseURL+SessionServiceGetBudgetProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("GetBudget")),
+			connect.WithClientOptions(opts...),
+		),
 		spawnWorkstream: connect.NewClient[v1.SpawnWorkstreamRequest, v1.SpawnWorkstreamResponse](
 			httpClient,
 			baseURL+SessionServiceSpawnWorkstreamProcedure,
@@ -482,6 +494,7 @@ type sessionServiceClient struct {
 	getPlan              *connect.Client[v1.GetPlanRequest, v1.GetPlanResponse]
 	captureBacklogItem   *connect.Client[v1.CaptureBacklogItemRequest, v1.Event]
 	getUsage             *connect.Client[v1.GetUsageRequest, v1.GetUsageResponse]
+	getBudget            *connect.Client[v1.GetBudgetRequest, v1.GetBudgetResponse]
 	spawnWorkstream      *connect.Client[v1.SpawnWorkstreamRequest, v1.SpawnWorkstreamResponse]
 	listWorkstreams      *connect.Client[v1.ListWorkstreamsRequest, v1.ListWorkstreamsResponse]
 	previewMerge         *connect.Client[v1.PreviewMergeRequest, v1.PreviewMergeResponse]
@@ -644,6 +657,11 @@ func (c *sessionServiceClient) GetUsage(ctx context.Context, req *connect.Reques
 	return c.getUsage.CallUnary(ctx, req)
 }
 
+// GetBudget calls ycc.v1.SessionService.GetBudget.
+func (c *sessionServiceClient) GetBudget(ctx context.Context, req *connect.Request[v1.GetBudgetRequest]) (*connect.Response[v1.GetBudgetResponse], error) {
+	return c.getBudget.CallUnary(ctx, req)
+}
+
 // SpawnWorkstream calls ycc.v1.SessionService.SpawnWorkstream.
 func (c *sessionServiceClient) SpawnWorkstream(ctx context.Context, req *connect.Request[v1.SpawnWorkstreamRequest]) (*connect.Response[v1.SpawnWorkstreamResponse], error) {
 	return c.spawnWorkstream.CallUnary(ctx, req)
@@ -737,6 +755,9 @@ type SessionServiceHandler interface {
 	// Usage/cost breakdown (spec §20): aggregated, priced token usage by task ×
 	// model × day so clients can render the cost breakdown.
 	GetUsage(context.Context, *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error)
+	// Spend guard (task 0137, spec §20.6): return the configured budget caps so the
+	// TUI work-loop driver can enforce the per-loop-run cap client-side.
+	GetBudget(context.Context, *connect.Request[v1.GetBudgetRequest]) (*connect.Response[v1.GetBudgetResponse], error)
 	// Parallel workstreams (docs/design/parallel-workstreams.md §6, §8): spawn a
 	// worktree+session, list them, preview/merge a branch back to base with the
 	// conflict-aware review gate, or discard one. Subscribe(session_id) is reused
@@ -942,6 +963,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("GetUsage")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceGetBudgetHandler := connect.NewUnaryHandler(
+		SessionServiceGetBudgetProcedure,
+		svc.GetBudget,
+		connect.WithSchema(sessionServiceMethods.ByName("GetBudget")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sessionServiceSpawnWorkstreamHandler := connect.NewUnaryHandler(
 		SessionServiceSpawnWorkstreamProcedure,
 		svc.SpawnWorkstream,
@@ -1036,6 +1063,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceCaptureBacklogItemHandler.ServeHTTP(w, r)
 		case SessionServiceGetUsageProcedure:
 			sessionServiceGetUsageHandler.ServeHTTP(w, r)
+		case SessionServiceGetBudgetProcedure:
+			sessionServiceGetBudgetHandler.ServeHTTP(w, r)
 		case SessionServiceSpawnWorkstreamProcedure:
 			sessionServiceSpawnWorkstreamHandler.ServeHTTP(w, r)
 		case SessionServiceListWorkstreamsProcedure:
@@ -1177,6 +1206,10 @@ func (UnimplementedSessionServiceHandler) CaptureBacklogItem(context.Context, *c
 
 func (UnimplementedSessionServiceHandler) GetUsage(context.Context, *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetUsage is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) GetBudget(context.Context, *connect.Request[v1.GetBudgetRequest]) (*connect.Response[v1.GetBudgetResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetBudget is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) SpawnWorkstream(context.Context, *connect.Request[v1.SpawnWorkstreamRequest]) (*connect.Response[v1.SpawnWorkstreamResponse], error) {

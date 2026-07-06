@@ -467,3 +467,38 @@ func TestGetSessionTranscript(t *testing.T) {
 		t.Fatalf("live transcript = %d events, want >= 2", len(live.Msg.Events))
 	}
 }
+
+// GetBudget returns the configured spend-guard caps (task 0137, spec §20.6).
+func TestGetBudgetReturnsConfiguredCaps(t *testing.T) {
+	reg := config.NewRegistry(&config.Config{
+		Models: map[string]config.Model{"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"}},
+		Roles:  config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
+		Budget: config.Budget{SessionCost: 5.0, SessionTokens: 2_000_000, LoopCost: 20.0, LoopTokens: 8_000_000},
+	})
+	srv := New(session.NewManager(reg, t.TempDir()))
+	resp, err := srv.GetBudget(context.Background(), connect.NewRequest(&v1.GetBudgetRequest{}))
+	if err != nil {
+		t.Fatalf("GetBudget: %v", err)
+	}
+	m := resp.Msg
+	if m.SessionCost != 5.0 || m.SessionTokens != 2_000_000 || m.LoopCost != 20.0 || m.LoopTokens != 8_000_000 {
+		t.Fatalf("GetBudget = %+v, want the configured caps", m)
+	}
+}
+
+// An absent [budget] block yields all-zero (unlimited) caps.
+func TestGetBudgetDefaultUnlimited(t *testing.T) {
+	reg := config.NewRegistry(&config.Config{
+		Models: map[string]config.Model{"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"}},
+		Roles:  config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
+	})
+	srv := New(session.NewManager(reg, t.TempDir()))
+	resp, err := srv.GetBudget(context.Background(), connect.NewRequest(&v1.GetBudgetRequest{}))
+	if err != nil {
+		t.Fatalf("GetBudget: %v", err)
+	}
+	m := resp.Msg
+	if m.SessionCost != 0 || m.SessionTokens != 0 || m.LoopCost != 0 || m.LoopTokens != 0 {
+		t.Fatalf("GetBudget default = %+v, want all zero", m)
+	}
+}

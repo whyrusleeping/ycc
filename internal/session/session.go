@@ -86,6 +86,14 @@ type Session struct {
 	// appended to the work log this session, so each accrues at most one summary
 	// line even across repeated idle cycles (spec §6.2, §20.5).
 	usageSummarized map[string]bool
+	// Spend guard (task 0137, spec §20.6), guarded by s.mu. budgetWarned is set
+	// once the session crosses ~80% of a configured cap (so the warning fires at
+	// most once); budgetBreached is set once a cap is crossed and handled (the
+	// attended Confirm is asked / the autonomous wrap-up is injected at most once).
+	// Both are seeded from the replayed log on Reopen so a reopened session that
+	// already crossed the line does not re-fire or re-ask.
+	budgetWarned   bool
+	budgetBreached bool
 
 	// Interrupt & steer state (spec §18.7), guarded by a dedicated mutex so it
 	// never contends with the s.mu hot paths. pauseReq is set by Interrupt and
@@ -312,6 +320,7 @@ func (s *Session) Checkpoint(ctx context.Context) ([]string, error) {
 		s.steerMu.Unlock()
 		msgs := s.deliverCorrections(corr)
 		msgs = append(msgs, s.drainJobNotes()...)
+		msgs = append(msgs, s.checkBudget(ctx)...)
 		if len(msgs) == 0 {
 			return nil, nil
 		}
@@ -351,6 +360,7 @@ func (s *Session) Checkpoint(ctx context.Context) ([]string, error) {
 	s.emitter.Emit(event.Resumed, map[string]any{})
 	msgs := s.deliverCorrections(corr)
 	msgs = append(msgs, s.drainJobNotes()...)
+	msgs = append(msgs, s.checkBudget(ctx)...)
 	return msgs, nil
 }
 
@@ -1408,6 +1418,9 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 	}
 	loop.SetHistory(engine.ReplayHistory(events))
 	s.loop = loop
+	// Seed the spend-guard flags from the replayed log so a session that already
+	// crossed the warning/breach line does not re-fire or re-ask on reopen.
+	s.seedBudgetFromLog(events)
 
 	// Register atomically: re-check under the lock so a concurrent Reopen/Start
 	// that won the race keeps its live session. The loser closes its freshly
@@ -1573,6 +1586,10 @@ func (m *Manager) ListByProject(name string) []*Session {
 
 // Models returns the configured logical models for the settings overlay pickers.
 func (m *Manager) Models() []config.ModelInfo { return m.reg.Models() }
+
+// Budget returns the configured spend caps (task 0137, spec §20.6) so the RPC
+// layer can serve the loop caps to the TUI work-loop driver.
+func (m *Manager) Budget() config.Budget { return m.reg.Budget() }
 
 // GetModel returns a copy of a logical model's record for editing in the
 // settings overlay (spec §18.2).

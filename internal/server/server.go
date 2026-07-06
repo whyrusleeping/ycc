@@ -708,6 +708,19 @@ func (s *Server) GetUsage(_ context.Context, req *connect.Request[v1.GetUsageReq
 	return connect.NewResponse(out), nil
 }
 
+// GetBudget returns the configured spend-guard caps (task 0137, spec §20.6) so
+// the TUI work-loop driver can enforce the per-loop-run cap client-side. Session
+// caps are enforced daemon-side; this only exposes the configured values.
+func (s *Server) GetBudget(_ context.Context, _ *connect.Request[v1.GetBudgetRequest]) (*connect.Response[v1.GetBudgetResponse], error) {
+	b := s.mgr.Budget()
+	return connect.NewResponse(&v1.GetBudgetResponse{
+		SessionCost:   b.SessionCost,
+		SessionTokens: b.SessionTokens,
+		LoopCost:      b.LoopCost,
+		LoopTokens:    b.LoopTokens,
+	}), nil
+}
+
 func usageRowToProto(r usage.Row) *v1.UsageRow {
 	return &v1.UsageRow{
 		Task:        r.Task,

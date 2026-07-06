@@ -6005,3 +6005,85 @@ func TestPendingPickerCondensesQuestionBody(t *testing.T) {
 		t.Fatalf("free-text mode should restore the full question body, got:\n%s", body)
 	}
 }
+
+// The status bar shows a visually distinct budget segment: a warn readout once a
+// session crosses ~80% of its cap, escalating to "budget reached" on breach
+// (task 0137, spec §20.6).
+func TestStatusBarBudgetSegment(t *testing.T) {
+	m := model{state: stateSession, status: "running", mode: "work", w: 160, budgetPct: 0.85}
+	bar := m.statusBar()
+	if !strings.Contains(bar, "budget 85%") {
+		t.Fatalf("status bar missing budget warning:\n%s", bar)
+	}
+	if strings.Contains(bar, "budget reached") {
+		t.Fatalf("warn state should not show 'budget reached':\n%s", bar)
+	}
+
+	m.budgetExceeded = true
+	bar = m.statusBar()
+	if !strings.Contains(bar, "budget reached") {
+		t.Fatalf("status bar missing budget breach:\n%s", bar)
+	}
+}
+
+// applyLoopDecision halts the loop when cumulative token spend reaches the loop
+// token cap, even though a ready task remains and the backlog changed (task 0137).
+func TestLoopDecisionStopsAtTokenCap(t *testing.T) {
+	m := &model{
+		looping: true, loopStarted: true, loopPrevFP: "0001:todo",
+		loopTokenCap: 1000, loopRun: &loopRunState{cumTokens: 1500},
+	}
+	next, _ := m.applyLoopDecision(loopDecisionMsg{next: "0002", fp: "0001:done"})
+	mm := next.(model)
+	if mm.looping {
+		t.Fatalf("expected loop to stop at token cap, still looping")
+	}
+	if mm.state != stateMenu || !strings.Contains(mm.status, "budget") {
+		t.Fatalf("expected budget-stop outcome, state=%v status=%q", mm.state, mm.status)
+	}
+}
+
+// applyLoopDecision halts on the cost cap too.
+func TestLoopDecisionStopsAtCostCap(t *testing.T) {
+	m := &model{
+		looping: true, loopStarted: true, loopPrevFP: "0001:todo",
+		loopCostCap: 1.0, loopRun: &loopRunState{cumCost: 2.0},
+	}
+	next, _ := m.applyLoopDecision(loopDecisionMsg{next: "0002", fp: "0001:done"})
+	mm := next.(model)
+	if mm.looping || !strings.Contains(mm.status, "budget") {
+		t.Fatalf("expected cost-cap budget stop, looping=%v status=%q", mm.looping, mm.status)
+	}
+}
+
+// applyLoopDecision halts when a loop session's own budget was breached
+// daemon-side, with a distinct outcome (task 0137).
+func TestLoopDecisionStopsOnSessionBreach(t *testing.T) {
+	m := &model{
+		looping: true, loopStarted: true, loopPrevFP: "0001:todo",
+		loopSessBreach: true, loopRun: &loopRunState{},
+	}
+	next, _ := m.applyLoopDecision(loopDecisionMsg{next: "0002", fp: "0001:done"})
+	mm := next.(model)
+	if mm.looping {
+		t.Fatalf("expected loop to stop on session breach, still looping")
+	}
+	if !strings.Contains(mm.status, "session budget reached") {
+		t.Fatalf("expected 'session budget reached' outcome, got %q", mm.status)
+	}
+}
+
+// With no loop caps configured, the loop continues normally past any spend
+// (unlimited default preserved).
+func TestLoopDecisionNoCapContinues(t *testing.T) {
+	fc := newFakeClient()
+	m := &model{
+		looping: true, loopStarted: true, loopPrevFP: "0001:todo",
+		loopRun: &loopRunState{cumTokens: 999999, cumCost: 999}, client: fc, ctx: context.Background(),
+	}
+	next, cmd := m.applyLoopDecision(loopDecisionMsg{next: "0002", fp: "0001:done"})
+	mm := next.(model)
+	if !mm.looping || cmd == nil {
+		t.Fatalf("expected loop to continue with no caps, looping=%v cmd=%v", mm.looping, cmd)
+	}
+}
