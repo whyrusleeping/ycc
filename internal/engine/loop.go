@@ -706,6 +706,24 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		// Record the assistant turn (text + tool_use) so context carries forward.
 		l.history = append(l.history, msg)
 
+		// deferred collects checkpoint messages (steered corrections, finished-job
+		// notifications, budget notices) that arrive at MID-BATCH checkpoints —
+		// after one tool result but before the rest of the SAME assistant turn's
+		// tool calls have been answered. Posting them immediately would wedge a
+		// user message between two tool results, splitting the tool_result blocks
+		// that Anthropic requires to sit immediately after their tool_use message
+		// (400: "tool_use ids were found without tool_result blocks immediately
+		// after"). Instead they are posted once the whole batch is answered.
+		// ReplayHistory applies the same rule when reconstructing history from the
+		// event log (the events are recorded at the checkpoint, mid-batch).
+		var deferred []string
+		flushDeferred := func() {
+			for _, m := range deferred {
+				l.Post(m)
+			}
+			deferred = nil
+		}
+
 		for ci, call := range msg.ToolCalls {
 			l.Emitter.Emit(event.ToolCall, map[string]any{
 				"name": call.Function.Name,
@@ -745,6 +763,11 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 						Content: "(skipped: the session ended before this tool ran)",
 					})
 				}
+				// Any checkpoint messages deferred earlier in this batch were
+				// already recorded as delivered (job_notified /
+				// user_input_delivered events), so they must enter the live
+				// history too — after the batch's results, where they are valid.
+				flushDeferred()
 				report := ctrl.Report
 				if report == "" {
 					report = msg.Content
@@ -753,11 +776,19 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			}
 
 			// Safe checkpoint after a tool result: pause-to-steer if requested
-			// (spec §18.7). A steered correction lands before the next turn.
-			if err := l.steerCheckpoint(ctx); err != nil {
-				return nil, err
+			// (spec §18.7). Any returned messages are deferred to the end of the
+			// batch (see above) so they never split this turn's tool results.
+			if l.Steer != nil {
+				msgs, err := l.Steer.Checkpoint(ctx)
+				if err != nil {
+					return nil, err
+				}
+				deferred = append(deferred, msgs...)
 			}
 		}
+		// Batch fully answered: deliver any checkpoint messages that arrived
+		// mid-batch, before the next turn.
+		flushDeferred()
 	}
 
 	return &Result{Report: "(stopped: reached max turns)", Turns: maxTurns}, fmt.Errorf("reached max turns (%d)", maxTurns)

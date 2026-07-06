@@ -82,7 +82,13 @@ A job's **final report** is delivered exactly once, by whichever fires first:
   and after every tool result and appends returned messages; a sibling hook (or the
   same hook, session-owned) drains finished-job notifications there —
   `"[job job_3 done] go test ./... — exit 0 (last 20 lines: …)"` — as a user-role
-  message before the next turn.
+  message before the next turn. A notification drained at a **mid-batch** checkpoint
+  (after one tool result of a multi-tool-call turn) is deferred until the whole
+  batch's results are appended — a user message wedged between two tool results
+  splits the `tool_result` blocks Anthropic requires immediately after their
+  `tool_use` message (400: "tool_use ids were found without tool_result blocks
+  immediately after"). Replay applies the same deferral to the recorded
+  `job_notified` event position.
 
 So the model *never polls*: fire, keep working, and either the report arrives at a
 checkpoint or the model calls `wait` when the result gates its next step. `job_output`

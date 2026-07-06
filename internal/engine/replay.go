@@ -135,6 +135,40 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 	lostJobs := map[string]string{} // id -> label
 	var lostOrder []string
 
+	// deferredUser buffers user-role injections (job_notified,
+	// user_input_delivered, budget halt) that were recorded at a MID-BATCH
+	// checkpoint — while the current assistant turn still has unanswered tool
+	// calls. The live loop defers Posting such messages until the whole batch is
+	// answered (a user message between two tool results splits the tool_result
+	// blocks Anthropic requires immediately after their tool_use message);
+	// replay mirrors that by buffering here and flushing once the batch's
+	// results are all in (or at the next message boundary).
+	var deferredUser []string
+	flushDeferred := func() {
+		if len(deferredUser) == 0 {
+			return
+		}
+		for _, t := range deferredUser {
+			history = append(history, gollama.Message{Role: "user", Content: t})
+		}
+		deferredUser = nil
+		assistantIdx = -1
+		lastTurnTruncated = false
+	}
+
+	// expectedCalls/seenCalls track the current coordinator turn's tool-call
+	// batch. The live loop emits tool_call events one at a time as it dispatches,
+	// so at a mid-batch checkpoint the LATER calls of the same turn have not
+	// appeared in the log yet — pending ids alone cannot tell an open batch from
+	// a finished one. model_turn records the turn's total tool_calls count, which
+	// lets replay know whether the batch is still open at any log position.
+	// (Logs from before that count was recorded read it as 0, degrading to the
+	// pending-only heuristic.)
+	expectedCalls, seenCalls := 0, 0
+	batchOpen := func() bool {
+		return assistantIdx >= 0 && (len(pending) > 0 || seenCalls < expectedCalls)
+	}
+
 	for _, ev := range events {
 		switch ev.Type {
 		case event.UserInput:
@@ -151,6 +185,7 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 				continue
 			}
 			repairDangling()
+			flushDeferred()
 			history = append(history, gollama.Message{Role: "user", Content: str(ev.Data, "text")})
 			assistantIdx = -1
 			lastTurnTruncated = false // a real user input breaks the truncation chain
@@ -158,7 +193,13 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			// A queued mid-run input entering the conversation at its safe checkpoint
 			// (spec §18.7): append it exactly where the live loop Posted it so the
 			// replayed history matches what the model saw, and reset turn state like
-			// a normal user input.
+			// a normal user input. Delivered at a MID-BATCH checkpoint (the current
+			// assistant turn's tool-call batch is still open), the live loop defers
+			// the Post to the batch end — buffer it to match.
+			if batchOpen() {
+				deferredUser = append(deferredUser, str(ev.Data, "text"))
+				continue
+			}
 			repairDangling()
 			history = append(history, gollama.Message{Role: "user", Content: str(ev.Data, "text")})
 			assistantIdx = -1
@@ -169,8 +210,10 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			}
 			// Repair any dangling tool calls on the previous assistant turn before
 			// starting a new one (e.g. an ask_user that was never answered because
-			// the session closed, followed on reopen by the model re-asking).
+			// the session closed, followed on reopen by the model re-asking), then
+			// deliver any mid-batch user injections deferred from that turn.
 			repairDangling()
+			flushDeferred()
 			truncated := boolv(ev.Data, "truncated")
 			text := str(ev.Data, "text")
 			// If the previous turn was truncated and we're about to append another
@@ -201,6 +244,8 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			})
 			assistantIdx = len(history) - 1
 			lastTurnTruncated = truncated
+			expectedCalls = intv(ev.Data, "tool_calls")
+			seenCalls = 0
 		case event.ToolCall:
 			if ev.Actor != "coordinator" {
 				continue
@@ -212,6 +257,7 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			id := canon(rawID)
 			canonByRaw[rawID] = id
 			pending = append(pending, id)
+			seenCalls++
 			call := gollama.ToolCall{
 				ID:   id,
 				Type: "function",
@@ -254,6 +300,12 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			popPending(id)
 			answered[id] = true
 			history = append(history, gollama.Message{Role: "tool", ToolCallID: id, Content: str(ev.Data, "result")})
+			// Batch complete: every tool call on the current assistant turn is
+			// answered, so any deferred mid-batch user injections land here —
+			// exactly where the live loop Posts them.
+			if !batchOpen() {
+				flushDeferred()
+			}
 		case event.JobStarted:
 			id := str(ev.Data, "id")
 			if id == "" {
@@ -272,7 +324,14 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			// A finished-job final report injected at a Steer checkpoint as a
 			// user-role message (docs/design/async-jobs.md §3.3): append it exactly
 			// where the live loop Posted it and reset turn state like a user input.
+			// Recorded at a MID-BATCH checkpoint (the current turn's tool-call
+			// batch is still open), the live loop defers the Post to the batch
+			// end — buffer it to match.
 			delete(lostJobs, str(ev.Data, "id"))
+			if batchOpen() {
+				deferredUser = append(deferredUser, str(ev.Data, "text"))
+				continue
+			}
 			repairDangling()
 			history = append(history, gollama.Message{Role: "user", Content: str(ev.Data, "text")})
 			assistantIdx = -1
@@ -291,6 +350,13 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			if text == "" {
 				continue
 			}
+			// Same mid-batch deferral as job_notified: the budget halt is
+			// delivered at a Steer checkpoint, which can fall between two tool
+			// results of one assistant turn.
+			if batchOpen() {
+				deferredUser = append(deferredUser, text)
+				continue
+			}
 			repairDangling()
 			history = append(history, gollama.Message{Role: "user", Content: text})
 			assistantIdx = -1
@@ -301,8 +367,10 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 	// Repair dangling tool calls on the trailing assistant message: any tool_call
 	// id that never saw a matching tool_result gets a synthetic result so the
 	// reconstructed conversation is valid for the next turn. (Mid-transcript
-	// dangling calls were already repaired at message boundaries above.)
+	// dangling calls were already repaired at message boundaries above.) Then
+	// deliver any still-buffered mid-batch injections after those repairs.
 	repairDangling()
+	flushDeferred()
 
 	// Synthesize a lost-job note for any background job that started but never
 	// finished before the log ended (docs/design/async-jobs.md §4): jobs do not
@@ -394,4 +462,23 @@ func boolv(m map[string]any, k string) bool {
 	}
 	b, _ := m[k].(bool)
 	return b
+}
+
+// intv reads an integer field from an event data map, handling both the live
+// typed shape (int) and the JSON-decoded-from-disk shape (float64). Missing or
+// non-numeric values read as 0.
+func intv(m map[string]any, k string) int {
+	if m == nil {
+		return 0
+	}
+	switch v := m[k].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	default:
+		return 0
+	}
 }

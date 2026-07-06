@@ -42,6 +42,61 @@ func TestReplayJobNotifiedAsUserMessage(t *testing.T) {
 	}
 }
 
+// A job notification recorded at a MID-BATCH checkpoint — between two tool
+// results of the SAME multi-tool-call assistant turn (the log interleaves
+// tool_call/tool_result per dispatch, so the second tool_call appears AFTER the
+// job_notified event) — replays AFTER the batch's last tool result, matching
+// the live loop's deferred Post. Injecting it in place would orphan the later
+// tool calls and split the tool_result blocks Anthropic requires immediately
+// after their tool_use message.
+func TestReplayJobNotifiedMidBatchDeferred(t *testing.T) {
+	events := []event.Event{
+		{Seq: 1, Actor: "user", Type: event.UserInput, Data: map[string]any{"text": "build it"}},
+		// The turn's total tool-call count is recorded on model_turn; replay uses
+		// it to know the batch is still open when the notification arrives.
+		{Seq: 2, Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{"text": "two reads", "tool_calls": 2}},
+		{Seq: 3, Actor: "coordinator", Type: event.ToolCall, Data: map[string]any{"name": "read_file", "args": "{}", "id": "c1"}},
+		{Seq: 4, Actor: "coordinator", Type: event.ToolResult, Data: map[string]any{"id": "c1", "result": "one"}},
+		// Mid-batch checkpoint: the finished job's report is recorded here, but
+		// the turn still owes tool_call/tool_result c2.
+		{Seq: 5, Actor: "user", Type: event.JobNotified, Data: map[string]any{"id": "job_1", "text": "[job job_1 done] build ok"}},
+		{Seq: 6, Actor: "coordinator", Type: event.ToolCall, Data: map[string]any{"name": "read_file", "args": "{}", "id": "c2"}},
+		{Seq: 7, Actor: "coordinator", Type: event.ToolResult, Data: map[string]any{"id": "c2", "result": "two"}},
+		{Seq: 8, Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{"text": "done"}},
+	}
+
+	got := ReplayHistory(events)
+	want := []gollama.Message{
+		{Role: "user", Content: "build it"},
+		{Role: "assistant", Content: "two reads"},
+		{Role: "tool", ToolCallID: "c1", Content: "one"},
+		{Role: "tool", ToolCallID: "c2", Content: "two"},
+		{Role: "user", Content: "[job job_1 done] build ok"},
+		{Role: "assistant", Content: "done"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("history len = %d, want %d:\n%+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i].Role != want[i].Role || got[i].Content != want[i].Content {
+			t.Fatalf("msg[%d] = {%s %q}, want {%s %q}", i, got[i].Role, got[i].Content, want[i].Role, want[i].Content)
+		}
+		if want[i].ToolCallID != "" && got[i].ToolCallID != want[i].ToolCallID {
+			t.Fatalf("msg[%d] tool_call_id = %q, want %q", i, got[i].ToolCallID, want[i].ToolCallID)
+		}
+	}
+	// Both tool calls must be attached to the assistant turn (neither orphaned).
+	if n := len(got[1].ToolCalls); n != 2 {
+		t.Fatalf("assistant turn has %d tool calls, want 2", n)
+	}
+	// No synthetic repair results should have been inserted.
+	for _, m := range got {
+		if strings.Contains(m.Content, "no result recorded") {
+			t.Fatalf("synthetic repair leaked into history: %+v", got)
+		}
+	}
+}
+
 // A job that started but whose finish was never recorded (daemon restart mid
 // flight) gets a synthesized "(job lost)" note so histories stay valid.
 func TestReplayLostJobSynthesized(t *testing.T) {
