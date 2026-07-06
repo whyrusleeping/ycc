@@ -313,6 +313,11 @@ type Config struct {
 	// and GOROOT) are always included; these extend them. Writes stay confined
 	// to the workspace regardless.
 	ReadRoots []string `toml:"read_roots,omitempty"`
+	// Notify configures the daemon-side push notifier (task 0142): a best-effort,
+	// async webhook (ntfy.sh-compatible) that reaches out when an agent needs the
+	// user — questions, idle-with-report, errors, work-loop digests, and blocked
+	// implementers. Absent (empty URL) = disabled.
+	Notify Notify `toml:"notify,omitempty"`
 }
 
 // GC configures the background session reaper (task 0054). IntervalSeconds sets
@@ -340,6 +345,30 @@ type Budget struct {
 	SessionTokens int64   `toml:"session_tokens,omitempty"` // total-token cap per session (0 = unlimited)
 	LoopCost      float64 `toml:"loop_cost,omitempty"`      // $ cap per work-loop run (0 = unlimited)
 	LoopTokens    int64   `toml:"loop_tokens,omitempty"`    // total-token cap per work-loop run (0 = unlimited)
+}
+
+// Notify configures the daemon-side push notifier (task 0142). URL is the webhook
+// endpoint (e.g. https://ntfy.sh/mytopic); empty disables notifications entirely.
+// Auth, when set, is sent verbatim as the Authorization request header (e.g.
+// "Bearer tk_..."). Events optionally restricts which event kinds fire — an empty
+// slice enables all kinds; a non-empty slice enables only the listed kinds (valid
+// kinds: question, idle, error, digest, blocked) so autonomous-loop users can pick
+// "questions + digest only".
+type Notify struct {
+	URL    string   `toml:"url,omitempty"`
+	Auth   string   `toml:"auth,omitempty"`
+	Events []string `toml:"events,omitempty"`
+}
+
+// NotifyEventKinds is the set of valid notify.events entries (task 0142). Kept
+// here (not in internal/notify) so config validation has no dependency on the
+// notifier package.
+var NotifyEventKinds = map[string]bool{
+	"question": true,
+	"idle":     true,
+	"error":    true,
+	"digest":   true,
+	"blocked":  true,
 }
 
 // Load reads and validates a TOML config file.
@@ -451,6 +480,11 @@ func (c *Config) validate() error {
 	if c.Budget.SessionCost < 0 || c.Budget.SessionTokens < 0 || c.Budget.LoopCost < 0 || c.Budget.LoopTokens < 0 {
 		return fmt.Errorf("budget: session_cost, session_tokens, loop_cost, and loop_tokens must be non-negative")
 	}
+	for _, k := range c.Notify.Events {
+		if !NotifyEventKinds[k] {
+			return fmt.Errorf("notify.events: unknown event kind %q (valid: question, idle, error, digest, blocked)", k)
+		}
+	}
 	return nil
 }
 
@@ -505,6 +539,15 @@ func (r *Registry) Budget() Budget {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.cfg.Budget
+}
+
+// Notify returns the configured daemon-side push-notifier settings (task 0142).
+// An empty URL means notifications are disabled. Guarded by the registry lock like
+// GC/Budget.
+func (r *Registry) Notify() Notify {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.cfg.Notify
 }
 
 // ReadRoots returns a copy of the configured extra trusted read-only roots

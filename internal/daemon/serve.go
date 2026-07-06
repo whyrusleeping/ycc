@@ -20,6 +20,7 @@ import (
 	"golang.org/x/net/http2/h2c"
 
 	"github.com/whyrusleeping/ycc/internal/config"
+	"github.com/whyrusleeping/ycc/internal/notify"
 	"github.com/whyrusleeping/ycc/internal/project"
 	"github.com/whyrusleeping/ycc/internal/server"
 	"github.com/whyrusleeping/ycc/internal/session"
@@ -66,6 +67,11 @@ func buildHandler(o Options) (http.Handler, error) {
 	reg := config.NewRegistry(cfg)
 	reg.SetPath(persistPath(o))
 	mgr := session.NewManager(reg, o.Workspace)
+	// Daemon-side push notifier (task 0142): best-effort webhook that reaches out
+	// when an agent needs the user. notify.New returns nil when unconfigured
+	// (empty url), so this is a no-op by default; applies to both the persistent
+	// and one-shot in-process paths.
+	mgr.SetNotifier(notify.New(reg.Notify()))
 	// A persistent daemon backs its project registry with durable state so the
 	// project list survives restarts (spec §3.1). The one-shot in-process path
 	// keeps the default in-memory registry (cwd is the single implicit project).

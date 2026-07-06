@@ -1027,6 +1027,26 @@ type loopDigest struct {
 	costStatus  string
 }
 
+// notifyLoopDigest fires a fire-and-forget daemon push notification summarising a
+// finished work-loop run (task 0142): "work loop finished: N completed, M blocked,
+// K in review". Delivery is best-effort — the daemon may have notifications
+// disabled or the "digest" kind muted, and an older daemon may lack the Notify RPC
+// — so any error is ignored and the command produces no message.
+func (m *model) notifyLoopDigest(d *loopDigest) tea.Cmd {
+	if d == nil {
+		return nil
+	}
+	line := fmt.Sprintf("work loop finished: %d completed, %d blocked, %d in review",
+		len(d.completed), len(d.blocked), len(d.inReview))
+	project, sessionID, client, ctx := m.project, m.sessionID, m.client, m.ctx
+	return func() tea.Msg {
+		_, _ = client.Notify(ctx, connect.NewRequest(&v1.NotifyRequest{
+			Kind: "digest", Line: line, Project: project, SessionId: sessionID,
+		}))
+		return nil
+	}
+}
+
 // buildLoopDigest rolls a finished loop run up into the digest artifact: it
 // aggregates commits/verdicts/tokens per task from the session records and
 // classifies every final backlog task against the run's baseline. It is pure so
@@ -1304,7 +1324,7 @@ func (m model) applyLoopDecision(msg loopDecisionMsg) (tea.Model, tea.Cmd) {
 		}
 		m.loopDigest = buildLoopDigest(run, msg.tasks, outcome)
 		m.digest, m.digestCursor = true, 0
-		cmds := []tea.Cmd{m.fetchLoopUsage, m.refreshMenu()}
+		cmds := []tea.Cmd{m.fetchLoopUsage, m.refreshMenu(), m.notifyLoopDigest(m.loopDigest)}
 		for _, bt := range m.loopDigest.blocked {
 			cmds = append(cmds, m.fetchDigestTask(bt.id))
 		}

@@ -788,6 +788,19 @@ func (s *Server) GetBudget(_ context.Context, _ *connect.Request[v1.GetBudgetReq
 	}), nil
 }
 
+// Notify routes a client-originated notification (the work-loop digest) through
+// the daemon-side webhook notifier (task 0142). It validates the kind against the
+// known set and returns delivered=false when the daemon has no notifier configured
+// or the kind is muted.
+func (s *Server) Notify(_ context.Context, req *connect.Request[v1.NotifyRequest]) (*connect.Response[v1.NotifyResponse], error) {
+	kind := req.Msg.Kind
+	if !config.NotifyEventKinds[kind] {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("unknown notify kind %q", kind))
+	}
+	delivered := s.mgr.Notify(kind, req.Msg.Project, req.Msg.SessionId, req.Msg.Line)
+	return connect.NewResponse(&v1.NotifyResponse{Delivered: delivered}), nil
+}
+
 func usageRowToProto(r usage.Row) *v1.UsageRow {
 	return &v1.UsageRow{
 		Task:        r.Task,

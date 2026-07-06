@@ -763,3 +763,48 @@ func TestBudgetDefaultUnlimited(t *testing.T) {
 		t.Fatalf("default Budget = %+v, want zero (unlimited)", b)
 	}
 }
+
+func TestNotifyRoundTripAndValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ycc.toml")
+	orig := &Config{
+		Models: map[string]Model{"claude": {Backend: "anthropic", BaseURL: "u", Model: "m", KeyEnv: "K"}},
+		Roles:  Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"}},
+		Notify: Notify{URL: "https://ntfy.sh/mytopic", Auth: "Bearer tk_x", Events: []string{"question", "digest"}},
+	}
+	if err := Save(path, orig); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !reflect.DeepEqual(got.Notify, orig.Notify) {
+		t.Fatalf("notify round-trip mismatch: got=%+v want=%+v", got.Notify, orig.Notify)
+	}
+
+	// Registry accessor reflects the configured notifier.
+	reg := NewRegistry(got)
+	if n := reg.Notify(); !reflect.DeepEqual(n, orig.Notify) {
+		t.Fatalf("Registry.Notify() = %+v, want %+v", n, orig.Notify)
+	}
+
+	// An unknown event kind is rejected by validate (via Save).
+	bad := &Config{
+		Models: orig.Models, Roles: orig.Roles,
+		Notify: Notify{URL: "https://ntfy.sh/x", Events: []string{"bogus"}},
+	}
+	if err := Save(filepath.Join(t.TempDir(), "bad.toml"), bad); err == nil {
+		t.Fatal("Save with unknown notify event kind succeeded, want error")
+	}
+}
+
+// An absent [notify] block means notifications are disabled (empty URL).
+func TestNotifyDefaultDisabled(t *testing.T) {
+	reg := NewRegistry(&Config{
+		Models: map[string]Model{"c": {Backend: "ollama", Model: "m"}},
+		Roles:  Roles{Coordinator: "c", Implementer: "c", Reviewers: []string{"c"}},
+	})
+	if n := reg.Notify(); n.URL != "" {
+		t.Fatalf("default Notify.URL = %q, want empty (disabled)", n.URL)
+	}
+}

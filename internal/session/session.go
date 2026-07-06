@@ -24,6 +24,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/git"
 	"github.com/whyrusleeping/ycc/internal/jobs"
+	"github.com/whyrusleeping/ycc/internal/notify"
 	"github.com/whyrusleeping/ycc/internal/orchestrator"
 	"github.com/whyrusleeping/ycc/internal/project"
 	"github.com/whyrusleeping/ycc/internal/tools"
@@ -941,6 +942,9 @@ type Manager struct {
 	projects         *project.Registry
 	workstreams      *workstream.Registry
 	worktreesRoot    string
+	// notifier pushes best-effort daemon-side notifications when an agent needs
+	// the user (task 0142). Nil when unconfigured; all uses are nil-safe.
+	notifier *notify.Notifier
 	// mergeMu serializes MergeWorkstream across all workstreams so integrations
 	// happen one at a time and each trial-merges against the latest base HEAD
 	// (sequential reconciliation, design §6).
@@ -964,6 +968,35 @@ func NewManager(reg *config.Registry, defaultWorkspace string) *Manager {
 
 // SetProjects backs the manager with a (persistent) project registry.
 func (m *Manager) SetProjects(p *project.Registry) { m.projects = p }
+
+// SetNotifier installs the daemon-side push notifier (task 0142). A nil notifier
+// (the default / unconfigured case) disables notifications; every session watcher
+// and the Notify RPC are nil-safe.
+func (m *Manager) SetNotifier(n *notify.Notifier) { m.notifier = n }
+
+// Notify pushes a best-effort notification for the given kind via the configured
+// notifier, returning whether it was delivered (false when no notifier is
+// configured or the kind is muted). It backs the client-driven Notify RPC used for
+// work-loop digests. Delivery is async and never blocks.
+func (m *Manager) Notify(kind, project, sessionID, line string) bool {
+	if !m.notifier.Enabled(kind) {
+		return false
+	}
+	m.notifier.Send(kind, project, sessionID, line)
+	return true
+}
+
+// projectLabel resolves a human project label for a session workspace: the
+// registered project name when the workspace matches a known project path,
+// otherwise the workspace's base name.
+func (m *Manager) projectLabel(absWS string) string {
+	for _, p := range m.projects.List() {
+		if p.Path == absWS {
+			return p.Name
+		}
+	}
+	return filepath.Base(absWS)
+}
 
 // SetWorkstreams backs the manager with a (persistent) workstream registry and
 // sets the root directory under which linked worktrees are created. An empty
@@ -1351,7 +1384,103 @@ func (m *Manager) newSession(absWS, id, mode, level, prompt string, log *event.L
 		return s.resolveReviewTier(name)
 	}
 
+	// Attach the daemon-side notification watcher when a notifier is configured
+	// (task 0142). It subscribes from LastSeq at attach time so a reopened
+	// session's replayed history never re-fires; the goroutine exits when the log
+	// is closed (its channel closes).
+	if m.notifier != nil {
+		m.startNotifyWatcher(absWS, id, log)
+	}
+
 	return s, nil
+}
+
+// startNotifyWatcher spawns a goroutine that maps session events to best-effort
+// push notifications (task 0142). It attaches at the log's current LastSeq so only
+// events emitted after attach fire — a reopened session's replayed history never
+// re-notifies. The goroutine exits when the log closes (the subscription channel
+// closes).
+func (m *Manager) startNotifyWatcher(absWS, id string, log *event.Log) {
+	project := m.projectLabel(absWS)
+	ch, cancel := log.Subscribe(log.LastSeq())
+	go func() {
+		defer cancel()
+		for ev := range ch {
+			if ev.Transient {
+				continue
+			}
+			switch ev.Type {
+			case event.QuestionAsked:
+				if boolVal(ev.Data, "auto") {
+					continue // auto-answered autonomous ask — nobody is waiting
+				}
+				m.notifier.Send(notify.KindQuestion, project, id, questionLine(ev.Data))
+			case event.SessionIdle:
+				m.notifier.Send(notify.KindIdle, project, id, firstLine(str(ev.Data, "report")))
+			case event.SessionError:
+				m.notifier.Send(notify.KindError, project, id, str(ev.Data, "msg"))
+			case event.SubagentFinished:
+				if boolVal(ev.Data, "blocked") {
+					role := str(ev.Data, "role")
+					if role == "" {
+						role = "implementer"
+					}
+					m.notifier.Send(notify.KindBlocked, project, id, role+" blocked — decision needed")
+				}
+			}
+		}
+	}()
+}
+
+// questionLine extracts a short human line from a question_asked payload, handling
+// both the single-question ("question") and batch ("questions") shapes. For a batch
+// it uses the first prompt and appends "(+N more)".
+func questionLine(data map[string]any) string {
+	if q := str(data, "question"); q != "" {
+		return firstLine(q)
+	}
+	qs, ok := data["questions"].([]any)
+	if !ok {
+		// Live (non-replayed) payload carries the concrete slice type.
+		if typed, ok2 := data["questions"].([]map[string]any); ok2 {
+			qs = make([]any, len(typed))
+			for i, q := range typed {
+				qs[i] = q
+			}
+		}
+	}
+	if len(qs) == 0 {
+		return "a question was asked"
+	}
+	first := ""
+	if qm, ok := qs[0].(map[string]any); ok {
+		first = firstLine(str(qm, "question"))
+	}
+	if len(qs) > 1 {
+		return fmt.Sprintf("%s (+%d more)", first, len(qs)-1)
+	}
+	return first
+}
+
+// boolVal reports whether data[key] is the boolean true.
+func boolVal(data map[string]any, key string) bool {
+	b, _ := data[key].(bool)
+	return b
+}
+
+// str returns data[key] as a string, or "" when absent/not a string.
+func str(data map[string]any, key string) string {
+	s, _ := data[key].(string)
+	return s
+}
+
+// firstLine returns the first non-empty line of s, trimmed.
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return strings.TrimSpace(s[:i])
+	}
+	return s
 }
 
 // Reopen re-instantiates a persisted session on its EXISTING event log ("resume

@@ -4554,6 +4554,123 @@ func (x *GetBudgetResponse) GetLoopTokens() int64 {
 	return 0
 }
 
+// Notify routes a client-originated push notification through the daemon-side
+// notifier (task 0142). It exists so the client-driven work-loop can emit its
+// completion digest via the same best-effort webhook channel the daemon uses for
+// question/idle/error/blocked events. delivered is false when the daemon has no
+// notifier configured or the kind is muted.
+type NotifyRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Kind          string                 `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`                            // one of: question, idle, error, digest, blocked
+	Line          string                 `protobuf:"bytes,2,opt,name=line,proto3" json:"line,omitempty"`                            // short human line
+	Project       string                 `protobuf:"bytes,3,opt,name=project,proto3" json:"project,omitempty"`                      // project label
+	SessionId     string                 `protobuf:"bytes,4,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"` // originating session id (optional)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NotifyRequest) Reset() {
+	*x = NotifyRequest{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[79]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NotifyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NotifyRequest) ProtoMessage() {}
+
+func (x *NotifyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[79]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NotifyRequest.ProtoReflect.Descriptor instead.
+func (*NotifyRequest) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{79}
+}
+
+func (x *NotifyRequest) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *NotifyRequest) GetLine() string {
+	if x != nil {
+		return x.Line
+	}
+	return ""
+}
+
+func (x *NotifyRequest) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *NotifyRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+type NotifyResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Delivered     bool                   `protobuf:"varint,1,opt,name=delivered,proto3" json:"delivered,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NotifyResponse) Reset() {
+	*x = NotifyResponse{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[80]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NotifyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NotifyResponse) ProtoMessage() {}
+
+func (x *NotifyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[80]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NotifyResponse.ProtoReflect.Descriptor instead.
+func (*NotifyResponse) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{80}
+}
+
+func (x *NotifyResponse) GetDelivered() bool {
+	if x != nil {
+		return x.Delivered
+	}
+	return false
+}
+
 // Parallel workstreams (docs/design/parallel-workstreams.md §5–§8): a workstream
 // is a linked git worktree + branch plus the `work` session scoped to it, tracked
 // as a child of a project. WorkstreamInfo mirrors workstream.Workstream.
@@ -4576,7 +4693,7 @@ type WorkstreamInfo struct {
 
 func (x *WorkstreamInfo) Reset() {
 	*x = WorkstreamInfo{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[79]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[81]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4588,7 +4705,7 @@ func (x *WorkstreamInfo) String() string {
 func (*WorkstreamInfo) ProtoMessage() {}
 
 func (x *WorkstreamInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[79]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[81]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4601,7 +4718,7 @@ func (x *WorkstreamInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkstreamInfo.ProtoReflect.Descriptor instead.
 func (*WorkstreamInfo) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{79}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{81}
 }
 
 func (x *WorkstreamInfo) GetId() string {
@@ -4697,7 +4814,7 @@ type SpawnWorkstreamRequest struct {
 
 func (x *SpawnWorkstreamRequest) Reset() {
 	*x = SpawnWorkstreamRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[80]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[82]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4709,7 +4826,7 @@ func (x *SpawnWorkstreamRequest) String() string {
 func (*SpawnWorkstreamRequest) ProtoMessage() {}
 
 func (x *SpawnWorkstreamRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[80]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[82]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4722,7 +4839,7 @@ func (x *SpawnWorkstreamRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SpawnWorkstreamRequest.ProtoReflect.Descriptor instead.
 func (*SpawnWorkstreamRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{80}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{82}
 }
 
 func (x *SpawnWorkstreamRequest) GetProject() string {
@@ -4769,7 +4886,7 @@ type SpawnWorkstreamResponse struct {
 
 func (x *SpawnWorkstreamResponse) Reset() {
 	*x = SpawnWorkstreamResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[81]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[83]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4781,7 +4898,7 @@ func (x *SpawnWorkstreamResponse) String() string {
 func (*SpawnWorkstreamResponse) ProtoMessage() {}
 
 func (x *SpawnWorkstreamResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[81]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[83]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4794,7 +4911,7 @@ func (x *SpawnWorkstreamResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SpawnWorkstreamResponse.ProtoReflect.Descriptor instead.
 func (*SpawnWorkstreamResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{81}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{83}
 }
 
 func (x *SpawnWorkstreamResponse) GetWorkstream() *WorkstreamInfo {
@@ -4814,7 +4931,7 @@ type ListWorkstreamsRequest struct {
 
 func (x *ListWorkstreamsRequest) Reset() {
 	*x = ListWorkstreamsRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[82]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[84]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4826,7 +4943,7 @@ func (x *ListWorkstreamsRequest) String() string {
 func (*ListWorkstreamsRequest) ProtoMessage() {}
 
 func (x *ListWorkstreamsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[82]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[84]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4839,7 +4956,7 @@ func (x *ListWorkstreamsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListWorkstreamsRequest.ProtoReflect.Descriptor instead.
 func (*ListWorkstreamsRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{82}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{84}
 }
 
 func (x *ListWorkstreamsRequest) GetProject() string {
@@ -4858,7 +4975,7 @@ type ListWorkstreamsResponse struct {
 
 func (x *ListWorkstreamsResponse) Reset() {
 	*x = ListWorkstreamsResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[83]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[85]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4870,7 +4987,7 @@ func (x *ListWorkstreamsResponse) String() string {
 func (*ListWorkstreamsResponse) ProtoMessage() {}
 
 func (x *ListWorkstreamsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[83]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[85]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4883,7 +5000,7 @@ func (x *ListWorkstreamsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListWorkstreamsResponse.ProtoReflect.Descriptor instead.
 func (*ListWorkstreamsResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{83}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{85}
 }
 
 func (x *ListWorkstreamsResponse) GetWorkstreams() []*WorkstreamInfo {
@@ -4906,7 +5023,7 @@ type PreviewMergeRequest struct {
 
 func (x *PreviewMergeRequest) Reset() {
 	*x = PreviewMergeRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[84]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[86]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4918,7 +5035,7 @@ func (x *PreviewMergeRequest) String() string {
 func (*PreviewMergeRequest) ProtoMessage() {}
 
 func (x *PreviewMergeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[84]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[86]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4931,7 +5048,7 @@ func (x *PreviewMergeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PreviewMergeRequest.ProtoReflect.Descriptor instead.
 func (*PreviewMergeRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{84}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{86}
 }
 
 func (x *PreviewMergeRequest) GetWorkstreamId() string {
@@ -4952,7 +5069,7 @@ type PreviewMergeResponse struct {
 
 func (x *PreviewMergeResponse) Reset() {
 	*x = PreviewMergeResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[85]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[87]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4964,7 +5081,7 @@ func (x *PreviewMergeResponse) String() string {
 func (*PreviewMergeResponse) ProtoMessage() {}
 
 func (x *PreviewMergeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[85]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[87]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4977,7 +5094,7 @@ func (x *PreviewMergeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PreviewMergeResponse.ProtoReflect.Descriptor instead.
 func (*PreviewMergeResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{85}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{87}
 }
 
 func (x *PreviewMergeResponse) GetClean() bool {
@@ -5018,7 +5135,7 @@ type MergeWorkstreamRequest struct {
 
 func (x *MergeWorkstreamRequest) Reset() {
 	*x = MergeWorkstreamRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[86]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[88]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5030,7 +5147,7 @@ func (x *MergeWorkstreamRequest) String() string {
 func (*MergeWorkstreamRequest) ProtoMessage() {}
 
 func (x *MergeWorkstreamRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[86]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[88]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5043,7 +5160,7 @@ func (x *MergeWorkstreamRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MergeWorkstreamRequest.ProtoReflect.Descriptor instead.
 func (*MergeWorkstreamRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{86}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{88}
 }
 
 func (x *MergeWorkstreamRequest) GetWorkstreamId() string {
@@ -5073,7 +5190,7 @@ type MergeWorkstreamResponse struct {
 
 func (x *MergeWorkstreamResponse) Reset() {
 	*x = MergeWorkstreamResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[87]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[89]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5085,7 +5202,7 @@ func (x *MergeWorkstreamResponse) String() string {
 func (*MergeWorkstreamResponse) ProtoMessage() {}
 
 func (x *MergeWorkstreamResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[87]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[89]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5098,7 +5215,7 @@ func (x *MergeWorkstreamResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MergeWorkstreamResponse.ProtoReflect.Descriptor instead.
 func (*MergeWorkstreamResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{87}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{89}
 }
 
 func (x *MergeWorkstreamResponse) GetMerged() bool {
@@ -5148,7 +5265,7 @@ type DiscardWorkstreamRequest struct {
 
 func (x *DiscardWorkstreamRequest) Reset() {
 	*x = DiscardWorkstreamRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[88]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[90]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5160,7 +5277,7 @@ func (x *DiscardWorkstreamRequest) String() string {
 func (*DiscardWorkstreamRequest) ProtoMessage() {}
 
 func (x *DiscardWorkstreamRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[88]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[90]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5173,7 +5290,7 @@ func (x *DiscardWorkstreamRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiscardWorkstreamRequest.ProtoReflect.Descriptor instead.
 func (*DiscardWorkstreamRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{88}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{90}
 }
 
 func (x *DiscardWorkstreamRequest) GetWorkstreamId() string {
@@ -5191,7 +5308,7 @@ type DiscardWorkstreamResponse struct {
 
 func (x *DiscardWorkstreamResponse) Reset() {
 	*x = DiscardWorkstreamResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[89]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[91]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5203,7 +5320,7 @@ func (x *DiscardWorkstreamResponse) String() string {
 func (*DiscardWorkstreamResponse) ProtoMessage() {}
 
 func (x *DiscardWorkstreamResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[89]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[91]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5216,7 +5333,7 @@ func (x *DiscardWorkstreamResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiscardWorkstreamResponse.ProtoReflect.Descriptor instead.
 func (*DiscardWorkstreamResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{89}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{91}
 }
 
 var File_ycc_v1_ycc_proto protoreflect.FileDescriptor
@@ -5545,7 +5662,15 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x0esession_tokens\x18\x02 \x01(\x03R\rsessionTokens\x12\x1b\n" +
 	"\tloop_cost\x18\x03 \x01(\x01R\bloopCost\x12\x1f\n" +
 	"\vloop_tokens\x18\x04 \x01(\x03R\n" +
-	"loopTokens\"\xd1\x02\n" +
+	"loopTokens\"p\n" +
+	"\rNotifyRequest\x12\x12\n" +
+	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x12\n" +
+	"\x04line\x18\x02 \x01(\tR\x04line\x12\x18\n" +
+	"\aproject\x18\x03 \x01(\tR\aproject\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x04 \x01(\tR\tsessionId\".\n" +
+	"\x0eNotifyResponse\x12\x1c\n" +
+	"\tdelivered\x18\x01 \x01(\bR\tdelivered\"\xd1\x02\n" +
 	"\x0eWorkstreamInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
 	"\aproject\x18\x02 \x01(\tR\aproject\x12\x1f\n" +
@@ -5593,7 +5718,7 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\tconflicts\x18\x05 \x03(\tR\tconflicts\"?\n" +
 	"\x18DiscardWorkstreamRequest\x12#\n" +
 	"\rworkstream_id\x18\x01 \x01(\tR\fworkstreamId\"\x1b\n" +
-	"\x19DiscardWorkstreamResponse2\xe9\x16\n" +
+	"\x19DiscardWorkstreamResponse2\xa2\x17\n" +
 	"\x0eSessionService\x12@\n" +
 	"\tListModes\x12\x18.ycc.v1.ListModesRequest\x1a\x19.ycc.v1.ListModesResponse\x12I\n" +
 	"\fStartSession\x12\x1b.ycc.v1.StartSessionRequest\x1a\x1c.ycc.v1.StartSessionResponse\x12I\n" +
@@ -5632,7 +5757,8 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\aGetPlan\x12\x16.ycc.v1.GetPlanRequest\x1a\x17.ycc.v1.GetPlanResponse\x12H\n" +
 	"\x12CaptureBacklogItem\x12!.ycc.v1.CaptureBacklogItemRequest\x1a\r.ycc.v1.Event0\x01\x12=\n" +
 	"\bGetUsage\x12\x17.ycc.v1.GetUsageRequest\x1a\x18.ycc.v1.GetUsageResponse\x12@\n" +
-	"\tGetBudget\x12\x18.ycc.v1.GetBudgetRequest\x1a\x19.ycc.v1.GetBudgetResponse\x12R\n" +
+	"\tGetBudget\x12\x18.ycc.v1.GetBudgetRequest\x1a\x19.ycc.v1.GetBudgetResponse\x127\n" +
+	"\x06Notify\x12\x15.ycc.v1.NotifyRequest\x1a\x16.ycc.v1.NotifyResponse\x12R\n" +
 	"\x0fSpawnWorkstream\x12\x1e.ycc.v1.SpawnWorkstreamRequest\x1a\x1f.ycc.v1.SpawnWorkstreamResponse\x12R\n" +
 	"\x0fListWorkstreams\x12\x1e.ycc.v1.ListWorkstreamsRequest\x1a\x1f.ycc.v1.ListWorkstreamsResponse\x12I\n" +
 	"\fPreviewMerge\x12\x1b.ycc.v1.PreviewMergeRequest\x1a\x1c.ycc.v1.PreviewMergeResponse\x12R\n" +
@@ -5651,7 +5777,7 @@ func file_ycc_v1_ycc_proto_rawDescGZIP() []byte {
 	return file_ycc_v1_ycc_proto_rawDescData
 }
 
-var file_ycc_v1_ycc_proto_msgTypes = make([]protoimpl.MessageInfo, 90)
+var file_ycc_v1_ycc_proto_msgTypes = make([]protoimpl.MessageInfo, 92)
 var file_ycc_v1_ycc_proto_goTypes = []any{
 	(*Event)(nil),                        // 0: ycc.v1.Event
 	(*StartSessionRequest)(nil),          // 1: ycc.v1.StartSessionRequest
@@ -5732,17 +5858,19 @@ var file_ycc_v1_ycc_proto_goTypes = []any{
 	(*GetUsageResponse)(nil),             // 76: ycc.v1.GetUsageResponse
 	(*GetBudgetRequest)(nil),             // 77: ycc.v1.GetBudgetRequest
 	(*GetBudgetResponse)(nil),            // 78: ycc.v1.GetBudgetResponse
-	(*WorkstreamInfo)(nil),               // 79: ycc.v1.WorkstreamInfo
-	(*SpawnWorkstreamRequest)(nil),       // 80: ycc.v1.SpawnWorkstreamRequest
-	(*SpawnWorkstreamResponse)(nil),      // 81: ycc.v1.SpawnWorkstreamResponse
-	(*ListWorkstreamsRequest)(nil),       // 82: ycc.v1.ListWorkstreamsRequest
-	(*ListWorkstreamsResponse)(nil),      // 83: ycc.v1.ListWorkstreamsResponse
-	(*PreviewMergeRequest)(nil),          // 84: ycc.v1.PreviewMergeRequest
-	(*PreviewMergeResponse)(nil),         // 85: ycc.v1.PreviewMergeResponse
-	(*MergeWorkstreamRequest)(nil),       // 86: ycc.v1.MergeWorkstreamRequest
-	(*MergeWorkstreamResponse)(nil),      // 87: ycc.v1.MergeWorkstreamResponse
-	(*DiscardWorkstreamRequest)(nil),     // 88: ycc.v1.DiscardWorkstreamRequest
-	(*DiscardWorkstreamResponse)(nil),    // 89: ycc.v1.DiscardWorkstreamResponse
+	(*NotifyRequest)(nil),                // 79: ycc.v1.NotifyRequest
+	(*NotifyResponse)(nil),               // 80: ycc.v1.NotifyResponse
+	(*WorkstreamInfo)(nil),               // 81: ycc.v1.WorkstreamInfo
+	(*SpawnWorkstreamRequest)(nil),       // 82: ycc.v1.SpawnWorkstreamRequest
+	(*SpawnWorkstreamResponse)(nil),      // 83: ycc.v1.SpawnWorkstreamResponse
+	(*ListWorkstreamsRequest)(nil),       // 84: ycc.v1.ListWorkstreamsRequest
+	(*ListWorkstreamsResponse)(nil),      // 85: ycc.v1.ListWorkstreamsResponse
+	(*PreviewMergeRequest)(nil),          // 86: ycc.v1.PreviewMergeRequest
+	(*PreviewMergeResponse)(nil),         // 87: ycc.v1.PreviewMergeResponse
+	(*MergeWorkstreamRequest)(nil),       // 88: ycc.v1.MergeWorkstreamRequest
+	(*MergeWorkstreamResponse)(nil),      // 89: ycc.v1.MergeWorkstreamResponse
+	(*DiscardWorkstreamRequest)(nil),     // 90: ycc.v1.DiscardWorkstreamRequest
+	(*DiscardWorkstreamResponse)(nil),    // 91: ycc.v1.DiscardWorkstreamResponse
 }
 var file_ycc_v1_ycc_proto_depIdxs = []int32{
 	3,  // 0: ycc.v1.ListProjectsResponse.projects:type_name -> ycc.v1.ProjectInfo
@@ -5763,8 +5891,8 @@ var file_ycc_v1_ycc_proto_depIdxs = []int32{
 	69, // 15: ycc.v1.ListPlansResponse.plans:type_name -> ycc.v1.PlanSummary
 	75, // 16: ycc.v1.GetUsageResponse.rows:type_name -> ycc.v1.UsageRow
 	75, // 17: ycc.v1.GetUsageResponse.total:type_name -> ycc.v1.UsageRow
-	79, // 18: ycc.v1.SpawnWorkstreamResponse.workstream:type_name -> ycc.v1.WorkstreamInfo
-	79, // 19: ycc.v1.ListWorkstreamsResponse.workstreams:type_name -> ycc.v1.WorkstreamInfo
+	81, // 18: ycc.v1.SpawnWorkstreamResponse.workstream:type_name -> ycc.v1.WorkstreamInfo
+	81, // 19: ycc.v1.ListWorkstreamsResponse.workstreams:type_name -> ycc.v1.WorkstreamInfo
 	26, // 20: ycc.v1.SessionService.ListModes:input_type -> ycc.v1.ListModesRequest
 	1,  // 21: ycc.v1.SessionService.StartSession:input_type -> ycc.v1.StartSessionRequest
 	30, // 22: ycc.v1.SessionService.ListSessions:input_type -> ycc.v1.ListSessionsRequest
@@ -5799,52 +5927,54 @@ var file_ycc_v1_ycc_proto_depIdxs = []int32{
 	73, // 51: ycc.v1.SessionService.CaptureBacklogItem:input_type -> ycc.v1.CaptureBacklogItemRequest
 	74, // 52: ycc.v1.SessionService.GetUsage:input_type -> ycc.v1.GetUsageRequest
 	77, // 53: ycc.v1.SessionService.GetBudget:input_type -> ycc.v1.GetBudgetRequest
-	80, // 54: ycc.v1.SessionService.SpawnWorkstream:input_type -> ycc.v1.SpawnWorkstreamRequest
-	82, // 55: ycc.v1.SessionService.ListWorkstreams:input_type -> ycc.v1.ListWorkstreamsRequest
-	84, // 56: ycc.v1.SessionService.PreviewMerge:input_type -> ycc.v1.PreviewMergeRequest
-	86, // 57: ycc.v1.SessionService.MergeWorkstream:input_type -> ycc.v1.MergeWorkstreamRequest
-	88, // 58: ycc.v1.SessionService.DiscardWorkstream:input_type -> ycc.v1.DiscardWorkstreamRequest
-	29, // 59: ycc.v1.SessionService.ListModes:output_type -> ycc.v1.ListModesResponse
-	2,  // 60: ycc.v1.SessionService.StartSession:output_type -> ycc.v1.StartSessionResponse
-	32, // 61: ycc.v1.SessionService.ListSessions:output_type -> ycc.v1.ListSessionsResponse
-	35, // 62: ycc.v1.SessionService.ListSessionHistory:output_type -> ycc.v1.ListSessionHistoryResponse
-	37, // 63: ycc.v1.SessionService.GetSessionTranscript:output_type -> ycc.v1.GetSessionTranscriptResponse
-	39, // 64: ycc.v1.SessionService.GetCommitDiff:output_type -> ycc.v1.GetCommitDiffResponse
-	0,  // 65: ycc.v1.SessionService.Subscribe:output_type -> ycc.v1.Event
-	12, // 66: ycc.v1.SessionService.SendInput:output_type -> ycc.v1.SendInputResponse
-	14, // 67: ycc.v1.SessionService.AnswerQuestion:output_type -> ycc.v1.AnswerQuestionResponse
-	17, // 68: ycc.v1.SessionService.AnswerQuestions:output_type -> ycc.v1.AnswerQuestionsResponse
-	19, // 69: ycc.v1.SessionService.Interrupt:output_type -> ycc.v1.InterruptResponse
-	21, // 70: ycc.v1.SessionService.Resume:output_type -> ycc.v1.ResumeResponse
-	23, // 71: ycc.v1.SessionService.StopSession:output_type -> ycc.v1.StopSessionResponse
-	25, // 72: ycc.v1.SessionService.ResumeSession:output_type -> ycc.v1.ResumeSessionResponse
-	5,  // 73: ycc.v1.SessionService.ListProjects:output_type -> ycc.v1.ListProjectsResponse
-	7,  // 74: ycc.v1.SessionService.AddProject:output_type -> ycc.v1.AddProjectResponse
-	9,  // 75: ycc.v1.SessionService.RemoveProject:output_type -> ycc.v1.RemoveProjectResponse
-	42, // 76: ycc.v1.SessionService.ListModels:output_type -> ycc.v1.ListModelsResponse
-	53, // 77: ycc.v1.SessionService.SetInteractionLevel:output_type -> ycc.v1.SetInteractionLevelResponse
-	55, // 78: ycc.v1.SessionService.SetRoleConfig:output_type -> ycc.v1.SetRoleConfigResponse
-	57, // 79: ycc.v1.SessionService.SetThinking:output_type -> ycc.v1.SetThinkingResponse
-	45, // 80: ycc.v1.SessionService.UpsertModel:output_type -> ycc.v1.UpsertModelResponse
-	47, // 81: ycc.v1.SessionService.RemoveModel:output_type -> ycc.v1.RemoveModelResponse
-	49, // 82: ycc.v1.SessionService.GetModelConfig:output_type -> ycc.v1.GetModelConfigResponse
-	51, // 83: ycc.v1.SessionService.DiscoverModels:output_type -> ycc.v1.DiscoverModelsResponse
-	60, // 84: ycc.v1.SessionService.ListBacklog:output_type -> ycc.v1.ListBacklogResponse
-	63, // 85: ycc.v1.SessionService.GetTask:output_type -> ycc.v1.GetTaskResponse
-	65, // 86: ycc.v1.SessionService.UpdateTask:output_type -> ycc.v1.UpdateTaskResponse
-	67, // 87: ycc.v1.SessionService.CreateTask:output_type -> ycc.v1.CreateTaskResponse
-	70, // 88: ycc.v1.SessionService.ListPlans:output_type -> ycc.v1.ListPlansResponse
-	72, // 89: ycc.v1.SessionService.GetPlan:output_type -> ycc.v1.GetPlanResponse
-	0,  // 90: ycc.v1.SessionService.CaptureBacklogItem:output_type -> ycc.v1.Event
-	76, // 91: ycc.v1.SessionService.GetUsage:output_type -> ycc.v1.GetUsageResponse
-	78, // 92: ycc.v1.SessionService.GetBudget:output_type -> ycc.v1.GetBudgetResponse
-	81, // 93: ycc.v1.SessionService.SpawnWorkstream:output_type -> ycc.v1.SpawnWorkstreamResponse
-	83, // 94: ycc.v1.SessionService.ListWorkstreams:output_type -> ycc.v1.ListWorkstreamsResponse
-	85, // 95: ycc.v1.SessionService.PreviewMerge:output_type -> ycc.v1.PreviewMergeResponse
-	87, // 96: ycc.v1.SessionService.MergeWorkstream:output_type -> ycc.v1.MergeWorkstreamResponse
-	89, // 97: ycc.v1.SessionService.DiscardWorkstream:output_type -> ycc.v1.DiscardWorkstreamResponse
-	59, // [59:98] is the sub-list for method output_type
-	20, // [20:59] is the sub-list for method input_type
+	79, // 54: ycc.v1.SessionService.Notify:input_type -> ycc.v1.NotifyRequest
+	82, // 55: ycc.v1.SessionService.SpawnWorkstream:input_type -> ycc.v1.SpawnWorkstreamRequest
+	84, // 56: ycc.v1.SessionService.ListWorkstreams:input_type -> ycc.v1.ListWorkstreamsRequest
+	86, // 57: ycc.v1.SessionService.PreviewMerge:input_type -> ycc.v1.PreviewMergeRequest
+	88, // 58: ycc.v1.SessionService.MergeWorkstream:input_type -> ycc.v1.MergeWorkstreamRequest
+	90, // 59: ycc.v1.SessionService.DiscardWorkstream:input_type -> ycc.v1.DiscardWorkstreamRequest
+	29, // 60: ycc.v1.SessionService.ListModes:output_type -> ycc.v1.ListModesResponse
+	2,  // 61: ycc.v1.SessionService.StartSession:output_type -> ycc.v1.StartSessionResponse
+	32, // 62: ycc.v1.SessionService.ListSessions:output_type -> ycc.v1.ListSessionsResponse
+	35, // 63: ycc.v1.SessionService.ListSessionHistory:output_type -> ycc.v1.ListSessionHistoryResponse
+	37, // 64: ycc.v1.SessionService.GetSessionTranscript:output_type -> ycc.v1.GetSessionTranscriptResponse
+	39, // 65: ycc.v1.SessionService.GetCommitDiff:output_type -> ycc.v1.GetCommitDiffResponse
+	0,  // 66: ycc.v1.SessionService.Subscribe:output_type -> ycc.v1.Event
+	12, // 67: ycc.v1.SessionService.SendInput:output_type -> ycc.v1.SendInputResponse
+	14, // 68: ycc.v1.SessionService.AnswerQuestion:output_type -> ycc.v1.AnswerQuestionResponse
+	17, // 69: ycc.v1.SessionService.AnswerQuestions:output_type -> ycc.v1.AnswerQuestionsResponse
+	19, // 70: ycc.v1.SessionService.Interrupt:output_type -> ycc.v1.InterruptResponse
+	21, // 71: ycc.v1.SessionService.Resume:output_type -> ycc.v1.ResumeResponse
+	23, // 72: ycc.v1.SessionService.StopSession:output_type -> ycc.v1.StopSessionResponse
+	25, // 73: ycc.v1.SessionService.ResumeSession:output_type -> ycc.v1.ResumeSessionResponse
+	5,  // 74: ycc.v1.SessionService.ListProjects:output_type -> ycc.v1.ListProjectsResponse
+	7,  // 75: ycc.v1.SessionService.AddProject:output_type -> ycc.v1.AddProjectResponse
+	9,  // 76: ycc.v1.SessionService.RemoveProject:output_type -> ycc.v1.RemoveProjectResponse
+	42, // 77: ycc.v1.SessionService.ListModels:output_type -> ycc.v1.ListModelsResponse
+	53, // 78: ycc.v1.SessionService.SetInteractionLevel:output_type -> ycc.v1.SetInteractionLevelResponse
+	55, // 79: ycc.v1.SessionService.SetRoleConfig:output_type -> ycc.v1.SetRoleConfigResponse
+	57, // 80: ycc.v1.SessionService.SetThinking:output_type -> ycc.v1.SetThinkingResponse
+	45, // 81: ycc.v1.SessionService.UpsertModel:output_type -> ycc.v1.UpsertModelResponse
+	47, // 82: ycc.v1.SessionService.RemoveModel:output_type -> ycc.v1.RemoveModelResponse
+	49, // 83: ycc.v1.SessionService.GetModelConfig:output_type -> ycc.v1.GetModelConfigResponse
+	51, // 84: ycc.v1.SessionService.DiscoverModels:output_type -> ycc.v1.DiscoverModelsResponse
+	60, // 85: ycc.v1.SessionService.ListBacklog:output_type -> ycc.v1.ListBacklogResponse
+	63, // 86: ycc.v1.SessionService.GetTask:output_type -> ycc.v1.GetTaskResponse
+	65, // 87: ycc.v1.SessionService.UpdateTask:output_type -> ycc.v1.UpdateTaskResponse
+	67, // 88: ycc.v1.SessionService.CreateTask:output_type -> ycc.v1.CreateTaskResponse
+	70, // 89: ycc.v1.SessionService.ListPlans:output_type -> ycc.v1.ListPlansResponse
+	72, // 90: ycc.v1.SessionService.GetPlan:output_type -> ycc.v1.GetPlanResponse
+	0,  // 91: ycc.v1.SessionService.CaptureBacklogItem:output_type -> ycc.v1.Event
+	76, // 92: ycc.v1.SessionService.GetUsage:output_type -> ycc.v1.GetUsageResponse
+	78, // 93: ycc.v1.SessionService.GetBudget:output_type -> ycc.v1.GetBudgetResponse
+	80, // 94: ycc.v1.SessionService.Notify:output_type -> ycc.v1.NotifyResponse
+	83, // 95: ycc.v1.SessionService.SpawnWorkstream:output_type -> ycc.v1.SpawnWorkstreamResponse
+	85, // 96: ycc.v1.SessionService.ListWorkstreams:output_type -> ycc.v1.ListWorkstreamsResponse
+	87, // 97: ycc.v1.SessionService.PreviewMerge:output_type -> ycc.v1.PreviewMergeResponse
+	89, // 98: ycc.v1.SessionService.MergeWorkstream:output_type -> ycc.v1.MergeWorkstreamResponse
+	91, // 99: ycc.v1.SessionService.DiscardWorkstream:output_type -> ycc.v1.DiscardWorkstreamResponse
+	60, // [60:100] is the sub-list for method output_type
+	20, // [20:60] is the sub-list for method input_type
 	20, // [20:20] is the sub-list for extension type_name
 	20, // [20:20] is the sub-list for extension extendee
 	0,  // [0:20] is the sub-list for field type_name
@@ -5864,7 +5994,7 @@ func file_ycc_v1_ycc_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ycc_v1_ycc_proto_rawDesc), len(file_ycc_v1_ycc_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   90,
+			NumMessages:   92,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

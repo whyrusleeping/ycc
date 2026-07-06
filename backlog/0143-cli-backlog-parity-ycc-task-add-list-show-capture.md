@@ -66,3 +66,7 @@ Note: the task description assumes a `CreateTask` RPC exists; it does NOT (only 
 - 2026-07-06 review (Claude): accept — The change cleanly implements `ycc task add|list|show` with both daemon-backed and daemon-free (direct docs.Store) operation, exactly per the plan and acceptance criteria. It adds the `CreateTask` RPC
 …[truncated]
 - 2026-07-06 decision: accept — commit: cli: add `ycc task add|list|show` backlog commands with CreateTask RPC and daemon-free fallback (task 0143)
+- 2026-07-06 usage: 44,639 tok (in 208, out 44,431, cache_r 4,131,707, cache_w 201,516) · cost n/a (unpriced)
+  implementer: 27,554 tok (in 112, out 27,442, cache_r 2,581,536, cache_w 67,189) · cost n/a (unpriced)
+  coordinator: 12,485 tok (in 60, out 12,425, cache_r 1,215,527, cache_w 100,926) · cost n/a (unpriced)
+  reviewer:Claude: 4,600 tok (in 36, out 4,564, cache_r 334,644, cache_w 33,401) · cost n/a (unpriced)

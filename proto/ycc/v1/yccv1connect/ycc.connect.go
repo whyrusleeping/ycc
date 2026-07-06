@@ -131,6 +131,8 @@ const (
 	// SessionServiceGetBudgetProcedure is the fully-qualified name of the SessionService's GetBudget
 	// RPC.
 	SessionServiceGetBudgetProcedure = "/ycc.v1.SessionService/GetBudget"
+	// SessionServiceNotifyProcedure is the fully-qualified name of the SessionService's Notify RPC.
+	SessionServiceNotifyProcedure = "/ycc.v1.SessionService/Notify"
 	// SessionServiceSpawnWorkstreamProcedure is the fully-qualified name of the SessionService's
 	// SpawnWorkstream RPC.
 	SessionServiceSpawnWorkstreamProcedure = "/ycc.v1.SessionService/SpawnWorkstream"
@@ -226,6 +228,9 @@ type SessionServiceClient interface {
 	// Spend guard (task 0137, spec §20.6): return the configured budget caps so the
 	// TUI work-loop driver can enforce the per-loop-run cap client-side.
 	GetBudget(context.Context, *connect.Request[v1.GetBudgetRequest]) (*connect.Response[v1.GetBudgetResponse], error)
+	// Push notifications (task 0142): route a client-originated notification (the
+	// work-loop completion digest) through the daemon-side webhook notifier.
+	Notify(context.Context, *connect.Request[v1.NotifyRequest]) (*connect.Response[v1.NotifyResponse], error)
 	// Parallel workstreams (docs/design/parallel-workstreams.md §6, §8): spawn a
 	// worktree+session, list them, preview/merge a branch back to base with the
 	// conflict-aware review gate, or discard one. Subscribe(session_id) is reused
@@ -453,6 +458,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("GetBudget")),
 			connect.WithClientOptions(opts...),
 		),
+		notify: connect.NewClient[v1.NotifyRequest, v1.NotifyResponse](
+			httpClient,
+			baseURL+SessionServiceNotifyProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("Notify")),
+			connect.WithClientOptions(opts...),
+		),
 		spawnWorkstream: connect.NewClient[v1.SpawnWorkstreamRequest, v1.SpawnWorkstreamResponse](
 			httpClient,
 			baseURL+SessionServiceSpawnWorkstreamProcedure,
@@ -522,6 +533,7 @@ type sessionServiceClient struct {
 	captureBacklogItem   *connect.Client[v1.CaptureBacklogItemRequest, v1.Event]
 	getUsage             *connect.Client[v1.GetUsageRequest, v1.GetUsageResponse]
 	getBudget            *connect.Client[v1.GetBudgetRequest, v1.GetBudgetResponse]
+	notify               *connect.Client[v1.NotifyRequest, v1.NotifyResponse]
 	spawnWorkstream      *connect.Client[v1.SpawnWorkstreamRequest, v1.SpawnWorkstreamResponse]
 	listWorkstreams      *connect.Client[v1.ListWorkstreamsRequest, v1.ListWorkstreamsResponse]
 	previewMerge         *connect.Client[v1.PreviewMergeRequest, v1.PreviewMergeResponse]
@@ -699,6 +711,11 @@ func (c *sessionServiceClient) GetBudget(ctx context.Context, req *connect.Reque
 	return c.getBudget.CallUnary(ctx, req)
 }
 
+// Notify calls ycc.v1.SessionService.Notify.
+func (c *sessionServiceClient) Notify(ctx context.Context, req *connect.Request[v1.NotifyRequest]) (*connect.Response[v1.NotifyResponse], error) {
+	return c.notify.CallUnary(ctx, req)
+}
+
 // SpawnWorkstream calls ycc.v1.SessionService.SpawnWorkstream.
 func (c *sessionServiceClient) SpawnWorkstream(ctx context.Context, req *connect.Request[v1.SpawnWorkstreamRequest]) (*connect.Response[v1.SpawnWorkstreamResponse], error) {
 	return c.spawnWorkstream.CallUnary(ctx, req)
@@ -802,6 +819,9 @@ type SessionServiceHandler interface {
 	// Spend guard (task 0137, spec §20.6): return the configured budget caps so the
 	// TUI work-loop driver can enforce the per-loop-run cap client-side.
 	GetBudget(context.Context, *connect.Request[v1.GetBudgetRequest]) (*connect.Response[v1.GetBudgetResponse], error)
+	// Push notifications (task 0142): route a client-originated notification (the
+	// work-loop completion digest) through the daemon-side webhook notifier.
+	Notify(context.Context, *connect.Request[v1.NotifyRequest]) (*connect.Response[v1.NotifyResponse], error)
 	// Parallel workstreams (docs/design/parallel-workstreams.md §6, §8): spawn a
 	// worktree+session, list them, preview/merge a branch back to base with the
 	// conflict-aware review gate, or discard one. Subscribe(session_id) is reused
@@ -1025,6 +1045,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("GetBudget")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceNotifyHandler := connect.NewUnaryHandler(
+		SessionServiceNotifyProcedure,
+		svc.Notify,
+		connect.WithSchema(sessionServiceMethods.ByName("Notify")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sessionServiceSpawnWorkstreamHandler := connect.NewUnaryHandler(
 		SessionServiceSpawnWorkstreamProcedure,
 		svc.SpawnWorkstream,
@@ -1125,6 +1151,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceGetUsageHandler.ServeHTTP(w, r)
 		case SessionServiceGetBudgetProcedure:
 			sessionServiceGetBudgetHandler.ServeHTTP(w, r)
+		case SessionServiceNotifyProcedure:
+			sessionServiceNotifyHandler.ServeHTTP(w, r)
 		case SessionServiceSpawnWorkstreamProcedure:
 			sessionServiceSpawnWorkstreamHandler.ServeHTTP(w, r)
 		case SessionServiceListWorkstreamsProcedure:
@@ -1278,6 +1306,10 @@ func (UnimplementedSessionServiceHandler) GetUsage(context.Context, *connect.Req
 
 func (UnimplementedSessionServiceHandler) GetBudget(context.Context, *connect.Request[v1.GetBudgetRequest]) (*connect.Response[v1.GetBudgetResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetBudget is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) Notify(context.Context, *connect.Request[v1.NotifyRequest]) (*connect.Response[v1.NotifyResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.Notify is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) SpawnWorkstream(context.Context, *connect.Request[v1.SpawnWorkstreamRequest]) (*connect.Response[v1.SpawnWorkstreamResponse], error) {

@@ -214,6 +214,7 @@ JSON="Content-Type: application/json"
 | [`ListBacklog`](#listbacklog) / [`GetTask`](#gettask) | browse the durable backlog |
 | [`GetUsage`](#getusage) | priced token-usage breakdown |
 | [`GetBudget`](#getbudget) | configured spend-guard caps |
+| [`Notify`](#notify) | route a push notification through the daemon-side notifier |
 
 ### ListProjects
 
@@ -527,6 +528,32 @@ curl -sS -H "$AUTH" -H "$JSON" -d '{}' \
 ```
 
 An unconfigured `[budget]` returns `{}` (all fields zero / unlimited).
+
+---
+
+### Notify
+
+Route a client-originated push notification through the daemon-side webhook
+notifier (spec §14, task 0142). This exists so the client-driven work-loop can
+emit its completion **digest** via the same best-effort webhook channel the daemon
+uses for `question`/`idle`/`error`/`blocked` events (which fire automatically,
+daemon-side — no client call needed). `kind` must be one of `question`, `idle`,
+`error`, `digest`, `blocked`; `line` is a short human summary; `project` and
+`sessionId` are context. `delivered` is `false` when the daemon has no `[notify]`
+block configured or that kind is muted via `notify.events`. Delivery is async and
+never blocks.
+
+```
+curl -sS -H "$AUTH" -H "$JSON" \
+  -d '{"kind":"digest","line":"work loop finished: 3 completed, 1 blocked","project":"myrepo"}' \
+  $B/ycc.v1.SessionService/Notify
+```
+
+```json
+{"delivered":true}
+```
+
+An unknown `kind` is `invalid_argument`.
 
 ---
 

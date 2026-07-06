@@ -888,6 +888,27 @@ or a `reviews.default` naming no tier are rejected); the built-ins are always va
   The phone-facing surface is the **documented** HTTP/JSON endpoint set — see
   [`docs/remote-api.md`](docs/remote-api.md) (connection & auth, protocol primer,
   endpoint catalog, and the event model for client authors).
+- **Daemon-side push notifications (task 0142).** Terminal notifications (§18, task
+  0108) only help when the terminal is visible. For the "kick off autonomous work,
+  walk away, answer from your phone" flow the daemon can also *reach out* via a
+  best-effort, async webhook (ntfy.sh-compatible: title/priority/tags headers + a
+  short body, plus the remote API as the click-through target). It fires when an
+  agent needs you: `question_asked` (including Confirm gates; auto-answered
+  autonomous asks are skipped — nobody is waiting), `session_idle` (with the final
+  report's first line), `session_error`, a work-loop completion **digest** (pushed
+  client-side through the daemon via the `Notify` RPC), and a **blocked** implementer
+  subagent. Configured in `ycc.toml` under `[notify]` — an absent block (empty `url`)
+  disables it entirely. Delivery never blocks or fails a session; a failed POST is
+  only logged. Per-kind enable/disable (`events`) lets autonomous-loop users pick,
+  e.g., "questions + digest only" (valid kinds: `question`, `idle`, `error`,
+  `digest`, `blocked`; an empty/absent list enables all):
+
+  ```toml
+  [notify]
+  url = "https://ntfy.sh/my-secret-topic"
+  auth = "Bearer tk_xxx"          # optional Authorization header
+  events = ["question", "digest"] # optional; omit for all kinds
+  ```
 
 ### 14.1 Parallel workstreams (git worktrees)
 

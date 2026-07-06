@@ -444,6 +444,19 @@ message GetBudgetResponse {
   int64 loop_tokens = 4;    // total-token cap per work-loop run (0 = unlimited)
 }
 
+// Notify routes a client-originated push notification through the daemon-side
+// notifier (task 0142). It exists so the client-driven work-loop can emit its
+// completion digest via the same best-effort webhook channel the daemon uses for
+// question/idle/error/blocked events. delivered is false when the daemon has no
+// notifier configured or the kind is muted.
+message NotifyRequest {
+  string kind = 1;       // one of: question, idle, error, digest, blocked
+  string line = 2;       // short human line
+  string project = 3;    // project label
+  string session_id = 4; // originating session id (optional)
+}
+message NotifyResponse { bool delivered = 1; }
+
 // Parallel workstreams (docs/design/parallel-workstreams.md §5–§8): a workstream
 // is a linked git worktree + branch plus the `work` session scoped to it, tracked
 // as a child of a project. WorkstreamInfo mirrors workstream.Workstream.
@@ -602,6 +615,10 @@ service SessionService {
   // Spend guard (task 0137, spec §20.6): return the configured budget caps so the
   // TUI work-loop driver can enforce the per-loop-run cap client-side.
   rpc GetBudget(GetBudgetRequest) returns (GetBudgetResponse);
+
+  // Push notifications (task 0142): route a client-originated notification (the
+  // work-loop completion digest) through the daemon-side webhook notifier.
+  rpc Notify(NotifyRequest) returns (NotifyResponse);
 
   // Parallel workstreams (docs/design/parallel-workstreams.md §6, §8): spawn a
   // worktree+session, list them, preview/merge a branch back to base with the
