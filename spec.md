@@ -1636,10 +1636,17 @@ price_cache_write  = 3.75   # $/Mtok for cache-creation input
 ```
 
 Cost for a turn = Σ(tokens_class × rate_class). The registry exposes pricing per logical
-model; the aggregator joins usage with pricing to produce dollar costs. Models with **no
-pricing configured report token counts only** (cost shown as "—"), so the feature degrades
-gracefully and never invents numbers. Pricing is config, not code, so it can be updated as
-vendor prices change without touching the event log.
+model; the aggregator joins usage with pricing to produce dollar costs. Resolution order:
+explicit `price_*` config wins; otherwise well-known Anthropic/OpenAI model ids fall back to
+a **built-in default rate table** (hard-coded from the vendors' published price lists,
+longest-prefix matched on the model id) so estimates work out of the box. Models with
+**neither report token counts only** (cost shown as "—"), so the feature degrades
+gracefully and never invents numbers. Built-in rates are estimates and may drift when
+vendors change prices — setting any `price_*` field overrides them without a code change.
+
+Usage token classes are recorded **disjoint**: OpenAI reports cached tokens as a subset of
+`prompt_tokens`, so the engine subtracts them from `input` at emit time (Anthropic already
+reports cache reads/writes separately), ensuring Σ(class × rate) never double-counts.
 
 ### 20.5 Surfacing
 

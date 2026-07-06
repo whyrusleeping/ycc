@@ -43,10 +43,11 @@ type Model struct {
 	// Optional per-model pricing in US dollars per million tokens (spec §20.4),
 	// split by token class so cache reads/writes can be priced separately from
 	// fresh input/output. Each is a pointer so an unset price is distinguishable
-	// from an explicit 0.0 (and round-trips through config.Save). Pricing lives
-	// in config — not code — so it can track vendor price changes without
-	// touching the event log. When none are set the model is "unpriced" and cost
-	// is reported as unknown rather than invented as 0.
+	// from an explicit 0.0 (and round-trips through config.Save). When none are
+	// set, well-known Anthropic/OpenAI model ids fall back to built-in default
+	// rates (default_pricing.go) so estimates work out of the box; setting any
+	// price_* field overrides the defaults entirely. Models with neither are
+	// "unpriced" and cost is reported as unknown rather than invented as 0.
 	PriceInput      *float64 `toml:"price_input,omitempty"`
 	PriceOutput     *float64 `toml:"price_output,omitempty"`
 	PriceCacheRead  *float64 `toml:"price_cache_read,omitempty"`
@@ -87,6 +88,21 @@ func (m Model) Pricing() Pricing {
 		p.Configured = true
 	}
 	return p
+}
+
+// EffectivePricing resolves the pricing actually used for cost estimates:
+// explicit config pricing when any price_* field is set, otherwise the
+// built-in default table for well-known Anthropic/OpenAI model ids
+// (DefaultPricing), otherwise unpriced. Config always wins so hard-coded
+// estimates can be corrected without a code change.
+func (m Model) EffectivePricing() Pricing {
+	if p := m.Pricing(); p.Configured {
+		return p
+	}
+	if p, ok := DefaultPricing(m.Backend, m.Model); ok {
+		return p
+	}
+	return Pricing{}
 }
 
 // Cost returns the dollar cost of a usage breakdown under this pricing, and
@@ -884,9 +900,11 @@ func (r *Registry) ThinkingFor(name string) Thinking {
 	return m.ResolveThinking()
 }
 
-// PricingFor returns the resolved pricing for a logical model name (spec §20.4).
-// An unknown name returns the zero (unconfigured) Pricing, so cost is reported
-// as unknown rather than invented.
+// PricingFor returns the resolved pricing for a logical model name (spec §20.4):
+// explicit config pricing when set, else the built-in default rates for
+// well-known Anthropic/OpenAI model ids (default_pricing.go). An unknown name
+// returns the zero (unconfigured) Pricing, so cost is reported as unknown
+// rather than invented.
 func (r *Registry) PricingFor(name string) Pricing {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -894,7 +912,7 @@ func (r *Registry) PricingFor(name string) Pricing {
 	if !ok {
 		return Pricing{}
 	}
-	return m.Pricing()
+	return m.EffectivePricing()
 }
 
 // Has reports whether a logical model name is configured.
@@ -930,7 +948,7 @@ func (r *Registry) Models() []ModelInfo {
 	out := make([]ModelInfo, 0, len(names))
 	for _, name := range names {
 		m := r.cfg.Models[name]
-		out = append(out, ModelInfo{Name: name, Backend: m.Backend, Model: m.Model, Pricing: m.Pricing()})
+		out = append(out, ModelInfo{Name: name, Backend: m.Backend, Model: m.Model, Pricing: m.EffectivePricing()})
 	}
 	return out
 }

@@ -667,6 +667,20 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		// Capture per-turn token usage (spec §20.1). resp.Usage is zero-valued for
 		// backends that don't report it, so usage records zeros without error.
 		u := resp.Usage
+		// Normalize the input count so token classes are DISJOINT across
+		// backends (spec §20.1): OpenAI reports cached tokens as a SUBSET of
+		// prompt_tokens (prompt_tokens_details.cached_tokens), while Anthropic
+		// reports cache reads/writes separately from input_tokens. Subtract the
+		// OpenAI-style cached count from Input so Input is always the fresh
+		// (uncached) prompt tokens and cost = Σ(class × rate) never
+		// double-counts cache hits. Anthropic-style usage
+		// (cache_read_input_tokens set) is already disjoint and left alone.
+		inputTokens := u.PromptTokens
+		if u.CacheReadInputTokens == 0 && u.PromptTokensDetails != nil {
+			if c := u.PromptTokensDetails.CachedTokens; c > 0 && c <= inputTokens {
+				inputTokens -= c
+			}
+		}
 		truncated := resp.Truncated()
 		// A non-truncated turn that produced no tool call AND no content is a
 		// degenerate stop: most often the whole output budget went to an
@@ -705,7 +719,7 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			// reconstruct the conversation losslessly (spec §5.1).
 			"thinking_blocks": toEventThinking(msg.ThinkingBlocks),
 			"usage": event.Usage{
-				Input:      u.PromptTokens,
+				Input:      inputTokens,
 				Output:     u.CompletionTokens,
 				CacheRead:  u.GetCachedTokens(),
 				CacheWrite: u.CacheCreationInputTokens,

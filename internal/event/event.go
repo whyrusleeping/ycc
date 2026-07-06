@@ -145,10 +145,12 @@ type ThinkingBlock struct {
 // Usage is the per-turn token accounting attached to a model_turn event's data
 // (spec §20.1, cost tracking). It is the source of truth for usage in the JSONL
 // log: every field serializes (zeros for backends that don't report usage), so a
-// turn always carries a complete, attributable breakdown. Input/Output are the
-// prompt/completion tokens; CacheRead/CacheWrite are the prompt-cache read and
-// creation tokens (Anthropic cache_* / OpenAI prompt_tokens_details); Total is
-// the backend-reported total.
+// turn always carries a complete, attributable breakdown. The classes are
+// DISJOINT: Input is the fresh (uncached) prompt tokens, Output the completion
+// tokens, and CacheRead/CacheWrite the prompt-cache read and creation tokens
+// (Anthropic cache_* / OpenAI prompt_tokens_details — the engine subtracts
+// OpenAI's cached subset from Input at emit time so cost math never
+// double-counts a class); Total is the backend-reported total.
 type Usage struct {
 	Input      int `json:"input"`
 	Output     int `json:"output"`

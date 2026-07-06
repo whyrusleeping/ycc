@@ -89,3 +89,11 @@ Acceptance mapping: A2+A4a/c/d → OpenAI native streaming w/ recorded-SSE tests
 …[truncated]
 - 2026-07-06 decision: accept — commit: gollama native SSE streaming for OpenAI-compatible + Ollama TurnStream (task 0170)  gollama 8653ccb adds native /chat/completions chunk streaming to TurnStream for OpenAI-compatible endpoints and Olla
 …[truncated]
+- 2026-07-06 usage: 56,861 tok (in 180, out 56,681, cache_r 3,953,257, cache_w 205,540) · cost n/a (unpriced)
+  implementer: 34,620 tok (in 100, out 34,520, cache_r 2,648,101, cache_w 75,656) · cost n/a (unpriced)
+  coordinator: 14,289 tok (in 44, out 14,245, cache_r 890,291, cache_w 87,106) · cost n/a (unpriced)
+  reviewer:Claude: 7,952 tok (in 36, out 7,916, cache_r 414,865, cache_w 42,778) · cost n/a (unpriced)
+- 2026-07-06 usage: 56,978 tok (in 182, out 56,796, cache_r 3,953,257, cache_w 272,414) · cost n/a (unpriced)
+  implementer: 34,620 tok (in 100, out 34,520, cache_r 2,648,101, cache_w 75,656) · cost n/a (unpriced)
+  coordinator: 14,406 tok (in 46, out 14,360, cache_r 890,291, cache_w 153,980) · cost n/a (unpriced)
+  reviewer:Claude: 7,952 tok (in 36, out 7,916, cache_r 414,865, cache_w 42,778) · cost n/a (unpriced)
