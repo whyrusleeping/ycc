@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/docs"
@@ -67,6 +68,14 @@ Call create_task exactly once; it ends your work.`
 // source of truth used both for the loop's MaxTurns and the turn-budget
 // sentence in the system prompt, so the two can't drift.
 const captureMaxTurns = 32
+
+// CaptureTimeout is the wall-clock budget for one capture run. It lives next to
+// captureMaxTurns because the two must stay in proportion: the agent is told it
+// has captureMaxTurns model steps (each a coordinator-model call, possibly with
+// tool use, plus transient-failure retry backoff), so a too-small timeout cuts
+// the run off mid-flight and surfaces to the client as a raw
+// "context deadline exceeded".
+const CaptureTimeout = 5 * time.Minute
 
 // captureClarify is a control tool: it lets the capture agent ask ONE clarifying
 // question, ending the loop with the question carried back to the client.

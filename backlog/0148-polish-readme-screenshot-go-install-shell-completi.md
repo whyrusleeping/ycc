@@ -72,3 +72,7 @@ Three bundled polish items:
 - 2026-07-06 review (Claude): accept — Revision addresses both prior nits. completeSessionIDs now falls back to cli.DefaultCompleteWithFlags when a flag is being completed (verified by new TestCompleteSessionIDsFlagFallback), and TestCompl
 …[truncated]
 - 2026-07-06 decision: accept — commit: polish: README screenshot (deterministic docs/tui.png) + go install, ycc completion with live session/project completion, cli.md audit (task 0148)
+- 2026-07-06 usage: 61,288 tok (in 280, out 61,008, cache_r 10,045,237, cache_w 288,113) · cost n/a (unpriced)
+  implementer: 41,198 tok (in 190, out 41,008, cache_r 8,251,579, cache_w 120,897) · cost n/a (unpriced)
+  coordinator: 15,336 tok (in 56, out 15,280, cache_r 1,452,892, cache_w 133,916) · cost n/a (unpriced)
+  reviewer:Claude: 4,754 tok (in 34, out 4,720, cache_r 340,766, cache_w 33,300) · cost n/a (unpriced)

@@ -1878,9 +1878,13 @@ func (m *Manager) CaptureBacklogItem(ctx context.Context, project, description, 
 	if emit != nil {
 		rec = event.NewFuncRecorder(emit)
 	}
-	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, orchestrator.CaptureTimeout)
 	defer cancel()
-	return orchestrator.RunCapture(ctx, cd, rec, description, priorQuestion, priorAnswer)
+	res, err := orchestrator.RunCapture(ctx, cd, rec, description, priorQuestion, priorAnswer)
+	if err != nil && errors.Is(err, context.DeadlineExceeded) {
+		return res, fmt.Errorf("capture timed out after %s", orchestrator.CaptureTimeout)
+	}
+	return res, err
 }
 
 // ErrUnknownProject indicates a project name did not resolve to a registered
