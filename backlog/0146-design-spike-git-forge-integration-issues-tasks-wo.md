@@ -66,3 +66,7 @@ Design spike — produce docs/design/forge-integration.md (no code changes), the
 - 2026-07-06 review (Claude): accept — The design spike deliverable — docs/design/forge-integration.md — is comprehensive, well-structured (house style matched), and technically grounded. It satisfies every acceptance-criteria item: th
 …[truncated]
 - 2026-07-06 decision: accept — commit: docs: forge-integration design spike — issues→tasks, workstream→PR publish, gh/glab strategy (task 0146); file follow-on tasks 0155–0163
+- 2026-07-06 usage: 32,155 tok (in 86, out 32,069, cache_r 1,391,808, cache_w 123,391) · cost n/a (unpriced)
+  coordinator: 15,634 tok (in 52, out 15,582, cache_r 941,191, cache_w 42,809) · cost n/a (unpriced)
+  implementer: 12,919 tok (in 22, out 12,897, cache_r 377,435, cache_w 56,035) · cost n/a (unpriced)
+  reviewer:Claude: 3,602 tok (in 12, out 3,590, cache_r 73,182, cache_w 24,547) · cost n/a (unpriced)
