@@ -1,10 +1,11 @@
 # Web client smoke test (manual, phone-viewport runbook)
 
-Verifies the first-cut embedded web SPA (design `docs/design/web-client.md`
-§4–§7, task 0152): the daemon serves a dependency-free vanilla HTML/CSS/JS client
-behind `--web`, and from a phone-sized viewport you can enter the token, browse
-sessions, and watch a live session stream — including in-progress `turn_delta`
-text — with a clean replay-from-seq reconnect.
+Verifies the embedded web SPA (design `docs/design/web-client.md` §4–§7): the
+daemon serves a dependency-free vanilla HTML/CSS/JS client behind `--web`, and
+from a phone-sized viewport you can enter the token, browse sessions, watch a
+live session stream — including in-progress `turn_delta` text — with a clean
+replay-from-seq reconnect (task 0152), and **interact**: send input, answer
+`ask_user` gates, and interrupt/resume/stop a session (task 0153).
 
 The automated coverage is:
 
@@ -100,10 +101,75 @@ curl -sS -o /dev/null -w '%{http_code}\n' -X POST \
 1. Stop a session (or open one with no `live` marker).
 2. Tap it → the full transcript renders once via `GetSessionTranscript` (static,
    no live tail, no reconnect churn).
+3. **No chrome**: a persisted session shows no input bar, no ⋯ overflow menu, and
+   no answer sheet — it is read-only.
+
+## 7. Interactions (task 0153, §7 chrome)
+
+All of this is **live sessions only**. Have a live session open (§4).
+
+### 7a. Send input (`SendInput`)
+
+1. A **sticky bottom input bar** (text field + Send) is present, thumb-reachable.
+2. Type a message and tap Send (or press Enter). The field clears on success and
+   the message appears in the feed as a user bubble (possibly tagged `queued`).
+3. Kill the daemon (or answer nothing that errors) and Send → a non-fatal
+   **toast** appears with the error message; the app stays usable.
+
+### 7b. Answer a single `ask_user` gate
+
+1. Drive the session to an `ask_user` with one question (interactive/judgement
+   level). A **bottom sheet** rises over the input bar: the prompt, any suggested
+   **option buttons**, and a free-text field with "Send answer".
+2. Tap an **option** → `AnswerQuestion` with that `optionIndex`; the sheet
+   dismisses when the durable `question_answered` event arrives, and the answer
+   shows in the feed.
+3. Repeat with **free text**: type an answer and Send (or Enter) → `AnswerQuestion`
+   with `optionIndex:-1` + text.
+4. **Cross-client dismiss**: raise a gate, then answer it from another client
+   (TUI or `curl AnswerQuestion`). The web sheet dismisses on its own when the
+   `question_answered` event streams in.
+5. **Error toast**: answer once, then tap an option again quickly (or answer a
+   stale gate) → `failed_precondition` "no pending question" surfaces as a toast
+   and controls re-enable.
+
+### 7c. Answer a batched `ask_user` gate
+
+1. Drive the session to an `ask_user` posing **multiple questions** in one call.
+   The sheet shows each prompt with its own options + free-text field, plus one
+   **"Send answers"** button.
+2. For different questions, pick an **option** (tap highlights it) and type
+   **free text** for another; tap Send answers → `AnswerQuestions` with positional
+   `answers[i]` (option → `optionIndex>=0`, free text → `optionIndex:-1`). The
+   sheet dismisses on `question_answered`.
+
+### 7d. Overflow menu (`Interrupt` / `Resume` / `StopSession`)
+
+1. Tap the **⋯** button in the session topbar → a small menu: Interrupt, Resume,
+   Stop session.
+2. **Interrupt** pauses at the next checkpoint (steer with SendInput); **Resume**
+   continues — both reflected in the feed / status.
+3. **Stop session** requires a **second tap** ("Tap again to stop") before it
+   hard-terminates. After stopping, the feed shows the session ending.
+4. Tapping outside the menu or pressing **Escape** closes it.
+
+### 7e. Auto-follow scroll + jump-to-latest pill
+
+1. While at the **bottom** of the feed, new events auto-scroll into view
+   (auto-follow).
+2. **Scroll up**: auto-follow stops and a floating **"↓ jump to latest"** pill
+   appears when new events arrive. Crucially, new events must **not yank** your
+   scroll position while you're reading history.
+3. Tap the **pill** (or scroll back to the bottom) → it re-pins to newest and the
+   pill hides.
 
 ## Expected outcome
 
 Token → list → live stream (with `turn_delta`) → reconnect with no gaps/dupes →
 persisted transcript all work from a phone-sized viewport, with no JS framework
-and no build step (`go build ./...` alone produced the binary). Read-only in this
-cut: there is no input bar, answer picker, or control actions yet (task 0153).
+and no build step (`go build ./...` alone produced the binary). Interactions
+(task 0153): send input, answer single + batched `ask_user` gates via option and
+free text (dismissed by the durable `question_answered`, even cross-client),
+interrupt/resume/stop via the overflow menu, non-fatal RPC errors as toasts, and
+auto-follow scrolling with a jump-to-latest pill that never yanks the reader's
+position.

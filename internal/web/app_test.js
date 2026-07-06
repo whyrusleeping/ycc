@@ -235,6 +235,112 @@ test("feedIngest: reconnect replay does not duplicate or drop", function () {
   assert.strictEqual(feed.cursor, 5);
 });
 
+// ---------------------------------------------------------------------------
+// pending ask_user gate tracking + answer-body builder
+// ---------------------------------------------------------------------------
+function askEvent(seq, data) {
+  return { seq: String(seq), actor: "coordinator", type: "question_asked", dataJson: JSON.stringify(data) };
+}
+
+test("feedIngest: single question_asked sets a pending gate", function () {
+  var feed = w.makeFeed();
+  assert.strictEqual(feed.pending, null);
+  var a = w.feedIngest(feed, askEvent(4, { question: "Proceed?", options: ["Yes", "No"] }));
+  assert.strictEqual(a.kind, "append");
+  assert.ok(feed.pending, "pending set");
+  assert.strictEqual(feed.pending.batch, false);
+  assert.strictEqual(feed.pending.auto, false);
+  assert.strictEqual(feed.pending.seq, 4);
+  assert.strictEqual(feed.pending.questions.length, 1);
+  assert.strictEqual(feed.pending.questions[0].prompt, "Proceed?");
+  assert.deepStrictEqual(feed.pending.questions[0].options, ["Yes", "No"]);
+});
+
+test("feedIngest: batch question_asked normalizes questions[]", function () {
+  var feed = w.makeFeed();
+  w.feedIngest(feed, askEvent(2, {
+    questions: [
+      { question: "Q1", options: ["a", "b"] },
+      { question: "Q2" }
+    ]
+  }));
+  assert.ok(feed.pending);
+  assert.strictEqual(feed.pending.batch, true);
+  assert.strictEqual(feed.pending.questions.length, 2);
+  assert.deepStrictEqual(feed.pending.questions[0].options, ["a", "b"]);
+  assert.deepStrictEqual(feed.pending.questions[1].options, []);
+});
+
+test("feedIngest: question_answered clears the pending gate", function () {
+  var feed = w.makeFeed();
+  w.feedIngest(feed, askEvent(3, { question: "Q?" }));
+  assert.ok(feed.pending);
+  var a = w.feedIngest(feed, { seq: "4", actor: "coordinator", type: "question_answered", dataJson: "{\"answer\":\"Yes\"}" });
+  assert.strictEqual(a.kind, "append");
+  assert.strictEqual(feed.pending, null);
+});
+
+test("feedIngest: terminal events clear the pending gate", function () {
+  ["session_idle", "session_error", "session_stopped"].forEach(function (t, i) {
+    var feed = w.makeFeed();
+    w.feedIngest(feed, askEvent(1, { question: "Q?" }));
+    assert.ok(feed.pending, t + " pending set");
+    var a = w.feedIngest(feed, { seq: String(i + 2), actor: "c", type: t, dataJson: "{}" });
+    assert.strictEqual(a.kind, "append");
+    assert.strictEqual(feed.pending, null, t + " clears pending");
+  });
+});
+
+test("feedIngest: replayed ask after answer does not re-raise the gate", function () {
+  var feed = w.makeFeed();
+  w.feedIngest(feed, askEvent(5, { question: "Q?" }));
+  w.feedIngest(feed, { seq: "6", actor: "c", type: "question_answered", dataJson: "{\"answer\":\"ok\"}" });
+  assert.strictEqual(feed.pending, null);
+  // Reconnect replays the ask at seq 5 (<= cursor 6): must be a deduped duplicate.
+  var dup = w.feedIngest(feed, askEvent(5, { question: "Q?" }));
+  assert.strictEqual(dup.kind, "duplicate");
+  assert.strictEqual(feed.pending, null, "replayed ask must not re-raise a dismissed sheet");
+});
+
+test("pendingFromAsk: auto flag is carried through", function () {
+  var p = w.pendingFromAsk({ dataJson: "{\"question\":\"Q?\",\"auto\":true}" }, 9);
+  assert.ok(p);
+  assert.strictEqual(p.auto, true);
+});
+
+test("buildAnswerBody: single option selection", function () {
+  var pending = { batch: false, questions: [{ prompt: "Q?", options: ["Yes", "No"] }] };
+  var body = w.buildAnswerBody(pending, [{ optionIndex: 0, text: "" }]);
+  assert.deepStrictEqual(body, { optionIndex: 0, text: "" });
+});
+
+test("buildAnswerBody: single free text uses optionIndex -1", function () {
+  var pending = { batch: false, questions: [{ prompt: "Q?", options: [] }] };
+  var body = w.buildAnswerBody(pending, [{ optionIndex: -1, text: "use TOML" }]);
+  assert.deepStrictEqual(body, { optionIndex: -1, text: "use TOML" });
+});
+
+test("buildAnswerBody: batch is positional with mixed option + free text", function () {
+  var pending = { batch: true, questions: [{ options: ["a", "b"] }, { options: [] }] };
+  var body = w.buildAnswerBody(pending, [
+    { optionIndex: 1, text: "" },
+    { optionIndex: -1, text: "custom" }
+  ]);
+  assert.deepStrictEqual(body, {
+    answers: [
+      { optionIndex: 1, text: "" },
+      { optionIndex: -1, text: "custom" }
+    ]
+  });
+});
+
+test("buildAnswerBody: batch pads missing answers to question count", function () {
+  var pending = { batch: true, questions: [{ options: [] }, { options: [] }] };
+  var body = w.buildAnswerBody(pending, [{ optionIndex: -1, text: "only one" }]);
+  assert.strictEqual(body.answers.length, 2);
+  assert.deepStrictEqual(body.answers[1], { optionIndex: -1, text: "" });
+});
+
 if (failures > 0) {
   console.error("\n" + failures + " test(s) failed");
   process.exit(1);

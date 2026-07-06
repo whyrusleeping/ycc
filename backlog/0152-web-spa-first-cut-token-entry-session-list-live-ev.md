@@ -92,3 +92,7 @@ Replace the placeholder SPA in internal/web/dist/ (index.html, app.js, app.css) 
 - 2026-07-06 review (Claude): accept — The change delivers the first-cut web SPA exactly per the task: dependency-free vanilla HTML/CSS/JS in internal/web/dist/, no build step, with token entry (ListProjects validation, localStorage, mid-s
 …[truncated]
 - 2026-07-06 decision: accept — commit: web: first-cut SPA — token entry, session list, live event stream (task 0152)
+- 2026-07-06 usage: 57,049 tok (in 118, out 56,931, cache_r 2,907,246, cache_w 257,006) · cost n/a (unpriced)
+  implementer: 37,217 tok (in 42, out 37,175, cache_r 1,463,550, cache_w 93,529) · cost n/a (unpriced)
+  coordinator: 12,546 tok (in 40, out 12,506, cache_r 871,343, cache_w 114,828) · cost n/a (unpriced)
+  reviewer:Claude: 7,286 tok (in 36, out 7,250, cache_r 572,353, cache_w 48,649) · cost n/a (unpriced)

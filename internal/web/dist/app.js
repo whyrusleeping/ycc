@@ -134,9 +134,67 @@
   }
 
   // makeFeed creates the durable-fold state: the resume cursor (highest persisted
-  // seq folded) and the per-actor live-tail snapshots.
+  // seq folded), the per-actor live-tail snapshots, and the pending ask_user gate
+  // (null when no question is open) that drives the answer sheet.
   function makeFeed() {
-    return { cursor: 0, tails: {} };
+    return { cursor: 0, tails: {}, pending: null };
+  }
+
+  // asStr coerces any value to a string ("" for null/undefined). A pure-section
+  // twin of the DOM helper strOf so pendingFromAsk can normalize prompts/options
+  // without reaching into the browser half.
+  function asStr(v) {
+    if (v === undefined || v === null) {
+      return "";
+    }
+    return (typeof v === "string") ? v : String(v);
+  }
+
+  // pendingFromAsk normalizes a durable question_asked event into the pending-gate
+  // shape { questions:[{prompt,options[]}], batch, auto, seq }. It accepts both the
+  // single ({question,options?,auto?}) and batch ({questions:[{question,options?}],
+  // auto?}) payloads emitted by internal/session/interaction.go (askData /
+  // askManyData). Returns null when no question can be parsed.
+  function pendingFromAsk(ev, seq) {
+    var d = parseData(ev);
+    var qs = [];
+    var batch = false;
+    if (d.questions && d.questions.length) {
+      batch = true;
+      for (var i = 0; i < d.questions.length; i++) {
+        var q = d.questions[i] || {};
+        qs.push({ prompt: asStr(q.question), options: (q.options || []).map(asStr) });
+      }
+    } else if (d.question !== undefined && d.question !== null) {
+      qs.push({ prompt: asStr(d.question), options: (d.options || []).map(asStr) });
+    }
+    if (qs.length === 0) {
+      return null;
+    }
+    return { questions: qs, batch: batch, auto: d.auto === true, seq: seq };
+  }
+
+  // buildAnswerBody turns a pending gate plus the collected per-question answers
+  // into the request body for AnswerQuestion (single) or AnswerQuestions (batch),
+  // matching docs/remote-api.md. Each entry is { optionIndex, text }: optionIndex
+  // >= 0 selects a suggested option (0-based); optionIndex -1 sends text as free
+  // text. The caller adds sessionId. answers is positional (answers[i] answers
+  // question i).
+  function buildAnswerBody(pending, answers) {
+    answers = answers || [];
+    function norm(a) {
+      a = a || {};
+      var idx = (typeof a.optionIndex === "number") ? a.optionIndex : -1;
+      return { optionIndex: idx, text: asStr(a.text) };
+    }
+    if (pending && pending.batch) {
+      var out = [];
+      for (var i = 0; i < pending.questions.length; i++) {
+        out.push(norm(answers[i]));
+      }
+      return { answers: out };
+    }
+    return norm(answers[0]);
   }
 
   // feedIngest folds one Event into the feed state and returns an action telling
@@ -174,6 +232,18 @@
     }
     feed.cursor = seq;
 
+    if (type === "question_asked") {
+      var pend = pendingFromAsk(ev, seq);
+      if (pend) {
+        feed.pending = pend;
+      }
+    } else if (type === "question_answered" || type === "session_idle" ||
+               type === "session_error" || type === "session_stopped") {
+      // Terminal / answered events clear any open gate. question_answered is
+      // authoritative even when the answer came from another client.
+      feed.pending = null;
+    }
+
     var clearedTail = null;
     if (type === "model_turn" && Object.prototype.hasOwnProperty.call(feed.tails, actor)) {
       delete feed.tails[actor];
@@ -194,7 +264,9 @@
       parseData: parseData,
       parseSeq: parseSeq,
       makeFeed: makeFeed,
-      feedIngest: feedIngest
+      feedIngest: feedIngest,
+      pendingFromAsk: pendingFromAsk,
+      buildAnswerBody: buildAnswerBody
     };
   }
 
@@ -579,16 +651,38 @@
       rowsEl: rows,
       tailsEl: tails,
       feedEl: feed,
+      headerEl: header,
       statusEl: statusEl,
       tailEls: {},
       open: true,
+      live: false,
       streaming: false,
       cleanEnd: false,
       backoff: 1000,
       controller: null,
       reconnectTimer: null,
-      empty: true
+      empty: true,
+      following: true,
+      pill: null,
+      inputEl: null,
+      sendBtn: null,
+      sheetEl: null,
+      sheetSeq: null,
+      sheetTimer: null,
+      menuEl: null,
+      menuDocHandler: null
     };
+
+    feed.addEventListener("scroll", function () {
+      var st = sessionState;
+      if (!st || st.feedEl !== feed) {
+        return;
+      }
+      st.following = nearBottom(st);
+      if (st.following) {
+        hidePill(st);
+      }
+    });
 
     if (meta) {
       startSessionView(sessionState, meta.live === true);
@@ -629,7 +723,9 @@
   }
 
   function startSessionView(state, live) {
+    state.live = !!live;
     if (live) {
+      installLiveChrome(state);
       openStream(state);
     } else {
       setStatus(state, "");
@@ -783,9 +879,396 @@
       clearTimeout(state.reconnectTimer);
       state.reconnectTimer = null;
     }
+    if (state.sheetTimer) {
+      clearTimeout(state.sheetTimer);
+      state.sheetTimer = null;
+    }
+    closeMenu(state);
     if (state.controller) {
       try { state.controller.abort(); } catch (e) { /* ignore */ }
     }
+  }
+
+  // ----------------------------------------------------------------------------
+  // Interactive chrome (§7): input bar, answer sheet, overflow menu, jump pill,
+  // toasts. All live-session only; appended inside #app so route changes clear
+  // them via clear(app).
+  // ----------------------------------------------------------------------------
+
+  function installLiveChrome(state) {
+    // Overflow menu button in the topbar.
+    var more = el("button", "btn ghost more", "⋯");
+    more.title = "Actions";
+    more.setAttribute("aria-label", "Session actions");
+    more.addEventListener("click", function (ev) {
+      ev.stopPropagation();
+      toggleMenu(state, more);
+    });
+    state.headerEl.appendChild(more);
+    state.moreBtn = more;
+
+    // Jump-to-latest pill (hidden until the user scrolls up during new content).
+    var pill = el("button", "pill", "↓ jump to latest");
+    pill.style.display = "none";
+    pill.addEventListener("click", function () {
+      scrollToBottom(state);
+    });
+    app.appendChild(pill);
+    state.pill = pill;
+
+    // Answer sheet host (populated on demand from feed.pending).
+    var sheet = el("div", "sheet");
+    sheet.style.display = "none";
+    app.appendChild(sheet);
+    state.sheetEl = sheet;
+
+    // Sticky bottom input bar → SendInput.
+    var bar = el("form", "inputbar");
+    var input = el("input", "field input-field");
+    input.type = "text";
+    input.placeholder = "Send a message…";
+    input.setAttribute("aria-label", "Message");
+    input.autocomplete = "off";
+    var send = el("button", "btn primary send", "Send");
+    send.type = "submit";
+    bar.appendChild(input);
+    bar.appendChild(send);
+    app.appendChild(bar);
+    state.inputEl = input;
+    state.sendBtn = send;
+    bar.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      sendInput(state);
+    });
+  }
+
+  function sendInput(state) {
+    if (!state.inputEl) {
+      return;
+    }
+    var text = state.inputEl.value.trim();
+    if (!text) {
+      return;
+    }
+    state.inputEl.disabled = true;
+    state.sendBtn.disabled = true;
+    rpc("SendInput", { sessionId: state.sessionId, text: text }).then(function () {
+      if (sessionState === state) {
+        state.inputEl.value = "";
+      }
+    }).catch(function (err) {
+      if (err && err.message === "unauthenticated") {
+        return;
+      }
+      toast((err && err.message) || "Could not send.");
+    }).then(function () {
+      if (sessionState === state && state.inputEl) {
+        state.inputEl.disabled = false;
+        state.sendBtn.disabled = false;
+        state.inputEl.focus();
+      }
+    });
+  }
+
+  // --- overflow menu ---
+
+  function toggleMenu(state, anchor) {
+    if (state.menuEl) {
+      closeMenu(state);
+      return;
+    }
+    var menu = el("div", "menu");
+    menu.appendChild(menuItem("Interrupt", function () {
+      closeMenu(state);
+      controlAction(state, "Interrupt", "Interrupt sent");
+    }));
+    menu.appendChild(menuItem("Resume", function () {
+      closeMenu(state);
+      controlAction(state, "Resume", "Resume sent");
+    }));
+    var stop = menuItem("Stop session", null);
+    stop.classList.add("danger");
+    stop.addEventListener("click", function () {
+      if (stop.getAttribute("data-armed") === "1") {
+        closeMenu(state);
+        controlAction(state, "StopSession", "Stop sent");
+      } else {
+        stop.setAttribute("data-armed", "1");
+        stop.textContent = "Tap again to stop";
+      }
+    });
+    menu.appendChild(stop);
+    app.appendChild(menu);
+    state.menuEl = menu;
+
+    // Close on tap-outside / Escape.
+    state.menuDocHandler = function (ev) {
+      if (ev.type === "keydown") {
+        if (ev.key === "Escape" || ev.keyCode === 27) {
+          closeMenu(state);
+        }
+        return;
+      }
+      if (state.menuEl && !state.menuEl.contains(ev.target) && ev.target !== anchor) {
+        closeMenu(state);
+      }
+    };
+    // Defer so the opening click doesn't immediately close it.
+    setTimeout(function () {
+      if (state.menuDocHandler) {
+        document.addEventListener("click", state.menuDocHandler, true);
+        document.addEventListener("keydown", state.menuDocHandler, true);
+      }
+    }, 0);
+  }
+
+  function menuItem(label, onClick) {
+    var b = el("button", "menu-item", label);
+    if (onClick) {
+      b.addEventListener("click", onClick);
+    }
+    return b;
+  }
+
+  function closeMenu(state) {
+    if (state.menuDocHandler) {
+      document.removeEventListener("click", state.menuDocHandler, true);
+      document.removeEventListener("keydown", state.menuDocHandler, true);
+      state.menuDocHandler = null;
+    }
+    if (state.menuEl && state.menuEl.parentNode) {
+      state.menuEl.parentNode.removeChild(state.menuEl);
+    }
+    state.menuEl = null;
+  }
+
+  function controlAction(state, method, okMsg) {
+    rpc(method, { sessionId: state.sessionId }).then(function () {
+      toast(okMsg);
+    }).catch(function (err) {
+      if (err && err.message === "unauthenticated") {
+        return;
+      }
+      toast((err && err.message) || (method + " failed"));
+    });
+  }
+
+  // --- answer sheet ---
+
+  function scheduleSheetSync(state) {
+    if (state.sheetTimer) {
+      return;
+    }
+    state.sheetTimer = setTimeout(function () {
+      state.sheetTimer = null;
+      if (sessionState === state) {
+        syncSheet(state);
+      }
+    }, 50);
+  }
+
+  function syncSheet(state) {
+    if (!state.sheetEl) {
+      return;
+    }
+    var p = state.feed.pending;
+    if (!p || p.auto) {
+      hideSheet(state);
+      return;
+    }
+    if (state.sheetSeq === p.seq && state.sheetEl.style.display !== "none") {
+      return; // already showing this gate — don't churn / clobber typed text
+    }
+    buildSheet(state, p);
+    state.sheetSeq = p.seq;
+  }
+
+  function hideSheet(state) {
+    if (state.sheetEl) {
+      clear(state.sheetEl);
+      state.sheetEl.style.display = "none";
+    }
+    state.sheetSeq = null;
+  }
+
+  // buildSheet renders the bottom-sheet answer picker for the pending gate. It
+  // must not move the feed's scroll position (it is a fixed overlay).
+  function buildSheet(state, pending) {
+    var sheet = state.sheetEl;
+    clear(sheet);
+    sheet.style.display = "";
+
+    var head = el("div", "sheet-head", pending.batch ? "Answer these questions" : "Answer");
+    sheet.appendChild(head);
+
+    var body = el("div", "sheet-body");
+    sheet.appendChild(body);
+
+    // Per-question local selection state (batch collects; single sends on tap).
+    var selections = [];
+    for (var qi = 0; qi < pending.questions.length; qi++) {
+      selections.push({ optionIndex: -1, textEl: null });
+    }
+
+    for (var i = 0; i < pending.questions.length; i++) {
+      (function (idx) {
+        var q = pending.questions[idx];
+        var qWrap = el("div", "sheet-q");
+        qWrap.appendChild(el("div", "q-prompt", q.prompt || "(question)"));
+
+        var optWrap = el("div", "sheet-opts");
+        var buttons = [];
+        for (var o = 0; o < q.options.length; o++) {
+          (function (optIdx) {
+            var ob = el("button", "opt-btn", q.options[optIdx]);
+            ob.type = "button";
+            ob.addEventListener("click", function () {
+              if (pending.batch) {
+                selections[idx].optionIndex = optIdx;
+                for (var b = 0; b < buttons.length; b++) {
+                  if (b === optIdx) {
+                    buttons[b].classList.add("selected");
+                  } else {
+                    buttons[b].classList.remove("selected");
+                  }
+                }
+              } else {
+                answerSingle(state, optIdx, "");
+              }
+            });
+            buttons.push(ob);
+            optWrap.appendChild(ob);
+          })(o);
+        }
+        if (q.options.length) {
+          qWrap.appendChild(optWrap);
+        }
+
+        var free = el("input", "field sheet-free");
+        free.type = "text";
+        free.placeholder = "Type an answer…";
+        free.setAttribute("aria-label", "Free-text answer");
+        selections[idx].textEl = free;
+        qWrap.appendChild(free);
+
+        if (!pending.batch) {
+          // Single question: submit free text with Enter or the Send button.
+          free.addEventListener("keydown", function (ev) {
+            if (ev.key === "Enter" || ev.keyCode === 13) {
+              ev.preventDefault();
+              var t = free.value.trim();
+              if (t) {
+                answerSingle(state, -1, t);
+              }
+            }
+          });
+          var one = el("button", "btn primary sheet-send", "Send answer");
+          one.type = "button";
+          one.addEventListener("click", function () {
+            var t = free.value.trim();
+            if (t) {
+              answerSingle(state, -1, t);
+            }
+          });
+          qWrap.appendChild(one);
+        }
+
+        body.appendChild(qWrap);
+      })(i);
+    }
+
+    if (pending.batch) {
+      var sendAll = el("button", "btn primary sheet-send", "Send answers");
+      sendAll.type = "button";
+      sendAll.addEventListener("click", function () {
+        var answers = [];
+        for (var s = 0; s < selections.length; s++) {
+          answers.push({
+            optionIndex: selections[s].optionIndex,
+            text: selections[s].textEl ? selections[s].textEl.value : ""
+          });
+        }
+        answerBatch(state, answers);
+      });
+      sheet.appendChild(sendAll);
+    }
+
+    state.sheetControls = sheet.querySelectorAll("button, input");
+  }
+
+  function disableSheet(state, on) {
+    var ctrls = state.sheetControls;
+    if (!ctrls) {
+      return;
+    }
+    for (var i = 0; i < ctrls.length; i++) {
+      ctrls[i].disabled = on;
+    }
+  }
+
+  function answerSingle(state, optionIndex, text) {
+    var body = buildAnswerBody(state.feed.pending, [{ optionIndex: optionIndex, text: text }]);
+    body.sessionId = state.sessionId;
+    sendAnswer(state, "AnswerQuestion", body);
+  }
+
+  function answerBatch(state, answers) {
+    var body = buildAnswerBody(state.feed.pending, answers);
+    body.sessionId = state.sessionId;
+    sendAnswer(state, "AnswerQuestions", body);
+  }
+
+  // sendAnswer posts an answer and leaves the sheet up: the durable
+  // question_answered event dismisses it (also covering answers from another
+  // client). On error it re-enables the controls and toasts the message.
+  function sendAnswer(state, method, body) {
+    disableSheet(state, true);
+    rpc(method, body).then(function () {
+      // Success: wait for question_answered to dismiss the sheet.
+    }).catch(function (err) {
+      if (err && err.message === "unauthenticated") {
+        return;
+      }
+      if (sessionState === state) {
+        disableSheet(state, false);
+      }
+      toast((err && err.message) || "Could not answer.");
+    });
+  }
+
+  // --- jump-to-latest pill ---
+
+  function showPill(state) {
+    if (state.pill) {
+      state.pill.style.display = "";
+    }
+  }
+
+  function hidePill(state) {
+    if (state.pill) {
+      state.pill.style.display = "none";
+    }
+  }
+
+  // --- toasts ---
+
+  function toast(msg) {
+    if (typeof document === "undefined") {
+      return;
+    }
+    var host = document.getElementById("toasts");
+    if (!host) {
+      host = el("div", "toasts");
+      host.id = "toasts";
+      document.body.appendChild(host);
+    }
+    var t = el("div", "toast", strOf(msg) || "Error");
+    host.appendChild(t);
+    setTimeout(function () {
+      if (t.parentNode) {
+        t.parentNode.removeChild(t);
+      }
+    }, 4000);
   }
 
   // --- event → DOM ---
@@ -812,6 +1295,12 @@
         // duplicate / transient: nothing to render.
         break;
     }
+    // The answer sheet is a projection of feed.pending; re-sync it (debounced) so
+    // an ask raises it and a question_answered (from any client) dismisses it,
+    // without a flash when an ask+answer replay in quick succession.
+    if (state.live) {
+      scheduleSheetSync(state);
+    }
   }
 
   function nearBottom(state) {
@@ -821,22 +1310,24 @@
 
   function scrollToBottom(state) {
     state.feedEl.scrollTop = state.feedEl.scrollHeight;
+    state.following = true;
+    hidePill(state);
   }
 
   function appendRow(state, node) {
-    var pinned = nearBottom(state);
     if (state.empty) {
       clear(state.rowsEl); // drop any "No events." placeholder
       state.empty = false;
     }
     state.rowsEl.appendChild(node);
-    if (pinned) {
+    if (state.following) {
       scrollToBottom(state);
+    } else {
+      showPill(state);
     }
   }
 
   function updateTail(state, actor, text) {
-    var pinned = nearBottom(state);
     var row = state.tailEls[actor];
     if (!row) {
       row = bubble("agent", actor || "agent", "", false);
@@ -848,8 +1339,10 @@
     if (body) {
       body.textContent = text;
     }
-    if (pinned) {
+    if (state.following) {
       scrollToBottom(state);
+    } else {
+      showPill(state);
     }
   }
 
