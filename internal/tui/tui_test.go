@@ -6238,3 +6238,73 @@ func TestLoopDecisionNoCapContinues(t *testing.T) {
 		t.Fatalf("expected loop to continue with no caps, looping=%v cmd=%v", mm.looping, cmd)
 	}
 }
+
+// TestYankText covers the per-event clipboard text extraction used by `y`
+// (task 0141): commit_made yields the sha, session_error the error text, and a
+// model_turn its raw text.
+func TestYankText(t *testing.T) {
+	m := model{w: 100, expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1}
+
+	commit := &v1.Event{Seq: 1, Type: "commit_made", Actor: "coordinator", DataJson: `{"sha":"abc123def","message":"do the thing"}`}
+	if got := m.yankText(commit); got != "abc123def" {
+		t.Fatalf("yankText(commit_made) = %q, want %q", got, "abc123def")
+	}
+
+	errEv := &v1.Event{Seq: 2, Type: "session_error", Actor: "coordinator", DataJson: `{"msg":"boom failure"}`}
+	if got := m.yankText(errEv); got != "boom failure" {
+		t.Fatalf("yankText(session_error) = %q, want %q", got, "boom failure")
+	}
+
+	turn := &v1.Event{Seq: 3, Type: "model_turn", Actor: "coordinator", DataJson: `{"text":"the model answer"}`}
+	if got := m.yankText(turn); got != "the model answer" {
+		t.Fatalf("yankText(model_turn) = %q, want %q", got, "the model answer")
+	}
+}
+
+// TestYankKeyCopiesRow verifies that `y` on a selected commit row with empty
+// input arms the "copied ✓" notice, while `y` mid-composition types into the
+// textarea instead (task 0141). It also confirms the notice self-clears on the
+// matching flashClearMsg tick.
+func TestYankKeyCopiesRow(t *testing.T) {
+	m := model{
+		client: newFakeClient(), ctx: context.Background(),
+		state: stateSession, status: "running", connected: true, sessionID: "s_live", follow: true,
+		input:    newSessionInput(),
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+		thinkLevels: map[string]string{},
+	}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(model)
+	m.input.Focus()
+	m.appendEvent(&v1.Event{Seq: 1, Type: "commit_made", Actor: "coordinator", DataJson: `{"sha":"abc123def","message":"do the thing"}`})
+	m.rebuild()
+	m.selected = 0
+
+	// Empty input: `y` yanks and arms the notice (no text typed into the input).
+	m = drive(t, m, "y")
+	if m.flashNote != "copied ✓" {
+		t.Fatalf("y on empty input did not set flashNote: %q", m.flashNote)
+	}
+	if m.input.Value() != "" {
+		t.Fatalf("y on empty input typed into the textarea: %q", m.input.Value())
+	}
+
+	// The clear tick dismisses the notice.
+	updated, _ = m.Update(flashClearMsg{seq: m.flashSeq})
+	m = updated.(model)
+	if m.flashNote != "" {
+		t.Fatalf("flashNote did not clear on the matching tick: %q", m.flashNote)
+	}
+
+	// With content in the input, `y` types normally instead of yanking.
+	m = typeText(t, m, "abc")
+	m.flashNote = ""
+	updated, _ = m.Update(keyMsg("y"))
+	m = updated.(model)
+	if m.flashNote != "" {
+		t.Fatalf("y mid-composition armed a flash: %q", m.flashNote)
+	}
+	if m.input.Value() != "abcy" {
+		t.Fatalf("y mid-composition did not type into the textarea: %q", m.input.Value())
+	}
+}

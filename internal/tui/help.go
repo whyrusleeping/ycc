@@ -80,6 +80,7 @@ func (m model) helpSections() []helpSection {
 			{"( / )", "jump to previous / next review verdict"},
 			{"< / >", "jump to previous / next commit"},
 			{"[ / ]", "jump to previous / next error"},
+			{"y", "copy the selected row to the clipboard (commit → sha, error → message; input empty)"},
 			{"enter (on ● commit)", "view the commit's diff (git show)"},
 			{m.interruptKeyHint(), "interrupt the running agent to steer it"},
 			{"shift+tab", "toggle work (loop) mid-session (work mode)"},

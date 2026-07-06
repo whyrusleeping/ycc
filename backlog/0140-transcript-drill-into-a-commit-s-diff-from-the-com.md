@@ -84,3 +84,7 @@ Design: a full-screen modal OVERLAY (like the existing wsMerge preview overlay) 
 - 2026-07-06 review (Claude): accept — The change fully implements task 0140: a full-screen commit-diff overlay (`git show`, stat+patch) opened with Enter on a selected commit_made row, syntax-highlighted via the existing colorizeDiff, scr
 …[truncated]
 - 2026-07-06 decision: accept — commit: tui: drill into a commit's diff from the commit_made row — GetCommitDiff RPC + foldable git-show overlay (task 0140)
+- 2026-07-06 usage: 59,874 tok (in 302, out 59,572, cache_r 11,773,753, cache_w 254,587) · cost n/a (unpriced)
+  implementer: 46,409 tok (in 252, out 46,157, cache_r 10,681,335, cache_w 130,753) · cost n/a (unpriced)
+  coordinator: 8,431 tok (in 22, out 8,409, cache_r 824,763, cache_w 90,827) · cost n/a (unpriced)
+  reviewer:Claude: 5,034 tok (in 28, out 5,006, cache_r 267,655, cache_w 33,007) · cost n/a (unpriced)

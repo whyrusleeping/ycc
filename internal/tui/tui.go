@@ -322,6 +322,10 @@ type model struct {
 	// clear timer so a stale timeout never wipes a newer error (task 0104).
 	flashErr string
 	flashSeq int
+	// flashNote is a parallel transient, self-clearing inline *notice* (e.g.
+	// "copied ✓" after an OSC 52 yank) shown in the status bar. It shares
+	// flashSeq's clear-timer guard with flashErr (task 0141).
+	flashNote string
 	// quitArmed is set by the first ctrl+c while a one-shot daemon has live agent
 	// work (a running/paused/pending session, a loop, a waiting background session,
 	// or a capture in flight). A second ctrl+c within quitGuardWindow quits; the
@@ -793,7 +797,20 @@ func (m *model) flash(err error) tea.Cmd {
 // the pending clear timer so it can't wipe a future error (task 0104).
 func (m *model) clearFlash() {
 	m.flashErr = ""
+	m.flashNote = ""
 	m.flashSeq++
+}
+
+// noteFlash arms a transient, self-clearing inline notice (e.g. "copied ✓" after
+// a clipboard yank), mirroring flash() but for a success/info message instead of
+// an error. It clears any pending error, bumps flashSeq (disarming stale clear
+// timers), and arms a shorter clear tick (task 0141).
+func (m *model) noteFlash(msg string) tea.Cmd {
+	m.flashSeq++
+	m.flashErr = ""
+	m.flashNote = msg
+	seq := m.flashSeq
+	return tea.Tick(2*time.Second, func(time.Time) tea.Msg { return flashClearMsg{seq} })
 }
 
 // quitGuardActive reports whether quitting right now would tear down live agent
@@ -2445,6 +2462,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case flashClearMsg:
 		if msg.seq == m.flashSeq {
 			m.flashErr = ""
+			m.flashNote = ""
 		}
 		return m, nil
 	case quitDisarmMsg:
@@ -3712,6 +3730,18 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, tea.Batch(stop, m.refreshMenu())
 				}
 				return m, m.refreshMenu()
+			}
+		case "y":
+			// Copy the selected transcript row's text to the clipboard via OSC 52
+			// (task 0141). Gated on empty input so a bare "y" still types into the
+			// textarea mid-compose; falls through otherwise. commit_made → sha,
+			// session_error → the error text, otherwise the row's body text.
+			if m.selected >= 0 && m.selected < len(m.evs) && strings.TrimSpace(m.input.Value()) == "" {
+				text := m.yankText(m.evs[m.selected])
+				if text == "" {
+					return m, nil
+				}
+				return m, tea.Batch(tea.SetClipboard(text), m.noteFlash("copied ✓"))
 			}
 		case "/":
 			// Enter transcript search (task 0116). Gated on empty input so a bare
@@ -6766,6 +6796,50 @@ func (m *model) searchableText(i int) string {
 	return b.String()
 }
 
+// yankText returns the plain text to copy to the clipboard for an event when the
+// user presses `y` on the selected transcript row (task 0141). For events whose
+// raw source pastes better than the glamour-rendered body (a commit sha, an error
+// message, a model's text) it returns that raw value; otherwise it falls back to
+// the on-screen expanded content stripped of styling. Returns "" when there's
+// nothing worth copying.
+func (m *model) yankText(ev *v1.Event) string {
+	if ev == nil {
+		return ""
+	}
+	switch ev.Type {
+	case "commit_made":
+		return dataField(ev, "sha")
+	case "session_error":
+		head := sessionErrorHead(ev)
+		msg := dataField(ev, "msg")
+		switch {
+		case head != "" && msg != "":
+			return head + "\n" + msg
+		case head != "":
+			return head
+		default:
+			return msg
+		}
+	case "model_turn", "user_input":
+		if t := firstField(ev, "text", "report", "question", "answer"); t != "" {
+			return strings.TrimSpace(t)
+		}
+	case "session_idle":
+		if t := firstField(ev, "report"); t != "" {
+			return strings.TrimSpace(t)
+		}
+	case "tool_result":
+		if t := dataField(ev, "result"); t != "" {
+			return strings.TrimSpace(t)
+		}
+	case "tool_call":
+		if a := dataField(ev, "args"); a != "" {
+			return strings.TrimSpace(prettyArgs(a))
+		}
+	}
+	return strings.TrimSpace(ansi.Strip(m.bodyFor(ev)))
+}
+
 // matchesQuery reports whether event i's searchable text contains q, which must
 // already be lower-cased.
 func (m *model) matchesQuery(i int, q string) bool {
@@ -8347,6 +8421,11 @@ func (m model) statusBar() string {
 	// the highest priority so the width-greedy fitter never drops it (task 0104).
 	if m.flashErr != "" {
 		segs = append(segs, seg{errStyle.Render("✗ " + m.flashErr), -1})
+	}
+	// A transient inline notice (e.g. "copied ✓" after a yank) rides at the same
+	// high priority so it's never dropped (task 0141).
+	if m.flashNote != "" {
+		segs = append(segs, seg{successStyle.Render(m.flashNote), -1})
 	}
 	// status: a state-colored dot. The header always shows the static dot; the
 	// activity spinner now lives next to the input box at the bottom of the
