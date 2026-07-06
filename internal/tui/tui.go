@@ -944,6 +944,15 @@ func (m model) sessionFinished() bool {
 // loopNext drives the "work (loop)" run: it loads the backlog, picks the next
 // ready task, and decides whether to start another work session (spec §9). The
 // decision is returned as a loopDecisionMsg so Update can apply it on the main loop.
+//
+// Investigation note (task 0168): the loop driver keeps NO snapshot or queue of
+// tasks captured at loop start. Every iteration re-reads the LIVE backlog via the
+// ListBacklog RPC (server → docs Store.List re-reads the backlog dir from disk),
+// then topReadyTask picks from that fresh list. So tasks added mid-loop — via the
+// coordinator's create_task, `ycc task add`, or ctrl+n quick capture — are already
+// considered by the next pick, under the same eligibility rules as the initial
+// pick (topReadyTask requires status todo/in_progress and Ready; proposed/blocked/
+// in_review and dependency-blocked tasks are skipped). No behavioural fix needed.
 func (m model) loopNext() tea.Cmd {
 	return func() tea.Msg {
 		resp, err := m.client.ListBacklog(m.ctx, connect.NewRequest(&v1.ListBacklogRequest{Project: m.project}))

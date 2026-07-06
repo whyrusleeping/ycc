@@ -83,3 +83,7 @@ Resolved open questions (recorded here as decisions):
 …[truncated]
 - 2026-07-06 decision: accept — commit: Project memory: committed memory.md store, remember tool, prompt injection, grooming path (task 0169)  - internal/docs: MemoryPath/ReadMemory/IsMemory/AppendMemory — categorized dated   entries at r
 …[truncated]
+- 2026-07-06 usage: 56,714 tok (in 254, out 56,460, cache_r 7,228,651, cache_w 304,075) · cost n/a (unpriced)
+  implementer: 33,869 tok (in 130, out 33,739, cache_r 4,284,253, cache_w 89,603) · cost n/a (unpriced)
+  coordinator: 16,605 tok (in 68, out 16,537, cache_r 2,397,537, cache_w 179,335) · cost n/a (unpriced)
+  reviewer:Claude: 6,240 tok (in 56, out 6,184, cache_r 546,861, cache_w 35,137) · cost n/a (unpriced)

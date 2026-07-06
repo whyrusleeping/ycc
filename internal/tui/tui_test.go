@@ -3965,6 +3965,7 @@ func TestTopReadyTask(t *testing.T) {
 		{Id: "0002", Status: "todo", Priority: 1, Ready: true},  // ready, p1 -> winner
 		{Id: "0006", Status: "in_review", Priority: 1, Ready: true},
 		{Id: "0007", Status: "blocked", Priority: 1, Ready: true},
+		{Id: "0001", Status: "proposed", Priority: 1, Ready: true}, // ready but not yet accepted -> never picked
 	}
 	if got := topReadyTask(tasks); got != "0002" {
 		t.Fatalf("expected highest-priority ready todo 0002, got %q", got)
@@ -3986,6 +3987,73 @@ func TestTopReadyTask(t *testing.T) {
 	}
 	if got := topReadyTask(none); got != "" {
 		t.Fatalf("expected no ready task, got %q", got)
+	}
+}
+
+// A task created while the loop is already running — with status todo and its
+// dependencies satisfied — is picked up by the NEXT loop iteration without
+// restarting the loop, because the driver re-reads the live backlog each cycle
+// (task 0168). Ineligible additions (proposed, dependency-blocked, blocked) are
+// skipped, exactly like the initial pick.
+func TestLoopPicksUpTaskAddedMidLoop(t *testing.T) {
+	fc := newFakeClient()
+	fc.backlogList = []*v1.BacklogTaskSummary{
+		{Id: "0001", Status: "todo", Priority: 2, Ready: true},
+	}
+	m := model{looping: true, loopStarted: false, loopPrevFP: "", client: fc, ctx: context.Background(), state: stateSession}
+
+	// First decision: pick 0001 and start the loop. loopRun is initialised here so
+	// the streamClosedMsg branch below records a per-session snapshot as the real
+	// loop does.
+	next1, cmd1 := m.applyLoopDecision(loopDecisionMsg{
+		next:  topReadyTask(fc.backlogList),
+		fp:    backlogFingerprint(fc.backlogList),
+		tasks: fc.backlogList,
+	})
+	m = next1.(model)
+	if !m.looping || !m.loopStarted || cmd1 == nil {
+		t.Fatalf("expected loop to start on first decision, looping=%v started=%v cmd=%v", m.looping, m.loopStarted, cmd1 != nil)
+	}
+
+	// Simulate mid-loop backlog changes: 0001 finished, plus several tasks added
+	// while the loop was running. Only 0002 (todo + ready) is eligible.
+	fc.backlogList = []*v1.BacklogTaskSummary{
+		{Id: "0001", Status: "done", Priority: 2, Ready: true},
+		{Id: "0002", Status: "todo", Priority: 3, Ready: true},      // added mid-loop -> next pick
+		{Id: "0003", Status: "proposed", Priority: 1, Ready: true},  // not yet accepted -> skip
+		{Id: "0004", Status: "todo", Priority: 1, Ready: false},     // dependency-blocked -> skip
+		{Id: "0005", Status: "blocked", Priority: 1, Ready: true},   // needs user -> skip
+	}
+
+	// Drive the next iteration exactly as the real loop does: the finished session's
+	// stream closes while looping, which returns loopNext().
+	upd, cmd := m.Update(streamClosedMsg{})
+	m = upd.(model)
+	if cmd == nil {
+		t.Fatal("expected streamClosedMsg (looping) to return a loopNext command")
+	}
+
+	// Execute the loopNext command against the fake client to get the decision.
+	dmsg, ok := cmd().(loopDecisionMsg)
+	if !ok {
+		t.Fatalf("expected loopDecisionMsg from loopNext, got %T", cmd())
+	}
+	if dmsg.next != "0002" {
+		t.Fatalf("expected mid-loop-added 0002 to be picked next, got %q", dmsg.next)
+	}
+
+	// Applying the decision continues the loop (fingerprint changed since 0001 is
+	// now done, so this is not treated as a stall).
+	next2, cmd2 := m.applyLoopDecision(dmsg)
+	m2 := next2.(model)
+	if !m2.looping {
+		t.Fatalf("expected loop to continue after picking up mid-loop task, looping=%v", m2.looping)
+	}
+	if m2.loopPrevFP != dmsg.fp {
+		t.Fatalf("expected loopPrevFP updated to %q, got %q", dmsg.fp, m2.loopPrevFP)
+	}
+	if cmd2 == nil {
+		t.Fatal("expected a startSession command for the picked-up task")
 	}
 }
 
