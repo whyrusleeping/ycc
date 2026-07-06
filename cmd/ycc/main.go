@@ -134,6 +134,7 @@ func newRootCommand(a *app) *cli.Command {
 			a.projectCommand(),
 			a.costCommand(),
 			a.specCheckCommand(),
+			a.doctorCommand(),
 			tokenCommand(),
 			daemonCommand(),
 		},

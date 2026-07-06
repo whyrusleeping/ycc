@@ -157,6 +157,38 @@ The markdown stale-reference report is printed to stdout. The spec-doctor `pm`
 preset runs this command via `Bash` as phase 1 (falling back to
 `go run ./cmd/ycc spec-check` in a dev workspace where the binary isn't on `PATH`).
 
+### `ycc doctor` — environment/config health check
+
+One-shot health check for the whole ycc stack. It prints one `✓`/`⚠`/`✗` line per
+check, and every `✗`/`⚠` is followed by an indented `↳` one-line remedy. Like
+`spec-check` it runs **locally against the workspace and needs no daemon** (the
+daemon check is a best-effort probe). It's the natural thing to run in a bug report.
+
+Checks, in order:
+
+- **config file** — discovered `ycc.toml` (explicit `--config`, else workspace then
+  user config dir); a malformed/invalid config is a hard failure.
+- **model keys** — each configured model's `key_env` resolved from the environment
+  or the machine-local secrets store (or `MISSING`). With no config file the built-in
+  Anthropic fallback (`ANTHROPIC_API_KEY`) is checked. Secret values are never printed.
+- **daemon** — whether a persistent daemon is reachable (`--addr`/`--token` or the
+  local loopback); degrades to a warning otherwise.
+- **sandbox** — reviewer bash confinement mechanism (Landlock / bwrap / none).
+- **git** — repo present and working tree clean/dirty, or not a repo. Read-only: it
+  never runs `git init`.
+- **docs** — spec entry point and backlog directory (with task count).
+- **web tools** — `EXA_API_KEY` presence (`web_search` / `fetch_page` disable without it).
+
+```sh
+ycc doctor                     # check the current workspace
+ycc --workspace ../proj doctor
+```
+
+**Exit codes** make it scriptable:
+
+- `0` — no hard failures (warnings are allowed).
+- `1` — a **hard failure**: an unresolvable model key or a malformed config.
+
 ### `ycc token <set|list|rm>` — machine-local secrets store
 
 Manages the machine-local secrets store. This is a purely local operation that

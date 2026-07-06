@@ -93,3 +93,7 @@ Goal: convert existing usage/cost telemetry into an enforced, optional spend gua
 - 2026-07-06 review (Claude): accept — Task 0137 (spend guard: budget caps) is implemented completely and correctly. Config adds a validated `[budget]` block with session and loop caps (0 = unlimited, absent preserves prior behaviour) plus
 …[truncated]
 - 2026-07-06 decision: accept — commit: Spend guard: budget caps for sessions and the work loop ([budget] config, checkpoint enforcement, budget events, GetBudget RPC, TUI warning + loop cap) (task 0137)
+- 2026-07-06 usage: 75,540 tok (in 404, out 75,136, cache_r 25,708,743, cache_w 408,198) · cost n/a (unpriced)
+  implementer: 56,956 tok (in 314, out 56,642, cache_r 23,523,605, cache_w 208,974) · cost n/a (unpriced)
+  reviewer:Claude: 9,458 tok (in 68, out 9,390, cache_r 870,093, cache_w 50,428) · cost n/a (unpriced)
+  coordinator: 9,126 tok (in 22, out 9,104, cache_r 1,315,045, cache_w 148,796) · cost n/a (unpriced)

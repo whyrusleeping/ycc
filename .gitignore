@@ -6,8 +6,8 @@ ant-key
 /ycc
 /yccd
 /ycc-spike
-/cmd/**/ycc
-/cmd/**/yccd
+/cmd/*/ycc
+/cmd/*/yccd
 
 # session state + scratch
 .ycc/
