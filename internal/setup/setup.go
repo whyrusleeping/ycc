@@ -19,14 +19,26 @@ import (
 
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/daemon"
+	"github.com/whyrusleeping/ycc/internal/secrets"
 )
 
 // NeedsSetup reports whether the first-run wizard should run: there is no
-// discoverable ycc.toml (workspace or user config dir) AND no fallback env key
-// (ANTHROPIC_API_KEY) is set. When either exists we can reach a model already,
-// so the wizard is skipped and ycc goes straight to the home menu.
+// discoverable ycc.toml (workspace or user config dir) AND no fallback API key
+// is reachable. A key is considered reachable when ANTHROPIC_API_KEY is set in
+// the environment or a token is present in the machine-local secrets store
+// (saved via `ycc token set`); either way we can hit a model already, so the
+// wizard is skipped and ycc goes straight to the home menu.
 func NeedsSetup(workspace string) bool {
-	return daemon.DiscoverConfig(workspace) == "" && os.Getenv("ANTHROPIC_API_KEY") == ""
+	if daemon.DiscoverConfig(workspace) != "" {
+		return false
+	}
+	if os.Getenv("ANTHROPIC_API_KEY") != "" {
+		return false
+	}
+	if _, ok := secrets.Lookup("ANTHROPIC_API_KEY"); ok {
+		return false
+	}
+	return true
 }
 
 // ConfigPath returns the path the wizard writes to: the user config dir
@@ -66,14 +78,11 @@ func defaultKeyEnv(backend string) string {
 	return ""
 }
 
+// defaultModel returns the first curated model id for a backend, reusing the
+// same curated per-backend defaults the TUI backend manager seeds (spec §13).
 func defaultModel(backend string) string {
-	switch backend {
-	case "anthropic":
-		return "claude-opus-4-8"
-	case "openai":
-		return "gpt-4o"
-	case "ollama":
-		return "llama3"
+	if ids := config.CuratedModelIDs(backend); len(ids) > 0 {
+		return ids[0]
 	}
 	return ""
 }
@@ -85,6 +94,7 @@ type provider struct {
 	baseURL string
 	model   string
 	keyEnv  string
+	key     string // pasted API key value (stored in secrets, never in ycc.toml)
 }
 
 // buildConfig turns the collected providers and role choices into a *config.Config.
@@ -137,6 +147,7 @@ func Run(workspace string) (string, error) {
 	}
 	m, ok := out.(model)
 	if !ok || m.skipped || !m.completed {
+		printSkipGuidance()
 		return "", nil
 	}
 	cfg, err := buildConfig(m.providers, m.coord, m.impl, m.reviewers)
@@ -154,5 +165,24 @@ func Run(workspace string) (string, error) {
 		fmt.Fprintf(os.Stderr, "ycc: setup: write %s: %v; continuing with fallback\n", path, err)
 		return "", nil
 	}
+	// Persist any pasted API keys to the machine-local secrets store (never into
+	// ycc.toml). Best-effort: warn on failure but keep the written config.
+	for _, p := range m.providers {
+		if p.keyEnv == "" || p.key == "" {
+			continue
+		}
+		if err := secrets.Set(p.keyEnv, p.key); err != nil {
+			fmt.Fprintf(os.Stderr, "ycc: setup: storing key for %s failed: %v\n", p.keyEnv, err)
+		}
+	}
 	return path, nil
+}
+
+// printSkipGuidance tells a user who skipped the wizard how to reach a working
+// model, so they don't silently proceed toward a keyless 401.
+func printSkipGuidance() {
+	fmt.Fprint(os.Stderr, "ycc: setup skipped — to get a working model either:\n"+
+		"  export ANTHROPIC_API_KEY=sk-...\n"+
+		"  or run: ycc token set ANTHROPIC_API_KEY\n"+
+		"  or re-run setup later from esc → settings\n")
 }

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -96,10 +97,37 @@ func TestBuildConfigNoProviders(t *testing.T) {
 	}
 }
 
-// drive feeds key strings to the model and returns the resulting model.
+// drive feeds key strings to the model and returns the resulting model. Any
+// tea.Cmd produced by an update is executed and its message fed back in (so
+// async steps like stepVerify's connection check resolve synchronously in
+// tests). tea.QuitMsg is treated as a no-op message.
 func drive(m model, keys ...string) model {
 	for _, k := range keys {
-		out, _ := m.Update(keyMsg(k))
+		m = send(m, keyMsg(k))
+	}
+	return m
+}
+
+// send delivers one message and drains any resulting commands. Commands are run
+// with a short timeout so blocking cursor-blink ticks (from textinput) are
+// abandoned rather than stalling the test; our own verify/discover commands
+// return instantly.
+func send(m model, msg tea.Msg) model {
+	out, cmd := m.Update(msg)
+	m = out.(model)
+	for cmd != nil {
+		ch := make(chan tea.Msg, 1)
+		go func(c tea.Cmd) { ch <- c() }(cmd)
+		var next tea.Msg
+		select {
+		case next = <-ch:
+		case <-time.After(100 * time.Millisecond):
+			next = nil
+		}
+		if next == nil {
+			break
+		}
+		out, cmd = m.Update(next)
 		m = out.(model)
 	}
 	return m
@@ -132,10 +160,19 @@ func keyMsg(k string) tea.KeyPressMsg {
 
 func TestWizardInteraction(t *testing.T) {
 	m := newModel()
+	m.verify = func(provider) error { return nil } // no network in tests
 	// Type the provider name then accept all default fields and Enter.
 	m = drive(m, "claude")
 	// fields name/backend default to anthropic; defaults already populate
-	// base_url/model/key_env. Enter validates and advances to addMore.
+	// base_url/model/key_env. Enter validates and advances to verify.
+	m = drive(m, "enter")
+	if m.step != stepVerify {
+		t.Fatalf("expected stepVerify, got %v (err=%q)", m.step, m.editErr)
+	}
+	if m.verifyErr != nil {
+		t.Fatalf("expected verify pass, got %v", m.verifyErr)
+	}
+	// Enter accepts the verified provider and advances to addMore.
 	m = drive(m, "enter")
 	if m.step != stepAddMore {
 		t.Fatalf("expected stepAddMore, got %v (err=%q)", m.step, m.editErr)

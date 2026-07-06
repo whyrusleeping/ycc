@@ -1,12 +1,18 @@
 package setup
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+
+	"github.com/whyrusleeping/ycc/internal/config"
+	"github.com/whyrusleeping/ycc/internal/secrets"
 )
 
 // step is the wizard's current screen.
@@ -14,6 +20,7 @@ type step int
 
 const (
 	stepProvider step = iota // editing the current provider's fields
+	stepVerify               // testing the just-entered provider's connection
 	stepAddMore              // add another provider or continue
 	stepRoles                // assign coordinator/implementer/reviewers
 	stepDone                 // terminal
@@ -26,8 +33,18 @@ const (
 	fieldBaseURL
 	fieldModel
 	fieldKeyEnv
+	fieldKey
 	numFields
 )
+
+// verifyMsg carries the result of a connection check (stepVerify).
+type verifyMsg struct{ err error }
+
+// discoverMsg carries the result of a ctrl+f model discovery in the editor.
+type discoverMsg struct {
+	ids []string
+	err error
+}
 
 // model is the Bubble Tea wizard. State is exposed at package scope so tests can
 // drive transitions with synthetic tea.KeyMsg and assert outcomes.
@@ -35,10 +52,22 @@ type model struct {
 	step step
 
 	// in-progress provider editor
-	inputs     [numFields]textinput.Model // name, base_url, model, key_env (backend slot unused)
-	backendIdx int                        // index into backends
-	focus      int                        // current field index
-	editErr    string
+	inputs      [numFields]textinput.Model // name, base_url, model, key_env, key (backend slot unused)
+	backendIdx  int                        // index into backends
+	focus       int                        // current field index
+	editErr     string
+	editInfo    string   // inline info line (e.g. "N models fetched")
+	fetchedIDs  []string // ids from the last successful ctrl+f discovery
+	cycleIdx    int      // cursor into the id cycle source (ctrl+n/p)
+	discovering bool     // a ctrl+f discovery is in flight
+
+	// verify step
+	candidate  provider                           // provider awaiting verification
+	verify     func(p provider) error             // injectable connection check
+	discover   func(p provider) ([]string, error) // injectable model discovery
+	verifying  bool
+	verifyDone bool
+	verifyErr  error
 
 	// collected providers
 	providers []provider
@@ -73,11 +102,50 @@ func newModel() model {
 	m.inputs[fieldBaseURL].Placeholder = "base url"
 	m.inputs[fieldModel].Placeholder = "model id"
 	m.inputs[fieldKeyEnv].Placeholder = "API key env var name"
+	m.inputs[fieldKey].Placeholder = "paste API key now (optional, stored locally)"
+	m.inputs[fieldKey].EchoMode = textinput.EchoPassword
+	m.inputs[fieldKey].CharLimit = 500
+	m.cycleIdx = -1
+	m.verify = realVerify
+	m.discover = realDiscover
 	m.applyBackendDefaults("")
 	m.focus = fieldName
 	m.inputs[fieldName].Focus()
 	m.revSel = map[int]bool{}
 	return m
+}
+
+// resolveKey picks the API credential to use for a provider: the freshly-pasted
+// value wins, then the env var, then the machine-local secrets store, then "".
+func resolveKey(p provider) string {
+	if p.key != "" {
+		return p.key
+	}
+	if p.keyEnv != "" {
+		if v := os.Getenv(p.keyEnv); v != "" {
+			return v
+		}
+		if v, ok := secrets.Lookup(p.keyEnv); ok {
+			return v
+		}
+	}
+	return ""
+}
+
+// realVerify tests a provider's connection by listing its models with a short
+// timeout. A nil error means the credentials + base_url reach the backend.
+func realVerify(p provider) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err := config.DiscoverModels(ctx, p.backend, p.baseURL, resolveKey(p))
+	return err
+}
+
+// realDiscover lists model ids for a provider (ctrl+f in the editor).
+func realDiscover(p provider) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return config.DiscoverModels(ctx, p.backend, p.baseURL, resolveKey(p))
 }
 
 // applyBackendDefaults refreshes base_url/model/key_env to the current backend's
@@ -95,6 +163,9 @@ func (m *model) applyBackendDefaults(prevBackend string) {
 	refresh(fieldBaseURL, defaultBaseURL)
 	refresh(fieldModel, defaultModel)
 	refresh(fieldKeyEnv, defaultKeyEnv)
+	// A backend change invalidates any previously-fetched id list.
+	m.fetchedIDs = nil
+	m.cycleIdx = -1
 }
 
 func (m *model) resetProviderEditor() {
@@ -103,31 +174,77 @@ func (m *model) resetProviderEditor() {
 		m.inputs[i].Blur()
 	}
 	m.backendIdx = 0
+	m.fetchedIDs = nil
+	m.cycleIdx = -1
 	m.applyBackendDefaults("")
 	m.focus = fieldName
 	m.inputs[fieldName].Focus()
 	m.editErr = ""
+	m.editInfo = ""
+}
+
+// currentProvider snapshots the editor's fields into a provider value.
+func (m model) currentProvider() provider {
+	return provider{
+		name:    strings.TrimSpace(m.inputs[fieldName].Value()),
+		backend: backends[m.backendIdx],
+		baseURL: strings.TrimSpace(m.inputs[fieldBaseURL].Value()),
+		model:   strings.TrimSpace(m.inputs[fieldModel].Value()),
+		keyEnv:  strings.TrimSpace(m.inputs[fieldKeyEnv].Value()),
+		key:     strings.TrimSpace(m.inputs[fieldKey].Value()),
+	}
+}
+
+func (m model) verifyCmd(p provider) tea.Cmd {
+	verify := m.verify
+	return func() tea.Msg { return verifyMsg{err: verify(p)} }
+}
+
+func (m model) discoverCmd(p provider) tea.Cmd {
+	discover := m.discover
+	return func() tea.Msg {
+		ids, err := discover(p)
+		return discoverMsg{ids: ids, err: err}
+	}
 }
 
 func (m model) Init() tea.Cmd { return nil }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	key, ok := msg.(tea.KeyMsg)
-	if !ok {
+	switch msg := msg.(type) {
+	case verifyMsg:
+		m.verifying = false
+		m.verifyDone = true
+		m.verifyErr = msg.err
 		return m, nil
-	}
-	switch key.String() {
-	case "ctrl+c", "esc":
-		m.skipped = true
-		return m, tea.Quit
-	}
-	switch m.step {
-	case stepProvider:
-		return m.updateProvider(key)
-	case stepAddMore:
-		return m.updateAddMore(key)
-	case stepRoles:
-		return m.updateRoles(key)
+	case discoverMsg:
+		m.discovering = false
+		if msg.err != nil {
+			m.editErr = "discover: " + msg.err.Error()
+			m.editInfo = ""
+		} else {
+			m.fetchedIDs = msg.ids
+			m.cycleIdx = -1
+			m.editErr = ""
+			m.editInfo = fmt.Sprintf("%d models fetched — ctrl+n/p to cycle", len(msg.ids))
+		}
+		return m, nil
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c", "esc":
+			m.skipped = true
+			return m, tea.Quit
+		}
+		switch m.step {
+		case stepProvider:
+			return m.updateProvider(msg)
+		case stepVerify:
+			return m.updateVerify(msg)
+		case stepAddMore:
+			return m.updateAddMore(msg)
+		case stepRoles:
+			return m.updateRoles(msg)
+		}
 	}
 	return m, nil
 }
@@ -154,14 +271,24 @@ func (m model) updateProvider(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.applyBackendDefaults(prev)
 		}
 		return m, nil
-	case "enter":
-		p := provider{
-			name:    strings.TrimSpace(m.inputs[fieldName].Value()),
-			backend: backends[m.backendIdx],
-			baseURL: strings.TrimSpace(m.inputs[fieldBaseURL].Value()),
-			model:   strings.TrimSpace(m.inputs[fieldModel].Value()),
-			keyEnv:  strings.TrimSpace(m.inputs[fieldKeyEnv].Value()),
+	case "ctrl+f":
+		p := m.currentProvider()
+		if p.backend == "" || p.baseURL == "" {
+			m.editErr = "backend and base url are required to fetch models"
+			return m, nil
 		}
+		m.discovering = true
+		m.editErr = ""
+		m.editInfo = "fetching models…"
+		return m, m.discoverCmd(p)
+	case "ctrl+n":
+		m.cyclePreset(1)
+		return m, nil
+	case "ctrl+p":
+		m.cyclePreset(-1)
+		return m, nil
+	case "enter":
+		p := m.currentProvider()
 		if p.name == "" || p.backend == "" || p.model == "" {
 			m.editErr = "name, backend and model are required"
 			return m, nil
@@ -172,11 +299,13 @@ func (m model) updateProvider(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-		m.providers = append(m.providers, p)
 		m.editErr = ""
-		m.step = stepAddMore
-		m.addMoreCur = 1 // default to "continue"
-		return m, nil
+		m.candidate = p
+		m.step = stepVerify
+		m.verifying = true
+		m.verifyDone = false
+		m.verifyErr = nil
+		return m, m.verifyCmd(p)
 	}
 	// text editing on the focused text field
 	if m.focus != fieldBackend {
@@ -187,6 +316,22 @@ func (m model) updateProvider(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// cyclePreset fills the model field with the next/previous id from the cycle
+// source: the last ctrl+f discovery when present, otherwise the backend's
+// curated defaults. The field remains a normal text input the user can overtype.
+func (m *model) cyclePreset(d int) {
+	src := m.fetchedIDs
+	if len(src) == 0 {
+		src = config.CuratedModelIDs(backends[m.backendIdx])
+	}
+	if len(src) == 0 {
+		return
+	}
+	m.cycleIdx = (m.cycleIdx + d + len(src)) % len(src)
+	m.inputs[fieldModel].SetValue(src[m.cycleIdx])
+	m.inputs[fieldModel].CursorEnd()
+}
+
 func (m *model) focusField(i int) {
 	for j := range m.inputs {
 		m.inputs[j].Blur()
@@ -195,6 +340,36 @@ func (m *model) focusField(i int) {
 	if i != fieldBackend {
 		m.inputs[i].Focus()
 	}
+}
+
+// updateVerify drives the verification screen: while the check runs keys are
+// ignored (esc still skips, handled globally). Once done, Enter accepts (on pass
+// it just continues; on failure it accepts anyway), [r] retries, [e] returns to
+// the editor with all values (including the pasted key) retained.
+func (m model) updateVerify(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.verifying {
+		return m, nil
+	}
+	switch key.String() {
+	case "e":
+		// Return to the editor (offered on pass and fail alike; the footer
+		// advertises it in both states). All field values are retained.
+		m.step = stepProvider
+		m.editErr = ""
+		m.focusField(fieldName)
+		return m, nil
+	case "r":
+		m.verifying = true
+		m.verifyDone = false
+		m.verifyErr = nil
+		return m, m.verifyCmd(m.candidate)
+	case "enter":
+		m.providers = append(m.providers, m.candidate)
+		m.step = stepAddMore
+		m.addMoreCur = 1 // default to "continue"
+		return m, nil
+	}
+	return m, nil
 }
 
 func (m model) updateAddMore(key tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -291,6 +466,7 @@ var (
 	titleStyle = lipgloss.NewStyle().Bold(true).Underline(true)
 	dimStyle   = lipgloss.NewStyle().Faint(true)
 	errStyle   = lipgloss.NewStyle().Bold(true)
+	okStyle    = lipgloss.NewStyle().Bold(true)
 	selStyle   = lipgloss.NewStyle().Bold(true)
 )
 
@@ -308,7 +484,7 @@ func (m model) render() string {
 	case stepProvider:
 		b.WriteString(titleStyle.Render("ycc first-run setup — configure a model provider"))
 		b.WriteString("\n\n")
-		labels := [numFields]string{"name", "backend", "base url", "model", "key env"}
+		labels := [numFields]string{"name", "backend", "base url", "model", "key env", "api key"}
 		for i := 0; i < numFields; i++ {
 			cursor := "  "
 			if m.focus == i {
@@ -322,11 +498,28 @@ func (m model) render() string {
 		}
 		if m.editErr != "" {
 			b.WriteString("\n" + errStyle.Render(m.editErr) + "\n")
+		} else if m.editInfo != "" {
+			b.WriteString("\n" + dimStyle.Render(m.editInfo) + "\n")
 		}
 		if len(m.providers) > 0 {
 			b.WriteString("\n" + dimStyle.Render(fmt.Sprintf("%d provider(s) added", len(m.providers))) + "\n")
 		}
-		b.WriteString("\n" + dimStyle.Render("Tab/↑↓ move · ←/→ change backend · Enter next · Esc skip"))
+		b.WriteString("\n" + dimStyle.Render("Tab/↑↓ move · ←/→ backend · ctrl+f fetch models · ctrl+n/p cycle ids · Enter verify · Esc skip"))
+	case stepVerify:
+		b.WriteString(titleStyle.Render("ycc first-run setup — verify connection"))
+		b.WriteString("\n\n")
+		b.WriteString(fmt.Sprintf("provider: %s  (backend %s)\n", m.candidate.name, m.candidate.backend))
+		b.WriteString(fmt.Sprintf("base url: %s\n\n", m.candidate.baseURL))
+		switch {
+		case m.verifying:
+			b.WriteString(dimStyle.Render("verifying connection…"))
+		case m.verifyErr != nil:
+			b.WriteString(errStyle.Render("✗ verification failed: "+m.verifyErr.Error()) + "\n")
+			b.WriteString("\n" + dimStyle.Render("[e] edit  ·  [r] retry  ·  [enter] accept anyway  ·  Esc skip"))
+		default:
+			b.WriteString(okStyle.Render("✓ connection ok") + "\n")
+			b.WriteString("\n" + dimStyle.Render("Enter continue · [e] edit · Esc skip"))
+		}
 	case stepAddMore:
 		b.WriteString(titleStyle.Render("ycc first-run setup — providers"))
 		b.WriteString("\n\n")
