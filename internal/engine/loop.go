@@ -96,6 +96,11 @@ type Loop struct {
 
 	mu      sync.Mutex // guards Client/Model swaps mid-loop (settings overlay, §18.2)
 	history []gollama.Message
+	// thinkingWarned records that we have already emitted the one-time
+	// session-log warning that the current backend cannot express the requested
+	// thinking/effort setting (spec §7.4, §13). It resets on SetBackend and
+	// SetThinking so a backend or level change may warn once more. Guarded by mu.
+	thinkingWarned bool
 }
 
 // steerCheckpoint consults the Steer hook (if any). It blocks while a pause is
@@ -129,6 +134,7 @@ func (l *Loop) SetBackend(client Turner, model, modelName, backend string, think
 	l.Thinking = think.Thinking
 	l.Effort = think.Effort
 	l.ThinkingDisplay = think.ThinkingDisplay
+	l.thinkingWarned = false
 	l.mu.Unlock()
 }
 
@@ -141,7 +147,44 @@ func (l *Loop) SetThinking(think Thinking) {
 	l.Thinking = think.Thinking
 	l.Effort = think.Effort
 	l.ThinkingDisplay = think.ThinkingDisplay
+	l.thinkingWarned = false
 	l.mu.Unlock()
+}
+
+// thinkingWarning returns a one-time session-log warning when the current
+// backend cannot (fully) express the requested thinking/effort setting, or ""
+// when none is due (spec §7.4, §13). Per the 2026-07-08 degrade decision,
+// unsupported settings are ignored rather than erroring, but we warn once so the
+// operator knows a per-role effort/thinking setting is silently degraded on a
+// mixed-backend session. It emits at most once per Loop; the flag resets on
+// SetBackend/SetThinking so a backend or level change may warn once more.
+//
+// Mapping: anthropic expresses thinking + effort fully; openai expresses effort
+// via reasoning_effort; ollama is on/off only (effort levels are ignored); any
+// other backend (e.g. bedrock) does not translate thinking/effort at all.
+func (l *Loop) thinkingWarning() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.thinkingWarned || l.Thinking == "" {
+		return ""
+	}
+	switch {
+	case strings.EqualFold(l.Backend, "anthropic"), strings.EqualFold(l.Backend, "openai"):
+		// Fully expressible (Anthropic thinking + effort) or levels expressible
+		// (OpenAI reasoning_effort). No warning.
+		return ""
+	case strings.EqualFold(l.Backend, "ollama"):
+		// Ollama expresses thinking on/off but has no effort levels. Only the
+		// effort setting is lost, so warn only when one was requested.
+		if l.Effort == "" {
+			return ""
+		}
+		l.thinkingWarned = true
+		return fmt.Sprintf("thinking: backend ollama supports on/off only; effort %q is ignored (thinking stays enabled)", l.Effort)
+	default:
+		l.thinkingWarned = true
+		return fmt.Sprintf("thinking: backend %s does not support thinking/effort; settings ignored", l.Backend)
+	}
 }
 
 // Thinking carries per-model reasoning settings for SetBackend so a coordinator
@@ -541,6 +584,11 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		}
 
 		client, modelID, ident, think := l.backend()
+		// One-time session-log warning if this backend can't express the
+		// requested thinking/effort setting (ignored, not an error — spec §7.4).
+		if msg := l.thinkingWarning(); msg != "" {
+			l.Emitter.Emit(event.Narration, map[string]any{"msg": msg})
+		}
 		opts := gollama.RequestOptions{
 			Model:           modelID,
 			System:          l.System,

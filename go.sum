@@ -145,8 +145,8 @@ github.com/ugorji/go/codec v1.2.7 h1:YPXUKf7fYbp/y8xloBqZOw2qaVggbfwMlI8WM3wZUJ0
 github.com/ugorji/go/codec v1.2.7/go.mod h1:WGN1fab3R1fzQlVQTkfxVtIBhWDRqOviHU95kRgeqEY=
 github.com/urfave/cli/v3 v3.10.1 h1:7Kx9H50hrHbRbyxgO1KP6/BcbiGRz0uYh5YyQ30JEEY=
 github.com/urfave/cli/v3 v3.10.1/go.mod h1:ysVLtOEmg2tOy6PknnYVhDoouyC/6N42TMeoMzskhso=
-github.com/whyrusleeping/gollama v0.0.0-20260706184156-4140920e3029 h1:EUbtybfTbVhVE3GoxTmibYtewDPH51yZMjaMUewLFxU=
-github.com/whyrusleeping/gollama v0.0.0-20260706184156-4140920e3029/go.mod h1:8Y1l7myBBW+rQ73a3+r6iPXb2BJnYH6qsjLlLiK8bEE=
+github.com/whyrusleeping/gollama v0.0.0-20260706185852-c92bd8b4201f h1:F/RDriRNs6fnCl11bqDVEOsVYpIUpWIooalUxKZ/W4o=
+github.com/whyrusleeping/gollama v0.0.0-20260706185852-c92bd8b4201f/go.mod h1:8Y1l7myBBW+rQ73a3+r6iPXb2BJnYH6qsjLlLiK8bEE=
 github.com/wk8/go-ordered-map/v2 v2.1.8 h1:5h/BUHu93oj4gIdvHHHGsScSTMijfx5PeYkE/fJgbpc=
 github.com/wk8/go-ordered-map/v2 v2.1.8/go.mod h1:5nJHM5DyteebpVlHnWMV0rPz6Zp7+xBAnxjb1X5vnTw=
 github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e h1:JVG44RsyaB9T2KIHavMF/ppJZNG9ZpyihvCd0w101no=

@@ -637,3 +637,95 @@ func TestPendingResponse(t *testing.T) {
 		})
 	}
 }
+
+// countThinkingWarnings returns the number of Narration events whose msg looks
+// like the one-time thinking/effort degrade warning.
+func countThinkingWarnings(rec *captureRecorder) int {
+	n := 0
+	for _, ev := range rec.evs {
+		if ev.Type != event.Narration {
+			continue
+		}
+		if msg, _ := ev.Data["msg"].(string); strings.HasPrefix(msg, "thinking: backend ") {
+			n++
+		}
+	}
+	return n
+}
+
+// On the Ollama backend, a thinking+effort setting can only partially be
+// expressed (on/off, no levels). The loop must emit exactly one session-log
+// warning across a multi-turn run — not one per turn.
+func TestLoopWarnsOnceOllamaEffortIgnored(t *testing.T) {
+	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{
+		assistantToolCall("Write", `{"file_path":"a.txt","content":"hi"}`),
+		assistantToolCall("finish", `{"report":"done"}`),
+	}}
+	rec := &captureRecorder{}
+	loop := newLoop(t, turner)
+	loop.Emitter = event.NewEmitter(rec, "agent")
+	loop.Backend = "ollama"
+	loop.Thinking = "adaptive"
+	loop.Effort = "high"
+	if _, err := loop.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := countThinkingWarnings(rec); got != 1 {
+		t.Fatalf("thinking warnings = %d, want exactly 1 across the multi-turn run", got)
+	}
+}
+
+// Anthropic (fully expressible) and OpenAI (effort expressible via
+// reasoning_effort) must never warn even with thinking + effort set.
+func TestLoopNoWarnOnExpressibleBackends(t *testing.T) {
+	for _, backend := range []string{"anthropic", "openai"} {
+		t.Run(backend, func(t *testing.T) {
+			turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{assistantText("hi")}}
+			rec := &captureRecorder{}
+			loop := newLoop(t, turner)
+			loop.Emitter = event.NewEmitter(rec, "agent")
+			loop.Backend = backend
+			loop.Thinking = "adaptive"
+			loop.Effort = "high"
+			if _, err := loop.Run(context.Background()); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if got := countThinkingWarnings(rec); got != 0 {
+				t.Fatalf("%s: thinking warnings = %d, want 0", backend, got)
+			}
+		})
+	}
+}
+
+// An unknown backend (e.g. bedrock) that does not translate thinking/effort at
+// all warns once when thinking is enabled.
+func TestLoopWarnsOnceUnknownBackend(t *testing.T) {
+	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{assistantText("hi")}}
+	rec := &captureRecorder{}
+	loop := newLoop(t, turner)
+	loop.Emitter = event.NewEmitter(rec, "agent")
+	loop.Backend = "bedrock"
+	loop.Thinking = "adaptive"
+	if _, err := loop.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := countThinkingWarnings(rec); got != 1 {
+		t.Fatalf("thinking warnings = %d, want 1", got)
+	}
+}
+
+// With thinking disabled (empty Thinking), no warning fires regardless of
+// backend.
+func TestLoopNoWarnWhenThinkingDisabled(t *testing.T) {
+	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{assistantText("hi")}}
+	rec := &captureRecorder{}
+	loop := newLoop(t, turner)
+	loop.Emitter = event.NewEmitter(rec, "agent")
+	loop.Backend = "ollama" // would warn if thinking were on
+	if _, err := loop.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := countThinkingWarnings(rec); got != 0 {
+		t.Fatalf("thinking warnings = %d, want 0 when thinking disabled", got)
+	}
+}

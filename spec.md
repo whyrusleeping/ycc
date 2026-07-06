@@ -501,7 +501,29 @@ even when they share a backend (§13). `Thinking=""` disables reasoning; `"adapt
 summaries. The provider's reasoning blocks round-trip automatically because the engine
 appends the returned assistant `Message` (which carries `ThinkingBlocks`) to history. When a
 turn returns a reasoning summary, the loop emits a dedicated `thinking` event (before the
-`model_turn`) for the UI (§18). Non-Anthropic backends ignore these fields.
+`model_turn`) for the UI (§18).
+
+**Per-backend mapping.** These backend-agnostic fields are translated to each provider's
+request shape by gollama (`Turn`/`ChatCompletion`):
+
+| backend | translation | levels |
+| --- | --- | --- |
+| **anthropic** | `thinking{type:"adaptive"}` + `output_config.effort` (+ `thinking_display`) | full: `low`..`max` |
+| **openai** (and OpenAI-compatible, e.g. GLM) | `reasoning_effort` request field | `low`/`medium`/`high`/`xhigh`; `max` clamps to `xhigh` (model-dependent) |
+| **ollama** | `think` bool (on iff `Thinking` set or `Think`) | on/off only — **effort levels are ignored** |
+| **bedrock / other** | not translated | ignored entirely |
+
+Returned reasoning is normalized into a single `Message.Thinking` field regardless of
+backend (Anthropic thinking blocks; Ollama's `message.reasoning`), so the `thinking` event
+lights up uniformly.
+
+**Graceful degrade.** A requested level a backend cannot express is **ignored, not an
+error**, so a per-role effort setting works across mixed backends. When a role's
+`Thinking`/`Effort` setting hits a backend that cannot fully express it, the loop emits a
+**one-time** session-log warning (a `log`/narration event) — once per session/role, not per
+request (the flag resets on a backend or level change). Ollama warns only that its effort
+level is dropped (thinking stays on); an untranslated backend (e.g. bedrock) warns that
+thinking/effort is ignored. Anthropic and OpenAI never warn (fully / levels expressible).
 
 ## 8. Tools
 
@@ -841,8 +863,11 @@ a possible future normalization, not required for this).
 
 **Per-model reasoning** (`thinking` / `effort` / `thinking_display`) is configured on each
 `[models.X]` block and resolved by the registry (`ThinkingFor(name)`), paralleling
-`max_tokens` / `MaxTokens()`. These map to Anthropic extended/adaptive thinking + effort
-(see §7.4); they are honored by the anthropic backend and ignored harmlessly by others.
+`max_tokens` / `MaxTokens()`. These are translated per backend (see the §7.4 mapping table:
+anthropic thinking+effort; openai `reasoning_effort` with `max`→`xhigh`; ollama `think`
+on/off with effort levels dropped; bedrock/other ignored). A level a backend cannot express
+is **ignored, not an error** (graceful degrade for mixed-backend sessions), with a one-time
+per-session/role warning in the session log (see §7.4).
 **Defaults are reasoning-on** (`thinking="adaptive"`, `effort="high"`,
 `thinking_display="summarized"`) — this is an agentic coding harness, so reasoning is
 desired by default, including on the no-config single-backend path. Set `thinking="off"`

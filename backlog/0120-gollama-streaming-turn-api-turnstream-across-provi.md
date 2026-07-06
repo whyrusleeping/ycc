@@ -115,3 +115,7 @@ Acceptance mapping: TurnStream+fallback (A); Anthropic SSE + offline fixture tes
 …[truncated]
 - 2026-07-06 decision: accept — commit: Streaming turns end to end: gollama TurnStream + ycc adoption (task 0120)  gollama 4140920 adds TurnStream(opts, onDelta) — Anthropic Messages SSE streaming with snapshot-semantics text deltas, asse
 …[truncated]
+- 2026-07-06 usage: 46,782 tok (in 152, out 46,630, cache_r 3,796,671, cache_w 202,952) · cost n/a (unpriced)
+  implementer: 30,043 tok (in 94, out 29,949, cache_r 2,480,804, cache_w 79,722) · cost n/a (unpriced)
+  coordinator: 12,157 tok (in 26, out 12,131, cache_r 1,019,131, cache_w 91,428) · cost n/a (unpriced)
+  reviewer:Claude: 4,582 tok (in 32, out 4,550, cache_r 296,736, cache_w 31,802) · cost n/a (unpriced)
