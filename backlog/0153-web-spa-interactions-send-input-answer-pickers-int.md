@@ -80,3 +80,7 @@ Extend the existing vanilla SPA (internal/web/dist/) with the interactive chrome
 - 2026-07-06 review (Claude): accept — The change delivers the third slice of the web client cleanly. It extends the pure feed state with pending ask_user tracking (pendingFromAsk normalizes both single {question,options?,auto?} and batch 
 …[truncated]
 - 2026-07-06 decision: accept — commit: web: interactive chrome — send input, answer sheet, session controls, follow scroll (task 0153)
+- 2026-07-06 usage: 45,019 tok (in 144, out 44,875, cache_r 2,973,040, cache_w 212,778) · cost n/a (unpriced)
+  implementer: 29,665 tok (in 62, out 29,603, cache_r 1,804,307, cache_w 78,067) · cost n/a (unpriced)
+  coordinator: 8,633 tok (in 32, out 8,601, cache_r 629,774, cache_w 101,404) · cost n/a (unpriced)
+  reviewer:Claude: 6,721 tok (in 50, out 6,671, cache_r 538,959, cache_w 33,307) · cost n/a (unpriced)
