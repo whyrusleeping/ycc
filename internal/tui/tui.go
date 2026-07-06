@@ -166,6 +166,21 @@ type model struct {
 	// visit can't multiply the in-flight timers.
 	waitingSeq int
 
+	// Home-menu project-context header (task 0139): orientation data shown as a
+	// one-line segment strip beneath the title — git branch/dirtiness, and today's
+	// spend. Every segment degrades gracefully (drops out) when its data is
+	// unavailable (non-git workspace, no priced usage, etc.).
+	gitBranch string // current branch name; "" => not a git workspace / unknown
+	gitDirty  bool   // working tree has uncommitted changes
+	// today's spend, populated from a throttled GetUsage over just today's log.
+	todaySpend       float64   // total $ spent today (0 => segment dropped)
+	todaySpendStatus string    // priced | partial | "" (unknown/loaded-but-empty)
+	todaySpendLoaded bool      // a spend fetch has completed at least once
+	lastSpendFetch   time.Time // throttle: refetch today's spend at most ~once/60s
+	// lastSession is the most recent resumable session, used for the "c continue
+	// last session" one-key affordance. nil => no session to continue.
+	lastSession *v1.SessionSummary
+
 	// browse selector (spec §18.6/§20.5): a small modal routing to the list+detail
 	// browsers — backlog, sessions, and cost (spec §18.6/§20.5).
 	browse       bool
@@ -569,13 +584,34 @@ type historyMsg struct {
 // RPC hiccup never flashes on the menu.
 type waitingSessionsMsg struct {
 	sessions []*v1.SessionSummary
-	err      error
+	// recent is the most-recent session overall (ListSessionHistory returns
+	// most-recent first), used for the "c continue last session" affordance
+	// (task 0139). nil when there is no session to continue.
+	recent *v1.SessionSummary
+	err    error
 }
 
 // menuRefreshMsg is the modest tick that re-polls waiting sessions while the
 // home menu is showing (task 0107), so a question raised in a background
 // session surfaces without the user pressing a key. seq disarms stale ticks.
 type menuRefreshMsg struct{ seq int }
+
+// menuGitMsg carries the current git branch + dirtiness for the home-menu
+// context header (task 0139). An error (non-git workspace, remote daemon, git
+// missing) is delivered as an empty branch so the segment simply drops out.
+type menuGitMsg struct {
+	branch string
+	dirty  bool
+	err    error
+}
+
+// menuSpendMsg carries today's aggregated spend for the home-menu context
+// header (task 0139). Errors are ignored silently — the segment drops out.
+type menuSpendMsg struct {
+	cost   float64
+	status string
+	err    error
+}
 
 // transcriptMsg carries a session's replayed event log for the read-only
 // transcript drill-in (spec §18.6), or an error if the fetch failed.
@@ -1324,7 +1360,13 @@ func (m model) fetchWaitingSessions() tea.Msg {
 			waiting = append(waiting, s)
 		}
 	}
-	return waitingSessionsMsg{sessions: waiting}
+	// The most-recent session (list is most-recent first) backs the "c continue
+	// last session" affordance on the home menu (task 0139).
+	var recent *v1.SessionSummary
+	if len(resp.Msg.Sessions) > 0 {
+		recent = resp.Msg.Sessions[0]
+	}
+	return waitingSessionsMsg{sessions: waiting, recent: recent}
 }
 
 // sessionNeedsUser reports whether a live session is waiting on the user: it is
@@ -1347,7 +1389,66 @@ func (m model) menuRefreshTick() tea.Cmd {
 // tick can't multiply the in-flight timers (task 0107).
 func (m *model) refreshMenu() tea.Cmd {
 	m.waitingSeq++
-	return tea.Batch(m.fetchBacklog, m.fetchWaitingSessions, m.menuRefreshTick())
+	cmds := []tea.Cmd{m.fetchBacklog, m.fetchWaitingSessions, m.fetchGitInfo, m.menuRefreshTick()}
+	// Today's spend is throttled: the aggregator scans usage logs, so re-issuing
+	// it on every 5s tick would be wasteful. Refetch at most ~once a minute.
+	if cmd := m.maybeFetchSpend(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	return tea.Batch(cmds...)
+}
+
+// maybeFetchSpend returns the today's-spend fetch cmd when it hasn't run within
+// the throttle window (~60s), and records the attempt so subsequent menu ticks
+// don't hammer the log-scanning aggregator (task 0139). Returns nil otherwise.
+func (m *model) maybeFetchSpend() tea.Cmd {
+	if !m.lastSpendFetch.IsZero() && time.Since(m.lastSpendFetch) < 60*time.Second {
+		return nil
+	}
+	m.lastSpendFetch = time.Now()
+	return m.fetchTodaySpend
+}
+
+// fetchGitInfo reads the current git branch and working-tree dirtiness of the
+// (local) workspace for the home-menu context header (task 0139). It shells out
+// to git directly (no shell) and returns an empty branch on any error — a
+// non-git workspace, a remote daemon whose workspace isn't local here, or git
+// being absent — so the header segment simply drops out.
+func (m model) fetchGitInfo() tea.Msg {
+	ws := m.workspace
+	if ws == "" {
+		return menuGitMsg{err: fmt.Errorf("no workspace")}
+	}
+	branchOut, err := exec.Command("git", "-C", ws, "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if err != nil {
+		return menuGitMsg{err: err}
+	}
+	branch := strings.TrimSpace(string(branchOut))
+	if branch == "" {
+		return menuGitMsg{err: fmt.Errorf("no branch")}
+	}
+	dirty := false
+	if statusOut, err := exec.Command("git", "-C", ws, "status", "--porcelain").Output(); err == nil {
+		dirty = strings.TrimSpace(string(statusOut)) != ""
+	}
+	return menuGitMsg{branch: branch, dirty: dirty}
+}
+
+// fetchTodaySpend aggregates today's token spend for the home-menu context
+// header (task 0139) via GetUsage scoped to today (Since=Until=today), grouped
+// by day. Any error is delivered so the segment drops out silently.
+func (m model) fetchTodaySpend() tea.Msg {
+	today := time.Now().Format("2006-01-02")
+	resp, err := m.client.GetUsage(m.ctx, connect.NewRequest(&v1.GetUsageRequest{
+		Project: m.project, GroupBy: []string{"day"}, Since: today, Until: today,
+	}))
+	if err != nil {
+		return menuSpendMsg{err: err}
+	}
+	if resp.Msg.Total == nil {
+		return menuSpendMsg{cost: 0, status: ""}
+	}
+	return menuSpendMsg{cost: resp.Msg.Total.Cost, status: resp.Msg.Total.PriceStatus}
 }
 
 // fetchTranscript loads a session's full replayed event log for the read-only
@@ -2229,6 +2330,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.waitingSessions = msg.sessions
+		m.lastSession = msg.recent
+		return m, nil
+	case menuGitMsg:
+		// Awareness signal only (task 0139): on error clear the branch so the git
+		// segment drops out of the header rather than showing stale data.
+		if msg.err != nil {
+			m.gitBranch, m.gitDirty = "", false
+			return m, nil
+		}
+		m.gitBranch, m.gitDirty = msg.branch, msg.dirty
+		return m, nil
+	case menuSpendMsg:
+		// Awareness signal only (task 0139): on error keep the last-known spend and
+		// stay quiet — a transient RPC hiccup must not blank the header.
+		if msg.err != nil {
+			return m, nil
+		}
+		m.todaySpend, m.todaySpendStatus, m.todaySpendLoaded = msg.cost, msg.status, true
 		return m, nil
 	case menuRefreshMsg:
 		// Drop a stale tick from a previous menu visit (seq guards against
@@ -2239,7 +2358,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state != stateMenu {
 			return m, m.menuRefreshTick()
 		}
-		return m, tea.Batch(m.fetchWaitingSessions, m.menuRefreshTick())
+		cmds := []tea.Cmd{m.fetchWaitingSessions, m.fetchGitInfo, m.menuRefreshTick()}
+		if cmd := m.maybeFetchSpend(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		return m, tea.Batch(cmds...)
 	case transcriptMsg:
 		if msg.err != nil {
 			m.historyMsgTxt = "error: " + msg.err.Error()
@@ -3172,6 +3295,16 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.historyWaitingOnly = true
 				m.historyMsgTxt = "loading…"
 				return m, m.fetchHistory
+			}
+		case "c":
+			// One-key "continue last session" (task 0139): reopen the most recent
+			// session (resume = replay). Same guard as "w"/"s": only intercept when a
+			// session exists AND the prompt is empty, so a bare "c" never hijacks
+			// typing into the focused prompt mid-composition.
+			if m.lastSession != nil && strings.TrimSpace(m.prompt.Value()) == "" {
+				id := m.lastSession.SessionId
+				m.status = "reopening " + short(id) + "…"
+				return m, m.reopenSession(id)
 			}
 		case "ctrl+r":
 			// Open the session browser to inspect/reopen a session (spec §18.6).
@@ -7505,7 +7638,8 @@ func (m model) pickerScreenView() string {
 
 func (m model) menuView() string {
 	var b strings.Builder
-	b.WriteString(m.titleBar(" ycc — home ") + "\n\n")
+	b.WriteString(m.titleBar(" ycc — home ") + "\n")
+	b.WriteString(m.menuHeader() + "\n\n")
 	if m.quitArmed {
 		b.WriteString("  " + errStyle.Render("⚠ "+quitGuardHint) + "\n\n")
 	}
@@ -7555,6 +7689,11 @@ func (m model) menuView() string {
 	}
 	b.WriteString("\n  " + dimStyle.Render("level ") + typeStyle.Render("‹"+m.menuLevel+"›") + dimStyle.Render("  ←/→") + "\n")
 	b.WriteString(framedInput(m.prompt, 2) + "\n")
+	// One-key affordance to reopen the most recent session (task 0139): resume the
+	// last conversation instead of ctrl+r → pick → o.
+	if m.lastSession != nil {
+		b.WriteString("  " + typeStyle.Render("c") + dimStyle.Render(" continue last session · "+lastSessionLabel(m.lastSession)) + "\n")
+	}
 	footer := "  ? help · ↑/↓ choose mode · ←/→ level · tab loop (work) · type a prompt · enter start · ctrl+o browse · ctrl+r sessions · esc settings · ctrl+b backlog · ctrl+n new task"
 	if m.blockedTaskCount() > 0 {
 		footer += " · w view blocked"
@@ -7562,8 +7701,25 @@ func (m model) menuView() string {
 	if len(m.waitingSessions) > 0 {
 		footer += " · s open waiting session"
 	}
+	if m.lastSession != nil {
+		footer += " · c continue last"
+	}
 	b.WriteString("\n" + m.footerBar(footer))
 	return b.String()
+}
+
+// lastSessionLabel renders the compact descriptor for the "c continue last
+// session" affordance (task 0139): the session's title (or short id when it has
+// none) plus its mode.
+func lastSessionLabel(s *v1.SessionSummary) string {
+	label := strings.TrimSpace(s.Title)
+	if label == "" {
+		label = short(s.SessionId)
+	}
+	if s.Mode != "" {
+		label += " (" + s.Mode + ")"
+	}
+	return label
 }
 
 // waitingSessionsLine builds the home-menu awareness line for live sessions that
@@ -7942,6 +8098,100 @@ func chosenSegs[T any](segs []T, keep []bool) []T {
 		}
 	}
 	return out
+}
+
+// fitSeg is one width-fit segment: pre-styled text plus a drop priority (lower =
+// kept first, dropped last). Used by the home-menu context header (task 0139).
+type fitSeg struct {
+	text string
+	prio int
+}
+
+// fitSegmentStrip greedily fits priority-ordered segments into width w, joining
+// the kept ones (in original visual order) with sep. It mirrors the status bar's
+// priority-fit approach (task 0139): a zero/negative width keeps everything, and
+// the result is ANSI-truncated to w as a final clamp so the strip never spills
+// past one physical row on a narrow terminal.
+func fitSegmentStrip(segs []fitSeg, sep string, w int) string {
+	render := func(chosen []fitSeg) string {
+		parts := make([]string, len(chosen))
+		for i, s := range chosen {
+			parts[i] = s.text
+		}
+		return strings.Join(parts, sep)
+	}
+	if w <= 0 {
+		return render(segs)
+	}
+	order := make([]int, len(segs))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool { return segs[order[a]].prio < segs[order[b]].prio })
+	keep := make([]bool, len(segs))
+	for _, idx := range order {
+		keep[idx] = true
+		if lipgloss.Width(render(chosenSegs(segs, keep))) > w {
+			keep[idx] = false // doesn't fit; lower-priority segments may still fit
+		}
+	}
+	return ansi.Truncate(render(chosenSegs(segs, keep)), w, dimStyle.Render("…"))
+}
+
+// menuReadyCount reports how many backlog tasks a work session could pick up
+// right now: ready and either todo or a resumable in_progress (task 0139).
+func (m model) menuReadyCount() int {
+	n := 0
+	for _, t := range m.backlogTasks {
+		if t.Ready && (t.Status == "todo" || t.Status == "in_progress") {
+			n++
+		}
+	}
+	return n
+}
+
+// menuHeader builds the one-line project-context header for the home menu (task
+// 0139): project · git branch (+dirty marker) · N ready / M blocked · $ today.
+// Each segment drops out when its data is unavailable (non-git workspace, empty
+// backlog, no priced usage), and the strip is width-fit to exactly one physical
+// row like the session status bar so it never corrupts the frame.
+func (m model) menuHeader() string {
+	var segs []fitSeg
+	// project name — highest priority, always present.
+	name := filepath.Base(m.workspace)
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		name = m.workspace
+	}
+	segs = append(segs, fitSeg{typeStyle.Render(name), 0})
+	// git branch + dirty marker (dropped when the workspace isn't a git repo).
+	if m.gitBranch != "" {
+		git := dimStyle.Render("⎇ ") + typeStyle.Render(m.gitBranch)
+		if m.gitDirty {
+			git += recoStyle.Render("*")
+		}
+		segs = append(segs, fitSeg{git, 2})
+	}
+	// backlog readiness (dropped when there are no backlog tasks at all).
+	if len(m.backlogTasks) > 0 {
+		ready := m.menuReadyCount()
+		blocked := m.blockedTaskCount()
+		line := typeStyle.Render(fmt.Sprintf("%d", ready)) + dimStyle.Render(" ready")
+		if blocked > 0 {
+			line += dimStyle.Render(" / ") + warnStyle.Render(fmt.Sprintf("%d blocked", blocked))
+		}
+		segs = append(segs, fitSeg{line, 1})
+	}
+	// today's spend (dropped until a priced fetch reports a positive cost).
+	if m.todaySpendLoaded && m.todaySpend > 0 {
+		var spend string
+		if m.todaySpendStatus == "partial" {
+			spend = recoStyle.Render(fmt.Sprintf("$%.2f* today", m.todaySpend))
+		} else {
+			spend = successStyle.Render(fmt.Sprintf("$%.2f today", m.todaySpend))
+		}
+		segs = append(segs, fitSeg{spend, 3})
+	}
+	return "  " + fitSegmentStrip(segs, dimStyle.Render(" · "), m.w-2)
 }
 
 // fmtTokens renders a token count compactly: "842", "12.3k", "1.2M".

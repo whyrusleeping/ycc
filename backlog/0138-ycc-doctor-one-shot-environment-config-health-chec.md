@@ -64,3 +64,7 @@ Implementation:
 - 2026-07-06 review (Claude): accept — The change adds a daemon-free `ycc doctor` subcommand with a testable `runDoctor` core covering all required checks (config discovery, per-model key resolution with env→secrets precedence matching c
 …[truncated]
 - 2026-07-06 decision: accept — commit: ycc doctor: one-shot environment/config health check with remedies (task 0138); fix .gitignore /cmd/** overmatch that silently untracked cmd/ycc sources (rescues speccheck.go)
+- 2026-07-06 usage: 24,858 tok (in 94, out 24,764, cache_r 2,596,453, cache_w 125,703) · cost n/a (unpriced)
+  implementer: 13,925 tok (in 52, out 13,873, cache_r 1,455,733, cache_w 70,476) · cost n/a (unpriced)
+  coordinator: 7,710 tok (in 26, out 7,684, cache_r 1,011,196, cache_w 28,916) · cost n/a (unpriced)
+  reviewer:Claude: 3,223 tok (in 16, out 3,207, cache_r 129,524, cache_w 26,311) · cost n/a (unpriced)

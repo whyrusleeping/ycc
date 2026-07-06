@@ -64,6 +64,7 @@ func (m model) helpSections() []helpSection {
 			{"enter", "start the selected mode with the typed prompt"},
 			{"w", "jump to blocked tasks (when any are blocked)"},
 			{"s", "open a session waiting for you (when any are waiting)"},
+			{"c", "continue the last session (when one exists)"},
 			{"type…", "compose an opening prompt"},
 		}},
 		{"session", []helpBind{

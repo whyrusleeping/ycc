@@ -2084,6 +2084,140 @@ func TestWaitingSessionIndicator(t *testing.T) {
 	}
 }
 
+// TestMenuContextHeader verifies the home-menu project-context header (task
+// 0139): the project name and ready/blocked backlog counts render from the
+// backlog, the git and today's-spend segments appear only when their data has
+// arrived, and the spend segment stays hidden at zero cost.
+func TestMenuContextHeader(t *testing.T) {
+	m := model{state: stateMenu, w: 200, workspace: "/home/user/myproj", backlogTasks: []*v1.BacklogTaskSummary{
+		{Id: "0001", Status: "todo", Title: "a", Ready: true},
+		{Id: "0002", Status: "todo", Title: "b", Ready: true},
+		{Id: "0003", Status: "in_progress", Title: "c", Ready: true},
+		{Id: "0004", Status: "todo", Title: "d", Ready: false},
+		{Id: "0005", Status: "blocked", Title: "e"},
+	}}
+	m.prompt = newChatInput("test")
+
+	view := ansi.Strip(m.menuView())
+	if !strings.Contains(view, "myproj") {
+		t.Fatalf("header missing project name:\n%s", view)
+	}
+	if !strings.Contains(view, "3 ready") {
+		t.Fatalf("header missing ready count (want 3):\n%s", view)
+	}
+	if !strings.Contains(view, "1 blocked") {
+		t.Fatalf("header missing blocked count (want 1):\n%s", view)
+	}
+	// Git + spend segments absent until their data arrives.
+	if strings.Contains(view, "⎇") {
+		t.Fatalf("git segment present before git info loaded:\n%s", view)
+	}
+	if strings.Contains(view, "today") {
+		t.Fatalf("spend segment present before spend loaded:\n%s", view)
+	}
+
+	// Git info arrives -> branch + dirty marker shown.
+	updated, _ := m.Update(menuGitMsg{branch: "main", dirty: true})
+	m = updated.(model)
+	view = ansi.Strip(m.menuView())
+	if !strings.Contains(view, "main") || !strings.Contains(view, "⎇") {
+		t.Fatalf("header missing git branch after menuGitMsg:\n%s", view)
+	}
+
+	// Zero-cost spend still hides the segment.
+	updated, _ = m.Update(menuSpendMsg{cost: 0, status: "priced"})
+	m = updated.(model)
+	if strings.Contains(ansi.Strip(m.menuView()), "today") {
+		t.Fatalf("spend segment shown at zero cost:\n%s", m.menuView())
+	}
+
+	// Positive spend -> segment appears.
+	updated, _ = m.Update(menuSpendMsg{cost: 1.23, status: "priced"})
+	m = updated.(model)
+	view = ansi.Strip(m.menuView())
+	if !strings.Contains(view, "$1.23 today") {
+		t.Fatalf("header missing spend segment after menuSpendMsg:\n%s", view)
+	}
+}
+
+// TestMenuHeaderFitsNarrowTerminal checks the context header stays on exactly one
+// physical row and never exceeds the terminal width, dropping segments by
+// priority on a narrow terminal (task 0139).
+func TestMenuHeaderFitsNarrowTerminal(t *testing.T) {
+	for _, w := range []int{80, 40, 20, 10} {
+		m := model{state: stateMenu, w: w, workspace: "/home/user/a-rather-long-project-name",
+			gitBranch: "feature/some-long-branch-name", gitDirty: true,
+			todaySpend: 12.34, todaySpendStatus: "priced", todaySpendLoaded: true,
+			backlogTasks: []*v1.BacklogTaskSummary{
+				{Id: "0001", Status: "todo", Ready: true},
+				{Id: "0002", Status: "blocked"},
+			}}
+		header := m.menuHeader()
+		if strings.Contains(header, "\n") {
+			t.Fatalf("w=%d: header spans multiple rows:\n%q", w, header)
+		}
+		if got := lipgloss.Width(header); got > w {
+			t.Fatalf("w=%d: header width %d exceeds terminal width", w, got)
+		}
+	}
+}
+
+// TestMenuContinueLastSession verifies the "c continue last session" affordance
+// (task 0139): with a lastSession and an empty prompt, "c" reopens it; the footer
+// and body advertise the affordance; and a bare "c" mid-composition types instead.
+func TestMenuContinueLastSession(t *testing.T) {
+	// No last session: affordance absent, "c" types into the prompt.
+	f := newFakeClient()
+	f.history = []*v1.SessionSummary{
+		{SessionId: "s_last", Mode: "work", Title: "wire up the header", Status: "idle", Live: false},
+	}
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	m.w = 200
+	if strings.Contains(m.menuView(), "continue last session") {
+		t.Fatalf("continue affordance shown with no last session:\n%s", m.menuView())
+	}
+
+	// Deliver the recent session via the waiting-sessions message path.
+	updated, _ := m.Update(waitingSessionsMsg{recent: f.history[0]})
+	m = updated.(model)
+	if m.lastSession == nil || m.lastSession.SessionId != "s_last" {
+		t.Fatalf("lastSession not set from waitingSessionsMsg: %+v", m.lastSession)
+	}
+	view := m.menuView()
+	if !strings.Contains(view, "continue last session") {
+		t.Fatalf("menu missing continue affordance:\n%s", view)
+	}
+	if !strings.Contains(view, "wire up the header") {
+		t.Fatalf("continue affordance missing session title:\n%s", view)
+	}
+	if !strings.Contains(view, "c continue last") {
+		t.Fatalf("footer missing continue hint:\n%s", view)
+	}
+
+	// "c" with an empty prompt reopens the last session.
+	m = drive(t, m, "c")
+	if f.lastReopened != "s_last" {
+		t.Fatalf("c reopened %q, want s_last", f.lastReopened)
+	}
+	if m.state != stateSession || m.sessionID != "s_last" {
+		t.Fatalf("c did not attach to the last session: state=%v id=%q", m.state, m.sessionID)
+	}
+
+	// "c" typed into a non-empty prompt is not hijacked.
+	typing := model{state: stateMenu, lastSession: f.history[0]}
+	typing.prompt = newChatInput("test")
+	typing.prompt.Focus()
+	typing = typeText(t, typing, "ab")
+	updated, _ = typing.updateMenu(keyMsg("c"))
+	typing = updated.(model)
+	if typing.state != stateMenu {
+		t.Fatalf("c hijacked typing: state=%v", typing.state)
+	}
+	if typing.prompt.Value() != "abc" {
+		t.Fatalf("c not typed into prompt, got %q", typing.prompt.Value())
+	}
+}
+
 // TestPreviousSessionsReopen drives the menu -> session browser -> reopen flow
 // (spec §18.6): ctrl+r opens the browser and loads the list, ↓ moves the cursor,
 // and `o` reopens the selected session via ResumeSession, entering the session
