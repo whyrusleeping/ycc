@@ -75,3 +75,7 @@ Verify: go build ./... && go test ./... ; eyeball `ycc export` output against a 
 - 2026-07-06 review (Claude): accept — The change adds a new `internal/export` package (markdown.go + helpers.go + thorough table of tests) and a `ycc export <session-id> [--out] [--full] [--project]` CLI command registered in newRootComma
 …[truncated]
 - 2026-07-06 decision: accept — commit: cli: add `ycc export` — session transcript to shareable markdown with TUI-parity folding (task 0144)
+- 2026-07-06 usage: 55,183 tok (in 186, out 54,997, cache_r 4,371,775, cache_w 307,862) · cost n/a (unpriced)
+  implementer: 33,906 tok (in 82, out 33,824, cache_r 2,249,239, cache_w 87,078) · cost n/a (unpriced)
+  coordinator: 13,081 tok (in 54, out 13,027, cache_r 1,303,615, cache_w 170,924) · cost n/a (unpriced)
+  reviewer:Claude: 8,196 tok (in 50, out 8,146, cache_r 818,921, cache_w 49,860) · cost n/a (unpriced)
