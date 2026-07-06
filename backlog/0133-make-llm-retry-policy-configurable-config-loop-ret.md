@@ -75,3 +75,7 @@ Verification: go build ./... && go test ./... (or at least ./internal/config ./i
 …[truncated]
 - 2026-07-06 decision: accept — commit: config: make LLM retry policy configurable via [retry] block (task 0133)  Plumb an optional [retry] TOML block (max_attempts / base_delay_ms / max_delay_ms) through config.Registry.RetryPolicy() into 
 …[truncated]
+- 2026-07-06 usage: 20,429 tok (in 146, out 20,283, cache_r 2,380,604, cache_w 89,182) · cost n/a (unpriced)
+  implementer: 15,812 tok (in 116, out 15,696, cache_r 1,928,203, cache_w 52,518) · cost n/a (unpriced)
+  coordinator: 3,054 tok (in 16, out 3,038, cache_r 383,827, cache_w 17,583) · cost n/a (unpriced)
+  reviewer:Claude: 1,563 tok (in 14, out 1,549, cache_r 68,574, cache_w 19,081) · cost n/a (unpriced)

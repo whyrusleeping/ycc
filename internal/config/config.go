@@ -320,7 +320,7 @@ type Config struct {
 	Notify Notify `toml:"notify,omitempty"`
 	// Retry configures automatic retry of transient LLM API failures (task 0133,
 	// spec §7.2). All fields default to 0 (unset) — an absent [retry] block keeps
-	// today's engine default (engine.DefaultRetryPolicy: 3 attempts, 500ms→30s).
+	// today's engine default (engine.DefaultRetryPolicy: 8 attempts, 500ms→30s).
 	Retry Retry `toml:"retry,omitempty"`
 }
 
@@ -964,6 +964,13 @@ func (r *Registry) Build(name string) (engine.Turner, string, error) {
 		return nil, "", fmt.Errorf("unknown model %q", name)
 	}
 	c := gollama.NewClient(m.BaseURL)
+	// Disable gollama's internal HTTP transport retry ring (429/503/529). That
+	// ring uses uncancellable time.Sleep and is invisible to subscribers, and
+	// stacking it under the loop-level ring double-counts a persistent rate
+	// limit. Transient API failures are instead retried solely by the engine
+	// loop (engine.Loop.runTurn, spec §7.2), which is ctx-aware and broadcasts
+	// transient `retry` events.
+	c.SetMaxRetries(0)
 	key := resolveKey(m)
 	switch m.Backend {
 	case "anthropic":
@@ -986,8 +993,9 @@ func (r *Registry) Build(name string) (engine.Turner, string, error) {
 	default:
 		return nil, "", fmt.Errorf("model %q: unsupported backend %q", name, m.Backend)
 	}
-	// Retry of transient API failures is handled by the engine loop itself
+	// Retry of transient API failures is handled solely by the engine loop
 	// (engine.Loop.runTurn, spec §7.2) — ctx-aware and visible to live
-	// subscribers — so the client is returned unwrapped.
+	// subscribers. gollama's own transport retry ring was disabled above
+	// (SetMaxRetries(0)), so this is the only retry ring.
 	return c, m.Model, nil
 }

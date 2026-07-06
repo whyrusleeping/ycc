@@ -16,24 +16,25 @@ import (
 // it out), the Emitter (so live subscribers see transient "retry" events), and
 // the error classification (apierror.go) all meet.
 //
-// Layering note: gollama's HTTP transport ALSO retries 429/503/529 internally
-// (5 attempts, 5s→80s exponential backoff) before its error ever reaches us.
-// The loop-level retry therefore mostly covers what gollama does not — other
-// 5xx, 408, and transport/network failures — and adds a slower second ring for
-// persistent rate limiting. A rate-limited request can thus stall for several
-// minutes in gollama silently; the transient retry events emitted here only
-// cover the loop-level ring.
+// Layering note: gollama's HTTP transport can also retry 429/503/529 internally,
+// but ycc disables that ring explicitly (SetMaxRetries(0) in
+// config.Registry.Build) precisely because it uses uncancellable time.Sleep and
+// is invisible to subscribers. The loop-level retry defined here is therefore the
+// single, ctx-aware, event-visible retry ring covering rate limiting, other 5xx,
+// 408, and transport/network failures alike.
 type RetryPolicy struct {
 	MaxAttempts int
 	BaseDelay   time.Duration
 	MaxDelay    time.Duration
 }
 
-// DefaultRetryPolicy returns a sensible policy: three total attempts (two
-// retries) with exponential backoff from 500ms capped at 30s.
+// DefaultRetryPolicy returns a sensible policy: eight total attempts (seven
+// retries) with exponential backoff from 500ms capped at 30s (worst-case ≈60s of
+// jittered backoff). This is the only retry ring — gollama's transport retry is
+// disabled by ycc — so the budget deliberately tolerates transient rate limiting.
 func DefaultRetryPolicy() RetryPolicy {
 	return RetryPolicy{
-		MaxAttempts: 3,
+		MaxAttempts: 8,
 		BaseDelay:   500 * time.Millisecond,
 		MaxDelay:    30 * time.Second,
 	}

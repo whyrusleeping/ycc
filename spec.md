@@ -413,13 +413,15 @@ providers' context-window phrasings), or `unknown` — plus the parsed HTTP stat
 **retryable** verdict. Retry decisions, context-window detection
 (`IsContextLengthError`), and error events all use this one taxonomy.
 
-**Retry lives in the loop** (`Loop.runTurn`, policy `Loop.Retry`; zero value = 3 total
+**Retry lives in the loop** (`Loop.runTurn`, policy `Loop.Retry`; zero value = 8 total
 attempts, exponential backoff 500ms→30s with equal jitter). The loop is where the run
 ctx (a stopped session cancels a pending backoff instead of sleeping it out), the
 emitter (each backoff broadcasts a transient `retry` event, §5), and the classification
 meet. Non-retryable failures surface immediately; retries exhausted surface the
-original error. (Layering note: gollama's transport additionally retries 429/503/529
-internally before its error ever reaches the loop.) The policy is **configurable** via an
+original error. (Layering note: gollama's transport can also retry 429/503/529
+internally, but ycc disables that ring — `SetMaxRetries(0)` in `config.Registry.Build` —
+because it uses uncancellable `time.Sleep` and is invisible to subscribers, so the
+loop's is the single, ctx-aware, event-visible retry ring.) The policy is **configurable** via an
 optional `[retry]` block (`max_attempts` / `base_delay_ms` / `max_delay_ms`); an absent
 block keeps today's default, each unset field falls back to the default, and
 `max_attempts = 1` disables loop-level retry entirely. It is plumbed through
@@ -770,7 +772,7 @@ reviewers   = "high"           # one level for the whole reviewer fan-out
 max_tokens  = 32000  # per-turn output token cap (0 => backend default)
 max_turns   = 1000   # per-Run tool-call turn cap; runaway/cost backstop (0 => engine default, 1000)
 
-# [retry]                 # optional transient-LLM-failure retry policy (§7.2); absent => engine default (3 attempts, 500ms→30s)
+# [retry]                 # optional transient-LLM-failure retry policy (§7.2); absent => engine default (8 attempts, 500ms→30s)
 # max_attempts  = 3       # total attempts incl. first; 1 disables retry (0/unset => default)
 # base_delay_ms = 500     # first backoff step, doubles each attempt (0/unset => default)
 # max_delay_ms  = 30000   # backoff cap (0/unset => default; must be >= base_delay_ms)
