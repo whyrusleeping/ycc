@@ -3465,6 +3465,89 @@ func TestPickerFooterMentionsNumbers(t *testing.T) {
 	}
 }
 
+// A pending question longer than the terminal width must word-wrap in the
+// picker footer (task 0149) rather than being clipped/ellipsised: the full text
+// is present across wrapped lines and no rendered line overflows the width.
+func TestPickerWrapsLongQuestion(t *testing.T) {
+	f := newFakeClient()
+	m := model{
+		client: f, ctx: context.Background(),
+		state: stateSession, status: "running", sessionID: "s1", follow: true,
+		input:    newSessionInput(),
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+	}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(model)
+
+	long := strings.TrimSpace(strings.Repeat("wrapme ", 30))
+	m.appendEvent(&v1.Event{
+		Seq: 1, Type: "question_asked", Actor: "coordinator",
+		DataJson: `{"question":"` + long + `","options":["yes","no"]}`,
+	})
+	if !m.picking || m.wizActive {
+		t.Fatalf("expected a single-question picker (picking=%v wizActive=%v)", m.picking, m.wizActive)
+	}
+
+	assertPickerWraps := func(width int) {
+		picker := m.pickerView()
+		for _, ln := range strings.Split(picker, "\n") {
+			if w := lipgloss.Width(ln); w > m.w {
+				t.Fatalf("width %d: picker line width %d exceeds %d: %q", width, w, m.w, ln)
+			}
+		}
+		joined := strings.ReplaceAll(stripANSI(picker), "\n", " ")
+		if got := strings.Count(joined, "wrapme"); got != 30 {
+			t.Fatalf("width %d: found %d wrapme tokens (clipped?), want 30:\n%s", width, got, picker)
+		}
+		// The layout accounting must agree with the rendered footer height so the
+		// help line / viewport math stays correct after wrapping.
+		if h, want := m.footerStackHeight(), lipgloss.Height(picker); h != want {
+			t.Fatalf("width %d: footerStackHeight()=%d, want lipgloss.Height(pickerView())=%d", width, h, want)
+		}
+	}
+
+	assertPickerWraps(80)
+
+	// Reflow on resize: a narrower terminal must re-wrap and still fit.
+	updated, _ = m.Update(tea.WindowSizeMsg{Width: 48, Height: 24})
+	m = updated.(model)
+	assertPickerWraps(48)
+}
+
+// The multi-question wizard footer word-wraps a long question prompt (task 0149)
+// instead of truncating it, and every rendered line fits the terminal width.
+func TestWizardWrapsLongQuestion(t *testing.T) {
+	f := newFakeClient()
+	m := model{
+		client: f, ctx: context.Background(),
+		state: stateSession, status: "running", sessionID: "s1", follow: true,
+		input:    newSessionInput(),
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+	}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 24})
+	m = updated.(model)
+
+	long := strings.TrimSpace(strings.Repeat("wrapme ", 25))
+	m.appendEvent(&v1.Event{
+		Seq: 3, Type: "question_asked", Actor: "coordinator",
+		DataJson: `{"questions":[{"question":"` + long + `","options":["a","b"]},{"question":"short?"}]}`,
+	})
+	if !m.wizActive {
+		t.Fatalf("expected an active wizard (wizActive=%v)", m.wizActive)
+	}
+
+	wiz := m.wizardView()
+	for _, ln := range strings.Split(wiz, "\n") {
+		if w := lipgloss.Width(ln); w > m.w {
+			t.Fatalf("wizard line width %d exceeds %d: %q", w, m.w, ln)
+		}
+	}
+	joined := strings.ReplaceAll(stripANSI(wiz), "\n", " ")
+	if got := strings.Count(joined, "wrapme"); got != 25 {
+		t.Fatalf("found %d wrapme tokens (truncated?), want 25:\n%s", got, wiz)
+	}
+}
+
 // The quick-add capture overlay (task 0049) streams the capture agent's action
 // log live: each captureEvMsg appends to captureLog and is rendered in
 // captureView, and a terminal capture_result event drives the overlay to its

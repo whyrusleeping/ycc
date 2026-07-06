@@ -3990,7 +3990,7 @@ func (m model) captureView() string {
 		b.WriteString(framedInput(m.captureInput, 0) + "\n")
 	case 1:
 		// Reuse the shared interactive question UI badge the main agents use.
-		b.WriteString(questionPrompt(m.captureQuestion, w, true) + "\n\n")
+		b.WriteString(questionPrompt(m.captureQuestion, w) + "\n\n")
 		b.WriteString("Your answer:\n\n")
 		b.WriteString(framedInput(m.captureInput, 0) + "\n")
 	case 2:
@@ -8775,19 +8775,26 @@ func (m model) histModalSearchBar() string {
 }
 
 // questionPrompt renders the shared interactive-question badge used by the main
-// agents (the askStyle " ? " badge followed by the prompt). When wrapField is
-// true the prompt is word-wrapped to width w (used by the capture overlay modal);
-// otherwise it is clamped to a single physical row via oneLine (used by the
-// session picker footer, whose layout must stay exactly one row tall).
-func questionPrompt(prompt string, w int, wrapField bool) string {
+// agents (the askStyle " ? " badge followed by the prompt), word-wrapped to
+// width w. Continuation lines are hanging-indented to align under the first
+// line's text (the badge occupies 5 visible columns). Used by the capture
+// overlay modal and the session picker footer.
+func questionPrompt(prompt string, w int) string {
+	const badgeW = 5 // " " + " ? " + " "
 	badge := " " + askStyle.Render(" ? ") + " "
-	if wrapField {
-		if w < 1 {
-			w = 20
-		}
-		return badge + wrap.String(wordwrap.String(prompt, w), w)
+	if w < badgeW+1 {
+		w = badgeW + 15
 	}
-	return badge + oneLine(prompt, w)
+	lines := strings.Split(wrapTo(prompt, w-badgeW), "\n")
+	indent := strings.Repeat(" ", badgeW)
+	for i := range lines {
+		if i == 0 {
+			lines[i] = badge + lines[i]
+		} else {
+			lines[i] = indent + lines[i]
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // pickerView renders the navigable list of suggested answers plus an "other…"
@@ -8795,7 +8802,7 @@ func questionPrompt(prompt string, w int, wrapField bool) string {
 func (m model) pickerView() string {
 	var b strings.Builder
 	if m.pending != "" {
-		b.WriteString(questionPrompt(m.pending, m.w-6, false) + "\n")
+		b.WriteString(questionPrompt(m.pending, m.w) + "\n")
 	}
 	rows := append(append([]string(nil), m.pickerOpts...), "other… (type your own)")
 	for i, opt := range rows {
@@ -8829,15 +8836,29 @@ func (m model) wizardView() string {
 			marker = selStyle.Render("▸ ")
 		}
 		num := fmt.Sprintf("%d. ", i+1)
+		// Word-wrap the question so a prompt longer than the terminal width folds
+		// onto multiple lines; continuation lines hang-indent to align under the
+		// prompt text (after the "  ▸ N. " prefix).
 		prompt := q.prompt
+		promptLines := []string{prompt}
 		if m.w > 0 {
-			prompt = trunc(prompt, m.w-len(num)-4)
+			promptLines = strings.Split(wrapTo(prompt, m.w-len(num)-4), "\n")
 		}
-		line := num + prompt
-		if i == m.wizIdx {
-			line = selStyle.Render(line)
+		indent := strings.Repeat(" ", len(num)+4)
+		for j, pl := range promptLines {
+			if j == 0 {
+				line := num + pl
+				if i == m.wizIdx {
+					line = selStyle.Render(line)
+				}
+				b.WriteString("  " + marker + line + "\n")
+			} else {
+				if i == m.wizIdx {
+					pl = selStyle.Render(pl)
+				}
+				b.WriteString(indent + pl + "\n")
+			}
 		}
-		b.WriteString("  " + marker + line + "\n")
 		// Show the collected answer (or a pending marker) under each question.
 		var ansTxt string
 		if a := m.wizAnswers[i]; a.done {

@@ -66,3 +66,7 @@ Scope note: the read-only session-browser transcript replay is NOT required by t
 - 2026-07-06 review (Claude): accept — The change implements OSC 52 clipboard yank on `y` in the live session view exactly per the plan and acceptance criteria: a yankText helper extracts the right text per event type (commit_made→sha, s
 …[truncated]
 - 2026-07-06 decision: accept — commit: tui: clipboard yank via OSC 52 — `y` copies the selected transcript row (commit → sha, error → message) with a "copied ✓" flash (task 0141)
+- 2026-07-06 usage: 22,527 tok (in 146, out 22,381, cache_r 2,020,386, cache_w 100,322) · cost n/a (unpriced)
+  implementer: 10,986 tok (in 72, out 10,914, cache_r 1,062,233, cache_w 40,757) · cost n/a (unpriced)
+  coordinator: 9,556 tok (in 56, out 9,500, cache_r 892,507, cache_w 47,340) · cost n/a (unpriced)
+  reviewer:Claude: 1,985 tok (in 18, out 1,967, cache_r 65,646, cache_w 12,225) · cost n/a (unpriced)
