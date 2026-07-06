@@ -12,10 +12,31 @@ one.
 See [`spec.md`](spec.md) for the full design and [`docs/cli.md`](docs/cli.md) for
 the complete command reference.
 
+![ycc TUI — session view](docs/tui.png)
+
+*The interactive TUI streaming a work session (user turn, model turns, collapsed
+Read/Edit/Bash tool calls, and the final report). Rendered deterministically by
+the built-in snapshot renderer — regenerate with `YCC_README_SCREENSHOT_DIR=docs
+go test ./internal/tui -run TestGenerateReadmeScreenshot`.*
+
 ## Install / build
 
 ```sh
-go build -o ycc ./cmd/ycc
+go install github.com/whyrusleeping/ycc/cmd/ycc@latest   # install to $GOBIN
+go build -o ycc ./cmd/ycc                                 # or build in-tree
+```
+
+### Shell completions
+
+`ycc` ships completion scripts for bash, zsh, and fish (run
+`ycc completion --help` for Powershell and details). Source the script for your
+shell — `ycc attach`/`ycc stop` then complete against live session ids and
+`--project` completes registered project names when a daemon is reachable:
+
+```sh
+source <(ycc completion bash)                          # ~/.bashrc
+source <(ycc completion zsh)                            # ~/.zshrc
+ycc completion fish > ~/.config/fish/completions/ycc.fish
 ```
 
 ## Quick start

@@ -64,3 +64,7 @@ Verification: doc reads coherently against the named code seams (spot-check file
 - 2026-07-06 review (Claude): accept — The change is a doc-only design spike (docs/design/mcp.md) plus backlog bookkeeping, exactly as the task requires. The doc mirrors the forge-integration spike's status header and structure and covers 
 …[truncated]
 - 2026-07-06 decision: accept — commit: docs: MCP client design spike — config, lifecycle, namespacing, role/security posture, go-sdk recommendation (task 0147); file follow-on tasks 0164–0167
+- 2026-07-06 usage: 35,888 tok (in 108, out 35,780, cache_r 2,683,800, cache_w 179,438) · cost n/a (unpriced)
+  coordinator: 18,983 tok (in 70, out 18,913, cache_r 1,915,799, cache_w 77,581) · cost n/a (unpriced)
+  implementer: 14,715 tok (in 28, out 14,687, cache_r 716,137, cache_w 79,586) · cost n/a (unpriced)
+  reviewer:Claude: 2,190 tok (in 10, out 2,180, cache_r 51,864, cache_w 22,271) · cost n/a (unpriced)

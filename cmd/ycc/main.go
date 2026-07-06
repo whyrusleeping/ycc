@@ -114,6 +114,10 @@ func newRootCommand(a *app) *cli.Command {
 			"By default the daemon runs in-process and is torn down on exit (no persistence);\n" +
 			"use `ycc daemon` or `ycc --background` for a persistent daemon.",
 		Flags: globalFlags,
+		// Shell completion: `ycc completion bash|zsh|fish|pwsh` emits a script to
+		// source. Un-hide the built-in completion command so it shows in --help.
+		EnableShellCompletion:           true,
+		ConfigureShellCompletionCommand: func(c *cli.Command) { c.Hidden = false },
 		// Resolve the workspace once, before any subcommand action runs.
 		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
 			if a.workspace == "" {
@@ -189,9 +193,10 @@ func (a *app) runTUI(ctx context.Context, cmd *cli.Command) error {
 // backlog).
 func (a *app) startCommand() *cli.Command {
 	return &cli.Command{
-		Name:      "start",
-		Usage:     "start a session and stream it (type to prod the agent)",
-		ArgsUsage: "[task]",
+		Name:          "start",
+		Usage:         "start a session and stream it (type to prod the agent)",
+		ArgsUsage:     "[task]",
+		ShellComplete: a.completeWithProject(nil),
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "workspace", Usage: "workspace `dir` (default: --workspace or current directory)"},
 			&cli.StringFlag{Name: "project", Usage: "registered project `name` (overrides --workspace)"},
@@ -229,9 +234,10 @@ func (a *app) startCommand() *cli.Command {
 // attachCommand re-attaches to a running session and replays from a seq offset.
 func (a *app) attachCommand() *cli.Command {
 	return &cli.Command{
-		Name:      "attach",
-		Usage:     "re-attach to a session and stream it",
-		ArgsUsage: "<session-id>",
+		Name:          "attach",
+		Usage:         "re-attach to a session and stream it",
+		ArgsUsage:     "<session-id>",
+		ShellComplete: a.completeSessionIDs,
 		Flags: []cli.Flag{
 			&cli.Int64Flag{Name: "from", Usage: "replay events with seq greater than `N`"},
 		},
@@ -304,9 +310,10 @@ func (a *app) modesCommand() *cli.Command {
 // stopCommand stops a running session.
 func (a *app) stopCommand() *cli.Command {
 	return &cli.Command{
-		Name:      "stop",
-		Usage:     "stop a running session",
-		ArgsUsage: "<session-id>",
+		Name:          "stop",
+		Usage:         "stop a running session",
+		ArgsUsage:     "<session-id>",
+		ShellComplete: a.completeSessionIDs,
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			id := cmd.Args().First()
 			if id == "" {
@@ -429,8 +436,9 @@ func (a *app) projectList(ctx context.Context) error {
 // --since/--until bound an inclusive date range.
 func (a *app) costCommand() *cli.Command {
 	return &cli.Command{
-		Name:  "cost",
-		Usage: "show a usage/cost breakdown",
+		Name:          "cost",
+		Usage:         "show a usage/cost breakdown",
+		ShellComplete: a.completeWithProject(nil),
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "project", Usage: "registered project `name` (default: daemon default workspace)"},
 			&cli.StringFlag{Name: "by", Value: "task", Usage: "group by, comma-separated: task,model,session,agent,day"},

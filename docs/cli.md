@@ -86,8 +86,8 @@ Lists the selectable session modes:
 | Mode | Description |
 |------|-------------|
 | `chat` | Open-ended conversation and coding — no fixed workflow. |
-| `work` | Pick a backlog task, implement it, review across models, and commit. |
-| `pm` | Plan, document, and groom the backlog (spec.md, tasks, plans). No implementation. |
+| `work` | Pick a backlog task, implement it, review it across models, and commit. |
+| `pm` | Plan and intake — spec authoring, backlog grooming, new features, and bug reports. No implementation. |
 
 ### `ycc stop <session-id>` — stop a session
 
@@ -230,6 +230,25 @@ ycc --workspace ../proj doctor
 - `0` — no hard failures (warnings are allowed).
 - `1` — a **hard failure**: an unresolvable model key or a malformed config.
 
+### `ycc export <session-id>` — export a transcript to markdown
+
+Renders a session's transcript to shareable markdown: model turns, collapsed
+tool-call summaries, folded `ask_user` Q&A, review verdicts, commits, the final
+report, and a usage/cost footer. It serves live and persisted sessions
+identically. Writes to stdout by default (or a file with `--out`).
+
+| Flag | Description |
+|------|-------------|
+| `--out FILE` | write markdown to `FILE` (default: stdout) |
+| `--full` | include tool-call argument/result payloads (not just summaries) |
+| `--project NAME` | registered project name (default: daemon default workspace) |
+
+```sh
+ycc export s_abc123                       # print markdown to stdout
+ycc export s_abc123 --out session.md      # write to a file
+ycc export s_abc123 --full                # include full tool payloads
+```
+
 ### `ycc token <set|list|rm>` — machine-local secrets store
 
 Manages the machine-local secrets store. This is a purely local operation that
@@ -272,6 +291,27 @@ does not dial a client of its own.
 ```sh
 ycc daemon
 ycc daemon --addr 0.0.0.0:8787 --token "$YCC_TOKEN" --tls-cert c.pem --tls-key k.pem
+```
+
+### `ycc completion <shell>` — shell completion scripts
+
+Emits a shell completion script for `bash`, `zsh`, `fish`, or `pwsh`
+(Powershell). Source the output to enable `<tab>` completion of commands, flags,
+and — best-effort, when a daemon is reachable — live values:
+
+- `ycc attach`/`ycc stop`/`ycc export` complete against live **session ids**
+  (via `ListSessions`).
+- `--project` completes registered **project names** (via `ListProjects`), on
+  `start`, `cost`, `export`, and `task add|list|show`.
+
+Value completion is strictly best-effort: it uses an explicit `--addr` daemon or
+an already-running local daemon and **never starts one**, so completion stays
+fast and silent when no daemon is around.
+
+```sh
+source <(ycc completion bash)                          # ~/.bashrc
+source <(ycc completion zsh)                            # ~/.zshrc
+ycc completion fish > ~/.config/fish/completions/ycc.fish
 ```
 
 ## Interaction levels

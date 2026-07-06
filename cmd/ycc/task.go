@@ -45,9 +45,10 @@ func (a *app) taskCommand() *cli.Command {
 		},
 		Commands: []*cli.Command{
 			{
-				Name:      "add",
-				Usage:     "create a backlog task",
-				ArgsUsage: "\"title\"",
+				Name:          "add",
+				Usage:         "create a backlog task",
+				ArgsUsage:     "\"title\"",
+				ShellComplete: a.completeWithProject(nil),
 				Flags: []cli.Flag{
 					projectFlag(),
 					&cli.IntFlag{Name: "priority", Aliases: []string{"p"}, Usage: "priority 1..5 (default 3)"},
@@ -78,8 +79,9 @@ func (a *app) taskCommand() *cli.Command {
 				},
 			},
 			{
-				Name:  "list",
-				Usage: "list backlog tasks with readiness",
+				Name:          "list",
+				Usage:         "list backlog tasks with readiness",
+				ShellComplete: a.completeWithProject(nil),
 				Flags: []cli.Flag{
 					projectFlag(),
 					&cli.BoolFlag{Name: "all", Aliases: []string{"a"}, Usage: "include completed (done) tasks"},
@@ -93,10 +95,11 @@ func (a *app) taskCommand() *cli.Command {
 				},
 			},
 			{
-				Name:      "show",
-				Usage:     "print a single task in full",
-				ArgsUsage: "<id>",
-				Flags:     []cli.Flag{projectFlag()},
+				Name:          "show",
+				Usage:         "print a single task in full",
+				ArgsUsage:     "<id>",
+				ShellComplete: a.completeWithProject(nil),
+				Flags:         []cli.Flag{projectFlag()},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					id := strings.TrimSpace(cmd.Args().First())
 					if id == "" {

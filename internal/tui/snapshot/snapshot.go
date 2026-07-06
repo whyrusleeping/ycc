@@ -16,6 +16,7 @@ import (
 	"image/color"
 	"image/png"
 	"os"
+	"strings"
 	"sync"
 
 	uv "github.com/charmbracelet/ultraviolet"
@@ -162,7 +163,7 @@ func RenderANSI(ansiStr string, cols, rows int) (image.Image, error) {
 					Face: face,
 					Dot:  fixed.P(x*cellW, y*cellH+baseline),
 				}
-				drawer.DrawString(content)
+				drawer.DrawString(substituteMissing(content, face))
 			}
 
 			// Skip the columns spanned by a wide cell; ultraviolet leaves the
@@ -174,6 +175,52 @@ func RenderANSI(ansiStr string, cols, rows int) (image.Image, error) {
 	}
 
 	return img, nil
+}
+
+// fallbackRune is drawn in place of any rune the active face has no glyph for,
+// so missing TUI icon runes (e.g. the box-drawing / status glyphs Go Mono
+// lacks) render as a neutral mark instead of the notdef "tofu" box.
+const fallbackRune = '•'
+
+// substituteMissing replaces every rune the face has no glyph for with a
+// fallback the face does have, so cell content never rasterizes as the notdef
+// box. Spaces and runes already present in the face pass through unchanged.
+// GlyphAdvance reports ok=false for a rune that maps to glyph index 0 (notdef),
+// which is exactly the missing-glyph case.
+func substituteMissing(s string, face font.Face) string {
+	missing := false
+	for _, r := range s {
+		if r == ' ' {
+			continue
+		}
+		if _, ok := face.GlyphAdvance(r); !ok {
+			missing = true
+			break
+		}
+	}
+	if !missing {
+		return s // fast path: every rune is covered
+	}
+
+	fb := fallbackRune
+	if _, ok := face.GlyphAdvance(fb); !ok {
+		fb = '*' // last resort; ASCII is always present
+	}
+
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r == ' ' {
+			b.WriteRune(r)
+			continue
+		}
+		if _, ok := face.GlyphAdvance(r); ok {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune(fb)
+		}
+	}
+	return b.String()
 }
 
 // WritePNG renders the ANSI frame and writes it to path as a PNG file.

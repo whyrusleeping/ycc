@@ -18,9 +18,10 @@ import (
 // and persisted sessions identically (GetSessionTranscript resolves both).
 func (a *app) exportCommand() *cli.Command {
 	return &cli.Command{
-		Name:      "export",
-		Usage:     "export a session transcript to shareable markdown",
-		ArgsUsage: "<session-id>",
+		Name:          "export",
+		Usage:         "export a session transcript to shareable markdown",
+		ArgsUsage:     "<session-id>",
+		ShellComplete: a.completeWithProject(a.completeSessionIDs),
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "out", Usage: "write markdown to `FILE` (default: stdout)"},
 			&cli.BoolFlag{Name: "full", Usage: "include tool call argument/result payloads"},
