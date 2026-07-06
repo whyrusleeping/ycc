@@ -318,6 +318,22 @@ type Config struct {
 	// user — questions, idle-with-report, errors, work-loop digests, and blocked
 	// implementers. Absent (empty URL) = disabled.
 	Notify Notify `toml:"notify,omitempty"`
+	// Retry configures automatic retry of transient LLM API failures (task 0133,
+	// spec §7.2). All fields default to 0 (unset) — an absent [retry] block keeps
+	// today's engine default (engine.DefaultRetryPolicy: 3 attempts, 500ms→30s).
+	Retry Retry `toml:"retry,omitempty"`
+}
+
+// Retry configures the loop-level retry of transient LLM API failures (task
+// 0133, spec §7.2). Each field is 0 when unset, meaning "keep the engine default
+// for that field" (see engine.DefaultRetryPolicy). MaxAttempts is the total
+// number of attempts including the first; MaxAttempts = 1 disables retry
+// entirely. BaseDelayMS is the first backoff step (milliseconds) and doubles
+// each attempt; MaxDelayMS caps it.
+type Retry struct {
+	MaxAttempts int `toml:"max_attempts,omitempty"`
+	BaseDelayMS int `toml:"base_delay_ms,omitempty"`
+	MaxDelayMS  int `toml:"max_delay_ms,omitempty"`
 }
 
 // GC configures the background session reaper (task 0054). IntervalSeconds sets
@@ -485,6 +501,12 @@ func (c *Config) validate() error {
 			return fmt.Errorf("notify.events: unknown event kind %q (valid: question, idle, error, digest, blocked)", k)
 		}
 	}
+	if c.Retry.MaxAttempts < 0 || c.Retry.BaseDelayMS < 0 || c.Retry.MaxDelayMS < 0 {
+		return fmt.Errorf("retry: max_attempts, base_delay_ms, and max_delay_ms must be non-negative")
+	}
+	if c.Retry.BaseDelayMS > 0 && c.Retry.MaxDelayMS > 0 && c.Retry.MaxDelayMS < c.Retry.BaseDelayMS {
+		return fmt.Errorf("retry: max_delay_ms (%d) must be >= base_delay_ms (%d)", c.Retry.MaxDelayMS, c.Retry.BaseDelayMS)
+	}
 	return nil
 }
 
@@ -548,6 +570,29 @@ func (r *Registry) Notify() Notify {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.cfg.Notify
+}
+
+// RetryPolicy returns the loop-level transient-failure retry policy (task 0133,
+// spec §7.2). It starts from engine.DefaultRetryPolicy and overlays each nonzero
+// [retry] config field (delays converted from milliseconds). Because the result
+// always has MaxAttempts >= 1, a configured max_attempts = 1 truly disables retry
+// (the loop's "zero value => default" fallback never kicks in). Guarded by the
+// registry lock like MaxTokens/MaxTurns so a runtime config edit is picked up on
+// the next loop build.
+func (r *Registry) RetryPolicy() engine.RetryPolicy {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	p := engine.DefaultRetryPolicy()
+	if r.cfg.Retry.MaxAttempts > 0 {
+		p.MaxAttempts = r.cfg.Retry.MaxAttempts
+	}
+	if r.cfg.Retry.BaseDelayMS > 0 {
+		p.BaseDelay = time.Duration(r.cfg.Retry.BaseDelayMS) * time.Millisecond
+	}
+	if r.cfg.Retry.MaxDelayMS > 0 {
+		p.MaxDelay = time.Duration(r.cfg.Retry.MaxDelayMS) * time.Millisecond
+	}
+	return p
 }
 
 // ReadRoots returns a copy of the configured extra trusted read-only roots

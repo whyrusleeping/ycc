@@ -26,6 +26,9 @@ type CaptureDeps struct {
 	Backend   string
 	Thinking  engine.Thinking
 	MaxTok    int
+	// Retry is the loop-level transient-failure retry policy applied to the
+	// capture loop. Zero value => engine default (task 0133).
+	Retry engine.RetryPolicy
 }
 
 // CaptureResult is the outcome of a capture run: either a created task
@@ -138,6 +141,7 @@ func RunCapture(ctx context.Context, cd CaptureDeps, rec event.Recorder, descrip
 		Emitter:         emitter,
 		MaxTok:          cd.MaxTok,
 		MaxTurns:        captureMaxTurns,
+		Retry:           cd.Retry,
 		Thinking:        cd.Thinking.Thinking,
 		Effort:          cd.Thinking.Effort,
 		ThinkingDisplay: cd.Thinking.ThinkingDisplay,

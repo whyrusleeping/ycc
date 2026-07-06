@@ -6,7 +6,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/secrets"
 )
 
@@ -806,5 +808,120 @@ func TestNotifyDefaultDisabled(t *testing.T) {
 	})
 	if n := reg.Notify(); n.URL != "" {
 		t.Fatalf("default Notify.URL = %q, want empty (disabled)", n.URL)
+	}
+}
+
+// A [retry] block round-trips through Save/Load and RetryPolicy overlays each
+// configured field onto the engine default (task 0133, spec §7.2).
+func TestRetryRoundTripAndPolicy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ycc.toml")
+	orig := &Config{
+		Models: map[string]Model{"claude": {Backend: "anthropic", BaseURL: "u", Model: "m", KeyEnv: "K"}},
+		Roles:  Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"}},
+		Retry:  Retry{MaxAttempts: 5, BaseDelayMS: 250, MaxDelayMS: 10000},
+	}
+	if err := Save(path, orig); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !reflect.DeepEqual(got.Retry, orig.Retry) {
+		t.Fatalf("retry round-trip mismatch: got=%+v want=%+v", got.Retry, orig.Retry)
+	}
+
+	reg := NewRegistry(got)
+	want := engine.RetryPolicy{MaxAttempts: 5, BaseDelay: 250 * time.Millisecond, MaxDelay: 10 * time.Second}
+	if p := reg.RetryPolicy(); p != want {
+		t.Fatalf("Registry.RetryPolicy() = %+v, want %+v", p, want)
+	}
+}
+
+// [retry] parses from TOML and a partial block overlays only the set fields,
+// leaving the rest at the engine default.
+func TestRetryParsePartialOverlay(t *testing.T) {
+	const src = `
+[models.c]
+backend = "ollama"
+model = "m"
+
+[roles]
+coordinator = "c"
+implementer = "c"
+reviewers = ["c"]
+
+[retry]
+max_attempts = 7
+`
+	path := filepath.Join(t.TempDir(), "ycc.toml")
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Retry.MaxAttempts != 7 {
+		t.Fatalf("Retry.MaxAttempts = %d, want 7", c.Retry.MaxAttempts)
+	}
+	def := engine.DefaultRetryPolicy()
+	want := engine.RetryPolicy{MaxAttempts: 7, BaseDelay: def.BaseDelay, MaxDelay: def.MaxDelay}
+	if p := NewRegistry(c).RetryPolicy(); p != want {
+		t.Fatalf("RetryPolicy() = %+v, want %+v (only max_attempts overlaid)", p, want)
+	}
+}
+
+// An absent [retry] block yields exactly the engine default policy.
+func TestRetryDefault(t *testing.T) {
+	reg := NewRegistry(&Config{
+		Models: map[string]Model{"c": {Backend: "ollama", Model: "m"}},
+		Roles:  Roles{Coordinator: "c", Implementer: "c", Reviewers: []string{"c"}},
+	})
+	if p := reg.RetryPolicy(); p != engine.DefaultRetryPolicy() {
+		t.Fatalf("default RetryPolicy() = %+v, want %+v", p, engine.DefaultRetryPolicy())
+	}
+}
+
+// max_attempts = 1 disables retry entirely (policy has MaxAttempts 1, so the
+// loop's "zero => default" fallback never kicks in).
+func TestRetryMaxAttemptsOneDisables(t *testing.T) {
+	reg := NewRegistry(&Config{
+		Models: map[string]Model{"c": {Backend: "ollama", Model: "m"}},
+		Roles:  Roles{Coordinator: "c", Implementer: "c", Reviewers: []string{"c"}},
+		Retry:  Retry{MaxAttempts: 1},
+	})
+	if p := reg.RetryPolicy(); p.MaxAttempts != 1 {
+		t.Fatalf("RetryPolicy().MaxAttempts = %d, want 1 (retry disabled)", p.MaxAttempts)
+	}
+}
+
+// validate rejects negative retry values and max_delay_ms < base_delay_ms.
+func TestRetryValidation(t *testing.T) {
+	base := func() *Config {
+		return &Config{
+			Models: map[string]Model{"c": {Backend: "ollama", Model: "m"}},
+			Roles:  Roles{Coordinator: "c", Implementer: "c", Reviewers: []string{"c"}},
+		}
+	}
+	neg := base()
+	neg.Retry = Retry{MaxAttempts: -1}
+	if err := neg.validate(); err == nil {
+		t.Fatal("validate with negative max_attempts succeeded, want error")
+	}
+	negDelay := base()
+	negDelay.Retry = Retry{BaseDelayMS: -5}
+	if err := negDelay.validate(); err == nil {
+		t.Fatal("validate with negative base_delay_ms succeeded, want error")
+	}
+	inverted := base()
+	inverted.Retry = Retry{BaseDelayMS: 1000, MaxDelayMS: 500}
+	if err := inverted.validate(); err == nil {
+		t.Fatal("validate with max_delay_ms < base_delay_ms succeeded, want error")
+	}
+	ok := base()
+	ok.Retry = Retry{BaseDelayMS: 500, MaxDelayMS: 500}
+	if err := ok.validate(); err != nil {
+		t.Fatalf("validate with equal delays failed: %v", err)
 	}
 }

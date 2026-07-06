@@ -1322,6 +1322,7 @@ func (m *Manager) newSession(absWS, id, mode, level, prompt string, log *event.L
 		Asker:       inter,
 		MaxTok:      m.reg.MaxTokens(),
 		MaxTurns:    m.reg.MaxTurns(),
+		Retry:       m.reg.RetryPolicy(),
 		ReadRoots:   m.reg.ReadRoots(),
 		Jobs:        jobs.NewRegistry(),
 	}
@@ -1366,7 +1367,7 @@ func (m *Manager) newSession(absWS, id, mode, level, prompt string, log *event.L
 		loop := &engine.Loop{
 			Client: client, Model: model, ModelName: coord, Backend: m.reg.BackendFor(coord),
 			System: sys, Tools: reg, Emitter: emitter,
-			MaxTok: m.reg.MaxTokens(), MaxTurns: m.reg.MaxTurns(),
+			MaxTok: m.reg.MaxTokens(), MaxTurns: m.reg.MaxTurns(), Retry: m.reg.RetryPolicy(),
 			Thinking: th.Thinking, Effort: th.Effort, ThinkingDisplay: th.ThinkingDisplay,
 		}
 		loop.Steer = s
@@ -1871,6 +1872,7 @@ func (m *Manager) CaptureBacklogItem(ctx context.Context, project, description, 
 		Backend:   m.reg.BackendFor(coord),
 		Thinking:  engine.Thinking{}, // reasoning OFF for a fast capture
 		MaxTok:    m.reg.MaxTokens(),
+		Retry:     m.reg.RetryPolicy(),
 	}
 	var rec event.Recorder
 	if emit != nil {

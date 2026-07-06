@@ -85,3 +85,7 @@ Verify: buf generate clean, go build ./... && go test ./...
 - 2026-07-06 review (Claude): accept — The change implements a daemon-side, best-effort webhook (ntfy.sh-compatible) push notifier exactly as planned. Config gains a `[notify]` block (url/auth/events) with validation and a Registry accesso
 …[truncated]
 - 2026-07-06 decision: accept — commit: daemon: push notifications via ntfy-compatible webhook for questions, idle, errors, digests, blocked (task 0142)
+- 2026-07-06 usage: 55,080 tok (in 290, out 54,790, cache_r 8,487,982, cache_w 287,378) · cost n/a (unpriced)
+  implementer: 32,578 tok (in 192, out 32,386, cache_r 6,436,146, cache_w 119,717) · cost n/a (unpriced)
+  coordinator: 19,133 tok (in 74, out 19,059, cache_r 1,879,660, cache_w 141,980) · cost n/a (unpriced)
+  reviewer:Claude: 3,369 tok (in 24, out 3,345, cache_r 172,176, cache_w 25,681) · cost n/a (unpriced)

@@ -94,6 +94,9 @@ type Deps struct {
 	Asker       Asker
 	MaxTok      int
 	MaxTurns    int // per-Run tool-call turn cap; 0 => engine default backstop
+	// Retry is the loop-level transient-failure retry policy applied to subagent
+	// loops (implementer/reviewers). Zero value => engine default (task 0133).
+	Retry engine.RetryPolicy
 	// ReviewTier resolves a requested review tier name (possibly empty) into a
 	// concrete ReviewPlan — which reviewer agents to spawn, or that the
 	// coordinator self-reviews (spec §13). Nil-safe: when unset, spawn_reviewers
@@ -200,6 +203,7 @@ func (d *Deps) newLoop(spec AgentSpec, system string, reg *tools.Registry, actor
 		Emitter:         d.Emitter.With(actor),
 		MaxTok:          d.MaxTok,
 		MaxTurns:        d.MaxTurns,
+		Retry:           d.Retry,
 		Thinking:        spec.Thinking,
 		Effort:          spec.Effort,
 		ThinkingDisplay: spec.ThinkingDisplay,
