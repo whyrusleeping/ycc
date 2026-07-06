@@ -69,3 +69,7 @@ Replace the pm-mode `spec_check` agent tool with a daemon-free `ycc spec-check` 
 - 2026-07-05 review (Claude): accept — The change correctly replaces the pm-mode `spec_check` agent tool with a daemon-free `ycc spec-check` CLI subcommand. The new command (cmd/ycc/speccheck.go) resolves the workspace via the global --wor
 …[truncated]
 - 2026-07-05 decision: accept — commit: Replace the spec_check pm tool with a daemon-free `ycc spec-check` CLI subcommand (task 0135; also renumber backlog id collision 0133→0135)
+- 2026-07-05 usage: 19,466 tok (in 122, out 19,344, cache_r 2,633,504, cache_w 112,698) · cost n/a (unpriced)
+  implementer: 12,120 tok (in 76, out 12,044, cache_r 2,143,159, cache_w 70,266) · cost n/a (unpriced)
+  coordinator: 5,296 tok (in 26, out 5,270, cache_r 337,528, cache_w 18,855) · cost n/a (unpriced)
+  reviewer:Claude: 2,050 tok (in 20, out 2,030, cache_r 152,817, cache_w 23,577) · cost n/a (unpriced)
