@@ -72,3 +72,7 @@ Verification: `go build ./... && go test ./internal/daemon/... ./internal/web/..
 …[truncated]
 - 2026-07-06 decision: accept — commit: daemon: --web flag serving embedded web client via go:embed (task 0151)  New internal/web package embeds placeholder SPA shell assets (dist/) and exposes an http.Handler; buildHandler mounts it at "/"
 …[truncated]
+- 2026-07-06 usage: 13,328 tok (in 70, out 13,258, cache_r 673,488, cache_w 59,024) · cost n/a (unpriced)
+  implementer: 7,563 tok (in 36, out 7,527, cache_r 351,330, cache_w 22,389) · cost n/a (unpriced)
+  coordinator: 4,572 tok (in 24, out 4,548, cache_r 292,240, cache_w 24,781) · cost n/a (unpriced)
+  reviewer:Claude: 1,193 tok (in 10, out 1,183, cache_r 29,918, cache_w 11,854) · cost n/a (unpriced)
