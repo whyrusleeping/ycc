@@ -334,7 +334,7 @@ type model struct {
 	backlogBlockedOnly bool
 	backlogVP          viewport.Model // scrollable viewport for the detail view
 	// backlogStatusPrompt is set while the browser waits for a status-choice digit
-	// (spec §18.5 grooming, task 0099): 1..5 map to todo/in_progress/in_review/done/blocked.
+	// (spec §18.5 grooming, task 0099): 1..6 map to todo/in_progress/in_review/done/blocked/proposed.
 	backlogStatusPrompt bool
 	// backlogNotice is a transient message shown in the browser footer (update
 	// errors, "workspace not local", etc.); cleared on the next successful action.
@@ -4636,6 +4636,8 @@ func statusForDigit(k string) (string, bool) {
 		return "done", true
 	case "5":
 		return "blocked", true
+	case "6":
+		return "proposed", true
 	}
 	return "", false
 }
@@ -4722,7 +4724,7 @@ func (m model) backlogView() string {
 		b.empty = "(no blocked tasks)"
 	}
 	if m.backlogStatusPrompt {
-		b.hint = "set status: 1 todo · 2 in_progress · 3 in_review · 4 done · 5 blocked · esc cancel"
+		b.hint = "set status: 1 todo · 2 in_progress · 3 in_review · 4 done · 5 blocked · 6 proposed · esc cancel"
 	} else if m.backlogNotice != "" {
 		b.hint = m.backlogNotice
 	} else if n := len(m.backlogSelected); n > 0 {
@@ -4905,7 +4907,7 @@ func (m model) taskDetailView(t *v1.TaskDetail) string {
 	}
 	hint += " · esc/← back · ctrl+c quit "
 	if m.backlogStatusPrompt {
-		hint = " set status: 1 todo · 2 in_progress · 3 in_review · 4 done · 5 blocked · esc cancel "
+		hint = " set status: 1 todo · 2 in_progress · 3 in_review · 4 done · 5 blocked · 6 proposed · esc cancel "
 	} else if m.backlogNotice != "" {
 		hint = " " + m.backlogNotice + " "
 	}

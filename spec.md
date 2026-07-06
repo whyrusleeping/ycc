@@ -269,7 +269,7 @@ Task file: `backlog/0007-add-token-auth.md`
 ---
 id: "0007"
 title: Add token auth to the daemon
-status: todo            # todo | in_progress | in_review | done | blocked
+status: todo            # proposed | todo | in_progress | in_review | done | blocked
 priority: 2             # 1 highest
 created: 2026-06-25
 updated: 2026-06-25
@@ -295,6 +295,14 @@ Why this exists and what "done" means in prose.
 `docs` package responsibilities: parse/write task files, validate frontmatter,
 append to a task's work log, and provide `list/get/create/update` used by
 the coordinator tools.
+
+`proposed` sits before `todo` in the lifecycle: it marks an idea captured during
+ideation (typically by the agent) that the user has not accepted as real scope. Proposed
+tasks are durable backlog entries but are never *ready* — `list_backlog` doesn't mark them
+`[READY]` and the work pipeline never picks them up. Promotion to `todo` (via
+`update_task` or the backlog browser) is the explicit acceptance act. `create_task`
+takes an optional initial status (`todo`, the default, or `proposed`); agent prompts
+direct un-endorsed ideas to `proposed`.
 
 `spec_refs` are free-form strings: a bare section title (e.g. `"Architecture"`) refers to the
 spec entry point, while `path#Section` (e.g. `"docs/rpc.md#Protocol"`) references a section of

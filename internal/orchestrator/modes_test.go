@@ -183,6 +183,42 @@ func TestListBacklogReadiness(t *testing.T) {
 	}
 }
 
+// A "proposed" task is an idea awaiting the user's acceptance: create_task can
+// file it directly, and list_backlog must never mark it READY (it stays out of
+// the work pipeline's ready pool until promoted to todo).
+func TestCreateTaskProposedNeverReady(t *testing.T) {
+	d := depsFor(t)
+	res, _ := createTask(d).Call(context.Background(), map[string]any{"title": "an idea", "status": "proposed"})
+	if !strings.Contains(res.Content, "[proposed]") {
+		t.Fatalf("create_task result should carry the proposed status: %q", res.Content)
+	}
+	got, err := d.Docs.Get("0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != docs.StatusProposed {
+		t.Fatalf("status = %q, want proposed", got.Status)
+	}
+
+	out, _ := listBacklog(d).Call(context.Background(), map[string]any{})
+	if strings.Contains(out.Content, "[READY]") {
+		t.Fatalf("proposed task must not be READY:\n%s", out.Content)
+	}
+	if !strings.Contains(out.Content, "proposed task(s)") {
+		t.Fatalf("expected proposed-count note:\n%s", out.Content)
+	}
+
+	// Default (no status) stays todo; a bogus status is rejected.
+	res, _ = createTask(d).Call(context.Background(), map[string]any{"title": "real work"})
+	if !strings.Contains(res.Content, "[todo]") {
+		t.Fatalf("default create_task should be todo: %q", res.Content)
+	}
+	res, _ = createTask(d).Call(context.Background(), map[string]any{"title": "bad", "status": "done"})
+	if !strings.Contains(res.Content, "invalid initial status") {
+		t.Fatalf("expected invalid-status error: %q", res.Content)
+	}
+}
+
 func TestSwitchToWorkSignalsModeChangeWithTask(t *testing.T) {
 	d := depsFor(t)
 	res, _ := switchToWork(d).Call(context.Background(), map[string]any{"task_id": "0021", "plan": "do the thing"})

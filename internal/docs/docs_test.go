@@ -47,6 +47,26 @@ func TestNextIDIncrements(t *testing.T) {
 	}
 }
 
+func TestCreateWithStatus(t *testing.T) {
+	s := NewStore(t.TempDir())
+	p, err := s.CreateWithStatus("an idea", "", 3, nil, nil, StatusProposed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Get(p.ID)
+	if got.Status != StatusProposed {
+		t.Fatalf("status = %q, want proposed", got.Status)
+	}
+	// Empty status defaults to todo.
+	d, err := s.CreateWithStatus("default", "", 3, nil, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Get(d.ID); got.Status != StatusTodo {
+		t.Fatalf("status = %q, want todo", got.Status)
+	}
+}
+
 func TestUpdateStatus(t *testing.T) {
 	s := NewStore(t.TempDir())
 	s.Create("task", "", 1, nil, nil)

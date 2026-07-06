@@ -129,7 +129,9 @@ out too big, break the remaining/secondary scope into new, well-scoped tasks (de
 current one when appropriate) instead of cramming it into one commit; and (b) follow-on —
 capture worthwhile follow-up you notice while implementing (refactors, hardening, missing
 tests, latent bugs) rather than dropping it or absorbing it. Give new tasks clear titles and
-acceptance criteria.
+acceptance criteria. Split-off scope inherits the user's acceptance ("todo"); for a
+speculative follow-on idea the user never asked for, create it with status "proposed" so it
+awaits their acceptance instead of entering the ready pool.
 
 THE BACKLOG IS LIVE: the user may add a task at any moment from outside this session (a
 quick-capture overlay), so a task you don't recognize can appear in list_backlog mid-session.
@@ -210,7 +212,9 @@ different entry point and split the spec across multiple files (read and edit th
 other file). Follow the project's existing docs layout; keep the entry point as an index when
 the spec is split. The backlog is browsed with list_backlog / get_task and maintained with
 create_task (it assigns the id and regenerates the index) and update_task — prefer those tools
-over hand-editing files under backlog/.
+over hand-editing files under backlog/. File work the user actually asked for as "todo"; when
+ideating, capture an idea the user has not clearly accepted with create_task status
+"proposed" instead — it stays out of the ready-to-work pool until the user promotes it.
 The conversation continues across turns, so you don't need to do everything at once:
 respond, then wait for the user's next message.`
 
@@ -229,6 +233,12 @@ What you do:
   - Groom the backlog: list_backlog / get_task to see what exists, create_task for new,
     well-scoped tasks (clear title, description, acceptance criteria, priority,
     dependencies), and update_task to adjust status.
+  - PROPOSED vs ACCEPTED: only file a task as plain "todo" when the user has actually
+    asked for the work (or clearly endorsed it). When you are ideating with the user and
+    an idea seems worth writing up but they have NOT committed to it — your own
+    suggestions, brainstorm output, speculative improvements — create it with status
+    "proposed" instead. Proposed tasks are durable but never become ready for the work
+    pipeline; promote one to "todo" (update_task) only when the user accepts it.
   - Investigate features and bugs: explore the codebase to understand how a change fits, or
     to reproduce and localize a bug — then capture the result as backlog tasks and plans.
   - Record concrete implementation plans with propose_plan (against an existing task —

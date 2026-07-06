@@ -42,6 +42,12 @@ func lockFor(dir string) *sync.Mutex {
 type Status string
 
 const (
+	// StatusProposed marks an idea captured during ideation that the user has
+	// not (yet) accepted as real scope. Proposed tasks are durable backlog
+	// entries but sit BEFORE todo in the lifecycle: they are never "ready",
+	// so the work pipeline does not pick them up. Promotion to todo is the
+	// explicit acceptance act.
+	StatusProposed   Status = "proposed"
 	StatusTodo       Status = "todo"
 	StatusInProgress Status = "in_progress"
 	StatusInReview   Status = "in_review"
@@ -167,13 +173,21 @@ func (s *Store) getLocked(id string) (*Task, error) {
 }
 
 // Create writes a new task file, assigning the next id and a slug from the title.
+// The task starts in the default accepted state (todo).
 func (s *Store) Create(title, body string, priority int, dependsOn, specRefs []string) (*Task, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.createLocked(title, body, priority, dependsOn, specRefs)
+	return s.CreateWithStatus(title, body, priority, dependsOn, specRefs, StatusTodo)
 }
 
-func (s *Store) createLocked(title, body string, priority int, dependsOn, specRefs []string) (*Task, error) {
+// CreateWithStatus is Create with an explicit initial status — e.g.
+// StatusProposed for ideas captured during ideation that the user has not yet
+// accepted. An empty status defaults to todo.
+func (s *Store) CreateWithStatus(title, body string, priority int, dependsOn, specRefs []string, status Status) (*Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.createLocked(title, body, priority, dependsOn, specRefs, status)
+}
+
+func (s *Store) createLocked(title, body string, priority int, dependsOn, specRefs []string, status Status) (*Task, error) {
 	if strings.TrimSpace(title) == "" {
 		return nil, fmt.Errorf("title is required")
 	}
@@ -185,8 +199,11 @@ func (s *Store) createLocked(title, body string, priority int, dependsOn, specRe
 	if strings.TrimSpace(body) == "" {
 		body = "## Description\n\n## Acceptance criteria\n\n## Work log\n"
 	}
+	if status == "" {
+		status = StatusTodo
+	}
 	t := &Task{
-		ID: id, Title: title, Status: StatusTodo, Priority: priority,
+		ID: id, Title: title, Status: status, Priority: priority,
 		Created: today, Updated: today,
 		DependsOn: dependsOn, SpecRefs: specRefs,
 		Body: ensureWorkLog(body), Slug: slugify(title),

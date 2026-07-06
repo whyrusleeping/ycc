@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/whyrusleeping/gollama"
+	"github.com/whyrusleeping/ycc/internal/docs"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/tools"
 )
@@ -201,12 +202,15 @@ func headerTitle(line string) string {
 
 func createTask(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
-		Name:        "create_task",
-		Description: "Create a new backlog task. Returns the assigned id.",
+		Name: "create_task",
+		Description: "Create a new backlog task. Returns the assigned id. Set status 'proposed' for an idea the user " +
+			"has not clearly accepted as scope (e.g. something you suggested during ideation that seems worth writing " +
+			"up): it is kept in the backlog but never becomes ready for the work pipeline until the user promotes it to 'todo'.",
 		Params: tools.Obj(map[string]any{
 			"title":       tools.StrProp("short task title"),
 			"description": tools.StrProp("description and acceptance criteria (markdown)"),
 			"priority":    map[string]any{"type": "integer", "description": "1 (highest) .. 5; default 3"},
+			"status":      map[string]any{"type": "string", "enum": []string{"todo", "proposed"}, "description": "initial status: 'todo' (default) for accepted work; 'proposed' for an idea awaiting the user's acceptance"},
 			"depends_on":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "task ids this depends on"},
 			"spec_refs":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "spec references this relates to: a bare section title refers to the spec entry point; `path#Section` references a section of another doc in the docs set"},
 		}, "title"),
@@ -214,13 +218,32 @@ func createTask(d *Deps) *gollama.Tool {
 			title, _ := tools.GetString(params, "title")
 			desc, _ := tools.GetString(params, "description")
 			body := taskBody(desc)
-			t, err := d.Docs.Create(title, body, getInt(params, "priority", 3), getStrings(params, "depends_on"), getStrings(params, "spec_refs"))
+			status, err := initialStatus(params)
 			if err != nil {
 				return tools.ErrResult("create_task: %v", err), nil
 			}
-			d.Emitter.Emit(event.DocUpdated, map[string]any{"task": t.ID, "created": true})
-			return tools.OkResult("created task " + t.ID + ": " + t.Title), nil
+			t, err := d.Docs.CreateWithStatus(title, body, getInt(params, "priority", 3), getStrings(params, "depends_on"), getStrings(params, "spec_refs"), status)
+			if err != nil {
+				return tools.ErrResult("create_task: %v", err), nil
+			}
+			d.Emitter.Emit(event.DocUpdated, map[string]any{"task": t.ID, "created": true, "status": string(t.Status)})
+			return tools.OkResult("created task " + t.ID + " [" + string(t.Status) + "]: " + t.Title), nil
 		},
+	}
+}
+
+// initialStatus reads create_task's optional "status" param: todo (default) or
+// proposed. Any other value is rejected — the remaining lifecycle states are
+// reached via update_task, not at creation.
+func initialStatus(params any) (docs.Status, error) {
+	raw, _ := tools.GetString(params, "status")
+	switch docs.Status(strings.TrimSpace(raw)) {
+	case "", docs.StatusTodo:
+		return docs.StatusTodo, nil
+	case docs.StatusProposed:
+		return docs.StatusProposed, nil
+	default:
+		return "", fmt.Errorf("invalid initial status %q (want todo or proposed)", raw)
 	}
 }
 

@@ -210,7 +210,8 @@ func listBacklog(d *Deps) *gollama.Tool {
 		Name: "list_backlog",
 		Description: "List backlog tasks with id, status, priority, title, and dependencies. Each open todo/blocked " +
 			"task is annotated [READY] when all of its dependencies are done, or [blocked by <ids>] otherwise, and a " +
-			"trailing summary lists the ids that are ready to start. Completed (done) tasks are hidden unless include_done is true.",
+			"trailing summary lists the ids that are ready to start. 'proposed' tasks are ideas awaiting the user's " +
+			"acceptance — never ready to start. Completed (done) tasks are hidden unless include_done is true.",
 		Params: tools.Obj(map[string]any{"include_done": tools.BoolProp("include completed (done) tasks in the output (default false)")}),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			ts, err := d.Docs.List()
@@ -221,11 +222,15 @@ func listBacklog(d *Deps) *gollama.Tool {
 			byID := docs.StatusByID(ts) // built from the full list so deps on hidden done tasks still resolve
 			var b strings.Builder
 			hidden := 0
+			proposed := 0
 			var ready []string
 			for _, t := range ts {
 				if t.Status == docs.StatusDone && !includeDone {
 					hidden++
 					continue
+				}
+				if t.Status == docs.StatusProposed {
+					proposed++
 				}
 				dep := strings.Join(t.DependsOn, ",")
 				if dep == "" {
@@ -253,6 +258,9 @@ func listBacklog(d *Deps) *gollama.Tool {
 				fmt.Fprintf(&b, "\nReady to start (all deps done): %s\n", strings.Join(ready, ", "))
 			} else {
 				fmt.Fprintf(&b, "\n(no tasks are ready to start — open tasks are blocked, in progress, or in review)\n")
+			}
+			if proposed > 0 {
+				fmt.Fprintf(&b, "(%d proposed task(s) — ideas awaiting the user's acceptance; promote to 'todo' with update_task only when the user confirms)\n", proposed)
 			}
 			if hidden > 0 {
 				fmt.Fprintf(&b, "(%d done task(s) hidden — pass include_done=true to show them)\n", hidden)
@@ -720,10 +728,10 @@ func commitTool(d *Deps) *gollama.Tool {
 func updateTask(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name:        "update_task",
-		Description: "Update a task's status (todo, in_progress, in_review, done, blocked).",
+		Description: "Update a task's status (proposed, todo, in_progress, in_review, done, blocked). Promoting a 'proposed' task to 'todo' marks it accepted by the user.",
 		Params: tools.Obj(map[string]any{
 			"task_id": tools.StrProp("task id"),
-			"status":  map[string]any{"type": "string", "enum": []string{"todo", "in_progress", "in_review", "done", "blocked"}, "description": "new status"},
+			"status":  map[string]any{"type": "string", "enum": []string{"proposed", "todo", "in_progress", "in_review", "done", "blocked"}, "description": "new status"},
 		}, "task_id", "status"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			id, _ := tools.GetString(params, "task_id")

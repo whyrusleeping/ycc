@@ -544,7 +544,7 @@ func (s *Server) UpdateTask(_ context.Context, req *connect.Request[v1.UpdateTas
 	// Validate mutations up front so a bad request never touches the store.
 	if m.Status != nil {
 		switch docs.Status(m.GetStatus()) {
-		case docs.StatusTodo, docs.StatusInProgress, docs.StatusInReview, docs.StatusDone, docs.StatusBlocked:
+		case docs.StatusProposed, docs.StatusTodo, docs.StatusInProgress, docs.StatusInReview, docs.StatusDone, docs.StatusBlocked:
 		default:
 			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid status %q", m.GetStatus()))
 		}
