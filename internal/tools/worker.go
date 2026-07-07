@@ -284,6 +284,9 @@ func editFile(ws *Workspace) *gollama.Tool {
 				return errResult("Edit: missing 'old_string'"), nil
 			}
 			newStr, _ := getString(params, "new_string")
+			if newStr == oldStr {
+				return errResult("Edit: old_string and new_string are identical — nothing would change"), nil
+			}
 			abs, err := ws.resolve(fp)
 			if err != nil {
 				return errResult("Edit: %v", err), nil
@@ -295,7 +298,7 @@ func editFile(ws *Workspace) *gollama.Tool {
 			count := strings.Count(string(data), oldStr)
 			switch {
 			case count == 0:
-				return errResult("Edit: old_string not found in %s", fp), nil
+				return errResult("Edit: old_string not found in %s. %s", fp, editNotFoundHint(string(data), oldStr)), nil
 			case count > 1:
 				return errResult("Edit: old_string is not unique in %s (found %d matches); the search text must match exactly once — add more surrounding context to disambiguate", fp, count), nil
 			}
