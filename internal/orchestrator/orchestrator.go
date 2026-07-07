@@ -674,6 +674,9 @@ func askUser(d *Deps) *gollama.Tool {
 		Name: "ask_user",
 		Description: "Ask the user one or more questions and get their answers. Use only as your interaction level " +
 			"permits. In autonomous mode no human answers; you will be told to proceed on your own judgement. " +
+			"Make each question SELF-CONTAINED: the user has not been following your work, so briefly give the " +
+			"context needed to answer well — what you were doing, what you found or tried, and why you're asking " +
+			"(one to three sentences before the question itself). Don't assume they can see your transcript. " +
 			"For a single question, pass `question` (and optional `options`, a short list of suggested answers). " +
 			"To ask several questions in one round-trip, pass `questions`: a list where each item has its own " +
 			"`question` text and its own optional `options` list. The client renders options as a picker so the " +

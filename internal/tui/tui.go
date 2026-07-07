@@ -245,10 +245,25 @@ type model struct {
 	searching   bool
 	searchQuery string
 
-	vp      viewport.Model
-	input   textarea.Model
-	glam    *glamour.TermRenderer
-	pending string
+	vp viewport.Model
+	// mouse drag-select-to-copy (select.go): press-drag-release over the
+	// transcript viewport highlights a region and copies its plain text to the
+	// system clipboard via OSC 52 on release; a press+release without motion
+	// stays a plain click (expand/collapse). Coordinates are content-relative
+	// (content line index / cell column) so the highlight stays glued to the
+	// text while the viewport scrolls mid-drag.
+	selDrag      bool // left button is down; a drag may be in progress
+	selRegion    bool // the pointer moved while down: a selection exists
+	selAnchorRow int  // press point (content coords)
+	selAnchorCol int
+	selHeadRow   int // latest drag point (content coords)
+	selHeadCol   int
+	// vpContent mirrors the exact content string last handed to m.vp.SetContent,
+	// used to extract selected plain text (the viewport doesn't expose content).
+	vpContent string
+	input     textarea.Model
+	glam      *glamour.TermRenderer
+	pending   string
 	// pendingSeq is the seq of the question_asked event whose (single) question
 	// is currently awaiting an answer; 0 when none. It lets the transcript row
 	// collapse to a pointer while the footer picker shows the same prompt, so
@@ -3056,6 +3071,28 @@ func (m model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Transcript drill-in: a read-only replayed view that scrolls via the viewport.
 	if m.historyTranscript {
+		// Mouse: wheel scrolls, and a left-button drag selects + copies the
+		// region to the clipboard on release (select.go), matching the live
+		// session view. A plain click is a no-op here (rows expand via enter).
+		switch mm := msg.(type) {
+		case tea.MouseWheelMsg:
+			var cmd tea.Cmd
+			m.vp, cmd = m.vp.Update(msg)
+			return m, cmd
+		case tea.MouseClickMsg:
+			if mm.Button == tea.MouseLeft {
+				m.selMouseDown(mm.X, mm.Y)
+			}
+			return m, nil
+		case tea.MouseMotionMsg:
+			m.selMouseMotion(mm.X, mm.Y)
+			return m, nil
+		case tea.MouseReleaseMsg:
+			if text, dragged := m.selMouseUp(); dragged && text != "" {
+				return m, tea.Batch(tea.SetClipboard(text), m.noteFlash("copied ✓"))
+			}
+			return m, nil
+		}
 		key, ok := msg.(tea.KeyMsg)
 		if !ok {
 			return m, nil
@@ -3552,7 +3589,33 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseClickMsg:
+		// A left press is ambiguous until released: motion turns it into a
+		// drag-selection (select.go), an immediate release stays a click whose
+		// expand/collapse toggle is applied by the MouseReleaseMsg case below.
 		if msg.Button == tea.MouseLeft {
+			m.selMouseDown(msg.X, msg.Y)
+		}
+		return m, nil
+
+	case tea.MouseMotionMsg:
+		m.selMouseMotion(msg.X, msg.Y)
+		return m, nil
+
+	case tea.MouseReleaseMsg:
+		// wasPress (a left press recorded by selMouseDown) rather than
+		// msg.Button gates the click fallback: legacy X10 mouse encoding
+		// reports every release as Button==MouseNone.
+		wasPress := m.selDrag
+		if text, dragged := m.selMouseUp(); dragged {
+			// A drag-selection: copy it to the system clipboard (OSC 52) and
+			// confirm with the same transient flash the row-yank uses.
+			if text == "" {
+				return m, nil
+			}
+			return m, tea.Batch(tea.SetClipboard(text), m.noteFlash("copied ✓"))
+		} else if wasPress {
+			// A plain click (no drag): select + expand/collapse the row under
+			// the pointer, as before.
 			row := msg.Y - headerHeight + m.vp.YOffset()
 			if i := m.eventAt(row); i >= 0 {
 				m.selected = i
@@ -7819,7 +7882,8 @@ func (m *model) rebuild() {
 		b.WriteString(tail)
 		b.WriteByte('\n')
 	}
-	m.vp.SetContent(b.String())
+	m.vpContent = b.String()
+	m.vp.SetContent(m.vpContent)
 	if m.follow {
 		m.vp.GotoBottom()
 	}
@@ -8320,7 +8384,7 @@ func (m model) transcriptView() string {
 	top := m.titleBar(" ycc — transcript · " + title + " ")
 	body := ""
 	if m.ready {
-		body = m.vp.View()
+		body = m.overlaySelection(m.vp.View())
 	}
 	var help string
 	switch {
@@ -8705,7 +8769,7 @@ func (m model) sessionView() string {
 	top := m.statusBar()
 	body := ""
 	if m.ready {
-		body = m.vp.View()
+		body = m.overlaySelection(m.vp.View())
 	}
 	// While `/` search is being typed, a single-row search bar replaces the whole
 	// footer stack (input/picker/wizard) and help line (task 0116). footerStackHeight
@@ -8737,7 +8801,7 @@ func (m model) sessionView() string {
 		help := m.footer(" ⏸ paused — type a correction + enter to steer · enter to resume · esc settings")
 		return top + "\n" + body + "\n" + m.inputRow() + "\n" + help
 	}
-	help := m.footer(searchHint + " ? help · enter send/expand · shift+enter newline · ↑↓ select · click expand · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings · ctrl+b backlog · ctrl+o browse · ctrl+n new task")
+	help := m.footer(searchHint + " ? help · enter send/expand · shift+enter newline · ↑↓ select · click expand · drag copy · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings · ctrl+b backlog · ctrl+o browse · ctrl+n new task")
 	if m.mode == "work" {
 		// Surface the loop toggle on work sessions: shift+tab halts a running loop
 		// gracefully (current task finishes) or rolls a single session into a loop.

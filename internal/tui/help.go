@@ -74,6 +74,7 @@ func (m model) helpSections() []helpSection {
 			{"↑ / ↓", "select a turn"},
 			{"pgup / pgdn", "scroll the transcript"},
 			{"click", "expand a turn"},
+			{"drag (mouse)", "select transcript text and copy it to the clipboard on release"},
 			{"/", "search the transcript (when the input is empty)"},
 			{"n / N", "next / previous search match"},
 			{"{ / }", "jump to previous / next question"},

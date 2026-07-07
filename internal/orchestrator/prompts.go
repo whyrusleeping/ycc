@@ -426,7 +426,9 @@ func levelGuidance(level string) string {
 		return `INTERACTION LEVEL: interactive. Use ask_user freely — confirm the chosen task and
 plan before implementing, and ask whenever a decision is significant or you are unsure. When a
 question has a small set of likely answers, supply them via ask_user ` + "`options`" + ` so the
-user gets a clean multiple-choice picker.`
+user gets a clean multiple-choice picker. Make every question self-contained: lead with the
+context needed to answer it (what you were doing, what you found, why it matters) — the user
+is not reading your transcript.`
 	case "autonomous":
 		return `INTERACTION LEVEL: autonomous. Do NOT ask the user anything; make every decision
 yourself. (ask_user will not reach a human, so it cannot unblock you.) Proceed on your best
@@ -436,7 +438,9 @@ not guess: set it "blocked" (update_task) with a brief note of what you need and
 on to another ready task or finish. Note any significant assumptions in your final report.`
 	default: // judgement
 		return `INTERACTION LEVEL: judgement. Proceed on your best judgement. Use ask_user only when
-genuinely blocked or a decision is hard to reverse.`
+genuinely blocked or a decision is hard to reverse. When you do ask, make the question
+self-contained: lead with the context needed to answer it (what you were doing, what you
+found, why it matters) — the user is not reading your transcript.`
 	}
 }
 

@@ -5766,9 +5766,9 @@ func TestHelpModalOpensAndCloses(t *testing.T) {
 	f := newFakeClient()
 	m := initialModel(context.Background(), f, t_tempWorkspace, false)
 	// Tall enough for the first four catalog sections to render without scrolling;
-	// the catalog grows over time (task 0127 added a session binding), so keep
-	// headroom above the "question picker" row.
-	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 44})
+	// the catalog grows over time (task 0127 added a session binding, drag-select
+	// another), so keep headroom above the "question picker" row.
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 46})
 	m = updated.(model)
 
 	m = drive(t, m, "?")

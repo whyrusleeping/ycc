@@ -574,6 +574,10 @@ selectable picker (Claude-Code style) with an "other…" escape to free text. Wh
 absent, the user answers with free (multiline) text. See §18.3 for the UI side. The
 `Asker.Ask(ctx, question, options)` interface already carries `options` end-to-end;
 exposing it on the tool schema + answering by option is the remaining wiring.
+Questions must be **self-contained**: the user is not following the agent's transcript,
+so the tool description and interaction-level prompts direct the agent to lead each
+question with the context needed to answer it (what it was doing, what it found, why
+it's asking) rather than assuming shared context.
 
 `ask_user` can also pose **several questions in one call**: pass `questions`, a list
 where each item has its own `question` text and its own optional `options` set. The
@@ -1467,6 +1471,28 @@ rendering input — width, theme, auto-expand pref, picker/wizard state, swappin
 log — clears all three via `invalidateRender()`. New code that makes an *earlier* row's
 rendering depend on a *later* event must add a matching invalidation in `appendEvent`.
 `BenchmarkRebuildWarm`/`Cold` (internal/tui) track the win (~ms vs ~seconds at 1500 events).
+
+### 18.10 Mouse: click, wheel, drag-select-to-copy
+
+The TUI enables cell-motion mouse reporting, which necessarily disables the terminal's
+*native* drag-selection inside it. The transcript viewport (live session view and the
+read-only history transcript) therefore re-implements the affordance in-app
+(`internal/tui/select.go`):
+
+- **Wheel** scrolls the viewport (scrolling to the bottom re-arms follow mode).
+- **Click** (left press + release without motion) selects and expands/collapses the row
+  under the pointer — the toggle applies on *release*, so it can be disambiguated from a
+  drag.
+- **Drag** (left press + motion) highlights a linear, stream-order region of the rendered
+  transcript in reverse video; **release copies its plain text** (ANSI stripped, per-line
+  trailing padding trimmed) to the system clipboard via **OSC 52** (`tea.SetClipboard` —
+  the same mechanism as the `y` row-yank, so it works over SSH), confirmed by the
+  transient "copied ✓" flash. Dragging past the viewport's top/bottom edge auto-scrolls.
+
+Selection coordinates are **content-relative** (content line index / cell column), so the
+highlight stays glued to the text when the viewport scrolls mid-drag; starting a drag
+disables follow so streaming appends can't yank the view. The highlight only exists while
+the button is held — nothing lingers after release.
 
 ## 19. Onboarding flows
 
