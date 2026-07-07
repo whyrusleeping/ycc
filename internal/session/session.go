@@ -1323,7 +1323,7 @@ func (m *Manager) newSession(absWS, id, mode, level, prompt string, log *event.L
 		MaxTok:      m.reg.MaxTokens(),
 		MaxTurns:    m.reg.MaxTurns(),
 		Retry:       m.reg.RetryPolicy(),
-		ReadRoots:   m.reg.ReadRoots(),
+		WriteRoots:  m.reg.WriteRoots(),
 		Jobs:        jobs.NewRegistry(),
 	}
 

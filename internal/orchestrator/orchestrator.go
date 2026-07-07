@@ -103,10 +103,11 @@ type Deps struct {
 	// falls back to the configured reviewer fan-out (current default behaviour).
 	ReviewTier func(name string) ReviewPlan
 
-	// ReadRoots are configured trusted read-only roots outside the workspace,
-	// passed through to tool workspaces so the Read tool can access them (task
-	// 0068). Writes stay confined to the workspace.
-	ReadRoots []string
+	// WriteRoots are configured extra writable roots outside the workspace,
+	// passed through to tool workspaces so Write/Edit can target them (e.g.
+	// sibling projects). Reads are unrestricted; writes default to the
+	// workspace plus these roots.
+	WriteRoots []string
 
 	// Jobs is the session-scoped background-job registry (docs/design/async-jobs.md).
 	// When set it enables background bash (Bash run_in_background) and the
@@ -387,10 +388,10 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 			}
 			reg := tools.New()
 			reg.Add(tools.Worker(&tools.Workspace{
-				Root:      d.Workspace,
-				ReadRoots: tools.ReadRoots(d.ReadRoots),
-				Jobs:      d.Jobs,
-				Emitter:   d.Emitter.With("implementer"),
+				Root:       d.Workspace,
+				WriteRoots: tools.NormalizeRoots(d.WriteRoots),
+				Jobs:       d.Jobs,
+				Emitter:    d.Emitter.With("implementer"),
 			})...)
 			impl := d.implementer()
 			loop := d.newLoop(impl, sys(implementerSystem, "", d.Workspace), reg, "implementer")
@@ -606,7 +607,7 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 			d.reviewers = nil
 			for _, spec := range specs {
 				reg := tools.New()
-				reg.Add(tools.Reviewer(&tools.Workspace{Root: d.Workspace, ReadRoots: tools.ReadRoots(d.ReadRoots)})...)
+				reg.Add(tools.Reviewer(&tools.Workspace{Root: d.Workspace})...)
 				loop := d.newLoop(spec, inspectSys(reviewerSystem, d.Workspace), reg, "reviewer:"+spec.Name)
 				loop.Seed(reviewerPrompt(t))
 				d.reviewers = append(d.reviewers, &reviewerHandle{name: spec.Name, loop: loop})

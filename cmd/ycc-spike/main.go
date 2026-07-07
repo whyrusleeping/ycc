@@ -84,7 +84,7 @@ func main() {
 	})
 
 	reg := tools.New()
-	reg.Add(tools.Worker(&tools.Workspace{Root: absDir, ReadRoots: tools.DefaultReadRoots()})...)
+	reg.Add(tools.Worker(&tools.Workspace{Root: absDir})...)
 
 	loop := &engine.Loop{
 		Client:    client,

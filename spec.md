@@ -539,6 +539,18 @@ that isn't its to make; it ends the run with a distinct BLOCKED outcome (the rea
 the task work log) rather than a normal report. There are no separate `list_dir`/`grep`/`glob`
 tools: `Read` on a directory lists it, and searching goes through `Bash` + ripgrep.
 
+**File-access policy.** `Read` is **unrestricted**: it accepts any absolute path (relative
+paths resolve against the workspace root), so agents can read sibling projects, dependency
+source (Go module cache, GOROOT), or anything else on disk. This deliberately matches
+reality — worker/coordinator `Bash` is unrestricted, so a path-confined `Read` only degraded
+UX (the model fell back to `cat` for out-of-tree files) without adding protection. (This
+subsumes the former `read_roots` allowlist, which is gone; the config key is ignored.)
+`Write`/`Edit` stay **confined to the workspace root** as a guardrail against accidental
+out-of-tree writes (hallucinated absolute paths; worktree implementers straying into the
+main tree) — not a security boundary. The optional `write_roots` config (ycc.toml, list of
+absolute paths) names extra trusted writable roots — e.g. a sibling project the agent should
+be able to modify; containment against the workspace and each write root is symlink-aware.
+
 **Multimodal `Read`.** The `Read` tool is multimodal, mirroring Claude Code: there is **no
 separate "view image" tool**. When `Read` is given an image (PNG, JPEG, GIF, WebP) or a PDF
 it returns the bytes as a **native content block** (an image block / an Anthropic document
@@ -603,9 +615,10 @@ under a small allowlist (temp dirs, `/dev`, `/run`, the Go build/module caches) 
 the helper exits non-zero rather than running unsandboxed. When no mechanism is available
 (non-Linux, or kernel/tool support missing) it degrades to prompt-only enforcement and the
 orchestrator emits a one-off `log` (Narration) warning per `spawn_reviewers`. Relatedly,
-`Workspace.resolve` (the Write/Edit path confinement) is now **symlink-aware**: after the
-textual `../` check it resolves symlinks and rejects a path that lands outside the root
-through an in-workspace symlink.
+`Workspace.resolve` (the Write/Edit path confinement — workspace root plus configured
+`write_roots`; see the file-access policy above) is **symlink-aware**: after the
+textual `../` check it resolves symlinks and rejects a path that lands outside the allowed
+roots through an in-tree symlink.
 
 ## 9. Modes (the home menu)
 
@@ -841,6 +854,8 @@ reviewers   = "high"           # one level for the whole reviewer fan-out
 
 max_tokens  = 32000  # per-turn output token cap (0 => backend default)
 max_turns   = 1000   # per-Run tool-call turn cap; runaway/cost backstop (0 => engine default, 1000)
+
+# write_roots = ["/abs/path/to/sibling"]  # extra writable roots outside the workspace for Write/Edit (§8; reads are unrestricted)
 
 # [retry]                 # optional transient-LLM-failure retry policy (§7.2); absent => engine default (8 attempts, 500ms→30s)
 # max_attempts  = 3       # total attempts incl. first; 1 disables retry (0/unset => default)

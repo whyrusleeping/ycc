@@ -7,9 +7,7 @@ package tools
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/whyrusleeping/gollama"
@@ -243,15 +241,17 @@ func okResult(content string) *gollama.ToolResult {
 	return &gollama.ToolResult{Content: content}
 }
 
-// Workspace confines tool file operations to a root directory.
+// Workspace anchors tool file operations to a root directory. Reads are
+// unrestricted (see resolveRead); writes are confined to Root plus any
+// configured WriteRoots (see resolve).
 type Workspace struct {
 	Root string
-	// ReadRoots are absolute, trusted read-only roots OUTSIDE the workspace that
-	// the Read tool may also read from (e.g. the Go module cache and GOROOT).
-	// They relax read access only: Write/Edit stay confined to Root via resolve.
-	// Containment against these roots is symlink-aware (see resolveRead) so a
-	// symlink inside an allowed root cannot be used to escape it.
-	ReadRoots []string
+	// WriteRoots are absolute, trusted roots OUTSIDE the workspace that Write
+	// and Edit may also target (e.g. a sibling project the user wants the agent
+	// to modify). Configured via write_roots in ycc.toml. Containment against
+	// these roots is symlink-aware (see withinRoot) so a symlink inside an
+	// allowed root cannot be used to escape it.
+	WriteRoots []string
 	// OnWrite, if set, is invoked with the resolved absolute path after a
 	// successful Write or Edit. Callers use it to surface document updates
 	// (e.g. an edit to spec.md) as events; it must not block.
@@ -267,16 +267,18 @@ type Workspace struct {
 	Emitter *event.Emitter
 }
 
-// resolve cleans a user-supplied path and confines it to the workspace, for
+// resolve cleans a user-supplied path and confines it to the writable roots, for
 // WRITE access (Write/Edit). Absolute paths (the Claude-Code convention) are
-// accepted when they fall within the workspace root; relative paths are joined to
-// the root.
+// accepted when they fall within the workspace root or one of the configured
+// extra WriteRoots; relative paths are joined to the workspace root.
 //
 // Confinement is enforced in two stages: a fast TEXTUAL check that rejects "../"
 // escapes, then a symlink-aware containment check (withinRoot/evalExisting) that
-// resolves symlinks so a symlink already inside the workspace pointing outside it
-// cannot be used to write out of the root. (Agents may still have unrestricted
-// Bash; reviewer Bash is sandboxed separately — see internal/sandbox.)
+// resolves symlinks so a symlink already inside an allowed root pointing outside
+// it cannot be used to write out of it. This is a guardrail against accidental
+// out-of-tree edits (hallucinated absolute paths, worktree implementers straying
+// into the main tree), not a security boundary: agents may have unrestricted
+// Bash; reviewer Bash is sandboxed separately — see internal/sandbox.
 func (w *Workspace) resolve(p string) (string, error) {
 	if p == "" {
 		p = "."
@@ -291,52 +293,51 @@ func (w *Workspace) resolve(p string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("invalid path %q", p)
 	}
-	if relToRoot == ".." || strings.HasPrefix(relToRoot, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path %q is outside the workspace", p)
-	}
-	// Symlink-aware check: reject a path that, once symlinks are resolved, lands
-	// outside the workspace (e.g. an in-workspace symlink dir pointing elsewhere).
-	if !withinRoot(clean, w.Root) {
+	inRoot := relToRoot != ".." && !strings.HasPrefix(relToRoot, ".."+string(filepath.Separator))
+	if inRoot {
+		// Symlink-aware check: reject a path that, once symlinks are resolved,
+		// lands outside every allowed root (e.g. an in-workspace symlink dir
+		// pointing elsewhere).
+		if withinRoot(clean, w.Root) {
+			return clean, nil
+		}
+		if w.withinWriteRoots(clean) {
+			return clean, nil
+		}
 		return "", fmt.Errorf("path %q resolves outside the workspace via a symlink", p)
 	}
-	return clean, nil
+	// Outside the workspace: allowed only within a configured extra write root.
+	if w.withinWriteRoots(clean) {
+		return clean, nil
+	}
+	return "", fmt.Errorf("path %q is outside the workspace (and not within a configured write_roots entry)", p)
 }
 
-// resolveRead cleans a user-supplied path for READ access. Like resolve it
-// accepts in-workspace paths (absolute within Root, or relative to Root). In
-// addition it accepts paths that fall within one of the trusted read-only roots
-// in w.ReadRoots (e.g. the Go module cache), so the model can read dependency
-// source that lives outside the workspace. Containment against ReadRoots is
-// symlink-aware so an allowed root cannot be used to escape into arbitrary
-// locations via a symlink. Write/Edit must keep using resolve — this relaxes
-// read access only.
+// withinWriteRoots reports whether clean falls within one of the configured
+// extra writable roots, symlink-aware.
+func (w *Workspace) withinWriteRoots(clean string) bool {
+	for _, root := range w.WriteRoots {
+		if root != "" && withinRoot(clean, root) {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveRead cleans a user-supplied path for READ access. Reads are
+// UNRESTRICTED: any absolute path is accepted, and relative paths are joined to
+// the workspace root. This deliberately matches reality — worker/coordinator
+// Bash is unrestricted, so a path-confined Read only degraded UX (the model fell
+// back to `cat` for sibling projects and dependency source) without adding any
+// protection. Write/Edit must keep using resolve — writes stay confined.
 func (w *Workspace) resolveRead(p string) (string, error) {
 	if p == "" {
 		p = "."
 	}
-	var clean string
 	if filepath.IsAbs(p) {
-		clean = filepath.Clean(p)
-	} else {
-		clean = filepath.Clean(filepath.Join(w.Root, p))
+		return filepath.Clean(p), nil
 	}
-	// In-workspace fast path: same TEXTUAL ".."-rejection check resolve() uses,
-	// to preserve the current in-workspace behavior exactly.
-	if relToRoot, err := filepath.Rel(w.Root, clean); err == nil {
-		if relToRoot != ".." && !strings.HasPrefix(relToRoot, ".."+string(filepath.Separator)) {
-			return clean, nil
-		}
-	}
-	// Otherwise the path must fall within one of the trusted read-only roots.
-	for _, root := range w.ReadRoots {
-		if root == "" {
-			continue
-		}
-		if withinRoot(clean, root) {
-			return clean, nil
-		}
-	}
-	return "", fmt.Errorf("path %q is outside the workspace and not within a trusted read-only root", p)
+	return filepath.Clean(filepath.Join(w.Root, p)), nil
 }
 
 // withinRoot reports whether clean is contained within root, resolving symlinks
@@ -378,48 +379,15 @@ func evalExisting(p string) string {
 	}
 }
 
-// DefaultReadRoots returns the built-in trusted read-only roots: the Go module
-// cache and GOROOT. Module-cache resolution mirrors the Go toolchain: $GOMODCACHE
-// if set, else the first $GOPATH entry's pkg/mod, else $HOME/go/pkg/mod. Missing
-// env vars are handled gracefully (entries that cannot be resolved are skipped).
-// Each returned path is absolute and cleaned.
-func DefaultReadRoots() []string {
-	var roots []string
-	if mc := goModCache(); mc != "" {
-		roots = append(roots, mc)
-	}
-	if gr := runtime.GOROOT(); gr != "" {
-		roots = append(roots, filepath.Clean(gr))
-	}
-	return roots
-}
-
-// goModCache resolves the Go module cache directory the way the toolchain does,
-// returning "" only if even the $HOME fallback is unavailable.
-func goModCache() string {
-	if v := os.Getenv("GOMODCACHE"); v != "" {
-		return filepath.Clean(v)
-	}
-	if gp := os.Getenv("GOPATH"); gp != "" {
-		if parts := filepath.SplitList(gp); len(parts) > 0 && parts[0] != "" {
-			return filepath.Clean(filepath.Join(parts[0], "pkg", "mod"))
-		}
-	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		return filepath.Clean(filepath.Join(home, "go", "pkg", "mod"))
-	}
-	return ""
-}
-
-// ReadRoots returns the default trusted read-only roots (DefaultReadRoots)
-// followed by any caller-supplied extras, with each entry made absolute where
-// possible, cleaned, empties dropped, and duplicates removed.
-func ReadRoots(extra []string) []string {
+// NormalizeRoots cleans a caller-supplied list of extra roots (e.g. the
+// write_roots config): each entry is made absolute where possible, cleaned,
+// empties dropped, and duplicates removed.
+func NormalizeRoots(roots []string) []string {
 	var out []string
 	seen := map[string]bool{}
-	add := func(p string) {
+	for _, p := range roots {
 		if strings.TrimSpace(p) == "" {
-			return
+			continue
 		}
 		if !filepath.IsAbs(p) {
 			if abs, err := filepath.Abs(p); err == nil {
@@ -428,16 +396,10 @@ func ReadRoots(extra []string) []string {
 		}
 		p = filepath.Clean(p)
 		if seen[p] {
-			return
+			continue
 		}
 		seen[p] = true
 		out = append(out, p)
-	}
-	for _, p := range DefaultReadRoots() {
-		add(p)
-	}
-	for _, p := range extra {
-		add(p)
 	}
 	return out
 }

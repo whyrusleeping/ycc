@@ -5,6 +5,7 @@
 
 ## Codebase gotchas
 - 2026-07-06: Usage accounting: OpenAI reports cached tokens as a SUBSET of prompt_tokens while Anthropic reports cache reads/writes disjoint from input_tokens; engine/loop.go normalizes to disjoint classes at emit time and built-in default pricing lives in internal/config/default_pricing.go (config price_* always overrides).
+- 2026-07-07: File-access policy (since write_roots change): Read tool is unrestricted (any path); Write/Edit are confined to the workspace plus config write_roots (tools.Workspace.WriteRoots, symlink-aware); the old read_roots config/machinery was removed and the key is silently ignored.
 
 ## Environment & tooling
 - 2026-07-07: Tool-failure forensics: agent session transcripts live in <workspace>/.ycc/sessions/*/events.jsonl (tool_call args + tool_result pairs keyed by id) and can be replayed to diagnose tool UX issues; Edit not-found diagnostics live in internal/tools/editdiag.go.

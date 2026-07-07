@@ -68,10 +68,10 @@ func Worker(ws *Workspace) []*gollama.Tool {
 func readFile(ws *Workspace) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "Read",
-		Description: "Read a file from the workspace. Text files are returned with line numbers in cat -n format " +
-			"(line number, a tab, then the line). file_path should be an absolute path within the workspace (a " +
-			"path relative to the workspace root is also accepted). Files under trusted read-only roots outside the " +
-			"workspace (e.g. the Go module cache) are also readable. By default up to 2000 lines are returned; use " +
+		Description: "Read a file. Text files are returned with line numbers in cat -n format " +
+			"(line number, a tab, then the line). file_path may be any absolute path — including files outside " +
+			"the workspace such as sibling projects or dependency source (e.g. the Go module cache) — or a path " +
+			"relative to the workspace root. By default up to 2000 lines are returned; use " +
 			"offset (1-based start line) and limit to read a specific window of a large file. Images (PNG, JPEG, " +
 			"GIF, WebP) and PDFs are returned to you natively as visual content — just Read them like any other file. " +
 			"Passing a directory path lists its immediate entries (subdirectories are shown with a trailing '/').",
@@ -234,7 +234,8 @@ func writeFile(ws *Workspace) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "Write",
 		Description: "Write a file to the workspace, creating it or overwriting it entirely. Creates parent " +
-			"directories as needed. file_path may be absolute (within the workspace) or relative to the root.",
+			"directories as needed. file_path may be absolute (within the workspace or a configured extra " +
+			"writable root) or relative to the workspace root.",
 		Params: obj(map[string]any{
 			"file_path": strProp("absolute path to the file (or relative to the workspace root)"),
 			"content":   strProp("the full content to write to the file"),

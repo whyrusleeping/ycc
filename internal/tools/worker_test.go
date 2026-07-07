@@ -105,7 +105,8 @@ func TestEditUniqueMatch(t *testing.T) {
 func TestPathConfinement(t *testing.T) {
 	root := t.TempDir()
 	reg := workerReg(root)
-	res := dispatch(t, reg, "Read", `{"file_path":"../../etc/passwd"}`)
+	// Reads are unrestricted, but writes stay confined to the workspace.
+	res := dispatch(t, reg, "Write", `{"file_path":"../../etc/ycc-test-escape","content":"x"}`)
 	if !res.IsError || !strings.Contains(res.Content, "outside the workspace") {
 		t.Fatalf("expected confinement rejection, got %q (err=%v)", res.Content, res.IsError)
 	}

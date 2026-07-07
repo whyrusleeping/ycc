@@ -129,7 +129,7 @@ func captureCreateTask(d *Deps) *gollama.Tool {
 // creates the task without asking again.
 func RunCapture(ctx context.Context, cd CaptureDeps, rec event.Recorder, description, priorQuestion, priorAnswer string) (CaptureResult, error) {
 	emitter := event.NewEmitter(rec, "capture")
-	ws := &tools.Workspace{Root: cd.Workspace, ReadRoots: tools.ReadRoots(nil)}
+	ws := &tools.Workspace{Root: cd.Workspace}
 	d := &Deps{Workspace: cd.Workspace, Docs: cd.Docs, Emitter: emitter}
 
 	reg := tools.New()

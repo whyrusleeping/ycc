@@ -324,11 +324,12 @@ type Config struct {
 	// telemetry into an enforced guard (task 0137, spec §20.6). All fields
 	// default to 0 (unlimited) — absent config preserves today's behaviour.
 	Budget Budget `toml:"budget,omitempty"`
-	// ReadRoots lists additional trusted read-only roots OUTSIDE the workspace
-	// that the Read tool may access (task 0068). Defaults (the Go module cache
-	// and GOROOT) are always included; these extend them. Writes stay confined
-	// to the workspace regardless.
-	ReadRoots []string `toml:"read_roots,omitempty"`
+	// WriteRoots lists extra trusted writable roots OUTSIDE the workspace that
+	// the Write/Edit tools may target (e.g. sibling projects the agent should
+	// be able to modify). Reads are unrestricted (any path); writes default to
+	// the workspace only and these extend that guardrail. (Replaces the former
+	// read_roots option, which is now unnecessary and ignored.)
+	WriteRoots []string `toml:"write_roots,omitempty"`
 	// Notify configures the daemon-side push notifier (task 0142): a best-effort,
 	// async webhook (ntfy.sh-compatible) that reaches out when an agent needs the
 	// user — questions, idle-with-report, errors, work-loop digests, and blocked
@@ -611,14 +612,13 @@ func (r *Registry) RetryPolicy() engine.RetryPolicy {
 	return p
 }
 
-// ReadRoots returns a copy of the configured extra trusted read-only roots
-// outside the workspace that the Read tool may access (task 0068). The built-in
-// defaults (Go module cache, GOROOT) are added separately by the tools layer;
-// these are user-configured additions. Writes stay confined to the workspace.
-func (r *Registry) ReadRoots() []string {
+// WriteRoots returns a copy of the configured extra writable roots outside the
+// workspace that the Write/Edit tools may target (e.g. sibling projects).
+// Reads are unrestricted; this widens the write guardrail only.
+func (r *Registry) WriteRoots() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return append([]string(nil), r.cfg.ReadRoots...)
+	return append([]string(nil), r.cfg.WriteRoots...)
 }
 
 // CoordinatorName / ImplementerName / ReviewerNames expose the role assignments.

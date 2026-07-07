@@ -68,10 +68,10 @@ func Presets() []Preset {
 // doc_globs — spec §6.1) as a doc_updated event.
 func BuildMode(mode string, d *Deps, level string) (*tools.Registry, string) {
 	ws := &tools.Workspace{
-		Root:      d.Workspace,
-		ReadRoots: tools.ReadRoots(d.ReadRoots),
-		Jobs:      d.Jobs,
-		Emitter:   d.Emitter,
+		Root:       d.Workspace,
+		WriteRoots: tools.NormalizeRoots(d.WriteRoots),
+		Jobs:       d.Jobs,
+		Emitter:    d.Emitter,
 		OnWrite: func(path string) {
 			// Memory is checked FIRST: memory.md is not spec (DocFiles excludes
 			// it), but a broad doc_glob (e.g. "*.md") could still match it via
@@ -125,8 +125,10 @@ const (
 )
 
 func workspaceNote(root string) string {
-	return "Workspace root: " + root + " — Read/Write/Edit accept absolute paths within it (or paths " +
-		"relative to it), and every Bash command also starts in this directory, so commands need no `cd` here."
+	return "Workspace root: " + root + " — relative paths resolve against it, and every Bash command " +
+		"also starts in this directory, so commands need no `cd` here. Read accepts any path (sibling " +
+		"projects and dependency source outside the workspace are readable); Write/Edit are confined to " +
+		"the workspace unless extra write roots are configured."
 }
 
 // sys assembles the full system prompt every agent uses: the role's base prompt,
