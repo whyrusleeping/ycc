@@ -55,3 +55,6 @@ Set up committed Swift codegen for the Connect client per docs/design/ios-client
 …[truncated]
 - 2026-07-08 review tier: simple (coordinator self-review)
 - 2026-07-08 decision: accept — commit: iOS codegen: committed connect-swift client for proto/ycc/v1 (task 0178) + iOS client design docs & backlog
+- 2026-07-08 usage: 8,797 tok (in 50, out 8,747, cache_r 667,373, cache_w 37,858) · $1.2732
+  coordinator: 5,603 tok (in 26, out 5,577, cache_r 492,516, cache_w 15,707) · $0.9680
+  implementer: 3,194 tok (in 24, out 3,170, cache_r 174,857, cache_w 22,151) · $0.3052

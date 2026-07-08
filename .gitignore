@@ -13,3 +13,12 @@ ant-key
 .ycc/
 scratch/
 lsp.webp
+
+# iOS client (clients/ios): generated project + SPM/Xcode build detritus
+clients/ios/*.xcodeproj
+clients/ios/App/Info.plist
+clients/ios/**/xcuserdata/
+clients/ios/**/.build/
+clients/ios/**/.swiftpm/
+clients/ios/**/Package.resolved
+.DS_Store

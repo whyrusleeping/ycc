@@ -1,0 +1,51 @@
+# XcodeGen manifest for the ycc iPhone app.
+#
+# Regenerate the (git-ignored) .xcodeproj with:  xcodegen generate
+# Build for a simulator with:
+#   xcodebuild -project Ycc.xcodeproj -scheme Ycc \
+#     -destination 'generic/platform=iOS Simulator' build
+#
+# All non-UI logic lives in the local YccKit SPM package; the app target here is
+# a thin SwiftUI shell. See docs/design/ios-client.md §3/§5.
+
+name: Ycc
+options:
+  bundleIdPrefix: dev.ycc
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+packages:
+  YccKit:
+    path: YccKit
+
+targets:
+  Ycc:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - App
+    dependencies:
+      - package: YccKit
+        product: YccKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.ycc.Ycc
+        # iPhone-only (1); no iPad/universal layouts (design §2 non-goals).
+        TARGETED_DEVICE_FAMILY: 1
+        # Simulator builds need no signing identity; keep CI/agent builds simple.
+        CODE_SIGNING_ALLOWED: NO
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: ycc
+        UILaunchScreen: {}
+        # Transport security: the intended deployment is a tailnet where http://
+        # is acceptable (spec §14, design §5 "Transport security"). Allow
+        # insecure loads so a plain-http tailnet daemon works; https:// daemons
+        # are unaffected and recommended off-tailnet.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
