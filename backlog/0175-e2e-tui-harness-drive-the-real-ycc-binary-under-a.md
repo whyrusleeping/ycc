@@ -80,3 +80,7 @@ Risks/notes: x/vt's ultraviolet dependency is older than the repo's — confirm 
 …[truncated]
 - 2026-07-08 decision: accept — commit: e2e TUI harness: drive the real ycc binary under a PTY with a scripted LLM stub (task 0175)  - internal/e2e: OpenAI-compatible /chat/completions stub (JSON + SSE), creack/pty driver   with isolated en
 …[truncated]
+- 2026-07-08 usage: 70,703 tok (in 324, out 70,379, cache_r 14,542,779, cache_w 309,346) · $12.5834
+  implementer: 51,144 tok (in 204, out 50,940, cache_r 12,532,714, cache_w 160,220) · $8.5423
+  coordinator: 13,488 tok (in 60, out 13,428, cache_r 1,215,295, cache_w 107,816) · $3.2350
+  reviewer:Claude: 6,071 tok (in 60, out 6,011, cache_r 794,770, cache_w 41,310) · $0.8061

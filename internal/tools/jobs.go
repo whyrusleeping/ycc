@@ -53,19 +53,25 @@ func jobOutputTool(ws *Workspace) *gollama.Tool {
 	}
 }
 
+// defaultWaitTimeout bounds a wait call that doesn't pass timeout_s: a hung
+// job must return control to the agent (with partial reports + a "still
+// running" note) rather than block the loop forever. The agent can always
+// wait again, check job_output, or kill_job.
+const defaultWaitTimeout = 10 * time.Minute
+
 func waitTool(ws *Workspace) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "wait",
 		Description: "Block until background job(s) finish, then return their final report(s) (exit code + output " +
 			"tail). Pass job_ids to wait on specific jobs, or omit it to wait on all live jobs. 'for' selects any " +
-			"(return as soon as one finishes) or all (default; wait for every target). Optional timeout_s bounds the " +
-			"wait — on timeout you get the reports of whatever finished plus which jobs are still running (no error). " +
-			"Call this only when a job's result gates your next step; otherwise keep working and the report arrives " +
-			"automatically.",
+			"(return as soon as one finishes) or all (default; wait for every target). timeout_s bounds the wait " +
+			"(default 600) — on timeout you get the reports of whatever finished plus which jobs are still running " +
+			"(no error), and you can simply wait again. Call this only when a job's result gates your next step; " +
+			"otherwise keep working and the report arrives automatically.",
 		Params: obj(map[string]any{
 			"job_ids":   StrArrProp("the job ids to wait on; omit to wait on all live jobs"),
 			"for":       map[string]any{"type": "string", "enum": []string{"any", "all"}, "description": "return after any one finishes, or after all (default all)"},
-			"timeout_s": map[string]any{"type": "integer", "description": "optional timeout in seconds; 0/absent = wait indefinitely"},
+			"timeout_s": map[string]any{"type": "integer", "description": "timeout in seconds (default 600); on timeout you get partial reports plus the still-running ids, and can wait again"},
 		}),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			ids := getStringSlice(params, "job_ids")
@@ -74,6 +80,9 @@ func waitTool(ws *Workspace) *gollama.Tool {
 				mode = m
 			}
 			timeout := time.Duration(getInt(params, "timeout_s", 0)) * time.Second
+			if timeout <= 0 {
+				timeout = defaultWaitTimeout
+			}
 			reports, running := ws.Jobs.Wait(ctx, ids, mode, timeout)
 			if len(reports) == 0 && len(running) == 0 {
 				return okResult("wait: no matching jobs."), nil
@@ -89,7 +98,8 @@ func waitTool(ws *Workspace) *gollama.Tool {
 				if b.Len() > 0 {
 					b.WriteString("\n\n")
 				}
-				fmt.Fprintf(&b, "still running: %s", strings.Join(running, ", "))
+				fmt.Fprintf(&b, "still running after %s: %s (wait again, check job_output, or kill_job)",
+					timeout, strings.Join(running, ", "))
 			}
 			return okResult(b.String()), nil
 		},

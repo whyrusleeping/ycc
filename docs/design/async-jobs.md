@@ -70,7 +70,10 @@ The registry hands out ids, tracks liveness, and kills everything on session end
 - `job_output(job_id)` — non-blocking: output since last read (bash) or progress note
   (agent) + current status. Never consumes the final report.
 - `wait(job_ids?, for: "any"|"all", timeout_s?)` — blocks; returns the final report(s)
-  of the completed job(s). Empty `job_ids` ⇒ all live jobs.
+  of the completed job(s). Empty `job_ids` ⇒ all live jobs. The wait is always bounded:
+  `timeout_s` defaults to 600 (a hung job must not block the agent forever); on timeout
+  the tool returns partial reports plus the still-running ids, and the agent can wait
+  again, inspect `job_output`, or `kill_job`.
 - `kill_job(job_id)`.
 
 ### 3.3 Delivery of final reports: exactly once
