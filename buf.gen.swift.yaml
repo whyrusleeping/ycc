@@ -1,0 +1,15 @@
+version: v2
+clean: true
+plugins:
+  # swift-protobuf: message types
+  - remote: buf.build/apple/swift
+    out: clients/ios/YccKit/Sources/YccProto
+    opt:
+      - Visibility=Public
+  # connect-swift: SessionService client (async/await interface)
+  - remote: buf.build/connectrpc/swift
+    out: clients/ios/YccKit/Sources/YccProto
+    opt:
+      - Visibility=Public
+      - GenerateAsyncMethods=true
+      - GenerateCallbackMethods=false

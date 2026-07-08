@@ -12,3 +12,4 @@
 
 ## User preferences
 - 2026-07-08: Home-menu action affordances must be ctrl-chords, never naked letter keys (user rule; w/s/c became ctrl+w/ctrl+s/ctrl+l in 2026-07); keep new menu shortcuts consistent with this.
+- 2026-07-08: iOS client decisions (2026-07): app lives in-repo at clients/ios (XcodeGen + YccKit SPM package, iPhone-only iOS 17+, connect-swift with committed generated code), notifications stay ntfy + ycc:// deep links (no APNs), and the work loop moves daemon-side (task 0179) rather than being client-driven.

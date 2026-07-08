@@ -987,7 +987,11 @@ or a `reviews.default` naming no tier are rejected); the built-ins are always va
   encryption — the daemon logs a cleartext warning when bound non-loopback without TLS.
   The phone-facing surface is the **documented** HTTP/JSON endpoint set — see
   [`docs/remote-api.md`](docs/remote-api.md) (connection & auth, protocol primer,
-  endpoint catalog, and the event model for client authors).
+  endpoint catalog, and the event model for client authors). Two clients of that
+  surface exist beyond the TUI: the daemon-served embedded web client (**shipped**;
+  `docs/design/web-client.md`, tasks 0151–0153) and a native SwiftUI iOS app in
+  `clients/ios/` (**planned**; `docs/design/ios-client.md` — connect-swift generated
+  client, phased toward TUI parity, tasks 0178–0190).
 - **Daemon-side push notifications (task 0142).** Terminal notifications (§18, task
   0108) only help when the terminal is visible. For the "kick off autonomous work,
   walk away, answer from your phone" flow the daemon can also *reach out* via a
