@@ -104,12 +104,36 @@ func CellSize() (w, h int, err error) {
 	return cellW, cellH, nil
 }
 
+// Grid is the minimal read-only view of a cols×rows cell grid the rasterizer
+// needs: a per-coordinate cell lookup that returns nil for an unset/out-of-range
+// cell. Both ultraviolet's *ScreenBuffer and the vt package's *Emulator (and its
+// concurrency-safe *SafeEmulator) satisfy this, so RenderScreen can rasterize a
+// live terminal-emulator screen with the exact same drawing path as RenderANSI.
+type Grid interface {
+	CellAt(x, y int) *uv.Cell
+}
+
 // RenderANSI parses an ANSI terminal frame (e.g. the output of a TUI model's
 // render()/View()) into a cols×rows cell grid and rasterizes it into an
 // image. Per-cell foreground/background colors are honored, along with the
 // bold, faint and reverse SGR attributes. Cell alignment follows each cell's
 // terminal Width (so wide runes line up).
 func RenderANSI(ansiStr string, cols, rows int) (image.Image, error) {
+	if cols < 1 || rows < 1 {
+		return nil, fmt.Errorf("invalid grid size %dx%d", cols, rows)
+	}
+	buf := uv.NewScreenBuffer(cols, rows)
+	buf.Method = ansi.GraphemeWidth
+	uv.NewStyledString(ansiStr).Draw(buf, uv.Rect(0, 0, cols, rows))
+	return RenderScreen(buf, cols, rows)
+}
+
+// RenderScreen rasterizes a live cell grid (e.g. a terminal emulator's screen)
+// into a cols×rows image, using the same per-cell drawing path as RenderANSI.
+// This is the entry point the e2e TUI harness uses to screenshot the real
+// rendered screen of the ycc binary running under a PTY (see internal/e2e):
+// pipe the PTY output into a vt.Emulator and hand it straight to RenderScreen.
+func RenderScreen(grid Grid, cols, rows int) (image.Image, error) {
 	initFonts()
 	if fontInitErr != nil {
 		return nil, fontInitErr
@@ -118,15 +142,11 @@ func RenderANSI(ansiStr string, cols, rows int) (image.Image, error) {
 		return nil, fmt.Errorf("invalid grid size %dx%d", cols, rows)
 	}
 
-	buf := uv.NewScreenBuffer(cols, rows)
-	buf.Method = ansi.GraphemeWidth
-	uv.NewStyledString(ansiStr).Draw(buf, uv.Rect(0, 0, cols, rows))
-
 	img := image.NewRGBA(image.Rect(0, 0, cols*cellW, rows*cellH))
 
 	for y := 0; y < rows; y++ {
 		for x := 0; x < cols; x++ {
-			cell := buf.CellAt(x, y)
+			cell := grid.CellAt(x, y)
 			if cell == nil {
 				fillRect(img, x*cellW, y*cellH, cellW, cellH, defaultBg)
 				continue
@@ -229,6 +249,23 @@ func WritePNG(path, ansiStr string, cols, rows int) error {
 	if err != nil {
 		return err
 	}
+	return encodePNG(path, img)
+}
+
+// WriteScreenPNG rasterizes a live cell grid (a terminal emulator's screen) and
+// writes it to path as a PNG file. It is the screenshot entry point for the e2e
+// TUI harness (internal/e2e), which captures the real rendered screen of the
+// ycc binary running under a PTY.
+func WriteScreenPNG(path string, grid Grid, cols, rows int) error {
+	img, err := RenderScreen(grid, cols, rows)
+	if err != nil {
+		return err
+	}
+	return encodePNG(path, img)
+}
+
+// encodePNG writes img to path as a PNG file.
+func encodePNG(path string, img image.Image) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("create %s: %w", path, err)

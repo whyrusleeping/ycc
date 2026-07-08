@@ -1465,6 +1465,21 @@ when the `YCC_TUI_SNAPSHOT_DIR` env var is set, so ordinary `go test ./...` neve
 tree; with the var set, a maintainer or the agent (via the multimodal `Read` tool, §8) can
 open the PNG to visually inspect the rendered screen.
 
+**End-to-end harness (`internal/e2e`).** The in-process `model.View()` path above mocks the
+Bubble Tea runtime and the terminal. `internal/e2e` closes that gap by driving the **real**
+`ycc` binary: `TestMain` builds it once; each test creates a temp workspace (git repo,
+`spec.md`, `backlog/`, and a generated `ycc.toml` pointing the daemon at a scripted
+OpenAI-compatible LLM stub — the *only* mocked seam), spawns the binary under a PTY
+(`creack/pty`) with an isolated `HOME`/`XDG` and `TERM=xterm-256color`, and pipes the child's
+terminal output into an in-process VT emulator (`github.com/charmbracelet/x/vt`). Tests
+synchronize on **screen-content predicates** over the emulator's text grid (no bare sleeps),
+send real keystroke byte sequences, and never assert on pixels. The same rasterizer serves
+screenshots of the live emulator screen via `snapshot.RenderScreen(grid, cols, rows)` /
+`snapshot.WriteScreenPNG(path, grid, cols, rows)` (`RenderANSI` is now a thin wrapper over
+`RenderScreen`), again gated on `YCC_TUI_SNAPSHOT_DIR`. This exercises the real daemon, engine
+loop, tool execution, and Bubble Tea render headlessly — no external terminal, ttyd, or
+ffmpeg. See `docs/e2e-tui.md` for the layered design and how to add scenarios.
+
 ### 18.9 Transcript rendering is incremental (render caches)
 
 The session view redraws by `rebuild()`, which concatenates every event's rendered block
