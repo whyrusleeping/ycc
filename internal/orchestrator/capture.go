@@ -145,7 +145,8 @@ func RunCapture(ctx context.Context, cd CaptureDeps, rec event.Recorder, descrip
 			fmt.Sprintf("\n\nYou have a budget of %d turns (each is one model step that may include tool calls); "+
 				"pace your quick investigation so you finish by calling create_task (or ask_clarification) "+
 				"well before running out.", captureMaxTurns) +
-			"\n\n" + workspaceNote(cd.Workspace),
+			"\n\n" + batchHint +
+			"\n" + workspaceNote(cd.Workspace),
 		Tools:           reg,
 		Emitter:         emitter,
 		MaxTok:          cd.MaxTok,

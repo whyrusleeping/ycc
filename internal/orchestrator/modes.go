@@ -122,6 +122,19 @@ const (
 		"`go build ./... && go test ./...`, is fine; only the leading `cd` into the root is redundant.)"
 	editHint = "Change files with the Edit tool (exact string replacement) or Write (create/overwrite " +
 		"whole file) rather than via shell redirection."
+	// batchHint encourages batching independent tool calls into one assistant
+	// turn. Every turn is a full model round-trip that re-reads the entire
+	// conversation prefix (billed as cache reads at best), so one turn carrying
+	// three Reads costs roughly a third of three single-call turns during
+	// exploration-heavy phases. The engine dispatches a multi-call batch
+	// in-order and keeps history valid (see engine/loop.go), so this is safe to
+	// encourage for every role.
+	batchHint = "BATCH INDEPENDENT TOOL CALLS: when you need several pieces of information and no call " +
+		"depends on another's result, issue them together in a single turn — e.g. Read three related " +
+		"files at once, or combine a Read with a ripgrep search — instead of one call per turn. Each " +
+		"turn is a full round-trip that re-processes the whole conversation, so batching is " +
+		"significantly cheaper and faster. Sequence calls only when a later call genuinely needs an " +
+		"earlier result (and never guess values you haven't read yet)."
 )
 
 func workspaceNote(root string) string {
@@ -152,7 +165,7 @@ func assemble(base, level, root string, editing bool) string {
 	if editing {
 		hint += " " + editHint
 	}
-	s := base + "\n\n" + hint + "\n" + workspaceNote(root)
+	s := base + "\n\n" + hint + "\n" + batchHint + "\n" + workspaceNote(root)
 	if level != "" {
 		s += "\n\n" + levelGuidance(level)
 	}
