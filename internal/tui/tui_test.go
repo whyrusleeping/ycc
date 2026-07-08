@@ -1290,6 +1290,9 @@ func keyMsg(key string) tea.KeyPressMsg {
 	case "ctrl+_":
 		return tea.KeyPressMsg{Code: '_', Mod: tea.ModCtrl}
 	default:
+		if r, ok := strings.CutPrefix(key, "ctrl+"); ok && len([]rune(r)) == 1 {
+			return tea.KeyPressMsg{Code: []rune(r)[0], Mod: tea.ModCtrl}
+		}
 		return tea.KeyPressMsg{Code: []rune(key)[0], Text: key}
 	}
 }
@@ -1941,7 +1944,7 @@ func TestBacklogHidesDoneByDefault(t *testing.T) {
 }
 
 // TestBlockedIndicator verifies the home-menu "waiting on you" indicator appears
-// only when a backlog task is blocked, and that pressing "w" opens the backlog
+// only when a backlog task is blocked, and that pressing ctrl+w opens the backlog
 // browser filtered to the blocked tasks (task 0101).
 func TestBlockedIndicator(t *testing.T) {
 	// No blocked tasks: indicator absent.
@@ -1973,14 +1976,14 @@ func TestBlockedIndicator(t *testing.T) {
 		t.Fatalf("menu missing blocked count:\n%s", view)
 	}
 
-	// Press "w": opens the backlog browser filtered to blocked tasks.
-	updated, _ := m.updateMenu(keyMsg("w"))
+	// Press ctrl+w: opens the backlog browser filtered to blocked tasks.
+	updated, _ := m.updateMenu(keyMsg("ctrl+w"))
 	m = updated.(model)
 	if !m.backlog {
-		t.Fatalf("after w, backlog browser not open")
+		t.Fatalf("after ctrl+w, backlog browser not open")
 	}
 	if !m.backlogBlockedOnly {
-		t.Fatalf("after w, backlogBlockedOnly not set")
+		t.Fatalf("after ctrl+w, backlogBlockedOnly not set")
 	}
 	vis := m.visibleBacklogTasks()
 	if len(vis) != 2 {
@@ -2000,29 +2003,44 @@ func TestBlockedIndicator(t *testing.T) {
 	}
 }
 
-// TestBlockedIndicatorWNoOpWhenNothingBlocked ensures "w" types into the prompt
-// (not intercepted) when nothing is blocked (task 0101).
-func TestBlockedIndicatorWNoOpWhenNothingBlocked(t *testing.T) {
+// TestBlockedIndicatorBareWTypes ensures a naked "w" always types into the
+// prompt — menu affordances are ctrl-chords, so a bare letter never triggers
+// anything even when tasks are blocked — and that ctrl+w is a no-op (falls
+// through) when nothing is blocked (task 0101).
+func TestBlockedIndicatorBareWTypes(t *testing.T) {
+	// Blocked tasks present: a naked "w" still just types.
 	m := model{state: stateMenu, backlogTasks: []*v1.BacklogTaskSummary{
-		{Id: "0001", Status: "todo", Title: "a"},
+		{Id: "0001", Status: "blocked", Title: "a"},
 	}}
 	m.prompt = newChatInput("test")
 	m.prompt.Focus()
 	updated, _ := m.updateMenu(keyMsg("w"))
 	m = updated.(model)
 	if m.backlog {
-		t.Fatalf("w opened backlog browser when nothing is blocked")
+		t.Fatalf("naked w opened the backlog browser")
 	}
 	if m.prompt.Value() != "w" {
 		t.Fatalf("w not typed into prompt, got %q", m.prompt.Value())
+	}
+
+	// Nothing blocked: ctrl+w does not open the browser.
+	m2 := model{state: stateMenu, backlogTasks: []*v1.BacklogTaskSummary{
+		{Id: "0001", Status: "todo", Title: "a"},
+	}}
+	m2.prompt = newChatInput("test")
+	m2.prompt.Focus()
+	updated, _ = m2.updateMenu(keyMsg("ctrl+w"))
+	m2 = updated.(model)
+	if m2.backlog {
+		t.Fatalf("ctrl+w opened backlog browser when nothing is blocked")
 	}
 }
 
 // TestWaitingSessionIndicator verifies the home-menu "session waiting for you"
 // indicator: absent when nothing needs the user, present with a count when a
-// live session has a pending question or is paused, and that pressing "s"
+// live session has a pending question or is paused, and that pressing ctrl+s
 // attaches directly (one session) or opens the filtered browser (several), while
-// a bare "s" typed into a non-empty prompt is never hijacked (task 0107).
+// a naked "s" types into the prompt and never triggers anything (task 0107).
 func TestWaitingSessionIndicator(t *testing.T) {
 	// (a) No waiting sessions: line absent.
 	m := model{state: stateMenu}
@@ -2031,7 +2049,7 @@ func TestWaitingSessionIndicator(t *testing.T) {
 		t.Fatalf("menu shows waiting-session line when nothing needs the user:\n%s", m.menuView())
 	}
 
-	// (b) One session with a pending question: line present with count + "press s".
+	// (b) One session with a pending question: line present with count + "press ctrl+s".
 	m.waitingSessions = []*v1.SessionSummary{
 		{SessionId: "s_q", Mode: "work", Status: "running", Live: true, WaitingInput: true},
 	}
@@ -2039,29 +2057,26 @@ func TestWaitingSessionIndicator(t *testing.T) {
 	if !strings.Contains(view, "1 session waiting for your answer") {
 		t.Fatalf("menu missing waiting-session line:\n%s", view)
 	}
-	if !strings.Contains(view, "press s to open") {
-		t.Fatalf("menu missing 's' route hint:\n%s", view)
-	}
-	if !strings.Contains(view, "s open waiting session") {
-		t.Fatalf("footer missing 's' affordance:\n%s", view)
+	if !strings.Contains(view, "press ctrl+s to open") {
+		t.Fatalf("menu missing 'ctrl+s' route hint:\n%s", view)
 	}
 
-	// (c) "s" with exactly one waiting session attaches directly (reopen).
+	// (c) ctrl+s with exactly one waiting session attaches directly (reopen).
 	f := newFakeClient()
 	f.history = []*v1.SessionSummary{
 		{SessionId: "s_q", Mode: "work", Status: "running", Live: true, WaitingInput: true},
 	}
 	one := initialModel(context.Background(), f, t_tempWorkspace, false)
 	one.waitingSessions = f.history
-	one = drive(t, one, "s")
+	one = drive(t, one, "ctrl+s")
 	if f.lastReopened != "s_q" {
-		t.Fatalf("s with one waiting session reopened %q, want s_q", f.lastReopened)
+		t.Fatalf("ctrl+s with one waiting session reopened %q, want s_q", f.lastReopened)
 	}
 	if one.state != stateSession || one.sessionID != "s_q" {
-		t.Fatalf("s did not attach to the waiting session: state=%v id=%q", one.state, one.sessionID)
+		t.Fatalf("ctrl+s did not attach to the waiting session: state=%v id=%q", one.state, one.sessionID)
 	}
 
-	// (d) "s" with two waiting sessions opens the browser filtered to them.
+	// (d) ctrl+s with two waiting sessions opens the browser filtered to them.
 	f2 := newFakeClient()
 	f2.history = []*v1.SessionSummary{
 		{SessionId: "s_q", Mode: "work", Status: "running", Live: true, WaitingInput: true, LastActivity: "2024-01-02T10:00:00Z"},
@@ -2070,12 +2085,12 @@ func TestWaitingSessionIndicator(t *testing.T) {
 	}
 	two := initialModel(context.Background(), f2, t_tempWorkspace, false)
 	two.waitingSessions = []*v1.SessionSummary{f2.history[0], f2.history[1]}
-	two = drive(t, two, "s")
+	two = drive(t, two, "ctrl+s")
 	if two.state != stateHistory {
-		t.Fatalf("s with two waiting sessions state=%v, want stateHistory", two.state)
+		t.Fatalf("ctrl+s with two waiting sessions state=%v, want stateHistory", two.state)
 	}
 	if !two.historyWaitingOnly {
-		t.Fatalf("s with two waiting sessions did not set historyWaitingOnly")
+		t.Fatalf("ctrl+s with two waiting sessions did not set historyWaitingOnly")
 	}
 	if len(two.history) != 2 {
 		t.Fatalf("waiting-only browser shows %d rows, want 2 (filtered): %+v", len(two.history), two.history)
@@ -2086,7 +2101,7 @@ func TestWaitingSessionIndicator(t *testing.T) {
 		}
 	}
 
-	// (e) "s" typed into a non-empty prompt is not hijacked.
+	// (e) A naked "s" always types into the prompt, even with sessions waiting.
 	typing := model{state: stateMenu, waitingSessions: f.history}
 	typing.prompt = newChatInput("test")
 	typing.prompt.Focus()
@@ -2179,11 +2194,12 @@ func TestMenuHeaderFitsNarrowTerminal(t *testing.T) {
 	}
 }
 
-// TestMenuContinueLastSession verifies the "c continue last session" affordance
-// (task 0139): with a lastSession and an empty prompt, "c" reopens it; the footer
-// and body advertise the affordance; and a bare "c" mid-composition types instead.
+// TestMenuContinueLastSession verifies the "ctrl+l continue last session"
+// affordance (task 0139): with a lastSession and an empty prompt, ctrl+l reopens
+// it; the footer and body advertise the affordance; and a naked "c" always types
+// into the prompt.
 func TestMenuContinueLastSession(t *testing.T) {
-	// No last session: affordance absent, "c" types into the prompt.
+	// No last session: affordance absent.
 	f := newFakeClient()
 	f.history = []*v1.SessionSummary{
 		{SessionId: "s_last", Mode: "work", Title: "wire up the header", Status: "idle", Live: false},
@@ -2207,20 +2223,20 @@ func TestMenuContinueLastSession(t *testing.T) {
 	if !strings.Contains(view, "wire up the header") {
 		t.Fatalf("continue affordance missing session title:\n%s", view)
 	}
-	if !strings.Contains(view, "c continue last") {
-		t.Fatalf("footer missing continue hint:\n%s", view)
+	if !strings.Contains(ansi.Strip(view), "ctrl+l continue last session") {
+		t.Fatalf("body missing ctrl+l continue hint:\n%s", view)
 	}
 
-	// "c" with an empty prompt reopens the last session.
-	m = drive(t, m, "c")
+	// ctrl+l with an empty prompt reopens the last session.
+	m = drive(t, m, "ctrl+l")
 	if f.lastReopened != "s_last" {
-		t.Fatalf("c reopened %q, want s_last", f.lastReopened)
+		t.Fatalf("ctrl+l reopened %q, want s_last", f.lastReopened)
 	}
 	if m.state != stateSession || m.sessionID != "s_last" {
-		t.Fatalf("c did not attach to the last session: state=%v id=%q", m.state, m.sessionID)
+		t.Fatalf("ctrl+l did not attach to the last session: state=%v id=%q", m.state, m.sessionID)
 	}
 
-	// "c" typed into a non-empty prompt is not hijacked.
+	// A naked "c" always types into the prompt, even with a last session set.
 	typing := model{state: stateMenu, lastSession: f.history[0]}
 	typing.prompt = newChatInput("test")
 	typing.prompt.Focus()
@@ -4146,10 +4162,11 @@ func TestMenuLevelSelector(t *testing.T) {
 	step("left", "autonomous")   // wraps back
 	step("left", "judgement")
 
-	// The footer and level pill document/show the selector.
-	view := m.menuView()
-	if !strings.Contains(view, "←/→ level") {
-		t.Fatalf("menu footer missing level key:\n%s", view)
+	// The level pill documents/shows the selector (the footer stays minimal;
+	// the full catalog lives in the help modal).
+	view := ansi.Strip(m.menuView())
+	if !strings.Contains(view, "←/→") {
+		t.Fatalf("menu missing ←/→ level hint:\n%s", view)
 	}
 	if !strings.Contains(view, "judgement") {
 		t.Fatalf("menu view missing level pill:\n%s", view)

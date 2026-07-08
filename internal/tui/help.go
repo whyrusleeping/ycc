@@ -63,9 +63,9 @@ func (m model) helpSections() []helpSection {
 			{"← / →", "cycle the interaction level for the next session (when the prompt is empty)"},
 			{"tab", "toggle work (loop) on the work entry"},
 			{"enter", "start the selected mode with the typed prompt"},
-			{"w", "jump to blocked tasks (when any are blocked)"},
-			{"s", "open a session waiting for you (when any are waiting)"},
-			{"c", "continue the last session (when one exists)"},
+			{"ctrl+w", "jump to blocked tasks (when any are blocked; prompt empty)"},
+			{"ctrl+s", "open a session waiting for you (when any are waiting; prompt empty)"},
+			{"ctrl+l", "continue the last session (when one exists; prompt empty)"},
 			{"type…", "compose an opening prompt"},
 		}},
 		{"session", []helpBind{

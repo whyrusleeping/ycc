@@ -9,3 +9,6 @@
 
 ## Environment & tooling
 - 2026-07-07: Tool-failure forensics: agent session transcripts live in <workspace>/.ycc/sessions/*/events.jsonl (tool_call args + tool_result pairs keyed by id) and can be replayed to diagnose tool UX issues; Edit not-found diagnostics live in internal/tools/editdiag.go.
+
+## User preferences
+- 2026-07-08: Home-menu action affordances must be ctrl-chords, never naked letter keys (user rule; w/s/c became ctrl+w/ctrl+s/ctrl+l in 2026-07); keep new menu shortcuts consistent with this.

@@ -1,10 +1,10 @@
 ---
 id: "0155"
 title: Forge probe helper + ycc doctor check (gh/glab availability & auth)
-status: proposed
+status: todo
 priority: 4
 created: "2026-07-06"
-updated: "2026-07-06"
+updated: "2026-07-08"
 depends_on: []
 spec_refs:
     - docs/design/forge-integration.md#4. Auth strategy

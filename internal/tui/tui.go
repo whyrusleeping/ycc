@@ -621,7 +621,7 @@ type historyMsg struct {
 type waitingSessionsMsg struct {
 	sessions []*v1.SessionSummary
 	// recent is the most-recent session overall (ListSessionHistory returns
-	// most-recent first), used for the "c continue last session" affordance
+	// most-recent first), used for the "ctrl+l continue last session" affordance
 	// (task 0139). nil when there is no session to continue.
 	recent *v1.SessionSummary
 	err    error
@@ -3444,22 +3444,22 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.backlogShowDone = false
 			m.backlogBlockedOnly = false
 			return m, m.fetchBacklog
-		case "w":
-			// Jump to the blocked tasks the agent is waiting on (task 0101). Only
-			// intercept when something is actually blocked AND the prompt is empty —
-			// a bare letter must never hijack typing into the focused prompt (e.g.
-			// "write a test…"); mid-composition it types normally.
+		case "ctrl+w":
+			// Jump to the blocked tasks the agent is waiting on (task 0101). Menu
+			// affordances are ctrl-chords so a naked letter never triggers anything;
+			// still gated on an empty prompt because the textarea binds ctrl+w to
+			// delete-word-backward — mid-composition it must keep deleting.
 			if m.blockedTaskCount() > 0 && strings.TrimSpace(m.prompt.Value()) == "" {
 				m.backlog, m.backlogCursor, m.backlogDetail = true, 0, nil
 				m.backlogShowDone = false
 				m.backlogBlockedOnly = true
 				return m, m.fetchBacklog
 			}
-		case "s":
+		case "ctrl+s":
 			// Jump straight to a live session that needs the user — a pending
 			// ask_user question or a paused-mid-steer session (task 0107). Same
-			// guard as "w": only intercept when a session actually needs the user
-			// AND the prompt is empty, so a bare "s" never hijacks typing.
+			// gating as ctrl+w: only intercept when a session actually needs the
+			// user AND the prompt is empty, so a jump never abandons a drafted prompt.
 			if len(m.waitingSessions) > 0 && strings.TrimSpace(m.prompt.Value()) == "" {
 				if len(m.waitingSessions) == 1 {
 					// Exactly one: attach directly (ResumeSession is idempotent for a
@@ -3478,11 +3478,11 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.historyMsgTxt = "loading…"
 				return m, m.fetchHistory
 			}
-		case "c":
+		case "ctrl+l":
 			// One-key "continue last session" (task 0139): reopen the most recent
-			// session (resume = replay). Same guard as "w"/"s": only intercept when a
-			// session exists AND the prompt is empty, so a bare "c" never hijacks
-			// typing into the focused prompt mid-composition.
+			// session (resume = replay). ctrl+l = "last" (ctrl+c is quit). Same
+			// gating as ctrl+w/ctrl+s: only intercept when a session exists AND the
+			// prompt is empty, so the jump never abandons a drafted prompt.
 			if m.lastSession != nil && strings.TrimSpace(m.prompt.Value()) == "" {
 				id := m.lastSession.SessionId
 				m.status = "reopening " + short(id) + "…"
@@ -8179,11 +8179,11 @@ func (m model) menuView() string {
 			noun = "tasks"
 		}
 		b.WriteString("  " + warnStyle.Render(fmt.Sprintf("⚠ %d %s blocked — waiting on you", n, noun)) +
-			dimStyle.Render(" · press w to view") + "\n\n")
+			dimStyle.Render(" · press ctrl+w to view") + "\n\n")
 	}
 	if n := len(m.waitingSessions); n > 0 {
 		b.WriteString("  " + warnStyle.Render(waitingSessionsLine(m.waitingSessions)) +
-			dimStyle.Render(" · press s to open") + "\n\n")
+			dimStyle.Render(" · press ctrl+s to open") + "\n\n")
 	}
 	if len(m.entries) == 0 {
 		b.WriteString("  loading modes…\n")
@@ -8219,23 +8219,18 @@ func (m model) menuView() string {
 	// One-key affordance to reopen the most recent session (task 0139): resume the
 	// last conversation instead of ctrl+r → pick → o.
 	if m.lastSession != nil {
-		b.WriteString("  " + typeStyle.Render("c") + dimStyle.Render(" continue last session · "+lastSessionLabel(m.lastSession)) + "\n")
+		b.WriteString("  " + typeStyle.Render("ctrl+l") + dimStyle.Render(" continue last session · "+lastSessionLabel(m.lastSession)) + "\n")
 	}
-	footer := "  ? help · ↑/↓ choose mode · ←/→ level · tab loop (work) · type a prompt · enter start · ctrl+o browse · ctrl+r sessions · esc settings · ctrl+b backlog · ctrl+n new task"
-	if m.blockedTaskCount() > 0 {
-		footer += " · w view blocked"
-	}
-	if len(m.waitingSessions) > 0 {
-		footer += " · s open waiting session"
-	}
-	if m.lastSession != nil {
-		footer += " · c continue last"
-	}
+	// Keep the footer to the essentials — the full keybinding catalog lives in
+	// the help modal (?), and the conditional affordances (ctrl+w blocked tasks,
+	// ctrl+s waiting session, ctrl+l continue last) are advertised by their own
+	// body lines above, so they aren't repeated here.
+	footer := "  ? help · ↑/↓ choose mode · enter start · esc settings"
 	b.WriteString("\n" + m.footerBar(footer))
 	return b.String()
 }
 
-// lastSessionLabel renders the compact descriptor for the "c continue last
+// lastSessionLabel renders the compact descriptor for the "ctrl+l continue last
 // session" affordance (task 0139): the session's title (or short id when it has
 // none) plus its mode.
 func lastSessionLabel(s *v1.SessionSummary) string {
