@@ -9,6 +9,7 @@
 
 ## Environment & tooling
 - 2026-07-07: Tool-failure forensics: agent session transcripts live in <workspace>/.ycc/sessions/*/events.jsonl (tool_call args + tool_result pairs keyed by id) and can be replayed to diagnose tool UX issues; Edit not-found diagnostics live in internal/tools/editdiag.go.
+- 2026-07-08: buf went missing from PATH (2026-07-08); reinstalled via `go install github.com/bufbuild/buf/cmd/buf@latest` into ~/go/bin — Swift proto regen uses REMOTE BSR plugins (network required), Go regen uses local protoc-gen-go/protoc-gen-connect-go.
 
 ## User preferences
 - 2026-07-08: Home-menu action affordances must be ctrl-chords, never naked letter keys (user rule; w/s/c became ctrl+w/ctrl+s/ctrl+l in 2026-07); keep new menu shortcuts consistent with this.
