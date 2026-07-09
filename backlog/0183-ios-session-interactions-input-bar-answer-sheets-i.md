@@ -87,3 +87,7 @@ Add interactive controls to the iOS session view (docs/design/ios-client.md §6 
 - 2026-07-08 review (claude): accept — The revision resolves the only prior finding: session_error's message is now read from the daemon's actual "msg" field (with "error"/"text" fallbacks) in both foldPhase and systemSummary, so the error
 …[truncated]
 - 2026-07-08 decision: accept — commit: iOS: session interactions — input bar, answer sheets, interrupt/resume/stop, phase banners + smoke runbook (task 0183)
+- 2026-07-08 usage: 48,731 tok (in 182, out 48,549, cache_r 4,908,652, cache_w 404,688) · $7.2986
+  implementer: 37,292 tok (in 124, out 37,168, cache_r 4,028,662, cache_w 180,881) · $4.0747
+  reviewer:claude: 6,904 tok (in 42, out 6,862, cache_r 513,854, cache_w 95,140) · $1.0233
+  coordinator: 4,535 tok (in 16, out 4,519, cache_r 366,136, cache_w 128,667) · $2.2006

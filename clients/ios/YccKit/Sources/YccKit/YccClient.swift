@@ -130,6 +130,60 @@ public final class YccClient: Sendable {
         }
     }
 
+    // MARK: - Starting & resuming sessions (task 0185)
+
+    /// Lists the daemon's session modes and presets (`ListModes`, spec §9).
+    /// Modes carry a `name`/`title`/`description`; presets are home-menu entries
+    /// that start a `mode` with a tailored `opening_prompt`. Drives the new-session
+    /// mode/preset pickers (docs/design/ios-client.md §6 phase 2 step 5).
+    public func listModes() async throws -> (modes: [Ycc_V1_Mode], presets: [Ycc_V1_Preset]) {
+        let response = await generated.listModes(request: Ycc_V1_ListModesRequest())
+        switch response.result {
+        case .success(let message):
+            return (message.modes, message.presets)
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
+    /// Start a new session (`StartSession`, docs/remote-api.md "StartSession").
+    /// `project` is an optional registered project name (empty => daemon default
+    /// workspace); `interactionLevel` is `interactive` | `judgement` |
+    /// `autonomous`. Returns the new session id to `Subscribe` from seq 0.
+    public func startSession(
+        project: String = "", mode: String, prompt: String, interactionLevel: String
+    ) async throws -> String {
+        var request = Ycc_V1_StartSessionRequest()
+        request.project = project
+        request.mode = mode
+        request.prompt = prompt
+        request.interactionLevel = interactionLevel
+        let response = await generated.startSession(request: request)
+        switch response.result {
+        case .success(let message):
+            return message.sessionID
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
+    /// Re-open a persisted session on its existing event log (`ResumeSession`,
+    /// spec §4.5/§18.6). Idempotent if the session is already live. `project` is
+    /// optional for a single-project daemon. Returns the session id, which is
+    /// stable across the resume so the caller can `Subscribe` to the same log.
+    public func resumeSession(project: String = "", sessionId: String) async throws -> String {
+        var request = Ycc_V1_ResumeSessionRequest()
+        request.project = project
+        request.sessionID = sessionId
+        let response = await generated.resumeSession(request: request)
+        switch response.result {
+        case .success(let message):
+            return message.sessionID
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
     // MARK: - Session interactions (task 0183)
 
     /// Deliver user input to a running/idle session (`SendInput`). Steer-by-default:

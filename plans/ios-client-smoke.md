@@ -5,10 +5,11 @@ daemon. The headless logic (`YccKit`) is covered by `swift test`; the build is
 covered by `xcodegen generate && xcodebuild`. This runbook covers what those
 can't: the app actually talking to a daemon from a simulator/device.
 
-This is the **phase-1 complete** cut — the connect screen, the projects/session
-list, a live streaming transcript, answering `ask_user` questions, and the
-interactive controls (input bar, interrupt/resume/stop). It grows as later
-phases land.
+This covers the **phase-1** cut plus **phase-2 start/resume** — the connect
+screen, the projects/session list, a live streaming transcript, answering
+`ask_user` questions, the interactive controls (input bar, interrupt/resume/
+stop), and starting/resuming sessions from the phone. It grows as later phases
+land.
 
 ## Prerequisites
 
@@ -142,6 +143,52 @@ ycc start --mode build --level interactive "a task that needs a decision from yo
     dropped (e.g. stop it, then attempt Resume), or send while stopped.
     - Expected: a mild "Action failed" alert surfacing the daemon's message
       (`not_found` / `failed_precondition`), no crash.
+
+## Start & resume sessions (phase-2 step 5)
+
+These steps exercise starting a new session from the phone and resuming a
+persisted one (docs/design/ios-client.md §6 phase 2 step 5). The view-model
+logic (`NewSessionModel`) is covered by `swift test`; this covers the live
+round-trip.
+
+15. **Start a new session.** On the Sessions landing view, tap the **+** button
+    in the toolbar.
+    - Expected: the **New session** sheet presents with a **Mode** picker
+      (work/pm/chat with a description under it), any **Presets** as tappable
+      shortcuts, an **Interaction level** picker (Interactive/Judgement/
+      Autonomous with a description), a **Project** picker (only when more than
+      one project is registered; "Default" = daemon default), and a multiline
+      **Prompt** composer. Mode/level/project default to your last-used choices.
+
+16. **Preset seeds the composer.** Tap a preset (e.g. a pm framing).
+    - Expected: the mode switches to the preset's mode and the prompt field is
+      pre-filled with its opening prompt; you can edit before starting.
+
+17. **Start lands in the live stream.** Pick `work` (or `pm`/`chat`), type a
+    prompt, tap **Start**.
+    - Expected: a brief progress spinner, then the sheet dismisses and the app
+      navigates directly into the **live** session view streaming from seq 0 —
+      the green **Live** indicator shows and the first turn streams in. Re-open
+      the **+** sheet later: your mode/level/project are remembered.
+
+18. **Start error is surfaced.** Open **+**, pick a project the daemon can't
+    resolve (or stop the daemon), and tap **Start**.
+    - Expected: an inline red error row in the sheet (the daemon's message, e.g.
+      unknown project) — you stay in the composer, no crash. A 401 drops back to
+      the connect screen.
+
+19. **Resume a persisted session.** Back on the Sessions list, swipe **right**
+    on a non-live (idle/finished/stopped) row (or long-press for the context
+    menu) and tap **Resume**.
+    - Expected: `ResumeSession` re-opens it on its existing log; the app
+      navigates into the live view. The transcript is **continuous** — the same
+      event log continues (seq continuity: no gap, no restart), and new activity
+      appends. Resuming an already-live session is idempotent (still opens it).
+
+20. **Resume error is surfaced.** Swipe-resume a session the daemon has dropped
+    (or with the daemon stopped).
+    - Expected: a **"Couldn't resume"** alert with the daemon's message
+      (`not_found` / server error), no crash.
 
 ## Notes
 

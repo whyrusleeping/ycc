@@ -12,6 +12,12 @@ struct LandingView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var model: SessionListModel?
+    /// Whether the "new session" composer sheet is shown.
+    @State private var showNewSession = false
+    /// The session to push into a live streaming view (set after Start/Resume).
+    @State private var liveTarget: LiveSessionTarget?
+    /// A resume failure message to surface as an alert.
+    @State private var resumeError: String?
 
     var body: some View {
         NavigationStack {
@@ -30,9 +36,42 @@ struct LandingView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
+                    Button { showNewSession = true } label: {
+                        Label("New session", systemImage: "plus")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button("Disconnect") { app.disconnect() }
                 }
             }
+            .navigationDestination(item: $liveTarget) { target in
+                if let client = app.client {
+                    SessionView(
+                        client: client,
+                        project: target.project,
+                        sessionID: target.sessionID,
+                        live: true)
+                }
+            }
+        }
+        .sheet(isPresented: $showNewSession) {
+            if let client = app.client {
+                NewSessionView(client: client) { sessionID, project in
+                    showNewSession = false
+                    liveTarget = LiveSessionTarget(sessionID: sessionID, project: project)
+                }
+            }
+        }
+        .alert(
+            "Couldn’t resume",
+            isPresented: Binding(
+                get: { resumeError != nil },
+                set: { if !$0 { resumeError = nil } }),
+            presenting: resumeError
+        ) { _ in
+            Button("OK", role: .cancel) { resumeError = nil }
+        } message: { message in
+            Text(message)
         }
         .task { await ensureLoaded() }
         .onChange(of: scenePhase) { _, phase in
@@ -40,6 +79,30 @@ struct LandingView: View {
         }
         .onChange(of: model?.unauthorized ?? false) { _, isUnauthorized in
             if isUnauthorized { app.handleUnauthorized() }
+        }
+    }
+
+    /// Re-open a persisted session on its existing log, then navigate into the
+    /// live view. Idempotent server-side if the session is already live.
+    private func resume(_ session: Ycc_V1_SessionSummary) {
+        guard let client = app.client else { return }
+        let project = model?.selectedProject ?? ""
+        Task {
+            do {
+                let sessionID = try await client.resumeSession(
+                    project: project, sessionId: session.sessionID)
+                liveTarget = LiveSessionTarget(sessionID: sessionID, project: project)
+            } catch YccError.unauthorized {
+                app.handleUnauthorized()
+            } catch let YccError.rpc(message) {
+                resumeError = message
+            } catch let YccError.notFound(message) {
+                resumeError = message
+            } catch let YccError.failedPrecondition(message) {
+                resumeError = message
+            } catch {
+                resumeError = error.localizedDescription
+            }
         }
     }
 
@@ -84,6 +147,23 @@ struct LandingView: View {
                         }
                         .listRowBackground(section.kind == .needsAnswer
                             ? Color.orange.opacity(0.12) : nil)
+                        // Persisted (non-live) rows can be re-opened on their
+                        // existing log via ResumeSession.
+                        .swipeActions(edge: .leading) {
+                            if !session.live {
+                                Button { resume(session) } label: {
+                                    Label("Resume", systemImage: "play.circle")
+                                }
+                                .tint(.green)
+                            }
+                        }
+                        .contextMenu {
+                            if !session.live {
+                                Button { resume(session) } label: {
+                                    Label("Resume session", systemImage: "play.circle")
+                                }
+                            }
+                        }
                     }
                 } header: {
                     if let title = section.title {
@@ -128,6 +208,15 @@ struct LandingView: View {
         }
         await model?.refresh()
     }
+}
+
+/// A session to push into a live streaming view, carrying the project needed to
+/// resolve it on a multi-project daemon. `Identifiable` drives
+/// `navigationDestination(item:)`.
+private struct LiveSessionTarget: Identifiable, Hashable {
+    let sessionID: String
+    let project: String
+    var id: String { sessionID }
 }
 
 /// A single session row: title, status badge, live marker, needs-answer marker,
