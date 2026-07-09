@@ -38,7 +38,12 @@ let package = Package(
         .testTarget(
             name: "YccKitTests",
             dependencies: ["YccKit"],
-            path: "Tests/YccKitTests"
+            path: "Tests/YccKitTests",
+            resources: [
+                // Real captured transcript (converted to wire shape) used by the
+                // projection-engine fold tests. See SessionProjectionTests.
+                .copy("Fixtures/transcript.jsonl"),
+            ]
         ),
     ]
 )

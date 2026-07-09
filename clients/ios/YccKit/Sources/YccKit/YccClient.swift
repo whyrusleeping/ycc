@@ -49,6 +49,71 @@ public final class YccClient: Sendable {
         }
     }
 
+    /// Fetch a session's full event log for a read-only replayed transcript
+    /// (no stream held open). `project` is optional for a single-project daemon.
+    public func getSessionTranscript(
+        project: String = "", sessionId: String
+    ) async throws -> [Ycc_V1_Event] {
+        var request = Ycc_V1_GetSessionTranscriptRequest()
+        request.project = project
+        request.sessionID = sessionId
+        let response = await generated.getSessionTranscript(request: request)
+        switch response.result {
+        case .success(let message):
+            return message.events
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
+    /// Subscribe to a session's live event stream. The server replays persisted
+    /// events with `seq > fromSeq` then tails live events (docs/remote-api.md
+    /// "Subscribe"). A fresh subscriber passes `fromSeq: 0`; a reconnecting one
+    /// passes its last **persisted** seq so only newer events replay — no gap,
+    /// no duplication.
+    ///
+    /// The returned stream finishes when the RPC completes cleanly and throws a
+    /// mapped ``YccError`` on stream error. Cancelling the consuming task (or
+    /// deiniting its `for await`) cancels the underlying Connect stream.
+    public func subscribe(
+        sessionId: String, fromSeq: Int64
+    ) -> AsyncThrowingStream<Ycc_V1_Event, Error> {
+        let stream = generated.subscribe()
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                var request = Ycc_V1_SubscribeRequest()
+                request.sessionID = sessionId
+                request.fromSeq = fromSeq
+                do {
+                    try stream.send(request)
+                } catch {
+                    continuation.finish(throwing: error)
+                    return
+                }
+                for await result in stream.results() {
+                    switch result {
+                    case .headers:
+                        continue
+                    case .message(let event):
+                        continuation.yield(event)
+                    case .complete(_, let error, _):
+                        if let error {
+                            continuation.finish(throwing: Self.mapAny(error))
+                        } else {
+                            continuation.finish()
+                        }
+                        return
+                    }
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in
+                task.cancel()
+                stream.cancel()
+            }
+        }
+    }
+
     /// Maps a connect-swift `ConnectError` into the UI-facing ``YccError``.
     static func map(_ error: ConnectError) -> YccError {
         switch error.code {
@@ -57,5 +122,13 @@ public final class YccClient: Sendable {
         default:
             return .rpc(message: error.message ?? "request failed (\(error.code))")
         }
+    }
+
+    /// Maps an arbitrary stream error (usually a `ConnectError`) to ``YccError``.
+    static func mapAny(_ error: Error) -> YccError {
+        if let connect = error as? ConnectError {
+            return map(connect)
+        }
+        return .rpc(message: error.localizedDescription)
     }
 }

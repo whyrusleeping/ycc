@@ -64,3 +64,7 @@ Notes: xcodegen is being installed via brew. Network access is available for SPM
 - 2026-07-08 review (claude): accept — The change fully scaffolds the SwiftUI iPhone app per docs/design/ios-client.md §3/§5. I verified all acceptance criteria empirically: `swift test` passes (11 tests), `xcodegen generate && xcodebuil
 …[truncated]
 - 2026-07-08 decision: accept — commit: iOS: app scaffold (clients/ios, XcodeGen + YccKit) with connect screen & Keychain auth (task 0180)
+- 2026-07-08 usage: 35,949 tok (in 142, out 35,807, cache_r 2,800,368, cache_w 142,233) · $3.6577
+  implementer: 26,184 tok (in 100, out 26,084, cache_r 2,339,361, cache_w 71,708) · $2.2705
+  coordinator: 5,267 tok (in 14, out 5,253, cache_r 190,357, cache_w 39,381) · $0.9454
+  reviewer:claude: 4,498 tok (in 28, out 4,470, cache_r 270,650, cache_w 31,144) · $0.4419
