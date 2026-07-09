@@ -243,6 +243,47 @@ task) so the sections and ready/blocked annotations have something to show.
       session view streaming from seq 0 (green **Live** indicator). A failure
       surfaces a "Couldn't start work" alert; a 401 drops back to connect.
 
+## Usage & budget (phase-3 step 9)
+
+These steps exercise the usage & budget views (docs/design/ios-client.md §6
+phase 3 step 9, spec §20.5/§20.6): a grouped, date-filterable token-usage
+breakdown and the configured spend-guard caps. The view-model logic
+(`UsageModel`: request mapping, row labels, token/cost/budget formatting,
+price-status handling) is covered by `swift test`; this covers the live
+round-trip. Use a workspace with real session history (some priced usage, and if
+possible a model without configured pricing so an **unpriced**/**partial** row
+shows). Optionally set a `[budget]` block in the daemon config to see set caps.
+
+27. **Open usage.** On the Sessions landing view, tap the **chart.bar** icon in
+    the toolbar.
+    - Expected: the **Usage** view pushes. A **Budget** section shows Session
+      cost / Session tokens / Loop cost / Loop tokens, each rendering
+      **Unlimited** when unset (0) or a formatted `$` / abbreviated-token cap
+      when configured. Below, a usage breakdown grouped by **Task** by default,
+      each row showing token classes (in/out, cache when present), a total
+      (`Σ 15.4k`), and a cost (`$0.0810`). A pinned **Total** row summarises the
+      breakdown. A multi-project daemon shows a project filter in the leading
+      toolbar.
+
+28. **Change grouping.** Use the **Group by** picker to switch between Task /
+    Model / Session / Agent / Day.
+    - Expected: `GetUsage` re-runs and rows re-label to the chosen dimension
+      (e.g. model names, session ids, `coordinator`/`implementer`/`reviewer`,
+      or `YYYY-MM-DD` days); a blank dimension renders as `—`.
+
+29. **Price status.** Confirm rows for models without pricing render an
+    **unpriced** badge with a `—` cost, and mixed rows a **partial** badge with a
+    trailing `*` on the cost.
+
+30. **Date filter round-trip.** Toggle **Filter by date** on and set **Since** /
+    **Until**.
+    - Expected: `GetUsage` re-runs with `YYYY-MM-DD` bounds; narrowing to a
+      range with no usage shows a sane **No usage recorded** empty state (not an
+      error). Toggling the filter off restores the unbounded breakdown.
+
+31. **Pull to refresh / unauthorized.** Pull down to re-read; a 401 mid-screen
+    drops back to the connect screen.
+
 ## Notes
 - Transport security: the app allows insecure (`http://`) loads for tailnet
   deployment (spec §14). `https://` daemons work unchanged.

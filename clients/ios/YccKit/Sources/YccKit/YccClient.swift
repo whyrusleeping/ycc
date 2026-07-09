@@ -315,6 +315,44 @@ public final class YccClient: Sendable {
         }
     }
 
+    // MARK: - Usage & budget (task 0188)
+
+    /// Priced token-usage breakdown, grouped and filtered (`GetUsage`, spec
+    /// §20.5). `groupBy` is any of `task` | `model` | `session` | `agent` | `day`
+    /// (empty => the daemon's default `task`); `since`/`until` are `YYYY-MM-DD`
+    /// inclusive (empty => unbounded). Returns the per-group `rows`, the `total`
+    /// row, and the resolved `workspace` path. int64 token counts arrive as
+    /// `Int64` through the generated client (JSON string on the wire).
+    public func getUsage(
+        project: String = "", groupBy: [String], since: String = "", until: String = ""
+    ) async throws -> (rows: [Ycc_V1_UsageRow], total: Ycc_V1_UsageRow, workspace: String) {
+        var request = Ycc_V1_GetUsageRequest()
+        request.project = project
+        request.groupBy = groupBy
+        request.since = since
+        request.until = until
+        let response = await generated.getUsage(request: request)
+        switch response.result {
+        case .success(let message):
+            return (message.rows, message.total, message.workspace)
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
+    /// The configured spend-guard caps (`GetBudget`, spec §20.6). Every field is
+    /// `0` when unset (unlimited); `sessionCost`/`loopCost` are US dollars and
+    /// `sessionTokens`/`loopTokens` count total tokens.
+    public func getBudget() async throws -> Ycc_V1_GetBudgetResponse {
+        let response = await generated.getBudget(request: Ycc_V1_GetBudgetRequest())
+        switch response.result {
+        case .success(let message):
+            return message
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
     /// Discard a unary response's payload, mapping any failure to ``YccError``.
     private func unary<M>(_ response: ResponseMessage<M>) throws {
         if case .failure(let error) = response.result {

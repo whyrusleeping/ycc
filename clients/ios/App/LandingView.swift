@@ -48,6 +48,13 @@ struct LandingView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink {
+                        UsageView(initialProject: model?.selectedProject ?? "")
+                    } label: {
+                        Label("Usage", systemImage: "chart.bar")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button("Disconnect") { app.disconnect() }
                 }
             }
