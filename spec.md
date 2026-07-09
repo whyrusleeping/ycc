@@ -1656,7 +1656,9 @@ harmless.
 A `work` session is essentially "do one task," but today nothing **durably** records
 *which* task a session worked on (the task lives only in the kickoff prompt). To attribute
 cost by task we record the linkage as an event: a new `task_focus` event
-(`data: { task: "0007" }`) is emitted when the focus is established —
+(`data: { task: "0007", title?: "…" }` — the title is looked up best-effort at emit
+time so UIs can label the focus without a backlog lookup) is emitted when the focus
+is established —
 
 - carried in by the `pm → work` hand-off (`switch_to_work` already knows the target task),
   and/or
@@ -1667,6 +1669,10 @@ A session may touch more than one task; attribution uses the **active focus** at
 of each `model_turn` (turns before any focus are attributed to "unattributed"). The
 projection (§20.3) folds usage into the currently-focused task. This keeps task linkage
 in the log (replayable, syncable) rather than as out-of-band session metadata.
+
+The focus is also surfaced in the UI: the TUI status bar shows the currently-focused
+task (id + truncated title) as a header segment, and the session browser (§18.6)
+prefixes each row's title with the task ids the session focused (`[0007,0009] <prompt>`).
 
 ### 20.3 Aggregation & projection
 

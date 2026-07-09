@@ -290,6 +290,11 @@ type model struct {
 	// feed a visually distinct status-bar segment and reset per session view.
 	budgetPct      float64
 	budgetExceeded bool
+	// Focused backlog task: the most recent task_focus event's task id (and its
+	// title, when the event carried one). Feeds a status-bar segment so the
+	// header shows which task the work agent is on; reset per session view.
+	focusTask      string
+	focusTaskTitle string
 	// Work-loop cap state: caps fetched once at loop start via GetBudget, and a
 	// flag recording that a loop session's own budget was breached daemon-side so
 	// the loop halts at the next decision point with a distinct outcome.
@@ -2545,6 +2550,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// view (task 0137). A reopened session that already crossed the line
 		// re-emits its budget_warning/budget_exceeded on replay, re-setting these.
 		m.budgetPct, m.budgetExceeded = 0, false
+		// Reset the focused-task readout: a reopened session that already focused
+		// a task re-emits its task_focus on replay, re-setting these.
+		m.focusTask, m.focusTaskTitle = "", ""
 		// Events already persisted before we subscribed are replayed by the daemon
 		// on reopen; only events genuinely newer than this instant should ring the
 		// terminal bell / raise a desktop notification (task 0108).
@@ -7373,6 +7381,13 @@ func (m *model) appendEvent(ev *v1.Event) {
 		}
 	case "budget_exceeded":
 		m.budgetExceeded = true
+	case "task_focus":
+		// The session's focus moved to a (new) backlog task: surface it in the
+		// status bar so the header always names the task being worked on.
+		if t := dataField(ev, "task"); t != "" {
+			m.focusTask = t
+			m.focusTaskTitle = dataField(ev, "title")
+		}
 	case "question_asked":
 		// This question is now the canonical row for its ask_user exchange: the
 		// tool_call that produced it (rendered while in flight, possibly with
@@ -7491,8 +7506,13 @@ func (m *model) appendEvent(ev *v1.Event) {
 		}
 	}
 	// Clear a latched error status once real activity resumes (task 0051):
-	// the header must not stay stuck on "error" after recovery.
-	if m.status == "error" {
+	// the header must not stay stuck on "error" after recovery. An idle status
+	// clears the same way: prodding a finished session emits a user_input echo
+	// the moment the daemon accepts it, but the first model event can lag tens
+	// of seconds behind (long context + thinking) — without this the header
+	// keeps saying "idle", the footer keeps offering "session finished", and no
+	// spinner runs, so the accepted follow-up looks like it went nowhere.
+	if m.status == "error" || m.status == "idle" {
 		switch ev.Type {
 		case "model_turn", "tool_call", "tool_result", "thinking", "user_input", "user_input_delivered":
 			m.status = "running"
@@ -8300,10 +8320,15 @@ func (m model) historyRows() []browserRow {
 	}
 	var rows []browserRow
 	for _, s := range m.history {
-		// Prefer a derived title; fall back to the short id.
+		// Prefer a derived title; fall back to the short id. Sessions that worked
+		// backlog tasks are prefixed with those task ids so the list shows at a
+		// glance which task each session was on.
 		title := strings.TrimSpace(s.Title)
 		if title == "" {
 			title = short(s.SessionId)
+		}
+		if len(s.FocusTasks) > 0 {
+			title = "[" + strings.Join(s.FocusTasks, ",") + "] " + title
 		}
 		meta := s.Mode + " · " + s.Status
 		if s.Live {
@@ -8311,9 +8336,6 @@ func (m model) historyRows() []browserRow {
 		}
 		if when := historyWhen(s); when != "" {
 			meta += " · " + when
-		}
-		if len(s.FocusTasks) > 0 {
-			meta += " · " + strings.Join(s.FocusTasks, ",")
 		}
 		rows = append(rows, browserRow{
 			text:   fmt.Sprintf("%-*s", tw, trunc(title, tw)),
@@ -8535,6 +8557,15 @@ func (m model) statusBar() string {
 
 	if m.mode != "" {
 		segs = append(segs, seg{dimStyle.Render("mode ") + typeStyle.Render(m.mode), 1})
+	}
+	// The backlog task currently in focus (task_focus): which task the work
+	// agent is on right now. The title tags along, truncated, when present.
+	if m.focusTask != "" {
+		label := m.focusTask
+		if m.focusTaskTitle != "" {
+			label += " " + trunc(m.focusTaskTitle, 32)
+		}
+		segs = append(segs, seg{dimStyle.Render("task ") + typeStyle.Render(label), 1})
 	}
 	// Surface that an unattended loop run is driving this session (tab on the work
 	// entry); kept high-priority so the user always sees they're in a loop.

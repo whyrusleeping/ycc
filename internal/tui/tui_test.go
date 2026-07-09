@@ -832,6 +832,26 @@ func TestAppendEventClearsLatchedError(t *testing.T) {
 	}
 }
 
+// The status header must not latch on "idle" either: prodding a finished
+// session emits a user_input echo as soon as the daemon accepts it, but the
+// first model event can lag far behind (long context + thinking). The echo —
+// and any later activity — must flip the status back to running so the spinner
+// arms and the footer stops claiming "session finished" while the agent is
+// actually working on the follow-up.
+func TestAppendEventClearsLatchedIdle(t *testing.T) {
+	for _, activity := range []string{"user_input", "thinking", "model_turn"} {
+		m := &model{w: 80, follow: true, expanded: map[int]bool{}, bodyCache: map[int]string{}}
+		m.appendEvent(&v1.Event{Type: "session_idle", DataJson: `{"report":"done"}`})
+		if m.status != "idle" {
+			t.Fatalf("after session_idle status = %q, want idle", m.status)
+		}
+		m.appendEvent(&v1.Event{Type: activity, DataJson: `{"text":"follow-up"}`})
+		if m.status != "running" {
+			t.Fatalf("after %s status = %q, want running", activity, m.status)
+		}
+	}
+}
+
 // The session view must fit exactly within the terminal: every rendered line must
 // be no wider than the terminal (so nothing wraps to a second physical row) and
 // the total number of lines must equal the terminal height. A wrapping footer or
@@ -3849,6 +3869,50 @@ func TestStatusBarSegments(t *testing.T) {
 	}
 	if !strings.Contains(bar, "18.0k") {
 		t.Fatalf("unpriced bar should still show tokens: %s", bar)
+	}
+}
+
+// TestStatusBarShowsFocusedTask: a task_focus event surfaces which backlog task
+// the session is working on in the header — id plus (truncated) title when the
+// event carries one — and a later focus replaces the readout.
+func TestStatusBarShowsFocusedTask(t *testing.T) {
+	m := model{
+		state: stateSession, status: "running", mode: "work", w: 120,
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+	}
+	m.appendEvent(&v1.Event{Seq: 1, Type: "task_focus", Actor: "coordinator", DataJson: `{"task":"0007","title":"Fix the frobnicator"}`})
+	bar := m.statusBar()
+	for _, want := range []string{"task", "0007", "Fix the frobnicator"} {
+		if !strings.Contains(bar, want) {
+			t.Fatalf("status bar missing %q after task_focus:\n%s", want, bar)
+		}
+	}
+
+	// A new focus replaces the old one; a title-less event still shows the id.
+	m.appendEvent(&v1.Event{Seq: 2, Type: "task_focus", Actor: "coordinator", DataJson: `{"task":"0009"}`})
+	bar = m.statusBar()
+	if !strings.Contains(bar, "0009") || strings.Contains(bar, "0007") {
+		t.Fatalf("status bar should show the new focus 0009 only:\n%s", bar)
+	}
+}
+
+// TestHistoryRowsPrefixFocusTasks: the session browser prefixes each row's title
+// with the backlog task(s) the session worked, so the list shows at a glance
+// which task each session was on; sessions with no focus are unprefixed.
+func TestHistoryRowsPrefixFocusTasks(t *testing.T) {
+	m := model{w: 100, history: []*v1.SessionSummary{
+		{SessionId: "sess-a", Title: "make the tests pass", Mode: "work", Status: "done", FocusTasks: []string{"0007", "0009"}},
+		{SessionId: "sess-b", Title: "just a chat", Mode: "chat", Status: "idle"},
+	}}
+	rows := m.historyRows()
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	if !strings.Contains(rows[0].text, "[0007,0009] make the tests pass") {
+		t.Fatalf("focused session row should prefix its tasks: %q", rows[0].text)
+	}
+	if strings.Contains(rows[1].text, "[") {
+		t.Fatalf("unfocused session row must not carry a task prefix: %q", rows[1].text)
 	}
 }
 

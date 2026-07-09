@@ -393,6 +393,16 @@ func TestUpdateTaskInProgressEmitsFocusWithDedupe(t *testing.T) {
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("focus events = %v, want %v", got, want)
 	}
+
+	// The focus event carries the task's title (best-effort) so UIs can label
+	// the focused task without a backlog lookup of their own.
+	for _, ev := range rec.events {
+		if ev.Type == event.TaskFocus && ev.Data["task"] == a.ID {
+			if title, _ := ev.Data["title"].(string); title != "task a" {
+				t.Fatalf("focus event title = %v, want %q", ev.Data["title"], "task a")
+			}
+		}
+	}
 }
 
 // remember is available to coordinator-level agents (chat, pm, work) but NOT to

@@ -138,7 +138,15 @@ func (d *Deps) emitFocus(taskID string) {
 	}
 	d.focus = id
 	d.mu.Unlock()
-	d.Emitter.Emit(event.TaskFocus, map[string]any{"task": id})
+	// Best-effort: carry the task's title so UIs can label the focus without a
+	// backlog lookup of their own. A failed lookup just omits it.
+	data := map[string]any{"task": id}
+	if d.Docs != nil {
+		if t, err := d.Docs.Get(id); err == nil && strings.TrimSpace(t.Title) != "" {
+			data["title"] = strings.TrimSpace(t.Title)
+		}
+	}
+	d.Emitter.Emit(event.TaskFocus, data)
 }
 
 type reviewerHandle struct {
