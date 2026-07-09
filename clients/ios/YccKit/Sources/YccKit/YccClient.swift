@@ -244,6 +244,77 @@ public final class YccClient: Sendable {
         try unary(await generated.stopSession(request: request))
     }
 
+    // MARK: - Backlog browser (task 0184)
+
+    /// List the backlog's summary rows (`ListBacklog`, spec §18.5). `project` is
+    /// optional: empty selects the daemon default workspace; a registered project
+    /// name filters to that workspace's backlog. Each row carries readiness
+    /// (`ready`/`blockedBy`) derived from dependency status.
+    public func listBacklog(project: String = "") async throws -> [Ycc_V1_BacklogTaskSummary] {
+        var request = Ycc_V1_ListBacklogRequest()
+        request.project = project
+        let response = await generated.listBacklog(request: request)
+        switch response.result {
+        case .success(let message):
+            return message.tasks
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
+    /// Fetch one task's full detail (`GetTask`, spec §18.5): frontmatter fields
+    /// plus the markdown `body`. `project` is optional for a single-project daemon.
+    public func getTask(project: String = "", id: String) async throws -> Ycc_V1_TaskDetail {
+        var request = Ycc_V1_GetTaskRequest()
+        request.project = project
+        request.id = id
+        let response = await generated.getTask(request: request)
+        switch response.result {
+        case .success(let message):
+            return message.task
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
+    /// Change a task's status (`UpdateTask` with only the optional `status` field
+    /// set, spec §18.5). Other fields are left untouched. Returns the refreshed
+    /// task detail from the daemon's response.
+    public func updateTaskStatus(
+        project: String = "", id: String, status: String
+    ) async throws -> Ycc_V1_TaskDetail {
+        var request = Ycc_V1_UpdateTaskRequest()
+        request.project = project
+        request.id = id
+        request.status = status
+        let response = await generated.updateTask(request: request)
+        switch response.result {
+        case .success(let message):
+            return message.task
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
+    /// Add a new task to the backlog (`CreateTask`, task 0143): title plus an
+    /// optional markdown body (scaffolded server-side). `project` is optional for
+    /// a single-project daemon. Returns the created task's detail.
+    public func createTask(
+        project: String = "", title: String, body: String
+    ) async throws -> Ycc_V1_TaskDetail {
+        var request = Ycc_V1_CreateTaskRequest()
+        request.project = project
+        request.title = title
+        request.body = body
+        let response = await generated.createTask(request: request)
+        switch response.result {
+        case .success(let message):
+            return message.task
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
     /// Discard a unary response's payload, mapping any failure to ``YccError``.
     private func unary<M>(_ response: ResponseMessage<M>) throws {
         if case .failure(let error) = response.result {

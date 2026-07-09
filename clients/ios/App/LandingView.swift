@@ -41,6 +41,13 @@ struct LandingView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink {
+                        BacklogView(initialProject: model?.selectedProject ?? "")
+                    } label: {
+                        Label("Backlog", systemImage: "checklist")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button("Disconnect") { app.disconnect() }
                 }
             }

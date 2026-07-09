@@ -5,11 +5,12 @@ daemon. The headless logic (`YccKit`) is covered by `swift test`; the build is
 covered by `xcodegen generate && xcodebuild`. This runbook covers what those
 can't: the app actually talking to a daemon from a simulator/device.
 
-This covers the **phase-1** cut plus **phase-2 start/resume** — the connect
-screen, the projects/session list, a live streaming transcript, answering
-`ask_user` questions, the interactive controls (input bar, interrupt/resume/
-stop), and starting/resuming sessions from the phone. It grows as later phases
-land.
+This covers the **phase-1** cut plus **phase-2 start/resume** and the **phase-2
+backlog browser** — the connect screen, the projects/session list, a live
+streaming transcript, answering `ask_user` questions, the interactive controls
+(input bar, interrupt/resume/stop), starting/resuming sessions, and browsing the
+backlog (list, detail, status updates, quick capture, start-work). It grows as
+later phases land.
 
 ## Prerequisites
 
@@ -190,8 +191,59 @@ round-trip.
     - Expected: a **"Couldn't resume"** alert with the daemon's message
       (`not_found` / server error), no crash.
 
-## Notes
+## Backlog browser (phase-2 step 6)
 
+These steps exercise the backlog browser (docs/design/ios-client.md §6 phase 2
+step 6, spec §18.5): listing, task detail, status updates, quick capture, and the
+"start work on this task" action. The view-model logic (`BacklogModel`,
+`TaskDetailModel`) is covered by `swift test`; this covers the live round-trip.
+Use a workspace with a non-trivial `backlog/` (some todo, in_progress, blocked
+and proposed tasks, and at least one task with a `depends_on` on a not-yet-done
+task) so the sections and ready/blocked annotations have something to show.
+
+21. **Open the backlog.** On the Sessions landing view, tap the **checklist**
+    icon in the toolbar.
+    - Expected: the **Backlog** view pushes, listing tasks grouped into status
+      **sections** ordered active-first — In progress, In review, Todo, Blocked,
+      Proposed, then Done last. Each row shows the task **id** (monospaced),
+      title, a **priority** pill (P1–P5), and a readiness annotation: a green
+      **Ready** for unblocked tasks or an orange **Blocked by 0173, …** listing
+      the not-yet-done dependencies (matches `ListBacklog` semantics). A
+      multi-project daemon shows a project filter in the leading toolbar.
+
+22. **Empty backlog state.** Point the project filter (or the daemon) at a
+    workspace with no backlog.
+    - Expected: a sane empty state ("Backlog is empty") with a **Capture task**
+      button — not an error.
+
+23. **Open task detail.** Tap a task row.
+    - Expected: the detail view shows the title, a **status pill**, priority,
+      ready/blocked, **Depends on** / **Spec refs** / **Created** / **Updated**
+      rows as present, and the markdown **Details** body rendered (headings,
+      lists and paragraphs render; fenced code blocks show monospaced). Pull to
+      refresh re-reads the task.
+
+24. **Change status.** In the detail toolbar, open the **⋯** status menu and pick
+    a new status (e.g. promote a **Proposed** task to **Todo**, or mark one
+    **Blocked**). The current status has a checkmark.
+    - Expected: `UpdateTask` runs (brief spinner), and the status pill reflects
+      the daemon's response. Backing out to the list and refreshing shows the
+      task in its new section. Picking the current status is a no-op.
+
+25. **Quick capture.** Back on the Backlog list, tap **+** in the toolbar. Enter
+    a title (and optional markdown description) and tap **Save**.
+    - Expected: `CreateTask` runs, the sheet dismisses, and the new task appears
+      in the list (default **Todo**, priority P3). A blank title disables
+      **Save**. A create failure surfaces an inline red error row in the sheet.
+
+26. **Start work on a task.** Open a task's detail and tap **Start work on this
+    task**.
+    - Expected: `StartSession` runs (mode `work`, level judgement, a prompt like
+      "Work on task 0184: …"); the app navigates directly into the **live**
+      session view streaming from seq 0 (green **Live** indicator). A failure
+      surfaces a "Couldn't start work" alert; a 401 drops back to connect.
+
+## Notes
 - Transport security: the app allows insecure (`http://`) loads for tailnet
   deployment (spec §14). `https://` daemons work unchanged.
 - Later phases extend this runbook beyond phase 1 (starting sessions from the
