@@ -49,6 +49,22 @@ public final class YccClient: Sendable {
         }
     }
 
+    /// Lists the daemon's session history — live and persisted, most-recent
+    /// first per the daemon (docs/remote-api.md "ListSessionHistory"). `project`
+    /// is optional: empty selects the daemon default workspace; a registered
+    /// project name filters to that workspace's sessions.
+    public func listSessionHistory(project: String = "") async throws -> [Ycc_V1_SessionSummary] {
+        var request = Ycc_V1_ListSessionHistoryRequest()
+        request.project = project
+        let response = await generated.listSessionHistory(request: request)
+        switch response.result {
+        case .success(let message):
+            return message.sessions
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
     /// Fetch a session's full event log for a read-only replayed transcript
     /// (no stream held open). `project` is optional for a single-project daemon.
     public func getSessionTranscript(
