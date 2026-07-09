@@ -18,6 +18,9 @@ struct LandingView: View {
     @State private var liveTarget: LiveSessionTarget?
     /// A resume failure message to surface as an alert.
     @State private var resumeError: String?
+    /// A deep-link routing failure (unknown/stale session or project) to surface
+    /// as an alert — a graceful landing instead of navigating into a dead view.
+    @State private var deepLinkError: String?
 
     var body: some View {
         NavigationStack {
@@ -71,7 +74,7 @@ struct LandingView: View {
                         client: client,
                         project: target.project,
                         sessionID: target.sessionID,
-                        live: true)
+                        live: target.live)
                 }
             }
         }
@@ -94,9 +97,26 @@ struct LandingView: View {
         } message: { message in
             Text(message)
         }
-        .task { await ensureLoaded() }
+        .alert(
+            "Couldn’t open link",
+            isPresented: Binding(
+                get: { deepLinkError != nil },
+                set: { if !$0 { deepLinkError = nil } }),
+            presenting: deepLinkError
+        ) { _ in
+            Button("OK", role: .cancel) { deepLinkError = nil }
+        } message: { message in
+            Text(message)
+        }
+        .task {
+            await ensureLoaded()
+            await consumePendingDeepLink()
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { await model?.refresh() } }
+        }
+        .onChange(of: app.pendingDeepLink) { _, link in
+            if link != nil { Task { await consumePendingDeepLink() } }
         }
         .onChange(of: model?.unauthorized ?? false) { _, isUnauthorized in
             if isUnauthorized { app.handleUnauthorized() }
@@ -229,6 +249,73 @@ struct LandingView: View {
         }
         await model?.refresh()
     }
+
+    // MARK: - Deep links (task 0186)
+
+    /// Consume a parked `ycc://` deep link once the landing view is loaded:
+    /// a session link resolves to a live/persisted open (or a graceful alert on
+    /// an unknown id); a project link sets the list filter (or alerts on an
+    /// unknown project).
+    private func consumePendingDeepLink() async {
+        guard let link = app.pendingDeepLink else { return }
+        app.pendingDeepLink = nil
+        // The list must be loaded so resolution can consult the current sessions
+        // and the registered project list.
+        if model == nil { await ensureLoaded() }
+        switch link {
+        case .session(let id, _):
+            await openSession(id)
+        case .project(let name):
+            await openProject(name)
+        }
+    }
+
+    /// Resolve a session id to the right project + live flag and navigate to it.
+    /// Checks the already-loaded list first, then scans the default workspace and
+    /// every registered project. An id found nowhere yields a graceful alert.
+    private func openSession(_ sessionID: String) async {
+        guard let client = app.client else { return }
+        if let match = model?.sessions.first(where: { $0.sessionID == sessionID }) {
+            liveTarget = LiveSessionTarget(
+                sessionID: sessionID,
+                project: model?.selectedProject ?? "",
+                live: match.live)
+            return
+        }
+        do {
+            var scanned = Set<String>()
+            var projectsToScan = [""]
+            projectsToScan += (model?.projects ?? []).map(\.name)
+            for project in projectsToScan {
+                guard scanned.insert(project).inserted else { continue }
+                let sessions = try await client.listSessionHistory(project: project)
+                if let match = sessions.first(where: { $0.sessionID == sessionID }) {
+                    liveTarget = LiveSessionTarget(
+                        sessionID: sessionID, project: project, live: match.live)
+                    return
+                }
+            }
+            deepLinkError = "Session \(sessionID) was not found on this server."
+        } catch YccError.unauthorized {
+            app.handleUnauthorized()
+        } catch let YccError.rpc(message) {
+            deepLinkError = message
+        } catch {
+            deepLinkError = error.localizedDescription
+        }
+    }
+
+    /// Apply a project deep link as the list filter, if the project is
+    /// registered (the default workspace `""` is always valid).
+    private func openProject(_ name: String) async {
+        guard let model else { return }
+        guard name.isEmpty || model.projects.contains(where: { $0.name == name }) else {
+            deepLinkError = "Project “\(name)” is not registered on this server."
+            return
+        }
+        model.selectedProject = name
+        await model.refresh()
+    }
 }
 
 /// A session to push into a live streaming view, carrying the project needed to
@@ -237,6 +324,10 @@ struct LandingView: View {
 private struct LiveSessionTarget: Identifiable, Hashable {
     let sessionID: String
     let project: String
+    /// Whether to open a live-streaming view (`Subscribe`) vs a replayed
+    /// transcript (`GetSessionTranscript`). Live open only needs the session id;
+    /// a persisted open needs the resolved project.
+    var live: Bool = true
     var id: String { sessionID }
 }
 

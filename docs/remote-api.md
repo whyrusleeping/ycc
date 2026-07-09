@@ -555,6 +555,27 @@ curl -sS -H "$AUTH" -H "$JSON" \
 
 An unknown `kind` is `invalid_argument`.
 
+#### ntfy click-through (deep links)
+
+Every session-scoped notification the daemon sends — `question`, `idle`,
+`error`, `blocked`, whether fired automatically daemon-side or routed via this
+RPC — carries an ntfy **`Click` header** of `ycc://session/<sessionId>`. ntfy
+clients open that URL when the notification is tapped, so with the iOS app
+installed the tap lands directly on the session that needs attention (task
+0186). A `digest` gets a `Click` too when it is sent with a session id (the TUI
+loop driver passes its own session), and no `Click` otherwise.
+
+The `ycc://` scheme (registered by the iOS client) is:
+
+| URL | Opens |
+|-----|-------|
+| `ycc://session/<id>` | the session view for `<id>` (resolving its project) |
+| `ycc://session/<id>?server=<name>` | as above, first switching to the saved server profile named `<name>` |
+| `ycc://project/<name>` | the session list filtered to project `<name>` |
+
+An unknown/stale id (or unregistered project/server) lands gracefully on the
+session list with an alert rather than a dead view.
+
 ---
 
 ## Event model

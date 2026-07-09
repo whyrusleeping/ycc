@@ -16,6 +16,12 @@ final class AppModel {
     /// disconnected (which shows the connect screen).
     private(set) var client: YccClient?
 
+    /// A deep link awaiting consumption once the app is connected and the
+    /// landing view is on screen (task 0186). Set by ``handleDeepLink(_:)`` on
+    /// `.onOpenURL` — including a cold-start launch URL — and cleared by the
+    /// landing view after it routes to the target.
+    var pendingDeepLink: DeepLink?
+
     init(store: ConnectionStore = ConnectionStore()) {
         self.store = store
         // Restore a previously-authenticated session on launch.
@@ -43,5 +49,35 @@ final class AppModel {
     func handleUnauthorized() {
         client = nil
         store.clearActive()
+    }
+
+    // MARK: - Deep links (task 0186)
+
+    /// Handle a `ycc://` deep link from `.onOpenURL` (warm start) or a cold-start
+    /// launch URL. A `ycc://session/<id>?server=<name>` link first best-effort
+    /// switches to the saved profile named `<name>` (if it exists and has a
+    /// stored token); the parsed link is then held in ``pendingDeepLink`` for the
+    /// landing view to consume once connected. Unrecognised URLs are ignored.
+    func handleDeepLink(_ url: URL) {
+        guard let link = DeepLink(url: url) else { return }
+        if case let .session(_, server?) = link {
+            selectProfile(named: server)
+        }
+        pendingDeepLink = link
+    }
+
+    /// Switch the active server to the saved profile named `name`, rebuilding the
+    /// client from its Keychain token. No-op (returns `false`) when no such
+    /// profile exists or it has no stored token — the pending deep link then
+    /// resolves against whatever server is already active.
+    @discardableResult
+    func selectProfile(named name: String) -> Bool {
+        guard let profile = store.profiles.first(where: { $0.name == name }),
+              let token = store.token(for: profile.id) else {
+            return false
+        }
+        store.selectProfile(profile.id)
+        client = YccClient(baseURL: profile.baseURL, token: token)
+        return true
     }
 }

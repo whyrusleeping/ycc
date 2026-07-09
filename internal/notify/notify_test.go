@@ -18,6 +18,7 @@ type capture struct {
 	priority string
 	tags     string
 	auth     string
+	click    string
 }
 
 // sink is an httptest server that records every received notification.
@@ -39,6 +40,7 @@ func newSink(t *testing.T) *sink {
 			priority: r.Header.Get("Priority"),
 			tags:     r.Header.Get("Tags"),
 			auth:     r.Header.Get("Authorization"),
+			click:    r.Header.Get("Click"),
 		})
 		s.mu.Unlock()
 		w.WriteHeader(http.StatusOK)
@@ -80,6 +82,9 @@ func TestSendPostsBodyAndHeaders(t *testing.T) {
 	}
 	if r.auth != "Bearer tk_abc" {
 		t.Errorf("auth = %q", r.auth)
+	}
+	if r.click != "ycc://session/sess123" {
+		t.Errorf("click = %q, want ycc://session/sess123", r.click)
 	}
 	for _, want := range []string{"should I refactor the parser?", "myproj", "sess123"} {
 		if !strings.Contains(r.body, want) {
@@ -124,6 +129,35 @@ func TestEventMuting(t *testing.T) {
 	}
 	if got[0].tags != "question" {
 		t.Errorf("delivered wrong kind: %q", got[0].tags)
+	}
+}
+
+func TestClickHeaderDeepLink(t *testing.T) {
+	s := newSink(t)
+	n := New(config.Notify{URL: s.URL})
+	// A notification carrying a session id deep-links to the session; a send
+	// with no session id carries no Click header.
+	n.Send(KindQuestion, "proj", "abc123", "answer me")
+	n.Send(KindDigest, "proj", "", "loop finished")
+	n.Flush()
+	got := s.all()
+	if len(got) != 2 {
+		t.Fatalf("want 2 requests, got %d", len(got))
+	}
+	var question, digest capture
+	for _, r := range got {
+		switch r.tags {
+		case KindQuestion:
+			question = r
+		case KindDigest:
+			digest = r
+		}
+	}
+	if question.click != "ycc://session/abc123" {
+		t.Errorf("question click = %q, want ycc://session/abc123", question.click)
+	}
+	if digest.click != "" {
+		t.Errorf("digest click = %q, want empty (no session id supplied)", digest.click)
 	}
 }
 

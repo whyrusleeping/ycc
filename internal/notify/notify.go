@@ -113,6 +113,13 @@ func (n *Notifier) Send(kind, project, sessionID, line string) {
 		req.Header.Set("Title", title)
 		req.Header.Set("Priority", priority)
 		req.Header.Set("Tags", kind)
+		// Deep-link the notification tap straight to the session (iOS ycc://
+		// scheme, task 0186). Any notification carrying a session id gets a
+		// Click header — including a digest routed via the Notify RPC with the
+		// loop-driver session's id. Only session-less sends omit it.
+		if sessionID != "" {
+			req.Header.Set("Click", "ycc://session/"+sessionID)
+		}
 		if n.auth != "" {
 			req.Header.Set("Authorization", n.auth)
 		}

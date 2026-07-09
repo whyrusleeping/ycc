@@ -196,8 +196,14 @@ The daemon already pushes `question` / `idle` / `error` / `blocked` / `digest`
 events to a configured webhook (spec §14). The user runs the ntfy app for
 delivery. The ycc app's contribution is the `ycc://` **deep-link scheme** plus
 a documented ntfy `click` URL convention so a notification tap opens the app on
-the right session. Native APNs (needing a push relay + signing identity) is
-deferred indefinitely; revisit only if ntfy proves inadequate.
+the right session. Concretely (task 0186): the daemon sets an ntfy `Click`
+header of `ycc://session/<id>` on every notification sent with a session id
+(`question`/`idle`/`error`/`blocked`, and a `digest` routed with the
+loop-driver session's id), and the iOS
+app registers the `ycc://` scheme (`ycc://session/<id>[?server=<name>]`,
+`ycc://project/<name>`) to route the tap — see docs/remote-api.md "Notify".
+Native APNs (needing a push relay + signing identity) is deferred indefinitely;
+revisit only if ntfy proves inadequate.
 
 ## 9. Daemon-side work loop (decision, prerequisite for loop parity)
 

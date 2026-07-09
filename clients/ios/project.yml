@@ -50,6 +50,13 @@ targets:
       properties:
         CFBundleDisplayName: ycc
         UILaunchScreen: {}
+        # Custom URL scheme for deep links (task 0186): ycc://session/<id> and
+        # ycc://project/<name>. ntfy notifications set a Click header of
+        # ycc://session/<id> so a tap opens the app straight on that session.
+        CFBundleURLTypes:
+          - CFBundleURLName: dev.ycc.deeplink
+            CFBundleURLSchemes:
+              - ycc
         # Transport security: the intended deployment is a tailnet where http://
         # is acceptable (spec §14, design §5 "Transport security"). Allow
         # insecure loads so a plain-http tailnet daemon works; https:// daemons

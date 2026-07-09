@@ -407,8 +407,56 @@ ycc workstream spawn --task 0001 "make a small change and commit it"
     - Expected: an **Action failed** alert with the daemon's message (no crash);
       a 401 drops back to the connect screen.
 
+## Deep links (`ycc://` scheme, task 0186)
+
+These steps exercise the `ycc://` URL scheme and the ntfy click-through
+convention (docs/design/ios-client.md §6 phase 2 step 7 / §8,
+docs/remote-api.md "Notify"). The `DeepLink` parser is covered by `swift test`;
+this covers the live routing (cold + warm start, stale ids). Use the simulator's
+`simctl openurl` to inject links (a device gets them by tapping an ntfy
+notification). Grab a real live session id first, e.g. from the app's session
+list or `ycc sessions`.
+
+```
+# Open a link in the *booted* simulator (equivalent to tapping an ntfy notification):
+xcrun simctl openurl booted 'ycc://session/<id>'
+xcrun simctl openurl booted 'ycc://project/<name>'
+```
+
+46. **Warm-start session deep link.** With the app running and connected on the
+    Sessions list, run `xcrun simctl openurl booted 'ycc://session/<id>'` for a
+    known session.
+    - Expected: the app navigates directly into that session's view (live if the
+      session is live, otherwise the replayed transcript) — no manual tapping.
+
+47. **Cold-start session deep link.** Force-quit the app. Run the same
+    `openurl`.
+    - Expected: the app launches, restores its saved session, and lands on the
+      target session once connected. (If the app was disconnected, it opens on
+      the connect screen; after you connect, it routes to the parked link.)
+
+48. **Stale/unknown session id.** Run `xcrun simctl openurl booted
+    'ycc://session/does-not-exist'`.
+    - Expected: the app stays on (or returns to) the Sessions list and shows a
+      **"Couldn't open link"** alert ("Session … was not found on this
+      server.") — a graceful landing, **no crash**.
+
+49. **Project deep link.** Run `xcrun simctl openurl booted
+    'ycc://project/<name>'` for a registered project.
+    - Expected: the Sessions list filters to that project. An unregistered
+      project name shows the "Couldn't open link" alert instead.
+
+50. **ntfy click-through end-to-end (optional).** Configure the daemon's
+    `[notify]` block to a real ntfy topic, install the ntfy app on the device (or
+    use the ntfy web app), and drive a session to ask a question. Tap the
+    resulting notification.
+    - Expected: the notification carries a `ycc://session/<id>` click action; the
+      tap opens the ycc app straight on that session (the daemon sets the ntfy
+      `Click` header for any notification sent with a session id).
+
 ## Notes
 - Transport security: the app allows insecure (`http://`) loads for tailnet
   deployment (spec §14). `https://` daemons work unchanged.
 - Later phases extend this runbook beyond phase 1 (starting sessions from the
-  home menu, notifications via ntfy + `ycc://` deep links).
+  home menu, notifications via ntfy + `ycc://` deep links — see the Deep links
+  section above).
