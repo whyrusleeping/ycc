@@ -23,6 +23,40 @@ public enum KeychainError: Error, Equatable, Sendable {
     case unavailable
 }
 
+extension KeychainError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case let .unexpectedStatus(status):
+            // errSecMissingEntitlement (-34018) is the classic symptom of an
+            // unsigned app (no application-identifier entitlement): the
+            // Keychain rejects access. Surface a hint rather than a bare code.
+            if status == -34018 {
+                return "Keychain access denied (OSStatus -34018): the app is "
+                    + "missing its signing entitlements. Rebuild with code "
+                    + "signing enabled."
+            }
+            let message = keychainStatusMessage(status)
+            if let message {
+                return "Keychain operation failed: \(message) (OSStatus \(status))."
+            }
+            return "Keychain operation failed (OSStatus \(status))."
+        case .unavailable:
+            return "Keychain is unavailable on this platform or the value could "
+                + "not be encoded."
+        }
+    }
+}
+
+/// Best-effort human-readable text for a Keychain `OSStatus`.
+private func keychainStatusMessage(_ status: OSStatus) -> String? {
+    #if canImport(Security)
+    if let cf = SecCopyErrorMessageString(status, nil) {
+        return cf as String
+    }
+    #endif
+    return nil
+}
+
 #if canImport(Security)
 /// A `kSecClassGenericPassword`-backed ``KeychainStore`` for the app.
 public struct SystemKeychainStore: KeychainStore {
@@ -48,6 +82,9 @@ public struct SystemKeychainStore: KeychainStore {
         SecItemDelete(baseQuery(account: account) as CFDictionary)
         var query = baseQuery(account: account)
         query[kSecValueData as String] = data
+        // Sane default: readable after first unlock (survives background refresh
+        // without exposing the token pre-unlock).
+        query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
         let status = SecItemAdd(query as CFDictionary, nil)
         guard status == errSecSuccess else { throw KeychainError.unexpectedStatus(status) }
     }

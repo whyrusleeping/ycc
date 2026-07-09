@@ -73,3 +73,7 @@ Build the event-log projection engine in YccKit (headless-testable) plus a read-
 - 2026-07-08 review (claude): accept — The revision addresses both prior minor findings correctly. SessionProjection now exposes clearLiveTail(), which startLiveLoop() calls before each (re)subscribe so a stale streamed tail no longer ling
 …[truncated]
 - 2026-07-08 decision: accept — commit: iOS: event-log projection engine + read-only session transcript view (task 0182)
+- 2026-07-08 usage: 67,635 tok (in 178, out 67,457, cache_r 6,287,898, cache_w 517,280) · $9.3260
+  implementer: 53,327 tok (in 102, out 53,225, cache_r 4,660,814, cache_w 270,069) · $5.3495
+  reviewer:claude: 8,447 tok (in 52, out 8,395, cache_r 1,059,779, cache_w 114,085) · $1.4531
+  coordinator: 5,861 tok (in 24, out 5,837, cache_r 567,305, cache_w 133,126) · $2.5235

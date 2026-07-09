@@ -34,8 +34,15 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: dev.ycc.Ycc
         # iPhone-only (1); no iPad/universal layouts (design §2 non-goals).
         TARGETED_DEVICE_FAMILY: 1
-        # Simulator builds need no signing identity; keep CI/agent builds simple.
-        CODE_SIGNING_ALLOWED: NO
+        # The app MUST be signed even for the simulator: an unsigned app has no
+        # application-identifier entitlement, so Keychain access fails with
+        # errSecMissingEntitlement (-34018) — the "KeychainError error 0" bug.
+        # Ad-hoc "Sign to Run Locally" (identity "-") needs no team/account, so
+        # CI/agent simulator builds stay simple while getting a keychain-capable
+        # app.
+        CODE_SIGNING_ALLOWED: YES
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Automatic
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
     info:
@@ -49,3 +56,33 @@ targets:
         # are unaffected and recommended off-tailnet.
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
+
+  # Hosted test bundle: runs inside the Ycc app on the simulator via `xcodebuild
+  # test`, inheriting the app's signed application-identifier entitlement so it
+  # can exercise the real Keychain path that plain `swift test` cannot. It does
+  # NOT link the YccKit package product itself (that would double-link the
+  # SwiftProtobuf transitive dep); the host app provides YccKit at runtime.
+  YccAppTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - Tests/YccAppTests
+    dependencies:
+      - target: Ycc
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.ycc.YccAppTests
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGNING_ALLOWED: YES
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Automatic
+
+schemes:
+  Ycc:
+    build:
+      targets:
+        Ycc: all
+    test:
+      targets:
+        - YccAppTests

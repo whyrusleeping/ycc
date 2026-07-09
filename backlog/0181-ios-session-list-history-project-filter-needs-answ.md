@@ -63,3 +63,7 @@ Session list screen per docs/design/ios-client.md §6 phase 1 step 2, becoming t
 - 2026-07-08 review (claude): accept — The change implements the iOS session-list home screen per the task. YccClient.listSessionHistory(project:) wraps the generated RPC following existing patterns; SessionListModel provides pure, well-te
 …[truncated]
 - 2026-07-08 decision: accept — commit: iOS: session list home — history, project filter, needs-answer badges (task 0181)
+- 2026-07-08 usage: 24,088 tok (in 82, out 24,006, cache_r 1,622,626, cache_w 83,850) · $2.5171
+  implementer: 16,317 tok (in 42, out 16,275, cache_r 672,902, cache_w 43,261) · $1.0139
+  coordinator: 4,288 tok (in 20, out 4,268, cache_r 786,708, cache_w 12,956) · $1.1623
+  reviewer:claude: 3,483 tok (in 20, out 3,463, cache_r 163,016, cache_w 27,633) · $0.3409
