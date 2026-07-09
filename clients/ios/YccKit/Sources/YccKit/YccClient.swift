@@ -405,6 +405,90 @@ public final class YccClient: Sendable {
         try unary(await generated.setThinking(request: request))
     }
 
+    // MARK: - Workstreams & commit diff (task 0189)
+
+    /// List a project's workstreams (`ListWorkstreams`, design §6/§8). `project`
+    /// is optional: empty returns all workstreams across projects. Each
+    /// ``Ycc_V1_WorkstreamInfo`` carries its lifecycle `status`, live
+    /// `sessionStatus`, and `commitCount`.
+    public func listWorkstreams(project: String = "") async throws -> [Ycc_V1_WorkstreamInfo] {
+        var request = Ycc_V1_ListWorkstreamsRequest()
+        request.project = project
+        let response = await generated.listWorkstreams(request: request)
+        switch response.result {
+        case .success(let message):
+            return message.workstreams
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
+    /// Trial-merge a workstream's branch into its base WITHOUT mutating anything
+    /// (`PreviewMerge`, design §6 step 1). Returns whether the merge is `clean`,
+    /// the `conflicts` paths otherwise, and the integrated `diff` preview when
+    /// clean.
+    public func previewMerge(
+        workstreamId: String
+    ) async throws -> (clean: Bool, conflicts: [String], diff: String) {
+        var request = Ycc_V1_PreviewMergeRequest()
+        request.workstreamID = workstreamId
+        let response = await generated.previewMerge(request: request)
+        switch response.result {
+        case .success(let message):
+            return (message.clean, message.conflicts, message.diff)
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
+    /// Integrate a workstream's branch back to base (`MergeWorkstream`, design
+    /// §6). Under interactive/judgement a clean trial merge returns
+    /// `needsAccept` + the integrated `diff` (nothing mutated) until `accept:
+    /// true`; a conflict returns the `conflicts` paths with base untouched. A
+    /// merged result carries the merge `commit` sha.
+    public func mergeWorkstream(
+        workstreamId: String, accept: Bool
+    ) async throws -> (merged: Bool, commit: String, needsAccept: Bool, diff: String, conflicts: [String]) {
+        var request = Ycc_V1_MergeWorkstreamRequest()
+        request.workstreamID = workstreamId
+        request.accept = accept
+        let response = await generated.mergeWorkstream(request: request)
+        switch response.result {
+        case .success(let message):
+            return (message.merged, message.commit, message.needsAccept, message.diff, message.conflicts)
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
+    /// Abandon a workstream without merging (`DiscardWorkstream`, design §6): it
+    /// stops the session, cleans up the worktree + branch, and marks the registry
+    /// entry discarded.
+    public func discardWorkstream(workstreamId: String) async throws {
+        var request = Ycc_V1_DiscardWorkstreamRequest()
+        request.workstreamID = workstreamId
+        try unary(await generated.discardWorkstream(request: request))
+    }
+
+    /// Fetch a commit's `git show` diff (`GetCommitDiff`, task 0140). `sha` is a
+    /// bare hex commit sha (from a `commit_made` event); `project` is optional for
+    /// a single-project daemon. The daemon caps the payload — `truncated` reports
+    /// when the cap was hit so the client can render a truncation notice.
+    public func getCommitDiff(
+        project: String = "", sha: String
+    ) async throws -> (diff: String, truncated: Bool) {
+        var request = Ycc_V1_GetCommitDiffRequest()
+        request.project = project
+        request.sha = sha
+        let response = await generated.getCommitDiff(request: request)
+        switch response.result {
+        case .success(let message):
+            return (message.diff, message.truncated)
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
     /// Discard a unary response's payload, mapping any failure to ``YccError``.
     private func unary<M>(_ response: ResponseMessage<M>) throws {
         if case .failure(let error) = response.result {

@@ -27,6 +27,8 @@ struct SessionView: View {
     @State private var showStopConfirm = false
     /// Whether the per-session settings sheet is shown.
     @State private var showSettings = false
+    /// A commit to drill into via the diff viewer (set by tapping a commit row).
+    @State private var commitTarget: CommitDiffTarget?
 
     private let client: YccClient
     private let project: String
@@ -67,6 +69,11 @@ struct SessionView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { statusToolbar }
         .toolbar { if isLive { actionMenu } }
+        .navigationDestination(item: $commitTarget) { target in
+            DiffView(
+                title: "Commit \(target.shortSha)",
+                content: .commit(project: project, sha: target.sha))
+        }
         .safeAreaInset(edge: .bottom) { bottomChrome }
         .sheet(isPresented: $showSettings) {
             SessionSettingsView(
@@ -229,7 +236,10 @@ struct SessionView: View {
                     ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
                 }
                 ForEach(model.rows) { row in
-                    TranscriptRowView(row: row).id(row.id)
+                    TranscriptRowView(row: row) { sha in
+                        commitTarget = CommitDiffTarget(sha: sha)
+                    }
+                    .id(row.id)
                 }
                 // Zero-height marker at the tail: its visibility drives
                 // auto-follow and the "jump to latest" pill.
@@ -314,6 +324,8 @@ struct SessionView: View {
 /// tappable disclosure rows for thinking and tool calls; compact system rows.
 private struct TranscriptRowView: View {
     let row: TranscriptRow
+    /// Called with the commit sha when a `commit_made` row is tapped.
+    var onOpenCommit: (String) -> Void = { _ in }
 
     var body: some View {
         switch row.kind {
@@ -334,6 +346,8 @@ private struct TranscriptRowView: View {
             QuestionRowView(prompt: prompt, options: options, answer: answer)
         case .system(let text):
             systemRow(text)
+        case .commit(let text, let sha):
+            commitRow(text, sha: sha)
         case .liveTail(let text):
             liveTail(text)
         }
@@ -367,6 +381,33 @@ private struct TranscriptRowView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// A commit row: like a system row, but tappable to drill into the commit's
+    /// diff when a sha is present. Without a sha it degrades to a plain row.
+    @ViewBuilder
+    private func commitRow(_ text: String, sha: String) -> some View {
+        if sha.isEmpty {
+            systemRow(text)
+        } else {
+            Button {
+                onOpenCommit(sha)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(.caption2)
+                        .foregroundStyle(.blue)
+                    Text(text)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -645,4 +686,13 @@ private struct QuestionSheet: View {
             dismiss()
         }
     }
+}
+
+/// A commit to drill into via the diff viewer, from a tapped `commit_made` row.
+/// `Identifiable` drives `navigationDestination(item:)`.
+private struct CommitDiffTarget: Identifiable, Hashable {
+    let sha: String
+    var id: String { sha }
+    /// A short display sha for the nav title (first 8 chars).
+    var shortSha: String { String(sha.prefix(8)) }
 }

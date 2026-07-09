@@ -382,6 +382,31 @@ final class SessionProjectionTests: XCTestCase {
         XCTAssertEqual(text, "Interrupted")
     }
 
+    // MARK: - Commit rows (task 0189)
+
+    func testCommitMadeExposesShaForDrillIn() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(
+            seq: 1, type: "commit_made",
+            dataJson: #"{"sha":"abc123def","message":"do the thing"}"#))
+        guard case .commit(let text, let sha)? = proj.durableRows.last?.kind else {
+            return XCTFail("commit_made should render a commit row")
+        }
+        XCTAssertEqual(sha, "abc123def")
+        XCTAssertEqual(text, "Committed abc123def: do the thing")
+    }
+
+    func testCommitMadeWithoutShaStillRendersRow() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(
+            seq: 1, type: "commit_made",
+            dataJson: #"{"message":"no sha here"}"#))
+        guard case .commit(_, let sha)? = proj.durableRows.last?.kind else {
+            return XCTFail("commit_made should render a commit row even without a sha")
+        }
+        XCTAssertEqual(sha, "")
+    }
+
     // MARK: - Interaction level tracking (task 0187)
 
     func testInteractionLevelSeededFromSessionStarted() {

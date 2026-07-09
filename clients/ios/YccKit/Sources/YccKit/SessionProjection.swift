@@ -28,6 +28,10 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
         /// A compact system/lifecycle row (session_started, commit_made, …), or
         /// a generic forward-compat fallback for unknown event types.
         case system(text: String)
+        /// A `commit_made` row: a compact summary plus the bare commit `sha` so
+        /// the view can drill into `GetCommitDiff` on tap. `sha` may be empty
+        /// when the event carried none (then it renders as a plain system row).
+        case commit(text: String, sha: String)
         /// The transient live tail: the in-progress model turn text streamed via
         /// `turn_delta`. Never persisted; replaced on each delta.
         case liveTail(text: String)
@@ -200,6 +204,14 @@ public struct SessionProjection: Sendable, Equatable {
 
         case "question_answered":
             applyQuestionAnswered(data)
+
+        case "commit_made":
+            // A dedicated row carrying the sha so the view can drill into the
+            // commit's diff (GetCommitDiff). Falls back to a plain summary.
+            if let text = Self.systemSummary(type: "commit_made", data: data) {
+                let sha = (data["sha"] as? String) ?? ""
+                appendDurable(event, .commit(text: text, sha: sha))
+            }
 
         default:
             // Lifecycle + everything else (incl. unknown future types) → a

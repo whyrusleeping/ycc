@@ -324,6 +324,89 @@ choices.
     picker reverts to its committed value. A 401 dismisses the sheet and drops
     back to the connect screen.
 
+## Workstreams pane & commit diff viewer (phase-3 step 10)
+
+These steps exercise the workstreams pane and the unified-diff viewer
+(docs/design/ios-client.md §6 phase 3 step 10, spec §14.1,
+docs/design/parallel-workstreams.md §6). The view-model logic
+(`WorkstreamsModel`: status mapping, the merge accept-gate state machine,
+conflict surfacing, discard refresh; `DiffFormatter`: unified-diff parsing;
+`SessionProjection`: commit_made sha exposure) is covered by `swift test`; this
+covers the live round-trip against a daemon with real worktrees. Set up state
+first:
+
+```
+# In a registered project's workspace, spawn a workstream with some commits.
+ycc workstream spawn --task 0001 "make a small change and commit it"
+# Let it make at least one commit (so commit_made rows and commit_count show).
+# Spawn a second workstream that will conflict with the first once one is merged,
+# so you can exercise the conflict path.
+```
+
+37. **Open the workstreams pane.** On the Sessions landing view, tap the
+    **arrow.triangle.branch** icon in the toolbar.
+    - Expected: the **Workstreams** view pushes, listing each workstream with its
+      **branch** (monospaced), optional **task id**, a lifecycle **status** badge
+      (Active/Merged/Discarded/Stale), a **commit count** ("3 commits"), and the
+      live **session status**. A multi-project daemon shows a project filter in
+      the leading toolbar ("All" lists across projects). An empty state shows
+      when there are none.
+
+38. **Preview a clean merge.** Long-press (context menu) an **Active** workstream
+    and tap **Preview merge**.
+    - Expected: `PreviewMerge` runs (nothing mutated); a sheet presents the
+      integrated **diff** in the monospaced, colour-tinted viewer (green
+      additions, red deletions, de-emphasised file/hunk headers). Large diffs
+      scroll smoothly and each line scrolls horizontally without truncation.
+
+39. **Preview a conflicting merge.** First merge one workstream (step 40), then
+    preview the second one that touches the same lines.
+    - Expected: the preview sheet shows a **conflicted files** list (the
+      conflicted paths) with a "resolve in the worktree" note, not a diff. Base
+      is untouched.
+
+40. **Merge with the review gate.** Context-menu an Active workstream (spawned
+    under interactive/judgement) and tap **Merge…**.
+    - Expected: `MergeWorkstream` (accept=false) returns **needs_accept** — a
+      **Review & merge** sheet shows the integrated diff with an **Accept &
+      merge** button. Tapping it re-calls `MergeWorkstream` with **accept=true**;
+      on success a **Merged** confirmation shows the merge commit sha and the
+      list refreshes (the row flips to **Merged**). Under an autonomous
+      workstream, a clean merge integrates immediately (straight to Merged).
+
+41. **Merge conflict path.** Merge the second (conflicting) workstream via
+    **Merge…**.
+    - Expected: a **Merge blocked** sheet listing the conflicted paths; base is
+      untouched and the worktree kept. No crash.
+
+42. **Discard with confirmation.** Swipe-left (or context menu) an Active
+    workstream and tap **Discard**.
+    - Expected: a destructive confirmation dialog ("This stops the session and
+      deletes the worktree + branch. It cannot be undone."). Confirm →
+      `DiscardWorkstream`; the list refreshes and the row drops / flips to
+      **Discarded**. Non-actionable (merged/discarded) rows offer no
+      merge/discard actions.
+
+43. **Open a workstream's session.** Context-menu a workstream and tap **Open
+    session**.
+    - Expected: the app navigates into the workstream's **live** session view
+      (its `session_id`), streaming as usual.
+
+44. **Commit diff from the session feed.** Open any session with a `commit_made`
+    row (e.g. a workstream session that committed) and tap the commit row (it
+    shows a branch icon and a chevron).
+    - Expected: the **commit diff** viewer pushes, fetching `GetCommitDiff` for
+      that commit's sha and rendering the tinted unified diff. A **large** diff
+      scrolls without hanging (rows render lazily); a daemon-truncated diff shows
+      a "diff truncated" notice at the end. A stale/missing sha shows a graceful
+      error state, not a crash.
+
+45. **Errors / unauthorized.** Attempt a merge/discard against a workstream the
+    daemon has already cleaned up; a mid-screen 401 (rotate the token) on any of
+    these screens.
+    - Expected: an **Action failed** alert with the daemon's message (no crash);
+      a 401 drops back to the connect screen.
+
 ## Notes
 - Transport security: the app allows insecure (`http://`) loads for tailnet
   deployment (spec §14). `https://` daemons work unchanged.

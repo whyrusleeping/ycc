@@ -23,4 +23,16 @@ public enum YccError: Error, Equatable, Sendable {
 
     /// Any other RPC failure, carrying the server-provided message for display.
     case rpc(message: String)
+
+    /// A human-facing message for the non-unauthorized cases (unauthorized is
+    /// handled by routing, not a message). Lets a model collapse the `catch`
+    /// ladder when it only needs the text.
+    public var displayMessage: String {
+        switch self {
+        case .unauthorized: return "Your session expired. Reconnect to continue."
+        case .notFound(let message): return message
+        case .failedPrecondition(let message): return message
+        case .rpc(let message): return message
+        }
+    }
 }
