@@ -57,6 +57,10 @@ public final class SessionViewModel {
     public var pendingQuestion: SessionProjection.PendingQuestion? { projection.pendingQuestion }
     /// The session's derived lifecycle phase (running/paused/idle/error/stopped).
     public var phase: SessionProjection.Phase { projection.phase }
+    /// The session's current interaction level as observed from the event stream
+    /// (`interactive` | `judgement` | `autonomous`), or `nil` until seen. Threaded
+    /// into the settings sheet so its picker seeds from reality.
+    public var interactionLevel: String? { projection.interactionLevel }
 
     private let source: SessionTranscriptSource
     private let actions: SessionActionSource?

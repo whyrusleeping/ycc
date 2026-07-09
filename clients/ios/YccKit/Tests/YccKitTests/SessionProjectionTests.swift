@@ -381,4 +381,53 @@ final class SessionProjectionTests: XCTestCase {
         }
         XCTAssertEqual(text, "Interrupted")
     }
+
+    // MARK: - Interaction level tracking (task 0187)
+
+    func testInteractionLevelSeededFromSessionStarted() {
+        var proj = SessionProjection()
+        XCTAssertNil(proj.interactionLevel)
+        proj.apply(makeEvent(
+            seq: 1, type: "session_started",
+            dataJson: #"{"mode":"work","interaction_level":"judgement"}"#))
+        XCTAssertEqual(proj.interactionLevel, "judgement")
+    }
+
+    func testInteractionLevelUpdatedByChangeEvent() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(
+            seq: 1, type: "session_started",
+            dataJson: #"{"interaction_level":"judgement"}"#))
+        proj.apply(makeEvent(
+            seq: 2, type: "interaction_level_changed",
+            dataJson: #"{"from":"judgement","to":"autonomous"}"#))
+        XCTAssertEqual(proj.interactionLevel, "autonomous")
+        // …and renders a readable system row.
+        guard case .system(let text)? = proj.durableRows.last?.kind else {
+            return XCTFail("interaction_level_changed should render a system row")
+        }
+        XCTAssertEqual(text, "Interaction level → autonomous")
+    }
+
+    func testRoleConfigChangedRendersSystemRow() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(
+            seq: 1, type: "role_config_changed",
+            dataJson: #"{"coordinator":"claude","implementer":"gpt","reviewers":["glm","gpt"]}"#))
+        guard case .system(let text)? = proj.durableRows.last?.kind else {
+            return XCTFail("role_config_changed should render a system row")
+        }
+        XCTAssertEqual(text, "Roles: coordinator claude · implementer gpt · reviewers glm, gpt")
+    }
+
+    func testThinkingLevelChangedRendersSystemRow() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(
+            seq: 1, type: "thinking_level_changed",
+            dataJson: #"{"role":"all","from":"medium","to":"high"}"#))
+        guard case .system(let text)? = proj.durableRows.last?.kind else {
+            return XCTFail("thinking_level_changed should render a system row")
+        }
+        XCTAssertEqual(text, "Thinking (all roles) → high")
+    }
 }

@@ -284,6 +284,46 @@ shows). Optionally set a `[budget]` block in the daemon config to see set caps.
 31. **Pull to refresh / unauthorized.** Pull down to re-read; a 401 mid-screen
     drops back to the connect screen.
 
+## Session settings sheet (task 0187)
+
+Requires a **live** session (start one from the home menu, step 5). The settings
+sheet is the phone analog of the TUI settings overlay (spec §18.2). View-model
+logic (seeding, request mapping, error surfacing) is covered by `swift test`;
+this covers the live round-trip and that changes reflect in subsequent events.
+Use a daemon with at least two configured `[models.*]` so the role pickers offer
+choices.
+
+32. **Open the settings sheet.** In a live session view, tap the **gearshape**
+    icon in the toolbar (next to the overflow `⋯` menu).
+    - Expected: a **Session settings** sheet presents with three sections —
+      **Interaction level**, **Thinking**, and **Roles**. The role pickers seed
+      from the daemon's CURRENT assignments (via `ListModels`), the thinking
+      pickers from the current per-role levels, and the interaction-level picker
+      from the session's current level (folded from the event stream).
+
+33. **Change interaction level.** Pick a different level (e.g. Judgement →
+    Autonomous).
+    - Expected: `SetInteractionLevel` fires; dismissing the sheet, the live feed
+      shows an **Interaction level → autonomous** system row. Re-opening the
+      sheet shows the picker still on the new level (it reflects reality).
+
+34. **Change thinking.** Set **Scope** to a role (or All roles) and pick a
+    **Level** (e.g. High).
+    - Expected: `SetThinking` fires; the feed shows a **Thinking (…) → high**
+      system row. Switching the scope picker reflects that role's current level.
+
+35. **Reassign roles.** Change **Coordinator** / **Implementer**, and expand
+    **Reviewers** to toggle the multi-select.
+    - Expected: `SetRoleConfig` fires; the feed shows a **Roles: …** system row.
+      The change is visible on the next turn/spawn (e.g. a `subagent_spawned`
+      event names the new model). The choice persists as the daemon default.
+
+36. **Invalid combination / unauthorized.** (Hard to trigger from the UI since
+    pickers only offer valid models.) If the daemon rejects a change, the
+    sheet shows the daemon's error verbatim in a red banner and the affected
+    picker reverts to its committed value. A 401 dismisses the sheet and drops
+    back to the connect screen.
+
 ## Notes
 - Transport security: the app allows insecure (`http://`) loads for tailnet
   deployment (spec §14). `https://` daemons work unchanged.

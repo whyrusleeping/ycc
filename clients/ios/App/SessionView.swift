@@ -25,12 +25,20 @@ struct SessionView: View {
     @State private var showQuestionSheet = false
     /// Whether the destructive stop confirmation is shown.
     @State private var showStopConfirm = false
+    /// Whether the per-session settings sheet is shown.
+    @State private var showSettings = false
 
+    private let client: YccClient
+    private let project: String
+    private let sessionID: String
     private let navigationTitle: String
     private let isLive: Bool
     private static let bottomAnchor = "transcript-bottom"
 
     init(client: YccClient, project: String = "", sessionID: String, live: Bool) {
+        self.client = client
+        self.project = project
+        self.sessionID = sessionID
         _model = State(initialValue: SessionViewModel(
             source: client, project: project, sessionID: sessionID,
             mode: live ? .live : .persisted))
@@ -60,6 +68,12 @@ struct SessionView: View {
         .toolbar { statusToolbar }
         .toolbar { if isLive { actionMenu } }
         .safeAreaInset(edge: .bottom) { bottomChrome }
+        .sheet(isPresented: $showSettings) {
+            SessionSettingsView(
+                client: client,
+                sessionID: sessionID,
+                currentInteractionLevel: model.interactionLevel)
+        }
         .sheet(isPresented: $showQuestionSheet) {
             if let pending = model.pendingQuestion {
                 QuestionSheet(
@@ -264,6 +278,13 @@ struct SessionView: View {
 
     @ToolbarContentBuilder
     private var actionMenu: some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
+            Button {
+                showSettings = true
+            } label: {
+                Image(systemName: "gearshape")
+            }
+        }
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
                 Button {

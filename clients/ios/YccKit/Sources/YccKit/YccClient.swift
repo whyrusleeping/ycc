@@ -353,6 +353,58 @@ public final class YccClient: Sendable {
         }
     }
 
+    // MARK: - Session settings (task 0187)
+
+    /// List the configured logical models plus the CURRENT per-role assignments
+    /// and per-role thinking levels (`ListModels`, spec §13/§18.2). The settings
+    /// sheet seeds its pickers from this so it reflects reality, not defaults.
+    public func listModels() async throws -> Ycc_V1_ListModelsResponse {
+        let response = await generated.listModels(request: Ycc_V1_ListModelsRequest())
+        switch response.result {
+        case .success(let message):
+            return message
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
+    /// Change a session's interaction level mid-flight (`SetInteractionLevel`,
+    /// spec §11/§18.2). `level` is `interactive` | `judgement` | `autonomous`;
+    /// it takes effect at the next gate and is recorded in the event log.
+    public func setInteractionLevel(sessionId: String, level: String) async throws {
+        var request = Ycc_V1_SetInteractionLevelRequest()
+        request.sessionID = sessionId
+        request.level = level
+        try unary(await generated.setInteractionLevel(request: request))
+    }
+
+    /// Reassign per-role logical models (`SetRoleConfig`, spec §13/§18.2). An
+    /// empty `coordinator`/`implementer` leaves that role unchanged; an empty
+    /// `reviewers` list leaves reviewers unchanged. The change applies to the live
+    /// session (when `sessionId` names one) and persists as the default.
+    public func setRoleConfig(
+        sessionId: String, coordinator: String, implementer: String, reviewers: [String]
+    ) async throws {
+        var request = Ycc_V1_SetRoleConfigRequest()
+        request.sessionID = sessionId
+        request.coordinator = coordinator
+        request.implementer = implementer
+        request.reviewers = reviewers
+        try unary(await generated.setRoleConfig(request: request))
+    }
+
+    /// Change a thinking/effort level (`SetThinking`, spec §7.4/§18.2). An empty
+    /// `role` applies to all roles; otherwise `coordinator` | `implementer` |
+    /// `reviewers`. `level` is `off` | `low` | `medium` | `high` | `xhigh` |
+    /// `max`. Applies live (when `sessionId` names a session) and persists.
+    public func setThinking(sessionId: String, level: String, role: String) async throws {
+        var request = Ycc_V1_SetThinkingRequest()
+        request.sessionID = sessionId
+        request.level = level
+        request.role = role
+        try unary(await generated.setThinking(request: request))
+    }
+
     /// Discard a unary response's payload, mapping any failure to ``YccError``.
     private func unary<M>(_ response: ResponseMessage<M>) throws {
         if case .failure(let error) = response.result {
