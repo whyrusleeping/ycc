@@ -25,6 +25,55 @@ private final class MockSource: SessionTranscriptSource, @unchecked Sendable {
     }
 }
 
+/// A fake action source recording invocations, with an injectable error to
+/// exercise the toast/`failed_precondition` paths. Also conforms to
+/// ``SessionTranscriptSource`` (holding no stream open) so it can back a
+/// view-model on its own.
+private final class MockActionSource: SessionActionSource, SessionTranscriptSource, @unchecked Sendable {
+    struct Call: Equatable {
+        var kind: String
+        var text: String = ""
+        var optionIndex: Int = -1
+        var batch: [String] = []  // "idx:<n>" or "text:<s>" per answer
+    }
+
+    private let lock = NSLock()
+    private var _calls: [Call] = []
+    var calls: [Call] { lock.lock(); defer { lock.unlock() }; return _calls }
+
+    /// If set, the next matching action throws this error.
+    var nextError: Error?
+
+    private func record(_ call: Call) throws {
+        lock.lock()
+        _calls.append(call)
+        let err = nextError
+        nextError = nil
+        lock.unlock()
+        if let err { throw err }
+    }
+
+    func sendInput(sessionId: String, text: String) async throws {
+        try record(Call(kind: "send", text: text))
+    }
+    func answerQuestion(sessionId: String, text: String, optionIndex: Int) async throws {
+        try record(Call(kind: "answer", text: text, optionIndex: optionIndex))
+    }
+    func answerQuestions(sessionId: String, answers: [(text: String, optionIndex: Int)]) async throws {
+        let batch = answers.map { $0.optionIndex >= 0 ? "idx:\($0.optionIndex)" : "text:\($0.text)" }
+        try record(Call(kind: "answerBatch", batch: batch))
+    }
+    func interrupt(sessionId: String) async throws { try record(Call(kind: "interrupt")) }
+    func resume(sessionId: String) async throws { try record(Call(kind: "resume")) }
+    func stopSession(sessionId: String) async throws { try record(Call(kind: "stop")) }
+
+    // SessionTranscriptSource — no stream held open.
+    func getSessionTranscript(project: String, sessionId: String) async throws -> [Ycc_V1_Event] { [] }
+    func subscribe(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_Event, Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
+}
+
 @MainActor
 final class SessionViewModelTests: XCTestCase {
     private func event(_ seq: Int64, _ type: String, _ dataJson: String, actor: String = "coordinator") -> Ycc_V1_Event {
@@ -197,5 +246,75 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertEqual(vm.projection.lastPersistedSeq, 5)
         XCTAssertEqual(source.recordedFromSeqs, [0, 3])
         vm.stop()
+    }
+
+    // MARK: - Interactive actions (task 0183)
+
+    private func actionVM(_ actions: MockActionSource) -> SessionViewModel {
+        // Pass the same object as both source and actions; it holds no stream.
+        SessionViewModel(source: actions, actions: actions, sessionID: "s1", mode: .live)
+    }
+
+    func testSendPassesThroughTrimmed() async {
+        let actions = MockActionSource()
+        let vm = actionVM(actions)
+        await vm.send(text: "  hello  ")
+        XCTAssertEqual(actions.calls, [.init(kind: "send", text: "hello")])
+        XCTAssertNil(vm.actionError)
+    }
+
+    func testSendIgnoresEmpty() async {
+        let actions = MockActionSource()
+        let vm = actionVM(actions)
+        await vm.send(text: "   ")
+        XCTAssertTrue(actions.calls.isEmpty)
+    }
+
+    func testAnswerSingleViaOptionAndViaText() async {
+        let actions = MockActionSource()
+        let vm = actionVM(actions)
+        await vm.answer(optionIndex: 2)
+        await vm.answer(text: "free text")
+        XCTAssertEqual(actions.calls, [
+            .init(kind: "answer", text: "", optionIndex: 2),
+            .init(kind: "answer", text: "free text", optionIndex: -1),
+        ])
+    }
+
+    func testAnswerBatchPositionalMixedOptionAndText() async {
+        let actions = MockActionSource()
+        let vm = actionVM(actions)
+        await vm.answerBatch([(text: "", optionIndex: 1), (text: "later", optionIndex: -1)])
+        XCTAssertEqual(actions.calls, [
+            .init(kind: "answerBatch", batch: ["idx:1", "text:later"]),
+        ])
+    }
+
+    func testFailedPreconditionOnAnswerSetsToastWithoutCrashing() async {
+        let actions = MockActionSource()
+        let vm = actionVM(actions)
+        actions.nextError = YccError.failedPrecondition(message: "no pending question")
+        await vm.answer(optionIndex: 0)
+        XCTAssertEqual(vm.actionError, "no pending question")
+        // State is not corrupted: a subsequent successful action still works.
+        await vm.send(text: "hi")
+        XCTAssertEqual(actions.calls.last, .init(kind: "send", text: "hi"))
+    }
+
+    func testNotFoundSetsToast() async {
+        let actions = MockActionSource()
+        let vm = actionVM(actions)
+        actions.nextError = YccError.notFound(message: "no such session")
+        await vm.send(text: "hi")
+        XCTAssertEqual(vm.actionError, "no such session")
+    }
+
+    func testInterruptResumeStopInvokeSource() async {
+        let actions = MockActionSource()
+        let vm = actionVM(actions)
+        await vm.interrupt()
+        await vm.resumeSession()
+        await vm.stopSession()
+        XCTAssertEqual(actions.calls.map(\.kind), ["interrupt", "resume", "stop"])
     }
 }

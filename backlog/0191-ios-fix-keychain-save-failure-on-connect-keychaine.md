@@ -50,3 +50,7 @@ Fix the keychain save failure on connect, reported by the user (simulator, valid
 - 2026-07-08 review (claude): accept — The change correctly fixes the iOS keychain-save-on-connect failure. Root cause (unsigned simulator build → no application-identifier entitlement → errSecMissingEntitlement -34018) is addressed by
 …[truncated]
 - 2026-07-08 decision: accept — commit: iOS: fix keychain save on connect — enable ad-hoc signing, readable KeychainError, on-simulator regression test (task 0191)
+- 2026-07-08 usage: 18,984 tok (in 86, out 18,898, cache_r 1,252,153, cache_w 61,962) · $1.9312
+  implementer: 13,234 tok (in 50, out 13,184, cache_r 514,230, cache_w 32,828) · $0.7921
+  reviewer:claude: 2,896 tok (in 24, out 2,872, cache_r 132,924, cache_w 17,711) · $0.2491
+  coordinator: 2,854 tok (in 12, out 2,842, cache_r 604,999, cache_w 11,423) · $0.8900

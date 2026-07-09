@@ -130,11 +130,82 @@ public final class YccClient: Sendable {
         }
     }
 
+    // MARK: - Session interactions (task 0183)
+
+    /// Deliver user input to a running/idle session (`SendInput`). Steer-by-default:
+    /// the daemon queues the text as a steer when the session is mid-turn.
+    public func sendInput(sessionId: String, text: String) async throws {
+        var request = Ycc_V1_SendInputRequest()
+        request.sessionID = sessionId
+        request.text = text
+        try unary(await generated.sendInput(request: request))
+    }
+
+    /// Answer a single pending `ask_user` question (`AnswerQuestion`).
+    /// `optionIndex >= 0` selects that suggested option; `-1` sends `text` as a
+    /// free-text answer.
+    public func answerQuestion(sessionId: String, text: String, optionIndex: Int) async throws {
+        var request = Ycc_V1_AnswerQuestionRequest()
+        request.sessionID = sessionId
+        request.text = text
+        request.optionIndex = Int32(optionIndex)
+        try unary(await generated.answerQuestion(request: request))
+    }
+
+    /// Answer a batch `ask_user` positionally (`AnswerQuestions`): `answers[i]`
+    /// answers the i-th question. Each answer's `optionIndex >= 0` selects an
+    /// option; `-1` sends its `text` as free text.
+    public func answerQuestions(
+        sessionId: String, answers: [(text: String, optionIndex: Int)]
+    ) async throws {
+        var request = Ycc_V1_AnswerQuestionsRequest()
+        request.sessionID = sessionId
+        request.answers = answers.map {
+            var a = Ycc_V1_QuestionAnswer()
+            a.text = $0.text
+            a.optionIndex = Int32($0.optionIndex)
+            return a
+        }
+        try unary(await generated.answerQuestions(request: request))
+    }
+
+    /// Gracefully pause a running session to steer it (`Interrupt`, spec §18.7).
+    public func interrupt(sessionId: String) async throws {
+        var request = Ycc_V1_InterruptRequest()
+        request.sessionID = sessionId
+        try unary(await generated.interrupt(request: request))
+    }
+
+    /// Continue a paused session (`Resume`).
+    public func resume(sessionId: String) async throws {
+        var request = Ycc_V1_ResumeRequest()
+        request.sessionID = sessionId
+        try unary(await generated.resume(request: request))
+    }
+
+    /// Hard-terminate a session (`StopSession`, spec §12) — no resume.
+    public func stopSession(sessionId: String) async throws {
+        var request = Ycc_V1_StopSessionRequest()
+        request.sessionID = sessionId
+        try unary(await generated.stopSession(request: request))
+    }
+
+    /// Discard a unary response's payload, mapping any failure to ``YccError``.
+    private func unary<M>(_ response: ResponseMessage<M>) throws {
+        if case .failure(let error) = response.result {
+            throw Self.map(error)
+        }
+    }
+
     /// Maps a connect-swift `ConnectError` into the UI-facing ``YccError``.
     static func map(_ error: ConnectError) -> YccError {
         switch error.code {
         case .unauthenticated, .permissionDenied:
             return .unauthorized
+        case .notFound:
+            return .notFound(message: error.message ?? "not found")
+        case .failedPrecondition:
+            return .failedPrecondition(message: error.message ?? "precondition failed")
         default:
             return .rpc(message: error.message ?? "request failed (\(error.code))")
         }

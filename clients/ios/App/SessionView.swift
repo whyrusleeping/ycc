@@ -1,13 +1,15 @@
 import SwiftUI
 import YccKit
 
-/// Read-only session transcript feed — the projection of the event log
-/// (docs/design/ios-client.md §6 phase 1 step 3). Live sessions stream via
-/// `Subscribe`; persisted sessions load once via `GetSessionTranscript`. The
-/// heavy lifting (folding, reconnect) lives in ``SessionViewModel`` / this
-/// view is a thin renderer.
+/// Read-only-plus-interactive session transcript feed — the projection of the
+/// event log (docs/design/ios-client.md §6 phase 1 steps 3–4). Live sessions
+/// stream via `Subscribe`; persisted sessions load once via
+/// `GetSessionTranscript`. The heavy lifting (folding, reconnect, actions) lives
+/// in ``SessionViewModel``; this view is a thin renderer.
 ///
-/// Interactions (input bar, answer sheets, interrupt/resume/stop) are task 0183.
+/// Interactions (task 0183): a sticky input bar (`SendInput`), an answer sheet
+/// for `ask_user` (`AnswerQuestion`/`AnswerQuestions`), and an overflow menu for
+/// interrupt/resume/stop. Chrome (banners) reflects the derived session phase.
 struct SessionView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.scenePhase) private var scenePhase
@@ -15,8 +17,17 @@ struct SessionView: View {
     @State private var model: SessionViewModel
     /// Whether the feed is scrolled to the newest row (auto-follow enabled).
     @State private var isAtBottom = true
+    /// Draft text in the input bar.
+    @State private var draft = ""
+    /// Whether the answer sheet is shown (decoupled from `pendingQuestion` so a
+    /// swipe-dismiss can hide it while the pending gate persists — reopen via the
+    /// banner).
+    @State private var showQuestionSheet = false
+    /// Whether the destructive stop confirmation is shown.
+    @State private var showStopConfirm = false
 
     private let navigationTitle: String
+    private let isLive: Bool
     private static let bottomAnchor = "transcript-bottom"
 
     init(client: YccClient, project: String = "", sessionID: String, live: Bool) {
@@ -24,6 +35,7 @@ struct SessionView: View {
             source: client, project: project, sessionID: sessionID,
             mode: live ? .live : .persisted))
         self.navigationTitle = live ? "Live session" : "Session"
+        self.isLive = live
     }
 
     var body: some View {
@@ -46,11 +58,154 @@ struct SessionView: View {
         .navigationTitle(navigationTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { statusToolbar }
+        .toolbar { if isLive { actionMenu } }
+        .safeAreaInset(edge: .bottom) { bottomChrome }
+        .sheet(isPresented: $showQuestionSheet) {
+            if let pending = model.pendingQuestion {
+                QuestionSheet(
+                    pending: pending,
+                    onAnswerSingle: { optionIndex, text in
+                        if optionIndex >= 0 { await model.answer(optionIndex: optionIndex) }
+                        else { await model.answer(text: text) }
+                    },
+                    onAnswerBatch: { answers in await model.answerBatch(answers) }
+                )
+            }
+        }
+        // Present/dismiss the sheet as the pending gate opens and clears — the
+        // event stream is the source of truth (answering here or elsewhere emits
+        // `question_answered`, which clears `pendingQuestion`).
+        .onChange(of: model.pendingQuestion?.rowID) { _, rowID in
+            showQuestionSheet = (rowID != nil)
+        }
+        .alert(
+            "Action failed",
+            isPresented: Binding(
+                get: { model.actionError != nil },
+                set: { if !$0 { model.actionError = nil } }
+            ),
+            presenting: model.actionError
+        ) { _ in
+            Button("OK", role: .cancel) { model.actionError = nil }
+        } message: { message in
+            Text(message)
+        }
+        .confirmationDialog(
+            "Stop this session?",
+            isPresented: $showStopConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Stop session", role: .destructive) {
+                Task { await model.stopSession() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This hard-terminates the agent — there is no resume.")
+        }
         .task { model.start() }
         .onDisappear { model.stop() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { model.reconnect() }
         }
+    }
+
+    // MARK: - Bottom chrome (banner + input bar)
+
+    @ViewBuilder
+    private var bottomChrome: some View {
+        if isLive {
+            VStack(spacing: 0) {
+                pendingQuestionBanner
+                phaseBanner
+                inputBar
+            }
+            .background(.bar)
+        }
+    }
+
+    /// When a question is pending but the sheet was swipe-dismissed, offer a way
+    /// back in (the transcript row also still shows it as waiting).
+    @ViewBuilder
+    private var pendingQuestionBanner: some View {
+        if model.pendingQuestion != nil, !showQuestionSheet {
+            banner(
+                "A question is waiting",
+                systemImage: "questionmark.bubble.fill",
+                tint: .orange,
+                action: ("Answer", { showQuestionSheet = true })
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var phaseBanner: some View {
+        switch model.phase {
+        case .paused:
+            banner(
+                "Paused — send a steer or Resume",
+                systemImage: "pause.circle.fill",
+                tint: .orange,
+                action: ("Resume", { Task { await model.resumeSession() } })
+            )
+        case .idle:
+            banner("Session idle", systemImage: "moon.zzz.fill", tint: .secondary)
+        case .error(let message):
+            banner(
+                message.isEmpty ? "Session error" : "Error: \(message)",
+                systemImage: "exclamationmark.triangle.fill",
+                tint: .red
+            )
+        case .stopped:
+            banner("Session stopped", systemImage: "stop.circle.fill", tint: .secondary)
+        case .running:
+            EmptyView()
+        }
+    }
+
+    private func banner(
+        _ text: String,
+        systemImage: String,
+        tint: Color,
+        action: (title: String, run: () -> Void)? = nil
+    ) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: systemImage).foregroundStyle(tint)
+            Text(text).font(.caption).foregroundStyle(.secondary)
+            Spacer()
+            if let action {
+                Button(action.title, action: action.run)
+                    .font(.caption.weight(.semibold))
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.08))
+    }
+
+    private var inputBar: some View {
+        HStack(spacing: 8) {
+            TextField("Message…", text: $draft, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .lineLimit(1...5)
+                .onSubmit(send)
+            Button(action: send) {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.title2)
+            }
+            .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    private func send() {
+        let text = draft
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        draft = ""
+        Task { await model.send(text: text) }
     }
 
     private var transcript: some View {
@@ -103,6 +258,32 @@ struct SessionView: View {
                     .foregroundStyle(.orange)
             case .idle, .finished:
                 EmptyView()
+            }
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var actionMenu: some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
+            Menu {
+                Button {
+                    Task { await model.interrupt() }
+                } label: {
+                    Label("Interrupt", systemImage: "pause.circle")
+                }
+                Button {
+                    Task { await model.resumeSession() }
+                } label: {
+                    Label("Resume", systemImage: "play.circle")
+                }
+                Divider()
+                Button(role: .destructive) {
+                    showStopConfirm = true
+                } label: {
+                    Label("Stop…", systemImage: "stop.circle")
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
             }
         }
     }
@@ -314,5 +495,133 @@ private struct QuestionRowView: View {
         .padding(10)
         .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.orange.opacity(0.3)))
+    }
+}
+
+/// The answer sheet for a pending `ask_user` gate. A single question offers its
+/// suggested options as buttons plus a free-text field (`AnswerQuestion`). A
+/// batch renders one section per question and submits positionally
+/// (`AnswerQuestions`, `answers[i]`). The sheet auto-dismisses when the gate
+/// clears (answered here or from another client) via the parent's `onChange`.
+private struct QuestionSheet: View {
+    let pending: SessionProjection.PendingQuestion
+    /// (optionIndex, text): optionIndex >= 0 selects an option, -1 sends text.
+    let onAnswerSingle: (Int, String) async -> Void
+    /// Positional batch answers.
+    let onAnswerBatch: ([(text: String, optionIndex: Int)]) async -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    /// Per-question free-text drafts.
+    @State private var texts: [String]
+    /// Per-question selected option index (-1 = none).
+    @State private var selected: [Int]
+
+    init(
+        pending: SessionProjection.PendingQuestion,
+        onAnswerSingle: @escaping (Int, String) async -> Void,
+        onAnswerBatch: @escaping ([(text: String, optionIndex: Int)]) async -> Void
+    ) {
+        self.pending = pending
+        self.onAnswerSingle = onAnswerSingle
+        self.onAnswerBatch = onAnswerBatch
+        _texts = State(initialValue: Array(repeating: "", count: pending.questions.count))
+        _selected = State(initialValue: Array(repeating: -1, count: pending.questions.count))
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                ForEach(Array(pending.questions.enumerated()), id: \.offset) { index, question in
+                    Section {
+                        ForEach(Array(question.options.enumerated()), id: \.offset) { optIdx, option in
+                            optionRow(index: index, optIdx: optIdx, option: option)
+                        }
+                        TextField("Type an answer…", text: binding(index), axis: .vertical)
+                            .lineLimit(1...4)
+                            .onChange(of: texts[index]) { _, newValue in
+                                // Typing overrides a picked option.
+                                if !newValue.isEmpty { selected[index] = -1 }
+                            }
+                        if !pending.isBatch {
+                            singleSendSection
+                        }
+                    } header: {
+                        Text(question.prompt)
+                    }
+                }
+            }
+            .navigationTitle(pending.isBatch ? "Answer questions" : "Answer")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                if pending.isBatch {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Submit") { submitBatch() }
+                            .disabled(!allAnswered)
+                    }
+                }
+            }
+        }
+    }
+
+    private func optionRow(index: Int, optIdx: Int, option: String) -> some View {
+        Button {
+            if pending.isBatch {
+                selected[index] = optIdx
+                texts[index] = ""
+            } else {
+                // Single question: an option tap answers immediately.
+                Task {
+                    await onAnswerSingle(optIdx, "")
+                    dismiss()
+                }
+            }
+        } label: {
+            HStack {
+                Text(option)
+                Spacer()
+                if pending.isBatch, selected[index] == optIdx {
+                    Image(systemName: "checkmark").foregroundStyle(.tint)
+                }
+            }
+        }
+    }
+
+    /// A binding to a per-question text draft, with a trailing send button for
+    /// the single-question case.
+    private func binding(_ index: Int) -> Binding<String> {
+        Binding(get: { texts[index] }, set: { texts[index] = $0 })
+    }
+
+    /// For a single question, provide an inline send action for free text.
+    private var singleSendSection: some View {
+        Button("Send") {
+            Task {
+                await onAnswerSingle(-1, texts[0])
+                dismiss()
+            }
+        }
+        .disabled(texts.first?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+    }
+
+    private var allAnswered: Bool {
+        for i in pending.questions.indices {
+            let hasText = !texts[i].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            if selected[i] < 0 && !hasText { return false }
+        }
+        return true
+    }
+
+    private func submitBatch() {
+        let answers: [(text: String, optionIndex: Int)] = pending.questions.indices.map { i in
+            if selected[i] >= 0 { return (text: "", optionIndex: selected[i]) }
+            return (text: texts[i], optionIndex: -1)
+        }
+        Task {
+            await onAnswerBatch(answers)
+            dismiss()
+        }
     }
 }

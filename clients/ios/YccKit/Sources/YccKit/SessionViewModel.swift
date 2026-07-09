@@ -44,12 +44,22 @@ public final class SessionViewModel {
     public private(set) var projection = SessionProjection()
     public private(set) var state: ConnectionState = .idle
 
+    /// A short-lived, UI-facing error message to surface as a toast after a
+    /// failed interactive action (send/answer/interrupt/resume/stop). Set on
+    /// failure; the view clears it once shown. A `failed_precondition` on an
+    /// answer (e.g. answered from another client) surfaces here as a mild toast
+    /// — never a crash.
+    public var actionError: String?
+
     /// Ordered rows to render (durable rows + the transient live tail).
     public var rows: [TranscriptRow] { projection.rows }
     /// The open `ask_user` question, if any.
     public var pendingQuestion: SessionProjection.PendingQuestion? { projection.pendingQuestion }
+    /// The session's derived lifecycle phase (running/paused/idle/error/stopped).
+    public var phase: SessionProjection.Phase { projection.phase }
 
     private let source: SessionTranscriptSource
+    private let actions: SessionActionSource?
     private let backoff: BackoffPolicy
     private var streamTask: Task<Void, Never>?
 
@@ -66,12 +76,16 @@ public final class SessionViewModel {
 
     public init(
         source: SessionTranscriptSource,
+        actions: SessionActionSource? = nil,
         project: String = "",
         sessionID: String,
         mode: Mode,
         backoff: BackoffPolicy = BackoffPolicy()
     ) {
         self.source = source
+        // Auto-wire the action surface from the same object when it conforms to
+        // both (YccClient does), so callers need only pass `source`.
+        self.actions = actions ?? (source as? SessionActionSource)
         self.project = project
         self.sessionID = sessionID
         self.mode = mode
@@ -169,10 +183,108 @@ public final class SessionViewModel {
         }
     }
 
+    // MARK: - Interactive actions (task 0183)
+
+    /// Send user input to the session (`SendInput`). The event stream is the
+    /// source of truth — no optimistic row is inserted; the delivered
+    /// `user_input` event will fold in.
+    public func send(text: String) async {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        await perform("send") { actions in
+            try await actions.sendInput(sessionId: self.sessionID, text: trimmed)
+        }
+    }
+
+    /// Answer the pending single question by selecting a suggested option.
+    public func answer(optionIndex: Int) async {
+        await perform("answer") { actions in
+            try await actions.answerQuestion(
+                sessionId: self.sessionID, text: "", optionIndex: optionIndex)
+        }
+    }
+
+    /// Answer the pending single question with free text.
+    public func answer(text: String) async {
+        await perform("answer") { actions in
+            try await actions.answerQuestion(
+                sessionId: self.sessionID, text: text, optionIndex: -1)
+        }
+    }
+
+    /// Answer a batch of questions positionally (`AnswerQuestions`). Each entry
+    /// is `(text, optionIndex)`: `optionIndex >= 0` picks an option, `-1` sends
+    /// the text.
+    public func answerBatch(_ answers: [(text: String, optionIndex: Int)]) async {
+        await perform("answer") { actions in
+            try await actions.answerQuestions(sessionId: self.sessionID, answers: answers)
+        }
+    }
+
+    /// Gracefully pause the session to steer it (`Interrupt`).
+    public func interrupt() async {
+        await perform("interrupt") { actions in
+            try await actions.interrupt(sessionId: self.sessionID)
+        }
+    }
+
+    /// Continue a paused session (`Resume`).
+    public func resumeSession() async {
+        await perform("resume") { actions in
+            try await actions.resume(sessionId: self.sessionID)
+        }
+    }
+
+    /// Hard-terminate the session (`StopSession`).
+    public func stopSession() async {
+        await perform("stop") { actions in
+            try await actions.stopSession(sessionId: self.sessionID)
+        }
+    }
+
+    /// Run an action against the injected source, surfacing failures as a
+    /// short-lived ``actionError`` toast. `failed_precondition` (e.g. a question
+    /// answered from another client) must not crash — it degrades to a mild
+    /// toast and relies on projection state (the stream) to dismiss the sheet.
+    private func perform(
+        _ label: String,
+        _ body: @escaping (SessionActionSource) async throws -> Void
+    ) async {
+        guard let actions else {
+            actionError = "\(label) unavailable"
+            return
+        }
+        do {
+            try await body(actions)
+        } catch {
+            actionError = Self.actionMessage(label, error)
+        }
+    }
+
+    private static func actionMessage(_ label: String, _ error: Error) -> String {
+        guard let ycc = error as? YccError else {
+            return "\(label) failed: \(error.localizedDescription)"
+        }
+        switch ycc {
+        case .unauthorized:
+            return "unauthorized"
+        case .notFound(let message):
+            return message.isEmpty ? "session not found" : message
+        case .failedPrecondition(let message):
+            // Most commonly: no pending question (answered elsewhere). Mild.
+            return message.isEmpty ? "no pending question" : message
+        case .rpc(let message):
+            return message.isEmpty ? "\(label) failed" : message
+        }
+    }
+
     private static func message(_ error: Error) -> String {
         if let ycc = error as? YccError {
             switch ycc {
             case .unauthorized: return "unauthorized"
+            case .notFound(let message): return message.isEmpty ? "not found" : message
+            case .failedPrecondition(let message):
+                return message.isEmpty ? "precondition failed" : message
             case .rpc(let message): return message
             }
         }

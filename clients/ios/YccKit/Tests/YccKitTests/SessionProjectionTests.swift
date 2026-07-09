@@ -286,4 +286,99 @@ final class SessionProjectionTests: XCTestCase {
                              dataJson: #"{"questions":[{"question":"First?"},{"question":"Second?"}]}"#))
         XCTAssertEqual(proj.pendingQuestion?.prompt, "First? (+1 more)")
     }
+
+    func testBatchQuestionParsesEveryQuestionAndOptions() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(seq: 1, type: "question_asked", dataJson: #"""
+        {"questions":[{"question":"Which DB?","options":["pg","sqlite"]},{"question":"Deadline?"}]}
+        """#))
+        let pending = proj.pendingQuestion
+        XCTAssertEqual(pending?.questions.count, 2)
+        XCTAssertTrue(pending?.isBatch ?? false)
+        XCTAssertEqual(pending?.questions.first?.prompt, "Which DB?")
+        XCTAssertEqual(pending?.questions.first?.options, ["pg", "sqlite"])
+        XCTAssertEqual(pending?.questions.last?.prompt, "Deadline?")
+        XCTAssertEqual(pending?.questions.last?.options, [])
+    }
+
+    func testSingleQuestionCarriesOneQuestionEntry() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(seq: 1, type: "question_asked",
+                             dataJson: #"{"question":"Proceed?","options":["yes","no"]}"#))
+        XCTAssertEqual(proj.pendingQuestion?.questions.count, 1)
+        XCTAssertFalse(proj.pendingQuestion?.isBatch ?? true)
+        XCTAssertEqual(proj.pendingQuestion?.questions.first?.options, ["yes", "no"])
+    }
+
+    func testBatchQuestionAnsweredClearsPendingAndResolvesRow() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(seq: 1, type: "question_asked",
+                             dataJson: #"{"questions":[{"question":"First?"},{"question":"Second?"}]}"#))
+        proj.apply(makeEvent(seq: 2, type: "question_answered",
+                             dataJson: #"{"answers":["a","b"]}"#))
+        XCTAssertNil(proj.pendingQuestion)
+        guard case .question(_, _, let answer)? = proj.durableRows.last?.kind else {
+            return XCTFail("expected a resolved question row")
+        }
+        XCTAssertEqual(answer, "a; b")
+    }
+
+    // MARK: - Phase folding
+
+    func testPhaseDefaultsToRunning() {
+        let proj = SessionProjection()
+        XCTAssertEqual(proj.phase, .running)
+    }
+
+    func testPhaseTransitions() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(seq: 1, type: "interrupted"))
+        XCTAssertEqual(proj.phase, .paused)
+
+        proj.apply(makeEvent(seq: 2, type: "resumed"))
+        XCTAssertEqual(proj.phase, .running)
+
+        proj.apply(makeEvent(seq: 3, type: "session_idle"))
+        XCTAssertEqual(proj.phase, .idle)
+
+        // Fresh activity clears the idle banner.
+        proj.apply(makeEvent(seq: 4, type: "user_input", dataJson: #"{"text":"go"}"#))
+        XCTAssertEqual(proj.phase, .running)
+
+        proj.apply(makeEvent(seq: 5, type: "session_error", dataJson: #"{"msg":"boom"}"#))
+        XCTAssertEqual(proj.phase, .error("boom"))
+
+        proj.apply(makeEvent(seq: 6, type: "session_stopped"))
+        XCTAssertEqual(proj.phase, .stopped)
+    }
+
+    func testSessionErrorReadsMsgWithFallbacks() {
+        // Production shape: the daemon emits the message under "msg".
+        var proj = SessionProjection()
+        proj.apply(makeEvent(seq: 1, type: "session_error", dataJson: #"{"msg":"kaboom"}"#))
+        XCTAssertEqual(proj.phase, .error("kaboom"))
+        guard case .system(let text)? = proj.durableRows.last?.kind else {
+            return XCTFail("session_error should render a system row")
+        }
+        XCTAssertEqual(text, "Session error: kaboom")
+
+        // Fallback to the legacy "error" key.
+        var errProj = SessionProjection()
+        errProj.apply(makeEvent(seq: 1, type: "session_error", dataJson: #"{"error":"legacy"}"#))
+        XCTAssertEqual(errProj.phase, .error("legacy"))
+
+        // Fallback to "text".
+        var textProj = SessionProjection()
+        textProj.apply(makeEvent(seq: 1, type: "session_error", dataJson: #"{"text":"tail"}"#))
+        XCTAssertEqual(textProj.phase, .error("tail"))
+    }
+
+    func testInterruptedRendersSystemRow() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(seq: 1, type: "interrupted"))
+        guard case .system(let text)? = proj.durableRows.last?.kind else {
+            return XCTFail("interrupted should render a system row")
+        }
+        XCTAssertEqual(text, "Interrupted")
+    }
 }

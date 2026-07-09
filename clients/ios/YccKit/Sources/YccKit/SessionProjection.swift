@@ -73,15 +73,59 @@ public struct SessionProjection: Sendable, Equatable {
     public private(set) var lastPersistedSeq: Int64 = 0
     /// The currently-open question, if any (cleared by `question_answered`).
     public private(set) var pendingQuestion: PendingQuestion?
+    /// The session's derived lifecycle phase, folded from lifecycle events.
+    public private(set) var phase: Phase = .running
 
     public init() {}
 
-    /// A pending `ask_user` gate awaiting an answer.
-    public struct PendingQuestion: Equatable, Sendable {
+    /// A derived, coarse lifecycle phase for chrome (banners, toolbar). Folded
+    /// from lifecycle events — the event stream is the source of truth, never an
+    /// optimistic client mutation.
+    public enum Phase: Equatable, Sendable {
+        /// The session is active (default; also after `resumed`/`user_input`/turn).
+        case running
+        /// Gracefully paused after `interrupted` — awaiting a steer or `Resume`.
+        case paused
+        /// The agent finished its work and is idle (`session_idle`).
+        case idle
+        /// The session errored (`session_error`), carrying the message.
+        case error(String)
+        /// The session was hard-stopped / ended (`session_stopped`/`session_ended`).
+        case stopped
+    }
+
+    /// A single question within a (possibly batched) `ask_user` gate.
+    public struct Question: Equatable, Sendable {
         public var prompt: String
         public var options: [String]
+        public init(prompt: String, options: [String]) {
+            self.prompt = prompt
+            self.options = options
+        }
+    }
+
+    /// A pending `ask_user` gate awaiting an answer. Carries the FULL batch so
+    /// the answer sheet can render every question; the summary `prompt`/`options`
+    /// drive the compact transcript row.
+    public struct PendingQuestion: Equatable, Sendable {
+        /// Summary prompt for the transcript row (first question, `(+N more)`).
+        public var prompt: String
+        /// Summary options for the transcript row (first question's options).
+        public var options: [String]
+        /// Every question in the batch (one entry for a single question).
+        public var questions: [Question]
         /// Row id of the question row, so an answer can resolve it in place.
         public var rowID: String
+
+        /// Whether this gate holds more than one question (answered positionally).
+        public var isBatch: Bool { questions.count > 1 }
+
+        public init(prompt: String, options: [String], questions: [Question], rowID: String) {
+            self.prompt = prompt
+            self.options = options
+            self.questions = questions
+            self.rowID = rowID
+        }
     }
 
     /// The full ordered rows to render: durable rows followed by the live tail.
@@ -118,6 +162,7 @@ public struct SessionProjection: Sendable, Equatable {
         lastPersistedSeq = event.seq
 
         let data = Self.parse(event.dataJson)
+        foldPhase(type: event.type, data: data)
 
         switch event.type {
         case "user_input":
@@ -233,13 +278,51 @@ public struct SessionProjection: Sendable, Equatable {
         )
     }
 
+    // MARK: - Phase folding
+
+    /// Fold a durable lifecycle event into the derived ``phase``. Non-lifecycle
+    /// activity (`user_input`, `model_turn`, `thinking`, tool calls, questions)
+    /// implies the session is running again — this is what clears a paused/idle
+    /// banner once work resumes.
+    private mutating func foldPhase(type: String, data: [String: Any]) {
+        switch type {
+        case "interrupted":
+            phase = .paused
+        case "session_idle":
+            phase = .idle
+        case "session_error":
+            let msg = (data["msg"] as? String)
+                ?? (data["error"] as? String)
+                ?? (data["text"] as? String) ?? ""
+            phase = .error(msg)
+        case "session_stopped", "session_ended":
+            phase = .stopped
+        case "resumed", "session_reopened", "session_started",
+             "user_input", "model_turn", "thinking", "tool_call", "tool_result",
+             "question_asked", "turn_delta":
+            phase = .running
+        default:
+            break
+        }
+    }
+
     // MARK: - Questions
 
     private mutating func applyQuestionAsked(_ event: Ycc_V1_Event, _ data: [String: Any]) {
-        let (prompt, options) = Self.firstQuestion(data)
+        let questions = Self.allQuestions(data)
+        let summary = Self.summaryQuestion(questions)
         let rowID = "seq-\(event.seq)"
-        appendDurable(event, .question(prompt: prompt, options: options, answer: nil), id: rowID)
-        pendingQuestion = PendingQuestion(prompt: prompt, options: options, rowID: rowID)
+        appendDurable(
+            event,
+            .question(prompt: summary.prompt, options: summary.options, answer: nil),
+            id: rowID
+        )
+        pendingQuestion = PendingQuestion(
+            prompt: summary.prompt,
+            options: summary.options,
+            questions: questions,
+            rowID: rowID
+        )
     }
 
     private mutating func applyQuestionAnswered(_ data: [String: Any]) {
@@ -297,18 +380,31 @@ public struct SessionProjection: Sendable, Equatable {
         return "\(value)"
     }
 
-    /// First question prompt + options from a single- or batch-shaped payload.
-    static func firstQuestion(_ data: [String: Any]) -> (prompt: String, options: [String]) {
+    /// Parse all questions from a single- or batch-shaped `question_asked`
+    /// payload (see internal/session/interaction.go askData/askManyData). A
+    /// single question has `question`/`options`; a batch has
+    /// `questions: [{question, options}]`.
+    static func allQuestions(_ data: [String: Any]) -> [Question] {
         if let q = data["question"] as? String, !q.isEmpty {
-            return (q, (data["options"] as? [String]) ?? [])
+            return [Question(prompt: q, options: (data["options"] as? [String]) ?? [])]
         }
-        if let qs = data["questions"] as? [[String: Any]], let first = qs.first {
-            let prompt = (first["question"] as? String) ?? "a question was asked"
-            let options = (first["options"] as? [String]) ?? []
-            let suffix = qs.count > 1 ? " (+\(qs.count - 1) more)" : ""
-            return (prompt + suffix, options)
+        if let qs = data["questions"] as? [[String: Any]], !qs.isEmpty {
+            return qs.map {
+                Question(
+                    prompt: ($0["question"] as? String) ?? "a question was asked",
+                    options: ($0["options"] as? [String]) ?? []
+                )
+            }
         }
-        return ("a question was asked", [])
+        return [Question(prompt: "a question was asked", options: [])]
+    }
+
+    /// Summary prompt/options for the compact transcript row: the first
+    /// question, with a `(+N more)` suffix for a batch.
+    static func summaryQuestion(_ questions: [Question]) -> (prompt: String, options: [String]) {
+        guard let first = questions.first else { return ("a question was asked", []) }
+        let suffix = questions.count > 1 ? " (+\(questions.count - 1) more)" : ""
+        return (first.prompt + suffix, first.options)
     }
 
     /// Answer text from a single- or batch-shaped `question_answered` payload.
@@ -336,7 +432,9 @@ public struct SessionProjection: Sendable, Equatable {
         case "session_idle":
             return "Session idle"
         case "session_error":
-            let msg = s("error").isEmpty ? s("text") : s("error")
+            // The daemon emits the message under "msg" (internal/engine/loop.go,
+            // internal/session/session.go); tolerate "error"/"text" fallbacks.
+            let msg = [s("msg"), s("error"), s("text")].first { !$0.isEmpty } ?? ""
             return msg.isEmpty ? "Session error" : "Session error: \(msg)"
         case "session_stopped":
             return "Session stopped"
