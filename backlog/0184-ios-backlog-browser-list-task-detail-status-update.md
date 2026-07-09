@@ -67,3 +67,7 @@ Check how ListBacklog treats done tasks (internal/daemon handler) before decidin
 - 2026-07-08 review (claude): accept — The iOS backlog browser (task 0184) is implemented completely and correctly. YccClient gains listBacklog/getTask/updateTaskStatus/createTask wrappers with consistent error mapping; BacklogModel and Ta
 …[truncated]
 - 2026-07-08 decision: accept — commit: iOS: backlog browser — sectioned list, task detail + markdown body, status updates, quick capture, start-work action (task 0184)
+- 2026-07-08 usage: 36,527 tok (in 114, out 36,413, cache_r 2,646,896, cache_w 185,363) · $4.2536
+  implementer: 26,779 tok (in 62, out 26,717, cache_r 1,626,691, cache_w 75,669) · $1.9545
+  coordinator: 5,271 tok (in 26, out 5,245, cache_r 662,808, cache_w 63,691) · $1.7215
+  reviewer:claude: 4,477 tok (in 26, out 4,451, cache_r 357,397, cache_w 46,003) · $0.5776

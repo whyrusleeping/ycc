@@ -62,3 +62,7 @@ Workstreams pane + commit diff viewer for the iOS app (spec §14.1; design §6 p
 - 2026-07-08 review (claude): accept — Task 0189 is implemented completely and correctly. YccKit gains typed wrappers for ListWorkstreams/PreviewMerge/MergeWorkstream/DiscardWorkstream/GetCommitDiff (field names verified against ycc.proto)
 …[truncated]
 - 2026-07-08 decision: accept — commit: iOS: workstreams pane (preview/merge accept-gate/discard) + commit diff viewer (task 0189)
+- 2026-07-08 usage: 49,196 tok (in 176, out 49,020, cache_r 5,808,664, cache_w 278,530) · $7.1486
+  implementer: 39,020 tok (in 108, out 38,912, cache_r 4,169,022, cache_w 115,924) · $3.7824
+  reviewer:claude: 5,942 tok (in 48, out 5,894, cache_r 702,333, cache_w 50,138) · $0.8121
+  coordinator: 4,234 tok (in 20, out 4,214, cache_r 937,309, cache_w 112,468) · $2.5541

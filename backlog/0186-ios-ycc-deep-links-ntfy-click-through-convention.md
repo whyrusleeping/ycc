@@ -57,3 +57,7 @@ ycc:// deep links + ntfy click-through (iOS app + a small daemon-side Click head
 - 2026-07-08 review (claude): accept — The task is well implemented across all three surfaces. The daemon (internal/notify/notify.go) sets an ntfy `Click: ycc://session/<id>` header when a session id is present, with a matching unit test. 
 …[truncated]
 - 2026-07-08 decision: accept — commit: iOS: ycc:// deep links (scheme, parser, cold/warm routing) + ntfy Click header + docs (task 0186)
+- 2026-07-08 usage: 35,455 tok (in 160, out 35,295, cache_r 4,101,091, cache_w 241,633) · $6.2462
+  implementer: 20,827 tok (in 78, out 20,749, cache_r 1,959,967, cache_w 70,929) · $1.9424
+  reviewer:claude: 7,466 tok (in 54, out 7,412, cache_r 576,609, cache_w 36,057) · $0.6992
+  coordinator: 7,162 tok (in 28, out 7,134, cache_r 1,564,515, cache_w 134,647) · $3.6046

@@ -58,3 +58,7 @@ Per-session settings sheet for the iOS session view (spec §18.2 analog; docs/de
 - 2026-07-08 review (claude): accept — The change delivers the per-session settings sheet cleanly and completely. YccClient gains correctly-shaped wrappers for ListModels/SetInteractionLevel/SetRoleConfig/SetThinking; SessionSettingsModel 
 …[truncated]
 - 2026-07-08 decision: accept — commit: iOS: session settings sheet — interaction level, per-role thinking, role/model config (task 0187)
+- 2026-07-08 usage: 41,246 tok (in 162, out 41,084, cache_r 5,093,452, cache_w 307,948) · $7.0160
+  implementer: 28,761 tok (in 90, out 28,671, cache_r 3,088,498, cache_w 166,009) · $3.2990
+  reviewer:claude: 6,577 tok (in 36, out 6,541, cache_r 463,287, cache_w 46,119) · $0.6836
+  coordinator: 5,908 tok (in 36, out 5,872, cache_r 1,541,667, cache_w 95,820) · $3.0334

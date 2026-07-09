@@ -62,3 +62,7 @@ Usage & budget views for the iOS app (docs/design/ios-client.md §6 phase 3 step
 - 2026-07-08 review (claude): accept — The change fully implements task 0188. YccClient gains getUsage/getBudget wrappers that correctly build requests and map errors; UsageModel is a well-structured @MainActor @Observable view model with 
 …[truncated]
 - 2026-07-08 decision: accept — commit: iOS: usage & budget views — grouped GetUsage breakdown with date filters, spend-guard caps (task 0188)
+- 2026-07-08 usage: 26,489 tok (in 110, out 26,379, cache_r 2,128,586, cache_w 101,893) · $2.8915
+  implementer: 17,607 tok (in 60, out 17,547, cache_r 1,189,834, cache_w 55,743) · $1.3823
+  coordinator: 4,960 tok (in 18, out 4,942, cache_r 616,063, cache_w 15,787) · $1.0607
+  reviewer:claude: 3,922 tok (in 32, out 3,890, cache_r 322,689, cache_w 30,363) · $0.4485

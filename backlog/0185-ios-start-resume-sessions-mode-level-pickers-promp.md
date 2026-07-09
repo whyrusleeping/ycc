@@ -64,3 +64,7 @@ Check proto shapes first (StartSessionRequest fields: project, mode, prompt, int
 - 2026-07-08 review (claude): accept — The change fully implements the iOS start & resume session flows per task 0185. YccClient gains typed listModes/startSession/resumeSession wrappers with correct proto field mapping and error translati
 …[truncated]
 - 2026-07-08 decision: accept — commit: iOS: start & resume sessions — mode/level/project pickers, prompt composer, resume affordance (task 0185)
+- 2026-07-08 usage: 29,951 tok (in 100, out 29,851, cache_r 2,085,639, cache_w 151,744) · $3.1524
+  implementer: 23,880 tok (in 60, out 23,820, cache_r 1,578,786, cache_w 74,451) · $1.8505
+  reviewer:claude: 4,102 tok (in 30, out 4,072, cache_r 342,625, cache_w 31,975) · $0.4731
+  coordinator: 1,969 tok (in 10, out 1,959, cache_r 164,228, cache_w 45,318) · $0.8288
