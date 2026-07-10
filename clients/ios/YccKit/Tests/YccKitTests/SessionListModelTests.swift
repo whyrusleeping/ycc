@@ -195,12 +195,19 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertEqual(source.requestedProjects, ["", "myproj"])
     }
 
-    func testProjectFilterHiddenWithOneOrZeroProjects() async {
+    func testProjectFilterShownWithOneProjectHiddenWithZero() async {
+        // Even one registered project means two choices (Default + it), so the
+        // filter shows; with nothing registered there's only Default, so it hides.
         let source = MockListSource()
         source.projects = [project("only")]
         let model = SessionListModel(source: source)
         await model.refresh()
-        XCTAssertFalse(model.showsProjectFilter)
+        XCTAssertTrue(model.showsProjectFilter)
+
+        let emptySource = MockListSource()
+        let emptyModel = SessionListModel(source: emptySource)
+        await emptyModel.refresh()
+        XCTAssertFalse(emptyModel.showsProjectFilter)
     }
 
     func testUnauthorizedSurfacesFlag() async {

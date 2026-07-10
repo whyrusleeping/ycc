@@ -251,6 +251,12 @@ struct SessionView: View {
             }
             .padding()
         }
+        // Open at the newest row, like a chat: the transcript starts scrolled
+        // to the bottom (and stays pinned there until the user scrolls away —
+        // at which point the jump-to-latest pill / auto-follow logic takes
+        // over). Matters for reopened sessions, whose history arrives as one
+        // atomic catch-up fold.
+        .defaultScrollAnchor(.bottom)
     }
 
     private func jumpToLatestPill(proxy: ScrollViewProxy) -> some View {
@@ -360,15 +366,25 @@ private struct TranscriptRowView: View {
                 if !isUser, !actor.isEmpty {
                     Text(actor).font(.caption2).foregroundStyle(.secondary)
                 }
-                Text(text.isEmpty ? " " : text)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(
-                        isUser ? Color.accentColor.opacity(0.85) : Color(.secondarySystemBackground),
-                        in: RoundedRectangle(cornerRadius: 14)
-                    )
-                    .foregroundStyle(isUser ? .white : .primary)
+                Group {
+                    if isUser {
+                        // User messages stay plain text — they were typed, not
+                        // authored in markdown.
+                        Text(text.isEmpty ? " " : text)
+                    } else {
+                        // Agent messages render as markdown (headings, lists,
+                        // inline styles, fenced code blocks).
+                        MarkdownText(text: text.isEmpty ? " " : text)
+                    }
+                }
+                .textSelection(.enabled)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    isUser ? Color.accentColor.opacity(0.85) : Color(.secondarySystemBackground),
+                    in: RoundedRectangle(cornerRadius: 14)
+                )
+                .foregroundStyle(isUser ? .white : .primary)
             }
             if !isUser { Spacer(minLength: 40) }
         }

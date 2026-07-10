@@ -6,13 +6,15 @@ import YccProto
 /// A scripted in-memory ``SessionTranscriptSource`` for headless view-model tests.
 private final class MockSource: SessionTranscriptSource, @unchecked Sendable {
     var transcript: [Ycc_V1_Event] = []
+    var transcriptError: Error?
     var streams: [AsyncThrowingStream<Ycc_V1_Event, Error>] = []
     private(set) var recordedFromSeqs: [Int64] = []
     private var callIndex = 0
     private let lock = NSLock()
 
     func getSessionTranscript(project: String, sessionId: String) async throws -> [Ycc_V1_Event] {
-        transcript
+        if let transcriptError { throw transcriptError }
+        return transcript
     }
 
     func subscribe(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_Event, Error> {
@@ -126,6 +128,61 @@ final class SessionViewModelTests: XCTestCase {
         // user bubble + model + tool + model = 4 rows.
         XCTAssertEqual(vm.rows.count, 4)
         XCTAssertTrue(source.recordedFromSeqs.isEmpty, "persisted mode holds no stream open")
+    }
+
+    /// Reopening a live session whose transcript already contains an answered
+    /// `ask_user` must never expose an intermediate pending-question state (the
+    /// bug: the answer sheet flashed open, then dismissed, during per-event
+    /// replay). The catch-up is a one-shot transcript fetch folded atomically,
+    /// and the stream subscribes from the caught-up seq — so replay never comes
+    /// through the stream at all.
+    func testLiveStartCatchesUpAtomicallyViaTranscript() async {
+        let source = MockSource()
+        source.transcript = [
+            event(1, "user_input", #"{"text":"hi"}"#, actor: "user"),
+            event(2, "question_asked", #"{"prompt":"Proceed?","options":["yes","no"]}"#),
+            event(3, "question_answered", #"{"answer":"yes"}"#),
+            event(4, "model_turn", #"{"text":"done"}"#),
+        ]
+        // The live stream stays open and yields nothing new.
+        source.streams = [AsyncThrowingStream { _ in }]
+        let vm = SessionViewModel(
+            source: source,
+            sessionID: "s1",
+            mode: .live,
+            backoff: .init(initial: 1_000_000, maximum: 2_000_000)
+        )
+
+        vm.start()
+        await waitUntil { source.recordedFromSeqs.count == 1 }
+
+        // Caught up: the answered question is folded, nothing pending.
+        XCTAssertNil(vm.pendingQuestion)
+        XCTAssertEqual(vm.projection.lastPersistedSeq, 4)
+        // The subscribe starts AFTER the transcript — replay never streams, so
+        // no per-event intermediate state was ever observable.
+        XCTAssertEqual(source.recordedFromSeqs, [4])
+        vm.stop()
+    }
+
+    func testLiveStartFallsBackToStreamReplayWhenTranscriptFails() async {
+        let source = MockSource()
+        source.transcriptError = YccError.rpc(message: "boom")
+        source.streams = [stream(sampleEvents)]
+        let vm = SessionViewModel(
+            source: source,
+            sessionID: "s1",
+            mode: .live,
+            backoff: .init(initial: 1_000_000, maximum: 2_000_000)
+        )
+
+        vm.start()
+        await waitUntil { vm.state == .finished }
+
+        // Full replay still arrives via the stream from seq 0 — never a gap.
+        XCTAssertEqual(vm.projection.lastPersistedSeq, 5)
+        XCTAssertEqual(vm.rows.count, 4)
+        XCTAssertEqual(source.recordedFromSeqs, [0])
     }
 
     func testLiveReconnectReplaysFromLastPersistedSeq() async {

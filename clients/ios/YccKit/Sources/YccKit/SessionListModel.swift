@@ -83,8 +83,10 @@ public final class SessionListModel {
         self.selectedProject = selectedProject
     }
 
-    /// The project filter is only meaningful with more than one project.
-    public var showsProjectFilter: Bool { projects.count > 1 }
+    /// The project filter is meaningful whenever any project is registered:
+    /// the picker always offers the implicit "Default" workspace (`""`) too,
+    /// so even a single registered project gives two choices.
+    public var showsProjectFilter: Bool { !projects.isEmpty }
 
     /// Sessions grouped into a pinned needs-answer section (when present) plus
     /// the recency-ordered remainder.

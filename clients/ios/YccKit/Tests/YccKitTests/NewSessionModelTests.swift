@@ -138,7 +138,7 @@ final class NewSessionModelTests: XCTestCase {
 
     func testCanStartRequiresModeAndPrompt() async {
         let source = MockNewSessionSource()
-        source.modes = [mode("work")]
+        source.modes = [mode("pm")]
         let model = NewSessionModel(source: source, defaults: MockDefaults())
         await model.load()
 
@@ -149,6 +149,36 @@ final class NewSessionModelTests: XCTestCase {
         XCTAssertTrue(model.canStart)
         model.selectedMode = ""
         XCTAssertFalse(model.canStart)          // no mode
+    }
+
+    func testWorkModeAllowsEmptyPrompt() async {
+        // Mirrors the TUI: plain "work" starts without a prompt (the agent picks
+        // the next ready backlog task); other modes still require one.
+        let source = MockNewSessionSource()
+        source.modes = [mode("work"), mode("pm")]
+        let model = NewSessionModel(source: source, defaults: MockDefaults())
+        await model.load()
+
+        model.selectedMode = "work"
+        XCTAssertTrue(model.promptIsOptional)
+        XCTAssertTrue(model.canStart)           // empty prompt is fine for work
+        model.selectedMode = "pm"
+        XCTAssertFalse(model.promptIsOptional)
+        XCTAssertFalse(model.canStart)          // still required elsewhere
+    }
+
+    func testStartWorkModeWithEmptyPromptSendsEmptyPrompt() async {
+        let source = MockNewSessionSource()
+        source.modes = [mode("work")]
+        source.startedSessionId = "s_work"
+        let model = NewSessionModel(source: source, defaults: MockDefaults())
+        await model.load()
+
+        let id = await model.start()
+
+        XCTAssertEqual(id, "s_work")
+        XCTAssertEqual(source.startArgs?.mode, "work")
+        XCTAssertEqual(source.startArgs?.prompt, "")
     }
 
     // MARK: - Presets

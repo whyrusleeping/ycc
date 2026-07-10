@@ -152,9 +152,13 @@ work unchanged and are recommended off-tailnet.
 
 ### Phase 2 — start work, backlog
 
-5. **Start session** — mode picker (`ListModes`), interaction level, prompt
-   composer → `StartSession`, then navigate straight into the live session
-   view. **Resume** — `ResumeSession` action on persisted rows.
+5. **Start session** — styled as a blank chat: a message-style composer with
+   a send arrow, compact mode / interaction-level / project chips above it
+   (`ListModes` / `ListProjects`), and presets as tappable suggestion cards
+   in the empty space → `StartSession`, then navigate straight into the live
+   session view. Plain `work` mode may start with an empty prompt (the agent
+   picks the next ready backlog task), like the TUI. **Resume** —
+   `ResumeSession` action on persisted rows.
 6. **Backlog browser** — `ListBacklog` grouped by status with ready/blocked
    annotations; task detail (`GetTask`) rendering the markdown body; status
    changes via `UpdateTask`; "start work on this task" → `StartSession`

@@ -5,10 +5,13 @@ import YccProto
 /// Drives a session transcript view by folding events through a
 /// ``SessionProjection`` (spec §5.2 / §18). Two modes:
 ///
-/// - **live** — `Subscribe` from seq 0, folding replay + live tail. On a stream
-///   drop it reconnects with a small backoff, and on app foregrounding
-///   ``reconnect()`` re-`Subscribe`s from the last **persisted** seq, so there
-///   is no gap and no duplication (docs/remote-api.md "Replay-from-seq").
+/// - **live** — catches up via a one-shot `GetSessionTranscript` folded as a
+///   single mutation (so replayed history — e.g. an already-answered question —
+///   never flashes transient UI), then `Subscribe`s from the caught-up seq for
+///   the live tail. On a stream drop it reconnects with a small backoff, and on
+///   app foregrounding ``reconnect()`` re-`Subscribe`s from the last
+///   **persisted** seq, so there is no gap and no duplication
+///   (docs/remote-api.md "Replay-from-seq").
 /// - **persisted** — `GetSessionTranscript` once, folded with no live tail and
 ///   no stream held open.
 ///
@@ -149,6 +152,21 @@ public final class SessionViewModel {
         streamTask = Task { [weak self] in
             guard let self else { return }
             var delay = self.backoff.initial
+            // First connect: catch up via the one-shot transcript, folded in a
+            // SINGLE observable mutation, then subscribe from the caught-up seq.
+            // Folding the replay event-by-event off the stream would let the UI
+            // observe intermediate states — e.g. an already-answered ask_user
+            // briefly presenting its answer sheet before the question_answered
+            // event folds in. A failed catch-up falls back to subscribing from
+            // seq 0 (per-event replay — cosmetic only, never a gap).
+            if self.projection.lastPersistedSeq == 0 {
+                self.state = .loading
+                if let events = try? await self.source.getSessionTranscript(
+                    project: self.project, sessionId: self.sessionID) {
+                    if Task.isCancelled { return }
+                    self.projection.apply(events)
+                }
+            }
             while !Task.isCancelled {
                 let fromSeq = self.projection.lastPersistedSeq
                 // Drop any stale streamed tail from before a disconnect so it

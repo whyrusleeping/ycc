@@ -138,15 +138,23 @@ public final class NewSessionModel {
         self.selectedProject = defaults.lastProject ?? ""
     }
 
-    /// Whether the project picker is worth showing (more than one project).
-    public var showsProjectPicker: Bool { projects.count > 1 }
+    /// Whether the project picker is worth showing: whenever any project is
+    /// registered, since the picker always offers the implicit "Default"
+    /// workspace (`""`) too — even a single registered project gives two choices.
+    public var showsProjectPicker: Bool { !projects.isEmpty }
 
-    /// A start is allowed once a mode is chosen and the prompt is non-empty and
-    /// no start is already in flight.
+    /// Whether the prompt may be left empty for the selected mode. Mirrors the
+    /// TUI: plain `work` mode starts without a prompt — the agent picks up the
+    /// next ready backlog task itself.
+    public var promptIsOptional: Bool { selectedMode == "work" }
+
+    /// A start is allowed once a mode is chosen, the prompt is non-empty
+    /// (unless the mode makes it optional), and no start is already in flight.
     public var canStart: Bool {
         !isStarting
             && !selectedMode.isEmpty
-            && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (promptIsOptional
+                || !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
     /// The currently-selected mode's description, if any (shown under the picker).

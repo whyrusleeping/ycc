@@ -92,7 +92,7 @@ struct TaskDetailView: View {
             }
             if !task.body.isEmpty {
                 Section("Details") {
-                    MarkdownBody(text: task.body)
+                    MarkdownText(text: task.body)
                 }
             }
         }
@@ -232,87 +232,5 @@ struct TaskStatusPill: View {
         case .done: return .gray
         case .unknown: return .gray
         }
-    }
-}
-
-/// Renders a markdown string block-by-block with native SwiftUI markdown
-/// (`AttributedString(markdown:)`). Splits on blank lines so headings, list
-/// items and paragraphs each render; fenced code blocks render monospaced.
-/// This is the deliberately-simple "first cut" the task calls for.
-private struct MarkdownBody: View {
-    let text: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                switch block {
-                case .code(let code):
-                    Text(code)
-                        .font(.caption.monospaced())
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(8)
-                        .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
-                case .markdown(let md):
-                    Text(rendered(md))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-        }
-        .padding(.vertical, 2)
-    }
-
-    private enum Block {
-        case markdown(String)
-        case code(String)
-    }
-
-    /// Split the body into fenced code blocks and paragraph groups (blank-line
-    /// separated). Keeps it dependency-free and predictable.
-    private var blocks: [Block] {
-        var result: [Block] = []
-        var paragraph: [String] = []
-        var code: [String] = []
-        var inCode = false
-
-        func flushParagraph() {
-            let joined = paragraph.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-            if !joined.isEmpty { result.append(.markdown(joined)) }
-            paragraph.removeAll()
-        }
-
-        for line in text.components(separatedBy: "\n") {
-            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
-                if inCode {
-                    result.append(.code(code.joined(separator: "\n")))
-                    code.removeAll()
-                    inCode = false
-                } else {
-                    flushParagraph()
-                    inCode = true
-                }
-                continue
-            }
-            if inCode {
-                code.append(line)
-            } else if line.trimmingCharacters(in: .whitespaces).isEmpty {
-                flushParagraph()
-            } else {
-                paragraph.append(line)
-            }
-        }
-        if inCode, !code.isEmpty { result.append(.code(code.joined(separator: "\n"))) }
-        flushParagraph()
-        return result
-    }
-
-    /// Parse one block as inline markdown, preserving soft line breaks. Falls
-    /// back to plain text if it doesn't parse.
-    private func rendered(_ md: String) -> AttributedString {
-        var options = AttributedString.MarkdownParsingOptions()
-        options.interpretedSyntax = .inlineOnlyPreservingWhitespace
-        if let attributed = try? AttributedString(markdown: md, options: options) {
-            return attributed
-        }
-        return AttributedString(md)
     }
 }
