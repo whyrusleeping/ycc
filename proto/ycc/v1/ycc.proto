@@ -483,6 +483,77 @@ message NotifyRequest {
 }
 message NotifyResponse { bool delivered = 1; }
 
+// Daemon-side work loop (task 0179, spec §9/§20.6). The unattended backlog-drain
+// driver moved from the client into the daemon: it starts fresh autonomous `work`
+// sessions one after another, enforces the no-progress guard and per-loop budget
+// caps daemon-side, and accumulates the end-of-batch digest — so a loop survives
+// client disconnects and any client can start/observe/stop it via plain RPCs
+// (spec §14, no separate facade). Real-time loop-lifecycle streaming is
+// intentionally deferred (task 0195); GetWorkLoop polling + Subscribe on
+// current_session_id satisfies "observe".
+
+// WorkLoopDigestTask is one task row in a finished loop's batch digest, mirroring
+// the client digest surface: how the task changed plus its rolled-up commit sha,
+// review verdict tally, tokens, priced cost, and (for blocked tasks) the reason.
+message WorkLoopDigestTask {
+  string id = 1;
+  string title = 2;
+  string status = 3;
+  string sha = 4;           // commit sha recorded for the task (if any)
+  string verdict_tally = 5; // e.g. "approve×2 reject×1"
+  int64 tokens = 6;
+  double cost = 7;
+  string price_status = 8; // priced | unpriced | partial
+  string reason = 9;       // blocked reason (from the task work log), blocked tasks only
+}
+
+// WorkLoopSession is a per-session record captured as each loop session finishes:
+// its id, the backlog task it focused, and its summed tokens/priced cost.
+message WorkLoopSession {
+  string session_id = 1;
+  string focus = 2;
+  int64 tokens = 3;
+  double cost = 4;
+  string price_status = 5; // priced | unpriced | partial
+}
+
+// WorkLoopInfo is a snapshot of a work loop: its lifecycle state, the session it
+// is currently driving (Subscribe target), and — once finished — the rolled-up
+// batch digest classifying every task against the backlog baseline at loop start.
+message WorkLoopInfo {
+  string loop_id = 1;
+  string project = 2;
+  string state = 3;              // running | stopping | finished
+  string current_session_id = 4; // the session being driven now (Subscribe target); empty between sessions
+  string outcome = 5;            // human outcome line once finished
+  string started_at = 6;         // RFC3339
+  int32 sessions_run = 7;
+  repeated WorkLoopSession sessions = 8;
+  repeated WorkLoopDigestTask completed = 9;
+  repeated WorkLoopDigestTask blocked = 10;
+  repeated WorkLoopDigestTask in_review = 11;
+  repeated WorkLoopDigestTask created = 12;
+  int64 total_tokens = 13;
+  double total_cost = 14;
+  string cost_status = 15; // priced | unpriced | partial
+}
+
+// StartWorkLoop starts an unattended work loop for a project (spec §9). It fails
+// (FailedPrecondition) if a loop is already running/stopping for that workspace.
+message StartWorkLoopRequest { string project = 1; }
+message StartWorkLoopResponse { WorkLoopInfo loop = 1; }
+
+// StopWorkLoop gracefully stops a running loop: the current session finishes and
+// no next session is picked. Returns the loop snapshot (unset when none running).
+message StopWorkLoopRequest { string project = 1; }
+message StopWorkLoopResponse { WorkLoopInfo loop = 1; }
+
+// GetWorkLoop returns the current loop snapshot for a project so a reconnecting
+// client can observe state (and Subscribe to current_session_id). loop is unset
+// when no loop has run for the workspace.
+message GetWorkLoopRequest { string project = 1; }
+message GetWorkLoopResponse { WorkLoopInfo loop = 1; }
+
 // Parallel workstreams (docs/design/parallel-workstreams.md §5–§8): a workstream
 // is a linked git worktree + branch plus the `work` session scoped to it, tracked
 // as a child of a project. WorkstreamInfo mirrors workstream.Workstream.
@@ -648,6 +719,15 @@ service SessionService {
   // Push notifications (task 0142): route a client-originated notification (the
   // work-loop completion digest) through the daemon-side webhook notifier.
   rpc Notify(NotifyRequest) returns (NotifyResponse);
+
+  // Daemon-side work loop (task 0179, spec §9/§20.6): start/stop/observe the
+  // unattended backlog-drain loop. The loop lives in the daemon, so it survives
+  // client disconnects; any client can start it, poll GetWorkLoop for state +
+  // digest, Subscribe to the current session, and gracefully StopWorkLoop it.
+  // Real-time loop-lifecycle streaming is deferred (task 0195).
+  rpc StartWorkLoop(StartWorkLoopRequest) returns (StartWorkLoopResponse);
+  rpc StopWorkLoop(StopWorkLoopRequest) returns (StopWorkLoopResponse);
+  rpc GetWorkLoop(GetWorkLoopRequest) returns (GetWorkLoopResponse);
 
   // Parallel workstreams (docs/design/parallel-workstreams.md §6, §8): spawn a
   // worktree+session, list them, preview/merge a branch back to base with the

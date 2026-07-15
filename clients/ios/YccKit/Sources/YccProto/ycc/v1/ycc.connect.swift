@@ -167,6 +167,20 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `notify`(request: Ycc_V1_NotifyRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_NotifyResponse>
 
+    /// Daemon-side work loop (task 0179, spec §9/§20.6): start/stop/observe the
+    /// unattended backlog-drain loop. The loop lives in the daemon, so it survives
+    /// client disconnects; any client can start it, poll GetWorkLoop for state +
+    /// digest, Subscribe to the current session, and gracefully StopWorkLoop it.
+    /// Real-time loop-lifecycle streaming is deferred (task 0195).
+    @available(iOS 13, *)
+    func `startWorkLoop`(request: Ycc_V1_StartWorkLoopRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_StartWorkLoopResponse>
+
+    @available(iOS 13, *)
+    func `stopWorkLoop`(request: Ycc_V1_StopWorkLoopRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_StopWorkLoopResponse>
+
+    @available(iOS 13, *)
+    func `getWorkLoop`(request: Ycc_V1_GetWorkLoopRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetWorkLoopResponse>
+
     /// Parallel workstreams (docs/design/parallel-workstreams.md §6, §8): spawn a
     /// worktree+session, list them, preview/merge a branch back to base with the
     /// conflict-aware review gate, or discard one. Subscribe(session_id) is reused
@@ -377,6 +391,21 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     }
 
     @available(iOS 13, *)
+    public func `startWorkLoop`(request: Ycc_V1_StartWorkLoopRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_StartWorkLoopResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/StartWorkLoop", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `stopWorkLoop`(request: Ycc_V1_StopWorkLoopRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_StopWorkLoopResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/StopWorkLoop", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `getWorkLoop`(request: Ycc_V1_GetWorkLoopRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_GetWorkLoopResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/GetWorkLoop", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
     public func `spawnWorkstream`(request: Ycc_V1_SpawnWorkstreamRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_SpawnWorkstreamResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/SpawnWorkstream", idempotencyLevel: .unknown, request: request, headers: headers)
     }
@@ -439,6 +468,9 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let getUsage = Connect.MethodSpec(name: "GetUsage", service: "ycc.v1.SessionService", type: .unary)
             public static let getBudget = Connect.MethodSpec(name: "GetBudget", service: "ycc.v1.SessionService", type: .unary)
             public static let notify = Connect.MethodSpec(name: "Notify", service: "ycc.v1.SessionService", type: .unary)
+            public static let startWorkLoop = Connect.MethodSpec(name: "StartWorkLoop", service: "ycc.v1.SessionService", type: .unary)
+            public static let stopWorkLoop = Connect.MethodSpec(name: "StopWorkLoop", service: "ycc.v1.SessionService", type: .unary)
+            public static let getWorkLoop = Connect.MethodSpec(name: "GetWorkLoop", service: "ycc.v1.SessionService", type: .unary)
             public static let spawnWorkstream = Connect.MethodSpec(name: "SpawnWorkstream", service: "ycc.v1.SessionService", type: .unary)
             public static let listWorkstreams = Connect.MethodSpec(name: "ListWorkstreams", service: "ycc.v1.SessionService", type: .unary)
             public static let previewMerge = Connect.MethodSpec(name: "PreviewMerge", service: "ycc.v1.SessionService", type: .unary)

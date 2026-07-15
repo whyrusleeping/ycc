@@ -152,6 +152,15 @@ func (s *Session) Level() string {
 	return s.InteractionLevel
 }
 
+// BudgetBreached reports whether this session crossed a configured spend cap and
+// handled it (task 0137, spec §20.6). The daemon work loop reads it after a loop
+// session finishes to decide whether to halt the loop at a safe point.
+func (s *Session) BudgetBreached() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.budgetBreached
+}
+
 func (s *Session) currentLoop() *engine.Loop {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -949,6 +958,15 @@ type Manager struct {
 	// happen one at a time and each trial-merges against the latest base HEAD
 	// (sequential reconciliation, design §6).
 	mergeMu sync.Mutex
+
+	// workLoops holds the daemon-side work loops keyed by resolved absolute
+	// workspace (task 0179, spec §9). Guarded by loopMu, a dedicated mutex so loop
+	// bookkeeping never contends with the session-map mu that Start/reclaim take.
+	loopMu    sync.Mutex
+	workLoops map[string]*workLoop
+	// newRunSession, when non-nil, overrides the loop's session runner (the test
+	// seam that drives control logic without a live model). Nil => the real runner.
+	newRunSession func(*workLoop) func(context.Context) (loopSessRec, bool, error)
 }
 
 // NewManager creates a session manager backed by the given model registry. It
@@ -963,6 +981,7 @@ func NewManager(reg *config.Registry, defaultWorkspace string) *Manager {
 		projects:         project.NewMemory(),
 		workstreams:      workstream.NewMemory(),
 		worktreesRoot:    workstream.DefaultWorktreesRoot(),
+		workLoops:        map[string]*workLoop{},
 	}
 }
 
@@ -1895,6 +1914,10 @@ var ErrUnknownProject = errors.New("unknown project")
 // ErrUnknownSession indicates a session id is not (or no longer) live in the
 // manager, so RPC handlers can map it to a not-found code.
 var ErrUnknownSession = errors.New("unknown session")
+
+// ErrLoopRunning indicates a work loop is already running/stopping for a
+// workspace, so StartWorkLoop handlers can map it to a failed-precondition code.
+var ErrLoopRunning = errors.New("work loop already running")
 
 // UsageReport scans the given project's workspace (empty => the daemon default
 // workspace) for session event logs and returns the aggregated, priced usage

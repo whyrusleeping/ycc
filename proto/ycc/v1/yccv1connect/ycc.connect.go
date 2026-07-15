@@ -135,6 +135,15 @@ const (
 	SessionServiceGetBudgetProcedure = "/ycc.v1.SessionService/GetBudget"
 	// SessionServiceNotifyProcedure is the fully-qualified name of the SessionService's Notify RPC.
 	SessionServiceNotifyProcedure = "/ycc.v1.SessionService/Notify"
+	// SessionServiceStartWorkLoopProcedure is the fully-qualified name of the SessionService's
+	// StartWorkLoop RPC.
+	SessionServiceStartWorkLoopProcedure = "/ycc.v1.SessionService/StartWorkLoop"
+	// SessionServiceStopWorkLoopProcedure is the fully-qualified name of the SessionService's
+	// StopWorkLoop RPC.
+	SessionServiceStopWorkLoopProcedure = "/ycc.v1.SessionService/StopWorkLoop"
+	// SessionServiceGetWorkLoopProcedure is the fully-qualified name of the SessionService's
+	// GetWorkLoop RPC.
+	SessionServiceGetWorkLoopProcedure = "/ycc.v1.SessionService/GetWorkLoop"
 	// SessionServiceSpawnWorkstreamProcedure is the fully-qualified name of the SessionService's
 	// SpawnWorkstream RPC.
 	SessionServiceSpawnWorkstreamProcedure = "/ycc.v1.SessionService/SpawnWorkstream"
@@ -236,6 +245,14 @@ type SessionServiceClient interface {
 	// Push notifications (task 0142): route a client-originated notification (the
 	// work-loop completion digest) through the daemon-side webhook notifier.
 	Notify(context.Context, *connect.Request[v1.NotifyRequest]) (*connect.Response[v1.NotifyResponse], error)
+	// Daemon-side work loop (task 0179, spec §9/§20.6): start/stop/observe the
+	// unattended backlog-drain loop. The loop lives in the daemon, so it survives
+	// client disconnects; any client can start it, poll GetWorkLoop for state +
+	// digest, Subscribe to the current session, and gracefully StopWorkLoop it.
+	// Real-time loop-lifecycle streaming is deferred (task 0195).
+	StartWorkLoop(context.Context, *connect.Request[v1.StartWorkLoopRequest]) (*connect.Response[v1.StartWorkLoopResponse], error)
+	StopWorkLoop(context.Context, *connect.Request[v1.StopWorkLoopRequest]) (*connect.Response[v1.StopWorkLoopResponse], error)
+	GetWorkLoop(context.Context, *connect.Request[v1.GetWorkLoopRequest]) (*connect.Response[v1.GetWorkLoopResponse], error)
 	// Parallel workstreams (docs/design/parallel-workstreams.md §6, §8): spawn a
 	// worktree+session, list them, preview/merge a branch back to base with the
 	// conflict-aware review gate, or discard one. Subscribe(session_id) is reused
@@ -475,6 +492,24 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("Notify")),
 			connect.WithClientOptions(opts...),
 		),
+		startWorkLoop: connect.NewClient[v1.StartWorkLoopRequest, v1.StartWorkLoopResponse](
+			httpClient,
+			baseURL+SessionServiceStartWorkLoopProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("StartWorkLoop")),
+			connect.WithClientOptions(opts...),
+		),
+		stopWorkLoop: connect.NewClient[v1.StopWorkLoopRequest, v1.StopWorkLoopResponse](
+			httpClient,
+			baseURL+SessionServiceStopWorkLoopProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("StopWorkLoop")),
+			connect.WithClientOptions(opts...),
+		),
+		getWorkLoop: connect.NewClient[v1.GetWorkLoopRequest, v1.GetWorkLoopResponse](
+			httpClient,
+			baseURL+SessionServiceGetWorkLoopProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("GetWorkLoop")),
+			connect.WithClientOptions(opts...),
+		),
 		spawnWorkstream: connect.NewClient[v1.SpawnWorkstreamRequest, v1.SpawnWorkstreamResponse](
 			httpClient,
 			baseURL+SessionServiceSpawnWorkstreamProcedure,
@@ -546,6 +581,9 @@ type sessionServiceClient struct {
 	getUsage             *connect.Client[v1.GetUsageRequest, v1.GetUsageResponse]
 	getBudget            *connect.Client[v1.GetBudgetRequest, v1.GetBudgetResponse]
 	notify               *connect.Client[v1.NotifyRequest, v1.NotifyResponse]
+	startWorkLoop        *connect.Client[v1.StartWorkLoopRequest, v1.StartWorkLoopResponse]
+	stopWorkLoop         *connect.Client[v1.StopWorkLoopRequest, v1.StopWorkLoopResponse]
+	getWorkLoop          *connect.Client[v1.GetWorkLoopRequest, v1.GetWorkLoopResponse]
 	spawnWorkstream      *connect.Client[v1.SpawnWorkstreamRequest, v1.SpawnWorkstreamResponse]
 	listWorkstreams      *connect.Client[v1.ListWorkstreamsRequest, v1.ListWorkstreamsResponse]
 	previewMerge         *connect.Client[v1.PreviewMergeRequest, v1.PreviewMergeResponse]
@@ -733,6 +771,21 @@ func (c *sessionServiceClient) Notify(ctx context.Context, req *connect.Request[
 	return c.notify.CallUnary(ctx, req)
 }
 
+// StartWorkLoop calls ycc.v1.SessionService.StartWorkLoop.
+func (c *sessionServiceClient) StartWorkLoop(ctx context.Context, req *connect.Request[v1.StartWorkLoopRequest]) (*connect.Response[v1.StartWorkLoopResponse], error) {
+	return c.startWorkLoop.CallUnary(ctx, req)
+}
+
+// StopWorkLoop calls ycc.v1.SessionService.StopWorkLoop.
+func (c *sessionServiceClient) StopWorkLoop(ctx context.Context, req *connect.Request[v1.StopWorkLoopRequest]) (*connect.Response[v1.StopWorkLoopResponse], error) {
+	return c.stopWorkLoop.CallUnary(ctx, req)
+}
+
+// GetWorkLoop calls ycc.v1.SessionService.GetWorkLoop.
+func (c *sessionServiceClient) GetWorkLoop(ctx context.Context, req *connect.Request[v1.GetWorkLoopRequest]) (*connect.Response[v1.GetWorkLoopResponse], error) {
+	return c.getWorkLoop.CallUnary(ctx, req)
+}
+
 // SpawnWorkstream calls ycc.v1.SessionService.SpawnWorkstream.
 func (c *sessionServiceClient) SpawnWorkstream(ctx context.Context, req *connect.Request[v1.SpawnWorkstreamRequest]) (*connect.Response[v1.SpawnWorkstreamResponse], error) {
 	return c.spawnWorkstream.CallUnary(ctx, req)
@@ -842,6 +895,14 @@ type SessionServiceHandler interface {
 	// Push notifications (task 0142): route a client-originated notification (the
 	// work-loop completion digest) through the daemon-side webhook notifier.
 	Notify(context.Context, *connect.Request[v1.NotifyRequest]) (*connect.Response[v1.NotifyResponse], error)
+	// Daemon-side work loop (task 0179, spec §9/§20.6): start/stop/observe the
+	// unattended backlog-drain loop. The loop lives in the daemon, so it survives
+	// client disconnects; any client can start it, poll GetWorkLoop for state +
+	// digest, Subscribe to the current session, and gracefully StopWorkLoop it.
+	// Real-time loop-lifecycle streaming is deferred (task 0195).
+	StartWorkLoop(context.Context, *connect.Request[v1.StartWorkLoopRequest]) (*connect.Response[v1.StartWorkLoopResponse], error)
+	StopWorkLoop(context.Context, *connect.Request[v1.StopWorkLoopRequest]) (*connect.Response[v1.StopWorkLoopResponse], error)
+	GetWorkLoop(context.Context, *connect.Request[v1.GetWorkLoopRequest]) (*connect.Response[v1.GetWorkLoopResponse], error)
 	// Parallel workstreams (docs/design/parallel-workstreams.md §6, §8): spawn a
 	// worktree+session, list them, preview/merge a branch back to base with the
 	// conflict-aware review gate, or discard one. Subscribe(session_id) is reused
@@ -1077,6 +1138,24 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("Notify")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceStartWorkLoopHandler := connect.NewUnaryHandler(
+		SessionServiceStartWorkLoopProcedure,
+		svc.StartWorkLoop,
+		connect.WithSchema(sessionServiceMethods.ByName("StartWorkLoop")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceStopWorkLoopHandler := connect.NewUnaryHandler(
+		SessionServiceStopWorkLoopProcedure,
+		svc.StopWorkLoop,
+		connect.WithSchema(sessionServiceMethods.ByName("StopWorkLoop")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceGetWorkLoopHandler := connect.NewUnaryHandler(
+		SessionServiceGetWorkLoopProcedure,
+		svc.GetWorkLoop,
+		connect.WithSchema(sessionServiceMethods.ByName("GetWorkLoop")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sessionServiceSpawnWorkstreamHandler := connect.NewUnaryHandler(
 		SessionServiceSpawnWorkstreamProcedure,
 		svc.SpawnWorkstream,
@@ -1181,6 +1260,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceGetBudgetHandler.ServeHTTP(w, r)
 		case SessionServiceNotifyProcedure:
 			sessionServiceNotifyHandler.ServeHTTP(w, r)
+		case SessionServiceStartWorkLoopProcedure:
+			sessionServiceStartWorkLoopHandler.ServeHTTP(w, r)
+		case SessionServiceStopWorkLoopProcedure:
+			sessionServiceStopWorkLoopHandler.ServeHTTP(w, r)
+		case SessionServiceGetWorkLoopProcedure:
+			sessionServiceGetWorkLoopHandler.ServeHTTP(w, r)
 		case SessionServiceSpawnWorkstreamProcedure:
 			sessionServiceSpawnWorkstreamHandler.ServeHTTP(w, r)
 		case SessionServiceListWorkstreamsProcedure:
@@ -1342,6 +1427,18 @@ func (UnimplementedSessionServiceHandler) GetBudget(context.Context, *connect.Re
 
 func (UnimplementedSessionServiceHandler) Notify(context.Context, *connect.Request[v1.NotifyRequest]) (*connect.Response[v1.NotifyResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.Notify is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) StartWorkLoop(context.Context, *connect.Request[v1.StartWorkLoopRequest]) (*connect.Response[v1.StartWorkLoopResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.StartWorkLoop is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) StopWorkLoop(context.Context, *connect.Request[v1.StopWorkLoopRequest]) (*connect.Response[v1.StopWorkLoopResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.StopWorkLoop is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) GetWorkLoop(context.Context, *connect.Request[v1.GetWorkLoopRequest]) (*connect.Response[v1.GetWorkLoopResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetWorkLoop is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) SpawnWorkstream(context.Context, *connect.Request[v1.SpawnWorkstreamRequest]) (*connect.Response[v1.SpawnWorkstreamResponse], error) {

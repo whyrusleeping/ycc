@@ -655,17 +655,26 @@ Each mode = a coordinator system prompt + a tool subset + a state machine. There
 
 **`work (loop)` — unattended backlog drain.** On the home menu, pressing **tab** with the
 `work` entry selected toggles it to `work (loop)`. Starting it runs `work` repeatedly: each
-session drives one task to a committed (or blocked/in_review) state, and when it ends the
-client immediately starts a fresh `work` session (new context, no carried prompt) for the
-next ready task. It keeps going until nothing is actionable — every remaining task is `done`,
-`blocked`, `in_review`, or not yet `ready` (dependencies unmet). A guard stops the loop if a
-finished session left its expected task unchanged (so it would re-pick the same task forever),
-and **shift+tab** in the running session toggles the loop — halting is *graceful* (the current
-task finishes and commits; the loop just doesn't pick up the next one), and it can likewise
-roll a single `work` session into a loop. This pairs with the coordinator's
-ability to mark a task `blocked` when it needs user feedback (§10): the loop simply skips such
-tasks rather than stalling. The loop is a **client** concern (the daemon just runs each
-session); the running session view shows a `⟳ loop` indicator.
+session drives one task to a committed (or blocked/in_review) state, and when it ends a fresh
+`work` session (new context, no carried prompt) is started for the next ready task. It keeps
+going until nothing is actionable — every remaining task is `done`, `blocked`, `in_review`,
+or not yet `ready` (dependencies unmet). A guard stops the loop if a finished session left the
+backlog unchanged (so it would re-pick the same task forever), and **shift+tab** in the
+running session toggles the loop — halting is *graceful* (the current task finishes and
+commits; the loop just doesn't pick up the next one), and it can likewise roll a single `work`
+session into a loop. This pairs with the coordinator's ability to mark a task `blocked` when it
+needs user feedback (§10): the loop simply skips such tasks rather than stalling.
+
+The loop driver runs **daemon-side** (task 0179): `StartWorkLoop`/`StopWorkLoop`/`GetWorkLoop`
+start it, gracefully stop it, and observe its status + end-of-batch digest. Because it lives in
+the daemon, a loop **survives client disconnects** and any client (including a phone that
+suspends in the background) can start it, poll `GetWorkLoop` for state, `Subscribe` to the
+current session, and stop it later. The no-progress guard, the per-loop budget caps (§20.6),
+and the completion digest all run daemon-side; the digest is pushed via the notifier (`digest`
+kind, §21) with no client `Notify` call. The **tab/shift+tab** toggle and the running session
+view's `⟳ loop` indicator remain client affordances over these RPCs. (Real-time
+loop-lifecycle streaming is deferred; `GetWorkLoop` polling plus `Subscribe` on the current
+session covers observation.)
 
 **Hand-off `pm` → `work`.** `pm` may offer `switch_to_work`, but it is *deliberate*, never
 automatic: (1) it requires explicit interactive **user approval** before transitioning, and
@@ -1845,8 +1854,10 @@ All values are non-negative; 0/unset means unlimited.
 - **Unpriced models.** A model with no configured pricing (§20.4) contributes tokens but no
   dollars, so a cost-only cap never breaches on it (no invented dollars); a token cap still
   applies.
-- **Loop cap (client-driven).** The per-loop-run cap is enforced by the TUI work-loop driver:
-  it fetches the caps once at loop start via `GetBudget`, accumulates tokens + priced cost as
-  each session closes, and stops the loop before starting the next session once a cap is
-  reached — the just-finished session having completed cleanly. An observed session-level
-  breach inside a loop session likewise halts the loop at the next decision point.
+- **Loop cap (daemon-side).** The per-loop-run cap is enforced by the **daemon** work-loop
+  driver (task 0179): it captures the caps at loop start (`Manager.Budget()`), accumulates
+  tokens + priced cost as each session closes, and stops the loop before starting the next
+  session once a cap is reached — the just-finished session having completed cleanly. An
+  observed session-level breach inside a loop session likewise halts the loop at the next
+  decision point. (The cap enforcement moved daemon-side with the loop driver; it used to be
+  client-driven, fetching caps via `GetBudget`.)

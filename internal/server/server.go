@@ -803,6 +803,102 @@ func (s *Server) Notify(_ context.Context, req *connect.Request[v1.NotifyRequest
 	return connect.NewResponse(&v1.NotifyResponse{Delivered: delivered}), nil
 }
 
+// StartWorkLoop starts a daemon-side unattended work loop for a project (task
+// 0179, spec §9). The loop survives client disconnects; the returned snapshot
+// carries the current session id for Subscribe. An unknown project is client
+// input (InvalidArgument); an already-running loop is FailedPrecondition.
+func (s *Server) StartWorkLoop(_ context.Context, req *connect.Request[v1.StartWorkLoopRequest]) (*connect.Response[v1.StartWorkLoopResponse], error) {
+	wl, err := s.mgr.StartWorkLoop(req.Msg.Project)
+	if err != nil {
+		switch {
+		case errors.Is(err, session.ErrUnknownProject):
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		case errors.Is(err, session.ErrLoopRunning):
+			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+		default:
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+	}
+	return connect.NewResponse(&v1.StartWorkLoopResponse{Loop: workLoopToProto(wl)}), nil
+}
+
+// StopWorkLoop gracefully stops a running loop (the current session finishes, no
+// next session is picked). A missing loop is not an error — it returns an empty
+// response (nil loop).
+func (s *Server) StopWorkLoop(_ context.Context, req *connect.Request[v1.StopWorkLoopRequest]) (*connect.Response[v1.StopWorkLoopResponse], error) {
+	wl, err := s.mgr.StopWorkLoop(req.Msg.Project)
+	if err != nil {
+		if errors.Is(err, session.ErrUnknownProject) {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&v1.StopWorkLoopResponse{Loop: workLoopToProto(wl)}), nil
+}
+
+// GetWorkLoop returns the current loop snapshot so a reconnecting client can
+// observe state and Subscribe to the current session. No active loop returns an
+// empty response (nil loop), not an error.
+func (s *Server) GetWorkLoop(_ context.Context, req *connect.Request[v1.GetWorkLoopRequest]) (*connect.Response[v1.GetWorkLoopResponse], error) {
+	wl, err := s.mgr.GetWorkLoop(req.Msg.Project)
+	if err != nil {
+		if errors.Is(err, session.ErrUnknownProject) {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&v1.GetWorkLoopResponse{Loop: workLoopToProto(wl)}), nil
+}
+
+// workLoopToProto marshals a work-loop snapshot to its proto form (nil-safe → nil).
+func workLoopToProto(wl *session.WorkLoop) *v1.WorkLoopInfo {
+	if wl == nil {
+		return nil
+	}
+	startedAt := ""
+	if !wl.StartedAt.IsZero() {
+		startedAt = wl.StartedAt.UTC().Format(time.RFC3339)
+	}
+	info := &v1.WorkLoopInfo{
+		LoopId:           wl.LoopID,
+		Project:          wl.Project,
+		State:            wl.State,
+		CurrentSessionId: wl.CurrentSessionID,
+		Outcome:          wl.Outcome,
+		StartedAt:        startedAt,
+		SessionsRun:      int32(wl.SessionsRun),
+		TotalTokens:      wl.TotalTokens,
+		TotalCost:        wl.TotalCost,
+		CostStatus:       wl.CostStatus,
+	}
+	for _, sn := range wl.Sessions {
+		info.Sessions = append(info.Sessions, &v1.WorkLoopSession{
+			SessionId: sn.SessionID, Focus: sn.Focus, Tokens: sn.Tokens,
+			Cost: sn.Cost, PriceStatus: sn.PriceStatus,
+		})
+	}
+	info.Completed = digestTasksToProto(wl.Completed)
+	info.Blocked = digestTasksToProto(wl.Blocked)
+	info.InReview = digestTasksToProto(wl.InReview)
+	info.Created = digestTasksToProto(wl.Created)
+	return info
+}
+
+func digestTasksToProto(tasks []session.WorkLoopDigestTask) []*v1.WorkLoopDigestTask {
+	if len(tasks) == 0 {
+		return nil
+	}
+	out := make([]*v1.WorkLoopDigestTask, 0, len(tasks))
+	for _, t := range tasks {
+		out = append(out, &v1.WorkLoopDigestTask{
+			Id: t.ID, Title: t.Title, Status: t.Status, Sha: t.SHA,
+			VerdictTally: t.VerdictTally, Tokens: t.Tokens, Cost: t.Cost,
+			PriceStatus: t.PriceStatus, Reason: t.Reason,
+		})
+	}
+	return out
+}
+
 func usageRowToProto(r usage.Row) *v1.UsageRow {
 	return &v1.UsageRow{
 		Task:        r.Task,

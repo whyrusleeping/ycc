@@ -216,6 +216,7 @@ JSON="Content-Type: application/json"
 | [`GetUsage`](#getusage) | priced token-usage breakdown |
 | [`GetBudget`](#getbudget) | configured spend-guard caps |
 | [`Notify`](#notify) | route a push notification through the daemon-side notifier |
+| [`StartWorkLoop` / `StopWorkLoop` / `GetWorkLoop`](#startworkloop--stopworkloop--getworkloop) | daemon-side unattended work loop: start / graceful stop / observe |
 
 ### ListProjects
 
@@ -615,6 +616,57 @@ The `ycc://` scheme (registered by the iOS client) is:
 
 An unknown/stale id (or unregistered project/server) lands gracefully on the
 session list with an alert rather than a dead view.
+
+---
+
+### StartWorkLoop / StopWorkLoop / GetWorkLoop
+
+Drive the daemon-side unattended **work loop** (spec §9, §20.6; task 0179). The
+loop starts fresh autonomous `work` sessions one after another, re-reading the
+live backlog before each pick, enforcing the no-progress guard and the per-loop
+budget caps daemon-side, and rolling every session up into an end-of-batch digest.
+Because it lives in the daemon, a loop **survives client disconnects**: any client
+can start it, poll `GetWorkLoop`, `Subscribe` to `currentSessionId`, and later stop
+it gracefully. All three take a single `project` (empty ⇒ the daemon default
+workspace) and return a `WorkLoopInfo` (unset `loop` ⇒ no loop for that workspace).
+
+- **`StartWorkLoop`** starts a loop. `failed_precondition` when one is already
+  `running`/`stopping` for that workspace; `invalid_argument` for an unknown
+  project.
+- **`StopWorkLoop`** requests a *graceful* stop: the current session finishes and
+  no next session is picked. A missing loop returns an empty response (no error).
+- **`GetWorkLoop`** returns the current snapshot so a reconnecting client can
+  observe state and Subscribe. Real-time loop-lifecycle streaming is deferred;
+  polling `GetWorkLoop` plus `Subscribe(currentSessionId)` covers observation.
+
+The completion digest is pushed via the notifier (`digest` kind) when the loop
+finishes with at least one session run — no client `Notify` call needed.
+
+```
+curl -sS -H "$AUTH" -H "$JSON" -d '{"project":"myrepo"}' \
+  $B/ycc.v1.SessionService/StartWorkLoop
+```
+
+`WorkLoopInfo` shape:
+
+| field | type | notes |
+|-------|------|-------|
+| `loopId` | string | stable id (`loop_<8-hex>`) |
+| `project` | string | human project label |
+| `state` | string | `running` \| `stopping` \| `finished` |
+| `currentSessionId` | string | session being driven now (Subscribe target); empty between sessions |
+| `outcome` | string | human outcome line once finished |
+| `startedAt` | string | RFC3339 |
+| `sessionsRun` | int32 | number of sessions the loop drove |
+| `sessions` | `WorkLoopSession[]` | per-session records (`sessionId`, `focus`, `tokens`, `cost`, `priceStatus`) |
+| `completed` / `blocked` / `inReview` / `created` | `WorkLoopDigestTask[]` | digest tasks classified against the backlog baseline at loop start |
+| `totalTokens` | int64 (JSON string) | cumulative tokens across the run |
+| `totalCost` | double | cumulative priced cost (unpriced models add none) |
+| `costStatus` | string | `priced` \| `unpriced` \| `partial` |
+
+`WorkLoopDigestTask`: `id`, `title`, `status`, `sha` (commit recorded for the
+task), `verdictTally` (e.g. `approve×2 reject×1`), `tokens`, `cost`, `priceStatus`,
+and `reason` (blocked reason from the task work log; blocked tasks only).
 
 ---
 
