@@ -15,6 +15,8 @@ struct NewSessionView: View {
 
     @State private var model: NewSessionModel
     @FocusState private var composerFocused: Bool
+    /// Whether the "add project" sheet is shown (from the project chip).
+    @State private var showAddProject = false
 
     /// Called with (sessionID, project) once a session starts successfully. The
     /// parent dismisses the sheet and pushes the live view.
@@ -47,6 +49,18 @@ struct NewSessionView: View {
         .task {
             await model.load()
             composerFocused = true
+        }
+        .sheet(isPresented: $showAddProject) {
+            if let client = app.client {
+                AddProjectView(client: client) { project in
+                    Task {
+                        // Reload so the chip lists the new project, then select
+                        // it — the likely reason the user added it here.
+                        await model.load()
+                        model.selectedProject = project.name
+                    }
+                }
+            }
         }
         .onChange(of: model.unauthorized) { _, isUnauthorized in
             if isUnauthorized {
@@ -140,7 +154,10 @@ struct NewSessionView: View {
             HStack(spacing: 8) {
                 modeChip
                 levelChip
-                if model.showsProjectPicker { projectChip }
+                // Always shown: the chip menu is also the home of the "Add
+                // project…" affordance (task 0192), which must be reachable on
+                // a daemon with no registered projects yet.
+                projectChip
             }
             .padding(.horizontal, 12)
             .padding(.top, 8)
@@ -198,6 +215,12 @@ struct NewSessionView: View {
                 ForEach(model.projects, id: \.name) { project in
                     Text(project.name).tag(project.name)
                 }
+            }
+            Divider()
+            Button {
+                showAddProject = true
+            } label: {
+                Label("Add project…", systemImage: "folder.badge.plus")
             }
         } label: {
             chipLabel(

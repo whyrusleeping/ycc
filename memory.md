@@ -16,6 +16,7 @@
 - 2026-07-07: Tool-failure forensics: agent session transcripts live in <workspace>/.ycc/sessions/\*/events.jsonl (tool_call args + tool_result pairs keyed by id) and can be replayed to diagnose tool UX issues; Edit not-found diagnostics live in internal/tools/editdiag.go.
 - 2026-07-08: buf went missing from PATH (2026-07-08); reinstalled via `go install github.com/bufbuild/buf/cmd/buf@latest` into ~/go/bin — Swift proto regen uses REMOTE BSR plugins (network required), Go regen uses local protoc-gen-go/protoc-gen-connect-go.
 - 2026-07-08: In clients/ios/YccKit, `swift test` output ends with a swift-testing "0 tests" summary (the suite is XCTest); check for "Test Suite 'All tests' passed" (e.g. via rg) instead of tailing the last lines.
+- 2026-07-10: On this machine (2026-07-10) `go test ./...` fails at HEAD in three pre-existing spots: internal/session TestReconcileWorkstreams (stale-vs-active), internal/setup TestConfigPath (real XDG path leaks through), internal/tools TestBackgroundBashWaitReturnsExitAndOutput (no job_finished) — unrelated to most changes; verify against HEAD before blaming new work.
 
 ## User preferences
 

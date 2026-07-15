@@ -182,6 +182,70 @@ public nonisolated struct Ycc_V1_RemoveProjectResponse: Sendable {
   public init() {}
 }
 
+/// ListDir — remote directory browsing for the add-project flow (task 0193).
+/// Lists DIRECTORIES ONLY (never files or file contents) so a remote client can
+/// navigate the daemon host's filesystem to pick a workspace to register with
+/// AddProject. Note the bearer token already permits StartSession in an
+/// arbitrary workspace path, so listing directory names does not expand the
+/// trust surface.
+public nonisolated struct Ycc_V1_DirEntry: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// directory basename
+  public var name: String = String()
+
+  /// contains a .git entry
+  public var isGitRepo: Bool = false
+
+  /// path is an already-registered project
+  public var isRegistered: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_ListDirRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Absolute directory to list; empty => the daemon user's home directory.
+  public var path: String = String()
+
+  /// When true, also populate `suggestions`: git repos that are siblings of
+  /// already-registered projects (likely projects, one tap to register).
+  public var suggest: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_ListDirResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// resolved absolute path that was listed
+  public var path: String = String()
+
+  /// parent dir ("" when path is the root)
+  public var parent: String = String()
+
+  /// subdirectories, sorted, hidden dirs omitted
+  public var entries: [Ycc_V1_DirEntry] = []
+
+  /// absolute paths (only when suggest=true)
+  public var suggestions: [String] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 public nonisolated struct Ycc_V1_SubscribeRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -2132,6 +2196,126 @@ nonisolated extension Ycc_V1_RemoveProjectResponse: SwiftProtobuf.Message, Swift
   }
 
   public static func ==(lhs: Ycc_V1_RemoveProjectResponse, rhs: Ycc_V1_RemoveProjectResponse) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_DirEntry: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DirEntry"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{3}is_git_repo\0\u{3}is_registered\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 2: try { try decoder.decodeSingularBoolField(value: &self.isGitRepo) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.isRegistered) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 1)
+    }
+    if self.isGitRepo != false {
+      try visitor.visitSingularBoolField(value: self.isGitRepo, fieldNumber: 2)
+    }
+    if self.isRegistered != false {
+      try visitor.visitSingularBoolField(value: self.isRegistered, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_DirEntry, rhs: Ycc_V1_DirEntry) -> Bool {
+    if lhs.name != rhs.name {return false}
+    if lhs.isGitRepo != rhs.isGitRepo {return false}
+    if lhs.isRegistered != rhs.isRegistered {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_ListDirRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ListDirRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}path\0\u{1}suggest\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.path) }()
+      case 2: try { try decoder.decodeSingularBoolField(value: &self.suggest) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.path.isEmpty {
+      try visitor.visitSingularStringField(value: self.path, fieldNumber: 1)
+    }
+    if self.suggest != false {
+      try visitor.visitSingularBoolField(value: self.suggest, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_ListDirRequest, rhs: Ycc_V1_ListDirRequest) -> Bool {
+    if lhs.path != rhs.path {return false}
+    if lhs.suggest != rhs.suggest {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_ListDirResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ListDirResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}path\0\u{1}parent\0\u{1}entries\0\u{1}suggestions\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.path) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.parent) }()
+      case 3: try { try decoder.decodeRepeatedMessageField(value: &self.entries) }()
+      case 4: try { try decoder.decodeRepeatedStringField(value: &self.suggestions) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.path.isEmpty {
+      try visitor.visitSingularStringField(value: self.path, fieldNumber: 1)
+    }
+    if !self.parent.isEmpty {
+      try visitor.visitSingularStringField(value: self.parent, fieldNumber: 2)
+    }
+    if !self.entries.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.entries, fieldNumber: 3)
+    }
+    if !self.suggestions.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.suggestions, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_ListDirResponse, rhs: Ycc_V1_ListDirResponse) -> Bool {
+    if lhs.path != rhs.path {return false}
+    if lhs.parent != rhs.parent {return false}
+    if lhs.entries != rhs.entries {return false}
+    if lhs.suggestions != rhs.suggestions {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

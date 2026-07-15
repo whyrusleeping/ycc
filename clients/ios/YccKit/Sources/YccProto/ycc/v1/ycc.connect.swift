@@ -81,6 +81,11 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `removeProject`(request: Ycc_V1_RemoveProjectRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_RemoveProjectResponse>
 
+    /// ListDir lists subdirectories of a daemon-host path (directories only) so
+    /// remote clients can browse to a workspace for AddProject (task 0193).
+    @available(iOS 13, *)
+    func `listDir`(request: Ycc_V1_ListDirRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ListDirResponse>
+
     /// Settings overlay (spec §18.2): enumerate models and change a session's
     /// interaction level / per-role model assignment mid-flight.
     @available(iOS 13, *)
@@ -277,6 +282,11 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     }
 
     @available(iOS 13, *)
+    public func `listDir`(request: Ycc_V1_ListDirRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_ListDirResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/ListDir", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
     public func `listModels`(request: Ycc_V1_ListModelsRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_ListModelsResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/ListModels", idempotencyLevel: .unknown, request: request, headers: headers)
     }
@@ -410,6 +420,7 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let listProjects = Connect.MethodSpec(name: "ListProjects", service: "ycc.v1.SessionService", type: .unary)
             public static let addProject = Connect.MethodSpec(name: "AddProject", service: "ycc.v1.SessionService", type: .unary)
             public static let removeProject = Connect.MethodSpec(name: "RemoveProject", service: "ycc.v1.SessionService", type: .unary)
+            public static let listDir = Connect.MethodSpec(name: "ListDir", service: "ycc.v1.SessionService", type: .unary)
             public static let listModels = Connect.MethodSpec(name: "ListModels", service: "ycc.v1.SessionService", type: .unary)
             public static let setInteractionLevel = Connect.MethodSpec(name: "SetInteractionLevel", service: "ycc.v1.SessionService", type: .unary)
             public static let setRoleConfig = Connect.MethodSpec(name: "SetRoleConfig", service: "ycc.v1.SessionService", type: .unary)

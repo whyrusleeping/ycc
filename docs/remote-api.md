@@ -201,6 +201,7 @@ JSON="Content-Type: application/json"
 | Method | Purpose |
 |--------|---------|
 | [`ListProjects`](#listprojects) | list registered projects (multi-project daemon) |
+| [`AddProject`](#addproject--listdir) / [`ListDir`](#addproject--listdir) | register a workspace / browse daemon-host directories |
 | [`ListSessions`](#listsessions) | live sessions (optionally filtered by project) |
 | [`ListSessionHistory`](#listsessionhistory) | live + persisted sessions, most-recent first |
 | [`GetSessionTranscript`](#getsessiontranscript) | full event log for one session |
@@ -234,6 +235,45 @@ list.) With projects registered:
 
 ```json
 {"projects":[{"name":"ycc","path":"/home/me/code/ycc"}]}
+```
+
+### AddProject / ListDir
+
+`AddProject` registers a workspace path as a named project (`name` optional —
+derived from the directory basename when empty). `ListDir` supports the
+client-side add-project picker: it lists the **subdirectories** of a
+daemon-host path (directories only, never files or file contents; hidden dirs
+omitted), each annotated with `isGitRepo` (contains a `.git` entry) and
+`isRegistered` (already a registered project). An empty `path` resolves to the
+daemon user's home directory; `parent` supports "up" navigation (empty at the
+filesystem root). Paths must be absolute (`invalid_argument` otherwise;
+`not_found` for missing paths).
+
+Trust note: the bearer token already permits `StartSession` in an arbitrary
+workspace path, so directory-name listing does not expand the trust surface.
+
+```
+curl -sS -H "$AUTH" -H "$JSON" -d '{"path":"/home/me/code","suggest":true}' \
+  $B/ycc.v1.SessionService/ListDir
+```
+
+```json
+{"path":"/home/me/code","parent":"/home/me",
+ "entries":[{"name":"ycc","isGitRepo":true,"isRegistered":true},{"name":"scratch"}],
+ "suggestions":["/home/me/code/otherrepo"]}
+```
+
+`suggest: true` additionally returns likely projects: git repos that are
+siblings of already-registered projects, excluding the registered ones (capped
+at 50).
+
+```
+curl -sS -H "$AUTH" -H "$JSON" -d '{"path":"/home/me/code/otherrepo"}' \
+  $B/ycc.v1.SessionService/AddProject
+```
+
+```json
+{"project":{"name":"otherrepo","path":"/home/me/code/otherrepo"}}
 ```
 
 ### ListSessions

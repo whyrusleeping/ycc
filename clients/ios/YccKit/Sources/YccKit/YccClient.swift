@@ -49,6 +49,26 @@ public final class YccClient: Sendable {
         }
     }
 
+    // MARK: - Projects (task 0192)
+
+    /// Register a daemon-host workspace path as a named project (`AddProject`,
+    /// spec §3.1; docs/remote-api.md "AddProject / ListDir"). `path` must be an
+    /// absolute path on the DAEMON's filesystem. `name` is optional — the daemon
+    /// derives it from the directory basename when empty. Returns the registered
+    /// project (with its resolved name).
+    public func addProject(path: String, name: String = "") async throws -> Ycc_V1_ProjectInfo {
+        var request = Ycc_V1_AddProjectRequest()
+        request.path = path
+        request.name = name
+        let response = await generated.addProject(request: request)
+        switch response.result {
+        case .success(let message):
+            return message.project
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
     /// Lists the daemon's session history — live and persisted, most-recent
     /// first per the daemon (docs/remote-api.md "ListSessionHistory"). `project`
     /// is optional: empty selects the daemon default workspace; a registered

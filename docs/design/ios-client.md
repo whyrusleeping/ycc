@@ -191,7 +191,9 @@ Phase 1: `ListProjects`, `ListSessionHistory`, `GetSessionTranscript`,
 `GetUsage`, `GetBudget`, `GetCommitDiff`, workstream RPCs, and the loop
 control surface from §9. Not planned: `Notify` (daemon-side pushes already
 fire without a client call), model-registry editing (`UpsertModel` etc. —
-config-file territory), `AddProject`/`RemoveProject` (server-side admin).
+config-file territory). `AddProject` (with the `ListDir` browse RPC, tasks
+0192–0194) has since been pulled into client scope so a new workspace can be
+registered from the phone; `RemoveProject` stays server-side admin.
 
 ## 8. Notifications (decision)
 

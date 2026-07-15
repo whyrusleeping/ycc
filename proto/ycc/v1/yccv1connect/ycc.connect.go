@@ -83,6 +83,8 @@ const (
 	// SessionServiceRemoveProjectProcedure is the fully-qualified name of the SessionService's
 	// RemoveProject RPC.
 	SessionServiceRemoveProjectProcedure = "/ycc.v1.SessionService/RemoveProject"
+	// SessionServiceListDirProcedure is the fully-qualified name of the SessionService's ListDir RPC.
+	SessionServiceListDirProcedure = "/ycc.v1.SessionService/ListDir"
 	// SessionServiceListModelsProcedure is the fully-qualified name of the SessionService's ListModels
 	// RPC.
 	SessionServiceListModelsProcedure = "/ycc.v1.SessionService/ListModels"
@@ -186,6 +188,9 @@ type SessionServiceClient interface {
 	ListProjects(context.Context, *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error)
 	AddProject(context.Context, *connect.Request[v1.AddProjectRequest]) (*connect.Response[v1.AddProjectResponse], error)
 	RemoveProject(context.Context, *connect.Request[v1.RemoveProjectRequest]) (*connect.Response[v1.RemoveProjectResponse], error)
+	// ListDir lists subdirectories of a daemon-host path (directories only) so
+	// remote clients can browse to a workspace for AddProject (task 0193).
+	ListDir(context.Context, *connect.Request[v1.ListDirRequest]) (*connect.Response[v1.ListDirResponse], error)
 	// Settings overlay (spec §18.2): enumerate models and change a session's
 	// interaction level / per-role model assignment mid-flight.
 	ListModels(context.Context, *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error)
@@ -356,6 +361,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("RemoveProject")),
 			connect.WithClientOptions(opts...),
 		),
+		listDir: connect.NewClient[v1.ListDirRequest, v1.ListDirResponse](
+			httpClient,
+			baseURL+SessionServiceListDirProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("ListDir")),
+			connect.WithClientOptions(opts...),
+		),
 		listModels: connect.NewClient[v1.ListModelsRequest, v1.ListModelsResponse](
 			httpClient,
 			baseURL+SessionServiceListModelsProcedure,
@@ -516,6 +527,7 @@ type sessionServiceClient struct {
 	listProjects         *connect.Client[v1.ListProjectsRequest, v1.ListProjectsResponse]
 	addProject           *connect.Client[v1.AddProjectRequest, v1.AddProjectResponse]
 	removeProject        *connect.Client[v1.RemoveProjectRequest, v1.RemoveProjectResponse]
+	listDir              *connect.Client[v1.ListDirRequest, v1.ListDirResponse]
 	listModels           *connect.Client[v1.ListModelsRequest, v1.ListModelsResponse]
 	setInteractionLevel  *connect.Client[v1.SetInteractionLevelRequest, v1.SetInteractionLevelResponse]
 	setRoleConfig        *connect.Client[v1.SetRoleConfigRequest, v1.SetRoleConfigResponse]
@@ -624,6 +636,11 @@ func (c *sessionServiceClient) AddProject(ctx context.Context, req *connect.Requ
 // RemoveProject calls ycc.v1.SessionService.RemoveProject.
 func (c *sessionServiceClient) RemoveProject(ctx context.Context, req *connect.Request[v1.RemoveProjectRequest]) (*connect.Response[v1.RemoveProjectResponse], error) {
 	return c.removeProject.CallUnary(ctx, req)
+}
+
+// ListDir calls ycc.v1.SessionService.ListDir.
+func (c *sessionServiceClient) ListDir(ctx context.Context, req *connect.Request[v1.ListDirRequest]) (*connect.Response[v1.ListDirResponse], error) {
+	return c.listDir.CallUnary(ctx, req)
 }
 
 // ListModels calls ycc.v1.SessionService.ListModels.
@@ -777,6 +794,9 @@ type SessionServiceHandler interface {
 	ListProjects(context.Context, *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error)
 	AddProject(context.Context, *connect.Request[v1.AddProjectRequest]) (*connect.Response[v1.AddProjectResponse], error)
 	RemoveProject(context.Context, *connect.Request[v1.RemoveProjectRequest]) (*connect.Response[v1.RemoveProjectResponse], error)
+	// ListDir lists subdirectories of a daemon-host path (directories only) so
+	// remote clients can browse to a workspace for AddProject (task 0193).
+	ListDir(context.Context, *connect.Request[v1.ListDirRequest]) (*connect.Response[v1.ListDirResponse], error)
 	// Settings overlay (spec §18.2): enumerate models and change a session's
 	// interaction level / per-role model assignment mid-flight.
 	ListModels(context.Context, *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error)
@@ -941,6 +961,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		SessionServiceRemoveProjectProcedure,
 		svc.RemoveProject,
 		connect.WithSchema(sessionServiceMethods.ByName("RemoveProject")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceListDirHandler := connect.NewUnaryHandler(
+		SessionServiceListDirProcedure,
+		svc.ListDir,
+		connect.WithSchema(sessionServiceMethods.ByName("ListDir")),
 		connect.WithHandlerOptions(opts...),
 	)
 	sessionServiceListModelsHandler := connect.NewUnaryHandler(
@@ -1117,6 +1143,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceAddProjectHandler.ServeHTTP(w, r)
 		case SessionServiceRemoveProjectProcedure:
 			sessionServiceRemoveProjectHandler.ServeHTTP(w, r)
+		case SessionServiceListDirProcedure:
+			sessionServiceListDirHandler.ServeHTTP(w, r)
 		case SessionServiceListModelsProcedure:
 			sessionServiceListModelsHandler.ServeHTTP(w, r)
 		case SessionServiceSetInteractionLevelProcedure:
@@ -1238,6 +1266,10 @@ func (UnimplementedSessionServiceHandler) AddProject(context.Context, *connect.R
 
 func (UnimplementedSessionServiceHandler) RemoveProject(context.Context, *connect.Request[v1.RemoveProjectRequest]) (*connect.Response[v1.RemoveProjectResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.RemoveProject is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) ListDir(context.Context, *connect.Request[v1.ListDirRequest]) (*connect.Response[v1.ListDirResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ListDir is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) ListModels(context.Context, *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error) {

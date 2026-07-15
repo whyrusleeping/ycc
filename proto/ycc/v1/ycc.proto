@@ -43,6 +43,31 @@ message AddProjectResponse { ProjectInfo project = 1; }
 message RemoveProjectRequest { string name = 1; }
 message RemoveProjectResponse {}
 
+// ListDir — remote directory browsing for the add-project flow (task 0193).
+// Lists DIRECTORIES ONLY (never files or file contents) so a remote client can
+// navigate the daemon host's filesystem to pick a workspace to register with
+// AddProject. Note the bearer token already permits StartSession in an
+// arbitrary workspace path, so listing directory names does not expand the
+// trust surface.
+message DirEntry {
+  string name = 1;          // directory basename
+  bool is_git_repo = 2;     // contains a .git entry
+  bool is_registered = 3;   // path is an already-registered project
+}
+message ListDirRequest {
+  // Absolute directory to list; empty => the daemon user's home directory.
+  string path = 1;
+  // When true, also populate `suggestions`: git repos that are siblings of
+  // already-registered projects (likely projects, one tap to register).
+  bool suggest = 2;
+}
+message ListDirResponse {
+  string path = 1;                 // resolved absolute path that was listed
+  string parent = 2;               // parent dir ("" when path is the root)
+  repeated DirEntry entries = 3;   // subdirectories, sorted, hidden dirs omitted
+  repeated string suggestions = 4; // absolute paths (only when suggest=true)
+}
+
 message SubscribeRequest {
   string session_id = 1;
   int64 from_seq = 2; // replay events with seq > from_seq, then stream live
@@ -567,6 +592,9 @@ service SessionService {
   rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
   rpc AddProject(AddProjectRequest) returns (AddProjectResponse);
   rpc RemoveProject(RemoveProjectRequest) returns (RemoveProjectResponse);
+  // ListDir lists subdirectories of a daemon-host path (directories only) so
+  // remote clients can browse to a workspace for AddProject (task 0193).
+  rpc ListDir(ListDirRequest) returns (ListDirResponse);
 
   // Settings overlay (spec §18.2): enumerate models and change a session's
   // interaction level / per-role model assignment mid-flight.

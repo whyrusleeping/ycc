@@ -21,6 +21,8 @@ struct LandingView: View {
     /// A deep-link routing failure (unknown/stale session or project) to surface
     /// as an alert — a graceful landing instead of navigating into a dead view.
     @State private var deepLinkError: String?
+    /// Whether the "add project" sheet is shown (from the project menu).
+    @State private var showAddProject = false
 
     var body: some View {
         NavigationStack {
@@ -33,7 +35,10 @@ struct LandingView: View {
             }
             .navigationTitle("Sessions")
             .toolbar {
-                if let model, model.showsProjectFilter {
+                // Always shown (not gated on registered projects): the menu is
+                // also the home of the "Add project…" affordance, which must be
+                // reachable on a daemon with no projects yet (task 0192).
+                if let model {
                     ToolbarItem(placement: .topBarLeading) {
                         projectFilter(model)
                     }
@@ -83,6 +88,16 @@ struct LandingView: View {
                 NewSessionView(client: client) { sessionID, project in
                     showNewSession = false
                     liveTarget = LiveSessionTarget(sessionID: sessionID, project: project)
+                }
+            }
+        }
+        .sheet(isPresented: $showAddProject) {
+            if let client = app.client {
+                AddProjectView(client: client) { project in
+                    // Select and refresh so the new project shows up in the
+                    // filter (and every other picker's next load).
+                    model?.selectedProject = project.name
+                    Task { await model?.refresh() }
                 }
             }
         }
@@ -231,6 +246,12 @@ struct LandingView: View {
                 ForEach(model.projects, id: \.name) { project in
                     Text(project.name).tag(project.name)
                 }
+            }
+            Divider()
+            Button {
+                showAddProject = true
+            } label: {
+                Label("Add project…", systemImage: "folder.badge.plus")
             }
         } label: {
             Label(
