@@ -110,3 +110,7 @@ Add `StartWorkLoop`, `StopWorkLoop`, `GetWorkLoop` handlers that call the manage
 …[truncated]
 - 2026-07-15 decision: accept — commit: feat(daemon): daemon-side work loop core (StartWorkLoop/StopWorkLoop/GetWorkLoop)  Move the work-loop driver into the daemon (spec §9/§20.6): a new internal/session/workloop.go engine drives fresh a
 …[truncated]
+- 2026-07-15 usage: 86,746 tok (in 292, out 86,454, cache_r 13,122,170, cache_w 373,498) · $11.0583
+  implementer: 57,771 tok (in 192, out 57,579, cache_r 9,199,406, cache_w 137,540) · $6.8998
+  coordinator: 19,910 tok (in 50, out 19,860, cache_r 2,657,733, cache_w 145,833) · $2.7371
+  reviewer:claude: 9,065 tok (in 50, out 9,015, cache_r 1,265,031, cache_w 90,125) · $1.4214
