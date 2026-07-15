@@ -85,8 +85,19 @@ struct LandingView: View {
         }
         .sheet(isPresented: $showNewSession) {
             if let client = app.client {
-                NewSessionView(client: client) { sessionID, project in
+                // Preselect the current filter so the session starts in the
+                // workspace the user is looking at.
+                NewSessionView(
+                    client: client,
+                    initialProject: model?.selectedProject ?? ""
+                ) { sessionID, project in
                     showNewSession = false
+                    // Follow the session's project so the list shows it when
+                    // the user backs out of the live view.
+                    if model?.selectedProject != project {
+                        model?.selectedProject = project
+                        Task { await model?.refresh() }
+                    }
                     liveTarget = LiveSessionTarget(sessionID: sessionID, project: project)
                 }
             }
@@ -167,18 +178,37 @@ struct LandingView: View {
         if model.isLoading && model.sessions.isEmpty {
             ProgressView()
         } else if let errorMessage = model.errorMessage, model.sessions.isEmpty {
-            ContentUnavailableView(
-                "Couldn’t load sessions",
-                systemImage: "exclamationmark.triangle",
-                description: Text(errorMessage))
+            refreshableUnavailable(model) {
+                ContentUnavailableView(
+                    "Couldn’t load sessions",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(errorMessage))
+            }
         } else if model.sessions.isEmpty {
-            ContentUnavailableView(
-                "No sessions",
-                systemImage: "bubble.left.and.bubble.right",
-                description: Text("Sessions started on this daemon show up here."))
+            refreshableUnavailable(model) {
+                ContentUnavailableView(
+                    "No sessions",
+                    systemImage: "bubble.left.and.bubble.right",
+                    description: Text("Sessions started on this daemon show up here."))
+            }
         } else {
             sessionList(model)
         }
+    }
+
+    /// Wraps an empty/error placeholder in a full-size scroll view so
+    /// pull-to-refresh works even when there is no list to pull on.
+    private func refreshableUnavailable<Content: View>(
+        _ model: SessionListModel, @ViewBuilder content: () -> Content
+    ) -> some View {
+        let placeholder = content()
+        return GeometryReader { proxy in
+            ScrollView {
+                placeholder
+                    .frame(width: proxy.size.width, height: proxy.size.height)
+            }
+        }
+        .refreshable { await model.refresh() }
     }
 
     private func sessionList(_ model: SessionListModel) -> some View {

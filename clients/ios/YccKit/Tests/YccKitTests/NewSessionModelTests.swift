@@ -127,6 +127,35 @@ final class NewSessionModelTests: XCTestCase {
         XCTAssertEqual(model.selectedProject, "")     // fell back to default
     }
 
+    func testInitialProjectOverridesRememberedProject() async {
+        // The landing screen's current filter must win over the remembered
+        // last-used project, so a new session starts where the user is looking.
+        let defaults = MockDefaults()
+        defaults.lastProject = "two"
+        let source = MockNewSessionSource()
+        source.modes = [mode("work")]
+        source.projects = [project("one"), project("two")]
+        let model = NewSessionModel(
+            source: source, defaults: defaults, initialProject: "one")
+
+        XCTAssertEqual(model.selectedProject, "one")
+        await model.load()
+        XCTAssertEqual(model.selectedProject, "one")
+
+        _ = await model.start()
+        XCTAssertEqual(source.startArgs?.project, "one")
+    }
+
+    func testInitialProjectEmptyMeansDefaultWorkspace() {
+        // An explicit "" (the landing filter on Default) must override a
+        // remembered project too — nil is the only "no preference" signal.
+        let defaults = MockDefaults()
+        defaults.lastProject = "two"
+        let model = NewSessionModel(
+            source: MockNewSessionSource(), defaults: defaults, initialProject: "")
+        XCTAssertEqual(model.selectedProject, "")
+    }
+
     func testInvalidRememberedLevelFallsBackToJudgement() {
         let defaults = MockDefaults()
         defaults.lastInteractionLevel = "nonsense"

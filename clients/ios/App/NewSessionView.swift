@@ -22,8 +22,17 @@ struct NewSessionView: View {
     /// parent dismisses the sheet and pushes the live view.
     private let onStarted: (String, String) -> Void
 
-    init(client: YccClient, onStarted: @escaping (String, String) -> Void) {
-        _model = State(initialValue: NewSessionModel(source: client))
+    /// - Parameter initialProject: the project to preselect (the landing
+    ///   screen's current filter; `""` = default workspace). Overrides the
+    ///   remembered last-used project so the session starts where the user is
+    ///   currently looking.
+    init(
+        client: YccClient,
+        initialProject: String? = nil,
+        onStarted: @escaping (String, String) -> Void
+    ) {
+        _model = State(initialValue: NewSessionModel(
+            source: client, initialProject: initialProject))
         self.onStarted = onStarted
     }
 

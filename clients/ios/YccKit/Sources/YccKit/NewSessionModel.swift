@@ -125,9 +125,14 @@ public final class NewSessionModel {
     private let source: NewSessionSource
     private let defaults: SessionDefaultsStore
 
+    /// - Parameter initialProject: when non-nil, the project to preselect
+    ///   (e.g. the landing screen's current filter, `""` = default workspace) —
+    ///   it takes precedence over the remembered last-used project so a new
+    ///   session lands in the workspace the user is looking at.
     public init(
         source: NewSessionSource,
-        defaults: SessionDefaultsStore = UserDefaultsSessionDefaults()
+        defaults: SessionDefaultsStore = UserDefaultsSessionDefaults(),
+        initialProject: String? = nil
     ) {
         self.source = source
         self.defaults = defaults
@@ -135,7 +140,7 @@ public final class NewSessionModel {
         self.selectedMode = defaults.lastMode ?? ""
         self.interactionLevel = defaults.lastInteractionLevel
             .flatMap(InteractionLevel.init(rawValue:)) ?? .judgement
-        self.selectedProject = defaults.lastProject ?? ""
+        self.selectedProject = initialProject ?? defaults.lastProject ?? ""
     }
 
     /// Whether the project picker is worth showing: whenever any project is
