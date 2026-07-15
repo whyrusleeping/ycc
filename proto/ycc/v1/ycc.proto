@@ -257,6 +257,7 @@ message ModelConfig {
   optional double price_output = 10;
   optional double price_cache_read = 11;
   optional double price_cache_write = 12;
+  string auth = 13;            // credential mechanism: "" | "api-key" | "oauth" (spec §13)
 }
 
 // UpsertModel adds or replaces a logical model backend (spec §18.2). The change

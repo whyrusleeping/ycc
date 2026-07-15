@@ -38,6 +38,7 @@ import (
 	"github.com/whyrusleeping/ycc/proto/ycc/v1/yccv1connect"
 
 	"github.com/whyrusleeping/ycc/internal/clientconfig"
+	"github.com/whyrusleeping/ycc/internal/codex"
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/docs"
 	"github.com/whyrusleeping/ycc/internal/event"
@@ -488,6 +489,7 @@ type model struct {
 	mbFormMode   int    // mbAdd | mbEdit | mbDuplicate
 	mbOrigName   string // name of the model loaded for edit/duplicate
 	mbOrigModel  string // model id of the model loaded for edit (to keep its name)
+	mbAuthIdx    int    // index into mbAuthList: api-key (default) vs oauth subscription auth
 	mbInputs     [mbNumFields]textinput.Model
 	mbBackends   []string // per-form backend cycle list (preserves an unknown loaded backend)
 	mbBackendIdx int
@@ -6132,6 +6134,7 @@ const (
 	mbFieldBaseURL
 	mbFieldModel
 	mbFieldKeyEnv
+	mbFieldAuth
 	mbFieldThinking
 	mbFieldEffort
 	mbFieldDisplay
@@ -6147,6 +6150,11 @@ var (
 	mbThinkingList = []string{"", "adaptive", "off"}
 	mbEffortList   = []string{"", "low", "medium", "high", "xhigh", "max"}
 	mbDisplayList  = []string{"", "summarized", "omitted"}
+	// mbAuthList mirrors config.Model.Auth: "" (the api-key default) or
+	// "oauth" (Claude/ChatGPT subscription; anthropic and openai backends
+	// only, spec §13). An explicit "api-key" value loaded from config maps
+	// onto "" — the two are equivalent.
+	mbAuthList = []string{"", "oauth"}
 
 	// mbModelPresets offers a small built-in list of common model ids per backend
 	// as suggestions in the model field (spec §13, task 0042). They are
@@ -6181,6 +6189,8 @@ func mbLabel(i int) string {
 		return "model id(s)"
 	case mbFieldKeyEnv:
 		return "key env"
+	case mbFieldAuth:
+		return "auth"
 	case mbFieldThinking:
 		return "thinking"
 	case mbFieldEffort:
@@ -6233,6 +6243,7 @@ func (m *model) mbStartAdd() {
 	m.mbPresetIdx = -1
 	m.mbFormMode = mbAdd
 	m.mbOrigName = ""
+	m.mbAuthIdx = 0
 	m.mbErr, m.mbInfo = "", ""
 	m.mbApplyCuratedIDs()
 	m.mbFocus = mbFieldName
@@ -6242,9 +6253,16 @@ func (m *model) mbStartAdd() {
 
 // mbApplyCuratedIDs fills the model-id field with the current backend's curated
 // default ids (space-separated). Used when opening the add form and when the
-// backend is changed in add mode, so switching backend re-seeds sensible ids.
+// backend (or, for openai, the auth mechanism) is changed in add mode, so
+// switching re-seeds sensible ids. A ChatGPT-subscription (oauth) openai
+// connection is seeded with the codex backend's catalog — the platform ids do
+// not apply there (spec §13).
 func (m *model) mbApplyCuratedIDs() {
-	if presets := mbModelPresets[m.mbBackends[m.mbBackendIdx]]; len(presets) > 0 {
+	presets := mbModelPresets[m.mbBackends[m.mbBackendIdx]]
+	if m.mbBackends[m.mbBackendIdx] == "openai" && mbAuthList[m.mbAuthIdx] == "oauth" {
+		presets = codex.Models
+	}
+	if len(presets) > 0 {
 		m.mbInputs[mbFieldModel].SetValue(strings.Join(presets, " "))
 		m.mbInputs[mbFieldModel].CursorEnd()
 	} else {
@@ -6258,6 +6276,7 @@ func (m *model) mbPrefill(cfg *v1.ModelConfig, mode int) {
 	m.mbFormMode = mode
 	m.mbOrigName = cfg.Name
 	m.mbOrigModel = cfg.Model
+	m.mbAuthIdx = mbIndexOf(mbAuthList, cfg.Auth)
 	name := cfg.Name
 	if mode == mbDuplicate {
 		name = cfg.Name + "-copy"
@@ -6355,10 +6374,28 @@ func (m *model) mbCycleFocused(d int) {
 	case mbFieldBackend:
 		m.mbBackendIdx = (m.mbBackendIdx + d + len(m.mbBackends)) % len(m.mbBackends)
 		m.mbPresetIdx = -1
+		// Subscription auth is anthropic/openai-only (spec §13): leaving those
+		// backends silently resets the auth picker to the api-key default.
+		if !mbOAuthBackend(m.mbBackends[m.mbBackendIdx]) {
+			m.mbAuthIdx = 0
+		}
 		// In add mode, re-seed the model-id field with the new backend's curated
 		// defaults so switching backend offers sensible ids (spec §13).
 		if m.mbFormMode == mbAdd {
 			m.mbApplyCuratedIDs()
+		}
+	case mbFieldAuth:
+		// Cycling to oauth only makes sense on backends with subscription
+		// support; elsewhere the field is pinned to api-key (the row renders
+		// the restriction).
+		if mbOAuthBackend(m.mbBackends[m.mbBackendIdx]) {
+			m.mbAuthIdx = (m.mbAuthIdx + d + len(mbAuthList)) % len(mbAuthList)
+			// The ChatGPT-subscription (codex) backend serves a different model
+			// catalog than the platform API: in add mode, re-seed a curated
+			// model-id field to match the selected auth (free text is kept).
+			if m.mbBackends[m.mbBackendIdx] == "openai" && m.mbFormMode == mbAdd {
+				m.mbApplyCuratedIDs()
+			}
 		}
 	case mbFieldThinking:
 		m.mbThinkIdx = (m.mbThinkIdx + d + len(mbThinkingList)) % len(mbThinkingList)
@@ -6535,6 +6572,13 @@ func (m model) mbSubmitForm() (tea.Model, tea.Cmd) {
 	// Shared connection fields for every sibling.
 	backendURL := strings.TrimSpace(m.mbInputs[mbFieldBaseURL].Value())
 	keyEnv := strings.TrimSpace(m.mbInputs[mbFieldKeyEnv].Value())
+	auth := mbAuthList[m.mbAuthIdx]
+	if auth == "oauth" && !mbOAuthBackend(backend) {
+		// Normally unreachable (the picker pins unsupported backends to
+		// api-key), but guard against stale state anyway.
+		m.mbErr = "auth \"oauth\" is only supported by the anthropic and openai backends"
+		return m, nil
+	}
 	thinking := mbThinkingList[m.mbThinkIdx]
 	effort := mbEffortList[m.mbEffortIdx]
 	display := mbDisplayList[m.mbDisplayIdx]
@@ -6570,6 +6614,7 @@ func (m model) mbSubmitForm() (tea.Model, tea.Cmd) {
 			BaseUrl:         backendURL,
 			Model:           id,
 			KeyEnv:          keyEnv,
+			Auth:            auth,
 			Thinking:        thinking,
 			Effort:          effort,
 			ThinkingDisplay: display,
@@ -6760,7 +6805,7 @@ func (m model) mbFormView() string {
 		title = "duplicate model backend"
 	}
 	order := []int{
-		mbFieldName, mbFieldBackend, mbFieldBaseURL, mbFieldModel, mbFieldKeyEnv,
+		mbFieldName, mbFieldBackend, mbFieldBaseURL, mbFieldModel, mbFieldKeyEnv, mbFieldAuth,
 		mbFieldThinking, mbFieldEffort, mbFieldDisplay,
 		mbFieldPriceIn, mbFieldPriceOut, mbFieldPriceCacheRead, mbFieldPriceCacheWrite,
 	}
@@ -6780,6 +6825,12 @@ func (m model) mbFormView() string {
 			}
 		case mbFieldBackend:
 			val = "◂ " + m.mbBackends[m.mbBackendIdx] + " ▸"
+		case mbFieldAuth:
+			if mbOAuthBackend(m.mbBackends[m.mbBackendIdx]) {
+				val = "◂ " + mbShowAuth(mbAuthList[m.mbAuthIdx]) + " ▸"
+			} else {
+				val = dimStyle.Render("api key  (oauth is anthropic/openai-only)")
+			}
 		case mbFieldThinking:
 			val = "◂ " + mbShow(mbThinkingList[m.mbThinkIdx]) + " ▸"
 		case mbFieldEffort:
@@ -6790,6 +6841,21 @@ func (m model) mbFormView() string {
 			val = m.mbInputs[f].View()
 		}
 		b.WriteString(cursor + label + " " + val + "\n")
+		// Under the focused auth field, explain the choice: oauth means a
+		// Claude (Pro/Max) or ChatGPT (Plus/Pro) subscription set up via
+		// `ycc login <backend>`, and key env is unused.
+		if f == mbFieldAuth && m.mbFocus == mbFieldAuth && mbOAuthBackend(m.mbBackends[m.mbBackendIdx]) {
+			backend := m.mbBackends[m.mbBackendIdx]
+			sub := "Claude subscription (Pro/Max)"
+			if backend == "openai" {
+				sub = "ChatGPT subscription (Plus/Pro)"
+			}
+			if mbAuthList[m.mbAuthIdx] == "oauth" {
+				b.WriteString("    " + dimStyle.Render(sub+" — run `ycc login "+backend+"` once; key env is ignored") + "\n")
+			} else {
+				b.WriteString("    " + dimStyle.Render("api key from key env · ←/→ for oauth ("+sub+")") + "\n")
+			}
+		}
 		// Under the focused model field, hint that multiple ids are allowed and how
 		// to fetch/cycle them. Free text always works.
 		if f == mbFieldModel && m.mbFocus == mbFieldModel {
@@ -6831,6 +6897,22 @@ func mbShow(s string) string {
 		return "(none)"
 	}
 	return s
+}
+
+// mbShowAuth renders the auth cycle's values with friendlier names: the empty
+// default is api-key auth, and oauth is labeled for what it is.
+func mbShowAuth(s string) string {
+	if s == "oauth" {
+		return "oauth (subscription)"
+	}
+	return "api key"
+}
+
+// mbOAuthBackend reports whether a backend supports subscription (oauth)
+// auth: anthropic (Claude Pro/Max) and openai (ChatGPT Plus/Pro via the codex
+// backend). Mirrors config.Model.validateAuth.
+func mbOAuthBackend(b string) bool {
+	return b == "anthropic" || b == "openai"
 }
 
 func (m *model) moveSelection(d int) {
@@ -7351,6 +7433,14 @@ func (m *model) appendEvent(ev *v1.Event) {
 	}
 	switch ev.Type {
 	case "model_turn":
+		// A coordinator turn identifies the model that actually produced it. Keep
+		// the top bar aligned with recorded reality (especially when replaying a
+		// session) rather than relying only on the latest global role defaults.
+		if ev.Actor == "coordinator" {
+			if name := dataField(ev, "model_name"); name != "" {
+				m.roleCoord = name
+			}
+		}
 		// The durable turn supersedes any live streamed tail for this actor: drop
 		// it so the persisted row replaces the in-progress row with no stale tail
 		// (task 0129). A clearing turn_delta usually arrives too, but clearing here
@@ -8506,8 +8596,8 @@ func isAllDigits(s string) bool {
 
 // statusBar renders the single-row session status line as a set of colored,
 // glyph-prefixed segments — an activity spinner / state dot, a mode pill, the
-// interaction level, the coordinator's thinking level, the elapsed clock, a live
-// token/cost readout (task 0062), and the location/id — joined by dim chevrons.
+// coordinator model and thinking level, the elapsed clock, a live token/cost
+// readout (task 0062), and the location/id — joined by dim chevrons.
 //
 // It is ALWAYS exactly one physical row. Each segment carries a priority (lower =
 // keep longer); when the joined bar would exceed the terminal width we drop the
@@ -8591,8 +8681,11 @@ func (m model) statusBar() string {
 		}
 		segs = append(segs, seg{readout, 2})
 	}
-	if m.level != "" {
-		segs = append(segs, seg{dimStyle.Render("lvl ") + typeStyle.Render(m.level), 3})
+	// Keep the active coordinator model beside its reasoning level so the bar
+	// answers at a glance which model is producing the session's top-level turns.
+	// roleCoord is seeded from ListModels and follows live role_config_changed events.
+	if m.roleCoord != "" {
+		segs = append(segs, seg{dimStyle.Render("model ") + typeStyle.Render(m.roleCoord), 3})
 	}
 	if lvl := m.thinkLevels["coordinator"]; lvl != "" {
 		segs = append(segs, seg{pathStyle.Render("◆") + " " + dimStyle.Render(lvl), 4})

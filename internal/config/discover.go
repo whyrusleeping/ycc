@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+
+	"github.com/whyrusleeping/ycc/internal/anthropicauth"
 )
 
 // curatedModelIDs lists sensible built-in model ids per backend. They are used to
@@ -116,6 +118,15 @@ func discoverAnthropic(ctx context.Context, baseURL, key string) ([]string, erro
 	headers := map[string]string{
 		"x-api-key":         key,
 		"anthropic-version": "2023-06-01",
+	}
+	// OAuth access tokens (Claude subscription / `claude setup-token`) must
+	// travel as a bearer token with the oauth beta opt-in, never x-api-key.
+	if strings.HasPrefix(key, anthropicauth.TokenPrefix) {
+		headers = map[string]string{
+			"Authorization":     "Bearer " + key,
+			"anthropic-beta":    anthropicauth.BetaHeader,
+			"anthropic-version": "2023-06-01",
+		}
 	}
 	if err := getJSON(ctx, url, headers, &out); err != nil {
 		return nil, err

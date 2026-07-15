@@ -19,6 +19,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/whyrusleeping/ycc/internal/clientconfig"
+	"github.com/whyrusleeping/ycc/internal/codex"
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/event"
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
@@ -1820,6 +1821,129 @@ func TestModelBackendsModelPresets(t *testing.T) {
 	m = typeText(t, m, "my-custom-model")
 	if got := m.mbInputs[mbFieldModel].Value(); got != "my-custom-model" {
 		t.Fatalf("free text not retained: model=%q", got)
+	}
+}
+
+// TestModelBackendsAuthPicker switches an anthropic model to subscription
+// (oauth) auth via the form's auth field and verifies the choice round-trips
+// (spec §13, task 0194).
+func TestModelBackendsAuthPicker(t *testing.T) {
+	f := newFakeClient(&v1.ModelConfig{Name: "claude", Backend: "anthropic", Model: "claude-3", KeyEnv: "ANTHROPIC_API_KEY"})
+	m := newBackendsModel(f)
+	m = runCmds(t, m, m.fetchModels)
+	m = drive(t, m, "e") // edit; focus starts on backend
+	// Move to the auth field (backend -> base_url -> model -> key_env -> auth).
+	for i := 0; i < 4; i++ {
+		m = drive(t, m, "tab")
+	}
+	if m.mbFocus != mbFieldAuth {
+		t.Fatalf("focus=%d, want mbFieldAuth(%d)", m.mbFocus, mbFieldAuth)
+	}
+	m = drive(t, m, "right") // api key -> oauth
+	if got := mbAuthList[m.mbAuthIdx]; got != "oauth" {
+		t.Fatalf("after right auth=%q, want oauth", got)
+	}
+	m = drive(t, m, "enter")
+	if f.lastUpsert == nil || f.lastUpsert.Auth != "oauth" {
+		t.Fatalf("UpsertModel auth=%v, want oauth", f.lastUpsert)
+	}
+}
+
+// TestModelBackendsAuthPrefillAndEditPreserved: an oauth model loads with the
+// picker on oauth, and an unrelated edit keeps the auth value (no silent
+// downgrade to api-key).
+func TestModelBackendsAuthPrefillAndEditPreserved(t *testing.T) {
+	f := newFakeClient(&v1.ModelConfig{Name: "claude", Backend: "anthropic", Model: "claude-3", Auth: "oauth"})
+	m := newBackendsModel(f)
+	m = runCmds(t, m, m.fetchModels)
+	m = drive(t, m, "e")
+	if got := mbAuthList[m.mbAuthIdx]; got != "oauth" {
+		t.Fatalf("prefill auth=%q, want oauth", got)
+	}
+	// Edit only the model id, then save: auth must survive.
+	m = drive(t, m, "tab") // base_url
+	m = drive(t, m, "tab") // model
+	m = typeText(t, m, "-opus")
+	m = drive(t, m, "enter")
+	if f.lastUpsert == nil || f.lastUpsert.Auth != "oauth" {
+		t.Fatalf("UpsertModel auth=%v, want oauth preserved", f.lastUpsert)
+	}
+}
+
+// TestModelBackendsAuthCodexPresets: in add mode, selecting oauth on an
+// openai connection re-seeds the curated model ids with the codex catalog
+// (the platform ids don't exist on the subscription backend), and switching
+// back restores the platform set.
+func TestModelBackendsAuthCodexPresets(t *testing.T) {
+	f := newFakeClient(&v1.ModelConfig{Name: "claude", Backend: "anthropic", Model: "claude-3"})
+	m := newBackendsModel(f)
+	m = runCmds(t, m, m.fetchModels)
+	m = drive(t, m, "a")
+	m = drive(t, m, "tab")   // -> backend
+	m = drive(t, m, "right") // anthropic -> openai (reseeds platform ids)
+	if got := m.mbInputs[mbFieldModel].Value(); got != strings.Join(mbModelPresets["openai"], " ") {
+		t.Fatalf("model ids = %q, want openai presets", got)
+	}
+	for i := 0; i < 4; i++ { // backend -> base_url -> model -> key_env -> auth
+		m = drive(t, m, "tab")
+	}
+	m = drive(t, m, "right") // api key -> oauth: codex catalog
+	if got := m.mbInputs[mbFieldModel].Value(); got != strings.Join(codex.Models, " ") {
+		t.Fatalf("model ids = %q, want codex catalog", got)
+	}
+	m = drive(t, m, "left") // back to api key: platform ids restored
+	if got := m.mbInputs[mbFieldModel].Value(); got != strings.Join(mbModelPresets["openai"], " ") {
+		t.Fatalf("model ids = %q, want openai presets restored", got)
+	}
+}
+
+// TestModelBackendsAuthSupportedBackendsOnly: the auth picker is pinned to
+// api-key on backends without subscription support (ollama), and switching
+// the backend to one of those resets a selected oauth back to api-key.
+// Anthropic → openai keeps the selection (both support oauth).
+func TestModelBackendsAuthSupportedBackendsOnly(t *testing.T) {
+	f := newFakeClient(&v1.ModelConfig{Name: "claude", Backend: "anthropic", Model: "claude-3"})
+	m := newBackendsModel(f)
+	m = runCmds(t, m, m.fetchModels)
+	m = drive(t, m, "a") // add form, backend defaults to anthropic, focus on name
+	// Select oauth on the anthropic backend.
+	for i := 0; i < 5; i++ { // name -> backend -> base_url -> model -> key_env -> auth
+		m = drive(t, m, "tab")
+	}
+	if m.mbFocus != mbFieldAuth {
+		t.Fatalf("focus=%d, want mbFieldAuth(%d)", m.mbFocus, mbFieldAuth)
+	}
+	m = drive(t, m, "right")
+	if got := mbAuthList[m.mbAuthIdx]; got != "oauth" {
+		t.Fatalf("auth=%q, want oauth", got)
+	}
+	// Back to the backend field.
+	for i := 0; i < 4; i++ {
+		m = drive(t, m, "shift+tab")
+	}
+	if m.mbFocus != mbFieldBackend {
+		t.Fatalf("focus=%d, want mbFieldBackend(%d)", m.mbFocus, mbFieldBackend)
+	}
+	// anthropic -> openai keeps oauth (both subscription-capable).
+	m = drive(t, m, "right")
+	if got := mbAuthList[m.mbAuthIdx]; got != "oauth" {
+		t.Fatalf("after anthropic->openai auth=%q, want oauth kept", got)
+	}
+	// openai -> ollama resets to the api-key default.
+	m = drive(t, m, "right")
+	if got := mbAuthList[m.mbAuthIdx]; got != "" {
+		t.Fatalf("after switch to ollama auth=%q, want api-key default", got)
+	}
+	// And the picker no longer cycles while on ollama.
+	for i := 0; i < 4; i++ {
+		m = drive(t, m, "tab")
+	}
+	if m.mbFocus != mbFieldAuth {
+		t.Fatalf("focus=%d, want mbFieldAuth(%d)", m.mbFocus, mbFieldAuth)
+	}
+	m = drive(t, m, "right")
+	if got := mbAuthList[m.mbAuthIdx]; got != "" {
+		t.Fatalf("auth cycled on ollama backend: %q", got)
 	}
 }
 
@@ -3833,21 +3957,40 @@ func TestSessionUsageSummation(t *testing.T) {
 }
 
 // TestStatusBarSegments renders the status bar with a fully-populated session and
-// asserts the distinct segments (mode, level, thinking, token readout) appear, and
-// that the bar stays exactly one physical row at a narrow width (no wrap).
+// asserts the distinct segments (mode, model, thinking, token readout) appear in
+// the intended order, and that the interaction-level segment is gone. It also
+// verifies the bar stays exactly one physical row at a narrow width (no wrap).
 func TestStatusBarSegments(t *testing.T) {
 	m := model{
 		state: stateSession, status: "running", mode: "implement", level: "judgement",
-		sessionID: "sess12345678", w: 120,
+		sessionID: "sess12345678", w: 120, roleCoord: "claude-opus",
 		thinkLevels:  map[string]string{"coordinator": "high"},
 		usageByModel: map[string]event.Usage{"claude": {Input: 12000, Output: 6000, Total: 18000}},
 		pricing:      map[string]config.Pricing{"claude": {Input: 3, Output: 15, Configured: true}},
 	}
 	bar := m.statusBar()
-	for _, want := range []string{"implement", "judgement", "high", "18.0k", "$"} {
+	for _, want := range []string{"implement", "claude-opus", "high", "18.0k", "$"} {
 		if !strings.Contains(bar, want) {
 			t.Fatalf("status bar missing %q:\n%s", want, bar)
 		}
+	}
+	if strings.Contains(bar, "judgement") || strings.Contains(bar, "lvl ") {
+		t.Fatalf("status bar must not show interaction level:\n%s", bar)
+	}
+	if modelAt, reasoningAt := strings.Index(bar, "claude-opus"), strings.Index(bar, "high"); modelAt < 0 || reasoningAt < 0 || modelAt > reasoningAt {
+		t.Fatalf("coordinator model must appear before reasoning level:\n%s", bar)
+	}
+
+	// A recorded coordinator turn is authoritative and updates the bar on live
+	// delivery and replay; non-coordinator turns must not replace it.
+	m.expanded, m.bodyCache, m.blockCache, m.hiddenCache = map[int]bool{}, map[int]string{}, map[int]string{}, map[int]bool{}
+	m.appendEvent(&v1.Event{Seq: 1, Type: "model_turn", Actor: "coordinator", DataJson: `{"model_name":"gpt-5.6-sol","text":"hello"}`})
+	if got := m.roleCoord; got != "gpt-5.6-sol" {
+		t.Fatalf("coordinator turn set roleCoord=%q, want gpt-5.6-sol", got)
+	}
+	m.appendEvent(&v1.Event{Seq: 2, Type: "model_turn", Actor: "implementer", DataJson: `{"model_name":"claude-sonnet","text":"done"}`})
+	if got := m.roleCoord; got != "gpt-5.6-sol" {
+		t.Fatalf("implementer turn changed roleCoord=%q", got)
 	}
 
 	// Single physical row at a narrow width: no newline and width within bound.
@@ -4099,10 +4242,10 @@ func TestLoopPicksUpTaskAddedMidLoop(t *testing.T) {
 	// while the loop was running. Only 0002 (todo + ready) is eligible.
 	fc.backlogList = []*v1.BacklogTaskSummary{
 		{Id: "0001", Status: "done", Priority: 2, Ready: true},
-		{Id: "0002", Status: "todo", Priority: 3, Ready: true},      // added mid-loop -> next pick
-		{Id: "0003", Status: "proposed", Priority: 1, Ready: true},  // not yet accepted -> skip
-		{Id: "0004", Status: "todo", Priority: 1, Ready: false},     // dependency-blocked -> skip
-		{Id: "0005", Status: "blocked", Priority: 1, Ready: true},   // needs user -> skip
+		{Id: "0002", Status: "todo", Priority: 3, Ready: true},     // added mid-loop -> next pick
+		{Id: "0003", Status: "proposed", Priority: 1, Ready: true}, // not yet accepted -> skip
+		{Id: "0004", Status: "todo", Priority: 1, Ready: false},    // dependency-blocked -> skip
+		{Id: "0005", Status: "blocked", Priority: 1, Ready: true},  // needs user -> skip
 	}
 
 	// Drive the next iteration exactly as the real loop does: the finished session's

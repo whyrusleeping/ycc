@@ -880,6 +880,9 @@ public nonisolated struct Ycc_V1_ModelConfig: Sendable {
   /// Clears the value of `priceCacheWrite`. Subsequent reads from it will return its default value.
   public mutating func clearPriceCacheWrite() {self._priceCacheWrite = nil}
 
+  /// credential mechanism: "" | "api-key" | "oauth" (spec §13)
+  public var auth: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -3464,7 +3467,7 @@ nonisolated extension Ycc_V1_ListModelsResponse: SwiftProtobuf.Message, SwiftPro
 
 nonisolated extension Ycc_V1_ModelConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelConfig"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}backend\0\u{3}base_url\0\u{1}model\0\u{3}key_env\0\u{1}thinking\0\u{1}effort\0\u{3}thinking_display\0\u{3}price_input\0\u{3}price_output\0\u{3}price_cache_read\0\u{3}price_cache_write\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}backend\0\u{3}base_url\0\u{1}model\0\u{3}key_env\0\u{1}thinking\0\u{1}effort\0\u{3}thinking_display\0\u{3}price_input\0\u{3}price_output\0\u{3}price_cache_read\0\u{3}price_cache_write\0\u{1}auth\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -3484,6 +3487,7 @@ nonisolated extension Ycc_V1_ModelConfig: SwiftProtobuf.Message, SwiftProtobuf._
       case 10: try { try decoder.decodeSingularDoubleField(value: &self._priceOutput) }()
       case 11: try { try decoder.decodeSingularDoubleField(value: &self._priceCacheRead) }()
       case 12: try { try decoder.decodeSingularDoubleField(value: &self._priceCacheWrite) }()
+      case 13: try { try decoder.decodeSingularStringField(value: &self.auth) }()
       default: break
       }
     }
@@ -3530,6 +3534,9 @@ nonisolated extension Ycc_V1_ModelConfig: SwiftProtobuf.Message, SwiftProtobuf._
     try { if let v = self._priceCacheWrite {
       try visitor.visitSingularDoubleField(value: v, fieldNumber: 12)
     } }()
+    if !self.auth.isEmpty {
+      try visitor.visitSingularStringField(value: self.auth, fieldNumber: 13)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -3546,6 +3553,7 @@ nonisolated extension Ycc_V1_ModelConfig: SwiftProtobuf.Message, SwiftProtobuf._
     if lhs._priceOutput != rhs._priceOutput {return false}
     if lhs._priceCacheRead != rhs._priceCacheRead {return false}
     if lhs._priceCacheWrite != rhs._priceCacheWrite {return false}
+    if lhs.auth != rhs.auth {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

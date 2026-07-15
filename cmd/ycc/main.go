@@ -142,6 +142,7 @@ func newRootCommand(a *app) *cli.Command {
 			a.doctorCommand(),
 			a.exportCommand(),
 			tokenCommand(),
+			loginCommand(),
 			daemonCommand(),
 		},
 	}
@@ -615,15 +616,20 @@ func resolveDaemon(addr, token string, background bool, ws, configPath string) (
 	}
 
 	if background {
-		if err := daemon.EnsureBackgroundDaemon(ws, configPath); err != nil {
+		if err := daemon.EnsureBackgroundDaemon(ws, configPath, token); err != nil {
 			return "", "", false, noop, err
 		}
-		return daemon.LocalAddr, "", true, noop, nil
+		return daemon.LocalAddr, token, true, noop, nil
 	}
 
-	// Attach to an already-running persistent local daemon if present.
-	if daemon.Reachable(daemon.LocalAddr, "") {
-		return daemon.LocalAddr, "", true, noop, nil
+	// Attach to an already-running persistent local daemon if present. Probe
+	// with the client token (--token / YCC_TOKEN): a daemon bound non-loopback
+	// for remote clients requires one, and an empty-token probe against it gets
+	// Unauthenticated — which would silently fall back to an isolated one-shot
+	// daemon instead of joining the shared multi-project one (spec §3.1). A
+	// tokenless loopback daemon ignores the header, so sending it is harmless.
+	if daemon.Reachable(daemon.LocalAddr, token) {
+		return daemon.LocalAddr, token, true, noop, nil
 	}
 
 	// Otherwise: one-shot in-process daemon on an ephemeral loopback address,

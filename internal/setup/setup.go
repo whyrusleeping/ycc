@@ -95,6 +95,7 @@ type provider struct {
 	model   string
 	keyEnv  string
 	key     string // pasted API key value (stored in secrets, never in ycc.toml)
+	auth    string // credential mechanism: "" (api-key default) | "oauth" (spec §13)
 }
 
 // buildConfig turns the collected providers and role choices into a *config.Config.
@@ -118,6 +119,7 @@ func buildConfig(providers []provider, coord, impl string, reviewers []string) (
 			BaseURL: p.baseURL,
 			Model:   p.model,
 			KeyEnv:  p.keyEnv,
+			Auth:    p.auth,
 		}
 	}
 	if coord == "" {

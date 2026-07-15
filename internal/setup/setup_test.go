@@ -111,11 +111,21 @@ func drive(m model, keys ...string) model {
 // send delivers one message and drains any resulting commands. Commands are run
 // with a short timeout so blocking cursor-blink ticks (from textinput) are
 // abandoned rather than stalling the test; our own verify/discover commands
-// return instantly.
+// return instantly. tea.BatchMsg (from tea.Batch, e.g. the openai login step)
+// is expanded and each sub-command executed, mirroring the real runtime.
 func send(m model, msg tea.Msg) model {
-	out, cmd := m.Update(msg)
+	out, _cmd := m.Update(msg)
 	m = out.(model)
-	for cmd != nil {
+	queue := []tea.Cmd{}
+	if _cmd != nil {
+		queue = append(queue, _cmd)
+	}
+	for len(queue) > 0 {
+		cmd := queue[0]
+		queue = queue[1:]
+		if cmd == nil {
+			continue
+		}
 		ch := make(chan tea.Msg, 1)
 		go func(c tea.Cmd) { ch <- c() }(cmd)
 		var next tea.Msg
@@ -125,10 +135,18 @@ func send(m model, msg tea.Msg) model {
 			next = nil
 		}
 		if next == nil {
-			break
+			continue
 		}
-		out, cmd = m.Update(next)
+		if batch, ok := next.(tea.BatchMsg); ok {
+			queue = append(queue, batch...)
+			continue
+		}
+		var follow tea.Cmd
+		out, follow = m.Update(next)
 		m = out.(model)
+		if follow != nil {
+			queue = append(queue, follow)
+		}
 	}
 	return m
 }

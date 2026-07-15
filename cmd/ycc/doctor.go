@@ -10,12 +10,15 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	cli "github.com/urfave/cli/v3"
 
+	"github.com/whyrusleeping/ycc/internal/anthropicauth"
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/daemon"
 	"github.com/whyrusleeping/ycc/internal/docs"
+	"github.com/whyrusleeping/ycc/internal/openaiauth"
 	"github.com/whyrusleeping/ycc/internal/sandbox"
 	"github.com/whyrusleeping/ycc/internal/secrets"
 )
@@ -189,9 +192,54 @@ func modelKeyChecks(cfg *config.Config) []check {
 	var out []check
 	for _, name := range names {
 		m := cfg.Models[name]
+		if m.Auth == "oauth" {
+			out = append(out, oauthCheck("model key ("+name+")", m.Backend))
+			continue
+		}
 		out = append(out, keyCheck("model key ("+name+")", m.KeyEnv))
 	}
 	return out
+}
+
+// oauthCheck verifies a subscription-authenticated (auth = "oauth") model has
+// stored OAuth credentials for its backend. It never contacts the network: an
+// expired access token with a refresh token present is fine (Build refreshes
+// on demand), so only entirely-missing credentials are a HARD failure.
+func oauthCheck(label, backend string) check {
+	provider, load := "anthropic", func() (expired bool, refresh, detail string, ok bool) {
+		c, ok := anthropicauth.Load()
+		if !ok {
+			return false, "", "", false
+		}
+		return c.Expired(time.Now()), c.RefreshToken, "Anthropic subscription (OAuth) credentials stored", true
+	}
+	if backend == "openai" {
+		provider, load = "openai", func() (expired bool, refresh, detail string, ok bool) {
+			c, ok := openaiauth.Load()
+			if !ok {
+				return false, "", "", false
+			}
+			return c.Expired(time.Now()), c.RefreshToken, "ChatGPT subscription (OAuth) credentials stored", true
+		}
+	}
+	expired, refresh, detail, ok := load()
+	if !ok {
+		return check{
+			status: statusFail,
+			label:  label,
+			detail: "no subscription credentials stored for " + provider,
+			remedy: "run `ycc login " + provider + "`",
+		}
+	}
+	if expired && refresh == "" {
+		return check{
+			status: statusFail,
+			label:  label,
+			detail: provider + " OAuth access token expired and no refresh token stored",
+			remedy: "run `ycc login " + provider + "`",
+		}
+	}
+	return check{status: statusOK, label: label, detail: detail}
 }
 
 // keyCheck resolves a single key_env, reporting where it resolved from without

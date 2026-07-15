@@ -41,9 +41,12 @@ func Reachable(addr, token string) bool {
 // LocalAddr, spawning a detached `ycc daemon` (which survives this process) if
 // none is reachable. It returns once the daemon answers. This is the opt-in
 // persistence path used by `ycc --background`; configPath is auto-discovered
-// when empty.
-func EnsureBackgroundDaemon(workspace, configPath string) error {
-	if Reachable(LocalAddr, "") {
+// when empty. token is the bearer token to probe with (and is passed to a
+// newly spawned daemon so remote clients keep working): an already-running
+// token-protected daemon rejects an empty-token probe, and spawning a second
+// daemon on the same port would just fail to bind.
+func EnsureBackgroundDaemon(workspace, configPath, token string) error {
+	if Reachable(LocalAddr, token) {
 		return nil
 	}
 	self, err := os.Executable()
@@ -67,6 +70,9 @@ func EnsureBackgroundDaemon(workspace, configPath string) error {
 	}
 	if configPath != "" {
 		args = append(args, "-config", configPath)
+	}
+	if token != "" {
+		args = append(args, "-token", token)
 	}
 
 	cmd := exec.Command(self, args...)
@@ -95,7 +101,7 @@ func EnsureBackgroundDaemon(workspace, configPath string) error {
 	_ = cmd.Process.Release()
 
 	for i := 0; i < 60; i++ {
-		if Reachable(LocalAddr, "") {
+		if Reachable(LocalAddr, token) {
 			return nil
 		}
 		time.Sleep(150 * time.Millisecond)

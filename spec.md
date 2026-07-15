@@ -110,7 +110,10 @@ Persistence is **opt-in**. The daemon runs in one of two lifecycles:
 
 Resolution for plain `ycc` (no `-addr`, no `daemon` subcommand):
 1. If a persistent local daemon answers at the well-known address, **attach** to it and
-   show the project picker.
+   show the project picker. The probe presents the client token (`--token` /
+   `YCC_TOKEN`) so a token-protected daemon (e.g. one bound non-loopback for phone
+   clients) is joined rather than silently shadowed by a one-shot daemon; a tokenless
+   loopback daemon ignores the header.
 2. Otherwise run **one-shot** in-process on the current directory.
 
 `ycc -addr <url>` always attaches to the given (persistent/remote) daemon and shows the
@@ -838,6 +841,7 @@ A config file maps logical names → gollama clients:
 [models.claude]
 backend = "anthropic"  base_url = "…"  model = "claude-opus-4-8"  key_env = "ANTHROPIC_API_KEY"
 thinking = "adaptive"  effort = "high"  thinking_display = "summarized"   # reasoning (see §7.4)
+# auth = "oauth"       # Claude subscription (Pro/Max) instead of an API key; see below
 [models.gpt]      backend="openai"    base_url="…" model="gpt-5.5"          key_env="OPENAI_API_KEY"
 [models.glm]      backend="openai"    base_url="https://…/glm" model="glm-4.6" key_env="GLM_API_KEY"
 [models.local]    backend="ollama"    base_url="http://localhost:11434" model="…"
@@ -882,6 +886,42 @@ model id. The set of ids can be **discovered** from the live backend via `Discov
 or seeded from curated per-backend defaults. The underlying config stays the flat
 per-logical-model map (a dedicated `[providers.X]` credential table that models reference is
 a possible future normalization, not required for this).
+
+**Credential mechanisms** (`auth`). By default a model authenticates with an API key
+resolved from `key_env` (environment first, then the machine-local secrets store —
+`~/.config/ycc/secrets.json`, mode 0600, managed by `ycc token set/list/rm`). Two
+backends additionally support **subscription auth** with `auth = "oauth"` on the
+`[models.X]` block (`key_env` is then ignored; both default to **unpriced**, §20.4):
+
+- **anthropic — Claude Pro/Max.** `ycc login anthropic` runs an authorization-code +
+  PKCE flow (browser login, paste back the `code#state` the page shows) and persists
+  the access/refresh pair in the secrets store under `ANTHROPIC_OAUTH`. At `Build`
+  time the registry sends a live access token — auto-refreshing and re-persisting an
+  expired one — as an `Authorization: Bearer` header plus the
+  `anthropic-beta: oauth-2025-04-20` opt-in header (never `x-api-key`), on the same
+  `/v1/messages` transport as API-key auth. A long-lived OAuth token minted elsewhere
+  (e.g. `claude setup-token`) can instead be stored under a normal `key_env`: the
+  registry auto-detects the `sk-ant-oat` prefix and applies the same treatment.
+- **openai — ChatGPT Plus/Pro.** `ycc login openai` runs the Codex CLI's OAuth flow
+  (PKCE against auth.openai.com with a local callback server on `localhost:1455`, the
+  redirect the public client id is registered with) and persists credentials —
+  including the ChatGPT account id parsed from the id_token — under `OPENAI_OAUTH`.
+  Subscription tokens are **not valid on the platform API**: inference goes through a
+  dedicated transport (`internal/codex`) speaking the **Responses API** to the Codex
+  backend (`chatgpt.com/backend-api/codex/responses`; an empty or platform base_url is
+  swapped automatically, an explicit proxy URL honored). The transport is
+  streaming-only with `store:false`, sends the required `chatgpt-account-id` /
+  `originator` / `OpenAI-Beta: responses=experimental` headers, and formats errors in
+  gollama's "status code NNN" shape so engine retry/classification work unchanged.
+  Model ids differ from the platform catalog (curated set in `internal/codex.Models`,
+  e.g. `gpt-5.6-sol`; no listing endpoint).
+
+`auth = "oauth"` on any other backend is a config error, and logout is
+`ycc token rm ANTHROPIC_OAUTH|OPENAI_OAUTH`. The TUI backend form has an **auth
+picker** (`api key` | `oauth (subscription)`) on its connection form: it is pinned to
+api-key for other backends (switching the backend to one resets it), the credential
+itself still comes from `ycc login <backend>`, and editing a model preserves its
+`auth` value.
 
 **Per-model reasoning** (`thinking` / `effort` / `thinking_display`) is configured on each
 `[models.X]` block and resolved by the registry (`ThinkingFor(name)`), paralleling
@@ -1129,7 +1169,10 @@ ycc/
 
 The Bubble Tea client (`internal/tui`, spec §15) is the primary local surface. It has
 two top-level states today — **home menu** and **session view** — plus a modal
-**settings overlay**. This section captures the interaction model.
+**settings overlay**. This section captures the interaction model. The session view's
+single-row top status bar identifies the active coordinator model immediately before
+its reasoning level; the interaction level remains available in settings rather than
+occupying a `lvl …` status-bar segment.
 
 ### 18.1 Session input — multiline
 
@@ -1192,7 +1235,8 @@ Overlay contents:
   first-run setup (§19.1). A backend manager screen lists the configured logical models and
   lets the user **add** a new one, **edit** an existing one, **duplicate** one, and
   **remove** one. Adding is **connection-centric** (§13): the form captures one connection
-  (backend `anthropic|openai|openai-compatible|glm|ollama`, base URL, `key_env`, shared
+  (backend `anthropic|openai|openai-compatible|glm|ollama`, base URL, `key_env`, auth
+  mechanism — api-key vs subscription oauth, anthropic/openai-only (§13) —, shared
   reasoning/pricing) plus a **set of model ids** in a single space/comma-separated field.
   Submitting creates **one sibling logical model per id**, each named after its model id, so
   a single anthropic connection yields selectable `claude-opus-4-8` / `claude-sonnet-4-5` /
@@ -1551,10 +1595,19 @@ second `DiscoverConfig` candidate, so every later run finds it.
 **What it collects.**
 1. **One or more model providers.** For each: a logical name (e.g. `claude`, `gpt`,
    `local`), a backend (`anthropic` | `openai` | `ollama` — the backends `config.Build`
-   already supports), a base URL (sensible default per backend), a model id, and an API key.
-   Keys are stored as a `key_env` reference (the var name) following the spec's
-   "keys in env only" lean (§17 open question), *not* inlined into the TOML; the wizard can
-   also offer to note which env vars must be exported. At least one provider is required.
+   already supports), a base URL (sensible default per backend), a model id, an **auth
+   mechanism** (api-key, or subscription `oauth` for the anthropic/openai backends — §13),
+   and an API key. Keys are stored as a `key_env` reference (the var name) following the
+   spec's "keys in env only" lean (§17 open question), *not* inlined into the TOML; the
+   wizard can also offer to note which env vars must be exported. Choosing oauth with no
+   stored subscription credentials routes through a **login step** before verification —
+   anthropic shows (and best-effort opens) the authorize URL and exchanges the pasted
+   `code#state`; openai runs the browser flow with the local callback server, showing a
+   waiting screen until the redirect lands — persisting the credentials to the secrets
+   store exactly like `ycc login <backend>`. Selecting oauth on an openai provider also
+   re-seeds a still-default model id with the codex default (the platform catalog does
+   not apply), and `ctrl+f` offers the curated codex set. At least one provider is
+   required.
 2. **Role assignments** (§13): pick the `coordinator`, `implementer`, and one-or-more
    `reviewers` from the configured logical models. With a single provider, all three default
    to it (mirroring `DefaultAnthropic`) and the user can accept without choosing.
@@ -1709,6 +1762,9 @@ longest-prefix matched on the model id) so estimates work out of the box. Models
 **neither report token counts only** (cost shown as "—"), so the feature degrades
 gracefully and never invents numbers. Built-in rates are estimates and may drift when
 vendors change prices — setting any `price_*` field overrides them without a code change.
+Subscription-authenticated models (`auth = "oauth"`, §13) are prepaid, so they **skip the
+built-in default table** (pricing them at API-key rates would invent spend that never
+happened) and are unpriced unless explicit `price_*` rates are configured.
 
 Usage token classes are recorded **disjoint**: OpenAI reports cached tokens as a subset of
 `prompt_tokens`, so the engine subtracts them from `input` at emit time (Anthropic already

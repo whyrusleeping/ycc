@@ -2553,6 +2553,7 @@ type ModelConfig struct {
 	PriceOutput     *float64               `protobuf:"fixed64,10,opt,name=price_output,json=priceOutput,proto3,oneof" json:"price_output,omitempty"`
 	PriceCacheRead  *float64               `protobuf:"fixed64,11,opt,name=price_cache_read,json=priceCacheRead,proto3,oneof" json:"price_cache_read,omitempty"`
 	PriceCacheWrite *float64               `protobuf:"fixed64,12,opt,name=price_cache_write,json=priceCacheWrite,proto3,oneof" json:"price_cache_write,omitempty"`
+	Auth            string                 `protobuf:"bytes,13,opt,name=auth,proto3" json:"auth,omitempty"` // credential mechanism: "" | "api-key" | "oauth" (spec §13)
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -2669,6 +2670,13 @@ func (x *ModelConfig) GetPriceCacheWrite() float64 {
 		return *x.PriceCacheWrite
 	}
 	return 0
+}
+
+func (x *ModelConfig) GetAuth() string {
+	if x != nil {
+		return x.Auth
+	}
+	return ""
 }
 
 // UpsertModel adds or replaces a logical model backend (spec §18.2). The change
@@ -5697,7 +5705,7 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\treviewers\x18\x04 \x03(\tR\treviewers\x121\n" +
 	"\x14coordinator_thinking\x18\x05 \x01(\tR\x13coordinatorThinking\x121\n" +
 	"\x14implementer_thinking\x18\x06 \x01(\tR\x13implementerThinking\x12-\n" +
-	"\x12reviewers_thinking\x18\a \x01(\tR\x11reviewersThinking\"\xde\x03\n" +
+	"\x12reviewers_thinking\x18\a \x01(\tR\x11reviewersThinking\"\xf2\x03\n" +
 	"\vModelConfig\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\abackend\x18\x02 \x01(\tR\abackend\x12\x19\n" +
@@ -5712,7 +5720,8 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\fprice_output\x18\n" +
 	" \x01(\x01H\x01R\vpriceOutput\x88\x01\x01\x12-\n" +
 	"\x10price_cache_read\x18\v \x01(\x01H\x02R\x0epriceCacheRead\x88\x01\x01\x12/\n" +
-	"\x11price_cache_write\x18\f \x01(\x01H\x03R\x0fpriceCacheWrite\x88\x01\x01B\x0e\n" +
+	"\x11price_cache_write\x18\f \x01(\x01H\x03R\x0fpriceCacheWrite\x88\x01\x01\x12\x12\n" +
+	"\x04auth\x18\r \x01(\tR\x04authB\x0e\n" +
 	"\f_price_inputB\x0f\n" +
 	"\r_price_outputB\x13\n" +
 	"\x11_price_cache_readB\x14\n" +

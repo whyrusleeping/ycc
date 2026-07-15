@@ -18,8 +18,11 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 	"github.com/whyrusleeping/gollama"
+	"github.com/whyrusleeping/ycc/internal/anthropicauth"
+	"github.com/whyrusleeping/ycc/internal/codex"
 	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
+	"github.com/whyrusleeping/ycc/internal/openaiauth"
 	"github.com/whyrusleeping/ycc/internal/secrets"
 )
 
@@ -29,6 +32,14 @@ type Model struct {
 	BaseURL string `toml:"base_url"`
 	Model   string `toml:"model"`
 	KeyEnv  string `toml:"key_env"`
+
+	// Auth selects the credential mechanism (spec §13). Empty or "api-key"
+	// (the default) resolves key_env as usual. "oauth" — anthropic backend
+	// only — authenticates with a Claude subscription (Pro/Max) via the OAuth
+	// credentials stored by `ycc login anthropic`: requests carry an
+	// Authorization bearer token (auto-refreshed) plus the
+	// anthropic-beta oauth opt-in header, and key_env is ignored.
+	Auth string `toml:"auth,omitempty"` // "" | "api-key" | "oauth"
 
 	// Thinking / Effort / ThinkingDisplay control Anthropic extended/adaptive
 	// reasoning per-model (spec §7, §13). They are honored by the anthropic
@@ -99,6 +110,13 @@ func (m Model) EffectivePricing() Pricing {
 	if p := m.Pricing(); p.Configured {
 		return p
 	}
+	// Subscription (OAuth) usage is prepaid — pricing it at API-key rates would
+	// invent spend that never happened (spec §20.4: never invent numbers), so
+	// the built-in default table is skipped and the model is unpriced unless
+	// the config sets explicit price_* rates.
+	if m.Auth == "oauth" {
+		return Pricing{}
+	}
 	if p, ok := DefaultPricing(m.Backend, m.Model); ok {
 		return p
 	}
@@ -137,6 +155,22 @@ func (m Model) Validate(name string) error {
 	case "anthropic", "openai", "openai-compatible", "glm", "ollama":
 	default:
 		return fmt.Errorf("model %q: unsupported backend %q", name, m.Backend)
+	}
+	return m.validateAuth(name)
+}
+
+// validateAuth checks the credential-mechanism field. Shared by load-time
+// validation and the runtime CRUD path so a mistyped auth value is rejected
+// early instead of silently falling back to api-key behavior in Build.
+func (m Model) validateAuth(name string) error {
+	switch m.Auth {
+	case "", "api-key":
+	case "oauth":
+		if m.Backend != "anthropic" && m.Backend != "openai" {
+			return fmt.Errorf("model %q: auth = \"oauth\" is only supported by the anthropic and openai backends (got %q)", name, m.Backend)
+		}
+	default:
+		return fmt.Errorf("model %q: unsupported auth %q (want \"api-key\" or \"oauth\")", name, m.Auth)
 	}
 	return nil
 }
@@ -477,6 +511,13 @@ func (c *Config) validate() error {
 			return fmt.Errorf("role references unknown model %q", name)
 		}
 	}
+	// Auth is checked at load time (not just Upsert) because Build would
+	// otherwise silently treat a mistyped auth value as the api-key default.
+	for name, m := range c.Models {
+		if err := m.validateAuth(name); err != nil {
+			return err
+		}
+	}
 	for role, lvl := range map[string]string{
 		RoleCoordinator: c.Roles.Thinking.Coordinator,
 		RoleImplementer: c.Roles.Thinking.Implementer,
@@ -798,6 +839,23 @@ func (r *Registry) GetModel(name string) (Model, bool) {
 // failure the caller should fall back to CuratedModelIDs(backend).
 func (r *Registry) DiscoverConnModels(ctx context.Context, backend, baseURL, keyEnv string) ([]string, error) {
 	key := resolveKey(Model{KeyEnv: keyEnv})
+	// An anthropic connection with no API key may be subscription-authenticated
+	// (auth = "oauth"): fall back to the stored OAuth access token, best-effort
+	// (discoverAnthropic recognizes the token prefix and sends bearer + beta
+	// headers). Failure just means the caller falls back to curated ids.
+	if key == "" && backend == "anthropic" {
+		if tok, err := anthropicauth.AccessToken(ctx); err == nil {
+			key = tok
+		}
+	}
+	// The codex backend (ChatGPT subscription) has no model-listing endpoint;
+	// when an openai connection has no API key but subscription credentials
+	// exist, offer the curated codex model set instead of failing discovery.
+	if key == "" && backend == "openai" {
+		if _, ok := openaiauth.Load(); ok {
+			return append([]string(nil), codex.Models...), nil
+		}
+	}
 	return DiscoverModels(ctx, backend, baseURL, key)
 }
 
@@ -972,6 +1030,17 @@ func resolveKey(m Model) string {
 	return ""
 }
 
+// codexBase resolves the endpoint for a subscription-authenticated openai
+// model: an empty base_url or one pointing at the platform API (where
+// subscription tokens are not valid) becomes the codex backend; any other
+// explicit URL (proxy/staging) is honored.
+func codexBase(base string) string {
+	if base == "" || strings.Contains(base, "api.openai.com") {
+		return codex.DefaultBaseURL
+	}
+	return base
+}
+
 // Build constructs a fresh backend client and returns it with its model id. A new
 // client per call avoids shared-state races across concurrent subagents.
 func (r *Registry) Build(name string) (engine.Turner, string, error) {
@@ -999,10 +1068,36 @@ func (r *Registry) Build(name string) (engine.Turner, string, error) {
 		// tool definition, recent messages) that drive prompt caching — is used
 		// even when the model routes through a proxy/gateway on a custom domain.
 		c.SetAnthropicMode(true)
-		if key != "" {
+		switch {
+		case m.Auth == "oauth":
+			// Claude subscription (Pro/Max) auth: a live OAuth access token
+			// (auto-refreshed from the secrets store) sent as a bearer token
+			// plus the oauth beta opt-in header — never x-api-key.
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			tok, err := anthropicauth.AccessToken(ctx)
+			cancel()
+			if err != nil {
+				return nil, "", fmt.Errorf("model %q: %w", name, err)
+			}
+			c.SetBearerToken(tok)
+			c.SetHeader("anthropic-beta", anthropicauth.BetaHeader)
+		case strings.HasPrefix(key, anthropicauth.TokenPrefix):
+			// A long-lived OAuth token (e.g. from `claude setup-token`) stored
+			// under key_env: same bearer + beta-header treatment.
+			c.SetBearerToken(key)
+			c.SetHeader("anthropic-beta", anthropicauth.BetaHeader)
+		case key != "":
 			c.SetAPIKey(key)
 		}
 	case "openai", "openai-compatible", "glm":
+		// ChatGPT subscription auth (spec §13): subscription tokens are not
+		// valid on the platform API — inference goes through the dedicated
+		// Codex Responses transport instead of gollama's OpenAI client. A
+		// base_url pointing at the platform API (or left empty) is swapped
+		// for the codex backend; an explicit proxy/staging URL is honored.
+		if m.Auth == "oauth" {
+			return codex.New(codexBase(m.BaseURL), openaiauth.AccessToken), m.Model, nil
+		}
 		if key != "" {
 			c.SetBearerToken(key)
 		}
