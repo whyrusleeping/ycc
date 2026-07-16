@@ -632,14 +632,17 @@ func TestCycleThinkLevels(t *testing.T) {
 // A thinking event renders a one-line "(reasoning)" detail and an expandable
 // body carrying the reasoning summary.
 func TestThinkingRendering(t *testing.T) {
-	ev := &v1.Event{Type: "thinking", DataJson: `{"text":"first I will read the file","blocks":1}`}
-	if d := detailLine(ev); !strings.Contains(d, "reasoning") || !strings.Contains(d, "read the file") {
+	ev := &v1.Event{Type: "thinking", DataJson: `{"text":"first I will read the file","blocks":1,"reasoning_tokens":384}`}
+	if d := detailLine(ev); !strings.Contains(d, "reasoning summary") || !strings.Contains(d, "384 hidden tokens") || !strings.Contains(d, "read the file") {
 		t.Fatalf("detailLine = %q", d)
 	}
 	m := &model{w: 80}
 	body := m.renderBody(ev)
 	if !strings.Contains(body, "read the file") {
 		t.Fatalf("renderBody = %q", body)
+	}
+	if d := expandedDetailLine(ev); !strings.Contains(d, "384 hidden reasoning tokens") {
+		t.Fatalf("expandedDetailLine = %q", d)
 	}
 	// An empty reasoning summary produces no body (nothing to expand).
 	empty := &v1.Event{Type: "thinking", DataJson: `{"text":""}`}
@@ -1276,6 +1279,10 @@ func (f *fakeClient) GetUsage(_ context.Context, req *connect.Request[v1.GetUsag
 		Total:     f.usageTotal,
 		Workspace: f.usageWksp,
 	}), nil
+}
+
+func (f *fakeClient) GetSubscriptionUsage(_ context.Context, _ *connect.Request[v1.GetSubscriptionUsageRequest]) (*connect.Response[v1.GetSubscriptionUsageResponse], error) {
+	return connect.NewResponse(&v1.GetSubscriptionUsageResponse{}), nil
 }
 
 // drive feeds a key through Update and, if a command is returned, runs it and
@@ -2982,6 +2989,18 @@ func newCostFakeClient() *fakeClient {
 
 // TestCostViewRoute verifies the browse selector (ctrl+o) routes to the cost view
 // and that driving the fetch populates the rows (spec §20.5, task 0039).
+func TestSubscriptionUsageTUI(t *testing.T) {
+	got := subscriptionUsageTUI([]*v1.SubscriptionUsageAccount{{
+		Provider: "anthropic", Models: []string{"claude"}, State: "fresh",
+		Windows: []*v1.SubscriptionUsageWindow{{Label: "5 hour", UsedPercent: 72.5, ResetsAtUnix: 1784548800}},
+	}})
+	for _, want := range []string{"Subscription allowance", "anthropic", "claude", "5 hour", "72.5%", "resets"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("subscription usage view missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestCostViewRoute(t *testing.T) {
 	f := newCostFakeClient()
 	m := initialModel(context.Background(), f, t_tempWorkspace, false)

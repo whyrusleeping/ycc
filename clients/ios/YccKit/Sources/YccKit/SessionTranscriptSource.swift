@@ -1,6 +1,19 @@
 import Foundation
 import YccProto
 
+/// One encoded picture selected by a client for a session message.
+public struct MessageImage: Sendable, Equatable {
+    public let data: Data
+    public let mediaType: String
+    public let filename: String
+
+    public init(data: Data, mediaType: String, filename: String = "") {
+        self.data = data
+        self.mediaType = mediaType
+        self.filename = filename
+    }
+}
+
 /// The transcript data source a ``SessionViewModel`` reads from. Abstracting it
 /// behind a protocol lets the reconnect / fold logic be unit-tested headlessly
 /// with an in-memory stub — no network, no simulator. ``YccClient`` is the
@@ -27,7 +40,7 @@ public protocol SessionActionSource: Sendable {
     func reopenSession(project: String, sessionId: String) async throws
 
     /// Deliver user input (`SendInput`); steer-by-default when mid-turn.
-    func sendInput(sessionId: String, text: String) async throws
+    func sendInput(sessionId: String, text: String, images: [MessageImage]) async throws
 
     /// Answer a single pending question (`AnswerQuestion`); `optionIndex >= 0`
     /// selects an option, `-1` sends `text` as free text.

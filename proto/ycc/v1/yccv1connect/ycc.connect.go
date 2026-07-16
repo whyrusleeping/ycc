@@ -130,6 +130,9 @@ const (
 	SessionServiceCaptureBacklogItemProcedure = "/ycc.v1.SessionService/CaptureBacklogItem"
 	// SessionServiceGetUsageProcedure is the fully-qualified name of the SessionService's GetUsage RPC.
 	SessionServiceGetUsageProcedure = "/ycc.v1.SessionService/GetUsage"
+	// SessionServiceGetSubscriptionUsageProcedure is the fully-qualified name of the SessionService's
+	// GetSubscriptionUsage RPC.
+	SessionServiceGetSubscriptionUsageProcedure = "/ycc.v1.SessionService/GetSubscriptionUsage"
 	// SessionServiceGetBudgetProcedure is the fully-qualified name of the SessionService's GetBudget
 	// RPC.
 	SessionServiceGetBudgetProcedure = "/ycc.v1.SessionService/GetBudget"
@@ -239,6 +242,8 @@ type SessionServiceClient interface {
 	// Usage/cost breakdown (spec §20): aggregated, priced token usage by task ×
 	// model × day so clients can render the cost breakdown.
 	GetUsage(context.Context, *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error)
+	// Best-effort provider-side subscription allowance (spec §20.5).
+	GetSubscriptionUsage(context.Context, *connect.Request[v1.GetSubscriptionUsageRequest]) (*connect.Response[v1.GetSubscriptionUsageResponse], error)
 	// Spend guard (task 0137, spec §20.6): return the configured budget caps so the
 	// TUI work-loop driver can enforce the per-loop-run cap client-side.
 	GetBudget(context.Context, *connect.Request[v1.GetBudgetRequest]) (*connect.Response[v1.GetBudgetResponse], error)
@@ -480,6 +485,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("GetUsage")),
 			connect.WithClientOptions(opts...),
 		),
+		getSubscriptionUsage: connect.NewClient[v1.GetSubscriptionUsageRequest, v1.GetSubscriptionUsageResponse](
+			httpClient,
+			baseURL+SessionServiceGetSubscriptionUsageProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("GetSubscriptionUsage")),
+			connect.WithClientOptions(opts...),
+		),
 		getBudget: connect.NewClient[v1.GetBudgetRequest, v1.GetBudgetResponse](
 			httpClient,
 			baseURL+SessionServiceGetBudgetProcedure,
@@ -579,6 +590,7 @@ type sessionServiceClient struct {
 	getPlan              *connect.Client[v1.GetPlanRequest, v1.GetPlanResponse]
 	captureBacklogItem   *connect.Client[v1.CaptureBacklogItemRequest, v1.Event]
 	getUsage             *connect.Client[v1.GetUsageRequest, v1.GetUsageResponse]
+	getSubscriptionUsage *connect.Client[v1.GetSubscriptionUsageRequest, v1.GetSubscriptionUsageResponse]
 	getBudget            *connect.Client[v1.GetBudgetRequest, v1.GetBudgetResponse]
 	notify               *connect.Client[v1.NotifyRequest, v1.NotifyResponse]
 	startWorkLoop        *connect.Client[v1.StartWorkLoopRequest, v1.StartWorkLoopResponse]
@@ -761,6 +773,11 @@ func (c *sessionServiceClient) GetUsage(ctx context.Context, req *connect.Reques
 	return c.getUsage.CallUnary(ctx, req)
 }
 
+// GetSubscriptionUsage calls ycc.v1.SessionService.GetSubscriptionUsage.
+func (c *sessionServiceClient) GetSubscriptionUsage(ctx context.Context, req *connect.Request[v1.GetSubscriptionUsageRequest]) (*connect.Response[v1.GetSubscriptionUsageResponse], error) {
+	return c.getSubscriptionUsage.CallUnary(ctx, req)
+}
+
 // GetBudget calls ycc.v1.SessionService.GetBudget.
 func (c *sessionServiceClient) GetBudget(ctx context.Context, req *connect.Request[v1.GetBudgetRequest]) (*connect.Response[v1.GetBudgetResponse], error) {
 	return c.getBudget.CallUnary(ctx, req)
@@ -889,6 +906,8 @@ type SessionServiceHandler interface {
 	// Usage/cost breakdown (spec §20): aggregated, priced token usage by task ×
 	// model × day so clients can render the cost breakdown.
 	GetUsage(context.Context, *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error)
+	// Best-effort provider-side subscription allowance (spec §20.5).
+	GetSubscriptionUsage(context.Context, *connect.Request[v1.GetSubscriptionUsageRequest]) (*connect.Response[v1.GetSubscriptionUsageResponse], error)
 	// Spend guard (task 0137, spec §20.6): return the configured budget caps so the
 	// TUI work-loop driver can enforce the per-loop-run cap client-side.
 	GetBudget(context.Context, *connect.Request[v1.GetBudgetRequest]) (*connect.Response[v1.GetBudgetResponse], error)
@@ -1126,6 +1145,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("GetUsage")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceGetSubscriptionUsageHandler := connect.NewUnaryHandler(
+		SessionServiceGetSubscriptionUsageProcedure,
+		svc.GetSubscriptionUsage,
+		connect.WithSchema(sessionServiceMethods.ByName("GetSubscriptionUsage")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sessionServiceGetBudgetHandler := connect.NewUnaryHandler(
 		SessionServiceGetBudgetProcedure,
 		svc.GetBudget,
@@ -1256,6 +1281,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceCaptureBacklogItemHandler.ServeHTTP(w, r)
 		case SessionServiceGetUsageProcedure:
 			sessionServiceGetUsageHandler.ServeHTTP(w, r)
+		case SessionServiceGetSubscriptionUsageProcedure:
+			sessionServiceGetSubscriptionUsageHandler.ServeHTTP(w, r)
 		case SessionServiceGetBudgetProcedure:
 			sessionServiceGetBudgetHandler.ServeHTTP(w, r)
 		case SessionServiceNotifyProcedure:
@@ -1419,6 +1446,10 @@ func (UnimplementedSessionServiceHandler) CaptureBacklogItem(context.Context, *c
 
 func (UnimplementedSessionServiceHandler) GetUsage(context.Context, *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetUsage is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) GetSubscriptionUsage(context.Context, *connect.Request[v1.GetSubscriptionUsageRequest]) (*connect.Response[v1.GetSubscriptionUsageResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetSubscriptionUsage is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) GetBudget(context.Context, *connect.Request[v1.GetBudgetRequest]) (*connect.Response[v1.GetBudgetResponse], error) {

@@ -179,7 +179,12 @@ public struct SessionProjection: Sendable, Equatable {
 
         switch event.type {
         case "user_input":
-            appendDurable(event, .userMessage(text: Self.text(data)))
+            var text = Self.text(data)
+            if let images = data["images"] as? [[String: Any]], !images.isEmpty {
+                let label = images.count == 1 ? "📷 Picture attached" : "📷 \(images.count) pictures attached"
+                text = text.isEmpty ? label : "\(text)\n\n\(label)"
+            }
+            appendDurable(event, .userMessage(text: text))
 
         case "model_turn":
             // The durable turn is the source of truth: it clears any live tail.

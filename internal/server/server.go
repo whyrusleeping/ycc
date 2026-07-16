@@ -5,9 +5,12 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,9 +20,11 @@ import (
 
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/docs"
+	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/orchestrator"
 	"github.com/whyrusleeping/ycc/internal/session"
+	"github.com/whyrusleeping/ycc/internal/subusage"
 	"github.com/whyrusleeping/ycc/internal/usage"
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 	"github.com/whyrusleeping/ycc/proto/ycc/v1/yccv1connect"
@@ -28,11 +33,14 @@ import (
 // Server adapts a session.Manager to the generated SessionServiceHandler.
 type Server struct {
 	yccv1connect.UnimplementedSessionServiceHandler
-	mgr *session.Manager
+	mgr      *session.Manager
+	subUsage *subusage.Service
 }
 
 // New returns a Server backed by mgr.
-func New(mgr *session.Manager) *Server { return &Server{mgr: mgr} }
+func New(mgr *session.Manager) *Server {
+	return &Server{mgr: mgr, subUsage: subusage.NewService(nil)}
+}
 
 // ListModes returns the selectable session modes and opening-prompt presets for
 // the home menu.
@@ -228,15 +236,67 @@ func (s *Server) Subscribe(ctx context.Context, req *connect.Request[v1.Subscrib
 	}
 }
 
-// SendInput delivers user text: it answers a pending question if one is open,
-// otherwise queues a follow-up instruction for the session's agent.
+const (
+	maxInputImages    = 4
+	maxInputImageSize = 5 << 20 // 5 MiB each, before base64 transport expansion
+)
+
+var allowedInputImages = map[string]string{
+	"image/jpeg": "image/jpeg",
+	"image/png":  "image/png",
+	"image/gif":  "image/gif",
+	"image/webp": "image/webp",
+}
+
+func validateInputImages(attachments []*v1.ImageAttachment) ([]engine.Image, error) {
+	images := make([]engine.Image, 0, len(attachments))
+	for _, image := range attachments {
+		if image == nil {
+			return nil, errors.New("picture attachment is missing")
+		}
+		if len(image.Data) == 0 || len(image.Data) > maxInputImageSize {
+			return nil, fmt.Errorf("each picture must be between 1 byte and %d MiB", maxInputImageSize>>20)
+		}
+		declared := strings.ToLower(strings.TrimSpace(image.MediaType))
+		if _, ok := allowedInputImages[declared]; !ok {
+			return nil, fmt.Errorf("unsupported picture type %q", image.MediaType)
+		}
+		detected := http.DetectContentType(image.Data)
+		if detected != declared {
+			return nil, fmt.Errorf("picture content is %s, not %s", detected, declared)
+		}
+		images = append(images, engine.Image{
+			Base64: base64.StdEncoding.EncodeToString(image.Data), MediaType: declared,
+			Filename: filepath.Base(image.Filename),
+		})
+	}
+	return images, nil
+}
+
+// SendInput delivers user text and optional pictures: it answers a pending
+// question only for text-only input, otherwise queues a multimodal instruction.
 func (s *Server) SendInput(_ context.Context, req *connect.Request[v1.SendInputRequest]) (*connect.Response[v1.SendInputResponse], error) {
 	sess, ok := s.mgr.Get(req.Msg.SessionId)
 	if !ok {
 		return nil, connect.NewError(connect.CodeNotFound, errNoSession)
 	}
-	if err := sess.SendInput(req.Msg.Text); err != nil {
-		return nil, connect.NewError(connect.CodeResourceExhausted, err)
+	if strings.TrimSpace(req.Msg.Text) == "" && len(req.Msg.Images) == 0 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("message must contain text or a picture"))
+	}
+	if len(req.Msg.Images) > maxInputImages {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("at most %d pictures may be sent", maxInputImages))
+	}
+	images, err := validateInputImages(req.Msg.Images)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	input := engine.UserMessage{Text: req.Msg.Text, Images: images}
+	if err := sess.SendInputMessage(input); err != nil {
+		code := connect.CodeResourceExhausted
+		if len(input.Images) > 0 && sess.PendingQuestion() {
+			code = connect.CodeFailedPrecondition
+		}
+		return nil, connect.NewError(code, err)
 	}
 	return connect.NewResponse(&v1.SendInputResponse{}), nil
 }
@@ -773,6 +833,35 @@ func (s *Server) GetUsage(_ context.Context, req *connect.Request[v1.GetUsageReq
 	out := &v1.GetUsageResponse{Workspace: res.Workspace, Total: usageRowToProto(res.Total)}
 	for _, r := range res.Rows {
 		out.Rows = append(out.Rows, usageRowToProto(r))
+	}
+	return connect.NewResponse(out), nil
+}
+
+// GetSubscriptionUsage returns cached, best-effort provider-side allowance for
+// configured OAuth accounts. Provider failures are represented as account state,
+// not RPC failures, so awareness telemetry cannot disrupt the rest of the UI.
+func (s *Server) GetSubscriptionUsage(ctx context.Context, req *connect.Request[v1.GetSubscriptionUsageRequest]) (*connect.Response[v1.GetSubscriptionUsageResponse], error) {
+	accounts := s.subUsage.Get(ctx, s.mgr.OAuthModels(), req.Msg.Refresh)
+	out := &v1.GetSubscriptionUsageResponse{}
+	for _, account := range accounts {
+		pa := &v1.SubscriptionUsageAccount{
+			Provider: account.Provider, Plan: account.Plan, Models: account.Models,
+			State: account.State, Message: account.Message,
+		}
+		if !account.FetchedAt.IsZero() {
+			pa.FetchedAtUnix = account.FetchedAt.Unix()
+		}
+		for _, window := range account.Windows {
+			pw := &v1.SubscriptionUsageWindow{
+				Id: window.ID, Label: window.Label, UsedPercent: window.UsedPercent,
+				WindowSeconds: window.WindowSeconds,
+			}
+			if !window.ResetsAt.IsZero() {
+				pw.ResetsAtUnix = window.ResetsAt.Unix()
+			}
+			pa.Windows = append(pa.Windows, pw)
+		}
+		out.Accounts = append(out.Accounts, pa)
 	}
 	return connect.NewResponse(out), nil
 }

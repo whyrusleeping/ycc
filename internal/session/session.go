@@ -65,9 +65,10 @@ type Session struct {
 	// the first new input before continuing on the reconstructed history.
 	resumed bool
 
-	inputCh chan string
-	ctx     context.Context
-	cancel  context.CancelFunc
+	inputCh   chan string
+	messageCh chan engine.UserMessage
+	ctx       context.Context
+	cancel    context.CancelFunc
 
 	// stopOnce guards Stop so a hard terminate runs at most once even if both a
 	// StopSession RPC and a manager teardown race to call it.
@@ -118,8 +119,8 @@ type Session struct {
 // emitted when it was accepted, so the later user_input_delivered event can refer
 // back to it (spec §18.7).
 type correction struct {
-	text string
-	seq  int
+	message engine.UserMessage
+	seq     int
 }
 
 // Role name constants used to key per-role thinking overrides and resolution.
@@ -183,8 +184,32 @@ func (s *Session) setLoop(l *engine.Loop) {
 // so the transcript never claims delivery before it happens. Otherwise (idle) it
 // is enqueued as a follow-up prod for when the agent next picks it up.
 func (s *Session) SendInput(text string) error {
-	if s.inter.Answer(text) {
+	return s.SendInputMessage(engine.UserMessage{Text: text})
+}
+
+// SendInputMessage delivers user text plus optional native image attachments.
+// Image bytes remain in live model history only; user_input events contain safe
+// metadata so events.jsonl never becomes a binary payload store.
+func (s *Session) SendInputMessage(input engine.UserMessage) error {
+	if len(input.Images) > 0 && s.inter.pending() {
+		return fmt.Errorf("answer the pending question before sending pictures")
+	}
+	if len(input.Images) == 0 && s.inter.Answer(input.Text) {
 		return nil
+	}
+	eventData := func(queued bool) map[string]any {
+		data := map[string]any{"text": input.Text}
+		if queued {
+			data["queued"] = true
+		}
+		if len(input.Images) > 0 {
+			images := make([]map[string]any, len(input.Images))
+			for i, img := range input.Images {
+				images[i] = map[string]any{"media_type": img.MediaType, "filename": img.Filename}
+			}
+			data["images"] = images
+		}
+		return data
 	}
 	// Mid-run or paused: buffer as a correction and echo it as queued. A run in
 	// flight drains corrections at its next safe checkpoint; a paused loop drains
@@ -193,18 +218,26 @@ func (s *Session) SendInput(text string) error {
 	// together under steerMu. It does NOT auto-resume a paused loop (§18.7).
 	s.steerMu.Lock()
 	if s.paused || s.pauseReq || s.running {
-		ev := s.emitter.EmitAs("user", event.UserInput, map[string]any{"text": text, "queued": true})
-		s.corrections = append(s.corrections, correction{text: text, seq: ev.Seq})
+		ev := s.emitter.EmitAs("user", event.UserInput, eventData(true))
+		s.corrections = append(s.corrections, correction{message: input, seq: ev.Seq})
 		s.steerMu.Unlock()
 		return nil
 	}
 	s.steerMu.Unlock()
+	if len(input.Images) == 0 {
+		select {
+		case s.inputCh <- input.Text:
+			s.emitter.EmitAs("user", event.UserInput, eventData(false))
+			return nil
+		default:
+			return fmt.Errorf("session %s input buffer full", s.ID)
+		}
+	}
 	select {
-	case s.inputCh <- text:
-		// Emit the echo at the moment the prod is accepted so the TUI can
-		// display it immediately, rather than waiting for the run loop to
-		// dequeue it (which only happens after the current/next agent turn).
-		s.emitter.EmitAs("user", event.UserInput, map[string]any{"text": text})
+	case s.messageCh <- input:
+		// Emit metadata at acceptance; the image bytes stay only in messageCh and
+		// model history, never in events.jsonl.
+		s.emitter.EmitAs("user", event.UserInput, eventData(false))
 		return nil
 	default:
 		return fmt.Errorf("session %s input buffer full", s.ID)
@@ -320,6 +353,22 @@ func (s *Session) PendingQuestion() bool {
 // user_input_delivered event for each drained correction, marking the point at
 // which the queued input actually enters the conversation.
 func (s *Session) Checkpoint(ctx context.Context) ([]string, error) {
+	messages, err := s.CheckpointMessages(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(messages) == 0 {
+		return nil, nil
+	}
+	texts := make([]string, len(messages))
+	for i, message := range messages {
+		texts[i] = message.Text
+	}
+	return texts, nil
+}
+
+// CheckpointMessages is engine.MessageSteer's multimodal checkpoint path.
+func (s *Session) CheckpointMessages(ctx context.Context) ([]engine.UserMessage, error) {
 	s.steerMu.Lock()
 	if !s.pauseReq {
 		// Steer-by-default fast path: deliver any queued corrections and any
@@ -329,8 +378,8 @@ func (s *Session) Checkpoint(ctx context.Context) ([]string, error) {
 		s.corrections = nil
 		s.steerMu.Unlock()
 		msgs := s.deliverCorrections(corr)
-		msgs = append(msgs, s.drainJobNotes()...)
-		msgs = append(msgs, s.checkBudget(ctx)...)
+		msgs = append(msgs, textMessages(s.drainJobNotes())...)
+		msgs = append(msgs, textMessages(s.checkBudget(ctx))...)
 		if len(msgs) == 0 {
 			return nil, nil
 		}
@@ -369,9 +418,17 @@ func (s *Session) Checkpoint(ctx context.Context) ([]string, error) {
 	s.setStatus(event.StatusRunning)
 	s.emitter.Emit(event.Resumed, map[string]any{})
 	msgs := s.deliverCorrections(corr)
-	msgs = append(msgs, s.drainJobNotes()...)
-	msgs = append(msgs, s.checkBudget(ctx)...)
+	msgs = append(msgs, textMessages(s.drainJobNotes())...)
+	msgs = append(msgs, textMessages(s.checkBudget(ctx))...)
 	return msgs, nil
+}
+
+func textMessages(texts []string) []engine.UserMessage {
+	out := make([]engine.UserMessage, len(texts))
+	for i, text := range texts {
+		out[i] = engine.UserMessage{Text: text}
+	}
+	return out
 }
 
 // drainJobNotes delivers the final reports of finished, unconsumed coordinator
@@ -412,16 +469,24 @@ func (s *Session) killJobs() {
 // the conversation — and returns their texts, in order, for the engine to Post
 // before the next turn (spec §18.7). The delivered event references the queued
 // echo by seq so replay and the TUI can pair them.
-func (s *Session) deliverCorrections(corr []correction) []string {
+func (s *Session) deliverCorrections(corr []correction) []engine.UserMessage {
 	if len(corr) == 0 {
 		return nil
 	}
-	texts := make([]string, len(corr))
+	messages := make([]engine.UserMessage, len(corr))
 	for i, c := range corr {
-		texts[i] = c.text
-		s.emitter.EmitAs("user", event.UserInputDelivered, map[string]any{"seq": c.seq, "text": c.text})
+		messages[i] = c.message
+		data := map[string]any{"seq": c.seq, "text": c.message.Text}
+		if len(c.message.Images) > 0 {
+			images := make([]map[string]any, len(c.message.Images))
+			for j, img := range c.message.Images {
+				images[j] = map[string]any{"media_type": img.MediaType, "filename": img.Filename}
+			}
+			data["images"] = images
+		}
+		s.emitter.EmitAs("user", event.UserInputDelivered, data)
 	}
-	return texts
+	return messages
 }
 
 // signalResumeLocked wakes a blocked Checkpoint. Call only while holding steerMu.
@@ -770,6 +835,8 @@ func (s *Session) run() {
 			select {
 			case text := <-s.inputCh:
 				s.currentLoop().Post(text)
+			case input := <-s.messageCh:
+				s.currentLoop().PostMessage(input)
 			case <-s.ctx.Done():
 				return
 			}
@@ -840,8 +907,8 @@ func (s *Session) run() {
 		s.corrections = nil
 		s.steerMu.Unlock()
 		if len(corr) > 0 {
-			for _, text := range s.deliverCorrections(corr) {
-				s.currentLoop().Post(text)
+			for _, input := range s.deliverCorrections(corr) {
+				s.currentLoop().PostMessage(input)
 			}
 			continue
 		}
@@ -849,6 +916,8 @@ func (s *Session) run() {
 		select {
 		case text := <-s.inputCh:
 			s.currentLoop().Post(text)
+		case input := <-s.messageCh:
+			s.currentLoop().PostMessage(input)
 		case <-s.ctx.Done():
 			return
 		}
@@ -1360,6 +1429,7 @@ func (m *Manager) newSession(absWS, id, mode, level, prompt string, log *event.L
 		prompt:           prompt,
 		resumed:          resumed,
 		inputCh:          make(chan string, 64),
+		messageCh:        make(chan engine.UserMessage, 64),
 		ctx:              ctx,
 		cancel:           cancel,
 		status:           event.StatusRunning,
@@ -1761,6 +1831,19 @@ func (m *Manager) ListByProject(name string) []*Session {
 
 // Models returns the configured logical models for the settings overlay pickers.
 func (m *Manager) Models() []config.ModelInfo { return m.reg.Models() }
+
+// OAuthModels groups configured subscription-authenticated logical model names
+// by provider. A provider login is account-scoped, so models in each group share
+// one subscription allowance report.
+func (m *Manager) OAuthModels() map[string][]string {
+	out := map[string][]string{}
+	for _, model := range m.reg.Models() {
+		if model.Auth == "oauth" && (model.Backend == "anthropic" || model.Backend == "openai") {
+			out[model.Backend] = append(out[model.Backend], model.Name)
+		}
+	}
+	return out
+}
 
 // Budget returns the configured spend caps (task 0137, spec §20.6) so the RPC
 // layer can serve the loop caps to the TUI work-loop driver.

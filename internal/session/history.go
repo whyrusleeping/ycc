@@ -231,6 +231,17 @@ func (m *Manager) ListSessionHistory(project string) ([]SessionSummary, error) {
 		})
 	}
 
+	// A persisted log can end without a terminal event when its owning daemon is
+	// killed or crashes. Reduction correctly leaves such a log at running, but if
+	// it has no matching in-memory session it cannot actually be running now.
+	// Normalize that orphaned display state while preserving running for rows the
+	// live overlay above confirmed are active.
+	for i := range summaries {
+		if !summaries[i].Live && summaries[i].Status == event.StatusRunning {
+			summaries[i].Status = event.StatusStopped
+		}
+	}
+
 	sort.SliceStable(summaries, func(i, j int) bool {
 		a, b := summaries[i], summaries[j]
 		if !a.LastActivity.Equal(b.LastActivity) {

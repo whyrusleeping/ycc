@@ -400,7 +400,11 @@ for the byte layout.
 ### SendInput
 
 Prod a running or idle session with a user message (queued and delivered at the next
-safe checkpoint under steer-by-default).
+safe checkpoint under steer-by-default). `images` may carry up to four inline pictures
+(`data` is standard base64 in JSON), each at most 5 MiB before base64 expansion. Supported
+media types are JPEG, PNG, GIF, and WebP; the daemon verifies the bytes match `mediaType`.
+Picture bytes are passed to the model but are not written to the event log — `user_input`
+retains only filename/media-type metadata. Pictures cannot answer an open `ask_user` gate.
 
 ```
 curl -sS -H "$AUTH" -H "$JSON" \

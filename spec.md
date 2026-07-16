@@ -507,7 +507,11 @@ even when they share a backend (§13). `Thinking=""` disables reasoning; `"adapt
 summaries. The provider's reasoning blocks round-trip automatically because the engine
 appends the returned assistant `Message` (which carries `ThinkingBlocks`) to history. When a
 turn returns a reasoning summary, the loop emits a dedicated `thinking` event (before the
-`model_turn`) for the UI (§18).
+`model_turn`) for the UI (§18). For the ChatGPT Codex Responses backend, ycc requests a
+`detailed` provider-authored summary and records the reported hidden reasoning-token count on
+the thinking event and model-turn usage. The count is a subset of output tokens—not an extra
+billable class—and makes explicit that even a short displayed summary is not the full private
+reasoning trace.
 
 **Per-backend mapping.** These backend-agnostic fields are translated to each provider's
 request shape by gollama (`Turn`/`ChatCompletion`):
@@ -827,6 +831,12 @@ Notable message shapes for the settings + structured-question work:
   restart; the `persist` field is retained for wire compatibility but ignored (a settings
   edit is never runtime-only). The daemon rebuilds backends on the next `Build`, so changes
   take effect without a restart (§13, §18.2, task 0041).
+- `SendInputRequest { session_id; text; repeated ImageAttachment images }` accepts text
+  with up to four validated JPEG/PNG/GIF/WebP pictures (5 MiB each). Image bytes enter the
+  live model history as native multimodal user blocks but never the append-only event log;
+  `user_input` records only media type/filename metadata, so text-only clients and transcript
+  replay remain compatible (reopened history retains the text + attachment indication, not
+  the original pixels).
 - `InterruptRequest { session_id }` / `ResumeRequest { session_id }` — pause a running
   agent at the next safe checkpoint, then continue (§18.7). A correction is steered in by
   `SendInput` while paused; `Resume` continues with no change. `Interrupt` is a *graceful
@@ -913,7 +923,10 @@ backends additionally support **subscription auth** with `auth = "oauth"` on the
   registry auto-detects the `sk-ant-oat` prefix and applies the same treatment.
 - **openai — ChatGPT Plus/Pro.** `ycc login openai` runs the Codex CLI's OAuth flow
   (PKCE against auth.openai.com with a local callback server on `localhost:1455`, the
-  redirect the public client id is registered with) and persists credentials —
+  redirect the public client id is registered with; when the browser runs on another
+  machine — e.g. ycc over ssh — pasting the failed redirect URL from the address bar
+  into the terminal completes the flow instead, racing the callback server) and
+  persists credentials —
   including the ChatGPT account id parsed from the id_token — under `OPENAI_OAUTH`.
   Subscription tokens are **not valid on the platform API**: inference goes through a
   dedicated transport (`internal/codex`) speaking the **Responses API** to the Codex
@@ -1386,11 +1399,14 @@ section closes that gap.
 
 **Durable session index.** The daemon can enumerate *all* sessions for a project —
 live and persisted — by scanning `.ycc/sessions/*/events.jsonl` and reducing each log to
-a summary (`event.Reduce`, §5/§20.3): id, mode, status (running/idle/error), started-at
-and last-activity timestamps, focused task(s), a short title (derived from the first user
-prompt / kickoff), and — once usage lands (§20) — token/cost totals. Live sessions in the
-manager's map take precedence over their on-disk snapshot so a running session shows live
-status. A new read RPC (`ListSessionHistory`, project-scoped) returns these summary rows;
+a summary (`event.Reduce`, §5/§20.3): id, mode, status
+(running/idle/error/paused/stopped), started-at and last-activity timestamps, focused task(s),
+a short title (derived from the first user prompt / kickoff), and — once usage lands (§20) —
+token/cost totals. Live sessions in the manager's map take precedence over their on-disk
+snapshot so a running session shows live status. A persisted-only log whose projection is
+still `running` is an orphan left by an abrupt daemon exit and is reported as `stopped`; only
+a matching in-memory session may appear `running`. A new read RPC (`ListSessionHistory`,
+project-scoped) returns these summary rows;
 the existing `ListSessions` continues to mean "live only".
 
 **Browser UI.** A **session browser** is a modal list+detail view, opened from the home
@@ -1795,7 +1811,9 @@ happened) and are unpriced unless explicit `price_*` rates are configured.
 
 Usage token classes are recorded **disjoint**: OpenAI reports cached tokens as a subset of
 `prompt_tokens`, so the engine subtracts them from `input` at emit time (Anthropic already
-reports cache reads/writes separately), ensuring Σ(class × rate) never double-counts.
+reports cache reads/writes separately), ensuring Σ(class × rate) never double-counts. When a
+provider reports `reasoning_tokens`, ycc also preserves that diagnostic count on the turn; it
+is explicitly a subset of `output`, not another disjoint or separately priced class.
 
 ### 20.5 Surfacing
 
@@ -1809,6 +1827,19 @@ reports cache reads/writes separately), ensuring Σ(class × rate) never double-
   cost breakdown by backlog task over time" surface. In the TUI this cost view is a modal that
   shares the generic list+detail "browser" surface with the session history browser
   (§18.6) and the backlog browser (§18.5).
+- **Subscription allowance.** `GetSubscriptionUsage` reports provider-side allowance for
+  configured OAuth accounts separately from ycc's local token/cost accounting. Its neutral
+  shape is account/provider → named windows, each carrying percent used, reset time, and
+  optional window duration. Anthropic is read from its OAuth usage endpoint; ChatGPT/Codex
+  is read from the Codex account usage endpoint. Both endpoints are provider-internal and may
+  change, so this telemetry is explicitly best-effort: the daemon caches successful results
+  for at least one minute, bounds network calls with a short timeout, serves an older snapshot
+  as `stale` when refresh fails, and otherwise returns `unavailable` with a sanitized reason.
+  Fetching never participates in or blocks a model turn, and no credential appears in RPCs,
+  logs, or UI. Multiple logical models sharing an OAuth account share one report. The TUI usage
+  view and iOS Usage screen show compact progress bars plus reset times and freshness state;
+  pull-to-refresh/reopening may request a cached refresh. This surface is informational only:
+  it does not alter retry, failover, or exhaustion behavior (§7.2).
 
 Relation to §10 task 0010 (context-window management): that task surfaces *context size*
 to avoid window overflow; this section tracks *spend*. They share the per-turn usage signal

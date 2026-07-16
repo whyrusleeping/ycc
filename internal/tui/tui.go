@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -405,13 +406,14 @@ type model struct {
 	// cost view (spec §20.5, task 0039): modal over menu/session, reached from the
 	// browse selector (ctrl+o). Read-only: shows the GetUsage token/cost breakdown
 	// for the selected project, grouped by a single dimension cycled with "g".
-	cost          bool
-	costRows      []*v1.UsageRow
-	costTotal     *v1.UsageRow
-	costWorkspace string
-	costGroupBy   []string // single dimension today: task|model|session|day|agent
-	costCursor    int
-	costMsg       string // status/empty line (loading…, (no usage recorded))
+	cost             bool
+	costRows         []*v1.UsageRow
+	costTotal        *v1.UsageRow
+	costWorkspace    string
+	costGroupBy      []string // single dimension today: task|model|session|day|agent
+	costCursor       int
+	costMsg          string // status/empty line (loading…, (no usage recorded))
+	subUsageAccounts []*v1.SubscriptionUsageAccount
 
 	// quick-add backlog capture overlay (spec §18.2, task 0016): modal over
 	// menu/session, opened with ctrl+n. It runs a lightweight, off-stream capture
@@ -710,6 +712,7 @@ type usageMsg struct {
 	rows      []*v1.UsageRow
 	total     *v1.UsageRow
 	workspace string
+	accounts  []*v1.SubscriptionUsageAccount
 }
 
 // workstreamsMsg carries the ListWorkstreams result for the panel (task 0085),
@@ -1927,7 +1930,13 @@ func (m model) fetchUsage() tea.Msg {
 	if err != nil {
 		return errMsg{err}
 	}
-	return usageMsg{rows: resp.Msg.Rows, total: resp.Msg.Total, workspace: resp.Msg.Workspace}
+	msg := usageMsg{rows: resp.Msg.Rows, total: resp.Msg.Total, workspace: resp.Msg.Workspace}
+	// Subscription telemetry is best effort: local usage still renders if this
+	// provider-internal endpoint is unavailable or an older daemon lacks the RPC.
+	if sub, subErr := m.client.GetSubscriptionUsage(m.ctx, connect.NewRequest(&v1.GetSubscriptionUsageRequest{Refresh: true})); subErr == nil {
+		msg.accounts = sub.Msg.Accounts
+	}
+	return msg
 }
 
 // fetchWorkstreams loads the workstreams for the current project for the panel
@@ -2755,6 +2764,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.costRows = msg.rows
 		m.costTotal = msg.total
 		m.costWorkspace = msg.workspace
+		m.subUsageAccounts = msg.accounts
 		m.costCursor = clampCursor(m.costCursor, len(m.costRows))
 		if len(m.costRows) == 0 {
 			m.costMsg = "(no usage recorded)"
@@ -4273,7 +4283,7 @@ var browseTargets = []struct{ label, desc string }{
 	{"backlog", "tasks · readiness · drill-in detail"},
 	{"plans", "saved runbooks · view markdown"},
 	{"sessions", "previous + live · transcript · reopen"},
-	{"cost", "token/cost breakdown by task × model × day"},
+	{"cost", "subscription allowance + token/cost breakdown"},
 	{"workstreams", "parallel worktrees · status · merge/discard"},
 	{"digest", "last work-loop run — done · blocked · cost"},
 }
@@ -4333,6 +4343,7 @@ func (m model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cost, m.costCursor = true, 0
 			m.costGroupBy = []string{"task"}
 			m.costRows, m.costTotal = nil, nil
+			m.subUsageAccounts = nil
 			m.costMsg = "loading…"
 			return m, m.fetchUsage
 		case "workstreams":
@@ -4961,27 +4972,72 @@ func costGroupValue(r *v1.UsageRow, dim string) string {
 	return ""
 }
 
-// costView renders the token/cost breakdown as a bordered modal card (spec §20.5,
-// task 0039). Columns mirror the `ycc cost` CLI table; the row under the cursor is
-// selection-highlighted and a dim TOTAL line closes the table.
+func subscriptionUsageTUI(accounts []*v1.SubscriptionUsageAccount) string {
+	if len(accounts) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Subscription allowance\n")
+	for _, account := range accounts {
+		heading := account.Provider
+		if account.Plan != "" {
+			heading += " · " + account.Plan
+		}
+		if len(account.Models) > 0 {
+			heading += "  [" + strings.Join(account.Models, ", ") + "]"
+		}
+		if account.State != "fresh" {
+			heading += "  " + account.State
+		}
+		b.WriteString(heading + "\n")
+		if len(account.Windows) == 0 {
+			msg := account.Message
+			if msg == "" {
+				msg = "allowance unavailable"
+			}
+			b.WriteString("  " + msg + "\n")
+			continue
+		}
+		for _, window := range account.Windows {
+			used := math.Max(0, math.Min(100, window.UsedPercent))
+			filled := int(math.Round(used / 10))
+			bar := strings.Repeat("█", filled) + strings.Repeat("░", 10-filled)
+			reset := ""
+			if window.ResetsAtUnix > 0 {
+				reset = " · resets " + time.Unix(window.ResetsAtUnix, 0).Local().Format("Jan 2 15:04")
+			}
+			b.WriteString(fmt.Sprintf("  %-18s %s %5.1f%%%s\n", window.Label, bar, used, reset))
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// costView renders provider subscription allowance followed by the local
+// token/cost breakdown as a bordered modal card (spec §20.5).
 func (m model) costView() string {
 	groupBy := m.costGroupBy
 	if len(groupBy) == 0 {
 		groupBy = []string{"task"}
 	}
 
-	title := " ycc — cost "
+	title := " ycc — usage "
 	if m.costWorkspace != "" {
-		title = " ycc — cost · " + m.costWorkspace + " "
+		title = " ycc — usage · " + m.costWorkspace + " "
 	}
 	hint := fmt.Sprintf("g group-by:%s · ↑/↓ select · esc close", groupBy[0])
+	subText := subscriptionUsageTUI(m.subUsageAccounts)
 
 	if len(m.costRows) == 0 {
 		msg := m.costMsg
 		if msg == "" {
-			msg = "(no usage recorded)"
+			msg = "(no local usage recorded)"
 		}
-		return m.modalCard(title, dimStyle.Render(msg), hint)
+		if subText != "" {
+			msg = subText + "\n\n" + dimStyle.Render(msg)
+		} else {
+			msg = dimStyle.Render(msg)
+		}
+		return m.modalCard(title, msg, hint)
 	}
 
 	// Build aligned columns with a tabwriter, then apply selection styling per
@@ -5028,7 +5084,8 @@ func (m model) costView() string {
 	}
 	// Window the data rows around the cursor so the card never overruns the
 	// terminal vertically (mirrors browserCard). Fixed chrome: modalCard's 6
-	// non-content rows plus the pinned header, TOTAL, and footnote lines.
+	// non-content rows plus the pinned header, TOTAL, footnote, and subscription
+	// allowance lines.
 	budget := len(dataLines)
 	if m.h > 0 {
 		chrome := 6 + 1 // modalCard chrome + header row
@@ -5037,6 +5094,9 @@ func (m model) costView() string {
 		}
 		if partial {
 			chrome++
+		}
+		if subText != "" {
+			chrome += strings.Count(subText, "\n") + 3 // allowance + blank + local heading
 		}
 		budget = m.h - chrome
 		if budget < 1 {
@@ -5048,6 +5108,9 @@ func (m model) costView() string {
 		hint = fmt.Sprintf("%s · %d–%d/%d", hint, start+1, end, len(dataLines))
 	}
 	var sb strings.Builder
+	if subText != "" {
+		sb.WriteString(subText + "\n\nLocal token usage\n")
+	}
 	sb.WriteString(dimStyle.Render(headerLine) + "\n")
 	for i, line := range dataLines[start:end] {
 		if start+i == m.costCursor {
@@ -9299,7 +9362,12 @@ func expandedDetailLine(ev *v1.Event) string {
 			return dimStyle.Render(fmtDurMS(ms))
 		}
 		return ""
-	case "user_input", "session_idle", "question_asked", "question_answered", "thinking":
+	case "thinking":
+		if tokens := dataField(ev, "reasoning_tokens"); tokens != "" && tokens != "0" {
+			return dimStyle.Render(tokens + " hidden reasoning tokens")
+		}
+		return ""
+	case "user_input", "session_idle", "question_asked", "question_answered":
 		return ""
 	}
 	return detailLine(ev)
@@ -10412,7 +10480,12 @@ func detailLine(ev *v1.Event) string {
 	case "model_turn":
 		return appendDur(ev, oneLine(dataField(ev, "text"), 120))
 	case "thinking":
-		return dimStyle.Render("(reasoning) " + oneLine(dataField(ev, "text"), 110))
+		label := "(reasoning summary"
+		if tokens := dataField(ev, "reasoning_tokens"); tokens != "" && tokens != "0" {
+			label += " · " + tokens + " hidden tokens"
+		}
+		label += ") "
+		return dimStyle.Render(label + oneLine(dataField(ev, "text"), 110))
 	case "user_input":
 		return "› " + oneLine(dataField(ev, "text"), 120)
 	case "question_asked":

@@ -210,19 +210,20 @@ public final class SessionViewModel {
 
     // MARK: - Interactive actions (task 0183)
 
-    /// Send user input to the session (`SendInput`). A persisted transcript is
-    /// first re-opened on its existing event log, then promoted to a live tail;
-    /// otherwise `SendInput` would target a session the daemon no longer has in
-    /// memory. The event stream remains the source of truth — no optimistic row
-    /// is inserted.
-    public func send(text: String) async {
+    /// Send user input and optional picture attachments to the session
+    /// (`SendInput`). A persisted transcript is first re-opened on its existing
+    /// event log, then promoted to a live tail; otherwise `SendInput` would target
+    /// a session the daemon no longer has in memory. The event stream remains the
+    /// source of truth — no optimistic row is inserted.
+    public func send(text: String, images: [MessageImage] = []) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty || !images.isEmpty else { return }
         if mode == .persisted {
             guard await reopenForInteraction() else { return }
         }
         await perform("send") { actions in
-            try await actions.sendInput(sessionId: self.sessionID, text: trimmed)
+            try await actions.sendInput(
+                sessionId: self.sessionID, text: trimmed, images: images)
         }
     }
 

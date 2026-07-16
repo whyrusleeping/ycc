@@ -45,6 +45,7 @@ struct UsageView: View {
     @ViewBuilder
     private func content(_ model: UsageModel) -> some View {
         List {
+            subscriptionSection(model)
             controls(model)
             budgetSection(model)
             usageSection(model)
@@ -81,6 +82,71 @@ struct UsageView: View {
                     .onChange(of: model.until) { _, _ in
                         Task { await model.refresh() }
                     }
+            }
+        }
+    }
+
+    // MARK: - Subscription allowance
+
+    @ViewBuilder
+    private func subscriptionSection(_ model: UsageModel) -> some View {
+        if !model.subscriptionAccounts.isEmpty {
+            Section("Subscription allowance") {
+                ForEach(model.subscriptionAccounts, id: \.provider) { account in
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text(account.provider.capitalized)
+                                .font(.subheadline.weight(.semibold))
+                            if !account.plan.isEmpty {
+                                Text(account.plan.capitalized)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if account.state != "fresh" {
+                                Text(account.state)
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(account.state == "stale" ? Color.orange : Color.secondary)
+                            }
+                        }
+                        if !account.models.isEmpty {
+                            Text(account.models.joined(separator: ", "))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        if account.windows.isEmpty {
+                            Text(account.message.isEmpty ? "Allowance unavailable" : account.message)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(account.windows, id: \.id) { window in
+                                subscriptionWindow(window)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            } footer: {
+                Text("Shared provider allowance; separate from ycc token usage below.")
+            }
+        }
+    }
+
+    private func subscriptionWindow(_ window: Ycc_V1_SubscriptionUsageWindow) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text(window.label)
+                Spacer()
+                Text(String(format: "%.0f%% used", window.usedPercent))
+                    .monospacedDigit()
+            }
+            .font(.caption)
+            ProgressView(value: min(max(window.usedPercent, 0), 100), total: 100)
+                .tint(window.usedPercent >= 90 ? .orange : .accentColor)
+            if window.resetsAtUnix > 0 {
+                Text("Resets \(Date(timeIntervalSince1970: TimeInterval(window.resetsAtUnix)), style: .relative)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
         }
     }

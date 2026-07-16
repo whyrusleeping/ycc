@@ -196,13 +196,28 @@ public final class SessionListModel {
     }()
 
     /// A row's display title: the derived title, falling back to
-    /// `mode + short session id` when empty so no row is blank.
+    /// `mode + short session id` when empty so no row is blank. Once the agent
+    /// focuses backlog work, prefix the name with the focused task ids so the
+    /// session remains identifiable from the phone without opening it.
     public static func displayTitle(for session: Ycc_V1_SessionSummary) -> String {
         let title = session.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !title.isEmpty { return title }
-        let shortID = String(session.sessionID.prefix(8))
-        let mode = session.mode.isEmpty ? "session" : session.mode
-        return shortID.isEmpty ? mode : "\(mode) · \(shortID)"
+        let base: String
+        if !title.isEmpty {
+            base = title
+        } else {
+            let shortID = String(session.sessionID.prefix(8))
+            let mode = session.mode.isEmpty ? "session" : session.mode
+            base = shortID.isEmpty ? mode : "\(mode) · \(shortID)"
+        }
+
+        var seen = Set<String>()
+        let taskIDs = session.focusTasks.compactMap { task -> String? in
+            let id = task.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !id.isEmpty, seen.insert(id).inserted else { return nil }
+            return id
+        }
+        guard !taskIDs.isEmpty else { return base }
+        return "[\(taskIDs.joined(separator: ","))] \(base)"
     }
 
     /// A stable sort: Swift's `sort(by:)` is not guaranteed stable, so decorate

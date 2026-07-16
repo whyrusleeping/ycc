@@ -72,6 +72,20 @@ final class SessionProjectionTests: XCTestCase {
         XCTAssertTrue(proj.rows.contains { if case .finalReport = $0.kind { return true }; return false })
     }
 
+    func testUserPictureMetadataRendersWithoutPayload() {
+        var projection = SessionProjection()
+        projection.apply(makeEvent(
+            seq: 1, type: "user_input", actor: "user",
+            dataJson: #"{"text":"look at this","images":[{"media_type":"image/jpeg","filename":"photo.jpg"}]}"#))
+        guard let first = projection.rows.first,
+              case .userMessage(let text) = first.kind else {
+            return XCTFail("expected user message")
+        }
+        XCTAssertTrue(text.contains("look at this"))
+        XCTAssertTrue(text.contains("Picture attached"))
+        XCTAssertFalse(text.contains("base64"))
+    }
+
     // MARK: - Acceptance: one-pass == disconnect + replay-from-seq
 
     func testDisconnectReplayFromSeqMatchesOnePass() throws {

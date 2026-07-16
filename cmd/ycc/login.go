@@ -25,7 +25,9 @@ import (
 //     code#state string the user pastes back.
 //   - openai (ChatGPT Plus/Pro): browser flow with a local callback server on
 //     localhost:1455 (the redirect the Codex public client id is registered
-//     with), so the browser must run on this machine (or the port forwarded).
+//     with). When the browser runs elsewhere (e.g. ycc over ssh) the redirect
+//     never lands; pasting the failed callback URL from the browser's address
+//     bar into the terminal completes the login instead.
 //
 // Credentials land in the machine-local secrets store (never in ycc.toml)
 // under ANTHROPIC_OAUTH / OPENAI_OAUTH; a model opts in with `auth = "oauth"`
@@ -99,14 +101,36 @@ func (a *app) loginOpenAI(ctx context.Context) error {
 	// callback server is torn down when Login returns.
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	creds, err := openaiauth.Login(ctx, func(url string) {
+	// Manual fallback for ssh/headless sessions: a goroutine feeds pasted
+	// lines from stdin, racing the localhost callback. It leaks a blocked
+	// Read when the browser path wins first — harmless, the process exits.
+	pasteCh := make(chan string)
+	go func() {
+		defer close(pasteCh)
+		sc := bufio.NewScanner(os.Stdin)
+		for sc.Scan() {
+			line := strings.TrimSpace(sc.Text())
+			if line == "" {
+				continue
+			}
+			select {
+			case pasteCh <- line:
+			case <-ctx.Done():
+			}
+			return
+		}
+	}()
+	creds, err := openaiauth.LoginWithPaste(ctx, func(url string) {
 		fmt.Println("Open this URL in your browser and log in with your ChatGPT account:")
 		fmt.Println()
 		fmt.Println("  " + url)
 		fmt.Println()
 		fmt.Println("Waiting for the browser to complete login (callback on localhost:1455)…")
+		fmt.Println("If your browser runs on a different machine (e.g. you're on ssh), the final")
+		fmt.Println("redirect to http://localhost:1455/… will fail to load — copy that URL from")
+		fmt.Println("the browser's address bar, paste it here, and press enter.")
 		openBrowser(url)
-	})
+	}, pasteCh)
 	if err != nil {
 		return err
 	}

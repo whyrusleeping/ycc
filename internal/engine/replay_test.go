@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/whyrusleeping/gollama"
@@ -58,6 +59,16 @@ func wantHistory() []gollama.Message {
 		},
 		{Role: "tool", ToolCallID: "call_1", Content: "file contents"},
 		{Role: "assistant", Content: "All done."},
+	}
+}
+
+func TestReplayUserPictureLeavesAttachmentMarker(t *testing.T) {
+	events := []event.Event{{Seq: 1, Actor: "user", Type: event.UserInput, Data: map[string]any{
+		"text": "what is this?", "images": []any{map[string]any{"media_type": "image/jpeg"}},
+	}}}
+	history := ReplayHistory(events)
+	if len(history) != 1 || !strings.Contains(history[0].Content, "picture attachment") {
+		t.Fatalf("history = %+v", history)
 	}
 }
 

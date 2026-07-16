@@ -10,6 +10,8 @@ public protocol UsageSource: Sendable {
     /// Priced token-usage breakdown, grouped and filtered (`GetUsage`).
     func getUsage(project: String, groupBy: [String], since: String, until: String)
         async throws -> (rows: [Ycc_V1_UsageRow], total: Ycc_V1_UsageRow, workspace: String)
+    /// Provider-side allowance for configured OAuth subscription accounts.
+    func getSubscriptionUsage(refresh: Bool) async throws -> [Ycc_V1_SubscriptionUsageAccount]
     /// The configured spend-guard caps (`GetBudget`).
     func getBudget() async throws -> Ycc_V1_GetBudgetResponse
     /// List the daemon's registered projects (drives the project filter).
@@ -101,6 +103,8 @@ public final class UsageModel {
     public private(set) var workspace: String = ""
     /// The configured spend-guard caps from the last successful load.
     public private(set) var budget: Ycc_V1_GetBudgetResponse?
+    /// Provider-side shared subscription allowance (separate from local usage).
+    public private(set) var subscriptionAccounts: [Ycc_V1_SubscriptionUsageAccount] = []
     /// Registered projects; drives the project filter menu.
     public private(set) var projects: [Ycc_V1_ProjectInfo] = []
 
@@ -161,6 +165,15 @@ public final class UsageModel {
             budget = loadedBudget
             projects = loadedProjects
             errorMessage = nil
+            // Provider allowance is informational and served best-effort. A
+            // telemetry failure must not hide local token usage or budget data.
+            do {
+                subscriptionAccounts = try await source.getSubscriptionUsage(refresh: true)
+            } catch YccError.unauthorized {
+                unauthorized = true
+            } catch {
+                // Preserve the last known account snapshot, if any.
+            }
         } catch YccError.unauthorized {
             unauthorized = true
         } catch let YccError.rpc(message) {

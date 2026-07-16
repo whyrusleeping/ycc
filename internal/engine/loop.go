@@ -44,6 +44,31 @@ type StreamTurner interface {
 	TurnStream(opts gollama.RequestOptions, onDelta func(text string)) (*gollama.ResponseMessageGenerate, error)
 }
 
+// ReasoningTokenReporter is an optional backend capability exposing the hidden
+// reasoning-token subset of output tokens for the most recently completed turn.
+// It is read immediately after Turn/TurnStream returns successfully.
+//
+// Reasoning tokens are observability metadata, not a sixth billable class: they
+// are already included in completion/output tokens.
+type ReasoningTokenReporter interface {
+	ReasoningTokens() int
+}
+
+// UserMessage is user-authored input ready to append to model history. Images
+// contain base64 payloads only in memory; the event log records metadata rather
+// than bytes.
+type UserMessage struct {
+	Text   string
+	Images []Image
+}
+
+// Image is one validated native image content block.
+type Image struct {
+	Base64    string
+	MediaType string
+	Filename  string
+}
+
 // Steer lets a session pause and steer a running loop at safe checkpoints
 // (spec §18.7). Checkpoint is consulted between turns and after each tool
 // result. When a pause is pending it blocks until resume (or ctx
@@ -51,6 +76,12 @@ type StreamTurner interface {
 // messages to append before the next turn. A nil Steer is a cheap no-op.
 type Steer interface {
 	Checkpoint(ctx context.Context) ([]string, error)
+}
+
+// MessageSteer is the optional multimodal extension implemented by sessions.
+// Keeping Steer text-only preserves compatibility with existing embedders.
+type MessageSteer interface {
+	CheckpointMessages(ctx context.Context) ([]UserMessage, error)
 }
 
 // Loop drives one agent (coordinator or subagent) over a backend.
@@ -111,12 +142,22 @@ func (l *Loop) steerCheckpoint(ctx context.Context) error {
 	if l.Steer == nil {
 		return nil
 	}
-	msgs, err := l.Steer.Checkpoint(ctx)
+	var msgs []UserMessage
+	var err error
+	if steer, ok := l.Steer.(MessageSteer); ok {
+		msgs, err = steer.CheckpointMessages(ctx)
+	} else {
+		var texts []string
+		texts, err = l.Steer.Checkpoint(ctx)
+		for _, text := range texts {
+			msgs = append(msgs, UserMessage{Text: text})
+		}
+	}
 	if err != nil {
 		return err
 	}
 	for _, m := range msgs {
-		l.Post(m)
+		l.PostMessage(m)
 	}
 	return nil
 }
@@ -351,13 +392,28 @@ func (l *Loop) History() []gollama.Message {
 	return out
 }
 
-// Post appends a user message to the conversation. Used both to seed the initial
-// task and to inject follow-up input between Run calls (a "prod"), so a session
-// can continue the same agent across multiple turns.
-func (l *Loop) Post(content string) {
+// Post appends a text-only user message to the conversation.
+func (l *Loop) Post(content string) { l.PostMessage(UserMessage{Text: content}) }
+
+// PostMessage appends user-authored text and native image blocks. MultiContent
+// is understood by Anthropic and OpenAI-compatible gollama transports.
+func (l *Loop) PostMessage(input UserMessage) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.history = append(l.history, gollama.Message{Role: "user", Content: content})
+	if len(input.Images) == 0 {
+		l.history = append(l.history, gollama.Message{Role: "user", Content: input.Text})
+		return
+	}
+	blocks := make([]gollama.ContentBlock, 0, len(input.Images)+1)
+	if input.Text != "" {
+		blocks = append(blocks, gollama.ContentBlock{Type: "text", Text: input.Text})
+	}
+	for _, img := range input.Images {
+		blocks = append(blocks, gollama.ContentBlock{
+			Type: "image", ImageBase64: img.Base64, ImageMediaType: img.MediaType,
+		})
+	}
+	l.history = append(l.history, gollama.Message{Role: "user", MultiContent: blocks})
 }
 
 // PendingResponse reports whether the conversation is currently waiting on an
@@ -653,14 +709,27 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		// sanitizeThinkingBlocks). Anthropic 400s on a thinking block with no text.
 		msg.ThinkingBlocks = sanitizeThinkingBlocks(msg.ThinkingBlocks)
 
+		// Read optional backend-specific reasoning usage before emitting either
+		// display or durable usage events. This count is a subset of output tokens,
+		// not a separate cost class.
+		reasoningTokens := 0
+		if reporter, ok := client.(ReasoningTokenReporter); ok {
+			reasoningTokens = reporter.ReasoningTokens()
+			if reasoningTokens < 0 {
+				reasoningTokens = 0
+			}
+		}
+
 		// Surface the model's reasoning summary (if any) as its own event so the
 		// TUI can show it distinctly, collapsed by default (spec §18). The
 		// ThinkingBlocks themselves round-trip via the appended assistant
-		// message; this event is purely for display.
+		// message; this event is purely for display. ReasoningTokens makes clear
+		// that the visible text is only a provider-authored summary.
 		if strings.TrimSpace(msg.Thinking) != "" {
 			l.Emitter.Emit(event.Thinking, map[string]any{
-				"text":   msg.Thinking,
-				"blocks": len(msg.ThinkingBlocks),
+				"text":             msg.Thinking,
+				"blocks":           len(msg.ThinkingBlocks),
+				"reasoning_tokens": reasoningTokens,
 			})
 		}
 
@@ -719,11 +788,12 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			// reconstruct the conversation losslessly (spec §5.1).
 			"thinking_blocks": toEventThinking(msg.ThinkingBlocks),
 			"usage": event.Usage{
-				Input:      inputTokens,
-				Output:     u.CompletionTokens,
-				CacheRead:  u.GetCachedTokens(),
-				CacheWrite: u.CacheCreationInputTokens,
-				Total:      u.TotalTokens,
+				Input:           inputTokens,
+				Output:          u.CompletionTokens,
+				CacheRead:       u.GetCachedTokens(),
+				CacheWrite:      u.CacheCreationInputTokens,
+				Total:           u.TotalTokens,
+				ReasoningTokens: reasoningTokens,
 			},
 		})
 
@@ -778,10 +848,10 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		// after"). Instead they are posted once the whole batch is answered.
 		// ReplayHistory applies the same rule when reconstructing history from the
 		// event log (the events are recorded at the checkpoint, mid-batch).
-		var deferred []string
+		var deferred []UserMessage
 		flushDeferred := func() {
 			for _, m := range deferred {
-				l.Post(m)
+				l.PostMessage(m)
 			}
 			deferred = nil
 		}
@@ -841,7 +911,17 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			// (spec §18.7). Any returned messages are deferred to the end of the
 			// batch (see above) so they never split this turn's tool results.
 			if l.Steer != nil {
-				msgs, err := l.Steer.Checkpoint(ctx)
+				var msgs []UserMessage
+				var err error
+				if steer, ok := l.Steer.(MessageSteer); ok {
+					msgs, err = steer.CheckpointMessages(ctx)
+				} else {
+					var texts []string
+					texts, err = l.Steer.Checkpoint(ctx)
+					for _, text := range texts {
+						msgs = append(msgs, UserMessage{Text: text})
+					}
+				}
 				if err != nil {
 					return nil, err
 				}

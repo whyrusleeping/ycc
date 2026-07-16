@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -204,6 +205,93 @@ func TestLoginCallbackFlow(t *testing.T) {
 	creds, err := <-credCh, <-errCh
 	if err != nil {
 		t.Fatal(err)
+	}
+	if creds.AccessToken != access || creds.RefreshToken != "rt" {
+		t.Fatalf("unexpected creds: %+v", creds)
+	}
+}
+
+func TestParsePastedCallback(t *testing.T) {
+	for _, tc := range []struct {
+		name, pasted, state string
+		want                string
+		wantErr             string
+	}{
+		{name: "full URL", pasted: "http://localhost:1455/auth/callback?code=abc&state=st-1", state: "st-1", want: "abc"},
+		{name: "full URL padded", pasted: "  http://localhost:1455/auth/callback?code=abc&state=st-1 \n", state: "st-1", want: "abc"},
+		{name: "query string only", pasted: "code=abc&state=st-1", state: "st-1", want: "abc"},
+		{name: "bare code", pasted: "abc", state: "st-1", want: "abc"},
+		{name: "state mismatch", pasted: "http://localhost:1455/auth/callback?code=abc&state=other", state: "st-1", wantErr: "state mismatch"},
+		{name: "error param", pasted: "http://localhost:1455/auth/callback?error=access_denied&error_description=nope", state: "st-1", wantErr: "access_denied"},
+		{name: "missing code", pasted: "http://localhost:1455/auth/callback?state=st-1", state: "st-1", wantErr: "no code"},
+		{name: "empty", pasted: "   ", state: "st-1", wantErr: "empty"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParsePastedCallback(tc.pasted, tc.state)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("want error containing %q, got %v", tc.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("code = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestLoginPasteFlow completes the login by pasting the callback URL instead
+// of the browser reaching localhost:1455 — with the callback port already
+// occupied (as it would effectively be unreachable over ssh, or held by the
+// codex CLI), which must degrade to paste-only rather than fail.
+func TestLoginPasteFlow(t *testing.T) {
+	isolate(t)
+	access := fakeJWT(t, map[string]any{"exp": float64(time.Now().Add(time.Hour).Unix())})
+	var gotCode string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.ParseForm()
+		gotCode = r.PostForm.Get("code")
+		json.NewEncoder(w).Encode(map[string]any{"access_token": access, "refresh_token": "rt"})
+	}))
+	defer srv.Close()
+	old := Issuer
+	Issuer = srv.URL
+	defer func() { Issuer = old }()
+
+	// Occupy the callback port so binding fails.
+	hog, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", CallbackPort))
+	if err != nil {
+		t.Skipf("cannot bind port %d to simulate conflict: %v", CallbackPort, err)
+	}
+	defer hog.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	urlCh := make(chan string, 1)
+	pasteCh := make(chan string, 1)
+	credCh := make(chan *Credentials, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		creds, err := LoginWithPaste(ctx, func(u string) { urlCh <- u }, pasteCh)
+		credCh <- creds
+		errCh <- err
+	}()
+	u, err := url.Parse(<-urlCh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := u.Query().Get("state")
+	pasteCh <- fmt.Sprintf("http://localhost:%d/auth/callback?code=pasted-code&state=%s", CallbackPort, url.QueryEscape(state))
+	creds, err := <-credCh, <-errCh
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotCode != "pasted-code" {
+		t.Fatalf("exchanged code = %q, want pasted-code", gotCode)
 	}
 	if creds.AccessToken != access || creds.RefreshToken != "rt" {
 		t.Fatalf("unexpected creds: %+v", creds)

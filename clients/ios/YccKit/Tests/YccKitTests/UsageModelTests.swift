@@ -10,6 +10,7 @@ private final class MockUsageSource: UsageSource, @unchecked Sendable {
     var total = Ycc_V1_UsageRow()
     var workspace = "/home/me/work"
     var budget = Ycc_V1_GetBudgetResponse()
+    var subscriptionAccounts: [Ycc_V1_SubscriptionUsageAccount] = []
     var projects: [Ycc_V1_ProjectInfo] = []
     var usageError: Error?
 
@@ -23,6 +24,10 @@ private final class MockUsageSource: UsageSource, @unchecked Sendable {
         usageArgs = (project, groupBy, since, until)
         if let usageError { throw usageError }
         return (rows, total, workspace)
+    }
+
+    func getSubscriptionUsage(refresh: Bool) async throws -> [Ycc_V1_SubscriptionUsageAccount] {
+        subscriptionAccounts
     }
 
     func getBudget() async throws -> Ycc_V1_GetBudgetResponse {
@@ -56,6 +61,19 @@ private func usageRow(
 @MainActor
 final class UsageModelTests: XCTestCase {
     // MARK: - Request mapping
+
+    func testRefreshLoadsSubscriptionAllowance() async {
+        let source = MockUsageSource()
+        var account = Ycc_V1_SubscriptionUsageAccount()
+        account.provider = "anthropic"
+        account.state = "fresh"
+        source.subscriptionAccounts = [account]
+        let model = UsageModel(source: source)
+
+        await model.refresh()
+
+        XCTAssertEqual(model.subscriptionAccounts.map(\.provider), ["anthropic"])
+    }
 
     func testRefreshSendsGroupingAndProject() async {
         let source = MockUsageSource()

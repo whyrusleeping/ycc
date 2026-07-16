@@ -150,13 +150,16 @@ type ThinkingBlock struct {
 // tokens, and CacheRead/CacheWrite the prompt-cache read and creation tokens
 // (Anthropic cache_* / OpenAI prompt_tokens_details — the engine subtracts
 // OpenAI's cached subset from Input at emit time so cost math never
-// double-counts a class); Total is the backend-reported total.
+// double-counts a class); Total is the backend-reported total. ReasoningTokens
+// is observability metadata: it is a subset of Output, never an additional cost
+// class, and is omitted for providers that do not report it.
 type Usage struct {
-	Input      int `json:"input"`
-	Output     int `json:"output"`
-	CacheRead  int `json:"cache_read"`
-	CacheWrite int `json:"cache_write"`
-	Total      int `json:"total"`
+	Input           int `json:"input"`
+	Output          int `json:"output"`
+	CacheRead       int `json:"cache_read"`
+	CacheWrite      int `json:"cache_write"`
+	Total           int `json:"total"`
+	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
 }
 
 // Event is a single entry in a session's log.

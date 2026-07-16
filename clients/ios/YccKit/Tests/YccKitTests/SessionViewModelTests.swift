@@ -58,8 +58,8 @@ private final class MockActionSource: SessionActionSource, SessionTranscriptSour
     func reopenSession(project: String, sessionId: String) async throws {
         try record(Call(kind: "reopen", text: project))
     }
-    func sendInput(sessionId: String, text: String) async throws {
-        try record(Call(kind: "send", text: text))
+    func sendInput(sessionId: String, text: String, images: [MessageImage]) async throws {
+        try record(Call(kind: "send", text: text, batch: images.map { $0.mediaType }))
     }
     func answerQuestion(sessionId: String, text: String, optionIndex: Int) async throws {
         try record(Call(kind: "answer", text: text, optionIndex: optionIndex))
@@ -362,6 +362,14 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertEqual(actions.calls, [.init(kind: "reopen")])
         XCTAssertEqual(vm.mode, .persisted)
         XCTAssertEqual(vm.actionError, "session log expired")
+    }
+
+    func testSendAllowsPictureWithoutText() async {
+        let actions = MockActionSource()
+        let vm = actionVM(actions)
+        let picture = MessageImage(data: Data([1, 2, 3]), mediaType: "image/jpeg", filename: "photo.jpg")
+        await vm.send(text: "", images: [picture])
+        XCTAssertEqual(actions.calls, [.init(kind: "send", batch: ["image/jpeg"])])
     }
 
     func testAnswerSingleViaOptionAndViaText() async {

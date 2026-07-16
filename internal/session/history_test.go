@@ -165,12 +165,38 @@ func TestScanSessionHistoryEmptySkipped(t *testing.T) {
 	}
 }
 
+func TestListSessionHistoryOrphanedRunningIsStopped(t *testing.T) {
+	ws := t.TempDir()
+	writeSession(t, ws, "s_orphan", []event.Event{
+		{Seq: 1, TS: ts(1), Type: event.SessionStarted, Data: map[string]any{"mode": "work"}},
+		{Seq: 2, TS: ts(2), Type: event.ModelTurn},
+		// No session_idle/error/stopped: simulate an abruptly terminated daemon.
+	})
+
+	m := NewManager(config.NewRegistry(nil), ws)
+	got, err := m.ListSessionHistory("")
+	if err != nil {
+		t.Fatalf("ListSessionHistory: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 summary, got %d", len(got))
+	}
+	if got[0].Live {
+		t.Fatal("orphaned persisted session must not be live")
+	}
+	if got[0].Status != event.StatusStopped {
+		t.Fatalf("orphaned persisted status = %q, want %q", got[0].Status, event.StatusStopped)
+	}
+}
+
 func TestListSessionHistoryLiveOverridesDisk(t *testing.T) {
 	ws := t.TempDir()
 	absWS, _ := filepath.Abs(ws)
 	writeSession(t, ws, "s_live", []event.Event{
 		{Seq: 1, TS: ts(1), Type: event.SessionStarted, Data: map[string]any{"mode": "work"}},
-		{Seq: 2, TS: ts(2), Type: event.SessionIdle, Data: map[string]any{"report": "done"}},
+		// The disk projection is running too; the live overlay must prevent orphan
+		// normalization and preserve the manager's current running status.
+		{Seq: 2, TS: ts(2), Type: event.ModelTurn},
 	})
 
 	m := NewManager(config.NewRegistry(nil), ws)

@@ -8,6 +8,11 @@
 // For information on using the generated types, please see the documentation:
 //   https://github.com/apple/swift-protobuf/
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
+import Foundation
+#endif
 import SwiftProtobuf
 
 // If the compiler emits an error on this type, it is because this file
@@ -261,6 +266,28 @@ public nonisolated struct Ycc_V1_SubscribeRequest: Sendable {
   public init() {}
 }
 
+/// ImageAttachment is an inline picture accompanying a user message. The daemon
+/// validates both the declared media type and file signature before passing it to
+/// the model. Attachment bytes are request-only: event logs retain metadata, not
+/// the image payload.
+public nonisolated struct Ycc_V1_ImageAttachment: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var data: Data = Data()
+
+  /// image/jpeg | image/png | image/gif | image/webp
+  public var mediaType: String = String()
+
+  /// optional display name; never interpreted as a path
+  public var filename: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 public nonisolated struct Ycc_V1_SendInputRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -269,6 +296,8 @@ public nonisolated struct Ycc_V1_SendInputRequest: Sendable {
   public var sessionID: String = String()
 
   public var text: String = String()
+
+  public var images: [Ycc_V1_ImageAttachment] = []
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -1564,6 +1593,88 @@ public nonisolated struct Ycc_V1_GetUsageResponse: Sendable {
   fileprivate var _total: Ycc_V1_UsageRow? = nil
 }
 
+/// Provider-side subscription allowance (spec §20.5). This is intentionally
+/// separate from GetUsage: it is shared account quota, not ycc-local token spend.
+/// No credential material crosses this boundary.
+public nonisolated struct Ycc_V1_GetSubscriptionUsageRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// request refresh when cache policy permits; never bypasses throttling
+  public var refresh: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_SubscriptionUsageWindow: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// provider-stable bucket id when available
+  public var id: String = String()
+
+  /// human-facing scope/window label
+  public var label: String = String()
+
+  /// consumed percentage, clamped to 0..100
+  public var usedPercent: Double = 0
+
+  /// UTC Unix seconds; 0 when provider omits it
+  public var resetsAtUnix: Int64 = 0
+
+  /// nominal duration; 0 when provider omits it
+  public var windowSeconds: Int64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_SubscriptionUsageAccount: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// anthropic | openai
+  public var provider: String = String()
+
+  /// provider plan label when reported
+  public var plan: String = String()
+
+  /// configured logical models sharing this account
+  public var models: [String] = []
+
+  public var windows: [Ycc_V1_SubscriptionUsageWindow] = []
+
+  /// fresh | stale | unavailable
+  public var state: String = String()
+
+  public var fetchedAtUnix: Int64 = 0
+
+  /// sanitized availability/freshness note
+  public var message: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_GetSubscriptionUsageResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var accounts: [Ycc_V1_SubscriptionUsageAccount] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 /// Spend guard budget caps (task 0137, spec §20.6). GetBudget returns the
 /// configured session and loop caps so the TUI work-loop driver can enforce the
 /// per-loop-run cap client-side (session caps are enforced daemon-side). Every
@@ -2571,9 +2682,49 @@ nonisolated extension Ycc_V1_SubscribeRequest: SwiftProtobuf.Message, SwiftProto
   }
 }
 
+nonisolated extension Ycc_V1_ImageAttachment: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ImageAttachment"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}data\0\u{3}media_type\0\u{1}filename\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBytesField(value: &self.data) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.mediaType) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.filename) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.data.isEmpty {
+      try visitor.visitSingularBytesField(value: self.data, fieldNumber: 1)
+    }
+    if !self.mediaType.isEmpty {
+      try visitor.visitSingularStringField(value: self.mediaType, fieldNumber: 2)
+    }
+    if !self.filename.isEmpty {
+      try visitor.visitSingularStringField(value: self.filename, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_ImageAttachment, rhs: Ycc_V1_ImageAttachment) -> Bool {
+    if lhs.data != rhs.data {return false}
+    if lhs.mediaType != rhs.mediaType {return false}
+    if lhs.filename != rhs.filename {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 nonisolated extension Ycc_V1_SendInputRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SendInputRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}text\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}text\0\u{1}images\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2583,6 +2734,7 @@ nonisolated extension Ycc_V1_SendInputRequest: SwiftProtobuf.Message, SwiftProto
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.text) }()
+      case 3: try { try decoder.decodeRepeatedMessageField(value: &self.images) }()
       default: break
       }
     }
@@ -2595,12 +2747,16 @@ nonisolated extension Ycc_V1_SendInputRequest: SwiftProtobuf.Message, SwiftProto
     if !self.text.isEmpty {
       try visitor.visitSingularStringField(value: self.text, fieldNumber: 2)
     }
+    if !self.images.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.images, fieldNumber: 3)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Ycc_V1_SendInputRequest, rhs: Ycc_V1_SendInputRequest) -> Bool {
     if lhs.sessionID != rhs.sessionID {return false}
     if lhs.text != rhs.text {return false}
+    if lhs.images != rhs.images {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -5044,6 +5200,176 @@ nonisolated extension Ycc_V1_GetUsageResponse: SwiftProtobuf.Message, SwiftProto
     if lhs.rows != rhs.rows {return false}
     if lhs._total != rhs._total {return false}
     if lhs.workspace != rhs.workspace {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_GetSubscriptionUsageRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetSubscriptionUsageRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}refresh\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBoolField(value: &self.refresh) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.refresh != false {
+      try visitor.visitSingularBoolField(value: self.refresh, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_GetSubscriptionUsageRequest, rhs: Ycc_V1_GetSubscriptionUsageRequest) -> Bool {
+    if lhs.refresh != rhs.refresh {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_SubscriptionUsageWindow: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SubscriptionUsageWindow"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}label\0\u{3}used_percent\0\u{3}resets_at_unix\0\u{3}window_seconds\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.id) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.label) }()
+      case 3: try { try decoder.decodeSingularDoubleField(value: &self.usedPercent) }()
+      case 4: try { try decoder.decodeSingularInt64Field(value: &self.resetsAtUnix) }()
+      case 5: try { try decoder.decodeSingularInt64Field(value: &self.windowSeconds) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.id.isEmpty {
+      try visitor.visitSingularStringField(value: self.id, fieldNumber: 1)
+    }
+    if !self.label.isEmpty {
+      try visitor.visitSingularStringField(value: self.label, fieldNumber: 2)
+    }
+    if self.usedPercent.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.usedPercent, fieldNumber: 3)
+    }
+    if self.resetsAtUnix != 0 {
+      try visitor.visitSingularInt64Field(value: self.resetsAtUnix, fieldNumber: 4)
+    }
+    if self.windowSeconds != 0 {
+      try visitor.visitSingularInt64Field(value: self.windowSeconds, fieldNumber: 5)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_SubscriptionUsageWindow, rhs: Ycc_V1_SubscriptionUsageWindow) -> Bool {
+    if lhs.id != rhs.id {return false}
+    if lhs.label != rhs.label {return false}
+    if lhs.usedPercent != rhs.usedPercent {return false}
+    if lhs.resetsAtUnix != rhs.resetsAtUnix {return false}
+    if lhs.windowSeconds != rhs.windowSeconds {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_SubscriptionUsageAccount: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SubscriptionUsageAccount"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}provider\0\u{1}plan\0\u{1}models\0\u{1}windows\0\u{1}state\0\u{3}fetched_at_unix\0\u{1}message\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.provider) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.plan) }()
+      case 3: try { try decoder.decodeRepeatedStringField(value: &self.models) }()
+      case 4: try { try decoder.decodeRepeatedMessageField(value: &self.windows) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.state) }()
+      case 6: try { try decoder.decodeSingularInt64Field(value: &self.fetchedAtUnix) }()
+      case 7: try { try decoder.decodeSingularStringField(value: &self.message) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.provider.isEmpty {
+      try visitor.visitSingularStringField(value: self.provider, fieldNumber: 1)
+    }
+    if !self.plan.isEmpty {
+      try visitor.visitSingularStringField(value: self.plan, fieldNumber: 2)
+    }
+    if !self.models.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.models, fieldNumber: 3)
+    }
+    if !self.windows.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.windows, fieldNumber: 4)
+    }
+    if !self.state.isEmpty {
+      try visitor.visitSingularStringField(value: self.state, fieldNumber: 5)
+    }
+    if self.fetchedAtUnix != 0 {
+      try visitor.visitSingularInt64Field(value: self.fetchedAtUnix, fieldNumber: 6)
+    }
+    if !self.message.isEmpty {
+      try visitor.visitSingularStringField(value: self.message, fieldNumber: 7)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_SubscriptionUsageAccount, rhs: Ycc_V1_SubscriptionUsageAccount) -> Bool {
+    if lhs.provider != rhs.provider {return false}
+    if lhs.plan != rhs.plan {return false}
+    if lhs.models != rhs.models {return false}
+    if lhs.windows != rhs.windows {return false}
+    if lhs.state != rhs.state {return false}
+    if lhs.fetchedAtUnix != rhs.fetchedAtUnix {return false}
+    if lhs.message != rhs.message {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_GetSubscriptionUsageResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetSubscriptionUsageResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}accounts\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.accounts) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.accounts.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.accounts, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_GetSubscriptionUsageResponse, rhs: Ycc_V1_GetSubscriptionUsageResponse) -> Bool {
+    if lhs.accounts != rhs.accounts {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

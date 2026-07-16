@@ -29,6 +29,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/whyrusleeping/gollama"
@@ -55,6 +56,11 @@ type Client struct {
 	tokens     TokenSource
 	httpClient *http.Client
 	originator string
+	// reasoningTokens carries the most recently completed turn's hidden
+	// reasoning-token count across the gollama transport boundary. A loop consumes
+	// it immediately after Turn/TurnStream; atomic keeps the optional capability
+	// safe if a caller inspects it concurrently.
+	reasoningTokens atomic.Int64
 }
 
 // New constructs a codex client. baseURL "" means DefaultBaseURL; a trailing
@@ -91,8 +97,9 @@ type inputItem struct {
 }
 
 type contentBlock struct {
-	Type string `json:"type"` // input_text (user/developer) | output_text (assistant)
-	Text string `json:"text"`
+	Type     string `json:"type"` // input_text | input_image | output_text
+	Text     string `json:"text,omitempty"`
+	ImageURL string `json:"image_url,omitempty"`
 }
 
 // toolDef is a Responses-API function tool (flat, unlike chat-completions'
@@ -161,7 +168,10 @@ func buildRequest(opts gollama.RequestOptions) request {
 		if effort == "max" {
 			effort = "xhigh"
 		}
-		req.Reasoning = &reasoningOpts{Effort: effort, Summary: "auto"}
+		// "detailed" affects only the user-visible summary, not the private
+		// reasoning itself. It gives ycc a useful trace instead of the one-line
+		// headings commonly selected by the provider's "auto" mode.
+		req.Reasoning = &reasoningOpts{Effort: effort, Summary: "detailed"}
 	}
 	return req
 }
@@ -199,10 +209,28 @@ func buildInput(msgs []gollama.Message) []inputItem {
 			if role == "system" {
 				role = "developer"
 			}
-			items = append(items, inputItem{
-				Type: "message", Role: role,
-				Content: []contentBlock{{Type: "input_text", Text: m.Content}},
-			})
+			content := []contentBlock{}
+			if len(m.MultiContent) > 0 {
+				for _, block := range m.MultiContent {
+					switch block.Type {
+					case "text":
+						content = append(content, contentBlock{Type: "input_text", Text: block.Text})
+					case "image":
+						if block.ImageURL != "" {
+							content = append(content, contentBlock{Type: "input_image", ImageURL: block.ImageURL})
+						} else if block.ImageBase64 != "" {
+							mediaType := block.ImageMediaType
+							if mediaType == "" {
+								mediaType = "image/jpeg"
+							}
+							content = append(content, contentBlock{Type: "input_image", ImageURL: "data:" + mediaType + ";base64," + block.ImageBase64})
+						}
+					}
+				}
+			} else {
+				content = append(content, contentBlock{Type: "input_text", Text: m.Content})
+			}
+			items = append(items, inputItem{Type: "message", Role: role, Content: content})
 		}
 	}
 	return items
@@ -247,6 +275,12 @@ type sseEvent struct {
 	} `json:"response"`
 }
 
+// ReasoningTokens returns the hidden reasoning tokens reported for the most
+// recently completed turn. engine.Loop reads this optional capability directly
+// after the turn, because gollama.Usage does not currently expose output-token
+// details.
+func (c *Client) ReasoningTokens() int { return int(c.reasoningTokens.Load()) }
+
 // Turn runs one model turn against the codex backend. The backend is
 // streaming-only, so Turn accumulates the stream silently.
 func (c *Client) Turn(opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
@@ -258,6 +292,8 @@ func (c *Client) Turn(opts gollama.RequestOptions) (*gollama.ResponseMessageGene
 // silently). Snapshot semantics satisfy engine.StreamTurner's contract and let
 // lossy clients replace their live tail rather than having to retain every delta.
 func (c *Client) TurnStream(opts gollama.RequestOptions, onDelta func(text string)) (*gollama.ResponseMessageGenerate, error) {
+	// Never leak a previous successful turn's count through an errored turn.
+	c.reasoningTokens.Store(0)
 	ctx := context.Background()
 	tok, accountID, err := c.tokens(ctx)
 	if err != nil {
@@ -291,17 +327,24 @@ func (c *Client) TurnStream(opts gollama.RequestOptions, onDelta func(text strin
 		// the status ("status code (\d+)") identically across backends.
 		return nil, fmt.Errorf("API returned non-200 status code %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
 	}
-	return parseStream(resp.Body, opts.Model, onDelta)
+	result, reasoningTokens, err := parseStream(resp.Body, opts.Model, onDelta)
+	if err == nil {
+		c.reasoningTokens.Store(int64(reasoningTokens))
+	}
+	return result, err
 }
 
-// parseStream folds the SSE event stream into a single response message.
-func parseStream(r io.Reader, model string, onDelta func(string)) (*gollama.ResponseMessageGenerate, error) {
+// parseStream folds the SSE event stream into a single response message and
+// returns the provider-reported hidden reasoning-token count separately because
+// gollama.Usage does not currently model output_tokens_details.
+func parseStream(r io.Reader, model string, onDelta func(string)) (*gollama.ResponseMessageGenerate, int, error) {
 	var (
-		text      strings.Builder
-		thinking  strings.Builder
-		toolCalls []gollama.ToolCall
-		out       = &gollama.ResponseMessageGenerate{Model: model, Done: true, StopReason: "stop"}
-		completed bool
+		text            strings.Builder
+		thinking        strings.Builder
+		toolCalls       []gollama.ToolCall
+		out             = &gollama.ResponseMessageGenerate{Model: model, Done: true, StopReason: "stop"}
+		completed       bool
+		reasoningTokens int
 	)
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
@@ -366,6 +409,7 @@ func parseStream(r io.Reader, model string, onDelta func(string)) (*gollama.Resp
 						CachedTokens: u.InputTokensDetails.CachedTokens,
 					},
 				}
+				reasoningTokens = u.OutputTokensDetails.ReasoningTokens
 			}
 			if ev.Response.IncompleteDetails != nil && ev.Response.IncompleteDetails.Reason == "max_output_tokens" {
 				out.StopReason = "length"
@@ -375,16 +419,16 @@ func parseStream(r io.Reader, model string, onDelta func(string)) (*gollama.Resp
 			if ev.Response != nil && ev.Response.Error != nil {
 				msg = ev.Response.Error.Message
 			}
-			return nil, fmt.Errorf("codex: %s", msg)
+			return nil, 0, fmt.Errorf("codex: %s", msg)
 		case "error":
-			return nil, fmt.Errorf("codex: stream error: %s", data)
+			return nil, 0, fmt.Errorf("codex: stream error: %s", data)
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("codex: reading stream: %w", err)
+		return nil, 0, fmt.Errorf("codex: reading stream: %w", err)
 	}
 	if !completed && text.Len() == 0 && len(toolCalls) == 0 {
-		return nil, fmt.Errorf("codex: stream ended without a completed response")
+		return nil, 0, fmt.Errorf("codex: stream ended without a completed response")
 	}
 	if len(toolCalls) > 0 {
 		out.StopReason = "tool_calls"
@@ -398,5 +442,5 @@ func parseStream(r io.Reader, model string, onDelta func(string)) (*gollama.Resp
 		},
 		FinishReason: out.StopReason,
 	}}
-	return out, nil
+	return out, reasoningTokens, nil
 }

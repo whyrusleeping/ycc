@@ -215,10 +215,19 @@ public final class YccClient: Sendable {
 
     /// Deliver user input to a running/idle session (`SendInput`). Steer-by-default:
     /// the daemon queues the text as a steer when the session is mid-turn.
-    public func sendInput(sessionId: String, text: String) async throws {
+    public func sendInput(
+        sessionId: String, text: String, images: [MessageImage] = []
+    ) async throws {
         var request = Ycc_V1_SendInputRequest()
         request.sessionID = sessionId
         request.text = text
+        request.images = images.map { image in
+            var attachment = Ycc_V1_ImageAttachment()
+            attachment.data = image.data
+            attachment.mediaType = image.mediaType
+            attachment.filename = image.filename
+            return attachment
+        }
         try unary(await generated.sendInput(request: request))
     }
 
@@ -362,6 +371,20 @@ public final class YccClient: Sendable {
         switch response.result {
         case .success(let message):
             return (message.rows, message.total, message.workspace)
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
+    /// Provider-side allowance for configured subscription-authenticated models.
+    /// This is shared account quota, separate from ycc-local token usage.
+    public func getSubscriptionUsage(refresh: Bool = true) async throws -> [Ycc_V1_SubscriptionUsageAccount] {
+        var request = Ycc_V1_GetSubscriptionUsageRequest()
+        request.refresh = refresh
+        let response = await generated.getSubscriptionUsage(request: request)
+        switch response.result {
+        case .success(let message):
+            return message.accounts
         case .failure(let error):
             throw Self.map(error)
         }

@@ -36,7 +36,8 @@ final class SessionListModelTests: XCTestCase {
         lastActivity: String = "",
         turns: Int64 = 0,
         live: Bool = false,
-        waitingInput: Bool = false
+        waitingInput: Bool = false,
+        focusTasks: [String] = []
     ) -> Ycc_V1_SessionSummary {
         var s = Ycc_V1_SessionSummary()
         s.sessionID = id
@@ -48,6 +49,7 @@ final class SessionListModelTests: XCTestCase {
         s.turns = turns
         s.live = live
         s.waitingInput = waitingInput
+        s.focusTasks = focusTasks
         return s
     }
 
@@ -153,6 +155,23 @@ final class SessionListModelTests: XCTestCase {
     func testDisplayTitleFallsBackToModeAndShortID() {
         let s = session(id: "abcdef1234567890", title: "   ", mode: "pm")
         XCTAssertEqual(SessionListModel.displayTitle(for: s), "pm · abcdef12")
+    }
+
+    func testDisplayTitleReferencesFocusedTask() {
+        let s = session(
+            id: "abcdef12345", title: "Implement the widget", focusTasks: ["0214"])
+        XCTAssertEqual(
+            SessionListModel.displayTitle(for: s),
+            "[0214] Implement the widget")
+    }
+
+    func testDisplayTitleReferencesDistinctFocusedTasksInOrder() {
+        let s = session(
+            id: "abcdef1234567890", title: " ", mode: "work",
+            focusTasks: [" 0214 ", "", "0215", "0214"])
+        XCTAssertEqual(
+            SessionListModel.displayTitle(for: s),
+            "[0214,0215] work · abcdef12")
     }
 
     // MARK: - Status mapping

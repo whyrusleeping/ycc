@@ -157,6 +157,10 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `getUsage`(request: Ycc_V1_GetUsageRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetUsageResponse>
 
+    /// Best-effort provider-side subscription allowance (spec §20.5).
+    @available(iOS 13, *)
+    func `getSubscriptionUsage`(request: Ycc_V1_GetSubscriptionUsageRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetSubscriptionUsageResponse>
+
     /// Spend guard (task 0137, spec §20.6): return the configured budget caps so the
     /// TUI work-loop driver can enforce the per-loop-run cap client-side.
     @available(iOS 13, *)
@@ -381,6 +385,11 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     }
 
     @available(iOS 13, *)
+    public func `getSubscriptionUsage`(request: Ycc_V1_GetSubscriptionUsageRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_GetSubscriptionUsageResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/GetSubscriptionUsage", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
     public func `getBudget`(request: Ycc_V1_GetBudgetRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_GetBudgetResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/GetBudget", idempotencyLevel: .unknown, request: request, headers: headers)
     }
@@ -466,6 +475,7 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let getPlan = Connect.MethodSpec(name: "GetPlan", service: "ycc.v1.SessionService", type: .unary)
             public static let captureBacklogItem = Connect.MethodSpec(name: "CaptureBacklogItem", service: "ycc.v1.SessionService", type: .serverStream)
             public static let getUsage = Connect.MethodSpec(name: "GetUsage", service: "ycc.v1.SessionService", type: .unary)
+            public static let getSubscriptionUsage = Connect.MethodSpec(name: "GetSubscriptionUsage", service: "ycc.v1.SessionService", type: .unary)
             public static let getBudget = Connect.MethodSpec(name: "GetBudget", service: "ycc.v1.SessionService", type: .unary)
             public static let notify = Connect.MethodSpec(name: "Notify", service: "ycc.v1.SessionService", type: .unary)
             public static let startWorkLoop = Connect.MethodSpec(name: "StartWorkLoop", service: "ycc.v1.SessionService", type: .unary)

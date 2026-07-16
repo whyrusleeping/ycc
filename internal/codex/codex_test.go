@@ -22,7 +22,10 @@ func TestBuildRequest(t *testing.T) {
 		System: "Be terse.",
 		Effort: "max",
 		Messages: []gollama.Message{
-			{Role: "user", Content: "list files"},
+			{Role: "user", MultiContent: []gollama.ContentBlock{
+				{Type: "text", Text: "list files"},
+				{Type: "image", ImageBase64: "aW1hZ2U=", ImageMediaType: "image/png"},
+			}},
 			{Role: "assistant", Content: "ok", ToolCalls: []gollama.ToolCall{{
 				ID: "call_1", Type: "function",
 				Function: gollama.ToolCallFunction{Name: "bash", Arguments: `{"cmd":"ls"}`},
@@ -44,8 +47,8 @@ func TestBuildRequest(t *testing.T) {
 	if req.Instructions != "Be terse." {
 		t.Errorf("instructions = %q", req.Instructions)
 	}
-	if req.Reasoning == nil || req.Reasoning.Effort != "xhigh" {
-		t.Errorf("reasoning = %+v, want max clamped to xhigh", req.Reasoning)
+	if req.Reasoning == nil || req.Reasoning.Effort != "xhigh" || req.Reasoning.Summary != "detailed" {
+		t.Errorf("reasoning = %+v, want xhigh effort + detailed summary", req.Reasoning)
 	}
 	if len(req.Tools) != 1 || req.Tools[0].Name != "bash" || req.Tools[0].Type != "function" {
 		t.Errorf("tools = %+v", req.Tools)
@@ -57,7 +60,7 @@ func TestBuildRequest(t *testing.T) {
 	if len(req.Input) != 4 {
 		t.Fatalf("input has %d items: %+v", len(req.Input), req.Input)
 	}
-	if req.Input[0].Type != "message" || req.Input[0].Role != "user" || req.Input[0].Content[0].Type != "input_text" {
+	if req.Input[0].Type != "message" || req.Input[0].Role != "user" || len(req.Input[0].Content) != 2 || req.Input[0].Content[0].Type != "input_text" || req.Input[0].Content[1].Type != "input_image" || req.Input[0].Content[1].ImageURL != "data:image/png;base64,aW1hZ2U=" {
 		t.Errorf("input[0] = %+v", req.Input[0])
 	}
 	if req.Input[1].Type != "message" || req.Input[1].Role != "assistant" || req.Input[1].Content[0].Type != "output_text" {
@@ -106,10 +109,11 @@ func codexStub(t *testing.T, gotReq *map[string]any, gotHdr *http.Header) *httpt
 		sse(w, map[string]any{"type": "response.completed", "response": map[string]any{
 			"status": "completed",
 			"usage": map[string]any{
-				"input_tokens":         100,
-				"input_tokens_details": map[string]any{"cached_tokens": 40},
-				"output_tokens":        7,
-				"total_tokens":         107,
+				"input_tokens":          100,
+				"input_tokens_details":  map[string]any{"cached_tokens": 40},
+				"output_tokens":         7,
+				"output_tokens_details": map[string]any{"reasoning_tokens": 5},
+				"total_tokens":          107,
 			},
 		}})
 	}))
@@ -167,6 +171,9 @@ func TestTurnStream(t *testing.T) {
 	if resp.Usage.PromptTokens != 100 || resp.Usage.CompletionTokens != 7 ||
 		resp.Usage.PromptTokensDetails == nil || resp.Usage.PromptTokensDetails.CachedTokens != 40 {
 		t.Errorf("usage = %+v", resp.Usage)
+	}
+	if got := c.ReasoningTokens(); got != 5 {
+		t.Errorf("reasoning tokens = %d, want 5", got)
 	}
 	if resp.Truncated() {
 		t.Error("unexpected truncation")
@@ -232,7 +239,7 @@ func TestParseStreamFallsBackToItemText(t *testing.T) {
 		`data: {"type":"response.completed","response":{"status":"completed"}}`,
 		``,
 	}, "\n")
-	resp, err := parseStream(strings.NewReader(body), "m", nil)
+	resp, _, err := parseStream(strings.NewReader(body), "m", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

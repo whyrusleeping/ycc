@@ -4,11 +4,10 @@ package engine
 // coordinator loop's conversation history from a session's persisted event log so
 // a finished/idle session can be re-opened and continued on the SAME log.
 //
-// Known lossy edge, explicitly documented as unsupported: tool-result
-// images/PDFs are NOT restored on replay (only their counts are recorded on
-// tool_result events). Multimodal tool-result content does not round-trip; the
-// reconstructed history carries the text result only. This is an accepted
-// limitation (see spec §18.6).
+// Known lossy edge, explicitly documented as unsupported: image/PDF bytes are
+// NOT restored on replay. Tool results retain only counts; user picture messages
+// retain metadata and replay as text with an explicit attachment-loss marker.
+// This is an accepted limitation (see spec §18.6).
 //
 // The internal truncation-retry nudge IS reproduced on replay: when the live
 // loop hits a mid-Run output-token truncation it appends a sanitized assistant
@@ -186,7 +185,7 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			}
 			repairDangling()
 			flushDeferred()
-			history = append(history, gollama.Message{Role: "user", Content: str(ev.Data, "text")})
+			history = append(history, gollama.Message{Role: "user", Content: replayUserText(ev.Data)})
 			assistantIdx = -1
 			lastTurnTruncated = false // a real user input breaks the truncation chain
 		case event.UserInputDelivered:
@@ -195,13 +194,14 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			// replayed history matches what the model saw, and reset turn state like
 			// a normal user input. Delivered at a MID-BATCH checkpoint (the current
 			// assistant turn's tool-call batch is still open), the live loop defers
-			// the Post to the batch end — buffer it to match.
+			// the Post to the batch end — buffer it to match. Image bytes are not
+			// persisted, so replay supplies an explicit attachment-loss marker.
 			if batchOpen() {
-				deferredUser = append(deferredUser, str(ev.Data, "text"))
+				deferredUser = append(deferredUser, replayUserText(ev.Data))
 				continue
 			}
 			repairDangling()
-			history = append(history, gollama.Message{Role: "user", Content: str(ev.Data, "text")})
+			history = append(history, gollama.Message{Role: "user", Content: replayUserText(ev.Data)})
 			assistantIdx = -1
 			lastTurnTruncated = false
 		case event.ModelTurn:
@@ -401,6 +401,25 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 	}
 
 	return history
+}
+
+func replayUserText(data map[string]any) string {
+	text := str(data, "text")
+	count := 0
+	switch images := data["images"].(type) {
+	case []any:
+		count = len(images)
+	case []map[string]any:
+		count = len(images)
+	}
+	if count == 0 {
+		return text
+	}
+	note := fmt.Sprintf("[The original message included %d picture attachment(s); image bytes are unavailable after session replay.]", count)
+	if text == "" {
+		return note
+	}
+	return text + "\n\n" + note
 }
 
 // parseThinkingBlocks defensively decodes the thinking_blocks field from a

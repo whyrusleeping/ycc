@@ -4,7 +4,9 @@
 // code + PKCE flow against auth.openai.com using Codex's public client id,
 // with the browser redirecting to a short-lived local callback server on
 // http://localhost:1455/auth/callback (the redirect URI the public client id
-// is registered with). Credentials — access/refresh/id tokens plus the
+// is registered with). For headless/ssh sessions where the browser cannot
+// reach that port, LoginWithPaste additionally accepts the callback URL
+// pasted back manually. Credentials — access/refresh/id tokens plus the
 // ChatGPT account id extracted from the id_token JWT — are persisted in the
 // machine-local secrets store (internal/secrets) under the OPENAI_OAUTH key.
 //
@@ -129,14 +131,31 @@ func AuthorizeURL(p PKCE, state, redirectURI string) string {
 // credentials are NOT persisted — callers Save them. ctx bounds the whole wait
 // (callers should apply a generous timeout; browser logins involve a human).
 func Login(ctx context.Context, onAuthorizeURL func(url string)) (*Credentials, error) {
+	return LoginWithPaste(ctx, onAuthorizeURL, nil)
+}
+
+// LoginWithPaste is Login with a manual fallback for sessions where the
+// browser cannot reach this machine's localhost:1455 (e.g. ycc running over
+// ssh): values received on pasted — the full callback URL from the browser's
+// address bar, its query string, or the bare code — complete the flow exactly
+// like a callback hit. Whichever of the two paths produces a code first wins.
+// pasted may be nil (Login's behavior) and may be closed (treated as "no
+// manual input will ever come"). When pasted is non-nil a failure to bind the
+// callback port degrades to paste-only login instead of failing.
+func LoginWithPaste(ctx context.Context, onAuthorizeURL func(url string), pasted <-chan string) (*Credentials, error) {
 	// Bind both loopback families: the redirect URI says "localhost" and the
 	// browser may resolve it to 127.0.0.1 or ::1. v6 is best-effort.
 	var lc net.ListenConfig
+	var listeners []net.Listener
 	v4, err := lc.Listen(ctx, "tcp4", fmt.Sprintf("127.0.0.1:%d", CallbackPort))
 	if err != nil {
-		return nil, fmt.Errorf("openai login: bind callback port %d (is another login or the codex CLI running?): %w", CallbackPort, err)
+		if pasted == nil {
+			return nil, fmt.Errorf("openai login: bind callback port %d (is another login or the codex CLI running?): %w", CallbackPort, err)
+		}
+		// Paste path still works without a callback server.
+	} else {
+		listeners = append(listeners, v4)
 	}
-	listeners := []net.Listener{v4}
 	if v6, err6 := lc.Listen(ctx, "tcp6", fmt.Sprintf("[::1]:%d", CallbackPort)); err6 == nil {
 		listeners = append(listeners, v6)
 	}
@@ -161,16 +180,54 @@ func Login(ctx context.Context, onAuthorizeURL func(url string)) (*Credentials, 
 		onAuthorizeURL(AuthorizeURL(pkce, state, redirectURI))
 	}
 
-	code, err := awaitCallback(ctx, listeners, state)
+	code, err := awaitCallback(ctx, listeners, state, pasted)
 	if err != nil {
 		return nil, err
 	}
 	return Exchange(ctx, code, pkce, redirectURI)
 }
 
+// ParsePastedCallback extracts the authorization code from a manually pasted
+// callback: the full redirect URL from the browser's address bar
+// ("http://localhost:1455/auth/callback?code=…&state=…"), just its query
+// string, or the bare code. A state parameter, when present, must match
+// expectedState.
+func ParsePastedCallback(pasted, expectedState string) (string, error) {
+	s := strings.TrimSpace(pasted)
+	if s == "" {
+		return "", errors.New("empty input")
+	}
+	qs := ""
+	if i := strings.IndexByte(s, '?'); i >= 0 {
+		qs = s[i+1:]
+	} else if strings.Contains(s, "=") {
+		qs = s
+	}
+	if qs == "" {
+		// Bare code (state cannot be verified in this form).
+		return s, nil
+	}
+	q, err := url.ParseQuery(qs)
+	if err != nil {
+		return "", fmt.Errorf("parsing pasted callback: %w", err)
+	}
+	if e := q.Get("error"); e != "" {
+		return "", fmt.Errorf("login failed: %s: %s", e, q.Get("error_description"))
+	}
+	code := q.Get("code")
+	if code == "" {
+		return "", errors.New("pasted callback has no code parameter")
+	}
+	if st := q.Get("state"); st != "" && st != expectedState {
+		return "", errors.New("pasted callback state mismatch (from a stale login attempt? paste the URL from the login you just started, or re-run `ycc login openai`)")
+	}
+	return code, nil
+}
+
 // awaitCallback serves GET /auth/callback on the listeners until a code (or
-// error) arrives with the matching state.
-func awaitCallback(ctx context.Context, listeners []net.Listener, expectedState string) (string, error) {
+// error) arrives with the matching state, or a manually pasted callback
+// arrives on pasted (nil = no manual path).
+func awaitCallback(ctx context.Context, listeners []net.Listener, expectedState string, pasted <-chan string) (string, error) {
 	type result struct {
 		code string
 		err  error
@@ -219,6 +276,21 @@ func awaitCallback(ctx context.Context, listeners []net.Listener, expectedState 
 		return "", fmt.Errorf("openai login: %w", ctx.Err())
 	case r := <-resultCh:
 		return r.code, r.err
+	case p, ok := <-pasted:
+		if !ok {
+			// Manual input closed (e.g. stdin EOF); wait on the browser only.
+			select {
+			case <-ctx.Done():
+				return "", fmt.Errorf("openai login: %w", ctx.Err())
+			case r := <-resultCh:
+				return r.code, r.err
+			}
+		}
+		code, err := ParsePastedCallback(p, expectedState)
+		if err != nil {
+			return "", fmt.Errorf("openai login: %w", err)
+		}
+		return code, nil
 	}
 }
 

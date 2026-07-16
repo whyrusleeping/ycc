@@ -27,6 +27,13 @@ func (s *scriptedTurner) Turn(opts gollama.RequestOptions) (*gollama.ResponseMes
 	return r, nil
 }
 
+type reasoningTurner struct {
+	*scriptedTurner
+	reasoningTokens int
+}
+
+func (s *reasoningTurner) ReasoningTokens() int { return s.reasoningTokens }
+
 func assistantToolCall(name, args string) *gollama.ResponseMessageGenerate {
 	return &gollama.ResponseMessageGenerate{Choices: []gollama.GenChoice{{Message: gollama.Message{
 		Role:      "assistant",
@@ -320,7 +327,10 @@ func TestLoopEmitsThinkingEvent(t *testing.T) {
 	resp := assistantText("the answer")
 	resp.Choices[0].Message.Thinking = "let me reason about this"
 	resp.Choices[0].Message.ThinkingBlocks = []gollama.ThinkingBlock{{Thinking: "let me reason about this", Signature: "sig"}}
-	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{resp}}
+	turner := &reasoningTurner{
+		scriptedTurner:  &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{resp}},
+		reasoningTokens: 384,
+	}
 	rec := &captureRecorder{}
 	loop := newLoop(t, turner)
 	loop.Emitter = event.NewEmitter(rec, "agent")
@@ -335,8 +345,15 @@ func TestLoopEmitsThinkingEvent(t *testing.T) {
 			if got, _ := ev.Data["text"].(string); got != "let me reason about this" {
 				t.Fatalf("thinking text = %q", got)
 			}
+			if got, _ := ev.Data["reasoning_tokens"].(int); got != 384 {
+				t.Fatalf("thinking reasoning_tokens = %d, want 384", got)
+			}
 		case event.ModelTurn:
 			turnIdx = i
+			u, ok := ev.Data["usage"].(event.Usage)
+			if !ok || u.ReasoningTokens != 384 {
+				t.Fatalf("model_turn usage = %+v, want 384 reasoning tokens", ev.Data["usage"])
+			}
 		}
 	}
 	if thinkIdx < 0 {
@@ -616,6 +633,20 @@ func TestToolResultMediaFollowupUserMessageOpenAI(t *testing.T) {
 
 // TestPendingResponse covers the reopen-mid-turn detector: the loop "owes a
 // turn" whenever its history ends on a user input or an unanswered tool result.
+func TestPostMessageCarriesNativeImages(t *testing.T) {
+	loop := &Loop{}
+	loop.PostMessage(UserMessage{Text: "what is this?", Images: []Image{{
+		Base64: "aW1hZ2U=", MediaType: "image/png", Filename: "photo.png",
+	}}})
+	history := loop.History()
+	if len(history) != 1 || history[0].Role != "user" || len(history[0].MultiContent) != 2 {
+		t.Fatalf("history = %+v", history)
+	}
+	if history[0].MultiContent[0].Text != "what is this?" || history[0].MultiContent[1].ImageMediaType != "image/png" {
+		t.Fatalf("content blocks = %+v", history[0].MultiContent)
+	}
+}
+
 func TestPendingResponse(t *testing.T) {
 	cases := []struct {
 		name string

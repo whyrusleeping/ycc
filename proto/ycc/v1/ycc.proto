@@ -73,9 +73,20 @@ message SubscribeRequest {
   int64 from_seq = 2; // replay events with seq > from_seq, then stream live
 }
 
+// ImageAttachment is an inline picture accompanying a user message. The daemon
+// validates both the declared media type and file signature before passing it to
+// the model. Attachment bytes are request-only: event logs retain metadata, not
+// the image payload.
+message ImageAttachment {
+  bytes data = 1;
+  string media_type = 2; // image/jpeg | image/png | image/gif | image/webp
+  string filename = 3;   // optional display name; never interpreted as a path
+}
+
 message SendInputRequest {
   string session_id = 1;
   string text = 2;
+  repeated ImageAttachment images = 3;
 }
 message SendInputResponse {}
 
@@ -457,6 +468,32 @@ message GetUsageResponse {
   string workspace = 3;
 }
 
+// Provider-side subscription allowance (spec §20.5). This is intentionally
+// separate from GetUsage: it is shared account quota, not ycc-local token spend.
+// No credential material crosses this boundary.
+message GetSubscriptionUsageRequest {
+  bool refresh = 1; // request refresh when cache policy permits; never bypasses throttling
+}
+message SubscriptionUsageWindow {
+  string id = 1;              // provider-stable bucket id when available
+  string label = 2;           // human-facing scope/window label
+  double used_percent = 3;    // consumed percentage, clamped to 0..100
+  int64 resets_at_unix = 4;   // UTC Unix seconds; 0 when provider omits it
+  int64 window_seconds = 5;   // nominal duration; 0 when provider omits it
+}
+message SubscriptionUsageAccount {
+  string provider = 1;        // anthropic | openai
+  string plan = 2;            // provider plan label when reported
+  repeated string models = 3; // configured logical models sharing this account
+  repeated SubscriptionUsageWindow windows = 4;
+  string state = 5;           // fresh | stale | unavailable
+  int64 fetched_at_unix = 6;
+  string message = 7;         // sanitized availability/freshness note
+}
+message GetSubscriptionUsageResponse {
+  repeated SubscriptionUsageAccount accounts = 1;
+}
+
 // Spend guard budget caps (task 0137, spec §20.6). GetBudget returns the
 // configured session and loop caps so the TUI work-loop driver can enforce the
 // per-loop-run cap client-side (session caps are enforced daemon-side). Every
@@ -711,6 +748,8 @@ service SessionService {
   // Usage/cost breakdown (spec §20): aggregated, priced token usage by task ×
   // model × day so clients can render the cost breakdown.
   rpc GetUsage(GetUsageRequest) returns (GetUsageResponse);
+  // Best-effort provider-side subscription allowance (spec §20.5).
+  rpc GetSubscriptionUsage(GetSubscriptionUsageRequest) returns (GetSubscriptionUsageResponse);
 
   // Spend guard (task 0137, spec §20.6): return the configured budget caps so the
   // TUI work-loop driver can enforce the per-loop-run cap client-side.

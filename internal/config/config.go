@@ -821,6 +821,7 @@ type ModelInfo struct {
 	Name    string
 	Backend string
 	Model   string
+	Auth    string
 	Pricing Pricing // resolved per-model pricing (spec §20.4); Configured=false ⇒ unpriced
 }
 
@@ -1006,7 +1007,7 @@ func (r *Registry) Models() []ModelInfo {
 	out := make([]ModelInfo, 0, len(names))
 	for _, name := range names {
 		m := r.cfg.Models[name]
-		out = append(out, ModelInfo{Name: name, Backend: m.Backend, Model: m.Model, Pricing: m.EffectivePricing()})
+		out = append(out, ModelInfo{Name: name, Backend: m.Backend, Model: m.Model, Auth: m.Auth, Pricing: m.EffectivePricing()})
 	}
 	return out
 }

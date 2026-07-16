@@ -189,7 +189,9 @@ do not permanently remove access to the daemon-wide inbox.
    `session_idle.report` is projected as a dedicated, always-expanded success
    card with native Markdown rendering; an immediately preceding model message
    repeated by the report is coalesced into the card rather than shown twice.
-4. **Interactions** — sticky input bar → `SendInput`; on a persisted session,
+4. **Interactions** — sticky input bar → `SendInput`, including a Photos picker
+   for up to four previewable/removable picture attachments (normalized to bounded
+   JPEG data and sent as native multimodal user content). On a persisted session,
    sending first calls `ResumeSession` on the existing log, promotes the view to
    a live `Subscribe` tail, then delivers the message. Question sheet (options as
    buttons + free text) → `AnswerQuestion` / `AnswerQuestions` (positional batch;
