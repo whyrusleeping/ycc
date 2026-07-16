@@ -4,7 +4,7 @@ title: 'iOS: add-project affordance in the project pickers'
 status: done
 priority: 4
 created: "2026-07-09"
-updated: "2026-07-10"
+updated: "2026-07-15"
 depends_on: []
 spec_refs: []
 ---

@@ -253,8 +253,10 @@ func (c *Client) Turn(opts gollama.RequestOptions) (*gollama.ResponseMessageGene
 	return c.TurnStream(opts, nil)
 }
 
-// TurnStream runs one model turn, invoking onDelta with each output-text
-// fragment as it arrives (nil onDelta = accumulate silently).
+// TurnStream runs one model turn, invoking onDelta with a snapshot of the full
+// accumulated output text after each fragment arrives (nil onDelta = accumulate
+// silently). Snapshot semantics satisfy engine.StreamTurner's contract and let
+// lossy clients replace their live tail rather than having to retain every delta.
 func (c *Client) TurnStream(opts gollama.RequestOptions, onDelta func(text string)) (*gollama.ResponseMessageGenerate, error) {
 	ctx := context.Background()
 	tok, accountID, err := c.tokens(ctx)
@@ -320,7 +322,7 @@ func parseStream(r io.Reader, model string, onDelta func(string)) (*gollama.Resp
 		case "response.output_text.delta":
 			text.WriteString(ev.Delta)
 			if onDelta != nil {
-				onDelta(ev.Delta)
+				onDelta(text.String())
 			}
 		case "response.reasoning_summary_text.delta":
 			thinking.WriteString(ev.Delta)

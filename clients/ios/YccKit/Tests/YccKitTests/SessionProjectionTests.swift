@@ -64,12 +64,12 @@ final class SessionProjectionTests: XCTestCase {
         proj.apply(events)
 
         XCTAssertFalse(proj.durableRows.isEmpty)
-        // The last durable event in the fixture is session_idle → a system row.
+        // The last durable event in the fixture is session_idle → a final report.
         XCTAssertEqual(proj.lastPersistedSeq, events.map(\.seq).max())
         // A user_input bubble and at least one tool row must be present.
         XCTAssertTrue(proj.rows.contains { if case .userMessage = $0.kind { return true }; return false })
         XCTAssertTrue(proj.rows.contains { if case .tool = $0.kind { return true }; return false })
-        XCTAssertTrue(proj.rows.contains { if case .system = $0.kind { return true }; return false })
+        XCTAssertTrue(proj.rows.contains { if case .finalReport = $0.kind { return true }; return false })
     }
 
     // MARK: - Acceptance: one-pass == disconnect + replay-from-seq
@@ -321,6 +321,49 @@ final class SessionProjectionTests: XCTestCase {
             return XCTFail("expected a resolved question row")
         }
         XCTAssertEqual(answer, "a; b")
+    }
+
+    // MARK: - Final report
+
+    func testSessionIdleCreatesMarkdownFinalReportAndCoalescesEchoedTurn() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(
+            seq: 1, type: "model_turn",
+            dataJson: #"{"text":"Shipped it."}"#))
+        proj.apply(makeEvent(
+            seq: 2, type: "session_idle",
+            dataJson: #"{"report":"Shipped it.\n\n## Verification\n\n- tests green"}"#))
+
+        XCTAssertEqual(proj.durableRows.count, 1, "echoed model bubble should fold into final report")
+        guard case .finalReport(let text)? = proj.durableRows.last?.kind else {
+            return XCTFail("session_idle.report should project as a dedicated final report")
+        }
+        XCTAssertTrue(text.contains("Shipped it."))
+        XCTAssertTrue(text.contains("## Verification"))
+        XCTAssertTrue(text.contains("- tests green"))
+        XCTAssertEqual(proj.phase, .idle)
+    }
+
+    func testDifferingSessionIdleReportPreservesModelTurn() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(seq: 1, type: "model_turn", dataJson: #"{"text":"Wrapping up."}"#))
+        proj.apply(makeEvent(seq: 2, type: "session_idle", dataJson: #"{"report":"Completed task 42."}"#))
+
+        XCTAssertEqual(proj.durableRows.count, 2)
+        guard case .modelMessage = proj.durableRows[0].kind,
+              case .finalReport(let report) = proj.durableRows[1].kind else {
+            return XCTFail("differing turn and finish report should both remain")
+        }
+        XCTAssertEqual(report, "Completed task 42.")
+    }
+
+    func testEmptySessionIdleReportFallsBackToSystemFinishRow() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(seq: 1, type: "session_idle"))
+        guard case .system(let text)? = proj.durableRows.last?.kind else {
+            return XCTFail("empty finish report should still produce a lifecycle row")
+        }
+        XCTAssertEqual(text, "Session finished")
     }
 
     // MARK: - Phase folding

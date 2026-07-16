@@ -21,6 +21,11 @@ extension YccClient: SessionTranscriptSource {}
 /// with an in-memory fake — no network, no simulator. ``YccClient`` is the
 /// production conformer.
 public protocol SessionActionSource: Sendable {
+    /// Re-open a persisted session on its existing event log (`ResumeSession`).
+    /// This is distinct from ``resume(sessionId:)``, which only continues a
+    /// currently-live session after a graceful pause.
+    func reopenSession(project: String, sessionId: String) async throws
+
     /// Deliver user input (`SendInput`); steer-by-default when mid-turn.
     func sendInput(sessionId: String, text: String) async throws
 

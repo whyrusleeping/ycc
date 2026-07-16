@@ -204,6 +204,13 @@ public final class YccClient: Sendable {
         }
     }
 
+    /// ``SessionActionSource`` form of `ResumeSession`; the stable session id is
+    /// intentionally discarded because an existing transcript view already owns
+    /// that identity.
+    public func reopenSession(project: String, sessionId: String) async throws {
+        _ = try await resumeSession(project: project, sessionId: sessionId)
+    }
+
     // MARK: - Session interactions (task 0183)
 
     /// Deliver user input to a running/idle session (`SendInput`). Steer-by-default:

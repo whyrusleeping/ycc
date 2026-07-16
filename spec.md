@@ -1323,6 +1323,16 @@ default** with a one-line `(reasoning) …` preview, click/Enter to expand — s
 produce no event. (The provider reasoning blocks themselves round-trip in conversation
 history automatically and are not re-displayed.)
 
+**Final report presentation.** `session_idle.report` is the canonical, human-facing
+finish message. Every client renders it prominently, fully expanded, and as Markdown —
+never subject to an "auto-expand agent logs" preference or a manual collapse. When the
+report repeats the immediately preceding final coordinator `model_turn` (exactly or as a
+prefix before appended assumptions/details), clients coalesce the duplicate narration
+into the finish presentation so the content appears once, under the final report rather
+than as an ordinary agent-log row. A genuinely different final turn and report both
+remain visible. The iOS client uses a dedicated success-styled final-report card; the TUI
+uses its expanded Glamour-rendered finish block.
+
 Partial model output is streamed incrementally to live clients as **transient
 `turn_delta` events** (broadcast-only, seq-less, never persisted — see §5.2) and the
 durable `model_turn` event written on completion remains the turn's source of truth
@@ -1537,7 +1547,7 @@ ffmpeg. See `docs/e2e-tui.md` for the layered design and how to add scenarios.
 The session view redraws by `rebuild()`, which concatenates every event's rendered block
 into the viewport. Rendering a block is expensive (JSON re-parsing of event payloads, diff
 generation, syntax highlighting, glamour markdown, lipgloss framing) and the fold logic
-(`hiddenRow`: merged tool results, ask_user plumbing, echoed idles) does backward/forward
+(`hiddenRow`: merged tool results, ask_user plumbing, finish-turn echoes) does backward/forward
 scans — so naively re-rendering every row on every keypress/event is O(N²)-ish and made
 long sessions visibly slow. The invariant: **rebuild must be O(changed rows), not O(all
 rows)**. Three caches enforce it, all owned by the model:

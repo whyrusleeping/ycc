@@ -149,9 +149,10 @@ func TestTurnStream(t *testing.T) {
 		t.Errorf("store/stream = %v/%v", gotReq["store"], gotReq["stream"])
 	}
 
-	// Response folding.
-	if strings.Join(deltas, "") != "hello" {
-		t.Errorf("deltas = %v", deltas)
+	// Response folding. Stream callbacks are full accumulated snapshots, not
+	// raw fragments, because turn_delta consumers replace their live tail.
+	if got, want := fmt.Sprint(deltas), "[hel hello]"; got != want {
+		t.Errorf("deltas = %v, want %v", deltas, want)
 	}
 	msg := resp.Choices[0].Message
 	if msg.Content != "hello" || msg.Thinking != "planning" {

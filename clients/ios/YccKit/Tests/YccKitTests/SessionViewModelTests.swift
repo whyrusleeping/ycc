@@ -55,6 +55,9 @@ private final class MockActionSource: SessionActionSource, SessionTranscriptSour
         if let err { throw err }
     }
 
+    func reopenSession(project: String, sessionId: String) async throws {
+        try record(Call(kind: "reopen", text: project))
+    }
     func sendInput(sessionId: String, text: String) async throws {
         try record(Call(kind: "send", text: text))
     }
@@ -325,6 +328,40 @@ final class SessionViewModelTests: XCTestCase {
         let vm = actionVM(actions)
         await vm.send(text: "   ")
         XCTAssertTrue(actions.calls.isEmpty)
+    }
+
+    func testPersistedSendReopensBeforeSendingAndPromotesToLive() async {
+        let actions = MockActionSource()
+        let vm = SessionViewModel(
+            source: actions,
+            actions: actions,
+            project: "demo",
+            sessionID: "s1",
+            mode: .persisted
+        )
+
+        await vm.send(text: "more work")
+
+        XCTAssertEqual(actions.calls, [
+            .init(kind: "reopen", text: "demo"),
+            .init(kind: "send", text: "more work"),
+        ])
+        XCTAssertEqual(vm.mode, .live)
+        XCTAssertNil(vm.actionError)
+        vm.stop()
+    }
+
+    func testPersistedSendDoesNotSendWhenReopenFails() async {
+        let actions = MockActionSource()
+        let vm = SessionViewModel(
+            source: actions, actions: actions, sessionID: "s1", mode: .persisted)
+        actions.nextError = YccError.notFound(message: "session log expired")
+
+        await vm.send(text: "more work")
+
+        XCTAssertEqual(actions.calls, [.init(kind: "reopen")])
+        XCTAssertEqual(vm.mode, .persisted)
+        XCTAssertEqual(vm.actionError, "session log expired")
     }
 
     func testAnswerSingleViaOptionAndViaText() async {

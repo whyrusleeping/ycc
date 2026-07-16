@@ -34,7 +34,6 @@ struct SessionView: View {
     private let project: String
     private let sessionID: String
     private let navigationTitle: String
-    private let isLive: Bool
     private static let bottomAnchor = "transcript-bottom"
 
     init(client: YccClient, project: String = "", sessionID: String, live: Bool) {
@@ -45,7 +44,6 @@ struct SessionView: View {
             source: client, project: project, sessionID: sessionID,
             mode: live ? .live : .persisted))
         self.navigationTitle = live ? "Live session" : "Session"
-        self.isLive = live
     }
 
     var body: some View {
@@ -68,7 +66,7 @@ struct SessionView: View {
         .navigationTitle(navigationTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { statusToolbar }
-        .toolbar { if isLive { actionMenu } }
+        .toolbar { if model.mode == .live { actionMenu } }
         .navigationDestination(item: $commitTarget) { target in
             DiffView(
                 title: "Commit \(target.shortSha)",
@@ -134,14 +132,20 @@ struct SessionView: View {
 
     @ViewBuilder
     private var bottomChrome: some View {
-        if isLive {
-            VStack(spacing: 0) {
+        VStack(spacing: 0) {
+            if model.mode == .live {
                 pendingQuestionBanner
                 phaseBanner
-                inputBar
+            } else {
+                banner(
+                    "Reopen this session to continue the conversation",
+                    systemImage: "clock.arrow.circlepath",
+                    tint: .secondary
+                )
             }
-            .background(.bar)
+            inputBar
         }
+        .background(.bar)
     }
 
     /// When a question is pending but the sheet was swipe-dismissed, offer a way
@@ -339,6 +343,8 @@ private struct TranscriptRowView: View {
             bubble(text: text, isUser: true)
         case .modelMessage(let text):
             bubble(text: text, isUser: false, actor: row.actor)
+        case .finalReport(let text):
+            finalReport(text)
         case .thinking(let text):
             ExpandableRow(
                 title: "Thinking",
@@ -388,6 +394,29 @@ private struct TranscriptRowView: View {
             }
             if !isUser { Spacer(minLength: 40) }
         }
+    }
+
+    /// The finish message is the primary result of a session, not a lifecycle
+    /// footnote: keep it always expanded, render its Markdown structure, and give
+    /// it a distinct success card that remains easy to find in a long transcript.
+    private func finalReport(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Finished", systemImage: "checkmark.circle.fill")
+                .font(.headline)
+                .foregroundStyle(.green)
+            MarkdownText(text: text)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.green.opacity(0.09), in: RoundedRectangle(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(Color.green.opacity(0.28), lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Session finished")
     }
 
     private func systemRow(_ text: String) -> some View {

@@ -21,10 +21,11 @@ import YccProto
 @MainActor
 @Observable
 public final class SessionViewModel {
-    public enum Mode: Sendable {
+    public enum Mode: Equatable, Sendable {
         /// A live session: subscribe + tail, reconnecting on drop/foreground.
         case live
-        /// A persisted session: fetch the transcript once, read-only.
+        /// A persisted session: fetch once, then promote to live if the user
+        /// continues the conversation.
         case persisted
     }
 
@@ -41,7 +42,9 @@ public final class SessionViewModel {
 
     public let project: String
     public let sessionID: String
-    public let mode: Mode
+    /// Starts as read-only for a historical row and becomes live after a
+    /// successful `ResumeSession`.
+    public private(set) var mode: Mode
 
     /// The folded projection. Views render ``rows``.
     public private(set) var projection = SessionProjection()
@@ -207,14 +210,41 @@ public final class SessionViewModel {
 
     // MARK: - Interactive actions (task 0183)
 
-    /// Send user input to the session (`SendInput`). The event stream is the
-    /// source of truth — no optimistic row is inserted; the delivered
-    /// `user_input` event will fold in.
+    /// Send user input to the session (`SendInput`). A persisted transcript is
+    /// first re-opened on its existing event log, then promoted to a live tail;
+    /// otherwise `SendInput` would target a session the daemon no longer has in
+    /// memory. The event stream remains the source of truth — no optimistic row
+    /// is inserted.
     public func send(text: String) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        if mode == .persisted {
+            guard await reopenForInteraction() else { return }
+        }
         await perform("send") { actions in
             try await actions.sendInput(sessionId: self.sessionID, text: trimmed)
+        }
+    }
+
+    /// Resume a persisted session via `ResumeSession` and switch this model from
+    /// one-shot replay to streaming the existing log. Returns false when reopen
+    /// failed, in which case ``actionError`` already carries the user-facing
+    /// reason and the caller must not attempt its follow-up action.
+    @discardableResult
+    public func reopenForInteraction() async -> Bool {
+        guard mode == .persisted else { return true }
+        guard let actions else {
+            actionError = "resume unavailable"
+            return false
+        }
+        do {
+            try await actions.reopenSession(project: project, sessionId: sessionID)
+            mode = .live
+            reconnect()
+            return true
+        } catch {
+            actionError = Self.actionMessage("resume", error)
+            return false
         }
     }
 

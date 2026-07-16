@@ -5935,9 +5935,13 @@ func (m *model) toggleAutoExpand() {
 }
 
 // eventExpanded reports whether the event with the given seq/type should render
-// expanded. A manual per-row override (m.expanded) always wins; otherwise the
-// auto-expand preference and the per-type default decide.
+// expanded. The final session report is a human-facing result, not an agent log,
+// so it is unconditionally expanded. Other rows honor a manual per-row override
+// first, then the auto-expand preference and per-type default.
 func (m *model) eventExpanded(seq int, typ string) bool {
+	if typ == "session_idle" {
+		return true
+	}
 	if v, ok := m.expanded[seq]; ok {
 		return v
 	}
@@ -6957,7 +6961,7 @@ func (m *model) moveSelection(d int) {
 // searchableText returns the plain-text (ansi-stripped) rendering of event i as
 // it appears on screen: its type/actor labels and detail-line headline plus,
 // when the row is expanded, its rendered body. Hidden rows (folded tool_results,
-// empty model_turns, echoed idles, delivery markers) return "" so a folded row
+// empty model_turns, finish-turn echoes, delivery markers) return "" so a folded row
 // never matches on its own — its text participates via the owning visible row.
 // Used for case-insensitive substring matching by the transcript search.
 func (m *model) searchableText(i int) string {
@@ -7288,6 +7292,11 @@ func (m *model) toggle(i int) {
 	if i < 0 || i >= len(m.evs) {
 		return
 	}
+	// The finish report is the session's primary result and must remain visible;
+	// unlike ordinary transcript rows it cannot be manually collapsed.
+	if m.evs[i].Type == "session_idle" {
+		return
+	}
 	// A hidden row (folded tool_result or empty model_turn) toggles the visible
 	// row it shares.
 	for m.hiddenRow(i) && i > 0 {
@@ -7530,6 +7539,17 @@ func (m *model) appendEvent(ev *v1.Event) {
 		}
 	case "session_idle":
 		m.status = "idle"
+		// The idle report supersedes an echoed final coordinator model_turn. That
+		// earlier row may already have a cached visible fold from the previous frame,
+		// so invalidate its fold and rendered neighbors now that the pairing exists.
+		for j := n - 1; j >= 0; j-- {
+			if m.evs[j].Type == "model_turn" && m.evs[j].Actor == "coordinator" &&
+				strings.TrimSpace(dataField(m.evs[j], "text")) != "" {
+				m.invalidateRow(j)
+				m.invalidateNeighbors(j)
+				break
+			}
+		}
 	case "session_reopened":
 		// Reopen marker: the daemon reconstructed the model history and repaired
 		// any dangling ask_user tool call with a synthetic result (engine replay),
@@ -7818,24 +7838,11 @@ func (m *model) isEmptyModelTurn(i int) bool {
 	return ev.Type == "model_turn" && strings.TrimSpace(dataField(ev, "text")) == ""
 }
 
-// isEchoedIdle reports whether the event at index i is a session_idle whose
-// report merely echoes the preceding final model_turn (so renderBody de-dupes it
-// to nothing). Such a row carries no content beyond the status change — and its
-// collapsed header would otherwise re-print the full report a second time, right
-// below the identical model_turn — so we hide it entirely.
-func (m *model) isEchoedIdle(i int) bool {
-	if i < 0 || i >= len(m.evs) {
-		return false
-	}
-	ev := m.evs[i]
-	return ev.Type == "session_idle" && strings.TrimSpace(m.bodyFor(ev)) == ""
-}
-
 // hiddenRow reports whether event i renders no block of its own and instead
 // shares the previous rendered row's start line: a tool_result folded into its
-// preceding tool_call, an empty (tool-calls-only) model_turn, a session_idle
-// whose report just echoes the final model_turn, ask_user tool plumbing (the
-// question_asked row is the canonical rendering of the exchange), or a
+// preceding tool_call, an empty (tool-calls-only) model_turn, a final model_turn
+// folded into its canonical session_idle finish report, ask_user tool plumbing
+// (the question_asked row is the canonical rendering of the exchange), or a
 // question_answered folded into its question_asked row. The result is memoized
 // per index (see hiddenCache): the pairing scans behind it re-parse event JSON
 // and can walk the log, so recomputing them for every row on every rebuild made
@@ -7860,7 +7867,7 @@ func (m *model) computeHiddenRow(i int) bool {
 		// no block of its own — otherwise the message would appear twice (§18.7).
 		return true
 	}
-	return m.isMergedResult(i) || m.isEmptyModelTurn(i) || m.isEchoedIdle(i) ||
+	return m.isMergedResult(i) || m.isEmptyModelTurn(i) || m.isFinishTurnEcho(i) ||
 		m.isAskUserPlumbing(i) || m.isFoldedAnswer(i)
 }
 
@@ -9338,8 +9345,13 @@ func (m *model) renderHeaderDetail(i int, ev *v1.Event, selected, expanded, hasB
 	// activity, so we drop the redundant "model_turn" type label and let the
 	// words read as prose.
 	typeSeg := typeStyle.Render(ev.Type) + " "
-	if ev.Type == "model_turn" {
+	switch ev.Type {
+	case "model_turn":
 		typeSeg = ""
+	case "session_idle":
+		// Present the terminal report as a human result, not an internal wire-event
+		// name. Its body is always expanded below this success-styled heading.
+		typeSeg = successStyle.Render("finished") + " "
 	}
 	return fmt.Sprintf("%s%s%s%s %s%s",
 		bar, indent, dimStyle.Render(tri),
@@ -9357,40 +9369,30 @@ func (m *model) bodyFor(ev *v1.Event) string {
 	return c
 }
 
-// precedingTurnText returns the text of the last coordinator model_turn before
-// the event at seq (the model's final assistant output), or "" if none. Used to
-// detect when a session_idle report merely echoes that final turn.
-func (m *model) precedingTurnText(seq int64) string {
-	last := ""
-	for _, ev := range m.evs {
-		if ev.Seq >= seq {
-			break
+// isFinishTurnEcho reports whether model_turn i is duplicated by the next
+// session_idle report. The finish event is the canonical human-facing result, so
+// the earlier narration row is folded away and the report remains fully visible.
+func (m *model) isFinishTurnEcho(i int) bool {
+	if i < 0 || i >= len(m.evs) || m.evs[i].Type != "model_turn" || m.evs[i].Actor != "coordinator" {
+		return false
+	}
+	turn := strings.TrimSpace(dataField(m.evs[i], "text"))
+	if turn == "" {
+		return false
+	}
+	for j := i + 1; j < len(m.evs); j++ {
+		next := m.evs[j]
+		if next.Type == "session_idle" {
+			report := strings.TrimSpace(dataField(next, "report"))
+			return report == turn || strings.HasPrefix(report, turn+"\n")
 		}
-		if ev.Type == "model_turn" {
-			if t := firstField(ev, "text"); strings.TrimSpace(t) != "" {
-				last = t
-			}
+		if next.Type == "model_turn" && next.Actor == "coordinator" &&
+			strings.TrimSpace(dataField(next, "text")) != "" {
+			// A newer coordinator response is the candidate finish turn instead.
+			return false
 		}
 	}
-	return last
-}
-
-// dropDuplicatePrefix removes a leading occurrence of prev from s (comparing
-// trimmed), returning the trimmed remainder; if s doesn't begin with prev it is
-// returned unchanged. Lets an idle report show only what it adds beyond the
-// already-rendered final assistant turn.
-func dropDuplicatePrefix(s, prev string) string {
-	ts, tp := strings.TrimSpace(s), strings.TrimSpace(prev)
-	if tp == "" {
-		return s
-	}
-	if ts == tp {
-		return ""
-	}
-	if strings.HasPrefix(ts, tp) {
-		return strings.TrimSpace(ts[len(tp):])
-	}
-	return s
+	return false
 }
 
 // questionBody renders a question_asked event as the canonical block for the
@@ -9548,17 +9550,9 @@ func (m *model) renderBody(ev *v1.Event) string {
 		if strings.TrimSpace(txt) == "" {
 			return ""
 		}
-		// The model's final text is already shown as its own model_turn row; the
-		// idle report repeats it (when the model yields plainly its report IS that
-		// text, sometimes with autonomous-mode assumptions appended). Strip the
-		// duplicated portion so the final output isn't printed twice — keep only
-		// what the report adds, or a control-tool report that genuinely differs.
-		if prev := m.precedingTurnText(ev.Seq); prev != "" {
-			txt = dropDuplicatePrefix(txt, prev)
-		}
-		if strings.TrimSpace(txt) == "" {
-			return ""
-		}
+		// The finish report is the canonical human-facing result. Render it in full
+		// as Markdown; an immediately preceding duplicate model_turn is folded away
+		// by isFinishTurnEcho rather than truncating or hiding this report.
 		return indentLines(m.markdown(txt), "  ")
 	case "thinking":
 		// Render the reasoning summary dimmed so it reads as the model's
@@ -10363,7 +10357,7 @@ func typeGlyphStyle(t string) lipgloss.Style {
 		return errStyle
 	case "budget_warning":
 		return recoStyle
-	case "commit_made", "question_answered":
+	case "commit_made", "question_answered", "session_idle":
 		return successStyle
 	default:
 		return typeStyle

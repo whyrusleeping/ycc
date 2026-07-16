@@ -18,6 +18,9 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
         case userMessage(text: String)
         /// A completed `model_turn` bubble (`actor` names the speaking agent).
         case modelMessage(text: String)
+        /// The canonical `session_idle.report`: an always-expanded, polished
+        /// Markdown finish summary rather than a compact lifecycle row.
+        case finalReport(text: String)
         /// A `thinking` block — collapsed by default, expandable to the text.
         case thinking(text: String)
         /// A `tool_call` (+ eventual `tool_result`) paired by id. `output` is
@@ -204,6 +207,21 @@ public struct SessionProjection: Sendable, Equatable {
 
         case "question_answered":
             applyQuestionAnswered(data)
+
+        case "session_idle":
+            // The report is the session's canonical human-facing result. If the
+            // immediately preceding model bubble is repeated as the report's
+            // exact text/prefix, replace it so the same answer is not shown twice.
+            let report = Self.stringField(data, "report").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !report.isEmpty {
+                if case let .modelMessage(text)? = durableRows.last?.kind,
+                   Self.report(report, startsWithTurn: text) {
+                    durableRows.removeLast()
+                }
+                appendDurable(event, .finalReport(text: report))
+            } else {
+                appendDurable(event, .system(text: "Session finished"))
+            }
 
         case "commit_made":
             // A dedicated row carrying the sha so the view can drill into the
@@ -417,6 +435,16 @@ public struct SessionProjection: Sendable, Equatable {
             return s
         }
         return "\(value)"
+    }
+
+    /// Whether a finish report starts by repeating the final model message. The
+    /// newline boundary avoids folding unrelated strings that only share a word
+    /// prefix (for example `Done` and `Doneness improved`).
+    static func report(_ report: String, startsWithTurn turn: String) -> Bool {
+        let report = report.trimmingCharacters(in: .whitespacesAndNewlines)
+        let turn = turn.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !turn.isEmpty else { return false }
+        return report == turn || report.hasPrefix(turn + "\n")
     }
 
     /// Parse all questions from a single- or batch-shaped `question_asked`

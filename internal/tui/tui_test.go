@@ -677,11 +677,9 @@ func TestExpandedHeaderDropsSnippet(t *testing.T) {
 	}
 }
 
-// A session_idle report that merely echoes the model's final assistant turn
-// renders no body (the final output must not be printed twice), while any extra
-// the report adds (autonomous-mode assumptions) — or a genuinely different
-// control-tool report — still renders.
-func TestIdleReportDeduped(t *testing.T) {
+// A session_idle report is the canonical human-facing finish message and renders
+// in full, whether it echoes the final turn, adds details, or differs entirely.
+func TestIdleReportRenderedInFull(t *testing.T) {
 	mk := func(evs ...*v1.Event) *model {
 		m := &model{w: 80, bodyCache: map[int]string{}}
 		m.evs = evs
@@ -689,22 +687,19 @@ func TestIdleReportDeduped(t *testing.T) {
 	}
 	turn := &v1.Event{Seq: 1, Type: "model_turn", Actor: "coordinator", DataJson: `{"text":"All done — shipped the feature and tests pass."}`}
 
-	// Exact echo: no body.
+	// Exact echo: the finish report remains the canonical, visible body.
 	idle := &v1.Event{Seq: 2, Type: "session_idle", DataJson: `{"report":"All done — shipped the feature and tests pass."}`}
 	m := mk(turn, idle)
-	if b := m.renderBody(idle); strings.TrimSpace(b) != "" {
-		t.Fatalf("echoing idle report should render empty body, got %q", b)
+	if b := m.renderBody(idle); !strings.Contains(b, "shipped the feature") {
+		t.Fatalf("echoing finish report should render in full, got %q", b)
 	}
 
-	// Echo + appended assumptions: only the assumptions remain.
+	// Echo + appended assumptions: the full report remains.
 	idle2 := &v1.Event{Seq: 2, Type: "session_idle", DataJson: `{"report":"All done — shipped the feature and tests pass.\n\nAssumptions made without consulting the user (autonomous mode):\n- used port 8080\n"}`}
 	m = mk(turn, idle2)
 	b := m.renderBody(idle2)
-	if strings.Contains(b, "shipped the feature") {
-		t.Fatalf("idle body should drop the duplicated final turn, got %q", b)
-	}
-	if !strings.Contains(b, "Assumptions") || !strings.Contains(b, "port 8080") {
-		t.Fatalf("idle body should keep the appended assumptions, got %q", b)
+	if !strings.Contains(b, "shipped the feature") || !strings.Contains(b, "Assumptions") || !strings.Contains(b, "port 8080") {
+		t.Fatalf("finish body should keep the complete report, got %q", b)
 	}
 
 	// Different control-tool report: rendered in full.
@@ -715,11 +710,9 @@ func TestIdleReportDeduped(t *testing.T) {
 	}
 }
 
-// A session_idle whose report merely echoes the final model_turn is hidden
-// entirely (hiddenRow): otherwise its collapsed header re-prints the full report
-// a second time, directly below the identical model_turn row. Any idle that adds
-// content (assumptions) or differs stays visible.
-func TestEchoedIdleHidden(t *testing.T) {
+// A final model_turn echoed by session_idle is folded into the canonical finish
+// report. Additive reports coalesce too; genuinely different rows both remain.
+func TestFinishReportCoalescesPrecedingTurn(t *testing.T) {
 	mk := func(evs ...*v1.Event) *model {
 		m := &model{w: 80, bodyCache: map[int]string{}}
 		m.evs = evs
@@ -729,20 +722,37 @@ func TestEchoedIdleHidden(t *testing.T) {
 
 	echo := &v1.Event{Seq: 2, Type: "session_idle", DataJson: `{"report":"All green. Shipped it."}`}
 	m := mk(turn, echo)
-	if !m.hiddenRow(1) {
-		t.Fatal("a session_idle echoing the final turn should be a hidden row")
+	if !m.hiddenRow(0) || m.hiddenRow(1) {
+		t.Fatal("echoed final turn should fold into a visible finish report")
 	}
 
 	added := &v1.Event{Seq: 2, Type: "session_idle", DataJson: `{"report":"All green. Shipped it.\n\nAssumptions:\n- used port 8080"}`}
 	m = mk(turn, added)
-	if m.hiddenRow(1) {
-		t.Fatal("an idle that adds content should stay visible")
+	if !m.hiddenRow(0) || m.hiddenRow(1) {
+		t.Fatal("a final-turn prefix should fold into the visible additive finish report")
 	}
 
 	diff := &v1.Event{Seq: 2, Type: "session_idle", DataJson: `{"report":"Completed task 0042."}`}
 	m = mk(turn, diff)
-	if m.hiddenRow(1) {
-		t.Fatal("a differing idle report should stay visible")
+	if m.hiddenRow(0) || m.hiddenRow(1) {
+		t.Fatal("a differing finish report should preserve both rows")
+	}
+}
+
+func TestFinishReportAlwaysExpandedAndCannotCollapse(t *testing.T) {
+	m := &model{
+		w: 80, ready: true, prefs: clientconfig.Prefs{AutoExpandLogs: false},
+		expanded: map[int]bool{2: false}, bodyCache: map[int]string{},
+		blockCache: map[int]string{}, hiddenCache: map[int]bool{},
+	}
+	idle := &v1.Event{Seq: 2, Type: "session_idle", Actor: "coordinator", DataJson: `{"report":"## Finished\n\n- shipped"}`}
+	m.evs = []*v1.Event{idle}
+	if !m.eventExpanded(2, "session_idle") {
+		t.Fatal("finish report must ignore auto-expand=false and manual collapse overrides")
+	}
+	m.toggle(0)
+	if !m.eventExpanded(2, "session_idle") {
+		t.Fatal("finish report must remain expanded after toggle")
 	}
 }
 
