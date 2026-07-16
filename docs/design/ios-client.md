@@ -170,9 +170,15 @@ work unchanged and are recommended off-tailnet.
 
 ### Phase 3 — TUI parity
 
-8. **Session settings sheet** — `SetInteractionLevel`, `SetThinking`,
-   `SetRoleConfig` (+ `ListModels`) for a live session — the phone analog of
-   the TUI settings overlay (§18.2).
+8. **Settings** — two related surfaces mirror the TUI overlay (§18.2):
+   - a **session settings sheet** uses `SetInteractionLevel`, `SetThinking`, and
+     `SetRoleConfig` (+ `ListModels`) against a live session;
+   - a home-screen **global Settings destination** edits persisted default role
+     assignments and per-role thinking without requiring a live session, and manages
+     logical model backends (add/edit/duplicate/remove, provider discovery, auth,
+     endpoint, reasoning, and pricing) through `GetModelConfig`, `UpsertModel`,
+     `RemoveModel`, and `DiscoverModels`. Secret values never cross the wire; the
+     form configures only the daemon-side credential mechanism / `key_env` reference.
 9. **Usage & budget** — `GetUsage` (group by task/model/day) and `GetBudget`
    views (§20.5).
 10. **Workstreams & diffs** — `ListWorkstreams`, `PreviewMerge`,
@@ -188,10 +194,10 @@ Phase 1: `ListProjects`, `ListSessionHistory`, `GetSessionTranscript`,
 `StopSession`. Phase 2 adds: `ListModes`, `StartSession`, `ResumeSession`,
 `ListBacklog`, `GetTask`, `UpdateTask` (optionally `CreateTask`). Phase 3 adds:
 `SetInteractionLevel`, `SetThinking`, `SetRoleConfig`, `ListModels`,
-`GetUsage`, `GetBudget`, `GetCommitDiff`, workstream RPCs, and the loop
-control surface from §9. Not planned: `Notify` (daemon-side pushes already
-fire without a client call), model-registry editing (`UpsertModel` etc. —
-config-file territory). `AddProject` (with the `ListDir` browse RPC, tasks
+`GetModelConfig`, `UpsertModel`, `RemoveModel`, `DiscoverModels`, `GetUsage`,
+`GetBudget`, `GetCommitDiff`, workstream RPCs, and the loop control surface
+from §9. `Notify` remains unnecessary because daemon-side pushes already fire
+without a client call. `AddProject` (with the `ListDir` browse RPC, tasks
 0192–0194) has since been pulled into client scope so a new workspace can be
 registered from the phone; `RemoveProject` stays server-side admin.
 

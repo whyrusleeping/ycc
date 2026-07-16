@@ -425,6 +425,49 @@ public final class YccClient: Sendable {
         try unary(await generated.setThinking(request: request))
     }
 
+    /// Return the complete editable record for one logical model.
+    public func getModelConfig(name: String) async throws -> Ycc_V1_ModelConfig {
+        var request = Ycc_V1_GetModelConfigRequest()
+        request.name = name
+        let response = await generated.getModelConfig(request: request)
+        switch response.result {
+        case .success(let message): return message.model
+        case .failure(let error): throw Self.map(error)
+        }
+    }
+
+    /// Add or replace a logical model. Model registry mutations are always persisted
+    /// by the daemon; `persist` remains true for compatibility with older daemons.
+    public func upsertModel(_ model: Ycc_V1_ModelConfig) async throws {
+        var request = Ycc_V1_UpsertModelRequest()
+        request.model = model
+        request.persist = true
+        try unary(await generated.upsertModel(request: request))
+    }
+
+    /// Remove a logical model. The daemon rejects models still assigned to a role.
+    public func removeModel(name: String) async throws {
+        var request = Ycc_V1_RemoveModelRequest()
+        request.name = name
+        request.persist = true
+        try unary(await generated.removeModel(request: request))
+    }
+
+    /// Discover model ids from a provider connection (or receive curated fallback ids).
+    public func discoverModels(
+        backend: String, baseURL: String, keyEnv: String
+    ) async throws -> Ycc_V1_DiscoverModelsResponse {
+        var request = Ycc_V1_DiscoverModelsRequest()
+        request.backend = backend
+        request.baseURL = baseURL
+        request.keyEnv = keyEnv
+        let response = await generated.discoverModels(request: request)
+        switch response.result {
+        case .success(let message): return message
+        case .failure(let error): throw Self.map(error)
+        }
+    }
+
     // MARK: - Workstreams & commit diff (task 0189)
 
     /// List a project's workstreams (`ListWorkstreams`, design §6/§8). `project`

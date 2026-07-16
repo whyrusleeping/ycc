@@ -70,6 +70,15 @@ struct LandingView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
+                    if let client = app.client {
+                        NavigationLink {
+                            GlobalSettingsView(client: client)
+                        } label: {
+                            Label("Settings", systemImage: "gearshape")
+                        }
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button("Disconnect") { app.disconnect() }
                 }
             }

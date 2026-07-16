@@ -151,6 +151,11 @@ struct SessionSettingsView: View {
         DisclosureGroup("Reviewers (\(model.reviewers.count))") {
             ForEach(model.models, id: \.name) { info in
                 Button {
+                    // An empty reviewer list means “leave unchanged” on the wire,
+                    // so don't let this UI pretend the final reviewer was removed.
+                    guard model.reviewers.count > 1 || !model.isReviewerSelected(info.name) else {
+                        return
+                    }
                     model.toggleReviewer(info.name)
                     Task { await model.applyRoleConfig() }
                 } label: {

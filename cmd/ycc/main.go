@@ -142,7 +142,7 @@ func newRootCommand(a *app) *cli.Command {
 			a.doctorCommand(),
 			a.exportCommand(),
 			tokenCommand(),
-			loginCommand(),
+			a.loginCommand(),
 			daemonCommand(),
 		},
 	}

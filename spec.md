@@ -917,7 +917,15 @@ backends additionally support **subscription auth** with `auth = "oauth"` on the
   e.g. `gpt-5.6-sol`; no listing endpoint).
 
 `auth = "oauth"` on any other backend is a config error, and logout is
-`ycc token rm ANTHROPIC_OAUTH|OPENAI_OAUTH`. The TUI backend form has an **auth
+`ycc token rm ANTHROPIC_OAUTH|OPENAI_OAUTH`. A successful `ycc login <backend>` also
+**auto-configures the config**: it ensures an `auth = "oauth"` model for that backend
+exists in the discovered ycc.toml (added under a free default name — `claude`/`chatgpt`,
+`-oauth`-suffixed on collision — with the backend's curated default model id), creating
+the config in the user config dir with all roles pointed at the new model when none
+exists yet. Existing models and role assignments are never mutated; if a subscription
+model for the backend is already configured the login just reports it. This is
+best-effort — a config that fails to load/write degrades to printing the manual
+`auth = "oauth"` instruction, never failing the login. The TUI backend form has an **auth
 picker** (`api key` | `oauth (subscription)`) on its connection form: it is pinned to
 api-key for other backends (switching the backend to one resets it), the credential
 itself still comes from `ycc login <backend>`, and editing a model preserves its
