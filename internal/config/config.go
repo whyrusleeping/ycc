@@ -373,6 +373,42 @@ type Config struct {
 	// spec §7.2). All fields default to 0 (unset) — an absent [retry] block keeps
 	// today's engine default (engine.DefaultRetryPolicy: 8 attempts, 500ms→30s).
 	Retry Retry `toml:"retry,omitempty"`
+	// Work configures the work-mode implementation pipeline (spec §10). An absent
+	// [work] block keeps the default "delegate" behaviour.
+	Work Work `toml:"work,omitempty"`
+}
+
+// Work configures the work-mode coordinator's implementation strategy (spec §10).
+// Implementation selects whether the coordinator delegates code changes to a
+// dedicated implementer subagent or makes them itself:
+//
+//   - "delegate" (default): the coordinator plans and delegates real code changes
+//     to the implementer subagent (spawn_implementer / send_to_implementer), then
+//     reviews the returned diff. Costs an extra agent hop but keeps the
+//     coordinator's context lean.
+//   - "direct": the coordinator implements the change itself with Read/Write/Edit/
+//     Bash; the implementer spawn tools are removed. Fewer moving parts and often
+//     better on quality/latency — the delegation hop mainly pays off when trying to
+//     save tokens on the coordinator's context.
+//
+// An empty value means "delegate".
+type Work struct {
+	Implementation string `toml:"implementation,omitempty"` // "" | "delegate" | "direct"
+}
+
+// Implementation constants for Work.Implementation.
+const (
+	ImplementationDelegate = "delegate"
+	ImplementationDirect   = "direct"
+)
+
+// Implementation normalizes the configured value, defaulting an empty setting to
+// "delegate".
+func (w Work) ResolvedImplementation() string {
+	if w.Implementation == "" {
+		return ImplementationDelegate
+	}
+	return w.Implementation
 }
 
 // Retry configures the loop-level retry of transient LLM API failures (task
@@ -565,6 +601,11 @@ func (c *Config) validate() error {
 	if c.Retry.BaseDelayMS > 0 && c.Retry.MaxDelayMS > 0 && c.Retry.MaxDelayMS < c.Retry.BaseDelayMS {
 		return fmt.Errorf("retry: max_delay_ms (%d) must be >= base_delay_ms (%d)", c.Retry.MaxDelayMS, c.Retry.BaseDelayMS)
 	}
+	switch c.Work.Implementation {
+	case "", ImplementationDelegate, ImplementationDirect:
+	default:
+		return fmt.Errorf("work.implementation: unknown value %q (want %q or %q)", c.Work.Implementation, ImplementationDelegate, ImplementationDirect)
+	}
 	return nil
 }
 
@@ -660,6 +701,38 @@ func (r *Registry) WriteRoots() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return append([]string(nil), r.cfg.WriteRoots...)
+}
+
+// WorkImplementation returns the configured work-mode implementation strategy
+// ("delegate" or "direct"), defaulting to "delegate" when unset (spec §10).
+// Guarded by the registry lock so a runtime config edit is picked up on the next
+// session build.
+func (r *Registry) WorkImplementation() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.cfg.Work.ResolvedImplementation()
+}
+
+// SetWorkImplementation updates the work-mode implementation strategy
+// (work.implementation in ycc.toml) and persists it so the choice survives a
+// restart (spec §10, §18.2). The value must be "delegate" or "direct". On a
+// persist failure the change is reverted so the live config and the file never
+// diverge.
+func (r *Registry) SetWorkImplementation(impl string) error {
+	switch impl {
+	case ImplementationDelegate, ImplementationDirect:
+	default:
+		return fmt.Errorf("unknown work implementation %q (want %q or %q)", impl, ImplementationDelegate, ImplementationDirect)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	prev := r.cfg.Work.Implementation
+	r.cfg.Work.Implementation = impl
+	if err := r.persistLocked(); err != nil {
+		r.cfg.Work.Implementation = prev
+		return err
+	}
+	return nil
 }
 
 // CoordinatorName / ImplementerName / ReviewerNames expose the role assignments.

@@ -932,3 +932,59 @@ func TestRetryValidation(t *testing.T) {
 		t.Fatalf("validate with equal delays failed: %v", err)
 	}
 }
+
+func TestWorkImplementationDefaultAndSet(t *testing.T) {
+	// Unset defaults to "delegate".
+	if got := (Work{}).ResolvedImplementation(); got != ImplementationDelegate {
+		t.Fatalf("empty Work.ResolvedImplementation = %q, want %q", got, ImplementationDelegate)
+	}
+	reg := baseRegistry()
+	if got := reg.WorkImplementation(); got != ImplementationDelegate {
+		t.Fatalf("default WorkImplementation = %q, want %q", got, ImplementationDelegate)
+	}
+
+	path := filepath.Join(t.TempDir(), "ycc.toml")
+	reg.SetPath(path)
+	if err := reg.SetWorkImplementation(ImplementationDirect); err != nil {
+		t.Fatalf("SetWorkImplementation(direct): %v", err)
+	}
+	if got := reg.WorkImplementation(); got != ImplementationDirect {
+		t.Fatalf("live WorkImplementation = %q, want %q", got, ImplementationDirect)
+	}
+	// Survives a reload from disk.
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load after SetWorkImplementation: %v", err)
+	}
+	if loaded.Work.ResolvedImplementation() != ImplementationDirect {
+		t.Fatalf("persisted work implementation = %q", loaded.Work.Implementation)
+	}
+	// A bogus value is rejected and leaves the live config unchanged.
+	if err := reg.SetWorkImplementation("bogus"); err == nil {
+		t.Fatal("SetWorkImplementation(bogus) succeeded, want error")
+	}
+	if got := reg.WorkImplementation(); got != ImplementationDirect {
+		t.Fatalf("rejected set changed live value to %q", got)
+	}
+}
+
+func TestWorkImplementationValidation(t *testing.T) {
+	base := func() *Config {
+		return &Config{
+			Models: map[string]Model{"c": {Backend: "ollama", Model: "m"}},
+			Roles:  Roles{Coordinator: "c", Implementer: "c", Reviewers: []string{"c"}},
+		}
+	}
+	bad := base()
+	bad.Work = Work{Implementation: "sometimes"}
+	if err := bad.validate(); err == nil {
+		t.Fatal("validate with unknown work.implementation succeeded, want error")
+	}
+	for _, v := range []string{"", ImplementationDelegate, ImplementationDirect} {
+		c := base()
+		c.Work = Work{Implementation: v}
+		if err := c.validate(); err != nil {
+			t.Fatalf("validate work.implementation=%q failed: %v", v, err)
+		}
+	}
+}

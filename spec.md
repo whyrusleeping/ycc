@@ -714,6 +714,29 @@ coordinator (FRESH context, mode=work)
 Fresh context in step 0 is important: each `work` session starts clean so the
 coordinator reasons from the durable docs, not from stale conversation.
 
+**Implementation strategy — delegate vs. direct (`work.implementation`).** Steps 4/6 above
+describe the default **`delegate`** strategy: the coordinator plans and hands real code changes
+to a dedicated **implementer** subagent (`spawn_implementer` / `send_to_implementer`), then
+reviews the returned diff. This keeps the coordinator's context lean but costs an extra agent
+hop, and that hop mainly pays off when the goal is to save tokens on the coordinator's context.
+The optional `[work]` config block lets a project opt into **`direct`** instead, where the
+**coordinator implements the change itself** with the `Read`/`Write`/`Edit`/`Bash` tools and no
+implementer subagent is involved — fewer moving parts, and often better on quality/latency:
+
+```toml
+[work]
+implementation = "direct"   # "delegate" (default) | "direct"
+```
+
+In `direct` mode the `spawn_implementer` / `send_to_implementer` tools are removed from the
+coordinator's tool set and it is given a coder-framed system prompt (do the work, verify it,
+then review); everything else (planning, review tiers, revise loop via `re_review`, blocked
+tasks, commit) is unchanged. The setting resolves at session start
+(`config.Registry.WorkImplementation()`, default `delegate`) and is threaded to the work-mode
+coordinator via `orchestrator.Deps.WorkImplementation`. Exposing it as a live, persisted
+setting in the settings overlay (§18.2) is a follow-up. The "Blocked implementer" note below
+applies only to `delegate` (there is no implementer subagent to block in `direct`).
+
 **Blocked implementer (step 4).** Instead of a normal report, the implementer can end its
 run BLOCKED (via `report_blocked`) with a reason — a decision that isn't its to make. The
 coordinator then resolves the decision itself (an ordinary judgement call), asks the user
@@ -879,6 +902,9 @@ max_tokens  = 32000  # per-turn output token cap (0 => backend default)
 max_turns   = 1000   # per-Run tool-call turn cap; runaway/cost backstop (0 => engine default, 1000)
 
 # write_roots = ["/abs/path/to/sibling"]  # extra writable roots outside the workspace for Write/Edit (§8; reads are unrestricted)
+
+# [work]                        # optional work-mode implementation strategy (§10); absent => "delegate"
+# implementation = "direct"     # "delegate" (coordinator → implementer subagent) | "direct" (coordinator edits itself)
 
 # [retry]                 # optional transient-LLM-failure retry policy (§7.2); absent => engine default (8 attempts, 500ms→30s)
 # max_attempts  = 3       # total attempts incl. first; 1 disables retry (0/unset => default)

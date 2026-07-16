@@ -1401,18 +1401,19 @@ func (m *Manager) newSession(absWS, id, mode, level, prompt string, log *event.L
 		reviewers = append(reviewers, rs)
 	}
 	deps := &orchestrator.Deps{
-		Workspace:   absWS,
-		Docs:        docs.NewStore(absWS),
-		Repo:        repo,
-		Emitter:     emitter,
-		Implementer: implSpec,
-		Reviewers:   reviewers,
-		Asker:       inter,
-		MaxTok:      m.reg.MaxTokens(),
-		MaxTurns:    m.reg.MaxTurns(),
-		Retry:       m.reg.RetryPolicy(),
-		WriteRoots:  m.reg.WriteRoots(),
-		Jobs:        jobs.NewRegistry(),
+		Workspace:          absWS,
+		Docs:               docs.NewStore(absWS),
+		Repo:               repo,
+		Emitter:            emitter,
+		Implementer:        implSpec,
+		Reviewers:          reviewers,
+		Asker:              inter,
+		MaxTok:             m.reg.MaxTokens(),
+		MaxTurns:           m.reg.MaxTurns(),
+		Retry:              m.reg.RetryPolicy(),
+		WriteRoots:         m.reg.WriteRoots(),
+		WorkImplementation: m.reg.WorkImplementation(),
+		Jobs:               jobs.NewRegistry(),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

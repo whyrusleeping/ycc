@@ -164,6 +164,40 @@ func TestWorkCoordinatorHasFileAndPipelineTools(t *testing.T) {
 	}
 }
 
+// In the "direct" implementation strategy (spec §10) the work coordinator
+// implements changes itself: the implementer spawn/revise tools are dropped, but
+// it keeps the editing tools and the review pipeline, and gets the direct prompt.
+func TestWorkCoordinatorDirectImplementation(t *testing.T) {
+	d := depsFor(t)
+	d.WorkImplementation = "direct"
+	reg, prompt := BuildMode("work", d, "judgement")
+	// No implementer subagent tools in direct mode.
+	for _, gone := range []string{"spawn_implementer", "send_to_implementer"} {
+		if hasTool(reg, gone) {
+			t.Fatalf("direct work coordinator should not have %s", gone)
+		}
+	}
+	// It still edits the workspace itself and reviews.
+	for _, want := range []string{"Read", "Write", "Edit", "Bash", "spawn_reviewers", "re_review", "commit", "list_backlog", "create_task", "propose_plan"} {
+		if !hasTool(reg, want) {
+			t.Fatalf("direct work coordinator missing %s", want)
+		}
+	}
+	if !strings.Contains(prompt, "DIRECT implementation") {
+		t.Fatalf("direct work coordinator should use the direct prompt:\n%s", prompt)
+	}
+	// The default (delegate) strategy keeps the implementer tools and the
+	// delegating prompt.
+	d.WorkImplementation = ""
+	reg, prompt = BuildMode("work", d, "judgement")
+	if !hasTool(reg, "spawn_implementer") || !hasTool(reg, "send_to_implementer") {
+		t.Fatalf("default work coordinator must keep the implementer pipeline tools")
+	}
+	if strings.Contains(prompt, "DIRECT implementation") {
+		t.Fatalf("default work coordinator should use the delegating prompt")
+	}
+}
+
 func TestListBacklogReadiness(t *testing.T) {
 	d := depsFor(t)
 	a, _ := d.Docs.Create("alpha", "", 1, nil, nil) // 0001, no deps -> READY

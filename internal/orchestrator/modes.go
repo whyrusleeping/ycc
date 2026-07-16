@@ -62,6 +62,9 @@ func Presets() []Preset {
 // BuildMode returns the tool registry and system prompt for a session mode. The
 // "work" mode is the full coordinator (CoordinatorTools); "pm" is the planning /
 // intake / docs coordinator (no implementation); "chat" is the freeform assistant.
+// The work coordinator's implementation strategy comes from d.WorkImplementation
+// (spec §10): "direct" drops the implementer spawn tools and uses a coder prompt,
+// while the default "delegate" keeps them.
 // The spec docs and code are plain files: pm/chat read them with Read and edit
 // them with Edit/Write — there is no dedicated spec tool. An OnWrite hook surfaces
 // an edit anywhere in the docs set (the spec entry point plus any configured
@@ -107,7 +110,10 @@ func BuildMode(mode string, d *Deps, level string) (*tools.Registry, string) {
 		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d), proposePlan(d), switchToWork(d), askUser(d), remember(d), tools.Finish())
 		return reg, sys(pmModeSystem, level, d.Workspace)
 	default: // work
-		return CoordinatorTools(d, ws), sys(coordinatorSystem, level, d.Workspace)
+		if d.WorkImplementation == "direct" {
+			return CoordinatorTools(d, ws, true), sys(coordinatorDirectSystem, level, d.Workspace)
+		}
+		return CoordinatorTools(d, ws, false), sys(coordinatorSystem, level, d.Workspace)
 	}
 }
 

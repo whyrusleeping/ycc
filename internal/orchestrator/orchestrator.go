@@ -109,6 +109,12 @@ type Deps struct {
 	// workspace plus these roots.
 	WriteRoots []string
 
+	// WorkImplementation selects the work coordinator's implementation strategy
+	// (spec §10): "" or "delegate" delegates code changes to the implementer
+	// subagent (default); "direct" makes the coordinator implement changes
+	// itself and drops the implementer spawn tools. Only the work mode reads it.
+	WorkImplementation string
+
 	// Jobs is the session-scoped background-job registry (docs/design/async-jobs.md).
 	// When set it enables background bash (Bash run_in_background) and the
 	// job_output/wait/kill_job tools; the session kills all jobs on end.
@@ -187,17 +193,19 @@ func (d *Deps) reviewerSpecs() []AgentSpec {
 
 // CoordinatorTools returns the coordinator's tool registry. The coordinator gets
 // the Editing set (Read/Write/Edit/Bash) so it can inspect the workspace and review
-// diffs first-hand — and could make a tiny touch-up — but the prompt steers it to
-// delegate real implementation to the implementer subagent.
-func CoordinatorTools(d *Deps, ws *tools.Workspace) *tools.Registry {
+// diffs first-hand — and could make a tiny touch-up — but in the default "delegate"
+// strategy the prompt steers it to delegate real implementation to the implementer
+// subagent. When direct is true (work.implementation = "direct", spec §10) the
+// implementer spawn/revise tools are omitted and the coordinator implements changes
+// itself with the Editing set.
+func CoordinatorTools(d *Deps, ws *tools.Workspace, direct bool) *tools.Registry {
 	reg := tools.New()
 	reg.Add(tools.Editing(ws)...)
-	reg.Add(
-		listBacklog(d), getTask(d), proposePlan(d),
-		spawnImplementer(d), spawnReviewers(d),
-		sendToImplementer(d), reReview(d),
-		askUser(d), commitTool(d), updateTask(d), createTask(d), remember(d), tools.Finish(),
-	)
+	reg.Add(listBacklog(d), getTask(d), proposePlan(d), spawnReviewers(d), reReview(d))
+	if !direct {
+		reg.Add(spawnImplementer(d), sendToImplementer(d))
+	}
+	reg.Add(askUser(d), commitTool(d), updateTask(d), createTask(d), remember(d), tools.Finish())
 	return reg
 }
 
