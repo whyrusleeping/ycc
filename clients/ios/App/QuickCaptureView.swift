@@ -2,9 +2,9 @@ import SwiftUI
 import YccKit
 
 /// The quick-capture composer (docs/design/ios-client.md §6 phase 2 step 6): a
-/// minimal `CreateTask` form — title plus an optional multiline description — for
-/// phone-friendly idea capture. On **Save** it creates the task and refreshes the
-/// backlog list, then dismisses.
+/// minimal `CreateTask` form — title, priority, and an optional multiline
+/// description — for phone-friendly idea capture. On **Save** it creates the task,
+/// refreshes the backlog list, then dismisses.
 struct QuickCaptureView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
@@ -13,6 +13,7 @@ struct QuickCaptureView: View {
 
     @State private var title = ""
     @State private var body_ = ""
+    @State private var priority = 3
 
     var body: some View {
         NavigationStack {
@@ -20,6 +21,15 @@ struct QuickCaptureView: View {
                 Section("Title") {
                     TextField("What needs doing?", text: $title, axis: .vertical)
                         .lineLimit(1...3)
+                }
+                Section("Priority") {
+                    Picker("Priority", selection: $priority) {
+                        ForEach(1...5, id: \.self) { value in
+                            Text("P\(value)").tag(value)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityLabel("Task priority")
                 }
                 Section("Description") {
                     TextField("Details (optional, markdown)", text: $body_, axis: .vertical)
@@ -60,7 +70,7 @@ struct QuickCaptureView: View {
 
     private func save() {
         Task {
-            if await model.create(title: title, body: body_) {
+            if await model.create(title: title, body: body_, priority: priority) {
                 dismiss()
             }
         }

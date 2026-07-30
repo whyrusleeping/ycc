@@ -11,8 +11,10 @@ public protocol BacklogSource: Sendable {
     func listBacklog(project: String) async throws -> [Ycc_V1_BacklogTaskSummary]
     /// List the daemon's registered projects (drives the project filter).
     func listProjects() async throws -> [Ycc_V1_ProjectInfo]
-    /// Create a task from a title + markdown body; returns its detail.
-    func createTask(project: String, title: String, body: String) async throws -> Ycc_V1_TaskDetail
+    /// Create a task from a title, markdown body, and P1–P5 priority; returns its detail.
+    func createTask(
+        project: String, title: String, body: String, priority: Int
+    ) async throws -> Ycc_V1_TaskDetail
 }
 
 extension YccClient: BacklogSource {}
@@ -149,20 +151,21 @@ public final class BacklogModel {
         !isCreating && !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// Quick-capture: create a task from a title + markdown body, then refresh the
-    /// list so the new row appears. Returns `true` on success. On failure sets
-    /// ``createError`` / ``unauthorized`` and returns `false`. A blank title is
-    /// rejected client-side without a round-trip.
-    public func create(title: String, body: String) async -> Bool {
+    /// Quick-capture: create a task from a title, markdown body, and P1–P5
+    /// priority, then refresh the list so the new row appears. Returns `true` on
+    /// success. On failure sets ``createError`` / ``unauthorized`` and returns
+    /// `false`. Invalid input is rejected client-side without a round-trip.
+    public func create(title: String, body: String, priority: Int = 3) async -> Bool {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedTitle.isEmpty, !isCreating else { return false }
+        guard !trimmedTitle.isEmpty, (1...5).contains(priority), !isCreating else { return false }
         isCreating = true
         defer { isCreating = false }
         do {
             _ = try await source.createTask(
                 project: selectedProject,
                 title: trimmedTitle,
-                body: body.trimmingCharacters(in: .whitespacesAndNewlines))
+                body: body.trimmingCharacters(in: .whitespacesAndNewlines),
+                priority: priority)
             createError = nil
             await refresh()
             return true

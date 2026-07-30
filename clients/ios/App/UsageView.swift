@@ -91,7 +91,7 @@ struct UsageView: View {
     @ViewBuilder
     private func subscriptionSection(_ model: UsageModel) -> some View {
         if !model.subscriptionAccounts.isEmpty {
-            Section("Subscription allowance") {
+            Section {
                 ForEach(model.subscriptionAccounts, id: \.provider) { account in
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
@@ -126,6 +126,8 @@ struct UsageView: View {
                     }
                     .padding(.vertical, 2)
                 }
+            } header: {
+                Text("Subscription allowance")
             } footer: {
                 Text("Shared provider allowance; separate from ycc token usage below.")
             }

@@ -18,13 +18,11 @@ struct SessionView: View {
 
     @State private var model: SessionViewModel
     @FocusState private var composerFocused: Bool
-    /// Whether new content should keep the feed pinned to its newest row. This is
-    /// deliberately separate from `isAtBottom`: the bottom marker can disappear
-    /// briefly when the keyboard/composer changes the viewport or a streaming row
-    /// grows, neither of which is a user request to stop following.
+    /// Whether new content should keep the feed pinned to its newest row. The
+    /// bottom marker can disappear briefly when the keyboard/composer changes the
+    /// viewport or a streaming row grows, neither of which is a user request to
+    /// stop following.
     @State private var isFollowingLatest = true
-    /// Whether the tail marker is currently inside the lazily rendered viewport.
-    @State private var isAtBottom = true
     /// Suppresses marker-driven re-follow while the user is actively scrolling.
     @State private var isDraggingTranscript = false
     /// Current transcript viewport height. Keyboard and multiline-composer
@@ -371,7 +369,14 @@ struct SessionView: View {
 
     private var transcript: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 10) {
+            // Keep transcript rows eagerly mounted. A LazyVStack can lose its
+            // estimated content geometry when the last row changes height many
+            // times per second (the streaming tail) while ScrollViewReader also
+            // keeps that row pinned. The resulting stale offset presents as an
+            // empty transcript until a manual scroll forces another layout pass.
+            // Session rows already collapse heavy tool/thinking details, so the
+            // predictable geometry is worth the modest eager-layout cost here.
+            VStack(alignment: .leading, spacing: 10) {
                 if model.durableRows.isEmpty, model.liveTail == nil, model.state == .loading {
                     ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
                 }
@@ -391,7 +396,7 @@ struct SessionView: View {
                     TranscriptRowView(row: liveTail)
                         .id(liveTail.id)
                 }
-                // A small lazy-stack marker tells us when the latest content is
+                // A small marker row tells us when the latest content is
                 // visible. Its disappearance alone does NOT disable following:
                 // live-tail growth and keyboard/composer relayout also move it
                 // out of view transiently. Only an actual drag does that.
@@ -399,11 +404,9 @@ struct SessionView: View {
                     .frame(height: 1)
                     .id(Self.bottomAnchor)
                     .onAppear {
-                        isAtBottom = true
                         if !isDraggingTranscript { isFollowingLatest = true }
                     }
                     .onDisappear {
-                        isAtBottom = false
                         if isDraggingTranscript { isFollowingLatest = false }
                     }
             }

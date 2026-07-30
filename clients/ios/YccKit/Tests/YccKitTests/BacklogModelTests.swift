@@ -15,7 +15,7 @@ private final class MockBacklogSource: BacklogSource, @unchecked Sendable {
     /// new row appearing after the create's implicit refresh).
     var tasksAfterCreate: [Ycc_V1_BacklogTaskSummary]?
 
-    private(set) var createArgs: (project: String, title: String, body: String)?
+    private(set) var createArgs: (project: String, title: String, body: String, priority: Int)?
     private(set) var listCount = 0
 
     func listBacklog(project: String) async throws -> [Ycc_V1_BacklogTaskSummary] {
@@ -28,8 +28,10 @@ private final class MockBacklogSource: BacklogSource, @unchecked Sendable {
         projects
     }
 
-    func createTask(project: String, title: String, body: String) async throws -> Ycc_V1_TaskDetail {
-        createArgs = (project, title, body)
+    func createTask(
+        project: String, title: String, body: String, priority: Int
+    ) async throws -> Ycc_V1_TaskDetail {
+        createArgs = (project, title, body, priority)
         if let createError { throw createError }
         if let after = tasksAfterCreate { tasks = after }
         var detail = Ycc_V1_TaskDetail()
@@ -159,15 +161,34 @@ final class BacklogModelTests: XCTestCase {
         source.tasksAfterCreate = [summary("0099", status: "todo")]
         let model = BacklogModel(source: source, selectedProject: "proj")
 
-        let ok = await model.create(title: "  new idea  ", body: "  details  ")
+        let ok = await model.create(title: "  new idea  ", body: "  details  ", priority: 1)
 
         XCTAssertTrue(ok)
         XCTAssertEqual(source.createArgs?.project, "proj")
         XCTAssertEqual(source.createArgs?.title, "new idea")
         XCTAssertEqual(source.createArgs?.body, "details")
+        XCTAssertEqual(source.createArgs?.priority, 1)
         // Refreshed after create: the new row is present.
         XCTAssertEqual(model.tasks.map(\.id), ["0099"])
         XCTAssertNil(model.createError)
+    }
+
+    func testCreateDefaultsToP3() async {
+        let source = MockBacklogSource()
+        let model = BacklogModel(source: source)
+
+        let ok = await model.create(title: "idea", body: "")
+        XCTAssertTrue(ok)
+        XCTAssertEqual(source.createArgs?.priority, 3)
+    }
+
+    func testCreateRejectsInvalidPriorityWithoutRoundTrip() async {
+        let source = MockBacklogSource()
+        let model = BacklogModel(source: source)
+
+        let ok = await model.create(title: "idea", body: "", priority: 6)
+        XCTAssertFalse(ok)
+        XCTAssertNil(source.createArgs)
     }
 
     func testCreateSurfacesError() async {

@@ -340,16 +340,17 @@ public final class YccClient: Sendable {
         }
     }
 
-    /// Add a new task to the backlog (`CreateTask`, task 0143): title plus an
-    /// optional markdown body (scaffolded server-side). `project` is optional for
-    /// a single-project daemon. Returns the created task's detail.
+    /// Add a new task to the backlog (`CreateTask`, task 0143): title, P1–P5
+    /// priority, and an optional markdown body (scaffolded server-side). `project`
+    /// is optional for a single-project daemon. Returns the created task's detail.
     public func createTask(
-        project: String = "", title: String, body: String
+        project: String = "", title: String, body: String, priority: Int = 3
     ) async throws -> Ycc_V1_TaskDetail {
         var request = Ycc_V1_CreateTaskRequest()
         request.project = project
         request.title = title
         request.body = body
+        request.priority = Int32(priority)
         let response = await generated.createTask(request: request)
         switch response.result {
         case .success(let message):
