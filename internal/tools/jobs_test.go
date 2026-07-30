@@ -160,3 +160,26 @@ func TestBackgroundRejectedWithoutRegistry(t *testing.T) {
 		t.Fatal("Bash advertises run_in_background without a job registry")
 	}
 }
+
+func TestBackgroundBashGuidanceAndTimeoutConflict(t *testing.T) {
+	reg, _, _ := jobsReg(t)
+	var bashDef *gollama.Tool
+	for _, td := range reg.tools {
+		if td.Name == "Bash" {
+			bashDef = td
+			break
+		}
+	}
+	if bashDef == nil {
+		t.Fatal("no Bash tool")
+	}
+	for _, want := range []string{"meaningful independent work", "do not start one background job and immediately wait"} {
+		if !strings.Contains(bashDef.Description, want) {
+			t.Fatalf("Bash background guidance missing %q: %s", want, bashDef.Description)
+		}
+	}
+	res := dispatch(t, reg, "Bash", `{"command":"echo hi","timeout_s":10,"run_in_background":true}`)
+	if !res.IsError || !strings.Contains(res.Content, "timeout_s applies only to foreground") {
+		t.Fatalf("timeout/background conflict = %q (err=%v)", res.Content, res.IsError)
+	}
+}

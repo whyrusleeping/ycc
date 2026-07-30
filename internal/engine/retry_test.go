@@ -65,6 +65,10 @@ func TestLoopRetrySucceedsAfterTransientFailures(t *testing.T) {
 		errors.New("error sending request: dial tcp: connection refused"),
 		errors.New("API returned non-200 status code 500: boom"),
 		errors.New("API returned non-200 status code 529: overloaded"),
+		// A codex in-stream server_error: no HTTP status, but transient. This is
+		// the failure that used to strand a session until the user typed
+		// "continue" by hand (task 0225).
+		errors.New("codex: stream error: server_error: An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists."),
 	}
 	for _, transient := range cases {
 		inner := &retryFakeTurner{errs: []error{transient}}

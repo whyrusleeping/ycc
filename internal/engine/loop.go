@@ -482,8 +482,9 @@ const turnDeltaInterval = 100 * time.Millisecond
 
 // turnOnce executes a single model turn attempt against client. When client
 // implements StreamTurner AND the loop's emitter can broadcast, it streams the
-// turn and broadcasts transient turn_delta events (data {"text": <snapshot>})
-// throttled to ~10/s, then broadcasts a clearing delta ({"text": "", "done":
+// turn and broadcasts transient turn_delta events (authoritative full `text`
+// snapshot plus optional append/base optimization hints) throttled to ~10/s,
+// then broadcasts a clearing delta ({"text": "", "done":
 // true}) on turn end — success OR error — so no stale live tail survives.
 // Otherwise it calls Turn exactly as before, emitting no deltas. The returned
 // response/error is identical in both paths; final model_turn emission is
@@ -503,6 +504,7 @@ func (l *Loop) turnOnce(client Turner, opts gollama.RequestOptions) (*gollama.Re
 	// onDelta is assumed to be invoked serially (see StreamTurner), so lastSent
 	// needs no synchronization; Broadcast itself is safe for concurrent use.
 	var lastSent time.Time
+	var lastText string
 	var sentAny bool
 	onDelta := func(text string) {
 		now := time.Now()
@@ -511,7 +513,17 @@ func (l *Loop) turnOnce(client Turner, opts gollama.RequestOptions) (*gollama.Re
 		}
 		lastSent = now
 		sentAny = true
-		l.Emitter.Broadcast(event.TurnDelta, map[string]any{"text": text})
+		data := map[string]any{"text": text}
+		// Keep snapshot semantics as the compatibility/source-of-truth path, but
+		// include an optional incremental hint for clients rendering long turns.
+		// The byte offset lets a lossy subscriber verify it received the preceding
+		// snapshot; on a gap or non-prefix replacement it simply uses text.
+		if strings.HasPrefix(text, lastText) {
+			data["append"] = text[len(lastText):]
+			data["append_base_utf8"] = len(lastText)
+		}
+		lastText = text
+		l.Emitter.Broadcast(event.TurnDelta, data)
 	}
 	// Clear the live tail on turn end (success OR error): a done delta tells
 	// subscribers to drop their tail row even if the turn failed before any

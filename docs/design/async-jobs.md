@@ -63,7 +63,13 @@ The registry hands out ids, tracks liveness, and kills everything on session end
 
 ### 3.2 Tool surface (coordinator; background bash also for the implementer)
 
-- `Bash(..., run_in_background: true)` → returns `job_id` immediately.
+- Foreground `Bash(..., timeout_s?)` blocks for the result and has a configurable timeout:
+  120 seconds by default, up to 3600 seconds. This is the correct mode when the result gates
+  the next step, including long builds and test suites.
+- `Bash(..., run_in_background: true)` → returns `job_id` immediately. This mode is reserved
+  for overlapping the command with meaningful independent work or intentionally leaving a
+  watcher running; starting one background job and immediately calling `wait` is an API-use
+  smell and prompt guidance explicitly discourages it. `timeout_s` is foreground-only.
 - `spawn_implementer` / `spawn_reviewers` (and any future `spawn_investigator`) gain
   `background: true` → return `job_id` immediately; the child loop runs in a goroutine
   with its own actor-tagged emitter (existing `Emitter.With` machinery).
@@ -93,9 +99,11 @@ A job's **final report** is delivered exactly once, by whichever fires first:
   immediately after"). Replay applies the same deferral to the recorded
   `job_notified` event position.
 
-So the model *never polls*: fire, keep working, and either the report arrives at a
-checkpoint or the model calls `wait` when the result gates its next step. `job_output`
-can be re-read any time and is not part of the exactly-once rule.
+So the model *never polls*: fire, do meaningful independent work, and either the report
+arrives at a checkpoint or the model calls `wait` after that work when the result gates its
+next step. If no independent work exists, the model uses foreground Bash with an appropriate
+`timeout_s` instead of backgrounding and immediately waiting. `job_output` can be re-read any
+time and is not part of the exactly-once rule.
 
 ### 3.4 Safety: the single-writer invariant
 
@@ -106,7 +114,9 @@ Two agents mutating one worktree race (spec §14.1 exists precisely for this).
 - **Background implementers in the same tree are refused** by the spawn tool while
   another mutating job (implementer or mutating bash) is live there. Parallel mutating
   work routes through workstreams (linked worktrees, §14.1).
-- Background bash is intended for builds/tests/watchers; the prompt says so.
+- Background bash is intended for commands that genuinely overlap other work and for
+  watchers; ordinary builds/tests stay foreground, using `timeout_s` when they need longer
+  than the default.
 
 ### 3.5 What we deliberately do NOT build
 

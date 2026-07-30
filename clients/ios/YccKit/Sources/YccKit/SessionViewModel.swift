@@ -59,6 +59,15 @@ public final class SessionViewModel {
 
     /// Ordered rows to render (durable rows + the transient live tail).
     public var rows: [TranscriptRow] { projection.rows }
+    /// Durable rows exposed separately so a live-tail update does not have to
+    /// allocate and diff a fresh `durableRows + [liveTail]` array in SwiftUI.
+    public var durableRows: [TranscriptRow] { projection.durableRows }
+    /// The single transient row, rendered separately from durable history.
+    public var liveTail: TranscriptRow? { projection.liveTail }
+    /// A cheap monotonic change token for transcript layout/scroll following.
+    /// Observing `rows` directly makes SwiftUI equality-compare every row and the
+    /// complete, ever-growing live-tail string on every snapshot.
+    public private(set) var transcriptRevision: UInt64 = 0
     /// The open `ask_user` question, if any.
     public var pendingQuestion: SessionProjection.PendingQuestion? { projection.pendingQuestion }
     /// The session's derived lifecycle phase (running/paused/idle/error/stopped).
@@ -139,6 +148,7 @@ public final class SessionViewModel {
                     project: self.project, sessionId: self.sessionID)
                 if Task.isCancelled { return }
                 self.projection.apply(events)
+                if !events.isEmpty { self.transcriptRevision &+= 1 }
                 self.state = .finished
             } catch is CancellationError {
                 // Cancelled during load — leave state as-is.
@@ -168,13 +178,17 @@ public final class SessionViewModel {
                     project: self.project, sessionId: self.sessionID) {
                     if Task.isCancelled { return }
                     self.projection.apply(events)
+                    if !events.isEmpty { self.transcriptRevision &+= 1 }
                 }
             }
             while !Task.isCancelled {
                 let fromSeq = self.projection.lastPersistedSeq
                 // Drop any stale streamed tail from before a disconnect so it
                 // doesn't linger until the next delta/model_turn replaces it.
-                self.projection.clearLiveTail()
+                if self.projection.liveTail != nil {
+                    self.projection.clearLiveTail()
+                    self.transcriptRevision &+= 1
+                }
                 self.state = .streaming
                 do {
                     let stream = self.source.subscribe(
@@ -182,6 +196,7 @@ public final class SessionViewModel {
                     for try await event in stream {
                         if Task.isCancelled { break }
                         self.projection.apply(event)
+                        self.transcriptRevision &+= 1
                     }
                     // Clean close: the server ended the stream (session gone /
                     // stopped). Don't reconnect.

@@ -8,8 +8,11 @@ import YccProto
 private final class MockTaskDetailSource: TaskDetailSource, @unchecked Sendable {
     var detail: Ycc_V1_TaskDetail
     var getError: Error?
+    var historyError: Error?
     var updateError: Error?
+    var sessions: [Ycc_V1_SessionSummary] = []
 
+    private(set) var historyProjects: [String] = []
     private(set) var updateArgs: (project: String, id: String, status: String)?
 
     init(detail: Ycc_V1_TaskDetail) {
@@ -19,6 +22,12 @@ private final class MockTaskDetailSource: TaskDetailSource, @unchecked Sendable 
     func getTask(project: String, id: String) async throws -> Ycc_V1_TaskDetail {
         if let getError { throw getError }
         return detail
+    }
+
+    func listSessionHistory(project: String) async throws -> [Ycc_V1_SessionSummary] {
+        historyProjects.append(project)
+        if let historyError { throw historyError }
+        return sessions
     }
 
     func updateTaskStatus(project: String, id: String, status: String) async throws -> Ycc_V1_TaskDetail {
@@ -38,6 +47,22 @@ private func detail(_ id: String, status: String, title: String = "A task") -> Y
     return d
 }
 
+private func session(
+    _ id: String,
+    status: String = "running",
+    live: Bool = true,
+    tasks: [String] = ["0010"],
+    lastActivity: String = "2026-07-15T12:00:00Z"
+) -> Ycc_V1_SessionSummary {
+    var s = Ycc_V1_SessionSummary()
+    s.sessionID = id
+    s.status = status
+    s.live = live
+    s.focusTasks = tasks
+    s.lastActivity = lastActivity
+    return s
+}
+
 @MainActor
 final class TaskDetailModelTests: XCTestCase {
     func testLoadPopulatesTaskAndStatus() async {
@@ -46,6 +71,34 @@ final class TaskDetailModelTests: XCTestCase {
         await model.load()
         XCTAssertEqual(model.task?.id, "0010")
         XCTAssertEqual(model.status, .proposed)
+        XCTAssertNil(model.errorMessage)
+        XCTAssertTrue(source.historyProjects.isEmpty)
+    }
+
+    func testLoadFindsOnlyLiveRunningOrPausedFocusedSessionsNewestFirst() async {
+        let source = MockTaskDetailSource(detail: detail("0010", status: "in_progress"))
+        source.sessions = [
+            session("older", status: "paused", lastActivity: "2026-07-14T12:00:00Z"),
+            session("idle", status: "idle"),
+            session("persisted", live: false),
+            session("other-task", tasks: ["9999"]),
+            session("newer", lastActivity: "2026-07-15T13:00:00Z"),
+        ]
+        let model = TaskDetailModel(source: source, project: "proj", taskID: "0010")
+
+        await model.load()
+
+        XCTAssertEqual(source.historyProjects, ["proj"])
+        XCTAssertEqual(model.activeSessions.map(\.sessionID), ["newer", "older"])
+    }
+
+    func testLoadKeepsTaskWhenOptionalHistoryLookupFails() async {
+        let source = MockTaskDetailSource(detail: detail("0010", status: "in_progress"))
+        source.historyError = YccError.rpc(message: "history unavailable")
+        let model = TaskDetailModel(source: source, taskID: "0010")
+        await model.load()
+        XCTAssertEqual(model.task?.id, "0010")
+        XCTAssertTrue(model.activeSessions.isEmpty)
         XCTAssertNil(model.errorMessage)
     }
 

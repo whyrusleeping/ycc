@@ -81,7 +81,11 @@ struct TaskDetailView: View {
                 metadata(task)
             }
             Section {
-                startWorkButton(task)
+                if model.status == .inProgress, !model.activeSessions.isEmpty {
+                    activeSessionButtons
+                } else {
+                    startWorkButton(task)
+                }
             }
             if let errorMessage = model.errorMessage {
                 Section {
@@ -158,6 +162,21 @@ struct TaskDetailView: View {
             }
         }
         .disabled(model.isUpdating || model.task == nil)
+    }
+
+    @ViewBuilder
+    private var activeSessionButtons: some View {
+        ForEach(model.activeSessions, id: \.sessionID) { session in
+            Button {
+                liveTarget = LiveTaskSessionTarget(sessionID: session.sessionID, project: project)
+            } label: {
+                Label(
+                    model.activeSessions.count == 1
+                        ? "Open active session"
+                        : "Open active session · \(String(session.sessionID.prefix(8)))",
+                    systemImage: session.status == "paused" ? "pause.circle.fill" : "bolt.circle.fill")
+            }
+        }
     }
 
     @ViewBuilder

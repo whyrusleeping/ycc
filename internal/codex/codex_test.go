@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/whyrusleeping/gollama"
+	"github.com/whyrusleeping/ycc/internal/engine"
 )
 
 func testTokens(tok, acct string) TokenSource {
@@ -204,6 +205,50 @@ func TestTurnResponseFailed(t *testing.T) {
 	_, err := c.Turn(gollama.RequestOptions{Model: "m", Messages: []gollama.Message{{Role: "user", Content: "x"}}})
 	if err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("want response.failed error, got %v", err)
+	}
+}
+
+// A stream-level `error` frame arrives over an HTTP 200 stream, so there is no
+// status code to parse. The adapter must keep the provider's error CODE in the
+// message so the engine classifies a backend `server_error` as transient and
+// RETRIES it, rather than stranding the session until the user types "continue"
+// (task 0225). This asserts the cross-package contract end to end.
+func TestTurnStreamErrorIsClassifiedRetryable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		sse(w, map[string]any{"type": "error", "error": map[string]any{
+			"type":    "server_error",
+			"code":    "server_error",
+			"message": "An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID abc123 in your message.",
+		}})
+	}))
+	defer srv.Close()
+	c := New(srv.URL, testTokens("t", "a"))
+	_, err := c.Turn(gollama.RequestOptions{Model: "m", Messages: []gollama.Message{{Role: "user", Content: "x"}}})
+	if err == nil {
+		t.Fatal("want a stream error")
+	}
+	if !strings.Contains(err.Error(), "server_error") || !strings.Contains(err.Error(), "request ID abc123") {
+		t.Fatalf("error must carry the provider code and message, got %v", err)
+	}
+	info := engine.ClassifyAPIError(err)
+	if info.Kind != engine.KindServer || !info.Retryable {
+		t.Fatalf("ClassifyAPIError = %+v, want kind=%s retryable=true", info, engine.KindServer)
+	}
+}
+
+// An unrecognised `error` frame still surfaces the raw payload rather than being
+// swallowed into an empty message.
+func TestTurnStreamErrorFallsBackToRawFrame(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		sse(w, map[string]any{"type": "error", "detail": "weird shape"})
+	}))
+	defer srv.Close()
+	c := New(srv.URL, testTokens("t", "a"))
+	_, err := c.Turn(gollama.RequestOptions{Model: "m", Messages: []gollama.Message{{Role: "user", Content: "x"}}})
+	if err == nil || !strings.Contains(err.Error(), "weird shape") {
+		t.Fatalf("want the raw frame preserved, got %v", err)
 	}
 }
 

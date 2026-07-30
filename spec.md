@@ -216,7 +216,11 @@ turn completion) remains the source of truth for the turn (see §18.4, task 0114
 `{"text": <full-accumulated-turn-text-so-far>}` — a **snapshot**, not an increment. A
 client replaces its live tail row with the latest snapshot, so lossy transient delivery
 and mid-turn retries are harmless (a retried attempt simply restarts from a short
-snapshot). The engine throttles snapshots to ~10/s. A turn's tail is cleared by a
+snapshot). A delta may additionally carry `append` and `append_base_utf8` optimization
+hints: a client may append that suffix only when its currently rendered text has the
+stated UTF-8 byte length; otherwise it must fall back to the authoritative `text`
+snapshot. This keeps lossy delivery and retry semantics unchanged while allowing long
+turns to avoid repeated whole-string layout. The engine throttles snapshots to ~10/s. A turn's tail is cleared by a
 terminating delta `{"text": "", "done": true}` broadcast on turn end (success **or**
 error, so no stale tail survives a failed turn) and, redundantly, by the arrival of the
 turn's persisted `model_turn`. The engine emits deltas only when the backend client
@@ -304,8 +308,10 @@ ideation (typically by the agent) that the user has not accepted as real scope. 
 tasks are durable backlog entries but are never *ready* — `list_backlog` doesn't mark them
 `[READY]` and the work pipeline never picks them up. Promotion to `todo` (via
 `update_task` or the backlog browser) is the explicit acceptance act. `create_task`
-takes an optional initial status (`todo`, the default, or `proposed`); agent prompts
-direct un-endorsed ideas to `proposed`.
+takes an optional initial status: `todo` (the default), `in_progress` for accepted work the
+agent is starting immediately, or `proposed`; agent prompts direct un-endorsed ideas to
+`proposed`. Direct `in_progress` creation lets an agent record a newly started active
+workstream atomically instead of spending a second tool call on `update_task`.
 
 `spec_refs` are free-form strings: a bare section title (e.g. `"Architecture"`) refers to the
 spec entry point, while `path#Section` (e.g. `"docs/rpc.md#Protocol"`) references a section of
@@ -455,7 +461,12 @@ an error to a **kind** — `rate_limit` (429), `overloaded` (503/529), `server` 
 5xx), `timeout` (408 / transport timeout), `network` (transport failure), `auth`
 (401/403), `invalid_request` (other 4xx), `context_length` (a 400 whose body matches the
 providers' context-window phrasings), or `unknown` — plus the parsed HTTP status and a
-**retryable** verdict. Retry decisions, context-window detection
+**retryable** verdict. A provider may also report a server-side failure **inside an
+otherwise-healthy HTTP 200 stream** (the codex backend sends an `error` frame with
+`code: "server_error"`, whose message tells the client to retry); with no status to
+parse, such provider-reported server codes classify as `server`/retryable rather than
+falling into non-retryable `unknown`, so the loop retries them instead of stranding the
+turn. Retry decisions, context-window detection
 (`IsContextLengthError`), and error events all use this one taxonomy.
 
 **Retry lives in the loop** (`Loop.runTurn`, policy `Loop.Retry`; zero value = 8 total
@@ -489,11 +500,14 @@ the coordinator's perspective (it awaits a structured report) but reviewers fan 
 **concurrently** (goroutines + a barrier). Reviewer contexts are *retained* so a revise
 round can reuse them (`re-review` sends the new diff into the existing reviewer history).
 
-**Async jobs (planned).** Spawns and long shell commands will also be runnable in the
-background under a unified **job** abstraction (`background: true` on spawn tools /
-`run_in_background` on Bash → a job id; `wait`/`job_output`/`kill_job`; completed-job
-reports pushed into the conversation at loop checkpoints so the model never polls).
-Design: `docs/design/async-jobs.md`; backlog 0131/0132.
+**Async jobs.** Spawns and shell commands can run in the background under a unified
+**job** abstraction (`background: true` on spawn tools / `run_in_background` on Bash → a
+job id; `wait`/`job_output`/`kill_job`; completed-job reports pushed into the conversation
+at loop checkpoints so the model never polls). Background execution is for overlapping
+meaningful independent work or leaving a watcher running—not for bypassing the foreground
+timeout and immediately calling `wait`. Foreground Bash therefore accepts `timeout_s`
+(default 120, maximum 3600 seconds) for long commands whose result gates the next step.
+Design: `docs/design/async-jobs.md`; backlog 0131/0132/0222.
 
 ### 7.4 Reasoning (extended/adaptive thinking + effort)
 
@@ -960,7 +974,10 @@ backends additionally support **subscription auth** with `auth = "oauth"` on the
   swapped automatically, an explicit proxy URL honored). The transport is
   streaming-only with `store:false`, sends the required `chatgpt-account-id` /
   `originator` / `OpenAI-Beta: responses=experimental` headers, and formats errors in
-  gollama's "status code NNN" shape so engine retry/classification work unchanged.
+  gollama's "status code NNN" shape so engine retry/classification work unchanged —
+  including in-stream `error`/`response.failed` frames, whose provider error **code** is
+  kept in the message (`server_error: …`) so a transient backend failure over a 200
+  stream is classified retryable (§7.2) instead of `unknown`.
   Model ids differ from the platform catalog (curated set in `internal/codex.Models`,
   e.g. `gpt-5.6-sol`; no listing endpoint).
 
@@ -1360,6 +1377,13 @@ the answer, the question row's body collapses to an "answer below ↓" pointer s
 prompt never shows twice on screen at once. Autonomous auto-answers render as a single
 dim "auto-answered (autonomous mode)" line instead of the canned no-human paragraph the
 model receives.
+
+**Plan proposal presentation.** A `plan_proposed` row is a human review artifact rather
+than a raw event dump. Its collapsed summary identifies the task and previews the first
+non-empty line; expanding it renders the event's `plan` field as Markdown (headings,
+lists, code, and emphasis), without exposing the surrounding JSON payload. The successful
+`propose_plan` tool call/result plumbing folds into that canonical proposal row; an errored
+result remains visible.
 
 ### 18.4 Reasoning (thinking) in the event stream
 

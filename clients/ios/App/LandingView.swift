@@ -23,6 +23,10 @@ struct LandingView: View {
     @State private var deepLinkError: String?
     /// Whether the "add project" sheet is shown (from the project menu).
     @State private var showAddProject = false
+    /// A registered project awaiting destructive deregistration confirmation.
+    @State private var projectToRemove: Ycc_V1_ProjectInfo?
+    /// A project-removal failure to show independently of session-list content.
+    @State private var projectRemovalError: String?
 
     var body: some View {
         NavigationStack {
@@ -120,6 +124,32 @@ struct LandingView: View {
                     Task { await model?.refresh() }
                 }
             }
+        }
+        .confirmationDialog(
+            "Remove \(projectToRemove?.name ?? "project")?",
+            isPresented: Binding(
+                get: { projectToRemove != nil },
+                set: { if !$0 { projectToRemove = nil } }),
+            titleVisibility: .visible,
+            presenting: projectToRemove
+        ) { project in
+            Button("Remove project", role: .destructive) {
+                removeProject(project)
+            }
+            Button("Cancel", role: .cancel) { projectToRemove = nil }
+        } message: { project in
+            Text("This removes \(project.name) from ycc. It does not delete the workspace or any files on the daemon host.")
+        }
+        .alert(
+            "Couldn’t remove project",
+            isPresented: Binding(
+                get: { projectRemovalError != nil },
+                set: { if !$0 { projectRemovalError = nil } }),
+            presenting: projectRemovalError
+        ) { _ in
+            Button("OK", role: .cancel) { projectRemovalError = nil }
+        } message: { message in
+            Text(message)
         }
         .alert(
             "Couldn’t resume",
@@ -292,6 +322,19 @@ struct LandingView: View {
             } label: {
                 Label("Add project…", systemImage: "folder.badge.plus")
             }
+            if !model.projects.isEmpty {
+                Menu {
+                    ForEach(model.projects, id: \.name) { project in
+                        Button(role: .destructive) {
+                            projectToRemove = project
+                        } label: {
+                            Label(project.name, systemImage: "minus.circle")
+                        }
+                    }
+                } label: {
+                    Label("Remove project…", systemImage: "folder.badge.minus")
+                }
+            }
         } label: {
             Label(
                 model.selectedProject.isEmpty ? "Default" : model.selectedProject,
@@ -299,6 +342,17 @@ struct LandingView: View {
         }
         .onChange(of: model.selectedProject) { _, _ in
             Task { await model.refresh() }
+        }
+    }
+
+    private func removeProject(_ project: Ycc_V1_ProjectInfo) {
+        guard let model else { return }
+        projectToRemove = nil
+        Task {
+            let removed = await model.removeProject(named: project.name)
+            if !removed, !model.unauthorized {
+                projectRemovalError = model.errorMessage ?? "The project could not be removed."
+            }
         }
     }
 

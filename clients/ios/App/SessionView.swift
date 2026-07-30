@@ -84,7 +84,9 @@ struct SessionView: View {
                 }
             }
             .animation(.default, value: isFollowingLatest)
-            .onChange(of: model.rows) { _, _ in
+            // A scalar revision avoids deep equality checks over every transcript
+            // row (including the growing live-tail string) for each streamed delta.
+            .onChange(of: model.transcriptRevision) { _, _ in
                 requestScrollToLatest()
             }
             .onChange(of: transcriptViewportHeight) { _, _ in
@@ -370,14 +372,24 @@ struct SessionView: View {
     private var transcript: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
-                if model.rows.isEmpty, model.state == .loading {
+                if model.durableRows.isEmpty, model.liveTail == nil, model.state == .loading {
                     ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
                 }
-                ForEach(model.rows) { row in
+                // Keep immutable history separate from the rapidly-changing tail.
+                // Building `durableRows + [liveTail]` every 100ms made SwiftUI diff
+                // the entire transcript for every snapshot.
+                ForEach(model.durableRows) { row in
                     TranscriptRowView(row: row) { sha in
                         commitTarget = CommitDiffTarget(sha: sha)
                     }
+                    .equatable()
                     .id(row.id)
+                }
+                if let liveTail = model.liveTail {
+                    // Intentionally not `.equatable()`: this stable-id subtree
+                    // must receive each snapshot so TextKit can append its suffix.
+                    TranscriptRowView(row: liveTail)
+                        .id(liveTail.id)
                 }
                 // A small lazy-stack marker tells us when the latest content is
                 // visible. Its disappearance alone does NOT disable following:
@@ -496,10 +508,15 @@ struct SessionView: View {
 
 /// Renders a single ``TranscriptRow``. Bubbles for messages; collapsed,
 /// tappable disclosure rows for thinking and tool calls; compact system rows.
-private struct TranscriptRowView: View {
+private struct TranscriptRowView: View, Equatable {
     let row: TranscriptRow
     /// Called with the commit sha when a `commit_made` row is tapped.
     var onOpenCommit: (String) -> Void = { _ in }
+
+    /// The callback is stable for a transcript row's lifetime; row payload is the
+    /// only input that should invalidate its subtree. This keeps old MarkdownText
+    /// rows from being reparsed whenever the live tail changes.
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.row == rhs.row }
 
     var body: some View {
         switch row.kind {
@@ -525,7 +542,11 @@ private struct TranscriptRowView: View {
         case .commit(let text, let sha):
             commitRow(text, sha: sha)
         case .liveTail(let text):
-            liveTail(text)
+            liveTail(
+                text,
+                append: row.liveAppend,
+                appendBaseUTF8: row.liveAppendBaseUTF8
+            )
         }
     }
 
@@ -620,21 +641,117 @@ private struct TranscriptRowView: View {
         }
     }
 
-    private func liveTail(_ text: String) -> some View {
+    private func liveTail(
+        _ text: String,
+        append: String?,
+        appendBaseUTF8: Int?
+    ) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                     ProgressView().scaleEffect(0.6)
                     Text("streaming").font(.caption2).foregroundStyle(.secondary)
                 }
-                Text(text)
-                    .padding(.horizontal, 12)
+                // Unlike SwiftUI.Text, this keeps one TextKit storage/layout tree
+                // alive and appends the new suffix for ordinary growing snapshots.
+                // Replacing an ever-longer Text at 10 Hz repeatedly shaped and laid
+                // out the full response, producing quadratic-feeling slowdown.
+                IncrementalStreamingText(
+                    text: text,
+                    append: append,
+                    appendBaseUTF8: appendBaseUTF8
+                )
+                .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
                     .foregroundStyle(.primary)
             }
             Spacer(minLength: 40)
         }
+    }
+}
+
+/// A non-scrolling, selectable TextKit view optimized for snapshot-style model
+/// output. Normal snapshots extend the previous text, so mutate NSTextStorage by
+/// only the suffix and let TextKit incrementally lay out the addition. A retry or
+/// other non-prefix replacement falls back to replacing the complete value.
+private struct IncrementalStreamingText: UIViewRepresentable {
+    let text: String
+    let append: String?
+    let appendBaseUTF8: Int?
+
+    final class Coordinator {
+        var renderedText = ""
+        var renderedUTF8Count = 0
+        var font: UIFont?
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> UITextView {
+        let view = UITextView()
+        view.backgroundColor = .clear
+        view.isEditable = false
+        view.isSelectable = true
+        view.isScrollEnabled = false
+        view.textContainerInset = .zero
+        view.textContainer.lineFragmentPadding = 0
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        view.setContentHuggingPriority(.required, for: .vertical)
+        return view
+    }
+
+    func updateUIView(_ view: UITextView, context: Context) {
+        let font = UIFont.preferredFont(forTextStyle: .body)
+        let foreground = UIColor.label
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: foreground,
+        ]
+        let coordinator = context.coordinator
+        var nextUTF8Count = coordinator.renderedUTF8Count
+
+        if coordinator.font != font {
+            // Dynamic Type/style changes are rare and legitimately require a
+            // complete relayout; streamed snapshots normally stay on append path.
+            view.attributedText = NSAttributedString(string: text, attributes: attributes)
+            nextUTF8Count = text.utf8.count
+        } else if let append,
+                  let appendBaseUTF8,
+                  appendBaseUTF8 == coordinator.renderedUTF8Count {
+            // Fast path from a daemon-provided verified base offset: no growing
+            // prefix/count scan and no reconstruction of the accumulated string.
+            if !append.isEmpty {
+                view.textStorage.append(NSAttributedString(string: append, attributes: attributes))
+            }
+            nextUTF8Count = appendBaseUTF8 + append.utf8.count
+        } else if text.hasPrefix(coordinator.renderedText) {
+            // Compatibility path for older daemons that only send snapshots.
+            let suffix = text.dropFirst(coordinator.renderedText.count)
+            if !suffix.isEmpty {
+                view.textStorage.append(NSAttributedString(string: String(suffix), attributes: attributes))
+            }
+            nextUTF8Count = text.utf8.count
+        } else if text != coordinator.renderedText {
+            // Retry/reset, lossy hint gap, or another non-prefix replacement.
+            view.attributedText = NSAttributedString(string: text, attributes: attributes)
+            nextUTF8Count = text.utf8.count
+        }
+
+        coordinator.renderedText = text
+        coordinator.renderedUTF8Count = nextUTF8Count
+        coordinator.font = font
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiView: UITextView,
+        context: Context
+    ) -> CGSize? {
+        guard let width = proposal.width else { return nil }
+        let fitted = uiView.sizeThatFits(
+            CGSize(width: width, height: .greatestFiniteMagnitude))
+        return CGSize(width: width, height: fitted.height)
     }
 }
 

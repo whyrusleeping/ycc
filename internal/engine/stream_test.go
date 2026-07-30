@@ -143,6 +143,7 @@ func TestLoopStreamsTurnDeltaSnapshots(t *testing.T) {
 	// Snapshots are full accumulated text; the first two carry text, the last is
 	// the clearing done delta.
 	var texts []string
+	var textEvents []event.Event
 	var sawDone bool
 	for _, d := range deltas {
 		if d.Seq != 0 || !d.Transient {
@@ -156,12 +157,26 @@ func TestLoopStreamsTurnDeltaSnapshots(t *testing.T) {
 			continue
 		}
 		texts = append(texts, d.Data["text"].(string))
+		textEvents = append(textEvents, d)
 	}
 	if !sawDone {
 		t.Fatalf("no clearing done delta; deltas=%+v", deltas)
 	}
 	if len(texts) < 2 || texts[0] != "Hel" || texts[len(texts)-1] != "Hello world" {
 		t.Fatalf("snapshot texts = %v, want first=Hel last=Hello world", texts)
+	}
+	if got := textEvents[0].Data["append"]; got != "Hel" {
+		t.Fatalf("first append hint = %#v, want Hel", got)
+	}
+	if got := textEvents[0].Data["append_base_utf8"]; got != 0 {
+		t.Fatalf("first append base = %#v, want 0", got)
+	}
+	last := textEvents[len(textEvents)-1]
+	if got := last.Data["append"]; got != "lo world" {
+		t.Fatalf("last append hint = %#v, want lo world", got)
+	}
+	if got := last.Data["append_base_utf8"]; got != len("Hel") {
+		t.Fatalf("last append base = %#v, want %d", got, len("Hel"))
 	}
 
 	// Deltas are never persisted (spec §5.2 / 0128 invariant).
@@ -178,6 +193,43 @@ func TestLoopStreamsTurnDeltaSnapshots(t *testing.T) {
 		if ev.Type == event.TurnDelta {
 			t.Fatalf("turn_delta persisted to events.jsonl: %+v", ev)
 		}
+	}
+}
+
+func TestLoopStreamOmitsAppendHintWhenSnapshotResets(t *testing.T) {
+	l, err := event.OpenLog(filepath.Join(t.TempDir(), "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+
+	stop := collectDeltas(t, l)
+	client := &scriptStreamTurner{
+		attempts: []streamAttempt{{
+			snaps: []string{"long prefix", "reset"},
+			resp:  assistantText("reset"),
+		}},
+		beforeDelta: func() { time.Sleep(turnDeltaInterval + 30*time.Millisecond) },
+	}
+	loop := newLoopWithRec(t, client, l)
+	if _, err := loop.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	var textEvents []event.Event
+	for _, delta := range stop() {
+		if done, _ := delta.Data["done"].(bool); !done {
+			textEvents = append(textEvents, delta)
+		}
+	}
+	if len(textEvents) != 2 {
+		t.Fatalf("text events = %d, want 2", len(textEvents))
+	}
+	if _, ok := textEvents[1].Data["append"]; ok {
+		t.Fatalf("reset snapshot unexpectedly carried append hint: %+v", textEvents[1].Data)
+	}
+	if _, ok := textEvents[1].Data["append_base_utf8"]; ok {
+		t.Fatalf("reset snapshot unexpectedly carried append base: %+v", textEvents[1].Data)
 	}
 }
 

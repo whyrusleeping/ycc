@@ -18,11 +18,12 @@ import (
 )
 
 const (
-	maxReadBytes     = 128 * 1024
-	maxBashBytes     = 64 * 1024
-	bashTimeout      = 2 * time.Minute
-	defaultReadLines = 2000
-	maxLineChars     = 2000
+	maxReadBytes          = 128 * 1024
+	maxBashBytes          = 64 * 1024
+	defaultBashTimeout    = 2 * time.Minute
+	maxBashTimeoutSeconds = 3600
+	defaultReadLines      = 2000
+	maxLineChars          = 2000
 	// maxDirEntries caps how many entries the Read tool lists when given a
 	// directory path, mirroring the line-limit approach for files.
 	maxDirEntries = 1000
@@ -321,26 +322,29 @@ func bash(ws *Workspace) *gollama.Tool {
 		"NOT persist between calls — so there is never a need to `cd` into the workspace root; just run " +
 		"the command directly (write `rg 'pattern'`, not `cd <workspace> && rg 'pattern'`). Use this to explore " +
 		"and inspect: search with ripgrep (`rg 'pattern'`, `rg --files -g '*.go'`), list with `ls`, and run " +
-		"builds/tests. Prefer the Read tool over `cat` for viewing files. Times out after 2 minutes."
-	params := map[string]any{"command": strProp("shell command to execute via 'sh -c'")}
+		"builds/tests. Prefer the Read tool over `cat` for viewing files. Foreground commands time out after 2 minutes " +
+		"by default; set timeout_s when a command needs longer (maximum 3600 seconds)."
+	params := map[string]any{
+		"command":   strProp("shell command to execute via 'sh -c'"),
+		"timeout_s": map[string]any{"type": "integer", "minimum": 1, "maximum": maxBashTimeoutSeconds, "description": "foreground timeout in seconds (default 120, maximum 3600)"},
+	}
 	if ws.Jobs != nil {
+		desc += " Use run_in_background only to overlap the command with meaningful independent work or to leave a " +
+			"watcher running. If you need the result before doing anything else, keep it foreground and increase timeout_s " +
+			"instead; do not start one background job and immediately wait for it. Do NOT poll a background job. "
 		// Phase 1: only the coordinator/pm/chat loop drains finished-job
 		// notifications at its session Checkpoint, so its background reports are
 		// PUSHED automatically. The implementer's loop has no drain hook, so its
 		// background jobs are wait-only — the report must be fetched with wait
 		// (docs/design/async-jobs.md §3.3). Word the guidance accordingly.
 		if bgAutoDelivered(ws) {
-			desc += " For a long-running command (a build, full test suite, or a watcher), pass run_in_background: true " +
-				"to start it as a background job and get a job_id back immediately instead of blocking (no 2-minute cap). " +
-				"Do NOT poll a background job: its report is delivered to you automatically when it finishes, or call " +
-				"wait(job_ids) when its result gates your next step. Use job_output to peek at partial output, kill_job to stop it."
-			params["run_in_background"] = BoolProp("run the command as a background job and return a job_id immediately (for builds/tests/watchers); do not poll — the report arrives automatically or via wait")
+			desc += "Its report is delivered automatically when it finishes, or call wait(job_ids) after your independent " +
+				"work when its result gates the next step. Use job_output to peek at partial output, kill_job to stop it."
+			params["run_in_background"] = BoolProp("run the command as a background job and return a job_id immediately; use only to overlap meaningful independent work or leave a watcher running, never to immediately call wait")
 		} else {
-			desc += " For a long-running command (a build, full test suite, or a watcher), pass run_in_background: true " +
-				"to start it as a background job and get a job_id back immediately instead of blocking (no 2-minute cap). " +
-				"Do NOT poll a background job: call wait(job_ids) to retrieve its report when its result gates your next " +
-				"step. Use job_output to peek at partial output, kill_job to stop it."
-			params["run_in_background"] = BoolProp("run the command as a background job and return a job_id immediately (for builds/tests/watchers); do not poll — retrieve its report with wait(job_ids)")
+			desc += "After doing independent work, call wait(job_ids) when the result gates the next step. Use job_output " +
+				"to peek at partial output, kill_job to stop it."
+			params["run_in_background"] = BoolProp("run the command as a background job and return a job_id immediately; use only to overlap meaningful independent work or leave a watcher running, never to immediately call wait")
 		}
 	}
 	return &gollama.Tool{
@@ -363,7 +367,8 @@ func sandboxedBash(ws *Workspace) *gollama.Tool {
 		"NOT persist between calls — so there is never a need to `cd` into the workspace root; just run " +
 		"the command directly (write `rg 'pattern'`, not `cd <workspace> && rg 'pattern'`). Use this to inspect " +
 		"the change: run `git diff`, search with ripgrep (`rg 'pattern'`), list with `ls`, read files, and run " +
-		"builds/tests. Prefer the Read tool over `cat` for viewing files. Times out after 2 minutes."
+		"builds/tests. Prefer the Read tool over `cat` for viewing files. Commands time out after 2 minutes by " +
+		"default; set timeout_s when a command needs longer (maximum 3600 seconds)."
 	if sandbox.Available() != sandbox.None {
 		desc += " NOTE: the workspace is mounted READ-ONLY for you — commands that try to write to or delete from " +
 			"the workspace will fail. That is expected; you are a reviewer, not an editor."
@@ -371,8 +376,11 @@ func sandboxedBash(ws *Workspace) *gollama.Tool {
 	return &gollama.Tool{
 		Name:        "Bash",
 		Description: desc,
-		Params:      obj(map[string]any{"command": strProp("shell command to execute via 'sh -c'")}, "command"),
-		Call:        bashCall(ws, true),
+		Params: obj(map[string]any{
+			"command":   strProp("shell command to execute via 'sh -c'"),
+			"timeout_s": map[string]any{"type": "integer", "minimum": 1, "maximum": maxBashTimeoutSeconds, "description": "timeout in seconds (default 120, maximum 3600)"},
+		}, "command"),
+		Call: bashCall(ws, true),
 	}
 }
 
@@ -392,6 +400,9 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 			if ws.Jobs == nil || ws.Emitter == nil {
 				return errResult("bash: run_in_background is not available in this session"), nil
 			}
+			if hasParam(params, "timeout_s") {
+				return errResult("bash: timeout_s applies only to foreground commands; omit it when run_in_background is true"), nil
+			}
 			job := startBackgroundBash(ws, cmdStr)
 			if bgAutoDelivered(ws) {
 				return okResult(fmt.Sprintf("started background job %s: %s\nIt runs in the background — do NOT poll it. "+
@@ -402,7 +413,15 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 				"Call wait([%q]) to retrieve its report when you need the result; "+
 				"use job_output(%q) to peek at partial output.", job.ID(), cmdStr, job.ID(), job.ID())), nil
 		}
-		cctx, cancel := context.WithTimeout(ctx, bashTimeout)
+		timeout := defaultBashTimeout
+		if hasParam(params, "timeout_s") {
+			timeoutSeconds := getInt(params, "timeout_s", 0)
+			if timeoutSeconds < 1 || timeoutSeconds > maxBashTimeoutSeconds {
+				return errResult("bash: timeout_s must be between 1 and %d seconds", maxBashTimeoutSeconds), nil
+			}
+			timeout = time.Duration(timeoutSeconds) * time.Second
+		}
+		cctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		var cmd *exec.Cmd
 		if sandboxed {
@@ -432,7 +451,7 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 		}
 		result := string(out)
 		if cctx.Err() == context.DeadlineExceeded {
-			result += "\n[command timed out after 2m]"
+			result += fmt.Sprintf("\n[command timed out after %s]", timeout)
 		} else if err != nil {
 			result += fmt.Sprintf("\n[exit: %v]", err)
 		}

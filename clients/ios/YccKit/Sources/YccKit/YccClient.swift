@@ -69,6 +69,14 @@ public final class YccClient: Sendable {
         }
     }
 
+    /// Deregister a project from the daemon. This only removes the registry entry;
+    /// it does not delete the workspace or any files on the daemon host.
+    public func removeProject(name: String) async throws {
+        var request = Ycc_V1_RemoveProjectRequest()
+        request.name = name
+        try unary(await generated.removeProject(request: request))
+    }
+
     /// Lists the daemon's session history — live and persisted, most-recent
     /// first per the daemon (docs/remote-api.md "ListSessionHistory"). `project`
     /// is optional: empty selects the daemon default workspace; a registered

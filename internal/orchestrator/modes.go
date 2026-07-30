@@ -208,14 +208,15 @@ func memorySection(root string) string {
 func createTask(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "create_task",
-		Description: "Create a new backlog task. Returns the assigned id. Set status 'proposed' for an idea the user " +
-			"has not clearly accepted as scope (e.g. something you suggested during ideation that seems worth writing " +
-			"up): it is kept in the backlog but never becomes ready for the work pipeline until the user promotes it to 'todo'.",
+		Description: "Create a new backlog task. Returns the assigned id. Set status 'in_progress' for accepted work " +
+			"you are starting immediately, or 'proposed' for an idea the user has not clearly accepted as scope " +
+			"(e.g. something you suggested during ideation that seems worth writing up): proposed tasks stay out of " +
+			"the work pipeline until the user promotes them to 'todo'.",
 		Params: tools.Obj(map[string]any{
 			"title":       tools.StrProp("short task title"),
 			"description": tools.StrProp("description and acceptance criteria (markdown)"),
 			"priority":    map[string]any{"type": "integer", "description": "1 (highest) .. 5; default 3"},
-			"status":      map[string]any{"type": "string", "enum": []string{"todo", "proposed"}, "description": "initial status: 'todo' (default) for accepted work; 'proposed' for an idea awaiting the user's acceptance"},
+			"status":      map[string]any{"type": "string", "enum": []string{"todo", "in_progress", "proposed"}, "description": "initial status: 'todo' (default) for accepted work; 'in_progress' for accepted work starting now; 'proposed' for an idea awaiting the user's acceptance"},
 			"depends_on":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "task ids this depends on"},
 			"spec_refs":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "spec references this relates to: a bare section title refers to the spec entry point; `path#Section` references a section of another doc in the docs set"},
 		}, "title"),
@@ -237,18 +238,20 @@ func createTask(d *Deps) *gollama.Tool {
 	}
 }
 
-// initialStatus reads create_task's optional "status" param: todo (default) or
-// proposed. Any other value is rejected — the remaining lifecycle states are
-// reached via update_task, not at creation.
+// initialStatus reads create_task's optional "status" param: todo (default),
+// in_progress, or proposed. Any other value is rejected — later lifecycle
+// states are reached via update_task, not at creation.
 func initialStatus(params any) (docs.Status, error) {
 	raw, _ := tools.GetString(params, "status")
 	switch docs.Status(strings.TrimSpace(raw)) {
 	case "", docs.StatusTodo:
 		return docs.StatusTodo, nil
+	case docs.StatusInProgress:
+		return docs.StatusInProgress, nil
 	case docs.StatusProposed:
 		return docs.StatusProposed, nil
 	default:
-		return "", fmt.Errorf("invalid initial status %q (want todo or proposed)", raw)
+		return "", fmt.Errorf("invalid initial status %q (want todo, in_progress, or proposed)", raw)
 	}
 }
 

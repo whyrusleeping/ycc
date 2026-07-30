@@ -48,13 +48,23 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
     public var actor: String
     /// RFC3339 timestamp of the source event (empty for the live tail).
     public var ts: String
+    /// Optional turn_delta optimization hint. When `liveAppendBaseUTF8` matches
+    /// the renderer's current UTF-8 length, append this suffix without scanning
+    /// or replacing the complete snapshot. Nil for durable rows/older daemons.
+    public var liveAppend: String?
+    public var liveAppendBaseUTF8: Int?
 
-    public init(id: String, kind: Kind, seq: Int64, actor: String, ts: String) {
+    public init(
+        id: String, kind: Kind, seq: Int64, actor: String, ts: String,
+        liveAppend: String? = nil, liveAppendBaseUTF8: Int? = nil
+    ) {
         self.id = id
         self.kind = kind
         self.seq = seq
         self.actor = actor
         self.ts = ts
+        self.liveAppend = liveAppend
+        self.liveAppendBaseUTF8 = liveAppendBaseUTF8
     }
 }
 
@@ -273,7 +283,9 @@ public struct SessionProjection: Sendable, Equatable {
             kind: .liveTail(text: text),
             seq: 0,
             actor: event.actor,
-            ts: event.ts
+            ts: event.ts,
+            liveAppend: data["append"] as? String,
+            liveAppendBaseUTF8: Self.integerField(data, "append_base_utf8")
         )
     }
 
@@ -422,6 +434,13 @@ public struct SessionProjection: Sendable, Equatable {
         guard !json.isEmpty, let data = json.data(using: .utf8) else { return [:] }
         let obj = try? JSONSerialization.jsonObject(with: data)
         return (obj as? [String: Any]) ?? [:]
+    }
+
+    /// Read an integer JSON field without depending on Foundation's private
+    /// NSNumber bridging details (JSONSerialization may bridge as Int or NSNumber).
+    static func integerField(_ data: [String: Any], _ key: String) -> Int? {
+        if let value = data[key] as? Int { return value }
+        return (data[key] as? NSNumber)?.intValue
     }
 
     /// Extract a `text` string field.

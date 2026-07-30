@@ -210,6 +210,16 @@ func getMapSlice(params any, key string) []map[string]any {
 	return out
 }
 
+// hasParam reports whether an argument was explicitly supplied, regardless of its value.
+func hasParam(params any, key string) bool {
+	m, ok := params.(map[string]any)
+	if !ok {
+		return false
+	}
+	_, ok = m[key]
+	return ok
+}
+
 // getInt pulls an integer argument (JSON numbers arrive as float64), or def.
 func getInt(params any, key string, def int) int {
 	if m, ok := params.(map[string]any); ok {

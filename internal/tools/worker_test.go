@@ -124,6 +124,45 @@ func TestBash(t *testing.T) {
 	}
 }
 
+func TestBashCustomForegroundTimeout(t *testing.T) {
+	reg := workerReg(t.TempDir())
+	start := time.Now()
+	res := dispatch(t, reg, "Bash", `{"command":"sleep 2","timeout_s":1}`)
+	if res.IsError || !strings.Contains(res.Content, "command timed out after 1s") {
+		t.Fatalf("bash timeout = %q (err=%v)", res.Content, res.IsError)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("custom timeout took too long: %s", elapsed)
+	}
+}
+
+func TestBashTimeoutSchemaAndValidation(t *testing.T) {
+	reg := workerReg(t.TempDir())
+	var bashDef *gollama.Tool
+	for _, td := range reg.tools {
+		if td.Name == "Bash" {
+			bashDef = td
+			break
+		}
+	}
+	if bashDef == nil {
+		t.Fatal("no Bash tool")
+	}
+	params, ok := bashDef.Params.(gollama.ToolFunctionParams)
+	if !ok || params.Properties["timeout_s"] == nil {
+		t.Fatalf("Bash does not advertise timeout_s: %#v", bashDef.Params)
+	}
+	for _, args := range []string{
+		`{"command":"echo hi","timeout_s":0}`,
+		`{"command":"echo hi","timeout_s":3601}`,
+	} {
+		res := dispatch(t, reg, "Bash", args)
+		if !res.IsError || !strings.Contains(res.Content, "between 1 and 3600") {
+			t.Fatalf("invalid timeout result = %q (err=%v)", res.Content, res.IsError)
+		}
+	}
+}
+
 // TestBashSurvivesEscapedGrandchild guards the hang where a command's grandchild
 // escapes the process group via setsid and inherits the tool's stdout pipe, so
 // CombinedOutput's read never reaches EOF and blocks long past the shell's exit

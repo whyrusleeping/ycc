@@ -594,6 +594,58 @@ func TestRendererBuildsAndRenders(t *testing.T) {
 	}
 }
 
+// A plan proposal is a human-facing Markdown document, not an opaque event
+// payload. Its collapsed row summarizes task + first line; expanding it renders
+// the plan field itself and never exposes the surrounding JSON envelope.
+func TestPlanProposedRendering(t *testing.T) {
+	ev := &v1.Event{
+		Seq: 12, Type: "plan_proposed", Actor: "coordinator",
+		DataJson: `{"task":"0221","plan":"# Implementation\n\n1. Read the renderer.\n2. Render **Markdown**."}`,
+	}
+	if got := detailLine(ev); !strings.Contains(got, "task 0221") || !strings.Contains(got, "# Implementation") {
+		t.Fatalf("detailLine = %q, want task and first plan line", got)
+	}
+
+	m := &model{w: 80, bodyCache: map[int]string{}}
+	m.makeRenderer()
+	body := m.renderBody(ev)
+	plain := stripANSI(body)
+	if !strings.Contains(plain, "Implementation") || !strings.Contains(plain, "Read the renderer") || !strings.Contains(plain, "Render Markdown") {
+		t.Fatalf("expanded plan body missing rendered plan content:\n%s", plain)
+	}
+	if strings.Contains(plain, `"task"`) || strings.Contains(plain, `"plan"`) || strings.Contains(plain, `0221`) {
+		t.Fatalf("expanded plan body leaked JSON envelope:\n%s", plain)
+	}
+
+	empty := &v1.Event{Type: "plan_proposed", DataJson: `{"task":"0221"}`}
+	if got := m.renderBody(empty); got != "" {
+		t.Fatalf("missing plan should have no body, got %q", got)
+	}
+	malformed := &v1.Event{Type: "plan_proposed", DataJson: `not-json`}
+	if got := m.renderBody(malformed); got != "" {
+		t.Fatalf("malformed payload should have no body, got %q", got)
+	}
+}
+
+func TestPlanProposedFoldsProposePlanPlumbing(t *testing.T) {
+	m := &model{hiddenCache: map[int]bool{}}
+	m.evs = []*v1.Event{
+		{Seq: 1, Type: "tool_call", Actor: "coordinator", DataJson: `{"id":"p1","name":"propose_plan","args":"{}"}`},
+		{Seq: 2, Type: "plan_proposed", Actor: "coordinator", DataJson: `{"task":"0221","plan":"1. Implement it"}`},
+		{Seq: 3, Type: "tool_result", Actor: "coordinator", DataJson: `{"id":"p1","name":"propose_plan","result":"plan recorded"}`},
+	}
+	if !m.hiddenRow(0) || !m.hiddenRow(2) || m.hiddenRow(1) {
+		t.Fatalf("propose_plan plumbing fold = [%v %v %v], want [true false true]", m.hiddenRow(0), m.hiddenRow(1), m.hiddenRow(2))
+	}
+
+	// A failed persistence result remains visible beside the proposal.
+	m.evs[2].DataJson = `{"id":"p1","name":"propose_plan","result":"write failed","error":"true"}`
+	m.hiddenCache = map[int]bool{}
+	if m.hiddenRow(2) {
+		t.Fatal("errored propose_plan result must remain visible")
+	}
+}
+
 func TestAutoExpand(t *testing.T) {
 	if !autoExpand("session_idle") || !autoExpand("question_asked") {
 		t.Fatal("session_idle and question_asked should auto-expand")

@@ -252,6 +252,14 @@ type sseEvent struct {
 			Text string `json:"text"`
 		} `json:"content"`
 	} `json:"item"`
+	// Error is the payload of a stream-level `error` frame, which the backend
+	// can send over an otherwise-healthy HTTP 200 stream. It is distinct from
+	// Response.Error (carried by `response.failed`).
+	Error *struct {
+		Type    string `json:"type"`
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
 	Response *struct {
 		Status            string `json:"status"`
 		IncompleteDetails *struct {
@@ -417,11 +425,11 @@ func parseStream(r io.Reader, model string, onDelta func(string)) (*gollama.Resp
 		case "response.failed":
 			msg := "response failed"
 			if ev.Response != nil && ev.Response.Error != nil {
-				msg = ev.Response.Error.Message
+				msg = errorText(ev.Response.Error.Code, "", ev.Response.Error.Message, msg)
 			}
 			return nil, 0, fmt.Errorf("codex: %s", msg)
 		case "error":
-			return nil, 0, fmt.Errorf("codex: stream error: %s", data)
+			return nil, 0, fmt.Errorf("codex: stream error: %s", streamErrorText(ev, data))
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -443,4 +451,37 @@ func parseStream(r io.Reader, model string, onDelta func(string)) (*gollama.Resp
 		FinishReason: out.StopReason,
 	}}
 	return out, reasoningTokens, nil
+}
+
+// streamErrorText renders a stream-level `error` frame. Such a frame arrives
+// over an HTTP 200 stream, so there is no status code for
+// engine.ClassifyAPIError to parse; keeping the provider's error CODE in the
+// message is what lets the classifier recognise a transient backend failure
+// (`server_error`, which the provider's own message tells clients to retry)
+// instead of treating it as an unknown — and therefore permanent — error. Falls
+// back to the raw frame when the payload is not the documented shape, so
+// nothing is ever silently swallowed.
+func streamErrorText(ev sseEvent, raw string) string {
+	if ev.Error == nil {
+		return raw
+	}
+	return errorText(ev.Error.Code, ev.Error.Type, ev.Error.Message, raw)
+}
+
+// errorText joins a provider error code with its message ("code: message"),
+// preferring code over type and degrading gracefully to whichever part is
+// present, or to fallback when neither is.
+func errorText(code, typ, message, fallback string) string {
+	if code == "" {
+		code = typ
+	}
+	switch {
+	case code != "" && message != "":
+		return code + ": " + message
+	case code != "":
+		return code
+	case message != "":
+		return message
+	}
+	return fallback
 }

@@ -182,6 +182,24 @@ final class SessionProjectionTests: XCTestCase {
         XCTAssertEqual(proj.lastPersistedSeq, 0, "transient events never advance the cursor")
     }
 
+    func testLiveTailCarriesOptionalVerifiedAppendHint() {
+        var proj = SessionProjection()
+        proj.apply(delta("Hel"))
+
+        var hinted = Ycc_V1_Event()
+        hinted.type = "turn_delta"
+        hinted.transient = true
+        hinted.dataJson = #"{"text":"Hello 🌍","append":"lo 🌍","append_base_utf8":3}"#
+        proj.apply(hinted)
+
+        XCTAssertEqual(proj.liveTail?.liveAppend, "lo 🌍")
+        XCTAssertEqual(proj.liveTail?.liveAppendBaseUTF8, 3)
+        guard case .liveTail(let text)? = proj.liveTail?.kind else {
+            return XCTFail("expected hinted live tail")
+        }
+        XCTAssertEqual(text, "Hello 🌍", "full snapshot remains authoritative")
+    }
+
     func testModelTurnClearsTailAndAppendsBubble() {
         var proj = SessionProjection()
         proj.apply(delta("partial answer so"))

@@ -112,7 +112,13 @@ SwiftUI + Observation (`@Observable`, iOS 17). `YccKit` owns:
   - handle **transient** events (`seq:0`, never persisted, never advance the
     cursor): `turn_delta` snapshots render as a single replaceable live-tail
     row, cleared by the terminating `{"text":"","done":true}` delta or the
-    durable `model_turn`;
+    durable `model_turn`. The SwiftUI feed renders this tail separately from
+    immutable history, drives scroll-following from a scalar revision, and uses
+    persistent TextKit storage to append prefix-extending snapshots (using the
+    optional `append` / verified `append_base_utf8` hint when present); this avoids
+    re-diffing/re-shaping the entire transcript and growing response every 100ms,
+    while a missing/lossy hint or non-prefix retry snapshot still falls back to
+    replacing from the authoritative `text` snapshot;
   - be identical for live (Subscribe) and persisted (GetSessionTranscript)
     sources — persisted is just "fold with no tail".
 - **`ConnectionStore`** — server profiles (name, base URL) in `UserDefaults`;
@@ -152,7 +158,8 @@ The drawer has two levels of navigation:
 2. **Projects** — the registered workspace list, each with active /
    needs-answer badges. Selecting a project closes the drawer and scopes the
    session list and project destinations (backlog, usage, workstreams, and new
-   session) to it. “Add project…” remains at the bottom of this list.
+   session) to it. “Add project…” and a confirmed “Remove project…” action remain at
+   the bottom of this list. Removing a registration never deletes workspace files.
 
 The first implementation aggregates client-side: call `ListProjects`, fan out
 `ListSessionHistory(project:)`, wrap every returned summary with its project
@@ -211,7 +218,10 @@ do not permanently remove access to the daemon-wide inbox.
 6. **Backlog browser** — `ListBacklog` grouped by status with ready/blocked
    annotations; task detail (`GetTask`) rendering the markdown body; status
    changes via `UpdateTask`; "start work on this task" → `StartSession`
-   (mode `work`, task-focused prompt). Optionally `CreateTask` for quick
+   (mode `work`, task-focused prompt). For an `in_progress` task, task detail
+   cross-references `ListSessionHistory` task focus and offers **Open active
+   session** for each live `running`/`paused` match, navigating to the existing
+   transcript instead of starting duplicate work. Optionally `CreateTask` for quick
    capture from the phone.
 7. **Deep links** — a `ycc://` URL scheme (`ycc://session/<id>`,
    `ycc://project/<name>`) so an ntfy notification tap can land directly on
@@ -249,7 +259,8 @@ cross-project active-session inbox), `GetSessionTranscript`, `Subscribe`,
 from §9. `Notify` remains unnecessary because daemon-side pushes already fire
 without a client call. `AddProject` (with the `ListDir` browse RPC, tasks
 0192–0194) has since been pulled into client scope so a new workspace can be
-registered from the phone; `RemoveProject` stays server-side admin.
+registered from the phone. `RemoveProject` is also exposed behind destructive
+confirmation; it only deregisters the workspace and never deletes files.
 
 ## 8. Notifications (decision)
 

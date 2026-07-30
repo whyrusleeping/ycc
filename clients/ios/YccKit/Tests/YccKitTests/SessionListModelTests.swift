@@ -9,7 +9,9 @@ private final class MockListSource: SessionListSource, @unchecked Sendable {
     var sessions: [Ycc_V1_SessionSummary] = []
     var projects: [Ycc_V1_ProjectInfo] = []
     var historyError: Error?
+    var removeError: Error?
     private(set) var requestedProjects: [String] = []
+    private(set) var removedProjects: [String] = []
     private let lock = NSLock()
 
     func listSessionHistory(project: String) async throws -> [Ycc_V1_SessionSummary] {
@@ -22,6 +24,14 @@ private final class MockListSource: SessionListSource, @unchecked Sendable {
 
     func listProjects() async throws -> [Ycc_V1_ProjectInfo] {
         projects
+    }
+
+    func removeProject(name: String) async throws {
+        if let removeError { throw removeError }
+        lock.lock()
+        removedProjects.append(name)
+        projects.removeAll { $0.name == name }
+        lock.unlock()
     }
 }
 
@@ -227,6 +237,44 @@ final class SessionListModelTests: XCTestCase {
         let emptyModel = SessionListModel(source: emptySource)
         await emptyModel.refresh()
         XCTAssertFalse(emptyModel.showsProjectFilter)
+    }
+
+    func testRemoveSelectedProjectFallsBackToDefaultAndRefreshes() async {
+        let source = MockListSource()
+        source.projects = [project("one"), project("two")]
+        let model = SessionListModel(source: source, selectedProject: "two")
+        await model.refresh()
+
+        let removed = await model.removeProject(named: "two")
+
+        XCTAssertTrue(removed)
+        XCTAssertEqual(source.removedProjects, ["two"])
+        XCTAssertEqual(model.selectedProject, "")
+        XCTAssertEqual(model.projects.map(\.name), ["one"])
+        XCTAssertEqual(source.requestedProjects, ["two", ""])
+    }
+
+    func testRemoveProjectFailureKeepsSelectionAndSurfacesError() async {
+        let source = MockListSource()
+        source.removeError = YccError.rpc(message: "cannot remove")
+        let model = SessionListModel(source: source, selectedProject: "one")
+
+        let removed = await model.removeProject(named: "one")
+
+        XCTAssertFalse(removed)
+        XCTAssertEqual(model.selectedProject, "one")
+        XCTAssertEqual(model.errorMessage, "cannot remove")
+    }
+
+    func testRemoveProjectUnauthorizedSurfacesFlag() async {
+        let source = MockListSource()
+        source.removeError = YccError.unauthorized
+        let model = SessionListModel(source: source)
+
+        let removed = await model.removeProject(named: "one")
+
+        XCTAssertFalse(removed)
+        XCTAssertTrue(model.unauthorized)
     }
 
     func testUnauthorizedSurfacesFlag() async {

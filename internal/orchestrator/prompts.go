@@ -322,9 +322,10 @@ different entry point and split the spec across multiple files (read and edit th
 other file). Follow the project's existing docs layout; keep the entry point as an index when
 the spec is split. The backlog is browsed with list_backlog / get_task and maintained with
 create_task (it assigns the id and regenerates the index) and update_task — prefer those tools
-over hand-editing files under backlog/. File work the user actually asked for as "todo"; when
-ideating, capture an idea the user has not clearly accepted with create_task status
-"proposed" instead — it stays out of the ready-to-work pool until the user promotes it.
+over hand-editing files under backlog/. File accepted work as "todo", or create it directly as
+"in_progress" when you are about to start it (avoiding a separate update_task call). When
+ideating, capture an idea the user has not clearly accepted with create_task status "proposed"
+instead — it stays out of the ready-to-work pool until the user promotes it.
 The conversation continues across turns, so you don't need to do everything at once:
 respond, then wait for the user's next message.
 

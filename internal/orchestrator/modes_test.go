@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -250,6 +251,30 @@ func TestCreateTaskProposedNeverReady(t *testing.T) {
 	res, _ = createTask(d).Call(context.Background(), map[string]any{"title": "bad", "status": "done"})
 	if !strings.Contains(res.Content, "invalid initial status") {
 		t.Fatalf("expected invalid-status error: %q", res.Content)
+	}
+}
+
+// Accepted work that is starting immediately can be created directly as
+// in_progress, avoiding a second update_task tool call.
+func TestCreateTaskInProgress(t *testing.T) {
+	d := depsFor(t)
+	tool := createTask(d)
+	params := tool.Params.(gollama.ToolFunctionParams)
+	statusSchema := params.Properties["status"].(map[string]any)
+	if !slices.Contains(statusSchema["enum"].([]string), "in_progress") {
+		t.Fatalf("create_task status enum = %v, want in_progress", statusSchema["enum"])
+	}
+
+	res, _ := tool.Call(context.Background(), map[string]any{"title": "active workstream", "status": "in_progress"})
+	if res.IsError || !strings.Contains(res.Content, "[in_progress]") {
+		t.Fatalf("create_task result should carry in_progress: %+v", res)
+	}
+	got, err := d.Docs.Get("0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != docs.StatusInProgress {
+		t.Fatalf("status = %q, want in_progress", got.Status)
 	}
 }
 

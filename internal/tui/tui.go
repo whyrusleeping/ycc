@@ -7550,6 +7550,22 @@ func (m *model) appendEvent(ev *v1.Event) {
 			m.focusTask = t
 			m.focusTaskTitle = dataField(ev, "title")
 		}
+	case "plan_proposed":
+		// This is the canonical row for propose_plan. Fold away the tool-call card
+		// that was visible in flight and refresh its neighbors' run boundaries.
+		for j := len(m.evs) - 2; j >= 0; j-- {
+			pv := m.evs[j]
+			if pv.Actor != ev.Actor {
+				continue
+			}
+			if pv.Type == "tool_call" && dataField(pv, "name") == "propose_plan" {
+				m.invalidateRow(j)
+				m.invalidateNeighbors(j)
+			}
+			if pv.Type == "tool_call" || pv.Type == "tool_result" || pv.Type == "plan_proposed" {
+				break
+			}
+		}
 	case "question_asked":
 		// This question is now the canonical row for its ask_user exchange: the
 		// tool_call that produced it (rendered while in flight, possibly with
@@ -7887,6 +7903,52 @@ func (m *model) isFoldedAnswer(i int) bool {
 	return m.questionIdxForAnswer(i) >= 0
 }
 
+// planProposalIdx returns the plan_proposed event emitted while the propose_plan
+// tool call at i executes. Like ask_user, this tool emits a human-facing event
+// between its call and result; that event is the canonical transcript row.
+func (m *model) planProposalIdx(i int) int {
+	if i < 0 || i >= len(m.evs) {
+		return -1
+	}
+	call := m.evs[i]
+	if call.Type != "tool_call" || dataField(call, "name") != "propose_plan" {
+		return -1
+	}
+	for j := i + 1; j < len(m.evs); j++ {
+		ev := m.evs[j]
+		if ev.Actor != call.Actor {
+			continue
+		}
+		switch ev.Type {
+		case "plan_proposed":
+			return j
+		case "tool_call", "tool_result":
+			return -1
+		}
+	}
+	return -1
+}
+
+// isPlanProposalPlumbing folds a successful propose_plan tool call/result into
+// its plan_proposed row. Failed results remain visible so persistence errors are
+// never hidden from the transcript.
+func (m *model) isPlanProposalPlumbing(i int) bool {
+	if i < 0 || i >= len(m.evs) {
+		return false
+	}
+	switch m.evs[i].Type {
+	case "tool_call":
+		return m.planProposalIdx(i) >= 0
+	case "tool_result":
+		if dataField(m.evs[i], "error") == "true" {
+			return false
+		}
+		ci := m.resultCallIdx(i)
+		return ci >= 0 && m.planProposalIdx(ci) >= 0
+	}
+	return false
+}
+
 // isEmptyModelTurn reports whether the event at index i is a model_turn that
 // carries no text — i.e. an agent turn whose only payload was tool calls. Such a
 // turn would otherwise render as a bare row showing just its timing/usage
@@ -7931,7 +7993,7 @@ func (m *model) computeHiddenRow(i int) bool {
 		return true
 	}
 	return m.isMergedResult(i) || m.isEmptyModelTurn(i) || m.isFinishTurnEcho(i) ||
-		m.isAskUserPlumbing(i) || m.isFoldedAnswer(i)
+		m.isAskUserPlumbing(i) || m.isPlanProposalPlumbing(i) || m.isFoldedAnswer(i)
 }
 
 // eventAt returns the index of the event whose rendered block contains content
@@ -9367,7 +9429,7 @@ func expandedDetailLine(ev *v1.Event) string {
 			return dimStyle.Render(tokens + " hidden reasoning tokens")
 		}
 		return ""
-	case "user_input", "session_idle", "question_asked", "question_answered":
+	case "user_input", "plan_proposed", "session_idle", "question_asked", "question_answered":
 		return ""
 	}
 	return detailLine(ev)
@@ -9613,6 +9675,15 @@ func (m *model) renderBody(ev *v1.Event) string {
 			return ""
 		}
 		return indentLines(m.markdown(txt), "  ")
+	case "plan_proposed":
+		// Plans are authored as Markdown. Render the plan field itself rather than
+		// falling back to the event's JSON envelope so numbered steps, headings,
+		// lists, and code references remain easy to scan when expanded.
+		plan := dataField(ev, "plan")
+		if strings.TrimSpace(plan) == "" {
+			return ""
+		}
+		return indentLines(m.markdown(plan), "  ")
 	case "session_idle":
 		txt := firstField(ev, "report")
 		if strings.TrimSpace(txt) == "" {
@@ -10517,6 +10588,15 @@ func detailLine(ev *v1.Event) string {
 		return dataField(ev, "sha") + " " + oneLine(dataField(ev, "message"), 80)
 	case "doc_updated":
 		return strings.TrimSpace(dataField(ev, "task") + " " + dataField(ev, "section") + " " + dataField(ev, "status"))
+	case "plan_proposed":
+		parts := []string{}
+		if task := strings.TrimSpace(dataField(ev, "task")); task != "" {
+			parts = append(parts, "task "+task)
+		}
+		if plan := firstNonEmptyLine(dataField(ev, "plan")); plan != "" {
+			parts = append(parts, oneLine(plan, 100))
+		}
+		return strings.Join(parts, " — ")
 	case "mode_changed":
 		return dataField(ev, "from") + " → " + dataField(ev, "to")
 	case "session_idle":
@@ -10942,6 +11022,15 @@ func short(id string) string {
 		return id[:12]
 	}
 	return id
+}
+
+func firstNonEmptyLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			return line
+		}
+	}
+	return ""
 }
 
 func oneLine(s string, n int) string {

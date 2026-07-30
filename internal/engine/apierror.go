@@ -98,6 +98,22 @@ var networkSignatures = []string{
 	"eof",
 }
 
+// providerServerSignatures are provider-reported SERVER-side failure codes that
+// reach us with no HTTP status, because they are delivered inside an otherwise
+// healthy (HTTP 200) response stream rather than as an HTTP error. The codex
+// backend does this: `{"type":"error","error":{"code":"server_error",...}}` mid
+// stream, with a message that explicitly tells the client to retry. These are
+// transient — the request/transcript is still valid and the next attempt
+// normally succeeds — so they classify exactly like their 5xx equivalents
+// instead of falling through to the non-retryable `unknown` bucket. Matched
+// only when no status code was parsed, so a 4xx body mentioning "server_error"
+// is unaffected.
+var providerServerSignatures = []string{
+	"server_error",
+	"internal_error",
+	"internal server error",
+}
+
 // ClassifyAPIError classifies an LLM API call failure. nil returns the zero
 // APIErrorInfo (Kind ""). See the APIErrorKind constants for the taxonomy; the
 // Retryable field is what the loop's retry policy keys on.
@@ -135,7 +151,17 @@ func ClassifyAPIError(err error) APIErrorInfo {
 		}
 	}
 
-	// No HTTP status: transport/network failure detection.
+	// No HTTP status. A provider may still report a server-side failure inside
+	// a 200 stream; treat it like the 5xx it stands for (checked before the
+	// generic transport heuristics, which it would otherwise fall past into
+	// `unknown`).
+	for _, sig := range providerServerSignatures {
+		if strings.Contains(lower, sig) {
+			return APIErrorInfo{Kind: KindServer, Retryable: true}
+		}
+	}
+
+	// Transport/network failure detection.
 	var netErr net.Error
 	if errors.As(err, &netErr) {
 		if netErr.Timeout() {

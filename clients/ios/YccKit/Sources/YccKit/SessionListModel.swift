@@ -11,6 +11,8 @@ public protocol SessionListSource: Sendable {
     func listSessionHistory(project: String) async throws -> [Ycc_V1_SessionSummary]
     /// List the daemon's registered projects (drives the project filter).
     func listProjects() async throws -> [Ycc_V1_ProjectInfo]
+    /// Deregister a project. Workspace files remain untouched.
+    func removeProject(name: String) async throws
 }
 
 extension YccClient: SessionListSource {}
@@ -110,6 +112,27 @@ public final class SessionListModel {
             errorMessage = message
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Deregister a project and reload the home screen. If it was selected, move
+    /// to the daemon's implicit Default workspace before refreshing so no request
+    /// is made with a now-stale project name. Returns true on success so the view
+    /// can dismiss its confirmation state.
+    @discardableResult
+    public func removeProject(named name: String) async -> Bool {
+        do {
+            try await source.removeProject(name: name)
+            projects.removeAll { $0.name == name }
+            if selectedProject == name { selectedProject = "" }
+            await refresh()
+            return true
+        } catch YccError.unauthorized {
+            unauthorized = true
+            return false
+        } catch {
+            errorMessage = (error as? YccError)?.displayMessage ?? error.localizedDescription
+            return false
         }
     }
 

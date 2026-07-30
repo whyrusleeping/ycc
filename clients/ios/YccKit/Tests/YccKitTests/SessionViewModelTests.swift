@@ -218,6 +218,28 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertEqual(vm.projection.rows, onePass.rows)
     }
 
+    func testTranscriptRevisionTracksStreamEventsWithoutComparingRows() async {
+        let source = MockSource()
+        var first = Ycc_V1_Event()
+        first.type = "turn_delta"
+        first.transient = true
+        first.dataJson = #"{"text":"a"}"#
+        var second = first
+        second.dataJson = #"{"text":"a much longer snapshot"}"#
+        source.streams = [stream([first, second])]
+        let vm = SessionViewModel(source: source, sessionID: "s1", mode: .live)
+
+        vm.start()
+        await waitUntil { vm.state == .finished }
+
+        XCTAssertEqual(vm.transcriptRevision, 2)
+        XCTAssertEqual(vm.durableRows, [])
+        guard case .liveTail(let text)? = vm.liveTail?.kind else {
+            return XCTFail("expected the last live-tail snapshot")
+        }
+        XCTAssertEqual(text, "a much longer snapshot")
+    }
+
     func testReconnectClearsStaleLiveTailBeforeNewEvents() async {
         let source = MockSource()
         // Stream 1: a durable user_input then a streaming turn_delta, then a drop.

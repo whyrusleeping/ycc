@@ -32,6 +32,14 @@ func TestClassifyAPIError(t *testing.T) {
 		{"network refused", errors.New("error sending request: dial tcp 1.2.3.4:443: connection refused"), KindNetwork, 0, true},
 		{"network dns", errors.New("error sending request: lookup api.example.com: no such host"), KindNetwork, 0, true},
 		{"transport timeout", errors.New("error sending request: context deadline exceeded"), KindTimeout, 0, true},
+		// In-stream provider server failures (HTTP 200, so no status to parse).
+		// The real codex frame, verbatim: retrying is what the provider asks for.
+		{"codex in-stream server_error", errors.New(`codex: stream error: server_error: An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID a66a36ef-2cb7-4c1c-be17-22f116c1a0ba in your message.`), KindServer, 0, true},
+		{"codex response.failed server_error", errors.New("codex: server_error: boom"), KindServer, 0, true},
+		{"provider internal error", errors.New("codex: stream error: internal_error: transient blip"), KindServer, 0, true},
+		// A 4xx body mentioning server_error keeps its status-based (permanent)
+		// classification — the signature must not override a parsed status.
+		{"400 mentioning server_error", errors.New(`API returned non-200 status code 400: {"error":{"code":"not_server_error"}}`), KindInvalidRequest, 400, false},
 		{"unknown", errors.New("something completely different"), KindUnknown, 0, false},
 	}
 	for _, c := range cases {

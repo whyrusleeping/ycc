@@ -95,6 +95,55 @@ func (r *Repo) Show(sha string) (string, error) {
 	return r.run("show", "--no-color", "--stat", "--patch", "--end-of-options", sha)
 }
 
+// SyncStatus is a cheap, local snapshot of how the working tree relates to its
+// upstream tracking branch. It reads only refs already present locally (it does
+// NOT contact the remote — call Fetch first to refresh them), so it is safe to
+// call frequently and never blocks on the network or triggers auth prompts.
+type SyncStatus struct {
+	Branch      string // current branch name; "" when detached HEAD
+	HasUpstream bool   // whether the branch has a configured upstream
+	Ahead       int    // commits on HEAD not on upstream
+	Behind      int    // commits on upstream not on HEAD
+	Dirty       bool   // uncommitted changes (staged, unstaged, or untracked)
+}
+
+// Status returns a cheap, local SyncStatus (see the type doc). Ahead/Behind are
+// zero when there is no upstream tracking branch (HasUpstream false).
+func (r *Repo) Status() (SyncStatus, error) {
+	var s SyncStatus
+	// Current branch (empty/"HEAD" when detached).
+	if out, err := r.run("rev-parse", "--abbrev-ref", "HEAD"); err == nil {
+		if b := strings.TrimSpace(out); b != "HEAD" {
+			s.Branch = b
+		}
+	}
+	// Dirty check — porcelain lists staged, unstaged, and untracked changes.
+	if out, err := r.run("status", "--porcelain"); err == nil {
+		s.Dirty = strings.TrimSpace(out) != ""
+	}
+	// Ahead/behind vs. upstream. `git rev-list --count --left-right @{u}...HEAD`
+	// prints "<behind>\t<ahead>". A missing upstream is a normal, non-fatal
+	// state (detached HEAD, no tracking branch), so we swallow the error.
+	if out, err := r.run("rev-list", "--count", "--left-right", "@{upstream}...HEAD"); err == nil {
+		fields := strings.Fields(strings.TrimSpace(out))
+		if len(fields) == 2 {
+			s.HasUpstream = true
+			fmt.Sscanf(fields[0], "%d", &s.Behind)
+			fmt.Sscanf(fields[1], "%d", &s.Ahead)
+		}
+	}
+	return s, nil
+}
+
+// Fetch updates remote-tracking refs from the branch's upstream remote (or
+// origin) WITHOUT modifying the working tree. It performs network I/O and may
+// be slow or fail (offline, auth) — callers should treat failure as non-fatal
+// and fall back to the last cached Status. Returns an error on failure.
+func (r *Repo) Fetch() error {
+	_, err := r.run("fetch", "--quiet")
+	return err
+}
+
 func (r *Repo) run(args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = r.Dir
