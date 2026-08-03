@@ -303,6 +303,17 @@ public final class SessionViewModel {
         }
     }
 
+    /// Retry after a session error (an LLM API failure that exhausted the
+    /// daemon's automatic retries). This reuses the `Resume` RPC — on the daemon
+    /// a `Resume` of an errored, idle session re-runs the failed turn on the
+    /// existing history with no injected user message — so the user no longer has
+    /// to "retry" by sending a throwaway message.
+    public func retry() async {
+        await perform("retry") { actions in
+            try await actions.resume(sessionId: self.sessionID)
+        }
+    }
+
     /// Hard-terminate the session (`StopSession`).
     public func stopSession() async {
         await perform("stop") { actions in

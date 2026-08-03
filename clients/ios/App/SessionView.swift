@@ -137,6 +137,13 @@ struct SessionView: View {
                     },
                     onAnswerBatch: { answers in await model.answerBatch(answers) }
                 )
+                // Tie the sheet's identity to the gate: if `pendingQuestion`
+                // changes shape while the sheet is open (e.g. a reopened session's
+                // resumed agent asks a differently-sized batch), a new `rowID`
+                // rebuilds QuestionSheet with correctly-sized @State instead of
+                // reusing stale `texts`/`selected` arrays and trapping on an
+                // out-of-range index.
+                .id(pending.rowID)
             }
         }
         // Present/dismiss the sheet as the pending gate opens and clears — the
@@ -222,11 +229,14 @@ struct SessionView: View {
             )
         case .idle:
             banner("Session idle", systemImage: "moon.zzz.fill", tint: .secondary)
-        case .error(let message):
+        case .error(let message, let retryable):
+            let retryAction: (title: String, run: () -> Void)? =
+                retryable ? ("Retry", { Task { await model.retry() } }) : nil
             banner(
                 message.isEmpty ? "Session error" : "Error: \(message)",
                 systemImage: "exclamationmark.triangle.fill",
-                tint: .red
+                tint: .red,
+                action: retryAction
             )
         case .stopped:
             banner("Session stopped", systemImage: "stop.circle.fill", tint: .secondary)
@@ -929,9 +939,9 @@ private struct QuestionSheet: View {
                         }
                         TextField("Type an answer…", text: binding(index), axis: .vertical)
                             .lineLimit(1...4)
-                            .onChange(of: texts[index]) { _, newValue in
+                            .onChange(of: text(at: index)) { _, newValue in
                                 // Typing overrides a picked option.
-                                if !newValue.isEmpty { selected[index] = -1 }
+                                if !newValue.isEmpty { setSelected(-1, at: index) }
                             }
                         if !pending.isBatch {
                             singleSendSection
@@ -960,8 +970,8 @@ private struct QuestionSheet: View {
     private func optionRow(index: Int, optIdx: Int, option: String) -> some View {
         Button {
             if pending.isBatch {
-                selected[index] = optIdx
-                texts[index] = ""
+                setSelected(optIdx, at: index)
+                setText("", at: index)
             } else {
                 // Single question: an option tap answers immediately.
                 Task {
@@ -973,42 +983,65 @@ private struct QuestionSheet: View {
             HStack {
                 Text(option)
                 Spacer()
-                if pending.isBatch, selected[index] == optIdx {
+                if pending.isBatch, selectedValue(at: index) == optIdx {
                     Image(systemName: "checkmark").foregroundStyle(.tint)
                 }
             }
         }
     }
 
+    // Bounds-safe accessors for the per-question `@State` arrays. These arrays
+    // are seeded to `pending.questions.count` in `init` and the `.id(rowID)` on
+    // the sheet rebuilds this view when the gate changes, but guarding here means
+    // a transient shape desync can never trap on an out-of-range subscript.
+    private func text(at index: Int) -> String {
+        texts.indices.contains(index) ? texts[index] : ""
+    }
+
+    private func setText(_ value: String, at index: Int) {
+        guard texts.indices.contains(index) else { return }
+        texts[index] = value
+    }
+
+    private func selectedValue(at index: Int) -> Int {
+        selected.indices.contains(index) ? selected[index] : -1
+    }
+
+    private func setSelected(_ value: Int, at index: Int) {
+        guard selected.indices.contains(index) else { return }
+        selected[index] = value
+    }
+
     /// A binding to a per-question text draft, with a trailing send button for
     /// the single-question case.
     private func binding(_ index: Int) -> Binding<String> {
-        Binding(get: { texts[index] }, set: { texts[index] = $0 })
+        Binding(get: { text(at: index) }, set: { setText($0, at: index) })
     }
 
     /// For a single question, provide an inline send action for free text.
     private var singleSendSection: some View {
         Button("Send") {
             Task {
-                await onAnswerSingle(-1, texts[0])
+                await onAnswerSingle(-1, text(at: 0))
                 dismiss()
             }
         }
-        .disabled(texts.first?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        .disabled(text(at: 0).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
     private var allAnswered: Bool {
         for i in pending.questions.indices {
-            let hasText = !texts[i].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            if selected[i] < 0 && !hasText { return false }
+            let hasText = !text(at: i).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            if selectedValue(at: i) < 0 && !hasText { return false }
         }
         return true
     }
 
     private func submitBatch() {
         let answers: [(text: String, optionIndex: Int)] = pending.questions.indices.map { i in
-            if selected[i] >= 0 { return (text: "", optionIndex: selected[i]) }
-            return (text: texts[i], optionIndex: -1)
+            let sel = selectedValue(at: i)
+            if sel >= 0 { return (text: "", optionIndex: sel) }
+            return (text: text(at: i), optionIndex: -1)
         }
         Task {
             await onAnswerBatch(answers)

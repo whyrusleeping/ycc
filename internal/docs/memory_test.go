@@ -16,7 +16,7 @@ func TestAppendMemoryCreatesFileWithHeader(t *testing.T) {
 		t.Fatalf("ReadMemory on absent file = %q, %v; want \"\", nil", got, err)
 	}
 
-	if err := s.AppendMemory("go test ./internal/tui is slow", "environment"); err != nil {
+	if _, err := s.AppendMemory("go test ./internal/tui is slow", "environment"); err != nil {
 		t.Fatalf("AppendMemory: %v", err)
 	}
 	body, err := s.ReadMemory()
@@ -43,7 +43,7 @@ func TestAppendMemoryDefaultCategoryAndUnknown(t *testing.T) {
 	s := NewStore(ws)
 
 	// Empty category defaults to lesson.
-	if err := s.AppendMemory("tried X, failed", ""); err != nil {
+	if _, err := s.AppendMemory("tried X, failed", ""); err != nil {
 		t.Fatalf("AppendMemory default: %v", err)
 	}
 	body, _ := s.ReadMemory()
@@ -52,12 +52,12 @@ func TestAppendMemoryDefaultCategoryAndUnknown(t *testing.T) {
 	}
 
 	// Unknown category is an error.
-	if err := s.AppendMemory("something", "bogus"); err == nil {
+	if _, err := s.AppendMemory("something", "bogus"); err == nil {
 		t.Fatalf("expected error for unknown category")
 	}
 
 	// Empty note is rejected.
-	if err := s.AppendMemory("   ", "lesson"); err == nil {
+	if _, err := s.AppendMemory("   ", "lesson"); err == nil {
 		t.Fatalf("expected error for empty note")
 	}
 }
@@ -66,13 +66,13 @@ func TestAppendMemoryAppendsToExistingSection(t *testing.T) {
 	ws := t.TempDir()
 	s := NewStore(ws)
 
-	if err := s.AppendMemory("first gotcha", "gotcha"); err != nil {
+	if _, err := s.AppendMemory("first gotcha", "gotcha"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.AppendMemory("second gotcha", "gotcha"); err != nil {
+	if _, err := s.AppendMemory("second gotcha", "gotcha"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.AppendMemory("a preference", "preference"); err != nil {
+	if _, err := s.AppendMemory("a preference", "preference"); err != nil {
 		t.Fatal(err)
 	}
 	body, _ := s.ReadMemory()
@@ -91,23 +91,63 @@ func TestAppendMemoryAppendsToExistingSection(t *testing.T) {
 	}
 }
 
-func TestAppendMemoryBudgetRefusal(t *testing.T) {
+// Crossing the soft budget must NOT block a write: the note is still recorded
+// and AppendMemory returns a grooming nudge. A write is only refused once the
+// file hits the hard ceiling.
+func TestAppendMemorySoftBudgetNudgeThenHardRefusal(t *testing.T) {
 	ws := t.TempDir()
 	s := NewStore(ws)
-	// Pre-fill the file over budget.
-	big := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 300)
-	if len(big) < memoryBudget {
-		t.Fatalf("test fixture too small: %d", len(big))
+
+	// Pre-fill the file over the SOFT budget but under the hard ceiling.
+	overSoft := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 200)
+	if len(overSoft) < memorySoftBudget || len(overSoft) >= memoryHardBudget {
+		t.Fatalf("fixture size %d must be in [soft=%d, hard=%d)", len(overSoft), memorySoftBudget, memoryHardBudget)
 	}
-	if err := os.WriteFile(s.MemoryPath(), []byte(big), 0o644); err != nil {
+	if err := os.WriteFile(s.MemoryPath(), []byte(overSoft), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err := s.AppendMemory("one more", "lesson")
-	if err == nil {
-		t.Fatalf("expected budget refusal")
+	res, err := s.AppendMemory("one more", "lesson")
+	if err != nil {
+		t.Fatalf("over-soft-budget write must succeed, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "consolidate") {
-		t.Fatalf("budget error should mention consolidating: %v", err)
+	if res.Advice == "" || !strings.Contains(res.Advice, "soft budget") {
+		t.Fatalf("expected a grooming nudge mentioning the soft budget, got advice=%q", res.Advice)
+	}
+	body, _ := s.ReadMemory()
+	if !strings.Contains(body, "one more") {
+		t.Fatalf("note must be recorded even over budget:\n%s", body)
+	}
+
+	// Now pre-fill over the HARD ceiling: the write is refused.
+	overHard := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 500)
+	if len(overHard) < memoryHardBudget {
+		t.Fatalf("fixture too small for hard ceiling: %d", len(overHard))
+	}
+	if err := os.WriteFile(s.MemoryPath(), []byte(overHard), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AppendMemory("blocked", "lesson"); err == nil {
+		t.Fatalf("expected hard-ceiling refusal")
+	} else if !strings.Contains(err.Error(), "consolidate") {
+		t.Fatalf("hard-ceiling error should mention consolidating: %v", err)
+	}
+}
+
+// A long note is still recorded, but AppendMemory flags it as too verbose.
+func TestAppendMemoryLongEntryNudge(t *testing.T) {
+	ws := t.TempDir()
+	s := NewStore(ws)
+	long := strings.Repeat("x", memoryEntryHint+50)
+	res, err := s.AppendMemory(long, "lesson")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Advice, "long") {
+		t.Fatalf("expected a terseness nudge, got advice=%q", res.Advice)
+	}
+	body, _ := s.ReadMemory()
+	if !strings.Contains(body, long) {
+		t.Fatalf("long note should still be recorded verbatim")
 	}
 }
 

@@ -450,6 +450,15 @@ Both return `{}` on success. Error cases (verified):
 (without aborting an in-flight tool) so you can steer it with `SendInput`; `Resume`
 continues the same loop. Distinct from the hard `StopSession`.
 
+`Resume` also doubles as **retry-after-error**: when a session has parked in the
+error state (an LLM API failure that exhausted the daemon's automatic retries, so
+the last turn owes a response), `Resume` re-runs that failed turn on the existing
+history with **no injected user message** — so a client can offer a plain "Retry"
+button instead of making the user send a throwaway message. The `session_error`
+event carries a `retryable` flag (see [Event model](#event-model)) so clients can
+show the affordance only when a retry can help (transient rate-limit/server/network
+failures) and hide it for terminal ones (auth, invalid request, context-length).
+
 ```
 curl -sS -H "$AUTH" -H "$JSON" -d '{"sessionId":"s_doc"}' \
   $B/ycc.v1.SessionService/Interrupt
@@ -701,6 +710,12 @@ Common `type` values (initial set; full table in spec §5.2):
 `review_submitted`, `decision_made`, `doc_updated`, `commit_made`,
 `session_idle` / `session_error`, `session_stopped` / `session_reopened`, `log`,
 and the transient `turn_delta`.
+
+A `session_error` payload carries `msg` plus the daemon's failure classification:
+`kind`, `status` (HTTP status when known), and `retryable` (bool). A retryable
+error (rate-limit/server/network, exhausted automatic retries) can be re-attempted
+with [`Resume`](#interrupt--resume); a non-retryable one (auth, invalid request,
+context-length) cannot. Absence of the flag should be treated as retryable.
 
 ### Replay-from-seq reconnection
 

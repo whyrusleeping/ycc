@@ -17,6 +17,13 @@ public protocol SessionListSource: Sendable {
 
 extension YccClient: SessionListSource {}
 
+private struct HistoryLoad: Sendable {
+    let project: String
+    var sessions: [Ycc_V1_SessionSummary] = []
+    var error: String?
+    var unauthorized = false
+}
+
 /// The canonical status of a session, parsed from the daemon's free-form
 /// `status` string (`running` | `idle` | `error` | `paused` | `stopped`). The
 /// view maps each case to a colour + label; kept here so the mapping is
@@ -68,19 +75,23 @@ public final class SessionListModel {
     public private(set) var sessions: [Ycc_V1_SessionSummary] = []
     /// Registered projects; drives the project filter menu.
     public private(set) var projects: [Ycc_V1_ProjectInfo] = []
-    /// The selected project filter. `""` selects the daemon default workspace.
-    /// Setting it does not auto-refresh — the view calls ``refresh()``.
-    public var selectedProject: String = ""
+    /// The selected project filter. `nil` is the daemon-wide recent-session feed,
+    /// `""` is the daemon default workspace, and any other value is a registered
+    /// project name. Setting it does not auto-refresh — the view calls ``refresh()``.
+    public var selectedProject: String?
 
     public private(set) var isLoading = false
+    /// A fatal load error. Partial aggregate failures use ``partialWarning`` and
+    /// preserve every project that loaded successfully.
     public private(set) var errorMessage: String?
+    public private(set) var partialWarning: String?
     /// Set when a load failed with ``YccError/unauthorized``; the view observes
     /// this to route back to the connect screen via `AppModel.handleUnauthorized`.
     public private(set) var unauthorized = false
 
     private let source: SessionListSource
 
-    public init(source: SessionListSource, selectedProject: String = "") {
+    public init(source: SessionListSource, selectedProject: String? = nil) {
         self.source = source
         self.selectedProject = selectedProject
     }
@@ -90,22 +101,44 @@ public final class SessionListModel {
     /// so even a single registered project gives two choices.
     public var showsProjectFilter: Bool { !projects.isEmpty }
 
-    /// Sessions grouped into a pinned needs-answer section (when present) plus
-    /// the recency-ordered remainder.
-    public var sections: [SessionSection] { Self.sections(from: sessions) }
+    /// The daemon-wide home feed is one globally recency-sorted list. A scoped
+    /// project view retains the phone-focused needs-answer pinning behavior.
+    public var sections: [SessionSection] {
+        guard selectedProject != nil else {
+            return sessions.isEmpty ? [] : [SessionSection(
+                kind: .all, title: nil, sessions: Self.sortedByRecency(sessions))]
+        }
+        return Self.sections(from: sessions)
+    }
 
-    /// (Re)load session history for the selected project and the project list.
-    /// Unauthorized bubbles up via ``unauthorized`` for the view to handle.
+    /// Maps each loaded session id to the project argument required by transcript
+    /// and resume RPCs. Aggregate rows therefore remain routable after histories
+    /// from several projects are merged.
+    public private(set) var sessionProjects: [String: String] = [:]
+
+    /// (Re)load the project list and either one project's history or the default
+    /// daemon-wide recent feed. The aggregate feed queries each distinct registered
+    /// workspace once, merges and deduplicates the results, and keeps successful
+    /// projects when another project fails.
     public func refresh() async {
         isLoading = true
         defer { isLoading = false }
+        unauthorized = false
         do {
-            async let history = source.listSessionHistory(project: selectedProject)
-            async let projectList = source.listProjects()
-            let (loaded, loadedProjects) = try await (history, projectList)
-            sessions = loaded
+            let loadedProjects = try await source.listProjects()
             projects = loadedProjects
-            errorMessage = nil
+
+            if let selectedProject {
+                sessions = try await source.listSessionHistory(project: selectedProject)
+                sessionProjects = sessions.reduce(into: [:]) { routes, session in
+                    routes[session.sessionID] = selectedProject
+                }
+                partialWarning = nil
+                errorMessage = nil
+                return
+            }
+
+            await refreshRecentAcrossProjects(loadedProjects)
         } catch YccError.unauthorized {
             unauthorized = true
         } catch let YccError.rpc(message) {
@@ -115,16 +148,88 @@ public final class SessionListModel {
         }
     }
 
+    /// The project argument needed to open or resume a loaded row.
+    public func project(for session: Ycc_V1_SessionSummary) -> String {
+        sessionProjects[session.sessionID] ?? selectedProject ?? ""
+    }
+
+    private func refreshRecentAcrossProjects(_ loadedProjects: [Ycc_V1_ProjectInfo]) async {
+        // Project aliases that point at the same workspace would return the same
+        // event logs. Keep the first registration for a stable display/routing name.
+        var seenPaths = Set<String>()
+        let targets: [String] = loadedProjects.compactMap { project in
+            let path = project.path.trimmingCharacters(in: .whitespacesAndNewlines)
+            let identity = path.isEmpty ? "name:\(project.name)" : "path:\(path)"
+            return seenPaths.insert(identity).inserted ? project.name : nil
+        }
+        // A one-shot daemon has no registry; its implicit workspace is addressed
+        // with an empty project argument.
+        let queryTargets = targets.isEmpty ? [""] : targets
+
+        let loads = await withTaskGroup(of: HistoryLoad.self, returning: [HistoryLoad].self) { group in
+            for project in queryTargets {
+                let source = source
+                group.addTask {
+                    do {
+                        return HistoryLoad(
+                            project: project,
+                            sessions: try await source.listSessionHistory(project: project))
+                    } catch YccError.unauthorized {
+                        return HistoryLoad(project: project, unauthorized: true)
+                    } catch {
+                        return HistoryLoad(
+                            project: project,
+                            error: (error as? YccError)?.displayMessage ?? error.localizedDescription)
+                    }
+                }
+            }
+            var byProject: [String: HistoryLoad] = [:]
+            for await load in group { byProject[load.project] = load }
+            // Restore project-list order so equal timestamps and deduplication are stable.
+            return queryTargets.compactMap { byProject[$0] }
+        }
+
+        if loads.contains(where: \.unauthorized) {
+            unauthorized = true
+            return
+        }
+
+        var merged: [Ycc_V1_SessionSummary] = []
+        var routes: [String: String] = [:]
+        var seenSessionIDs = Set<String>()
+        for load in loads where load.error == nil {
+            for session in load.sessions where seenSessionIDs.insert(session.sessionID).inserted {
+                merged.append(session)
+                routes[session.sessionID] = load.project
+            }
+        }
+        sessions = Self.sortedByRecency(merged)
+        sessionProjects = routes
+
+        let failed = loads.filter { $0.error != nil }
+        if failed.isEmpty {
+            partialWarning = nil
+            errorMessage = nil
+        } else if failed.count < loads.count {
+            let names = failed.map { $0.project.isEmpty ? "Default" : $0.project }
+            partialWarning = "Some projects couldn’t be loaded: \(names.joined(separator: ", "))."
+            errorMessage = nil
+        } else {
+            partialWarning = nil
+            errorMessage = failed.first?.error ?? "Couldn’t load sessions."
+        }
+    }
+
     /// Deregister a project and reload the home screen. If it was selected, move
-    /// to the daemon's implicit Default workspace before refreshing so no request
-    /// is made with a now-stale project name. Returns true on success so the view
+    /// to the daemon-wide recent feed before refreshing so no request is made
+    /// with a now-stale project name. Returns true on success so the view
     /// can dismiss its confirmation state.
     @discardableResult
     public func removeProject(named name: String) async -> Bool {
         do {
             try await source.removeProject(name: name)
             projects.removeAll { $0.name == name }
-            if selectedProject == name { selectedProject = "" }
+            if selectedProject == name { selectedProject = nil }
             await refresh()
             return true
         } catch YccError.unauthorized {

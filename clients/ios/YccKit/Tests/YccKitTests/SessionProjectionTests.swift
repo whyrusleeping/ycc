@@ -421,7 +421,7 @@ final class SessionProjectionTests: XCTestCase {
         XCTAssertEqual(proj.phase, .running)
 
         proj.apply(makeEvent(seq: 5, type: "session_error", dataJson: #"{"msg":"boom"}"#))
-        XCTAssertEqual(proj.phase, .error("boom"))
+        XCTAssertEqual(proj.phase, .error("boom", retryable: true))
 
         proj.apply(makeEvent(seq: 6, type: "session_stopped"))
         XCTAssertEqual(proj.phase, .stopped)
@@ -431,7 +431,7 @@ final class SessionProjectionTests: XCTestCase {
         // Production shape: the daemon emits the message under "msg".
         var proj = SessionProjection()
         proj.apply(makeEvent(seq: 1, type: "session_error", dataJson: #"{"msg":"kaboom"}"#))
-        XCTAssertEqual(proj.phase, .error("kaboom"))
+        XCTAssertEqual(proj.phase, .error("kaboom", retryable: true))
         guard case .system(let text)? = proj.durableRows.last?.kind else {
             return XCTFail("session_error should render a system row")
         }
@@ -440,12 +440,20 @@ final class SessionProjectionTests: XCTestCase {
         // Fallback to the legacy "error" key.
         var errProj = SessionProjection()
         errProj.apply(makeEvent(seq: 1, type: "session_error", dataJson: #"{"error":"legacy"}"#))
-        XCTAssertEqual(errProj.phase, .error("legacy"))
+        XCTAssertEqual(errProj.phase, .error("legacy", retryable: true))
 
         // Fallback to "text".
         var textProj = SessionProjection()
         textProj.apply(makeEvent(seq: 1, type: "session_error", dataJson: #"{"text":"tail"}"#))
-        XCTAssertEqual(textProj.phase, .error("tail"))
+        XCTAssertEqual(textProj.phase, .error("tail", retryable: true))
+
+        // An explicit `retryable=false` (e.g. auth / invalid request / context
+        // length) suppresses the retry affordance.
+        var terminalProj = SessionProjection()
+        terminalProj.apply(makeEvent(
+            seq: 1, type: "session_error",
+            dataJson: #"{"msg":"context window exceeded","retryable":false}"#))
+        XCTAssertEqual(terminalProj.phase, .error("context window exceeded", retryable: false))
     }
 
     func testInterruptedRendersSystemRow() {

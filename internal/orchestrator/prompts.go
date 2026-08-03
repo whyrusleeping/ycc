@@ -379,8 +379,8 @@ and removed from memory; a note matured into a repeatable procedure moves to pla
 observation that implies work becomes a create_task; and operational trivia found IN the spec
 moves OUT to memory (keeping the spec normative-only makes the spec doctor's job tractable).
 GROOMING is your job: dedupe, merge repeats, prune stale/disproven entries, and run the
-promotion path — especially as memory nears its ~4 KB size budget (remember refuses over
-budget). Never treat memory entries as normative claims.
+promotion path — especially once memory passes its ~4 KB soft budget (remember keeps
+recording but nudges you to groom; it only refuses at a ~12 KB hard ceiling). Never treat memory entries as normative claims.
 
 Hand-off to work is deliberate. When a plan is agreed and its task exists, you MAY call
 switch_to_work to start implementing — but only that one specific task, and only with the
@@ -508,7 +508,7 @@ Steps:
 	`then remove it from memory; for a matured multi-step procedure, propose a plans/*.md runbook; for an ` +
 	`observation that implies work, create_task. Present the promotions for approval before applying spec edits.
 5. REWRITE memory.md (Edit/Write) keeping the "# Project memory" title and the advisory header blockquote and ` +
-	`the category sections, entries dated, well under the ~4 KB budget.
+	`the category sections, entries dated, and the whole file back under the ~4 KB soft budget.
 
 Use ask_user when intent is unclear; finish when memory.md is groomed and any approved promotions are recorded.`
 

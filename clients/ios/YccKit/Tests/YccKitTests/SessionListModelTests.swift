@@ -7,8 +7,10 @@ import YccProto
 /// the project passed to each history query so the filter round-trip is testable.
 private final class MockListSource: SessionListSource, @unchecked Sendable {
     var sessions: [Ycc_V1_SessionSummary] = []
+    var sessionsByProject: [String: [Ycc_V1_SessionSummary]] = [:]
     var projects: [Ycc_V1_ProjectInfo] = []
     var historyError: Error?
+    var historyErrorsByProject: [String: Error] = [:]
     var removeError: Error?
     private(set) var requestedProjects: [String] = []
     private(set) var removedProjects: [String] = []
@@ -18,8 +20,9 @@ private final class MockListSource: SessionListSource, @unchecked Sendable {
         lock.lock()
         requestedProjects.append(project)
         lock.unlock()
+        if let error = historyErrorsByProject[project] { throw error }
         if let historyError { throw historyError }
-        return sessions
+        return sessionsByProject[project] ?? sessions
     }
 
     func listProjects() async throws -> [Ycc_V1_ProjectInfo] {
@@ -63,10 +66,10 @@ final class SessionListModelTests: XCTestCase {
         return s
     }
 
-    private func project(_ name: String) -> Ycc_V1_ProjectInfo {
+    private func project(_ name: String, path: String? = nil) -> Ycc_V1_ProjectInfo {
         var p = Ycc_V1_ProjectInfo()
         p.name = name
-        p.path = "/tmp/\(name)"
+        p.path = path ?? "/tmp/\(name)"
         return p
     }
 
@@ -210,12 +213,72 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertEqual(model.projects.count, 2)
         XCTAssertTrue(model.showsProjectFilter)
         XCTAssertNil(model.errorMessage)
+        XCTAssertEqual(Set(source.requestedProjects), Set(["one", "two"]))
+    }
+
+    func testDefaultFeedAggregatesProjectsAndSortsGloballyByRecency() async {
+        let source = MockListSource()
+        source.projects = [project("one"), project("two")]
+        source.sessionsByProject = [
+            "one": [session(id: "old", lastActivity: "2026-07-08T08:00:00Z")],
+            "two": [session(id: "new", lastActivity: "2026-07-08T12:00:00Z")],
+        ]
+        let model = SessionListModel(source: source)
+
+        await model.refresh()
+
+        XCTAssertNil(model.selectedProject)
+        XCTAssertEqual(model.sections.flatMap(\.sessions).map(\.sessionID), ["new", "old"])
+        XCTAssertEqual(model.project(for: model.sessions.first { $0.sessionID == "new" }!), "two")
+        XCTAssertEqual(model.project(for: model.sessions.first { $0.sessionID == "old" }!), "one")
+        XCTAssertNil(model.partialWarning)
+    }
+
+    func testDefaultFeedDeduplicatesWorkspaceAliasesAndSessions() async {
+        let source = MockListSource()
+        source.projects = [
+            project("primary", path: "/same/workspace"),
+            project("alias", path: "/same/workspace"),
+        ]
+        source.sessionsByProject["primary"] = [session(id: "same")]
+        let model = SessionListModel(source: source)
+
+        await model.refresh()
+
+        XCTAssertEqual(source.requestedProjects, ["primary"])
+        XCTAssertEqual(model.sessions.map(\.sessionID), ["same"])
+        XCTAssertEqual(model.project(for: model.sessions[0]), "primary")
+    }
+
+    func testDefaultFeedPreservesPartialResultsAndWarns() async {
+        let source = MockListSource()
+        source.projects = [project("good"), project("bad")]
+        source.sessionsByProject["good"] = [session(id: "available")]
+        source.historyErrorsByProject["bad"] = YccError.rpc(message: "offline")
+        let model = SessionListModel(source: source)
+
+        await model.refresh()
+
+        XCTAssertEqual(model.sessions.map(\.sessionID), ["available"])
+        XCTAssertEqual(model.partialWarning, "Some projects couldn’t be loaded: bad.")
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testOneShotDefaultFeedQueriesImplicitWorkspace() async {
+        let source = MockListSource()
+        source.sessionsByProject[""] = [session(id: "implicit")]
+        let model = SessionListModel(source: source)
+
+        await model.refresh()
+
         XCTAssertEqual(source.requestedProjects, [""])
+        XCTAssertEqual(model.sessions.map(\.sessionID), ["implicit"])
+        XCTAssertEqual(model.project(for: model.sessions[0]), "")
     }
 
     func testProjectFilterRoundTrips() async {
         let source = MockListSource()
-        let model = SessionListModel(source: source)
+        let model = SessionListModel(source: source, selectedProject: "")
 
         await model.refresh()
         model.selectedProject = "myproj"
@@ -239,7 +302,7 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertFalse(emptyModel.showsProjectFilter)
     }
 
-    func testRemoveSelectedProjectFallsBackToDefaultAndRefreshes() async {
+    func testRemoveSelectedProjectFallsBackToRecentFeedAndRefreshes() async {
         let source = MockListSource()
         source.projects = [project("one"), project("two")]
         let model = SessionListModel(source: source, selectedProject: "two")
@@ -249,9 +312,9 @@ final class SessionListModelTests: XCTestCase {
 
         XCTAssertTrue(removed)
         XCTAssertEqual(source.removedProjects, ["two"])
-        XCTAssertEqual(model.selectedProject, "")
+        XCTAssertNil(model.selectedProject)
         XCTAssertEqual(model.projects.map(\.name), ["one"])
-        XCTAssertEqual(source.requestedProjects, ["two", ""])
+        XCTAssertEqual(source.requestedProjects, ["two", "one"])
     }
 
     func testRemoveProjectFailureKeepsSelectionAndSurfacesError() async {

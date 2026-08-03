@@ -110,8 +110,12 @@ public struct SessionProjection: Sendable, Equatable {
         case paused
         /// The agent finished its work and is idle (`session_idle`).
         case idle
-        /// The session errored (`session_error`), carrying the message.
-        case error(String)
+        /// The session errored (`session_error`), carrying the message. The
+        /// `retryable` flag mirrors the daemon's classification (loop.go): a
+        /// transient failure (rate limit, server/network) can be re-attempted via
+        /// `Resume`, while a terminal one (auth, invalid request, context length)
+        /// cannot. Defaults to `true` for generic errors that carry no flag.
+        case error(String, retryable: Bool)
         /// The session was hard-stopped / ended (`session_stopped`/`session_ended`).
         case stopped
     }
@@ -347,7 +351,11 @@ public struct SessionProjection: Sendable, Equatable {
             let msg = (data["msg"] as? String)
                 ?? (data["error"] as? String)
                 ?? (data["text"] as? String) ?? ""
-            phase = .error(msg)
+            // Absent flag ⇒ retryable (generic/max-turns errors are worth a retry);
+            // only an explicit `retryable=false` (auth, invalid request, context
+            // length) suppresses the affordance.
+            let retryable = (data["retryable"] as? Bool) ?? true
+            phase = .error(msg, retryable: retryable)
         case "session_stopped", "session_ended":
             phase = .stopped
         case "resumed", "session_reopened", "session_started",

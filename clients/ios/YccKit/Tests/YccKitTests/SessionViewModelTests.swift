@@ -441,4 +441,14 @@ final class SessionViewModelTests: XCTestCase {
         await vm.stopSession()
         XCTAssertEqual(actions.calls.map(\.kind), ["interrupt", "resume", "stop"])
     }
+
+    // The error-banner Retry maps to the Resume RPC (the daemon re-runs the failed
+    // turn on the existing history), and surfaces failures under a "retry" label.
+    func testRetryInvokesResume() async {
+        let actions = MockActionSource()
+        let vm = actionVM(actions)
+        await vm.retry()
+        XCTAssertEqual(actions.calls.map(\.kind), ["resume"])
+        XCTAssertNil(vm.actionError)
+    }
 }

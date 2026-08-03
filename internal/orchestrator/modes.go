@@ -180,9 +180,10 @@ func assemble(base, level, root string, editing bool) string {
 }
 
 // maxInjectedMemory defensively caps the memory content appended to every
-// agent's system prompt. memory.md has a ~4 KB write budget (docs.memoryBudget),
-// but a hand-edited file could exceed it; the cap keeps a runaway file from
-// bloating every prompt.
+// agent's system prompt. memory.md has a ~12 KB hard write ceiling
+// (docs.memoryHardBudget) with a 4 KB soft budget that nudges grooming, but a
+// hand-edited file could exceed even the ceiling; this cap keeps a runaway file
+// from bloating every prompt.
 const maxInjectedMemory = 16 * 1024
 
 // memorySection reads memory.md at the workspace root and returns the advisory
@@ -319,15 +320,17 @@ func workHandoffPrompt(taskID, plan string) string {
 // remember lets coordinator-level agents durably capture an operational learning
 // (spec §6.5): it appends a dated, categorized bullet to memory.md and emits
 // doc_updated. It is deliberately NOT given to the implementer or reviewers — the
-// coordinator decides what learning is durable (design doc §5.2). Over-budget
-// writes are refused with actionable guidance that reaches the model verbatim.
+// coordinator decides what learning is durable (design doc §5.2). A write is only
+// refused when memory.md hits a hard ceiling; crossing the soft budget still
+// records the note and returns a grooming nudge that reaches the model verbatim.
 func remember(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "remember",
 		Description: "Durably record an operational learning about WORKING ON this project in memory.md — advisory " +
 			"notes injected into future sessions (NOT design truth; that belongs in the spec). Use it for environment/" +
 			"tooling quirks, codebase gotchas, user preferences, and lessons learned. Appends a dated bullet under the " +
-			"chosen category. Refuses when memory.md is over its size budget — consolidate/groom it first.",
+			"chosen category; keep the note terse. The write succeeds even when memory is over its soft budget (you'll " +
+			"get a nudge to groom); it is only refused if memory hits a hard ceiling.",
 		Params: tools.Obj(map[string]any{
 			"note":     tools.StrProp("the learning to record, as a single concise sentence"),
 			"category": map[string]any{"type": "string", "enum": []string{"environment", "gotcha", "preference", "lesson"}, "description": "category (default 'lesson'): environment (tooling/env quirks), gotcha (codebase pitfalls), preference (user preferences), lesson (lessons learned)"},
@@ -335,14 +338,19 @@ func remember(d *Deps) *gollama.Tool {
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			note, _ := tools.GetString(params, "note")
 			category, _ := tools.GetString(params, "category")
-			if err := d.Docs.AppendMemory(note, category); err != nil {
+			res, err := d.Docs.AppendMemory(note, category)
+			if err != nil {
 				return tools.ErrResult("remember: %v", err), nil
 			}
 			d.Emitter.Emit(event.DocUpdated, map[string]any{"doc": "memory", "path": "memory.md"})
 			if strings.TrimSpace(category) == "" {
 				category = "lesson"
 			}
-			return tools.OkResult("recorded in memory.md under " + category), nil
+			msg := "recorded in memory.md under " + category
+			if res.Advice != "" {
+				msg += " — note: " + res.Advice
+			}
+			return tools.OkResult(msg), nil
 		},
 	}
 }

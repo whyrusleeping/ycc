@@ -67,8 +67,12 @@ type Session struct {
 
 	inputCh   chan string
 	messageCh chan engine.UserMessage
-	ctx       context.Context
-	cancel    context.CancelFunc
+	// retryCh nudges the idle-after-error run loop to re-run the failed turn on
+	// the existing history (no new user message). Unbuffered so a Retry while the
+	// loop is running/paused is a harmless no-op (nothing is receiving).
+	retryCh chan struct{}
+	ctx     context.Context
+	cancel  context.CancelFunc
 
 	// stopOnce guards Stop so a hard terminate runs at most once even if both a
 	// StopSession RPC and a manager teardown race to call it.
@@ -509,15 +513,30 @@ func (s *Session) Interrupt() error {
 }
 
 // Resume continues a paused loop with no correction (spec §18.7). It cancels a
-// not-yet-effective pause request, and is a no-op if nothing is paused.
+// not-yet-effective pause request. When the session is idle after a session
+// error (retries exhausted), it instead nudges the run loop to re-run the failed
+// turn on the existing history — a true retry with no injected user message
+// (that is what "retry by sending another message" was standing in for). It is a
+// no-op if nothing is paused and the session is not errored.
 func (s *Session) Resume() error {
 	s.steerMu.Lock()
 	if s.paused {
 		s.signalResumeLocked()
-	} else {
-		s.pauseReq = false
+		s.steerMu.Unlock()
+		return nil
 	}
+	s.pauseReq = false
+	running := s.running
 	s.steerMu.Unlock()
+	// Errored + not running ⇒ the run loop is blocked waiting for input. Signal a
+	// retry so it re-runs without a bogus user turn. Non-blocking: if the loop is
+	// mid-run (or not on the retry-aware wait) the send falls through as a no-op.
+	if !running && s.Status() == event.StatusError {
+		select {
+		case s.retryCh <- struct{}{}:
+		default:
+		}
+	}
 	return nil
 }
 
@@ -918,6 +937,10 @@ func (s *Session) run() {
 			s.currentLoop().Post(text)
 		case input := <-s.messageCh:
 			s.currentLoop().PostMessage(input)
+		case <-s.retryCh:
+			// Retry after a session error: loop back and re-run the failed turn on
+			// the existing history (the last user/tool turn still owes a response),
+			// without injecting a user message.
 		case <-s.ctx.Done():
 			return
 		}
@@ -1431,6 +1454,7 @@ func (m *Manager) newSession(absWS, id, mode, level, prompt string, log *event.L
 		resumed:          resumed,
 		inputCh:          make(chan string, 64),
 		messageCh:        make(chan engine.UserMessage, 64),
+		retryCh:          make(chan struct{}),
 		ctx:              ctx,
 		cancel:           cancel,
 		status:           event.StatusRunning,

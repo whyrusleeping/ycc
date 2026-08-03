@@ -3,7 +3,10 @@
 > Status: **accepted / implemented** (first cut, task 0169: committed root
 > `memory.md`, the `remember` tool for coordinator-level agents, whole-memory
 > injection into every agent's system prompt, `doc_updated` eventing, spec-doctor
-> exclusion, and the `memory-groom` pm preset). Deferred: the git-ignored
+> exclusion, and the `memory-groom` pm preset). Refined since: the write bound is
+> now a graded **~4 KB soft budget** (records the note + returns a grooming nudge)
+> with a **~12 KB hard ceiling** (refuses), replacing the original hard 4 KB
+> refusal (§5.4). Deferred: the git-ignored
 > `.ycc/memory.local.md` tier and end-of-session auto-capture. Grounded in the
 > current architecture: spec §1 (durable state lives in documents), §6 (document
 > model: spec entry point + docs set, backlog, plans),
@@ -142,11 +145,21 @@ instructions."* Read-only roles (reviewers) get it too — gotchas sharpen revie
 ### 5.4 Bounding & grooming
 
 Memory must stay small enough to inject wholesale — no retrieval machinery in the first
-cut. A hard budget (~4 KB / ~60 entries) enforced at `remember` time: when over budget,
-the tool refuses with "consolidate first". Grooming is a `pm` activity (and a candidate
-preset beside `spec-doctor`, §9): dedupe, drop stale/disproven entries, merge repeats,
-and run the promotion path (§3). The grooming prompt treats *repeated re-confirmation*
-as the promotion signal.
+cut. Bounding is **graded, not a hard wall at the injection size**, because a hard refusal
+at the boundary turns a cheap incidental action (jot a learning mid-task) into a forced
+grooming detour — the disruptive failure mode observed in practice. So:
+
+- a **~4 KB soft budget**: crossing it does *not* block a write. `remember` still records
+  the note and returns an escalating **grooming nudge** (current size + "run memory-groom
+  soon"); an over-long single entry also draws a terseness nudge. The learning is never lost.
+- a **~12 KB hard ceiling**: only here does `remember` refuse, with "consolidate first"
+  guidance — this still catches a genuinely runaway file, but with generous runway and
+  repeated nudges first. A defensive injection cap (~16 KB) protects the prompt from a
+  hand-edited file that exceeds even the ceiling.
+
+Grooming is a `pm` activity (and a candidate preset beside `spec-doctor`, §9): dedupe, drop
+stale/disproven entries, merge repeats, and run the promotion path (§3). The grooming prompt
+treats *repeated re-confirmation* as the promotion signal.
 
 ## 6. Open questions
 

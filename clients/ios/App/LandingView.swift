@@ -37,7 +37,7 @@ struct LandingView: View {
                     ProgressView()
                 }
             }
-            .navigationTitle("Sessions")
+            .navigationTitle(model?.selectedProject == nil ? "Recent Sessions" : "Sessions")
             .toolbar {
                 // Always shown (not gated on registered projects): the menu is
                 // also the home of the "Add project…" affordance, which must be
@@ -192,7 +192,7 @@ struct LandingView: View {
     /// live view. Idempotent server-side if the session is already live.
     private func resume(_ session: Ycc_V1_SessionSummary) {
         guard let client = app.client else { return }
-        let project = model?.selectedProject ?? ""
+        let project = model?.project(for: session) ?? ""
         Task {
             do {
                 let sessionID = try await client.resumeSession(
@@ -227,8 +227,11 @@ struct LandingView: View {
             refreshableUnavailable(model) {
                 ContentUnavailableView(
                     "No sessions",
-                    systemImage: "bubble.left.and.bubble.right",
-                    description: Text("Sessions started on this daemon show up here."))
+                    systemImage: model.partialWarning == nil
+                        ? "bubble.left.and.bubble.right"
+                        : "exclamationmark.triangle",
+                    description: Text(model.partialWarning
+                        ?? "Sessions started on this daemon show up here."))
             }
         } else {
             sessionList(model)
@@ -252,6 +255,12 @@ struct LandingView: View {
 
     private func sessionList(_ model: SessionListModel) -> some View {
         List {
+            if let warning = model.partialWarning {
+                Label(warning, systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+                    .accessibilityLabel("Partial results. \(warning)")
+            }
             ForEach(model.sections) { section in
                 Section {
                     ForEach(section.sessions, id: \.sessionID) { session in
@@ -263,12 +272,15 @@ struct LandingView: View {
                             if let client = app.client {
                                 SessionView(
                                     client: client,
-                                    project: model.selectedProject,
+                                    project: model.project(for: session),
                                     sessionID: session.sessionID,
                                     live: session.live)
                             }
                         } label: {
-                            SessionRow(session: session)
+                            SessionRow(
+                                session: session,
+                                project: model.project(for: session),
+                                showsProject: model.selectedProject == nil)
                         }
                         .listRowBackground(section.kind == .needsAnswer
                             ? Color.orange.opacity(0.12) : nil)
@@ -311,9 +323,10 @@ struct LandingView: View {
         @Bindable var model = model
         return Menu {
             Picker("Project", selection: $model.selectedProject) {
-                Text("Default").tag("")
+                Text("All projects").tag(String?.none)
+                Text("Default").tag(String?.some(""))
                 ForEach(model.projects, id: \.name) { project in
-                    Text(project.name).tag(project.name)
+                    Text(project.name).tag(String?.some(project.name))
                 }
             }
             Divider()
@@ -337,7 +350,7 @@ struct LandingView: View {
             }
         } label: {
             Label(
-                model.selectedProject.isEmpty ? "Default" : model.selectedProject,
+                model.selectedProject.map { $0.isEmpty ? "Default" : $0 } ?? "All projects",
                 systemImage: "line.3.horizontal.decrease.circle")
         }
         .onChange(of: model.selectedProject) { _, _ in
@@ -392,7 +405,7 @@ struct LandingView: View {
         if let match = model?.sessions.first(where: { $0.sessionID == sessionID }) {
             liveTarget = LiveSessionTarget(
                 sessionID: sessionID,
-                project: model?.selectedProject ?? "",
+                project: model?.project(for: match) ?? "",
                 live: match.live)
             return
         }
@@ -449,6 +462,8 @@ private struct LiveSessionTarget: Identifiable, Hashable {
 /// turns, and a relative last-activity time.
 private struct SessionRow: View {
     let session: Ycc_V1_SessionSummary
+    var project = ""
+    var showsProject = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -471,6 +486,10 @@ private struct SessionRow: View {
             }
             HStack(spacing: 8) {
                 StatusBadge(status: session.status)
+                if showsProject {
+                    Label(project.isEmpty ? "Default" : project, systemImage: "folder")
+                        .lineLimit(1)
+                }
                 if session.turns > 0 {
                     Label("\(session.turns)", systemImage: "arrow.triangle.2.circlepath")
                         .labelStyle(.titleAndIcon)

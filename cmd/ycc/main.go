@@ -576,10 +576,20 @@ func daemonCommand() *cli.Command {
 			&cli.BoolFlag{Name: "web", Usage: "serve the embedded web client at / (static assets are unauthenticated; RPCs still require the bearer token)"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
+			// Like the in-process and background-daemon paths, fall back to the
+			// discovered ycc.toml (workspace, then user config dir) when no
+			// -config is given. Without this the persistent daemon boots from the
+			// hardcoded DefaultAnthropic and ignores an existing config, so
+			// settings edits persisted to that file never survive a restart.
+			configPath := cmd.String("config")
+			workspace := cmd.String("workspace")
+			if configPath == "" {
+				configPath = daemon.DiscoverConfig(workspace)
+			}
 			err := daemon.Serve(daemon.Options{
 				Addr:       cmd.String("addr"),
-				Workspace:  cmd.String("workspace"),
-				ConfigPath: cmd.String("config"),
+				Workspace:  workspace,
+				ConfigPath: configPath,
 				Model:      cmd.String("model"),
 				BaseURL:    cmd.String("base-url"),
 				KeyEnv:     cmd.String("key-env"),

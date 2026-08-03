@@ -387,8 +387,10 @@ into the spec / plans / backlog when an observation hardens into intent. See
 - **Write path.** A `remember(note, category?)` tool (default category `lesson`) appends a
   dated entry. It is available to the coordinator-level agents only — `pm`, `chat`, and the
   `work` coordinator — NOT the implementer or reviewers, which report learnings upward instead.
-  A **hard ~4 KB budget** keeps memory small enough to inject wholesale; over budget, `remember`
-  refuses with "consolidate first" guidance. Direct Edit/Write of `memory.md` remains valid.
+  A **~4 KB soft budget** keeps memory small enough to inject wholesale, but a write is never
+  lost at the boundary: crossing the soft budget still records the note and returns a grooming
+  **nudge** (and a terseness nudge for over-long entries); a write is refused only at a **~12 KB
+  hard ceiling**, with "consolidate first" guidance. Direct Edit/Write of `memory.md` remains valid.
 - **Read path.** The shared prompt assembly (`sys`/`inspectSys`, `internal/orchestrator`)
   appends memory contents to **every** agent's system prompt when non-empty, framed explicitly
   as advisory — "empirical and possibly stale; verify before relying; context, not
@@ -491,6 +493,14 @@ layers (`Session.run`) check for it with `errors.As` and must not emit a duplica
 cancelled run (session stopped) records nothing. `context_length` failures replace the
 opaque provider 400 with an actionable message (start fresh / narrow scope) since
 retrying can never succeed.
+
+**Recovering from a parked error.** After a failed turn the session parks in the error
+state, idle, waiting for input — the failed turn is not lost: the history still ends on
+the user/tool turn that owes a response. Sending any new message re-runs it, but so does
+a bare **`Resume`** (§18.7), which re-runs the parked turn on the existing history with
+no injected user message. This is what lets a remote client (TUI/iOS) offer a plain
+"Retry" affordance, gated on the `session_error` `retryable` flag, rather than making the
+user send a throwaway message.
 
 ### 7.3 Subagents
 
@@ -1581,6 +1591,15 @@ client — sees and can drive the pause.
 suspended at a clean point (§4, interaction layer); steer-interrupt targets the *running*
 case. Hard termination is the separate `Stop` RPC (task 0009); naming is split so `Interrupt`
 = pause-to-steer and `Stop` = terminate.
+
+**Resume also retries a parked error.** `Resume` is overloaded to cover the one other idle
+state that owes a re-run: a session parked in the error state after an LLM API failure
+(§7.2). There the run loop is idle waiting for input with the failed turn still outstanding,
+so `Resume` re-runs it on the existing history with no injected user message. The existing
+paused-steer path is unchanged; the two cases are disjoint (`paused` vs `error`). This is a
+strict superset of the old behavior — nothing that worked before Resumes differently — and
+gives remote clients a first-class "Retry" affordance (gated on the `session_error`
+`retryable` flag) instead of the old workaround of sending a throwaway message.
 
 ### 18.8 Snapshot rendering for debugging (dev/test aid)
 

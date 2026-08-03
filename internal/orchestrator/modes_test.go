@@ -502,20 +502,39 @@ func TestRememberAppendsAndEmitsDocUpdated(t *testing.T) {
 	}
 }
 
-// An over-budget memory.md causes remember to return an error result whose
+// Over the soft budget, remember still records the note but its result carries a
+// grooming nudge. Over the hard ceiling, remember returns an error result whose
 // guidance ("consolidate") reaches the model.
-func TestRememberOverBudgetRefused(t *testing.T) {
+func TestRememberSoftNudgeThenHardRefusal(t *testing.T) {
 	d := depsFor(t)
-	big := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 300)
-	if err := os.WriteFile(d.Docs.MemoryPath(), []byte(big), 0o644); err != nil {
+
+	// Over soft budget, under hard ceiling: recorded, with a nudge.
+	overSoft := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 200)
+	if err := os.WriteFile(d.Docs.MemoryPath(), []byte(overSoft), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	res, err := remember(d).Call(context.Background(), map[string]any{"note": "x"})
+	res, err := remember(d).Call(context.Background(), map[string]any{"note": "keep me"})
+	if err != nil {
+		t.Fatalf("remember returned a hard error: %v", err)
+	}
+	if res.IsError || !strings.Contains(res.Content, "soft budget") {
+		t.Fatalf("expected a success result with a soft-budget nudge; got IsError=%v %q", res.IsError, res.Content)
+	}
+	if body, _ := d.Docs.ReadMemory(); !strings.Contains(body, "keep me") {
+		t.Fatalf("note must be recorded over the soft budget:\n%s", body)
+	}
+
+	// Over the hard ceiling: refused with consolidate guidance.
+	overHard := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 500)
+	if err := os.WriteFile(d.Docs.MemoryPath(), []byte(overHard), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err = remember(d).Call(context.Background(), map[string]any{"note": "x"})
 	if err != nil {
 		t.Fatalf("remember returned a hard error: %v", err)
 	}
 	if !res.IsError || !strings.Contains(res.Content, "consolidate") {
-		t.Fatalf("expected an over-budget error result mentioning consolidate; got IsError=%v %q", res.IsError, res.Content)
+		t.Fatalf("expected a hard-ceiling error result mentioning consolidate; got IsError=%v %q", res.IsError, res.Content)
 	}
 }
 

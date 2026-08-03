@@ -138,7 +138,7 @@ work unchanged and are recommended off-tailnet.
 
 ## 6. Screens & feature phases
 
-### Navigation shell — workspace drawer + active-session inbox
+### Navigation shell — workspace drawer + recent-session feed
 
 The authenticated app uses a **left-edge workspace drawer**, following the Slack /
 Discord interaction model rather than making project selection a small toolbar
@@ -148,13 +148,12 @@ swiping it closed returns to the current screen.
 
 The drawer has two levels of navigation:
 
-1. **All active sessions** — a daemon-wide inbox at the top. It merges live
-   sessions from every registered project, pins sessions waiting for input, and
-   sorts the rest by latest activity. Every row is visibly annotated with its
-   project name; the drawer row carries badges for total active and needs-answer
-   counts. This is the default landing destination on a multi-project daemon, so
-   a question in another workspace cannot be hidden by the currently selected
-   project.
+1. **Recent sessions** — a daemon-wide feed at the top. It merges live and
+   persisted sessions from every registered project and sorts the complete feed
+   by latest activity (with started-at fallback), most recent first. Every row is
+   visibly annotated with its project name. This is the default landing
+   destination on a multi-project daemon, so recent work and questions in another
+   workspace cannot be hidden by the currently selected project.
 2. **Projects** — the registered workspace list, each with active /
    needs-answer badges. Selecting a project closes the drawer and scopes the
    session list and project destinations (backlog, usage, workstreams, and new
@@ -163,11 +162,8 @@ The drawer has two levels of navigation:
 
 The first implementation aggregates client-side: call `ListProjects`, fan out
 `ListSessionHistory(project:)`, wrap every returned summary with its project
-identity, merge/deduplicate, and retain active rows for **All active**: live
-`running` / `paused` sessions (including every `waitingInput` row), plus live
-`error` rows as attention items; `idle` / `stopped` history remains inside its
-project. This preserves titles and `waitingInput`, which the lighter
-`ListSessions` rows do not
+identity, merge/deduplicate, and globally sort all rows by latest activity. This
+preserves titles and `waitingInput`, which the lighter `ListSessions` rows do not
 carry, and requires no client-specific RPC. Registered project paths are used to
 avoid querying the same workspace twice; the daemon-default workspace is used as
 a fallback when there are no registered projects. Fan-out tolerates a failed
@@ -185,11 +181,11 @@ do not permanently remove access to the daemon-wide inbox.
 1. **Connect screen** — base URL + token; validate with `ListProjects`
    (401 → "invalid token"); persist (Keychain for the token).
 2. **Session list** — the navigation shell above provides both the daemon-wide
-   **All active sessions** inbox and project-scoped `ListSessionHistory` views.
-   Rows are most-recent-first with waiting-input pinned; each aggregate row shows
+   **Recent sessions** feed and project-scoped `ListSessionHistory` views. The
+   aggregate feed is strictly most-recent-first by last activity; each row shows
    its project, plus status badge (`running`/`idle`/`error`), live marker, and
-   turns. `waitingInput:true` rows are styled loudest ("needs answer" is the
-   whole point of a phone client). Pull-to-refresh + refresh on foreground.
+   turns. `waitingInput:true` rows remain styled loudly. Pull-to-refresh +
+   refresh on foreground.
 3. **Session view** — the transcript feed from `SessionProjection`: live
    sessions via `Subscribe`, persisted via `GetSessionTranscript`. Auto-follow
    scroll with a "jump to latest" pill when the user scrolls up. The
@@ -204,7 +200,10 @@ do not permanently remove access to the daemon-wide inbox.
    buttons + free text) → `AnswerQuestion` / `AnswerQuestions` (positional batch;
    `optionIndex >= 0` picks an option, `-1` sends text), dismissed by
    `question_answered`; toolbar/overflow → `Interrupt` / `Resume` /
-   `StopSession` (with confirmation on stop).
+   `StopSession` (with confirmation on stop). The phase banner surfaces a **Retry**
+   button when the session has errored on a *retryable* LLM API failure (the
+   `session_error` `retryable` flag); it calls `Resume`, which re-runs the failed
+   turn on the existing history with no throwaway user message.
 
 ### Phase 2 — start work, backlog
 
@@ -249,7 +248,7 @@ do not permanently remove access to the daemon-wide inbox.
 ## 7. RPC coverage map
 
 Phase 1: `ListProjects`, `ListSessionHistory` (fanned out by the client for the
-cross-project active-session inbox), `GetSessionTranscript`, `Subscribe`,
+cross-project recent-session feed), `GetSessionTranscript`, `Subscribe`,
 `SendInput`, `AnswerQuestion(s)`, `Interrupt`, `Resume`,
 `StopSession`. Phase 2 adds: `ListModes`, `StartSession`, `ResumeSession`,
 `ListBacklog`, `GetTask`, `UpdateTask` (optionally `CreateTask`). Phase 3 adds:
