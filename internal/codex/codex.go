@@ -117,6 +117,14 @@ type reasoningOpts struct {
 	Summary string `json:"summary,omitempty"`
 }
 
+// streamOpts asks the Codex Responses backend to finish each reasoning-summary
+// section in sequence. Without this, concurrently generated sections can be cut
+// off before their authoritative `...text.done` event arrives, leaving ycc with
+// only an early fragment of the provider-visible summary.
+type streamOpts struct {
+	ReasoningSummaryDelivery string `json:"reasoning_summary_delivery"`
+}
+
 type request struct {
 	Model             string         `json:"model"`
 	Instructions      string         `json:"instructions"`
@@ -126,6 +134,7 @@ type request struct {
 	ParallelToolCalls bool           `json:"parallel_tool_calls"`
 	Store             bool           `json:"store"`
 	Stream            bool           `json:"stream"`
+	StreamOptions     *streamOpts    `json:"stream_options,omitempty"`
 	Reasoning         *reasoningOpts `json:"reasoning,omitempty"`
 }
 
@@ -169,9 +178,11 @@ func buildRequest(opts gollama.RequestOptions) request {
 			effort = "xhigh"
 		}
 		// "detailed" affects only the user-visible summary, not the private
-		// reasoning itself. It gives ycc a useful trace instead of the one-line
-		// headings commonly selected by the provider's "auto" mode.
+		// reasoning itself. It gives ycc the most useful trace the provider makes
+		// available. Sequential delivery makes completed sections authoritative and
+		// prevents later summary work from truncating earlier sections.
 		req.Reasoning = &reasoningOpts{Effort: effort, Summary: "detailed"}
+		req.StreamOptions = &streamOpts{ReasoningSummaryDelivery: "sequential_cutoff"}
 	}
 	return req
 }
@@ -240,9 +251,13 @@ func buildInput(msgs []gollama.Message) []inputItem {
 
 // sseEvent mirrors the fields we consume across codex stream event types.
 type sseEvent struct {
-	Type  string `json:"type"`
-	Delta string `json:"delta"`
-	Item  *struct {
+	Type         string `json:"type"`
+	Delta        string `json:"delta"`
+	Text         string `json:"text"`
+	SummaryIndex *int   `json:"summary_index"`
+	ItemID       string `json:"item_id"`
+	Item         *struct {
+		ID        string `json:"id"`
 		Type      string `json:"type"`
 		Name      string `json:"name"`
 		Arguments string `json:"arguments"`
@@ -251,6 +266,10 @@ type sseEvent struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"content"`
+		Summary []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"summary"`
 	} `json:"item"`
 	// Error is the payload of a stream-level `error` frame, which the backend
 	// can send over an otherwise-healthy HTTP 200 stream. It is distinct from
@@ -346,14 +365,41 @@ func (c *Client) TurnStream(opts gollama.RequestOptions, onDelta func(text strin
 // returns the provider-reported hidden reasoning-token count separately because
 // gollama.Usage does not currently model output_tokens_details.
 func parseStream(r io.Reader, model string, onDelta func(string)) (*gollama.ResponseMessageGenerate, int, error) {
+	type summaryPart struct {
+		itemID string
+		index  int
+		text   string
+	}
 	var (
 		text            strings.Builder
-		thinking        strings.Builder
+		legacyThinking  strings.Builder
+		summaryParts    []*summaryPart
 		toolCalls       []gollama.ToolCall
 		out             = &gollama.ResponseMessageGenerate{Model: model, Done: true, StopReason: "stop"}
 		completed       bool
 		reasoningTokens int
 	)
+	// Summary deltas and done events identify a section by reasoning item +
+	// summary index. Some older streams omit item_id, so let a later authoritative
+	// event adopt an unclaimed same-index part rather than displaying it twice.
+	findSummaryPart := func(itemID string, index int) *summaryPart {
+		for _, part := range summaryParts {
+			if part.itemID == itemID && part.index == index {
+				return part
+			}
+		}
+		if itemID != "" {
+			for _, part := range summaryParts {
+				if part.itemID == "" && part.index == index {
+					part.itemID = itemID
+					return part
+				}
+			}
+		}
+		part := &summaryPart{itemID: itemID, index: index}
+		summaryParts = append(summaryParts, part)
+		return part
+	}
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	for scanner.Scan() {
@@ -376,12 +422,37 @@ func parseStream(r io.Reader, model string, onDelta func(string)) (*gollama.Resp
 				onDelta(text.String())
 			}
 		case "response.reasoning_summary_text.delta":
-			thinking.WriteString(ev.Delta)
+			if ev.SummaryIndex == nil {
+				// Compatibility with the original Codex stream shape, before
+				// summary sections carried stable indexes.
+				legacyThinking.WriteString(ev.Delta)
+				continue
+			}
+			findSummaryPart(ev.ItemID, *ev.SummaryIndex).text += ev.Delta
+		case "response.reasoning_summary_text.done":
+			if ev.SummaryIndex == nil {
+				if ev.Text != "" {
+					legacyThinking.Reset()
+					legacyThinking.WriteString(ev.Text)
+				}
+				continue
+			}
+			// The done event is authoritative: replace (do not append to) the
+			// partial deltas, which may have been truncated or lossy.
+			findSummaryPart(ev.ItemID, *ev.SummaryIndex).text = ev.Text
 		case "response.output_item.done":
 			if ev.Item == nil {
 				continue
 			}
 			switch ev.Item.Type {
+			case "reasoning":
+				// Non-streaming-compatible fallback: a completed reasoning item
+				// may carry its summary array without summary text events.
+				for i, summary := range ev.Item.Summary {
+					if summary.Type == "summary_text" && summary.Text != "" {
+						findSummaryPart(ev.Item.ID, i).text = summary.Text
+					}
+				}
 			case "function_call":
 				toolCalls = append(toolCalls, gollama.ToolCall{
 					ID:   ev.Item.CallID,
@@ -441,11 +512,20 @@ func parseStream(r io.Reader, model string, onDelta func(string)) (*gollama.Resp
 	if len(toolCalls) > 0 {
 		out.StopReason = "tool_calls"
 	}
+	thinking := make([]string, 0, len(summaryParts)+1)
+	if s := strings.TrimSpace(legacyThinking.String()); s != "" {
+		thinking = append(thinking, s)
+	}
+	for _, part := range summaryParts {
+		if s := strings.TrimSpace(part.text); s != "" {
+			thinking = append(thinking, s)
+		}
+	}
 	out.Choices = []gollama.GenChoice{{
 		Message: gollama.Message{
 			Role:      "assistant",
 			Content:   text.String(),
-			Thinking:  thinking.String(),
+			Thinking:  strings.Join(thinking, "\n\n"),
 			ToolCalls: toolCalls,
 		},
 		FinishReason: out.StopReason,

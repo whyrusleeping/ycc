@@ -204,7 +204,7 @@ struct TaskDetailView: View {
             defer { isStarting = false }
             do {
                 let sessionID = try await client.startSession(
-                    project: project, mode: "work", prompt: prompt, interactionLevel: "judgement")
+                    project: project, mode: "work", prompt: prompt)
                 liveTarget = LiveTaskSessionTarget(sessionID: sessionID, project: project)
             } catch YccError.unauthorized {
                 app.handleUnauthorized()

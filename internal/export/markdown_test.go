@@ -151,7 +151,7 @@ func TestAskUserAutoAnswer(t *testing.T) {
 		ev(4, "coordinator", "tool_result", map[string]any{"id": "a1", "result": "no human"}),
 	}
 	md := Markdown(evs, Options{SessionID: "s1"})
-	if !strings.Contains(md, "auto-answered (autonomous mode)") {
+	if !strings.Contains(md, "auto-answered (unattended execution)") {
 		t.Fatalf("expected auto-answer line:\n%s", md)
 	}
 }
@@ -276,13 +276,13 @@ func TestUserInputQueued(t *testing.T) {
 func TestHeaderAndMetadata(t *testing.T) {
 	evs := []*v1.Event{
 		{Seq: 1, Actor: "system", Type: "session_started", Ts: "2026-07-06T12:00:00Z",
-			DataJson: `{"mode":"work","workspace":"/tmp/proj","interaction_level":"autonomous"}`},
+			DataJson: `{"mode":"work","workspace":"/tmp/proj"}`},
 	}
 	md := Markdown(evs, Options{SessionID: "s_abc"})
 	if !strings.HasPrefix(md, "# Session s_abc") {
 		t.Fatalf("expected header:\n%s", md)
 	}
-	for _, want := range []string{"mode: work", "workspace: /tmp/proj", "level: autonomous", "started: 2026-07-06"} {
+	for _, want := range []string{"mode: work", "workspace: /tmp/proj", "started: 2026-07-06"} {
 		if !strings.Contains(md, want) {
 			t.Fatalf("expected metadata %q:\n%s", want, md)
 		}

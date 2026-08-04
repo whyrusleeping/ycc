@@ -302,6 +302,36 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertFalse(emptyModel.showsProjectFilter)
     }
 
+    func testRecentFeedRequiresProjectChoiceForNewSession() async {
+        let source = MockListSource()
+        source.projects = [project("one"), project("two")]
+        let model = SessionListModel(source: source)
+
+        await model.refresh()
+
+        XCTAssertTrue(model.requiresProjectChoiceForNewSession)
+        XCTAssertEqual(model.newSessionProjectChoices, ["one", "two"])
+    }
+
+    func testScopedListStartsNewSessionInSelectedProject() async {
+        let source = MockListSource()
+        source.projects = [project("one"), project("two")]
+        let model = SessionListModel(source: source, selectedProject: "two")
+
+        await model.refresh()
+
+        XCTAssertFalse(model.requiresProjectChoiceForNewSession)
+    }
+
+    func testOneShotRecentFeedOffersOnlyDefaultProject() async {
+        let model = SessionListModel(source: MockListSource())
+
+        await model.refresh()
+
+        XCTAssertTrue(model.requiresProjectChoiceForNewSession)
+        XCTAssertEqual(model.newSessionProjectChoices, [""])
+    }
+
     func testRemoveSelectedProjectFallsBackToRecentFeedAndRefreshes() async {
         let source = MockListSource()
         source.projects = [project("one"), project("two")]

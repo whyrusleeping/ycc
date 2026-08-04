@@ -5,7 +5,7 @@
 //
 // M3 adds: multi-model reviewer fan-out (concurrent, with a barrier), a revise
 // loop that REUSES subagent contexts (send_to_implementer / re_review), and the
-// three interaction levels gating ask_user.
+// coordinator tools, including ask_user.
 package orchestrator
 
 import (
@@ -54,19 +54,17 @@ type Question struct {
 	Options []string
 }
 
-// Asker lets the coordinator ask the user a question, subject to the session's
-// interaction level. Implemented by the session.
+// Asker lets the coordinator ask the user a question. Implemented by the session.
 type Asker interface {
 	Ask(ctx context.Context, question string, options []string) (string, error)
 	// AskMany poses several questions in a single round-trip, each with its own
 	// optional set of suggested answers. The returned slice is parallel to the
-	// input: answers[i] is the answer to questions[i]. Subject to the same
-	// interaction-level gating as Ask (autonomous mode auto-answers each).
+	// input: answers[i] is the answer to questions[i]. Internal unattended runs
+	// auto-answer rather than waiting with no client attached.
 	AskMany(ctx context.Context, questions []Question) ([]string, error)
 	// Confirm asks the user a yes/no question for a high-impact, hard-to-reverse
-	// action (e.g. starting the work pipeline). Unlike Ask, it requires a real
-	// human answer even in autonomous mode: when no human is available it returns
-	// (false, nil) so the action is declined rather than silently taken (spec §9, §11).
+	// action (e.g. starting the work pipeline). It requires a real human answer;
+	// when none is available it returns (false, nil), declining safely.
 	Confirm(ctx context.Context, question string) (bool, error)
 }
 
@@ -410,7 +408,7 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 				Emitter:    d.Emitter.With("implementer"),
 			})...)
 			impl := d.implementer()
-			loop := d.newLoop(impl, sys(implementerSystem, "", d.Workspace), reg, "implementer")
+			loop := d.newLoop(impl, sys(implementerSystem, false, d.Workspace), reg, "implementer")
 			// The implementer needs more output headroom than the shared cap: a
 			// single turn may interleave an extended-thinking block with a large
 			// multi-file edit, and the thinking counts against the same budget. Too
@@ -689,8 +687,8 @@ func reReview(d *Deps) *gollama.Tool {
 func askUser(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "ask_user",
-		Description: "Ask the user one or more questions and get their answers. Use only as your interaction level " +
-			"permits. In autonomous mode no human answers; you will be told to proceed on your own judgement. " +
+		Description: "Ask the user one or more questions and get their answers when human input is genuinely useful. " +
+			"Internal unattended runs will tell you to proceed without an answer. " +
 			"Make each question SELF-CONTAINED: the user has not been following your work, so briefly give the " +
 			"context needed to answer well — what you were doing, what you found or tried, and why you're asking " +
 			"(one to three sentences before the question itself). Don't assume they can see your transcript. " +
@@ -875,7 +873,7 @@ func implementerOutcome(d *Deps, id, label, before string, res *engine.Result) *
 		}
 		out += "\n\nDo not push it to guess. If this is an ordinary judgement call, decide it yourself and " +
 			"send_to_implementer with the answer (it keeps its context). If the user is genuinely needed, ask_user as " +
-			"your interaction level permits and relay the answer via send_to_implementer. If no answer is available, " +
+			"and relay the answer via send_to_implementer. If no answer is available, " +
 			"update_task 'blocked' with the reason (already recorded in the work log)."
 		return tools.OkResult(out)
 	}

@@ -3,10 +3,8 @@ import YccKit
 import YccProto
 
 /// The per-session settings sheet — the phone analog of the TUI settings overlay
-/// (spec §18.2; docs/design/ios-client.md §6 phase 3 step 8). Three sections:
+/// (spec §18.2; docs/design/ios-client.md §6 phase 3 step 8). Two sections:
 ///
-/// - **Interaction level** — a picker driving `SetInteractionLevel` (applies at
-///   the next gate; visible as an `interaction_level_changed` row in the feed).
 /// - **Thinking** — a role-scope picker (all/coordinator/implementer/reviewers)
 ///   plus a level picker driving `SetThinking`.
 /// - **Roles** — coordinator/implementer single pickers plus a reviewers
@@ -21,11 +19,8 @@ struct SessionSettingsView: View {
 
     @State private var model: SessionSettingsModel
 
-    init(client: YccClient, sessionID: String, currentInteractionLevel: String?) {
-        _model = State(initialValue: SessionSettingsModel(
-            source: client,
-            sessionId: sessionID,
-            currentInteractionLevel: currentInteractionLevel))
+    init(client: YccClient, sessionID: String) {
+        _model = State(initialValue: SessionSettingsModel(source: client, sessionId: sessionID))
     }
 
     var body: some View {
@@ -38,7 +33,6 @@ struct SessionSettingsView: View {
                             .font(.callout)
                     }
                 }
-                interactionSection
                 thinkingSection
                 rolesSection
             }
@@ -61,27 +55,6 @@ struct SessionSettingsView: View {
                     app.handleUnauthorized()
                 }
             }
-        }
-    }
-
-    // MARK: - Interaction level
-
-    private var interactionSection: some View {
-        @Bindable var model = model
-        return Section {
-            Picker("Level", selection: $model.interactionLevel) {
-                ForEach(InteractionLevel.allCases) { level in
-                    Text(level.title).tag(level)
-                }
-            }
-            .onChange(of: model.interactionLevel) { _, _ in
-                Task { await model.applyInteractionLevel() }
-            }
-            Text(model.interactionLevel.detail)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        } header: {
-            Text("Interaction level")
         }
     }
 

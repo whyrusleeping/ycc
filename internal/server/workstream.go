@@ -61,11 +61,10 @@ func (s *Server) SpawnWorkstream(_ context.Context, req *connect.Request[v1.Spaw
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("project is required"))
 	}
 	ws, _, err := s.mgr.SpawnWorkstream(session.SpawnWorkstreamConfig{
-		Project:          m.Project,
-		BaseRef:          m.BaseRef,
-		TaskID:           m.TaskId,
-		Prompt:           m.Prompt,
-		InteractionLevel: m.InteractionLevel,
+		Project: m.Project,
+		BaseRef: m.BaseRef,
+		TaskID:  m.TaskId,
+		Prompt:  m.Prompt,
 	})
 	if err != nil {
 		return nil, workstreamError(err)
@@ -121,7 +120,7 @@ func (s *Server) PreviewMerge(_ context.Context, req *connect.Request[v1.Preview
 
 // MergeWorkstream integrates a workstream's branch back to base with the
 // conflict-aware, review-gated flow (design §6). accept accepts a clean but gated
-// merge under interactive/judgement; a conflict surfaces the conflicted paths.
+// merge until explicitly accepted; a conflict surfaces the conflicted paths.
 func (s *Server) MergeWorkstream(_ context.Context, req *connect.Request[v1.MergeWorkstreamRequest]) (*connect.Response[v1.MergeWorkstreamResponse], error) {
 	if strings.TrimSpace(req.Msg.WorkstreamId) == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("workstream_id is required"))

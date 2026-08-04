@@ -14,6 +14,11 @@ struct LandingView: View {
     @State private var model: SessionListModel?
     /// Whether the "new session" composer sheet is shown.
     @State private var showNewSession = false
+    /// Project selected by the explicit picker shown when New Chat is tapped
+    /// from the daemon-wide Recent Sessions feed.
+    @State private var newSessionProject: String?
+    /// Whether the Recent Sessions project picker is visible.
+    @State private var showNewSessionProjectPicker = false
     /// The session to push into a live streaming view (set after Start/Resume).
     @State private var liveTarget: LiveSessionTarget?
     /// A resume failure message to surface as an alert.
@@ -48,8 +53,8 @@ struct LandingView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { showNewSession = true } label: {
-                        Label("New session", systemImage: "plus")
+                    Button { beginNewSession() } label: {
+                        Label("New chat", systemImage: "plus")
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -96,13 +101,30 @@ struct LandingView: View {
                 }
             }
         }
+        .confirmationDialog(
+            "Start a new chat in…",
+            isPresented: $showNewSessionProjectPicker,
+            titleVisibility: .visible
+        ) {
+            if let model {
+                ForEach(model.newSessionProjectChoices, id: \.self) { project in
+                    Button(project.isEmpty ? "Default" : project) {
+                        newSessionProject = project
+                        showNewSession = true
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Choose which project this chat should work in.")
+        }
         .sheet(isPresented: $showNewSession) {
             if let client = app.client {
-                // Preselect the current filter so the session starts in the
-                // workspace the user is looking at.
+                // A scoped Sessions list starts in its current project. Recent
+                // Sessions first records an explicit project choice above.
                 NewSessionView(
                     client: client,
-                    initialProject: model?.selectedProject ?? ""
+                    initialProject: newSessionProject
                 ) { sessionID, project in
                     showNewSession = false
                     // Follow the session's project so the list shows it when
@@ -185,6 +207,19 @@ struct LandingView: View {
         }
         .onChange(of: model?.unauthorized ?? false) { _, isUnauthorized in
             if isUnauthorized { app.handleUnauthorized() }
+        }
+    }
+
+    /// Start directly in a scoped project's composer, or require an explicit
+    /// project choice from the daemon-wide Recent Sessions feed.
+    private func beginNewSession() {
+        guard let model else { return }
+        if model.requiresProjectChoiceForNewSession {
+            newSessionProject = nil
+            showNewSessionProjectPicker = true
+        } else {
+            newSessionProject = model.selectedProject
+            showNewSession = true
         }
     }
 

@@ -16,7 +16,7 @@ func newSteerSession() (*Session, *captureRecorder) {
 	s := &Session{
 		ID:      "test",
 		emitter: em,
-		inter:   newInteraction("interactive", em),
+		inter:   newInteraction(false, em),
 		inputCh: make(chan string, 4),
 		status:  event.StatusRunning,
 	}

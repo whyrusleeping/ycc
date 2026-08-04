@@ -202,7 +202,6 @@ func (a *app) startCommand() *cli.Command {
 			&cli.StringFlag{Name: "workspace", Usage: "workspace `dir` (default: --workspace or current directory)"},
 			&cli.StringFlag{Name: "project", Usage: "registered project `name` (overrides --workspace)"},
 			&cli.StringFlag{Name: "mode", Usage: "session `mode` (default: work)"},
-			&cli.StringFlag{Name: "level", Usage: "interaction `level`: interactive | judgement | autonomous"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			ws := cmd.String("workspace")
@@ -215,11 +214,10 @@ func (a *app) startCommand() *cli.Command {
 			}
 			defer cleanup()
 			resp, err := client.StartSession(ctx, connect.NewRequest(&v1.StartSessionRequest{
-				Workspace:        ws,
-				Project:          cmd.String("project"),
-				Mode:             cmd.String("mode"),
-				InteractionLevel: cmd.String("level"),
-				Prompt:           cmd.Args().First(),
+				Workspace: ws,
+				Project:   cmd.String("project"),
+				Mode:      cmd.String("mode"),
+				Prompt:    cmd.Args().First(),
 			}))
 			if err != nil {
 				return fmt.Errorf("StartSession: %w", err)

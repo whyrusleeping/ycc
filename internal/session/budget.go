@@ -20,16 +20,16 @@ import (
 
 // checkBudget enforces the configured per-session spend caps at a safe checkpoint.
 // It returns any wrap-up instruction(s) to inject before the next turn (a
-// graceful autonomous/loop halt), or nil. Behaviour:
+// graceful unattended loop halt), or nil. Behaviour:
 //
 //   - No session caps configured → cheap no-op.
 //   - Spent >= ~80% of a configured cap and not yet warned → emit budget_warning
 //     once (visible in the status bar / transcript) and keep going.
 //   - Spent >= a configured cap and not yet handled:
-//   - attended (non-autonomous): raise a Confirm gate. "yes" → record
+//   - attended (attended): raise a Confirm gate. "yes" → record
 //     budget_exceeded{action:"continue"} and continue (asked at most once);
 //     "no" (or no human) → graceful halt.
-//   - autonomous / loop / declined confirm → record budget_exceeded{action:
+//   - unattended loop / declined confirm → record budget_exceeded{action:
 //     "halt"} as a USER-actor event carrying the wrap-up instruction (so reopen
 //     replays it as a user message) and inject that instruction so the agent
 //     brings the current task to a safe stopping point, then finishes.
@@ -88,7 +88,7 @@ func (s *Session) checkBudget(ctx context.Context) []string {
 	switch {
 	case pct >= 1.0:
 		status := budgetStatus(tokens, cost, caps)
-		if s.inter.Level() != "autonomous" {
+		if !s.unattended {
 			ok, err := s.inter.Confirm(ctx, "Session budget reached ("+status+") — continue past the budget?")
 			if err != nil || ctx.Err() != nil {
 				// ctx cancelled while asking (Confirm returns false,nil on cancel):

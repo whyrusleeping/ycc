@@ -77,7 +77,7 @@ func TestE2ESettingsOverlay(t *testing.T) {
 	h.waitForText("Pick a backlog task")
 
 	h.send(keyEsc)
-	h.waitForText("interaction level")
+	h.waitForText("coordinator model")
 	h.waitForText("model backends")
 	h.screenshot("04_settings_overlay")
 }

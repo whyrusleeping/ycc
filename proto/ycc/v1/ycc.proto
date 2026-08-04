@@ -19,7 +19,7 @@ message Event {
 message StartSessionRequest {
   string workspace = 1; // workspace dir; empty => daemon default
   string mode = 2; // e.g. "work"; M1 runs a single worker agent
-  string interaction_level = 3; // interactive | judgement | autonomous
+  reserved 3; // retired session-policy field
   string prompt = 4; // initial task prompt
   // project is an optional registered project name; when set it resolves to that
   // project's workspace (overriding `workspace`). Spec §3.1.
@@ -308,14 +308,6 @@ message DiscoverModelsResponse {
 }
 
 
-// SetInteractionLevel changes a session's interaction level mid-flight (spec §11,
-// §18.2). It takes effect at the next gate and is recorded in the event log.
-message SetInteractionLevelRequest {
-  string session_id = 1;
-  string level = 2; // interactive | judgement | autonomous
-}
-message SetInteractionLevelResponse {}
-
 // SetRoleConfig reassigns per-role logical models (spec §13, §18.2). Empty
 // coordinator/implementer leaves that role unchanged; an empty reviewers list
 // leaves reviewers unchanged. The assignment is persisted as the default (roles
@@ -521,7 +513,7 @@ message NotifyRequest {
 message NotifyResponse { bool delivered = 1; }
 
 // Daemon-side work loop (task 0179, spec §9/§20.6). The unattended backlog-drain
-// driver moved from the client into the daemon: it starts fresh autonomous `work`
+// driver moved from the client into the daemon: it starts fresh unattended `work`
 // sessions one after another, enforces the no-progress guard and per-loop budget
 // caps daemon-side, and accumulates the end-of-batch digest — so a loop survives
 // client disconnects and any client can start/observe/stop it via plain RPCs
@@ -616,7 +608,7 @@ message SpawnWorkstreamRequest {
   string base_ref = 2;          // ref/commit to branch from; empty => HEAD
   string task_id = 3;           // optional backlog task id (appended to branch)
   string prompt = 4;            // optional initial prompt for the session
-  string interaction_level = 5; // interactive | judgement | autonomous (default judgement)
+  reserved 5;                   // retired session-policy field
 }
 message SpawnWorkstreamResponse { WorkstreamInfo workstream = 1; }
 
@@ -638,9 +630,8 @@ message PreviewMergeResponse {
 // MergeWorkstream integrates a workstream's branch back to base with the
 // conflict-aware, review-gated flow (design §6). The design §8 sketch calls the
 // second field "strategy", but that sketch is explicitly non-final; the manager's
-// real gate is `accept`: under interactive/judgement a clean trial merge returns
-// needs_accept + the integrated diff (nothing mutated) until accept=true, while
-// autonomous integrates clean merges immediately. A conflict returns the
+// real gate is `accept`: a clean trial merge returns needs_accept + the integrated
+// diff (nothing mutated) until accept=true. A conflict returns the
 // conflicted paths with base untouched and the worktree kept.
 message MergeWorkstreamRequest {
   string workstream_id = 1;
@@ -705,10 +696,9 @@ service SessionService {
   // remote clients can browse to a workspace for AddProject (task 0193).
   rpc ListDir(ListDirRequest) returns (ListDirResponse);
 
-  // Settings overlay (spec §18.2): enumerate models and change a session's
-  // interaction level / per-role model assignment mid-flight.
+  // Settings overlay (spec §18.2): enumerate models and change per-role model
+  // assignment mid-flight.
   rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
-  rpc SetInteractionLevel(SetInteractionLevelRequest) returns (SetInteractionLevelResponse);
   rpc SetRoleConfig(SetRoleConfigRequest) returns (SetRoleConfigResponse);
   rpc SetThinking(SetThinkingRequest) returns (SetThinkingResponse);
 

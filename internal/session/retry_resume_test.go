@@ -35,7 +35,7 @@ func (f *flakyTurner) Turn(gollama.RequestOptions) (*gollama.ResponseMessageGene
 // side of the iOS "Retry" button.
 func TestResumeRetriesAfterError(t *testing.T) {
 	s := newStopSession(t)
-	s.inter = newInteraction("autonomous", s.emitter)
+	s.inter = newInteraction(true, s.emitter)
 	s.Mode = "chat"
 	s.prompt = "do the thing"
 	s.retryCh = make(chan struct{})

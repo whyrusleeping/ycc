@@ -60,11 +60,10 @@ func (s *Server) ListModes(_ context.Context, _ *connect.Request[v1.ListModesReq
 func (s *Server) StartSession(_ context.Context, req *connect.Request[v1.StartSessionRequest]) (*connect.Response[v1.StartSessionResponse], error) {
 	m := req.Msg
 	sess, err := s.mgr.Start(session.Config{
-		Workspace:        m.Workspace,
-		Mode:             m.Mode,
-		InteractionLevel: m.InteractionLevel,
-		Prompt:           m.Prompt,
-		Project:          m.Project,
+		Workspace: m.Workspace,
+		Mode:      m.Mode,
+		Prompt:    m.Prompt,
+		Project:   m.Project,
 	})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
@@ -525,18 +524,6 @@ func (s *Server) DiscoverModels(ctx context.Context, req *connect.Request[v1.Dis
 	return connect.NewResponse(&v1.DiscoverModelsResponse{
 		ModelIds: ids, FromNetwork: true, Note: fmt.Sprintf("%d models from %s", len(ids), backend),
 	}), nil
-}
-
-// SetInteractionLevel changes a session's interaction level mid-flight (spec §11).
-func (s *Server) SetInteractionLevel(_ context.Context, req *connect.Request[v1.SetInteractionLevelRequest]) (*connect.Response[v1.SetInteractionLevelResponse], error) {
-	sess, ok := s.mgr.Get(req.Msg.SessionId)
-	if !ok {
-		return nil, connect.NewError(connect.CodeNotFound, errNoSession)
-	}
-	if err := sess.SetInteractionLevel(req.Msg.Level); err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
-	}
-	return connect.NewResponse(&v1.SetInteractionLevelResponse{}), nil
 }
 
 // SetRoleConfig reassigns per-role logical models (spec §13, §18.2). When

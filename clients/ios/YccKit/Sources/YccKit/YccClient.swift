@@ -178,16 +178,14 @@ public final class YccClient: Sendable {
 
     /// Start a new session (`StartSession`, docs/remote-api.md "StartSession").
     /// `project` is an optional registered project name (empty => daemon default
-    /// workspace); `interactionLevel` is `interactive` | `judgement` |
-    /// `autonomous`. Returns the new session id to `Subscribe` from seq 0.
+    /// workspace). Returns the new session id to `Subscribe` from seq 0.
     public func startSession(
-        project: String = "", mode: String, prompt: String, interactionLevel: String
+        project: String = "", mode: String, prompt: String
     ) async throws -> String {
         var request = Ycc_V1_StartSessionRequest()
         request.project = project
         request.mode = mode
         request.prompt = prompt
-        request.interactionLevel = interactionLevel
         let response = await generated.startSession(request: request)
         switch response.result {
         case .success(let message):
@@ -429,16 +427,6 @@ public final class YccClient: Sendable {
         }
     }
 
-    /// Change a session's interaction level mid-flight (`SetInteractionLevel`,
-    /// spec §11/§18.2). `level` is `interactive` | `judgement` | `autonomous`;
-    /// it takes effect at the next gate and is recorded in the event log.
-    public func setInteractionLevel(sessionId: String, level: String) async throws {
-        var request = Ycc_V1_SetInteractionLevelRequest()
-        request.sessionID = sessionId
-        request.level = level
-        try unary(await generated.setInteractionLevel(request: request))
-    }
-
     /// Reassign per-role logical models (`SetRoleConfig`, spec §13/§18.2). An
     /// empty `coordinator`/`implementer` leaves that role unchanged; an empty
     /// `reviewers` list leaves reviewers unchanged. The change applies to the live
@@ -546,7 +534,7 @@ public final class YccClient: Sendable {
     }
 
     /// Integrate a workstream's branch back to base (`MergeWorkstream`, design
-    /// §6). Under interactive/judgement a clean trial merge returns
+    /// §6). Under interactive a clean trial merge returns
     /// `needsAccept` + the integrated `diff` (nothing mutated) until `accept:
     /// true`; a conflict returns the `conflicts` paths with base untouched. A
     /// merged result carries the merge `commit` sha.

@@ -34,10 +34,10 @@ import (
 
 // Config parameterizes a new session.
 type Config struct {
-	Workspace        string
-	Mode             string
-	InteractionLevel string
-	Prompt           string
+	Workspace  string
+	Mode       string
+	Unattended bool
+	Prompt     string
 	// Project, when set, names a registered project whose workspace is used,
 	// overriding Workspace (spec §3.1).
 	Project string
@@ -45,10 +45,11 @@ type Config struct {
 
 // Session is one running agent conversation backed by a persistent event log.
 type Session struct {
-	ID               string
-	Workspace        string
-	Mode             string
-	InteractionLevel string
+	ID        string
+	Workspace string
+	Mode      string
+
+	unattended bool
 
 	log       *event.Log
 	emitter   *event.Emitter
@@ -95,7 +96,7 @@ type Session struct {
 	// Spend guard (task 0137, spec §20.6), guarded by s.mu. budgetWarned is set
 	// once the session crosses ~80% of a configured cap (so the warning fires at
 	// most once); budgetBreached is set once a cap is crossed and handled (the
-	// attended Confirm is asked / the autonomous wrap-up is injected at most once).
+	// attended Confirm is asked / the unattended wrap-up is injected at most once).
 	// Both are seeded from the replayed log on Reopen so a reopened session that
 	// already crossed the line does not re-fire or re-ask.
 	budgetWarned   bool
@@ -148,13 +149,6 @@ func (s *Session) setStatus(st event.Status) {
 	s.mu.Lock()
 	s.status = st
 	s.mu.Unlock()
-}
-
-// Level returns the session's current interaction level (guarded read).
-func (s *Session) Level() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.InteractionLevel
 }
 
 // BudgetBreached reports whether this session crossed a configured spend cap and
@@ -540,24 +534,6 @@ func (s *Session) Resume() error {
 	return nil
 }
 
-// SetInteractionLevel changes the session's interaction level mid-flight. It
-// takes effect at the next gate (the next ask_user) and is recorded in the
-// event log so other subscribers see it (spec §11, §18.2).
-func (s *Session) SetInteractionLevel(level string) error {
-	switch level {
-	case "interactive", "judgement", "autonomous":
-	default:
-		return fmt.Errorf("unknown interaction level %q", level)
-	}
-	s.mu.Lock()
-	from := s.InteractionLevel
-	s.InteractionLevel = level
-	s.mu.Unlock()
-	s.inter.SetLevel(level)
-	s.emitter.Emit(event.InteractionLevelChanged, map[string]any{"from": from, "to": level})
-	return nil
-}
-
 // SetRoleConfig reassigns per-role logical models mid-session and rebuilds the
 // relevant gollama clients so the next coordinator turn / next spawned subagent
 // uses the new assignment (spec §13, §18.2). Empty coordinator/implementer leaves
@@ -862,9 +838,8 @@ func (s *Session) run() {
 		}
 	} else {
 		s.emitter.Emit(event.SessionStarted, map[string]any{
-			"workspace":         s.Workspace,
-			"mode":              s.Mode,
-			"interaction_level": s.Level(),
+			"workspace": s.Workspace,
+			"mode":      s.Mode,
 		})
 		s.emitter.EmitAs("user", event.UserInput, map[string]any{"text": s.prompt})
 	}
@@ -966,7 +941,7 @@ func modeTransitionPrompt(mode string) string {
 	return "You are now in " + mode + " mode."
 }
 
-// withAssumptions appends any assumptions recorded by autonomous-mode ask_user
+// withAssumptions appends any assumptions recorded by unattended ask_user
 // calls to the final report (spec §11).
 func (s *Session) withAssumptions(report string) string {
 	as := s.inter.Assumptions()
@@ -975,7 +950,7 @@ func (s *Session) withAssumptions(report string) string {
 	}
 	var b []byte
 	b = append(b, report...)
-	b = append(b, "\n\nAssumptions made without consulting the user (autonomous mode):\n"...)
+	b = append(b, "\n\nAssumptions made without consulting the user (unattended execution):\n"...)
 	for _, a := range as {
 		b = append(b, "- "+a+"\n"...)
 	}
@@ -1167,10 +1142,6 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 	if mode == "" {
 		mode = "work"
 	}
-	level := cfg.InteractionLevel
-	if level == "" {
-		level = "judgement"
-	}
 	// The prompt is optional: an empty one (e.g. "work" mode with no suggested
 	// task) gets a sensible per-mode default so the agent has a starting point.
 	prompt := strings.TrimSpace(cfg.Prompt)
@@ -1188,7 +1159,7 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 		return nil, fmt.Errorf("open event log: %w", err)
 	}
 
-	s, err := m.newSession(absWS, id, mode, level, prompt, log, false)
+	s, err := m.newSession(absWS, id, mode, cfg.Unattended, prompt, log, false)
 	if err != nil {
 		return nil, err
 	}
@@ -1219,8 +1190,6 @@ type SpawnWorkstreamConfig struct {
 	TaskID string
 	// Prompt seeds the work session (optional).
 	Prompt string
-	// InteractionLevel selects the interaction tier (default "judgement").
-	InteractionLevel string
 }
 
 // SpawnWorkstream creates a linked git worktree + branch (ycc/ws/<id>) off the
@@ -1294,15 +1263,10 @@ func (m *Manager) SpawnWorkstream(cfg SpawnWorkstreamConfig) (workstream.Workstr
 		repo.PruneWorktrees()
 	}
 
-	level := cfg.InteractionLevel
-	if level == "" {
-		level = "judgement"
-	}
 	s, err := m.start(Config{
-		Workspace:        dir,
-		Mode:             "work",
-		InteractionLevel: level,
-		Prompt:           cfg.Prompt,
+		Workspace: dir,
+		Mode:      "work",
+		Prompt:    cfg.Prompt,
 	}, false)
 	if err != nil {
 		cleanup()
@@ -1401,9 +1365,9 @@ func (m *Manager) ReconcileWorkstreams() error {
 // creating/seeding its loop or registering it — callers do that, since Start
 // seeds the loop while Reopen installs a reconstructed history. resumed marks a
 // session re-instantiated on an existing log (spec §4.5).
-func (m *Manager) newSession(absWS, id, mode, level, prompt string, log *event.Log, resumed bool) (*Session, error) {
+func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt string, log *event.Log, resumed bool) (*Session, error) {
 	emitter := event.NewEmitter(log, "coordinator")
-	inter := newInteraction(level, emitter)
+	inter := newInteraction(unattended, emitter)
 	repo, err := git.Open(absWS)
 	if err != nil {
 		return nil, fmt.Errorf("prepare git workspace: %w", err)
@@ -1441,35 +1405,34 @@ func (m *Manager) newSession(absWS, id, mode, level, prompt string, log *event.L
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{
-		ID:               id,
-		Workspace:        absWS,
-		Mode:             mode,
-		InteractionLevel: level,
-		log:              log,
-		emitter:          emitter,
-		inter:            inter,
-		deps:             deps,
-		reg:              m.reg,
-		prompt:           prompt,
-		resumed:          resumed,
-		inputCh:          make(chan string, 64),
-		messageCh:        make(chan engine.UserMessage, 64),
-		retryCh:          make(chan struct{}),
-		ctx:              ctx,
-		cancel:           cancel,
-		status:           event.StatusRunning,
-		coordinator:      coordName,
-		implementer:      implName,
-		reviewers:        reviewerNames,
-		thinkLevels:      map[string]string{},
-		usageSummarized:  map[string]bool{},
+		ID:              id,
+		Workspace:       absWS,
+		Mode:            mode,
+		log:             log,
+		emitter:         emitter,
+		inter:           inter,
+		deps:            deps,
+		reg:             m.reg,
+		prompt:          prompt,
+		resumed:         resumed,
+		inputCh:         make(chan string, 64),
+		messageCh:       make(chan engine.UserMessage, 64),
+		retryCh:         make(chan struct{}),
+		ctx:             ctx,
+		cancel:          cancel,
+		status:          event.StatusRunning,
+		coordinator:     coordName,
+		implementer:     implName,
+		reviewers:       reviewerNames,
+		thinkLevels:     map[string]string{},
+		usageSummarized: map[string]bool{},
 	}
 
 	// buildLoop assembles the agent loop for a mode; reused on mode transitions.
 	// It reads the session's current coordinator assignment so a mid-session
 	// role-config change drives the next coordinator loop (spec §18.2).
 	s.buildLoop = func(mode, prompt string) (*engine.Loop, error) {
-		reg, sys := orchestrator.BuildMode(mode, deps, s.inter.Level())
+		reg, sys := orchestrator.BuildMode(mode, deps, unattended)
 		s.mu.Lock()
 		coord := s.coordinator
 		s.mu.Unlock()
@@ -1527,7 +1490,7 @@ func (m *Manager) startNotifyWatcher(absWS, id string, log *event.Log) {
 			switch ev.Type {
 			case event.QuestionAsked:
 				if boolVal(ev.Data, "auto") {
-					continue // auto-answered autonomous ask — nobody is waiting
+					continue // auto-answered unattended ask — nobody is waiting
 				}
 				m.notifier.Send(notify.KindQuestion, project, id, questionLine(ev.Data))
 			case event.SessionIdle:
@@ -1645,12 +1608,7 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 	if mode == "" {
 		mode = "work"
 	}
-	level := proj.InteractionLevel
-	if level == "" {
-		level = "judgement"
-	}
-
-	s, err := m.newSession(absWS, id, mode, level, "", log, true)
+	s, err := m.newSession(absWS, id, mode, false, "", log, true)
 	if err != nil {
 		log.Close()
 		return nil, err

@@ -14,7 +14,7 @@ private final class MockNewSessionSource: NewSessionSource, @unchecked Sendable 
     var resumeError: Error?
     var startedSessionId = "s_new"
 
-    private(set) var startArgs: (project: String, mode: String, prompt: String, level: String)?
+    private(set) var startArgs: (project: String, mode: String, prompt: String)?
     private(set) var resumeArgs: (project: String, sessionId: String)?
 
     func listModes() async throws -> (modes: [Ycc_V1_Mode], presets: [Ycc_V1_Preset]) {
@@ -27,9 +27,9 @@ private final class MockNewSessionSource: NewSessionSource, @unchecked Sendable 
     }
 
     func startSession(
-        project: String, mode: String, prompt: String, interactionLevel: String
+        project: String, mode: String, prompt: String
     ) async throws -> String {
-        startArgs = (project, mode, prompt, interactionLevel)
+        startArgs = (project, mode, prompt)
         if let startError { throw startError }
         return startedSessionId
     }
@@ -44,7 +44,6 @@ private final class MockNewSessionSource: NewSessionSource, @unchecked Sendable 
 /// An in-memory ``SessionDefaultsStore`` so recall/persist is testable.
 private final class MockDefaults: SessionDefaultsStore {
     var lastMode: String?
-    var lastInteractionLevel: String?
     var lastProject: String?
 }
 
@@ -93,7 +92,6 @@ final class NewSessionModelTests: XCTestCase {
     func testLoadRecallsRememberedSelections() async {
         let defaults = MockDefaults()
         defaults.lastMode = "pm"
-        defaults.lastInteractionLevel = "autonomous"
         defaults.lastProject = "two"
         let source = MockNewSessionSource()
         source.modes = [mode("work"), mode("pm")]
@@ -102,7 +100,6 @@ final class NewSessionModelTests: XCTestCase {
 
         // Recalled before load, from the defaults store.
         XCTAssertEqual(model.selectedMode, "pm")
-        XCTAssertEqual(model.interactionLevel, .autonomous)
         XCTAssertEqual(model.selectedProject, "two")
 
         await model.load()
@@ -154,13 +151,6 @@ final class NewSessionModelTests: XCTestCase {
         let model = NewSessionModel(
             source: MockNewSessionSource(), defaults: defaults, initialProject: "")
         XCTAssertEqual(model.selectedProject, "")
-    }
-
-    func testInvalidRememberedLevelFallsBackToJudgement() {
-        let defaults = MockDefaults()
-        defaults.lastInteractionLevel = "nonsense"
-        let model = NewSessionModel(source: MockNewSessionSource(), defaults: defaults)
-        XCTAssertEqual(model.interactionLevel, .judgement)
     }
 
     // MARK: - Validation
@@ -230,7 +220,6 @@ final class NewSessionModelTests: XCTestCase {
         let model = NewSessionModel(source: source, defaults: defaults)
         await model.load()
         model.selectedMode = "pm"
-        model.interactionLevel = .interactive
         model.selectedProject = "one"
         model.prompt = "  build a thing  "
 
@@ -240,10 +229,8 @@ final class NewSessionModelTests: XCTestCase {
         XCTAssertEqual(source.startArgs?.project, "one")
         XCTAssertEqual(source.startArgs?.mode, "pm")
         XCTAssertEqual(source.startArgs?.prompt, "build a thing")
-        XCTAssertEqual(source.startArgs?.level, "interactive")
         // Selections persisted for next time.
         XCTAssertEqual(defaults.lastMode, "pm")
-        XCTAssertEqual(defaults.lastInteractionLevel, "interactive")
         XCTAssertEqual(defaults.lastProject, "one")
     }
 

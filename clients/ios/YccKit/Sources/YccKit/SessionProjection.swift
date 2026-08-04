@@ -92,12 +92,6 @@ public struct SessionProjection: Sendable, Equatable {
     public private(set) var pendingQuestion: PendingQuestion?
     /// The session's derived lifecycle phase, folded from lifecycle events.
     public private(set) var phase: Phase = .running
-    /// The session's current interaction level (`interactive` | `judgement` |
-    /// `autonomous`), folded from `session_started` and any mid-session
-    /// `interaction_level_changed` events so the settings sheet can seed its
-    /// picker with reality rather than a guessed default. `nil` until observed.
-    public private(set) var interactionLevel: String?
-
     public init() {}
 
     /// A derived, coarse lifecycle phase for chrome (banners, toolbar). Folded
@@ -189,7 +183,6 @@ public struct SessionProjection: Sendable, Equatable {
 
         let data = Self.parse(event.dataJson)
         foldPhase(type: event.type, data: data)
-        foldInteractionLevel(type: event.type, data: data)
 
         switch event.type {
         case "user_input":
@@ -367,27 +360,6 @@ public struct SessionProjection: Sendable, Equatable {
         }
     }
 
-    // MARK: - Interaction level folding
-
-    /// Track the session's current interaction level: seeded from
-    /// `session_started` (`interaction_level`) and updated on each
-    /// `interaction_level_changed` (`to`). The event stream is the source of
-    /// truth so the settings sheet reflects reality (spec §11/§18.2).
-    private mutating func foldInteractionLevel(type: String, data: [String: Any]) {
-        switch type {
-        case "session_started":
-            if let level = (data["interaction_level"] as? String), !level.isEmpty {
-                interactionLevel = level
-            }
-        case "interaction_level_changed":
-            if let level = (data["to"] as? String), !level.isEmpty {
-                interactionLevel = level
-            }
-        default:
-            break
-        }
-    }
-
     // MARK: - Questions
 
     private mutating func applyQuestionAsked(_ event: Ycc_V1_Event, _ data: [String: Any]) {
@@ -526,7 +498,6 @@ public struct SessionProjection: Sendable, Equatable {
         case "session_started":
             var parts: [String] = []
             if !s("mode").isEmpty { parts.append(s("mode")) }
-            if !s("interaction_level").isEmpty { parts.append(s("interaction_level")) }
             return parts.isEmpty ? "Session started" : "Session started · " + parts.joined(separator: " · ")
         case "session_idle":
             return "Session idle"
@@ -543,9 +514,6 @@ public struct SessionProjection: Sendable, Equatable {
             return "Interrupted"
         case "resumed":
             return "Resumed"
-        case "interaction_level_changed":
-            let to = s("to")
-            return to.isEmpty ? "Interaction level changed" : "Interaction level → \(to)"
         case "role_config_changed":
             var parts: [String] = []
             if !s("coordinator").isEmpty { parts.append("coordinator \(s("coordinator"))") }

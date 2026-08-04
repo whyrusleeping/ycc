@@ -22,7 +22,7 @@ import (
 // loop survives client disconnects and any client (including a phone that
 // suspends in the background) can start/observe/stop it via plain Connect RPCs.
 //
-// The loop starts fresh autonomous `work` sessions one after another, re-reading
+// The loop starts fresh unattended `work` sessions one after another, re-reading
 // the LIVE backlog before each pick (so tasks added mid-loop are considered),
 // enforcing the no-progress guard and the per-loop budget caps daemon-side, and
 // rolling every session up into an end-of-batch digest pushed via the notifier.
@@ -125,7 +125,7 @@ type workLoop struct {
 	inReview  []WorkLoopDigestTask
 	created   []WorkLoopDigestTask
 
-	// runSession is the injectable seam: the default runs a real autonomous work
+	// runSession is the injectable seam: the default runs a real unattended work
 	// session; tests substitute a fake returning canned records.
 	runSession func(ctx context.Context) (loopSessRec, bool, error)
 }
@@ -490,11 +490,11 @@ func (wl *workLoop) buildDigestLocked(final []*docs.Task) {
 
 // --- session runner (the injectable seam's default) ---
 
-// realRunSession starts one autonomous `work` session, waits for it to finish,
+// realRunSession starts one unattended `work` session, waits for it to finish,
 // snapshots + prices it, then reclaims it. Graceful stop still lets the current
 // session complete (checked before the NEXT pick, not here).
 func (wl *workLoop) realRunSession(ctx context.Context) (loopSessRec, bool, error) {
-	sess, err := wl.m.Start(Config{Project: wl.projectArg, Mode: "work", InteractionLevel: "autonomous"})
+	sess, err := wl.m.Start(Config{Project: wl.projectArg, Mode: "work", Unattended: true})
 	if err != nil {
 		return loopSessRec{}, false, err
 	}
@@ -502,7 +502,7 @@ func (wl *workLoop) realRunSession(ctx context.Context) (loopSessRec, bool, erro
 	wl.currentSessionID = sess.ID
 	wl.mu.Unlock()
 
-	// An autonomous work session reaches Idle only after `finish` (it then blocks
+	// An unattended work session reaches Idle only after `finish` (it then blocks
 	// on input), so Idle == done here; Error is also terminal.
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()

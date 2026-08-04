@@ -750,7 +750,7 @@ func TestIdleReportRenderedInFull(t *testing.T) {
 	}
 
 	// Echo + appended assumptions: the full report remains.
-	idle2 := &v1.Event{Seq: 2, Type: "session_idle", DataJson: `{"report":"All done — shipped the feature and tests pass.\n\nAssumptions made without consulting the user (autonomous mode):\n- used port 8080\n"}`}
+	idle2 := &v1.Event{Seq: 2, Type: "session_idle", DataJson: `{"report":"All done — shipped the feature and tests pass.\n\nAssumptions made without consulting the user (unattended execution):\n- used port 8080\n"}`}
 	m = mk(turn, idle2)
 	b := m.renderBody(idle2)
 	if !strings.Contains(b, "shipped the feature") || !strings.Contains(b, "Assumptions") || !strings.Contains(b, "port 8080") {
@@ -1058,8 +1058,6 @@ type fakeClient struct {
 	discoverNote string
 	lastDiscover *v1.DiscoverModelsRequest
 
-	lastStartLevel string // InteractionLevel of the most recent StartSession
-
 	lastRoleReq *v1.SetRoleConfigRequest // most recent SetRoleConfig call
 
 	// previous-sessions screen (spec §18.6)
@@ -1139,10 +1137,7 @@ func (f *fakeClient) StopSession(_ context.Context, req *connect.Request[v1.Stop
 	return connect.NewResponse(&v1.StopSessionResponse{}), nil
 }
 
-// StartSession records the requested interaction level so the loop-autonomy test
-// can assert that a loop iteration starts an unattended (autonomous) session.
-func (f *fakeClient) StartSession(_ context.Context, req *connect.Request[v1.StartSessionRequest]) (*connect.Response[v1.StartSessionResponse], error) {
-	f.lastStartLevel = req.Msg.InteractionLevel
+func (f *fakeClient) StartSession(_ context.Context, _ *connect.Request[v1.StartSessionRequest]) (*connect.Response[v1.StartSessionResponse], error) {
 	return connect.NewResponse(&v1.StartSessionResponse{SessionId: "s-new"}), nil
 }
 
@@ -1436,7 +1431,6 @@ func TestOverlayCoordinatorAppliesImmediately(t *testing.T) {
 	m = runCmds(t, m, m.fetchModels) // populate the model list + seed roles
 	m.openOverlay()
 	// Move the cursor to the coordinator row and cycle it.
-	m = drive(t, m, "down") // interaction level -> coordinator
 	if m.ovCursor != ovCoord {
 		t.Fatalf("cursor = %d, want ovCoord(%d)", m.ovCursor, ovCoord)
 	}
@@ -1470,7 +1464,6 @@ func overlayToReviewers(t *testing.T, extra ...*v1.ModelConfig) model {
 	m := initialModel(context.Background(), f, t_tempWorkspace, false)
 	m = runCmds(t, m, m.fetchModels)
 	m.openOverlay()
-	m = drive(t, m, "down") // level -> coord
 	m = drive(t, m, "down") // coord -> impl
 	m = drive(t, m, "down") // impl -> reviewers
 	if m.ovCursor != ovReviewers {
@@ -4039,11 +4032,11 @@ func TestSessionUsageSummation(t *testing.T) {
 
 // TestStatusBarSegments renders the status bar with a fully-populated session and
 // asserts the distinct segments (mode, model, thinking, token readout) appear in
-// the intended order, and that the interaction-level segment is gone. It also
+// the intended order and verifies the removed policy segment stays gone. It also
 // verifies the bar stays exactly one physical row at a narrow width (no wrap).
 func TestStatusBarSegments(t *testing.T) {
 	m := model{
-		state: stateSession, status: "running", mode: "implement", level: "judgement",
+		state: stateSession, status: "running", mode: "implement",
 		sessionID: "sess12345678", w: 120, roleCoord: "claude-opus",
 		thinkLevels:  map[string]string{"coordinator": "high"},
 		usageByModel: map[string]event.Usage{"claude": {Input: 12000, Output: 6000, Total: 18000}},
@@ -4055,8 +4048,8 @@ func TestStatusBarSegments(t *testing.T) {
 			t.Fatalf("status bar missing %q:\n%s", want, bar)
 		}
 	}
-	if strings.Contains(bar, "judgement") || strings.Contains(bar, "lvl ") {
-		t.Fatalf("status bar must not show interaction level:\n%s", bar)
+	if strings.Contains(bar, "lvl ") {
+		t.Fatalf("status bar must not show the removed policy segment:\n%s", bar)
 	}
 	if modelAt, reasoningAt := strings.Index(bar, "claude-opus"), strings.Index(bar, "high"); modelAt < 0 || reasoningAt < 0 || modelAt > reasoningAt {
 		t.Fatalf("coordinator model must appear before reasoning level:\n%s", bar)
@@ -4403,10 +4396,8 @@ func TestLoopDecisionStopsWhenEmpty(t *testing.T) {
 	}
 }
 
-// A loop iteration that has a ready task starts the next work session in
-// AUTONOMOUS mode so an unattended run never blocks on ask_user (a genuinely
-// stuck task is marked blocked by the coordinator and skipped).
-func TestLoopDecisionStartsAutonomousSession(t *testing.T) {
+// A legacy client-side loop iteration with a ready task starts the next work session.
+func TestLoopDecisionStartsSession(t *testing.T) {
 	fc := newFakeClient()
 	m := &model{looping: true, loopStarted: false, loopPrevFP: "", client: fc, ctx: context.Background()}
 	next, cmd := m.applyLoopDecision(loopDecisionMsg{next: "0003", fp: "0003:todo"})
@@ -4418,96 +4409,6 @@ func TestLoopDecisionStartsAutonomousSession(t *testing.T) {
 		t.Fatal("expected a startSession command")
 	}
 	cmd() // executes the StartSession RPC against the fake client
-	if fc.lastStartLevel != "autonomous" {
-		t.Fatalf("loop session must start autonomous, got %q", fc.lastStartLevel)
-	}
-}
-
-// The home menu starts at judgement each launch (not persisted — §18.2), and
-// ←/→ cycle the selector through interactive/judgement/autonomous when the prompt
-// is empty. With a typed prompt, the arrows move the cursor and leave the level
-// untouched. The chosen level is passed to StartSession on enter, while a loop
-// start always forces autonomous regardless of the selector.
-func TestMenuLevelSelector(t *testing.T) {
-	// Default is judgement on a fresh model.
-	m := newBackendsModel(newFakeClient())
-	m.state = stateMenu
-	if m.menuLevel != "judgement" {
-		t.Fatalf("fresh menuLevel = %q, want judgement", m.menuLevel)
-	}
-
-	// right cycles judgement → autonomous; left wraps autonomous → judgement etc.
-	step := func(key, want string) {
-		t.Helper()
-		updated, _ := m.updateMenu(keyMsg(key))
-		m = updated.(model)
-		if m.menuLevel != want {
-			t.Fatalf("after %s, menuLevel = %q, want %q", key, m.menuLevel, want)
-		}
-	}
-	step("right", "autonomous")
-	step("right", "interactive") // wraps
-	step("left", "autonomous")   // wraps back
-	step("left", "judgement")
-
-	// The level pill documents/shows the selector (the footer stays minimal;
-	// the full catalog lives in the help modal).
-	view := ansi.Strip(m.menuView())
-	if !strings.Contains(view, "←/→") {
-		t.Fatalf("menu missing ←/→ level hint:\n%s", view)
-	}
-	if !strings.Contains(view, "judgement") {
-		t.Fatalf("menu view missing level pill:\n%s", view)
-	}
-
-	// With a typed prompt, ←/→ move the cursor and leave the level unchanged.
-	m.mbOpen = false
-	m.prompt.Focus()
-	m = typeText(t, m, "fix the bug")
-	if strings.TrimSpace(m.prompt.Value()) == "" {
-		t.Fatalf("prompt did not receive typed text")
-	}
-	updated, _ := m.updateMenu(keyMsg("right"))
-	m = updated.(model)
-	if m.menuLevel != "judgement" {
-		t.Fatalf("with a typed prompt, right changed menuLevel to %q", m.menuLevel)
-	}
-}
-
-// The enter path starts the selected session at the level chosen on the home menu.
-func TestMenuEnterUsesSelectedLevel(t *testing.T) {
-	fc := newFakeClient()
-	m := newBackendsModel(fc)
-	m.state = stateMenu
-	m.prompt = newChatInput("test")
-	m.entries = []menuEntry{{label: "chat", description: "chat mode", mode: "chat"}}
-	m.cursor = 0
-	m.menuLevel = "interactive"
-
-	updated, cmd := m.updateMenu(keyMsg("enter"))
-	m = updated.(model)
-	if cmd == nil {
-		t.Fatal("expected a startSession command from enter")
-	}
-	cmd() // executes StartSession against the fake client
-	if fc.lastStartLevel != "interactive" {
-		t.Fatalf("enter started level %q, want interactive", fc.lastStartLevel)
-	}
-}
-
-// A loop start forces autonomous even when the home-menu selector picked a
-// less-autonomous level (the loop path must never block on ask_user).
-func TestMenuLoopForcesAutonomousDespiteSelector(t *testing.T) {
-	fc := newFakeClient()
-	m := &model{looping: true, loopStarted: false, loopPrevFP: "", menuLevel: "interactive", client: fc, ctx: context.Background()}
-	_, cmd := m.applyLoopDecision(loopDecisionMsg{next: "0003", fp: "0003:todo"})
-	if cmd == nil {
-		t.Fatal("expected a startSession command from the loop")
-	}
-	cmd()
-	if fc.lastStartLevel != "autonomous" {
-		t.Fatalf("loop start used level %q despite selector, want autonomous", fc.lastStartLevel)
-	}
 }
 
 // A finished work session goes idle and blocks for input rather than
@@ -5655,7 +5556,7 @@ func TestMaybeNotify(t *testing.T) {
 	if got := run(newModel(false, true, false), ev("question_asked", after.Format(time.RFC3339), "")); got != "\x1b]9;ycc: question waiting\x07" {
 		t.Fatalf("empty question desktop = %q", got)
 	}
-	// Auto-answered question (autonomous mode) → silent.
+	// Auto-answered question (unattended execution) → silent.
 	if got := run(newModel(true, true, false), ev("question_asked", after.Format(time.RFC3339), `{"question":"proceed?","auto":true}`)); got != "" {
 		t.Fatalf("auto:true question should be silent, got %q", got)
 	}
@@ -5859,9 +5760,6 @@ func TestBacklogMultiSelectSpawn(t *testing.T) {
 	for _, r := range f.spawnReqs {
 		if r.Project != "demo" {
 			t.Fatalf("spawn project = %q, want demo", r.Project)
-		}
-		if r.InteractionLevel != "judgement" {
-			t.Fatalf("spawn level = %q, want judgement", r.InteractionLevel)
 		}
 		gotTasks[r.TaskId] = true
 	}
@@ -6509,7 +6407,7 @@ func TestAskUserErrorStaysVisible(t *testing.T) {
 // Autonomous-mode auto-answers must render as one compact dim line, not the
 // full canned "no human is available…" paragraph the agent receives.
 func TestAutoAnsweredQuestionRendersCompact(t *testing.T) {
-	canned := "You are in autonomous mode and no human is available, so this question cannot be answered."
+	canned := "You are in unattended execution and no human is available, so this question cannot be answered."
 	m := &model{
 		expanded: map[int]bool{}, bodyCache: map[int]string{},
 		evs: []*v1.Event{
@@ -6521,7 +6419,7 @@ func TestAutoAnsweredQuestionRendersCompact(t *testing.T) {
 		t.Fatal("auto question_answered should fold into the question row")
 	}
 	body := stripANSI(m.bodyFor(m.evs[0]))
-	if !strings.Contains(body, "auto-answered (autonomous mode)") {
+	if !strings.Contains(body, "auto-answered (unattended execution)") {
 		t.Fatalf("auto answer should render the compact marker, got:\n%s", body)
 	}
 	if strings.Contains(body, "no human is available") {

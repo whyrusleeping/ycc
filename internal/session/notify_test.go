@@ -77,7 +77,7 @@ func TestNotifyWatcherMapsEvents(t *testing.T) {
 	m.startNotifyWatcher(ws, "s1", log)
 	em := event.NewEmitter(log, "coordinator")
 
-	// Auto-answered autonomous ask: nobody is waiting, so it must NOT notify.
+	// Auto-answered unattended ask: nobody is waiting, so it must NOT notify.
 	em.Emit(event.QuestionAsked, askData("auto question", nil, true))
 	// A real (blocking) question, multi-line — first line only.
 	em.Emit(event.QuestionAsked, askData("Which approach?\nmore detail here", nil, false))

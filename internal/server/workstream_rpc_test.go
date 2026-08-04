@@ -123,11 +123,11 @@ func TestWorkstreamRPCEndToEnd(t *testing.T) {
 	client, mgr, proj, _ := newWorkstreamServer(t)
 	ctx := context.Background()
 
-	// Spawn two autonomous workstreams so a clean merge integrates without a
+	// Spawn two workstreams and explicitly accept clean merges after preview; a
 	// separate accept round-trip.
 	spawn := func() *v1.WorkstreamInfo {
 		resp, err := client.SpawnWorkstream(ctx, connect.NewRequest(&v1.SpawnWorkstreamRequest{
-			Project: "demo", InteractionLevel: "autonomous",
+			Project: "demo",
 		}))
 		if err != nil {
 			t.Fatalf("SpawnWorkstream: %v", err)
@@ -214,7 +214,7 @@ func TestWorkstreamRPCEndToEnd(t *testing.T) {
 		t.Fatalf("base HEAD moved during preview: %s -> %s", baseBeforePreview, got)
 	}
 
-	// MergeWorkstream ws1: clean autonomous merge integrates with a commit sha.
+	// MergeWorkstream ws1: accepted clean merge integrates with a commit sha.
 	mg1, err := client.MergeWorkstream(ctx, connect.NewRequest(&v1.MergeWorkstreamRequest{WorkstreamId: ws1.GetId(), Accept: true}))
 	if err != nil {
 		t.Fatalf("MergeWorkstream ws1: %v", err)
@@ -285,7 +285,7 @@ func TestWorkstreamJSONPath(t *testing.T) {
 	client, mgr, _, srv := newWorkstreamServer(t)
 	ctx := context.Background()
 
-	resp, err := client.SpawnWorkstream(ctx, connect.NewRequest(&v1.SpawnWorkstreamRequest{Project: "demo", InteractionLevel: "autonomous"}))
+	resp, err := client.SpawnWorkstream(ctx, connect.NewRequest(&v1.SpawnWorkstreamRequest{Project: "demo"}))
 	if err != nil {
 		t.Fatalf("SpawnWorkstream: %v", err)
 	}

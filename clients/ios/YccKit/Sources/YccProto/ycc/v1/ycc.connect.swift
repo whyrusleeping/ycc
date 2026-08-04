@@ -86,13 +86,10 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `listDir`(request: Ycc_V1_ListDirRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ListDirResponse>
 
-    /// Settings overlay (spec §18.2): enumerate models and change a session's
-    /// interaction level / per-role model assignment mid-flight.
+    /// Settings overlay (spec §18.2): enumerate models and change per-role model
+    /// assignment mid-flight.
     @available(iOS 13, *)
     func `listModels`(request: Ycc_V1_ListModelsRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ListModelsResponse>
-
-    @available(iOS 13, *)
-    func `setInteractionLevel`(request: Ycc_V1_SetInteractionLevelRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_SetInteractionLevelResponse>
 
     @available(iOS 13, *)
     func `setRoleConfig`(request: Ycc_V1_SetRoleConfigRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_SetRoleConfigResponse>
@@ -310,11 +307,6 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     }
 
     @available(iOS 13, *)
-    public func `setInteractionLevel`(request: Ycc_V1_SetInteractionLevelRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_SetInteractionLevelResponse> {
-        return await self.client.unary(path: "/ycc.v1.SessionService/SetInteractionLevel", idempotencyLevel: .unknown, request: request, headers: headers)
-    }
-
-    @available(iOS 13, *)
     public func `setRoleConfig`(request: Ycc_V1_SetRoleConfigRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_SetRoleConfigResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/SetRoleConfig", idempotencyLevel: .unknown, request: request, headers: headers)
     }
@@ -460,7 +452,6 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let removeProject = Connect.MethodSpec(name: "RemoveProject", service: "ycc.v1.SessionService", type: .unary)
             public static let listDir = Connect.MethodSpec(name: "ListDir", service: "ycc.v1.SessionService", type: .unary)
             public static let listModels = Connect.MethodSpec(name: "ListModels", service: "ycc.v1.SessionService", type: .unary)
-            public static let setInteractionLevel = Connect.MethodSpec(name: "SetInteractionLevel", service: "ycc.v1.SessionService", type: .unary)
             public static let setRoleConfig = Connect.MethodSpec(name: "SetRoleConfig", service: "ycc.v1.SessionService", type: .unary)
             public static let setThinking = Connect.MethodSpec(name: "SetThinking", service: "ycc.v1.SessionService", type: .unary)
             public static let upsertModel = Connect.MethodSpec(name: "UpsertModel", service: "ycc.v1.SessionService", type: .unary)

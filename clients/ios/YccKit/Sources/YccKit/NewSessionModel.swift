@@ -13,7 +13,7 @@ public protocol NewSessionSource: Sendable {
     func listProjects() async throws -> [Ycc_V1_ProjectInfo]
     /// Start a new session; returns its id to subscribe from seq 0.
     func startSession(
-        project: String, mode: String, prompt: String, interactionLevel: String
+        project: String, mode: String, prompt: String
     ) async throws -> String
     /// Re-open a persisted session on its existing log; returns its id.
     func resumeSession(project: String, sessionId: String) async throws -> String
@@ -21,46 +21,12 @@ public protocol NewSessionSource: Sendable {
 
 extension YccClient: NewSessionSource {}
 
-/// A session's interaction level (spec §11): how much autonomy the agent has
-/// before it must consult the human. Kept as a typed enum so the picker is
-/// exhaustive and the wire value (`interactive` | `judgement` | `autonomous`)
-/// is a single source of truth.
-public enum InteractionLevel: String, CaseIterable, Sendable, Identifiable {
-    /// Asks before most actions — every `ask_user` gate blocks for a human.
-    case interactive
-    /// Asks only for judgement calls (the daemon default).
-    case judgement
-    /// Runs to completion without asking (auto-answers gates).
-    case autonomous
-
-    public var id: String { rawValue }
-
-    /// A human-facing label for the picker.
-    public var title: String {
-        switch self {
-        case .interactive: return "Interactive"
-        case .judgement: return "Judgement"
-        case .autonomous: return "Autonomous"
-        }
-    }
-
-    /// A one-line description of what the level does.
-    public var detail: String {
-        switch self {
-        case .interactive: return "Asks before most actions"
-        case .judgement: return "Asks only for judgement calls"
-        case .autonomous: return "Runs to completion without asking"
-        }
-    }
-}
-
-/// Client-side memory of the last-used mode/level/project so a returning user
+/// Client-side memory of the last-used mode/project so a returning user
 /// gets sensible defaults (docs/design/ios-client.md §6 phase 2 step 5).
 /// Abstracted behind a protocol so tests can stub it without touching
 /// `UserDefaults`.
 public protocol SessionDefaultsStore: AnyObject {
     var lastMode: String? { get set }
-    var lastInteractionLevel: String? { get set }
     var lastProject: String? { get set }
 }
 
@@ -68,7 +34,6 @@ public protocol SessionDefaultsStore: AnyObject {
 public final class UserDefaultsSessionDefaults: SessionDefaultsStore {
     private let defaults: UserDefaults
     private static let modeKey = "ycc.newSession.mode"
-    private static let levelKey = "ycc.newSession.interactionLevel"
     private static let projectKey = "ycc.newSession.project"
 
     public init(defaults: UserDefaults = .standard) {
@@ -79,10 +44,6 @@ public final class UserDefaultsSessionDefaults: SessionDefaultsStore {
         get { defaults.string(forKey: Self.modeKey) }
         set { defaults.set(newValue, forKey: Self.modeKey) }
     }
-    public var lastInteractionLevel: String? {
-        get { defaults.string(forKey: Self.levelKey) }
-        set { defaults.set(newValue, forKey: Self.levelKey) }
-    }
     public var lastProject: String? {
         get { defaults.string(forKey: Self.projectKey) }
         set { defaults.set(newValue, forKey: Self.projectKey) }
@@ -90,7 +51,7 @@ public final class UserDefaultsSessionDefaults: SessionDefaultsStore {
 }
 
 /// Drives the "new session" flow: loads ``ListModes`` + ``ListProjects``, holds
-/// the mode / interaction-level / project selections and the prompt draft,
+/// the mode / project selections and the prompt draft,
 /// validates, and starts the session (returning its id so the view can navigate
 /// straight into the live stream). Last-used selections are remembered via an
 /// injectable ``SessionDefaultsStore``. `@MainActor` because it publishes
@@ -108,8 +69,6 @@ public final class NewSessionModel {
 
     /// The selected mode name (e.g. `work`/`pm`/`chat`).
     public var selectedMode: String = ""
-    /// The selected interaction level.
-    public var interactionLevel: InteractionLevel = .judgement
     /// The selected project (`""` => daemon default workspace).
     public var selectedProject: String = ""
     /// The multiline prompt composer draft.
@@ -138,8 +97,6 @@ public final class NewSessionModel {
         self.defaults = defaults
         // Recall last-used selections up front so the pickers open on them.
         self.selectedMode = defaults.lastMode ?? ""
-        self.interactionLevel = defaults.lastInteractionLevel
-            .flatMap(InteractionLevel.init(rawValue:)) ?? .judgement
         self.selectedProject = initialProject ?? defaults.lastProject ?? ""
     }
 
@@ -219,8 +176,7 @@ public final class NewSessionModel {
             let sessionId = try await source.startSession(
                 project: selectedProject,
                 mode: selectedMode,
-                prompt: trimmedPrompt,
-                interactionLevel: interactionLevel.rawValue)
+                prompt: trimmedPrompt)
             rememberSelections()
             errorMessage = nil
             return sessionId
@@ -244,7 +200,6 @@ public final class NewSessionModel {
 
     private func rememberSelections() {
         defaults.lastMode = selectedMode
-        defaults.lastInteractionLevel = interactionLevel.rawValue
         defaults.lastProject = selectedProject
     }
 }

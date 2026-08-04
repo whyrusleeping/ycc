@@ -2,7 +2,6 @@ package session
 
 import (
 	"bytes"
-	"context"
 	"strings"
 	"testing"
 
@@ -33,14 +32,14 @@ func testRegistry() *config.Registry {
 	return config.NewRegistry(cfg)
 }
 
-// newTestSession builds a Session WITHOUT launching run(), so SetInteractionLevel
-// and SetRoleConfig can be exercised deterministically against an in-memory log.
+// newTestSession builds a Session WITHOUT launching run(), so settings changes
+// can be exercised deterministically against an in-memory log.
 func newTestSession(t *testing.T) (*Session, *bytes.Buffer) {
 	t.Helper()
 	var buf bytes.Buffer
 	rec := event.NewStdoutRecorder(&buf)
 	emitter := event.NewEmitter(rec, "coordinator")
-	inter := newInteraction("judgement", emitter)
+	inter := newInteraction(false, emitter)
 	reg := testRegistry()
 	client, model, err := reg.Build("a")
 	if err != nil {
@@ -48,54 +47,22 @@ func newTestSession(t *testing.T) (*Session, *bytes.Buffer) {
 	}
 	deps := &orchestrator.Deps{Emitter: emitter, Asker: inter}
 	s := &Session{
-		ID:               "s_test",
-		InteractionLevel: "judgement",
-		emitter:          emitter,
-		inter:            inter,
-		deps:             deps,
-		reg:              reg,
-		loop:             &engine.Loop{Client: client, Model: model, Emitter: emitter},
-		coordinator:      "a",
-		implementer:      "a",
-		reviewers:        []string{"a"},
-		status:           event.StatusRunning,
+		ID:          "s_test",
+		emitter:     emitter,
+		inter:       inter,
+		deps:        deps,
+		reg:         reg,
+		loop:        &engine.Loop{Client: client, Model: model, Emitter: emitter},
+		coordinator: "a",
+		implementer: "a",
+		reviewers:   []string{"a"},
+		status:      event.StatusRunning,
 	}
 	return s, &buf
 }
 
 func logHas(buf *bytes.Buffer, typ string) bool {
 	return strings.Contains(buf.String(), typ)
-}
-
-// SetInteractionLevel updates the live policy and emits a log event; the change
-// is observed by the NEXT gate (Ask).
-func TestSetInteractionLevelTakesEffectAtNextGate(t *testing.T) {
-	s, buf := newTestSession(t)
-
-	// A blocking gate would be judgement; switch to autonomous so the next Ask
-	// returns immediately without a human.
-	if err := s.SetInteractionLevel("autonomous"); err != nil {
-		t.Fatal(err)
-	}
-	if s.inter.Level() != "autonomous" {
-		t.Fatalf("level = %q", s.inter.Level())
-	}
-	if !logHas(buf, string(event.InteractionLevelChanged)) {
-		t.Fatalf("no interaction_level_changed event:\n%s", buf.String())
-	}
-
-	// Next gate: autonomous mode does not block.
-	ans, err := s.inter.Ask(context.Background(), "proceed?", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(strings.ToLower(ans), "autonomous") {
-		t.Fatalf("answer = %q", ans)
-	}
-
-	if err := s.SetInteractionLevel("bogus"); err == nil {
-		t.Fatal("expected error for unknown level")
-	}
 }
 
 // SetRoleConfig validates names, rebuilds the coordinator loop backend and the
@@ -222,7 +189,7 @@ func TestSetThinkingHonoredByModeSwitchBuildLoop(t *testing.T) {
 	// resolves coordinator reasoning through s.thinkingFor, so a session-wide
 	// override flows into the next mode's loop.
 	s.buildLoop = func(mode, prompt string) (*engine.Loop, error) {
-		reg, sys := orchestrator.BuildMode(mode, s.deps, s.inter.Level())
+		reg, sys := orchestrator.BuildMode(mode, s.deps, false)
 		s.mu.Lock()
 		coord := s.coordinator
 		s.mu.Unlock()

@@ -63,9 +63,6 @@ public nonisolated struct Ycc_V1_StartSessionRequest: Sendable {
   /// e.g. "work"; M1 runs a single worker agent
   public var mode: String = String()
 
-  /// interactive | judgement | autonomous
-  public var interactionLevel: String = String()
-
   /// initial task prompt
   public var prompt: String = String()
 
@@ -1058,33 +1055,6 @@ public nonisolated struct Ycc_V1_DiscoverModelsResponse: Sendable {
   public init() {}
 }
 
-/// SetInteractionLevel changes a session's interaction level mid-flight (spec §11,
-/// §18.2). It takes effect at the next gate and is recorded in the event log.
-public nonisolated struct Ycc_V1_SetInteractionLevelRequest: Sendable {
-  // SwiftProtobuf.Message conformance is added in an extension below. See the
-  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
-  // methods supported on all messages.
-
-  public var sessionID: String = String()
-
-  /// interactive | judgement | autonomous
-  public var level: String = String()
-
-  public var unknownFields = SwiftProtobuf.UnknownStorage()
-
-  public init() {}
-}
-
-public nonisolated struct Ycc_V1_SetInteractionLevelResponse: Sendable {
-  // SwiftProtobuf.Message conformance is added in an extension below. See the
-  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
-  // methods supported on all messages.
-
-  public var unknownFields = SwiftProtobuf.UnknownStorage()
-
-  public init() {}
-}
-
 /// SetRoleConfig reassigns per-role logical models (spec §13, §18.2). Empty
 /// coordinator/implementer leaves that role unchanged; an empty reviewers list
 /// leaves reviewers unchanged. The assignment is persisted as the default (roles
@@ -2029,9 +1999,6 @@ public nonisolated struct Ycc_V1_SpawnWorkstreamRequest: Sendable {
   /// optional initial prompt for the session
   public var prompt: String = String()
 
-  /// interactive | judgement | autonomous (default judgement)
-  public var interactionLevel: String = String()
-
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -2118,9 +2085,8 @@ public nonisolated struct Ycc_V1_PreviewMergeResponse: Sendable {
 /// MergeWorkstream integrates a workstream's branch back to base with the
 /// conflict-aware, review-gated flow (design §6). The design §8 sketch calls the
 /// second field "strategy", but that sketch is explicitly non-final; the manager's
-/// real gate is `accept`: under interactive/judgement a clean trial merge returns
-/// needs_accept + the integrated diff (nothing mutated) until accept=true, while
-/// autonomous integrates clean merges immediately. A conflict returns the
+/// real gate is `accept`: a clean trial merge returns needs_accept + the integrated
+/// diff (nothing mutated) until accept=true. A conflict returns the
 /// conflicted paths with base untouched and the worktree kept.
 public nonisolated struct Ycc_V1_MergeWorkstreamRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
@@ -2247,7 +2213,7 @@ nonisolated extension Ycc_V1_Event: SwiftProtobuf.Message, SwiftProtobuf._Messag
 
 nonisolated extension Ycc_V1_StartSessionRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".StartSessionRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}workspace\0\u{1}mode\0\u{3}interaction_level\0\u{1}prompt\0\u{1}project\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}workspace\0\u{1}mode\0\u{2}\u{2}prompt\0\u{1}project\0\u{c}\u{3}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2257,7 +2223,6 @@ nonisolated extension Ycc_V1_StartSessionRequest: SwiftProtobuf.Message, SwiftPr
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.workspace) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.mode) }()
-      case 3: try { try decoder.decodeSingularStringField(value: &self.interactionLevel) }()
       case 4: try { try decoder.decodeSingularStringField(value: &self.prompt) }()
       case 5: try { try decoder.decodeSingularStringField(value: &self.project) }()
       default: break
@@ -2272,9 +2237,6 @@ nonisolated extension Ycc_V1_StartSessionRequest: SwiftProtobuf.Message, SwiftPr
     if !self.mode.isEmpty {
       try visitor.visitSingularStringField(value: self.mode, fieldNumber: 2)
     }
-    if !self.interactionLevel.isEmpty {
-      try visitor.visitSingularStringField(value: self.interactionLevel, fieldNumber: 3)
-    }
     if !self.prompt.isEmpty {
       try visitor.visitSingularStringField(value: self.prompt, fieldNumber: 4)
     }
@@ -2287,7 +2249,6 @@ nonisolated extension Ycc_V1_StartSessionRequest: SwiftProtobuf.Message, SwiftPr
   public static func ==(lhs: Ycc_V1_StartSessionRequest, rhs: Ycc_V1_StartSessionRequest) -> Bool {
     if lhs.workspace != rhs.workspace {return false}
     if lhs.mode != rhs.mode {return false}
-    if lhs.interactionLevel != rhs.interactionLevel {return false}
     if lhs.prompt != rhs.prompt {return false}
     if lhs.project != rhs.project {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
@@ -4183,60 +4144,6 @@ nonisolated extension Ycc_V1_DiscoverModelsResponse: SwiftProtobuf.Message, Swif
   }
 }
 
-nonisolated extension Ycc_V1_SetInteractionLevelRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".SetInteractionLevelRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}level\0")
-
-  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.level) }()
-      default: break
-      }
-    }
-  }
-
-  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.sessionID.isEmpty {
-      try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 1)
-    }
-    if !self.level.isEmpty {
-      try visitor.visitSingularStringField(value: self.level, fieldNumber: 2)
-    }
-    try unknownFields.traverse(visitor: &visitor)
-  }
-
-  public static func ==(lhs: Ycc_V1_SetInteractionLevelRequest, rhs: Ycc_V1_SetInteractionLevelRequest) -> Bool {
-    if lhs.sessionID != rhs.sessionID {return false}
-    if lhs.level != rhs.level {return false}
-    if lhs.unknownFields != rhs.unknownFields {return false}
-    return true
-  }
-}
-
-nonisolated extension Ycc_V1_SetInteractionLevelResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".SetInteractionLevelResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
-
-  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    // Load everything into unknown fields
-    while try decoder.nextFieldNumber() != nil {}
-  }
-
-  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    try unknownFields.traverse(visitor: &visitor)
-  }
-
-  public static func ==(lhs: Ycc_V1_SetInteractionLevelResponse, rhs: Ycc_V1_SetInteractionLevelResponse) -> Bool {
-    if lhs.unknownFields != rhs.unknownFields {return false}
-    return true
-  }
-}
-
 nonisolated extension Ycc_V1_SetRoleConfigRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SetRoleConfigRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}coordinator\0\u{1}implementer\0\u{1}reviewers\0")
@@ -6008,7 +5915,7 @@ nonisolated extension Ycc_V1_WorkstreamInfo: SwiftProtobuf.Message, SwiftProtobu
 
 nonisolated extension Ycc_V1_SpawnWorkstreamRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SpawnWorkstreamRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{3}base_ref\0\u{3}task_id\0\u{1}prompt\0\u{3}interaction_level\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{3}base_ref\0\u{3}task_id\0\u{1}prompt\0\u{c}\u{5}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -6020,7 +5927,6 @@ nonisolated extension Ycc_V1_SpawnWorkstreamRequest: SwiftProtobuf.Message, Swif
       case 2: try { try decoder.decodeSingularStringField(value: &self.baseRef) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.taskID) }()
       case 4: try { try decoder.decodeSingularStringField(value: &self.prompt) }()
-      case 5: try { try decoder.decodeSingularStringField(value: &self.interactionLevel) }()
       default: break
       }
     }
@@ -6039,9 +5945,6 @@ nonisolated extension Ycc_V1_SpawnWorkstreamRequest: SwiftProtobuf.Message, Swif
     if !self.prompt.isEmpty {
       try visitor.visitSingularStringField(value: self.prompt, fieldNumber: 4)
     }
-    if !self.interactionLevel.isEmpty {
-      try visitor.visitSingularStringField(value: self.interactionLevel, fieldNumber: 5)
-    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -6050,7 +5953,6 @@ nonisolated extension Ycc_V1_SpawnWorkstreamRequest: SwiftProtobuf.Message, Swif
     if lhs.baseRef != rhs.baseRef {return false}
     if lhs.taskID != rhs.taskID {return false}
     if lhs.prompt != rhs.prompt {return false}
-    if lhs.interactionLevel != rhs.interactionLevel {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

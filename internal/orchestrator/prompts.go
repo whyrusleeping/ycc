@@ -119,8 +119,7 @@ IMPLEMENTER BLOCKED: spawn_implementer/send_to_implementer can return a structur
 outcome — the implementer stopped on a decision that isn't its to make, with a reason (already
 recorded in the task's work log) rather than a normal report. Don't push it to guess. If it's
 an ordinary judgement call, decide it yourself and send_to_implementer with the answer (it
-keeps its context). If it genuinely needs the user, ask_user as your interaction level permits
-and relay the answer via send_to_implementer. If no answer is available (e.g. autonomous),
+keeps its context). If it genuinely needs the user, ask_user and relay the answer via send_to_implementer. If no answer is available during unattended execution,
 update_task "blocked" with the reason, then move on to another ready task or finish.
 
 SCOPE: keep the active task tight — this session still drives ONE task to a committed state.
@@ -388,7 +387,7 @@ user's explicit approval (the tool asks for it). Pass the exact task_id and a pl
 the work coordinator implements THAT task rather than wandering to another. If you are not
 ready to hand off, just call finish to hand back.
 
-Ask the user (ask_user) when intent is unclear, as your interaction level allows; when a
+Ask the user (ask_user) when intent is unclear; when a
 question has a small set of likely answers, pass them as ask_user 'options'. Call finish when
 the docs/backlog reflect the agreed state.`
 
@@ -512,29 +511,11 @@ Steps:
 
 Use ask_user when intent is unclear; finish when memory.md is groomed and any approved promotions are recorded.`
 
-func levelGuidance(level string) string {
-	switch level {
-	case "interactive":
-		return `INTERACTION LEVEL: interactive. Use ask_user freely — confirm the chosen task and
-plan before implementing, and ask whenever a decision is significant or you are unsure. When a
-question has a small set of likely answers, supply them via ask_user ` + "`options`" + ` so the
-user gets a clean multiple-choice picker. Make every question self-contained: lead with the
-context needed to answer it (what you were doing, what you found, why it matters) — the user
-is not reading your transcript.`
-	case "autonomous":
-		return `INTERACTION LEVEL: autonomous. Do NOT ask the user anything; make every decision
-yourself. (ask_user will not reach a human, so it cannot unblock you.) Proceed on your best
-judgement wherever you reasonably can. If a task GENUINELY cannot proceed without the user — an
-unresolved design decision, conflicting requirements, or a choice that is hard to reverse — do
-not guess: set it "blocked" (update_task) with a brief note of what you need and why, then move
-on to another ready task or finish. Note any significant assumptions in your final report.`
-	default: // judgement
-		return `INTERACTION LEVEL: judgement. Proceed on your best judgement. Use ask_user only when
-genuinely blocked or a decision is hard to reverse. When you do ask, make the question
-self-contained: lead with the context needed to answer it (what you were doing, what you
-found, why it matters) — the user is not reading your transcript.`
-	}
-}
+const unattendedGuidance = `UNATTENDED EXECUTION: no human is waiting to answer questions. Do
+not call ask_user to unblock yourself; make reversible decisions on your own judgement. If work
+genuinely cannot proceed without user intent or a hard-to-reverse choice, mark the affected task
+blocked with a concise explanation, then continue other ready work or finish. Note significant
+assumptions in the final report.`
 
 func implementerPrompt(t *docs.Task, plan string, hints []string) string {
 	return fmt.Sprintf(`Implement this task.

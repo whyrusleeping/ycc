@@ -208,7 +208,7 @@ A **workstream** is the unit. Its lifecycle:
    single-writer invariant holds: one daemon, one coordinator, one tree.
 
 3. **Merge.** When the workstream reaches a clean/idle accepted state, the user
-   (or an autonomous policy) requests integration back to base. See §6 for the
+   requests integration back to base. See §6 for the
    strategy and conflict handling. On success, base advances to include the
    workstream's commits.
 
@@ -241,9 +241,7 @@ Options considered:
 1. The daemon performs a **trial merge** (`git merge --no-commit --no-ff` into a
    throwaway/base-tip, or `git merge-tree`) to *detect* conflicts without
    mutating base.
-2. **Clean trial → present for acceptance.** Under autonomous interaction level,
-   auto-merge clean workstreams; under interactive/judgement levels, surface the
-   integrated diff as a decision (consistent with spec §11 levels and the "review
+2. **Clean trial → present for acceptance.** Always surface the integrated diff as a decision (consistent with spec §11 levels and the "review
    before accept" rule). Merges are **sequential** across workstreams so each is
    reconciled against the latest base.
 3. **Conflicting trial → surface, never silently resolve.** Emit a
@@ -293,7 +291,7 @@ Conceptually we introduce a first-class **Workstream** alongside Session.
   tasks and chooses "Run in parallel (N workstreams)." Each selection becomes a
   workstream: the daemon creates the worktree + branch and starts a `work`
   session inside it. RPC sketch: `SpawnWorkstream(project, base_ref, task_id?,
-  prompt?, interaction_level)` → `{workstream_id, branch, worktree_path,
+  prompt?)` → `{workstream_id, branch, worktree_path,
   session_id}`.
 - **Monitor.** A **Workstreams** panel lists active workstreams with status
   (running / idle / awaiting-review / conflict), focused task, branch, and commit
@@ -361,7 +359,7 @@ backlog by the coordinator):
 
 3. **Merge/integration flow with conflict surfacing.**
    - Implement the §6 sequential, review-gated merge: trial-merge, accept gate by
-     interaction level, sequential reconciliation, and a `workstream_conflict`
+     explicit acceptance, sequential reconciliation, and a `workstream_conflict`
      path that stops without mutating base.
    - New event types (`workstream_created/merged/conflict/discarded`) + reducer
      handling.

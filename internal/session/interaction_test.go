@@ -14,15 +14,15 @@ func discardEmitter() *event.Emitter {
 	return event.NewEmitter(event.NewStdoutRecorder(io.Discard), "coordinator")
 }
 
-// In autonomous mode ask_user must not block; it records the question as an
+// In unattended execution ask_user must not block; it records the question as an
 // assumption and tells the agent to proceed.
 func TestAutonomousDoesNotBlock(t *testing.T) {
-	in := newInteraction("autonomous", discardEmitter())
+	in := newInteraction(true, discardEmitter())
 	ans, err := in.Ask(context.Background(), "which database?", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(strings.ToLower(ans), "autonomous") {
+	if !strings.Contains(strings.ToLower(ans), "unattended") {
 		t.Fatalf("answer = %q", ans)
 	}
 	as := in.Assumptions()
@@ -33,7 +33,7 @@ func TestAutonomousDoesNotBlock(t *testing.T) {
 
 // In interactive mode ask_user blocks until an answer arrives.
 func TestInteractiveBlocksUntilAnswer(t *testing.T) {
-	in := newInteraction("interactive", discardEmitter())
+	in := newInteraction(false, discardEmitter())
 	if in.Answer("nope") {
 		t.Fatal("Answer with no pending question should return false")
 	}
@@ -68,7 +68,7 @@ func TestInteractiveBlocksUntilAnswer(t *testing.T) {
 // Regression: an answer arriving after a question is cancelled must not be
 // buffered and silently consumed by the NEXT question.
 func TestNoStaleAnswerAcrossQuestions(t *testing.T) {
-	in := newInteraction("interactive", discardEmitter())
+	in := newInteraction(false, discardEmitter())
 
 	// Q1: ask, wait until pending, then cancel it.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -100,11 +100,11 @@ func TestNoStaleAnswerAcrossQuestions(t *testing.T) {
 	}
 }
 
-// Confirm requires a real human answer even in autonomous mode (it does not
+// Confirm requires a real human answer even in unattended execution (it does not
 // auto-answer). When no human is available (the context is cancelled), it declines
 // — returning (false, nil) — so a high-impact action is not silently taken.
 func TestConfirmDeclinesWhenNoHuman(t *testing.T) {
-	in := newInteraction("autonomous", discardEmitter())
+	in := newInteraction(true, discardEmitter())
 	ctx, cancel := context.WithCancel(context.Background())
 	type res struct {
 		ok  bool
@@ -115,7 +115,7 @@ func TestConfirmDeclinesWhenNoHuman(t *testing.T) {
 		ok, err := in.Confirm(ctx, "start work?")
 		done <- res{ok, err}
 	}()
-	waitPending(t, in) // Confirm blocks even in autonomous, so a question goes pending
+	waitPending(t, in) // Confirm blocks during unattended execution, so a question goes pending
 	cancel()
 	select {
 	case r := <-done:
@@ -125,7 +125,7 @@ func TestConfirmDeclinesWhenNoHuman(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Confirm did not return after cancel")
 	}
-	// A confirmation gate is not an autonomous assumption.
+	// A confirmation gate is not an unattended assumption.
 	if len(in.Assumptions()) != 0 {
 		t.Fatalf("Confirm should not record an assumption: %v", in.Assumptions())
 	}
@@ -133,7 +133,7 @@ func TestConfirmDeclinesWhenNoHuman(t *testing.T) {
 
 // Confirm resolves to true only for an affirmative answer.
 func TestConfirmAffirmative(t *testing.T) {
-	in := newInteraction("interactive", discardEmitter())
+	in := newInteraction(false, discardEmitter())
 	done := make(chan bool, 1)
 	go func() {
 		ok, _ := in.Confirm(context.Background(), "proceed?")
@@ -170,7 +170,7 @@ func waitPending(t *testing.T, in *interaction) {
 
 // A cancelled context unblocks a pending ask_user with an error.
 func TestInteractiveContextCancel(t *testing.T) {
-	in := newInteraction("judgement", discardEmitter())
+	in := newInteraction(false, discardEmitter())
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
@@ -195,7 +195,7 @@ func TestAnswerOptionResolvesIndex(t *testing.T) {
 	opts := []string{"postgres", "sqlite", "mysql"}
 
 	// Index selection resolves to the option text.
-	in := newInteraction("interactive", discardEmitter())
+	in := newInteraction(false, discardEmitter())
 	got := make(chan string, 1)
 	go func() { a, _ := in.Ask(context.Background(), "db?", opts); got <- a }()
 	deadline := time.Now().Add(2 * time.Second)
@@ -210,7 +210,7 @@ func TestAnswerOptionResolvesIndex(t *testing.T) {
 	}
 
 	// Negative index is treated as free text.
-	in2 := newInteraction("interactive", discardEmitter())
+	in2 := newInteraction(false, discardEmitter())
 	got2 := make(chan string, 1)
 	go func() { a, _ := in2.Ask(context.Background(), "db?", opts); got2 <- a }()
 	deadline = time.Now().Add(2 * time.Second)

@@ -21,15 +21,14 @@ const (
 // a projection over the log). It is rebuilt by replaying events and is the
 // canonical source for things like "what mode is this, is it idle, last report".
 type Projection struct {
-	Mode             string
-	InteractionLevel string
-	Workspace        string
-	Status           Status
-	Turns            int
-	ToolCalls        int
-	LastReport       string
-	LastError        string
-	LastSeq          int
+	Mode       string
+	Workspace  string
+	Status     Status
+	Turns      int
+	ToolCalls  int
+	LastReport string
+	LastError  string
+	LastSeq    int
 	// FocusTask is the backlog task the session is currently working on, set by
 	// the most recent task_focus event ("" before any focus). TurnsByTask counts
 	// model_turns attributed to each focused task (spec §20.2); the empty-string
@@ -55,7 +54,6 @@ func Reduce(events []Event) Projection {
 		case SessionStarted:
 			p.Status = StatusRunning
 			p.Mode = str(ev.Data, "mode")
-			p.InteractionLevel = str(ev.Data, "interaction_level")
 			p.Workspace = str(ev.Data, "workspace")
 		case TaskFocus:
 			p.FocusTask = str(ev.Data, "task")
@@ -101,13 +99,6 @@ func Reduce(events []Event) Projection {
 			// its existing log. It does NOT change status — the reopened session's
 			// status is whatever its prior events established (it resumes idle,
 			// awaiting the first new input).
-		case InteractionLevelChanged:
-			// A mid-session settings overlay (spec §18.2): keep the projection's
-			// interaction level current so consumers (e.g. the merge accept gate,
-			// design §6) read the effective level of a non-live session.
-			if to := str(ev.Data, "to"); to != "" {
-				p.InteractionLevel = to
-			}
 		case WorkstreamCreated:
 			p.WorkstreamID = str(ev.Data, "workstream")
 			p.WorkstreamState = "created"

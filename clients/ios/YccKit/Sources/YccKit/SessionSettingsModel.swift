@@ -11,8 +11,6 @@ public protocol SessionSettingsSource: Sendable {
     /// Configured logical models + CURRENT per-role assignments and per-role
     /// thinking levels (`ListModels`); seeds the pickers with reality.
     func listModels() async throws -> Ycc_V1_ListModelsResponse
-    /// Change the session's interaction level (`SetInteractionLevel`).
-    func setInteractionLevel(sessionId: String, level: String) async throws
     /// Reassign per-role logical models (`SetRoleConfig`); empty fields unchanged.
     func setRoleConfig(
         sessionId: String, coordinator: String, implementer: String, reviewers: [String]
@@ -86,8 +84,7 @@ public enum ThinkingRole: String, CaseIterable, Sendable, Identifiable {
 /// Drives the per-session settings sheet (spec §18.2 analog; docs/design/
 /// ios-client.md §6 phase 3 step 8): the phone analog of the TUI settings
 /// overlay. Seeds its pickers from ``ListModels`` (per-role model assignments +
-/// per-role thinking) and the session's current interaction level (threaded from
-/// the live projection), then applies each change against the live session via
+/// per-role thinking), then applies each change against the live session via
 /// the injected ``SessionSettingsSource`` — surfacing the daemon's error verbatim
 /// on an invalid combination. `@MainActor` because it publishes observable UI
 /// state; the source is injected so the logic is testable headlessly.
@@ -97,8 +94,6 @@ public final class SessionSettingsModel {
     /// Available logical models (drives the role pickers).
     public private(set) var models: [Ycc_V1_ModelInfo] = []
 
-    /// The selected interaction level (bound to the picker).
-    public var interactionLevel: InteractionLevel
     /// The selected coordinator model (`""` until seeded / when unset).
     public var coordinator: String = ""
     /// The selected implementer model.
@@ -131,27 +126,17 @@ public final class SessionSettingsModel {
 
     // Committed (daemon-confirmed) values, so a failed apply can revert the
     // corresponding picker back to reality rather than lie about the state.
-    private var committedInteractionLevel: InteractionLevel
     private var committedCoordinator = ""
     private var committedImplementer = ""
     private var committedReviewers: [String] = []
 
-    public init(
-        source: SessionSettingsSource,
-        sessionId: String,
-        currentInteractionLevel: String? = nil
-    ) {
+    public init(source: SessionSettingsSource, sessionId: String) {
         self.source = source
         self.sessionId = sessionId
-        let level = currentInteractionLevel
-            .flatMap(InteractionLevel.init(rawValue:)) ?? .judgement
-        self.interactionLevel = level
-        self.committedInteractionLevel = level
     }
 
     /// Load the model list and seed every picker from the daemon's CURRENT
-    /// per-role assignments + per-role thinking. The interaction level is seeded
-    /// at init from the live projection. Unauthorized bubbles up via
+    /// per-role assignments + per-role thinking. Unauthorized bubbles up via
     /// ``unauthorized`` for the view to handle.
     public func load() async {
         isLoading = true
@@ -204,20 +189,6 @@ public final class SessionSettingsModel {
                 || level != reviewersThinking
         default:
             return level != thinkingLevelFor(role)
-        }
-    }
-
-    /// Apply the selected interaction level (`SetInteractionLevel`). On failure
-    /// reverts the picker to the last committed value and surfaces the error.
-    public func applyInteractionLevel() async {
-        guard interactionLevel != committedInteractionLevel else { return }
-        await apply {
-            try await self.source.setInteractionLevel(
-                sessionId: self.sessionId, level: self.interactionLevel.rawValue)
-        } onSuccess: {
-            self.committedInteractionLevel = self.interactionLevel
-        } onFailure: {
-            self.interactionLevel = self.committedInteractionLevel
         }
     }
 

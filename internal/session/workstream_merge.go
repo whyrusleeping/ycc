@@ -25,8 +25,8 @@ type MergePreview struct {
 // NeedsAccept, or a non-empty Conflicts describes the outcome:
 //   - Merged: the branch was integrated (Commit holds the merge commit sha) and
 //     the worktree + branch were cleaned up.
-//   - NeedsAccept: the trial merge is clean but the interaction level gates the
-//     integration behind explicit acceptance; Diff holds the integrated diff to
+//   - NeedsAccept: the trial merge is clean but explicit acceptance is required;
+//     Diff holds the integrated diff to
 //     review. Nothing was mutated.
 //   - Conflicts: the merge conflicted; the base branch is untouched and the
 //     worktree is kept so the conflict can be resolved (design §6).
@@ -63,31 +63,6 @@ func (m *Manager) emitWorkstreamEvent(ws workstream.Workstream, t event.Type, da
 	}
 	log.Record("system", t, data)
 	log.Close()
-}
-
-// effectiveLevel resolves a workstream session's current interaction level: the
-// live session's Level() if it is running, else the reduced projection of its
-// durable log. Defaults to "judgement" when nothing establishes a level.
-func (m *Manager) effectiveLevel(ws workstream.Workstream) string {
-	if ws.SessionID != "" {
-		m.mu.Lock()
-		s, live := m.sessions[ws.SessionID]
-		m.mu.Unlock()
-		if live {
-			if lvl := s.Level(); lvl != "" {
-				return lvl
-			}
-		}
-	}
-	if ws.SessionID != "" && ws.WorktreePath != "" {
-		logPath := filepath.Join(ws.WorktreePath, ".ycc", "sessions", ws.SessionID, "events.jsonl")
-		if events, err := event.ReadLog(logPath); err == nil {
-			if lvl := event.Reduce(events).InteractionLevel; lvl != "" {
-				return lvl
-			}
-		}
-	}
-	return "judgement"
 }
 
 // primaryRepo resolves the parent project's primary tree for an active
@@ -209,16 +184,15 @@ func (m *Manager) PreviewWorkstreamMerge(id string) (MergePreview, error) {
 // §6). The whole operation is serialized across workstreams so each merge sees
 // the previous one's changes (sequential reconciliation).
 //
-// The outcome depends on the trial merge and the interaction level:
+// The outcome depends on the trial merge and explicit acceptance:
 //   - conflict → a workstream_conflict event listing the paths; base untouched,
 //     worktree + active status kept so the conflict can be resolved.
-//   - clean, autonomous level (or accept=true) → the branch is merged --no-ff,
-//     a workstream_merged event recorded, the session stopped, and the
-//     worktree + branch cleaned up; registry status set to merged. The session
-//     log is preserved into the primary workspace before cleanup so its
-//     transcript stays viewable afterwards.
-//   - clean, interactive/judgement level and accept=false → NeedsAccept with the
-//     integrated diff; nothing is mutated and no event is recorded.
+//   - clean and accept=true → the branch is merged --no-ff, a workstream_merged
+//     event recorded, the session stopped, and the worktree + branch cleaned up;
+//     registry status set to merged. The session log is preserved into the
+//     primary workspace before cleanup so its transcript remains viewable.
+//   - clean and accept=false → NeedsAccept with the integrated diff; nothing is
+//     mutated and no event is recorded.
 func (m *Manager) MergeWorkstream(id string, accept bool) (MergeOutcome, error) {
 	m.mergeMu.Lock()
 	defer m.mergeMu.Unlock()
@@ -245,9 +219,8 @@ func (m *Manager) MergeWorkstream(id string, accept bool) (MergeOutcome, error) 
 		return m.surfaceConflict(ws, trial.Conflicts), nil
 	}
 
-	// Step 2: review gate. Autonomous integrates clean workstreams silently;
-	// interactive/judgement surface the integrated diff and wait for acceptance.
-	if m.effectiveLevel(ws) != "autonomous" && !accept {
+	// Step 2: every clean merge requires explicit acceptance after preview.
+	if !accept {
 		diff, derr := repo.DiffMergeBase(ws.Branch)
 		if derr != nil {
 			return MergeOutcome{}, derr

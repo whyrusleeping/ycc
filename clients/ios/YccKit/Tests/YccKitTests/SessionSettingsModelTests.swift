@@ -11,18 +11,12 @@ private final class MockSettingsSource: SessionSettingsSource, @unchecked Sendab
     var listError: Error?
     var setError: Error?
 
-    private(set) var levelArgs: (sessionId: String, level: String)?
     private(set) var roleArgs: (sessionId: String, coordinator: String, implementer: String, reviewers: [String])?
     private(set) var thinkingArgs: (sessionId: String, level: String, role: String)?
 
     func listModels() async throws -> Ycc_V1_ListModelsResponse {
         if let listError { throw listError }
         return response
-    }
-
-    func setInteractionLevel(sessionId: String, level: String) async throws {
-        levelArgs = (sessionId, level)
-        if let setError { throw setError }
     }
 
     func setRoleConfig(
@@ -72,8 +66,7 @@ final class SessionSettingsModelTests: XCTestCase {
     func testLoadSeedsPickersFromListModels() async {
         let source = MockSettingsSource()
         source.response = listModelsResponse()
-        let model = SessionSettingsModel(
-            source: source, sessionId: "s1", currentInteractionLevel: "autonomous")
+        let model = SessionSettingsModel(source: source, sessionId: "s1")
 
         await model.load()
 
@@ -84,16 +77,8 @@ final class SessionSettingsModelTests: XCTestCase {
         XCTAssertEqual(model.coordinatorThinking, .high)
         XCTAssertEqual(model.implementerThinking, .medium)
         XCTAssertEqual(model.reviewersThinking, .low)
-        // Interaction level seeds from the projection value threaded at init.
-        XCTAssertEqual(model.interactionLevel, .autonomous)
         XCTAssertNil(model.errorMessage)
         XCTAssertFalse(model.unauthorized)
-    }
-
-    func testInteractionLevelDefaultsToJudgementWhenUnknown() {
-        let source = MockSettingsSource()
-        let model = SessionSettingsModel(source: source, sessionId: "s1")
-        XCTAssertEqual(model.interactionLevel, .judgement)
     }
 
     func testThinkingLevelParsesUnknownToMedium() {
@@ -106,49 +91,6 @@ final class SessionSettingsModelTests: XCTestCase {
         XCTAssertEqual(ThinkingRole.all.wireValue, "")
         XCTAssertEqual(ThinkingRole.coordinator.wireValue, "coordinator")
         XCTAssertEqual(ThinkingRole.reviewers.wireValue, "reviewers")
-    }
-
-    // MARK: - Interaction level
-
-    func testApplyInteractionLevelSendsRequestAndCommits() async {
-        let source = MockSettingsSource()
-        source.response = listModelsResponse()
-        let model = SessionSettingsModel(
-            source: source, sessionId: "s1", currentInteractionLevel: "judgement")
-        await model.load()
-
-        model.interactionLevel = .autonomous
-        await model.applyInteractionLevel()
-
-        XCTAssertEqual(source.levelArgs?.sessionId, "s1")
-        XCTAssertEqual(source.levelArgs?.level, "autonomous")
-        XCTAssertEqual(model.interactionLevel, .autonomous)
-        XCTAssertNil(model.errorMessage)
-    }
-
-    func testApplyInteractionLevelNoOpWhenUnchanged() async {
-        let source = MockSettingsSource()
-        let model = SessionSettingsModel(
-            source: source, sessionId: "s1", currentInteractionLevel: "judgement")
-
-        model.interactionLevel = .judgement
-        await model.applyInteractionLevel()
-
-        XCTAssertNil(source.levelArgs) // never sent
-    }
-
-    func testApplyInteractionLevelRevertsAndSurfacesErrorOnFailure() async {
-        let source = MockSettingsSource()
-        source.setError = YccError.failedPrecondition(message: "cannot change now")
-        let model = SessionSettingsModel(
-            source: source, sessionId: "s1", currentInteractionLevel: "judgement")
-
-        model.interactionLevel = .autonomous
-        await model.applyInteractionLevel()
-
-        // Reverted to the committed value; error surfaced verbatim.
-        XCTAssertEqual(model.interactionLevel, .judgement)
-        XCTAssertEqual(model.errorMessage, "cannot change now")
     }
 
     // MARK: - Role config
@@ -267,11 +209,10 @@ final class SessionSettingsModelTests: XCTestCase {
     func testApplyUnauthorizedSetsFlag() async {
         let source = MockSettingsSource()
         source.setError = YccError.unauthorized
-        let model = SessionSettingsModel(
-            source: source, sessionId: "s1", currentInteractionLevel: "judgement")
+        let model = SessionSettingsModel(source: source, sessionId: "s1")
 
-        model.interactionLevel = .interactive
-        await model.applyInteractionLevel()
+        model.thinkingLevel = .high
+        await model.applyThinking()
 
         XCTAssertTrue(model.unauthorized)
     }

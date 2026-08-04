@@ -9,18 +9,14 @@ import (
 	"github.com/whyrusleeping/ycc/internal/orchestrator"
 )
 
-// interaction implements orchestrator.Asker, enforcing the session's interaction
-// level (spec §11):
-//   - autonomous: ask_user never blocks; the question is recorded as an assumption
-//     and the agent is told to proceed on its own judgement.
-//   - interactive / judgement: ask_user emits a question and blocks until the user
-//     answers (via SendInput or AnswerQuestion) or the session is cancelled.
-//
+// interaction implements orchestrator.Asker. Normal sessions suspend for human
+// answers; internal unattended sessions auto-answer so daemon work loops cannot
+// block with nobody attached. Unattended is execution context, not a user setting.
 // Each pending question gets a fresh single-use channel held under the mutex, so
 // an answer can never be buffered across questions or silently dropped.
 type interaction struct {
-	level   string
-	emitter *event.Emitter
+	unattended bool
+	emitter    *event.Emitter
 
 	mu          sync.Mutex
 	waiting     chan string // non-nil only while a question is pending
@@ -40,32 +36,17 @@ type answer struct {
 	text string
 }
 
-func newInteraction(level string, emitter *event.Emitter) *interaction {
-	return &interaction{level: level, emitter: emitter}
+func newInteraction(unattended bool, emitter *event.Emitter) *interaction {
+	return &interaction{unattended: unattended, emitter: emitter}
 }
 
-// SetLevel updates the interaction level. It takes effect at the next Ask gate;
-// a question already blocked is unaffected (spec §11, §18.2).
-func (in *interaction) SetLevel(level string) {
-	in.mu.Lock()
-	in.level = level
-	in.mu.Unlock()
-}
-
-// Level returns the current interaction level.
-func (in *interaction) Level() string {
-	in.mu.Lock()
-	defer in.mu.Unlock()
-	return in.level
-}
-
-// autonomousAutoAnswer is the canned reply every ask_user call receives in
-// autonomous mode (spec §11): no human is available, so the agent is told to
+// unattendedAutoAnswer is the canned reply every ask_user call receives in
+// unattended execution (spec §11): no human is available, so the agent is told to
 // proceed on its own judgement — or, when a wrong guess would be hard to
 // reverse, to mark the affected backlog task "blocked" instead of guessing.
 // One constant serves both the single-question and batch paths so the two
 // can't drift apart.
-const autonomousAutoAnswer = "You are in autonomous mode and no human is available, so this question " +
+const unattendedAutoAnswer = "You are in unattended execution and no human is available, so this question " +
 	"cannot be answered. If you can responsibly proceed, do so on your best judgement and note the " +
 	"assumption in your final report. If you genuinely cannot — the answer is needed and a wrong guess " +
 	"is hard to reverse — do not guess: mark the affected backlog task \"blocked\" (update_task) with a " +
@@ -74,15 +55,15 @@ const autonomousAutoAnswer = "You are in autonomous mode and no human is availab
 // Ask implements orchestrator.Asker.
 func (in *interaction) Ask(ctx context.Context, question string, options []string) (string, error) {
 	in.mu.Lock()
-	level := in.level
+	unattended := in.unattended
 	in.mu.Unlock()
-	if level == "autonomous" {
+	if unattended {
 		in.emitter.Emit(event.QuestionAsked, askData(question, options, true))
 		in.mu.Lock()
 		in.assumptions = append(in.assumptions, question)
 		in.mu.Unlock()
-		in.emitter.Emit(event.QuestionAnswered, map[string]any{"answer": autonomousAutoAnswer, "auto": true})
-		return autonomousAutoAnswer, nil
+		in.emitter.Emit(event.QuestionAnswered, map[string]any{"answer": unattendedAutoAnswer, "auto": true})
+		return unattendedAutoAnswer, nil
 	}
 
 	ch := make(chan string, 1)
@@ -114,16 +95,16 @@ func (in *interaction) Ask(ctx context.Context, question string, options []strin
 // own optional option set. The returned slice is parallel to questions.
 func (in *interaction) AskMany(ctx context.Context, questions []orchestrator.Question) ([]string, error) {
 	in.mu.Lock()
-	level := in.level
+	unattended := in.unattended
 	in.mu.Unlock()
 
-	if level == "autonomous" {
+	if unattended {
 		in.emitter.Emit(event.QuestionAsked, askManyData(questions, true))
 		answers := make([]string, len(questions))
 		in.mu.Lock()
 		for i, q := range questions {
 			in.assumptions = append(in.assumptions, q.Prompt)
-			answers[i] = autonomousAutoAnswer
+			answers[i] = unattendedAutoAnswer
 		}
 		in.mu.Unlock()
 		in.emitter.Emit(event.QuestionAnswered, map[string]any{"answers": answers, "auto": true})
@@ -155,7 +136,7 @@ func (in *interaction) AskMany(ctx context.Context, questions []orchestrator.Que
 }
 
 // Confirm asks a yes/no question for a high-impact, hard-to-reverse action. Unlike
-// Ask, it does NOT auto-answer in autonomous mode: starting the work pipeline is
+// Ask, it does NOT auto-answer in unattended execution: starting the work pipeline is
 // hard to reverse, so it always seeks a real human answer. When no human is
 // available (the session is cancelled before answering), it returns (false, nil)
 // so the action is declined rather than silently taken (spec §9, §11).
@@ -345,7 +326,7 @@ func (in *interaction) pending() bool {
 	return in.waiting != nil || in.batchWaiting != nil
 }
 
-// Assumptions returns the questions auto-answered in autonomous mode.
+// Assumptions returns the questions auto-answered in unattended execution.
 func (in *interaction) Assumptions() []string {
 	in.mu.Lock()
 	defer in.mu.Unlock()

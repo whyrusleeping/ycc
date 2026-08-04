@@ -132,7 +132,7 @@ func TestResumeRunLoopAppends(t *testing.T) {
 	s := newStopSession(t)
 	s.log = log
 	s.emitter = em
-	s.inter = newInteraction("autonomous", em)
+	s.inter = newInteraction(true, em)
 	s.Mode = "chat"
 	s.resumed = true
 
@@ -201,7 +201,7 @@ func TestResumeRunsPendingTurnBeforeInput(t *testing.T) {
 	s := newStopSession(t)
 	s.log = log
 	s.emitter = em
-	s.inter = newInteraction("autonomous", em)
+	s.inter = newInteraction(true, em)
 	s.Mode = "chat"
 	s.resumed = true
 

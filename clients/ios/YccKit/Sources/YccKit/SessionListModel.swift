@@ -101,6 +101,19 @@ public final class SessionListModel {
     /// so even a single registered project gives two choices.
     public var showsProjectFilter: Bool { !projects.isEmpty }
 
+    /// Starting a chat from the daemon-wide Recent Sessions feed must ask for a
+    /// project instead of silently falling back to the daemon's default workspace.
+    /// A project-scoped session list can start directly in its selected project.
+    public var requiresProjectChoiceForNewSession: Bool { selectedProject == nil }
+
+    /// Project names offered by the Recent Sessions new-chat prompt. A
+    /// multi-project daemon offers its registered projects only, avoiding an
+    /// accidental chat in the daemon process's implicit default workspace. A
+    /// one-shot daemon has no registry, so its sole Default workspace is used.
+    public var newSessionProjectChoices: [String] {
+        projects.isEmpty ? [""] : projects.map(\.name)
+    }
+
     /// The daemon-wide home feed is one globally recency-sorted list. A scoped
     /// project view retains the phone-focused needs-answer pinning behavior.
     public var sections: [SessionSection] {

@@ -40,7 +40,7 @@ specially, or replacing git. We lean on git for history and diffs.
   holds a registry of projects (name → path) so a client can list them and pick one to
   work in; a one-shot daemon has exactly one implicit project — the current directory.
 - **Session** — one continuous unit of interaction, identified by an id, backed by an
-  **append-only event log**. A session has a *mode* and an *interaction level*.
+  **append-only event log**. A session has a *mode*.
 - **Event log** — the source of truth for a session. Every model turn, tool call,
   tool result, user input, subagent spawn, and decision is an event. UI state is a
   *projection* (reduction) of the log. "Resume" = replay; "sync"/"remote" = ship the
@@ -52,8 +52,6 @@ specially, or replacing git. We lean on git for history and diffs.
 - **Subagent** — a child agent spawned by the coordinator with its own model, system
   prompt, tool set, and (nested) event stream. Two kinds matter most: the
   **implementer** (writes code) and the **reviewer** (critiques a change).
-- **Interaction level** — `interactive` | `judgement` | `autonomous`. Gates whether
-  and when the coordinator may stop to ask the user.
 
 ## 3. System architecture
 
@@ -104,7 +102,7 @@ Persistence is **opt-in**. The daemon runs in one of two lifecycles:
   current directory is the single project and the client skips the project picker.
   Closing the client therefore ends any in-flight agent work; that is the trade.
 - **Persistent (`ycc daemon`).** An explicitly-started, long-lived, **multi-project**
-  daemon at a well-known local address. It survives client exits, so autonomous
+  daemon at a well-known local address. It survives client exits, so unattended
   sessions keep running. `ycc --background` is a convenience that spawns one (detached)
   and attaches the TUI to it.
 
@@ -132,19 +130,19 @@ stale environment. Persistence now happens only when explicitly requested.
 
 ## 4. Process & data-flow model
 
-1. Client calls `StartSession(workspace, mode, interactionLevel)` → daemon creates a
+1. Client calls `StartSession(workspace, mode)` → daemon creates a
    session + event log, instantiates the coordinator for that mode.
 2. Client opens `Subscribe(sessionID)` (server-stream) and begins rendering events.
 3. Coordinator runs its agent loop. Each turn emits events. Tool calls emit events and
    mutate the workspace / docs. Subagent spawns create nested event streams.
-4. When the coordinator (per interaction level) needs the user, it calls the `ask_user`
+4. When the coordinator needs the user, it calls the `ask_user`
    tool → emits a `QuestionAsked` event and *suspends*. Client renders it; user answers
    via `AnswerQuestion(sessionID, ...)` → `QuestionAnswered` event → loop resumes.
 5. On completion the coordinator commits, updates the backlog/spec, emits `SessionIdle`,
    and returns control. The session persists and can be resumed or re-entered.
 
 The daemon never blocks on a client. A session with no subscribers keeps running (e.g.
-in `autonomous` level); a client reconnecting just replays the log from an offset.
+in an unattended work loop); a client reconnecting just replays the log from an offset.
 
 ## 5. Session & event log
 
@@ -174,7 +172,7 @@ Event `type`s (initial set):
 
 | type | meaning |
 |------|---------|
-| `session_started` | mode, interaction level, workspace |
+| `session_started` | mode, workspace |
 | `mode_changed` | transitioned modes within a session |
 | `model_turn` | a model produced a message (text + any tool calls) |
 | `tool_call` / `tool_result` | a tool was invoked / returned |
@@ -532,10 +530,12 @@ summaries. The provider's reasoning blocks round-trip automatically because the 
 appends the returned assistant `Message` (which carries `ThinkingBlocks`) to history. When a
 turn returns a reasoning summary, the loop emits a dedicated `thinking` event (before the
 `model_turn`) for the UI (§18). For the ChatGPT Codex Responses backend, ycc requests a
-`detailed` provider-authored summary and records the reported hidden reasoning-token count on
-the thinking event and model-turn usage. The count is a subset of output tokens—not an extra
-billable class—and makes explicit that even a short displayed summary is not the full private
-reasoning trace.
+`detailed` provider-authored summary with sequential-cutoff delivery, assembles every completed
+summary section in provider order (authoritative `reasoning_summary_text.done` text replaces its
+partial deltas), and records the reported hidden reasoning-token count on the thinking event and
+model-turn usage. Delta-only streams remain supported for compatibility. The count is a subset of
+output tokens—not an extra billable class—and makes explicit that even a short displayed summary
+is not the full private reasoning trace.
 
 **Per-backend mapping.** These backend-agnostic fields are translated to each provider's
 request shape by gollama (`Turn`/`ChatCompletion`):
@@ -608,8 +608,8 @@ plain file edited with `Edit`/`Write` (a write to it is surfaced as a `doc_updat
 **Shared prompt assembly.** Every agent's system prompt is assembled through one path
 (`sys`/`inspectSys` in `internal/orchestrator`): the role's base prompt + the shared tooling
 guidance (Read-over-cat, ripgrep, fresh-shell/no-`cd` rules; read-only roles get it without
-the editing sentence) + a workspace note + (coordinator/pm/chat only) the interaction-level
-policy. Subagents don't receive interaction-level guidance — they have no `ask_user`.
+the editing sentence) + a workspace note. Daemon-driven work loops additionally receive a
+private unattended-execution note so they never wait for a user who is not present.
 
 `ask_user(question, options?)` is the structured-question control tool. The optional
 `options` parameter is a list of suggested answers; when present, the client renders a
@@ -618,7 +618,7 @@ absent, the user answers with free (multiline) text. See §18.3 for the UI side.
 `Asker.Ask(ctx, question, options)` interface already carries `options` end-to-end;
 exposing it on the tool schema + answering by option is the remaining wiring.
 Questions must be **self-contained**: the user is not following the agent's transcript,
-so the tool description and interaction-level prompts direct the agent to lead each
+so the tool description directs the agent to lead each
 question with the context needed to answer it (what it was doing, what it found, why
 it's asking) rather than assuming shared context.
 
@@ -705,7 +705,7 @@ loop-lifecycle streaming is deferred; `GetWorkLoop` polling plus `Subscribe` on 
 session covers observation.)
 
 **Hand-off `pm` → `work`.** `pm` may offer `switch_to_work`, but it is *deliberate*, never
-automatic: (1) it requires explicit interactive **user approval** before transitioning, and
+automatic: (1) it requires explicit **user approval** before transitioning, and
 (2) it carries the planning **context plus the specific target task** into the `work`
 session, so the coordinator implements *that* task rather than re-picking "the next ready
 task." (The old `feature`/`bug` `switch_to_work` spun up a fresh coordinator that was free
@@ -722,7 +722,7 @@ concern: it lists the modes (plus the `pm` presets) and calls `StartSession`.
 coordinator (FRESH context, mode=work)
   1. read backlog  → list_backlog / get_task
   2. pick a task   (or accept the user-suggested one)
-  3. plan          → propose_plan ; (per interaction level) maybe ask_user to confirm
+  3. plan          → propose_plan ; ask_user when confirmation or clarification is useful
   4. implement     → spawn_implementer(task, plan)
                      implementer runs worker tools, returns a structured report + diff
   5. review        → spawn_reviewer × N  (different models, concurrent)
@@ -764,7 +764,7 @@ applies only to `delegate` (there is no implementer subagent to block in `direct
 **Blocked implementer (step 4).** Instead of a normal report, the implementer can end its
 run BLOCKED (via `report_blocked`) with a reason — a decision that isn't its to make. The
 coordinator then resolves the decision itself (an ordinary judgement call), asks the user
-per the interaction level, or marks the task `blocked`; the reason is recorded in the task's
+when their intent is needed, or marks the task `blocked`; the reason is recorded in the task's
 work log, and a subsequent `send_to_implementer` resumes the same context with the answer.
 
 A `work` session drives **one** task to a committed state, but the coordinator may
@@ -778,31 +778,23 @@ A `work` session drives **one** task to a committed state, but the coordinator m
 This keeps the active task focused; new tasks get clear titles, acceptance criteria, and
 appropriate dependencies. It is the mechanism, not an invitation to scope-creep.
 
-## 11. Interaction levels
+## 11. Questions, unattended work, and confirmation gates
 
-One policy value, enforced at the `ask_user` gate and baked into the coordinator prompt:
+There is no session setting controlling when the assistant asks questions. In ordinary sessions it uses its
+own judgement, calls `ask_user` when human input is genuinely useful or required, and waits
+for the answer.
 
-- **`interactive`** — ask freely; confirm the plan, surface meaningful choices.
-- **`judgement`** — proceed on best judgement; only `ask_user` when genuinely blocked
-  or a decision is hard to reverse.
-- **`autonomous`** — never `ask_user`; make every call, and accumulate questions /
-  assumptions / decisions into the final report for end-of-session review.
+Daemon-driven work loops are internally marked **unattended**. This is execution context,
+not a user-selectable session policy: `ask_user` is auto-answered with guidance to make a
+reversible assumption or mark the task blocked, so a background loop cannot wait forever
+with no client attached. Significant assumptions are included in the final report.
 
-The gate lives in the loop: in `autonomous`, an `ask_user` call is converted into a
-logged assumption + auto-answer ("proceed") rather than a suspend.
-
-**Exception — confirmation gates.** A high-impact, hard-to-reverse action exposes a
-`Confirm` gate (yes/no) rather than `ask_user`. Starting the `pm` → `work` implementation
-pipeline is one: its `switch_to_work` confirmation seeks a *real human answer even in
-`autonomous`* (it does not auto-answer), and if no human is available the action is
-**declined** and the session stays put rather than silently launching work.
-
-The level is chosen at `StartSession` and can be **changed mid-session** from the
-client's settings overlay (§18.2) via `SetInteractionLevel(sessionID, level)`. The
-daemon updates the live policy used by the next gate check and emits an event so the
-change is recorded in the log and visible to other subscribers. Raising autonomy
-(e.g. interactive → autonomous) takes effect immediately; lowering it means the *next*
-decision point will pause for the user.
+A high-impact, hard-to-reverse action exposes a `Confirm` gate (yes/no) rather than
+`ask_user`. Starting the `pm` → `work` implementation pipeline is one: its
+`switch_to_work` confirmation seeks a real human answer, and if none is available the
+action is declined rather than silently launching work. Workstream merges similarly always
+return a preview and require explicit acceptance; unattended execution never bypasses these
+operation-specific safety gates.
 
 ## 12. RPC protocol (Connect)
 
@@ -837,7 +829,6 @@ service SessionService {
   rpc UpsertModel(UpsertModelRequest) returns (UpsertModelResponse);    // add/edit a model backend (§18.2, task 0041)
   rpc RemoveModel(RemoveModelRequest) returns (RemoveModelResponse);    // delete a model backend (§18.2, task 0041)
   rpc DiscoverModels(DiscoverModelsRequest) returns (DiscoverModelsResponse); // list a connection's model ids (§13, §18.2)
-  rpc SetInteractionLevel(SetInteractionLevelRequest) returns (SetInteractionLevelResponse);
   rpc SetRoleConfig(SetRoleConfigRequest) returns (SetRoleConfigResponse);
   rpc SetThinking(SetThinkingRequest) returns (SetThinkingResponse);    // per-role reasoning level
 
@@ -856,7 +847,6 @@ Notable message shapes for the settings + structured-question work:
 - `AnswerQuestionRequest { session_id; oneof answer { string text; int32 option_index } }`
   — answer a structured question by chosen option or free text. `question_asked` events
   gain a `repeated string options` field so the client can render the picker.
-- `SetInteractionLevelRequest { session_id; string level }` (§11).
 - `SetRoleConfigRequest { session_id; string coordinator; string implementer;
   repeated string reviewers }` — per-role model assignment by logical model name (§13).
   Empty fields leave that role unchanged.
@@ -1116,17 +1106,17 @@ or a `reviews.default` naming no tier are rejected); the built-ins are always va
   `clients/ios/` (**planned**; `docs/design/ios-client.md` — connect-swift generated
   client, phased toward TUI parity, tasks 0178–0190).
 - **Daemon-side push notifications (task 0142).** Terminal notifications (§18, task
-  0108) only help when the terminal is visible. For the "kick off autonomous work,
+  0108) only help when the terminal is visible. For the "kick off unattended work,
   walk away, answer from your phone" flow the daemon can also *reach out* via a
   best-effort, async webhook (ntfy.sh-compatible: title/priority/tags headers + a
   short body, plus the remote API as the click-through target). It fires when an
   agent needs you: `question_asked` (including Confirm gates; auto-answered
-  autonomous asks are skipped — nobody is waiting), `session_idle` (with the final
+  unattended asks are auto-answered — nobody is waiting), `session_idle` (with the final
   report's first line), `session_error`, a work-loop completion **digest** (pushed
   client-side through the daemon via the `Notify` RPC), and a **blocked** implementer
   subagent. Configured in `ycc.toml` under `[notify]` — an absent block (empty `url`)
   disables it entirely. Delivery never blocks or fails a session; a failed POST is
-  only logged. Per-kind enable/disable (`events`) lets autonomous-loop users pick,
+  only logged. Per-kind enable/disable (`events`) lets unattended-loop users pick,
   e.g., "questions + digest only" (valid kinds: `question`, `idle`, `error`,
   `digest`, `blocked`; an empty/absent list enables all):
 
@@ -1159,8 +1149,7 @@ ycc adopts **git worktrees** (design spike task 0078; full rationale/alternative
   violate single-writer. Startup recovery reconciles stale worktrees via `git worktree
   list`/`prune`.
 - **Merge flow — conflict-aware, sequential, review-gated.** A **non-mutating trial
-  merge** detects conflicts first. **Clean** → auto-merged under the *autonomous*
-  interaction level, otherwise gated behind an explicit acceptance with the integrated
+  merge** detects conflicts first. **Clean** → always gated behind explicit acceptance with the integrated
   diff shown. **Conflicted** → emit `workstream_conflict` listing the conflicted paths and
   stop; the base branch is **never** left conflicted, and the worktree is kept for
   resolution. On merge or discard, cleanup runs `git worktree remove`, deletes the branch,
@@ -1213,7 +1202,7 @@ ycc/
   subscribes and prods. *Proves the client/server seam.* — **done**
 - **M2 — `work` happy path.** Coordinator + `spawn_implementer` + a single reviewer +
   commit + structured backlog read/write. N=1, no revise loop. — **done**
-- **M3 — Multi-model review + revise loop + interaction levels.** Reviewer fan-out
+- **M3 — Multi-model review + revise loop.** Reviewer fan-out
   across Claude/GPT/GLM/local, `send_to_implementer`/`re_review`, the three autonomy
   gates. — **done**
 - **M4 — Home menu + `spec`/`backlog`/`feature`/`bug` modes + TUI.** — **done**
@@ -1222,10 +1211,10 @@ ycc/
   end-to-end remote Subscribe/prod path + a documented Connect HTTP/JSON surface for
   phone clients. Daemon-to-daemon log sync/replication is **dropped** (§14).
 - **M6 — Interactive UX polish.** Multiline `textarea` input (Enter sends, Shift+Enter
-  newline), the **settings overlay** (esc; mid-session interaction level + per-role
+  newline), the **settings overlay** (esc; per-role
   model configuration + UI prefs + intentional "back to home menu"), and
   **structured `ask_user` questions** (option pickers). New RPCs: `ListModels`,
-  `SetInteractionLevel`, `SetRoleConfig`; `AnswerQuestion`/`question_asked` extended for
+  `SetRoleConfig`; `AnswerQuestion`/`question_asked` extended for
   options. See §18.
 
 ## 17. Open questions
@@ -1254,7 +1243,7 @@ The Bubble Tea client (`internal/tui`, spec §15) is the primary local surface. 
 two top-level states today — **home menu** and **session view** — plus a modal
 **settings overlay**. This section captures the interaction model. The session view's
 single-row top status bar identifies the active coordinator model immediately before
-its reasoning level; the interaction level remains available in settings rather than
+its reasoning level; session behavior remains assistant-driven rather than
 occupying a `lvl …` status-bar segment.
 
 ### 18.1 Session input — multiline
@@ -1279,12 +1268,6 @@ the user can't fat-finger their way out of a running session.
 
 Overlay contents:
 
-- **Interaction level** — `interactive | judgement | autonomous`, changeable
-  **mid-session** (see §11). Selecting a value issues `SetInteractionLevel(sessionID,
-  level)`; the daemon updates the live policy and emits an event so the change is in the
-  log (and reflected in any other subscribed client). This is deliberately **per-session
-  and not persisted** — a persisted global `autonomous` default (no human approval gates)
-  would be a safety footgun, so each session starts at its configured/default level.
 - **Thinking level** — `off | low | medium | high | xhigh | max`, changeable
   **mid-session**, set **per role** (coordinator / implementer / reviewers). Each role has
   its own reasoning override that applies to that agent (and the reviewer fan-out for
@@ -1384,8 +1367,8 @@ once answered), and the tool plumbing rows plus the `question_answered` row are 
 An ask_user call that errored without asking (or whose result is an error, e.g. cancelled
 mid-question) keeps its error row visible. While the footer picker/wizard is collecting
 the answer, the question row's body collapses to an "answer below ↓" pointer so the
-prompt never shows twice on screen at once. Autonomous auto-answers render as a single
-dim "auto-answered (autonomous mode)" line instead of the canned no-human paragraph the
+prompt never shows twice on screen at once. Unattended auto-answers render as a single
+dim "auto-answered (unattended execution)" line instead of the canned no-human paragraph the
 model receives.
 
 **Plan proposal presentation.** A `plan_proposed` row is a human review artifact rather
@@ -1939,11 +1922,11 @@ All values are non-negative; 0/unset means unlimited.
 - **~80% warning.** When a session crosses ~80% of a configured cap it emits a
   `budget_warning` event once; the status bar shows a visually distinct warn segment
   ("⚠ budget NN%") and the transcript records the crossing.
-- **Attended breach → Confirm gate.** In an attended (non-autonomous) session, crossing a
+- **Attended breach → Confirm gate.** In an normal attended session, crossing a
   cap raises a Confirm gate ("Session budget reached … — continue past the budget?").
   Declining halts gracefully; confirming records `budget_exceeded{action:"continue"}` and
   continues without asking again.
-- **Autonomous / loop breach → graceful halt.** In an autonomous or loop session (or when
+- **Unattended loop breach → graceful halt.** In an unattended loop session (or when
   an attended user declines), the guard records `budget_exceeded{action:"halt"}` and injects
   a user-role wrap-up instruction: stop taking on new work, bring the current task to the
   nearest safe stopping point (finish+commit if essentially complete, otherwise mark it

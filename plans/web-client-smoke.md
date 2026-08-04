@@ -118,8 +118,7 @@ All of this is **live sessions only**. Have a live session open (§4).
 
 ### 7b. Answer a single `ask_user` gate
 
-1. Drive the session to an `ask_user` with one question (interactive/judgement
-   level). A **bottom sheet** rises over the input bar: the prompt, any suggested
+1. Drive the session to an `ask_user` with one question (an ordinary session waits for the answer). A **bottom sheet** rises over the input bar: the prompt, any suggested
    **option buttons**, and a free-text field with "Send answer".
 2. Tap an **option** → `AnswerQuestion` with that `optionIndex`; the sheet
    dismisses when the durable `question_answered` event arrives, and the answer

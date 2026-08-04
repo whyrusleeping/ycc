@@ -88,9 +88,6 @@ const (
 	// SessionServiceListModelsProcedure is the fully-qualified name of the SessionService's ListModels
 	// RPC.
 	SessionServiceListModelsProcedure = "/ycc.v1.SessionService/ListModels"
-	// SessionServiceSetInteractionLevelProcedure is the fully-qualified name of the SessionService's
-	// SetInteractionLevel RPC.
-	SessionServiceSetInteractionLevelProcedure = "/ycc.v1.SessionService/SetInteractionLevel"
 	// SessionServiceSetRoleConfigProcedure is the fully-qualified name of the SessionService's
 	// SetRoleConfig RPC.
 	SessionServiceSetRoleConfigProcedure = "/ycc.v1.SessionService/SetRoleConfig"
@@ -203,10 +200,9 @@ type SessionServiceClient interface {
 	// ListDir lists subdirectories of a daemon-host path (directories only) so
 	// remote clients can browse to a workspace for AddProject (task 0193).
 	ListDir(context.Context, *connect.Request[v1.ListDirRequest]) (*connect.Response[v1.ListDirResponse], error)
-	// Settings overlay (spec §18.2): enumerate models and change a session's
-	// interaction level / per-role model assignment mid-flight.
+	// Settings overlay (spec §18.2): enumerate models and change per-role model
+	// assignment mid-flight.
 	ListModels(context.Context, *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error)
-	SetInteractionLevel(context.Context, *connect.Request[v1.SetInteractionLevelRequest]) (*connect.Response[v1.SetInteractionLevelResponse], error)
 	SetRoleConfig(context.Context, *connect.Request[v1.SetRoleConfigRequest]) (*connect.Response[v1.SetRoleConfigResponse], error)
 	SetThinking(context.Context, *connect.Request[v1.SetThinkingRequest]) (*connect.Response[v1.SetThinkingResponse], error)
 	// Model backends (spec §18.2): add/edit/remove a logical model backend at
@@ -395,12 +391,6 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("ListModels")),
 			connect.WithClientOptions(opts...),
 		),
-		setInteractionLevel: connect.NewClient[v1.SetInteractionLevelRequest, v1.SetInteractionLevelResponse](
-			httpClient,
-			baseURL+SessionServiceSetInteractionLevelProcedure,
-			connect.WithSchema(sessionServiceMethods.ByName("SetInteractionLevel")),
-			connect.WithClientOptions(opts...),
-		),
 		setRoleConfig: connect.NewClient[v1.SetRoleConfigRequest, v1.SetRoleConfigResponse](
 			httpClient,
 			baseURL+SessionServiceSetRoleConfigProcedure,
@@ -575,7 +565,6 @@ type sessionServiceClient struct {
 	removeProject        *connect.Client[v1.RemoveProjectRequest, v1.RemoveProjectResponse]
 	listDir              *connect.Client[v1.ListDirRequest, v1.ListDirResponse]
 	listModels           *connect.Client[v1.ListModelsRequest, v1.ListModelsResponse]
-	setInteractionLevel  *connect.Client[v1.SetInteractionLevelRequest, v1.SetInteractionLevelResponse]
 	setRoleConfig        *connect.Client[v1.SetRoleConfigRequest, v1.SetRoleConfigResponse]
 	setThinking          *connect.Client[v1.SetThinkingRequest, v1.SetThinkingResponse]
 	upsertModel          *connect.Client[v1.UpsertModelRequest, v1.UpsertModelResponse]
@@ -696,11 +685,6 @@ func (c *sessionServiceClient) ListDir(ctx context.Context, req *connect.Request
 // ListModels calls ycc.v1.SessionService.ListModels.
 func (c *sessionServiceClient) ListModels(ctx context.Context, req *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error) {
 	return c.listModels.CallUnary(ctx, req)
-}
-
-// SetInteractionLevel calls ycc.v1.SessionService.SetInteractionLevel.
-func (c *sessionServiceClient) SetInteractionLevel(ctx context.Context, req *connect.Request[v1.SetInteractionLevelRequest]) (*connect.Response[v1.SetInteractionLevelResponse], error) {
-	return c.setInteractionLevel.CallUnary(ctx, req)
 }
 
 // SetRoleConfig calls ycc.v1.SessionService.SetRoleConfig.
@@ -867,10 +851,9 @@ type SessionServiceHandler interface {
 	// ListDir lists subdirectories of a daemon-host path (directories only) so
 	// remote clients can browse to a workspace for AddProject (task 0193).
 	ListDir(context.Context, *connect.Request[v1.ListDirRequest]) (*connect.Response[v1.ListDirResponse], error)
-	// Settings overlay (spec §18.2): enumerate models and change a session's
-	// interaction level / per-role model assignment mid-flight.
+	// Settings overlay (spec §18.2): enumerate models and change per-role model
+	// assignment mid-flight.
 	ListModels(context.Context, *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error)
-	SetInteractionLevel(context.Context, *connect.Request[v1.SetInteractionLevelRequest]) (*connect.Response[v1.SetInteractionLevelResponse], error)
 	SetRoleConfig(context.Context, *connect.Request[v1.SetRoleConfigRequest]) (*connect.Response[v1.SetRoleConfigResponse], error)
 	SetThinking(context.Context, *connect.Request[v1.SetThinkingRequest]) (*connect.Response[v1.SetThinkingResponse], error)
 	// Model backends (spec §18.2): add/edit/remove a logical model backend at
@@ -1053,12 +1036,6 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		SessionServiceListModelsProcedure,
 		svc.ListModels,
 		connect.WithSchema(sessionServiceMethods.ByName("ListModels")),
-		connect.WithHandlerOptions(opts...),
-	)
-	sessionServiceSetInteractionLevelHandler := connect.NewUnaryHandler(
-		SessionServiceSetInteractionLevelProcedure,
-		svc.SetInteractionLevel,
-		connect.WithSchema(sessionServiceMethods.ByName("SetInteractionLevel")),
 		connect.WithHandlerOptions(opts...),
 	)
 	sessionServiceSetRoleConfigHandler := connect.NewUnaryHandler(
@@ -1251,8 +1228,6 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceListDirHandler.ServeHTTP(w, r)
 		case SessionServiceListModelsProcedure:
 			sessionServiceListModelsHandler.ServeHTTP(w, r)
-		case SessionServiceSetInteractionLevelProcedure:
-			sessionServiceSetInteractionLevelHandler.ServeHTTP(w, r)
 		case SessionServiceSetRoleConfigProcedure:
 			sessionServiceSetRoleConfigHandler.ServeHTTP(w, r)
 		case SessionServiceSetThinkingProcedure:
@@ -1386,10 +1361,6 @@ func (UnimplementedSessionServiceHandler) ListDir(context.Context, *connect.Requ
 
 func (UnimplementedSessionServiceHandler) ListModels(context.Context, *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ListModels is not implemented"))
-}
-
-func (UnimplementedSessionServiceHandler) SetInteractionLevel(context.Context, *connect.Request[v1.SetInteractionLevelRequest]) (*connect.Response[v1.SetInteractionLevelResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.SetInteractionLevel is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) SetRoleConfig(context.Context, *connect.Request[v1.SetRoleConfigRequest]) (*connect.Response[v1.SetRoleConfigResponse], error) {

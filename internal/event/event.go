@@ -71,9 +71,8 @@ const (
 	// model_turns are attributed to the most recent focus by the projection.
 	TaskFocus Type = "task_focus"
 	// Settings overlay (spec §18.2): mid-session config changes recorded in the log.
-	InteractionLevelChanged Type = "interaction_level_changed"
-	RoleConfigChanged       Type = "role_config_changed"
-	ThinkingLevelChanged    Type = "thinking_level_changed"
+	RoleConfigChanged    Type = "role_config_changed"
+	ThinkingLevelChanged Type = "thinking_level_changed"
 	// Interrupt & steer (spec §5.2, §18.7): a running agent is gracefully paused
 	// at a safe checkpoint (Interrupted ⇒ status paused) and later continues on
 	// the same loop/conversation (Resumed ⇒ status running), optionally after a

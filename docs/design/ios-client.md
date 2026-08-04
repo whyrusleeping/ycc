@@ -153,7 +153,11 @@ The drawer has two levels of navigation:
    by latest activity (with started-at fallback), most recent first. Every row is
    visibly annotated with its project name. This is the default landing
    destination on a multi-project daemon, so recent work and questions in another
-   workspace cannot be hidden by the currently selected project.
+   workspace cannot be hidden by the currently selected project. Because this
+   feed has no implicit project scope, tapping **New chat** first presents a
+   cancellable project chooser; the selected project is then preselected in the
+   normal new-session composer. From a project-scoped Sessions list, New chat
+   opens that composer directly in the current project.
 2. **Projects** — the registered workspace list, each with active /
    needs-answer badges. Selecting a project closes the drawer and scopes the
    session list and project destinations (backlog, usage, workstreams, and new
@@ -188,7 +192,10 @@ do not permanently remove access to the daemon-wide inbox.
    refresh on foreground.
 3. **Session view** — the transcript feed from `SessionProjection`: live
    sessions via `Subscribe`, persisted via `GetSessionTranscript`. Auto-follow
-   scroll with a "jump to latest" pill when the user scrolls up. The
+   scroll with a "jump to latest" pill when the user scrolls up. Follow mode is
+   opt-out on an explicit user drag and live updates preserve scrollback exactly;
+   a default bottom scroll anchor is not used because SwiftUI reapplies it on
+   content-size changes. The
    `session_idle.report` is projected as a dedicated, always-expanded success
    card with native Markdown rendering; an immediately preceding model message
    repeated by the report is coalesced into the card rather than shown twice.
@@ -208,7 +215,7 @@ do not permanently remove access to the daemon-wide inbox.
 ### Phase 2 — start work, backlog
 
 5. **Start session** — styled as a blank chat: a message-style composer with
-   a send arrow, compact mode / interaction-level / project chips above it
+   a send arrow, compact mode / project chips above it
    (`ListModes` / `ListProjects`), and presets as tappable suggestion cards
    in the empty space → `StartSession`, then navigate straight into the live
    session view. Plain `work` mode may start with an empty prompt (the agent
@@ -229,7 +236,7 @@ do not permanently remove access to the daemon-wide inbox.
 ### Phase 3 — TUI parity
 
 8. **Settings** — two related surfaces mirror the TUI overlay (§18.2):
-   - a **session settings sheet** uses `SetInteractionLevel`, `SetThinking`, and
+   - a **session settings sheet** uses `SetThinking` and
      `SetRoleConfig` (+ `ListModels`) against a live session;
    - a home-screen **global Settings destination** edits persisted default role
      assignments and per-role thinking without requiring a live session, and manages
@@ -252,7 +259,7 @@ cross-project recent-session feed), `GetSessionTranscript`, `Subscribe`,
 `SendInput`, `AnswerQuestion(s)`, `Interrupt`, `Resume`,
 `StopSession`. Phase 2 adds: `ListModes`, `StartSession`, `ResumeSession`,
 `ListBacklog`, `GetTask`, `UpdateTask` (optionally `CreateTask`). Phase 3 adds:
-`SetInteractionLevel`, `SetThinking`, `SetRoleConfig`, `ListModels`,
+`SetThinking`, `SetRoleConfig`, `ListModels`,
 `GetModelConfig`, `UpsertModel`, `RemoveModel`, `DiscoverModels`, `GetUsage`,
 `GetBudget`, `GetCommitDiff`, workstream RPCs, and the loop control surface
 from §9. `Notify` remains unnecessary because daemon-side pushes already fire

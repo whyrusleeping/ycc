@@ -51,6 +51,9 @@ func TestBuildRequest(t *testing.T) {
 	if req.Reasoning == nil || req.Reasoning.Effort != "xhigh" || req.Reasoning.Summary != "detailed" {
 		t.Errorf("reasoning = %+v, want xhigh effort + detailed summary", req.Reasoning)
 	}
+	if req.StreamOptions == nil || req.StreamOptions.ReasoningSummaryDelivery != "sequential_cutoff" {
+		t.Errorf("stream_options = %+v, want sequential reasoning summaries", req.StreamOptions)
+	}
 	if len(req.Tools) != 1 || req.Tools[0].Name != "bash" || req.Tools[0].Type != "function" {
 		t.Errorf("tools = %+v", req.Tools)
 	}
@@ -77,9 +80,9 @@ func TestBuildRequest(t *testing.T) {
 	if got := buildRequest(gollama.RequestOptions{Model: "m"}); strings.TrimSpace(got.Instructions) == "" {
 		t.Error("empty instructions not defaulted")
 	}
-	// Thinking off (no effort) omits the reasoning block.
-	if got := buildRequest(gollama.RequestOptions{Model: "m"}); got.Reasoning != nil {
-		t.Error("reasoning block present without effort")
+	// Thinking off (no effort) omits both reasoning controls.
+	if got := buildRequest(gollama.RequestOptions{Model: "m"}); got.Reasoning != nil || got.StreamOptions != nil {
+		t.Errorf("reasoning controls present without effort: reasoning=%+v stream_options=%+v", got.Reasoning, got.StreamOptions)
 	}
 }
 
@@ -178,6 +181,59 @@ func TestTurnStream(t *testing.T) {
 	}
 	if resp.Truncated() {
 		t.Error("unexpected truncation")
+	}
+}
+
+func TestParseStreamPreservesCompletedReasoningSummarySections(t *testing.T) {
+	var stream strings.Builder
+	write := func(v map[string]any) {
+		data, _ := json.Marshal(v)
+		fmt.Fprintf(&stream, "data: %s\n\n", data)
+	}
+	// Deltas may be partial; done text must replace them. Multiple summary parts
+	// must remain distinct rather than being glued into one unreadable heading.
+	write(map[string]any{"type": "response.reasoning_summary_part.added", "item_id": "r1", "summary_index": 0})
+	write(map[string]any{"type": "response.reasoning_summary_text.delta", "item_id": "r1", "summary_index": 0, "delta": "**Inspecting**"})
+	write(map[string]any{"type": "response.reasoning_summary_text.done", "item_id": "r1", "summary_index": 0, "text": "**Inspecting code**\n\nI traced the request path."})
+	write(map[string]any{"type": "response.reasoning_summary_text.delta", "item_id": "r1", "summary_index": 1, "delta": "**Planning fix**"})
+	write(map[string]any{"type": "response.reasoning_summary_text.done", "item_id": "r1", "summary_index": 1, "text": "**Planning fix**\n\nI will preserve every section."})
+	write(map[string]any{"type": "response.output_text.delta", "delta": "done"})
+	write(map[string]any{"type": "response.completed", "response": map[string]any{"status": "completed"}})
+
+	resp, _, err := parseStream(strings.NewReader(stream.String()), "m", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := resp.Choices[0].Message.Thinking
+	want := "**Inspecting code**\n\nI traced the request path.\n\n**Planning fix**\n\nI will preserve every section."
+	if got != want {
+		t.Fatalf("thinking:\n%q\nwant:\n%q", got, want)
+	}
+	if strings.Count(got, "**Inspecting") != 1 {
+		t.Fatalf("partial delta was duplicated instead of replaced: %q", got)
+	}
+}
+
+func TestParseStreamUsesReasoningItemSummaryFallback(t *testing.T) {
+	var stream strings.Builder
+	write := func(v map[string]any) {
+		data, _ := json.Marshal(v)
+		fmt.Fprintf(&stream, "data: %s\n\n", data)
+	}
+	write(map[string]any{"type": "response.output_item.done", "item": map[string]any{
+		"id": "r1", "type": "reasoning", "summary": []map[string]any{
+			{"type": "summary_text", "text": "first section"},
+			{"type": "summary_text", "text": "second section"},
+		},
+	}})
+	write(map[string]any{"type": "response.completed", "response": map[string]any{"status": "completed"}})
+
+	resp, _, err := parseStream(strings.NewReader(stream.String()), "m", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := resp.Choices[0].Message.Thinking, "first section\n\nsecond section"; got != want {
+		t.Fatalf("thinking = %q, want %q", got, want)
 	}
 }
 

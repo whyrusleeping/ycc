@@ -25,6 +25,10 @@ struct SessionView: View {
     @State private var isFollowingLatest = true
     /// Suppresses marker-driven re-follow while the user is actively scrolling.
     @State private var isDraggingTranscript = false
+    /// Whether the transcript's bottom marker is inside the viewport. This is
+    /// measured geometrically: rows live in an eager VStack, so onAppear/onDisappear
+    /// describes mounting, not viewport visibility.
+    @State private var isLatestVisible = true
     /// Current transcript viewport height. Keyboard and multiline-composer
     /// changes resize this even when the row data itself does not change.
     @State private var transcriptViewportHeight: CGFloat = 0
@@ -57,6 +61,7 @@ struct SessionView: View {
     private let sessionID: String
     private let navigationTitle: String
     private static let bottomAnchor = "transcript-bottom"
+    private static let transcriptCoordinateSpace = "transcript-scroll"
     private static let maxPictures = 4
     private static let maxPictureBytes = 5 * 1_024 * 1_024
 
@@ -89,7 +94,7 @@ struct SessionView: View {
             .animation(.default, value: isFollowingLatest)
             // A scalar revision avoids deep equality checks over every transcript
             // row (including the growing live-tail string) for each streamed delta.
-            .onChange(of: model.transcriptRevision) { _, _ in
+            .onChange(of: model.transcriptRevision, initial: true) { _, _ in
                 requestScrollToLatest(proxy: proxy)
             }
             .onChange(of: transcriptViewportHeight) { _, _ in
@@ -110,10 +115,7 @@ struct SessionView: View {
         }
         .safeAreaInset(edge: .bottom) { bottomChrome }
         .sheet(isPresented: $showSettings) {
-            SessionSettingsView(
-                client: client,
-                sessionID: sessionID,
-                currentInteractionLevel: model.interactionLevel)
+            SessionSettingsView(client: client, sessionID: sessionID)
         }
         .sheet(isPresented: $showQuestionSheet) {
             if let pending = model.pendingQuestion {
@@ -394,29 +396,49 @@ struct SessionView: View {
                     TranscriptRowView(row: liveTail)
                         .id(liveTail.id)
                 }
-                // A small marker row tells us when the latest content is
-                // visible. Its disappearance alone does NOT disable following:
-                // live-tail growth and keyboard/composer relayout also move it
-                // out of view transiently. Only an actual drag does that.
+                // A small marker row tells us geometrically when the latest
+                // content is visible. With this eager VStack the marker remains
+                // mounted while offscreen, so lifecycle callbacks cannot answer
+                // that question reliably.
                 Color.clear
                     .frame(height: 1)
                     .id(Self.bottomAnchor)
-                    .onAppear {
-                        if !isDraggingTranscript { isFollowingLatest = true }
-                    }
-                    .onDisappear {
-                        if isDraggingTranscript { isFollowingLatest = false }
+                    .background {
+                        GeometryReader { geometry in
+                            Color.clear.preference(
+                                key: TranscriptBottomPreferenceKey.self,
+                                value: geometry.frame(
+                                    in: .named(Self.transcriptCoordinateSpace)).maxY)
+                        }
                     }
             }
             .padding()
         }
+        .coordinateSpace(name: Self.transcriptCoordinateSpace)
+        .onPreferenceChange(TranscriptBottomPreferenceKey.self) { bottomY in
+            let tolerance: CGFloat = 8
+            isLatestVisible = bottomY <= transcriptViewportHeight + tolerance
+            // Only a user's drag can opt out of follow mode. Content growth while
+            // pinned can briefly move the marker below the viewport before the
+            // explicit scroll request settles, and must not look like scrollback.
+            if isDraggingTranscript, !isLatestVisible {
+                stopFollowingLatest()
+            }
+        }
         .simultaneousGesture(
             DragGesture(minimumDistance: 4)
-                .onChanged { _ in isDraggingTranscript = true }
+                .onChanged { value in
+                    if !isDraggingTranscript { isDraggingTranscript = true }
+                    // At gesture recognition time the geometry preference can lag
+                    // the finger by one layout pass. A downward swipe is explicitly
+                    // toward older content, so it must win even before that pass.
+                    if !isLatestVisible || value.translation.height > 0 {
+                        stopFollowingLatest()
+                    }
+                }
                 .onEnded { _ in
-                    // `onDisappear` normally disables following during the drag.
-                    // Do not decide from the marker here: deceleration continues
-                    // after this callback, so the marker may not have settled yet.
+                    // Deceleration continues after this callback. Follow mode was
+                    // already disabled as soon as the drag moved off the live edge.
                     isDraggingTranscript = false
                 }
         )
@@ -429,9 +451,19 @@ struct SessionView: View {
                     }
             }
         }
-        // Open at the newest row, like a chat. Subsequent pinning is explicit so
-        // SwiftUI never has competing implicit anchoring and scroll animations.
-        .defaultScrollAnchor(.bottom)
+        // Do not use `.defaultScrollAnchor(.bottom)` here. SwiftUI also consults
+        // that anchor on content-size changes, which moves the viewport whenever
+        // the live tail grows even while the user is reading scrollback. Initial
+        // and subsequent live-edge positioning are both handled explicitly by
+        // `requestScrollToLatest` while follow mode is enabled.
+    }
+
+    private func stopFollowingLatest() {
+        guard isFollowingLatest else { return }
+        isFollowingLatest = false
+        // Invalidate a post-layout or keyboard-settle request that was queued
+        // while the transcript was still following the live edge.
+        scrollToken.value &+= 1
     }
 
     private func requestScrollToLatest(proxy: ScrollViewProxy) {
@@ -519,6 +551,16 @@ struct SessionView: View {
                 Image(systemName: "ellipsis.circle")
             }
         }
+    }
+}
+
+/// Carries the transcript tail's vertical position out of its scroll content so
+/// follow mode can distinguish a user reading scrollback from a tail that merely
+/// moved during live layout.
+private struct TranscriptBottomPreferenceKey: PreferenceKey {
+    static let defaultValue = CGFloat.greatestFiniteMagnitude
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 

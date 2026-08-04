@@ -24,7 +24,7 @@ func newStopSession(t *testing.T) *Session {
 		ID:      "test",
 		log:     log,
 		emitter: em,
-		inter:   newInteraction("interactive", em),
+		inter:   newInteraction(false, em),
 		inputCh: make(chan string, 4),
 		ctx:     ctx,
 		cancel:  cancel,

@@ -5,7 +5,7 @@ import YccProto
 /// The "new session" composer (docs/design/ios-client.md §6 phase 2 step 5),
 /// styled as a blank chat rather than a settings form: the prompt composer sits
 /// at the bottom with a send arrow (like the live session's input bar), a row of
-/// compact chips above it tucks away mode / interaction level / project, and
+/// compact chips above it tucks away mode / project, and
 /// presets appear as tappable suggestion cards in the empty space. Sending calls
 /// `StartSession` and hands the new session id back to the parent, which
 /// navigates directly into the live streaming view (`Subscribe` from seq 0).
@@ -156,13 +156,12 @@ struct NewSessionView: View {
     }
 
     /// A compact, scrollable row of chips just above the composer: mode (with
-    /// its description as a subtitle in the menu), interaction level, and — when
+    /// its description as a subtitle in the menu), and — when
     /// there is more than one project — the project.
     private var optionChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 modeChip
-                levelChip
                 // Always shown: the chip menu is also the home of the "Add
                 // project…" affordance (task 0192), which must be reachable on
                 // a daemon with no registered projects yet.
@@ -194,25 +193,6 @@ struct NewSessionView: View {
             }
         } label: {
             chipLabel(selectedModeTitle, systemImage: "circle.grid.2x2")
-        }
-    }
-
-    private var levelChip: some View {
-        @Bindable var model = model
-        return Menu {
-            Picker("Interaction level", selection: $model.interactionLevel) {
-                ForEach(InteractionLevel.allCases) { level in
-                    Label {
-                        Text(level.title)
-                        Text(level.detail)
-                    } icon: {
-                        EmptyView()
-                    }
-                    .tag(level)
-                }
-            }
-        } label: {
-            chipLabel(model.interactionLevel.title, systemImage: "person.wave.2")
         }
     }
 

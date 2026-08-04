@@ -76,12 +76,12 @@ xcodebuild -project Ycc.xcodeproj -scheme Ycc \
 
 These steps exercise the live session view: streaming, answering questions,
 replay-from-seq reconnect, and the interrupt/resume/stop controls. Start a live
-session in an *interactive* mode so `ask_user` actually blocks (autonomous mode
+ordinary session so `ask_user` actually blocks (unattended execution
 auto-answers). A quick way:
 
 ```
-# In the daemon's workspace, start an interactive session that will ask something.
-ycc start --mode build --level interactive "a task that needs a decision from you"
+# In the daemon's workspace, start a session that will ask something.
+ycc start --mode build "a task that needs a decision from you"
 # You can also `ycc attach <session-id>` from another terminal and type to
 # answer/steer — handy for the "answered elsewhere" race below. Then open the
 # session from the app's session list.
@@ -92,6 +92,10 @@ ycc start --mode build --level interactive "a task that needs a decision from yo
      model turns stream in as a "streaming" live-tail bubble that resolves into
      a durable bubble; the toolbar shows the green **Live** indicator; tool
      calls appear as collapsed rows that flip to ✓/✗ on result.
+   - While the model is still streaming, scroll well back into the transcript
+     and keep reading for several new deltas/events. Expected: the visible text
+     stays fixed with no jumps; a **Jump to latest** pill appears. Tap it and
+     confirm that the transcript returns to the live edge and resumes following.
 
 7. **Answer an `ask_user` (single, option).** Drive the agent to a question that
    offers suggested options (e.g. a Yes/No confirm). An answer sheet presents.
@@ -156,8 +160,7 @@ round-trip.
     in the toolbar.
     - Expected: the **New session** sheet presents with a **Mode** picker
       (work/pm/chat with a description under it), any **Presets** as tappable
-      shortcuts, an **Interaction level** picker (Interactive/Judgement/
-      Autonomous with a description), a **Project** picker (only when more than
+      shortcuts and a **Project** picker (only when more than
       one project is registered; "Default" = daemon default), and a multiline
       **Prompt** composer. Mode/level/project default to your last-used choices.
 
@@ -238,7 +241,7 @@ task) so the sections and ready/blocked annotations have something to show.
 
 26. **Start work on a task.** Open a task's detail and tap **Start work on this
     task**.
-    - Expected: `StartSession` runs (mode `work`, level judgement, a prompt like
+    - Expected: `StartSession` runs (mode `work`, with a prompt like
       "Work on task 0184: …"); the app navigates directly into the **live**
       session view streaming from seq 0 (green **Live** indicator). A failure
       surfaces a "Couldn't start work" alert; a 401 drops back to connect.
@@ -296,16 +299,9 @@ choices.
 32. **Open the settings sheet.** In a live session view, tap the **gearshape**
     icon in the toolbar (next to the overflow `⋯` menu).
     - Expected: a **Session settings** sheet presents with three sections —
-      **Interaction level**, **Thinking**, and **Roles**. The role pickers seed
+      **Thinking** and **Roles**. The role pickers seed
       from the daemon's CURRENT assignments (via `ListModels`), the thinking
-      pickers from the current per-role levels, and the interaction-level picker
-      from the session's current level (folded from the event stream).
-
-33. **Change interaction level.** Pick a different level (e.g. Judgement →
-    Autonomous).
-    - Expected: `SetInteractionLevel` fires; dismissing the sheet, the live feed
-      shows an **Interaction level → autonomous** system row. Re-opening the
-      sheet shows the picker still on the new level (it reflects reality).
+      pickers from the current per-role levels.
 
 34. **Change thinking.** Set **Scope** to a role (or All roles) and pick a
     **Level** (e.g. High).
@@ -366,12 +362,12 @@ ycc workstream spawn --task 0001 "make a small change and commit it"
       is untouched.
 
 40. **Merge with the review gate.** Context-menu an Active workstream (spawned
-    under interactive/judgement) and tap **Merge…**.
+    and tap **Merge…**.
     - Expected: `MergeWorkstream` (accept=false) returns **needs_accept** — a
       **Review & merge** sheet shows the integrated diff with an **Accept &
       merge** button. Tapping it re-calls `MergeWorkstream` with **accept=true**;
       on success a **Merged** confirmation shows the merge commit sha and the
-      list refreshes (the row flips to **Merged**). Under an autonomous
+      list refreshes (the row flips to **Merged**). After explicit acceptance, the
       workstream, a clean merge integrates immediately (straight to Merged).
 
 41. **Merge conflict path.** Merge the second (conflicting) workstream via

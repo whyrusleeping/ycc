@@ -363,12 +363,10 @@ type model struct {
 	w, h      int
 
 	// settings overlay (spec §18.2): modal over both menu and session, opened by
-	// Esc. It exposes interaction level, per-role model config, UI prefs, and Quit.
+	// Esc. It exposes per-role model config, UI prefs, and Quit.
 	overlay      bool
 	ovCursor     int
 	models       []*v1.ModelInfo   // populated from ListModels
-	level        string            // current interaction level (session)
-	menuLevel    string            // home-menu selector: interaction level for the NEXT session (not persisted; defaults to judgement each launch — §18.2)
 	thinkLevels  map[string]string // per-role thinking levels (coordinator|implementer|reviewers)
 	roleCoord    string            // logical model driving the coordinator
 	roleImpl     string            // logical model for the implementer
@@ -545,11 +543,11 @@ func initialModel(ctx context.Context, client yccv1connect.SessionServiceClient,
 		selected: -1, follow: prefs.Follow,
 		deliveredSeqs: map[int64]bool{},
 		liveTails:     map[string]string{},
-		prefs:         prefs, level: "judgement", menuLevel: "judgement",
-		thinkLevels:  map[string]string{"coordinator": "high", "implementer": "high", "reviewers": "high"},
-		spin:         spin,
-		usageByModel: map[string]event.Usage{},
-		pricing:      map[string]config.Pricing{},
+		prefs:         prefs,
+		thinkLevels:   map[string]string{"coordinator": "high", "implementer": "high", "reviewers": "high"},
+		spin:          spin,
+		usageByModel:  map[string]event.Usage{},
+		pricing:       map[string]config.Pricing{},
 	}
 }
 
@@ -921,13 +919,11 @@ func (m model) fetchModels() tea.Msg {
 	}
 }
 
-// startSession starts a session in the given mode. An empty level lets the daemon
-// apply its default (judgement); the work loop passes "autonomous" so unattended
-// runs never block on ask_user (spec §9, §11).
-func (m model) startSession(mode, prompt, level string) tea.Cmd {
+// startSession starts a normal attended session in the given mode.
+func (m model) startSession(mode, prompt string) tea.Cmd {
 	return func() tea.Msg {
 		resp, err := m.client.StartSession(m.ctx, connect.NewRequest(&v1.StartSessionRequest{
-			Mode: mode, Prompt: prompt, Workspace: m.workspace, Project: m.project, InteractionLevel: level,
+			Mode: mode, Prompt: prompt, Workspace: m.workspace, Project: m.project,
 		}))
 		if err != nil {
 			return errMsg{err}
@@ -1396,13 +1392,13 @@ func (m model) applyLoopDecision(msg loopDecisionMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	m.loopStarted, m.loopPrevFP = true, msg.fp
-	// Loop sessions run autonomously: ask_user must never block an unattended run.
-	// A genuinely stuck task is marked blocked (and skipped) rather than waited on.
-	return m, m.startSession("work", "", "autonomous")
+	// The legacy client-side loop starts a normal session. New unattended loops are
+	// daemon-owned and use the manager's internal Unattended execution flag.
+	return m, m.startSession("work", "")
 }
 
 // blockedTaskCount reports how many backlog tasks are currently marked "blocked"
-// (an autonomous/loop session set them aside pending user input — spec §10/§11).
+// (an unattended loop session set them aside pending user input — spec §10/§11).
 // The home menu uses it to surface a "waiting on you" indicator (task 0101).
 func (m model) blockedTaskCount() int {
 	n := 0
@@ -1786,21 +1782,6 @@ func (m *model) choosePickerOption(idx int) tea.Cmd {
 	return tea.Batch(fc, m.answerQuestion(idx, ""))
 }
 
-// setLevel issues SetInteractionLevel for the current session (spec §18.2).
-func (m model) setLevel(level string) tea.Cmd {
-	return func() tea.Msg {
-		if m.sessionID == "" {
-			return nil
-		}
-		if _, err := m.client.SetInteractionLevel(m.ctx, connect.NewRequest(&v1.SetInteractionLevelRequest{
-			SessionId: m.sessionID, Level: level,
-		})); err != nil {
-			return errMsg{err}
-		}
-		return nil
-	}
-}
-
 // setThinking issues SetThinking per role (spec §7.4, §18.2). With a live session
 // it applies to that session and persists; with no session an empty session_id
 // just persists the new default. An empty role updates all roles. Either way the
@@ -1959,7 +1940,7 @@ func (m model) wsRefreshTick() tea.Cmd {
 
 // spawnWorkstreamsCmd fires one SpawnWorkstream per selected backlog task (task
 // 0085, design §8), stopping at the first error. Each session is seeded with a
-// prompt naming the task and runs at the default (judgement) interaction level.
+// prompt naming the task.
 func (m model) spawnWorkstreamsCmd(tasks []*v1.BacklogTaskSummary) tea.Cmd {
 	project := m.project
 	ctx := m.ctx
@@ -1969,7 +1950,7 @@ func (m model) spawnWorkstreamsCmd(tasks []*v1.BacklogTaskSummary) tea.Cmd {
 		for _, t := range tasks {
 			prompt := fmt.Sprintf("Work on backlog task %s: %s", t.Id, t.Title)
 			if _, err := client.SpawnWorkstream(ctx, connect.NewRequest(&v1.SpawnWorkstreamRequest{
-				Project: project, TaskId: t.Id, Prompt: prompt, InteractionLevel: "judgement",
+				Project: project, TaskId: t.Id, Prompt: prompt,
 			})); err != nil {
 				return wsSpawnedMsg{count: n, err: err}
 			}
@@ -3533,18 +3514,6 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+_":
 			m.openHelp()
 			return m, nil
-		case "left", "right":
-			// Cycle the interaction level for the next session, but only when the
-			// prompt is empty so ←/→ still move the cursor mid-edit (same gating as
-			// the "?" help key). Not persisted — resets to judgement each launch.
-			if strings.TrimSpace(m.prompt.Value()) == "" {
-				d := 1
-				if key.String() == "left" {
-					d = -1
-				}
-				m.menuLevel = cycle(levels, m.menuLevel, d)
-				return m, nil
-			}
 		case "up":
 			if m.cursor > 0 {
 				m.cursor--
@@ -3589,7 +3558,7 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case e.openingPrompt != "":
 				prompt = e.openingPrompt + "\n\nContext from the user (supplied upfront with this request):\n" + prompt
 			}
-			return m, m.startSession(e.mode, prompt, m.menuLevel)
+			return m, m.startSession(e.mode, prompt)
 		}
 	}
 	var cmd tea.Cmd
@@ -5796,8 +5765,7 @@ func (m *model) refreshPlanDetailVP() {
 
 // overlay rows (indices into the navigable list).
 const (
-	ovLevel = iota
-	ovCoord
+	ovCoord = iota
 	ovImpl
 	ovReviewers
 	ovBackends
@@ -5813,7 +5781,6 @@ const (
 )
 
 var (
-	levels      = []string{"interactive", "judgement", "autonomous"}
 	thinkLevels = []string{"off", "low", "medium", "high", "xhigh", "max"}
 	themes      = []string{"dark", "light"}
 )
@@ -5866,13 +5833,10 @@ func (m model) updateOverlay(msg tea.Msg) (tea.Model, tea.Cmd) {
 // overlayAdjust cycles the value under the cursor (left/right).
 func (m model) overlayAdjust(d int) (tea.Model, tea.Cmd) {
 	switch m.ovCursor {
-	case ovLevel:
-		m.level = cycle(levels, m.level, d)
-		return m, m.setLevel(m.level)
 	case ovCoord:
 		m.roleCoord = cycleModel(m.models, m.roleCoord, d)
-		// Apply immediately (like interaction level) so the choice sticks without a
-		// separate "apply" step — the daemon persists it to ycc.toml.
+		// Apply immediately so the choice sticks without a separate "apply" step —
+		// the daemon persists it to ycc.toml.
 		return m, m.setRoleConfig(m.roleCoord, "", nil)
 	case ovImpl:
 		m.roleImpl = cycleModel(m.models, m.roleImpl, d)
@@ -6107,7 +6071,6 @@ func (m model) overlayView() string {
 		interruptVal = "(agent is " + m.status + ")"
 	}
 	rows := []struct{ label, val string }{
-		{"interaction level", m.level},
 		{"coordinator model", m.roleCoord + " (" + m.thinkLevels["coordinator"] + ")"},
 		{"implementer model", m.roleImpl + " (" + m.thinkLevels["implementer"] + ")"},
 		{"reviewers", strings.Join(m.roleReviewrs, ", ")},
@@ -6152,7 +6115,7 @@ func (m model) overlayView() string {
 		b.WriteString(cursor + label + dimStyle.Render(val) + "\n")
 	}
 	if m.sessionID == "" {
-		b.WriteString("\n" + dimStyle.Render("(no active session: role changes are saved as defaults; interaction/thinking level apply only within a session)"))
+		b.WriteString("\n" + dimStyle.Render("(no active session: role changes are saved as defaults; thinking overrides apply only within a session)"))
 	}
 	help := "↑/↓ move · ←/→ change · +/- thinking · enter activate · esc close"
 	if m.ovCursor == ovReviewers {
@@ -7664,14 +7627,6 @@ func (m *model) appendEvent(ev *v1.Event) {
 	case "mode_changed":
 		m.mode = dataField(ev, "to")
 		m.status = "running"
-	case "session_started":
-		if lvl := dataField(ev, "interaction_level"); lvl != "" {
-			m.level = lvl
-		}
-	case "interaction_level_changed":
-		if to := dataField(ev, "to"); to != "" {
-			m.level = to
-		}
 	case "thinking_level_changed":
 		if to := dataField(ev, "to"); to != "" {
 			role := dataField(ev, "role")
@@ -8436,7 +8391,7 @@ func (m model) menuView() string {
 		lbl, desc := e.label, e.description
 		if m.loop && isWorkEntry(e) {
 			lbl = e.label + " (loop)"
-			desc = "Chew through every ready backlog task unattended (autonomous) — stuck tasks are marked blocked and skipped."
+			desc = "Chew through every ready backlog task unattended — stuck tasks are marked blocked and skipped."
 		}
 		label := fmt.Sprintf("%-9s %s", lbl, dimStyle.Render(desc))
 		switch {
@@ -8456,7 +8411,6 @@ func (m model) menuView() string {
 		}
 		b.WriteString("  " + cursor + label + "\n")
 	}
-	b.WriteString("\n  " + dimStyle.Render("level ") + typeStyle.Render("‹"+m.menuLevel+"›") + dimStyle.Render("  ←/→") + "\n")
 	b.WriteString(framedInput(m.prompt, 2) + "\n")
 	// One-key affordance to reopen the most recent session (task 0139): resume the
 	// last conversation instead of ctrl+r → pick → o.
@@ -9530,7 +9484,7 @@ func (m *model) isFinishTurnEcho(i int) bool {
 // row are hidden — see isAskUserPlumbing / isFoldedAnswer). While the footer
 // picker/wizard is collecting the answer it collapses to a pointer (the footer
 // already shows the prompt); once the paired question_answered event exists the
-// answer folds in beneath the question; and an autonomous auto-answer compacts
+// answer folds in beneath the question; and an unattended auto-answer compacts
 // to one dim line instead of the canned "no human available" paragraph.
 func (m *model) questionBody(ev *v1.Event) string {
 	ansEv := m.answerEventFor(ev)
@@ -9642,11 +9596,11 @@ func answerLines(a string, w int, indent string) string {
 	return strings.Join(lines, "\n")
 }
 
-// autoAnswerLine is the compact rendering of an autonomous-mode auto-answer:
+// autoAnswerLine is the compact rendering of an unattended auto-answer:
 // the canned "no human is available…" paragraph the agent receives adds
 // nothing for the human reading the log, so one dim line carries the fact.
 func autoAnswerLine(indent string) string {
-	return indent + dimStyle.Render("→ auto-answered (autonomous mode): agent proceeds on its own judgement")
+	return indent + dimStyle.Render("→ auto-answered (unattended execution): agent proceeds on its own judgement")
 }
 
 func (m *model) renderBody(ev *v1.Event) string {
@@ -10816,7 +10770,7 @@ func (m *model) maybeNotify(ev *v1.Event) {
 	if m.looping && ev.Type == "session_idle" {
 		return
 	}
-	// Auto-answered questions (autonomous mode) never need the user, so a bell
+	// Auto-answered questions (unattended execution) never need the user, so a bell
 	// would be a false alarm.
 	if ev.Type == "question_asked" && dataField(ev, "auto") == "true" {
 		return

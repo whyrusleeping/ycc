@@ -56,7 +56,7 @@ func TestSendInputEmitsEchoOnEnqueue(t *testing.T) {
 	s := &Session{
 		ID:      "test",
 		emitter: event.NewEmitter(rec, "coordinator"),
-		inter:   newInteraction("interactive", event.NewEmitter(rec, "coordinator")),
+		inter:   newInteraction(false, event.NewEmitter(rec, "coordinator")),
 		inputCh: make(chan string, 4),
 	}
 
@@ -94,7 +94,7 @@ func TestSendInputBufferFullNoEcho(t *testing.T) {
 	s := &Session{
 		ID:      "test",
 		emitter: event.NewEmitter(rec, "coordinator"),
-		inter:   newInteraction("interactive", event.NewEmitter(rec, "coordinator")),
+		inter:   newInteraction(false, event.NewEmitter(rec, "coordinator")),
 		inputCh: make(chan string, 1),
 	}
 	if err := s.SendInput("first"); err != nil {

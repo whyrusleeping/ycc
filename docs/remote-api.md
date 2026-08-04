@@ -329,7 +329,7 @@ curl -sS -H "$AUTH" -H "$JSON" -d '{"sessionId":"s_doc"}' \
 ```json
 {"events":[
   {"seq":"1","ts":"2026-07-04T10:00:00.000Z","actor":"user","type":"user_input","dataJson":"{\"text\":\"add a hello.txt file\"}"},
-  {"seq":"2","ts":"2026-07-04T10:00:01.000Z","actor":"coordinator","type":"session_started","dataJson":"{\"interaction_level\":\"judgement\",\"mode\":\"work\",\"workspace\":\"/home/me/work\"}"},
+  {"seq":"2","ts":"2026-07-04T10:00:01.000Z","actor":"coordinator","type":"session_started","dataJson":"{\"mode\":\"work\",\"workspace\":\"/home/me/work\"}"},
   {"seq":"3","ts":"2026-07-04T10:00:02.000Z","actor":"coordinator","type":"model_turn","dataJson":"{\"text\":\"On it — creating hello.txt now.\"}"},
   {"seq":"4","ts":"2026-07-04T17:10:32.643Z","actor":"coordinator","type":"session_reopened"}
 ]}
@@ -339,13 +339,12 @@ See [Event model](#event-model) for the `Event` shape and `dataJson` parsing.
 
 ### StartSession
 
-Start a new session. `workspace` (or a registered `project` name), `mode`,
-`interactionLevel` (`interactive` | `judgement` | `autonomous`), and an initial
-`prompt`.
+Start a new session with `workspace` (or a registered `project` name), `mode`, and
+an initial `prompt`.
 
 ```
 curl -sS -H "$AUTH" -H "$JSON" \
-  -d '{"mode":"work","interactionLevel":"judgement","prompt":"summarize the README"}' \
+  -d '{"mode":"work","prompt":"summarize the README"}' \
   $B/ycc.v1.SessionService/StartSession
 ```
 
@@ -635,7 +634,7 @@ session list with an alert rather than a dead view.
 ### StartWorkLoop / StopWorkLoop / GetWorkLoop
 
 Drive the daemon-side unattended **work loop** (spec §9, §20.6; task 0179). The
-loop starts fresh autonomous `work` sessions one after another, re-reading the
+loop starts fresh unattended `work` sessions one after another, re-reading the
 live backlog before each pick, enforcing the no-progress guard and the per-loop
 budget caps daemon-side, and rolling every session up into an end-of-batch digest.
 Because it lives in the daemon, a loop **survives client disconnects**: any client

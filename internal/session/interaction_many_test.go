@@ -27,10 +27,10 @@ func waitBatchPending(t *testing.T, in *interaction) {
 	}
 }
 
-// In autonomous mode AskMany must not block: it auto-answers every question and
+// In unattended execution AskMany must not block: it auto-answers every question and
 // records each as an assumption.
 func TestAskManyAutonomous(t *testing.T) {
-	in := newInteraction("autonomous", discardEmitter())
+	in := newInteraction(true, discardEmitter())
 	qs := []orchestrator.Question{
 		{Prompt: "which database?"},
 		{Prompt: "which language?", Options: []string{"go", "rust"}},
@@ -43,7 +43,7 @@ func TestAskManyAutonomous(t *testing.T) {
 		t.Fatalf("answers = %v", ans)
 	}
 	for _, a := range ans {
-		if !strings.Contains(strings.ToLower(a), "autonomous") {
+		if !strings.Contains(strings.ToLower(a), "unattended") {
 			t.Fatalf("answer = %q", a)
 		}
 	}
@@ -56,7 +56,7 @@ func TestAskManyAutonomous(t *testing.T) {
 // Interactive AskMany blocks until AnswerAll delivers; option indices resolve to
 // option text and free-text answers pass through.
 func TestAskManyInteractive(t *testing.T) {
-	in := newInteraction("interactive", discardEmitter())
+	in := newInteraction(false, discardEmitter())
 
 	// No batch pending yet.
 	if in.AnswerAll([]answer{{idx: 0}}) {
@@ -91,7 +91,7 @@ func TestAskManyInteractive(t *testing.T) {
 // ask_user is pending must resolve the batch — the reply lands in A1 and the
 // other slots point back to it — rather than returning false and being lost.
 func TestAnswerResolvesPendingBatch(t *testing.T) {
-	in := newInteraction("interactive", discardEmitter())
+	in := newInteraction(false, discardEmitter())
 
 	qs := []orchestrator.Question{
 		{Prompt: "db?", Options: []string{"postgres", "sqlite"}},
@@ -142,7 +142,7 @@ func TestSendInputAnswersPendingBatch(t *testing.T) {
 	s := &Session{
 		ID:      "test",
 		emitter: event.NewEmitter(rec, "coordinator"),
-		inter:   newInteraction("interactive", event.NewEmitter(rec, "coordinator")),
+		inter:   newInteraction(false, event.NewEmitter(rec, "coordinator")),
 		inputCh: make(chan string, 4),
 	}
 
@@ -177,7 +177,7 @@ func TestSendInputAnswersPendingBatch(t *testing.T) {
 
 // A cancelled context unblocks a pending AskMany with an error.
 func TestAskManyContextCancel(t *testing.T) {
-	in := newInteraction("judgement", discardEmitter())
+	in := newInteraction(false, discardEmitter())
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {

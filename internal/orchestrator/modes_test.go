@@ -112,7 +112,7 @@ func TestBuildModeToolsets(t *testing.T) {
 	d := depsFor(t)
 	// pm exposes planning/docs/backlog tools and switch_to_work, but NO
 	// implementation tools (no spawn_implementer / commit).
-	pmReg, _ := BuildMode("pm", d, "judgement")
+	pmReg, _ := BuildMode("pm", d, false)
 	for _, want := range []string{"Read", "Edit", "Write", "Bash", "list_backlog", "get_task", "create_task", "update_task", "propose_plan", "switch_to_work", "ask_user", "finish"} {
 		if !hasTool(pmReg, want) {
 			t.Fatalf("pm mode missing %s", want)
@@ -125,7 +125,7 @@ func TestBuildModeToolsets(t *testing.T) {
 	}
 	// chat is the freeform assistant: file tools + read AND write backlog tools
 	// (create_task/update_task), but no implementation pipeline or switch_to_work.
-	chatReg, _ := BuildMode("chat", d, "judgement")
+	chatReg, _ := BuildMode("chat", d, false)
 	for _, want := range []string{"Read", "Edit", "Write", "Bash", "list_backlog", "get_task", "create_task", "update_task", "ask_user"} {
 		if !hasTool(chatReg, want) {
 			t.Fatalf("chat mode missing %s", want)
@@ -138,7 +138,7 @@ func TestBuildModeToolsets(t *testing.T) {
 	}
 	// The removed authoring modes no longer build.
 	for _, mode := range []string{"spec", "backlog", "feature", "bug"} {
-		reg, _ := BuildMode(mode, d, "judgement")
+		reg, _ := BuildMode(mode, d, false)
 		// Unknown modes fall through to the work coordinator; assert they are not
 		// silently still distinct authoring modes by checking they carry the work
 		// pipeline (spawn_implementer).
@@ -150,7 +150,7 @@ func TestBuildModeToolsets(t *testing.T) {
 
 func TestWorkCoordinatorHasFileAndPipelineTools(t *testing.T) {
 	d := depsFor(t)
-	reg, _ := BuildMode("work", d, "judgement")
+	reg, _ := BuildMode("work", d, false)
 	// The work coordinator can inspect/edit the workspace directly...
 	for _, want := range []string{"Read", "Write", "Edit", "Bash"} {
 		if !hasTool(reg, want) {
@@ -171,7 +171,7 @@ func TestWorkCoordinatorHasFileAndPipelineTools(t *testing.T) {
 func TestWorkCoordinatorDirectImplementation(t *testing.T) {
 	d := depsFor(t)
 	d.WorkImplementation = "direct"
-	reg, prompt := BuildMode("work", d, "judgement")
+	reg, prompt := BuildMode("work", d, false)
 	// No implementer subagent tools in direct mode.
 	for _, gone := range []string{"spawn_implementer", "send_to_implementer"} {
 		if hasTool(reg, gone) {
@@ -190,7 +190,7 @@ func TestWorkCoordinatorDirectImplementation(t *testing.T) {
 	// The default (delegate) strategy keeps the implementer tools and the
 	// delegating prompt.
 	d.WorkImplementation = ""
-	reg, prompt = BuildMode("work", d, "judgement")
+	reg, prompt = BuildMode("work", d, false)
 	if !hasTool(reg, "spawn_implementer") || !hasTool(reg, "send_to_implementer") {
 		t.Fatalf("default work coordinator must keep the implementer pipeline tools")
 	}
@@ -327,7 +327,7 @@ func TestSpecEditEmitsDocUpdated(t *testing.T) {
 		Emitter:   event.NewEmitter(event.NewStdoutRecorder(&buf), "coordinator"),
 		Asker:     noopAsker{},
 	}
-	reg, _ := BuildMode("pm", d, "judgement")
+	reg, _ := BuildMode("pm", d, false)
 
 	res := reg.Dispatch(context.Background(), gollama.ToolCall{
 		Function: gollama.ToolCallFunction{
@@ -357,7 +357,7 @@ func hasTool(reg *tools.Registry, name string) bool {
 }
 
 // declineAsker rejects every confirmation, simulating a user who declines (or no
-// human being available in autonomous mode).
+// human being available in unattended execution).
 type declineAsker struct{}
 
 func (declineAsker) Ask(context.Context, string, []string) (string, error) { return "ok", nil }
@@ -469,7 +469,7 @@ func TestUpdateTaskInProgressEmitsFocusWithDedupe(t *testing.T) {
 func TestRememberRegisteredForCoordinatorRoles(t *testing.T) {
 	d := depsFor(t)
 	for _, mode := range []string{"chat", "pm", "work"} {
-		reg, _ := BuildMode(mode, d, "judgement")
+		reg, _ := BuildMode(mode, d, false)
 		if !hasTool(reg, "remember") {
 			t.Fatalf("mode %q should have the remember tool", mode)
 		}
@@ -543,7 +543,7 @@ func TestRememberSoftNudgeThenHardRefusal(t *testing.T) {
 func TestAssembleInjectsMemory(t *testing.T) {
 	ws := t.TempDir()
 
-	base := assemble("BASE PROMPT", "", ws, true)
+	base := assemble("BASE PROMPT", false, ws, true)
 	if strings.Contains(base, "PROJECT MEMORY") {
 		t.Fatalf("absent memory should add nothing:\n%s", base)
 	}
@@ -551,7 +551,7 @@ func TestAssembleInjectsMemory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(ws, "memory.md"), []byte("# Project memory\n\n## Lessons learned\n- 2026-01-01: use -run while iterating\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	withMem := assemble("BASE PROMPT", "", ws, true)
+	withMem := assemble("BASE PROMPT", false, ws, true)
 	if !strings.Contains(withMem, "PROJECT MEMORY") {
 		t.Fatalf("memory not injected:\n%s", withMem)
 	}
@@ -573,7 +573,7 @@ func TestMemoryEditEmitsDocUpdated(t *testing.T) {
 	rec := &captureRec{}
 	d := depsFor(t)
 	d.Emitter = event.NewEmitter(rec, "coordinator")
-	reg, _ := BuildMode("pm", d, "judgement")
+	reg, _ := BuildMode("pm", d, false)
 
 	res := reg.Dispatch(context.Background(), gollama.ToolCall{
 		Function: gollama.ToolCallFunction{

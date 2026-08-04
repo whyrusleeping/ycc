@@ -17,7 +17,7 @@ func TestReduceSessionStopped(t *testing.T) {
 
 // TestReduceWorkstreamLifecycle verifies the parallel-workstream events fold into
 // the projection's workstream fields (design §6, §8), including a JSONL-decoded
-// []any conflicts payload, and that interaction_level_changed updates the level.
+// []any conflicts payload.
 func TestReduceWorkstreamLifecycle(t *testing.T) {
 	// created → conflict (fresh []string) → merged clears conflicts.
 	p := Reduce([]Event{
@@ -58,17 +58,5 @@ func TestReduceWorkstreamLifecycle(t *testing.T) {
 	})
 	if p.WorkstreamState != "discarded" || len(p.WorkstreamConflicts) != 0 {
 		t.Fatalf("after discarded: state=%q conflicts=%v", p.WorkstreamState, p.WorkstreamConflicts)
-	}
-}
-
-// TestReduceInteractionLevelChanged verifies a mid-session settings overlay
-// updates the projection's interaction level (needed by the merge accept gate).
-func TestReduceInteractionLevelChanged(t *testing.T) {
-	p := Reduce([]Event{
-		{Seq: 1, Type: SessionStarted, Data: map[string]any{"interaction_level": "judgement"}},
-		{Seq: 2, Type: InteractionLevelChanged, Data: map[string]any{"from": "judgement", "to": "autonomous"}},
-	})
-	if p.InteractionLevel != "autonomous" {
-		t.Fatalf("InteractionLevel = %q, want autonomous", p.InteractionLevel)
 	}
 }

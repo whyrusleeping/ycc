@@ -40,12 +40,10 @@ func snapshotHasEvent(s *Session, t event.Type) (event.Event, bool) {
 	return event.Event{}, false
 }
 
-// TestMergeWorkstreamCleanAutonomous: a clean trial-merge under the autonomous
-// level integrates silently, cleans up the worktree + branch, and records a
-// workstream_merged event.
-func TestMergeWorkstreamCleanAutonomous(t *testing.T) {
+// TestMergeWorkstreamCleanAccepted verifies an accepted clean trial merge.
+func TestMergeWorkstreamCleanAccepted(t *testing.T) {
 	m, proj := newWorkstreamManager(t)
-	ws, s, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo", InteractionLevel: "autonomous"})
+	ws, s, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
 	if err != nil {
 		t.Fatalf("SpawnWorkstream: %v", err)
 	}
@@ -53,7 +51,7 @@ func TestMergeWorkstreamCleanAutonomous(t *testing.T) {
 
 	commitInto(t, ws.WorktreePath, "feature.txt", "hello\n", "add feature")
 
-	out, err := m.MergeWorkstream(ws.ID, false)
+	out, err := m.MergeWorkstream(ws.ID, true)
 	if err != nil {
 		t.Fatalf("MergeWorkstream: %v", err)
 	}
@@ -83,12 +81,12 @@ func TestMergeWorkstreamCleanAutonomous(t *testing.T) {
 	}
 }
 
-// TestMergeWorkstreamAcceptGate: under a non-autonomous level a clean trial-merge
+// TestMergeWorkstreamAcceptGate: under a attended session a clean trial-merge
 // is gated behind explicit acceptance; the first call returns the integrated diff
 // and mutates nothing, the second (accept=true) integrates.
 func TestMergeWorkstreamAcceptGate(t *testing.T) {
 	m, proj := newWorkstreamManager(t)
-	ws, s, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"}) // default judgement
+	ws, s, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
 	if err != nil {
 		t.Fatalf("SpawnWorkstream: %v", err)
 	}
@@ -144,7 +142,7 @@ func TestMergeWorkstreamConflict(t *testing.T) {
 	// Establish a shared base file so both sides diverge on the same path.
 	commitInto(t, proj, "shared.txt", "base\n", "add shared")
 
-	ws, s, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo", InteractionLevel: "autonomous"})
+	ws, s, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
 	if err != nil {
 		t.Fatalf("SpawnWorkstream: %v", err)
 	}
@@ -202,12 +200,12 @@ func TestMergeWorkstreamConflict(t *testing.T) {
 func TestMergeWorkstreamSequential(t *testing.T) {
 	m, _ := newWorkstreamManager(t)
 
-	ws1, s1, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo", InteractionLevel: "autonomous"})
+	ws1, s1, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
 	if err != nil {
 		t.Fatalf("spawn ws1: %v", err)
 	}
 	defer m.Stop(s1.ID)
-	ws2, s2, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo", InteractionLevel: "autonomous"})
+	ws2, s2, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
 	if err != nil {
 		t.Fatalf("spawn ws2: %v", err)
 	}
@@ -218,11 +216,11 @@ func TestMergeWorkstreamSequential(t *testing.T) {
 	commitInto(t, ws2.WorktreePath, "collide.txt", "from-ws2\n", "ws2 collide")
 
 	// ws1 merges cleanly first.
-	if out, err := m.MergeWorkstream(ws1.ID, false); err != nil || !out.Merged {
+	if out, err := m.MergeWorkstream(ws1.ID, true); err != nil || !out.Merged {
 		t.Fatalf("merge ws1: out=%+v err=%v", out, err)
 	}
 	// ws2 now conflicts because it is reconciled against the post-ws1 base.
-	out, err := m.MergeWorkstream(ws2.ID, false)
+	out, err := m.MergeWorkstream(ws2.ID, true)
 	if err != nil {
 		t.Fatalf("merge ws2: %v", err)
 	}
@@ -236,12 +234,12 @@ func TestMergeWorkstreamSequential(t *testing.T) {
 func TestMergeWorkstreamSequentialHappy(t *testing.T) {
 	m, proj := newWorkstreamManager(t)
 
-	ws1, s1, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo", InteractionLevel: "autonomous"})
+	ws1, s1, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
 	if err != nil {
 		t.Fatalf("spawn ws1: %v", err)
 	}
 	defer m.Stop(s1.ID)
-	ws2, s2, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo", InteractionLevel: "autonomous"})
+	ws2, s2, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
 	if err != nil {
 		t.Fatalf("spawn ws2: %v", err)
 	}
@@ -250,10 +248,10 @@ func TestMergeWorkstreamSequentialHappy(t *testing.T) {
 	commitInto(t, ws1.WorktreePath, "a.txt", "A\n", "ws1 a")
 	commitInto(t, ws2.WorktreePath, "b.txt", "B\n", "ws2 b")
 
-	if out, err := m.MergeWorkstream(ws1.ID, false); err != nil || !out.Merged {
+	if out, err := m.MergeWorkstream(ws1.ID, true); err != nil || !out.Merged {
 		t.Fatalf("merge ws1: out=%+v err=%v", out, err)
 	}
-	if out, err := m.MergeWorkstream(ws2.ID, false); err != nil || !out.Merged {
+	if out, err := m.MergeWorkstream(ws2.ID, true); err != nil || !out.Merged {
 		t.Fatalf("merge ws2: out=%+v err=%v", out, err)
 	}
 	for _, f := range []string{"a.txt", "b.txt"} {
@@ -310,7 +308,7 @@ func transcriptHasEvent(events []event.Event, t event.Type) bool {
 // (including the workstream_merged event) is still viewable via SessionTranscript.
 func TestMergeWorkstreamPreservesTranscript(t *testing.T) {
 	m, proj := newWorkstreamManager(t)
-	ws, s, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo", InteractionLevel: "autonomous"})
+	ws, s, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
 	if err != nil {
 		t.Fatalf("SpawnWorkstream: %v", err)
 	}
@@ -318,7 +316,7 @@ func TestMergeWorkstreamPreservesTranscript(t *testing.T) {
 
 	commitInto(t, ws.WorktreePath, "feature.txt", "hello\n", "add feature")
 
-	if out, err := m.MergeWorkstream(ws.ID, false); err != nil || !out.Merged {
+	if out, err := m.MergeWorkstream(ws.ID, true); err != nil || !out.Merged {
 		t.Fatalf("MergeWorkstream: out=%+v err=%v", out, err)
 	}
 
@@ -377,12 +375,12 @@ func TestDiscardWorkstreamPreservesTranscript(t *testing.T) {
 func TestWorkstreamCommitCountsMatchesSingle(t *testing.T) {
 	m, _ := newWorkstreamManager(t)
 
-	ws1, s1, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo", InteractionLevel: "autonomous"})
+	ws1, s1, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
 	if err != nil {
 		t.Fatalf("SpawnWorkstream 1: %v", err)
 	}
 	defer m.Stop(s1.ID)
-	ws2, s2, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo", InteractionLevel: "autonomous"})
+	ws2, s2, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
 	if err != nil {
 		t.Fatalf("SpawnWorkstream 2: %v", err)
 	}

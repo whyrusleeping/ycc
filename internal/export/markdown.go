@@ -267,7 +267,7 @@ func (b *builder) renderQuestion(ev *v1.Event) string {
 			sb.WriteString(fmt.Sprintf("\n%d. %s\n", i+1, oneLineKeep(q.prompt)))
 			switch {
 			case auto:
-				sb.WriteString("   → _auto-answered (autonomous mode)_\n")
+				sb.WriteString("   → _auto-answered (unattended execution)_\n")
 			case ans != nil:
 				a := ""
 				if i < len(answers) {
@@ -286,7 +286,7 @@ func (b *builder) renderQuestion(ev *v1.Event) string {
 	block := "**Q:** " + oneLineKeep(q)
 	switch {
 	case auto:
-		block += "\n\n> → _auto-answered (autonomous mode)_"
+		block += "\n\n> → _auto-answered (unattended execution)_"
 	case ans != nil:
 		block += "\n\n> → " + answerText(dataField(ans, "answer"))
 	}
@@ -366,9 +366,6 @@ func (b *builder) metadataLine() string {
 		}
 		if v := dataField(ev, "workspace"); v != "" {
 			parts = append(parts, "workspace: "+v)
-		}
-		if v := dataField(ev, "interaction_level"); v != "" {
-			parts = append(parts, "level: "+v)
 		}
 		if v := ev.Ts; v != "" {
 			parts = append(parts, "started: "+v)

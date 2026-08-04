@@ -3,8 +3,7 @@
 > Status: **proposal** (design spike, task 0146). No code lands with this doc;
 > the follow-on implementation tasks in §11 are filed separately.
 > Grounded in the current architecture: spec §6.2 (backlog structure, per-file
-> tasks, `spec_refs`), §8 (tools), §11 (interaction levels + the "Exception —
-> confirmation gates" rule), §12 (RPC surface), §14.1 (parallel workstreams:
+> tasks, `spec_refs`), §8 (tools), §11 (questions, unattended work, and confirmation gates), §12 (RPC surface), §14.1 (parallel workstreams:
 > branch `ycc/ws/<id>`, `workstreams.json` registry, conflict-aware
 > review-gated merge, lifecycle events, RPC surface), and the session→markdown
 > exporter (task 0144, `cmd/ycc/export.go` + `internal/export`).
@@ -228,8 +227,7 @@ registry/event logic and wouldn't work for remote clients.
    §4); resolve the git remote for the branch and confirm it's a recognised
    forge. Any failure → a specific error (§9), nothing mutated.
 2. **Gate.** Pushing a branch and opening a public PR is a hard-to-reverse side
-   effect. Mirror `MergeWorkstream`'s gate: under *autonomous* proceed; under
-   *interactive/judgement* return `NeedsAccept` with a preview (branch, remote,
+   effect. Mirror `MergeWorkstream`'s gate: return `NeedsAccept` with a preview (branch, remote,
    PR title, PR body) until `accept=true` (§8).
 3. **Compose the PR body.** Reuse `internal/export`: render the workstream's
    session transcript (reviewer verdicts + final report + commit summary) to
@@ -281,8 +279,7 @@ PR for this" stays **prompt-level in v1** — a reusable runbook under `plans/`
 - **Confirmation gate.** Because push + PR-create are public side effects, the
   runbook instructs the agent to seek an explicit human confirmation before
   pushing (spec §11 "Exception — confirmation gates"): treat it like
-  `switch_to_work` — a real human yes/no even under *autonomous*, declined (no
-  push) if no human is available.
+  `switch_to_work` — a real human yes/no, declined (no push) if no human is available.
 - **Why not first-class yet.** Unlike a workstream, a plain work session has no
   daemon-owned branch/registry/terminal-state machinery to hang a clean RPC off
   — the branch is whatever the session committed to, cleanup is the user's, and
@@ -294,28 +291,11 @@ PR for this" stays **prompt-level in v1** — a reusable runbook under `plans/`
 ## 8. Safety & gating
 
 Pushing branches, opening PRs, and closing issues are **public, hard-to-reverse
-side effects** on shared infrastructure — the exact category spec §11 covers with
-the "Exception — confirmation gates" rule. Semantics per interaction level:
-
-| Level         | Publish workstream / open PR / close issue                          |
-|---------------|---------------------------------------------------------------------|
-| interactive   | preview shown, requires explicit accept (like `MergeWorkstream`)    |
-| judgement     | requires explicit accept (hard-to-reverse ⇒ gate, per §11)          |
-| autonomous    | proceeds — but see note                                             |
-
-Note on autonomous: local merge auto-proceeds under *autonomous* because it only
-touches the local base branch, which is recoverable. A **PR/push is externally
-visible** and harder to walk back. Two defensible policies:
-
-1. Treat publish like merge — autonomous auto-publishes. Simple, consistent.
-2. Treat publish like `switch_to_work` — a **confirmation gate that seeks a real
-   human even under autonomous** and *declines* (no push) if none is available.
-
-**Recommended:** policy (2) for the *non-workstream* Flow 3 (an ad-hoc ship is
-riskier) and policy (1) for the *workstream publish* Flow 2 when the user
-explicitly chose "publish" as the terminal action (the intent to go public is
-already expressed by selecting publish). Both are within the spec §11 framework;
-the exact default is a small config knob (`forge.confirm_publish`).
+side effects** on shared infrastructure. They always show a preview and require
+explicit human acceptance. Internal unattended execution never bypasses this gate;
+if no human is available the operation is declined. This matches `MergeWorkstream`
+and `switch_to_work` and keeps safety attached to the operation rather than a
+session-wide policy.
 
 ## 9. Failure modes
 

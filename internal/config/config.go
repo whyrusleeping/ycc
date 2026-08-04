@@ -455,7 +455,7 @@ type Budget struct {
 // Auth, when set, is sent verbatim as the Authorization request header (e.g.
 // "Bearer tk_..."). Events optionally restricts which event kinds fire — an empty
 // slice enables all kinds; a non-empty slice enables only the listed kinds (valid
-// kinds: question, idle, error, digest, blocked) so autonomous-loop users can pick
+// kinds: question, idle, error, digest, blocked) so unattended-loop users can pick
 // "questions + digest only".
 type Notify struct {
 	URL    string   `toml:"url,omitempty"`

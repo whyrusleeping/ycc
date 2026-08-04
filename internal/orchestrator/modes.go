@@ -69,7 +69,7 @@ func Presets() []Preset {
 // them with Edit/Write — there is no dedicated spec tool. An OnWrite hook surfaces
 // an edit anywhere in the docs set (the spec entry point plus any configured
 // doc_globs — spec §6.1) as a doc_updated event.
-func BuildMode(mode string, d *Deps, level string) (*tools.Registry, string) {
+func BuildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) {
 	ws := &tools.Workspace{
 		Root:       d.Workspace,
 		WriteRoots: tools.NormalizeRoots(d.WriteRoots),
@@ -100,7 +100,7 @@ func BuildMode(mode string, d *Deps, level string) (*tools.Registry, string) {
 	case "chat":
 		reg.Add(tools.Editing(ws)...)
 		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d), askUser(d), remember(d))
-		return reg, sys(chatModeSystem, level, d.Workspace)
+		return reg, sys(chatModeSystem, unattended, d.Workspace)
 	case "pm":
 		// pm maintains the project's design docs (plain files) so it keeps
 		// Write/Edit, but it does no implementation: no spawn_* / commit, and the
@@ -108,12 +108,12 @@ func BuildMode(mode string, d *Deps, level string) (*tools.Registry, string) {
 		// future work).
 		reg.Add(tools.Editing(ws)...)
 		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d), proposePlan(d), switchToWork(d), askUser(d), remember(d), tools.Finish())
-		return reg, sys(pmModeSystem, level, d.Workspace)
+		return reg, sys(pmModeSystem, unattended, d.Workspace)
 	default: // work
 		if d.WorkImplementation == "direct" {
-			return CoordinatorTools(d, ws, true), sys(coordinatorDirectSystem, level, d.Workspace)
+			return CoordinatorTools(d, ws, true), sys(coordinatorDirectSystem, unattended, d.Workspace)
 		}
-		return CoordinatorTools(d, ws, false), sys(coordinatorSystem, level, d.Workspace)
+		return CoordinatorTools(d, ws, false), sys(coordinatorSystem, unattended, d.Workspace)
 	}
 }
 
@@ -151,29 +151,26 @@ func workspaceNote(root string) string {
 }
 
 // sys assembles the full system prompt every agent uses: the role's base prompt,
-// the shared tooling guidance, the workspace note, and — when level is non-empty —
-// the interaction-level policy. One assembly path keeps the shared rules
-// byte-identical across roles instead of hand-copied paraphrases that drift.
-// Subagents (implementer/reviewers) pass level="" because they have no ask_user
-// gate; the interaction level is the coordinator's concern.
-func sys(base, level, root string) string {
-	return assemble(base, level, root, true)
+// shared tooling guidance, workspace note, and (for daemon work loops) an
+// unattended-execution note. One assembly path keeps shared rules byte-identical.
+func sys(base string, unattended bool, root string) string {
+	return assemble(base, unattended, root, true)
 }
 
 // inspectSys assembles the system prompt for read-only roles (reviewers): the
 // same shared guidance minus the editing sentence.
 func inspectSys(base, root string) string {
-	return assemble(base, "", root, false)
+	return assemble(base, false, root, false)
 }
 
-func assemble(base, level, root string, editing bool) string {
+func assemble(base string, unattended bool, root string, editing bool) string {
 	hint := inspectHint
 	if editing {
 		hint += " " + editHint
 	}
 	s := base + "\n\n" + hint + "\n" + batchHint + "\n" + workspaceNote(root)
-	if level != "" {
-		s += "\n\n" + levelGuidance(level)
+	if unattended {
+		s += "\n\n" + unattendedGuidance
 	}
 	s += memorySection(root)
 	return s
@@ -262,7 +259,7 @@ func initialStatus(params any) (docs.Status, error) {
 // coordinator implements THAT task rather than re-picking "the next ready task".
 //
 // Starting an implementation pipeline is high-impact and hard to reverse, so the
-// approval gate is a REAL confirmation even in autonomous mode (where ask_user
+// approval gate is a REAL confirmation even in unattended execution (where ask_user
 // normally auto-answers) — if no human is available, the hand-off is declined and
 // pm stays put rather than silently launching work.
 func switchToWork(d *Deps) *gollama.Tool {
@@ -284,7 +281,7 @@ func switchToWork(d *Deps) *gollama.Tool {
 				return tools.ErrResult("switch_to_work: a target task_id is required"), nil
 			}
 			// Deliberate hand-off: get explicit approval. Confirm forces a real
-			// human answer even in autonomous mode (it does not auto-answer).
+			// human answer even in unattended execution (it does not auto-answer).
 			ok, err := d.Asker.Confirm(ctx, fmt.Sprintf(
 				"Start the implementation pipeline now for task %s? This launches the work coordinator to implement it.", id))
 			if err != nil {

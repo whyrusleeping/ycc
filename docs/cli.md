@@ -53,11 +53,10 @@ task from the backlog.
 | `--workspace DIR` | workspace dir (default: `--workspace` or current directory) |
 | `--project NAME` | registered project name (overrides `--workspace`) |
 | `--mode MODE` | session mode: `chat`, `work`, or `pm` (default: `work`) |
-| `--level LEVEL` | interaction level: `interactive`, `judgement`, or `autonomous` |
 
 ```sh
 ycc start "add a hello.txt"
-ycc start --mode pm --level interactive
+ycc start --mode pm
 ycc start                       # work mode: coordinator picks a backlog task
 ```
 
@@ -313,16 +312,5 @@ source <(ycc completion bash)                          # ~/.bashrc
 source <(ycc completion zsh)                            # ~/.zshrc
 ycc completion fish > ~/.config/fish/completions/ycc.fish
 ```
-
-## Interaction levels
-
-The `--level` flag on `start` (and the TUI settings overlay) sets one policy value
-enforced at the `ask_user` gate:
-
-- **`interactive`** — ask freely; confirm the plan, surface meaningful choices.
-- **`judgement`** — proceed on best judgement; only ask when genuinely blocked or a
-  decision is hard to reverse.
-- **`autonomous`** — never ask; make every call and accumulate questions /
-  assumptions / decisions into the final report.
 
 [urfave/cli]: https://github.com/urfave/cli
