@@ -30,8 +30,10 @@ public final class YccClient: Sendable {
             codec: JSONCodec(),
             interceptors: [AuthInterceptor.factory(token: token)]
         )
+        // RetryGuardHTTPClient prevents a CFNetwork abort when a streaming
+        // RPC's request is retransmitted (its body stream is one-shot).
         let protocolClient = ProtocolClient(
-            httpClient: URLSessionHTTPClient(),
+            httpClient: RetryGuardHTTPClient(),
             config: config
         )
         self.generated = Ycc_V1_SessionServiceClient(client: protocolClient)
