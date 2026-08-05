@@ -216,6 +216,7 @@ struct BacklogView: View {
 
 /// The long-press status changer: every selectable status, with a checkmark on
 /// the row's current one. Shared by the list rows and the board cards.
+@MainActor
 @ViewBuilder
 func statusMenu(_ model: BacklogModel, task: Ycc_V1_BacklogTaskSummary) -> some View {
     let current = TaskStatus(status: task.status)
