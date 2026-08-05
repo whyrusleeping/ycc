@@ -18,6 +18,8 @@ lsp.webp
 clients/ios/*.xcodeproj
 clients/ios/App/Info.plist
 clients/ios/**/xcuserdata/
+# scratch drop point for UI-review screenshots copied off a Mac/phone
+clients/ios/screenshots/
 clients/ios/**/.build/
 clients/ios/**/.swiftpm/
 clients/ios/**/Package.resolved

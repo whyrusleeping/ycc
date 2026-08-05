@@ -64,7 +64,9 @@ struct SessionView: View {
     private let title: String
     private static let bottomAnchor = "transcript-bottom"
     private static let transcriptCoordinateSpace = "transcript-scroll"
-    private static let maxPictures = 4
+    /// Mirrors the daemon's per-message cap (spec §12); the merge/capacity
+    /// rules themselves live in `PictureAttachments` so they are unit-tested.
+    private static let maxPictures = PictureAttachments.maxCount
     private static let maxPictureBytes = 5 * 1_024 * 1_024
 
     private struct DraftPicture: Identifiable {
@@ -289,18 +291,33 @@ struct SessionView: View {
                     }
                     .padding(.top, 5)
                 }
+                .accessibilityLabel("\(pictures.count) pictures attached")
             }
             HStack(spacing: 8) {
                 PhotosPicker(
                     selection: $photoItems,
-                    maxSelectionCount: Self.maxPictures,
+                    maxSelectionCount: max(1, Self.maxPictures - pictures.count),
                     matching: .images
                 ) {
-                    Image(systemName: loadingPictures ? "hourglass" : "photo.on.rectangle")
+                    // The badge is the one honest signal that a pick actually
+                    // landed; the thumbnail strip is easy to miss above the
+                    // keyboard on a small screen.
+                    Image(systemName: pictures.isEmpty
+                        ? "photo.on.rectangle"
+                        : "photo.badge.checkmark")
                         .font(.title3)
+                        .foregroundStyle(pictures.isEmpty ? Color.accentColor : Color.green)
+                        .opacity(loadingPictures ? 0 : 1)
+                        .overlay {
+                            if loadingPictures {
+                                ProgressView().controlSize(.small)
+                            }
+                        }
                 }
-                .disabled(loadingPictures)
-                .accessibilityLabel("Add pictures")
+                .disabled(loadingPictures || PictureAttachments.isFull(current: pictures.count))
+                .accessibilityLabel(pictures.isEmpty
+                    ? "Add pictures"
+                    : "Add pictures, \(pictures.count) attached")
                 .onChange(of: photoItems) { _, items in
                     Task { await loadPictures(items) }
                 }
@@ -325,33 +342,78 @@ struct SessionView: View {
 
     @MainActor
     private func loadPictures(_ items: [PhotosPickerItem]) async {
+        // The `photoItems = []` reset below re-fires this `onChange` with an
+        // empty selection. Without this guard that second pass overwrote
+        // `pictures` with an empty array, so every attachment silently vanished
+        // between picking it and sending — the thumbnails never even appeared.
+        guard !items.isEmpty else { return }
+
         loadingPictures = true
         defer { loadingPictures = false; photoItems = [] }
+
+        let room = PictureAttachments.room(current: pictures.count)
+        guard room > 0 else {
+            model.actionError = "You can attach up to \(Self.maxPictures) pictures."
+            return
+        }
+
         var loaded: [DraftPicture] = []
         do {
-            for (index, item) in items.prefix(Self.maxPictures).enumerated() {
+            for (index, item) in items.prefix(room).enumerated() {
                 guard let source = try await item.loadTransferable(type: Data.self),
                       let uiImage = UIImage(data: source) else {
                     throw PictureError.unreadable
                 }
-                // Normalize to JPEG so HEIC and other Photos formats have a
-                // model-supported wire type, while preserving a useful preview.
-                guard let data = uiImage.jpegData(compressionQuality: 0.85) else {
-                    throw PictureError.unreadable
-                }
-                guard data.count <= Self.maxPictureBytes else {
+                // Normalize to bounded JPEG so HEIC and other Photos formats
+                // have a model-supported wire type, and so a 48MP camera roll
+                // original cannot blow the daemon's per-image size limit.
+                guard let data = Self.normalizedJPEG(uiImage) else {
                     throw PictureError.tooLarge
                 }
                 loaded.append(DraftPicture(
                     image: MessageImage(
-                        data: data, mediaType: "image/jpeg", filename: "photo-\(index + 1).jpg"),
+                        data: data,
+                        mediaType: "image/jpeg",
+                        filename: "photo-\(pictures.count + index + 1).jpg"),
                     preview: uiImage))
             }
-            pictures = loaded
+            // Merge rather than replace: each round starts from a cleared
+            // selection, so replacing would drop earlier picks (and an empty
+            // round would wipe the draft entirely — see PictureAttachments).
+            pictures = PictureAttachments.merged(existing: pictures, adding: loaded)
         } catch {
-            pictures = []
+            // Keep whatever was already attached; only this round is dropped.
             model.actionError = error.localizedDescription
         }
+    }
+
+    /// Downscale to a sane long edge, then step the JPEG quality down until the
+    /// encoding fits the per-image cap. Drawing through a renderer also bakes in
+    /// the EXIF orientation, so a portrait photo doesn't reach the model sideways.
+    private static func normalizedJPEG(_ image: UIImage) -> Data? {
+        let maxEdge: CGFloat = 2048
+        let longEdge = max(image.size.width, image.size.height)
+        let target: UIImage
+        if longEdge > maxEdge, longEdge > 0 {
+            let scale = maxEdge / longEdge
+            let size = CGSize(
+                width: (image.size.width * scale).rounded(),
+                height: (image.size.height * scale).rounded())
+            let format = UIGraphicsImageRendererFormat.default()
+            format.scale = 1
+            target = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+                image.draw(in: CGRect(origin: .zero, size: size))
+            }
+        } else {
+            target = image
+        }
+        for quality in [0.85, 0.7, 0.55, 0.4] as [CGFloat] {
+            if let data = target.jpegData(compressionQuality: quality),
+               data.count <= maxPictureBytes {
+                return data
+            }
+        }
+        return nil
     }
 
     private func send() {
@@ -368,7 +430,7 @@ struct SessionView: View {
         var errorDescription: String? {
             switch self {
             case .unreadable: return "One of the selected pictures could not be read."
-            case .tooLarge: return "A selected picture is larger than 5 MB after encoding."
+            case .tooLarge: return "A selected picture is too large to send, even after downscaling."
             }
         }
     }
