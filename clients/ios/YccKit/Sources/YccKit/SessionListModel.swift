@@ -7,7 +7,7 @@ import YccProto
 /// headlessly with an in-memory mock — no network, no simulator. ``YccClient``
 /// is the production conformer.
 public protocol SessionListSource: Sendable {
-    /// List session history for a project (empty => daemon default workspace).
+    /// List session history for a named project.
     func listSessionHistory(project: String) async throws -> [Ycc_V1_SessionSummary]
     /// List the daemon's registered projects (drives the project filter).
     func listProjects() async throws -> [Ycc_V1_ProjectInfo]
@@ -42,6 +42,23 @@ public enum SessionStatusKind: String, Sendable, CaseIterable {
     }
 }
 
+/// Live-activity counts for one project (or the whole daemon). Drives the
+/// workspace drawer's badges, where a waiting question outranks mere activity.
+public struct ProjectActivity: Sendable, Equatable {
+    /// Live sessions currently running or paused — work in flight.
+    public var active = 0
+    /// Live sessions blocked on an unanswered question. The loudest state a
+    /// phone client exists to surface.
+    public var needsAnswer = 0
+
+    public init(active: Int = 0, needsAnswer: Int = 0) {
+        self.active = active
+        self.needsAnswer = needsAnswer
+    }
+
+    public var isEmpty: Bool { active == 0 && needsAnswer == 0 }
+}
+
 /// A grouped list of sessions for display. Needs-answer sessions are pinned to
 /// the top in their own section; the rest follow most-recent-first.
 public struct SessionSection: Identifiable, Sendable {
@@ -70,14 +87,15 @@ public struct SessionSection: Identifiable, Sendable {
 @MainActor
 @Observable
 public final class SessionListModel {
-    /// Raw sessions from the last successful load (unsorted; view reads
-    /// ``sections``).
-    public private(set) var sessions: [Ycc_V1_SessionSummary] = []
-    /// Registered projects; drives the project filter menu.
+    /// Every session loaded across the daemon, most-recent-first. ``sessions``
+    /// is the ``selectedProject``-filtered view of this; the drawer's badges and
+    /// deep-link resolution read the unfiltered set.
+    public private(set) var allSessions: [Ycc_V1_SessionSummary] = []
+    /// Registered projects; drives the workspace drawer.
     public private(set) var projects: [Ycc_V1_ProjectInfo] = []
-    /// The selected project filter. `nil` is the daemon-wide recent-session feed,
-    /// `""` is the daemon default workspace, and any other value is a registered
-    /// project name. Setting it does not auto-refresh — the view calls ``refresh()``.
+    /// The selected project filter. `nil` is the daemon-wide recent-session feed;
+    /// a value is a registered project name. Filtering is client-side over the
+    /// aggregate load, so changing it needs no refresh and no network round-trip.
     public var selectedProject: String?
 
     public private(set) var isLoading = false
@@ -96,23 +114,22 @@ public final class SessionListModel {
         self.selectedProject = selectedProject
     }
 
-    /// The project filter is meaningful whenever any project is registered:
-    /// the picker always offers the implicit "Default" workspace (`""`) too,
-    /// so even a single registered project gives two choices.
+    /// The sessions to display: everything, or just the selected project's.
+    public var sessions: [Ycc_V1_SessionSummary] {
+        guard let selectedProject else { return allSessions }
+        return allSessions.filter { sessionProjects[$0.sessionID] == selectedProject }
+    }
+
+    /// The filter is meaningful when projects exist (alongside All projects).
     public var showsProjectFilter: Bool { !projects.isEmpty }
 
     /// Starting a chat from the daemon-wide Recent Sessions feed must ask for a
-    /// project instead of silently falling back to the daemon's default workspace.
+    /// project instead of silently choosing one.
     /// A project-scoped session list can start directly in its selected project.
     public var requiresProjectChoiceForNewSession: Bool { selectedProject == nil }
 
-    /// Project names offered by the Recent Sessions new-chat prompt. A
-    /// multi-project daemon offers its registered projects only, avoiding an
-    /// accidental chat in the daemon process's implicit default workspace. A
-    /// one-shot daemon has no registry, so its sole Default workspace is used.
-    public var newSessionProjectChoices: [String] {
-        projects.isEmpty ? [""] : projects.map(\.name)
-    }
+    /// Project names offered by the Recent Sessions new-chat prompt.
+    public var newSessionProjectChoices: [String] { projects.map(\.name) }
 
     /// The daemon-wide home feed is one globally recency-sorted list. A scoped
     /// project view retains the phone-focused needs-answer pinning behavior.
@@ -129,10 +146,26 @@ public final class SessionListModel {
     /// from several projects are merged.
     public private(set) var sessionProjects: [String: String] = [:]
 
-    /// (Re)load the project list and either one project's history or the default
-    /// daemon-wide recent feed. The aggregate feed queries each distinct registered
-    /// workspace once, merges and deduplicates the results, and keeps successful
-    /// projects when another project fails.
+    /// Live-activity counts per project name, for the drawer's badges.
+    public private(set) var activityByProject: [String: ProjectActivity] = [:]
+
+    /// Daemon-wide live-activity counts, for the drawer's "Recent sessions" row.
+    public var totalActivity: ProjectActivity {
+        activityByProject.values.reduce(into: ProjectActivity()) { total, activity in
+            total.active += activity.active
+            total.needsAnswer += activity.needsAnswer
+        }
+    }
+
+    /// Activity for one project (zero when it has none).
+    public func activity(forProject name: String) -> ProjectActivity {
+        activityByProject[name] ?? ProjectActivity()
+    }
+
+    /// (Re)load the project list and every project's history. The aggregate feed
+    /// queries each distinct registered workspace once, merges and deduplicates
+    /// the results, and keeps successful projects when another project fails —
+    /// so the drawer's badges stay accurate no matter which project is selected.
     public func refresh() async {
         isLoading = true
         defer { isLoading = false }
@@ -141,17 +174,17 @@ public final class SessionListModel {
             let loadedProjects = try await source.listProjects()
             projects = loadedProjects
 
-            if let selectedProject {
-                sessions = try await source.listSessionHistory(project: selectedProject)
-                sessionProjects = sessions.reduce(into: [:]) { routes, session in
-                    routes[session.sessionID] = selectedProject
-                }
-                partialWarning = nil
-                errorMessage = nil
+            guard !loadedProjects.isEmpty else {
+                // A daemon that reports no registered project can still own a
+                // session log for its startup workspace; query it by the selected
+                // name (an empty name resolves server-side).
+                let name = selectedProject ?? ""
+                let loaded = try await source.listSessionHistory(project: name)
+                apply(loads: [HistoryLoad(project: name, sessions: loaded)])
                 return
             }
 
-            await refreshRecentAcrossProjects(loadedProjects)
+            await refreshAcrossProjects(loadedProjects)
         } catch YccError.unauthorized {
             unauthorized = true
         } catch let YccError.rpc(message) {
@@ -166,7 +199,7 @@ public final class SessionListModel {
         sessionProjects[session.sessionID] ?? selectedProject ?? ""
     }
 
-    private func refreshRecentAcrossProjects(_ loadedProjects: [Ycc_V1_ProjectInfo]) async {
+    private func refreshAcrossProjects(_ loadedProjects: [Ycc_V1_ProjectInfo]) async {
         // Project aliases that point at the same workspace would return the same
         // event logs. Keep the first registration for a stable display/routing name.
         var seenPaths = Set<String>()
@@ -175,9 +208,7 @@ public final class SessionListModel {
             let identity = path.isEmpty ? "name:\(project.name)" : "path:\(path)"
             return seenPaths.insert(identity).inserted ? project.name : nil
         }
-        // A one-shot daemon has no registry; its implicit workspace is addressed
-        // with an empty project argument.
-        let queryTargets = targets.isEmpty ? [""] : targets
+        let queryTargets = targets
 
         let loads = await withTaskGroup(of: HistoryLoad.self, returning: [HistoryLoad].self) { group in
             for project in queryTargets {
@@ -206,30 +237,51 @@ public final class SessionListModel {
             unauthorized = true
             return
         }
+        apply(loads: loads)
+    }
 
+    /// Merge per-project history loads into the aggregate feed, its routing
+    /// table, the drawer's activity counts, and the error/partial-warning state.
+    private func apply(loads: [HistoryLoad]) {
         var merged: [Ycc_V1_SessionSummary] = []
         var routes: [String: String] = [:]
+        var activity: [String: ProjectActivity] = [:]
         var seenSessionIDs = Set<String>()
         for load in loads where load.error == nil {
+            var counts = ProjectActivity()
             for session in load.sessions where seenSessionIDs.insert(session.sessionID).inserted {
                 merged.append(session)
                 routes[session.sessionID] = load.project
+                Self.accumulate(session, into: &counts)
             }
+            activity[load.project] = counts
         }
-        sessions = Self.sortedByRecency(merged)
+        allSessions = Self.sortedByRecency(merged)
         sessionProjects = routes
+        activityByProject = activity
 
         let failed = loads.filter { $0.error != nil }
         if failed.isEmpty {
             partialWarning = nil
             errorMessage = nil
         } else if failed.count < loads.count {
-            let names = failed.map { $0.project.isEmpty ? "Default" : $0.project }
+            let names = failed.map(\.project)
             partialWarning = "Some projects couldn’t be loaded: \(names.joined(separator: ", "))."
             errorMessage = nil
         } else {
             partialWarning = nil
             errorMessage = failed.first?.error ?? "Couldn’t load sessions."
+        }
+    }
+
+    /// Count one session into a project's live-activity tally. Only live rows
+    /// count: a persisted log's last-known status is history, not activity.
+    static func accumulate(_ session: Ycc_V1_SessionSummary, into counts: inout ProjectActivity) {
+        guard session.live else { return }
+        if session.waitingInput { counts.needsAnswer += 1 }
+        switch SessionStatusKind(status: session.status) {
+        case .running, .paused: counts.active += 1
+        default: break
         }
     }
 

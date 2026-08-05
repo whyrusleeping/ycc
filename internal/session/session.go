@@ -41,6 +41,10 @@ type Config struct {
 	// Project, when set, names a registered project whose workspace is used,
 	// overriding Workspace (spec §3.1).
 	Project string
+	// CoordinatorModel, when set, overrides the coordinator's logical model FOR
+	// THIS SESSION ONLY (spec §13, §18.2): the persisted per-role defaults are
+	// untouched and implementer/reviewers keep them. An unknown name is an error.
+	CoordinatorModel string
 }
 
 // Session is one running agent conversation backed by a persistent event log.
@@ -101,6 +105,15 @@ type Session struct {
 	// already crossed the line does not re-fire or re-ask.
 	budgetWarned   bool
 	budgetBreached bool
+	// refused marks a session parked after a provider-side safety refusal
+	// (engine Result.Refused, task 0238): the coordinator's last turn came back
+	// with stop_reason "refusal" and was kept out of history. Refusals are
+	// sticky (per provider docs, continuing the conversation keeps being
+	// refused), so while set, SendInput is rejected with guidance; recovery is
+	// Resume() (explicit retry of the pending turn as-is) or a coordinator model
+	// change via SetRoleConfig (which clears the gate and retries
+	// automatically). Cleared at the start of every run-loop iteration.
+	refused bool
 
 	// Interrupt & steer state (spec §18.7), guarded by a dedicated mutex so it
 	// never contends with the s.mu hot paths. pauseReq is set by Interrupt and
@@ -160,8 +173,21 @@ func (s *Session) BudgetBreached() bool {
 	return s.budgetBreached
 }
 
-func (s *Session) currentLoop() *engine.Loop {
+// Refused reports whether the session is parked after a provider safety
+// refusal (see the refused field): user input is gated until a retry.
+func (s *Session) Refused() bool {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.refused
+}
+
+func (s *Session) setRefused(v bool) {
+	s.mu.Lock()
+	s.refused = v
+	s.mu.Unlock()
+}
+
+func (s *Session) currentLoop() *engine.Loop {	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.loop
 }
@@ -189,6 +215,13 @@ func (s *Session) SendInput(text string) error {
 // Image bytes remain in live model history only; user_input events contain safe
 // metadata so events.jsonl never becomes a binary payload store.
 func (s *Session) SendInputMessage(input engine.UserMessage) error {
+	// A refused session (provider safety refusal, task 0238) rejects new input:
+	// per documented provider semantics the conversation would just keep being
+	// refused, silently eating every message. Recovery is a model switch (which
+	// retries automatically) or an explicit retry — not another message.
+	if s.Refused() {
+		return fmt.Errorf("the model's provider refused the last turn (safety classifier); sending another message would be refused too — switch the coordinator to a different model (retries automatically) or retry the turn")
+	}
 	if len(input.Images) > 0 && s.inter.pending() {
 		return fmt.Errorf("answer the pending question before sending pictures")
 	}
@@ -601,7 +634,23 @@ func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []str
 
 	s.mu.Lock()
 	s.coordinator, s.implementer, s.reviewers = newCoord, newImpl, newRevs
+	// A coordinator model change is the documented way out of a provider safety
+	// refusal (task 0238): retrying the refused turn on a DIFFERENT model is
+	// the provider-recommended recovery, so clear the input gate and nudge the
+	// parked run loop to re-run the pending turn on the new backend.
+	wasRefused := s.refused && coordinator != ""
+	if wasRefused {
+		s.refused = false
+	}
 	s.mu.Unlock()
+	if wasRefused {
+		// Non-blocking, like Resume: if the loop is mid-run (not parked on the
+		// retry-aware wait) the nudge falls through as a harmless no-op.
+		select {
+		case s.retryCh <- struct{}{}:
+		default:
+		}
+	}
 
 	s.emitter.Emit(event.RoleConfigChanged, map[string]any{
 		"coordinator": newCoord,
@@ -837,15 +886,26 @@ func (s *Session) run() {
 			}
 		}
 	} else {
+		s.mu.Lock()
+		coord := s.coordinator
+		s.mu.Unlock()
 		s.emitter.Emit(event.SessionStarted, map[string]any{
 			"workspace": s.Workspace,
 			"mode":      s.Mode,
+			// The coordinator model is recorded so a resume replays the session on
+			// the model it was started with, including a per-session override
+			// picked at StartSession (spec §13, §18.2).
+			"coordinator": coord,
 		})
 		s.emitter.EmitAs("user", event.UserInput, map[string]any{"text": s.prompt})
 	}
 
 	for {
 		s.setStatus(event.StatusRunning)
+		// A starting run clears the refusal gate: this iteration IS the retry
+		// (via Resume, a model switch, or reopen re-running the pending turn).
+		// If the provider refuses again the gate is simply re-established below.
+		s.setRefused(false)
 		s.steerMu.Lock()
 		s.running = true
 		s.steerMu.Unlock()
@@ -869,6 +929,21 @@ func (s *Session) run() {
 			if !errors.As(err, &te) {
 				s.emitter.Emit(event.SessionError, map[string]any{"msg": err.Error()})
 			}
+		} else if res.Refused {
+			// Provider-side safety refusal (engine Result.Refused, task 0238):
+			// the refused turn was kept out of history, so the conversation
+			// still owes a response and the next Run re-runs the pending turn.
+			// Park in StatusError with an explanatory session_error (kind
+			// "refusal") and gate SendInput until a retry: Resume() re-runs
+			// as-is; a coordinator model change via SetRoleConfig retries
+			// automatically (the provider-documented recovery — same-model
+			// retries usually refuse again).
+			s.setRefused(true)
+			s.setStatus(event.StatusError)
+			s.emitter.Emit(event.SessionError, map[string]any{
+				"msg":  "the model's provider refused to respond (safety classifier, stop_reason \"refusal\"). Continuing this conversation as-is will keep being refused — switch the coordinator to a different model (retries the turn automatically) or retry.",
+				"kind": "refusal",
+			})
 		} else if res.NextMode != "" && res.NextMode != s.Mode {
 			// A control tool requested a mode transition within this session. A
 			// carried prompt (e.g. the pm → work hand-off) seeds the new loop
@@ -1011,13 +1086,12 @@ func (s *Session) summarizeUsage() {
 // Manager owns the set of live sessions and the backend registry used to build
 // their agent loops.
 type Manager struct {
-	mu               sync.Mutex
-	sessions         map[string]*Session
-	reg              *config.Registry
-	defaultWorkspace string
-	projects         *project.Registry
-	workstreams      *workstream.Registry
-	worktreesRoot    string
+	mu            sync.Mutex
+	sessions      map[string]*Session
+	reg           *config.Registry
+	projects      *project.Registry
+	workstreams   *workstream.Registry
+	worktreesRoot string
 	// notifier pushes best-effort daemon-side notifications when an agent needs
 	// the user (task 0142). Nil when unconfigured; all uses are nil-safe.
 	notifier *notify.Notifier
@@ -1040,19 +1114,25 @@ type Manager struct {
 // starts with an in-memory project registry; call SetProjects to back it with a
 // persistent one (spec §3.1). The workstream registry likewise defaults to an
 // in-memory one; SetWorkstreams backs it with durable state.
-func NewManager(reg *config.Registry, defaultWorkspace string) *Manager {
+func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
+	projects := project.NewMemory()
+	if initialWorkspace != "" {
+		// Every workspace is a normal named project. This also gives a one-shot
+		// daemon exactly one listable project instead of a synthetic "Default".
+		_, _ = projects.EnsureWorkspace(initialWorkspace)
+	}
 	return &Manager{
-		sessions:         map[string]*Session{},
-		reg:              reg,
-		defaultWorkspace: defaultWorkspace,
-		projects:         project.NewMemory(),
-		workstreams:      workstream.NewMemory(),
-		worktreesRoot:    workstream.DefaultWorktreesRoot(),
-		workLoops:        map[string]*workLoop{},
+		sessions:      map[string]*Session{},
+		reg:           reg,
+		projects:      projects,
+		workstreams:   workstream.NewMemory(),
+		worktreesRoot: workstream.DefaultWorktreesRoot(),
+		workLoops:     map[string]*workLoop{},
 	}
 }
 
-// SetProjects backs the manager with a (persistent) project registry.
+// SetProjects replaces the manager's project registry. Daemon construction is
+// responsible for registering its startup workspace in the replacement registry.
 func (m *Manager) SetProjects(p *project.Registry) { m.projects = p }
 
 // SetNotifier installs the daemon-side push notifier (task 0142). A nil notifier
@@ -1097,6 +1177,27 @@ func (m *Manager) SetWorkstreams(w *workstream.Registry, root string) {
 // Projects returns the registered projects (name + path) for ListProjects.
 func (m *Manager) Projects() []project.Project { return m.projects.List() }
 
+// resolveProjectWorkspace resolves a named project. An omitted name is accepted
+// only when the daemon has exactly one project, as an unambiguous convenience;
+// there is no hidden/default workspace alongside the registry.
+func (m *Manager) resolveProjectWorkspace(name string) (string, error) {
+	if name != "" {
+		ws, ok := m.projects.Resolve(name)
+		if !ok {
+			return "", fmt.Errorf("%w %q", ErrUnknownProject, name)
+		}
+		return ws, nil
+	}
+	projects := m.projects.List()
+	if len(projects) == 1 {
+		return projects[0].Path, nil
+	}
+	if len(projects) == 0 {
+		return "", fmt.Errorf("%w: no projects are registered", ErrUnknownProject)
+	}
+	return "", fmt.Errorf("%w: project is required when %d projects are registered", ErrUnknownProject, len(projects))
+}
+
 // AddProject registers a workspace under an optional name (spec §3.1).
 func (m *Manager) AddProject(path, name string) (project.Project, error) {
 	return m.projects.Add(path, name)
@@ -1116,16 +1217,15 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 // pollutes the user-facing project picker (design §7).
 func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) {
 	ws := cfg.Workspace
-	// A named project resolves to its registered workspace, overriding ws.
-	if cfg.Project != "" {
-		p, ok := m.projects.Resolve(cfg.Project)
-		if !ok {
-			return nil, fmt.Errorf("unknown project %q", cfg.Project)
+	// A named project resolves to its registered workspace, overriding ws. With
+	// neither field, permit the sole registered project but never guess among
+	// multiple projects.
+	if cfg.Project != "" || ws == "" {
+		var err error
+		ws, err = m.resolveProjectWorkspace(cfg.Project)
+		if err != nil {
+			return nil, err
 		}
-		ws = p
-	}
-	if ws == "" {
-		ws = m.defaultWorkspace
 	}
 	absWS, err := filepath.Abs(ws)
 	if err != nil {
@@ -1149,6 +1249,12 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 		prompt = defaultPrompt(mode)
 	}
 
+	// A per-session coordinator override is validated before anything is created,
+	// so a bad model name never leaves a stray session log behind.
+	if cfg.CoordinatorModel != "" && !m.reg.Has(cfg.CoordinatorModel) {
+		return nil, fmt.Errorf("%w %q", ErrUnknownModel, cfg.CoordinatorModel)
+	}
+
 	id, err := newID()
 	if err != nil {
 		return nil, err
@@ -1159,8 +1265,9 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 		return nil, fmt.Errorf("open event log: %w", err)
 	}
 
-	s, err := m.newSession(absWS, id, mode, cfg.Unattended, prompt, log, false)
+	s, err := m.newSession(absWS, id, mode, cfg.Unattended, prompt, log, false, cfg.CoordinatorModel)
 	if err != nil {
+		log.Close()
 		return nil, err
 	}
 	loop, err := s.buildLoop(mode, prompt)
@@ -1365,7 +1472,11 @@ func (m *Manager) ReconcileWorkstreams() error {
 // creating/seeding its loop or registering it — callers do that, since Start
 // seeds the loop while Reopen installs a reconstructed history. resumed marks a
 // session re-instantiated on an existing log (spec §4.5).
-func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt string, log *event.Log, resumed bool) (*Session, error) {
+// newSession builds a Session on an open log. coordOverride, when non-empty,
+// names the logical model this session's coordinator uses INSTEAD of the
+// configured default (spec §13, §18.2) — a per-session choice that never touches
+// the persisted role defaults; implementer/reviewers always follow the config.
+func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt string, log *event.Log, resumed bool, coordOverride string) (*Session, error) {
 	emitter := event.NewEmitter(log, "coordinator")
 	inter := newInteraction(unattended, emitter)
 	repo, err := git.Open(absWS)
@@ -1373,6 +1484,12 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 		return nil, fmt.Errorf("prepare git workspace: %w", err)
 	}
 	coordName := m.reg.CoordinatorName()
+	if coordOverride != "" {
+		if !m.reg.Has(coordOverride) {
+			return nil, fmt.Errorf("%w %q", ErrUnknownModel, coordOverride)
+		}
+		coordName = coordOverride
+	}
 	implName := m.reg.ImplementerName()
 	reviewerNames := append([]string(nil), m.reg.ReviewerNames()...)
 	implSpec, err := m.agentSpec(roleImplementer, implName)
@@ -1568,20 +1685,16 @@ func firstLine(s string) string {
 // appends to the same continuous events.jsonl. It is idempotent: reopening an
 // already-live session returns the live one. A previously Stop-terminated
 // session is reopenable too — resume is pure log replay, so session_stopped is
-// informational and does not block it. An empty project uses the default
-// workspace; an unknown project is ErrUnknownProject; a session with no persisted
-// log is ErrUnknownSession.
+// informational and does not block it. The project must be named unless it is
+// the daemon's sole project; an unknown/ambiguous project is ErrUnknownProject;
+// a session with no persisted log is ErrUnknownSession.
 func (m *Manager) Reopen(project, id string) (*Session, error) {
 	if s, ok := m.Get(id); ok {
 		return s, nil // already live — no-op
 	}
-	ws := m.defaultWorkspace
-	if project != "" {
-		p, ok := m.projects.Resolve(project)
-		if !ok {
-			return nil, fmt.Errorf("%w %q", ErrUnknownProject, project)
-		}
-		ws = p
+	ws, err := m.resolveProjectWorkspace(project)
+	if err != nil {
+		return nil, err
 	}
 	absWS, err := filepath.Abs(ws)
 	if err != nil {
@@ -1608,7 +1721,14 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 	if mode == "" {
 		mode = "work"
 	}
-	s, err := m.newSession(absWS, id, mode, false, "", log, true)
+	// Replay on the model the session last ran on (which may be a per-session
+	// override picked at StartSession). A model that has since been removed from
+	// the config falls back to the current default rather than failing the resume.
+	coord := proj.Coordinator
+	if coord != "" && !m.reg.Has(coord) {
+		coord = ""
+	}
+	s, err := m.newSession(absWS, id, mode, false, "", log, true, coord)
 	if err != nil {
 		log.Close()
 		return nil, err
@@ -1645,20 +1765,17 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 // SessionTranscript returns the full event log for a session — live or persisted
 // on disk — for the read-only transcript view (spec §18.6). A live session
 // returns its in-memory snapshot; otherwise the persisted
-// <workspace>/.ycc/sessions/<id>/events.jsonl is read. An empty project uses the
-// default workspace; an unknown project is ErrUnknownProject; a session with no
-// live state and no persisted log is ErrUnknownSession.
+// <workspace>/.ycc/sessions/<id>/events.jsonl is read. The project must be
+// named unless it is the daemon's sole project; an unknown/ambiguous project is
+// ErrUnknownProject; a session with no live state and no persisted log is
+// ErrUnknownSession.
 func (m *Manager) SessionTranscript(project, id string) ([]event.Event, error) {
 	if s, ok := m.Get(id); ok {
 		return s.Log().Snapshot(), nil
 	}
-	ws := m.defaultWorkspace
-	if project != "" {
-		p, ok := m.projects.Resolve(project)
-		if !ok {
-			return nil, fmt.Errorf("%w %q", ErrUnknownProject, project)
-		}
-		ws = p
+	ws, err := m.resolveProjectWorkspace(project)
+	if err != nil {
+		return nil, err
 	}
 	absWS, err := filepath.Abs(ws)
 	if err != nil {
@@ -1676,19 +1793,14 @@ func (m *Manager) SessionTranscript(project, id string) ([]event.Event, error) {
 }
 
 // CommitDiff returns the `git show` output (stat + patch) for a commit in a
-// project's workspace, for the transcript commit-diff drill-in (task 0140). An
-// empty project uses the default workspace; an unknown project is
-// ErrUnknownProject. Linked-worktree (workstream) commits are visible from the
-// primary repo since they share the object database, so no special-casing is
-// needed. A bad/unknown sha surfaces as the underlying git error.
+// project's workspace, for the transcript commit-diff drill-in (task 0140).
+// The project must be named unless it is the daemon's sole project. Linked-
+// worktree commits are visible from the primary repo since they share the object
+// database. A bad/unknown sha surfaces as the underlying git error.
 func (m *Manager) CommitDiff(project, sha string) (string, error) {
-	ws := m.defaultWorkspace
-	if project != "" {
-		p, ok := m.projects.Resolve(project)
-		if !ok {
-			return "", fmt.Errorf("%w %q", ErrUnknownProject, project)
-		}
-		ws = p
+	ws, err := m.resolveProjectWorkspace(project)
+	if err != nil {
+		return "", err
 	}
 	absWS, err := filepath.Abs(ws)
 	if err != nil {
@@ -1899,16 +2011,12 @@ func (m *Manager) RemoveModel(name string, persist bool) error {
 	return m.reg.RemoveModel(name, persist)
 }
 
-// Backlog returns a docs.Store for the given project's workspace (empty => the
-// daemon default workspace). Used by the read-only backlog RPCs (spec §18.5).
+// Backlog returns a docs.Store for the named project (or the sole project when
+// omitted). Used by the read-only backlog RPCs (spec §18.5).
 func (m *Manager) Backlog(project string) (*docs.Store, error) {
-	ws := m.defaultWorkspace
-	if project != "" {
-		p, ok := m.projects.Resolve(project)
-		if !ok {
-			return nil, fmt.Errorf("unknown project %q", project)
-		}
-		ws = p
+	ws, err := m.resolveProjectWorkspace(project)
+	if err != nil {
+		return nil, err
 	}
 	absWS, err := filepath.Abs(ws)
 	if err != nil {
@@ -1922,21 +2030,16 @@ func (m *Manager) Backlog(project string) (*docs.Store, error) {
 // description into a structured backlog task without disturbing any running
 // session. The agent may ask ONE clarifying question (returned via Question);
 // the client re-invokes with priorQuestion/priorAnswer so it creates the task.
-// project empty => the daemon default workspace; backlog writes are serialized
-// in docs.Store so a concurrent work session can't corrupt the index. emit, when
-// non-nil, receives the capture agent's action-log events live so the caller can
-// stream progress; the passed ctx bounds the run.
+// The project may be omitted only when the daemon has one project; backlog writes
+// are serialized in docs.Store so a concurrent work session can't corrupt the
+// index. emit, when non-nil, receives the capture agent's action-log events live.
 func (m *Manager) CaptureBacklogItem(ctx context.Context, project, description, priorQuestion, priorAnswer string, emit func(event.Event)) (orchestrator.CaptureResult, error) {
 	if strings.TrimSpace(description) == "" {
 		return orchestrator.CaptureResult{}, fmt.Errorf("description is required")
 	}
-	ws := m.defaultWorkspace
-	if project != "" {
-		p, ok := m.projects.Resolve(project)
-		if !ok {
-			return orchestrator.CaptureResult{}, fmt.Errorf("%w %q", ErrUnknownProject, project)
-		}
-		ws = p
+	ws, err := m.resolveProjectWorkspace(project)
+	if err != nil {
+		return orchestrator.CaptureResult{}, err
 	}
 	absWS, err := filepath.Abs(ws)
 	if err != nil {
@@ -1981,21 +2084,22 @@ var ErrUnknownProject = errors.New("unknown project")
 // manager, so RPC handlers can map it to a not-found code.
 var ErrUnknownSession = errors.New("unknown session")
 
+// ErrUnknownModel indicates a requested logical model name is not configured
+// (e.g. a per-session coordinator override at StartSession), so RPC handlers can
+// map it to an invalid-argument code.
+var ErrUnknownModel = errors.New("unknown model")
+
 // ErrLoopRunning indicates a work loop is already running/stopping for a
 // workspace, so StartWorkLoop handlers can map it to a failed-precondition code.
 var ErrLoopRunning = errors.New("work loop already running")
 
-// UsageReport scans the given project's workspace (empty => the daemon default
-// workspace) for session event logs and returns the aggregated, priced usage
-// breakdown (spec §20.3, §20.5). Pricing comes from the daemon's model registry.
+// UsageReport scans the named project's workspace (or the sole project when
+// omitted) and returns the aggregated, priced usage breakdown (spec §20.3,
+// §20.5). Pricing comes from the daemon's model registry.
 func (m *Manager) UsageReport(project string, opts usage.Options) (*usage.Result, error) {
-	ws := m.defaultWorkspace
-	if project != "" {
-		p, ok := m.projects.Resolve(project)
-		if !ok {
-			return nil, fmt.Errorf("%w %q", ErrUnknownProject, project)
-		}
-		ws = p
+	ws, err := m.resolveProjectWorkspace(project)
+	if err != nil {
+		return nil, err
 	}
 	absWS, err := filepath.Abs(ws)
 	if err != nil {

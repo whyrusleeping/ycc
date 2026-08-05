@@ -59,7 +59,9 @@ struct SessionView: View {
     private let client: YccClient
     private let project: String
     private let sessionID: String
-    private let navigationTitle: String
+    /// The display name carried in from the list, so the pushed screen is
+    /// identifiable before (or without) any event arriving.
+    private let title: String
     private static let bottomAnchor = "transcript-bottom"
     private static let transcriptCoordinateSpace = "transcript-scroll"
     private static let maxPictures = 4
@@ -71,14 +73,17 @@ struct SessionView: View {
         let preview: UIImage
     }
 
-    init(client: YccClient, project: String = "", sessionID: String, live: Bool) {
+    init(client: YccClient, project: String = "", sessionID: String, live: Bool, title: String = "") {
         self.client = client
         self.project = project
         self.sessionID = sessionID
         _model = State(initialValue: SessionViewModel(
             source: client, project: project, sessionID: sessionID,
             mode: live ? .live : .persisted))
-        self.navigationTitle = live ? "Live session" : "Session"
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.title = trimmed.isEmpty
+            ? (live ? "Live session" : "Session")
+            : trimmed
     }
 
     var body: some View {
@@ -104,8 +109,9 @@ struct SessionView: View {
                 requestScrollToLatest(proxy: proxy)
             }
         }
-        .navigationTitle(navigationTitle)
+        .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { titleToolbar }
         .toolbar { statusToolbar }
         .toolbar { if model.mode == .live { actionMenu } }
         .navigationDestination(item: $commitTarget) { target in
@@ -395,6 +401,9 @@ struct SessionView: View {
                     // must receive each snapshot so TextKit can append its suffix.
                     TranscriptRowView(row: liveTail)
                         .id(liveTail.id)
+                } else if model.isAwaitingAgentActivity {
+                    workingRow
+                        .id("agent-working")
                 }
                 // A small marker row tells us geometrically when the latest
                 // content is visible. With this eager VStack the marker remains
@@ -458,6 +467,24 @@ struct SessionView: View {
         // `requestScrollToLatest` while follow mode is enabled.
     }
 
+    /// Immediate acknowledgement after StartSession/SendInput, shown until the
+    /// event stream produces the first meaningful piece of agent activity.
+    private var workingRow: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.small)
+            Text("Agent is working…")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Agent is working")
+    }
+
     private func stopFollowingLatest() {
         guard isFollowingLatest else { return }
         isFollowingLatest = false
@@ -501,6 +528,29 @@ struct SessionView: View {
         .buttonStyle(.plain)
     }
 
+    /// A two-line inline title: the session's name over its project. An inline
+    /// `navigationTitle` alone can only show one line, and "which project is
+    /// this?" is the question a cross-project feed makes constant.
+    @ToolbarContentBuilder
+    private var titleToolbar: some ToolbarContent {
+        ToolbarItem(placement: .principal) {
+            VStack(spacing: 0) {
+                Text(title)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if !project.isEmpty {
+                    Text(project)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: 220)
+            .accessibilityElement(children: .combine)
+        }
+    }
+
     @ToolbarContentBuilder
     private var statusToolbar: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
@@ -520,17 +570,18 @@ struct SessionView: View {
         }
     }
 
+    /// One overflow menu rather than a row of glyphs: settings plus the
+    /// interrupt / resume / stop controls.
     @ToolbarContentBuilder
     private var actionMenu: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
-            Button {
-                showSettings = true
-            } label: {
-                Image(systemName: "gearshape")
-            }
-        }
-        ToolbarItem(placement: .topBarTrailing) {
             Menu {
+                Button {
+                    showSettings = true
+                } label: {
+                    Label("Session settings", systemImage: "gearshape")
+                }
+                Divider()
                 Button {
                     Task { await model.interrupt() }
                 } label: {
@@ -548,7 +599,7 @@ struct SessionView: View {
                     Label("Stop…", systemImage: "stop.circle")
                 }
             } label: {
-                Image(systemName: "ellipsis.circle")
+                Label("Session actions", systemImage: "ellipsis.circle")
             }
         }
     }
@@ -979,10 +1030,27 @@ private struct QuestionSheet: View {
             Form {
                 ForEach(Array(pending.questions.enumerated()), id: \.offset) { index, question in
                     Section {
+                        // The question is the point of this sheet: render it as
+                        // full-size prose, not a small-caps section header that
+                        // truncates a multi-sentence, self-contained ask.
+                        VStack(alignment: .leading, spacing: 4) {
+                            if pending.isBatch {
+                                Text("Question \(index + 1) of \(pending.questions.count)")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                            }
+                            MarkdownText(text: question.prompt)
+                                .font(.callout)
+                        }
+                        .padding(.vertical, 2)
+                        .listRowBackground(Color.clear)
+
                         ForEach(Array(question.options.enumerated()), id: \.offset) { optIdx, option in
                             optionRow(index: index, optIdx: optIdx, option: option)
                         }
-                        TextField("Type an answer…", text: binding(index), axis: .vertical)
+                        TextField(
+                            question.options.isEmpty ? "Type an answer…" : "Or type your own…",
+                            text: binding(index), axis: .vertical)
                             .lineLimit(1...4)
                             .onChange(of: text(at: index)) { _, newValue in
                                 // Typing overrides a picked option.
@@ -991,12 +1059,10 @@ private struct QuestionSheet: View {
                         if !pending.isBatch {
                             singleSendSection
                         }
-                    } header: {
-                        Text(question.prompt)
                     }
                 }
             }
-            .navigationTitle(pending.isBatch ? "Answer questions" : "Answer")
+            .navigationTitle(pending.isBatch ? "Answer questions" : "The agent is asking")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -1025,12 +1091,14 @@ private struct QuestionSheet: View {
                 }
             }
         } label: {
-            HStack {
+            HStack(spacing: 10) {
+                Image(systemName: selectedValue(at: index) == optIdx
+                    ? "largecircle.fill.circle" : "circle")
+                    .foregroundStyle(selectedValue(at: index) == optIdx ? Color.accentColor : .secondary)
                 Text(option)
-                Spacer()
-                if pending.isBatch, selectedValue(at: index) == optIdx {
-                    Image(systemName: "checkmark").foregroundStyle(.tint)
-                }
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.leading)
+                Spacer(minLength: 0)
             }
         }
     }

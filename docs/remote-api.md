@@ -70,7 +70,7 @@ YCC_TOKEN=$YCC_TOKEN ycc daemon --addr 100.64.0.1:8787
 | `--addr <ip:port>` | listen address (default `127.0.0.1:8787`). A non-loopback bind **requires** a token. |
 | `--token <t>` | bearer token clients must present. Also read from the `YCC_TOKEN` env var. Empty disables auth (loopback only). |
 | `--tls-cert <file>` / `--tls-key <file>` | enable HTTPS. Optional on a private tailnet. |
-| `--workspace <dir>` | default workspace for sessions that don't specify one. |
+| `--workspace <dir>` | startup project directory, registered by basename. |
 
 ### Deployment model (decided)
 
@@ -295,10 +295,11 @@ curl -sS -H "$AUTH" -H "$JSON" -d '{}' \
 ### ListSessionHistory
 
 Both live sessions and persisted on-disk logs, most-recent first — the session
-browser's list. Optional `project`.
+browser's list. Pass a registered `project`; omission is accepted only when the
+daemon has exactly one project.
 
 ```
-curl -sS -H "$AUTH" -H "$JSON" -d '{}' \
+curl -sS -H "$AUTH" -H "$JSON" -d '{"project":"work"}' \
   $B/ycc.v1.SessionService/ListSessionHistory
 ```
 
@@ -319,10 +320,11 @@ Omitted fields (`toolCalls`, `focusTasks`, `waitingInput` here) are zero/empty.
 ### GetSessionTranscript
 
 The full event log for a session — live or persisted — for a read-only replayed
-transcript. Requires `sessionId` (optional `project`).
+transcript. Requires `sessionId` and its registered `project` (the project may be
+omitted only on a single-project daemon).
 
 ```
-curl -sS -H "$AUTH" -H "$JSON" -d '{"sessionId":"s_doc"}' \
+curl -sS -H "$AUTH" -H "$JSON" -d '{"project":"work","sessionId":"s_doc"}' \
   $B/ycc.v1.SessionService/GetSessionTranscript
 ```
 
@@ -339,17 +341,34 @@ See [Event model](#event-model) for the `Event` shape and `dataJson` parsing.
 
 ### StartSession
 
-Start a new session with `workspace` (or a registered `project` name), `mode`, and
-an initial `prompt`.
+Start a new session with a registered `project` name, `mode`, and an initial
+`prompt`. A raw `workspace` is accepted for client-driven auto-registration; an
+omitted project/workspace is accepted only when exactly one project exists.
 
 ```
 curl -sS -H "$AUTH" -H "$JSON" \
-  -d '{"mode":"work","prompt":"summarize the README"}' \
+  -d '{"project":"work","mode":"work","prompt":"summarize the README"}' \
   $B/ycc.v1.SessionService/StartSession
 ```
 
 ```json
 {"sessionId":"s_65d79bf4919dd36c"}
+```
+
+`coordinatorModel` optionally names a logical model (from
+[`ListModels`](#listmodels)) for the session's **coordinator**, overriding the
+configured default **for this session only** — the persisted role assignments in
+`ycc.toml` and the implementer/reviewer roles are untouched (use
+[`SetRoleConfig`](#setroleconfig) to change the defaults). An unconfigured name is
+`invalid_argument`, and no session is created. The choice is recorded in the
+session's `session_started` event, so a later `ResumeSession` replays the session
+on the same model (falling back to the default if that model has since been
+removed).
+
+```
+curl -sS -H "$AUTH" -H "$JSON" \
+  -d '{"project":"work","mode":"chat","prompt":"explain the retry policy","coordinatorModel":"gpt"}' \
+  $B/ycc.v1.SessionService/StartSession
 ```
 
 Then `Subscribe` to the returned `sessionId` to follow it.
@@ -639,8 +658,9 @@ live backlog before each pick, enforcing the no-progress guard and the per-loop
 budget caps daemon-side, and rolling every session up into an end-of-batch digest.
 Because it lives in the daemon, a loop **survives client disconnects**: any client
 can start it, poll `GetWorkLoop`, `Subscribe` to `currentSessionId`, and later stop
-it gracefully. All three take a single `project` (empty ⇒ the daemon default
-workspace) and return a `WorkLoopInfo` (unset `loop` ⇒ no loop for that workspace).
+it gracefully. All three take a single `project` (empty is accepted only when the
+daemon has exactly one project) and return a `WorkLoopInfo` (unset `loop` ⇒ no loop
+for that workspace).
 
 - **`StartWorkLoop`** starts a loop. `failed_precondition` when one is already
   `running`/`stopping` for that workspace; `invalid_argument` for an unknown

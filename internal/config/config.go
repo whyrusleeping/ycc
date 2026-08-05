@@ -37,8 +37,8 @@ type Model struct {
 	// (the default) resolves key_env as usual. "oauth" — anthropic backend
 	// only — authenticates with a Claude subscription (Pro/Max) via the OAuth
 	// credentials stored by `ycc login anthropic`: requests carry an
-	// Authorization bearer token (auto-refreshed) plus the
-	// anthropic-beta oauth opt-in header, and key_env is ignored.
+	// Authorization bearer token (auto-refreshed) plus the Claude Code/OAuth
+	// beta opt-ins and x-app marker, and key_env is ignored.
 	Auth string `toml:"auth,omitempty"` // "" | "api-key" | "oauth"
 
 	// Thinking / Effort / ThinkingDisplay control Anthropic extended/adaptive
@@ -684,6 +684,9 @@ func (r *Registry) RetryPolicy() engine.RetryPolicy {
 	p := engine.DefaultRetryPolicy()
 	if r.cfg.Retry.MaxAttempts > 0 {
 		p.MaxAttempts = r.cfg.Retry.MaxAttempts
+		// An explicit total-attempt budget is authoritative for every transient
+		// class, including 429s; the smaller 429 cap is a default-policy guardrail.
+		p.RateLimitMaxAttempts = 0
 	}
 	if r.cfg.Retry.BaseDelayMS > 0 {
 		p.BaseDelay = time.Duration(r.cfg.Retry.BaseDelayMS) * time.Millisecond
@@ -1124,7 +1127,7 @@ func (r *Registry) Build(name string) (engine.Turner, string, error) {
 	if !ok {
 		return nil, "", fmt.Errorf("unknown model %q", name)
 	}
-	c := gollama.NewClient(m.BaseURL)
+	c := gollama.NewClient(providerBaseURL(m.Backend, m.BaseURL))
 	// Disable gollama's internal HTTP transport retry ring (429/503/529). That
 	// ring uses uncancellable time.Sleep and is invisible to subscribers, and
 	// stacking it under the loop-level ring double-counts a persistent rate
@@ -1133,6 +1136,7 @@ func (r *Registry) Build(name string) (engine.Turner, string, error) {
 	// transient `retry` events.
 	c.SetMaxRetries(0)
 	key := resolveKey(m)
+	anthropicSubscription := false
 	switch m.Backend {
 	case "anthropic":
 		// Pin the native Anthropic transport explicitly rather than relying on
@@ -1146,7 +1150,8 @@ func (r *Registry) Build(name string) (engine.Turner, string, error) {
 		case m.Auth == "oauth":
 			// Claude subscription (Pro/Max) auth: a live OAuth access token
 			// (auto-refreshed from the secrets store) sent as a bearer token
-			// plus the oauth beta opt-in header — never x-api-key.
+			// plus the Claude Code/OAuth beta opt-ins and x-app marker —
+			// never x-api-key.
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			tok, err := anthropicauth.AccessToken(ctx)
 			cancel()
@@ -1155,11 +1160,15 @@ func (r *Registry) Build(name string) (engine.Turner, string, error) {
 			}
 			c.SetBearerToken(tok)
 			c.SetHeader("anthropic-beta", anthropicauth.BetaHeader)
+			c.SetHeader("x-app", anthropicauth.AppHeader)
+			anthropicSubscription = true
 		case strings.HasPrefix(key, anthropicauth.TokenPrefix):
 			// A long-lived OAuth token (e.g. from `claude setup-token`) stored
 			// under key_env: same bearer + beta-header treatment.
 			c.SetBearerToken(key)
 			c.SetHeader("anthropic-beta", anthropicauth.BetaHeader)
+			c.SetHeader("x-app", anthropicauth.AppHeader)
+			anthropicSubscription = true
 		case key != "":
 			c.SetAPIKey(key)
 		}
@@ -1184,5 +1193,8 @@ func (r *Registry) Build(name string) (engine.Turner, string, error) {
 	// (engine.Loop.runTurn, spec §7.2) — ctx-aware and visible to live
 	// subscribers. gollama's own transport retry ring was disabled above
 	// (SetMaxRetries(0)), so this is the only retry ring.
+	if anthropicSubscription {
+		return anthropicauth.NewTurner(c), m.Model, nil
+	}
 	return c, m.Model, nil
 }

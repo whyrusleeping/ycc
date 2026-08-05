@@ -254,6 +254,7 @@ func (f *HTTPFetcher) getJSON(ctx context.Context, url, token, accountID string,
 	req.Header.Set("User-Agent", "ycc")
 	if anthropic {
 		req.Header.Set("anthropic-beta", anthropicauth.BetaHeader)
+		req.Header.Set("x-app", anthropicauth.AppHeader)
 	} else if accountID != "" {
 		req.Header.Set("ChatGPT-Account-Id", accountID)
 	}

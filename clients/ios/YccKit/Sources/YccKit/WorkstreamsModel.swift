@@ -109,10 +109,8 @@ public final class WorkstreamsModel {
         self.selectedProject = selectedProject
     }
 
-    /// The project filter is meaningful whenever any project is registered:
-    /// the picker always offers the implicit "Default" workspace (`""`) too,
-    /// so even a single registered project gives two choices.
-    public var showsProjectFilter: Bool { !projects.isEmpty }
+    /// The project picker is useful only when there is a real choice.
+    public var showsProjectFilter: Bool { projects.count > 1 }
 
     /// Whether the last successful load produced any workstreams.
     public var hasWorkstreams: Bool { !workstreams.isEmpty }
@@ -128,6 +126,9 @@ public final class WorkstreamsModel {
             let (loaded, loadedProjects) = try await (list, projectList)
             workstreams = loaded
             projects = loadedProjects
+            if selectedProject.isEmpty, loadedProjects.count == 1 {
+                selectedProject = loadedProjects[0].name
+            }
             errorMessage = nil
         } catch YccError.unauthorized {
             unauthorized = true

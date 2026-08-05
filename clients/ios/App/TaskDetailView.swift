@@ -106,7 +106,19 @@ struct TaskDetailView: View {
     @ViewBuilder
     private func metadata(_ task: Ycc_V1_TaskDetail) -> some View {
         HStack(spacing: 8) {
-            TaskStatusPill(status: model.status)
+            // The pill doubles as the status changer (the toolbar menu offers
+            // the same choices); the chevron marks it as tappable.
+            Menu {
+                statusChoices
+            } label: {
+                HStack(spacing: 3) {
+                    TaskStatusPill(status: model.status)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .disabled(model.isUpdating)
             PriorityBadge(priority: task.priority)
             if task.ready, model.status != .done {
                 Label("Ready", systemImage: "checkmark.circle")
@@ -141,19 +153,26 @@ struct TaskDetailView: View {
         }
     }
 
-    private var statusMenu: some View {
-        Menu {
-            ForEach(TaskStatus.selectable) { status in
-                Button {
-                    Task { await model.setStatus(status) }
-                } label: {
-                    if status == model.status {
-                        Label(status.title, systemImage: "checkmark")
-                    } else {
-                        Text(status.title)
-                    }
+    /// The selectable statuses, with a checkmark on the current one (shared by
+    /// the toolbar menu and the tappable status pill).
+    @ViewBuilder
+    private var statusChoices: some View {
+        ForEach(TaskStatus.selectable) { status in
+            Button {
+                Task { await model.setStatus(status) }
+            } label: {
+                if status == model.status {
+                    Label(status.title, systemImage: "checkmark")
+                } else {
+                    Text(status.title)
                 }
             }
+        }
+    }
+
+    private var statusMenu: some View {
+        Menu {
+            statusChoices
         } label: {
             if model.isUpdating {
                 ProgressView()

@@ -7,7 +7,7 @@ import YccProto
 /// headlessly with an in-memory mock — no network, no simulator. ``YccClient``
 /// is the production conformer. (Mirrors the ``SessionListSource`` pattern.)
 public protocol BacklogSource: Sendable {
-    /// List the backlog for a project (empty => daemon default workspace).
+    /// List the backlog for a named project.
     func listBacklog(project: String) async throws -> [Ycc_V1_BacklogTaskSummary]
     /// List the daemon's registered projects (drives the project filter).
     func listProjects() async throws -> [Ycc_V1_ProjectInfo]
@@ -15,6 +15,8 @@ public protocol BacklogSource: Sendable {
     func createTask(
         project: String, title: String, body: String, priority: Int
     ) async throws -> Ycc_V1_TaskDetail
+    /// Change a task's status; returns the refreshed detail.
+    func updateTaskStatus(project: String, id: String, status: String) async throws -> Ycc_V1_TaskDetail
 }
 
 extension YccClient: BacklogSource {}
@@ -94,7 +96,7 @@ public final class BacklogModel {
     public private(set) var tasks: [Ycc_V1_BacklogTaskSummary] = []
     /// Registered projects; drives the project filter menu.
     public private(set) var projects: [Ycc_V1_ProjectInfo] = []
-    /// The selected project filter. `""` selects the daemon default workspace.
+    /// The selected registered project. Empty means no choice has been made yet.
     /// Setting it does not auto-refresh — the view calls ``refresh()``.
     public var selectedProject: String = ""
 
@@ -109,6 +111,12 @@ public final class BacklogModel {
     /// A quick-capture failure message, surfaced inline in the capture sheet.
     public private(set) var createError: String?
 
+    /// The id of the task whose status change is in flight (one at a time); the
+    /// view shows a per-row spinner and disables further changes while set.
+    public private(set) var updatingTaskID: String?
+    /// A status-change failure message, surfaced as an alert over the list.
+    public var updateError: String?
+
     private let source: BacklogSource
 
     public init(source: BacklogSource, selectedProject: String = "") {
@@ -116,10 +124,8 @@ public final class BacklogModel {
         self.selectedProject = selectedProject
     }
 
-    /// The project filter is meaningful whenever any project is registered:
-    /// the picker always offers the implicit "Default" workspace (`""`) too,
-    /// so even a single registered project gives two choices.
-    public var showsProjectFilter: Bool { !projects.isEmpty }
+    /// The project picker is useful only when there is a real choice.
+    public var showsProjectFilter: Bool { projects.count > 1 }
 
     /// Tasks grouped into ordered status sections.
     public var sections: [BacklogSection] { Self.sections(from: tasks) }
@@ -135,6 +141,9 @@ public final class BacklogModel {
             let (loaded, loadedProjects) = try await (backlog, projectList)
             tasks = loaded
             projects = loadedProjects
+            if selectedProject.isEmpty, loadedProjects.count == 1 {
+                selectedProject = loadedProjects[0].name
+            }
             errorMessage = nil
         } catch YccError.unauthorized {
             unauthorized = true
@@ -189,6 +198,52 @@ public final class BacklogModel {
 
     /// Clear any lingering quick-capture error (called when the sheet opens).
     public func clearCreateError() { createError = nil }
+
+    /// Change a task's status straight from the list (`UpdateTask` with only the
+    /// status field set). The changed row is patched in place immediately (so it
+    /// moves to its new section), then the list refreshes — a status change can
+    /// flip other rows' ready/blocked flags when a dependency completes. A no-op
+    /// (returning `true`) when the status is unchanged. On failure sets
+    /// ``updateError`` / ``unauthorized`` and returns `false`.
+    @discardableResult
+    public func setStatus(taskID: String, to newStatus: TaskStatus) async -> Bool {
+        guard newStatus != .unknown, updatingTaskID == nil else { return false }
+        if let current = tasks.first(where: { $0.id == taskID }),
+            TaskStatus(status: current.status) == newStatus {
+            return true
+        }
+        updatingTaskID = taskID
+        defer { updatingTaskID = nil }
+        do {
+            let detail = try await source.updateTaskStatus(
+                project: selectedProject, id: taskID, status: newStatus.rawValue)
+            if let index = tasks.firstIndex(where: { $0.id == taskID }) {
+                tasks[index].status = detail.status
+                tasks[index].title = detail.title
+                tasks[index].priority = detail.priority
+                tasks[index].ready = detail.ready
+                tasks[index].blockedBy = detail.blockedBy
+            }
+            updateError = nil
+            await refresh()
+            return true
+        } catch YccError.unauthorized {
+            unauthorized = true
+            return false
+        } catch let YccError.rpc(message) {
+            updateError = message
+            return false
+        } catch let YccError.notFound(message) {
+            updateError = message
+            return false
+        } catch let YccError.failedPrecondition(message) {
+            updateError = message
+            return false
+        } catch {
+            updateError = error.localizedDescription
+            return false
+        }
+    }
 
     // MARK: - Pure logic (unit-tested)
 

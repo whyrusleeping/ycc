@@ -297,14 +297,27 @@ const (
 // message. The result is used both as the assistant turn's content (recorded on
 // the model_turn event for lossless replay) and as the loop's Result.Report.
 func noContentYieldReport(stopReason string) string {
-	switch strings.ToLower(strings.TrimSpace(stopReason)) {
-	case "refusal":
+	if isRefusalStop(stopReason) {
 		return "(the model declined to respond and produced no content or tool call)"
+	}
+	switch strings.ToLower(strings.TrimSpace(stopReason)) {
 	case "", "end_turn", "stop", "stop_sequence":
 		return "(the model ended its turn without any content or tool call)"
 	default:
 		return fmt.Sprintf("(the model ended its turn without any content or tool call; stop reason: %s)", stopReason)
 	}
+}
+
+// isRefusalStop reports whether a provider stop reason is a server-side safety
+// refusal (Anthropic's streaming classifier returns stop_reason "refusal" on an
+// HTTP 200). Refusals are STICKY by documented provider semantics: continuing
+// the conversation without resetting context results in continued refusals, and
+// retrying the same model usually refuses again — the recommended recovery is to
+// modify the triggering context or retry on a different model. The loop
+// therefore keeps a refused turn OUT of history (see Run) and surfaces
+// Result.Refused so the session layer can gate further input.
+func isRefusalStop(stopReason string) bool {
+	return strings.EqualFold(strings.TrimSpace(stopReason), "refusal")
 }
 
 // Result is the outcome of a completed loop.
@@ -327,6 +340,15 @@ type Result struct {
 	// the reason. Callers treat this distinctly from a normal finish: resolve the
 	// decision, escalate to the user, or mark the work blocked — not as done.
 	Blocked bool
+	// Refused is set when the run ended on a provider-side safety refusal
+	// (stop_reason "refusal") with no tool call. The refused turn was kept OUT
+	// of the loop's history (it is still recorded as a model_turn event for the
+	// transcript), so the conversation still owes a response to its last
+	// user/tool message and a later Run cleanly re-runs the same pending turn —
+	// typically after the caller switches the backend to a different model,
+	// since refusals are sticky (continuing or retrying the same model usually
+	// refuses again). Callers should gate new user input until that retry.
+	Refused bool
 }
 
 // Seed appends an initial user message (the task prompt) before Run.
@@ -566,19 +588,23 @@ func (l *Loop) runTurn(ctx context.Context, client Turner, opts gollama.RequestO
 		}
 		lastErr = err
 		info := ClassifyAPIError(err)
-		if !info.Retryable || attempt == policy.MaxAttempts || ctx.Err() != nil {
+		maxAttempts := policy.MaxAttempts
+		if info.Kind == KindRateLimit && policy.RateLimitMaxAttempts > 0 && maxAttempts > policy.RateLimitMaxAttempts {
+			maxAttempts = policy.RateLimitMaxAttempts
+		}
+		if !info.Retryable || attempt >= maxAttempts || ctx.Err() != nil {
 			return nil, attempt, err
 		}
 		delay := policy.backoff(attempt, l.retryRand)
 		logf("ycc: LLM API call failed (attempt %d/%d), retrying in %v: %v",
-			attempt, policy.MaxAttempts, delay, err)
+			attempt, maxAttempts, delay, err)
 		if l.Emitter != nil {
 			// Transient, non-persisted (like turn_delta): live subscribers show
 			// the retry wait; the durable log records nothing unless the turn
 			// ultimately fails (which emits a session_error).
 			l.Emitter.Broadcast(event.Retry, map[string]any{
 				"attempt":      attempt,
-				"max_attempts": policy.MaxAttempts,
+				"max_attempts": maxAttempts,
 				"delay_ms":     delay.Milliseconds(),
 				"kind":         string(info.Kind),
 				"status":       info.Status,
@@ -843,6 +869,18 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			// is guaranteed non-empty here — the pre-emit guard above synthesized a
 			// concise stop-reason description for the empty-content case — so the
 			// report is never blank and history never holds an empty assistant turn.
+			if isRefusalStop(resp.StopReason) {
+				// Provider-side safety refusal: keep the refused turn OUT of
+				// history (the model_turn event above still records it — with its
+				// stop_reason — for the transcript; ReplayHistory skips it the
+				// same way on reopen). The history then still owes a response to
+				// its last user/tool message, so a later Run — after the caller
+				// switches models, or an explicit retry — re-runs the pending
+				// turn cleanly instead of continuing a conversation the provider
+				// has marked as refused (which, per documented semantics, would
+				// keep being refused).
+				return &Result{Report: msg.Content, Turns: turn, NoContent: noContentYield, Refused: true}, nil
+			}
 			l.history = append(l.history, msg)
 			return &Result{Report: msg.Content, Turns: turn, NoContent: noContentYield}, nil
 		}

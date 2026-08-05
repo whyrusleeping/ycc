@@ -208,6 +208,16 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			if ev.Actor != "coordinator" {
 				continue // subagent turn — not part of the coordinator history
 			}
+			// A provider-side safety refusal (stop_reason "refusal") with no tool
+			// calls was kept OUT of the live history (see Loop.Run): the loop
+			// returned Result.Refused without appending the turn, so the pending
+			// user/tool turn still owes a response and reopen re-runs it. Skip it
+			// here so the reconstructed history matches — replaying the refusal
+			// placeholder would poison the reopened conversation the same way the
+			// live one was.
+			if isRefusalStop(str(ev.Data, "stop_reason")) && intv(ev.Data, "tool_calls") == 0 {
+				continue
+			}
 			// Repair any dangling tool calls on the previous assistant turn before
 			// starting a new one (e.g. an ask_user that was never answered because
 			// the session closed, followed on reopen by the model re-asking), then

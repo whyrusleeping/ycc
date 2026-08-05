@@ -342,7 +342,55 @@ final class SessionViewModelTests: XCTestCase {
         let vm = actionVM(actions)
         await vm.send(text: "  hello  ")
         XCTAssertEqual(actions.calls, [.init(kind: "send", text: "hello")])
+        XCTAssertTrue(vm.isAwaitingAgentActivity)
         XCTAssertNil(vm.actionError)
+    }
+
+    func testNewLiveSessionShowsWorkingBeforeFirstEvent() {
+        let actions = MockActionSource()
+        let vm = actionVM(actions)
+
+        XCTAssertFalse(vm.isAwaitingAgentActivity)
+        vm.start()
+        XCTAssertTrue(vm.isAwaitingAgentActivity)
+        vm.stop()
+    }
+
+    func testUserEchoKeepsWorkingUntilAgentActivityArrives() async {
+        // Feed events one at a time so the receipt echo can be observed before
+        // the first meaningful agent event.
+        let source = MockSource()
+        var continuation: AsyncThrowingStream<Ycc_V1_Event, Error>.Continuation!
+        let eventStream = AsyncThrowingStream<Ycc_V1_Event, Error> {
+            continuation = $0
+        }
+        source.streams = [eventStream]
+        let vm = SessionViewModel(source: source, sessionID: "s2", mode: .live)
+        vm.start()
+        await waitUntil { source.recordedFromSeqs.count == 1 }
+
+        continuation.yield(
+            event(1, "user_input", #"{"text":"hello"}"#, actor: "user"))
+        await waitUntil { vm.projection.lastPersistedSeq == 1 }
+        XCTAssertTrue(vm.isAwaitingAgentActivity, "receipt echo is not agent feedback")
+
+        continuation.yield(
+            event(2, "tool_call", #"{"id":"1","name":"Read","args":"{}"}"#))
+        await waitUntil { vm.projection.lastPersistedSeq == 2 }
+        XCTAssertFalse(vm.isAwaitingAgentActivity)
+        continuation.finish()
+        vm.stop()
+    }
+
+    func testFailedSendClearsWorkingFeedback() async {
+        let actions = MockActionSource()
+        let vm = actionVM(actions)
+        actions.nextError = YccError.rpc(message: "offline")
+
+        await vm.send(text: "hello")
+
+        XCTAssertFalse(vm.isAwaitingAgentActivity)
+        XCTAssertEqual(vm.actionError, "offline")
     }
 
     func testSendIgnoresEmpty() async {

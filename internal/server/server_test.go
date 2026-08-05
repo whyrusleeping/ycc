@@ -93,7 +93,8 @@ func TestProjectRPCs(t *testing.T) {
 		Models: map[string]config.Model{"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"}},
 		Roles:  config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
 	})
-	srv := New(session.NewManager(reg, t.TempDir()))
+	startupDir := t.TempDir()
+	srv := New(session.NewManager(reg, startupDir))
 	ctx := context.Background()
 
 	dir := t.TempDir()
@@ -109,16 +110,16 @@ func TestProjectRPCs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListProjects: %v", err)
 	}
-	if len(list.Msg.Projects) != 1 || list.Msg.Projects[0].GetName() != "demo" {
-		t.Fatalf("ListProjects = %+v, want [demo]", list.Msg.Projects)
+	if len(list.Msg.Projects) != 2 || list.Msg.Projects[1].GetName() != "demo" {
+		t.Fatalf("ListProjects = %+v, want startup project + demo", list.Msg.Projects)
 	}
 
 	if _, err := srv.RemoveProject(ctx, connect.NewRequest(&v1.RemoveProjectRequest{Name: "demo"})); err != nil {
 		t.Fatalf("RemoveProject: %v", err)
 	}
 	list2, _ := srv.ListProjects(ctx, connect.NewRequest(&v1.ListProjectsRequest{}))
-	if len(list2.Msg.Projects) != 0 {
-		t.Fatalf("ListProjects after remove = %+v, want empty", list2.Msg.Projects)
+	if len(list2.Msg.Projects) != 1 || list2.Msg.Projects[0].GetPath() != startupDir {
+		t.Fatalf("ListProjects after remove = %+v, want startup project", list2.Msg.Projects)
 	}
 
 	// AddProject without a path is an InvalidArgument error.

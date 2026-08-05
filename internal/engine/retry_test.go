@@ -136,6 +136,41 @@ func TestLoopRetryNonRetryableFailsImmediately(t *testing.T) {
 	}
 }
 
+func TestDefaultRetryPolicyCapsPersistentRateLimit(t *testing.T) {
+	orig := errors.New("API returned non-200 status code 429: persistent")
+	inner := &retryFakeTurner{errs: []error{orig, orig, orig, orig, orig}}
+	// RetryPolicy{} exercises the default, including the rate-limit-specific cap.
+	loop, rec, slept := newRetryLoop(t, inner, RetryPolicy{})
+	_, err := loop.Run(context.Background())
+	if !errors.Is(err, orig) {
+		t.Fatalf("expected original rate-limit error, got %v", err)
+	}
+	if inner.calls != DefaultRateLimitMaxAttempts {
+		t.Fatalf("calls = %d, want %d", inner.calls, DefaultRateLimitMaxAttempts)
+	}
+	if len(*slept) != DefaultRateLimitMaxAttempts-1 {
+		t.Fatalf("sleeps = %d, want %d", len(*slept), DefaultRateLimitMaxAttempts-1)
+	}
+	errs := sessionErrors(rec)
+	if len(errs) != 1 {
+		t.Fatalf("session errors = %d, want 1", len(errs))
+	}
+	if attempts, _ := errs[0].Data["attempts"].(int); attempts != DefaultRateLimitMaxAttempts {
+		t.Fatalf("recorded attempts = %v, want %d", errs[0].Data["attempts"], DefaultRateLimitMaxAttempts)
+	}
+}
+
+func TestExplicitRetryPolicyRemainsAuthoritativeForRateLimit(t *testing.T) {
+	orig := errors.New("API returned non-200 status code 429: persistent")
+	policy := RetryPolicy{MaxAttempts: 5, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond}
+	inner := &retryFakeTurner{errs: []error{orig, orig, orig, orig, orig}}
+	loop, _, slept := newRetryLoop(t, inner, policy)
+	_, _ = loop.Run(context.Background())
+	if inner.calls != policy.MaxAttempts || len(*slept) != policy.MaxAttempts-1 {
+		t.Fatalf("calls/sleeps = %d/%d, want %d/%d", inner.calls, len(*slept), policy.MaxAttempts, policy.MaxAttempts-1)
+	}
+}
+
 func TestLoopRetryExhaustionEmitsStructuredError(t *testing.T) {
 	orig := errors.New("API returned non-200 status code 503: persistent")
 	policy := RetryPolicy{MaxAttempts: 3, BaseDelay: 10 * time.Millisecond, MaxDelay: time.Second}

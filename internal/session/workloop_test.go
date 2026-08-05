@@ -211,17 +211,15 @@ func waitLoopFinished(t *testing.T, m *Manager, project string) *WorkLoop {
 	return nil
 }
 
-// TestWorkLoopDefaultWorkspace covers project=="" (the default-workspace case):
-// the loop must read the daemon default workspace's backlog — NOT resolve the
-// display basename as a registered project name (regression: that would fail with
-// "unknown project" and the loop would die immediately).
-func TestWorkLoopDefaultWorkspace(t *testing.T) {
+// TestWorkLoopSoleProjectOmitted covers project=="" as an unambiguous
+// convenience when the manager has exactly one named project.
+func TestWorkLoopSoleProjectOmitted(t *testing.T) {
 	sink := newNotifySink(t)
 	reg := config.NewRegistry(&config.Config{
 		Models: map[string]config.Model{"c": {Backend: "ollama", Model: "m"}},
 		Roles:  config.Roles{Coordinator: "c", Implementer: "c", Reviewers: []string{"c"}},
 	})
-	// Default workspace is a real backlog dir that is NOT a registered project.
+	// NewManager registers its startup workspace as a normal named project.
 	ws := t.TempDir()
 	m := NewManager(reg, ws)
 	m.SetNotifier(notify.New(config.Notify{URL: sink.URL}))
@@ -407,7 +405,7 @@ func TestWorkLoopUnknownProject(t *testing.T) {
 	if _, err := m.StartWorkLoop("nope"); err == nil {
 		t.Fatal("expected unknown-project error")
 	}
-	// Default-workspace resolution (empty project) resolves fine even with no loop.
+	// Empty selection resolves the sole named project even with no loop.
 	if _, err := m.GetWorkLoop(""); err != nil {
 		t.Fatalf("GetWorkLoop(\"\"): %v", err)
 	}

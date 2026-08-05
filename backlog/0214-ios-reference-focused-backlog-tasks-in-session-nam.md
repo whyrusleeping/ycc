@@ -4,7 +4,7 @@ title: 'iOS: reference focused backlog tasks in session names'
 status: done
 priority: 3
 created: "2026-07-16"
-updated: "2026-07-16"
+updated: "2026-08-05"
 depends_on: []
 spec_refs:
     - Session & event log

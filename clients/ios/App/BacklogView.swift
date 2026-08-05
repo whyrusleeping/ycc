@@ -5,9 +5,9 @@ import YccProto
 /// The backlog browser (docs/design/ios-client.md §6 phase 2 step 6, spec
 /// §18.5): the daemon's durable backlog grouped into ordered status sections,
 /// with ready/blocked annotations and priority. Tapping a row opens the task
-/// detail; the toolbar "+" opens a quick-capture sheet. A mid-screen
-/// `.unauthorized` failure routes back to the connect screen via
-/// ``AppModel/handleUnauthorized()``.
+/// detail; long-press (or swipe) changes a task's status in place; the toolbar
+/// "+" opens a quick-capture sheet. A mid-screen `.unauthorized` failure routes
+/// back to the connect screen via ``AppModel/handleUnauthorized()``.
 struct BacklogView: View {
     @Environment(AppModel.self) private var app
 
@@ -90,27 +90,88 @@ struct BacklogView: View {
                                     taskTitle: task.title)
                             }
                         } label: {
-                            BacklogRow(task: task)
+                            BacklogRow(task: task, isUpdating: model.updatingTaskID == task.id)
+                        }
+                        .contextMenu {
+                            statusMenu(model, task: task)
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            swipeStatusButtons(model, task: task)
                         }
                     }
                 }
             }
         }
         .refreshable { await model.refresh() }
+        .alert(
+            "Couldn’t update task",
+            isPresented: Binding(
+                get: { model.updateError != nil },
+                set: { if !$0 { model.updateError = nil } }),
+            presenting: model.updateError
+        ) { _ in
+            Button("OK", role: .cancel) { model.updateError = nil }
+        } message: { message in
+            Text(message)
+        }
+    }
+
+    /// The long-press status changer: every selectable status, with a checkmark
+    /// on the row's current one (matching the task-detail toolbar menu).
+    @ViewBuilder
+    private func statusMenu(_ model: BacklogModel, task: Ycc_V1_BacklogTaskSummary) -> some View {
+        let current = TaskStatus(status: task.status)
+        Section("Set status") {
+            ForEach(TaskStatus.selectable) { status in
+                Button {
+                    Task { await model.setStatus(taskID: task.id, to: status) }
+                } label: {
+                    if status == current {
+                        Label(status.title, systemImage: "checkmark")
+                    } else {
+                        Text(status.title)
+                    }
+                }
+                .disabled(status == current || model.updatingTaskID != nil)
+            }
+        }
+    }
+
+    /// Quick swipe shortcuts for the most common transitions: mark done, and
+    /// start (todo/proposed/blocked → in progress). The full set lives in the
+    /// long-press context menu.
+    @ViewBuilder
+    private func swipeStatusButtons(_ model: BacklogModel, task: Ycc_V1_BacklogTaskSummary) -> some View {
+        let current = TaskStatus(status: task.status)
+        if current != .done {
+            Button {
+                Task { await model.setStatus(taskID: task.id, to: .done) }
+            } label: {
+                Label("Done", systemImage: "checkmark.circle.fill")
+            }
+            .tint(.green)
+        }
+        if current != .inProgress, current != .done {
+            Button {
+                Task { await model.setStatus(taskID: task.id, to: .inProgress) }
+            } label: {
+                Label("Start", systemImage: "play.circle.fill")
+            }
+            .tint(.blue)
+        }
     }
 
     private func projectFilter(_ model: BacklogModel) -> some View {
         @Bindable var model = model
         return Menu {
             Picker("Project", selection: $model.selectedProject) {
-                Text("Default").tag("")
                 ForEach(model.projects, id: \.name) { project in
                     Text(project.name).tag(project.name)
                 }
             }
         } label: {
             Label(
-                model.selectedProject.isEmpty ? "Default" : model.selectedProject,
+                model.selectedProject.isEmpty ? "Choose project" : model.selectedProject,
                 systemImage: "line.3.horizontal.decrease.circle")
         }
         .onChange(of: model.selectedProject) { _, _ in
@@ -127,10 +188,12 @@ struct BacklogView: View {
     }
 }
 
-/// A single backlog row: id + title, a priority badge, and a ready/blocked
-/// annotation matching ListBacklog semantics.
+/// A single backlog row: id + title, a priority badge, a ready/blocked
+/// annotation matching ListBacklog semantics, and a spinner while a status
+/// change for this row is in flight.
 private struct BacklogRow: View {
     let task: Ycc_V1_BacklogTaskSummary
+    var isUpdating = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -142,6 +205,10 @@ private struct BacklogRow: View {
                     .font(.headline)
                     .lineLimit(2)
                 Spacer(minLength: 4)
+                if isUpdating {
+                    ProgressView()
+                        .controlSize(.small)
+                }
                 PriorityBadge(priority: task.priority)
             }
             if let annotation = BacklogModel.blockedAnnotation(for: task) {

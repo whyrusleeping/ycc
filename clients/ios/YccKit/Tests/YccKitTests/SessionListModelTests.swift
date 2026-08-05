@@ -216,7 +216,7 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertEqual(Set(source.requestedProjects), Set(["one", "two"]))
     }
 
-    func testDefaultFeedAggregatesProjectsAndSortsGloballyByRecency() async {
+    func testRecentFeedAggregatesProjectsAndSortsGloballyByRecency() async {
         let source = MockListSource()
         source.projects = [project("one"), project("two")]
         source.sessionsByProject = [
@@ -234,7 +234,7 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertNil(model.partialWarning)
     }
 
-    func testDefaultFeedDeduplicatesWorkspaceAliasesAndSessions() async {
+    func testRecentFeedDeduplicatesWorkspaceAliasesAndSessions() async {
         let source = MockListSource()
         source.projects = [
             project("primary", path: "/same/workspace"),
@@ -250,7 +250,7 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertEqual(model.project(for: model.sessions[0]), "primary")
     }
 
-    func testDefaultFeedPreservesPartialResultsAndWarns() async {
+    func testRecentFeedPreservesPartialResultsAndWarns() async {
         let source = MockListSource()
         source.projects = [project("good"), project("bad")]
         source.sessionsByProject["good"] = [session(id: "available")]
@@ -264,16 +264,17 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertNil(model.errorMessage)
     }
 
-    func testOneShotDefaultFeedQueriesImplicitWorkspace() async {
+    func testOneShotFeedQueriesItsNamedProject() async {
         let source = MockListSource()
-        source.sessionsByProject[""] = [session(id: "implicit")]
+        source.projects = [project("only")]
+        source.sessionsByProject["only"] = [session(id: "named")]
         let model = SessionListModel(source: source)
 
         await model.refresh()
 
-        XCTAssertEqual(source.requestedProjects, [""])
-        XCTAssertEqual(model.sessions.map(\.sessionID), ["implicit"])
-        XCTAssertEqual(model.project(for: model.sessions[0]), "")
+        XCTAssertEqual(source.requestedProjects, ["only"])
+        XCTAssertEqual(model.sessions.map(\.sessionID), ["named"])
+        XCTAssertEqual(model.project(for: model.sessions[0]), "only")
     }
 
     func testProjectFilterRoundTrips() async {
@@ -288,8 +289,7 @@ final class SessionListModelTests: XCTestCase {
     }
 
     func testProjectFilterShownWithOneProjectHiddenWithZero() async {
-        // Even one registered project means two choices (Default + it), so the
-        // filter shows; with nothing registered there's only Default, so it hides.
+        // The filter includes All projects plus the named project.
         let source = MockListSource()
         source.projects = [project("only")]
         let model = SessionListModel(source: source)
@@ -323,13 +323,15 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertFalse(model.requiresProjectChoiceForNewSession)
     }
 
-    func testOneShotRecentFeedOffersOnlyDefaultProject() async {
-        let model = SessionListModel(source: MockListSource())
+    func testOneShotRecentFeedOffersItsNamedProject() async {
+        let source = MockListSource()
+        source.projects = [project("only")]
+        let model = SessionListModel(source: source)
 
         await model.refresh()
 
         XCTAssertTrue(model.requiresProjectChoiceForNewSession)
-        XCTAssertEqual(model.newSessionProjectChoices, [""])
+        XCTAssertEqual(model.newSessionProjectChoices, ["only"])
     }
 
     func testRemoveSelectedProjectFallsBackToRecentFeedAndRefreshes() async {
@@ -344,7 +346,70 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertEqual(source.removedProjects, ["two"])
         XCTAssertNil(model.selectedProject)
         XCTAssertEqual(model.projects.map(\.name), ["one"])
-        XCTAssertEqual(source.requestedProjects, ["two", "one"])
+        // Every load fans out over the registered projects (the drawer's badges
+        // need all of them); the post-removal reload queries the survivor only.
+        // Fan-out order is a task group's, so compare as a multiset.
+        XCTAssertEqual(source.requestedProjects.count, 3)
+        XCTAssertEqual(Set(source.requestedProjects.prefix(2)), Set(["one", "two"]))
+        XCTAssertEqual(source.requestedProjects.last, "one")
+    }
+
+    func testSelectingAProjectFiltersClientSideWithoutRefetching() async {
+        let source = MockListSource()
+        source.projects = [project("one"), project("two")]
+        source.sessionsByProject = [
+            "one": [session(id: "a", lastActivity: "2026-07-08T08:00:00Z")],
+            "two": [session(id: "b", lastActivity: "2026-07-08T12:00:00Z")],
+        ]
+        let model = SessionListModel(source: source)
+        await model.refresh()
+
+        XCTAssertEqual(model.sessions.map(\.sessionID), ["b", "a"])
+
+        model.selectedProject = "one"
+
+        XCTAssertEqual(model.sessions.map(\.sessionID), ["a"])
+        XCTAssertEqual(model.allSessions.count, 2)
+        // No extra history query: the aggregate load already holds every project.
+        XCTAssertEqual(source.requestedProjects.count, 2)
+    }
+
+    func testActivityCountsAreTrackedPerProjectAndGlobally() async {
+        let source = MockListSource()
+        source.projects = [project("one"), project("two")]
+        source.sessionsByProject = [
+            "one": [
+                session(id: "running", status: "running", live: true),
+                session(id: "asking", status: "running", live: true, waitingInput: true),
+                // Not live: a persisted log's last status is history, not activity.
+                session(id: "old", status: "running", live: false),
+            ],
+            "two": [session(id: "paused", status: "paused", live: true)],
+        ]
+        let model = SessionListModel(source: source)
+        await model.refresh()
+
+        XCTAssertEqual(model.activity(forProject: "one"), ProjectActivity(active: 2, needsAnswer: 1))
+        XCTAssertEqual(model.activity(forProject: "two"), ProjectActivity(active: 1, needsAnswer: 0))
+        XCTAssertEqual(model.activity(forProject: "missing"), ProjectActivity())
+        XCTAssertEqual(model.totalActivity, ProjectActivity(active: 3, needsAnswer: 1))
+        XCTAssertFalse(model.totalActivity.isEmpty)
+    }
+
+    func testIdleAndStoppedLiveSessionsAreNotCountedActive() async {
+        let source = MockListSource()
+        source.projects = [project("one")]
+        source.sessionsByProject = [
+            "one": [
+                session(id: "idle", status: "idle", live: true),
+                session(id: "stopped", status: "stopped", live: true),
+            ],
+        ]
+        let model = SessionListModel(source: source)
+        await model.refresh()
+
+        XCTAssertEqual(model.activity(forProject: "one"), ProjectActivity())
+        XCTAssertTrue(model.totalActivity.isEmpty)
     }
 
     func testRemoveProjectFailureKeepsSelectionAndSurfacesError() async {

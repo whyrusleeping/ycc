@@ -17,6 +17,9 @@ func TestHTTPFetcherAnthropic(t *testing.T) {
 		if got := r.Header.Get("anthropic-beta"); got == "" {
 			t.Fatal("missing anthropic oauth beta header")
 		}
+		if got := r.Header.Get("x-app"); got != "cli" {
+			t.Fatalf("x-app = %q", got)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"five_hour":{"utilization":12.5,"resets_at":"2026-07-20T12:00:00Z"},"seven_day":{"utilization":42,"resets_at":"2026-07-25T12:00:00Z"}}`))
 	}))

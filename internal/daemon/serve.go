@@ -81,14 +81,21 @@ func buildHandler(o Options) (http.Handler, error) {
 	// and one-shot in-process paths.
 	mgr.SetNotifier(notify.New(reg.Notify()))
 	// A persistent daemon backs its project registry with durable state so the
-	// project list survives restarts (spec §3.1). The one-shot in-process path
-	// keeps the default in-memory registry (cwd is the single implicit project).
+	// project list survives restarts (spec §3.1). The one-shot path keeps the
+	// manager's in-memory registry, already containing cwd as its sole project.
 	if o.Persist {
 		preg, err := project.Open(project.StateFile())
 		if err != nil {
 			return nil, fmt.Errorf("load project registry: %w", err)
 		}
 		mgr.SetProjects(preg)
+		// The startup workspace is not a privileged "default"; register it as a
+		// normal named project so every RPC/UI uses the same project model.
+		if o.Workspace != "" {
+			if _, err := mgr.AddProject(o.Workspace, ""); err != nil {
+				return nil, fmt.Errorf("register startup project: %w", err)
+			}
+		}
 		// The workstream registry (parallel worktrees, design §5/§7) is likewise
 		// durable and reconciled on startup: prune stale worktrees left by a
 		// crashed daemon and mark orphaned workstreams stale. A reconcile error is

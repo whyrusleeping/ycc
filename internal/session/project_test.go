@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -41,6 +42,16 @@ func TestStartUnknownProject(t *testing.T) {
 	_, err := m.Start(Config{Project: "nope", Prompt: "hi"})
 	if err == nil || !strings.Contains(err.Error(), "unknown project") {
 		t.Fatalf("Start unknown project err = %v, want unknown project", err)
+	}
+}
+
+func TestResolveProjectWorkspaceRejectsAmbiguousOmission(t *testing.T) {
+	m := NewManager(testRegistry(), t.TempDir())
+	if _, err := m.AddProject(t.TempDir(), "second"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.resolveProjectWorkspace(""); !errors.Is(err, ErrUnknownProject) || !strings.Contains(err.Error(), "project is required") {
+		t.Fatalf("resolve omitted project = %v, want required-selection error", err)
 	}
 }
 

@@ -501,8 +501,8 @@ type model struct {
 }
 
 // Run starts the TUI against the daemon client. showPicker selects the initial
-// project-picker screen (persistent/remote daemon); a one-shot daemon passes
-// false so the cwd is the single implicit project (spec §3.1).
+// project-picker screen for persistent/remote daemons. A one-shot daemon still
+// exposes cwd as a normal project, but it is the unambiguous sole choice.
 func Run(ctx context.Context, client yccv1connect.SessionServiceClient, workspace string, showPicker bool) error {
 	p := tea.NewProgram(initialModel(ctx, client, workspace, showPicker))
 	_, err := p.Run()
@@ -790,9 +790,12 @@ type mbDiscoverMsg struct {
 }
 
 func (m model) Init() tea.Cmd {
-	cmds := []tea.Cmd{m.fetchModes, m.fetchModels, m.fetchBacklog, m.fetchWaitingSessions, m.menuRefreshTick()}
-	if m.showPicker {
-		cmds = append(cmds, m.fetchProjects)
+	cmds := []tea.Cmd{m.fetchModes, m.fetchModels, m.fetchProjects, m.menuRefreshTick()}
+	// A persistent multi-project client must pick a project before issuing scoped
+	// RPCs. A one-shot daemon has one project, so omission is unambiguous while the
+	// ListProjects response is still in flight.
+	if !m.showPicker {
+		cmds = append(cmds, m.fetchBacklog, m.fetchWaitingSessions)
 	}
 	return tea.Batch(cmds...)
 }
@@ -2392,6 +2395,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.projects = msg.projects
 		if m.projectCur >= len(m.projects) {
 			m.projectCur = 0
+		}
+		// A one-shot daemon has one ordinary named project. Select it
+		// automatically so subsequent RPCs never rely on an empty/default project.
+		if !m.showPicker && m.project == "" && len(m.projects) == 1 {
+			m.project = m.projects[0].Name
+			m.workspace = m.projects[0].Path
+			return m, m.refreshMenu()
 		}
 		return m, nil
 	case historyMsg:

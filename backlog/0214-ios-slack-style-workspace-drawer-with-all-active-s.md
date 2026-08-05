@@ -1,7 +1,7 @@
 ---
 id: "0214"
 title: 'iOS: Slack-style workspace drawer with all-active session inbox'
-status: todo
+status: in_progress
 priority: 2
 created: "2026-07-15"
 updated: "2026-07-15"
@@ -26,3 +26,9 @@ Acceptance criteria:
 ## Acceptance criteria
 
 ## Work log
+- Added `DrawerContainer` (App/WorkspaceDrawer.swift): a left-edge slide-over that overlays the whole `NavigationStack`, opens via hamburger or an interactive edge swipe, and closes via scrim tap / reverse swipe / selection. The edge gesture is a guarded `simultaneousGesture` rather than an overlaid grab strip (a hit-testable strip swallowed taps on the leading edge of every list row) and is disabled while a screen is pushed so it cannot fight the system back-swipe.
+- Added `WorkspaceDrawer`: recent-sessions inbox, registered projects with activity badges, project-scoped destinations (backlog / workstreams / usage) and an account footer (settings / disconnect). "Add project…" and a destructive "Remove project…" context action stay in the project list.
+- `LandingView` is now the shell: path-driven `NavigationStack` over a single `HomeDestination` enum (so the drawer can push), toolbar cut from six trailing items to a menu button + New chat, and the menu button mirrors the global needs-answer badge.
+- `SessionListModel` now always fans out across projects and filters client-side, so drawer badges stay accurate under any scope and project switching needs no refetch; added `ProjectActivity`, `activity(forProject:)`, `totalActivity`, `allSessions`, plus headless tests for the counts and the client-side filter.
+- Documented the shell (drawer contents, toolbar budget, unconditional fan-out) in docs/design/ios-client.md §6.
+- NOT YET VERIFIED: no Swift toolchain on this machine — `swift test` and the simulator build must run on the Mac.

@@ -213,7 +213,7 @@ func TestWizardOAuthLoginFlow(t *testing.T) {
 		if p.Verifier == "" {
 			t.Error("exchange called with empty PKCE verifier")
 		}
-		return &anthropicauth.Credentials{AccessToken: "sk-ant-oat01-x", RefreshToken: "rt", ExpiresAt: time.Now().Add(time.Hour).Unix()}, nil
+		return &anthropicauth.Credentials{AccessToken: "sk-ant-oat01-x", RefreshToken: "rt", ExpiresAt: time.Now().Add(time.Hour).Unix(), FlowVersion: anthropicauth.FlowVersion}, nil
 	}
 
 	m = drive(m, strings.Split("claude", "")...)

@@ -161,7 +161,7 @@ round-trip.
     - Expected: the **New session** sheet presents with a **Mode** picker
       (work/pm/chat with a description under it), any **Presets** as tappable
       shortcuts and a **Project** picker (only when more than
-      one project is registered; "Default" = daemon default), and a multiline
+      one project is registered), and a multiline
       **Prompt** composer. Mode/level/project default to your last-used choices.
 
 16. **Preset seeds the composer.** Tap a preset (e.g. a pm framing).

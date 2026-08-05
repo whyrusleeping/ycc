@@ -114,13 +114,13 @@ func TestLoopYieldsOnNoToolCalls(t *testing.T) {
 	}
 }
 
-// A non-truncated turn with empty content and no tool calls (e.g. stop_reason
-// "refusal", or the whole budget consumed by a thinking block with no follow-up
-// text) must never surface as a blank assistant message: the loop synthesizes a
-// non-empty, stop-reason-aware report and stores it as the assistant turn.
+// A non-truncated turn with empty content and no tool calls (e.g. the whole
+// budget consumed by a thinking block with no follow-up text) must never surface
+// as a blank assistant message: the loop synthesizes a non-empty,
+// stop-reason-aware report and stores it as the assistant turn.
 func TestLoopEmptyYieldSynthesizesReport(t *testing.T) {
 	r := assistantText("") // no content, no tool calls
-	r.StopReason = "refusal"
+	r.StopReason = "end_turn"
 	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{r}}
 	loop := newLoop(t, turner)
 	res, err := loop.Run(context.Background())
@@ -130,14 +130,89 @@ func TestLoopEmptyYieldSynthesizesReport(t *testing.T) {
 	if strings.TrimSpace(res.Report) == "" {
 		t.Fatalf("expected a non-empty report, got %q", res.Report)
 	}
-	if !strings.Contains(strings.ToLower(res.Report), "declined") {
-		t.Fatalf("report should mention the refusal/declination, got %q", res.Report)
+	if !res.NoContent {
+		t.Fatal("NoContent = false, want true for a degenerate empty yield")
 	}
 	// The final assistant message in history must be non-empty (no blank message).
 	hist := loop.History()
 	last := hist[len(hist)-1]
 	if last.Role != "assistant" || strings.TrimSpace(last.Content) == "" {
 		t.Fatalf("expected a non-empty trailing assistant message, got %+v", last)
+	}
+}
+
+// A provider-side safety refusal (stop_reason "refusal", no tool call) sets
+// Result.Refused and keeps the refused turn OUT of history: refusals are sticky
+// per provider semantics, so the pending user turn must stay unanswered for a
+// later Run (typically on a different model) to re-run it cleanly.
+func TestLoopRefusalKeptOutOfHistory(t *testing.T) {
+	r := assistantText("")
+	r.StopReason = "refusal"
+	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{
+		r,
+		assistantText("recovered on retry"),
+	}}
+	loop := newLoop(t, turner)
+	loop.Seed("please do the thing")
+	res, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Refused {
+		t.Fatal("Refused = false, want true for stop_reason refusal")
+	}
+	if !strings.Contains(strings.ToLower(res.Report), "declined") {
+		t.Fatalf("report should mention the refusal/declination, got %q", res.Report)
+	}
+	// The refused turn is NOT in history: the seed user message is still the
+	// tail, and the loop still owes it a response.
+	hist := loop.History()
+	if len(hist) != 1 || hist[0].Role != "user" {
+		t.Fatalf("history = %+v, want only the seed user message", hist)
+	}
+	if !loop.PendingResponse() {
+		t.Fatal("PendingResponse = false, want true after a refusal")
+	}
+	// A second Run (the retry, e.g. after a model switch) re-runs the SAME
+	// pending turn: the request must not carry any refusal placeholder.
+	res2, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("retry Run: %v", err)
+	}
+	if res2.Refused || res2.Report != "recovered on retry" {
+		t.Fatalf("retry result = %+v, want clean recovery", res2)
+	}
+	for _, m := range turner.lastMsgs {
+		if m.Role == "assistant" && strings.Contains(m.Content, "declined") {
+			t.Fatalf("retry request still carries the refusal placeholder: %+v", m)
+		}
+	}
+}
+
+// A refusal that arrives WITH partial visible text (the streaming classifier can
+// cut a turn off mid-output) is still a refusal: Refused is set, the partial
+// text is the report, and the turn stays out of history.
+func TestLoopRefusalWithPartialTextKeptOutOfHistory(t *testing.T) {
+	r := assistantText("Hello, I was about to sa")
+	r.StopReason = "refusal"
+	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{r}}
+	loop := newLoop(t, turner)
+	loop.Seed("hi")
+	res, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Refused {
+		t.Fatal("Refused = false, want true")
+	}
+	if res.NoContent {
+		t.Fatal("NoContent = true, want false when partial text was produced")
+	}
+	if res.Report != "Hello, I was about to sa" {
+		t.Fatalf("report = %q, want the partial text", res.Report)
+	}
+	if hist := loop.History(); len(hist) != 1 {
+		t.Fatalf("history = %+v, want only the seed user message", hist)
 	}
 }
 

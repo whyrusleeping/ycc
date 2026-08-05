@@ -439,7 +439,7 @@ func (a *app) costCommand() *cli.Command {
 		Usage:         "show a usage/cost breakdown",
 		ShellComplete: a.completeWithProject(nil),
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "project", Usage: "registered project `name` (default: daemon default workspace)"},
+			&cli.StringFlag{Name: "project", Usage: "registered project `name` (required when multiple exist)"},
 			&cli.StringFlag{Name: "by", Value: "task", Usage: "group by, comma-separated: task,model,session,agent,day"},
 			&cli.StringFlag{Name: "since", Usage: "include usage on/after this day (`YYYY-MM-DD`)"},
 			&cli.StringFlag{Name: "until", Usage: "include usage on/before this day (`YYYY-MM-DD`)"},
@@ -562,7 +562,7 @@ func daemonCommand() *cli.Command {
 			"presenting the `Authorization: Bearer <token>` header.",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "addr", Value: "127.0.0.1:8787", Usage: "`address` to listen on (non-loopback requires --token)"},
-			&cli.StringFlag{Name: "workspace", Value: ".", Usage: "default workspace for sessions that don't specify one"},
+			&cli.StringFlag{Name: "workspace", Value: ".", Usage: "startup project directory (registered by basename)"},
 			&cli.StringFlag{Name: "config", Usage: "TOML config `file` (models + roles)"},
 			&cli.StringFlag{Name: "model", Value: "claude-opus-4-8", Usage: "fallback model id (when no --config)"},
 			&cli.StringFlag{Name: "base-url", Value: "https://api.anthropic.com", Usage: "fallback API base URL (when no --config)"},

@@ -289,7 +289,7 @@
   }
 
   var projects = [];
-  var currentProject = ""; // "" = all
+  var currentProject = ""; // selected registered project
   var sessionsById = {};   // id -> session meta from ListSessionHistory
   var sessionState = null; // active session-view state (streaming, feed, els)
 
@@ -507,6 +507,9 @@
   function loadProjectsThenList() {
     rpc("ListProjects", {}).then(function (j) {
       projects = (j && j.projects) ? j.projects : [];
+      if (!currentProject || !projects.some(function (p) { return p.name === currentProject; })) {
+        currentProject = projects.length ? (projects[0].name || "") : "";
+      }
       renderChips();
       loadList();
     }).catch(function () {
@@ -527,7 +530,6 @@
       return;
     }
     chips.style.display = "";
-    chips.appendChild(chip("all", "", currentProject === ""));
     for (var i = 0; i < projects.length; i++) {
       var name = projects[i].name || "";
       chips.appendChild(chip(name, name, currentProject === name));
@@ -729,7 +731,7 @@
       openStream(state);
     } else {
       setStatus(state, "");
-      rpc("GetSessionTranscript", { sessionId: state.sessionId }).then(function (j) {
+      rpc("GetSessionTranscript", { project: currentProject, sessionId: state.sessionId }).then(function (j) {
         if (!sessionState || sessionState !== state) {
           return;
         }

@@ -34,7 +34,7 @@ func TestRetryPolicyPlumbedToSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenLog: %v", err)
 	}
-	s, err := m.newSession(ws, "s_retry", "work", false, "go", log, false)
+	s, err := m.newSession(ws, "s_retry", "work", false, "go", log, false, "")
 	if err != nil {
 		t.Fatalf("newSession: %v", err)
 	}

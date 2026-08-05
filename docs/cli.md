@@ -116,7 +116,7 @@ task.
 
 | Flag | Description |
 |------|-------------|
-| `--project NAME` | registered project name (default: daemon default workspace) |
+| `--project NAME` | registered project name (required when multiple projects exist) |
 | `--by LIST` | group by, comma-separated: `task`, `model`, `session`, `agent`, `day` (default: `task`) |
 | `--since YYYY-MM-DD` | include usage on/after this day |
 | `--until YYYY-MM-DD` | include usage on/before this day |
@@ -240,7 +240,7 @@ identically. Writes to stdout by default (or a file with `--out`).
 |------|-------------|
 | `--out FILE` | write markdown to `FILE` (default: stdout) |
 | `--full` | include tool-call argument/result payloads (not just summaries) |
-| `--project NAME` | registered project name (default: daemon default workspace) |
+| `--project NAME` | registered project name (required when multiple projects exist) |
 
 ```sh
 ycc export s_abc123                       # print markdown to stdout
@@ -276,7 +276,7 @@ does not dial a client of its own.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--addr ADDR` | `127.0.0.1:8787` | address to listen on |
-| `--workspace DIR` | `.` | default workspace for sessions that don't specify one |
+| `--workspace DIR` | `.` | startup project directory, registered by basename |
 | `--config FILE` | | TOML config file (models + roles) |
 | `--model ID` | `claude-opus-4-8` | fallback model id (when no `--config`) |
 | `--base-url URL` | `https://api.anthropic.com` | fallback API base URL (when no `--config`) |

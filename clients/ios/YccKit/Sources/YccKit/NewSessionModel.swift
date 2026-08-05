@@ -11,9 +11,13 @@ public protocol NewSessionSource: Sendable {
     func listModes() async throws -> (modes: [Ycc_V1_Mode], presets: [Ycc_V1_Preset])
     /// List the daemon's registered projects (drives the project picker).
     func listProjects() async throws -> [Ycc_V1_ProjectInfo]
+    /// Configured logical models + the current default role assignment
+    /// (`ListModels`); drives the optional model picker.
+    func listModels() async throws -> Ycc_V1_ListModelsResponse
     /// Start a new session; returns its id to subscribe from seq 0.
+    /// `coordinatorModel` is empty for "use the configured default".
     func startSession(
-        project: String, mode: String, prompt: String
+        project: String, mode: String, prompt: String, coordinatorModel: String
     ) async throws -> String
     /// Re-open a persisted session on its existing log; returns its id.
     func resumeSession(project: String, sessionId: String) async throws -> String
@@ -50,11 +54,12 @@ public final class UserDefaultsSessionDefaults: SessionDefaultsStore {
     }
 }
 
-/// Drives the "new session" flow: loads ``ListModes`` + ``ListProjects``, holds
-/// the mode / project selections and the prompt draft,
-/// validates, and starts the session (returning its id so the view can navigate
-/// straight into the live stream). Last-used selections are remembered via an
-/// injectable ``SessionDefaultsStore``. `@MainActor` because it publishes
+/// Drives the "new session" flow: loads ``ListModes`` + ``ListProjects`` +
+/// ``ListModels``, holds the mode / project / model selections and the prompt
+/// draft, validates, and starts the session (returning its id so the view can
+/// navigate straight into the live stream). Last-used mode/project are remembered
+/// via an injectable ``SessionDefaultsStore``; the model pick is a per-session
+/// override and deliberately not remembered. `@MainActor` because it publishes
 /// observable UI state; the source is injected so the logic is testable
 /// headlessly.
 @MainActor
@@ -66,11 +71,20 @@ public final class NewSessionModel {
     public private(set) var presets: [Ycc_V1_Preset] = []
     /// Registered projects; drives the project picker.
     public private(set) var projects: [Ycc_V1_ProjectInfo] = []
+    /// Configured logical models; drives the optional model picker.
+    public private(set) var models: [Ycc_V1_ModelInfo] = []
+    /// The daemon's configured default coordinator model, shown as the "Default"
+    /// option's subtitle so the user can see what they'd get without choosing.
+    public private(set) var defaultModel: String = ""
 
     /// The selected mode name (e.g. `work`/`pm`/`chat`).
     public var selectedMode: String = ""
-    /// The selected project (`""` => daemon default workspace).
+    /// The selected registered project. Empty means no choice has been made yet.
     public var selectedProject: String = ""
+    /// The coordinator model override for this session. Empty (the default) means
+    /// "use the daemon's configured coordinator" — picking one here affects ONLY
+    /// the session being started; the persisted role defaults are untouched.
+    public var selectedModel: String = ""
     /// The multiline prompt composer draft.
     public var prompt: String = ""
 
@@ -84,9 +98,8 @@ public final class NewSessionModel {
     private let source: NewSessionSource
     private let defaults: SessionDefaultsStore
 
-    /// - Parameter initialProject: when non-nil, the project to preselect
-    ///   (e.g. the landing screen's current filter, `""` = default workspace) —
-    ///   it takes precedence over the remembered last-used project so a new
+    /// - Parameter initialProject: when non-nil, the named project to preselect.
+    ///   It takes precedence over the remembered last-used project so a new
     ///   session lands in the workspace the user is looking at.
     public init(
         source: NewSessionSource,
@@ -100,10 +113,19 @@ public final class NewSessionModel {
         self.selectedProject = initialProject ?? defaults.lastProject ?? ""
     }
 
-    /// Whether the project picker is worth showing: whenever any project is
-    /// registered, since the picker always offers the implicit "Default"
-    /// workspace (`""`) too — even a single registered project gives two choices.
-    public var showsProjectPicker: Bool { !projects.isEmpty }
+    /// The picker is useful only when there is a real choice.
+    public var showsProjectPicker: Bool { projects.count > 1 }
+
+    /// The model chip is worth showing only when there is something to pick
+    /// between (a single configured model leaves nothing to choose).
+    public var showsModelPicker: Bool { models.count > 1 }
+
+    /// The label for the current model choice: the picked model, or the daemon's
+    /// default coordinator marked as such, or a bare prompt when unknown.
+    public var selectedModelTitle: String {
+        if !selectedModel.isEmpty { return selectedModel }
+        return defaultModel.isEmpty ? "Model" : "\(defaultModel) (default)"
+    }
 
     /// Whether the prompt may be left empty for the selected mode. Mirrors the
     /// TUI: plain `work` mode starts without a prompt — the agent picks up the
@@ -124,28 +146,45 @@ public final class NewSessionModel {
         modes.first { $0.name == selectedMode }?.description_p.nilIfEmpty
     }
 
-    /// Load modes + projects. Falls back to the first available mode when no
-    /// remembered mode is still valid, so the picker is never empty. Unauthorized
-    /// bubbles up via ``unauthorized`` for the view to handle.
+    /// Load modes + projects (+ the optional model list). Falls back to the first
+    /// available mode when no remembered mode is still valid, so the picker is
+    /// never empty. Unauthorized bubbles up via ``unauthorized`` for the view to
+    /// handle.
     public func load() async {
         isLoading = true
         defer { isLoading = false }
         do {
             async let modesCall = source.listModes()
             async let projectList = source.listProjects()
+            async let modelList = source.listModels()
             let ((loadedModes, loadedPresets), loadedProjects) = try await (modesCall, projectList)
+            // The model picker is a convenience: a daemon that fails ListModels
+            // must not block starting a session, so its failure is tolerated and
+            // simply leaves the chip hidden.
+            let loadedModels = try? await modelList
             modes = loadedModes
             presets = loadedPresets
             projects = loadedProjects
+            models = loadedModels?.models ?? []
+            defaultModel = loadedModels?.coordinator ?? ""
+            // Never keep an override pointing at a model that is no longer
+            // configured — fall back to the daemon's default.
+            if !selectedModel.isEmpty, !models.contains(where: { $0.name == selectedModel }) {
+                selectedModel = ""
+            }
             // Keep a valid mode selected: honour the remembered one if it still
             // exists, otherwise default to the first mode.
             if selectedMode.isEmpty || !loadedModes.contains(where: { $0.name == selectedMode }) {
                 selectedMode = loadedModes.first?.name ?? ""
             }
-            // Drop a remembered project that no longer exists (keep "" default).
+            // Drop a remembered project that no longer exists, then select the
+            // sole project automatically. Never manufacture a "Default" choice.
             if !selectedProject.isEmpty,
                !loadedProjects.contains(where: { $0.name == selectedProject }) {
                 selectedProject = ""
+            }
+            if selectedProject.isEmpty, loadedProjects.count == 1 {
+                selectedProject = loadedProjects[0].name
             }
             errorMessage = nil
         } catch YccError.unauthorized {
@@ -176,7 +215,8 @@ public final class NewSessionModel {
             let sessionId = try await source.startSession(
                 project: selectedProject,
                 mode: selectedMode,
-                prompt: trimmedPrompt)
+                prompt: trimmedPrompt,
+                coordinatorModel: selectedModel)
             rememberSelections()
             errorMessage = nil
             return sessionId
@@ -199,6 +239,9 @@ public final class NewSessionModel {
     }
 
     private func rememberSelections() {
+        // Mode/project are sticky conveniences; the model choice deliberately is
+        // NOT — it is a one-off override for this session, so the next composer
+        // opens back on the daemon's configured default.
         defaults.lastMode = selectedMode
         defaults.lastProject = selectedProject
     }

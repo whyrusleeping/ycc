@@ -40,7 +40,7 @@ func TestGetCommitDiff(t *testing.T) {
 	srv := New(session.NewManager(reg, ws))
 	ctx := context.Background()
 
-	// Happy path: default workspace (empty project), real sha.
+	// Happy path: omitted project resolves the sole named project.
 	resp, err := srv.GetCommitDiff(ctx, connect.NewRequest(&v1.GetCommitDiffRequest{Sha: sha}))
 	if err != nil {
 		t.Fatalf("GetCommitDiff: %v", err)

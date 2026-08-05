@@ -21,7 +21,7 @@ func EnsureSubscriptionModel(c *Config, backend string) (name string, added bool
 	switch backend {
 	case "anthropic":
 		defName = "claude"
-		baseURL = "https://api.anthropic.com"
+		baseURL = DefaultAnthropicBaseURL
 		if ids := CuratedModelIDs("anthropic"); len(ids) > 0 {
 			modelID = ids[0]
 		}

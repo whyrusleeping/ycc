@@ -7,11 +7,21 @@ import YccProto
 /// .md §6 phase 1 step 2). Live rows stream when opened; persisted rows render
 /// the replayed transcript. A mid-session `.unauthorized` failure routes back
 /// to the connect screen via ``AppModel/handleUnauthorized()``.
+///
+/// Navigation follows the design's shell (§6 "Navigation shell"): a left-edge
+/// workspace drawer owns project selection and the project destinations
+/// (backlog / workstreams / usage) plus global settings, leaving the toolbar
+/// with just the menu button and the primary "new chat" action.
 struct LandingView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var model: SessionListModel?
+    /// The navigation stack's path. Path-driven so the drawer can push a
+    /// destination over whatever is currently on screen.
+    @State private var path: [HomeDestination] = []
+    /// Whether the workspace drawer is revealed.
+    @State private var drawerOpen = false
     /// Whether the "new session" composer sheet is shown.
     @State private var showNewSession = false
     /// Project selected by the explicit picker shown when New Chat is tapped
@@ -19,14 +29,12 @@ struct LandingView: View {
     @State private var newSessionProject: String?
     /// Whether the Recent Sessions project picker is visible.
     @State private var showNewSessionProjectPicker = false
-    /// The session to push into a live streaming view (set after Start/Resume).
-    @State private var liveTarget: LiveSessionTarget?
     /// A resume failure message to surface as an alert.
     @State private var resumeError: String?
     /// A deep-link routing failure (unknown/stale session or project) to surface
     /// as an alert — a graceful landing instead of navigating into a dead view.
     @State private var deepLinkError: String?
-    /// Whether the "add project" sheet is shown (from the project menu).
+    /// Whether the "add project" sheet is shown (from the drawer).
     @State private var showAddProject = false
     /// A registered project awaiting destructive deregistration confirmation.
     @State private var projectToRemove: Ycc_V1_ProjectInfo?
@@ -34,72 +42,10 @@ struct LandingView: View {
     @State private var projectRemovalError: String?
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if let model {
-                    content(model)
-                } else {
-                    ProgressView()
-                }
-            }
-            .navigationTitle(model?.selectedProject == nil ? "Recent Sessions" : "Sessions")
-            .toolbar {
-                // Always shown (not gated on registered projects): the menu is
-                // also the home of the "Add project…" affordance, which must be
-                // reachable on a daemon with no projects yet (task 0192).
-                if let model {
-                    ToolbarItem(placement: .topBarLeading) {
-                        projectFilter(model)
-                    }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { beginNewSession() } label: {
-                        Label("New chat", systemImage: "plus")
-                    }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    NavigationLink {
-                        BacklogView(initialProject: model?.selectedProject ?? "")
-                    } label: {
-                        Label("Backlog", systemImage: "checklist")
-                    }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    NavigationLink {
-                        WorkstreamsView(initialProject: model?.selectedProject ?? "")
-                    } label: {
-                        Label("Workstreams", systemImage: "arrow.triangle.branch")
-                    }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    NavigationLink {
-                        UsageView(initialProject: model?.selectedProject ?? "")
-                    } label: {
-                        Label("Usage", systemImage: "chart.bar")
-                    }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    if let client = app.client {
-                        NavigationLink {
-                            GlobalSettingsView(client: client)
-                        } label: {
-                            Label("Settings", systemImage: "gearshape")
-                        }
-                    }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Disconnect") { app.disconnect() }
-                }
-            }
-            .navigationDestination(item: $liveTarget) { target in
-                if let client = app.client {
-                    SessionView(
-                        client: client,
-                        project: target.project,
-                        sessionID: target.sessionID,
-                        live: target.live)
-                }
-            }
+        DrawerContainer(isOpen: $drawerOpen, edgeSwipeEnabled: path.isEmpty) {
+            drawer
+        } content: {
+            navigation
         }
         .confirmationDialog(
             "Start a new chat in…",
@@ -108,7 +54,7 @@ struct LandingView: View {
         ) {
             if let model {
                 ForEach(model.newSessionProjectChoices, id: \.self) { project in
-                    Button(project.isEmpty ? "Default" : project) {
+                    Button(project) {
                         newSessionProject = project
                         showNewSession = true
                     }
@@ -133,7 +79,7 @@ struct LandingView: View {
                         model?.selectedProject = project
                         Task { await model?.refresh() }
                     }
-                    liveTarget = LiveSessionTarget(sessionID: sessionID, project: project)
+                    path.append(.session(id: sessionID, project: project, live: true, title: ""))
                 }
             }
         }
@@ -141,7 +87,7 @@ struct LandingView: View {
             if let client = app.client {
                 AddProjectView(client: client) { project in
                     // Select and refresh so the new project shows up in the
-                    // filter (and every other picker's next load).
+                    // drawer (and every other picker's next load).
                     model?.selectedProject = project.name
                     Task { await model?.refresh() }
                 }
@@ -210,6 +156,108 @@ struct LandingView: View {
         }
     }
 
+    // MARK: - Shell
+
+    @ViewBuilder
+    private var drawer: some View {
+        if let model {
+            WorkspaceDrawer(
+                serverName: app.store.activeProfile?.name ?? "",
+                model: model,
+                onSelectProject: { project in
+                    // Filtering is client-side over the aggregate load, so this
+                    // is instant — no refetch, no spinner.
+                    model.selectedProject = project
+                    closeDrawer()
+                },
+                onOpen: { destination in
+                    closeDrawer()
+                    path.append(destination)
+                },
+                onAddProject: {
+                    closeDrawer()
+                    showAddProject = true
+                },
+                onRemoveProject: { project in
+                    closeDrawer()
+                    projectToRemove = project
+                },
+                onDisconnect: {
+                    closeDrawer()
+                    app.disconnect()
+                })
+        }
+    }
+
+    private var navigation: some View {
+        NavigationStack(path: $path) {
+            Group {
+                if let model {
+                    content(model)
+                } else {
+                    ProgressView()
+                }
+            }
+            .navigationTitle(model?.selectedProject ?? "Recent")
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        // The container owns the open/close animation.
+                        drawerOpen = true
+                    } label: {
+                        Label("Workspaces", systemImage: "line.3.horizontal")
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        // Mirror the drawer's loudest badge on the closed menu
+                        // button so a question in another project is visible
+                        // without opening anything.
+                        if (model?.totalActivity.needsAnswer ?? 0) > 0 {
+                            Circle()
+                                .fill(Color.orange)
+                                .frame(width: 8, height: 8)
+                                .offset(x: 3, y: -2)
+                        }
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { beginNewSession() } label: {
+                        Label("New chat", systemImage: "square.and.pencil")
+                    }
+                }
+            }
+            .navigationDestination(for: HomeDestination.self) { destination in
+                self.destination(destination)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func destination(_ destination: HomeDestination) -> some View {
+        // Defensive: a mid-session disconnect nils the client; RootView swaps to
+        // the connect screen, so these branches are effectively unreachable —
+        // but never force-unwrap in a lazily-built destination.
+        if let client = app.client {
+            switch destination {
+            case let .session(id, project, live, title):
+                SessionView(
+                    client: client, project: project, sessionID: id,
+                    live: live, title: title)
+            case let .backlog(project):
+                BacklogView(initialProject: project)
+            case let .workstreams(project):
+                WorkstreamsView(initialProject: project)
+            case let .usage(project):
+                UsageView(initialProject: project)
+            case .settings:
+                GlobalSettingsView(client: client)
+            }
+        }
+    }
+
+    private func closeDrawer() {
+        drawerOpen = false
+    }
+
     /// Start directly in a scoped project's composer, or require an explicit
     /// project choice from the daemon-wide Recent Sessions feed.
     private func beginNewSession() {
@@ -232,7 +280,9 @@ struct LandingView: View {
             do {
                 let sessionID = try await client.resumeSession(
                     project: project, sessionId: session.sessionID)
-                liveTarget = LiveSessionTarget(sessionID: sessionID, project: project)
+                path.append(.session(
+                    id: sessionID, project: project, live: true,
+                    title: SessionListModel.displayTitle(for: session)))
             } catch YccError.unauthorized {
                 app.handleUnauthorized()
             } catch let YccError.rpc(message) {
@@ -247,6 +297,8 @@ struct LandingView: View {
         }
     }
 
+    // MARK: - Session list
+
     @ViewBuilder
     private func content(_ model: SessionListModel) -> some View {
         if model.isLoading && model.sessions.isEmpty {
@@ -260,17 +312,29 @@ struct LandingView: View {
             }
         } else if model.sessions.isEmpty {
             refreshableUnavailable(model) {
-                ContentUnavailableView(
-                    "No sessions",
-                    systemImage: model.partialWarning == nil
-                        ? "bubble.left.and.bubble.right"
-                        : "exclamationmark.triangle",
-                    description: Text(model.partialWarning
-                        ?? "Sessions started on this daemon show up here."))
+                ContentUnavailableView {
+                    Label(
+                        emptyTitle(model),
+                        systemImage: model.partialWarning == nil
+                            ? "bubble.left.and.bubble.right"
+                            : "exclamationmark.triangle")
+                } description: {
+                    Text(model.partialWarning ?? "Start one with the compose button.")
+                } actions: {
+                    if model.partialWarning == nil {
+                        Button("New chat") { beginNewSession() }
+                            .buttonStyle(.borderedProminent)
+                    }
+                }
             }
         } else {
             sessionList(model)
         }
+    }
+
+    private func emptyTitle(_ model: SessionListModel) -> String {
+        guard let project = model.selectedProject else { return "No sessions yet" }
+        return "Nothing in \(project) yet"
     }
 
     /// Wraps an empty/error placeholder in a full-size scroll view so
@@ -299,19 +363,12 @@ struct LandingView: View {
             ForEach(model.sections) { section in
                 Section {
                     ForEach(section.sessions, id: \.sessionID) { session in
-                        NavigationLink {
-                            // Defensive: a mid-session disconnect nils the
-                            // client; RootView swaps to the connect screen, so
-                            // this branch is effectively unreachable — but never
-                            // force-unwrap in a lazily-built destination.
-                            if let client = app.client {
-                                SessionView(
-                                    client: client,
-                                    project: model.project(for: session),
-                                    sessionID: session.sessionID,
-                                    live: session.live)
-                            }
-                        } label: {
+                        NavigationLink(value: HomeDestination.session(
+                            id: session.sessionID,
+                            project: model.project(for: session),
+                            live: session.live,
+                            title: SessionListModel.displayTitle(for: session))
+                        ) {
                             SessionRow(
                                 session: session,
                                 project: model.project(for: session),
@@ -351,46 +408,8 @@ struct LandingView: View {
                 }
             }
         }
+        .listStyle(.insetGrouped)
         .refreshable { await model.refresh() }
-    }
-
-    private func projectFilter(_ model: SessionListModel) -> some View {
-        @Bindable var model = model
-        return Menu {
-            Picker("Project", selection: $model.selectedProject) {
-                Text("All projects").tag(String?.none)
-                Text("Default").tag(String?.some(""))
-                ForEach(model.projects, id: \.name) { project in
-                    Text(project.name).tag(String?.some(project.name))
-                }
-            }
-            Divider()
-            Button {
-                showAddProject = true
-            } label: {
-                Label("Add project…", systemImage: "folder.badge.plus")
-            }
-            if !model.projects.isEmpty {
-                Menu {
-                    ForEach(model.projects, id: \.name) { project in
-                        Button(role: .destructive) {
-                            projectToRemove = project
-                        } label: {
-                            Label(project.name, systemImage: "minus.circle")
-                        }
-                    }
-                } label: {
-                    Label("Remove project…", systemImage: "folder.badge.minus")
-                }
-            }
-        } label: {
-            Label(
-                model.selectedProject.map { $0.isEmpty ? "Default" : $0 } ?? "All projects",
-                systemImage: "line.3.horizontal.decrease.circle")
-        }
-        .onChange(of: model.selectedProject) { _, _ in
-            Task { await model.refresh() }
-        }
     }
 
     private func removeProject(_ project: Ycc_V1_ProjectInfo) {
@@ -416,7 +435,7 @@ struct LandingView: View {
 
     /// Consume a parked `ycc://` deep link once the landing view is loaded:
     /// a session link resolves to a live/persisted open (or a graceful alert on
-    /// an unknown id); a project link sets the list filter (or alerts on an
+    /// an unknown id); a project link sets the drawer scope (or alerts on an
     /// unknown project).
     private func consumePendingDeepLink() async {
         guard let link = app.pendingDeepLink else { return }
@@ -433,27 +452,28 @@ struct LandingView: View {
     }
 
     /// Resolve a session id to the right project + live flag and navigate to it.
-    /// Checks the already-loaded list first, then scans the default workspace and
-    /// every registered project. An id found nowhere yields a graceful alert.
+    /// Checks the already-loaded aggregate first, then scans every registered
+    /// project. An id found nowhere yields a graceful alert.
     private func openSession(_ sessionID: String) async {
         guard let client = app.client else { return }
-        if let match = model?.sessions.first(where: { $0.sessionID == sessionID }) {
-            liveTarget = LiveSessionTarget(
-                sessionID: sessionID,
+        if let match = model?.allSessions.first(where: { $0.sessionID == sessionID }) {
+            path.append(.session(
+                id: sessionID,
                 project: model?.project(for: match) ?? "",
-                live: match.live)
+                live: match.live,
+                title: SessionListModel.displayTitle(for: match)))
             return
         }
         do {
             var scanned = Set<String>()
-            var projectsToScan = [""]
-            projectsToScan += (model?.projects ?? []).map(\.name)
+            let projectsToScan = (model?.projects ?? []).map(\.name)
             for project in projectsToScan {
                 guard scanned.insert(project).inserted else { continue }
                 let sessions = try await client.listSessionHistory(project: project)
                 if let match = sessions.first(where: { $0.sessionID == sessionID }) {
-                    liveTarget = LiveSessionTarget(
-                        sessionID: sessionID, project: project, live: match.live)
+                    path.append(.session(
+                        id: sessionID, project: project, live: match.live,
+                        title: SessionListModel.displayTitle(for: match)))
                     return
                 }
             }
@@ -467,30 +487,15 @@ struct LandingView: View {
         }
     }
 
-    /// Apply a project deep link as the list filter, if the project is
-    /// registered (the default workspace `""` is always valid).
+    /// Apply a project deep link as the drawer scope if the project is registered.
     private func openProject(_ name: String) async {
         guard let model else { return }
-        guard name.isEmpty || model.projects.contains(where: { $0.name == name }) else {
+        guard model.projects.contains(where: { $0.name == name }) else {
             deepLinkError = "Project “\(name)” is not registered on this server."
             return
         }
         model.selectedProject = name
-        await model.refresh()
     }
-}
-
-/// A session to push into a live streaming view, carrying the project needed to
-/// resolve it on a multi-project daemon. `Identifiable` drives
-/// `navigationDestination(item:)`.
-private struct LiveSessionTarget: Identifiable, Hashable {
-    let sessionID: String
-    let project: String
-    /// Whether to open a live-streaming view (`Subscribe`) vs a replayed
-    /// transcript (`GetSessionTranscript`). Live open only needs the session id;
-    /// a persisted open needs the resolved project.
-    var live: Bool = true
-    var id: String { sessionID }
 }
 
 /// A single session row: title, status badge, live marker, needs-answer marker,
@@ -522,7 +527,7 @@ private struct SessionRow: View {
             HStack(spacing: 8) {
                 StatusBadge(status: session.status)
                 if showsProject {
-                    Label(project.isEmpty ? "Default" : project, systemImage: "folder")
+                    Label(project, systemImage: "folder")
                         .lineLimit(1)
                 }
                 if session.turns > 0 {

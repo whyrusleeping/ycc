@@ -50,6 +50,13 @@ public final class SessionViewModel {
     public private(set) var projection = SessionProjection()
     public private(set) var state: ConnectionState = .idle
 
+    /// True from the moment an interaction starts until the first visible agent
+    /// activity (streamed text, a model/tool/thinking row, question, idle, or
+    /// error) arrives. This is deliberately UI-local rather than a projected
+    /// lifecycle fact: it bridges the otherwise blank interval between submitting
+    /// input and receiving the daemon's first response event.
+    public private(set) var isAwaitingAgentActivity: Bool
+
     /// A short-lived, UI-facing error message to surface as a toast after a
     /// failed interactive action (send/answer/interrupt/resume/stop). Set on
     /// failure; the view clears it once shown. A `failed_precondition` on an
@@ -104,6 +111,7 @@ public final class SessionViewModel {
         self.sessionID = sessionID
         self.mode = mode
         self.backoff = backoff
+        self.isAwaitingAgentActivity = false
     }
 
     /// Begin loading. Idempotent: a second call while already running is ignored.
@@ -113,6 +121,11 @@ public final class SessionViewModel {
         case .persisted:
             loadTranscript()
         case .live:
+            // StartSession returns only after accepting the opening prompt, so a
+            // newly-opened live view may already be doing work before its first
+            // event reaches Subscribe. Replay immediately retires this hint when
+            // the transcript already contains meaningful agent activity.
+            isAwaitingAgentActivity = true
             startLiveLoop()
         }
     }
@@ -142,8 +155,7 @@ public final class SessionViewModel {
                 let events = try await self.source.getSessionTranscript(
                     project: self.project, sessionId: self.sessionID)
                 if Task.isCancelled { return }
-                self.projection.apply(events)
-                if !events.isEmpty { self.transcriptRevision &+= 1 }
+                self.applyToProjection(events)
                 self.state = .finished
             } catch is CancellationError {
                 // Cancelled during load — leave state as-is.
@@ -172,8 +184,7 @@ public final class SessionViewModel {
                 if let events = try? await self.source.getSessionTranscript(
                     project: self.project, sessionId: self.sessionID) {
                     if Task.isCancelled { return }
-                    self.projection.apply(events)
-                    if !events.isEmpty { self.transcriptRevision &+= 1 }
+                    self.applyToProjection(events)
                 }
             }
             while !Task.isCancelled {
@@ -190,8 +201,7 @@ public final class SessionViewModel {
                         sessionId: self.sessionID, fromSeq: fromSeq)
                     for try await event in stream {
                         if Task.isCancelled { break }
-                        self.projection.apply(event)
-                        self.transcriptRevision &+= 1
+                        self.applyToProjection(event)
                     }
                     // Clean close: the server ended the stream (session gone /
                     // stopped). Don't reconnect.
@@ -231,9 +241,18 @@ public final class SessionViewModel {
         if mode == .persisted {
             guard await reopenForInteraction() else { return }
         }
-        await perform("send") { actions in
+        let startedAwaitingActivity = phase != .paused && !isAwaitingAgentActivity
+        if startedAwaitingActivity {
+            isAwaitingAgentActivity = true
+            transcriptRevision &+= 1
+        }
+        let succeeded = await perform("send") { actions in
             try await actions.sendInput(
                 sessionId: self.sessionID, text: trimmed, images: images)
+        }
+        if !succeeded, startedAwaitingActivity, isAwaitingAgentActivity {
+            isAwaitingAgentActivity = false
+            transcriptRevision &+= 1
         }
     }
 
@@ -320,18 +339,52 @@ public final class SessionViewModel {
     /// short-lived ``actionError`` toast. `failed_precondition` (e.g. a question
     /// answered from another client) must not crash — it degrades to a mild
     /// toast and relies on projection state (the stream) to dismiss the sheet.
+    @discardableResult
     private func perform(
         _ label: String,
         _ body: @escaping (SessionActionSource) async throws -> Void
-    ) async {
+    ) async -> Bool {
         guard let actions else {
             actionError = "\(label) unavailable"
-            return
+            return false
         }
         do {
             try await body(actions)
+            return true
         } catch {
             actionError = Self.actionMessage(label, error)
+            return false
+        }
+    }
+
+    /// Apply stream/replay events and retire the optimistic working indicator as
+    /// soon as the agent produces something user-visible. A user_input echo alone
+    /// does not retire it — that only confirms receipt of the submitted message.
+    private func applyToProjection(_ event: Ycc_V1_Event) {
+        projection.apply(event)
+        transcriptRevision &+= 1
+        if isAwaitingAgentActivity, Self.isAgentActivity(event) {
+            isAwaitingAgentActivity = false
+        }
+    }
+
+    private func applyToProjection(_ events: [Ycc_V1_Event]) {
+        guard !events.isEmpty else { return }
+        projection.apply(events)
+        transcriptRevision &+= 1
+        if isAwaitingAgentActivity, events.contains(where: Self.isAgentActivity) {
+            isAwaitingAgentActivity = false
+        }
+    }
+
+    private static func isAgentActivity(_ event: Ycc_V1_Event) -> Bool {
+        switch event.type {
+        case "turn_delta", "model_turn", "thinking", "tool_call", "tool_result",
+             "question_asked", "session_idle", "session_error", "session_stopped",
+             "session_ended", "interrupted":
+            return true
+        default:
+            return false
         }
     }
 

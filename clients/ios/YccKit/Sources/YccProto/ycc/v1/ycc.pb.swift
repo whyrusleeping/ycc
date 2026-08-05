@@ -57,7 +57,7 @@ public nonisolated struct Ycc_V1_StartSessionRequest: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// workspace dir; empty => daemon default
+  /// workspace dir; empty => resolve project
   public var workspace: String = String()
 
   /// e.g. "work"; M1 runs a single worker agent
@@ -69,6 +69,13 @@ public nonisolated struct Ycc_V1_StartSessionRequest: Sendable {
   /// project is an optional registered project name; when set it resolves to that
   /// project's workspace (overriding `workspace`). Spec §3.1.
   public var project: String = String()
+
+  /// coordinator_model optionally overrides the coordinator's logical model
+  /// (a name from ListModels) FOR THIS SESSION ONLY — the persisted per-role
+  /// defaults in ycc.toml are untouched, and implementer/reviewers keep them.
+  /// Empty means "use the configured default". Unknown name => InvalidArgument.
+  /// Spec §13, §18.2.
+  public var coordinatorModel: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -605,7 +612,7 @@ public nonisolated struct Ycc_V1_ListSessionHistoryRequest: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// optional registered project; empty => daemon default workspace
+  /// registered project; empty allowed only when exactly one exists
   public var project: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -674,7 +681,7 @@ public nonisolated struct Ycc_V1_GetSessionTranscriptRequest: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// optional registered project; empty => daemon default workspace
+  /// registered project; empty allowed only when exactly one exists
   public var project: String = String()
 
   public var sessionID: String = String()
@@ -705,7 +712,7 @@ public nonisolated struct Ycc_V1_GetCommitDiffRequest: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// optional registered project; empty => daemon default workspace
+  /// registered project; empty allowed only when exactly one exists
   public var project: String = String()
 
   /// bare hex commit sha (from a commit_made event)
@@ -1131,7 +1138,7 @@ public nonisolated struct Ycc_V1_ListBacklogRequest: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// optional registered project; empty => daemon default workspace
+  /// registered project; empty allowed only when exactly one exists
   public var project: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -1182,7 +1189,7 @@ public nonisolated struct Ycc_V1_GetTaskRequest: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// optional registered project; empty => daemon default workspace
+  /// registered project; empty allowed only when exactly one exists
   public var project: String = String()
 
   public var id: String = String()
@@ -1258,7 +1265,7 @@ public nonisolated struct Ycc_V1_UpdateTaskRequest: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// optional registered project; empty => daemon default workspace
+  /// registered project; empty allowed only when exactly one exists
   public var project: String = String()
 
   public var id: String = String()
@@ -1331,7 +1338,7 @@ public nonisolated struct Ycc_V1_CreateTaskRequest: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// optional registered project; empty => daemon default workspace
+  /// registered project; empty allowed only when exactly one exists
   public var project: String = String()
 
   /// required
@@ -1459,7 +1466,7 @@ public nonisolated struct Ycc_V1_CaptureBacklogItemRequest: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// optional registered project; empty => daemon default workspace
+  /// registered project; empty allowed only when exactly one exists
   public var project: String = String()
 
   /// the user's natural-language description
@@ -1485,7 +1492,7 @@ public nonisolated struct Ycc_V1_GetUsageRequest: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// optional registered project; empty => daemon default workspace
+  /// registered project; empty allowed only when exactly one exists
   public var project: String = String()
 
   /// task | model | session | agent | day (default: task)
@@ -2213,7 +2220,7 @@ nonisolated extension Ycc_V1_Event: SwiftProtobuf.Message, SwiftProtobuf._Messag
 
 nonisolated extension Ycc_V1_StartSessionRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".StartSessionRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}workspace\0\u{1}mode\0\u{2}\u{2}prompt\0\u{1}project\0\u{c}\u{3}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}workspace\0\u{1}mode\0\u{2}\u{2}prompt\0\u{1}project\0\u{3}coordinator_model\0\u{c}\u{3}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2225,6 +2232,7 @@ nonisolated extension Ycc_V1_StartSessionRequest: SwiftProtobuf.Message, SwiftPr
       case 2: try { try decoder.decodeSingularStringField(value: &self.mode) }()
       case 4: try { try decoder.decodeSingularStringField(value: &self.prompt) }()
       case 5: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.coordinatorModel) }()
       default: break
       }
     }
@@ -2243,6 +2251,9 @@ nonisolated extension Ycc_V1_StartSessionRequest: SwiftProtobuf.Message, SwiftPr
     if !self.project.isEmpty {
       try visitor.visitSingularStringField(value: self.project, fieldNumber: 5)
     }
+    if !self.coordinatorModel.isEmpty {
+      try visitor.visitSingularStringField(value: self.coordinatorModel, fieldNumber: 6)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -2251,6 +2262,7 @@ nonisolated extension Ycc_V1_StartSessionRequest: SwiftProtobuf.Message, SwiftPr
     if lhs.mode != rhs.mode {return false}
     if lhs.prompt != rhs.prompt {return false}
     if lhs.project != rhs.project {return false}
+    if lhs.coordinatorModel != rhs.coordinatorModel {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

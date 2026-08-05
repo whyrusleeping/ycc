@@ -214,14 +214,13 @@ struct UsageView: View {
         @Bindable var model = model
         return Menu {
             Picker("Project", selection: $model.selectedProject) {
-                Text("Default").tag("")
                 ForEach(model.projects, id: \.name) { project in
                     Text(project.name).tag(project.name)
                 }
             }
         } label: {
             Label(
-                model.selectedProject.isEmpty ? "Default" : model.selectedProject,
+                model.selectedProject.isEmpty ? "Choose project" : model.selectedProject,
                 systemImage: "line.3.horizontal.decrease.circle")
         }
         .onChange(of: model.selectedProject) { _, _ in

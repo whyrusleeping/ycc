@@ -25,7 +25,7 @@ func (a *app) exportCommand() *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "out", Usage: "write markdown to `FILE` (default: stdout)"},
 			&cli.BoolFlag{Name: "full", Usage: "include tool call argument/result payloads"},
-			&cli.StringFlag{Name: "project", Usage: "registered project `name` (default: daemon default workspace)"},
+			&cli.StringFlag{Name: "project", Usage: "registered project `name` (required when multiple exist)"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			id := cmd.Args().First()

@@ -36,9 +36,9 @@ specially, or replacing git. We lean on git for history and diffs.
 
 - **Workspace** — a git repository on the workspace machine that `ycc` operates on.
   Holds `spec.md`, the `backlog/`, and the code.
-- **Project** — a named workspace a persistent daemon manages. A persistent daemon
-  holds a registry of projects (name → path) so a client can list them and pick one to
-  work in; a one-shot daemon has exactly one implicit project — the current directory.
+- **Project** — a named workspace a daemon manages. Every workspace is a normal,
+  named project in the daemon's registry (name → path), including a one-shot daemon's
+  sole current-directory project; there is no separate or synthetic “Default” project.
 - **Session** — one continuous unit of interaction, identified by an id, backed by an
   **append-only event log**. A session has a *mode*.
 - **Event log** — the source of truth for a session. Every model turn, tool call,
@@ -99,8 +99,9 @@ Persistence is **opt-in**. The daemon runs in one of two lifecycles:
 - **One-shot (the default `ycc`).** When no daemon is requested and none is already
   running locally, `ycc` starts the daemon **in-process** on an ephemeral loopback
   address and ties it to the client's lifetime — closing `ycc` tears it down. The
-  current directory is the single project and the client skips the project picker.
-  Closing the client therefore ends any in-flight agent work; that is the trade.
+  current directory is registered by basename as the sole project, so the client can
+  skip the picker without inventing a “Default” project. Closing the client therefore
+  ends any in-flight agent work; that is the trade.
 - **Persistent (`ycc daemon`).** An explicitly-started, long-lived, **multi-project**
   daemon at a well-known local address. It survives client exits, so unattended
   sessions keep running. `ycc --background` is a convenience that spawns one (detached)
@@ -120,9 +121,12 @@ picker.
 A persistent daemon manages **multiple projects**. The registry (name → path) is durable
 state in the daemon's state dir (e.g. `~/.local/state/ycc/projects.json`). Projects are
 registered explicitly (`ycc project add <path>` / `AddProject`) **and** auto-registered
-when a session starts in a not-yet-known workspace. Clients `ListProjects`, pick one,
-then drive the existing mode/session flow scoped to that project. Sessions and their
-event logs still live under each project's own `<workspace>/.ycc/` (§5.1, §14).
+when a session starts in a not-yet-known workspace; the daemon's startup `--workspace`
+is also registered by basename as an ordinary project, not retained as privileged
+fallback state. Clients `ListProjects`, pick one, then drive the existing mode/session
+flow scoped to that project. An omitted project is accepted only when the registry has
+exactly one entry; otherwise it is an explicit selection error. Sessions and their event
+logs still live under each project's own `<workspace>/.ycc/` (§5.1, §14).
 
 This supersedes the earlier "always auto-start a detached daemon that persists after
 exit" decision: that default orphaned daemons serving a stale binary and capturing a
@@ -172,7 +176,7 @@ Event `type`s (initial set):
 
 | type | meaning |
 |------|---------|
-| `session_started` | mode, workspace |
+| `session_started` | mode, workspace, coordinator model (so a resume replays on the model the session was started with) |
 | `mode_changed` | transitioned modes within a session |
 | `model_turn` | a model produced a message (text + any tool calls) |
 | `tool_call` / `tool_result` | a tool was invoked / returned |
@@ -469,9 +473,12 @@ falling into non-retryable `unknown`, so the loop retries them instead of strand
 turn. Retry decisions, context-window detection
 (`IsContextLengthError`), and error events all use this one taxonomy.
 
-**Retry lives in the loop** (`Loop.runTurn`, policy `Loop.Retry`; zero value = 8 total
-attempts, exponential backoff 500ms→30s with equal jitter). The loop is where the run
-ctx (a stopped session cancels a pending backoff instead of sleeping it out), the
+**Retry lives in the loop** (`Loop.runTurn`, policy `Loop.Retry`; zero value = up to 8
+total attempts, exponential backoff 500ms→30s with equal jitter). Under the default policy,
+HTTP 429 rate limits stop after 3 total attempts: account allowance windows can last hours,
+so eight rapid attempts are usually noise rather than recovery. An explicit `[retry]`
+`max_attempts` remains authoritative. The loop is where the run ctx (a stopped session
+cancels a pending backoff instead of sleeping it out), the
 emitter (each backoff broadcasts a transient `retry` event, §5), and the classification
 meet. Non-retryable failures surface immediately; retries exhausted surface the
 original error. (Layering note: gollama's transport can also retry 429/503/529
@@ -499,6 +506,23 @@ a bare **`Resume`** (§18.7), which re-runs the parked turn on the existing hist
 no injected user message. This is what lets a remote client (TUI/iOS) offer a plain
 "Retry" affordance, gated on the `session_error` `retryable` flag, rather than making the
 user send a throwaway message.
+
+**Provider safety refusals (`stop_reason: "refusal"`).** Anthropic's streaming
+classifier can end a turn with `stop_reason "refusal"` inside a healthy HTTP 200 —
+no usable content, no tool call — and refusals are **sticky** by documented provider
+semantics: continuing the conversation without resetting context keeps being refused,
+and retrying the same model usually refuses again (the recommended recovery is a
+different model). ycc therefore treats a no-tool-call refusal turn specially: the
+engine keeps it **out of the loop's history** (it is still recorded as a `model_turn`
+event, with its `stop_reason`, for the transcript) and returns `Result.Refused`;
+`ReplayHistory` skips such turns the same way, so a reopened session re-runs the
+pending turn instead of replaying a poisoned placeholder. The session layer parks in
+the error state with a `session_error` of `kind: "refusal"` and **gates `SendInput`**
+(rejected with guidance; the RPC maps it to failed-precondition) until a retry: a
+bare `Resume` re-runs the pending turn as-is, and a coordinator model change via
+`SetRoleConfig` clears the gate and retries automatically. A refusal that arrives with
+partial visible text (the classifier cut a turn off mid-output) is handled the same
+way — the partial text becomes the report but never enters history.
 
 ### 7.3 Subagents
 
@@ -844,6 +868,14 @@ Notable message shapes for the settings + structured-question work:
   `AddProjectResponse { ProjectInfo project }`; `RemoveProjectRequest { string name }` (§3.1).
   `StartSessionRequest` gains an optional `project` (name) that resolves to a workspace — an
   unknown workspace is auto-registered. `ListSessionsRequest` may carry a `project` filter.
+- `StartSessionRequest` also takes an optional `coordinator_model` (a logical model name from
+  `ListModels`): a **per-session** coordinator override for the session being started. It never
+  touches the persisted role defaults (that is `SetRoleConfig`'s job) and leaves
+  implementer/reviewers on the configured models; an unconfigured name is `invalid_argument`.
+  The chosen model is recorded in `session_started`, so `ResumeSession` replays the session on
+  it (falling back to the default if it was removed since). Clients surface it as an optional
+  model picker on the new-session composer (docs/design/ios-client.md §6; the TUI keeps using
+  the settings overlay, §18.2).
 - `AnswerQuestionRequest { session_id; oneof answer { string text; int32 option_index } }`
   — answer a structured question by chosen option or free text. `question_asked` events
   gain a `repeated string options` field so the client can render the picker.
@@ -952,15 +984,25 @@ resolved from `key_env` (environment first, then the machine-local secrets store
 backends additionally support **subscription auth** with `auth = "oauth"` on the
 `[models.X]` block (`key_env` is then ignored; both default to **unpriced**, §20.4):
 
-- **anthropic — Claude Pro/Max.** `ycc login anthropic` runs an authorization-code +
-  PKCE flow (browser login, paste back the `code#state` the page shows) and persists
-  the access/refresh pair in the secrets store under `ANTHROPIC_OAUTH`. At `Build`
-  time the registry sends a live access token — auto-refreshing and re-persisting an
-  expired one — as an `Authorization: Bearer` header plus the
-  `anthropic-beta: oauth-2025-04-20` opt-in header (never `x-api-key`), on the same
-  `/v1/messages` transport as API-key auth. A long-lived OAuth token minted elsewhere
-  (e.g. `claude setup-token`) can instead be stored under a normal `key_env`: the
-  registry auto-detects the `sk-ant-oat` prefix and applies the same treatment.
+- **anthropic — Claude Pro/Max.** `ycc login anthropic` runs the current Claude Code
+  authorization-code + PKCE flow (browser login through `claude.com/cai/oauth/authorize`,
+  paste back the `code#state` the page shows) with the subscription-inference/session
+  scopes, and persists the versioned access/refresh pair in the secrets store under
+  `ANTHROPIC_OAUTH`. Credentials from a retired flow fail locally with a one-time re-login
+  instruction rather than reaching inference and looking like an exhausted allowance. At
+  `Build` time the registry sends a live access token — auto-refreshing and re-persisting an
+  expired one — as `Authorization: Bearer`, with
+  `anthropic-beta: claude-code-20250219,oauth-2025-04-20` and `x-app: cli` (never
+  `x-api-key`), on the same `/v1/messages` transport as API-key auth. Each OAuth turn also
+  prepends Anthropic's reserved subscription system blocks, in order:
+  `x-anthropic-billing-header: cc_version=0.0.0; cc_entrypoint=ycc;` (a truthful ycc
+  entrypoint, not a spoofed Claude Code version) and
+  `You are a Claude agent, built on Anthropic's Claude Agent SDK.`; ycc's complete behavioral
+  system prompt remains a separate following block, equivalent to Claude Code's
+  `--system-prompt` behavior. API-key turns are unchanged. A long-lived OAuth
+  token minted elsewhere (e.g. `claude setup-token`) can instead be stored under a normal
+  `key_env`: the registry auto-detects the `sk-ant-oat` prefix and applies the same request
+  headers without imposing ycc's stored-credential flow-version check.
 - **openai — ChatGPT Plus/Pro.** `ycc login openai` runs the Codex CLI's OAuth flow
   (PKCE against auth.openai.com with a local callback server on `localhost:1455`, the
   redirect the public client id is registered with; when the browser runs on another
@@ -1085,7 +1127,8 @@ or a `reviews.default` naming no tier are rejected); the built-ins are always va
   repo proper (committed with code).
 - A persistent daemon's **project registry** (name → path) is durable state in the
   daemon's state dir (`~/.local/state/ycc/projects.json`), separate from each project's
-  per-workspace `.ycc/`. One-shot daemons keep no registry (one implicit project = cwd).
+  per-workspace `.ycc/`. A one-shot daemon uses the same model with an in-memory registry
+  containing one ordinary named project (cwd); there is no implicit “Default” workspace.
 - **Remote access (M5) — direct dial, no log replication.** *Decided:* the earlier
   daemon-to-daemon push/pull replication idea is **dropped**. Remote observation and
   prodding happen by dialing the workspace daemon's Connect endpoint directly — another
@@ -1165,8 +1208,8 @@ ycc adopts **git worktrees** (design spike task 0078; full rationale/alternative
 
 **Single binary.** There is one `ycc` binary that is client, TUI, and daemon.
 `ycc` (no subcommand) attaches to a persistent local daemon if one is already running,
-otherwise launches the TUI over an **in-process, ephemeral** daemon bound to the current
-directory and torn down when `ycc` exits (§3.1). `ycc daemon` runs an explicit,
+otherwise launches the TUI over an **in-process, ephemeral** daemon whose sole named
+project is the current directory and which is torn down when `ycc` exits (§3.1). `ycc daemon` runs an explicit,
 persistent, **multi-project** service (for the workspace machine / remote); `ycc -addr
 <url>` attaches to a remote one; `ycc --background` spawns a detached persistent daemon
 and attaches. Persistence is opt-in — the default no longer leaves a daemon running
@@ -1310,7 +1353,9 @@ Overlay contents:
   seeded with the backend's curated defaults (opus/sonnet/fable for anthropic) and can be
   populated from the live backend with **`ctrl+f`** (`DiscoverModels`, §13) — the
   OpenAI-compatible `/models`, Anthropic `/v1/models`, or Ollama `/api/tags` endpoint —
-  falling back to curated defaults when discovery is unavailable. **Edit** operates on a
+  falling back to curated defaults when discovery is unavailable. A blank Anthropic base
+  URL means the provider default, `https://api.anthropic.com`, including during discovery;
+  an explicit URL continues to select a proxy or staging endpoint. **Edit** operates on a
   single model id; **duplicate** clones a connection and changes only the name + model id.
   This reuses the first-run wizard's provider form (task 0023). Edits issue
   `UpsertModel` / `RemoveModel` (§12); the daemon updates the live config (so the next

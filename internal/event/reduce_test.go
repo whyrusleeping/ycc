@@ -60,3 +60,31 @@ func TestReduceWorkstreamLifecycle(t *testing.T) {
 		t.Fatalf("after discarded: state=%q conflicts=%v", p.WorkstreamState, p.WorkstreamConflicts)
 	}
 }
+
+// The coordinator model folds from session_started (which records the model the
+// session was started on, including a per-session override) and is updated by a
+// later role_config_changed, so a resume replays on the right model.
+func TestReduceCoordinatorModel(t *testing.T) {
+	p := Reduce([]Event{
+		{Seq: 1, Type: SessionStarted, Data: map[string]any{"mode": "chat", "coordinator": "gpt"}},
+		{Seq: 2, Type: ModelTurn},
+	})
+	if p.Coordinator != "gpt" {
+		t.Fatalf("Coordinator = %q, want gpt", p.Coordinator)
+	}
+
+	p = Reduce([]Event{
+		{Seq: 1, Type: SessionStarted, Data: map[string]any{"mode": "chat", "coordinator": "gpt"}},
+		{Seq: 2, Type: RoleConfigChanged, Data: map[string]any{"coordinator": "claude", "implementer": "claude"}},
+	})
+	if p.Coordinator != "claude" {
+		t.Fatalf("Coordinator after role change = %q, want claude", p.Coordinator)
+	}
+
+	// Older logs without the field simply leave it empty (caller falls back to
+	// the configured default).
+	p = Reduce([]Event{{Seq: 1, Type: SessionStarted, Data: map[string]any{"mode": "work"}}})
+	if p.Coordinator != "" {
+		t.Fatalf("Coordinator = %q, want empty for a legacy log", p.Coordinator)
+	}
+}

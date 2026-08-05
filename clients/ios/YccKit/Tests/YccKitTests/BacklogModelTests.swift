@@ -11,11 +11,13 @@ private final class MockBacklogSource: BacklogSource, @unchecked Sendable {
     var projects: [Ycc_V1_ProjectInfo] = []
     var listError: Error?
     var createError: Error?
+    var updateError: Error?
     /// When set, replaces `tasks` on the next successful create (simulates the
     /// new row appearing after the create's implicit refresh).
     var tasksAfterCreate: [Ycc_V1_BacklogTaskSummary]?
 
     private(set) var createArgs: (project: String, title: String, body: String, priority: Int)?
+    private(set) var updateArgs: (project: String, id: String, status: String)?
     private(set) var listCount = 0
 
     func listBacklog(project: String) async throws -> [Ycc_V1_BacklogTaskSummary] {
@@ -38,6 +40,23 @@ private final class MockBacklogSource: BacklogSource, @unchecked Sendable {
         detail.id = "0099"
         detail.title = title
         detail.status = "todo"
+        return detail
+    }
+
+    func updateTaskStatus(
+        project: String, id: String, status: String
+    ) async throws -> Ycc_V1_TaskDetail {
+        updateArgs = (project, id, status)
+        if let updateError { throw updateError }
+        // Reflect the change in the list, as the daemon would on the next load.
+        if let index = tasks.firstIndex(where: { $0.id == id }) {
+            tasks[index].status = status
+        }
+        var detail = Ycc_V1_TaskDetail()
+        detail.id = id
+        detail.title = "Task \(id)"
+        detail.status = status
+        detail.priority = 3
         return detail
     }
 }
@@ -205,6 +224,77 @@ final class BacklogModelTests: XCTestCase {
         source.createError = YccError.unauthorized
         let model = BacklogModel(source: source)
         let ok = await model.create(title: "x", body: "")
+        XCTAssertFalse(ok)
+        XCTAssertTrue(model.unauthorized)
+    }
+
+    // MARK: - Status change
+
+    func testSetStatusSendsArgsAndMovesRow() async {
+        let source = MockBacklogSource()
+        source.tasks = [summary("0001", status: "todo")]
+        let model = BacklogModel(source: source, selectedProject: "proj")
+        await model.refresh()
+
+        let ok = await model.setStatus(taskID: "0001", to: .done)
+
+        XCTAssertTrue(ok)
+        XCTAssertEqual(source.updateArgs?.project, "proj")
+        XCTAssertEqual(source.updateArgs?.id, "0001")
+        XCTAssertEqual(source.updateArgs?.status, "done")
+        XCTAssertEqual(model.sections.map(\.status), [.done])
+        XCTAssertNil(model.updateError)
+        XCTAssertNil(model.updatingTaskID)
+    }
+
+    func testSetStatusNoOpWhenUnchanged() async {
+        let source = MockBacklogSource()
+        source.tasks = [summary("0001", status: "todo")]
+        let model = BacklogModel(source: source)
+        await model.refresh()
+
+        let ok = await model.setStatus(taskID: "0001", to: .todo)
+
+        XCTAssertTrue(ok)
+        XCTAssertNil(source.updateArgs)
+    }
+
+    func testSetStatusRejectsUnknownWithoutRoundTrip() async {
+        let source = MockBacklogSource()
+        source.tasks = [summary("0001", status: "todo")]
+        let model = BacklogModel(source: source)
+        await model.refresh()
+
+        let ok = await model.setStatus(taskID: "0001", to: .unknown)
+
+        XCTAssertFalse(ok)
+        XCTAssertNil(source.updateArgs)
+    }
+
+    func testSetStatusSurfacesError() async {
+        let source = MockBacklogSource()
+        source.tasks = [summary("0001", status: "todo")]
+        source.updateError = YccError.rpc(message: "nope")
+        let model = BacklogModel(source: source)
+        await model.refresh()
+
+        let ok = await model.setStatus(taskID: "0001", to: .done)
+
+        XCTAssertFalse(ok)
+        XCTAssertEqual(model.updateError, "nope")
+        // The row is untouched on failure.
+        XCTAssertEqual(model.tasks.first?.status, "todo")
+    }
+
+    func testSetStatusSurfacesUnauthorized() async {
+        let source = MockBacklogSource()
+        source.tasks = [summary("0001", status: "todo")]
+        source.updateError = YccError.unauthorized
+        let model = BacklogModel(source: source)
+        await model.refresh()
+
+        let ok = await model.setStatus(taskID: "0001", to: .done)
+
         XCTAssertFalse(ok)
         XCTAssertTrue(model.unauthorized)
     }

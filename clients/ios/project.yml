@@ -32,6 +32,11 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.ycc.Ycc
+        # App icon + tint come from App/Assets.xcassets. XcodeGen does not set
+        # these the way a template-generated Xcode project does, so without them
+        # the app ships with the generic white icon and the stock blue tint.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         # iPhone-only (1); no iPad/universal layouts (design §2 non-goals).
         TARGETED_DEVICE_FAMILY: 1
         # The app MUST be signed even for the simulator: an unsigned app has no

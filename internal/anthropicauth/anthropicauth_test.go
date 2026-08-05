@@ -87,7 +87,7 @@ func TestExchangeAndRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if creds.AccessToken != "sk-ant-oat01-access-1" || creds.RefreshToken != "rt-1" {
+	if creds.AccessToken != "sk-ant-oat01-access-1" || creds.RefreshToken != "rt-1" || creds.FlowVersion != FlowVersion {
 		t.Fatalf("unexpected creds: %+v", creds)
 	}
 	if creds.Expired(time.Now()) {
@@ -108,6 +108,9 @@ func TestExchangeAndRefresh(t *testing.T) {
 	if fresh.RefreshToken != "rt-1" {
 		t.Fatalf("refresh token not carried over: %q", fresh.RefreshToken)
 	}
+	if fresh.FlowVersion != FlowVersion {
+		t.Fatalf("refresh flow version = %d, want %d", fresh.FlowVersion, FlowVersion)
+	}
 }
 
 func TestAccessTokenRefreshesAndPersists(t *testing.T) {
@@ -123,7 +126,7 @@ func TestAccessTokenRefreshesAndPersists(t *testing.T) {
 	defer func() { TokenEndpoint = old }()
 
 	// Expired stored creds -> AccessToken must refresh and persist.
-	if err := Save(&Credentials{AccessToken: "stale", RefreshToken: "rt-1", ExpiresAt: time.Now().Add(-time.Hour).Unix()}); err != nil {
+	if err := Save(&Credentials{AccessToken: "stale", RefreshToken: "rt-1", ExpiresAt: time.Now().Add(-time.Hour).Unix(), FlowVersion: FlowVersion}); err != nil {
 		t.Fatal(err)
 	}
 	tok, err := AccessToken(context.Background())
@@ -139,7 +142,7 @@ func TestAccessTokenRefreshesAndPersists(t *testing.T) {
 	}
 
 	// Valid creds -> returned as-is, no endpoint call needed.
-	if err := Save(&Credentials{AccessToken: "live", RefreshToken: "rt", ExpiresAt: time.Now().Add(time.Hour).Unix()}); err != nil {
+	if err := Save(&Credentials{AccessToken: "live", RefreshToken: "rt", ExpiresAt: time.Now().Add(time.Hour).Unix(), FlowVersion: FlowVersion}); err != nil {
 		t.Fatal(err)
 	}
 	TokenEndpoint = "http://127.0.0.1:0" // would fail if contacted
@@ -153,6 +156,15 @@ func TestAccessTokenErrors(t *testing.T) {
 	if _, err := AccessToken(context.Background()); err == nil || !strings.Contains(err.Error(), "ycc login anthropic") {
 		t.Fatalf("want login hint when nothing stored, got %v", err)
 	}
+	// Credentials saved by the retired endpoint/scope generation have no
+	// flow_version. Do not send or refresh them: Anthropic currently reports an
+	// opaque 429 that looks like allowance exhaustion instead of auth failure.
+	if err := Save(&Credentials{AccessToken: "legacy-live", RefreshToken: "legacy-rt", ExpiresAt: time.Now().Add(time.Hour).Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AccessToken(context.Background()); err == nil || !strings.Contains(err.Error(), "changed its Claude subscription OAuth flow") || !strings.Contains(err.Error(), "ycc login anthropic") {
+		t.Fatalf("want migration login hint for legacy credentials, got %v", err)
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
 	}))
@@ -160,7 +172,7 @@ func TestAccessTokenErrors(t *testing.T) {
 	old := TokenEndpoint
 	TokenEndpoint = srv.URL
 	defer func() { TokenEndpoint = old }()
-	if err := Save(&Credentials{AccessToken: "stale", RefreshToken: "rt-dead", ExpiresAt: 1}); err != nil {
+	if err := Save(&Credentials{AccessToken: "stale", RefreshToken: "rt-dead", ExpiresAt: 1, FlowVersion: FlowVersion}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := AccessToken(context.Background()); err == nil || !strings.Contains(err.Error(), "ycc login anthropic") {

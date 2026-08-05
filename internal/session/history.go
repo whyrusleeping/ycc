@@ -163,18 +163,15 @@ func truncateTitle(s string) string {
 
 // ListSessionHistory enumerates all sessions for a project — both live (from the
 // manager map) and persisted on-disk logs — and returns their summaries sorted
-// most-recent first (spec §18.6). An empty project means the daemon default
-// workspace; an unknown project name returns ErrUnknownProject. Live sessions
-// override their on-disk snapshot (live status/mode win, Live=true), and a live
-// session with no disk snapshot yet is still included.
+// most-recent first (spec §18.6). The project may be omitted only when the
+// daemon has one project; unknown or ambiguous selection returns
+// ErrUnknownProject. Live sessions override their on-disk snapshot (live
+// status/mode win, Live=true), and a live session with no disk snapshot yet is
+// still included.
 func (m *Manager) ListSessionHistory(project string) ([]SessionSummary, error) {
-	ws := m.defaultWorkspace
-	if project != "" {
-		p, ok := m.projects.Resolve(project)
-		if !ok {
-			return nil, fmt.Errorf("%w %q", ErrUnknownProject, project)
-		}
-		ws = p
+	ws, err := m.resolveProjectWorkspace(project)
+	if err != nil {
+		return nil, err
 	}
 	absWS, err := filepath.Abs(ws)
 	if err != nil {

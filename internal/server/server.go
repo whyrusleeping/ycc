@@ -60,12 +60,16 @@ func (s *Server) ListModes(_ context.Context, _ *connect.Request[v1.ListModesReq
 func (s *Server) StartSession(_ context.Context, req *connect.Request[v1.StartSessionRequest]) (*connect.Response[v1.StartSessionResponse], error) {
 	m := req.Msg
 	sess, err := s.mgr.Start(session.Config{
-		Workspace: m.Workspace,
-		Mode:      m.Mode,
-		Prompt:    m.Prompt,
-		Project:   m.Project,
+		Workspace:        m.Workspace,
+		Mode:             m.Mode,
+		Prompt:           m.Prompt,
+		Project:          m.Project,
+		CoordinatorModel: m.CoordinatorModel,
 	})
 	if err != nil {
+		if errors.Is(err, session.ErrUnknownProject) || errors.Is(err, session.ErrUnknownModel) {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	return connect.NewResponse(&v1.StartSessionResponse{SessionId: sess.ID}), nil
@@ -292,7 +296,10 @@ func (s *Server) SendInput(_ context.Context, req *connect.Request[v1.SendInputR
 	input := engine.UserMessage{Text: req.Msg.Text, Images: images}
 	if err := sess.SendInputMessage(input); err != nil {
 		code := connect.CodeResourceExhausted
-		if len(input.Images) > 0 && sess.PendingQuestion() {
+		if sess.Refused() || (len(input.Images) > 0 && sess.PendingQuestion()) {
+			// Refused: the provider safety-refused the last turn and new input is
+			// gated until a model switch / retry (task 0238) — a precondition
+			// failure, not backpressure.
 			code = connect.CodeFailedPrecondition
 		}
 		return nil, connect.NewError(code, err)

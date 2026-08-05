@@ -72,6 +72,45 @@ func TestReplayUserPictureLeavesAttachmentMarker(t *testing.T) {
 	}
 }
 
+// A coordinator model_turn recorded from a provider-side safety refusal
+// (stop_reason "refusal", tool_calls 0) is skipped on replay, matching the live
+// loop keeping it out of history: the reopened conversation then still owes a
+// response to its last user/tool message, so reopen re-runs the pending turn
+// instead of continuing a refused conversation. This also un-wedges logs written
+// BEFORE the live loop learned to drop refusal turns.
+func TestReplayHistorySkipsRefusalTurns(t *testing.T) {
+	events := []event.Event{
+		{Seq: 1, Type: event.SessionStarted, Data: map[string]any{"mode": "chat"}},
+		{Seq: 2, Actor: "user", Type: event.UserInput, Data: map[string]any{"text": "work on task 70"}},
+		{Seq: 3, Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{
+			"text": "", "stop_reason": "tool_use", "tool_calls": 1,
+		}},
+		{Seq: 4, Actor: "coordinator", Type: event.ToolCall, Data: map[string]any{
+			"name": "get_task", "args": `{"task_id":"0070"}`, "id": "call_1",
+		}},
+		{Seq: 5, Actor: "coordinator", Type: event.ToolResult, Data: map[string]any{
+			"id": "call_1", "result": "task body",
+		}},
+		{Seq: 6, Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{
+			"text":        "(the model declined to respond and produced no content or tool call)",
+			"stop_reason": "refusal",
+			"tool_calls":  0,
+		}},
+		{Seq: 7, Type: event.SessionIdle, Data: map[string]any{"report": "(the model declined to respond and produced no content or tool call)"}},
+	}
+	got := ReplayHistory(events)
+	want := []gollama.Message{
+		{Role: "user", Content: "work on task 70"},
+		{Role: "assistant", ToolCalls: []gollama.ToolCall{
+			{ID: "call_1", Type: "function", Function: gollama.ToolCallFunction{Name: "get_task", Arguments: `{"task_id":"0070"}`}},
+		}},
+		{Role: "tool", ToolCallID: "call_1", Content: "task body"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ReplayHistory mismatch:\n got=%+v\nwant=%+v", got, want)
+	}
+}
+
 func TestReplayHistoryTyped(t *testing.T) {
 	got := ReplayHistory(coordinatorSession())
 	want := wantHistory()

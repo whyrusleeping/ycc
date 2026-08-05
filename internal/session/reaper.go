@@ -91,16 +91,10 @@ func (r *reaper) tick() {
 }
 
 // pruneLogs removes on-disk session directories whose events.jsonl is older than
-// LogRetention, across the manager's default workspace and every registered
-// project workspace. It is best-effort (IO errors are ignored) and never touches
-// a directory belonging to a currently-live session.
+// LogRetention across every registered project workspace. It is best-effort (IO
+// errors are ignored) and never touches a live session's directory.
 func (r *reaper) pruneLogs(now time.Time) {
 	workspaces := map[string]bool{}
-	if r.m.defaultWorkspace != "" {
-		if abs, err := filepath.Abs(r.m.defaultWorkspace); err == nil {
-			workspaces[abs] = true
-		}
-	}
 	for _, p := range r.m.projects.List() {
 		if p.Path != "" {
 			workspaces[p.Path] = true

@@ -95,12 +95,27 @@ func turnOnce(t *testing.T, reg *Registry, name string) {
 func TestBuildAnthropicOAuthHeaders(t *testing.T) {
 	isolateSecrets(t)
 	var got http.Header
-	srv := anthropicStub(t, &got)
+	var body struct {
+		System []struct {
+			Text string `json:"text"`
+		} `json:"system"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"id": "msg_1", "type": "message", "role": "assistant",
+			"content": []map[string]any{{"type": "text", "text": "ok"}}, "model": "claude-opus-4-8",
+			"stop_reason": "end_turn", "usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
+		})
+	}))
 	defer srv.Close()
 
 	// Live (non-expired) stored credentials: no refresh needed.
 	if err := anthropicauth.Save(&anthropicauth.Credentials{
-		AccessToken: "sk-ant-oat01-live", RefreshToken: "rt", ExpiresAt: time.Now().Add(time.Hour).Unix(),
+		AccessToken: "sk-ant-oat01-live", RefreshToken: "rt", ExpiresAt: time.Now().Add(time.Hour).Unix(), FlowVersion: anthropicauth.FlowVersion,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -114,8 +129,52 @@ func TestBuildAnthropicOAuthHeaders(t *testing.T) {
 	if beta := got.Get("anthropic-beta"); beta != anthropicauth.BetaHeader {
 		t.Errorf("anthropic-beta = %q", beta)
 	}
+	if app := got.Get("x-app"); app != anthropicauth.AppHeader {
+		t.Errorf("x-app = %q", app)
+	}
 	if got.Get("x-api-key") != "" {
 		t.Error("oauth request must not carry x-api-key")
+	}
+	if len(body.System) != 2 || body.System[0].Text != anthropicauth.BillingSystemPrefix || body.System[1].Text != anthropicauth.AgentSystemPrefix {
+		t.Fatalf("reserved system prefix = %+v", body.System)
+	}
+}
+
+func TestBuildAnthropicAPIKeyDoesNotPrefixSystem(t *testing.T) {
+	isolateSecrets(t)
+	var system []struct {
+		Text string `json:"text"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			System []struct {
+				Text string `json:"text"`
+			} `json:"system"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		system = body.System
+		json.NewEncoder(w).Encode(map[string]any{
+			"id": "msg_1", "type": "message", "role": "assistant",
+			"content": []map[string]any{{"type": "text", "text": "ok"}}, "model": "claude-opus-4-8",
+			"stop_reason": "end_turn", "usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("FAKE_ANTHROPIC_KEY", "sk-ant-api03-regular")
+	reg := NewRegistry(&Config{Models: map[string]Model{
+		"api": {Backend: "anthropic", BaseURL: srv.URL, Model: "claude-opus-4-8", KeyEnv: "FAKE_ANTHROPIC_KEY"},
+	}})
+	client, model, err := reg.Build("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Turn(gollama.RequestOptions{Model: model, System: "You are ycc.", Messages: []gollama.Message{{Role: "user", Content: "hi"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(system) != 1 || system[0].Text != "You are ycc." {
+		t.Fatalf("API-key system blocks = %+v; reserved OAuth prefix leaked", system)
 	}
 }
 
@@ -138,6 +197,9 @@ func TestBuildAnthropicSetupTokenHeaders(t *testing.T) {
 	if beta := got.Get("anthropic-beta"); beta != anthropicauth.BetaHeader {
 		t.Errorf("anthropic-beta = %q", beta)
 	}
+	if app := got.Get("x-app"); app != anthropicauth.AppHeader {
+		t.Errorf("x-app = %q", app)
+	}
 	if got.Get("x-api-key") != "" {
 		t.Error("setup-token request must not carry x-api-key")
 	}
@@ -145,9 +207,9 @@ func TestBuildAnthropicSetupTokenHeaders(t *testing.T) {
 	// A plain API key still travels as x-api-key with no beta header.
 	t.Setenv("FAKE_ANTHROPIC_KEY", "sk-ant-api03-regular")
 	turnOnce(t, reg, "sub")
-	if got.Get("x-api-key") != "sk-ant-api03-regular" || got.Get("Authorization") != "" || got.Get("anthropic-beta") != "" {
-		t.Errorf("api-key headers wrong: x-api-key=%q auth=%q beta=%q",
-			got.Get("x-api-key"), got.Get("Authorization"), got.Get("anthropic-beta"))
+	if got.Get("x-api-key") != "sk-ant-api03-regular" || got.Get("Authorization") != "" || got.Get("anthropic-beta") != "" || got.Get("x-app") != "" {
+		t.Errorf("api-key headers wrong: x-api-key=%q auth=%q beta=%q x-app=%q",
+			got.Get("x-api-key"), got.Get("Authorization"), got.Get("anthropic-beta"), got.Get("x-app"))
 	}
 }
 

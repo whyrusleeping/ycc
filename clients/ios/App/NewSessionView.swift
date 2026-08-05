@@ -23,7 +23,7 @@ struct NewSessionView: View {
     private let onStarted: (String, String) -> Void
 
     /// - Parameter initialProject: the project to preselect (the landing
-    ///   screen's current filter; `""` = default workspace). Overrides the
+    ///   screen's current named-project filter). Overrides the
     ///   remembered last-used project so the session starts where the user is
     ///   currently looking.
     init(
@@ -166,6 +166,9 @@ struct NewSessionView: View {
                 // project…" affordance (task 0192), which must be reachable on
                 // a daemon with no registered projects yet.
                 projectChip
+                if model.showsModelPicker {
+                    modelChip
+                }
             }
             .padding(.horizontal, 12)
             .padding(.top, 8)
@@ -200,7 +203,6 @@ struct NewSessionView: View {
         @Bindable var model = model
         return Menu {
             Picker("Project", selection: $model.selectedProject) {
-                Text("Default").tag("")
                 ForEach(model.projects, id: \.name) { project in
                     Text(project.name).tag(project.name)
                 }
@@ -213,8 +215,39 @@ struct NewSessionView: View {
             }
         } label: {
             chipLabel(
-                model.selectedProject.isEmpty ? "Default" : model.selectedProject,
+                model.selectedProject.isEmpty ? "Choose project" : model.selectedProject,
                 systemImage: "folder")
+        }
+    }
+
+    /// The optional model chip: picks the coordinator model FOR THIS SESSION
+    /// ONLY (the persisted role defaults, edited in Settings, are untouched).
+    /// "Default" leaves the choice to the daemon's configuration.
+    private var modelChip: some View {
+        @Bindable var model = model
+        return Menu {
+            Picker("Model", selection: $model.selectedModel) {
+                Label {
+                    Text("Default")
+                    if !model.defaultModel.isEmpty {
+                        Text(model.defaultModel)
+                    }
+                } icon: {
+                    EmptyView()
+                }
+                .tag("")
+                ForEach(model.models, id: \.name) { info in
+                    Label {
+                        Text(info.name)
+                        Text(info.model.isEmpty ? info.backend : info.model)
+                    } icon: {
+                        EmptyView()
+                    }
+                    .tag(info.name)
+                }
+            }
+        } label: {
+            chipLabel(model.selectedModelTitle, systemImage: "cpu")
         }
     }
 

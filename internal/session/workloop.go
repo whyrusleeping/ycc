@@ -92,7 +92,7 @@ type workLoop struct {
 
 	loopID     string
 	project    string // human display label (for the notifier line / WorkLoop.Project)
-	projectArg string // caller's ORIGINAL project argument (empty => default workspace)
+	projectArg string // caller's original project argument (empty only for sole project)
 	workspace  string // resolved absolute workspace
 
 	mu               sync.Mutex
@@ -254,13 +254,9 @@ func (m *Manager) GetWorkLoop(project string) (*WorkLoop, error) {
 // resolveWorkspace resolves a project label to its absolute workspace and human
 // label, matching the resolution used by Backlog/start (spec §3.1).
 func (m *Manager) resolveWorkspace(project string) (absWS, label string, err error) {
-	ws := m.defaultWorkspace
-	if project != "" {
-		p, ok := m.projects.Resolve(project)
-		if !ok {
-			return "", "", fmt.Errorf("%w %q", ErrUnknownProject, project)
-		}
-		ws = p
+	ws, err := m.resolveProjectWorkspace(project)
+	if err != nil {
+		return "", "", err
 	}
 	absWS, err = filepath.Abs(ws)
 	if err != nil {

@@ -17,13 +17,19 @@ message Event {
 }
 
 message StartSessionRequest {
-  string workspace = 1; // workspace dir; empty => daemon default
+  string workspace = 1; // workspace dir; empty => resolve project
   string mode = 2; // e.g. "work"; M1 runs a single worker agent
   reserved 3; // retired session-policy field
   string prompt = 4; // initial task prompt
   // project is an optional registered project name; when set it resolves to that
   // project's workspace (overriding `workspace`). Spec §3.1.
   string project = 5;
+  // coordinator_model optionally overrides the coordinator's logical model
+  // (a name from ListModels) FOR THIS SESSION ONLY — the persisted per-role
+  // defaults in ycc.toml are untouched, and implementer/reviewers keep them.
+  // Empty means "use the configured default". Unknown name => InvalidArgument.
+  // Spec §13, §18.2.
+  string coordinator_model = 6;
 }
 message StartSessionResponse { string session_id = 1; }
 
@@ -175,7 +181,7 @@ message SessionInfo {
 message ListSessionsResponse { repeated SessionInfo sessions = 1; }
 
 message ListSessionHistoryRequest {
-  string project = 1; // optional registered project; empty => daemon default workspace
+  string project = 1; // registered project; empty allowed only when exactly one exists
 }
 message SessionSummary {
   string session_id = 1;
@@ -200,7 +206,7 @@ message ListSessionHistoryResponse { repeated SessionSummary sessions = 1; }
 // persisted on disk — so the session browser can render a read-only replayed
 // transcript with the same event components as the live view (spec §18.6).
 message GetSessionTranscriptRequest {
-  string project = 1;    // optional registered project; empty => daemon default workspace
+  string project = 1;    // registered project; empty allowed only when exactly one exists
   string session_id = 2;
 }
 message GetSessionTranscriptResponse { repeated Event events = 1; }
@@ -210,7 +216,7 @@ message GetSessionTranscriptResponse { repeated Event events = 1; }
 // daemon caps the returned diff to bound the wire payload; truncated reports when
 // the cap was hit so the client can render a truncation notice.
 message GetCommitDiffRequest {
-  string project = 1; // optional registered project; empty => daemon default workspace
+  string project = 1; // registered project; empty allowed only when exactly one exists
   string sha = 2;     // bare hex commit sha (from a commit_made event)
 }
 message GetCommitDiffResponse {
@@ -339,7 +345,7 @@ message SetThinkingResponse {}
 // (internal/docs Store) so clients can list and inspect tasks independent of any
 // agent session.
 message ListBacklogRequest {
-  string project = 1; // optional registered project; empty => daemon default workspace
+  string project = 1; // registered project; empty allowed only when exactly one exists
 }
 message BacklogTaskSummary {
   string id = 1;
@@ -352,7 +358,7 @@ message BacklogTaskSummary {
 }
 message ListBacklogResponse { repeated BacklogTaskSummary tasks = 1; }
 message GetTaskRequest {
-  string project = 1; // optional registered project; empty => daemon default workspace
+  string project = 1; // registered project; empty allowed only when exactly one exists
   string id = 2;
 }
 message TaskDetail {
@@ -376,7 +382,7 @@ message GetTaskResponse { TaskDetail task = 1; }
 // fields set is a valid "refresh" that re-reads the task file (used after
 // hand-edits in $EDITOR).
 message UpdateTaskRequest {
-  string project = 1;       // optional registered project; empty => daemon default workspace
+  string project = 1;       // registered project; empty allowed only when exactly one exists
   string id = 2;
   optional string status = 3;   // todo | in_progress | in_review | done | blocked
   optional int32 priority = 4;  // 1..5
@@ -389,7 +395,7 @@ message UpdateTaskResponse { TaskDetail task = 1; }
 // "## Description / ## Acceptance criteria / ## Work log" scaffold around the
 // supplied body. Used by `ycc task add` when a daemon is available.
 message CreateTaskRequest {
-  string project = 1;          // optional registered project; empty => daemon default workspace
+  string project = 1;          // registered project; empty allowed only when exactly one exists
   string title = 2;            // required
   string body = 3;            // long description / markdown; scaffolded if it lacks the canonical headers
   int32 priority = 4;         // 1..5; 0 => default (3)
@@ -424,7 +430,7 @@ message GetPlanResponse {
 // clarifying question; the client carries it back via prior_question/prior_answer
 // so the second call creates the task without asking again.
 message CaptureBacklogItemRequest {
-  string project = 1;        // optional registered project; empty => daemon default workspace
+  string project = 1;        // registered project; empty allowed only when exactly one exists
   string description = 2;    // the user's natural-language description
   string prior_question = 3; // the clarifying question the agent asked previously (if any)
   string prior_answer = 4;   // the user's answer to that question
@@ -435,7 +441,7 @@ message CaptureBacklogItemRequest {
 // pricing, and returns a structured breakdown grouped by task × model × day so
 // non-CLI clients (TUI/phone) can render it identically to `ycc cost`.
 message GetUsageRequest {
-  string project = 1;           // optional registered project; empty => daemon default workspace
+  string project = 1;           // registered project; empty allowed only when exactly one exists
   repeated string group_by = 2; // task | model | session | agent | day (default: task)
   string since = 3;             // YYYY-MM-DD inclusive, optional
   string until = 4;             // YYYY-MM-DD inclusive, optional

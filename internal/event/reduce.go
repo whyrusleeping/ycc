@@ -35,6 +35,11 @@ type Projection struct {
 	// key holds turns that occurred before any focus ("unattributed").
 	FocusTask   string
 	TurnsByTask map[string]int
+	// Coordinator is the logical model the session's coordinator last ran on,
+	// folded from session_started / role_config_changed. Reopen replays a session
+	// on it, so a per-session model choice (StartSession's coordinator_model)
+	// survives a resume. Empty for logs written before it was recorded.
+	Coordinator string
 	// Parallel-workstream projection (docs/design/parallel-workstreams.md §6, §8):
 	// the workstream lifecycle folded from its own session stream. WorkstreamID is
 	// set once created; WorkstreamState is one of created/merged/conflict/discarded;
@@ -55,6 +60,13 @@ func Reduce(events []Event) Projection {
 			p.Status = StatusRunning
 			p.Mode = str(ev.Data, "mode")
 			p.Workspace = str(ev.Data, "workspace")
+			if c := str(ev.Data, "coordinator"); c != "" {
+				p.Coordinator = c
+			}
+		case RoleConfigChanged:
+			if c := str(ev.Data, "coordinator"); c != "" {
+				p.Coordinator = c
+			}
 		case TaskFocus:
 			p.FocusTask = str(ev.Data, "task")
 		case ModelTurn:

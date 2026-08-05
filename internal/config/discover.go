@@ -23,6 +23,12 @@ var curatedModelIDs = map[string][]string{
 	"ollama":    {"qwen2.5-coder", "llama3.3", "deepseek-r1"},
 }
 
+// DefaultAnthropicBaseURL is the native Anthropic API root used when an
+// Anthropic connection leaves base_url blank. Blank is useful in client forms:
+// it means "use the provider default" while an explicit URL still supports a
+// proxy or staging endpoint.
+const DefaultAnthropicBaseURL = "https://api.anthropic.com"
+
 // CuratedModelIDs returns the curated default model ids for a backend (spec §13).
 // The returned slice is a copy the caller may mutate.
 func CuratedModelIDs(backend string) []string {
@@ -32,17 +38,28 @@ func CuratedModelIDs(backend string) []string {
 	return out
 }
 
+// providerBaseURL resolves a blank URL for providers with a canonical endpoint.
+// Explicit URLs are preserved so proxies and staging endpoints keep working.
+func providerBaseURL(backend, baseURL string) string {
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" && backend == "anthropic" {
+		return DefaultAnthropicBaseURL
+	}
+	return baseURL
+}
+
 // DiscoverModels queries a backend's model-listing endpoint and returns the
 // available model ids (spec §13). It supports the OpenAI-compatible /models
 // endpoint (openai, glm, openai-compatible), the Anthropic /v1/models endpoint,
-// and the Ollama /api/tags endpoint. key is the resolved API credential (may be
-// empty for keyless/local backends).
+// and the Ollama /api/tags endpoint. A blank Anthropic base URL resolves to the
+// native Anthropic API. key is the resolved API credential (may be empty for
+// keyless/local backends).
 //
 // It is a best-effort convenience for the connection form: on any failure the
 // caller should fall back to CuratedModelIDs. The returned ids are sorted and
 // de-duplicated.
 func DiscoverModels(ctx context.Context, backend, baseURL, key string) ([]string, error) {
-	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	baseURL = strings.TrimRight(providerBaseURL(backend, baseURL), "/")
 	if baseURL == "" {
 		return nil, fmt.Errorf("discover models: base_url is required for backend %q", backend)
 	}
@@ -126,6 +143,7 @@ func discoverAnthropic(ctx context.Context, baseURL, key string) ([]string, erro
 			"Authorization":     "Bearer " + key,
 			"anthropic-beta":    anthropicauth.BetaHeader,
 			"anthropic-version": "2023-06-01",
+			"x-app":             anthropicauth.AppHeader,
 		}
 	}
 	if err := getJSON(ctx, url, headers, &out); err != nil {

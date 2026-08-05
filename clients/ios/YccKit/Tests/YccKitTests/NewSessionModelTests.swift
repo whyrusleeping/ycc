@@ -9,12 +9,14 @@ private final class MockNewSessionSource: NewSessionSource, @unchecked Sendable 
     var modes: [Ycc_V1_Mode] = []
     var presets: [Ycc_V1_Preset] = []
     var projects: [Ycc_V1_ProjectInfo] = []
+    var models = Ycc_V1_ListModelsResponse()
     var modesError: Error?
+    var modelsError: Error?
     var startError: Error?
     var resumeError: Error?
     var startedSessionId = "s_new"
 
-    private(set) var startArgs: (project: String, mode: String, prompt: String)?
+    private(set) var startArgs: (project: String, mode: String, prompt: String, coordinatorModel: String)?
     private(set) var resumeArgs: (project: String, sessionId: String)?
 
     func listModes() async throws -> (modes: [Ycc_V1_Mode], presets: [Ycc_V1_Preset]) {
@@ -26,10 +28,15 @@ private final class MockNewSessionSource: NewSessionSource, @unchecked Sendable 
         projects
     }
 
+    func listModels() async throws -> Ycc_V1_ListModelsResponse {
+        if let modelsError { throw modelsError }
+        return models
+    }
+
     func startSession(
-        project: String, mode: String, prompt: String
+        project: String, mode: String, prompt: String, coordinatorModel: String
     ) async throws -> String {
-        startArgs = (project, mode, prompt)
+        startArgs = (project, mode, prompt, coordinatorModel)
         if let startError { throw startError }
         return startedSessionId
     }
@@ -70,6 +77,125 @@ final class NewSessionModelTests: XCTestCase {
         p.name = name
         p.path = "/tmp/\(name)"
         return p
+    }
+
+    /// A `ListModels` response with the given logical models and default
+    /// coordinator assignment.
+    private func modelList(_ names: [String], coordinator: String) -> Ycc_V1_ListModelsResponse {
+        var response = Ycc_V1_ListModelsResponse()
+        response.models = names.map { name in
+            var info = Ycc_V1_ModelInfo()
+            info.name = name
+            info.backend = "anthropic"
+            info.model = "\(name)-latest"
+            return info
+        }
+        response.coordinator = coordinator
+        return response
+    }
+
+    // MARK: - Model picker
+
+    func testLoadPopulatesModelsAndDefaultsToConfiguredCoordinator() async {
+        let source = MockNewSessionSource()
+        source.modes = [mode("work")]
+        source.models = modelList(["claude", "gpt"], coordinator: "claude")
+        let model = NewSessionModel(source: source, defaults: MockDefaults())
+
+        await model.load()
+
+        XCTAssertEqual(model.models.count, 2)
+        XCTAssertEqual(model.defaultModel, "claude")
+        XCTAssertEqual(model.selectedModel, "")            // no override by default
+        XCTAssertTrue(model.showsModelPicker)
+        XCTAssertEqual(model.selectedModelTitle, "claude (default)")
+    }
+
+    func testModelPickerHiddenWithoutAChoice() async {
+        let source = MockNewSessionSource()
+        source.modes = [mode("work")]
+        source.models = modelList(["claude"], coordinator: "claude")
+        let model = NewSessionModel(source: source, defaults: MockDefaults())
+
+        await model.load()
+
+        XCTAssertFalse(model.showsModelPicker)
+    }
+
+    func testStartSendsSelectedModelAsOverride() async {
+        let source = MockNewSessionSource()
+        source.modes = [mode("work")]
+        source.models = modelList(["claude", "gpt"], coordinator: "claude")
+        let model = NewSessionModel(source: source, defaults: MockDefaults())
+        await model.load()
+        model.selectedModel = "gpt"
+        model.prompt = "go"
+
+        _ = await model.start()
+
+        XCTAssertEqual(source.startArgs?.coordinatorModel, "gpt")
+        XCTAssertEqual(model.selectedModelTitle, "gpt")
+    }
+
+    func testStartWithoutModelChoiceSendsEmptyOverride() async {
+        let source = MockNewSessionSource()
+        source.modes = [mode("work")]
+        source.models = modelList(["claude", "gpt"], coordinator: "claude")
+        let model = NewSessionModel(source: source, defaults: MockDefaults())
+        await model.load()
+        model.prompt = "go"
+
+        _ = await model.start()
+
+        XCTAssertEqual(source.startArgs?.coordinatorModel, "")
+    }
+
+    func testModelChoiceIsNotRemembered() async {
+        // The pick is a per-session override, so the next composer opens back on
+        // the daemon's default (unlike mode/project, which are sticky).
+        let defaults = MockDefaults()
+        let source = MockNewSessionSource()
+        source.modes = [mode("work")]
+        source.models = modelList(["claude", "gpt"], coordinator: "claude")
+        let first = NewSessionModel(source: source, defaults: defaults)
+        await first.load()
+        first.selectedModel = "gpt"
+        first.prompt = "go"
+        _ = await first.start()
+
+        let second = NewSessionModel(source: source, defaults: defaults)
+        await second.load()
+        XCTAssertEqual(second.selectedModel, "")
+    }
+
+    func testLoadDropsOverrideForRemovedModel() async {
+        let source = MockNewSessionSource()
+        source.modes = [mode("work")]
+        source.models = modelList(["claude", "gpt"], coordinator: "claude")
+        let model = NewSessionModel(source: source, defaults: MockDefaults())
+        await model.load()
+        model.selectedModel = "gpt"
+
+        source.models = modelList(["claude", "glm"], coordinator: "claude")
+        await model.load()
+
+        XCTAssertEqual(model.selectedModel, "")
+    }
+
+    func testListModelsFailureStillAllowsStarting() async {
+        // The picker is a convenience: a ListModels failure hides the chip but
+        // must not block the composer.
+        let source = MockNewSessionSource()
+        source.modes = [mode("work")]
+        source.modelsError = YccError.rpc(message: "boom")
+        let model = NewSessionModel(source: source, defaults: MockDefaults())
+
+        await model.load()
+
+        XCTAssertTrue(model.models.isEmpty)
+        XCTAssertFalse(model.showsModelPicker)
+        XCTAssertNil(model.errorMessage)
+        XCTAssertTrue(model.canStart)      // work mode, empty prompt is fine
     }
 
     // MARK: - Loading + defaults
@@ -121,7 +247,7 @@ final class NewSessionModelTests: XCTestCase {
         await model.load()
 
         XCTAssertEqual(model.selectedMode, "work")   // fell back to first
-        XCTAssertEqual(model.selectedProject, "")     // fell back to default
+        XCTAssertEqual(model.selectedProject, "one")  // sole project auto-selected
     }
 
     func testInitialProjectOverridesRememberedProject() async {
@@ -143,9 +269,9 @@ final class NewSessionModelTests: XCTestCase {
         XCTAssertEqual(source.startArgs?.project, "one")
     }
 
-    func testInitialProjectEmptyMeansDefaultWorkspace() {
-        // An explicit "" (the landing filter on Default) must override a
-        // remembered project too — nil is the only "no preference" signal.
+    func testInitialProjectEmptyMeansNoSelection() {
+        // An explicit empty initial project overrides a remembered project; load
+        // will then select a sole project or wait for a multi-project choice.
         let defaults = MockDefaults()
         defaults.lastProject = "two"
         let model = NewSessionModel(

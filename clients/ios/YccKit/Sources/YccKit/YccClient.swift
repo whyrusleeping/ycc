@@ -81,8 +81,8 @@ public final class YccClient: Sendable {
 
     /// Lists the daemon's session history — live and persisted, most-recent
     /// first per the daemon (docs/remote-api.md "ListSessionHistory"). `project`
-    /// is optional: empty selects the daemon default workspace; a registered
-    /// project name filters to that workspace's sessions.
+    /// names the registered workspace; empty is accepted only when exactly one
+    /// project exists.
     public func listSessionHistory(project: String = "") async throws -> [Ycc_V1_SessionSummary] {
         var request = Ycc_V1_ListSessionHistoryRequest()
         request.project = project
@@ -177,15 +177,20 @@ public final class YccClient: Sendable {
     }
 
     /// Start a new session (`StartSession`, docs/remote-api.md "StartSession").
-    /// `project` is an optional registered project name (empty => daemon default
-    /// workspace). Returns the new session id to `Subscribe` from seq 0.
+    /// `project` names a registered workspace; empty is accepted only when exactly
+    /// one project exists. `coordinatorModel` optionally overrides the coordinator's
+    /// logical model for this session only (empty = the configured default).
+    /// Returns the new session id to `Subscribe` from seq 0.
     public func startSession(
-        project: String = "", mode: String, prompt: String
+        project: String = "", mode: String, prompt: String, coordinatorModel: String = ""
     ) async throws -> String {
         var request = Ycc_V1_StartSessionRequest()
         request.project = project
         request.mode = mode
         request.prompt = prompt
+        // Empty = use the daemon's configured coordinator; a name overrides it for
+        // THIS session only (the persisted role defaults are untouched).
+        request.coordinatorModel = coordinatorModel
         let response = await generated.startSession(request: request)
         switch response.result {
         case .success(let message):
@@ -290,9 +295,9 @@ public final class YccClient: Sendable {
 
     // MARK: - Backlog browser (task 0184)
 
-    /// List the backlog's summary rows (`ListBacklog`, spec §18.5). `project` is
-    /// optional: empty selects the daemon default workspace; a registered project
-    /// name filters to that workspace's backlog. Each row carries readiness
+    /// List the backlog's summary rows (`ListBacklog`, spec §18.5). `project`
+    /// names a registered workspace; empty is accepted only when exactly one
+    /// project exists. Each row carries readiness
     /// (`ready`/`blockedBy`) derived from dependency status.
     public func listBacklog(project: String = "") async throws -> [Ycc_V1_BacklogTaskSummary] {
         var request = Ycc_V1_ListBacklogRequest()

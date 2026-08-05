@@ -28,7 +28,7 @@ extension YccClient: TaskDetailSource {}
 public final class TaskDetailModel {
     /// The task's id (stable across the model's life).
     public let taskID: String
-    /// The project the task lives in (`""` => daemon default workspace).
+    /// The named project the task lives in.
     public let project: String
 
     /// The last-loaded task detail, or `nil` before the first successful load.

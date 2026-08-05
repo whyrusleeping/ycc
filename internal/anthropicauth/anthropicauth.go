@@ -1,17 +1,17 @@
 // Package anthropicauth implements Claude subscription (Pro/Max) OAuth
 // authentication for the anthropic backend, as an alternative to API keys
-// (spec §13). It covers the standard authorization-code + PKCE flow used by
-// Anthropic's own tooling: `ycc login anthropic` sends the user to the
-// browser, exchanges the pasted code for an access/refresh token pair, and
-// persists it in the machine-local secrets store (internal/secrets, mode-0600
-// secrets.json) under the ANTHROPIC_OAUTH key. At request-build time
-// AccessToken returns a live access token, transparently refreshing and
-// re-persisting an expired one.
+// (spec §13). It follows the current Claude Code authorization-code + PKCE flow:
+// `ycc login anthropic` sends the user to the browser, exchanges the pasted
+// code for an access/refresh token pair, and persists it in the machine-local
+// secrets store (internal/secrets, mode-0600 secrets.json) under the
+// ANTHROPIC_OAUTH key. At request-build time AccessToken returns a live access
+// token, transparently refreshing and re-persisting an expired one.
 //
 // OAuth-authenticated requests differ from API-key requests in two ways, both
 // applied by config.Registry.Build: the credential travels as an
 // "Authorization: Bearer" header (never x-api-key), and the request carries
-// the "anthropic-beta: oauth-2025-04-20" opt-in header.
+// the Claude Code + OAuth beta opt-ins required by Anthropic's subscription
+// inference surface.
 package anthropicauth
 
 import (
@@ -39,18 +39,33 @@ const (
 	// protects the flow).
 	ClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 
-	authorizeEndpoint = "https://claude.ai/oauth/authorize"
-	redirectURI       = "https://console.anthropic.com/oauth/code/callback"
-	scopes            = "org:create_api_key user:profile user:inference"
+	// These are the current Claude Code subscription-login endpoints and scopes.
+	// Anthropic moved the browser entry point from claude.ai/oauth/authorize and
+	// the token endpoint from console.anthropic.com in 2026. Keeping these values
+	// together makes drift conspicuous and covered by TestPKCEAndAuthorizeURL.
+	authorizeEndpoint = "https://claude.com/cai/oauth/authorize"
+	redirectURI       = "https://platform.claude.com/oauth/code/callback"
+	scopes            = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
+
+	// FlowVersion is persisted with credentials. Credentials created before this
+	// marker used Anthropic's retired endpoints/scopes; they may still refresh but
+	// inference currently rejects them with an opaque 429. Requiring a one-time
+	// re-login avoids presenting that rejection as an exhausted allowance.
+	FlowVersion = 2
 
 	// SecretsKey is the secrets-store key the JSON-encoded Credentials live
 	// under. It is deliberately shaped like a key_env name so `ycc token list`
 	// / `ycc token rm ANTHROPIC_OAUTH` manage it like any other stored secret.
 	SecretsKey = "ANTHROPIC_OAUTH"
 
-	// BetaHeader is the anthropic-beta header value that opts a /v1/messages
-	// request into OAuth bearer authentication.
-	BetaHeader = "oauth-2025-04-20"
+	// BetaHeader opts /v1/messages into Claude Code subscription inference and
+	// OAuth bearer authentication. The order mirrors current Claude Code.
+	BetaHeader = "claude-code-20250219,oauth-2025-04-20"
+
+	// AppHeader identifies the subscription inference surface. Current Claude
+	// Code sends this alongside the beta opt-ins; ycc deliberately does not spoof
+	// Claude Code's User-Agent or SDK telemetry headers.
+	AppHeader = "cli"
 
 	// TokenPrefix marks Anthropic OAuth access tokens (including long-lived
 	// ones minted by `claude setup-token`). A key_env credential with this
@@ -63,7 +78,7 @@ const (
 
 // TokenEndpoint is the OAuth token-exchange/refresh endpoint. Package variable
 // so tests can point it at an httptest server.
-var TokenEndpoint = "https://console.anthropic.com/v1/oauth/token"
+var TokenEndpoint = "https://platform.claude.com/v1/oauth/token"
 
 // Credentials is the persisted OAuth state.
 type Credentials struct {
@@ -72,6 +87,10 @@ type Credentials struct {
 	// ExpiresAt is the access token's expiry as unix seconds (0 = unknown,
 	// treated as expired so we refresh rather than send a dead token).
 	ExpiresAt int64 `json:"expires_at"`
+	// FlowVersion identifies the endpoint/scope generation that minted the
+	// credentials. Zero is legacy (all credentials stored before this field was
+	// introduced) and deliberately requires a one-time login migration.
+	FlowVersion int `json:"flow_version"`
 }
 
 // Expired reports whether the access token is (about to be) unusable.
@@ -196,6 +215,7 @@ func tokenCall(ctx context.Context, body map[string]string) (*Credentials, error
 		AccessToken:  tr.AccessToken,
 		RefreshToken: tr.RefreshToken,
 		ExpiresAt:    time.Now().Add(time.Duration(tr.ExpiresIn) * time.Second).Unix(),
+		FlowVersion:  FlowVersion,
 	}, nil
 }
 
@@ -236,6 +256,9 @@ func AccessToken(ctx context.Context) (string, error) {
 	creds, ok := Load()
 	if !ok {
 		return "", errors.New("no Anthropic subscription credentials stored; run `ycc login anthropic`")
+	}
+	if creds.FlowVersion < FlowVersion {
+		return "", errors.New("Anthropic changed its Claude subscription OAuth flow; run `ycc login anthropic` once to update the stored credentials")
 	}
 	if !creds.Expired(time.Now()) {
 		return creds.AccessToken, nil

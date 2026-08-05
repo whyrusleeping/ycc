@@ -110,14 +110,20 @@ func (x *Event) GetTransient() bool {
 
 type StartSessionRequest struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
-	Workspace string                 `protobuf:"bytes,1,opt,name=workspace,proto3" json:"workspace,omitempty"` // workspace dir; empty => daemon default
+	Workspace string                 `protobuf:"bytes,1,opt,name=workspace,proto3" json:"workspace,omitempty"` // workspace dir; empty => resolve project
 	Mode      string                 `protobuf:"bytes,2,opt,name=mode,proto3" json:"mode,omitempty"`           // e.g. "work"; M1 runs a single worker agent
 	Prompt    string                 `protobuf:"bytes,4,opt,name=prompt,proto3" json:"prompt,omitempty"`       // initial task prompt
 	// project is an optional registered project name; when set it resolves to that
 	// project's workspace (overriding `workspace`). Spec §3.1.
-	Project       string `protobuf:"bytes,5,opt,name=project,proto3" json:"project,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Project string `protobuf:"bytes,5,opt,name=project,proto3" json:"project,omitempty"`
+	// coordinator_model optionally overrides the coordinator's logical model
+	// (a name from ListModels) FOR THIS SESSION ONLY — the persisted per-role
+	// defaults in ycc.toml are untouched, and implementer/reviewers keep them.
+	// Empty means "use the configured default". Unknown name => InvalidArgument.
+	// Spec §13, §18.2.
+	CoordinatorModel string `protobuf:"bytes,6,opt,name=coordinator_model,json=coordinatorModel,proto3" json:"coordinator_model,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *StartSessionRequest) Reset() {
@@ -174,6 +180,13 @@ func (x *StartSessionRequest) GetPrompt() string {
 func (x *StartSessionRequest) GetProject() string {
 	if x != nil {
 		return x.Project
+	}
+	return ""
+}
+
+func (x *StartSessionRequest) GetCoordinatorModel() string {
+	if x != nil {
+		return x.CoordinatorModel
 	}
 	return ""
 }
@@ -1931,7 +1944,7 @@ func (x *ListSessionsResponse) GetSessions() []*SessionInfo {
 
 type ListSessionHistoryRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"` // optional registered project; empty => daemon default workspace
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"` // registered project; empty allowed only when exactly one exists
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2157,7 +2170,7 @@ func (x *ListSessionHistoryResponse) GetSessions() []*SessionSummary {
 // transcript with the same event components as the live view (spec §18.6).
 type GetSessionTranscriptRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"` // optional registered project; empty => daemon default workspace
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"` // registered project; empty allowed only when exactly one exists
 	SessionId     string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2257,7 +2270,7 @@ func (x *GetSessionTranscriptResponse) GetEvents() []*Event {
 // the cap was hit so the client can render a truncation notice.
 type GetCommitDiffRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"` // optional registered project; empty => daemon default workspace
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"` // registered project; empty allowed only when exactly one exists
 	Sha           string                 `protobuf:"bytes,2,opt,name=sha,proto3" json:"sha,omitempty"`         // bare hex commit sha (from a commit_made event)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -3354,7 +3367,7 @@ func (*SetThinkingResponse) Descriptor() ([]byte, []int) {
 // agent session.
 type ListBacklogRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"` // optional registered project; empty => daemon default workspace
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"` // registered project; empty allowed only when exactly one exists
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3534,7 +3547,7 @@ func (x *ListBacklogResponse) GetTasks() []*BacklogTaskSummary {
 
 type GetTaskRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"` // optional registered project; empty => daemon default workspace
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"` // registered project; empty allowed only when exactly one exists
 	Id            string                 `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -3766,7 +3779,7 @@ func (x *GetTaskResponse) GetTask() *TaskDetail {
 // hand-edits in $EDITOR).
 type UpdateTaskRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"` // optional registered project; empty => daemon default workspace
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"` // registered project; empty allowed only when exactly one exists
 	Id            string                 `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"`
 	Status        *string                `protobuf:"bytes,3,opt,name=status,proto3,oneof" json:"status,omitempty"`      // todo | in_progress | in_review | done | blocked
 	Priority      *int32                 `protobuf:"varint,4,opt,name=priority,proto3,oneof" json:"priority,omitempty"` // 1..5
@@ -3890,7 +3903,7 @@ func (x *UpdateTaskResponse) GetTask() *TaskDetail {
 // supplied body. Used by `ycc task add` when a daemon is available.
 type CreateTaskRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`    // optional registered project; empty => daemon default workspace
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`    // registered project; empty allowed only when exactly one exists
 	Title         string                 `protobuf:"bytes,2,opt,name=title,proto3" json:"title,omitempty"`        // required
 	Body          string                 `protobuf:"bytes,3,opt,name=body,proto3" json:"body,omitempty"`          // long description / markdown; scaffolded if it lacks the canonical headers
 	Priority      int32                  `protobuf:"varint,4,opt,name=priority,proto3" json:"priority,omitempty"` // 1..5; 0 => default (3)
@@ -4286,7 +4299,7 @@ func (x *GetPlanResponse) GetContent() string {
 // so the second call creates the task without asking again.
 type CaptureBacklogItemRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`                                  // optional registered project; empty => daemon default workspace
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`                                  // registered project; empty allowed only when exactly one exists
 	Description   string                 `protobuf:"bytes,2,opt,name=description,proto3" json:"description,omitempty"`                          // the user's natural-language description
 	PriorQuestion string                 `protobuf:"bytes,3,opt,name=prior_question,json=priorQuestion,proto3" json:"prior_question,omitempty"` // the clarifying question the agent asked previously (if any)
 	PriorAnswer   string                 `protobuf:"bytes,4,opt,name=prior_answer,json=priorAnswer,proto3" json:"prior_answer,omitempty"`       // the user's answer to that question
@@ -4358,7 +4371,7 @@ func (x *CaptureBacklogItemRequest) GetPriorAnswer() string {
 // non-CLI clients (TUI/phone) can render it identically to `ycc cost`.
 type GetUsageRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`                // optional registered project; empty => daemon default workspace
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`                // registered project; empty allowed only when exactly one exists
 	GroupBy       []string               `protobuf:"bytes,2,rep,name=group_by,json=groupBy,proto3" json:"group_by,omitempty"` // task | model | session | agent | day (default: task)
 	Since         string                 `protobuf:"bytes,3,opt,name=since,proto3" json:"since,omitempty"`                    // YYYY-MM-DD inclusive, optional
 	Until         string                 `protobuf:"bytes,4,opt,name=until,proto3" json:"until,omitempty"`                    // YYYY-MM-DD inclusive, optional
@@ -6387,12 +6400,13 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x05actor\x18\x03 \x01(\tR\x05actor\x12\x12\n" +
 	"\x04type\x18\x04 \x01(\tR\x04type\x12\x1b\n" +
 	"\tdata_json\x18\x05 \x01(\tR\bdataJson\x12\x1c\n" +
-	"\ttransient\x18\x06 \x01(\bR\ttransient\"\x7f\n" +
+	"\ttransient\x18\x06 \x01(\bR\ttransient\"\xac\x01\n" +
 	"\x13StartSessionRequest\x12\x1c\n" +
 	"\tworkspace\x18\x01 \x01(\tR\tworkspace\x12\x12\n" +
 	"\x04mode\x18\x02 \x01(\tR\x04mode\x12\x16\n" +
 	"\x06prompt\x18\x04 \x01(\tR\x06prompt\x12\x18\n" +
-	"\aproject\x18\x05 \x01(\tR\aprojectJ\x04\b\x03\x10\x04\"5\n" +
+	"\aproject\x18\x05 \x01(\tR\aproject\x12+\n" +
+	"\x11coordinator_model\x18\x06 \x01(\tR\x10coordinatorModelJ\x04\b\x03\x10\x04\"5\n" +
 	"\x14StartSessionResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\"5\n" +
