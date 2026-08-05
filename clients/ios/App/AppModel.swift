@@ -22,6 +22,27 @@ final class AppModel {
     /// landing view after it routes to the target.
     var pendingDeepLink: DeepLink?
 
+    /// Sessions whose pending question this client just answered, awaiting
+    /// application to the (separately owned) session list.
+    ///
+    /// The daemon is the source of truth, but the inbox only reloads on an
+    /// explicit refresh — so without this the home feed and drawer badges keep
+    /// nagging about a question the user has already dealt with. The session
+    /// view posts here; ``LandingView`` drains it into its list model.
+    private(set) var answeredQuestionSessions: Set<String> = []
+
+    /// Record that a session's pending question was answered from this client.
+    func noteQuestionAnswered(sessionID: String) {
+        guard !sessionID.isEmpty else { return }
+        answeredQuestionSessions.insert(sessionID)
+    }
+
+    /// Drain the answered-question notices once they have been applied.
+    func clearAnsweredQuestionNotices() {
+        guard !answeredQuestionSessions.isEmpty else { return }
+        answeredQuestionSessions.removeAll()
+    }
+
     init(store: ConnectionStore = ConnectionStore()) {
         self.store = store
         // Restore a previously-authenticated session on launch.

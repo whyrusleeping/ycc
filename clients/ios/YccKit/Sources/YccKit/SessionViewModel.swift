@@ -280,27 +280,43 @@ public final class SessionViewModel {
 
     /// Answer the pending single question by selecting a suggested option.
     public func answer(optionIndex: Int) async {
-        await perform("answer") { actions in
+        let succeeded = await perform("answer") { actions in
             try await actions.answerQuestion(
                 sessionId: self.sessionID, text: "", optionIndex: optionIndex)
         }
+        if succeeded { clearAnsweredGate() }
     }
 
     /// Answer the pending single question with free text.
     public func answer(text: String) async {
-        await perform("answer") { actions in
+        let succeeded = await perform("answer") { actions in
             try await actions.answerQuestion(
                 sessionId: self.sessionID, text: text, optionIndex: -1)
         }
+        if succeeded { clearAnsweredGate() }
     }
 
     /// Answer a batch of questions positionally (`AnswerQuestions`). Each entry
     /// is `(text, optionIndex)`: `optionIndex >= 0` picks an option, `-1` sends
     /// the text.
     public func answerBatch(_ answers: [(text: String, optionIndex: Int)]) async {
-        await perform("answer") { actions in
+        let succeeded = await perform("answer") { actions in
             try await actions.answerQuestions(sessionId: self.sessionID, answers: answers)
         }
+        if succeeded { clearAnsweredGate() }
+    }
+
+    /// Drop the pending-question gate as soon as the daemon accepts an answer,
+    /// rather than waiting for the `question_answered` event to make the return
+    /// trip. Without this the banner keeps asking the user to answer a question
+    /// they just answered for as long as the stream takes to catch up (and
+    /// indefinitely if it is mid-reconnect). The event remains authoritative: it
+    /// is what folds the answer into the transcript row, and a re-asked question
+    /// re-opens the gate normally.
+    private func clearAnsweredGate() {
+        guard projection.pendingQuestion != nil else { return }
+        projection.clearPendingQuestion()
+        transcriptRevision &+= 1
     }
 
     /// Gracefully pause the session to steer it (`Interrupt`).

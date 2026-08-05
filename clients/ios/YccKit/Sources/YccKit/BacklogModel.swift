@@ -73,6 +73,41 @@ public enum TaskStatus: String, Sendable, CaseIterable, Identifiable {
         case .done: return 6
         }
     }
+
+    /// Column ordering for the board, which is *workflow* order rather than the
+    /// list's "most interesting first" order: a card moves left to right as the
+    /// work progresses, which is the whole point of a kanban lane.
+    public var boardOrder: Int {
+        switch self {
+        case .proposed: return 0
+        case .todo: return 1
+        case .inProgress: return 2
+        case .inReview: return 3
+        case .blocked: return 4
+        case .done: return 5
+        case .unknown: return 6
+        }
+    }
+
+    /// The board's lanes, left to right. ``unknown`` is not a lane; it is
+    /// appended only when tasks actually carry an unrecognised status.
+    public static var boardColumns: [TaskStatus] {
+        selectable.sorted { $0.boardOrder < $1.boardOrder }
+    }
+
+    /// The lane immediately before/after this one, for "move the card left/right"
+    /// actions. Returns nil at the ends (and for ``unknown``, which is off-board).
+    public var previousBoardColumn: TaskStatus? {
+        let columns = Self.boardColumns
+        guard let index = columns.firstIndex(of: self), index > 0 else { return nil }
+        return columns[index - 1]
+    }
+
+    public var nextBoardColumn: TaskStatus? {
+        let columns = Self.boardColumns
+        guard let index = columns.firstIndex(of: self), index + 1 < columns.count else { return nil }
+        return columns[index + 1]
+    }
 }
 
 /// A group of backlog tasks sharing a status, for a sectioned list.
@@ -129,6 +164,9 @@ public final class BacklogModel {
 
     /// Tasks grouped into ordered status sections.
     public var sections: [BacklogSection] { Self.sections(from: tasks) }
+
+    /// Tasks grouped into board lanes, in workflow order.
+    public var board: [BacklogSection] { Self.board(from: tasks) }
 
     /// (Re)load the backlog for the selected project and the project list.
     /// Unauthorized bubbles up via ``unauthorized`` for the view to handle.
@@ -262,6 +300,25 @@ public final class BacklogModel {
         return order
             .sorted { $0.sortOrder < $1.sortOrder }
             .map { BacklogSection(status: $0, tasks: byStatus[$0] ?? []) }
+    }
+
+    /// Group tasks into board lanes in workflow order (see
+    /// ``TaskStatus/boardOrder``). Unlike ``sections(from:)`` this keeps **empty
+    /// lanes** — a board with a missing "In review" column stops being a board,
+    /// and an empty lane is also the target you want to move a card into. A lane
+    /// for ``unknown`` is appended only when some task actually has one.
+    public static func board(from tasks: [Ycc_V1_BacklogTaskSummary]) -> [BacklogSection] {
+        var byStatus: [TaskStatus: [Ycc_V1_BacklogTaskSummary]] = [:]
+        for task in tasks {
+            byStatus[TaskStatus(status: task.status), default: []].append(task)
+        }
+        var lanes = TaskStatus.boardColumns.map {
+            BacklogSection(status: $0, tasks: byStatus[$0] ?? [])
+        }
+        if let strays = byStatus[.unknown], !strays.isEmpty {
+            lanes.append(BacklogSection(status: .unknown, tasks: strays))
+        }
+        return lanes
     }
 
     /// A short readiness annotation for a summary row: `nil` when ready (no

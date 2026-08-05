@@ -209,10 +209,15 @@ struct WorkspaceDrawer: View {
                     DrawerRow(
                         title: "Add project…",
                         systemImage: "folder.badge.plus",
-                        isMuted: true,
+                        // Tinted, not muted: it is an action, and grey made it
+                        // read as a disabled row.
+                        tint: .accentColor,
                         action: onAddProject)
 
-                    sectionHeader(model.selectedProject ?? "All projects")
+                    // Naming the scope here is what stops this reading as a
+                    // second, competing list of projects.
+                    sectionHeader("Browse \(model.selectedProject ?? "all projects")")
+
                     DrawerRow(title: "Backlog", systemImage: "checklist") {
                         onOpen(.backlog(project: scopedProject))
                     }
@@ -285,8 +290,20 @@ private struct DrawerRow: View {
     var isSelected = false
     /// Renders the title/icon in a quieter style for secondary actions.
     var isMuted = false
+    /// Overrides the icon + title colour, for affirmative actions.
+    var tint: Color?
     var activity: ProjectActivity?
     let action: () -> Void
+
+    private var iconColor: Color {
+        if let tint { return tint }
+        return isSelected ? Color.accentColor : Color.secondary
+    }
+
+    private var titleColor: Color {
+        if let tint { return tint }
+        return isMuted ? Color.secondary : Color.primary
+    }
 
     var body: some View {
         Button(action: action) {
@@ -294,10 +311,10 @@ private struct DrawerRow: View {
                 Image(systemName: systemImage)
                     .font(.footnote)
                     .frame(width: 20)
-                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+                    .foregroundStyle(iconColor)
                 Text(title)
                     .font(.subheadline.weight(isSelected ? .semibold : .regular))
-                    .foregroundStyle(isMuted ? Color.secondary : Color.primary)
+                    .foregroundStyle(titleColor)
                     .lineLimit(1)
                 Spacer(minLength: 6)
                 if let activity, !activity.isEmpty {

@@ -412,6 +412,53 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertTrue(model.totalActivity.isEmpty)
     }
 
+    func testMarkAnsweredClearsTheNeedsAnswerBadgeImmediately() async {
+        let source = MockListSource()
+        source.projects = [project("one")]
+        source.sessionsByProject = [
+            "one": [session(id: "asking", status: "running", live: true, waitingInput: true)],
+        ]
+        let model = SessionListModel(source: source)
+        await model.refresh()
+        XCTAssertEqual(model.activity(forProject: "one").needsAnswer, 1)
+
+        model.markAnswered(sessionID: "asking")
+
+        // No refetch: the badge and the row both stop nagging right away.
+        XCTAssertEqual(model.activity(forProject: "one").needsAnswer, 0)
+        XCTAssertEqual(model.totalActivity.needsAnswer, 0)
+        XCTAssertFalse(model.sessions.first { $0.sessionID == "asking" }!.waitingInput)
+        XCTAssertEqual(source.requestedProjects.count, 1)
+    }
+
+    func testMarkAnsweredIgnoresUnknownOrAlreadyAnsweredSessions() async {
+        let source = MockListSource()
+        source.projects = [project("one")]
+        source.sessionsByProject = ["one": [session(id: "quiet", live: true)]]
+        let model = SessionListModel(source: source)
+        await model.refresh()
+
+        model.markAnswered(sessionID: "nope")
+        model.markAnswered(sessionID: "quiet")
+
+        XCTAssertEqual(model.allSessions.count, 1)
+        XCTAssertFalse(model.allSessions[0].waitingInput)
+    }
+
+    func testProjectsWithNoSessionsStillReportEmptyActivity() async {
+        let source = MockListSource()
+        source.projects = [project("busy"), project("empty")]
+        source.sessionsByProject = [
+            "busy": [session(id: "a", status: "running", live: true)],
+            "empty": [],
+        ]
+        let model = SessionListModel(source: source)
+        await model.refresh()
+
+        XCTAssertEqual(model.activity(forProject: "busy"), ProjectActivity(active: 1))
+        XCTAssertEqual(model.activity(forProject: "empty"), ProjectActivity())
+    }
+
     func testRemoveProjectFailureKeepsSelectionAndSurfacesError() async {
         let source = MockListSource()
         source.removeError = YccError.rpc(message: "cannot remove")

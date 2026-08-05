@@ -1,7 +1,7 @@
 ---
 id: "0214"
 title: 'iOS: Slack-style workspace drawer with all-active session inbox'
-status: in_progress
+status: in_review
 priority: 2
 created: "2026-07-15"
 updated: "2026-07-15"
@@ -32,3 +32,4 @@ Acceptance criteria:
 - `SessionListModel` now always fans out across projects and filters client-side, so drawer badges stay accurate under any scope and project switching needs no refetch; added `ProjectActivity`, `activity(forProject:)`, `totalActivity`, `allSessions`, plus headless tests for the counts and the client-side filter.
 - Documented the shell (drawer contents, toolbar budget, unconditional fan-out) in docs/design/ios-client.md §6.
 - NOT YET VERIFIED: no Swift toolchain on this machine — `swift test` and the simulator build must run on the Mac.
+- Verified on device from screenshots: drawer opens, scopes, and navigates correctly. Two refinements from that pass — the destinations section header now names its scope ("Browse all projects" / "Browse ycc") instead of the ambiguous "All projects" that read as a second project list, and "Add project…" is tinted rather than muted grey, which made it look disabled.

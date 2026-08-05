@@ -45,6 +45,9 @@ private final class MockActionSource: SessionActionSource, SessionTranscriptSour
 
     /// If set, the next matching action throws this error.
     var nextError: Error?
+    /// Seeded transcript, so a test can put the model into a pending-question
+    /// state before exercising an action.
+    var transcript: [Ycc_V1_Event] = []
 
     private func record(_ call: Call) throws {
         lock.lock()
@@ -73,7 +76,9 @@ private final class MockActionSource: SessionActionSource, SessionTranscriptSour
     func stopSession(sessionId: String) async throws { try record(Call(kind: "stop")) }
 
     // SessionTranscriptSource — no stream held open.
-    func getSessionTranscript(project: String, sessionId: String) async throws -> [Ycc_V1_Event] { [] }
+    func getSessionTranscript(project: String, sessionId: String) async throws -> [Ycc_V1_Event] {
+        transcript
+    }
     func subscribe(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_Event, Error> {
         AsyncThrowingStream { $0.finish() }
     }
@@ -460,6 +465,63 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertEqual(actions.calls, [
             .init(kind: "answerBatch", batch: ["idx:1", "text:later"]),
         ])
+    }
+
+    // MARK: - Answering closes the gate immediately
+
+    /// Seed a live VM that is sitting on an unanswered question.
+    private func askingVM(_ actions: MockActionSource) async -> SessionViewModel {
+        actions.transcript = [
+            event(1, "question_asked", #"{"question":"Proceed?","options":["yes","no"]}"#),
+        ]
+        let vm = actionVM(actions)
+        vm.start()
+        await waitUntil { vm.pendingQuestion != nil }
+        XCTAssertNotNil(vm.pendingQuestion, "precondition: a question is pending")
+        return vm
+    }
+
+    /// The `question_answered` event is authoritative, but waiting for it to
+    /// make the round trip left the banner asking the user to answer a question
+    /// they had just answered — indefinitely if the stream was reconnecting.
+    func testAnsweringClosesTheGateWithoutWaitingForTheEvent() async {
+        let actions = MockActionSource()
+        let vm = await askingVM(actions)
+
+        await vm.answer(optionIndex: 0)
+
+        XCTAssertNil(vm.pendingQuestion)
+    }
+
+    func testAnsweringWithTextClosesTheGate() async {
+        let actions = MockActionSource()
+        let vm = await askingVM(actions)
+
+        await vm.answer(text: "go ahead")
+
+        XCTAssertNil(vm.pendingQuestion)
+    }
+
+    func testBatchAnswerClosesTheGate() async {
+        let actions = MockActionSource()
+        let vm = await askingVM(actions)
+
+        await vm.answerBatch([(text: "", optionIndex: 0)])
+
+        XCTAssertNil(vm.pendingQuestion)
+    }
+
+    /// A rejected answer must leave the gate open — the user still has to deal
+    /// with the question.
+    func testFailedAnswerKeepsTheGateOpen() async {
+        let actions = MockActionSource()
+        let vm = await askingVM(actions)
+        actions.nextError = YccError.rpc(message: "boom")
+
+        await vm.answer(optionIndex: 0)
+
+        XCTAssertEqual(vm.actionError, "boom")
+        XCTAssertNotNil(vm.pendingQuestion)
     }
 
     func testFailedPreconditionOnAnswerSetsToastWithoutCrashing() async {

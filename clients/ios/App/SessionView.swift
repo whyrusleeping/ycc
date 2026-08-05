@@ -113,8 +113,11 @@ struct SessionView: View {
         }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+        // The transcript scrolls the full height of the screen, so without an
+        // opaque bar its text bleeds through behind the status bar and title.
+        .toolbarBackground(.visible, for: .navigationBar)
         .toolbar { titleToolbar }
-        .toolbar { statusToolbar }
+        .toolbar { backlogShortcut }
         .toolbar { if model.mode == .live { actionMenu } }
         .navigationDestination(item: $commitTarget) { target in
             DiffView(
@@ -132,8 +135,12 @@ struct SessionView: View {
                     onAnswerSingle: { optionIndex, text in
                         if optionIndex >= 0 { await model.answer(optionIndex: optionIndex) }
                         else { await model.answer(text: text) }
+                        noteAnswered()
                     },
-                    onAnswerBatch: { answers in await model.answerBatch(answers) }
+                    onAnswerBatch: { answers in
+                        await model.answerBatch(answers)
+                        noteAnswered()
+                    }
                 )
                 // Tie the sheet's identity to the gate: if `pendingQuestion`
                 // changes shape while the sheet is open (e.g. a reopened session's
@@ -425,6 +432,14 @@ struct SessionView: View {
         Task { await model.send(text: text, images: images) }
     }
 
+    /// Tell the rest of the app this session's question is dealt with, so the
+    /// inbox and drawer badges stop nagging before the next list refresh.
+    /// Harmless if the answer failed — the next refresh restores the truth.
+    @MainActor
+    private func noteAnswered() {
+        app.noteQuestionAnswered(sessionID: sessionID)
+    }
+
     private enum PictureError: LocalizedError {
         case unreadable, tooLarge
         var errorDescription: String? {
@@ -590,9 +605,11 @@ struct SessionView: View {
         .buttonStyle(.plain)
     }
 
-    /// A two-line inline title: the session's name over its project. An inline
-    /// `navigationTitle` alone can only show one line, and "which project is
-    /// this?" is the question a cross-project feed makes constant.
+    /// A two-line inline title: the session's name over its project and live
+    /// state. An inline `navigationTitle` alone can only show one line, and
+    /// "which project is this?" is the question a cross-project feed makes
+    /// constant. Folding the connection state in here also frees a toolbar slot
+    /// for the backlog shortcut.
     @ToolbarContentBuilder
     private var titleToolbar: some ToolbarContent {
         ToolbarItem(placement: .principal) {
@@ -600,40 +617,64 @@ struct SessionView: View {
                 Text(title)
                     .font(.headline)
                     .lineLimit(1)
-                    .truncationMode(.middle)
-                if !project.isEmpty {
-                    Text(project)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    // Tail, not middle: these titles are derived from the
+                    // opening prompt, so the front of the string is the part
+                    // that identifies the session.
+                    .truncationMode(.tail)
+                HStack(spacing: 4) {
+                    if !project.isEmpty {
+                        Text(project)
+                    }
+                    connectionState
                 }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
             }
-            .frame(maxWidth: 220)
+            .frame(maxWidth: 230)
             .accessibilityElement(children: .combine)
         }
     }
 
-    @ToolbarContentBuilder
-    private var statusToolbar: some ToolbarContent {
-        ToolbarItem(placement: .topBarTrailing) {
-            switch model.state {
-            case .streaming:
-                Label("Live", systemImage: "dot.radiowaves.left.and.right")
-                    .labelStyle(.iconOnly)
-                    .foregroundStyle(.green)
-            case .reconnecting, .loading:
-                ProgressView()
-            case .failed:
+    /// The stream's state, rendered inline under the title rather than as its
+    /// own toolbar button.
+    @ViewBuilder
+    private var connectionState: some View {
+        switch model.state {
+        case .streaming:
+            HStack(spacing: 3) {
+                Circle().fill(Color.green).frame(width: 5, height: 5)
+                Text("live")
+            }
+        case .reconnecting:
+            Text("· reconnecting…")
+        case .loading:
+            Text("· loading…")
+        case .failed:
+            HStack(spacing: 3) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-            case .idle, .finished:
-                EmptyView()
+                Text("offline")
+            }
+            .foregroundStyle(.orange)
+        case .idle, .finished:
+            EmptyView()
+        }
+    }
+
+    /// The backlog is the other half of "what is this agent doing", so it stays
+    /// one tap away from a session rather than only reachable from the home
+    /// screen's drawer.
+    @ToolbarContentBuilder
+    private var backlogShortcut: some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
+            NavigationLink(value: HomeDestination.backlog(project: project)) {
+                Label("Backlog", systemImage: "checklist")
             }
         }
     }
 
-    /// One overflow menu rather than a row of glyphs: settings plus the
-    /// interrupt / resume / stop controls.
+    /// One overflow menu rather than a row of glyphs: settings, the other
+    /// project destinations, and the interrupt / resume / stop controls.
     @ToolbarContentBuilder
     private var actionMenu: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
@@ -642,6 +683,12 @@ struct SessionView: View {
                     showSettings = true
                 } label: {
                     Label("Session settings", systemImage: "gearshape")
+                }
+                NavigationLink(value: HomeDestination.workstreams(project: project)) {
+                    Label("Workstreams", systemImage: "arrow.triangle.branch")
+                }
+                NavigationLink(value: HomeDestination.usage(project: project)) {
+                    Label("Usage", systemImage: "chart.bar")
                 }
                 Divider()
                 Button {
@@ -702,7 +749,9 @@ private struct TranscriptRowView: View, Equatable {
                 title: "Thinking",
                 systemImage: "brain",
                 tint: .purple,
-                detail: text
+                preview: ToolPreview.oneLine(text, limit: 70),
+                detail: text,
+                detailIsAside: true
             )
         case .tool(let name, let status, let args, let output):
             ToolRowView(name: name, status: status, args: args, output: output)
@@ -931,7 +980,13 @@ private struct ExpandableRow: View {
     let title: String
     let systemImage: String
     var tint: Color = .secondary
+    /// A one-line hint of the body, shown while collapsed. Without it a stack of
+    /// "Thinking" rows says nothing about what the agent was actually weighing.
+    var preview: String = ""
     let detail: String
+    /// Render the body as a quiet aside (dimmed + italic, spec §18.4) rather
+    /// than as prose competing with the model's actual reply.
+    var detailIsAside = false
 
     @State private var expanded = false
 
@@ -941,9 +996,20 @@ private struct ExpandableRow: View {
                 withAnimation(.snappy) { expanded.toggle() }
             } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: systemImage).foregroundStyle(tint)
-                    Text(title).font(.caption).foregroundStyle(.secondary)
-                    Spacer()
+                    Image(systemName: systemImage)
+                        .font(.caption)
+                        .foregroundStyle(tint)
+                    Text(title)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if !preview.isEmpty, !expanded {
+                        Text(preview)
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    Spacer(minLength: 4)
                     Image(systemName: expanded ? "chevron.up" : "chevron.down")
                         .font(.caption2).foregroundStyle(.tertiary)
                 }
@@ -951,18 +1017,28 @@ private struct ExpandableRow: View {
             .buttonStyle(.plain)
 
             if expanded {
-                Text(detail)
-                    .font(.callout)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-                    .background(Color(.tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
+                Group {
+                    if detailIsAside {
+                        Text(detail)
+                            .font(.footnote.italic())
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text(detail)
+                            .font(.callout)
+                    }
+                }
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(Color(.tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
             }
         }
     }
 }
 
-/// A tool call collapsed to `name + status`, expandable to args and output.
+/// A tool call collapsed to `icon + name + what it acted on`, expandable to the
+/// full args and output. The argument preview is what makes a long transcript
+/// scannable — a column of bare "Bash ✓" rows carries no information.
 private struct ToolRowView: View {
     let name: String
     let status: TranscriptRow.ToolStatus
@@ -971,16 +1047,31 @@ private struct ToolRowView: View {
 
     @State private var expanded = false
 
+    private var preview: String { ToolPreview.summary(tool: name, args: args) }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Button {
                 withAnimation(.snappy) { expanded.toggle() }
             } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: "wrench.and.screwdriver").foregroundStyle(.blue)
-                    Text(name).font(.caption.monospaced()).foregroundStyle(.primary)
+                    Image(systemName: ToolPreview.symbol(for: name))
+                        .font(.caption)
+                        .foregroundStyle(.blue)
+                        .frame(width: 16)
+                    Text(name)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.primary)
+                        .layoutPriority(1)
+                    if !preview.isEmpty {
+                        Text(preview)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    Spacer(minLength: 4)
                     statusBadge
-                    Spacer()
                     Image(systemName: expanded ? "chevron.up" : "chevron.down")
                         .font(.caption2).foregroundStyle(.tertiary)
                 }
@@ -994,6 +1085,8 @@ private struct ToolRowView: View {
                 }
             }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(preview.isEmpty ? name : "\(name), \(preview)")
     }
 
     private var statusBadge: some View {
@@ -1065,9 +1158,10 @@ private struct QuestionRowView: View {
 private struct QuestionSheet: View {
     let pending: SessionProjection.PendingQuestion
     /// (optionIndex, text): optionIndex >= 0 selects an option, -1 sends text.
-    let onAnswerSingle: (Int, String) async -> Void
+    /// `@MainActor` because these callbacks touch the session/app view models.
+    let onAnswerSingle: @MainActor (Int, String) async -> Void
     /// Positional batch answers.
-    let onAnswerBatch: ([(text: String, optionIndex: Int)]) async -> Void
+    let onAnswerBatch: @MainActor ([(text: String, optionIndex: Int)]) async -> Void
 
     @Environment(\.dismiss) private var dismiss
     /// Per-question free-text drafts.
@@ -1077,8 +1171,8 @@ private struct QuestionSheet: View {
 
     init(
         pending: SessionProjection.PendingQuestion,
-        onAnswerSingle: @escaping (Int, String) async -> Void,
-        onAnswerBatch: @escaping ([(text: String, optionIndex: Int)]) async -> Void
+        onAnswerSingle: @escaping @MainActor (Int, String) async -> Void,
+        onAnswerBatch: @escaping @MainActor ([(text: String, optionIndex: Int)]) async -> Void
     ) {
         self.pending = pending
         self.onAnswerSingle = onAnswerSingle
@@ -1089,38 +1183,63 @@ private struct QuestionSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                ForEach(Array(pending.questions.enumerated()), id: \.offset) { index, question in
-                    Section {
-                        // The question is the point of this sheet: render it as
-                        // full-size prose, not a small-caps section header that
-                        // truncates a multi-sentence, self-contained ask.
-                        VStack(alignment: .leading, spacing: 4) {
-                            if pending.isBatch {
-                                Text("Question \(index + 1) of \(pending.questions.count)")
-                                    .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(.secondary)
+            ScrollViewReader { proxy in
+                Form {
+                    ForEach(Array(pending.questions.enumerated()), id: \.offset) { index, question in
+                        Section {
+                            // The question is the point of this sheet: render it
+                            // as full-size prose, not a small-caps section header
+                            // that truncates a multi-sentence, self-contained ask.
+                            VStack(alignment: .leading, spacing: 4) {
+                                if pending.isBatch {
+                                    Text("Question \(index + 1) of \(pending.questions.count)")
+                                        .font(.caption2.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                }
+                                MarkdownText(text: question.prompt)
+                                    .font(.callout)
                             }
-                            MarkdownText(text: question.prompt)
-                                .font(.callout)
-                        }
-                        .padding(.vertical, 2)
-                        .listRowBackground(Color.clear)
+                            .padding(.vertical, 2)
+                            .listRowBackground(Color.clear)
 
-                        ForEach(Array(question.options.enumerated()), id: \.offset) { optIdx, option in
-                            optionRow(index: index, optIdx: optIdx, option: option)
-                        }
-                        TextField(
-                            question.options.isEmpty ? "Type an answer…" : "Or type your own…",
-                            text: binding(index), axis: .vertical)
-                            .lineLimit(1...4)
-                            .onChange(of: text(at: index)) { _, newValue in
-                                // Typing overrides a picked option.
-                                if !newValue.isEmpty { setSelected(-1, at: index) }
+                            ForEach(Array(question.options.enumerated()), id: \.offset) { optIdx, option in
+                                optionRow(index: index, optIdx: optIdx, option: option, proxy: proxy)
                             }
-                        if !pending.isBatch {
-                            singleSendSection
+                            TextField(
+                                question.options.isEmpty ? "Type an answer…" : "Or type your own…",
+                                text: binding(index), axis: .vertical)
+                                .lineLimit(1...4)
+                                .onChange(of: text(at: index)) { _, newValue in
+                                    // Typing overrides a picked option.
+                                    if !newValue.isEmpty { setSelected(-1, at: index) }
+                                }
+                            if !pending.isBatch {
+                                singleSendSection
+                            }
                         }
+                        .id(Self.anchor(forQuestion: index))
+                    }
+
+                    if pending.isBatch {
+                        Section {
+                            Button {
+                                submitBatch()
+                            } label: {
+                                HStack {
+                                    Spacer()
+                                    Text("Submit answers").fontWeight(.semibold)
+                                    Spacer()
+                                }
+                            }
+                            .disabled(!allAnswered)
+                        } footer: {
+                            if !allAnswered {
+                                Text("Answer every question to submit.")
+                            }
+                        }
+                        .id(Self.submitAnchor)
+                        .listRowBackground(allAnswered ? Color.accentColor : Color(.tertiarySystemFill))
+                        .foregroundStyle(allAnswered ? Color.white : Color.secondary)
                     }
                 }
             }
@@ -1140,11 +1259,19 @@ private struct QuestionSheet: View {
         }
     }
 
-    private func optionRow(index: Int, optIdx: Int, option: String) -> some View {
+    /// Scroll anchors, so answering one question can carry the user to the next
+    /// one (and to the submit button after the last).
+    private static func anchor(forQuestion index: Int) -> String { "question-\(index)" }
+    private static let submitAnchor = "submit"
+
+    private func optionRow(
+        index: Int, optIdx: Int, option: String, proxy: ScrollViewProxy
+    ) -> some View {
         Button {
             if pending.isBatch {
                 setSelected(optIdx, at: index)
                 setText("", at: index)
+                advance(from: index, proxy: proxy)
             } else {
                 // Single question: an option tap answers immediately.
                 Task {
@@ -1162,6 +1289,19 @@ private struct QuestionSheet: View {
                     .multilineTextAlignment(.leading)
                 Spacer(minLength: 0)
             }
+        }
+    }
+
+    /// After answering question `index`, bring the next unanswered question (or
+    /// the submit button) into view. Scanning for the next *unanswered* question
+    /// keeps revisiting an earlier answer from bouncing the user back down.
+    private func advance(from index: Int, proxy: ScrollViewProxy) {
+        let next = pending.questions.indices.first { candidate in
+            candidate > index && !isAnswered(candidate)
+        }
+        let target = next.map(Self.anchor(forQuestion:)) ?? Self.submitAnchor
+        withAnimation(.snappy) {
+            proxy.scrollTo(target, anchor: .top)
         }
     }
 
@@ -1204,12 +1344,14 @@ private struct QuestionSheet: View {
         .disabled(text(at: 0).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
+    /// Whether question `index` has an answer (a picked option or typed text).
+    private func isAnswered(_ index: Int) -> Bool {
+        if selectedValue(at: index) >= 0 { return true }
+        return !text(at: index).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     private var allAnswered: Bool {
-        for i in pending.questions.indices {
-            let hasText = !text(at: i).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            if selectedValue(at: i) < 0 && !hasText { return false }
-        }
-        return true
+        pending.questions.indices.allSatisfy(isAnswered)
     }
 
     private func submitBatch() {

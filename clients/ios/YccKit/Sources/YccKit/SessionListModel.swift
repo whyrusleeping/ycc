@@ -146,20 +146,49 @@ public final class SessionListModel {
     /// from several projects are merged.
     public private(set) var sessionProjects: [String: String] = [:]
 
-    /// Live-activity counts per project name, for the drawer's badges.
-    public private(set) var activityByProject: [String: ProjectActivity] = [:]
+    /// Live-activity counts per project name, for the drawer's badges. Computed
+    /// from the loaded rows rather than cached at load time, so a local
+    /// correction like ``markAnswered(sessionID:)`` is reflected immediately.
+    public var activityByProject: [String: ProjectActivity] {
+        var counts: [String: ProjectActivity] = [:]
+        for project in loadedProjects { counts[project] = ProjectActivity() }
+        for session in allSessions {
+            guard let project = sessionProjects[session.sessionID] else { continue }
+            var activity = counts[project] ?? ProjectActivity()
+            Self.accumulate(session, into: &activity)
+            counts[project] = activity
+        }
+        return counts
+    }
+
+    /// Project names that produced a successful history load, so a project with
+    /// no sessions still reports (empty) activity rather than being absent.
+    private var loadedProjects: [String] = []
 
     /// Daemon-wide live-activity counts, for the drawer's "Recent sessions" row.
     public var totalActivity: ProjectActivity {
-        activityByProject.values.reduce(into: ProjectActivity()) { total, activity in
-            total.active += activity.active
-            total.needsAnswer += activity.needsAnswer
+        allSessions.reduce(into: ProjectActivity()) { total, session in
+            Self.accumulate(session, into: &total)
         }
     }
 
     /// Activity for one project (zero when it has none).
     public func activity(forProject name: String) -> ProjectActivity {
         activityByProject[name] ?? ProjectActivity()
+    }
+
+    /// Locally clear a session's "waiting for an answer" flag.
+    ///
+    /// The daemon is the source of truth, but the list only reloads on an
+    /// explicit refresh — so after answering a question the inbox and the
+    /// drawer badges kept nagging about a question that was already answered.
+    /// This applies the correction the client already knows about; the next
+    /// refresh overwrites it with the server's view either way.
+    public func markAnswered(sessionID: String) {
+        guard let index = allSessions.firstIndex(where: { $0.sessionID == sessionID }),
+              allSessions[index].waitingInput
+        else { return }
+        allSessions[index].waitingInput = false
     }
 
     /// (Re)load the project list and every project's history. The aggregate feed
@@ -245,20 +274,18 @@ public final class SessionListModel {
     private func apply(loads: [HistoryLoad]) {
         var merged: [Ycc_V1_SessionSummary] = []
         var routes: [String: String] = [:]
-        var activity: [String: ProjectActivity] = [:]
         var seenSessionIDs = Set<String>()
+        var succeeded: [String] = []
         for load in loads where load.error == nil {
-            var counts = ProjectActivity()
+            succeeded.append(load.project)
             for session in load.sessions where seenSessionIDs.insert(session.sessionID).inserted {
                 merged.append(session)
                 routes[session.sessionID] = load.project
-                Self.accumulate(session, into: &counts)
             }
-            activity[load.project] = counts
         }
         allSessions = Self.sortedByRecency(merged)
         sessionProjects = routes
-        activityByProject = activity
+        loadedProjects = succeeded
 
         let failed = loads.filter { $0.error != nil }
         if failed.isEmpty {

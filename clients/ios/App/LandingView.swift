@@ -151,6 +151,19 @@ struct LandingView: View {
         .onChange(of: app.pendingDeepLink) { _, link in
             if link != nil { Task { await consumePendingDeepLink() } }
         }
+        // Apply locally-known answers straight away, so the inbox and drawer
+        // badges stop nagging the moment the user answers rather than at the
+        // next manual refresh.
+        .onChange(of: app.answeredQuestionSessions) { _, answered in
+            guard !answered.isEmpty else { return }
+            for sessionID in answered { model?.markAnswered(sessionID: sessionID) }
+            app.clearAnsweredQuestionNotices()
+        }
+        // Returning to the inbox is a strong signal that its rows are stale:
+        // the agent has usually moved on while the user was inside a session.
+        .onChange(of: path.isEmpty) { _, isAtRoot in
+            if isAtRoot { Task { await model?.refresh() } }
+        }
         .onChange(of: model?.unauthorized ?? false) { _, isUnauthorized in
             if isUnauthorized { app.handleUnauthorized() }
         }
@@ -515,7 +528,9 @@ private struct SessionRow: View {
                 }
                 Text(SessionListModel.displayTitle(for: session))
                     .font(.headline)
-                    .lineLimit(1)
+                    // Titles are derived from the opening prompt, so one line
+                    // truncates almost every row into uselessness.
+                    .lineLimit(2)
                 Spacer(minLength: 4)
                 if session.live {
                     Label("Live", systemImage: "dot.radiowaves.left.and.right")
@@ -531,8 +546,7 @@ private struct SessionRow: View {
                         .lineLimit(1)
                 }
                 if session.turns > 0 {
-                    Label("\(session.turns)", systemImage: "arrow.triangle.2.circlepath")
-                        .labelStyle(.titleAndIcon)
+                    Text("\(session.turns) turns")
                 }
                 Spacer(minLength: 4)
                 if let text = relativeLastActivity {
@@ -574,11 +588,11 @@ private struct StatusBadge: View {
     private var color: Color {
         switch kind {
         case .running: return .green
-        case .idle: return .blue
         case .error: return .red
         case .paused: return .orange
-        case .stopped: return .gray
-        case .unknown: return .gray
+        // `idle` is the overwhelmingly common state of a session list, so a
+        // loud colour there is pure noise — reserve colour for what needs you.
+        case .idle, .stopped, .unknown: return .gray
         }
     }
 }

@@ -77,6 +77,55 @@ private func summary(
 
 @MainActor
 final class BacklogModelTests: XCTestCase {
+    // MARK: - Board lanes
+
+    func testBoardLanesFollowWorkflowOrder() {
+        let lanes = BacklogModel.board(from: [summary("0001", status: "todo")])
+        XCTAssertEqual(
+            lanes.map(\.status),
+            [.proposed, .todo, .inProgress, .inReview, .blocked, .done])
+    }
+
+    func testBoardKeepsEmptyLanes() {
+        // A board with lanes that vanish when empty is not a board — and an
+        // empty lane is exactly the column you want to move a card into.
+        let lanes = BacklogModel.board(from: [summary("0001", status: "in_progress")])
+        XCTAssertEqual(lanes.count, 6)
+        XCTAssertEqual(lanes.first(where: { $0.status == .inProgress })?.tasks.count, 1)
+        XCTAssertEqual(lanes.first(where: { $0.status == .todo })?.tasks.count, 0)
+    }
+
+    func testBoardAppendsAnUnknownLaneOnlyWhenUsed() {
+        XCTAssertNil(
+            BacklogModel.board(from: [summary("0001", status: "todo")])
+                .first(where: { $0.status == .unknown }))
+        let withStray = BacklogModel.board(from: [summary("0002", status: "weird")])
+        XCTAssertEqual(withStray.last?.status, .unknown)
+        XCTAssertEqual(withStray.last?.tasks.map(\.id), ["0002"])
+    }
+
+    func testBoardGroupsTasksIntoTheirLane() {
+        let lanes = BacklogModel.board(from: [
+            summary("0001", status: "todo"),
+            summary("0002", status: "todo"),
+            summary("0003", status: "done"),
+        ])
+        XCTAssertEqual(lanes.first(where: { $0.status == .todo })?.tasks.map(\.id), ["0001", "0002"])
+        XCTAssertEqual(lanes.first(where: { $0.status == .done })?.tasks.map(\.id), ["0003"])
+    }
+
+    func testAdjacentBoardColumns() {
+        XCTAssertNil(TaskStatus.proposed.previousBoardColumn)
+        XCTAssertEqual(TaskStatus.proposed.nextBoardColumn, .todo)
+        XCTAssertEqual(TaskStatus.inProgress.previousBoardColumn, .todo)
+        XCTAssertEqual(TaskStatus.inProgress.nextBoardColumn, .inReview)
+        XCTAssertNil(TaskStatus.done.nextBoardColumn)
+        XCTAssertEqual(TaskStatus.done.previousBoardColumn, .blocked)
+        // `unknown` is off-board and has no neighbours.
+        XCTAssertNil(TaskStatus.unknown.previousBoardColumn)
+        XCTAssertNil(TaskStatus.unknown.nextBoardColumn)
+    }
+
     // MARK: - Sectioning
 
     func testSectionsOrderedActiveFirstDoneLast() {

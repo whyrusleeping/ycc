@@ -389,6 +389,14 @@ public struct SessionProjection: Sendable, Equatable {
         pendingQuestion = nil
     }
 
+    /// Close the pending-question gate optimistically, once the daemon has
+    /// accepted an answer but before the `question_answered` event arrives.
+    /// Only the gate is cleared — the transcript row still waits for the event
+    /// to fold in the authoritative answer text.
+    public mutating func clearPendingQuestion() {
+        pendingQuestion = nil
+    }
+
     // MARK: - Row helpers
 
     private mutating func appendDurable(
