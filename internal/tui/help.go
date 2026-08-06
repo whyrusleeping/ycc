@@ -134,8 +134,9 @@ func (m model) helpSections() []helpSection {
 		}},
 		{"cost", []helpBind{
 			{"↑ / ↓", "scroll the breakdown"},
-			{"g", "cycle grouping (task · model · day)"},
-			{"esc / q", "close"},
+			{"enter", "task breakdown by agent"},
+			{"g", "cycle grouping (task · model · session · day · agent)"},
+			{"esc / q", "back from the task drill-down · close"},
 		}},
 		{"digest", []helpBind{
 			{"↑ / ↓", "move between rows"},

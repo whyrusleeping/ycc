@@ -58,3 +58,6 @@ Verify with `go build ./... && go test ./...` (note in the report any pre-existi
 …[truncated]
 - 2026-08-06 review tier: simple (coordinator self-review)
 - 2026-08-06 decision: accept — commit: cost: --task filter for a single-task usage breakdown (GetUsageRequest.task)
+- 2026-08-06 usage: 1,147,088 tok (in 199,267, out 12,141, cache_r 1,419,358, cache_w 15,128) · cost n/a (unpriced)
+  implementer: 1,142,017 tok (in 199,247, out 7,090, cache_r 935,680, cache_w 0) · cost n/a (unpriced)
+  coordinator: 5,071 tok (in 20, out 5,051, cache_r 483,678, cache_w 15,128) · cost n/a (unpriced)

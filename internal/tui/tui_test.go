@@ -1074,10 +1074,11 @@ type fakeClient struct {
 	lastCommitSha   string
 
 	// cost view (spec §20.5, task 0039)
-	usageRows   []*v1.UsageRow
-	usageTotal  *v1.UsageRow
-	usageWksp   string
-	lastGroupBy []string
+	usageRows     []*v1.UsageRow
+	usageTotal    *v1.UsageRow
+	usageWksp     string
+	lastGroupBy   []string
+	lastUsageTask string
 
 	// plan library browser (task 0077)
 	plans []*v1.PlanSummary
@@ -1316,11 +1317,23 @@ func (f *fakeClient) DiscardWorkstream(_ context.Context, req *connect.Request[v
 	return connect.NewResponse(&v1.DiscardWorkstreamResponse{}), nil
 }
 
-// GetUsage backs the cost view route (spec §20.5, task 0039). It records the
-// requested group-by so tests can assert the "g" cycle re-fetches with a new
-// dimension, and returns canned priced/unpriced rows plus a total.
+// GetUsage backs the cost view route (spec §20.5, tasks 0039/0174). It records
+// grouping and task filters, returning a distinct per-agent breakdown when a task
+// is selected so drill-down behavior is observable.
 func (f *fakeClient) GetUsage(_ context.Context, req *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error) {
 	f.lastGroupBy = req.Msg.GroupBy
+	f.lastUsageTask = req.Msg.Task
+	if req.Msg.Task != "" {
+		return connect.NewResponse(&v1.GetUsageResponse{
+			Rows: []*v1.UsageRow{
+				{Task: req.Msg.Task, Agent: "coordinator", Model: "sonnet", Input: 600, Output: 100, Total: 700, Cost: 0.07, PriceStatus: "priced"},
+				{Task: req.Msg.Task, Agent: "implementer", Model: "codex", Input: 800, Output: 200, Total: 1000, Cost: 0.1, PriceStatus: "priced"},
+				{Task: req.Msg.Task, Agent: "reviewer", Model: "sonnet", Input: 300, Output: 50, Total: 350, Cost: 0.035, PriceStatus: "priced"},
+			},
+			Total:     &v1.UsageRow{Input: 1700, Output: 350, Total: 2050, Cost: 0.205, PriceStatus: "priced"},
+			Workspace: f.usageWksp,
+		}), nil
+	}
 	return connect.NewResponse(&v1.GetUsageResponse{
 		Rows:      f.usageRows,
 		Total:     f.usageTotal,
@@ -3025,8 +3038,8 @@ func newCostFakeClient() *fakeClient {
 	f := newFakeClient()
 	f.usageWksp = "demo-workspace"
 	f.usageRows = []*v1.UsageRow{
-		{Task: "0001", Model: "sonnet", Input: 1000, Output: 200, CacheRead: 50, CacheWrite: 10, Total: 1260, Cost: 0.1234, PriceStatus: "priced"},
 		{Task: "", Model: "local", Input: 500, Output: 100, Total: 600, PriceStatus: "unpriced"},
+		{Task: "0001", Model: "sonnet", Input: 1000, Output: 200, CacheRead: 50, CacheWrite: 10, Total: 1260, Cost: 0.1234, PriceStatus: "priced"},
 	}
 	f.usageTotal = &v1.UsageRow{Input: 1500, Output: 300, CacheRead: 50, CacheWrite: 10, Total: 1860, Cost: 0.1234, PriceStatus: "partial"}
 	return f
@@ -3117,6 +3130,129 @@ func TestCostView(t *testing.T) {
 	m = drive(t, m, "esc")
 	if m.cost {
 		t.Fatal("esc should close the cost view")
+	}
+}
+
+// TestCostViewTaskDrilldown covers the task-filtered agent breakdown, scoped
+// grouping cycle, and two-level back navigation (task 0174).
+func TestCostViewTaskDrilldown(t *testing.T) {
+	f := newCostFakeClient()
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	m.cost = true
+	m.costGroupBy = []string{"task"}
+	m.costRows = f.usageRows
+	m.costTotal = f.usageTotal
+	m.costWorkspace = f.usageWksp
+	m.costCursor = 1
+
+	m = drive(t, m, "enter")
+	if m.costTask != "0001" || f.lastUsageTask != "0001" {
+		t.Fatalf("enter task filter: model=%q request=%q, want 0001", m.costTask, f.lastUsageTask)
+	}
+	if got := m.costGroupBy; len(got) != 1 || got[0] != "agent" {
+		t.Fatalf("drill-down group-by = %v, want [agent]", got)
+	}
+	view := m.costView()
+	for _, want := range []string{"task 0001", "coordinator", "implementer", "reviewer", "TOTAL", "esc back"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("drill-down view missing %q:\n%s", want, view)
+		}
+	}
+
+	// Grouping cycles within the task scope and never returns to task.
+	m = drive(t, m, "g")
+	if got := m.costGroupBy; len(got) != 1 || got[0] != "model" {
+		t.Fatalf("drill-down g group-by = %v, want [model]", got)
+	}
+	if f.lastUsageTask != "0001" {
+		t.Fatalf("drill-down g lost task filter: %q", f.lastUsageTask)
+	}
+
+	// First esc restores the task table and its cursor; the second closes it.
+	m = drive(t, m, "esc")
+	if !m.cost || m.costTask != "" || f.lastUsageTask != "" {
+		t.Fatalf("esc should return to unfiltered cost table: open=%v task=%q request=%q", m.cost, m.costTask, f.lastUsageTask)
+	}
+	if got := m.costGroupBy; len(got) != 1 || got[0] != "task" {
+		t.Fatalf("restored group-by = %v, want [task]", got)
+	}
+	if m.costCursor != 1 {
+		t.Fatalf("restored cursor = %d, want 1", m.costCursor)
+	}
+	m = drive(t, m, "esc")
+	if m.cost {
+		t.Fatal("second esc should close cost view")
+	}
+}
+
+// TestCostViewIgnoresStaleUsageResponses simulates the filtered drill-down RPC
+// completing after the newer parent-table RPC and guards against adopting its
+// rows under the restored task heading.
+func TestCostViewIgnoresStaleUsageResponses(t *testing.T) {
+	f := newCostFakeClient()
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	m.cost = true
+	m.costGroupBy = []string{"task"}
+	m.costRows = f.usageRows
+	m.costTotal = f.usageTotal
+	m.costCursor = 1
+
+	updated, drillCmd := m.Update(keyMsg("enter"))
+	drilled := updated.(model)
+	if drillCmd == nil {
+		t.Fatal("enter should issue the filtered usage request")
+	}
+	staleFiltered := drillCmd()
+	staleGen := staleFiltered.(usageMsg).gen
+
+	updated, parentCmd := drilled.Update(keyMsg("esc"))
+	parent := updated.(model)
+	if parentCmd == nil {
+		t.Fatal("esc should issue the parent-table usage request")
+	}
+	if parent.costGen <= staleGen {
+		t.Fatalf("parent generation = %d, want newer than stale %d", parent.costGen, staleGen)
+	}
+
+	// The current parent response applies normally.
+	updated, _ = parent.Update(parentCmd())
+	parent = updated.(model)
+	if len(parent.costRows) != 2 || parent.costRows[1].Task != "0001" || parent.costGroupBy[0] != "task" {
+		t.Fatalf("current parent response was not applied: group=%v rows=%+v", parent.costGroupBy, parent.costRows)
+	}
+
+	// The older filtered response arriving afterward must change nothing.
+	updated, _ = parent.Update(staleFiltered)
+	got := updated.(model)
+	if got.costTask != "" || len(got.costGroupBy) != 1 || got.costGroupBy[0] != "task" {
+		t.Fatalf("stale response changed parent state: task=%q group=%v", got.costTask, got.costGroupBy)
+	}
+	if len(got.costRows) != 2 || got.costRows[0].Task != "" || got.costRows[1].Task != "0001" {
+		t.Fatalf("stale response replaced task-level rows: %+v", got.costRows)
+	}
+}
+
+// TestCostViewUnattributedNotDrillable makes the empty task row an explicit,
+// discoverably unavailable drill-down rather than an accidental unfiltered fetch.
+func TestCostViewUnattributedNotDrillable(t *testing.T) {
+	f := newCostFakeClient()
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	m.cost = true
+	m.costGroupBy = []string{"task"}
+	m.costRows = f.usageRows
+	m.costTotal = f.usageTotal
+	m.costCursor = 0
+
+	view := m.costView()
+	if !strings.Contains(view, "enter n/a for (unattributed)") {
+		t.Fatalf("unattributed hint should explain that drill-down is unavailable:\n%s", view)
+	}
+	m = drive(t, m, "enter")
+	if m.costTask != "" || f.lastUsageTask != "" {
+		t.Fatalf("unattributed row drilled unexpectedly: model=%q request=%q", m.costTask, f.lastUsageTask)
+	}
+	if m.costCursor != 0 {
+		t.Fatalf("unattributed enter moved cursor: got %d, want 0", m.costCursor)
 	}
 }
 

@@ -404,12 +404,18 @@ type model struct {
 	// cost view (spec §20.5, task 0039): modal over menu/session, reached from the
 	// browse selector (ctrl+o). Read-only: shows the GetUsage token/cost breakdown
 	// for the selected project, grouped by a single dimension cycled with "g".
-	cost             bool
-	costRows         []*v1.UsageRow
-	costTotal        *v1.UsageRow
-	costWorkspace    string
-	costGroupBy      []string // single dimension today: task|model|session|day|agent
-	costCursor       int
+	cost          bool
+	costRows      []*v1.UsageRow
+	costTotal     *v1.UsageRow
+	costWorkspace string
+	costGroupBy   []string // single dimension today: task|model|session|day|agent
+	costCursor    int
+	// costTask scopes the §20.5 table after a task drill-down; costTaskCursor
+	// preserves the parent-row selection while that task 0174 detail is open.
+	costTask       string
+	costTaskCursor int
+	// costGen guards task 0174 state against out-of-order GetUsage responses.
+	costGen          int
 	costMsg          string // status/empty line (loading…, (no usage recorded))
 	subUsageAccounts []*v1.SubscriptionUsageAccount
 
@@ -707,6 +713,7 @@ type planDetailMsg struct{ plan *v1.GetPlanResponse }
 
 // usageMsg carries the GetUsage breakdown for the cost view (spec §20.5, task 0039).
 type usageMsg struct {
+	gen       int // request generation; stale task/group responses are ignored
 	rows      []*v1.UsageRow
 	total     *v1.UsageRow
 	workspace string
@@ -1906,15 +1913,15 @@ func (m model) fetchCommitDiff(sha string) tea.Cmd {
 }
 
 // fetchUsage loads the token/cost breakdown for the cost view (spec §20.5, task
-// 0039). It respects the selected project and the chosen group-by dimension.
+// 0039). It respects the selected project, task drill-down, and group-by dimension.
 func (m model) fetchUsage() tea.Msg {
 	resp, err := m.client.GetUsage(m.ctx, connect.NewRequest(&v1.GetUsageRequest{
-		Project: m.project, GroupBy: m.costGroupBy,
+		Project: m.project, GroupBy: m.costGroupBy, Task: m.costTask,
 	}))
 	if err != nil {
 		return errMsg{err}
 	}
-	msg := usageMsg{rows: resp.Msg.Rows, total: resp.Msg.Total, workspace: resp.Msg.Workspace}
+	msg := usageMsg{gen: m.costGen, rows: resp.Msg.Rows, total: resp.Msg.Total, workspace: resp.Msg.Workspace}
 	// Subscription telemetry is best effort: local usage still renders if this
 	// provider-internal endpoint is unavailable or an older daemon lacks the RPC.
 	if sub, subErr := m.client.GetSubscriptionUsage(m.ctx, connect.NewRequest(&v1.GetSubscriptionUsageRequest{Refresh: true})); subErr == nil {
@@ -2751,6 +2758,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cdiffVP.GotoTop()
 		return m, nil
 	case usageMsg:
+		if msg.gen != m.costGen {
+			return m, nil
+		}
 		m.rpcOK()
 		m.costRows = msg.rows
 		m.costTotal = msg.total
@@ -4320,10 +4330,12 @@ func (m model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "cost":
 			// The cost view (spec §20.5, task 0039) opens grouped by task.
 			m.cost, m.costCursor = true, 0
+			m.costTask, m.costTaskCursor = "", 0
 			m.costGroupBy = []string{"task"}
 			m.costRows, m.costTotal = nil, nil
 			m.subUsageAccounts = nil
 			m.costMsg = "loading…"
+			m.costGen++
 			return m, m.fetchUsage
 		case "workstreams":
 			m.openWorkstreams()
@@ -4843,8 +4855,12 @@ func (m model) commitDiffView() string {
 // with the "g" key (mirrors the CLI's -by options in cmd/ycc).
 var costGroupOrder = []string{"task", "model", "session", "day", "agent"}
 
-// updateCost handles the modal cost view: list navigation plus "g" to cycle the
-// group-by dimension (which re-fetches). Esc/q dismisses it.
+// costDrillGroupOrder omits task because every row in a drill-down is already
+// scoped to the focused task (task 0174).
+var costDrillGroupOrder = []string{"agent", "model", "session", "day"}
+
+// updateCost handles navigation, grouping, and task drill-down in the modal cost
+// view. Esc/q backs out of a drill-down before dismissing the modal.
 func (m model) updateCost(msg tea.Msg) (tea.Model, tea.Cmd) {
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
@@ -4854,6 +4870,15 @@ func (m model) updateCost(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return m.confirmQuit()
 	case "esc", "q":
+		if m.costTask != "" {
+			m.costTask = ""
+			m.costGroupBy = []string{"task"}
+			m.costCursor = m.costTaskCursor
+			m.costRows, m.costTotal = nil, nil
+			m.costMsg = "loading…"
+			m.costGen++
+			return m, m.fetchUsage
+		}
 		m.cost = false
 		return m, nil
 	case "up":
@@ -4862,21 +4887,43 @@ func (m model) updateCost(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "down":
 		m.costCursor = navDown(m.costCursor, len(m.costRows))
 		return m, nil
+	case "enter":
+		if m.costTask != "" || len(m.costGroupBy) == 0 || m.costGroupBy[0] != "task" || m.costCursor < 0 || m.costCursor >= len(m.costRows) {
+			return m, nil
+		}
+		task := m.costRows[m.costCursor].Task
+		if task == "" {
+			return m, nil
+		}
+		m.costTaskCursor = m.costCursor
+		m.costTask = task
+		m.costGroupBy = []string{"agent"}
+		m.costCursor = 0
+		m.costRows, m.costTotal = nil, nil
+		m.costMsg = "loading…"
+		m.costGen++
+		return m, m.fetchUsage
 	case "g":
+		order := costGroupOrder
 		cur := "task"
+		if m.costTask != "" {
+			order = costDrillGroupOrder
+			cur = "agent"
+		}
 		if len(m.costGroupBy) > 0 {
 			cur = m.costGroupBy[0]
 		}
-		next := costGroupOrder[0]
-		for i, d := range costGroupOrder {
+		next := order[0]
+		for i, d := range order {
 			if d == cur {
-				next = costGroupOrder[(i+1)%len(costGroupOrder)]
+				next = order[(i+1)%len(order)]
 				break
 			}
 		}
 		m.costGroupBy = []string{next}
 		m.costCursor = 0
 		m.costMsg = "loading…"
+		m.costGen++
 		return m, m.fetchUsage
 	}
 	return m, nil
@@ -4999,11 +5046,28 @@ func (m model) costView() string {
 		groupBy = []string{"task"}
 	}
 
-	title := " ycc — usage "
+	title := " ycc — usage"
 	if m.costWorkspace != "" {
-		title = " ycc — usage · " + m.costWorkspace + " "
+		title += " · " + m.costWorkspace
 	}
-	hint := fmt.Sprintf("g group-by:%s · ↑/↓ select · esc close", groupBy[0])
+	if m.costTask != "" {
+		title += " · task " + m.costTask
+	}
+	title += " "
+
+	hint := fmt.Sprintf("g group-by:%s · ↑/↓ select", groupBy[0])
+	if m.costTask != "" {
+		hint += " · esc back"
+	} else {
+		if groupBy[0] == "task" {
+			if m.costCursor >= 0 && m.costCursor < len(m.costRows) && m.costRows[m.costCursor].Task == "" {
+				hint += " · enter n/a for (unattributed)"
+			} else {
+				hint += " · enter breakdown"
+			}
+		}
+		hint += " · esc close"
+	}
 	subText := subscriptionUsageTUI(m.subUsageAccounts)
 
 	if len(m.costRows) == 0 {

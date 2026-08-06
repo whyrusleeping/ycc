@@ -4,6 +4,7 @@ import (
 	"image/color"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -11,6 +12,61 @@ import (
 	"github.com/whyrusleeping/ycc/internal/tui/snapshot"
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 )
+
+// TestSnapshotCostDrilldown renders a representative per-task agent breakdown.
+// YCC_TUI_SNAPSHOT_DIR optionally writes cost_drilldown.png for visual inspection;
+// ordinary tests keep the image and assertions in memory.
+func TestSnapshotCostDrilldown(t *testing.T) {
+	const cols, rows = 90, 20
+
+	m := model{
+		cost:          true,
+		costTask:      "0093",
+		costWorkspace: "demo-workspace",
+		costGroupBy:   []string{"agent"},
+		costRows: []*v1.UsageRow{
+			{Task: "0093", Agent: "coordinator", Input: 12000, Output: 2400, CacheRead: 1000, Total: 15400, Cost: 12, PriceStatus: "priced"},
+			{Task: "0093", Agent: "implementer", Input: 19000, Output: 5100, CacheRead: 2200, Total: 26300, Cost: 19, PriceStatus: "priced"},
+			{Task: "0093", Agent: "reviewer", Input: 5000, Output: 900, CacheRead: 500, Total: 6400, Cost: 5, PriceStatus: "priced"},
+		},
+		costTotal: &v1.UsageRow{Input: 36000, Output: 8400, CacheRead: 3700, Total: 48100, Cost: 36, PriceStatus: "priced"},
+	}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: cols, Height: rows})
+	m = updated.(model)
+	frame := m.render()
+	for _, want := range []string{"task 0093", "Agent", "coordinator", "implementer", "reviewer", "TOTAL", "esc back"} {
+		if !strings.Contains(frame, want) {
+			t.Fatalf("cost drill-down frame missing %q:\n%s", want, frame)
+		}
+	}
+
+	img, err := snapshot.RenderANSI(frame, cols, rows)
+	if err != nil {
+		t.Fatalf("RenderANSI: %v", err)
+	}
+	if img == nil {
+		t.Fatal("RenderANSI returned nil image")
+	}
+	cw, ch, err := snapshot.CellSize()
+	if err != nil {
+		t.Fatalf("CellSize: %v", err)
+	}
+	b := img.Bounds()
+	if b.Dx() != cols*cw || b.Dy() != rows*ch {
+		t.Fatalf("image bounds = %dx%d, want %dx%d", b.Dx(), b.Dy(), cols*cw, rows*ch)
+	}
+
+	if dir := os.Getenv("YCC_TUI_SNAPSHOT_DIR"); dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("MkdirAll %s: %v", dir, err)
+		}
+		path := filepath.Join(dir, "cost_drilldown.png")
+		if err := snapshot.WritePNG(path, frame, cols, rows); err != nil {
+			t.Fatalf("WritePNG: %v", err)
+		}
+		t.Logf("wrote %dx%d snapshot to %s", b.Dx(), b.Dy(), path)
+	}
+}
 
 // TestSnapshotSessionView drives a representative session screen to an image
 // and asserts it is a valid, colored frame of the expected pixel dimensions.
