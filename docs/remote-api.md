@@ -623,10 +623,10 @@ An unconfigured `[budget]` returns `{}` (all fields zero / unlimited).
 ### Notify
 
 Route a client-originated push notification through the daemon-side webhook
-notifier (spec §14, task 0142). This exists so the client-driven work-loop can
-emit its completion **digest** via the same best-effort webhook channel the daemon
-uses for `question`/`idle`/`error`/`blocked` events (which fire automatically,
-daemon-side — no client call needed). `kind` must be one of `question`, `idle`,
+notifier (spec §14, task 0142). Daemon-owned work loops emit their completion
+**digest** automatically; this RPC remains available for other client-originated
+notifications through the same best-effort channel used for
+`question`/`idle`/`error`/`blocked` events. `kind` must be one of `question`, `idle`,
 `error`, `digest`, `blocked`; `line` is a short human summary; `project` and
 `sessionId` are context. `delivered` is `false` when the daemon has no `[notify]`
 block configured or that kind is muted via `notify.events`. Delivery is async and
@@ -651,8 +651,9 @@ Every session-scoped notification the daemon sends — `question`, `idle`,
 RPC — carries an ntfy **`Click` header** of `ycc://session/<sessionId>`. ntfy
 clients open that URL when the notification is tapped, so with the iOS app
 installed the tap lands directly on the session that needs attention (task
-0186). A `digest` gets a `Click` too when it is sent with a session id (the TUI
-loop driver passes its own session), and no `Click` otherwise.
+0186). A `digest` gets a `Click` only when it is sent with a session id. The
+daemon-owned work loop currently sends its digest with an empty session id, so
+work-loop digest notifications have no `Click` header.
 
 The `ycc://` scheme (registered by the iOS client) is:
 

@@ -1054,6 +1054,12 @@ type fakeClient struct {
 	lastStopped string
 	stopCount   int
 
+	workLoop       *v1.WorkLoopInfo
+	startLoopErr   error
+	startLoopCount int
+	stopLoopCount  int
+	getLoopCount   int
+
 	discoverIDs  []string // returned by DiscoverModels
 	discoverNote string
 	lastDiscover *v1.DiscoverModelsRequest
@@ -1140,6 +1146,30 @@ func (f *fakeClient) StopSession(_ context.Context, req *connect.Request[v1.Stop
 
 func (f *fakeClient) StartSession(_ context.Context, _ *connect.Request[v1.StartSessionRequest]) (*connect.Response[v1.StartSessionResponse], error) {
 	return connect.NewResponse(&v1.StartSessionResponse{SessionId: "s-new"}), nil
+}
+
+func (f *fakeClient) StartWorkLoop(_ context.Context, _ *connect.Request[v1.StartWorkLoopRequest]) (*connect.Response[v1.StartWorkLoopResponse], error) {
+	f.startLoopCount++
+	if f.startLoopErr != nil {
+		return nil, f.startLoopErr
+	}
+	if f.workLoop == nil {
+		f.workLoop = &v1.WorkLoopInfo{State: "running"}
+	}
+	return connect.NewResponse(&v1.StartWorkLoopResponse{Loop: f.workLoop}), nil
+}
+
+func (f *fakeClient) StopWorkLoop(_ context.Context, _ *connect.Request[v1.StopWorkLoopRequest]) (*connect.Response[v1.StopWorkLoopResponse], error) {
+	f.stopLoopCount++
+	if f.workLoop != nil {
+		f.workLoop.State = "stopping"
+	}
+	return connect.NewResponse(&v1.StopWorkLoopResponse{Loop: f.workLoop}), nil
+}
+
+func (f *fakeClient) GetWorkLoop(_ context.Context, _ *connect.Request[v1.GetWorkLoopRequest]) (*connect.Response[v1.GetWorkLoopResponse], error) {
+	f.getLoopCount++
+	return connect.NewResponse(&v1.GetWorkLoopResponse{Loop: f.workLoop}), nil
 }
 
 func (f *fakeClient) GetModelConfig(_ context.Context, req *connect.Request[v1.GetModelConfigRequest]) (*connect.Response[v1.GetModelConfigResponse], error) {
@@ -4390,423 +4420,236 @@ func mustJSONString(s string) string {
 	return string(b)
 }
 
-func TestTopReadyTask(t *testing.T) {
-	tasks := []*v1.BacklogTaskSummary{
-		{Id: "0003", Status: "todo", Priority: 1, Ready: false}, // blocked by deps
-		{Id: "0004", Status: "done", Priority: 1, Ready: true},  // already done
-		{Id: "0005", Status: "todo", Priority: 2, Ready: true},  // ready, p2
-		{Id: "0002", Status: "todo", Priority: 1, Ready: true},  // ready, p1 -> winner
-		{Id: "0006", Status: "in_review", Priority: 1, Ready: true},
-		{Id: "0007", Status: "blocked", Priority: 1, Ready: true},
-		{Id: "0001", Status: "proposed", Priority: 1, Ready: true}, // ready but not yet accepted -> never picked
-	}
-	if got := topReadyTask(tasks); got != "0002" {
-		t.Fatalf("expected highest-priority ready todo 0002, got %q", got)
-	}
-	// In-progress is resumable and ready; with no todo it should be picked.
-	resume := []*v1.BacklogTaskSummary{
-		{Id: "0009", Status: "in_progress", Priority: 3, Ready: true},
-		{Id: "0008", Status: "in_review", Priority: 1, Ready: true},
-		{Id: "0010", Status: "blocked", Priority: 1, Ready: true},
-	}
-	if got := topReadyTask(resume); got != "0009" {
-		t.Fatalf("expected resumable in_progress 0009, got %q", got)
-	}
-	// Nothing actionable -> empty.
-	none := []*v1.BacklogTaskSummary{
-		{Id: "0011", Status: "done", Priority: 1, Ready: true},
-		{Id: "0012", Status: "blocked", Priority: 1, Ready: true},
-		{Id: "0013", Status: "todo", Priority: 1, Ready: false},
-	}
-	if got := topReadyTask(none); got != "" {
-		t.Fatalf("expected no ready task, got %q", got)
-	}
-}
-
-// A task created while the loop is already running — with status todo and its
-// dependencies satisfied — is picked up by the NEXT loop iteration without
-// restarting the loop, because the driver re-reads the live backlog each cycle
-// (task 0168). Ineligible additions (proposed, dependency-blocked, blocked) are
-// skipped, exactly like the initial pick.
-func TestLoopPicksUpTaskAddedMidLoop(t *testing.T) {
-	fc := newFakeClient()
-	fc.backlogList = []*v1.BacklogTaskSummary{
-		{Id: "0001", Status: "todo", Priority: 2, Ready: true},
-	}
-	m := model{looping: true, loopStarted: false, loopPrevFP: "", client: fc, ctx: context.Background(), state: stateSession}
-
-	// First decision: pick 0001 and start the loop. loopRun is initialised here so
-	// the streamClosedMsg branch below records a per-session snapshot as the real
-	// loop does.
-	next1, cmd1 := m.applyLoopDecision(loopDecisionMsg{
-		next:  topReadyTask(fc.backlogList),
-		fp:    backlogFingerprint(fc.backlogList),
-		tasks: fc.backlogList,
+func TestDigestFromWorkLoop(t *testing.T) {
+	started := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
+	d := digestFromWorkLoop(&v1.WorkLoopInfo{
+		Outcome: "loop complete", StartedAt: started, TotalTokens: 30, TotalCost: 1.25, CostStatus: "partial",
+		Sessions:  []*v1.WorkLoopSession{{SessionId: "s1", Focus: "0001", Tokens: 30, Cost: .5, PriceStatus: "priced"}},
+		Completed: []*v1.WorkLoopDigestTask{{Id: "0001", Title: "done", Status: "done", Sha: "abcdef123", VerdictTally: "approve×1", Tokens: 20, Cost: .4, PriceStatus: "priced"}},
+		Blocked:   []*v1.WorkLoopDigestTask{{Id: "0002", Title: "blocked", Status: "blocked", Reason: "needs key", Tokens: 10, PriceStatus: "unpriced"}},
+		InReview:  []*v1.WorkLoopDigestTask{{Id: "0003"}}, Created: []*v1.WorkLoopDigestTask{{Id: "0004"}},
 	})
-	m = next1.(model)
-	if !m.looping || !m.loopStarted || cmd1 == nil {
-		t.Fatalf("expected loop to start on first decision, looping=%v started=%v cmd=%v", m.looping, m.loopStarted, cmd1 != nil)
+	if d == nil || d.outcome != "loop complete" || d.totalTokens != 30 || d.totalCost != 1.25 || d.costStatus != "partial" {
+		t.Fatalf("bad totals/outcome: %+v", d)
 	}
-
-	// Simulate mid-loop backlog changes: 0001 finished, plus several tasks added
-	// while the loop was running. Only 0002 (todo + ready) is eligible.
-	fc.backlogList = []*v1.BacklogTaskSummary{
-		{Id: "0001", Status: "done", Priority: 2, Ready: true},
-		{Id: "0002", Status: "todo", Priority: 3, Ready: true},     // added mid-loop -> next pick
-		{Id: "0003", Status: "proposed", Priority: 1, Ready: true}, // not yet accepted -> skip
-		{Id: "0004", Status: "todo", Priority: 1, Ready: false},    // dependency-blocked -> skip
-		{Id: "0005", Status: "blocked", Priority: 1, Ready: true},  // needs user -> skip
+	if len(d.sessions) != 1 || d.sessions[0].id != "s1" || d.sessions[0].cost != .5 {
+		t.Fatalf("bad sessions: %+v", d.sessions)
 	}
-
-	// Drive the next iteration exactly as the real loop does: the finished session's
-	// stream closes while looping, which returns loopNext().
-	upd, cmd := m.Update(streamClosedMsg{})
-	m = upd.(model)
-	if cmd == nil {
-		t.Fatal("expected streamClosedMsg (looping) to return a loopNext command")
+	if len(d.completed) != 1 || d.completed[0].sha != "abcdef123" || d.completed[0].verdictTally != "approve×1" || d.completed[0].priceStatus != "priced" {
+		t.Fatalf("bad completed mapping: %+v", d.completed)
 	}
-
-	// Execute the loopNext command against the fake client to get the decision.
-	dmsg, ok := cmd().(loopDecisionMsg)
-	if !ok {
-		t.Fatalf("expected loopDecisionMsg from loopNext, got %T", cmd())
-	}
-	if dmsg.next != "0002" {
-		t.Fatalf("expected mid-loop-added 0002 to be picked next, got %q", dmsg.next)
-	}
-
-	// Applying the decision continues the loop (fingerprint changed since 0001 is
-	// now done, so this is not treated as a stall).
-	next2, cmd2 := m.applyLoopDecision(dmsg)
-	m2 := next2.(model)
-	if !m2.looping {
-		t.Fatalf("expected loop to continue after picking up mid-loop task, looping=%v", m2.looping)
-	}
-	if m2.loopPrevFP != dmsg.fp {
-		t.Fatalf("expected loopPrevFP updated to %q, got %q", dmsg.fp, m2.loopPrevFP)
-	}
-	if cmd2 == nil {
-		t.Fatal("expected a startSession command for the picked-up task")
+	if len(d.blocked) != 1 || d.blocked[0].reason != "needs key" || len(d.inReview) != 1 || len(d.created) != 1 {
+		t.Fatalf("bad sections: blocked=%+v review=%+v created=%+v", d.blocked, d.inReview, d.created)
 	}
 }
 
-func TestLoopDecisionStopsOnNoProgress(t *testing.T) {
-	// A session ran (loopStarted) but the backlog fingerprint is unchanged from
-	// before it: nothing advanced, so the loop must stop instead of spinning. This
-	// is fingerprint-based, NOT a guess at which task ran, so a session that worked
-	// a different task than the driver might have predicted is NOT a false stall —
-	// any status change yields a different fingerprint and keeps the loop going.
-	m := &model{looping: true, loopStarted: true, loopPrevFP: "0001:done,0002:todo"}
-	next, _ := m.applyLoopDecision(loopDecisionMsg{next: "0002", fp: "0001:done,0002:todo"})
-	mm := next.(model)
-	if mm.looping {
-		t.Fatalf("expected loop to stop on no-progress, still looping")
-	}
-	if mm.state != stateMenu {
-		t.Fatalf("expected return to menu, got state %v", mm.state)
-	}
-}
-
-// A finished session that changed the backlog (even if it worked a different
-// ready task than the driver would have guessed) must NOT be treated as a stall:
-// the fingerprint differs, so the loop continues to the next task.
-func TestLoopDecisionContinuesWhenBacklogChanged(t *testing.T) {
+func TestWorkLoopMessagesAndTick(t *testing.T) {
 	fc := newFakeClient()
-	m := &model{looping: true, loopStarted: true, loopPrevFP: "0001:todo,0002:todo", client: fc, ctx: context.Background()}
-	next, cmd := m.applyLoopDecision(loopDecisionMsg{next: "0001", fp: "0001:todo,0002:done"})
-	mm := next.(model)
-	if !mm.looping || mm.loopPrevFP != "0001:todo,0002:done" {
-		t.Fatalf("expected loop to continue with new fingerprint, looping=%v fp=%q", mm.looping, mm.loopPrevFP)
-	}
-	if cmd == nil {
-		t.Fatal("expected a startSession command")
-	}
-}
+	m := model{client: fc, ctx: context.Background(), state: stateMenu, project: "p", loopSeq: 4,
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1}
 
-func TestLoopDecisionStopsWhenEmpty(t *testing.T) {
-	m := &model{looping: true, loopStarted: true, loopPrevFP: "0002:todo"}
-	next, _ := m.applyLoopDecision(loopDecisionMsg{next: "", fp: "0002:done"})
-	mm := next.(model)
-	if mm.looping || mm.state != stateMenu {
-		t.Fatalf("expected loop to stop and return to menu, looping=%v state=%v", mm.looping, mm.state)
-	}
-}
-
-// A legacy client-side loop iteration with a ready task starts the next work session.
-func TestLoopDecisionStartsSession(t *testing.T) {
-	fc := newFakeClient()
-	m := &model{looping: true, loopStarted: false, loopPrevFP: "", client: fc, ctx: context.Background()}
-	next, cmd := m.applyLoopDecision(loopDecisionMsg{next: "0003", fp: "0003:todo"})
-	mm := next.(model)
-	if !mm.looping || !mm.loopStarted || mm.loopPrevFP != "0003:todo" {
-		t.Fatalf("expected loop to continue, looping=%v started=%v fp=%q", mm.looping, mm.loopStarted, mm.loopPrevFP)
-	}
-	if cmd == nil {
-		t.Fatal("expected a startSession command")
-	}
-	cmd() // executes the StartSession RPC against the fake client
-}
-
-// A finished work session goes idle and blocks for input rather than
-// self-terminating, so while looping the driver must stop it explicitly (closing
-// its stream to advance the loop). A second idle event must not re-trigger.
-func TestLoopStopsIdleSession(t *testing.T) {
-	m := newSessionTextareaModel(t)
-	m.looping = true
-	m.sessionID = "s1"
-	m.client = newFakeClient()
-	m.ctx = context.Background()
-	m.events = make(chan *v1.Event, 4)
-
-	idle := &v1.Event{Seq: 1, Type: "session_idle", DataJson: `{"report":"shipped task 0002"}`}
-	nm, cmd := m.Update(evMsg{idle})
+	nm, cmd := m.Update(workLoopMsg{info: &v1.WorkLoopInfo{State: "running", CurrentSessionId: "s-loop"}, seq: 4})
 	m = nm.(model)
-	if !m.loopStopping {
-		t.Fatal("expected loopStopping=true after a looping session goes idle")
+	if !m.looping || cmd == nil {
+		t.Fatalf("running snapshot did not attach/poll: looping=%v cmd=%v", m.looping, cmd)
 	}
-	if cmd == nil {
-		t.Fatal("expected a command (StopSession) to be issued on idle while looping")
-	}
-
-	// A subsequent idle event must not re-arm the stop (guard against repeats).
-	idle2 := &v1.Event{Seq: 2, Type: "session_idle", DataJson: `{"report":"again"}`}
-	nm, _ = m.Update(evMsg{idle2})
-	m = nm.(model)
-	if !m.loopStopping {
-		t.Fatal("loopStopping should remain set across further idle events")
-	}
-
-	// The returned command must re-arm a reader on m.events. The idle branch
-	// batches stopSession()+waitEvent()+spin; StopSession closes the event stream,
-	// and only an armed waitEvent surfaces that close as streamClosedMsg to drive
-	// the loop advance. Verify the batch issues StopSession AND contains a command
-	// that yields streamClosedMsg once the channel is closed (fails if waitEvent is
-	// dropped from the batch).
 	batch, ok := cmd().(tea.BatchMsg)
 	if !ok {
-		t.Fatalf("expected a tea.BatchMsg from the idle-looping command, got %T", cmd())
+		t.Fatalf("running snapshot command = %T, want batch", cmd())
 	}
-	close(m.events)
-	fc := m.client.(*fakeClient)
-	sawStreamClosed := false
 	for _, c := range batch {
-		if c == nil {
-			continue
-		}
-		if _, isClosed := c().(streamClosedMsg); isClosed {
-			sawStreamClosed = true
+		if c != nil {
+			if started, ok := c().(startedMsg); ok && started.id != "s-loop" {
+				t.Fatalf("attached session = %q", started.id)
+			}
 		}
 	}
-	if fc.lastStopped != "s1" {
-		t.Fatalf("expected StopSession to be issued for s1, got %q", fc.lastStopped)
+	if fc.lastReopened != "s-loop" {
+		t.Fatalf("did not reopen current loop session: %q", fc.lastReopened)
 	}
-	if !sawStreamClosed {
-		t.Fatal("idle-looping command must re-arm waitEvent(m.events) so the closed stream yields streamClosedMsg")
+
+	m.sessionID = "s-loop"
+	nm, _ = m.Update(workLoopMsg{info: &v1.WorkLoopInfo{State: "running", CurrentSessionId: "s-loop"}, seq: m.loopSeq})
+	m = nm.(model)
+	if fc.lastReopened != "s-loop" { // unchanged; no second call to distinguish below
+		t.Fatal("unexpected reopen state")
+	}
+
+	seq := m.loopSeq
+	nm, stale := m.Update(loopTickMsg{seq: seq - 1})
+	m = nm.(model)
+	if stale != nil {
+		t.Fatal("stale loop tick was not ignored")
+	}
+	_, fresh := m.Update(loopTickMsg{seq: seq})
+	if fresh == nil {
+		t.Fatal("current loop tick did not fetch")
+	}
+
+	nm, _ = m.Update(workLoopMsg{info: &v1.WorkLoopInfo{State: "finished", Outcome: "loop complete", Completed: []*v1.WorkLoopDigestTask{{Id: "1"}}}, seq: m.loopSeq})
+	m = nm.(model)
+	if m.looping || !m.digest || m.state != stateMenu || m.status != "loop complete" || m.loopDigest == nil {
+		t.Fatalf("finished snapshot not surfaced: looping=%v digest=%v state=%v status=%q", m.looping, m.digest, m.state, m.status)
 	}
 }
 
-// When the loop is NOT active, an idle session must stay put (no auto-stop) so a
-// normal work session remains usable after finishing a task.
-func TestNonLoopIdleStaysPut(t *testing.T) {
+func TestWorkLoopDigestReadStaysModalOverLiveSession(t *testing.T) {
+	for _, looping := range []bool{false, true} {
+		t.Run(fmt.Sprintf("looping=%v", looping), func(t *testing.T) {
+			fc := newFakeClient()
+			fc.workLoop = &v1.WorkLoopInfo{State: "finished", Outcome: "old loop complete", TotalTokens: 42}
+			m := model{client: fc, ctx: context.Background(), state: stateSession, status: "running",
+				looping: looping, loopSeq: 9, browse: true,
+				expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1}
+			for i, target := range browseTargets {
+				if target.label == "digest" {
+					m.browseCursor = i
+				}
+			}
+
+			nm, cmd := m.updateBrowse(keyMsg("enter"))
+			m = nm.(model)
+			if cmd == nil {
+				t.Fatal("Browse → digest did not issue GetWorkLoop")
+			}
+			nm, follow := m.Update(cmd())
+			m = nm.(model)
+			if follow != nil || !m.digest || m.loopDigest == nil {
+				t.Fatalf("digest read did not open modal: digest=%v cmd=%v", m.digest, follow)
+			}
+			if m.state != stateSession || m.status != "running" || m.looping != looping || m.loopSeq != 9 {
+				t.Fatalf("digest read changed lifecycle: state=%v status=%q looping=%v seq=%d", m.state, m.status, m.looping, m.loopSeq)
+			}
+		})
+	}
+}
+
+func TestWorkLoopFinishedStartResponseSurfacesDigest(t *testing.T) {
+	fc := newFakeClient()
+	m := model{client: fc, ctx: context.Background(), state: stateMenu, project: "p", status: "loop starting…", loopSeq: 7,
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1}
+	info := &v1.WorkLoopInfo{State: "finished", Outcome: "loop complete: no ready tasks remain", TotalTokens: 12}
+	nm, cmd := m.Update(workLoopMsg{info: info, initiated: true})
+	m = nm.(model)
+	if m.looping || !m.digest || m.loopDigest == nil || m.status != info.Outcome || m.state != stateMenu {
+		t.Fatalf("finished Start response not surfaced: looping=%v digest=%v status=%q state=%v", m.looping, m.digest, m.status, m.state)
+	}
+	if cmd == nil {
+		t.Fatal("finished Start response did not refresh the menu")
+	}
+	if m.loopSeq != 8 {
+		t.Fatalf("initiated response generation = %d, want 8", m.loopSeq)
+	}
+}
+
+func TestWorkLoopStalePollCannotDetachOrMultiplyTimers(t *testing.T) {
+	fc := newFakeClient()
+	m := model{client: fc, ctx: context.Background(), state: stateMenu, project: "p", loopSeq: 3,
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1}
+
+	// A newer user Start response advances the generation and attaches the loop.
+	nm, startCmd := m.Update(workLoopMsg{info: &v1.WorkLoopInfo{State: "running", CurrentSessionId: "s-new"}, initiated: true})
+	m = nm.(model)
+	if !m.looping || m.loopSeq != 4 || startCmd == nil {
+		t.Fatalf("start did not establish generation: looping=%v seq=%d cmd=%v", m.looping, m.loopSeq, startCmd)
+	}
+
+	// A GetWorkLoop issued under generation 3 must not clear the newer attachment,
+	// regardless of whether it reports nil or an old finished loop.
+	nm, staleCmd := m.Update(workLoopMsg{seq: 3})
+	m = nm.(model)
+	if !m.looping || m.loopSeq != 4 || staleCmd != nil {
+		t.Fatalf("stale nil poll detached loop: looping=%v seq=%d cmd=%v", m.looping, m.loopSeq, staleCmd)
+	}
+	nm, staleCmd = m.Update(workLoopMsg{seq: 3, info: &v1.WorkLoopInfo{State: "finished", Outcome: "old"}})
+	m = nm.(model)
+	if !m.looping || m.loopSeq != 4 || staleCmd != nil || m.status == "old" {
+		t.Fatalf("stale finished poll applied: looping=%v seq=%d status=%q cmd=%v", m.looping, m.loopSeq, m.status, staleCmd)
+	}
+
+	// Neither a stale timer nor a stale running response may arm another chain.
+	_, staleTickCmd := m.Update(loopTickMsg{seq: 3})
+	if staleTickCmd != nil {
+		t.Fatal("stale tick armed a poll")
+	}
+	_, staleRunningCmd := m.Update(workLoopMsg{seq: 3, info: &v1.WorkLoopInfo{State: "running"}})
+	if staleRunningCmd != nil {
+		t.Fatal("stale running poll armed a second timer chain")
+	}
+}
+
+func TestWorkLoopMenuStartsAndAttachesExisting(t *testing.T) {
+	fc := newFakeClient()
+	m := model{client: fc, ctx: context.Background(), state: stateMenu, project: "p", loop: true,
+		entries: []menuEntry{{label: "work", mode: "work"}}, expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1}
+	nm, cmd := m.Update(keyMsg("enter"))
+	m = nm.(model)
+	if cmd == nil {
+		t.Fatal("work (loop) enter did not issue StartWorkLoop")
+	}
+	msg, ok := cmd().(workLoopMsg)
+	if !ok || msg.err != nil {
+		t.Fatalf("start result = %#v", msg)
+	}
+	if fc.startLoopCount != 1 {
+		t.Fatalf("StartWorkLoop calls = %d", fc.startLoopCount)
+	}
+
+	fc.workLoop = &v1.WorkLoopInfo{State: "running", CurrentSessionId: "existing"}
+	fc.startLoopErr = connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("already running"))
+	msg, ok = m.startWorkLoop()().(workLoopMsg)
+	if !ok || msg.err != nil || !msg.alreadyRunning || msg.info.GetCurrentSessionId() != "existing" {
+		t.Fatalf("existing-loop fallback = %#v", msg)
+	}
+	if fc.getLoopCount != 1 {
+		t.Fatalf("GetWorkLoop fallback calls = %d", fc.getLoopCount)
+	}
+}
+
+func TestWorkLoopErrorKeepsPolling(t *testing.T) {
+	m := model{looping: true, loopSeq: 2, connected: true}
+	nm, cmd := m.Update(workLoopMsg{err: fmt.Errorf("temporary"), seq: 2, continuePoll: true})
+	m = nm.(model)
+	if !m.looping || cmd == nil || m.loopSeq != 2 {
+		t.Fatalf("error dropped polling: looping=%v cmd=%v seq=%d", m.looping, cmd, m.loopSeq)
+	}
+}
+
+func TestWorkLoopShiftTabArmStop(t *testing.T) {
+	fc := newFakeClient()
 	m := newSessionTextareaModel(t)
-	m.looping = false
-	m.sessionID = "s1"
-	m.events = make(chan *v1.Event, 4)
+	m.client, m.ctx, m.project, m.mode = fc, context.Background(), "p", "work"
 
-	idle := &v1.Event{Seq: 1, Type: "session_idle", DataJson: `{"report":"done"}`}
-	nm, _ := m.Update(evMsg{idle})
+	nm, cmd := m.Update(keyMsg("shift+tab"))
 	m = nm.(model)
-	if m.loopStopping {
-		t.Fatal("non-loop session must not arm loopStopping on idle")
+	if !m.loopArmed || cmd != nil {
+		t.Fatalf("plain work session did not arm: armed=%v cmd=%v", m.loopArmed, cmd)
 	}
-	if m.status != "idle" {
-		t.Fatalf("expected status idle, got %q", m.status)
-	}
-}
-
-// --- work-loop batch digest (task 0098) ---
-
-// evJSON builds an event of the given type with a JSON data payload.
-func evJSON(seq int64, typ, data string) *v1.Event {
-	return &v1.Event{Seq: seq, Type: typ, DataJson: data}
-}
-
-// TestBlockedReasonFromBody covers the pure work-log reason extractor: it prefers
-// the last bullet mentioning "blocked", else the last bullet, else "".
-func TestBlockedReasonFromBody(t *testing.T) {
-	cases := []struct{ name, body, want string }{
-		{"prefers last blocked", "## Work log\n- did a thing\n- blocked: need the API key\n- (later) tidied up", "blocked: need the API key"},
-		{"prefers blocked", "## Work log\n- blocked: waiting on review\n- noted", "blocked: waiting on review"},
-		{"last bullet", "## Work log\n- first\n- second", "second"},
-		{"star bullets", "# Task\n## Work log\n* only bullet here", "only bullet here"},
-		{"no work log", "## Description\n- not a work log bullet", ""},
-		{"empty", "", ""},
-	}
-	for _, c := range cases {
-		if got := blockedReasonFromBody(c.body); got != c.want {
-			t.Errorf("%s: blockedReasonFromBody = %q, want %q", c.name, got, c.want)
-		}
-	}
-}
-
-// digestLoopModel builds a model wired to the given fake client ready to drive a
-// scripted loop run for the digest tests.
-func digestLoopModel(fc *fakeClient) model {
-	return model{
-		client: fc, ctx: context.Background(),
-		looping: true, loopStarted: false,
-		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
-		usageByModel: map[string]event.Usage{},
-	}
-}
-
-// TestLoopDigestRollup drives a scripted two-session loop and asserts the digest
-// classifies tasks, records commit sha + verdict tally, and per-session records.
-func TestLoopDigestRollup(t *testing.T) {
-	fc := newFakeClient()
-	fc.taskDetails = map[string]*v1.TaskDetail{
-		"0002": {Id: "0002", Status: "blocked", Body: "## Work log\n- started\n- blocked: needs the staging DB password"},
-	}
-	m := digestLoopModel(fc)
-
-	// First decision initialises the run baseline (0001,0002 todo) and starts s1.
-	baseline := []*v1.BacklogTaskSummary{
-		{Id: "0001", Title: "First task", Status: "todo", Ready: true},
-		{Id: "0002", Title: "Second task", Status: "todo", Ready: true},
-	}
-	nm, _ := m.applyLoopDecision(loopDecisionMsg{next: "0001", fp: "0001:todo,0002:todo", tasks: baseline})
+	nm, _ = m.Update(keyMsg("shift+tab"))
 	m = nm.(model)
-	if m.loopRun == nil || len(m.loopRun.baseline) != 2 {
-		t.Fatalf("expected run baseline of 2 tasks, got %+v", m.loopRun)
+	if m.loopArmed {
+		t.Fatal("second shift+tab did not disarm")
 	}
-
-	// Session 1 works 0001: focuses it, commits, two approvals, spends 1000 tokens.
-	m.sessionID = "s1"
-	m.sessionStart = time.Now().Add(-90 * time.Second)
-	m.usageByModel = map[string]event.Usage{"m": {Total: 1000}}
-	m.evs = []*v1.Event{
-		evJSON(1, "task_focus", `{"task":"0001"}`),
-		evJSON(2, "commit_made", `{"task":"0001","sha":"abcdef1234567","message":"do the thing"}`),
-		evJSON(3, "review_submitted", `{"verdict":"approve"}`),
-		evJSON(4, "review_submitted", `{"verdict":"approve"}`),
-	}
-	nm, _ = m.Update(streamClosedMsg{})
+	m.loopArmed = true
+	nm, cmd = m.Update(streamClosedMsg{})
 	m = nm.(model)
-	if len(m.loopRun.sessions) != 1 {
-		t.Fatalf("expected 1 session recorded after s1, got %d", len(m.loopRun.sessions))
+	if cmd == nil || m.loopArmed {
+		t.Fatal("armed stream close did not start loop")
+	}
+	_ = cmd()
+	if fc.startLoopCount != 1 {
+		t.Fatalf("StartWorkLoop calls = %d", fc.startLoopCount)
 	}
 
-	// Second decision (0002 ready) continues the loop; start s2.
-	nm, _ = m.applyLoopDecision(loopDecisionMsg{next: "0002", fp: "0001:done,0002:todo", tasks: baseline})
+	m.looping = true
+	nm, cmd = m.Update(keyMsg("shift+tab"))
 	m = nm.(model)
-
-	// Session 2 works 0002 and blocks it, spending 500 tokens.
-	m.sessionID = "s2"
-	m.sessionStart = time.Now().Add(-30 * time.Second)
-	m.usageByModel = map[string]event.Usage{"m": {Total: 500}}
-	m.evs = []*v1.Event{
-		evJSON(1, "task_focus", `{"task":"0002"}`),
+	if cmd == nil || !strings.Contains(m.status, "stopping") {
+		t.Fatal("running loop did not request graceful stop")
 	}
-	nm, _ = m.Update(streamClosedMsg{})
-	m = nm.(model)
-	if len(m.loopRun.sessions) != 2 {
-		t.Fatalf("expected 2 sessions recorded, got %d", len(m.loopRun.sessions))
-	}
-
-	// Final decision: nothing ready. 0001 done, 0002 blocked, 0003 newly created.
-	final := []*v1.BacklogTaskSummary{
-		{Id: "0001", Title: "First task", Status: "done"},
-		{Id: "0002", Title: "Second task", Status: "blocked"},
-		{Id: "0003", Title: "Follow-up", Status: "todo"},
-	}
-	nm, cmd := m.applyLoopDecision(loopDecisionMsg{next: "", fp: "", tasks: final})
-	m = nm.(model)
-
-	if !m.digest {
-		t.Fatal("expected the digest modal to open when the loop ends")
-	}
-	d := m.loopDigest
-	if d == nil {
-		t.Fatal("expected a loopDigest to be built")
-	}
-	if len(d.completed) != 1 || d.completed[0].id != "0001" {
-		t.Fatalf("expected 0001 completed, got %+v", d.completed)
-	}
-	if d.completed[0].sha != "abcdef1234567" {
-		t.Fatalf("expected commit sha recorded, got %q", d.completed[0].sha)
-	}
-	if d.completed[0].verdictTally != "approve×2" {
-		t.Fatalf("expected verdict tally approve×2, got %q", d.completed[0].verdictTally)
-	}
-	if d.completed[0].tokens != 1000 {
-		t.Fatalf("expected 1000 tokens for 0001, got %d", d.completed[0].tokens)
-	}
-	if len(d.blocked) != 1 || d.blocked[0].id != "0002" {
-		t.Fatalf("expected 0002 blocked, got %+v", d.blocked)
-	}
-	if len(d.created) != 1 || d.created[0].id != "0003" {
-		t.Fatalf("expected 0003 created, got %+v", d.created)
-	}
-	if d.totalTokens != 1500 {
-		t.Fatalf("expected total 1500 tokens, got %d", d.totalTokens)
-	}
-
-	// The finish batch fetches each blocked task's reason; drive that fetch and
-	// feed the digestTaskMsg back so the reason fills in.
-	_ = cmd
-	dm := m.fetchDigestTask("0002")()
-	nm, _ = m.Update(dm)
-	m = nm.(model)
-	if got := m.loopDigest.blocked[0].reason; got != "blocked: needs the staging DB password" {
-		t.Fatalf("expected blocked reason from work log, got %q", got)
-	}
-}
-
-// TestLoopDigestPricingAndReopen covers cost fill (unpriced renders "—" until
-// priced) and that the digest is re-openable from the browse selector.
-func TestLoopDigestPricingAndReopen(t *testing.T) {
-	d := &loopDigest{
-		outcome:    "loop complete: no ready tasks remain",
-		costStatus: "unpriced",
-		sessions:   []loopSessRec{{id: "s1", focus: "0001", tokens: 1000, priceStatus: "unpriced"}},
-		completed:  []digestTask{{id: "0001", title: "First", tokens: 1000, priceStatus: "unpriced"}},
-	}
-	m := model{loopDigest: d, digest: true}
-
-	// Before pricing, cost renders "—" (§20.4).
-	if !strings.Contains(m.digestView(), "—") {
-		t.Fatalf("expected unpriced cost to render as em dash, got:\n%s", m.digestView())
-	}
-
-	// Price it from a per-session usage row; cost fills for the session's focus task.
-	d.applyUsage([]*v1.UsageRow{{Session: "s1", Cost: 0.42, PriceStatus: "priced", Total: 1000}})
-	if d.completed[0].priceStatus != "priced" || d.completed[0].cost != 0.42 {
-		t.Fatalf("expected 0001 priced at 0.42, got status=%q cost=%v", d.completed[0].priceStatus, d.completed[0].cost)
-	}
-	if d.totalCost != 0.42 || d.costStatus != "priced" {
-		t.Fatalf("expected total 0.42 priced, got cost=%v status=%q", d.totalCost, d.costStatus)
-	}
-	if !strings.Contains(m.digestView(), "$0.4200") {
-		t.Fatalf("expected priced cost in digest view, got:\n%s", m.digestView())
-	}
-
-	// Re-openable: from the menu, browse selector → "digest" reopens it.
-	fc := newFakeClient()
-	mm := model{
-		client: fc, ctx: context.Background(), state: stateMenu,
-		loopDigest: d, browse: true,
-		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
-	}
-	// Move the browse cursor to the "digest" target and open it.
-	for i, tgt := range browseTargets {
-		if tgt.label == "digest" {
-			mm.browseCursor = i
-		}
-	}
-	nm, _ := mm.updateBrowse(keyMsg("enter"))
-	mm = nm.(model)
-	if !mm.digest || mm.browse {
-		t.Fatalf("expected browse selector to reopen the digest, digest=%v browse=%v", mm.digest, mm.browse)
+	_ = cmd()
+	if fc.stopLoopCount != 1 {
+		t.Fatalf("StopWorkLoop calls = %d", fc.stopLoopCount)
 	}
 }
 
@@ -6667,71 +6510,6 @@ func TestStatusBarBudgetSegment(t *testing.T) {
 	}
 }
 
-// applyLoopDecision halts the loop when cumulative token spend reaches the loop
-// token cap, even though a ready task remains and the backlog changed (task 0137).
-func TestLoopDecisionStopsAtTokenCap(t *testing.T) {
-	m := &model{
-		looping: true, loopStarted: true, loopPrevFP: "0001:todo",
-		loopTokenCap: 1000, loopRun: &loopRunState{cumTokens: 1500},
-	}
-	next, _ := m.applyLoopDecision(loopDecisionMsg{next: "0002", fp: "0001:done"})
-	mm := next.(model)
-	if mm.looping {
-		t.Fatalf("expected loop to stop at token cap, still looping")
-	}
-	if mm.state != stateMenu || !strings.Contains(mm.status, "budget") {
-		t.Fatalf("expected budget-stop outcome, state=%v status=%q", mm.state, mm.status)
-	}
-}
-
-// applyLoopDecision halts on the cost cap too.
-func TestLoopDecisionStopsAtCostCap(t *testing.T) {
-	m := &model{
-		looping: true, loopStarted: true, loopPrevFP: "0001:todo",
-		loopCostCap: 1.0, loopRun: &loopRunState{cumCost: 2.0},
-	}
-	next, _ := m.applyLoopDecision(loopDecisionMsg{next: "0002", fp: "0001:done"})
-	mm := next.(model)
-	if mm.looping || !strings.Contains(mm.status, "budget") {
-		t.Fatalf("expected cost-cap budget stop, looping=%v status=%q", mm.looping, mm.status)
-	}
-}
-
-// applyLoopDecision halts when a loop session's own budget was breached
-// daemon-side, with a distinct outcome (task 0137).
-func TestLoopDecisionStopsOnSessionBreach(t *testing.T) {
-	m := &model{
-		looping: true, loopStarted: true, loopPrevFP: "0001:todo",
-		loopSessBreach: true, loopRun: &loopRunState{},
-	}
-	next, _ := m.applyLoopDecision(loopDecisionMsg{next: "0002", fp: "0001:done"})
-	mm := next.(model)
-	if mm.looping {
-		t.Fatalf("expected loop to stop on session breach, still looping")
-	}
-	if !strings.Contains(mm.status, "session budget reached") {
-		t.Fatalf("expected 'session budget reached' outcome, got %q", mm.status)
-	}
-}
-
-// With no loop caps configured, the loop continues normally past any spend
-// (unlimited default preserved).
-func TestLoopDecisionNoCapContinues(t *testing.T) {
-	fc := newFakeClient()
-	m := &model{
-		looping: true, loopStarted: true, loopPrevFP: "0001:todo",
-		loopRun: &loopRunState{cumTokens: 999999, cumCost: 999}, client: fc, ctx: context.Background(),
-	}
-	next, cmd := m.applyLoopDecision(loopDecisionMsg{next: "0002", fp: "0001:done"})
-	mm := next.(model)
-	if !mm.looping || cmd == nil {
-		t.Fatalf("expected loop to continue with no caps, looping=%v cmd=%v", mm.looping, cmd)
-	}
-}
-
-// TestYankText covers the per-event clipboard text extraction used by `y`
-// (task 0141): commit_made yields the sha, session_error the error text, and a
-// model_turn its raw text.
 func TestYankText(t *testing.T) {
 	m := model{w: 100, expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1}
 

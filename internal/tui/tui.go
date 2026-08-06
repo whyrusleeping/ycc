@@ -83,38 +83,15 @@ type model struct {
 	cursor  int
 	prompt  textarea.Model
 
-	// "work (loop)" mode (toggled with tab on the work entry): chew through the
-	// backlog unattended, starting a fresh work session for each ready task until
-	// none remain (every task done, blocked, or in_review). loop is the menu toggle;
-	// looping is true while a loop run is in flight.
-	//
-	// Stall detection is by backlog FINGERPRINT, not by predicting which task the
-	// session will work: the coordinator is an LLM that picks its own task, so a
-	// driver that guessed task X and then re-derived X afterwards (because the LLM
-	// actually worked a different ready task, leaving X pending) would falsely
-	// conclude "no progress" and bail after a single completed task. Instead we
-	// snapshot the backlog (id+status of every task) before each session and stop
-	// only when a finished session leaves that snapshot completely unchanged — i.e.
-	// it genuinely advanced nothing. loopStarted marks that at least one session has
-	// run, so the very first decision is never judged a stall.
-	loop        bool
-	looping     bool
-	loopStarted bool
-	loopPrevFP  string
-	// loopStopping guards the idle→stop transition while looping: a finished work
-	// session goes idle and blocks (it does not self-terminate), so the loop driver
-	// stops it explicitly to close its stream and advance. The flag prevents issuing
-	// StopSession more than once for the same idle session.
-	loopStopping bool
-
-	// batch digest (task 0098, §9): the "work (loop)" driver accumulates a
-	// per-session summary as it runs (loopRun) and rolls it up into an
-	// end-of-batch digest (loopDigest) shown when the loop ends — "here's what
-	// happened while you were gone": tasks completed / blocked / in_review /
-	// created, with commit sha, review verdicts, tokens and cost. loopDigest
-	// survives dismissal so the browse selector can reopen it. digest gates the
-	// modal digest surface (shared list+detail browser).
-	loopRun      *loopRunState
+	// "work (loop)" is daemon-owned. loop is the home-menu toggle; looping mirrors
+	// a running/stopping WorkLoopInfo, loopInfo is the latest daemon snapshot, and
+	// loopArmed defers starting a loop until an attended work session has ended.
+	loop         bool
+	looping      bool
+	loopArmed    bool
+	loopArmStop  bool
+	loopInfo     *v1.WorkLoopInfo
+	loopSeq      int
 	loopDigest   *loopDigest
 	digest       bool
 	digestCursor int
@@ -297,13 +274,6 @@ type model struct {
 	// header shows which task the work agent is on; reset per session view.
 	focusTask      string
 	focusTaskTitle string
-	// Work-loop cap state: caps fetched once at loop start via GetBudget, and a
-	// flag recording that a loop session's own budget was breached daemon-side so
-	// the loop halts at the next decision point with a distinct outcome.
-	loopCostCap    float64
-	loopTokenCap   int64
-	loopSessBreach bool
-
 	// lastMouse records when we last saw a mouse event. bubbletea v1's input
 	// parser leaks the bytes of a split SGR mouse report (common during rapid
 	// scroll, when the 256-byte read buffer fills and cuts an event in half) as
@@ -586,41 +556,21 @@ type modelsMsg struct {
 type projectsMsg struct{ projects []*v1.ProjectInfo }
 type startedMsg struct{ id, mode string }
 
-// loopDecisionMsg carries the "work (loop)" driver's decision after a session
-// ends: next is the id of the next ready task to work (""=none left), and fp is a
-// fingerprint of the whole backlog at this point (id+status of every task). The
-// driver compares fp against the snapshot taken before the just-finished session
-// to detect a genuine stall (nothing changed) without guessing which task ran.
-type loopDecisionMsg struct {
-	next  string
-	fp    string
-	tasks []*v1.BacklogTaskSummary // full backlog snapshot at this decision point
-	err   error
+// workLoopMsg carries daemon-owned work-loop snapshots from start/stop/get.
+// alreadyRunning marks StartWorkLoop's FailedPrecondition fallback so the UI can
+// explain that it attached to a loop started by another client.
+type workLoopMsg struct {
+	info           *v1.WorkLoopInfo
+	err            error
+	alreadyRunning bool
+	openDigest     bool // pure historical read: opens modal without lifecycle changes
+	continuePoll   bool
+	initiated      bool // start/stop action: applies, advances generation, surfaces completion
+	seq            int  // generation captured by a background GetWorkLoop
 }
 
-// loopUsageMsg carries the per-session token/cost breakdown (GetUsage grouped by
-// session) used to price the batch digest (task 0098, §20). The handler matches
-// rows to the loop run's session ids and fills per-task + total cost.
-type loopUsageMsg struct {
-	rows []*v1.UsageRow
-	err  error
-}
-
-// budgetCapsMsg carries the configured loop spend caps fetched once at loop start
-// via GetBudget (task 0137, spec §20.6). The loop driver enforces the per-loop-run
-// cap client-side; a fetch error just leaves the caps at 0 (unlimited).
-type budgetCapsMsg struct {
-	loopCost   float64
-	loopTokens int64
-}
-
-// digestTaskMsg carries one blocked task's full detail so the digest can surface
-// the specific reason it is blocked (task 0098; ties into §18.7 semantics).
-type digestTaskMsg struct {
-	id   string
-	task *v1.TaskDetail
-	err  error
-}
+// loopTickMsg polls GetWorkLoop while a loop is running. seq disarms stale timers.
+type loopTickMsg struct{ seq int }
 
 type historyMsg struct {
 	sessions []*v1.SessionSummary
@@ -946,10 +896,7 @@ func (m model) startSession(mode, prompt string) tea.Cmd {
 // which would carry an opening prompt). Only this entry supports the loop toggle.
 func isWorkEntry(e menuEntry) bool { return e.mode == "work" && e.openingPrompt == "" }
 
-// stopSession hard-terminates the current session via StopSession (spec §12). The
-// loop driver uses it to end a finished work session that has gone idle (it blocks
-// waiting for input rather than self-terminating): stopping it closes the event
-// stream, which surfaces as streamClosedMsg and drives the next loop iteration.
+// stopSession hard-terminates the current session via StopSession (spec §12).
 func (m model) stopSession() tea.Cmd {
 	id := m.sessionID
 	return func() tea.Msg {
@@ -964,84 +911,90 @@ func (m model) stopSession() tea.Cmd {
 // state the user should be offered a clean exit from (task 0127): the agent went
 // idle after finishing ("idle" — it now blocks in the daemon waiting for input, so
 // leaving must StopSession to avoid an orphan) or the event stream already ended
-// ("stream closed" — nothing left to stop). It deliberately EXCLUDES looping
-// sessions (the work-loop driver already auto-stops idle sessions and advances —
-// this must not interfere) and the recoverable "error"/"paused" states (esc →
+// ("stream closed" — nothing left to stop). It deliberately EXCLUDES daemon-loop
+// sessions (the daemon advances them — this must not interfere) and the recoverable
+// "error"/"paused" states (esc →
 // settings overlay → "back home" remains the escape hatch there).
 func (m model) sessionFinished() bool {
 	return m.state == stateSession && !m.looping && (m.status == "idle" || m.status == "stream closed")
 }
 
-// loopNext drives the "work (loop)" run: it loads the backlog, picks the next
-// ready task, and decides whether to start another work session (spec §9). The
-// decision is returned as a loopDecisionMsg so Update can apply it on the main loop.
-//
-// Investigation note (task 0168): the loop driver keeps NO snapshot or queue of
-// tasks captured at loop start. Every iteration re-reads the LIVE backlog via the
-// ListBacklog RPC (server → docs Store.List re-reads the backlog dir from disk),
-// then topReadyTask picks from that fresh list. So tasks added mid-loop — via the
-// coordinator's create_task, `ycc task add`, or ctrl+n quick capture — are already
-// considered by the next pick, under the same eligibility rules as the initial
-// pick (topReadyTask requires status todo/in_progress and Ready; proposed/blocked/
-// in_review and dependency-blocked tasks are skipped). No behavioural fix needed.
-func (m model) loopNext() tea.Cmd {
+// startWorkLoop asks the daemon to own the unattended backlog loop. If another
+// client already started one, fetch its snapshot instead of treating that as an
+// error so reconnecting TUIs attach seamlessly.
+func (m model) startWorkLoop() tea.Cmd {
 	return func() tea.Msg {
-		resp, err := m.client.ListBacklog(m.ctx, connect.NewRequest(&v1.ListBacklogRequest{Project: m.project}))
-		if err != nil {
-			return loopDecisionMsg{err: err}
+		resp, err := m.client.StartWorkLoop(m.ctx, connect.NewRequest(&v1.StartWorkLoopRequest{Project: m.project}))
+		if err == nil {
+			return workLoopMsg{info: resp.Msg.Loop, initiated: true}
 		}
-		return loopDecisionMsg{
-			next:  topReadyTask(resp.Msg.Tasks),
-			fp:    backlogFingerprint(resp.Msg.Tasks),
-			tasks: resp.Msg.Tasks,
+		if connect.CodeOf(err) != connect.CodeFailedPrecondition {
+			return workLoopMsg{err: err, initiated: true}
 		}
+		got, getErr := m.client.GetWorkLoop(m.ctx, connect.NewRequest(&v1.GetWorkLoopRequest{Project: m.project}))
+		if getErr != nil {
+			return workLoopMsg{err: getErr, initiated: true}
+		}
+		return workLoopMsg{info: got.Msg.Loop, alreadyRunning: true, initiated: true}
 	}
 }
 
-// --- work-loop batch digest (task 0098, §9/§20) ---
-//
-// The loop driver accumulates a per-session summary as it runs and rolls it up
-// into an end-of-batch digest when the loop stops. Everything is projected from
-// data that already exists — the backlog snapshot at loop start (baseline), the
-// live event log of each session (task_focus / commit_made / review_submitted),
-// the running per-model token tally, and the GetUsage cost aggregator — rather
-// than new bookkeeping.
+// stopWorkLoop gracefully drains the daemon loop: its current task may finish but
+// no next task is picked.
+func (m model) stopWorkLoop() tea.Cmd {
+	return func() tea.Msg {
+		resp, err := m.client.StopWorkLoop(m.ctx, connect.NewRequest(&v1.StopWorkLoopRequest{Project: m.project}))
+		if err != nil {
+			return workLoopMsg{err: err, initiated: true}
+		}
+		return workLoopMsg{info: resp.Msg.Loop, initiated: true}
+	}
+}
 
-// loopCommit is one commit made during a loop session.
-type loopCommit struct{ task, sha, message string }
+// fetchWorkLoop captures the current generation so an older GetWorkLoop response
+// cannot overwrite a newer start/stop/attach transition.
+func (m model) fetchWorkLoop() tea.Cmd {
+	seq := m.loopSeq
+	return func() tea.Msg {
+		resp, err := m.client.GetWorkLoop(m.ctx, connect.NewRequest(&v1.GetWorkLoopRequest{Project: m.project}))
+		if err != nil {
+			return workLoopMsg{err: err, continuePoll: m.looping, seq: seq}
+		}
+		info := resp.Msg.Loop
+		attach := !m.looping && info != nil && (info.State == "running" || info.State == "stopping")
+		return workLoopMsg{info: info, alreadyRunning: attach, seq: seq}
+	}
+}
 
-// loopSessRec is a per-session snapshot captured when a loop session's stream
-// closes: its id, focus task, wall-clock duration, summed tokens, the commits it
-// made, and the review verdicts it collected. Cost/priceStatus are filled later
-// from GetUsage (grouped by session).
+// fetchWorkLoopDigest is a pure historical read for the digest modal. Unlike a
+// start/stop response it must not alter lifecycle state or polling generations.
+func (m model) fetchWorkLoopDigest() tea.Cmd {
+	return func() tea.Msg {
+		resp, err := m.client.GetWorkLoop(m.ctx, connect.NewRequest(&v1.GetWorkLoopRequest{Project: m.project}))
+		if err != nil {
+			return workLoopMsg{err: err, openDigest: true}
+		}
+		return workLoopMsg{info: resp.Msg.Loop, openDigest: true}
+	}
+}
+
+func (m model) loopRefreshTick() tea.Cmd {
+	seq := m.loopSeq
+	return tea.Tick(2*time.Second, func(time.Time) tea.Msg { return loopTickMsg{seq} })
+}
+
+// --- work-loop batch digest (task 0098/0267, §9/§20) ---
+
+// loopSessRec mirrors the per-session summary supplied by WorkLoopInfo.
 type loopSessRec struct {
 	id          string
 	focus       string
-	dur         time.Duration
 	tokens      int64
-	commits     []loopCommit
-	verdicts    []string
 	cost        float64
 	priceStatus string
 }
 
-// loopRunState accumulates across every session a single loop run drives.
-// baseline is the backlog (id → summary) at loop start so the finished digest can
-// classify each task by how it changed (completed / blocked / in_review / new).
-type loopRunState struct {
-	startedAt time.Time
-	baseline  map[string]*v1.BacklogTaskSummary
-	sessions  []loopSessRec
-	// Cumulative spend across every session the run has driven, accumulated at
-	// each session close (task 0137, spec §20.6). cumCost sums only priced
-	// models' dollars; costStatus tracks pricing coverage so an unpriced run never
-	// invents a dollar cap breach. Used by applyLoopDecision to enforce loop caps.
-	cumTokens  int64
-	cumCost    float64
-	costStatus string
-}
-
-// digestTask is one task row in the finished digest.
+// digestTask mirrors one daemon-provided WorkLoopDigestTask.
 type digestTask struct {
 	id, title, status string
 	sha               string
@@ -1049,7 +1002,7 @@ type digestTask struct {
 	tokens            int64
 	cost              float64
 	priceStatus       string
-	reason            string // blocked reason (filled from the task's work log)
+	reason            string
 }
 
 // loopDigest is the finished, re-openable batch digest surface.
@@ -1067,344 +1020,42 @@ type loopDigest struct {
 	costStatus  string
 }
 
-// notifyLoopDigest fires a fire-and-forget daemon push notification summarising a
-// finished work-loop run (task 0142): "work loop finished: N completed, M blocked,
-// K in review". Delivery is best-effort — the daemon may have notifications
-// disabled or the "digest" kind muted, and an older daemon may lack the Notify RPC
-// — so any error is ignored and the command produces no message.
-func (m *model) notifyLoopDigest(d *loopDigest) tea.Cmd {
-	if d == nil {
+// digestFromWorkLoop maps the daemon's durable loop snapshot onto the existing
+// digest browser model. The daemon owns all classification, pricing, and reasons.
+func digestFromWorkLoop(info *v1.WorkLoopInfo) *loopDigest {
+	if info == nil {
 		return nil
 	}
-	line := fmt.Sprintf("work loop finished: %d completed, %d blocked, %d in review",
-		len(d.completed), len(d.blocked), len(d.inReview))
-	project, sessionID, client, ctx := m.project, m.sessionID, m.client, m.ctx
-	return func() tea.Msg {
-		_, _ = client.Notify(ctx, connect.NewRequest(&v1.NotifyRequest{
-			Kind: "digest", Line: line, Project: project, SessionId: sessionID,
-		}))
-		return nil
+	d := &loopDigest{
+		outcome: info.Outcome, totalTokens: info.TotalTokens,
+		totalCost: info.TotalCost, costStatus: info.CostStatus,
 	}
-}
-
-// buildLoopDigest rolls a finished loop run up into the digest artifact: it
-// aggregates commits/verdicts/tokens per task from the session records and
-// classifies every final backlog task against the run's baseline. It is pure so
-// the roll-up is unit-testable. Cost is left "unpriced" until fetchLoopUsage fills
-// it (§20.4: cost renders "—" while unpriced).
-func buildLoopDigest(run *loopRunState, final []*v1.BacklogTaskSummary, outcome string) *loopDigest {
-	d := &loopDigest{outcome: outcome, costStatus: "unpriced"}
-	baseline := map[string]*v1.BacklogTaskSummary{}
-	if run != nil {
-		d.startedAt = run.startedAt
-		if !run.startedAt.IsZero() {
-			d.dur = time.Since(run.startedAt)
-		}
-		d.sessions = run.sessions
-		baseline = run.baseline
+	if started, err := time.Parse(time.RFC3339, info.StartedAt); err == nil {
+		d.startedAt = started
+		d.dur = time.Since(started)
 	}
-
-	shaByTask := map[string]string{}
-	verdictsByTask := map[string][]string{}
-	tokensByTask := map[string]int64{}
-	for _, s := range d.sessions {
-		d.totalTokens += s.tokens
-		for _, c := range s.commits {
-			if c.task != "" {
-				shaByTask[c.task] = c.sha
-			}
-		}
-		if s.focus != "" {
-			verdictsByTask[s.focus] = append(verdictsByTask[s.focus], s.verdicts...)
-			tokensByTask[s.focus] += s.tokens
-		}
+	for _, s := range info.Sessions {
+		d.sessions = append(d.sessions, loopSessRec{
+			id: s.SessionId, focus: s.Focus, tokens: s.Tokens,
+			cost: s.Cost, priceStatus: s.PriceStatus,
+		})
 	}
-
-	sorted := append([]*v1.BacklogTaskSummary(nil), final...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Id < sorted[j].Id })
-	for _, t := range sorted {
-		dt := digestTask{
-			id: t.Id, title: t.Title, status: t.Status,
-			sha:          shaByTask[t.Id],
-			verdictTally: tallyVerdicts(verdictsByTask[t.Id]),
-			tokens:       tokensByTask[t.Id],
-			priceStatus:  "unpriced",
-		}
-		base, existed := baseline[t.Id]
-		if !existed {
-			d.created = append(d.created, dt)
-			continue
-		}
-		switch t.Status {
-		case "done":
-			if base.Status != "done" {
-				d.completed = append(d.completed, dt)
-			}
-		case "blocked":
-			d.blocked = append(d.blocked, dt)
-		case "in_review":
-			d.inReview = append(d.inReview, dt)
-		}
-	}
-	return d
-}
-
-// tallyVerdicts summarises a task's review verdicts as "approve×2 reject×1"
-// (insertion order preserved) for the completed-task suffix.
-func tallyVerdicts(verdicts []string) string {
-	if len(verdicts) == 0 {
-		return ""
-	}
-	counts := map[string]int{}
-	var order []string
-	for _, v := range verdicts {
-		if _, ok := counts[v]; !ok {
-			order = append(order, v)
-		}
-		counts[v]++
-	}
-	parts := make([]string, 0, len(order))
-	for _, v := range order {
-		parts = append(parts, fmt.Sprintf("%s×%d", v, counts[v]))
-	}
-	return strings.Join(parts, " ")
-}
-
-// mergeCostStatus combines two price statuses: unset ("") adopts the other; a
-// disagreement is "partial" (some priced, some not).
-func mergeCostStatus(a, b string) string {
-	if a == "" {
-		return b
-	}
-	if b == "" || a == b {
-		return a
-	}
-	return "partial"
-}
-
-// applyUsage prices the digest from GetUsage rows grouped by session: each row is
-// matched to a session record (and, via its focus task, to a digest task), and
-// per-task + total cost/priceStatus are recomputed (task 0098, §20).
-func (d *loopDigest) applyUsage(rows []*v1.UsageRow) {
-	bySession := map[string]*v1.UsageRow{}
-	for _, r := range rows {
-		bySession[r.Session] = r
-	}
-	costByTask := map[string]float64{}
-	statusByTask := map[string]string{}
-	var total float64
-	totalStatus := ""
-	for i := range d.sessions {
-		s := &d.sessions[i]
-		r := bySession[s.id]
-		if r == nil {
-			continue
-		}
-		s.cost, s.priceStatus = r.Cost, r.PriceStatus
-		total += r.Cost
-		totalStatus = mergeCostStatus(totalStatus, r.PriceStatus)
-		if s.focus != "" {
-			costByTask[s.focus] += r.Cost
-			statusByTask[s.focus] = mergeCostStatus(statusByTask[s.focus], r.PriceStatus)
-		}
-	}
-	d.totalCost = total
-	if totalStatus != "" {
-		d.costStatus = totalStatus
-	}
-	assign := func(list []digestTask) {
-		for i := range list {
-			if st, ok := statusByTask[list[i].id]; ok {
-				list[i].cost = costByTask[list[i].id]
-				list[i].priceStatus = st
-			}
-		}
-	}
-	assign(d.completed)
-	assign(d.blocked)
-	assign(d.inReview)
-	assign(d.created)
-}
-
-// blockedReasonFromBody extracts a one-line reason a task is blocked from its
-// markdown body: the last "## Work log" bullet mentioning "blocked", else the
-// last bullet (task 0098; ties into §18.7). Empty when there is no work log.
-func blockedReasonFromBody(body string) string {
-	lines := strings.Split(body, "\n")
-	inLog := false
-	var bullets []string
-	for _, ln := range lines {
-		t := strings.TrimSpace(ln)
-		if strings.HasPrefix(t, "#") {
-			inLog = strings.Contains(strings.ToLower(t), "work log")
-			continue
-		}
-		if inLog && (strings.HasPrefix(t, "- ") || strings.HasPrefix(t, "* ")) {
-			bullets = append(bullets, strings.TrimSpace(t[2:]))
-		}
-	}
-	if len(bullets) == 0 {
-		return ""
-	}
-	for i := len(bullets) - 1; i >= 0; i-- {
-		if strings.Contains(strings.ToLower(bullets[i]), "blocked") {
-			return bullets[i]
-		}
-	}
-	return bullets[len(bullets)-1]
-}
-
-// snapshotLoopSession captures the just-finished session's summary from live TUI
-// state (event log + running token tally) for the batch digest roll-up.
-func (m model) snapshotLoopSession() loopSessRec {
-	rec := loopSessRec{id: m.sessionID, priceStatus: "unpriced"}
-	if !m.sessionStart.IsZero() {
-		rec.dur = time.Since(m.sessionStart)
-	}
-	for _, u := range m.usageByModel {
-		rec.tokens += int64(u.Total)
-	}
-	for _, ev := range m.evs {
-		switch ev.Type {
-		case "task_focus":
-			if t := dataField(ev, "task"); t != "" {
-				rec.focus = t
-			}
-		case "commit_made":
-			rec.commits = append(rec.commits, loopCommit{
-				task: dataField(ev, "task"), sha: dataField(ev, "sha"), message: dataField(ev, "message"),
+	mapTasks := func(src []*v1.WorkLoopDigestTask) []digestTask {
+		out := make([]digestTask, 0, len(src))
+		for _, t := range src {
+			out = append(out, digestTask{
+				id: t.Id, title: t.Title, status: t.Status, sha: t.Sha,
+				verdictTally: t.VerdictTally, tokens: t.Tokens, cost: t.Cost,
+				priceStatus: t.PriceStatus, reason: t.Reason,
 			})
-		case "review_submitted":
-			if v := dataField(ev, "verdict"); v != "" {
-				rec.verdicts = append(rec.verdicts, v)
-			}
 		}
+		return out
 	}
-	return rec
-}
-
-// fetchLoopUsage loads the per-session token/cost breakdown to price the batch
-// digest (task 0098, §20). Grouped by session so rows match the run's sessions.
-func (m model) fetchLoopUsage() tea.Msg {
-	resp, err := m.client.GetUsage(m.ctx, connect.NewRequest(&v1.GetUsageRequest{
-		Project: m.project, GroupBy: []string{"session"},
-	}))
-	if err != nil {
-		return loopUsageMsg{err: err}
-	}
-	return loopUsageMsg{rows: resp.Msg.Rows}
-}
-
-// fetchBudget loads the configured spend caps once at loop start so the loop
-// driver can enforce the per-loop-run cap client-side (task 0137, spec §20.6). A
-// fetch error is swallowed to unlimited caps — the guard is best-effort and must
-// never block starting a loop.
-func (m model) fetchBudget() tea.Msg {
-	resp, err := m.client.GetBudget(m.ctx, connect.NewRequest(&v1.GetBudgetRequest{}))
-	if err != nil {
-		return budgetCapsMsg{}
-	}
-	return budgetCapsMsg{loopCost: resp.Msg.LoopCost, loopTokens: resp.Msg.LoopTokens}
-}
-
-// fetchDigestTask loads one blocked task's detail so the digest can surface the
-// specific reason it is blocked and offer a jump-to-task (task 0098).
-func (m model) fetchDigestTask(id string) tea.Cmd {
-	return func() tea.Msg {
-		resp, err := m.client.GetTask(m.ctx, connect.NewRequest(&v1.GetTaskRequest{Project: m.project, Id: id}))
-		if err != nil {
-			return digestTaskMsg{id: id, err: err}
-		}
-		return digestTaskMsg{id: id, task: resp.Msg.Task}
-	}
-}
-
-// backlogFingerprint is a stable, order-independent summary of the backlog's
-// actionable state: the id and status of every task. The loop driver compares
-// the fingerprint before and after a session to tell whether that session
-// advanced anything at all (a task moving todo→in_progress→done/in_review/blocked,
-// or a new task appearing, all change it). Equal fingerprints across a finished
-// session mean nothing moved — a genuine stall.
-func backlogFingerprint(tasks []*v1.BacklogTaskSummary) string {
-	parts := make([]string, 0, len(tasks))
-	for _, t := range tasks {
-		parts = append(parts, t.Id+":"+t.Status)
-	}
-	sort.Strings(parts)
-	return strings.Join(parts, ",")
-}
-
-// applyLoopDecision acts on the loop driver's decision: stop and return to the
-// menu when nothing is actionable, an error occurred, or the just-finished session
-// left the backlog completely unchanged (a stall — re-running would spin forever);
-// otherwise start the next work session and stay in the loop.
-func (m model) applyLoopDecision(msg loopDecisionMsg) (tea.Model, tea.Cmd) {
-	// Initialise the run accumulator on the first decision of a loop run: the
-	// baseline is the backlog at loop start so the end-of-batch digest can diff
-	// against it. loopNext runs before/between every session, so this covers both
-	// entry paths (menu enter and shift+tab mid-session).
-	if m.loopRun == nil && msg.err == nil {
-		m.loopRun = &loopRunState{startedAt: time.Now(), baseline: map[string]*v1.BacklogTaskSummary{}}
-		for _, t := range msg.tasks {
-			m.loopRun.baseline[t.Id] = t
-		}
-	}
-
-	// finish stops the loop and, when at least one session actually ran, rolls the
-	// run up into the re-openable batch digest ("here's what happened while you
-	// were gone") and opens it — otherwise it just shows the status line as before
-	// (e.g. starting a loop on an empty backlog).
-	finish := func(outcome string) (tea.Model, tea.Cmd) {
-		run := m.loopRun
-		m.looping, m.loopStarted, m.loopPrevFP = false, false, ""
-		m.loopRun = nil
-		m.state, m.status = stateMenu, outcome
-		if run == nil || len(run.sessions) == 0 {
-			return m, m.refreshMenu()
-		}
-		m.loopDigest = buildLoopDigest(run, msg.tasks, outcome)
-		m.digest, m.digestCursor = true, 0
-		cmds := []tea.Cmd{m.fetchLoopUsage, m.refreshMenu(), m.notifyLoopDigest(m.loopDigest)}
-		for _, bt := range m.loopDigest.blocked {
-			cmds = append(cmds, m.fetchDigestTask(bt.id))
-		}
-		return m, tea.Batch(cmds...)
-	}
-
-	switch {
-	case msg.err != nil:
-		return finish("loop stopped: " + msg.err.Error())
-	case msg.next == "":
-		return finish("loop complete: no ready tasks remain")
-	case m.loopStarted && msg.fp == m.loopPrevFP:
-		// A session ran but the backlog is byte-for-byte unchanged: it advanced
-		// nothing, so starting another would loop forever on the same state.
-		return finish("loop stopped: session made no progress")
-	case m.loopStarted && m.loopSessBreach:
-		// A loop session's own budget was breached daemon-side (task 0137): halt
-		// the loop at this safe decision point (the current session already
-		// completed) with a distinct outcome recorded in the digest.
-		return finish("loop stopped: session budget reached")
-	}
-	// Enforce the per-loop-run spend cap (task 0137, spec §20.6): once cumulative
-	// tokens or priced cost crosses a configured cap, stop before starting the
-	// next session. The just-finished session already completed so nothing is cut
-	// off mid-write. Unpriced runs contribute no dollars so a cost cap never
-	// breaches on them (§20.4).
-	if m.loopStarted && m.loopRun != nil {
-		if m.loopTokenCap > 0 && m.loopRun.cumTokens >= m.loopTokenCap {
-			return finish(fmt.Sprintf("loop stopped: budget reached (%s tokens, cap %s)",
-				fmtTokens(int(m.loopRun.cumTokens)), fmtTokens(int(m.loopTokenCap))))
-		}
-		if m.loopCostCap > 0 && m.loopRun.cumCost >= m.loopCostCap {
-			return finish(fmt.Sprintf("loop stopped: budget reached ($%.2f, cap $%.2f)",
-				m.loopRun.cumCost, m.loopCostCap))
-		}
-	}
-	m.loopStarted, m.loopPrevFP = true, msg.fp
-	// The legacy client-side loop starts a normal session. New unattended loops are
-	// daemon-owned and use the manager's internal Unattended execution flag.
-	return m, m.startSession("work", "")
+	d.completed = mapTasks(info.Completed)
+	d.blocked = mapTasks(info.Blocked)
+	d.inReview = mapTasks(info.InReview)
+	d.created = mapTasks(info.Created)
+	return d
 }
 
 // blockedTaskCount reports how many backlog tasks are currently marked "blocked"
@@ -1418,24 +1069,6 @@ func (m model) blockedTaskCount() int {
 		}
 	}
 	return n
-}
-
-// topReadyTask returns the id of the task a work session would pick next: the
-// highest-priority (lowest priority number) actionable task that is ready and not
-// yet done/blocked/in-review — i.e. status "todo" or a resumable "in_progress".
-// Ties break by id so the choice is stable. Returns "" when nothing is ready.
-func topReadyTask(tasks []*v1.BacklogTaskSummary) string {
-	best := ""
-	bestPrio := int32(0)
-	for _, t := range tasks {
-		if !t.Ready || (t.Status != "todo" && t.Status != "in_progress") {
-			continue
-		}
-		if best == "" || t.Priority < bestPrio || (t.Priority == bestPrio && t.Id < best) {
-			best, bestPrio = t.Id, t.Priority
-		}
-	}
-	return best
 }
 
 // fetchHistory loads the persisted session history for the previous-sessions
@@ -1493,7 +1126,7 @@ func (m model) menuRefreshTick() tea.Cmd {
 // tick can't multiply the in-flight timers (task 0107).
 func (m *model) refreshMenu() tea.Cmd {
 	m.waitingSeq++
-	cmds := []tea.Cmd{m.fetchBacklog, m.fetchWaitingSessions, m.fetchGitInfo, m.menuRefreshTick()}
+	cmds := []tea.Cmd{m.fetchBacklog, m.fetchWaitingSessions, m.fetchGitInfo, m.fetchWorkLoop(), m.menuRefreshTick()}
 	// Today's spend is throttled: the aggregator scans usage logs, so re-issuing
 	// it on every 5s tick would be wasteful. Refetch at most ~once a minute.
 	if cmd := m.maybeFetchSpend(); cmd != nil {
@@ -2475,6 +2108,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.menuRefreshTick()
 		}
 		cmds := []tea.Cmd{m.fetchWaitingSessions, m.fetchGitInfo, m.menuRefreshTick()}
+		if !m.looping {
+			cmds = append(cmds, m.fetchWorkLoop())
+		}
 		if cmd := m.maybeFetchSpend(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -2542,7 +2178,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.follow = m.prefs.Follow
 		m.pending, m.paused, m.picking = "", false, false
 		m.pickerOpts, m.pickerCursor = nil, 0
-		m.loopStopping = false
 		m.clearWizard()
 		m.clearSearch()
 		// Allocate a fresh event channel for this session. The subscribe goroutine
@@ -2572,55 +2207,106 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		spin := m.spinnerCmd() // arm the activity spinner (mutates m.spinning) before returning m
 		return m, tea.Batch(m.subscribe(), fc, spin)
 	case streamClosedMsg:
-		m.status = "stream closed"
-		// In a loop run, a closed stream means the work session finished. Record a
-		// per-session summary for the batch digest before deciding whether to start
-		// the next task rather than dropping back to an idle view.
+		m.loopArmStop = false
+		if m.loopArmed {
+			// An attended work session must be completely gone before asking the daemon
+			// to start its own session; otherwise two coordinators could work the same
+			// backlog concurrently.
+			m.loopArmed = false
+			m.status = "loop starting…"
+			return m, m.startWorkLoop()
+		}
 		if m.looping {
-			if m.loopRun != nil {
-				rec := m.snapshotLoopSession()
-				m.loopRun.sessions = append(m.loopRun.sessions, rec)
-				// Accumulate loop-wide spend for the loop cost/token cap (task 0137).
-				// Cost is the priced estimate from the live per-model tally; unpriced
-				// models contribute tokens only (never invented dollars, §20.4).
-				_, cost, status := m.sessionUsage()
-				m.loopRun.cumTokens += rec.tokens
-				m.loopRun.cumCost += cost
-				m.loopRun.costStatus = mergeCostStatus(m.loopRun.costStatus, status)
-				// A daemon-side per-session budget breach observed while looping stops
-				// the loop at the next decision point with a distinct outcome.
-				if m.budgetExceeded {
-					m.loopSessBreach = true
-				}
+			m.status = "loop: session ended — waiting for the daemon to pick the next task"
+			return m, nil
+		}
+		m.status = "stream closed"
+		return m, nil
+	case workLoopMsg:
+		// Historical digest reads are modal-only: they deliberately bypass lifecycle
+		// and generation handling so Browse → digest cannot detach a running loop or
+		// eject a live session back to the menu.
+		if msg.openDigest {
+			if msg.err != nil {
+				return m, m.flash(msg.err)
 			}
-			m.status = "loop: session ended — checking backlog…"
-			return m, m.loopNext()
+			m.rpcOK()
+			m.loopDigest = digestFromWorkLoop(msg.info)
+			m.digest, m.digestCursor = true, 0
+			return m, nil
 		}
-		return m, nil
-	case loopDecisionMsg:
-		return m.applyLoopDecision(msg)
-	case budgetCapsMsg:
-		// Loop spend caps fetched at loop start (task 0137). May arrive after the
-		// first session already started — that's fine, the caps apply from here on.
-		m.loopCostCap, m.loopTokenCap = msg.loopCost, msg.loopTokens
-		return m, nil
-	case loopUsageMsg:
-		// Price the batch digest from the per-session usage breakdown (task 0098).
-		if msg.err == nil && m.loopDigest != nil {
-			m.loopDigest.applyUsage(msg.rows)
+		// GetWorkLoop can race a newer Start/Stop response. Background responses are
+		// valid only in the generation in which their RPC was issued; start/stop
+		// actions always apply and invalidate every older poll/timer chain.
+		if !msg.initiated && msg.seq != m.loopSeq {
+			return m, nil
 		}
-		return m, nil
-	case digestTaskMsg:
-		// Fill a blocked digest task's specific reason from its work log (task 0098).
-		if msg.err == nil && m.loopDigest != nil && msg.task != nil {
-			reason := blockedReasonFromBody(msg.task.Body)
-			for i := range m.loopDigest.blocked {
-				if m.loopDigest.blocked[i].id == msg.id {
-					m.loopDigest.blocked[i].reason = reason
-				}
+		if msg.initiated {
+			m.loopSeq++
+		}
+		if msg.err != nil {
+			cmd := m.flash(msg.err)
+			if m.looping || msg.continuePoll {
+				m.looping = true
+				return m, tea.Batch(cmd, m.loopRefreshTick())
 			}
+			return m, cmd
 		}
-		return m, nil
+		m.rpcOK()
+		wasLooping := m.looping
+		m.loopInfo = msg.info
+		if msg.info == nil {
+			m.looping = false
+			if !msg.initiated {
+				m.loopSeq++
+			}
+			return m, nil
+		}
+		switch msg.info.State {
+		case "running", "stopping":
+			m.looping = true
+			if !msg.initiated && !wasLooping {
+				// A menu discovery is the root of a new single poll chain.
+				m.loopSeq++
+			}
+			if msg.alreadyRunning {
+				m.status = "loop already running — attached"
+			} else if msg.info.State == "stopping" {
+				m.status = "loop stopping: current task finishes, next not picked"
+			} else if !wasLooping {
+				m.status = "loop started"
+			}
+			cmds := []tea.Cmd{m.loopRefreshTick()}
+			if id := msg.info.CurrentSessionId; id != "" && id != m.sessionID {
+				cmds = append(cmds, m.reopenSession(id))
+			} else if id == "" && wasLooping {
+				m.status = "loop: waiting for the next task"
+			}
+			return m, tea.Batch(cmds...)
+		case "finished":
+			m.looping = false
+			if !msg.initiated {
+				m.loopSeq++
+			}
+			m.loopDigest = digestFromWorkLoop(msg.info)
+			if msg.initiated || wasLooping {
+				m.digest, m.digestCursor = true, 0
+				m.state, m.status = stateMenu, msg.info.Outcome
+				return m, m.refreshMenu()
+			}
+			return m, nil
+		default:
+			m.looping = false
+			if !msg.initiated {
+				m.loopSeq++
+			}
+			return m, nil
+		}
+	case loopTickMsg:
+		if msg.seq != m.loopSeq || !m.looping {
+			return m, nil
+		}
+		return m, m.fetchWorkLoop()
 	case evMsg:
 		m.markConnected()
 		// Transient events (Seq=0, broadcast-only, e.g. turn_delta) are ephemeral
@@ -2669,14 +2355,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if closed {
 			return m, func() tea.Msg { return streamClosedMsg{} }
 		}
-		// In a loop run a finished work session goes idle and blocks waiting for
-		// input rather than self-terminating, so its stream never closes on its own.
-		// When that happens, stop it explicitly: closing its stream surfaces as
-		// streamClosedMsg, which advances the loop to the next ready task. The guard
-		// ensures we issue StopSession only once for this idle session.
-		if m.looping && !m.loopStopping && m.status == "idle" {
-			m.loopStopping = true
-			m.status = "loop: task finished — advancing…"
+		if m.loopArmed && !m.loopArmStop && m.status == "idle" {
+			m.loopArmStop = true
+			m.status = "loop armed: ending current session…"
 			return m, tea.Batch(m.stopSession(), waitEvent(m.events), spin)
 		}
 		return m, tea.Batch(waitEvent(m.events), spin)
@@ -3557,14 +3238,11 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			e := m.entries[m.cursor]
-			// "work (loop)": drive the backlog unattended. Hand off to the loop
-			// driver, which picks the next ready task, starts a session, and repeats
-			// when it ends — ignoring any typed prompt so every iteration auto-picks.
+			// The daemon owns unattended iteration, caps, progress detection, and the
+			// durable digest; the TUI only starts and observes it.
 			if m.loop && isWorkEntry(e) {
-				m.looping, m.loopStarted, m.loopPrevFP = true, false, ""
-				m.loopRun = nil // start a fresh batch-digest accumulation (task 0098)
-				m.loopSessBreach, m.loopCostCap, m.loopTokenCap = false, 0, 0
-				return m, tea.Batch(m.fetchBudget, m.loopNext())
+				m.status = "loop starting…"
+				return m, m.startWorkLoop()
 			}
 			// Compose the preset's opening prompt with any typed text: choosing a
 			// preset AND typing details means both — the preset supplies the
@@ -3784,19 +3462,22 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "shift+tab":
-			// Toggle the unattended "work (loop)" run mid-session (spec §9). Halting
-			// it is graceful: the current task runs to completion (commit/blocked/
-			// in_review) and the loop simply doesn't pick up the next one. Toggling it
-			// on lets an ordinary work session roll into a loop once it finishes. Only
-			// meaningful for work-mode sessions.
-			if m.mode == "work" {
-				m.looping = !m.looping
-				m.loopStarted, m.loopPrevFP = false, ""
-				if m.looping {
-					m.loopRun = nil // fresh batch-digest accumulation (task 0098)
-					m.loopSessBreach, m.loopCostCap, m.loopTokenCap = false, 0, 0
-					return m, m.fetchBudget
-				}
+			if m.mode != "work" {
+				return m, nil
+			}
+			if m.looping {
+				m.status = "loop stopping: current task finishes, next not picked"
+				return m, m.stopWorkLoop()
+			}
+			// Do not immediately start a daemon loop beside this attended session.
+			// Arm it and start only after the current stream closes, avoiding two
+			// coordinators competing for the same backlog.
+			m.loopArmed = !m.loopArmed
+			m.loopArmStop = false
+			if m.loopArmed {
+				m.status = "loop armed: starts when this session finishes"
+			} else {
+				m.status = "loop disarmed"
 			}
 			return m, nil
 		case "up":
@@ -3809,8 +3490,7 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Return to the main menu from a finished (idle / stream-closed) session
 			// (task 0127). Gated on empty input so a bare "q" still types into the
 			// textarea mid-compose; falls through otherwise. Only fires on a finished,
-			// non-looping session (sessionFinished): the loop driver owns the idle→stop
-			// transition for its own sessions.
+			// non-looping session (sessionFinished): the daemon owns loop sessions.
 			if m.sessionFinished() && strings.TrimSpace(m.input.Value()) == "" {
 				// Build the stop command FIRST so it captures the current m.sessionID.
 				stop := m.stopSession()
@@ -4341,10 +4021,11 @@ func (m model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.openWorkstreams()
 			return m, tea.Batch(m.fetchWorkstreams, m.wsRefreshTick())
 		case "digest":
-			// Reopen the last work-loop batch digest (task 0098). When no loop has
-			// finished yet the digest surface shows its empty-state message.
+			// Load the daemon's durable snapshot so the last digest survives a TUI
+			// restart. A nil loop keeps the digest browser's empty state.
 			m.digest, m.digestCursor = true, 0
-			return m, nil
+			m.loopDigest = nil
+			return m, m.fetchWorkLoopDigest()
 		}
 		return m, nil
 	}
@@ -8817,10 +8498,19 @@ func (m model) statusBar() string {
 		}
 		segs = append(segs, seg{dimStyle.Render("task ") + typeStyle.Render(label), 1})
 	}
-	// Surface that an unattended loop run is driving this session (tab on the work
-	// entry); kept high-priority so the user always sees they're in a loop.
+	// Surface daemon loop lifecycle (or an attended session's deferred arm) at high
+	// priority so unattended work is never invisible.
+	loopLabel := ""
 	if m.looping {
-		segs = append(segs, seg{recoStyle.Render("⟳ loop"), 1})
+		loopLabel = "⟳ loop"
+		if m.loopInfo != nil && m.loopInfo.State == "stopping" {
+			loopLabel = "⟳ loop (stopping)"
+		}
+	} else if m.loopArmed {
+		loopLabel = "⟳ loop (armed)"
+	}
+	if loopLabel != "" {
+		segs = append(segs, seg{recoStyle.Render(loopLabel), 1})
 	}
 	// Spend guard (task 0137, spec §20.6): a visually distinct, high-priority
 	// segment once the session crosses ~80% (warn) or the cap (err). Kept above
@@ -9082,12 +8772,13 @@ func (m model) sessionView() string {
 	}
 	help := m.footer(searchHint + " ? help · enter send/expand · shift+enter newline · ↑↓ select · click expand · drag copy · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings · ctrl+b backlog · ctrl+o browse · ctrl+n new task")
 	if m.mode == "work" {
-		// Surface the loop toggle on work sessions: shift+tab halts a running loop
-		// gracefully (current task finishes) or rolls a single session into a loop.
-		if m.looping {
+		switch {
+		case m.looping:
 			help = m.footer(searchHint + " ? help · shift+tab halt loop · enter send/expand · ↑↓ select · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings")
-		} else {
-			help = m.footer(searchHint + " ? help · shift+tab loop · enter send/expand · ↑↓ select · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings")
+		case m.loopArmed:
+			help = m.footer(searchHint + " ? help · shift+tab disarm loop · enter send/expand · ↑↓ select · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings")
+		default:
+			help = m.footer(searchHint + " ? help · shift+tab arm loop · enter send/expand · ↑↓ select · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings")
 		}
 	}
 	if m.sessionFinished() {

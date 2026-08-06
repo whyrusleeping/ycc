@@ -91,3 +91,7 @@ This workspace has no Swift toolchain (memory: Linux box, connect-swift is Apple
 …[truncated]
 - 2026-08-06 decision: accept — commit: ios: work-loop control — start/observe/stop the daemon loop + digest (task 0190)  Wire the phone to the daemon-side work loop RPCs (task 0179): YccClient wrappers for StartWorkLoop/StopWorkLoop/GetW
 …[truncated]
+- 2026-08-06 usage: 3,801,844 tok (in 497,637, out 50,447, cache_r 5,146,303, cache_w 136,614) · cost n/a (unpriced)
+  implementer: 3,083,250 tok (in 289,161, out 24,937, cache_r 2,769,152, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 704,576 tok (in 208,440, out 11,528, cache_r 484,608, cache_w 0) · cost n/a (unpriced)
+  coordinator: 14,018 tok (in 36, out 13,982, cache_r 1,892,543, cache_w 136,614) · cost n/a (unpriced)
