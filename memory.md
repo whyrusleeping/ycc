@@ -15,6 +15,7 @@
 - 2026-08-06: iOS SessionProjection: the question row is resolved via openQuestionRowID (kept past an optimistic gate close), NOT via pendingQuestion — resolving through the gate was the bug that left answered cards reading "Waiting for an answer" (task 0247).
 - 2026-08-06: Models sometimes leak XML invoke syntax into a JSON string tool argument (question swallowing options, description swallowing priority); internal/tools/argrepair.go repairs it schema-aware in Registry.Repair (engine loop pre-emit) + Dispatch — check the tool_call event's `repaired` field when a tool looks like it lost arguments.
 - 2026-08-06: Anthropic OAuth tokens are resolved PER TURN by anthropicauth.NewOAuthTurner (config.Build passes TokenSource{AccessToken, ForceRefresh, c.SetBearerToken}); a token frozen at Build dies whenever any other process refreshes, because Anthropic invalidates the previous access token on every refresh-token redemption.
+- 2026-08-06: iOS composers: clearing a SwiftUI TextField binding on send is not enough — UIKit commits a pending autocorrection afterwards and writes the text back; fix is a one-runloop `.autocorrectionDisabled` pulse + deferred re-clear (done in SessionView.send, task 0278).
 
 ## Environment & tooling
 

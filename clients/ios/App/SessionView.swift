@@ -45,6 +45,13 @@ struct SessionView: View {
     @State private var draft = ""
     @State private var pictures: [DraftPicture] = []
     @State private var loadingPictures = false
+    /// Pulsed true for one runloop turn right after a send. UIKit commits a
+    /// pending autocorrection *after* the send action returns and writes the
+    /// corrected string back into the binding, which is why a composer that was
+    /// just cleared sometimes still shows the message that was sent. Turning
+    /// autocorrection off for a beat makes UIKit discard that pending correction
+    /// instead of committing it (see `send()`).
+    @State private var suppressAutocorrect = false
     /// Whether the answer sheet is shown (decoupled from `pendingQuestion` so a
     /// swipe-dismiss can hide it while the pending gate persists — reopen via the
     /// banner).
@@ -273,6 +280,7 @@ struct SessionView: View {
                 TextField("Message…", text: $draft, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(1...5)
+                    .autocorrectionDisabled(suppressAutocorrect)
                     .focused($composerFocused)
                     .onSubmit(send)
                 Button(action: send) {
@@ -295,6 +303,19 @@ struct SessionView: View {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !images.isEmpty else { return }
         draft = ""
         pictures = []
+        // Clearing the binding is not enough on its own: if the keyboard still
+        // holds an uncommitted autocorrection (the user tapped send without
+        // accepting or dismissing the suggestion), UIKit commits it *after* this
+        // action and writes the corrected text straight back into the freshly
+        // emptied field — the message goes out but the composer keeps showing it.
+        // Dropping autocorrection for one runloop turn makes UIKit throw that
+        // pending correction away, and the deferred re-clear mops up any
+        // write-back that still lands before the pulse takes effect.
+        suppressAutocorrect = true
+        Task { @MainActor in
+            draft = ""
+            suppressAutocorrect = false
+        }
         Task { await model.send(text: text, images: images) }
     }
 
