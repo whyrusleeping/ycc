@@ -577,7 +577,8 @@ Unknown id → `{"code":"not_found","message":"no task with id \"9999\""}`.
 
 Priced token-usage breakdown, grouped and filtered. `groupBy` is any of
 `task` | `model` | `session` | `agent` | `day` (default `task`); `since`/`until` are
-`YYYY-MM-DD` inclusive.
+`YYYY-MM-DD` inclusive. Optional `task` restricts entries to one exact backlog task
+id before grouping; an empty value applies no task filter.
 
 ```
 curl -sS -H "$AUTH" -H "$JSON" -d '{"groupBy":["task"]}' \

@@ -4387,6 +4387,7 @@ type GetUsageRequest struct {
 	GroupBy       []string               `protobuf:"bytes,2,rep,name=group_by,json=groupBy,proto3" json:"group_by,omitempty"` // task | model | session | agent | day (default: task)
 	Since         string                 `protobuf:"bytes,3,opt,name=since,proto3" json:"since,omitempty"`                    // YYYY-MM-DD inclusive, optional
 	Until         string                 `protobuf:"bytes,4,opt,name=until,proto3" json:"until,omitempty"`                    // YYYY-MM-DD inclusive, optional
+	Task          string                 `protobuf:"bytes,5,opt,name=task,proto3" json:"task,omitempty"`                      // restrict to one backlog task id, optional; empty = no filter
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4445,6 +4446,13 @@ func (x *GetUsageRequest) GetSince() string {
 func (x *GetUsageRequest) GetUntil() string {
 	if x != nil {
 		return x.Until
+	}
+	return ""
+}
+
+func (x *GetUsageRequest) GetTask() string {
+	if x != nil {
+		return x.Task
 	}
 	return ""
 }
@@ -6710,12 +6718,13 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12 \n" +
 	"\vdescription\x18\x02 \x01(\tR\vdescription\x12%\n" +
 	"\x0eprior_question\x18\x03 \x01(\tR\rpriorQuestion\x12!\n" +
-	"\fprior_answer\x18\x04 \x01(\tR\vpriorAnswer\"r\n" +
+	"\fprior_answer\x18\x04 \x01(\tR\vpriorAnswer\"\x86\x01\n" +
 	"\x0fGetUsageRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12\x19\n" +
 	"\bgroup_by\x18\x02 \x03(\tR\agroupBy\x12\x14\n" +
 	"\x05since\x18\x03 \x01(\tR\x05since\x12\x14\n" +
-	"\x05until\x18\x04 \x01(\tR\x05until\"\xb1\x02\n" +
+	"\x05until\x18\x04 \x01(\tR\x05until\x12\x12\n" +
+	"\x04task\x18\x05 \x01(\tR\x04task\"\xb1\x02\n" +
 	"\bUsageRow\x12\x12\n" +
 	"\x04task\x18\x01 \x01(\tR\x04task\x12\x14\n" +
 	"\x05model\x18\x02 \x01(\tR\x05model\x12\x18\n" +

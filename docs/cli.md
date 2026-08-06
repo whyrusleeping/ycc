@@ -118,11 +118,13 @@ task.
 |------|-------------|
 | `--project NAME` | registered project name (required when multiple projects exist) |
 | `--by LIST` | group by, comma-separated: `task`, `model`, `session`, `agent`, `day` (default: `task`) |
+| `--task ID` | restrict usage to one backlog task id |
 | `--since YYYY-MM-DD` | include usage on/after this day |
 | `--until YYYY-MM-DD` | include usage on/before this day |
 
 ```sh
 ycc cost
+ycc cost --task 0093 --by agent
 ycc cost --by model,day --since 2026-06-01 --until 2026-06-30
 ```
 

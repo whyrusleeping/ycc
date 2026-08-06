@@ -238,6 +238,47 @@ func TestAggregateDateFilter(t *testing.T) {
 	}
 }
 
+func TestAggregateTaskFilter(t *testing.T) {
+	// With no explicit grouping, filtering still leaves the default per-task row
+	// and makes the total specific to that task. Surrounding whitespace is ignored.
+	res := Aggregate(sampleEntries(), pricer(), Options{Task: "  0007  "})
+	if len(res.Rows) != 1 || res.Rows[0].Task != "0007" {
+		t.Fatalf("task filter rows = %+v, want only 0007", res.Rows)
+	}
+	if res.Rows[0].Tokens.Total != 1650 || res.Total.Tokens.Total != 1650 {
+		t.Fatalf("task filter row/total = %d/%d, want 1650/1650", res.Rows[0].Tokens.Total, res.Total.Tokens.Total)
+	}
+
+	entries := []Entry{
+		{Task: "0093", Model: "claude", Agent: "coordinator", Day: "2026-06-01", Tokens: Tokens{Input: 100, Total: 100}},
+		{Task: "0093", Model: "claude", Agent: "implementer", Day: "2026-06-02", Tokens: Tokens{Input: 200, Total: 200}},
+		{Task: "0093", Model: "gpt", Agent: "reviewer:gpt", Day: "2026-06-03", Tokens: Tokens{Input: 300, Total: 300}},
+		{Task: "0094", Model: "claude", Agent: "implementer", Day: "2026-06-02", Tokens: Tokens{Input: 900, Total: 900}},
+	}
+	res = Aggregate(entries, pricer(), Options{
+		Task: "0093", GroupBy: []Dim{DimAgent}, Since: ts("2026-06-02"), Until: ts("2026-06-03"),
+	})
+	if len(res.Rows) != 2 || res.Total.Tokens.Total != 500 {
+		t.Fatalf("composed task/agent/date filter = rows %+v total %+v, want 2 rows and total 500", res.Rows, res.Total)
+	}
+	for _, row := range res.Rows {
+		if row.Agent != "implementer" && row.Agent != "reviewer" {
+			t.Fatalf("unexpected agent row after composed filter: %+v", row)
+		}
+	}
+
+	res = Aggregate(entries, pricer(), Options{Task: "unknown"})
+	if len(res.Rows) != 0 || res.Total.Tokens != (Tokens{}) || res.Total.Cost != 0 {
+		t.Fatalf("unknown task result = rows %+v total %+v, want empty rows and zero total", res.Rows, res.Total)
+	}
+
+	unfiltered := Aggregate(sampleEntries(), pricer(), Options{})
+	emptyTask := Aggregate(sampleEntries(), pricer(), Options{Task: ""})
+	if len(emptyTask.Rows) != len(unfiltered.Rows) || emptyTask.Total != unfiltered.Total {
+		t.Fatalf("empty task filter changed result: got %+v, want %+v", emptyTask, unfiltered)
+	}
+}
+
 func TestFormatWorkLogLine(t *testing.T) {
 	priced := Row{Tokens: Tokens{Input: 8000, Output: 4000, CacheRead: 300, CacheWrite: 45, Total: 12345}, Cost: 0.1234, Status: StatusPriced}
 	got := FormatWorkLogLine(priced)

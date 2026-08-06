@@ -430,9 +430,9 @@ func (a *app) projectList(ctx context.Context) error {
 }
 
 // costCommand renders the usage/cost breakdown (spec §20.3, §20.5) returned by
-// the daemon's GetUsage RPC. By default it groups by backlog task; --by selects
-// other dimensions (comma-separated: task,model,session,agent,day) and
-// --since/--until bound an inclusive date range.
+// the daemon's GetUsage RPC. By default it groups by backlog task; --task filters
+// to one backlog task, --by selects other dimensions (comma-separated:
+// task,model,session,agent,day), and --since/--until bound an inclusive date range.
 func (a *app) costCommand() *cli.Command {
 	return &cli.Command{
 		Name:          "cost",
@@ -441,6 +441,7 @@ func (a *app) costCommand() *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "project", Usage: "registered project `name` (required when multiple exist)"},
 			&cli.StringFlag{Name: "by", Value: "task", Usage: "group by, comma-separated: task,model,session,agent,day"},
+			&cli.StringFlag{Name: "task", Usage: "restrict to one backlog task `id`"},
 			&cli.StringFlag{Name: "since", Usage: "include usage on/after this day (`YYYY-MM-DD`)"},
 			&cli.StringFlag{Name: "until", Usage: "include usage on/before this day (`YYYY-MM-DD`)"},
 		},
@@ -458,6 +459,7 @@ func (a *app) costCommand() *cli.Command {
 			defer cleanup()
 			resp, err := client.GetUsage(ctx, connect.NewRequest(&v1.GetUsageRequest{
 				Project: cmd.String("project"), GroupBy: groupBy, Since: cmd.String("since"), Until: cmd.String("until"),
+				Task: cmd.String("task"),
 			}))
 			if err != nil {
 				return fmt.Errorf("GetUsage: %w", err)

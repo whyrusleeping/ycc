@@ -531,6 +531,44 @@ func TestGetSessionTranscript(t *testing.T) {
 	}
 }
 
+func TestGetUsageFiltersByTask(t *testing.T) {
+	reg := config.NewRegistry(&config.Config{
+		Models: map[string]config.Model{"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"}},
+		Roles:  config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
+	})
+	ws := t.TempDir()
+	logPath := filepath.Join(ws, ".ycc", "sessions", "sess_usage", "events.jsonl")
+	lg, err := event.OpenLog(logPath)
+	if err != nil {
+		t.Fatalf("OpenLog: %v", err)
+	}
+	lg.Record("coordinator", event.TaskFocus, map[string]any{"task": "0093"})
+	lg.Record("coordinator", event.ModelTurn, map[string]any{
+		"model_name": "a", "usage": event.Usage{Input: 90, Output: 10, Total: 100},
+	})
+	lg.Record("implementer", event.TaskFocus, map[string]any{"task": "0094"})
+	lg.Record("implementer", event.ModelTurn, map[string]any{
+		"model_name": "a", "usage": event.Usage{Input: 800, Output: 100, Total: 900},
+	})
+	if err := lg.Close(); err != nil {
+		t.Fatalf("Close log: %v", err)
+	}
+
+	srv := New(session.NewManager(reg, ws))
+	resp, err := srv.GetUsage(context.Background(), connect.NewRequest(&v1.GetUsageRequest{
+		Task: " 0093 ", GroupBy: []string{"agent"},
+	}))
+	if err != nil {
+		t.Fatalf("GetUsage: %v", err)
+	}
+	if len(resp.Msg.Rows) != 1 || resp.Msg.Rows[0].Agent != "coordinator" {
+		t.Fatalf("rows = %+v, want only task 0093 coordinator usage", resp.Msg.Rows)
+	}
+	if resp.Msg.Rows[0].Total != 100 || resp.Msg.Total.GetTotal() != 100 {
+		t.Fatalf("row/total tokens = %d/%d, want 100/100", resp.Msg.Rows[0].Total, resp.Msg.Total.GetTotal())
+	}
+}
+
 // GetBudget returns the configured spend-guard caps (task 0137, spec §20.6).
 func TestGetBudgetReturnsConfiguredCaps(t *testing.T) {
 	reg := config.NewRegistry(&config.Config{

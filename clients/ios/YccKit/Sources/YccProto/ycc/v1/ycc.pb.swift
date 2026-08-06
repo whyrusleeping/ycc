@@ -1510,6 +1510,9 @@ public nonisolated struct Ycc_V1_GetUsageRequest: Sendable {
   /// YYYY-MM-DD inclusive, optional
   public var until: String = String()
 
+  /// restrict to one backlog task id, optional; empty = no filter
+  public var task: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -4963,7 +4966,7 @@ nonisolated extension Ycc_V1_CaptureBacklogItemRequest: SwiftProtobuf.Message, S
 
 nonisolated extension Ycc_V1_GetUsageRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GetUsageRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{3}group_by\0\u{1}since\0\u{1}until\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{3}group_by\0\u{1}since\0\u{1}until\0\u{1}task\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -4975,6 +4978,7 @@ nonisolated extension Ycc_V1_GetUsageRequest: SwiftProtobuf.Message, SwiftProtob
       case 2: try { try decoder.decodeRepeatedStringField(value: &self.groupBy) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.since) }()
       case 4: try { try decoder.decodeSingularStringField(value: &self.until) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.task) }()
       default: break
       }
     }
@@ -4993,6 +4997,9 @@ nonisolated extension Ycc_V1_GetUsageRequest: SwiftProtobuf.Message, SwiftProtob
     if !self.until.isEmpty {
       try visitor.visitSingularStringField(value: self.until, fieldNumber: 4)
     }
+    if !self.task.isEmpty {
+      try visitor.visitSingularStringField(value: self.task, fieldNumber: 5)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -5001,6 +5008,7 @@ nonisolated extension Ycc_V1_GetUsageRequest: SwiftProtobuf.Message, SwiftProtob
     if lhs.groupBy != rhs.groupBy {return false}
     if lhs.since != rhs.since {return false}
     if lhs.until != rhs.until {return false}
+    if lhs.task != rhs.task {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

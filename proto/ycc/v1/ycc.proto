@@ -450,6 +450,7 @@ message GetUsageRequest {
   repeated string group_by = 2; // task | model | session | agent | day (default: task)
   string since = 3;             // YYYY-MM-DD inclusive, optional
   string until = 4;             // YYYY-MM-DD inclusive, optional
+  string task = 5;              // restrict to one backlog task id, optional; empty = no filter
 }
 message UsageRow {
   string task = 1;

@@ -131,12 +131,13 @@ type Row struct {
 	Status  PriceStatus
 }
 
-// Options control aggregation: which dimensions to group by and an optional
-// inclusive date range (UTC YYYY-MM-DD).
+// Options control aggregation: which dimensions to group by, an optional
+// inclusive date range (UTC YYYY-MM-DD), and an optional exact task id filter.
 type Options struct {
 	GroupBy []Dim
 	Since   time.Time
 	Until   time.Time
+	Task    string // Exact Entry.Task match after trimming; empty means no filter.
 }
 
 // Result is the aggregated breakdown for a workspace.
@@ -278,8 +279,8 @@ func readEvents(path string) ([]event.Event, error) {
 }
 
 // Aggregate groups entries by the selected dimensions (default: task), filters
-// by the optional date range, prices each entry via pricer, and returns the
-// sorted rows plus a project total. A nil pricer treats every model as unpriced.
+// by the optional task and date range, prices each entry via pricer, and returns
+// the sorted rows plus a project total. A nil pricer treats every model as unpriced.
 func Aggregate(entries []Entry, pricer Pricer, opts Options) Result {
 	groupBy := opts.GroupBy
 	if len(groupBy) == 0 {
@@ -293,12 +294,16 @@ func Aggregate(entries []Entry, pricer Pricer, opts Options) Result {
 	if !opts.Until.IsZero() {
 		until = opts.Until.UTC().Format("2006-01-02")
 	}
+	task := strings.TrimSpace(opts.Task)
 
 	groups := map[string]*rowAgg{}
 	var order []string
 	var total rowAgg
 
 	for _, e := range entries {
+		if task != "" && e.Task != task {
+			continue
+		}
 		if since != "" && e.Day < since {
 			continue
 		}

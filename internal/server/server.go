@@ -823,7 +823,7 @@ func (s *Server) GetUsage(_ context.Context, req *connect.Request[v1.GetUsageReq
 		}
 		groupBy = append(groupBy, d)
 	}
-	opts := usage.Options{GroupBy: groupBy}
+	opts := usage.Options{GroupBy: groupBy, Task: strings.TrimSpace(req.Msg.Task)}
 	if req.Msg.Since != "" {
 		t, err := time.Parse("2006-01-02", req.Msg.Since)
 		if err != nil {
