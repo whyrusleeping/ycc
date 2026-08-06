@@ -17,6 +17,13 @@ struct NewSessionView: View {
     @FocusState private var composerFocused: Bool
     /// Whether the "add project" sheet is shown (from the project chip).
     @State private var showAddProject = false
+    /// Pictures staged for the OPENING prompt (shared composer affordances in
+    /// `PictureComposer.swift`). They are mirrored into `model.images` so the
+    /// send button unlocks on a picture-only draft.
+    @State private var pictures: [DraftPicture] = []
+    @State private var loadingPictures = false
+    /// A picture-loading failure (the model owns only RPC errors).
+    @State private var pictureError: String?
 
     /// Called with (sessionID, project) once a session starts successfully. The
     /// parent dismisses the sheet and pushes the live view.
@@ -139,7 +146,7 @@ struct NewSessionView: View {
 
     @ViewBuilder
     private var errorBanner: some View {
-        if let errorMessage = model.errorMessage {
+        if let errorMessage = pictureError ?? model.errorMessage {
             HStack(spacing: 8) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.red)
@@ -275,37 +282,55 @@ struct NewSessionView: View {
     }
 
     /// The message-style composer: multiline field plus a send arrow (mirrors
-    /// the live session's input bar). Sending starts the session. Work mode may
-    /// start with an empty prompt (the agent picks the next ready backlog task),
-    /// like the TUI.
+    /// the live session's input bar), including the same Photos picker — an
+    /// opening prompt may carry pictures (spec §12), so a session about a
+    /// screenshot does not have to burn its first turn asking for it.
+    /// Sending starts the session. Work mode may start with an empty prompt (the
+    /// agent picks the next ready backlog task), like the TUI.
     private var composer: some View {
         @Bindable var model = model
-        return HStack(spacing: 8) {
-            TextField(
-                model.promptIsOptional
-                    ? "What should the agent do? (optional)"
-                    : "What should the agent do?",
-                text: $model.prompt, axis: .vertical)
-                .textFieldStyle(.roundedBorder)
-                .lineLimit(1...6)
-                .focused($composerFocused)
-                .disabled(model.isStarting)
-            if model.isStarting {
-                ProgressView()
-                    .frame(width: 28, height: 28)
-            } else {
-                Button(action: start) {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.title2)
+        return VStack(alignment: .leading, spacing: 6) {
+            PictureStrip(pictures: $pictures)
+            HStack(spacing: 8) {
+                PicturePickerButton(pictures: $pictures, isLoading: $loadingPictures) { message in
+                    pictureError = message
                 }
-                .disabled(!model.canStart)
+                .disabled(model.isStarting)
+                TextField(
+                    model.promptIsOptional
+                        ? "What should the agent do? (optional)"
+                        : "What should the agent do?",
+                    text: $model.prompt, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(1...6)
+                    .focused($composerFocused)
+                    .disabled(model.isStarting)
+                if model.isStarting {
+                    ProgressView()
+                        .frame(width: 28, height: 28)
+                } else {
+                    Button(action: start) {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.title2)
+                    }
+                    .disabled(!model.canStart || loadingPictures)
+                }
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+        // Mirror the draft into the model so `canStart` sees a picture-only
+        // prompt, and clear a stale picture error once the draft changes.
+        .onChange(of: pictures.map(\.id)) { _, _ in
+            model.images = pictures.map(\.image)
+            pictureError = nil
+        }
     }
 
     private func start() {
+        // Hand the staged pictures to the model right before starting, so
+        // `canStart` and the request see the same draft.
+        model.images = pictures.map(\.image)
         Task {
             let project = model.selectedProject
             if let sessionID = await model.start() {

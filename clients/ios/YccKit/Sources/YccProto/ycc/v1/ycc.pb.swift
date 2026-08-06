@@ -77,6 +77,12 @@ public nonisolated struct Ycc_V1_StartSessionRequest: Sendable {
   /// Spec §13, §18.2.
   public var coordinatorModel: String = String()
 
+  /// images optionally attaches up to four validated pictures to the OPENING
+  /// prompt (same limits and validation as SendInputRequest.images), so a
+  /// session whose whole subject is a screenshot does not have to waste its
+  /// first turn. Spec §12.
+  public var images: [Ycc_V1_ImageAttachment] = []
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -2220,7 +2226,7 @@ nonisolated extension Ycc_V1_Event: SwiftProtobuf.Message, SwiftProtobuf._Messag
 
 nonisolated extension Ycc_V1_StartSessionRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".StartSessionRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}workspace\0\u{1}mode\0\u{2}\u{2}prompt\0\u{1}project\0\u{3}coordinator_model\0\u{c}\u{3}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}workspace\0\u{1}mode\0\u{2}\u{2}prompt\0\u{1}project\0\u{3}coordinator_model\0\u{1}images\0\u{c}\u{3}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2233,6 +2239,7 @@ nonisolated extension Ycc_V1_StartSessionRequest: SwiftProtobuf.Message, SwiftPr
       case 4: try { try decoder.decodeSingularStringField(value: &self.prompt) }()
       case 5: try { try decoder.decodeSingularStringField(value: &self.project) }()
       case 6: try { try decoder.decodeSingularStringField(value: &self.coordinatorModel) }()
+      case 7: try { try decoder.decodeRepeatedMessageField(value: &self.images) }()
       default: break
       }
     }
@@ -2254,6 +2261,9 @@ nonisolated extension Ycc_V1_StartSessionRequest: SwiftProtobuf.Message, SwiftPr
     if !self.coordinatorModel.isEmpty {
       try visitor.visitSingularStringField(value: self.coordinatorModel, fieldNumber: 6)
     }
+    if !self.images.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.images, fieldNumber: 7)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -2263,6 +2273,7 @@ nonisolated extension Ycc_V1_StartSessionRequest: SwiftProtobuf.Message, SwiftPr
     if lhs.prompt != rhs.prompt {return false}
     if lhs.project != rhs.project {return false}
     if lhs.coordinatorModel != rhs.coordinatorModel {return false}
+    if lhs.images != rhs.images {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

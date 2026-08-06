@@ -371,6 +371,22 @@ curl -sS -H "$AUTH" -H "$JSON" \
   $B/ycc.v1.SessionService/StartSession
 ```
 
+`images` attaches up to four pictures to the **opening prompt**, with exactly the
+same rules and validation as [`SendInput`](#sendinput) (`data` is standard base64
+in JSON, ≤5 MiB each, JPEG/PNG/GIF/WebP with the bytes verified against
+`mediaType`). They are validated *before* anything is created, so a bad picture is
+`invalid_argument` with no stray session or log. The seed message the agent sees on
+its very first turn is multimodal; the `user_input` event again records only
+filename/media-type metadata, so a replayed session keeps the text plus an
+attachment note rather than the pixels.
+
+```
+curl -sS -H "$AUTH" -H "$JSON" \
+  -d '{"project":"work","mode":"chat","prompt":"what is wrong here?",
+       "images":[{"data":"'"$(base64 -w0 shot.png)"'","mediaType":"image/png","filename":"shot.png"}]}' \
+  $B/ycc.v1.SessionService/StartSession
+```
+
 Then `Subscribe` to the returned `sessionId` to follow it.
 
 ### Subscribe

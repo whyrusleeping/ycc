@@ -140,6 +140,127 @@ func TestBuildAnthropicOAuthHeaders(t *testing.T) {
 	}
 }
 
+// A session keeps its client for its whole life, so the OAuth bearer must be
+// resolved per turn: Anthropic invalidates the previous access token whenever
+// the refresh token is redeemed, and the redeemer is often another ycc process
+// (or the usage poller). A client built before such a rotation must pick the
+// new credential up rather than dying on a revoked token.
+func TestBuildAnthropicOAuthTokenFollowsBackgroundRefresh(t *testing.T) {
+	isolateSecrets(t)
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Header.Get("Authorization"))
+		if r.Header.Get("Authorization") != "Bearer sk-ant-oat01-second" {
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `{"type":"error","error":{"type":"authentication_error","message":"OAuth access token has been revoked."}}`)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"id": "msg_1", "type": "message", "role": "assistant",
+			"content": []map[string]any{{"type": "text", "text": "ok"}}, "model": "claude-opus-4-8",
+			"stop_reason": "end_turn", "usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
+		})
+	}))
+	defer srv.Close()
+
+	save := func(access string) {
+		t.Helper()
+		if err := anthropicauth.Save(&anthropicauth.Credentials{
+			AccessToken: access, RefreshToken: "rt", ExpiresAt: time.Now().Add(time.Hour).Unix(), FlowVersion: anthropicauth.FlowVersion,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save("sk-ant-oat01-first")
+	// The store still holds the rejected token during the first turn, so its
+	// recovery attempt redeems the refresh token; keep that off the network and
+	// make it fail, isolating the per-turn resolution being tested here.
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
+	}))
+	defer dead.Close()
+	oldEndpoint := anthropicauth.TokenEndpoint
+	anthropicauth.TokenEndpoint = dead.URL
+	defer func() { anthropicauth.TokenEndpoint = oldEndpoint }()
+
+	reg := NewRegistry(&Config{Models: map[string]Model{
+		"sub": {Backend: "anthropic", BaseURL: srv.URL, Model: "claude-opus-4-8", Auth: "oauth"},
+	}})
+	client, modelID, err := reg.Build("sub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn := func() error {
+		_, err := client.Turn(gollama.RequestOptions{Model: modelID, Messages: []gollama.Message{{Role: "user", Content: "hi"}}})
+		return err
+	}
+	if err := turn(); err == nil {
+		t.Fatal("stub should reject the first credential")
+	}
+	// Something else refreshed the shared store while the session was idle.
+	save("sk-ant-oat01-second")
+	if err := turn(); err != nil {
+		t.Fatalf("turn after background refresh: %v", err)
+	}
+	want := []string{"Bearer sk-ant-oat01-first", "Bearer sk-ant-oat01-second"}
+	if len(seen) != len(want) {
+		t.Fatalf("requests = %v, want %v", seen, want)
+	}
+	for i, w := range want {
+		if seen[i] != w {
+			t.Fatalf("request %d Authorization = %q, want %q", i, seen[i], w)
+		}
+	}
+}
+
+// When the rotation lands mid-turn — the credential was live when resolved and
+// revoked by the time it reached the API — the turn is recovered by one forced
+// refresh and retry rather than failing the session with a non-retryable 401.
+func TestBuildAnthropicOAuthRecoversFromRevokedToken(t *testing.T) {
+	isolateSecrets(t)
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Header.Get("Authorization"))
+		if r.Header.Get("Authorization") != "Bearer sk-ant-oat01-refreshed" {
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `{"type":"error","error":{"type":"authentication_error","message":"OAuth access token has been revoked."}}`)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"id": "msg_1", "type": "message", "role": "assistant",
+			"content": []map[string]any{{"type": "text", "text": "ok"}}, "model": "claude-opus-4-8",
+			"stop_reason": "end_turn", "usage": map[string]int{"input_tokens": 1, "output_tokens": 1},
+		})
+	}))
+	defer srv.Close()
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "sk-ant-oat01-refreshed", "refresh_token": "rt-2", "expires_in": 3600,
+		})
+	}))
+	defer tokenSrv.Close()
+	oldEndpoint := anthropicauth.TokenEndpoint
+	anthropicauth.TokenEndpoint = tokenSrv.URL
+	defer func() { anthropicauth.TokenEndpoint = oldEndpoint }()
+
+	if err := anthropicauth.Save(&anthropicauth.Credentials{
+		AccessToken: "sk-ant-oat01-revoked", RefreshToken: "rt", ExpiresAt: time.Now().Add(time.Hour).Unix(), FlowVersion: anthropicauth.FlowVersion,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reg := NewRegistry(&Config{Models: map[string]Model{
+		"sub": {Backend: "anthropic", BaseURL: srv.URL, Model: "claude-opus-4-8", Auth: "oauth"},
+	}})
+	turnOnce(t, reg, "sub")
+	want := []string{"Bearer sk-ant-oat01-revoked", "Bearer sk-ant-oat01-refreshed"}
+	if len(seen) != len(want) || seen[0] != want[0] || seen[1] != want[1] {
+		t.Fatalf("requests = %v, want %v", seen, want)
+	}
+	if stored, ok := anthropicauth.Load(); !ok || stored.AccessToken != "sk-ant-oat01-refreshed" {
+		t.Fatalf("refreshed credential not persisted: %+v ok=%v", stored, ok)
+	}
+}
+
 func TestBuildAnthropicAPIKeyDoesNotPrefixSystem(t *testing.T) {
 	isolateSecrets(t)
 	var system []struct {

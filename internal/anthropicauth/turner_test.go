@@ -1,8 +1,10 @@
 package anthropicauth
 
 import (
+	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/whyrusleeping/gollama"
@@ -83,5 +85,175 @@ func TestTurnerPrefixesStreamingAndNonStreaming(t *testing.T) {
 	}
 	if !reflect.DeepEqual(inner.streamOpts.SystemBlocks, want) {
 		t.Fatalf("TurnStream blocks = %#v", inner.streamOpts.SystemBlocks)
+	}
+}
+
+// scriptedTurner replies with the queued outcome for each call, recording the
+// bearer credential the transport carried at that moment.
+type scriptedTurner struct {
+	token   *string
+	replies []error
+	seen    []string
+	deltas  int
+}
+
+func (s *scriptedTurner) next() error {
+	s.seen = append(s.seen, *s.token)
+	if len(s.replies) == 0 {
+		return nil
+	}
+	err := s.replies[0]
+	s.replies = s.replies[1:]
+	return err
+}
+
+func (s *scriptedTurner) Turn(gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+	return nil, s.next()
+}
+
+func (s *scriptedTurner) TurnStream(_ gollama.RequestOptions, onDelta func(string)) (*gollama.ResponseMessageGenerate, error) {
+	err := s.next()
+	if err == nil {
+		s.deltas++
+		onDelta("live")
+	}
+	return nil, err
+}
+
+// oauthFixture wires a scripted client to a token source over a mutable stored
+// token, standing in for the secrets store that other ycc processes share.
+type oauthFixture struct {
+	inner    *scriptedTurner
+	turner   *Turner
+	stored   string // what the "secrets store" currently holds
+	onDisk   string // bearer installed on the transport
+	refresh  func(stale string) string
+	refreshN int
+}
+
+func newOAuthFixture(t *testing.T, stored string, replies ...error) *oauthFixture {
+	t.Helper()
+	f := &oauthFixture{stored: stored}
+	f.inner = &scriptedTurner{token: &f.onDisk, replies: replies}
+	f.turner = NewOAuthTurner(f.inner, TokenSource{
+		Token: func(context.Context) (string, error) { return f.stored, nil },
+		Refresh: func(_ context.Context, stale string) (string, error) {
+			f.refreshN++
+			if f.refresh == nil {
+				return stale, nil
+			}
+			f.stored = f.refresh(stale)
+			return f.stored, nil
+		},
+		Apply: func(tok string) { f.onDisk = tok },
+	})
+	return f
+}
+
+func revoked() error {
+	return errors.New(`API returned non-200 status code 401: {"type":"error","error":{"type":"authentication_error","message":"OAuth access token has been revoked."},"request_id":null}`)
+}
+
+// A session outlives the token it was built with: every turn must install
+// whatever credential the shared store currently holds, so a refresh performed
+// by another process is picked up instead of sending a dead token.
+func TestOAuthTurnerResolvesTokenEveryTurn(t *testing.T) {
+	f := newOAuthFixture(t, "tok-1", nil, nil, nil)
+	if _, err := f.turner.Turn(gollama.RequestOptions{System: "sys"}); err != nil {
+		t.Fatal(err)
+	}
+	f.stored = "tok-2" // another ycc process refreshed underneath us
+	if _, err := f.turner.Turn(gollama.RequestOptions{System: "sys"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.turner.TurnStream(gollama.RequestOptions{System: "sys"}, func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"tok-1", "tok-2", "tok-2"}; !reflect.DeepEqual(f.inner.seen, want) {
+		t.Fatalf("tokens sent = %v, want %v", f.inner.seen, want)
+	}
+	if f.refreshN != 0 {
+		t.Fatalf("forced %d refreshes on healthy turns", f.refreshN)
+	}
+	// The system prefix still applies on the refreshing path.
+	if f.inner.deltas != 1 {
+		t.Fatalf("stream delta count = %d", f.inner.deltas)
+	}
+}
+
+// The rotation can also land mid-turn, after the token was resolved: a revoked
+// 401 is recovered with one forced refresh and one retry, not a dead session.
+func TestOAuthTurnerRetriesOnceAfterRevoked(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(*oauthFixture) error
+	}{
+		{"turn", func(f *oauthFixture) error {
+			_, err := f.turner.Turn(gollama.RequestOptions{System: "sys"})
+			return err
+		}},
+		{"stream", func(f *oauthFixture) error {
+			_, err := f.turner.TurnStream(gollama.RequestOptions{System: "sys"}, func(string) {})
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newOAuthFixture(t, "tok-revoked", revoked(), nil)
+			f.refresh = func(string) string { return "tok-fresh" }
+			if err := tc.run(f); err != nil {
+				t.Fatalf("turn not recovered: %v", err)
+			}
+			if want := []string{"tok-revoked", "tok-fresh"}; !reflect.DeepEqual(f.inner.seen, want) {
+				t.Fatalf("tokens sent = %v, want %v", f.inner.seen, want)
+			}
+			if f.refreshN != 1 {
+				t.Fatalf("forced refreshes = %d, want 1", f.refreshN)
+			}
+		})
+	}
+}
+
+// Recovery is attempted once. When it cannot produce a different credential the
+// caller sees the provider's own rejection, which carries the actionable hint.
+func TestOAuthTurnerReportsUnrecoverableRevocation(t *testing.T) {
+	f := newOAuthFixture(t, "tok-revoked", revoked(), revoked())
+	err := func() error {
+		_, err := f.turner.Turn(gollama.RequestOptions{System: "sys"})
+		return err
+	}()
+	if err == nil || !strings.Contains(err.Error(), "revoked") {
+		t.Fatalf("err = %v, want the provider rejection", err)
+	}
+	if len(f.inner.seen) != 1 || f.refreshN != 1 {
+		t.Fatalf("attempts = %v, refreshes = %d; want one of each", f.inner.seen, f.refreshN)
+	}
+}
+
+// A rejection that is not about the credential must not burn a refresh.
+func TestOAuthTurnerDoesNotRefreshOnOtherErrors(t *testing.T) {
+	f := newOAuthFixture(t, "tok", errors.New("API returned non-200 status code 429: rate_limit_error"))
+	if _, err := f.turner.Turn(gollama.RequestOptions{System: "sys"}); err == nil {
+		t.Fatal("want the rate-limit error")
+	}
+	if f.refreshN != 0 || len(f.inner.seen) != 1 {
+		t.Fatalf("refreshes = %d, attempts = %v", f.refreshN, f.inner.seen)
+	}
+}
+
+func TestIsRevokedCredential(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want bool
+	}{
+		{nil, false},
+		{revoked(), true},
+		{errors.New(`status code 401: {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired."}}`), true},
+		{errors.New(`status code 401: {"type":"error","error":{"type":"authentication_error","message":"x-api-key header is required"}}`), false},
+		{errors.New(`status code 403: {"type":"error","error":{"type":"permission_error","message":"token revoked"}}`), false},
+		{errors.New("status code 429: rate_limit_error"), false},
+	} {
+		if got := IsRevokedCredential(tc.err); got != tc.want {
+			t.Errorf("IsRevokedCredential(%v) = %v, want %v", tc.err, got, tc.want)
+		}
 	}
 }

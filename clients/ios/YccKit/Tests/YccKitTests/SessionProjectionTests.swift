@@ -355,6 +355,71 @@ final class SessionProjectionTests: XCTestCase {
         XCTAssertEqual(answer, "a; b")
     }
 
+    /// The optimistic close must resolve the transcript card too — the user has
+    /// answered, so the row cannot keep saying "Waiting for an answer".
+    func testResolvePendingQuestionAnswersTheRowImmediately() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(seq: 1, type: "question_asked",
+                             dataJson: #"{"question":"Proceed?","options":["yes","no"]}"#))
+
+        proj.resolvePendingQuestion(answer: "yes")
+
+        XCTAssertNil(proj.pendingQuestion)
+        guard case .question(_, _, let answer)? = proj.durableRows.last?.kind else {
+            return XCTFail("expected a resolved question row")
+        }
+        XCTAssertEqual(answer, "yes")
+    }
+
+    /// Regression: closing the gate optimistically used to orphan the later
+    /// `question_answered` event (it looked the row up through `pendingQuestion`,
+    /// which was already nil), leaving the card unanswered forever.
+    func testAnsweredEventStillResolvesRowAfterOptimisticClose() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(seq: 1, type: "question_asked",
+                             dataJson: #"{"question":"Proceed?","options":["yes","no"]}"#))
+        proj.resolvePendingQuestion(answer: "")
+
+        proj.apply(makeEvent(seq: 2, type: "question_answered", dataJson: #"{"answer":"yes"}"#))
+
+        guard case .question(_, _, let answer)? = proj.durableRows.last?.kind else {
+            return XCTFail("expected a resolved question row")
+        }
+        XCTAssertEqual(answer, "yes", "the event is authoritative for the row text")
+    }
+
+    /// An unparseable/empty answered payload must not wipe the text this client
+    /// already folded in optimistically.
+    func testEmptyAnsweredPayloadKeepsOptimisticAnswerText() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(seq: 1, type: "question_asked",
+                             dataJson: #"{"question":"Proceed?"}"#))
+        proj.resolvePendingQuestion(answer: "go ahead")
+
+        proj.apply(makeEvent(seq: 2, type: "question_answered", dataJson: "{}"))
+
+        guard case .question(_, _, let answer)? = proj.durableRows.last?.kind else {
+            return XCTFail("expected a resolved question row")
+        }
+        XCTAssertEqual(answer, "go ahead")
+    }
+
+    /// A re-asked question opens a fresh gate and its own row; answering it must
+    /// resolve the new row, not the stale one.
+    func testSecondQuestionResolvesItsOwnRow() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(seq: 1, type: "question_asked", dataJson: #"{"question":"First?"}"#))
+        proj.apply(makeEvent(seq: 2, type: "question_answered", dataJson: #"{"answer":"one"}"#))
+        proj.apply(makeEvent(seq: 3, type: "question_asked", dataJson: #"{"question":"Second?"}"#))
+        proj.resolvePendingQuestion(answer: "two")
+
+        let questions = proj.durableRows.compactMap { row -> String? in
+            guard case .question(_, _, let answer) = row.kind else { return nil }
+            return answer
+        }
+        XCTAssertEqual(questions, ["one", "two"])
+    }
+
     // MARK: - Final report
 
     func testSessionIdleCreatesMarkdownFinalReportAndCoalescesEchoedTurn() {
@@ -396,6 +461,55 @@ final class SessionProjectionTests: XCTestCase {
             return XCTFail("empty finish report should still produce a lifecycle row")
         }
         XCTAssertEqual(text, "Session finished")
+    }
+
+    // MARK: - Coordinator model folding
+
+    func testCoordinatorModelFoldsFromLifecycleAndTurns() {
+        var proj = SessionProjection()
+        XCTAssertEqual(proj.coordinatorModel, "")
+
+        proj.apply(makeEvent(
+            seq: 1, type: "session_started", actor: "system",
+            dataJson: #"{"mode":"work","workspace":"/ws","coordinator":"claude"}"#))
+        XCTAssertEqual(proj.coordinatorModel, "claude")
+        // The started row names the model too, so a replayed transcript says
+        // which model did the work.
+        guard case .system(let started)? = proj.durableRows.last?.kind else {
+            return XCTFail("session_started should render a system row")
+        }
+        XCTAssertEqual(started, "Session started · work · claude")
+
+        // The turn that actually ran is authoritative.
+        proj.apply(makeEvent(
+            seq: 2, type: "model_turn", actor: "coordinator",
+            dataJson: #"{"text":"hi","model_name":"gpt"}"#))
+        XCTAssertEqual(proj.coordinatorModel, "gpt")
+
+        // A subagent's turn must not hijack the coordinator readout.
+        proj.apply(makeEvent(
+            seq: 3, type: "model_turn", actor: "implementer",
+            dataJson: #"{"text":"sub","model_name":"glm"}"#))
+        XCTAssertEqual(proj.coordinatorModel, "gpt")
+
+        // A mid-session role change moves it.
+        proj.apply(makeEvent(
+            seq: 4, type: "role_config_changed", actor: "system",
+            dataJson: #"{"coordinator":"claude","implementer":"gpt"}"#))
+        XCTAssertEqual(proj.coordinatorModel, "claude")
+    }
+
+    func testCoordinatorModelIgnoresEmptyAndUnrelatedPayloads() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(
+            seq: 1, type: "session_started", actor: "system",
+            dataJson: #"{"mode":"work","coordinator":"claude"}"#))
+        // Older logs omit model_name; the known name must survive.
+        proj.apply(makeEvent(seq: 2, type: "model_turn", dataJson: #"{"text":"hi"}"#))
+        XCTAssertEqual(proj.coordinatorModel, "claude")
+        // Unparsable payloads never clear it either.
+        proj.apply(makeEvent(seq: 3, type: "model_turn", dataJson: "not json"))
+        XCTAssertEqual(proj.coordinatorModel, "claude")
     }
 
     // MARK: - Phase folding

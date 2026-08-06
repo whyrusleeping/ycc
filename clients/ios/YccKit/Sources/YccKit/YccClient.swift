@@ -180,9 +180,12 @@ public final class YccClient: Sendable {
     /// `project` names a registered workspace; empty is accepted only when exactly
     /// one project exists. `coordinatorModel` optionally overrides the coordinator's
     /// logical model for this session only (empty = the configured default).
+    /// `images` attaches up to four pictures to the OPENING prompt, so a session
+    /// about a screenshot does not have to burn its first turn (spec §12).
     /// Returns the new session id to `Subscribe` from seq 0.
     public func startSession(
-        project: String = "", mode: String, prompt: String, coordinatorModel: String = ""
+        project: String = "", mode: String, prompt: String, coordinatorModel: String = "",
+        images: [MessageImage] = []
     ) async throws -> String {
         var request = Ycc_V1_StartSessionRequest()
         request.project = project
@@ -191,6 +194,7 @@ public final class YccClient: Sendable {
         // Empty = use the daemon's configured coordinator; a name overrides it for
         // THIS session only (the persisted role defaults are untouched).
         request.coordinatorModel = coordinatorModel
+        request.images = images.map(Self.attachment)
         let response = await generated.startSession(request: request)
         switch response.result {
         case .success(let message):
@@ -234,14 +238,18 @@ public final class YccClient: Sendable {
         var request = Ycc_V1_SendInputRequest()
         request.sessionID = sessionId
         request.text = text
-        request.images = images.map { image in
-            var attachment = Ycc_V1_ImageAttachment()
-            attachment.data = image.data
-            attachment.mediaType = image.mediaType
-            attachment.filename = image.filename
-            return attachment
-        }
+        request.images = images.map(Self.attachment)
         try unary(await generated.sendInput(request: request))
+    }
+
+    /// Wire form of one picture attachment (shared by `SendInput` and
+    /// `StartSession`, which validate identically daemon-side).
+    private static func attachment(_ image: MessageImage) -> Ycc_V1_ImageAttachment {
+        var attachment = Ycc_V1_ImageAttachment()
+        attachment.data = image.data
+        attachment.mediaType = image.mediaType
+        attachment.filename = image.filename
+        return attachment
     }
 
     /// Answer a single pending `ask_user` question (`AnswerQuestion`).

@@ -15,9 +15,11 @@ public protocol NewSessionSource: Sendable {
     /// (`ListModels`); drives the optional model picker.
     func listModels() async throws -> Ycc_V1_ListModelsResponse
     /// Start a new session; returns its id to subscribe from seq 0.
-    /// `coordinatorModel` is empty for "use the configured default".
+    /// `coordinatorModel` is empty for "use the configured default"; `images`
+    /// attaches pictures to the opening prompt (spec §12).
     func startSession(
-        project: String, mode: String, prompt: String, coordinatorModel: String
+        project: String, mode: String, prompt: String, coordinatorModel: String,
+        images: [MessageImage]
     ) async throws -> String
     /// Re-open a persisted session on its existing log; returns its id.
     func resumeSession(project: String, sessionId: String) async throws -> String
@@ -87,6 +89,10 @@ public final class NewSessionModel {
     public var selectedModel: String = ""
     /// The multiline prompt composer draft.
     public var prompt: String = ""
+    /// Pictures attached to the opening prompt (at most
+    /// ``PictureAttachments/maxCount``). They travel with `StartSession`, so the
+    /// agent sees the screenshot on its FIRST turn rather than a turn later.
+    public var images: [MessageImage] = []
 
     public private(set) var isLoading = false
     public private(set) var isStarting = false
@@ -132,12 +138,14 @@ public final class NewSessionModel {
     /// next ready backlog task itself.
     public var promptIsOptional: Bool { selectedMode == "work" }
 
-    /// A start is allowed once a mode is chosen, the prompt is non-empty
-    /// (unless the mode makes it optional), and no start is already in flight.
+    /// A start is allowed once a mode is chosen, the prompt carries something
+    /// (text, or a picture that speaks for itself, unless the mode makes the
+    /// prompt optional), and no start is already in flight.
     public var canStart: Bool {
         !isStarting
             && !selectedMode.isEmpty
             && (promptIsOptional
+                || !images.isEmpty
                 || !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
@@ -216,7 +224,8 @@ public final class NewSessionModel {
                 project: selectedProject,
                 mode: selectedMode,
                 prompt: trimmedPrompt,
-                coordinatorModel: selectedModel)
+                coordinatorModel: selectedModel,
+                images: images)
             rememberSelections()
             errorMessage = nil
             return sessionId

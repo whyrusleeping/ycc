@@ -123,6 +123,12 @@ public final class SessionSettingsModel {
 
     private let source: SessionSettingsSource
     private let sessionId: String
+    /// The coordinator model this SESSION is actually running on, when the caller
+    /// knows it (folded from the session's event log). `ListModels` reports only
+    /// the daemon's GLOBAL role defaults, so without this a session started with a
+    /// per-session `coordinator_model` override would seed its picker with the
+    /// wrong model and silently reassign it on the next apply.
+    private let sessionCoordinator: String
 
     // Committed (daemon-confirmed) values, so a failed apply can revert the
     // corresponding picker back to reality rather than lie about the state.
@@ -130,9 +136,14 @@ public final class SessionSettingsModel {
     private var committedImplementer = ""
     private var committedReviewers: [String] = []
 
-    public init(source: SessionSettingsSource, sessionId: String) {
+    public init(
+        source: SessionSettingsSource,
+        sessionId: String,
+        sessionCoordinator: String = ""
+    ) {
         self.source = source
         self.sessionId = sessionId
+        self.sessionCoordinator = sessionCoordinator
     }
 
     /// Load the model list and seed every picker from the daemon's CURRENT
@@ -144,10 +155,15 @@ public final class SessionSettingsModel {
         do {
             let response = try await source.listModels()
             models = response.models
-            coordinator = response.coordinator
+            // The session's own coordinator wins over the global default when the
+            // caller knows it AND it is a configured model (an unknown name would
+            // leave the picker with no matching tag).
+            let known = response.models.contains { $0.name == sessionCoordinator }
+            let coord = known ? sessionCoordinator : response.coordinator
+            coordinator = coord
             implementer = response.implementer
             reviewers = response.reviewers
-            committedCoordinator = response.coordinator
+            committedCoordinator = coord
             committedImplementer = response.implementer
             committedReviewers = response.reviewers
             coordinatorThinking = ThinkingLevel.parse(response.coordinatorThinking)

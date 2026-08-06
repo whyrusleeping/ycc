@@ -907,11 +907,22 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		}
 
 		for ci, call := range msg.ToolCalls {
-			l.Emitter.Emit(event.ToolCall, map[string]any{
+			// Some models leak the XML-ish invoke syntax into a JSON string
+			// argument, swallowing their own sibling arguments (an ask_user whose
+			// `question` ends in `</question><parameter name="options">[…]` and
+			// reaches the user as raw markup with no picker). Repair before the
+			// event so the transcript shows what the tool actually ran with; the
+			// recovery is recorded on the event for forensics.
+			call, recovered := l.Tools.Repair(call)
+			callData := map[string]any{
 				"name": call.Function.Name,
 				"args": call.Function.Arguments,
 				"id":   call.ID,
-			})
+			}
+			if len(recovered) > 0 {
+				callData["repaired"] = recovered
+			}
+			l.Emitter.Emit(event.ToolCall, callData)
 			toolStart := time.Now()
 			res := l.Tools.Dispatch(ctx, call)
 			toolMS := time.Since(toolStart).Milliseconds()

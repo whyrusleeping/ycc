@@ -1,6 +1,11 @@
 package anthropicauth
 
 import (
+	"context"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/engine"
 )
@@ -47,19 +52,130 @@ func PrefixSystem(opts gollama.RequestOptions) gollama.RequestOptions {
 // Turner decorates the native Anthropic client so both streaming and
 // non-streaming turns carry the reserved subscription system prefix. API-key
 // clients are never wrapped by config.Registry.Build.
+//
+// When constructed with NewOAuthTurner it additionally keeps the transport's
+// bearer credential live. Anthropic invalidates the previous access token every
+// time the refresh token is redeemed, so a token resolved once when the client
+// was built dies the moment anything else (another ycc process, the
+// subscription-usage poller, `ycc doctor`) refreshes — killing sessions that
+// outlive it with a non-retryable 401. Resolving per turn, plus one forced
+// refresh + retry when the provider reports the token revoked, makes a
+// long-running session survive a background rotation.
 type Turner struct {
 	inner engine.Turner
+	src   *TokenSource
+
+	mu    sync.Mutex
+	using string // the access token currently installed on the transport
 }
 
+// TokenSource supplies live OAuth credentials to a Turner and installs them on
+// the underlying transport. Fields are injectable so tests do not need the real
+// secrets store; production values are AccessToken, ForceRefresh and the
+// gollama client's SetBearerToken.
+type TokenSource struct {
+	// Token returns a currently-valid access token, refreshing a stored one
+	// that has expired. It is called once per turn, so it must be cheap when
+	// no refresh is due.
+	Token func(ctx context.Context) (string, error)
+	// Refresh replaces an access token the provider rejected as revoked or
+	// expired. It receives the rejected token so it can prefer a credential
+	// another process already refreshed over redeeming the refresh token again.
+	Refresh func(ctx context.Context, stale string) (string, error)
+	// Apply installs an access token as the transport's bearer credential.
+	Apply func(token string)
+}
+
+// NewTurner wraps a client whose credential is static (a long-lived
+// `sk-ant-oat` token stored under key_env): system-prefix behavior only.
 func NewTurner(inner engine.Turner) *Turner { return &Turner{inner: inner} }
 
+// NewOAuthTurner wraps a Claude subscription client, keeping its bearer token
+// live across the life of the session that holds it.
+func NewOAuthTurner(inner engine.Turner, src TokenSource) *Turner {
+	return &Turner{inner: inner, src: &src}
+}
+
 func (t *Turner) Turn(opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
-	return t.inner.Turn(PrefixSystem(opts))
+	return t.run(opts, func(o gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+		return t.inner.Turn(o)
+	})
 }
 
 func (t *Turner) TurnStream(opts gollama.RequestOptions, onDelta func(string)) (*gollama.ResponseMessageGenerate, error) {
-	if stream, ok := t.inner.(engine.StreamTurner); ok {
-		return stream.TurnStream(PrefixSystem(opts), onDelta)
+	stream, ok := t.inner.(engine.StreamTurner)
+	if !ok {
+		return t.Turn(opts)
 	}
-	return t.Turn(opts)
+	return t.run(opts, func(o gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+		return stream.TurnStream(o, onDelta)
+	})
+}
+
+// run installs a live credential (when this Turner has a token source), calls
+// the wrapped turn, and retries it exactly once against a forcibly refreshed
+// token if the provider rejected the credential as no longer valid. A retry is
+// safe because a rejected request never reached inference.
+//
+// Credential-carrying turns are serialized: installing a token mutates the
+// transport's header map, which a request in flight on the same client reads.
+// A client is built per loop and its turns are already sequential, so this only
+// makes an unsupported sharing pattern slow instead of racy.
+func (t *Turner) run(opts gollama.RequestOptions, do func(gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error)) (*gollama.ResponseMessageGenerate, error) {
+	opts = PrefixSystem(opts)
+	if t.src == nil {
+		return do(opts)
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), tokenTimeout)
+	tok, err := t.src.Token(ctx)
+	cancel()
+	if err != nil {
+		return nil, err
+	}
+	t.install(tok)
+	resp, err := do(opts)
+	if err == nil || !IsRevokedCredential(err) {
+		return resp, err
+	}
+	ctx, cancel = context.WithTimeout(context.Background(), tokenTimeout)
+	fresh, refreshErr := t.src.Refresh(ctx, tok)
+	cancel()
+	// A failed recovery is reported as the provider's original rejection: it is
+	// the actionable error, and the refresh failure is its consequence.
+	if refreshErr != nil || fresh == tok {
+		return resp, err
+	}
+	t.install(fresh)
+	return do(opts)
+}
+
+// install sets the transport's bearer credential, skipping the write when the
+// token is unchanged (the common case). Callers hold t.mu.
+func (t *Turner) install(token string) {
+	if token == t.using {
+		return
+	}
+	t.src.Apply(token)
+	t.using = token
+}
+
+// tokenTimeout bounds a token-endpoint round trip taken on the turn's path.
+const tokenTimeout = 30 * time.Second
+
+// IsRevokedCredential reports whether err is the provider rejecting the OAuth
+// access token itself — the shape a token-family rotation elsewhere produces
+// ("OAuth access token has been revoked", HTTP 401) — rather than a request the
+// credential was merely not entitled to make. Matching is textual because the
+// error crosses the gollama transport as a formatted status + body string.
+func IsRevokedCredential(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if !strings.Contains(msg, "401") || !strings.Contains(msg, "authentication_error") {
+		return false
+	}
+	return strings.Contains(msg, "revoked") || strings.Contains(msg, "expired")
 }

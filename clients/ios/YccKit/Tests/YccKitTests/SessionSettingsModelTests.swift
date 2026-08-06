@@ -81,6 +81,39 @@ final class SessionSettingsModelTests: XCTestCase {
         XCTAssertFalse(model.unauthorized)
     }
 
+    /// ListModels reports only the daemon's GLOBAL role defaults, so a session
+    /// started with a per-session coordinator override must seed its picker from
+    /// the session's own (log-derived) model — otherwise the sheet claims the
+    /// wrong model and the next apply silently reassigns the session.
+    func testLoadPrefersSessionCoordinatorOverGlobalDefault() async {
+        let source = MockSettingsSource()
+        source.response = listModelsResponse(coordinator: "claude")
+        let model = SessionSettingsModel(
+            source: source, sessionId: "s1", sessionCoordinator: "gpt")
+
+        await model.load()
+
+        XCTAssertEqual(model.coordinator, "gpt")
+        // The seed is committed, so an unrelated failed apply reverts to it.
+        source.setError = YccError.rpc(message: "nope")
+        model.coordinator = "glm"
+        await model.applyRoleConfig()
+        XCTAssertEqual(model.coordinator, "gpt")
+    }
+
+    /// An unknown session model (e.g. removed from config) has no picker tag, so
+    /// the global default is used rather than leaving the picker unselected.
+    func testLoadIgnoresUnknownSessionCoordinator() async {
+        let source = MockSettingsSource()
+        source.response = listModelsResponse(coordinator: "claude")
+        let model = SessionSettingsModel(
+            source: source, sessionId: "s1", sessionCoordinator: "retired-model")
+
+        await model.load()
+
+        XCTAssertEqual(model.coordinator, "claude")
+    }
+
     func testThinkingLevelParsesUnknownToMedium() {
         XCTAssertEqual(ThinkingLevel.parse(""), .medium)
         XCTAssertEqual(ThinkingLevel.parse("XHIGH"), .xhigh)

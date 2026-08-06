@@ -1137,6 +1137,11 @@ func (r *Registry) Build(name string) (engine.Turner, string, error) {
 	c.SetMaxRetries(0)
 	key := resolveKey(m)
 	anthropicSubscription := false
+	// Set for `auth = "oauth"` models only: their bearer credential is resolved
+	// per turn, because Anthropic invalidates the previous access token on every
+	// refresh (spec §13) and a token frozen here dies as soon as anything else
+	// refreshes it.
+	var oauthTokens *anthropicauth.TokenSource
 	switch m.Backend {
 	case "anthropic":
 		// Pin the native Anthropic transport explicitly rather than relying on
@@ -1151,7 +1156,9 @@ func (r *Registry) Build(name string) (engine.Turner, string, error) {
 			// Claude subscription (Pro/Max) auth: a live OAuth access token
 			// (auto-refreshed from the secrets store) sent as a bearer token
 			// plus the Claude Code/OAuth beta opt-ins and x-app marker —
-			// never x-api-key.
+			// never x-api-key. Resolving it here as well as per turn keeps a
+			// missing or superseded login a Build-time error instead of a
+			// first-turn failure.
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			tok, err := anthropicauth.AccessToken(ctx)
 			cancel()
@@ -1162,6 +1169,11 @@ func (r *Registry) Build(name string) (engine.Turner, string, error) {
 			c.SetHeader("anthropic-beta", anthropicauth.BetaHeader)
 			c.SetHeader("x-app", anthropicauth.AppHeader)
 			anthropicSubscription = true
+			oauthTokens = &anthropicauth.TokenSource{
+				Token:   anthropicauth.AccessToken,
+				Refresh: anthropicauth.ForceRefresh,
+				Apply:   c.SetBearerToken,
+			}
 		case strings.HasPrefix(key, anthropicauth.TokenPrefix):
 			// A long-lived OAuth token (e.g. from `claude setup-token`) stored
 			// under key_env: same bearer + beta-header treatment.
@@ -1194,6 +1206,9 @@ func (r *Registry) Build(name string) (engine.Turner, string, error) {
 	// subscribers. gollama's own transport retry ring was disabled above
 	// (SetMaxRetries(0)), so this is the only retry ring.
 	if anthropicSubscription {
+		if oauthTokens != nil {
+			return anthropicauth.NewOAuthTurner(c, *oauthTokens), m.Model, nil
+		}
 		return anthropicauth.NewTurner(c), m.Model, nil
 	}
 	return c, m.Model, nil

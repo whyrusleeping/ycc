@@ -151,6 +151,56 @@ func TestAccessTokenRefreshesAndPersists(t *testing.T) {
 	}
 }
 
+// A revoked access token is recovered without redeeming the refresh token when
+// another ycc process has already refreshed the credential in the shared store:
+// redeeming an already-rotated refresh token is what revokes the token family.
+func TestForceRefreshPrefersCredentialRefreshedElsewhere(t *testing.T) {
+	isolate(t)
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "sk-ant-oat01-redeemed", "refresh_token": "rt-3", "expires_in": 3600,
+		})
+	}))
+	defer srv.Close()
+	old := TokenEndpoint
+	TokenEndpoint = srv.URL
+	defer func() { TokenEndpoint = old }()
+
+	// The store holds a live token that is not the one the provider rejected:
+	// take it as-is.
+	if err := Save(&Credentials{AccessToken: "sk-ant-oat01-fresh", RefreshToken: "rt-2", ExpiresAt: time.Now().Add(time.Hour).Unix(), FlowVersion: FlowVersion}); err != nil {
+		t.Fatal(err)
+	}
+	tok, err := ForceRefresh(context.Background(), "sk-ant-oat01-revoked")
+	if err != nil || tok != "sk-ant-oat01-fresh" {
+		t.Fatalf("got %q, %v; want the stored token", tok, err)
+	}
+	if calls != 0 {
+		t.Fatalf("token endpoint called %d times; want none", calls)
+	}
+
+	// The store still holds the rejected token: redeem, even though it has not
+	// expired by the clock (AccessToken would have returned it unchanged).
+	if err := Save(&Credentials{AccessToken: "sk-ant-oat01-revoked", RefreshToken: "rt-2", ExpiresAt: time.Now().Add(time.Hour).Unix(), FlowVersion: FlowVersion}); err != nil {
+		t.Fatal(err)
+	}
+	if tok, err = AccessToken(context.Background()); err != nil || tok != "sk-ant-oat01-revoked" {
+		t.Fatalf("AccessToken = %q, %v; want the unexpired stored token", tok, err)
+	}
+	tok, err = ForceRefresh(context.Background(), "sk-ant-oat01-revoked")
+	if err != nil || tok != "sk-ant-oat01-redeemed" {
+		t.Fatalf("got %q, %v; want a redeemed token", tok, err)
+	}
+	if calls != 1 {
+		t.Fatalf("token endpoint called %d times; want 1", calls)
+	}
+	if stored, ok := Load(); !ok || stored.AccessToken != "sk-ant-oat01-redeemed" || stored.RefreshToken != "rt-3" {
+		t.Fatalf("redeemed creds not persisted: %+v ok=%v", stored, ok)
+	}
+}
+
 func TestAccessTokenErrors(t *testing.T) {
 	isolate(t)
 	if _, err := AccessToken(context.Background()); err == nil || !strings.Contains(err.Error(), "ycc login anthropic") {

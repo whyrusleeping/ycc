@@ -19,8 +19,11 @@ struct SessionSettingsView: View {
 
     @State private var model: SessionSettingsModel
 
-    init(client: YccClient, sessionID: String) {
-        _model = State(initialValue: SessionSettingsModel(source: client, sessionId: sessionID))
+    /// `coordinator` seeds the role picker with the model THIS session is running
+    /// on (from its event log); `ListModels` alone would show the global default.
+    init(client: YccClient, sessionID: String, coordinator: String = "") {
+        _model = State(initialValue: SessionSettingsModel(
+            source: client, sessionId: sessionID, sessionCoordinator: coordinator))
     }
 
     var body: some View {

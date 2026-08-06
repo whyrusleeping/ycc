@@ -92,9 +92,23 @@ func (r *Registry) Dispatch(ctx context.Context, call gollama.ToolCall) *gollama
 	if !ok {
 		return errResult("no such tool %q", call.Function.Name)
 	}
+	// Defensive: recover arguments the model leaked as raw `<parameter …>` markup
+	// inside another string argument (see argrepair.go). The engine loop repairs
+	// before emitting the tool_call event; doing it here too keeps every other
+	// dispatch path (and any future caller) safe, and is a no-op on clean calls.
+	call, recovered := r.Repair(call)
 	res, err := gollama.HandleToolCall(ctx, []*gollama.Tool{t}, call)
 	if err != nil {
 		return errResult("tool %q failed: %v", call.Function.Name, err)
+	}
+	if len(recovered) > 0 && res != nil {
+		// Tell the model it malformed the call, or it repeats the same mistake
+		// for the rest of the session.
+		res.Content = strings.TrimRight(res.Content, "\n") + fmt.Sprintf(
+			"\n\n(ycc note: this call's arguments contained raw <parameter name=\"…\"> markup inside a "+
+				"string argument; %s was recovered from it. Emit tool arguments as JSON only — never "+
+				"write invoke/parameter tags inside an argument value.)",
+			strings.Join(recovered, ", "))
 	}
 	return res
 }

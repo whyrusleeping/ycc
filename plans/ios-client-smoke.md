@@ -181,6 +181,15 @@ round-trip.
       unknown project) — you stay in the composer, no crash. A 401 drops back to
       the connect screen.
 
+18b. **Opening-prompt pictures.** Open **+**, tap the photo button left of the
+    prompt field and pick one or two images (try one with NO prompt text).
+    - Expected: thumbnails appear above the field, the photo icon turns into a
+      green check badge, and the send arrow enables even with an empty prompt.
+      After starting, the live transcript's first user row shows the "📷 N
+      pictures attached" note and the agent's FIRST reply already describes the
+      picture (it must not need a follow-up message to see it). Removing a
+      thumbnail with its ✕ drops just that picture.
+
 19. **Resume a persisted session.** Back on the Sessions list, swipe **right**
     on a non-live (idle/finished/stopped) row (or long-press for the context
     menu) and tap **Resume**.

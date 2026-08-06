@@ -90,8 +90,23 @@ public struct SessionProjection: Sendable, Equatable {
     public private(set) var lastPersistedSeq: Int64 = 0
     /// The currently-open question, if any (cleared by `question_answered`).
     public private(set) var pendingQuestion: PendingQuestion?
+    /// Row id of the most recent `question_asked` row, kept even after the gate
+    /// is closed optimistically (``resolvePendingQuestion(answer:)``) so the
+    /// authoritative `question_answered` event can still fold its answer into
+    /// the right row. Without it, an optimistic close orphaned the event and the
+    /// transcript card kept reading "Waiting for an answer".
+    private var openQuestionRowID: String?
     /// The session's derived lifecycle phase, folded from lifecycle events.
     public private(set) var phase: Phase = .running
+    /// The logical model driving the session's coordinator — "which model is
+    /// doing the work". Folded from the log itself rather than from `ListModels`,
+    /// which only reports the daemon's GLOBAL role defaults and therefore lies
+    /// about a session started with a per-session `coordinator_model` override
+    /// (spec §13, §18.2). Sources, in increasing authority: `session_started`
+    /// (`coordinator`), `role_config_changed` (`coordinator`), and each
+    /// coordinator `model_turn` (`model_name` — the model that actually produced
+    /// the turn). Empty for logs written before the field existed.
+    public private(set) var coordinatorModel: String = ""
     public init() {}
 
     /// A derived, coarse lifecycle phase for chrome (banners, toolbar). Folded
@@ -183,6 +198,7 @@ public struct SessionProjection: Sendable, Equatable {
 
         let data = Self.parse(event.dataJson)
         foldPhase(type: event.type, data: data)
+        foldCoordinatorModel(type: event.type, actor: event.actor, data: data)
 
         switch event.type {
         case "user_input":
@@ -360,6 +376,27 @@ public struct SessionProjection: Sendable, Equatable {
         }
     }
 
+    // MARK: - Coordinator model folding
+
+    /// Track which logical model is producing the session's top-level turns.
+    /// A subagent turn (implementer/reviewer actor) must never overwrite it —
+    /// the coordinator is the agent the transcript's chrome is about.
+    private mutating func foldCoordinatorModel(
+        type: String, actor: String, data: [String: Any]
+    ) {
+        switch type {
+        case "session_started", "role_config_changed":
+            let name = (data["coordinator"] as? String) ?? ""
+            if !name.isEmpty { coordinatorModel = name }
+        case "model_turn":
+            guard actor.isEmpty || actor == "coordinator" else { return }
+            let name = (data["model_name"] as? String) ?? ""
+            if !name.isEmpty { coordinatorModel = name }
+        default:
+            break
+        }
+    }
+
     // MARK: - Questions
 
     private mutating func applyQuestionAsked(_ event: Ycc_V1_Event, _ data: [String: Any]) {
@@ -377,24 +414,36 @@ public struct SessionProjection: Sendable, Equatable {
             questions: questions,
             rowID: rowID
         )
+        openQuestionRowID = rowID
     }
 
     private mutating func applyQuestionAnswered(_ data: [String: Any]) {
-        let answer = Self.answerText(data)
-        if let pending = pendingQuestion,
-           let idx = durableRows.lastIndex(where: { $0.id == pending.rowID }),
-           case let .question(prompt, options, _) = durableRows[idx].kind {
-            durableRows[idx].kind = .question(prompt: prompt, options: options, answer: answer)
-        }
+        foldAnswer(Self.answerText(data))
         pendingQuestion = nil
+        openQuestionRowID = nil
     }
 
     /// Close the pending-question gate optimistically, once the daemon has
-    /// accepted an answer but before the `question_answered` event arrives.
-    /// Only the gate is cleared — the transcript row still waits for the event
-    /// to fold in the authoritative answer text.
-    public mutating func clearPendingQuestion() {
+    /// accepted an answer but before the `question_answered` event arrives, and
+    /// resolve the transcript row with the answer text this client sent. The
+    /// event stays authoritative — when it lands it overwrites the row with the
+    /// daemon's canonical answer — but the card must not keep saying "waiting"
+    /// while the round trip (or a stream reconnect) completes.
+    public mutating func resolvePendingQuestion(answer: String) {
+        foldAnswer(answer)
         pendingQuestion = nil
+    }
+
+    /// Mark the open question row answered. An empty answer still resolves the
+    /// row (the gate is closed either way) but never overwrites text already
+    /// folded in, so an optimistic answer survives a payload we can't parse.
+    private mutating func foldAnswer(_ answer: String) {
+        guard let rowID = pendingQuestion?.rowID ?? openQuestionRowID,
+              let idx = durableRows.lastIndex(where: { $0.id == rowID }),
+              case let .question(prompt, options, existing) = durableRows[idx].kind
+        else { return }
+        let text = answer.isEmpty ? (existing ?? "") : answer
+        durableRows[idx].kind = .question(prompt: prompt, options: options, answer: text)
     }
 
     // MARK: - Row helpers
@@ -506,6 +555,10 @@ public struct SessionProjection: Sendable, Equatable {
         case "session_started":
             var parts: [String] = []
             if !s("mode").isEmpty { parts.append(s("mode")) }
+            // The coordinator model the session was started on (possibly a
+            // per-session override), so a replayed transcript still says which
+            // model did the work.
+            if !s("coordinator").isEmpty { parts.append(s("coordinator")) }
             return parts.isEmpty ? "Session started" : "Session started · " + parts.joined(separator: " · ")
         case "session_idle":
             return "Session idle"

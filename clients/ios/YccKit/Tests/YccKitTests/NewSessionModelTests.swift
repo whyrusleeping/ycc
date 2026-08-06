@@ -16,7 +16,9 @@ private final class MockNewSessionSource: NewSessionSource, @unchecked Sendable 
     var resumeError: Error?
     var startedSessionId = "s_new"
 
-    private(set) var startArgs: (project: String, mode: String, prompt: String, coordinatorModel: String)?
+    private(set) var startArgs: (
+        project: String, mode: String, prompt: String, coordinatorModel: String,
+        images: [MessageImage])?
     private(set) var resumeArgs: (project: String, sessionId: String)?
 
     func listModes() async throws -> (modes: [Ycc_V1_Mode], presets: [Ycc_V1_Preset]) {
@@ -34,9 +36,10 @@ private final class MockNewSessionSource: NewSessionSource, @unchecked Sendable 
     }
 
     func startSession(
-        project: String, mode: String, prompt: String, coordinatorModel: String
+        project: String, mode: String, prompt: String, coordinatorModel: String,
+        images: [MessageImage]
     ) async throws -> String {
-        startArgs = (project, mode, prompt, coordinatorModel)
+        startArgs = (project, mode, prompt, coordinatorModel, images)
         if let startError { throw startError }
         return startedSessionId
     }
@@ -367,6 +370,39 @@ final class NewSessionModelTests: XCTestCase {
         let id = await model.start()
         XCTAssertNil(id)
         XCTAssertNil(source.startArgs)   // never called
+    }
+
+    // MARK: - Opening-prompt pictures (task 0257)
+
+    /// Pictures ride along with `StartSession`, so the agent sees the screenshot
+    /// on its FIRST turn instead of a turn later via SendInput.
+    func testStartSendsAttachedPictures() async {
+        let source = MockNewSessionSource()
+        source.modes = [mode("chat")]
+        let model = NewSessionModel(source: source, defaults: MockDefaults())
+        await model.load()
+        model.prompt = "what is this?"
+        model.images = [MessageImage(
+            data: Data([0x89, 0x50, 0x4E, 0x47]), mediaType: "image/png", filename: "shot.png")]
+
+        _ = await model.start()
+
+        XCTAssertEqual(source.startArgs?.images.count, 1)
+        XCTAssertEqual(source.startArgs?.images.first?.mediaType, "image/png")
+        XCTAssertEqual(source.startArgs?.images.first?.filename, "shot.png")
+    }
+
+    /// A picture is itself a prompt: an attachment alone unlocks the send button
+    /// even in a mode that normally demands text.
+    func testPictureAloneEnablesStart() async {
+        let source = MockNewSessionSource()
+        source.modes = [mode("chat")]
+        let model = NewSessionModel(source: source, defaults: MockDefaults())
+        await model.load()
+        XCTAssertFalse(model.canStart)          // no text, no picture
+
+        model.images = [MessageImage(data: Data([0xFF]), mediaType: "image/jpeg")]
+        XCTAssertTrue(model.canStart)
     }
 
     func testStartSurfacesRpcError() async {

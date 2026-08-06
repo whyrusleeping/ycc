@@ -458,6 +458,25 @@ Some tools are **control tools** that don't just return data — they change
 orchestration state (`ask_user` suspends; `finish` ends the loop; `spawn_*` runs a
 child loop). The registry marks these so the loop can react.
 
+#### Malformed tool arguments (leaked invoke markup)
+
+Models occasionally leak the XML-ish tool-invoke syntax **into a JSON string argument**:
+they close the parameter they are writing with a tag and then spell the remaining
+parameters as markup inside that same string —
+`{"question":"… What next?</question>\n<parameter name="options">[…]"}`, or
+`{"description":"…</description>\n<parameter name="priority">3"}`. The call is valid JSON,
+so nothing downstream notices: the sibling arguments are silently lost and the leaked
+markup reaches the user (an `ask_user` rendered as a wall of raw XML with no option
+picker). `tools.RepairLeakedArgs` (applied by `Registry.Repair` in the engine loop before
+the `tool_call` event is emitted, and again inside `Dispatch` for any other caller) moves
+those blocks back into real arguments: it truncates the host string at the closing tag and
+JSON-decodes each recovered value. It is deliberately conservative — it fires only when a
+closing tag is immediately followed by a `<parameter name="X">` block **and** `X` is a
+parameter that tool declares and the call left unset — so prose that merely mentions the
+syntax is untouched. A repair is recorded on the `tool_call` event (`repaired: [names]`)
+and appended as a short correction note to the tool result, so the model stops repeating
+the mistake for the rest of the session.
+
 #### API failure handling (classification, retry, session_error)
 
 All LLM API failures flow through one classifier (`engine.ClassifyAPIError`), which maps
@@ -906,6 +925,12 @@ Notable message shapes for the settings + structured-question work:
   `user_input` records only media type/filename metadata, so text-only clients and transcript
   replay remain compatible (reopened history retains the text + attachment indication, not
   the original pixels).
+- `StartSessionRequest` carries the same `repeated ImageAttachment images`, attaching
+  pictures to the **opening prompt** under identical limits and validation (rejected as
+  `InvalidArgument` before any session/log is created). A session whose subject *is* a
+  screenshot therefore does not have to waste its first turn: the seed message is
+  multimodal, and its `user_input` event again records metadata only. Attachments seed the
+  first coordinator loop once — an in-session mode transition re-seeds text only.
 - `InterruptRequest { session_id }` / `ResumeRequest { session_id }` — pause a running
   agent at the next safe checkpoint, then continue (§18.7). A correction is steered in by
   `SendInput` while paused; `Resume` continues with no change. `Interrupt` is a *graceful
@@ -989,11 +1014,18 @@ backends additionally support **subscription auth** with `auth = "oauth"` on the
   paste back the `code#state` the page shows) with the subscription-inference/session
   scopes, and persists the versioned access/refresh pair in the secrets store under
   `ANTHROPIC_OAUTH`. Credentials from a retired flow fail locally with a one-time re-login
-  instruction rather than reaching inference and looking like an exhausted allowance. At
-  `Build` time the registry sends a live access token — auto-refreshing and re-persisting an
-  expired one — as `Authorization: Bearer`, with
+  instruction rather than reaching inference and looking like an exhausted allowance. Every
+  OAuth turn sends a live access token — re-read from the secrets store per turn, refreshing
+  and re-persisting an expired one — as `Authorization: Bearer`, with
   `anthropic-beta: claude-code-20250219,oauth-2025-04-20` and `x-app: cli` (never
-  `x-api-key`), on the same `/v1/messages` transport as API-key auth. Each OAuth turn also
+  `x-api-key`), on the same `/v1/messages` transport as API-key auth. Resolving the token
+  per turn rather than once per client is load-bearing: Anthropic invalidates the previous
+  access token whenever the refresh token is redeemed, so a session that outlives a refresh
+  by any other holder of the credential — another ycc process, the subscription-usage
+  poller — would otherwise die on a non-retryable 401. A turn the provider still rejects as
+  revoked or expired is retried exactly once against a forcibly refreshed token, and that
+  forced refresh prefers a credential another process has already stored over redeeming the
+  refresh token again. Each OAuth turn also
   prepends Anthropic's reserved subscription system blocks, in order:
   `x-anthropic-billing-header: cc_version=0.0.0; cc_entrypoint=ycc;` (a truthful ycc
   entrypoint, not a spoofed Claude Code version) and
@@ -1203,6 +1235,17 @@ ycc adopts **git worktrees** (design spike task 0078; full rationale/alternative
 - **RPC surface** (§12): `SpawnWorkstream`, `ListWorkstreams`, `PreviewMerge`,
   `MergeWorkstream`, `DiscardWorkstream`; `Subscribe` is reused verbatim for the
   workstream's session stream.
+- **Automatic integration** (**planned**; `docs/design/workstream-integration.md`). The
+  manual, review-gated merge above is the current behaviour and stays available as
+  `mode = "manual"`/`"gate"`. The decided direction is an **auto-integrating merge queue**
+  per project: a workstream that ends cleanly emits `workstream_ready`; a serialized
+  integrator rebases its branch onto the configured **base branch** *inside the
+  workstream's own worktree*, runs the project's `verify` command there, and only then
+  advances base by **fast-forward** (never merging into whatever the primary tree happens
+  to have checked out). A conflict or a red verify spawns an **`integrate`-mode agent
+  session in the worktree** to resolve/fix and re-verify; if it can't, the workstream goes
+  to `needs_attention` and notifies rather than touching base. Auto requires a configured
+  `verify` — without one it degrades to the review gate.
 
 ## 15. Package layout
 

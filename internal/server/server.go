@@ -59,12 +59,19 @@ func (s *Server) ListModes(_ context.Context, _ *connect.Request[v1.ListModesReq
 // StartSession creates and launches a new session.
 func (s *Server) StartSession(_ context.Context, req *connect.Request[v1.StartSessionRequest]) (*connect.Response[v1.StartSessionResponse], error) {
 	m := req.Msg
+	// Opening-prompt attachments follow exactly the SendInput rules, and are
+	// validated BEFORE Start so a bad picture never leaves a stray session log.
+	images, err := checkInputImages(m.Images)
+	if err != nil {
+		return nil, err
+	}
 	sess, err := s.mgr.Start(session.Config{
 		Workspace:        m.Workspace,
 		Mode:             m.Mode,
 		Prompt:           m.Prompt,
 		Project:          m.Project,
 		CoordinatorModel: m.CoordinatorModel,
+		Images:           images,
 	})
 	if err != nil {
 		if errors.Is(err, session.ErrUnknownProject) || errors.Is(err, session.ErrUnknownModel) {
@@ -276,6 +283,24 @@ func validateInputImages(attachments []*v1.ImageAttachment) ([]engine.Image, err
 	return images, nil
 }
 
+// checkInputImages applies the full attachment policy (count cap + per-picture
+// validation) and returns a ready-to-use connect error, so StartSession and
+// SendInput cannot drift apart on what a valid picture is.
+func checkInputImages(attachments []*v1.ImageAttachment) ([]engine.Image, error) {
+	if len(attachments) == 0 {
+		return nil, nil
+	}
+	if len(attachments) > maxInputImages {
+		return nil, connect.NewError(connect.CodeInvalidArgument,
+			fmt.Errorf("at most %d pictures may be sent", maxInputImages))
+	}
+	images, err := validateInputImages(attachments)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	return images, nil
+}
+
 // SendInput delivers user text and optional pictures: it answers a pending
 // question only for text-only input, otherwise queues a multimodal instruction.
 func (s *Server) SendInput(_ context.Context, req *connect.Request[v1.SendInputRequest]) (*connect.Response[v1.SendInputResponse], error) {
@@ -286,12 +311,9 @@ func (s *Server) SendInput(_ context.Context, req *connect.Request[v1.SendInputR
 	if strings.TrimSpace(req.Msg.Text) == "" && len(req.Msg.Images) == 0 {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("message must contain text or a picture"))
 	}
-	if len(req.Msg.Images) > maxInputImages {
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("at most %d pictures may be sent", maxInputImages))
-	}
-	images, err := validateInputImages(req.Msg.Images)
+	images, err := checkInputImages(req.Msg.Images)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, err
 	}
 	input := engine.UserMessage{Text: req.Msg.Text, Images: images}
 	if err := sess.SendInputMessage(input); err != nil {

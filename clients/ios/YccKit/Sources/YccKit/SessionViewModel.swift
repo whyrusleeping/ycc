@@ -79,6 +79,12 @@ public final class SessionViewModel {
     public var pendingQuestion: SessionProjection.PendingQuestion? { projection.pendingQuestion }
     /// The session's derived lifecycle phase (running/paused/idle/error/stopped).
     public var phase: SessionProjection.Phase { projection.phase }
+    /// The logical model driving this session's coordinator, folded from the log
+    /// (`session_started` / `role_config_changed` / coordinator `model_turn`).
+    /// Empty until an event names it. Chrome uses this to answer "which model is
+    /// doing the work" — `ListModels` cannot, since it reports only the daemon's
+    /// global role defaults.
+    public var coordinatorModel: String { projection.coordinatorModel }
     private let source: SessionTranscriptSource
     private let actions: SessionActionSource?
     private let backoff: BackoffPolicy
@@ -280,11 +286,12 @@ public final class SessionViewModel {
 
     /// Answer the pending single question by selecting a suggested option.
     public func answer(optionIndex: Int) async {
+        let local = localAnswer(optionIndex: optionIndex, text: "")
         let succeeded = await perform("answer") { actions in
             try await actions.answerQuestion(
                 sessionId: self.sessionID, text: "", optionIndex: optionIndex)
         }
-        if succeeded { clearAnsweredGate() }
+        if succeeded { clearAnsweredGate(answer: local) }
     }
 
     /// Answer the pending single question with free text.
@@ -293,29 +300,54 @@ public final class SessionViewModel {
             try await actions.answerQuestion(
                 sessionId: self.sessionID, text: text, optionIndex: -1)
         }
-        if succeeded { clearAnsweredGate() }
+        if succeeded { clearAnsweredGate(answer: text) }
     }
 
     /// Answer a batch of questions positionally (`AnswerQuestions`). Each entry
     /// is `(text, optionIndex)`: `optionIndex >= 0` picks an option, `-1` sends
     /// the text.
     public func answerBatch(_ answers: [(text: String, optionIndex: Int)]) async {
+        let local = localBatchAnswer(answers)
         let succeeded = await perform("answer") { actions in
             try await actions.answerQuestions(sessionId: self.sessionID, answers: answers)
         }
-        if succeeded { clearAnsweredGate() }
+        if succeeded { clearAnsweredGate(answer: local) }
+    }
+
+    /// Resolve what this client just answered, the way the daemon will: an
+    /// in-range option index means that option's text, otherwise the free text.
+    private func localAnswer(optionIndex: Int, text: String) -> String {
+        guard let pending = projection.pendingQuestion,
+              optionIndex >= 0, optionIndex < pending.options.count
+        else { return text }
+        return pending.options[optionIndex]
+    }
+
+    /// The same resolution for a batch, joined the way `question_answered`
+    /// summarises `answers[]` for the transcript row.
+    private func localBatchAnswer(_ answers: [(text: String, optionIndex: Int)]) -> String {
+        guard let pending = projection.pendingQuestion else { return "" }
+        return pending.questions.enumerated().map { index, question -> String in
+            guard index < answers.count else { return "" }
+            let a = answers[index]
+            if a.optionIndex >= 0, a.optionIndex < question.options.count {
+                return question.options[a.optionIndex]
+            }
+            return a.text
+        }.joined(separator: "; ")
     }
 
     /// Drop the pending-question gate as soon as the daemon accepts an answer,
     /// rather than waiting for the `question_answered` event to make the return
     /// trip. Without this the banner keeps asking the user to answer a question
     /// they just answered for as long as the stream takes to catch up (and
-    /// indefinitely if it is mid-reconnect). The event remains authoritative: it
-    /// is what folds the answer into the transcript row, and a re-asked question
-    /// re-opens the gate normally.
-    private func clearAnsweredGate() {
+    /// indefinitely if it is mid-reconnect), and the transcript card keeps
+    /// reading "Waiting for an answer". The event remains authoritative — it
+    /// overwrites the row with the daemon's canonical answer text when it
+    /// arrives, and a re-asked question re-opens the gate normally.
+    private func clearAnsweredGate(answer: String) {
         guard projection.pendingQuestion != nil else { return }
-        projection.clearPendingQuestion()
+        projection.resolvePendingQuestion(answer: answer)
         transcriptRevision &+= 1
     }
 

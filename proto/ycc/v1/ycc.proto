@@ -30,6 +30,11 @@ message StartSessionRequest {
   // Empty means "use the configured default". Unknown name => InvalidArgument.
   // Spec §13, §18.2.
   string coordinator_model = 6;
+  // images optionally attaches up to four validated pictures to the OPENING
+  // prompt (same limits and validation as SendInputRequest.images), so a
+  // session whose whole subject is a screenshot does not have to waste its
+  // first turn. Spec §12.
+  repeated ImageAttachment images = 7;
 }
 message StartSessionResponse { string session_id = 1; }
 

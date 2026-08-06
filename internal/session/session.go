@@ -45,6 +45,10 @@ type Config struct {
 	// THIS SESSION ONLY (spec §13, §18.2): the persisted per-role defaults are
 	// untouched and implementer/reviewers keep them. An unknown name is an error.
 	CoordinatorModel string
+	// Images optionally attaches validated pictures to the OPENING prompt (spec
+	// §12). The bytes live only in model history; the initial user_input event
+	// records metadata, exactly like SendInputMessage.
+	Images []engine.Image
 }
 
 // Session is one running agent conversation backed by a persistent event log.
@@ -63,6 +67,13 @@ type Session struct {
 	reg       *config.Registry
 	prompt    string
 	buildLoop func(mode, prompt string) (*engine.Loop, error)
+
+	// promptImages are pictures attached to the OPENING prompt (spec §12). The
+	// bytes seed the first loop's history exactly once — a later mode transition
+	// re-seeds text only — while the initial user_input event records metadata.
+	promptImages []engine.Image
+	// promptImagesUsed marks those bytes as already seeded into a loop.
+	promptImagesUsed bool
 
 	// resumed marks a session re-instantiated on an EXISTING log via Reopen
 	// ("resume = replay", spec §4.5/§18.6): run() then skips the SessionStarted /
@@ -187,7 +198,8 @@ func (s *Session) setRefused(v bool) {
 	s.mu.Unlock()
 }
 
-func (s *Session) currentLoop() *engine.Loop {	s.mu.Lock()
+func (s *Session) currentLoop() *engine.Loop {
+	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.loop
 }
@@ -209,6 +221,33 @@ func (s *Session) setLoop(l *engine.Loop) {
 // is enqueued as a follow-up prod for when the agent next picks it up.
 func (s *Session) SendInput(text string) error {
 	return s.SendInputMessage(engine.UserMessage{Text: text})
+}
+
+// imageMetadata renders picture attachments as the safe, byte-free shape
+// recorded on user_input events (media type + display name only). It returns nil
+// for no images so callers can omit the field entirely.
+func imageMetadata(images []engine.Image) []map[string]any {
+	if len(images) == 0 {
+		return nil
+	}
+	meta := make([]map[string]any, len(images))
+	for i, img := range images {
+		meta[i] = map[string]any{"media_type": img.MediaType, "filename": img.Filename}
+	}
+	return meta
+}
+
+// takeSeedImages returns the opening-prompt attachments exactly once. A later
+// mode transition rebuilds the loop with the same code path and must NOT re-post
+// the pictures into the fresh history.
+func (s *Session) takeSeedImages() []engine.Image {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.promptImagesUsed {
+		return nil
+	}
+	s.promptImagesUsed = true
+	return s.promptImages
 }
 
 // SendInputMessage delivers user text plus optional native image attachments.
@@ -233,12 +272,8 @@ func (s *Session) SendInputMessage(input engine.UserMessage) error {
 		if queued {
 			data["queued"] = true
 		}
-		if len(input.Images) > 0 {
-			images := make([]map[string]any, len(input.Images))
-			for i, img := range input.Images {
-				images[i] = map[string]any{"media_type": img.MediaType, "filename": img.Filename}
-			}
-			data["images"] = images
+		if meta := imageMetadata(input.Images); meta != nil {
+			data["images"] = meta
 		}
 		return data
 	}
@@ -897,7 +932,14 @@ func (s *Session) run() {
 			// picked at StartSession (spec §13, §18.2).
 			"coordinator": coord,
 		})
-		s.emitter.EmitAs("user", event.UserInput, map[string]any{"text": s.prompt})
+		// The opening prompt echoes like any other user input; pictures are
+		// recorded as metadata only (bytes live in model history alone, and a
+		// replayed session gets the "unavailable after replay" note).
+		initial := map[string]any{"text": s.prompt}
+		if meta := imageMetadata(s.promptImages); meta != nil {
+			initial["images"] = meta
+		}
+		s.emitter.EmitAs("user", event.UserInput, initial)
 	}
 
 	for {
@@ -1270,6 +1312,9 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 		log.Close()
 		return nil, err
 	}
+	// Opening-prompt pictures must be attached BEFORE the first loop is built:
+	// buildLoop consumes them so the seed message is multimodal (spec §12).
+	s.promptImages = cfg.Images
 	loop, err := s.buildLoop(mode, prompt)
 	if err != nil {
 		return nil, err
@@ -1568,7 +1613,11 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 		// Mode transitions and Start always pass a non-empty seed; reopen passes
 		// "" because it installs a reconstructed history instead of seeding.
 		if prompt != "" {
-			loop.Seed(prompt)
+			if images := s.takeSeedImages(); len(images) > 0 {
+				loop.PostMessage(engine.UserMessage{Text: prompt, Images: images})
+			} else {
+				loop.Seed(prompt)
+			}
 		}
 		return loop, nil
 	}

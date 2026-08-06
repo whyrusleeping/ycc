@@ -524,6 +524,61 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertNotNil(vm.pendingQuestion)
     }
 
+    /// The gate closing is only half the job: the transcript card must stop
+    /// saying "Waiting for an answer" too, without waiting for the event.
+    func testAnsweringResolvesTheTranscriptRowWithTheChosenOption() async {
+        let actions = MockActionSource()
+        let vm = await askingVM(actions)
+
+        await vm.answer(optionIndex: 1)
+
+        XCTAssertEqual(answeredText(vm), "no")
+    }
+
+    func testAnsweringWithTextResolvesTheTranscriptRow() async {
+        let actions = MockActionSource()
+        let vm = await askingVM(actions)
+
+        await vm.answer(text: "go ahead")
+
+        XCTAssertEqual(answeredText(vm), "go ahead")
+    }
+
+    func testBatchAnswerResolvesTheTranscriptRow() async {
+        let actions = MockActionSource()
+        actions.transcript = [
+            event(1, "question_asked", #"""
+            {"questions":[{"question":"Which DB?","options":["pg","sqlite"]},{"question":"When?"}]}
+            """#),
+        ]
+        let vm = actionVM(actions)
+        vm.start()
+        await waitUntil { vm.pendingQuestion != nil }
+
+        await vm.answerBatch([(text: "", optionIndex: 1), (text: "friday", optionIndex: -1)])
+
+        XCTAssertEqual(answeredText(vm), "sqlite; friday")
+    }
+
+    /// A rejected answer must leave the card unanswered as well as the gate open.
+    func testFailedAnswerLeavesTheTranscriptRowUnanswered() async {
+        let actions = MockActionSource()
+        let vm = await askingVM(actions)
+        actions.nextError = YccError.rpc(message: "boom")
+
+        await vm.answer(optionIndex: 0)
+
+        XCTAssertNil(answeredText(vm))
+    }
+
+    /// The answer folded into the last question row, if any.
+    private func answeredText(_ vm: SessionViewModel) -> String? {
+        for row in vm.durableRows.reversed() {
+            if case .question(_, _, let answer) = row.kind { return answer }
+        }
+        return nil
+    }
+
     func testFailedPreconditionOnAnswerSetsToastWithoutCrashing() async {
         let actions = MockActionSource()
         let vm = actionVM(actions)

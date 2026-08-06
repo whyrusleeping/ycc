@@ -12,6 +12,9 @@
 - 2026-08-05: Anthropic refusals (stop_reason "refusal", HTTP 200) are STICKY per docs — recovery is drop the turn or switch model. Handled since task 0238: engine keeps refusal turns out of history (Result.Refused), replay skips them, session gates SendInput until Resume/model change; stop_details still unparsed (task 0239).
 - 2026-08-05: StartSession takes an optional per-session coordinator_model override (task 0240): validated in Manager.start (ErrUnknownModel → InvalidArgument), recorded in session_started and folded into event.Projection.Coordinator so Reopen replays on the same model; ListModels still reports only the GLOBAL role defaults (see proposed task 0241).
 - 2026-08-05: backlog/ currently has 14 duplicate task ids (0120, 0175, 0192-0195, 0211-0218), so get_task/update_task silently resolve to the FIRST matching file — verify with `rg -o '^id: "[0-9]+"' backlog/*.md | sort | uniq -d` and hand-edit the intended file's frontmatter when a colliding id is involved.
+- 2026-08-06: iOS SessionProjection: the question row is resolved via openQuestionRowID (kept past an optimistic gate close), NOT via pendingQuestion — resolving through the gate was the bug that left answered cards reading "Waiting for an answer" (task 0247).
+- 2026-08-06: Models sometimes leak XML invoke syntax into a JSON string tool argument (question swallowing options, description swallowing priority); internal/tools/argrepair.go repairs it schema-aware in Registry.Repair (engine loop pre-emit) + Dispatch — check the tool_call event's `repaired` field when a tool looks like it lost arguments.
+- 2026-08-06: Anthropic OAuth tokens are resolved PER TURN by anthropicauth.NewOAuthTurner (config.Build passes TokenSource{AccessToken, ForceRefresh, c.SetBearerToken}); a token frozen at Build dies whenever any other process refreshes, because Anthropic invalidates the previous access token on every refresh-token redemption.
 
 ## Environment & tooling
 

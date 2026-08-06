@@ -242,10 +242,25 @@ do not permanently remove access to the daemon-wide inbox.
    `session_idle.report` is projected as a dedicated, always-expanded success
    card with native Markdown rendering; an immediately preceding model message
    repeated by the report is coalesced into the card rather than shown twice.
+   The chrome names **which model is doing the work**: `SessionProjection` folds
+   a `coordinatorModel` from the log (`session_started.coordinator`,
+   `role_config_changed.coordinator`, and each coordinator `model_turn`'s
+   `model_name`, which is authoritative because it is the model that actually
+   produced the turn; subagent turns never move it). It appears in the toolbar
+   subtitle beside the project, on the streaming tail (`<model> · streaming`),
+   in the "<model> is working…" progress row, and on the `session_started`
+   system row. The log is the source of truth here rather than `ListModels`,
+   which reports only the daemon's GLOBAL role defaults and would misreport a
+   session started with a `coordinator_model` override; the settings sheet
+   (step 8) seeds its coordinator picker from this folded value for the same
+   reason.
 4. **Interactions** — sticky input bar → `SendInput`, including a Photos picker
    for up to four previewable/removable picture attachments (normalized to bounded
-   JPEG data and sent as native multimodal user content). A compact **Agent is
-   working…** progress row appears immediately after starting a session or sending
+   JPEG data and sent as native multimodal user content; the picker, thumbnail
+   strip and JPEG normalization live in `PictureComposer.swift`, shared with the
+   new-session composer). A compact **Agent is
+   working…** progress row (naming the model once the log has identified it)
+   appears immediately after starting a session or sending
    input and remains until the stream delivers the first meaningful agent activity;
    a `user_input` receipt echo alone does not clear it. On a persisted session,
    sending first calls `ResumeSession` on the existing log, promotes the view to
@@ -273,6 +288,11 @@ do not permanently remove access to the daemon-wide inbox.
    (labelled with the daemon's configured coordinator) and is deliberately NOT
    remembered across sessions, unlike the sticky mode/project chips; a
    `ListModels` failure just hides the chip rather than blocking the composer.
+   The composer carries the SAME Photos picker as the live input bar
+   (`PictureComposer.swift` holds the shared picker/thumbnail affordances):
+   opening-prompt pictures ride along on `StartSession.images`, so a session
+   about a screenshot does not burn its first turn asking for it, and a
+   picture-only draft is enough to start (the send button unlocks without text).
    **Resume** — `ResumeSession` action on persisted rows.
 6. **Backlog browser** — two presentations over `ListBacklog`. The default is a
    **board**: horizontally snapping kanban lanes in *workflow* order (proposed →

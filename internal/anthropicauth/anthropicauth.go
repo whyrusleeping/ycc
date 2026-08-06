@@ -250,9 +250,33 @@ var mu sync.Mutex
 // requests, refreshing and re-persisting the stored credentials if the access
 // token has expired. It fails with a run-`ycc login anthropic` hint when no
 // credentials are stored or the refresh is rejected.
+//
+// It re-reads the secrets store on every call, so a caller that resolves a
+// token per request automatically picks up a refresh performed by another ycc
+// process instead of holding a token that a rotation has invalidated.
 func AccessToken(ctx context.Context) (string, error) {
 	mu.Lock()
 	defer mu.Unlock()
+	return accessToken(ctx, "")
+}
+
+// ForceRefresh returns a replacement for stale, an access token the provider
+// has rejected as revoked or expired. Redeeming the refresh token is the last
+// resort: Anthropic rotates the whole token family on every refresh, so if the
+// store already holds a token other than stale (another ycc process — or the
+// subscription-usage poller — refreshed underneath us, which is exactly what
+// invalidated stale), that stored token is returned without a network call.
+// Passing an empty stale always redeems.
+func ForceRefresh(ctx context.Context, stale string) (string, error) {
+	mu.Lock()
+	defer mu.Unlock()
+	return accessToken(ctx, stale)
+}
+
+// accessToken implements AccessToken/ForceRefresh; callers hold mu. A non-empty
+// stale token additionally forces a refresh when the store still holds it, even
+// though it has not expired by the clock.
+func accessToken(ctx context.Context, stale string) (string, error) {
 	creds, ok := Load()
 	if !ok {
 		return "", errors.New("no Anthropic subscription credentials stored; run `ycc login anthropic`")
@@ -260,7 +284,8 @@ func AccessToken(ctx context.Context) (string, error) {
 	if creds.FlowVersion < FlowVersion {
 		return "", errors.New("Anthropic changed its Claude subscription OAuth flow; run `ycc login anthropic` once to update the stored credentials")
 	}
-	if !creds.Expired(time.Now()) {
+	superseded := stale != "" && creds.AccessToken != stale
+	if !creds.Expired(time.Now()) && (stale == "" || superseded) {
 		return creds.AccessToken, nil
 	}
 	fresh, err := Refresh(ctx, creds.RefreshToken)
