@@ -305,6 +305,22 @@ Why this exists and what "done" means in prose.
 append to a task's work log, and provide `list/get/create/update` used by
 the coordinator tools.
 
+**Ids are unique, and the store enforces it.** Ids are assigned as `max+1` under a
+per-directory lock, which is enough within one machine but not across checkouts: two
+branches that each add tasks and are later merged can land two files claiming the same id.
+A duplicate id is corrupting rather than cosmetic — every by-id path (`get_task`,
+`update_task`, the `GetTask` RPC, the TUI backlog browser) resolves to the *first* match, so
+the other holder becomes unreachable ("unclickable") and status updates hit the wrong task.
+Therefore **any scan of the backlog self-heals**: when a scan sees a duplicate id, the
+*oldest* claimant (by `created`, then `updated`, then filename — a deterministic total order,
+so independent checkouts heal identically) keeps the id, and each other claimant is renumbered
+onto a fresh id after the current maximum, its file renamed to match and a work-log line
+recording the move. `depends_on` references are left untouched: a dependency on the shared id
+is ambiguous and the surviving oldest task is the better guess, with the work-log breadcrumb
+making a wrong guess recoverable by hand. Healing inside `List` is silent and best-effort (a
+read-only backlog still lists fine); `ycc doctor` runs the same pass explicitly and *reports*
+the renumberings so the renames can be committed.
+
 `proposed` sits before `todo` in the lifecycle: it marks an idea captured during
 ideation (typically by the agent) that the user has not accepted as real scope. Proposed
 tasks are durable backlog entries but are never *ready* — `list_backlog` doesn't mark them

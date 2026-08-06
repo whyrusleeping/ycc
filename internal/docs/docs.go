@@ -103,7 +103,30 @@ func (s *Store) List() ([]*Task, error) {
 	return s.listLocked()
 }
 
+// listLocked scans the backlog and self-heals duplicate ids before returning
+// (see dedupe.go): two files claiming the same id make one of them unreachable
+// by id (Get, update_task, the TUI browser all resolve to the first match), so
+// the store renumbers the younger claimant onto a fresh id. Healing is
+// best-effort — if the rewrite fails (read-only dir, races) the raw scan is
+// still returned so reads keep working.
 func (s *Store) listLocked() ([]*Task, error) {
+	tasks, err := s.scanLocked()
+	if err != nil {
+		return nil, err
+	}
+	if !hasDuplicateIDs(tasks) {
+		return tasks, nil
+	}
+	if _, err := s.dedupeLocked(tasks); err != nil {
+		return tasks, nil
+	}
+	return s.scanLocked()
+}
+
+// scanLocked parses every task file in the backlog dir, sorted by id. It does
+// NOT heal duplicate ids (listLocked does) so it can be used from the dedupe
+// pass itself without recursing.
+func (s *Store) scanLocked() ([]*Task, error) {
 	entries, err := os.ReadDir(s.dir)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -121,6 +144,9 @@ func (s *Store) listLocked() ([]*Task, error) {
 			return nil, fmt.Errorf("%s: %w", e.Name(), err)
 		}
 		if t != nil {
+			// Normalize on read so a hand-written `id: "195"` still matches the
+			// canonical zero-padded form used by lookups and dedupe grouping.
+			t.ID = normalizeID(t.ID)
 			tasks = append(tasks, t)
 		}
 	}
@@ -242,11 +268,7 @@ func (s *Store) AppendWorkLog(id, line string) (*Task, error) {
 	// Delegate to the lock-free helper (NOT the exported Update, which would
 	// re-lock the non-reentrant mutex and deadlock).
 	return s.updateLocked(id, func(t *Task) {
-		t.Body = ensureWorkLog(t.Body)
-		if !strings.HasSuffix(t.Body, "\n") {
-			t.Body += "\n"
-		}
-		t.Body += fmt.Sprintf("- %s %s\n", time.Now().Format("2006-01-02"), strings.TrimSpace(line))
+		t.Body = appendWorkLogLine(t.Body, time.Now().Format("2006-01-02"), strings.TrimSpace(line))
 	})
 }
 

@@ -370,6 +370,21 @@ func docsChecks(ws string) []check {
 
 	dir := store.Dir()
 	if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
+		// Resolve duplicate ids first so the count below is honest and the
+		// renumbering is REPORTED here rather than happening silently inside a
+		// later List (spec §6.2).
+		if renumbered, err := store.DedupeIDs(); err == nil && len(renumbered) > 0 {
+			var moves []string
+			for _, r := range renumbered {
+				moves = append(moves, r.String())
+			}
+			out = append(out, check{
+				status: statusWarn,
+				label:  "backlog",
+				detail: fmt.Sprintf("%d duplicate task id(s) renumbered: %s", len(renumbered), strings.Join(moves, ", ")),
+				remedy: "commit the renamed task files",
+			})
+		}
 		detail := "backlog present at " + relOrAbs(ws, dir)
 		if tasks, err := store.List(); err == nil {
 			detail = fmt.Sprintf("%s (%d task(s))", detail, len(tasks))
