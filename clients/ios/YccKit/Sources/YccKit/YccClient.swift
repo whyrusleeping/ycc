@@ -95,6 +95,50 @@ public final class YccClient: Sendable {
         }
     }
 
+    // MARK: - Work loop (task 0190)
+
+    /// Start the daemon-owned unattended backlog drain for a project. The loop
+    /// continues independently of this client connection.
+    public func startWorkLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo {
+        var request = Ycc_V1_StartWorkLoopRequest()
+        request.project = project
+        let response = await generated.startWorkLoop(request: request)
+        switch response.result {
+        case .success(let message):
+            return message.loop
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
+    /// Request a graceful stop: the current session finishes and no next task is
+    /// picked. `nil` means the workspace has no loop snapshot.
+    public func stopWorkLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo? {
+        var request = Ycc_V1_StopWorkLoopRequest()
+        request.project = project
+        let response = await generated.stopWorkLoop(request: request)
+        switch response.result {
+        case .success(let message):
+            return message.hasLoop ? message.loop : nil
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
+    /// Fetch the reconnectable daemon-side loop snapshot. `nil` means no loop has
+    /// ever run for this workspace.
+    public func getWorkLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo? {
+        var request = Ycc_V1_GetWorkLoopRequest()
+        request.project = project
+        let response = await generated.getWorkLoop(request: request)
+        switch response.result {
+        case .success(let message):
+            return message.hasLoop ? message.loop : nil
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
     /// Fetch a session's full event log for a read-only replayed transcript
     /// (no stream held open). `project` is optional for a single-project daemon.
     public func getSessionTranscript(

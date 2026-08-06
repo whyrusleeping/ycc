@@ -13,13 +13,26 @@ public protocol SessionListSource: Sendable {
     func listProjects() async throws -> [Ycc_V1_ProjectInfo]
     /// Deregister a project. Workspace files remain untouched.
     func removeProject(name: String) async throws
+    /// Fetch a project's daemon-side work-loop snapshot for row ownership badges.
+    func workLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo?
 }
 
-extension YccClient: SessionListSource {}
+/// Existing sources need not support loop ownership; it is supplemental and a
+/// failure must never degrade the session list.
+public extension SessionListSource {
+    func workLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo? { nil }
+}
+
+extension YccClient: SessionListSource {
+    public func workLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo? {
+        try await getWorkLoop(project: project)
+    }
+}
 
 private struct HistoryLoad: Sendable {
     let project: String
     var sessions: [Ycc_V1_SessionSummary] = []
+    var loopSessionIDs: Set<String> = []
     var error: String?
     var unauthorized = false
 }
@@ -146,6 +159,18 @@ public final class SessionListModel {
     /// from several projects are merged.
     public private(set) var sessionProjects: [String: String] = [:]
 
+    /// Session ids owned by work loops in the projects loaded by the latest
+    /// refresh. Rebuilt from completed sessions plus each current session.
+    public private(set) var loopSessionIDs: Set<String> = []
+
+    public func isLoopSession(_ session: Ycc_V1_SessionSummary) -> Bool {
+        isLoopSession(sessionID: session.sessionID)
+    }
+
+    public func isLoopSession(sessionID: String) -> Bool {
+        loopSessionIDs.contains(sessionID)
+    }
+
     /// Live-activity counts per project name, for the drawer's badges. Computed
     /// from the loaded rows rather than cached at load time, so a local
     /// correction like ``markAnswered(sessionID:)`` is reflected immediately.
@@ -208,8 +233,14 @@ public final class SessionListModel {
                 // session log for its startup workspace; query it by the selected
                 // name (an empty name resolves server-side).
                 let name = selectedProject ?? ""
-                let loaded = try await source.listSessionHistory(project: name)
-                apply(loads: [HistoryLoad(project: name, sessions: loaded)])
+                let source = source
+                async let history = source.listSessionHistory(project: name)
+                async let loop = Self.loadWorkLoop(from: source, project: name)
+                let loaded = try await history
+                apply(loads: [HistoryLoad(
+                    project: name,
+                    sessions: loaded,
+                    loopSessionIDs: Self.loopSessionIDs(from: await loop))])
                 return
             }
 
@@ -244,9 +275,12 @@ public final class SessionListModel {
                 let source = source
                 group.addTask {
                     do {
+                        async let history = source.listSessionHistory(project: project)
+                        async let loop = Self.loadWorkLoop(from: source, project: project)
                         return HistoryLoad(
                             project: project,
-                            sessions: try await source.listSessionHistory(project: project))
+                            sessions: try await history,
+                            loopSessionIDs: Self.loopSessionIDs(from: await loop))
                     } catch YccError.unauthorized {
                         return HistoryLoad(project: project, unauthorized: true)
                     } catch {
@@ -285,6 +319,9 @@ public final class SessionListModel {
         }
         allSessions = Self.sortedByRecency(merged)
         sessionProjects = routes
+        loopSessionIDs = loads.reduce(into: Set<String>()) { ids, load in
+            ids.formUnion(load.loopSessionIDs)
+        }
         loadedProjects = succeeded
 
         let failed = loads.filter { $0.error != nil }
@@ -299,6 +336,20 @@ public final class SessionListModel {
             partialWarning = nil
             errorMessage = failed.first?.error ?? "Couldn’t load sessions."
         }
+    }
+
+    nonisolated private static func loadWorkLoop(
+        from source: SessionListSource, project: String
+    ) async -> Ycc_V1_WorkLoopInfo? {
+        try? await source.workLoop(project: project)
+    }
+
+    nonisolated private static func loopSessionIDs(from loop: Ycc_V1_WorkLoopInfo?) -> Set<String> {
+        guard let loop else { return [] }
+        var ids = Set(loop.sessions.map(\.sessionID).filter { !$0.isEmpty })
+        let current = loop.currentSessionID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !current.isEmpty { ids.insert(current) }
+        return ids
     }
 
     /// Count one session into a project's live-activity tally. Only live rows

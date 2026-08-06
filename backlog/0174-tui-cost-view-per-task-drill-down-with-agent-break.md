@@ -71,3 +71,7 @@ Verify with `go build ./... && go test ./internal/tui/...` then `go test ./...` 
 - 2026-08-06 review (sol): accept — The revision resolves the prior out-of-order response defect by generation-tagging usage requests, rejecting stale responses, and adding a focused regression test for drill-down followed by back navig
 …[truncated]
 - 2026-08-06 decision: accept — commit: tui: per-task cost drill-down with agent breakdown (§20.5)
+- 2026-08-06 usage: 2,524,199 tok (in 387,028, out 30,803, cache_r 2,943,163, cache_w 77,385) · cost n/a (unpriced)
+  implementer: 1,832,790 tok (in 199,088, out 14,502, cache_r 1,619,200, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 682,849 tok (in 187,912, out 7,769, cache_r 487,168, cache_w 0) · cost n/a (unpriced)
+  coordinator: 8,560 tok (in 28, out 8,532, cache_r 836,795, cache_w 77,385) · cost n/a (unpriced)

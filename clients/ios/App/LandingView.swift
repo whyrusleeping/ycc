@@ -271,6 +271,9 @@ struct LandingView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
+                    NavigationLink(value: HomeDestination.workLoop(project: project)) {
+                        Label("Work loop", systemImage: "arrow.triangle.2.circlepath")
+                    }
                     NavigationLink(value: HomeDestination.workstreams(project: project)) {
                         Label("Workstreams", systemImage: "arrow.triangle.branch")
                     }
@@ -297,6 +300,8 @@ struct LandingView: View {
                     live: live, title: title)
             case let .backlog(project):
                 BacklogView(initialProject: project)
+            case let .workLoop(project):
+                WorkLoopView(project: project)
             case let .workstreams(project):
                 WorkstreamsView(initialProject: project)
             case let .usage(project):
@@ -441,7 +446,8 @@ struct LandingView: View {
                             SessionRow(
                                 session: session,
                                 project: model.project(for: session),
-                                showsProject: model.selectedProject == nil)
+                                showsProject: model.selectedProject == nil,
+                                isLoopOwned: model.isLoopSession(session))
                         }
                         .listRowBackground(section.kind == .needsAnswer
                             ? Color.orange.opacity(0.12) : nil)
@@ -581,6 +587,7 @@ private struct SessionRow: View {
     let session: Ycc_V1_SessionSummary
     var project = ""
     var showsProject = false
+    var isLoopOwned = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -605,6 +612,15 @@ private struct SessionRow: View {
             }
             HStack(spacing: 8) {
                 StatusBadge(status: session.status)
+                if isLoopOwned {
+                    Label("loop", systemImage: "arrow.triangle.2.circlepath")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(Color.accentColor.opacity(0.14), in: Capsule())
+                        .foregroundStyle(Color.accentColor)
+                        .accessibilityLabel("work loop session")
+                }
                 if showsProject {
                     Label(project, systemImage: "folder")
                         .lineLimit(1)

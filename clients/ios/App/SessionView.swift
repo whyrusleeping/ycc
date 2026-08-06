@@ -575,6 +575,9 @@ struct SessionView: View {
                 } label: {
                     Label("Session settings", systemImage: "gearshape")
                 }
+                NavigationLink(value: HomeDestination.workLoop(project: project)) {
+                    Label("Work loop", systemImage: "arrow.triangle.2.circlepath")
+                }
                 NavigationLink(value: HomeDestination.workstreams(project: project)) {
                     Label("Workstreams", systemImage: "arrow.triangle.branch")
                 }

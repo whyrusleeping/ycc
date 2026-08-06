@@ -12,6 +12,8 @@ private final class MockListSource: SessionListSource, @unchecked Sendable {
     var historyError: Error?
     var historyErrorsByProject: [String: Error] = [:]
     var removeError: Error?
+    var loopsByProject: [String: Ycc_V1_WorkLoopInfo] = [:]
+    var loopErrorsByProject: [String: Error] = [:]
     private(set) var requestedProjects: [String] = []
     private(set) var removedProjects: [String] = []
     private let lock = NSLock()
@@ -35,6 +37,11 @@ private final class MockListSource: SessionListSource, @unchecked Sendable {
         removedProjects.append(name)
         projects.removeAll { $0.name == name }
         lock.unlock()
+    }
+
+    func workLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo? {
+        if let error = loopErrorsByProject[project] { throw error }
+        return loopsByProject[project]
     }
 }
 
@@ -197,6 +204,62 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertEqual(SessionStatusKind(status: "stopped"), .stopped)
         XCTAssertEqual(SessionStatusKind(status: "weird"), .unknown)
         XCTAssertEqual(SessionStatusKind(status: ""), .unknown)
+    }
+
+    // MARK: - Work-loop ownership
+
+    func testWorkLoopSnapshotMarksCompletedAndCurrentSessions() async {
+        let source = MockListSource()
+        source.projects = [project("one")]
+        source.sessionsByProject["one"] = [session(id: "done"), session(id: "current"), session(id: "other")]
+        var completed = Ycc_V1_WorkLoopSession()
+        completed.sessionID = "done"
+        var loop = Ycc_V1_WorkLoopInfo()
+        loop.sessions = [completed]
+        loop.currentSessionID = "current"
+        source.loopsByProject["one"] = loop
+        let model = SessionListModel(source: source)
+
+        await model.refresh()
+
+        XCTAssertTrue(model.isLoopSession(sessionID: "done"))
+        XCTAssertTrue(model.isLoopSession(sessionID: "current"))
+        XCTAssertFalse(model.isLoopSession(sessionID: "other"))
+        XCTAssertTrue(model.isLoopSession(model.sessions.first { $0.sessionID == "done" }!))
+    }
+
+    func testThrowingWorkLoopDoesNotDegradeHistoryOrWarn() async {
+        let source = MockListSource()
+        source.projects = [project("one")]
+        source.sessionsByProject["one"] = [session(id: "available")]
+        source.loopErrorsByProject["one"] = YccError.rpc(message: "loop unavailable")
+        let model = SessionListModel(source: source)
+
+        await model.refresh()
+
+        XCTAssertEqual(model.sessions.map(\.sessionID), ["available"])
+        XCTAssertTrue(model.loopSessionIDs.isEmpty)
+        XCTAssertNil(model.partialWarning)
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testLoopIDsAreRebuiltEachRefresh() async {
+        let source = MockListSource()
+        source.projects = [project("one")]
+        source.sessionsByProject["one"] = [session(id: "old")]
+        var record = Ycc_V1_WorkLoopSession()
+        record.sessionID = "old"
+        var loop = Ycc_V1_WorkLoopInfo()
+        loop.sessions = [record]
+        source.loopsByProject["one"] = loop
+        let model = SessionListModel(source: source)
+
+        await model.refresh()
+        XCTAssertTrue(model.isLoopSession(sessionID: "old"))
+
+        source.loopsByProject.removeValue(forKey: "one")
+        await model.refresh()
+        XCTAssertTrue(model.loopSessionIDs.isEmpty)
     }
 
     // MARK: - Refresh / project filter round-trip

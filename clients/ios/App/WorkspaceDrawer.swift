@@ -11,6 +11,7 @@ enum HomeDestination: Hashable {
     /// the pushed screen is identifiable before its first event arrives.
     case session(id: String, project: String, live: Bool, title: String)
     case backlog(project: String)
+    case workLoop(project: String)
     case workstreams(project: String)
     case usage(project: String)
     case settings

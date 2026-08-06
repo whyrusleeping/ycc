@@ -332,8 +332,12 @@ do not permanently remove access to the daemon-wide inbox.
 10. **Workstreams & diffs** — `ListWorkstreams`, `PreviewMerge`,
     `MergeWorkstream`/`DiscardWorkstream`; `GetCommitDiff` viewer for
     `commit_made` events (§14.1, §18).
-11. **Work loop** — start/stop/observe the unattended backlog drain, which by
-    then is **daemon-side** (§9). Blocked on that daemon work.
+11. **Work loop** — shipped start/observe/graceful-stop control for the
+    daemon-side unattended backlog drain (§9), including 5-second `GetWorkLoop`
+    polling while active, foreground refresh after phone suspension, current and
+    completed session links, the end-of-batch digest, and a `⟳ loop` marker on
+    loop-owned session rows. The daemon continues independently while the phone
+    is locked; its existing ntfy integration delivers the completed digest.
 
 ## 7. RPC coverage map
 
