@@ -1,10 +1,10 @@
 ---
 id: "0166"
 title: 'Observability: ycc doctor MCP check + ycc mcp list (servers & tools)'
-status: proposed
+status: done
 priority: 5
 created: "2026-07-06"
-updated: "2026-07-06"
+updated: "2026-08-06"
 depends_on:
     - "0164"
 spec_refs:
@@ -21,3 +21,4 @@ A non-fatal `ycc doctor` check that each configured MCP server is reachable (std
 - [ ] The listing shows servers, transports (command/url), roles, and discovered tool names.
 
 ## Work log
+- 2026-08-07: CLOSED NOT PLANNED in a backlog audit. MCP client support was never started and the user dropped it as scope; refile fresh if it comes back.

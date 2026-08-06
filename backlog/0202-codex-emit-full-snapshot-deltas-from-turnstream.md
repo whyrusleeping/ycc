@@ -1,10 +1,10 @@
 ---
 id: "0202"
 title: 'Codex: emit full snapshot deltas from TurnStream'
-status: todo
+status: done
 priority: 2
 created: "2026-07-15"
-updated: "2026-07-15"
+updated: "2026-08-06"
 depends_on: []
 spec_refs:
     - Session & event log#Transient (broadcast-only) events
@@ -24,3 +24,6 @@ The engine `StreamTurner` contract requires each callback to contain the full ac
 - [ ] `go test ./...` passes.
 
 ## Work log
+- 2026-08-07: Closed as already satisfied during a backlog audit. `internal/codex/codex.go`
+  accumulates into `text` and calls `onDelta(text.String())` after each output-text fragment;
+  `codex_test.go` asserts the callback sequence is exactly `[hel hello]`.

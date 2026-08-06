@@ -1,10 +1,10 @@
 ---
-id: "0175"
+id: "0263"
 title: 'E2E TUI harness: drive the real ycc binary under a PTY, screenshot rendered screens'
 status: done
 priority: 3
 created: "2026-07-08"
-updated: "2026-07-08"
+updated: "2026-08-06"
 depends_on: []
 spec_refs:
     - Client UI (TUI)
@@ -84,3 +84,4 @@ Risks/notes: x/vt's ultraviolet dependency is older than the repo's — confirm 
   implementer: 51,144 tok (in 204, out 50,940, cache_r 12,532,714, cache_w 160,220) · $8.5423
   coordinator: 13,488 tok (in 60, out 13,428, cache_r 1,215,295, cache_w 107,816) · $3.2350
   reviewer:Claude: 6,071 tok (in 60, out 6,011, cache_r 794,770, cache_w 41,310) · $0.8061
+- 2026-08-06 renumbered 0175 → 0263 (duplicate id detected, 0175 kept by another task)

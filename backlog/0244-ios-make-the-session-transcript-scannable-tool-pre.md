@@ -1,10 +1,10 @@
 ---
 id: "0244"
 title: 'iOS: make the session transcript scannable (tool previews, reasoning as an aside)'
-status: in_review
+status: done
 priority: 2
 created: "2026-08-05"
-updated: "2026-08-05"
+updated: "2026-08-06"
 depends_on: []
 spec_refs: []
 ---
@@ -37,3 +37,4 @@ Screenshots from the device showed the live transcript's visual hierarchy is inv
 - `ToolRowView` now renders `icon + name + argument preview + status`; `ExpandableRow` gained `preview` and `detailIsAside`, and reasoning uses both.
 - Session view: opaque navigation bar background, tail-truncated title.
 - NOT YET VERIFIED on device.
+- 2026-08-07: Closed done in a backlog audit — implemented and committed; on-device use is the verification the Linux box could not provide.

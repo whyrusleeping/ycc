@@ -1,10 +1,10 @@
 ---
-id: "0218"
+id: "0275"
 title: Surface workspace git sync status (ahead/behind/dirty) in the app
 status: todo
 priority: 3
 created: "2026-07-16"
-updated: "2026-07-16"
+updated: "2026-08-06"
 depends_on: []
 spec_refs:
     - Projects
@@ -49,3 +49,4 @@ periodic.
 - Spec §3.1 (projects) updated to document the sync-status field and the cached-fetch model.
 
 ## Work log
+- 2026-08-06 renumbered 0218 → 0275 (duplicate id detected, 0218 kept by another task)

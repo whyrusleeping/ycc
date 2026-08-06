@@ -1,10 +1,10 @@
 ---
-id: "0195"
+id: "0267"
 title: 'TUI: migrate work (loop) to daemon-side loop RPCs; delete client driver'
 status: todo
 priority: 2
 created: "2026-07-15"
-updated: "2026-07-15"
+updated: "2026-08-06"
 depends_on:
     - "0179"
 spec_refs:
@@ -32,3 +32,4 @@ Context: 0179 moves the loop driver into the daemon (engine + RPCs + no-progress
 - TUI tests updated/added for the RPC-driven flow; `go build ./...` and `go test ./...` green.
 
 ## Work log
+- 2026-08-06 renumbered 0195 → 0267 (duplicate id detected, 0195 kept by another task)

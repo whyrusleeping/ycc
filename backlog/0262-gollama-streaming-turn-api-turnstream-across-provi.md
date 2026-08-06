@@ -1,10 +1,10 @@
 ---
-id: "0120"
+id: "0262"
 title: 'gollama: streaming turn API (TurnStream) across providers'
 status: done
 priority: 3
 created: "2026-07-02"
-updated: "2026-07-06"
+updated: "2026-08-06"
 depends_on: []
 spec_refs:
     - 7. Agent engine
@@ -119,3 +119,4 @@ Acceptance mapping: TurnStream+fallback (A); Anthropic SSE + offline fixture tes
   implementer: 30,043 tok (in 94, out 29,949, cache_r 2,480,804, cache_w 79,722) · cost n/a (unpriced)
   coordinator: 12,157 tok (in 26, out 12,131, cache_r 1,019,131, cache_w 91,428) · cost n/a (unpriced)
   reviewer:Claude: 4,582 tok (in 32, out 4,550, cache_r 296,736, cache_w 31,802) · cost n/a (unpriced)
+- 2026-08-06 renumbered 0120 → 0262 (duplicate id detected, 0120 kept by another task)

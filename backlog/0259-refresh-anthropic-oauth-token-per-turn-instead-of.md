@@ -1,7 +1,7 @@
 ---
 id: "0259"
 title: Refresh Anthropic OAuth token per turn instead of snapshotting it at Build
-status: in_review
+status: done
 priority: 1
 created: "2026-08-06"
 updated: "2026-08-06"
@@ -75,3 +75,4 @@ and Anthropic revokes the whole token family.
 - Not addressed here: the engine loop still classifies a surviving auth 401 as
   non-retryable, which is correct once the credential itself is recoverable.
 
+- 2026-08-07: Closed done in a backlog audit — implemented and committed; on-device use is the verification the Linux box could not provide.

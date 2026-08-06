@@ -1,10 +1,10 @@
 ---
 id: "0246"
 title: 'iOS question sheet: auto-advance, bottom submit, and clear the answered state everywhere'
-status: in_review
+status: done
 priority: 2
 created: "2026-08-05"
-updated: "2026-08-05"
+updated: "2026-08-06"
 depends_on: []
 spec_refs: []
 ---
@@ -40,3 +40,4 @@ Cause of (3) was staleness in two independent places:
 - `AppModel.answeredQuestionSessions` is the seam between the session view and the separately-owned list model; `LandingView` drains it, and also refreshes whenever the navigation path returns to the root.
 - Answer callbacks are now `@MainActor` function types, since they touch the app/session view models.
 - NOT YET VERIFIED on device.
+- 2026-08-07: Closed done in a backlog audit — implemented and committed; on-device use is the verification the Linux box could not provide.

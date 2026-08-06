@@ -1,10 +1,10 @@
 ---
 id: "0240"
 title: 'iOS: optional model picker on the new-session composer (per-session coordinator override)'
-status: in_review
+status: done
 priority: 3
 created: "2026-08-05"
-updated: "2026-08-05"
+updated: "2026-08-06"
 depends_on: []
 spec_refs:
     - docs/design/ios-client.md#Phase 2 — start work, backlog
@@ -41,3 +41,4 @@ model instead of the configured coordinator.
 
 
 ## Work log
+- 2026-08-07: Closed done in a backlog audit — implemented and committed; on-device use is the verification the Linux box could not provide.

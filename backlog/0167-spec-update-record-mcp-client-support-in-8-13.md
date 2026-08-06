@@ -1,10 +1,10 @@
 ---
 id: "0167"
 title: 'Spec update: record MCP client support in §8/§13'
-status: proposed
+status: done
 priority: 5
 created: "2026-07-06"
-updated: "2026-07-06"
+updated: "2026-08-06"
 depends_on:
     - "0164"
     - "0165"
@@ -23,3 +23,4 @@ Extend spec §8 (tools) and §13 (config) to document MCP client support: the `[
 - [ ] `ycc spec-check` passes.
 
 ## Work log
+- 2026-08-07: CLOSED NOT PLANNED in a backlog audit. MCP client support was never started and the user dropped it as scope; refile fresh if it comes back.

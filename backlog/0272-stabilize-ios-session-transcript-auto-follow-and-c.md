@@ -1,10 +1,10 @@
 ---
-id: "0215"
+id: "0272"
 title: Stabilize iOS session transcript auto-follow and composer scrolling
-status: blocked
+status: todo
 priority: 2
 created: "2026-07-16"
-updated: "2026-07-16"
+updated: "2026-08-06"
 depends_on: []
 spec_refs:
     - docs/design/ios-client.md#6. Screens & feature phases
@@ -21,3 +21,4 @@ Investigate and fix the iOS SessionView transcript failing to remain pinned whil
 - The iOS app builds successfully.
 
 ## Work log
+- 2026-08-06 renumbered 0215 → 0272 (duplicate id detected, 0215 kept by another task)

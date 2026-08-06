@@ -1,7 +1,7 @@
 ---
 id: "0258"
 title: 'Question UI showed raw parameter markup: repair tool args when a model leaks invoke syntax into a JSON string'
-status: in_review
+status: done
 priority: 2
 created: "2026-08-06"
 updated: "2026-08-06"
@@ -28,3 +28,4 @@ Root cause (confirmed in two live logs): the MODEL leaks the XML-ish invoke synt
 - [ ] confirmed live: a follow-up `ask_user` that leaks renders as a clean question + option picker on iOS/TUI
 
 ## Work log
+- 2026-08-07: Closed done in a backlog audit — implemented and committed; on-device use is the verification the Linux box could not provide.

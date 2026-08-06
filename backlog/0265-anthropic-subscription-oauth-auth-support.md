@@ -1,10 +1,10 @@
 ---
-id: "0193"
+id: "0265"
 title: Anthropic subscription (OAuth) auth support
 status: done
 priority: 3
 created: "2026-07-15"
-updated: "2026-07-15"
+updated: "2026-08-06"
 depends_on: []
 spec_refs:
     - 13. Configuration
@@ -33,3 +33,4 @@ Acceptance:
 ## Acceptance criteria
 
 ## Work log
+- 2026-08-06 renumbered 0193 → 0265 (duplicate id detected, 0193 kept by another task)

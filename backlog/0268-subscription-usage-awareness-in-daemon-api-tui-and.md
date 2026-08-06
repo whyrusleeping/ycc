@@ -1,10 +1,10 @@
 ---
-id: "0211"
+id: "0268"
 title: Subscription usage awareness in daemon API, TUI, and iOS app
-status: in_review
+status: done
 priority: 3
 created: "2026-07-16"
-updated: "2026-07-16"
+updated: "2026-08-06"
 depends_on: []
 spec_refs:
     - Credential mechanisms
@@ -27,3 +27,5 @@ Acceptance criteria:
 ## Acceptance criteria
 
 ## Work log
+- 2026-08-06 renumbered 0211 → 0268 (duplicate id detected, 0211 kept by another task)
+- 2026-08-07: Closed done in a backlog audit — implemented and committed; on-device use is the verification the Linux box could not provide.

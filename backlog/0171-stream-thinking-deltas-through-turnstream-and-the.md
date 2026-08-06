@@ -1,10 +1,10 @@
 ---
 id: "0171"
 title: Stream thinking deltas through TurnStream and the turn_delta path
-status: proposed
+status: done
 priority: 5
 created: "2026-07-06"
-updated: "2026-07-06"
+updated: "2026-08-06"
 depends_on: []
 spec_refs:
     - 18.4 Reasoning (thinking) in the event stream
@@ -21,3 +21,4 @@ Sketch: add a richer callback variant in gollama (e.g. TurnStreamEx with a delta
 - [ ] spec §5.2/§18.4 updated for the extended payload
 
 ## Work log
+- 2026-08-07: CLOSED NOT PLANNED in a backlog audit. Codex already streams reasoning summaries, so the live thinking tail is no longer worth an additive gollama API.

@@ -1,10 +1,10 @@
 ---
-id: "0214"
+id: "0271"
 title: 'iOS: reference focused backlog tasks in session names'
 status: done
 priority: 3
 created: "2026-07-16"
-updated: "2026-08-05"
+updated: "2026-08-06"
 depends_on: []
 spec_refs:
     - Session & event log
@@ -24,3 +24,4 @@ When an agent establishes a backlog-task focus, make the iOS session list name v
 - Updated the iOS session-list title projection to prefix focused task ids (for example, `[0214] Implement the widget`) while preserving the existing title fallback.
 - Normalized focused ids defensively by trimming, removing blanks, and deduplicating in API order; added focused, unfocused, multiple-task, and fallback test coverage.
 - `git diff --check` passes. YccKit tests could not run in this environment because `swift` is not installed (`swift: not found`).
+- 2026-08-06 renumbered 0214 → 0271 (duplicate id detected, 0214 kept by another task)

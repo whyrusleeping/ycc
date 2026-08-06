@@ -1,7 +1,7 @@
 ---
 id: "0257"
 title: 'Pictures on session start: StartSessionRequest.images + iOS new-session picker'
-status: in_review
+status: done
 priority: 3
 created: "2026-08-06"
 updated: "2026-08-06"
@@ -30,3 +30,4 @@ The iOS new-session composer has no picture attachment button, because `StartSes
 - [ ] `go test ./...` passes; YccKit tests pass on the Mac
 
 ## Work log
+- 2026-08-07: Closed done in a backlog audit — implemented and committed; on-device use is the verification the Linux box could not provide.

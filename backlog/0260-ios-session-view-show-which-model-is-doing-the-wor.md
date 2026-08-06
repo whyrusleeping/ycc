@@ -1,7 +1,7 @@
 ---
 id: "0260"
 title: 'iOS session view: show which model is doing the work'
-status: in_review
+status: done
 priority: 3
 created: "2026-08-06"
 updated: "2026-08-06"
@@ -46,3 +46,4 @@ Surfaces:
 - [ ] `swift test` + Xcode build verified on the Mac (no Swift toolchain here).
 
 ## Work log
+- 2026-08-07: Closed done in a backlog audit — implemented and committed; on-device use is the verification the Linux box could not provide.

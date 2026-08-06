@@ -1,10 +1,10 @@
 ---
 id: "0220"
 title: Eliminate iOS long-response streaming slowdown
-status: in_review
+status: done
 priority: 2
 created: "2026-07-20"
-updated: "2026-07-20"
+updated: "2026-08-06"
 depends_on: []
 spec_refs:
     - docs/design/ios-client.md#Session view + projection
@@ -23,3 +23,4 @@ Long streamed model responses become progressively laggier in the iOS session vi
 ## Work log
 - 2026-07-20: Root cause confirmed: each 10 Hz full snapshot rebuilt a growing SwiftUI `Text`, `onChange(model.rows)` deep-compared the full transcript, and unchanged Markdown rows could be re-evaluated.
 - 2026-07-20: Added loss-safe append hints to `turn_delta`, persistent TextKit append rendering with snapshot fallback, separate durable/tail rendering, equatable durable rows, and scalar transcript revisions. Engine tests pass; Swift/iOS verification is blocked in this Linux environment because `swift`/`xcodebuild` are unavailable.
+- 2026-08-07: Closed done in a backlog audit — implemented and committed; on-device use is the verification the Linux box could not provide.

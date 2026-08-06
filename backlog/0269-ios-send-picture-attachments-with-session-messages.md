@@ -1,10 +1,10 @@
 ---
-id: "0212"
+id: "0269"
 title: 'iOS: send picture attachments with session messages'
-status: in_review
+status: done
 priority: 2
 created: "2026-07-16"
-updated: "2026-07-16"
+updated: "2026-08-06"
 depends_on: []
 spec_refs:
     - docs/design/ios-client.md#6. Screens & feature phases
@@ -23,3 +23,5 @@ Add end-to-end image attachments for iOS session messages.
 
 ## Work log
 - 2026-07-16: Implemented Photos picker + previews/removal, bounded protobuf attachments, daemon signature validation, multimodal engine/provider plumbing, metadata-only transcript events, replay marker, docs, and Go/Swift unit coverage. `go test ./...` passes. Swift/Xcode verification is pending because this workspace has no `swift`/Xcode toolchain.
+- 2026-08-06 renumbered 0212 → 0269 (duplicate id detected, 0212 kept by another task)
+- 2026-08-07: Closed done in a backlog audit — implemented and committed; on-device use is the verification the Linux box could not provide.

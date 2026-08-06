@@ -1,7 +1,7 @@
 ---
 id: "0247"
 title: 'iOS: answered question card stayed "Waiting for an answer"'
-status: in_review
+status: done
 priority: 2
 created: "2026-08-06"
 updated: "2026-08-06"
@@ -28,3 +28,4 @@ Cause: `SessionProjection.applyQuestionAnswered` looked the row up **through `pe
 - `SessionViewModel`: `clearAnsweredGate(answer:)`; `localAnswer(optionIndex:text:)` / `localBatchAnswer(_:)` resolve option indices against the pending gate exactly as the daemon does (`interaction.AnswerOption`/`AnswerAll`), joining a batch with `; ` like `answerText`.
 - `QuestionRowView`: a non-nil but empty answer now renders "Answered" instead of falling back to the waiting state.
 - Tests: 4 in `SessionProjectionTests`, 4 in `SessionViewModelTests`.
+- 2026-08-07: Closed done in a backlog audit — implemented and committed; on-device use is the verification the Linux box could not provide.

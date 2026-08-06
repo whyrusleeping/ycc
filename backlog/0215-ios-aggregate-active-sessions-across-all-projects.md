@@ -1,10 +1,10 @@
 ---
 id: "0215"
 title: 'iOS: aggregate active sessions across all projects'
-status: todo
+status: done
 priority: 2
 created: "2026-07-15"
-updated: "2026-07-15"
+updated: "2026-08-06"
 depends_on: []
 spec_refs:
     - docs/design/ios-client.md#Navigation shell — workspace drawer + active-session inbox
@@ -26,3 +26,7 @@ Acceptance criteria:
 ## Acceptance criteria
 
 ## Work log
+- 2026-08-07: Closed as shipped. `YccKit/SessionListModel.swift` fans out per distinct workspace,
+  tags rows with project identity, pins needs-answer sessions, exposes global/per-project
+  active + needsAnswer badge counts and a partial-failure warning, with tests in
+  `SessionListModelTests.swift`; the dependent drawer task 0214 is already in review.

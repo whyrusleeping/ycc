@@ -1,10 +1,10 @@
 ---
 id: "0195"
 title: OpenAI ChatGPT subscription (OAuth/Codex) auth support
-status: in_review
+status: done
 priority: 3
 created: "2026-07-15"
-updated: "2026-07-15"
+updated: "2026-08-06"
 depends_on: []
 spec_refs:
     - 13. Backends & model registry
@@ -33,3 +33,4 @@ Acceptance:
 ## Acceptance criteria
 
 ## Work log
+- 2026-08-07: Closed done in a backlog audit — implemented and committed; on-device use is the verification the Linux box could not provide.

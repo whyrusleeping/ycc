@@ -1,10 +1,10 @@
 ---
-id: "0213"
+id: "0270"
 title: Normalize orphaned persisted session status in history
 status: done
 priority: 2
 created: "2026-07-16"
-updated: "2026-07-16"
+updated: "2026-08-06"
 depends_on: []
 spec_refs:
     - Session & event log
@@ -19,3 +19,4 @@ ListSessionHistory currently replays an abruptly-ended persisted log as `running
 - Tests cover both orphan normalization and live override behavior.
 
 ## Work log
+- 2026-08-06 renumbered 0213 → 0270 (duplicate id detected, 0213 kept by another task)

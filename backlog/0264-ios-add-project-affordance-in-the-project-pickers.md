@@ -1,10 +1,10 @@
 ---
-id: "0192"
+id: "0264"
 title: 'iOS: add-project affordance in the project pickers'
 status: done
 priority: 4
 created: "2026-07-09"
-updated: "2026-07-15"
+updated: "2026-08-06"
 depends_on: []
 spec_refs: []
 ---
@@ -24,3 +24,4 @@ Acceptance criteria:
 ## Work log
 
 - 2026-07-10: Implemented the manual-path flow. `YccClient.addProject(path:name:)`; new `AddProjectModel` (YccKit) behind `AddProjectSource` with path validation (absolute, non-root, trimmed) + unauthorized/error surfacing, headless tests in AddProjectModelTests (pass). `AddProjectView` sheet (path + optional name, server-side-path footer, inline error, unauthorized routes to connect). Affordance: "Add project…" row added to the LandingView project-filter menu and the NewSessionView project chip — both now ALWAYS shown (previously hidden with zero registered projects) so the affordance is reachable on a fresh daemon; on success the presenter refreshes and selects the new project. Directory picker upgrade tracked as 0194 (daemon RPC 0193 already landed). `xcodebuild` + `swift test` green.
+- 2026-08-06 renumbered 0192 → 0264 (duplicate id detected, 0192 kept by another task)

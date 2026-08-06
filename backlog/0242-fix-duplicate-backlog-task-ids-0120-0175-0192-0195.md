@@ -1,10 +1,10 @@
 ---
 id: "0242"
 title: Fix duplicate backlog task ids (0120, 0175, 0192–0195, 0211–0218)
-status: proposed
+status: done
 priority: 3
 created: "2026-08-05"
-updated: "2026-08-05"
+updated: "2026-08-06"
 depends_on: []
 spec_refs: []
 ---
@@ -30,3 +30,7 @@ Likely cause: `create_task` allocating the next id from a stale view of the dire
 
 
 ## Work log
+- 2026-08-07: Closed as superseded by the dedupe self-heal (`internal/docs/dedupe.go`): every
+  Store scan renumbers the younger claimant and `ycc doctor` reports the moves. The 14 historical
+  collisions were healed into 0262-0275; `rg -o '^id: "[0-9]+"' backlog/*.md | sort | uniq -d`
+  is now empty. Remaining prevention work is tracked by 0249 / 0276.

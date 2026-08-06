@@ -1,10 +1,10 @@
 ---
 id: "0165"
 title: 'Session/orchestrator wiring: mount MCP tools per role, session lifecycle, events'
-status: proposed
+status: done
 priority: 4
 created: "2026-07-06"
-updated: "2026-07-06"
+updated: "2026-08-06"
 depends_on:
     - "0164"
 spec_refs:
@@ -26,3 +26,4 @@ Mount each configured MCP server's tools into the registries for its configured 
 - [ ] MCP calls appear in the event log as ordinary tool_call/tool_result events (no new event types); replay/reopen unaffected.
 
 ## Work log
+- 2026-08-07: CLOSED NOT PLANNED in a backlog audit. MCP client support was never started and the user dropped it as scope; refile fresh if it comes back.

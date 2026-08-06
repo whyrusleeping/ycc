@@ -1,10 +1,10 @@
 ---
-id: "0216"
+id: "0273"
 title: Expose Codex reasoning effort and request detailed summaries
 status: done
 priority: 2
 created: "2026-07-16"
-updated: "2026-07-16"
+updated: "2026-08-06"
 depends_on: []
 spec_refs:
     - Agent engine
@@ -24,3 +24,4 @@ Work must coexist with the current dirty tree and avoid disturbing unrelated in-
 - [ ] Unit tests cover request shape, parsing, event propagation, and rendering.
 
 ## Work log
+- 2026-08-06 renumbered 0216 → 0273 (duplicate id detected, 0216 kept by another task)

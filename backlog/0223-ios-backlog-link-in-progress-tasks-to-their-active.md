@@ -1,10 +1,10 @@
 ---
 id: "0223"
 title: 'iOS backlog: link in-progress tasks to their active session'
-status: in_review
+status: done
 priority: 2
 created: "2026-07-21"
-updated: "2026-07-21"
+updated: "2026-08-06"
 depends_on: []
 spec_refs:
     - docs/design/ios-client.md#Phase 2 — start work, backlog
@@ -20,3 +20,4 @@ When an iOS backlog task is `in_progress`, look up live session-history rows foc
 - Matching/session lookup behavior has headless YccKit tests.
 
 ## Work log
+- 2026-08-07: Closed done in a backlog audit — implemented and committed; on-device use is the verification the Linux box could not provide.

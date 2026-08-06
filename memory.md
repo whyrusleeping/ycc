@@ -11,7 +11,7 @@
 - 2026-08-05: Anthropic subscription OAuth (2026 flow): claude.com/cai/oauth/authorize + platform.claude.com token/callback, extra user:sessions:claude_code/user:mcp_servers/user:file_upload scopes, beta headers claude-code-20250219,oauth-2025-04-20 + x-app: cli; credentials from the retired flow can misleadingly get HTTP 429.
 - 2026-08-05: Anthropic refusals (stop_reason "refusal", HTTP 200) are STICKY per docs — recovery is drop the turn or switch model. Handled since task 0238: engine keeps refusal turns out of history (Result.Refused), replay skips them, session gates SendInput until Resume/model change; stop_details still unparsed (task 0239).
 - 2026-08-05: StartSession takes an optional per-session coordinator_model override (task 0240): validated in Manager.start (ErrUnknownModel → InvalidArgument), recorded in session_started and folded into event.Projection.Coordinator so Reopen replays on the same model; ListModels still reports only the GLOBAL role defaults (see proposed task 0241).
-- 2026-08-05: backlog/ currently has 14 duplicate task ids (0120, 0175, 0192-0195, 0211-0218), so get_task/update_task silently resolve to the FIRST matching file — verify with `rg -o '^id: "[0-9]+"' backlog/*.md | sort | uniq -d` and hand-edit the intended file's frontmatter when a colliding id is involved.
+- 2026-08-06: Duplicate backlog ids now SELF-HEAL: any docs.Store scan renumbers the younger claimant (internal/docs/dedupe.go, oldest `created` keeps the id) and `ycc doctor` reports the moves; the 14 historical collisions (0120/0175/0192-0195/0211-0218) were healed into 0262-0275 on 2026-08-06.
 - 2026-08-06: iOS SessionProjection: the question row is resolved via openQuestionRowID (kept past an optimistic gate close), NOT via pendingQuestion — resolving through the gate was the bug that left answered cards reading "Waiting for an answer" (task 0247).
 - 2026-08-06: Models sometimes leak XML invoke syntax into a JSON string tool argument (question swallowing options, description swallowing priority); internal/tools/argrepair.go repairs it schema-aware in Registry.Repair (engine loop pre-emit) + Dispatch — check the tool_call event's `repaired` field when a tool looks like it lost arguments.
 - 2026-08-06: Anthropic OAuth tokens are resolved PER TURN by anthropicauth.NewOAuthTurner (config.Build passes TokenSource{AccessToken, ForceRefresh, c.SetBearerToken}); a token frozen at Build dies whenever any other process refreshes, because Anthropic invalidates the previous access token on every refresh-token redemption.
@@ -27,6 +27,7 @@
 
 - 2026-07-08: Home-menu action affordances must be ctrl-chords, never naked letter keys.
 - 2026-07-08: iOS client decisions: in-repo at clients/ios (XcodeGen + YccKit SPM, iPhone-only iOS 17+, committed generated proto code), notifications via ntfy + ycc:// deep links (no APNs), work loop daemon-side (task 0179).
+- 2026-08-06: iOS tasks pile up in `in_review` because Swift/xcodebuild can't run on the Linux workspace — treat that status as "implemented, awaiting the user's on-device use", and sweep it during backlog audits rather than letting it grow.
 
 ## Lessons learned
 

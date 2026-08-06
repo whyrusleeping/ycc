@@ -1,10 +1,10 @@
 ---
-id: "0194"
+id: "0266"
 title: 'Subscription auth UX: setup-wizard login option + TUI auth picker'
 status: done
 priority: 3
 created: "2026-07-15"
-updated: "2026-07-15"
+updated: "2026-08-06"
 depends_on:
     - "0193"
 spec_refs:
@@ -24,3 +24,4 @@ Acceptance:
 ## Acceptance criteria
 
 ## Work log
+- 2026-08-06 renumbered 0194 → 0266 (duplicate id detected, 0194 kept by another task)

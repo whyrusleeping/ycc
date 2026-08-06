@@ -1,10 +1,10 @@
 ---
 id: "0154"
 title: 'tsnet embedding: ycc daemon --ts-hostname (deferred per web-client design)'
-status: proposed
+status: done
 priority: 5
 created: "2026-07-06"
-updated: "2026-07-06"
+updated: "2026-08-06"
 depends_on:
     - "0152"
 spec_refs:
@@ -25,3 +25,4 @@ Revisit only after the web client ships, and weigh the full `tailscale.com` depe
 - [ ] If pursued: `--ts-hostname` works end-to-end from a phone on the tailnet; guardrails documented.
 
 ## Work log
+- 2026-08-07: CLOSED NOT PLANNED in a backlog audit. Deferred pending a web client that has not started; revisit by refiling if tsnet embedding becomes attractive.

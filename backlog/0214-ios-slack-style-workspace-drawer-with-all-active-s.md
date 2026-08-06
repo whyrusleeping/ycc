@@ -1,10 +1,10 @@
 ---
 id: "0214"
 title: 'iOS: Slack-style workspace drawer with all-active session inbox'
-status: in_review
+status: done
 priority: 2
 created: "2026-07-15"
-updated: "2026-07-15"
+updated: "2026-08-06"
 depends_on:
     - "0215"
 spec_refs:
@@ -33,3 +33,4 @@ Acceptance criteria:
 - Documented the shell (drawer contents, toolbar budget, unconditional fan-out) in docs/design/ios-client.md §6.
 - NOT YET VERIFIED: no Swift toolchain on this machine — `swift test` and the simulator build must run on the Mac.
 - Verified on device from screenshots: drawer opens, scopes, and navigates correctly. Two refinements from that pass — the destinations section header now names its scope ("Browse all projects" / "Browse ycc") instead of the ambiguous "All projects" that read as a second project list, and "Add project…" is tinted rather than muted grey, which made it look disabled.
+- 2026-08-07: Closed done in a backlog audit — implemented and committed; on-device use is the verification the Linux box could not provide.

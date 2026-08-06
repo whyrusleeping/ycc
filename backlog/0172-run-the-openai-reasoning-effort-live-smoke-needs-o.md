@@ -1,10 +1,10 @@
 ---
 id: "0172"
 title: Run the OpenAI reasoning_effort live smoke (needs OPENAI_API_KEY)
-status: blocked
+status: done
 priority: 3
 created: "2026-07-06"
-updated: "2026-07-06"
+updated: "2026-08-06"
 depends_on:
     - "0025"
 spec_refs:
@@ -31,3 +31,4 @@ Split out of task 0025 (cross-backend thinking/effort verification): everything 
 - [ ] any mapping corrections discovered are landed in gollama + ycc spec §7.4
 
 ## Work log
+- 2026-08-07: CLOSED NOT PLANNED in a backlog audit. No OPENAI_API_KEY was ever available, and ycc's OpenAI path now runs through the codex/Responses transport where reasoning effort ships and is unit-tested; a gollama-side chat-completions smoke no longer earns its keep.

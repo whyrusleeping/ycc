@@ -1,10 +1,10 @@
 ---
 id: "0192"
 title: 'iOS: aggregated "All projects" session list (cross-project home view)'
-status: proposed
+status: done
 priority: 3
 created: "2026-07-09"
-updated: "2026-07-09"
+updated: "2026-08-06"
 depends_on: []
 spec_refs:
     - Daemon modes & project registry
@@ -21,3 +21,5 @@ Options: client-side fan-out (N × ListSessionHistory, merge + tag rows with pro
 - Default selection decided (aggregate vs current default-workspace behaviour) and documented.
 
 ## Work log
+- 2026-08-07: Closed as superseded — the cross-project feed shipped via 0227 (home aggregate),
+  0215 (aggregation model) and 0214 (workspace drawer "All active").

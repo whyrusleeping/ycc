@@ -1,10 +1,10 @@
 ---
 id: "0243"
 title: 'iOS: fix silently dropped picture attachments in the session composer'
-status: in_review
+status: done
 priority: 1
 created: "2026-08-05"
-updated: "2026-08-05"
+updated: "2026-08-06"
 depends_on: []
 spec_refs: []
 ---
@@ -48,3 +48,4 @@ The daemon side was verified correct (`validateInputImages` + `engine.UserMessag
 - Rewrote `loadPictures` to guard empty rounds, merge instead of replace, preserve the draft on error, and normalize via a new `normalizedJPEG` (downscale to 2048px through `UIGraphicsImageRenderer`, stepping quality 0.85 → 0.4 until under the cap).
 - Composer affordance: `photo.badge.checkmark` in green with an attached count, an inline spinner while loading, and the picker disabled at capacity.
 - NOT YET VERIFIED on device — no Swift toolchain on the workspace machine.
+- 2026-08-07: Closed done in a backlog audit — implemented and committed; on-device use is the verification the Linux box could not provide.

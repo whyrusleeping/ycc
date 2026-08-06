@@ -1,10 +1,10 @@
 ---
 id: "0245"
 title: 'iOS: kanban board for the backlog + backlog shortcut from a session'
-status: in_review
+status: done
 priority: 2
 created: "2026-08-05"
-updated: "2026-08-05"
+updated: "2026-08-06"
 depends_on: []
 spec_refs: []
 ---
@@ -35,3 +35,4 @@ Two follow-ups from device review of the navigation rework (task 0214).
 - `SessionView`: backlog toolbar link, workstreams/usage in the overflow menu, connection state folded into the navigation subtitle.
 - Documented both in docs/design/ios-client.md §6, including *why* the drawer is not reachable from pushed screens and how per-screen shortcuts compensate.
 - NOT YET VERIFIED on device.
+- 2026-08-07: Closed done in a backlog audit — implemented and committed; on-device use is the verification the Linux box could not provide.
