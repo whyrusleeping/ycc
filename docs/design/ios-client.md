@@ -153,32 +153,44 @@ The drawer has two levels of navigation:
    by latest activity (with started-at fallback), most recent first. Every row is
    visibly annotated with its project name. This is the default landing
    destination on a multi-project daemon, so recent work and questions in another
-   workspace cannot be hidden by the currently selected project. Because this
-   feed has no implicit project scope, tapping **New chat** first presents a
-   cancellable project chooser; the selected project is then preselected in the
-   normal new-session composer. From a project-scoped Sessions list, New chat
-   opens that composer directly in the current project.
+   workspace cannot be hidden by the currently selected project. It carries no
+   project-scoped destinations, because it has no project.
 2. **Projects** — the registered workspace list, each with active /
    needs-answer badges. Selecting a project closes the drawer and scopes the
    session list and project destinations (backlog, usage, workstreams, and new
    session) to it. “Add project…” and a confirmed “Remove project…” action remain at
    the bottom of this list. Removing a registration never deletes workspace files.
 
-Below those two levels the drawer also carries the project-scoped destinations
-(**Backlog**, **Workstreams**, **Usage**) and the account footer (**Settings**,
-**Disconnect**). That is deliberate: those are navigation, not per-screen actions,
-and hanging them off the toolbar left an iPhone navigation bar with six competing
-glyphs and no room for a title. The toolbar keeps exactly two affordances — the menu
-button (which mirrors the drawer's loudest needs-answer badge, so a question in
-another project is visible while the drawer is shut) and the primary **New chat**
-action. The drawer overlays the whole navigation stack, so the current destination
-survives underneath it; the left-edge reveal gesture is disabled while a screen is
-pushed, leaving that edge to the system's interactive back gesture.
+Below those two levels the drawer carries only the account footer (**Settings**,
+**Disconnect**). The project-scoped destinations (**Backlog**, **Workstreams**,
+**Usage**) deliberately do *not* live in the drawer: it is opened most often from
+the unscoped Recent sessions feed, from which those entries could only open
+unscoped — landing on a "choose a project" filter instead of the backlog the user
+asked for. They belong to a project, so they hang off the toolbar of that
+project's own session list: **Backlog** as a one-tap glyph, Workstreams and Usage
+in an overflow menu, exactly as in the session view. On the Recent sessions feed
+those toolbar items are absent rather than unscoped. The menu button keeps
+mirroring the drawer's loudest needs-answer badge, so a question in another
+project is visible while the drawer is shut. The drawer overlays the
+whole navigation stack, so the current destination survives underneath it; the
+left-edge reveal gesture is disabled while a screen is pushed, leaving that edge
+to the system's interactive back gesture.
 
-Because the drawer is therefore *not* reachable from a pushed screen, screens that
-users live inside carry their own shortcuts to the destinations they need: the
-session view keeps **Backlog** as a one-tap toolbar link (with Workstreams and
-Usage in its overflow menu), all scoped to that session's project. The session
+**New chat always starts where the user was last looking.** From a project-scoped
+list that is the current project; from the unscoped Recent sessions feed it is the
+last project the user *viewed* (persisted across launches), which is not the same
+as the last project they *started a session in* — defaulting to the latter put
+chats in the wrong workspace. Only a user who has never opened a project, on a
+daemon with more than one, is asked outright with a cancellable chooser. The
+chosen project is carried as the composer sheet's presentation *item*, never as a
+flag plus a separately-stored project: the latter can present with a value
+captured before the assignment lands, silently falling back to the remembered
+project. The composer's project chip can still redirect the session.
+
+Because the drawer is *not* reachable from a pushed screen either, screens that
+users live inside repeat those shortcuts: the session view keeps **Backlog** as a
+one-tap toolbar link (with Workstreams and Usage in its overflow menu), all
+scoped to that session's project. The session
 view also folds its stream state (live / reconnecting / offline) into the
 navigation subtitle beside the project name rather than spending a toolbar slot
 on it.

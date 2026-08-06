@@ -9,9 +9,10 @@ import YccProto
 /// to the connect screen via ``AppModel/handleUnauthorized()``.
 ///
 /// Navigation follows the design's shell (§6 "Navigation shell"): a left-edge
-/// workspace drawer owns project selection and the project destinations
-/// (backlog / workstreams / usage) plus global settings, leaving the toolbar
-/// with just the menu button and the primary "new chat" action.
+/// workspace drawer owns project selection plus global settings, while the
+/// project-scoped destinations (backlog / workstreams / usage) hang off the
+/// toolbar of the project's own session list — they need a project, and the
+/// drawer's unscoped Recent-sessions feed has none to give them.
 struct LandingView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.scenePhase) private var scenePhase
@@ -22,13 +23,17 @@ struct LandingView: View {
     @State private var path: [HomeDestination] = []
     /// Whether the workspace drawer is revealed.
     @State private var drawerOpen = false
-    /// Whether the "new session" composer sheet is shown.
-    @State private var showNewSession = false
-    /// Project selected by the explicit picker shown when New Chat is tapped
-    /// from the daemon-wide Recent Sessions feed.
-    @State private var newSessionProject: String?
+    /// The pending "new session" composer presentation, carrying the project it
+    /// must open in. Kept as the sheet's *item* (rather than a bare flag plus a
+    /// separate project `@State`) so the composer can never be presented with a
+    /// stale project and silently fall back to the last-*started* one.
+    @State private var newSessionRequest: NewSessionRequest?
     /// Whether the Recent Sessions project picker is visible.
     @State private var showNewSessionProjectPicker = false
+    /// The last project the user actually looked at, remembered across launches.
+    /// The unscoped Recent Sessions feed has no project of its own, so this is
+    /// what "New chat" defaults to from there.
+    @AppStorage("ycc.lastViewedProject") private var lastViewedProject = ""
     /// A resume failure message to surface as an alert.
     @State private var resumeError: String?
     /// A deep-link routing failure (unknown/stale session or project) to surface
@@ -55,8 +60,7 @@ struct LandingView: View {
             if let model {
                 ForEach(model.newSessionProjectChoices, id: \.self) { project in
                     Button(project) {
-                        newSessionProject = project
-                        showNewSession = true
+                        newSessionRequest = NewSessionRequest(project: project)
                     }
                 }
             }
@@ -64,15 +68,15 @@ struct LandingView: View {
         } message: {
             Text("Choose which project this chat should work in.")
         }
-        .sheet(isPresented: $showNewSession) {
+        .sheet(item: $newSessionRequest) { request in
             if let client = app.client {
-                // A scoped Sessions list starts in its current project. Recent
-                // Sessions first records an explicit project choice above.
+                // The composer opens in the project the user was last looking
+                // at; the chip inside it can still move the session elsewhere.
                 NewSessionView(
                     client: client,
-                    initialProject: newSessionProject
+                    initialProject: request.project
                 ) { sessionID, project in
-                    showNewSession = false
+                    newSessionRequest = nil
                     // Follow the session's project so the list shows it when
                     // the user backs out of the live view.
                     if model?.selectedProject != project {
@@ -167,6 +171,12 @@ struct LandingView: View {
         .onChange(of: model?.unauthorized ?? false) { _, isUnauthorized in
             if isUnauthorized { app.handleUnauthorized() }
         }
+        // Remember the scope the user actually browses, so New chat from the
+        // unscoped feed lands where they were rather than wherever they last
+        // happened to start a session.
+        .onChange(of: model?.selectedProject) { _, project in
+            if let project, !project.isEmpty { lastViewedProject = project }
+        }
     }
 
     // MARK: - Shell
@@ -232,6 +242,7 @@ struct LandingView: View {
                         }
                     }
                 }
+                projectDestinations
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { beginNewSession() } label: {
                         Label("New chat", systemImage: "square.and.pencil")
@@ -240,6 +251,35 @@ struct LandingView: View {
             }
             .navigationDestination(for: HomeDestination.self) { destination in
                 self.destination(destination)
+            }
+        }
+    }
+
+    /// The project-scoped destinations, shown only on a project's own session
+    /// list. They need a project, and the daemon-wide Recent Sessions feed has
+    /// none — which is exactly why they no longer live in the drawer, where they
+    /// were most often tapped from the unscoped feed and opened unscoped.
+    /// Backlog earns its own glyph (it is the one users reach for constantly);
+    /// the rest sit behind an overflow menu, as in the session view.
+    @ToolbarContentBuilder
+    private var projectDestinations: some ToolbarContent {
+        if let project = model?.selectedProject {
+            ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink(value: HomeDestination.backlog(project: project)) {
+                    Label("Backlog", systemImage: "checklist")
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    NavigationLink(value: HomeDestination.workstreams(project: project)) {
+                        Label("Workstreams", systemImage: "arrow.triangle.branch")
+                    }
+                    NavigationLink(value: HomeDestination.usage(project: project)) {
+                        Label("Usage", systemImage: "chart.bar")
+                    }
+                } label: {
+                    Label("\(project) actions", systemImage: "ellipsis.circle")
+                }
             }
         }
     }
@@ -271,17 +311,33 @@ struct LandingView: View {
         drawerOpen = false
     }
 
-    /// Start directly in a scoped project's composer, or require an explicit
-    /// project choice from the daemon-wide Recent Sessions feed.
+    /// Open the composer in the project the user was last looking at: the
+    /// current scope, or — from the unscoped Recent Sessions feed — the last
+    /// project they viewed. Only a user who has never opened a project (and has
+    /// more than one to choose from) is asked outright.
     private func beginNewSession() {
         guard let model else { return }
-        if model.requiresProjectChoiceForNewSession {
-            newSessionProject = nil
+        if let project = defaultNewSessionProject(model) {
+            newSessionRequest = NewSessionRequest(project: project)
+        } else if model.requiresProjectChoiceForNewSession,
+                  model.newSessionProjectChoices.count > 1 {
             showNewSessionProjectPicker = true
         } else {
-            newSessionProject = model.selectedProject
-            showNewSession = true
+            // Nothing to default to: let the composer pick (sole project, or the
+            // last-used one) and show its project chip.
+            newSessionRequest = NewSessionRequest(project: nil)
         }
+    }
+
+    /// The project a new session should start in, or nil when there is nothing
+    /// trustworthy to preselect. A remembered project that has since been
+    /// deregistered is ignored.
+    private func defaultNewSessionProject(_ model: SessionListModel) -> String? {
+        if let selected = model.selectedProject { return selected }
+        guard !lastViewedProject.isEmpty,
+              model.projects.contains(where: { $0.name == lastViewedProject })
+        else { return nil }
+        return lastViewedProject
     }
 
     /// Re-open a persisted session on its existing log, then navigate into the
@@ -509,6 +565,14 @@ struct LandingView: View {
         }
         model.selectedProject = name
     }
+}
+
+/// A pending "new session" composer presentation, identified by the project it
+/// opens in. `nil` means "no explicit choice" — the composer falls back to its
+/// own remembered project.
+private struct NewSessionRequest: Identifiable {
+    let project: String?
+    var id: String { project ?? "" }
 }
 
 /// A single session row: title, status badge, live marker, needs-answer marker,

@@ -159,8 +159,11 @@ struct DrawerContainer<Drawer: View, Content: View>: View {
 // MARK: - Drawer content
 
 /// The workspace drawer's contents: the daemon-wide recent-session inbox, the
-/// registered projects with live-activity badges, the project-scoped
-/// destinations, and the account footer.
+/// registered projects with live-activity badges, and the account footer. The
+/// project-scoped destinations (backlog / workstreams / usage) deliberately do
+/// NOT live here: the drawer is usually opened from the unscoped Recent Sessions
+/// feed, which would open them without a project. They hang off the toolbar of
+/// the project's own session list instead.
 struct WorkspaceDrawer: View {
     /// The active server profile's display name, shown under the wordmark.
     let serverName: String
@@ -172,10 +175,6 @@ struct WorkspaceDrawer: View {
     let onAddProject: () -> Void
     let onRemoveProject: (Ycc_V1_ProjectInfo) -> Void
     let onDisconnect: () -> Void
-
-    /// Project destinations follow the current scope; with no project selected
-    /// they open unscoped and offer their own picker.
-    private var scopedProject: String { model.selectedProject ?? "" }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -213,20 +212,6 @@ struct WorkspaceDrawer: View {
                         // read as a disabled row.
                         tint: .accentColor,
                         action: onAddProject)
-
-                    // Naming the scope here is what stops this reading as a
-                    // second, competing list of projects.
-                    sectionHeader("Browse \(model.selectedProject ?? "all projects")")
-
-                    DrawerRow(title: "Backlog", systemImage: "checklist") {
-                        onOpen(.backlog(project: scopedProject))
-                    }
-                    DrawerRow(title: "Workstreams", systemImage: "arrow.triangle.branch") {
-                        onOpen(.workstreams(project: scopedProject))
-                    }
-                    DrawerRow(title: "Usage", systemImage: "chart.bar") {
-                        onOpen(.usage(project: scopedProject))
-                    }
                 }
                 .padding(.horizontal, 10)
                 .padding(.top, 10)
