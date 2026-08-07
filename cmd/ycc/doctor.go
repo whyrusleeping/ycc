@@ -18,6 +18,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/daemon"
 	"github.com/whyrusleeping/ycc/internal/docs"
+	"github.com/whyrusleeping/ycc/internal/forge"
 	"github.com/whyrusleeping/ycc/internal/openaiauth"
 	"github.com/whyrusleeping/ycc/internal/sandbox"
 	"github.com/whyrusleeping/ycc/internal/secrets"
@@ -25,8 +26,8 @@ import (
 
 // doctorCommand is the daemon-free one-shot environment/config health check. It
 // probes the whole stack — config discovery, per-model key resolution, daemon
-// reachability, reviewer sandbox, git, docs, and the web-tools key — and prints
-// one ✓/⚠/✗ line per check, each failure/degradation with a one-line remedy. It
+// reachability, reviewer sandbox, git, forge CLIs, docs, and the web-tools key —
+// and prints one ✓/⚠/✗ line per check, each failure/degradation with a one-line remedy. It
 // exits non-zero when any HARD failure (an unresolvable model key or a malformed
 // config) is found, so it is scriptable and the natural thing to run in a bug
 // report. Like `ycc spec-check` it runs locally against the workspace and needs
@@ -37,9 +38,9 @@ func (a *app) doctorCommand() *cli.Command {
 		Usage: "one-shot environment/config health check with remedies",
 		Description: "Checks the whole ycc stack and prints one ✓/⚠/✗ line per check: config file\n" +
 			"discovery, each configured model's key resolution (env / secrets store / MISSING),\n" +
-			"persistent daemon reachability, reviewer sandbox mechanism, git repo state, the docs\n" +
-			"entry point + backlog, and the EXA_API_KEY web-tools key. Every ✗/⚠ comes with a\n" +
-			"one-line remedy.\n\n" +
+			"persistent daemon reachability, reviewer sandbox mechanism, git repo state, forge CLI\n" +
+			"availability/auth, the docs entry point + backlog, and the EXA_API_KEY web-tools key.\n" +
+			"Every ✗/⚠ comes with a one-line remedy.\n\n" +
 			"Runs locally against the workspace; no daemon is required (daemon checks are\n" +
 			"best-effort probes). Exits non-zero when a hard failure — an unresolvable model key\n" +
 			"or a malformed config — is found, so it works in scripts and CI.",
@@ -87,7 +88,7 @@ func (c checkStatus) symbol() string {
 // failure (unresolvable model key or malformed config) was found — the caller
 // maps that to a non-zero exit. It never prints secret values, only where a key
 // resolved from. All checks are best-effort and non-mutating (in particular the
-// git probe never runs `git init`).
+// git probe never runs `git init`); forge CLI availability/auth is warn-only.
 func runDoctor(workspace, configPath, addr, token string, out io.Writer) (hardFail bool) {
 	ws, err := filepath.Abs(workspace)
 	if err != nil {
@@ -115,12 +116,17 @@ func runDoctor(workspace, configPath, addr, token string, out io.Writer) (hardFa
 	// 5. Git (never hard).
 	add(gitCheck(ws))
 
-	// 6. Docs (spec entry point + backlog).
+	// 6. Forge CLIs (optional, never hard).
+	for _, c := range forgeChecks() {
+		add(c)
+	}
+
+	// 7. Docs (spec entry point + backlog).
 	for _, c := range docsChecks(ws) {
 		add(c)
 	}
 
-	// 7. EXA_API_KEY (web tools).
+	// 8. EXA_API_KEY (web tools).
 	add(exaCheck())
 
 	// Render.
@@ -348,6 +354,55 @@ func runGit(dir string, args ...string) (string, error) {
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	return string(out), err
+}
+
+// forgeChecks reports installed forge CLIs and their authentication state. Forge
+// integration is optional, so every degradation is warn-only. A shared timeout
+// bounds both probes so doctor cannot hang indefinitely in a CLI auth check.
+func forgeChecks() []check {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var installed []forge.Status
+	for _, kind := range forge.Kinds() {
+		status := forge.Probe(ctx, kind)
+		if status.Installed {
+			installed = append(installed, status)
+		}
+	}
+	if len(installed) == 0 {
+		return []check{{
+			status: statusWarn,
+			label:  "forge",
+			detail: "no forge CLI (gh/glab) installed; forge features (task import, PR publish) unavailable",
+			remedy: "install gh (https://cli.github.com) or glab to enable forge features",
+		}}
+	}
+
+	checks := make([]check, 0, len(installed))
+	for _, status := range installed {
+		label := "forge (" + status.CLI + ")"
+		if !status.Authenticated {
+			checks = append(checks, check{
+				status: statusWarn,
+				label:  label,
+				detail: status.CLI + " installed but not authenticated",
+				remedy: "run `" + status.Kind.LoginCommand() + "`",
+			})
+			continue
+		}
+
+		detail := status.CLI
+		if status.Version != "" {
+			detail += " " + status.Version
+		}
+		detail += ", authenticated"
+		if len(status.Hosts) > 0 {
+			detail += " (" + strings.Join(status.Hosts, ", ") + ")"
+		}
+		checks = append(checks, check{status: statusOK, label: label, detail: detail})
+	}
+	return checks
 }
 
 // docsChecks reports the spec entry point and the backlog directory. Both are

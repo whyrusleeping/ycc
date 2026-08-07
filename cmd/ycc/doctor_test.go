@@ -134,3 +134,26 @@ func TestRunDoctorDoesNotInitGit(t *testing.T) {
 		t.Fatalf("expected a not-a-repo git line:\n%s", out.String())
 	}
 }
+
+// Forge integration is optional. With PATH controlled so neither gh nor glab
+// can exist, doctor emits one actionable warning but reports no hard failure.
+func TestRunDoctorNoForgeCLIWarnOnly(t *testing.T) {
+	isolateEnv(t)
+	ws := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ws, "ycc.toml"), []byte(validConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
+	t.Setenv("PATH", t.TempDir())
+
+	var out bytes.Buffer
+	if hard := runDoctor(ws, "", "", "", &out); hard {
+		t.Fatalf("missing forge CLIs must not cause a hard failure:\n%s", out.String())
+	}
+	if !bytes.Contains(out.Bytes(), []byte("⚠ forge: no forge CLI (gh/glab) installed; forge features (task import, PR publish) unavailable")) {
+		t.Fatalf("expected missing forge CLI warning:\n%s", out.String())
+	}
+	if !bytes.Contains(out.Bytes(), []byte("install gh (https://cli.github.com) or glab")) {
+		t.Fatalf("expected actionable forge CLI remedy:\n%s", out.String())
+	}
+}
