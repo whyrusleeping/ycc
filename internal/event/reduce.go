@@ -42,12 +42,12 @@ type Projection struct {
 	Coordinator string
 	// Parallel-workstream projection (docs/design/parallel-workstreams.md §6, §8):
 	// the workstream lifecycle folded from its own session stream. WorkstreamID is
-	// set once created; WorkstreamState is one of created/merged/conflict/discarded;
-	// WorkstreamConflicts lists the conflicted paths from the most recent conflict
-	// (cleared on a subsequent merge/discard).
-	WorkstreamID        string
-	WorkstreamState     string
-	WorkstreamConflicts []string
+	// set once created; WorkstreamConflicts and WorkstreamAttentionReason preserve
+	// the detail of conflict and needs-attention states respectively.
+	WorkstreamID              string
+	WorkstreamState           string
+	WorkstreamConflicts       []string
+	WorkstreamAttentionReason string
 }
 
 // Reduce folds an event slice into a Projection.
@@ -118,12 +118,20 @@ func Reduce(events []Event) Projection {
 		case WorkstreamConflict:
 			p.WorkstreamState = "conflict"
 			p.WorkstreamConflicts = strSlice(ev.Data, "conflicts")
+		case WorkstreamReady:
+			p.WorkstreamState = "ready"
+			p.WorkstreamAttentionReason = ""
+		case WorkstreamNeedsAttention:
+			p.WorkstreamState = "needs_attention"
+			p.WorkstreamAttentionReason = str(ev.Data, "reason")
 		case WorkstreamMerged:
 			p.WorkstreamState = "merged"
 			p.WorkstreamConflicts = nil
+			p.WorkstreamAttentionReason = ""
 		case WorkstreamDiscarded:
 			p.WorkstreamState = "discarded"
 			p.WorkstreamConflicts = nil
+			p.WorkstreamAttentionReason = ""
 		}
 	}
 	return p

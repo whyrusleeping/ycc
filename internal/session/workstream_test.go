@@ -152,7 +152,8 @@ func TestReconcileWorkstreams(t *testing.T) {
 	if err != nil {
 		t.Fatalf("spawn live: %v", err)
 	}
-	// Stop the session so it isn't left running; the workstream stays registered.
+	// Stop the session so it isn't left running; completion is now explicitly
+	// derived as needs-attention because this fixture made no commits.
 	for _, s := range m.List() {
 		m.Stop(s.ID)
 	}
@@ -176,8 +177,8 @@ func TestReconcileWorkstreams(t *testing.T) {
 	if got, _ := m.workstreams.Get(gone.ID); got.Status != workstream.StatusStale {
 		t.Fatalf("vanished workstream status = %v, want stale", got.Status)
 	}
-	if got, _ := m.workstreams.Get(live.ID); got.Status != workstream.StatusActive {
-		t.Fatalf("live workstream status = %v, want active", got.Status)
+	if got, _ := m.workstreams.Get(live.ID); got.Status != workstream.StatusNeedsAttention {
+		t.Fatalf("live workstream status = %v, want needs_attention", got.Status)
 	}
 
 	// Persistence across a fresh Open (restart simulation).
@@ -188,7 +189,7 @@ func TestReconcileWorkstreams(t *testing.T) {
 	if got, _ := reopened.Get(gone.ID); got.Status != workstream.StatusStale {
 		t.Fatalf("reopened vanished status = %v, want stale", got.Status)
 	}
-	if got, _ := reopened.Get(live.ID); got.Status != workstream.StatusActive {
-		t.Fatalf("reopened live status = %v, want active", got.Status)
+	if got, _ := reopened.Get(live.ID); got.Status != workstream.StatusNeedsAttention {
+		t.Fatalf("reopened live status = %v, want needs_attention", got.Status)
 	}
 }

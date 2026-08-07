@@ -27,6 +27,10 @@ type Status string
 const (
 	// StatusActive: the worktree exists and a session is (or was) writing to it.
 	StatusActive Status = "active"
+	// StatusReady: the session completed with reviewable commits.
+	StatusReady Status = "ready"
+	// StatusNeedsAttention: the session completed but cannot be auto-integrated.
+	StatusNeedsAttention Status = "needs_attention"
 	// StatusMerged: the workstream's branch was integrated back to base and the
 	// worktree cleaned up (set by the merge flow, task 0083).
 	StatusMerged Status = "merged"
@@ -42,6 +46,12 @@ const (
 // worktree is no longer a live single writer).
 func (s Status) Terminal() bool {
 	return s == StatusMerged || s == StatusDiscarded || s == StatusStale
+}
+
+// InFlight reports whether the worktree remains live and mergeable. Ready and
+// needs-attention retain the same single-writer ownership as active work.
+func (s Status) InFlight() bool {
+	return s == StatusActive || s == StatusReady || s == StatusNeedsAttention
 }
 
 // Workstream is one parallel unit of work: a linked worktree + branch and the
@@ -65,6 +75,8 @@ type Workstream struct {
 	TaskID string `json:"task_id,omitempty"`
 	// Status is the lifecycle state.
 	Status Status `json:"status"`
+	// StatusReason explains why a workstream needs attention.
+	StatusReason string `json:"status_reason,omitempty"`
 	// CreatedAt is when the workstream was spawned.
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -215,8 +227,20 @@ func (r *Registry) Get(id string) (Workstream, bool) {
 	return w, ok
 }
 
+// BySession returns the workstream associated with sessionID.
+func (r *Registry) BySession(sessionID string) (Workstream, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, w := range r.byID {
+		if sessionID != "" && w.SessionID == sessionID {
+			return w, true
+		}
+	}
+	return Workstream{}, false
+}
+
 // SetStatus updates a workstream's status, persisting the change. Returns an
-// error if the id is unknown.
+// error if the id is unknown. Leaving needs-attention clears its reason.
 func (r *Registry) SetStatus(id string, status Status) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -224,15 +248,54 @@ func (r *Registry) SetStatus(id string, status Status) error {
 	if !ok {
 		return fmt.Errorf("unknown workstream %q", id)
 	}
-	prev := w.Status
+	prev := w
 	w.Status = status
+	if status != StatusNeedsAttention {
+		w.StatusReason = ""
+	}
 	r.byID[id] = w
 	if err := r.save(); err != nil {
-		w.Status = prev
-		r.byID[id] = w
+		r.byID[id] = prev
 		return err
 	}
 	return nil
+}
+
+// Transition atomically changes a workstream only when its current status is in
+// from. It is the lifecycle CAS used to prevent readiness from overwriting a
+// concurrent merge/discard transition.
+func (r *Registry) Transition(id string, to Status, reason string, from ...Status) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	w, ok := r.byID[id]
+	if !ok {
+		return false, fmt.Errorf("unknown workstream %q", id)
+	}
+	allowed := false
+	for _, status := range from {
+		if w.Status == status {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return false, nil
+	}
+	if to != StatusNeedsAttention {
+		reason = ""
+	}
+	if w.Status == to && w.StatusReason == reason {
+		return false, nil
+	}
+	prev := w
+	w.Status = to
+	w.StatusReason = reason
+	r.byID[id] = w
+	if err := r.save(); err != nil {
+		r.byID[id] = prev
+		return false, err
+	}
+	return true, nil
 }
 
 // SetSessionID records the session scoped to a workstream, persisting it.

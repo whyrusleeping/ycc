@@ -102,21 +102,24 @@ func (m *model) openWorkstreams() {
 	}
 }
 
-// wsRowStatus resolves the status cell for a workstream row. Precedence (design
-// §8): a terminal registry status (merged/discarded/stale) wins; then a
-// locally-known conflict (loud, distinct); then awaiting-review; else the live
-// session status (running/idle/…). Returns the label and whether it is a
-// conflict (so the view can render it in the error style).
+// wsRowStatus resolves the status cell for a workstream row. Registry completion
+// and terminal states win over the session status; needs-attention and conflicts
+// use the loud error style returned by the second value.
 func (m model) wsRowStatus(w *v1.WorkstreamInfo) (string, bool) {
 	switch w.GetStatus() {
 	case "merged", "discarded", "stale":
 		return w.GetStatus(), false
+	case "needs_attention":
+		return "⚠ needs attention", true
 	}
 	switch m.wsLocal[w.GetId()] {
 	case "conflict":
 		return "conflict", true
 	case "awaiting-review":
 		return "awaiting-review", false
+	}
+	if w.GetStatus() == "ready" {
+		return "ready", false
 	}
 	if s := w.GetSessionStatus(); s != "" {
 		return s, false
@@ -197,8 +200,9 @@ func (m model) updateWorkstreams(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "m":
 		if w := m.wsCurrent(); w != nil {
-			if w.GetStatus() != "active" {
-				m.wsNotice = "cannot merge: workstream is " + w.GetStatus()
+			status := w.GetStatus()
+			if status != "active" && status != "ready" && status != "needs_attention" {
+				m.wsNotice = "cannot merge: workstream is " + status
 				return m, nil
 			}
 			m.wsNotice = "previewing merge…"

@@ -158,8 +158,8 @@ func (m *Manager) PreviewWorkstreamMerge(id string) (MergePreview, error) {
 	if !ok {
 		return MergePreview{}, fmt.Errorf("unknown workstream %q", id)
 	}
-	if ws.Status != workstream.StatusActive {
-		return MergePreview{}, fmt.Errorf("workstream %q is not active (status %s)", id, ws.Status)
+	if !ws.Status.InFlight() {
+		return MergePreview{}, fmt.Errorf("workstream %q is not in flight (status %s)", id, ws.Status)
 	}
 	repo, err := m.primaryRepo(ws)
 	if err != nil {
@@ -201,8 +201,8 @@ func (m *Manager) MergeWorkstream(id string, accept bool) (MergeOutcome, error) 
 	if !ok {
 		return MergeOutcome{}, fmt.Errorf("unknown workstream %q", id)
 	}
-	if ws.Status != workstream.StatusActive {
-		return MergeOutcome{}, fmt.Errorf("workstream %q is not active (status %s)", id, ws.Status)
+	if !ws.Status.InFlight() {
+		return MergeOutcome{}, fmt.Errorf("workstream %q is not in flight (status %s)", id, ws.Status)
 	}
 	repo, err := m.primaryRepo(ws)
 	if err != nil {
@@ -247,14 +247,16 @@ func (m *Manager) MergeWorkstream(id string, accept bool) (MergeOutcome, error) 
 		"branch":     ws.Branch,
 		"commit":     res.Commit,
 	})
+	// Mark terminal before Stop emits session_stopped, otherwise the readiness
+	// watcher can race the merge and briefly resurrect an integration state.
+	if err := m.workstreams.SetStatus(ws.ID, workstream.StatusMerged); err != nil {
+		return MergeOutcome{}, err
+	}
 	if ws.SessionID != "" {
 		m.Stop(ws.SessionID)
 	}
 	m.preserveWorkstreamSession(ws)
 	m.cleanupWorktree(repo, ws)
-	if err := m.workstreams.SetStatus(ws.ID, workstream.StatusMerged); err != nil {
-		return MergeOutcome{}, err
-	}
 	return MergeOutcome{Merged: true, Commit: res.Commit}, nil
 }
 
@@ -371,13 +373,16 @@ func (m *Manager) DiscardWorkstream(id string) error {
 	if !ok {
 		return fmt.Errorf("unknown workstream %q", id)
 	}
-	if ws.Status != workstream.StatusActive && ws.Status != workstream.StatusStale {
-		return fmt.Errorf("workstream %q is not active (status %s)", id, ws.Status)
+	if !ws.Status.InFlight() && ws.Status != workstream.StatusStale {
+		return fmt.Errorf("workstream %q cannot be discarded (status %s)", id, ws.Status)
 	}
 	m.emitWorkstreamEvent(ws, event.WorkstreamDiscarded, map[string]any{
 		"workstream": ws.ID,
 		"branch":     ws.Branch,
 	})
+	if err := m.workstreams.SetStatus(ws.ID, workstream.StatusDiscarded); err != nil {
+		return err
+	}
 	if ws.SessionID != "" {
 		m.Stop(ws.SessionID)
 	}
@@ -392,5 +397,5 @@ func (m *Manager) DiscardWorkstream(id string) error {
 		}
 		repo.PruneWorktrees()
 	}
-	return m.workstreams.SetStatus(ws.ID, workstream.StatusDiscarded)
+	return nil
 }

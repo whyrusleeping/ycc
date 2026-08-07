@@ -1083,9 +1083,10 @@ func (s *Session) run() {
 		case input := <-s.messageCh:
 			s.currentLoop().PostMessage(input)
 		case <-s.retryCh:
-			// Retry after a session error: loop back and re-run the failed turn on
-			// the existing history (the last user/tool turn still owes a response),
-			// without injecting a user message.
+			// Retry after a session error: mark the retry as resumed only when the
+			// parked run loop actually consumes it, then re-run the failed turn on
+			// existing history without injecting a user message.
+			s.emitter.Emit(event.Resumed, map[string]any{})
 		case <-s.ctx.Done():
 			return
 		}
@@ -1181,12 +1182,13 @@ func (s *Session) summarizeUsage() {
 // Manager owns the set of live sessions and the backend registry used to build
 // their agent loops.
 type Manager struct {
-	mu            sync.Mutex
-	sessions      map[string]*Session
-	reg           *config.Registry
-	projects      *project.Registry
-	workstreams   *workstream.Registry
-	worktreesRoot string
+	mu                sync.Mutex
+	sessions          map[string]*Session
+	reg               *config.Registry
+	projects          *project.Registry
+	workstreams       *workstream.Registry
+	worktreesRoot     string
+	workstreamWatches map[string]chan struct{}
 	// notifier pushes best-effort daemon-side notifications when an agent needs
 	// the user (task 0142). Nil when unconfigured; all uses are nil-safe.
 	notifier *notify.Notifier
@@ -1217,12 +1219,13 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 		_, _ = projects.EnsureWorkspace(initialWorkspace)
 	}
 	return &Manager{
-		sessions:      map[string]*Session{},
-		reg:           reg,
-		projects:      projects,
-		workstreams:   workstream.NewMemory(),
-		worktreesRoot: workstream.DefaultWorktreesRoot(),
-		workLoops:     map[string]*workLoop{},
+		sessions:          map[string]*Session{},
+		reg:               reg,
+		projects:          projects,
+		workstreams:       workstream.NewMemory(),
+		worktreesRoot:     workstream.DefaultWorktreesRoot(),
+		workstreamWatches: map[string]chan struct{}{},
+		workLoops:         map[string]*workLoop{},
 	}
 }
 
@@ -1504,6 +1507,13 @@ func (m *Manager) SpawnWorkstream(cfg SpawnWorkstreamConfig) (workstream.Workstr
 		"project":    ws.Project,
 		"task":       ws.TaskID,
 	})
+	// Registration happens after the session starts, so attach explicitly here;
+	// newSession cannot discover a fresh workstream yet. The immediate status
+	// check closes the small race where the initial turn finished before attach.
+	m.startWorkstreamWatcher(ws, s.log)
+	if status := s.Status(); status == event.StatusIdle || status == event.StatusError || status == event.StatusStopped {
+		m.evaluateWorkstreamReadiness(ws.ID, status, workstreamRunBlocked(s.log.Snapshot()))
+	}
 	return ws, s, nil
 }
 
@@ -1512,18 +1522,16 @@ func (m *Manager) Workstreams(project string) []workstream.Workstream {
 	return m.workstreams.ListByProject(project)
 }
 
-// ReconcileWorkstreams reconciles the workstream registry against the git state
-// on startup, recovering from a crashed daemon (design §5, §7). For each project
-// with active workstreams it prunes stale worktree admin entries and marks any
-// active workstream whose worktree directory is missing (or absent from
-// `git worktree list`) as stale. It is conservative: it never deletes unknown or
-// dirty worktrees; prune only reaps git's own stale admin entries.
+// ReconcileWorkstreams reconciles the workstream registry against git and the
+// durable session log on startup (design §5, §7). All in-flight states retain a
+// live worktree; missing trees become stale, while non-live terminal session
+// logs have readiness re-derived so daemon restarts cannot lose completion.
 func (m *Manager) ReconcileWorkstreams() error {
 	all := m.workstreams.List()
-	// Group active workstreams by project.
+	// Group all worktree-owning states by project.
 	byProject := map[string][]workstream.Workstream{}
 	for _, w := range all {
-		if w.Status == workstream.StatusActive {
+		if w.Status.InFlight() {
 			byProject[w.Project] = append(byProject[w.Project], w)
 		}
 	}
@@ -1560,6 +1568,29 @@ func (m *Manager) ReconcileWorkstreams() error {
 			if os.IsNotExist(statErr) || !known[path] {
 				m.workstreams.SetStatus(w.ID, workstream.StatusStale)
 			}
+		}
+	}
+
+	// Reduce worktree-local logs after stale detection. This re-derives completion
+	// before any session is reopened following a daemon restart.
+	for _, w := range m.workstreams.List() {
+		if !w.Status.InFlight() || w.SessionID == "" {
+			continue
+		}
+		m.mu.Lock()
+		_, live := m.sessions[w.SessionID]
+		m.mu.Unlock()
+		if live {
+			continue
+		}
+		logPath := filepath.Join(w.WorktreePath, ".ycc", "sessions", w.SessionID, "events.jsonl")
+		events := readEventsTolerant(logPath)
+		if len(events) == 0 {
+			continue
+		}
+		status := workstreamTerminalStatus(events)
+		if status == event.StatusIdle || status == event.StatusError || status == event.StatusStopped {
+			m.evaluateWorkstreamReadiness(w.ID, status, workstreamRunBlocked(events))
 		}
 	}
 	return nil
@@ -1864,6 +1895,9 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 	m.sessions[id] = s
 	m.mu.Unlock()
 
+	if linked, ok := m.workstreams.BySession(id); ok && linked.Status.InFlight() {
+		m.startWorkstreamWatcher(linked, log)
+	}
 	go s.run()
 	return s, nil
 }
@@ -1977,7 +2011,20 @@ func (m *Manager) Stop(id string) error {
 		return fmt.Errorf("%w %q", ErrUnknownSession, id)
 	}
 	s.Stop()
+	m.waitWorkstreamWatcher(id)
 	return nil
+}
+
+// waitWorkstreamWatcher joins a watcher after its session log has been closed so
+// callers may safely tear down/reopen the worktree. Never hold m.mu while
+// waiting: readiness emission briefly needs that mutex.
+func (m *Manager) waitWorkstreamWatcher(id string) {
+	m.mu.Lock()
+	watchDone := m.workstreamWatches[id]
+	m.mu.Unlock()
+	if watchDone != nil {
+		<-watchDone
+	}
 }
 
 // reclaim removes an idle session from the live map to free memory WITHOUT
@@ -1996,6 +2043,7 @@ func (m *Manager) reclaim(id string) {
 		return
 	}
 	s.reap()
+	m.waitWorkstreamWatcher(id)
 }
 
 // List returns all live sessions.

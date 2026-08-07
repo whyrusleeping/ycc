@@ -45,7 +45,9 @@ func workstreamError(err error) *connect.Error {
 	switch {
 	case strings.Contains(msg, "unknown workstream"), strings.Contains(msg, "unknown project"):
 		return connect.NewError(connect.CodeNotFound, err)
-	case strings.Contains(msg, "is not active"):
+	case strings.Contains(msg, "is not active"),
+		strings.Contains(msg, "is not in flight"),
+		strings.Contains(msg, "cannot be discarded"):
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	default:
 		return connect.NewError(connect.CodeInternal, err)

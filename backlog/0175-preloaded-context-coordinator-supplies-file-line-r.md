@@ -105,3 +105,7 @@ Run gofmt, go vet, `go test ./internal/orchestrator ./internal/tools ./internal/
 …[truncated]
 - 2026-08-07 verification: live checks passed — Anthropic (claude-opus-4-8, adaptive thinking) via TestSyntheticPreloadLiveAnthropic, and OpenAI/codex (gpt-5.6-sol via ChatGPT subscription OAuth) via a one-off scratch run: both accepted the synthetic seed history and the codex model quoted the preloaded content back. OPENAI_API_KEY-gated live test remains for platform-API runs. Note: implementer loops are not reconstructed on session reopen (existing design), so replay fidelity is at the event-log level: synthetic events record the exact seeded content and coordinator ReplayHistory is provably unaffected.
 - 2026-08-07 decision: accept — commit: spawn_implementer: preload_files seeds real Read outputs as a synthetic tool exchange in the implementer's initial history (task 0175)
+- 2026-08-07 usage: 3,427,641 tok (in 698,588, out 62,045, cache_r 5,702,758, cache_w 338,606) · cost n/a (unpriced)
+  implementer: 2,801,582 tok (in 497,282, out 23,340, cache_r 2,280,960, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 599,740 tok (in 201,238, out 12,454, cache_r 386,048, cache_w 0) · cost n/a (unpriced)
+  coordinator: 26,319 tok (in 68, out 26,251, cache_r 3,035,750, cache_w 338,606) · cost n/a (unpriced)

@@ -53,6 +53,50 @@ func TestDuplicateActiveWorktreeRejected(t *testing.T) {
 	}
 }
 
+func TestTransitionPersistsReasonAndCAS(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "workstreams.json")
+	r, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := mk("ws_a", "proj", "/tmp/wt/a")
+	w.SessionID = "s_1"
+	if err := r.Add(w); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := r.Transition(w.ID, StatusNeedsAttention, "no commits since base", StatusActive)
+	if err != nil || !changed {
+		t.Fatalf("Transition = %v, %v", changed, err)
+	}
+	got, ok := r.BySession("s_1")
+	if !ok || got.Status != StatusNeedsAttention || got.StatusReason != "no commits since base" {
+		t.Fatalf("BySession = %+v, %v", got, ok)
+	}
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ = reopened.Get(w.ID)
+	if got.Status != StatusNeedsAttention || got.StatusReason != "no commits since base" {
+		t.Fatalf("reopened = %+v", got)
+	}
+	changed, err = reopened.Transition(w.ID, StatusReady, "ignored", StatusMerged)
+	if err != nil || changed {
+		t.Fatalf("disallowed Transition = %v, %v", changed, err)
+	}
+	changed, err = reopened.Transition(w.ID, StatusReady, "ignored", StatusNeedsAttention)
+	if err != nil || !changed {
+		t.Fatalf("allowed Transition = %v, %v", changed, err)
+	}
+	got, _ = reopened.Get(w.ID)
+	if got.Status != StatusReady || got.StatusReason != "" {
+		t.Fatalf("ready did not clear reason: %+v", got)
+	}
+	if !StatusReady.InFlight() || !StatusNeedsAttention.InFlight() || StatusReady.Terminal() {
+		t.Fatal("completion statuses must remain non-terminal/in-flight")
+	}
+}
+
 func TestSetStatusPersists(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "workstreams.json")
 	r, err := Open(path)

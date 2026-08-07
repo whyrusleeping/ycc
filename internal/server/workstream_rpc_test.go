@@ -324,7 +324,8 @@ func TestWorkstreamRPCErrorMapping(t *testing.T) {
 	})
 	mgr := session.NewManager(reg, t.TempDir())
 	mgr.SetProjects(project.NewMemory())
-	mgr.SetWorkstreams(workstream.NewMemory(), filepath.Join(t.TempDir(), "worktrees"))
+	wreg := workstream.NewMemory()
+	mgr.SetWorkstreams(wreg, filepath.Join(t.TempDir(), "worktrees"))
 	srv := server.New(mgr)
 	ctx := context.Background()
 
@@ -340,6 +341,23 @@ func TestWorkstreamRPCErrorMapping(t *testing.T) {
 	if _, err := srv.SpawnWorkstream(ctx, connect.NewRequest(&v1.SpawnWorkstreamRequest{})); connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("SpawnWorkstream empty project code = %v, want InvalidArgument", connect.CodeOf(err))
 	}
+
+	// Lifecycle precondition errors use the manager's current wording and must
+	// never regress to Internal when that wording evolves.
+	terminal := workstream.Workstream{ID: "ws_terminal", Status: workstream.StatusMerged}
+	if err := wreg.Add(terminal); err != nil {
+		t.Fatalf("add terminal workstream: %v", err)
+	}
+	if _, err := srv.PreviewMerge(ctx, connect.NewRequest(&v1.PreviewMergeRequest{WorkstreamId: terminal.ID})); connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("PreviewMerge terminal code = %v, want FailedPrecondition", connect.CodeOf(err))
+	}
+	if _, err := srv.MergeWorkstream(ctx, connect.NewRequest(&v1.MergeWorkstreamRequest{WorkstreamId: terminal.ID})); connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("MergeWorkstream terminal code = %v, want FailedPrecondition", connect.CodeOf(err))
+	}
+	if _, err := srv.DiscardWorkstream(ctx, connect.NewRequest(&v1.DiscardWorkstreamRequest{WorkstreamId: terminal.ID})); connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("DiscardWorkstream terminal code = %v, want FailedPrecondition", connect.CodeOf(err))
+	}
+
 	// A missing workstream_id is likewise InvalidArgument.
 	if _, err := srv.PreviewMerge(ctx, connect.NewRequest(&v1.PreviewMergeRequest{})); connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("PreviewMerge empty id code = %v, want InvalidArgument", connect.CodeOf(err))

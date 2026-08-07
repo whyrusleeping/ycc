@@ -92,6 +92,12 @@ const (
 	// WorkstreamCreated marks a linked worktree + branch being spawned off a
 	// project's base (data: { workstream, branch, base, worktree, project, task }).
 	WorkstreamCreated Type = "workstream_created"
+	// WorkstreamReady marks a completed session whose branch has reviewable work
+	// (data: { workstream, branch, commits, task }).
+	WorkstreamReady Type = "workstream_ready"
+	// WorkstreamNeedsAttention marks completed work that cannot be integrated
+	// automatically (data: { workstream, branch, reason }).
+	WorkstreamNeedsAttention Type = "workstream_needs_attention"
 	// WorkstreamMerged marks a clean, review-gated integration back to base and
 	// subsequent cleanup (data: { workstream, branch, commit }).
 	WorkstreamMerged Type = "workstream_merged"

@@ -58,6 +58,16 @@ func TestWorkstreamsPanelConflictRow(t *testing.T) {
 }
 
 // TestWorkstreamMergeFlow covers preview → accept → merged (task 0085, design §6).
+func TestWorkstreamCompletionRows(t *testing.T) {
+	m := model{wsLocal: map[string]string{}}
+	if status, loud := m.wsRowStatus(&v1.WorkstreamInfo{Status: "ready", SessionStatus: "idle"}); status != "ready" || loud {
+		t.Fatalf("ready row = %q, %v", status, loud)
+	}
+	if status, loud := m.wsRowStatus(&v1.WorkstreamInfo{Status: "needs_attention", SessionStatus: "stopped"}); status != "⚠ needs attention" || !loud {
+		t.Fatalf("attention row = %q, %v", status, loud)
+	}
+}
+
 func TestWorkstreamMergeFlow(t *testing.T) {
 	f := newFakeClient()
 	m := initialModel(context.Background(), f, t_tempWorkspace, false)

@@ -42,6 +42,19 @@ func TestReduceWorkstreamLifecycle(t *testing.T) {
 		t.Fatalf("[]any conflicts = %v", p.WorkstreamConflicts)
 	}
 
+	// Needs-attention preserves its reason; ready clears it.
+	p = Reduce([]Event{{Seq: 1, Type: WorkstreamNeedsAttention, Data: map[string]any{"reason": "no commits since base"}}})
+	if p.WorkstreamState != "needs_attention" || p.WorkstreamAttentionReason != "no commits since base" {
+		t.Fatalf("needs attention: state=%q reason=%q", p.WorkstreamState, p.WorkstreamAttentionReason)
+	}
+	p = Reduce([]Event{
+		{Seq: 1, Type: WorkstreamNeedsAttention, Data: map[string]any{"reason": "blocked"}},
+		{Seq: 2, Type: WorkstreamReady, Data: map[string]any{"commits": 1}},
+	})
+	if p.WorkstreamState != "ready" || p.WorkstreamAttentionReason != "" {
+		t.Fatalf("ready: state=%q reason=%q", p.WorkstreamState, p.WorkstreamAttentionReason)
+	}
+
 	// merged clears conflicts and sets state.
 	p = Reduce([]Event{
 		{Seq: 1, Type: WorkstreamConflict, Data: map[string]any{"conflicts": []any{"x.go"}}},
