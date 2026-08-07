@@ -7,12 +7,12 @@ import YccProto
 /// polls only while visible/active and reloads when the app returns to foreground.
 struct WorkLoopView: View {
     @Environment(AppModel.self) private var app
+    @Environment(HomeRouter.self) private var router
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var model: WorkLoopModel?
     @State private var showStartConfirmation = false
     @State private var showStopConfirmation = false
-    @State private var sessionTarget: WorkLoopSessionTarget?
 
     let project: String
 
@@ -25,16 +25,6 @@ struct WorkLoopView: View {
             }
         }
         .navigationTitle("Work loop")
-        .navigationDestination(item: $sessionTarget) { target in
-            if let client = app.client {
-                SessionView(
-                    client: client,
-                    project: project,
-                    sessionID: target.sessionID,
-                    live: target.live,
-                    title: target.title)
-            }
-        }
         .confirmationDialog(
             "Start unattended work loop?",
             isPresented: $showStartConfirmation,
@@ -127,10 +117,11 @@ struct WorkLoopView: View {
             if !model.currentSessionID.isEmpty {
                 Section("Current session") {
                     Button {
-                        sessionTarget = WorkLoopSessionTarget(
-                            sessionID: model.currentSessionID,
-                            title: "Loop session",
-                            live: true)
+                        router.open(.session(
+                            id: model.currentSessionID,
+                            project: project,
+                            live: true,
+                            title: "Loop session"))
                     } label: {
                         HStack {
                             Label(String(model.currentSessionID.prefix(8)), systemImage: "dot.radiowaves.left.and.right")
@@ -148,10 +139,11 @@ struct WorkLoopView: View {
                 Section("Sessions run") {
                     ForEach(loop.sessions, id: \.sessionID) { session in
                         Button {
-                            sessionTarget = WorkLoopSessionTarget(
-                                sessionID: session.sessionID,
-                                title: session.focus.isEmpty ? "Loop session" : session.focus,
-                                live: session.sessionID == model.currentSessionID)
+                            router.open(.session(
+                                id: session.sessionID,
+                                project: project,
+                                live: session.sessionID == model.currentSessionID,
+                                title: session.focus.isEmpty ? "Loop session" : session.focus))
                         } label: {
                             workLoopSessionRow(session)
                         }
@@ -307,13 +299,6 @@ struct WorkLoopView: View {
             await model?.refresh()
         }
     }
-}
-
-private struct WorkLoopSessionTarget: Identifiable, Hashable {
-    let sessionID: String
-    let title: String
-    let live: Bool
-    var id: String { sessionID }
 }
 
 private struct WorkLoopStateBadge: View {

@@ -177,6 +177,22 @@ whole navigation stack, so the current destination survives underneath it; the
 left-edge reveal gesture is disabled while a screen is pushed, leaving that edge
 to the system's interactive back gesture.
 
+**One router, screen dedupe.** Every push goes through a single path-driven
+router (`HomeRouter`, injected via the environment): the whole stack is a
+`[HomeDestination]` value, including task detail and the sessions opened from
+task detail / work loop / workstreams — no screen keeps a private
+`navigationDestination(item:)` push of its own. This exists because the screens
+cross-link in circles (session → backlog → task → that task's active session →
+backlog…), and when every link pushes, laps around that cycle grow the stack
+without bound and Back has to walk every copy. The router's `open` therefore
+navigates by *screen identity* (session id; project-scoped screen kind): if the
+destination is already on the stack it pops back to it — merging parameters, so
+a live-flag flip rebuilds the screen but an empty incoming title never clobbers
+a good one — and only otherwise pushes. Stack depth is bounded by the number of
+distinct screens visited, not the number of hops. A value-driven, titled stack
+also makes the system's long-press-on-Back menu work for multi-level pops for
+free.
+
 **New chat always asks when the answer is ambiguous.** From a project-scoped list
 the project is the current scope and the composer opens straight away. From the
 unscoped Recent sessions feed there is no scope, so the user is asked with a

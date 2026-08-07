@@ -9,21 +9,28 @@ import YccProto
 /// and navigates into its live stream.
 struct TaskDetailView: View {
     @Environment(AppModel.self) private var app
+    @Environment(HomeRouter.self) private var router
 
     @State private var model: TaskDetailModel
-    /// The session to push into a live streaming view (set after Start work).
-    @State private var liveTarget: LiveTaskSessionTarget?
     /// A start-work failure message to surface as an alert.
     @State private var startError: String?
     @State private var isStarting = false
 
+    private let taskID: String
     private let taskTitle: String
     private let project: String
 
     init(client: YccClient, project: String, taskID: String, taskTitle: String) {
         _model = State(initialValue: TaskDetailModel(source: client, project: project, taskID: taskID))
+        self.taskID = taskID
         self.taskTitle = taskTitle
         self.project = project
+    }
+
+    /// The display title for a session opened from this task, mirroring how the
+    /// session list would eventually title it.
+    private var sessionTitle: String {
+        taskTitle.isEmpty ? "Work on task \(taskID)" : taskTitle
     }
 
     var body: some View {
@@ -45,15 +52,6 @@ struct TaskDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) { statusMenu }
-        }
-        .navigationDestination(item: $liveTarget) { target in
-            if let client = app.client {
-                SessionView(
-                    client: client,
-                    project: target.project,
-                    sessionID: target.sessionID,
-                    live: true)
-            }
         }
         .alert(
             "Couldn’t start work",
@@ -187,7 +185,12 @@ struct TaskDetailView: View {
     private var activeSessionButtons: some View {
         ForEach(model.activeSessions, id: \.sessionID) { session in
             Button {
-                liveTarget = LiveTaskSessionTarget(sessionID: session.sessionID, project: project)
+                // Routed with dedupe: if the user *came here from* that very
+                // session (session → backlog → task), this pops back to it
+                // instead of stacking a second copy of the same transcript.
+                router.open(.session(
+                    id: session.sessionID, project: project,
+                    live: true, title: sessionTitle))
             } label: {
                 Label(
                     model.activeSessions.count == 1
@@ -224,7 +227,9 @@ struct TaskDetailView: View {
             do {
                 let sessionID = try await client.startSession(
                     project: project, mode: "work", prompt: prompt)
-                liveTarget = LiveTaskSessionTarget(sessionID: sessionID, project: project)
+                router.open(.session(
+                    id: sessionID, project: project,
+                    live: true, title: sessionTitle))
             } catch YccError.unauthorized {
                 app.handleUnauthorized()
             } catch let YccError.rpc(message) {
@@ -238,13 +243,6 @@ struct TaskDetailView: View {
             }
         }
     }
-}
-
-/// A session to push into a live streaming view after "Start work".
-private struct LiveTaskSessionTarget: Identifiable, Hashable {
-    let sessionID: String
-    let project: String
-    var id: String { sessionID }
 }
 
 /// A coloured status pill for a task's lifecycle status.

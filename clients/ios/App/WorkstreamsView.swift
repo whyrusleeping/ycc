@@ -11,6 +11,7 @@ import YccProto
 /// screen via ``AppModel/handleUnauthorized()``.
 struct WorkstreamsView: View {
     @Environment(AppModel.self) private var app
+    @Environment(HomeRouter.self) private var router
 
     @State private var model: WorkstreamsModel?
     /// A preview result to present (clean diff or conflicts list).
@@ -19,8 +20,6 @@ struct WorkstreamsView: View {
     @State private var mergeSheet: MergeSheet?
     /// The workstream pending a destructive discard confirmation.
     @State private var discardTarget: Ycc_V1_WorkstreamInfo?
-    /// The session to push into a live streaming view (from "Open session").
-    @State private var liveTarget: LiveWorkstreamTarget?
 
     private let initialProject: String
 
@@ -40,15 +39,6 @@ struct WorkstreamsView: View {
         .toolbar {
             if let model, model.showsProjectFilter {
                 ToolbarItem(placement: .topBarLeading) { projectFilter(model) }
-            }
-        }
-        .navigationDestination(item: $liveTarget) { target in
-            if let client = app.client {
-                SessionView(
-                    client: client,
-                    project: target.project,
-                    sessionID: target.sessionID,
-                    live: true)
             }
         }
         .sheet(item: $previewSheet) { sheet in
@@ -147,8 +137,12 @@ struct WorkstreamsView: View {
         }
         if !workstream.sessionID.isEmpty {
             Button {
-                liveTarget = LiveWorkstreamTarget(
-                    sessionID: workstream.sessionID, project: workstream.project)
+                router.open(.session(
+                    id: workstream.sessionID,
+                    project: workstream.project,
+                    live: true,
+                    title: workstream.taskID.isEmpty
+                        ? "Workstream session" : "Workstream \(workstream.taskID)"))
             } label: {
                 Label("Open session", systemImage: "bubble.left.and.bubble.right")
             }
@@ -277,13 +271,6 @@ struct WorkstreamsView: View {
         }
         await model?.refresh()
     }
-}
-
-/// A session to push into a live streaming view from a workstream row.
-private struct LiveWorkstreamTarget: Identifiable, Hashable {
-    let sessionID: String
-    let project: String
-    var id: String { sessionID }
 }
 
 /// A preview result to present in a sheet.

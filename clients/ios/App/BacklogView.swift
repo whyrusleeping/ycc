@@ -151,15 +151,11 @@ struct BacklogView: View {
             ForEach(model.sections) { section in
                 Section(section.title) {
                     ForEach(section.tasks, id: \.id) { task in
-                        NavigationLink {
-                            if let client = app.client {
-                                TaskDetailView(
-                                    client: client,
-                                    project: model.selectedProject,
-                                    taskID: task.id,
-                                    taskTitle: task.title)
-                            }
-                        } label: {
+                        NavigationLink(value: HomeDestination.taskDetail(
+                            project: model.selectedProject,
+                            taskID: task.id,
+                            title: task.title)
+                        ) {
                             BacklogRow(task: task, isUpdating: model.updatingTaskID == task.id)
                         }
                         .contextMenu {
@@ -266,7 +262,6 @@ func statusMenu(_ model: BacklogModel, task: Ycc_V1_BacklogTaskSummary) -> some 
 /// board you can push cards across rather than a paged carousel.
 private struct BacklogBoard: View {
     let model: BacklogModel
-    @Environment(AppModel.self) private var app
 
     @State private var containerWidth: CGFloat = 375
 
@@ -304,7 +299,6 @@ private struct BacklogBoard: View {
 private struct BacklogLane: View {
     let model: BacklogModel
     let lane: BacklogSection
-    @Environment(AppModel.self) private var app
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -342,15 +336,11 @@ private struct BacklogLane: View {
 
     @ViewBuilder
     private func card(_ task: Ycc_V1_BacklogTaskSummary) -> some View {
-        NavigationLink {
-            if let client = app.client {
-                TaskDetailView(
-                    client: client,
-                    project: model.selectedProject,
-                    taskID: task.id,
-                    taskTitle: task.title)
-            }
-        } label: {
+        NavigationLink(value: HomeDestination.taskDetail(
+            project: model.selectedProject,
+            taskID: task.id,
+            title: task.title)
+        ) {
             BacklogCard(
                 model: model,
                 task: task,

@@ -18,9 +18,11 @@ struct LandingView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var model: SessionListModel?
-    /// The navigation stack's path. Path-driven so the drawer can push a
-    /// destination over whatever is currently on screen.
-    @State private var path: [HomeDestination] = []
+    /// The navigation router. Path-driven so the drawer can push a destination
+    /// over whatever is currently on screen, and shared through the environment
+    /// so pushed screens navigate with screen dedupe instead of piling copies
+    /// onto the stack (see ``HomeRouter``).
+    @State private var router = HomeRouter()
     /// Whether the workspace drawer is revealed.
     @State private var drawerOpen = false
     /// The pending "new session" composer presentation, carrying the project it
@@ -47,11 +49,12 @@ struct LandingView: View {
     @State private var projectRemovalError: String?
 
     var body: some View {
-        DrawerContainer(isOpen: $drawerOpen, edgeSwipeEnabled: path.isEmpty) {
+        DrawerContainer(isOpen: $drawerOpen, edgeSwipeEnabled: router.path.isEmpty) {
             drawer
         } content: {
             navigation
         }
+        .environment(router)
         .confirmationDialog(
             "Start a new chat in…",
             isPresented: $showNewSessionProjectPicker,
@@ -83,7 +86,7 @@ struct LandingView: View {
                         model?.selectedProject = project
                         Task { await model?.refresh() }
                     }
-                    path.append(.session(id: sessionID, project: project, live: true, title: ""))
+                    router.open(.session(id: sessionID, project: project, live: true, title: ""))
                 }
             }
         }
@@ -165,7 +168,7 @@ struct LandingView: View {
         }
         // Returning to the inbox is a strong signal that its rows are stale:
         // the agent has usually moved on while the user was inside a session.
-        .onChange(of: path.isEmpty) { _, isAtRoot in
+        .onChange(of: router.path.isEmpty) { _, isAtRoot in
             if isAtRoot { Task { await model?.refresh() } }
         }
         .onChange(of: model?.unauthorized ?? false) { _, isUnauthorized in
@@ -195,7 +198,7 @@ struct LandingView: View {
                 },
                 onOpen: { destination in
                     closeDrawer()
-                    path.append(destination)
+                    router.open(destination)
                 },
                 onAddProject: {
                     closeDrawer()
@@ -213,7 +216,8 @@ struct LandingView: View {
     }
 
     private var navigation: some View {
-        NavigationStack(path: $path) {
+        @Bindable var router = router
+        return NavigationStack(path: $router.path) {
             Group {
                 if let model {
                     content(model)
@@ -315,6 +319,10 @@ struct LandingView: View {
                 SessionView(
                     client: client, project: project, sessionID: id,
                     live: live, title: title)
+            case let .taskDetail(project, taskID, title):
+                TaskDetailView(
+                    client: client, project: project,
+                    taskID: taskID, taskTitle: title)
             case let .backlog(project):
                 BacklogView(initialProject: project)
             case let .workLoop(project):
@@ -374,7 +382,7 @@ struct LandingView: View {
             do {
                 let sessionID = try await client.resumeSession(
                     project: project, sessionId: session.sessionID)
-                path.append(.session(
+                router.open(.session(
                     id: sessionID, project: project, live: true,
                     title: SessionListModel.displayTitle(for: session)))
             } catch YccError.unauthorized {
@@ -569,7 +577,7 @@ struct LandingView: View {
     private func openSession(_ sessionID: String) async {
         guard let client = app.client else { return }
         if let match = model?.allSessions.first(where: { $0.sessionID == sessionID }) {
-            path.append(.session(
+            router.open(.session(
                 id: sessionID,
                 project: model?.project(for: match) ?? "",
                 live: match.live,
@@ -583,7 +591,7 @@ struct LandingView: View {
                 guard scanned.insert(project).inserted else { continue }
                 let sessions = try await client.listSessionHistory(project: project)
                 if let match = sessions.first(where: { $0.sessionID == sessionID }) {
-                    path.append(.session(
+                    router.open(.session(
                         id: sessionID, project: project, live: match.live,
                         title: SessionListModel.displayTitle(for: match)))
                     return

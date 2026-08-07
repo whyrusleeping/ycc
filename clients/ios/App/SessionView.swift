@@ -13,6 +13,7 @@ import YccKit
 /// interrupt/resume/stop. Chrome (banners) reflects the derived session phase.
 struct SessionView: View {
     @Environment(AppModel.self) private var app
+    @Environment(HomeRouter.self) private var router
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var model: SessionViewModel
@@ -573,11 +574,15 @@ struct SessionView: View {
 
     /// The backlog is the other half of "what is this agent doing", so it stays
     /// one tap away from a session rather than only reachable from the home
-    /// screen's drawer.
+    /// screen's drawer. Routed through ``HomeRouter`` (not a bare
+    /// `NavigationLink`) so revisiting a screen already on the stack pops back
+    /// to it instead of stacking another copy.
     @ToolbarContentBuilder
     private var backlogShortcut: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
-            NavigationLink(value: HomeDestination.backlog(project: project)) {
+            Button {
+                router.open(.backlog(project: project))
+            } label: {
                 Label("Backlog", systemImage: "checklist")
             }
         }
@@ -594,13 +599,19 @@ struct SessionView: View {
                 } label: {
                     Label("Session settings", systemImage: "gearshape")
                 }
-                NavigationLink(value: HomeDestination.workLoop(project: project)) {
+                Button {
+                    router.open(.workLoop(project: project))
+                } label: {
                     Label("Work loop", systemImage: "arrow.triangle.2.circlepath")
                 }
-                NavigationLink(value: HomeDestination.workstreams(project: project)) {
+                Button {
+                    router.open(.workstreams(project: project))
+                } label: {
                     Label("Workstreams", systemImage: "arrow.triangle.branch")
                 }
-                NavigationLink(value: HomeDestination.usage(project: project)) {
+                Button {
+                    router.open(.usage(project: project))
+                } label: {
                     Label("Usage", systemImage: "chart.bar")
                 }
                 Divider()
