@@ -6,7 +6,8 @@ seam is the LLM at the HTTP boundary — the binary, the one-shot in-process dae
 loop, tool execution, and the Bubble Tea runtime are all real.
 
 It complements, rather than replaces, the in-process tests in `internal/tui` (which call
-`model.Update`/`View` directly and rasterize frames with `internal/tui/snapshot`). Use the
+`model.Update`/`View` directly and rasterize frames with `internal/tui/snapshot`; see the
+[TUI component map](tui-components.md) for test ownership). Use the
 in-process tests for fast, fine-grained view/logic assertions; use the e2e harness to prove
 the whole stack wires together and real keystrokes produce the expected screens.
 

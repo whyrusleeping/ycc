@@ -1349,7 +1349,9 @@ ycc/
 
 ## 18. Client UI (TUI)
 
-The Bubble Tea client (`internal/tui`, spec §15) is the primary local surface. It has
+The Bubble Tea client (`internal/tui`, spec §15) is the primary local surface. Its
+developer-facing file and ownership map is [`docs/tui-components.md`](docs/tui-components.md).
+It has
 two top-level states today — **home menu** and **session view** — plus a modal
 **settings overlay**. This section captures the interaction model. The session view's
 single-row top status bar identifies the active coordinator model immediately before
