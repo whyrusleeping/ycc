@@ -289,6 +289,16 @@ var builtinReviewTiers = map[string]bool{
 	"simple": true, "single-opus": true, "high-powered": true,
 }
 
+// builtinTierDescriptions is the "when to pick me" guidance shown to the
+// coordinator for the built-in tiers. A configured tier may set its own
+// description; one that overrides a built-in name inherits this text when it
+// leaves description empty.
+var builtinTierDescriptions = map[string]string{
+	"simple":       "you, the coordinator, review the change yourself — NO reviewer agent is spawned; only for tiny, low-risk changes",
+	"single-opus":  "one reviewer; the sensible default for ordinary changes",
+	"high-powered": "parallel multi-model review (when configured with multiple reviewers) — for large, risky, security-sensitive, or hard-to-reverse changes",
+}
+
 // effectiveReviewTiers returns the built-in tiers overlaid with any configured
 // tiers, plus the effective default tier name. The built-ins guarantee the
 // simple/single-opus/high-powered tiers always exist; a configured tier with the
@@ -304,6 +314,14 @@ func (c *Config) effectiveReviewTiers() (map[string]ReviewTier, string) {
 	for name, t := range c.Reviews.Tiers {
 		tiers[name] = t
 	}
+	// A tier with no description of its own inherits the built-in blurb for its
+	// name (custom tiers simply have none unless configured).
+	for name, t := range tiers {
+		if t.Description == "" {
+			t.Description = builtinTierDescriptions[name]
+			tiers[name] = t
+		}
+	}
 	def := "single-opus"
 	if c.Reviews.Default != "" {
 		def = c.Reviews.Default
@@ -313,19 +331,111 @@ func (c *Config) effectiveReviewTiers() (map[string]ReviewTier, string) {
 
 // ReviewTierResolved is the effective tier a coordinator review should use.
 type ReviewTierResolved struct {
-	Name       string   // effective tier name actually used
-	SelfReview bool     // coordinator self-reviews; no reviewer agents
-	Models     []string // logical model names for the reviewer fan-out
-	Fallback   bool     // requested tier was unknown and we degraded to the default
+	Name        string             // effective tier name actually used
+	Description string             // "when to pick me" guidance (config or built-in)
+	SelfReview  bool               // coordinator self-reviews; no reviewer agents
+	Reviewers   []ResolvedReviewer // the reviewer fan-out (model + label + focus prompt)
+	Fallback    bool               // requested tier was unknown and we degraded to the default
 }
 
-// ReviewTier is one configurable review intensity tier (spec §13). Strategy
-// "agents" (the default when empty) spawns reviewer subagents for each logical
-// model in Models; "coordinator" (aliases "self"/"self-review") means the
-// coordinator reviews the change itself with no separate reviewer agent.
+// ResolvedReviewer is one reviewer slot of a resolved tier: which logical model
+// reviews, under which (unique) label, with what extra focus prompt and optional
+// per-reviewer reasoning level.
+type ResolvedReviewer struct {
+	Label    string // unique within the tier; defaults to Model; labels the actor "reviewer:<label>"
+	Model    string // logical model name from [models.X]
+	Prompt   string // extra focus guidance appended to the reviewer system prompt
+	Thinking string // optional per-reviewer reasoning level (off|low|…|max); "" => role/model default
+}
+
+// Reviewer is one configured reviewer slot inside a review tier (spec §13.1).
+// It lets a tier task a specific logical model with a specific review focus
+// ("conciseness and readability", "performance characteristics", …) instead of
+// running the same generic review N times:
+//
+//	[[reviews.tiers.high-powered.reviewers]]
+//	name = "readability"
+//	model = "claude"
+//	prompt = "Focus on conciseness, naming, and code readability."
+type Reviewer struct {
+	Name     string `toml:"name,omitempty"`     // label; defaults to Model
+	Model    string `toml:"model"`              // logical model name
+	Prompt   string `toml:"prompt,omitempty"`   // extra focus guidance for this reviewer
+	Thinking string `toml:"thinking,omitempty"` // optional per-reviewer reasoning level
+}
+
+// ReviewTier is one configurable review intensity tier (spec §13.1). Strategy
+// "agents" (the default when empty) spawns reviewer subagents — either one per
+// logical model in Models (the shorthand) or one per entry in Reviewers (the
+// long form, which additionally carries a per-reviewer focus prompt);
+// "coordinator" (aliases "self"/"self-review") means the coordinator reviews the
+// change itself with no separate reviewer agent. Prompt is extra guidance given
+// to EVERY reviewer of the tier, and Description tells the coordinator when to
+// pick this tier.
 type ReviewTier struct {
-	Strategy string   `toml:"strategy"`
-	Models   []string `toml:"models"`
+	Strategy    string     `toml:"strategy,omitempty"`
+	Description string     `toml:"description,omitempty"`
+	Models      []string   `toml:"models,omitempty"`
+	Prompt      string     `toml:"prompt,omitempty"`
+	Reviewers   []Reviewer `toml:"reviewers,omitempty"`
+}
+
+// reviewerEntries returns the tier's reviewer slots, expanding the Models
+// shorthand when the long form is absent.
+func (t ReviewTier) reviewerEntries() []Reviewer {
+	if len(t.Reviewers) > 0 {
+		return t.Reviewers
+	}
+	out := make([]Reviewer, 0, len(t.Models))
+	for _, m := range t.Models {
+		out = append(out, Reviewer{Model: m})
+	}
+	return out
+}
+
+// resolveReviewers turns the tier's reviewer slots into resolved reviewers:
+// labels defaulted to the model name and made unique (a tier may run the same
+// model twice under different focuses), and the tier-wide prompt combined with
+// each reviewer's own focus prompt.
+func (t ReviewTier) resolveReviewers() []ResolvedReviewer {
+	entries := t.reviewerEntries()
+	seen := map[string]int{}
+	out := make([]ResolvedReviewer, 0, len(entries))
+	for _, e := range entries {
+		model := strings.TrimSpace(e.Model)
+		if model == "" {
+			continue
+		}
+		label := strings.TrimSpace(e.Name)
+		if label == "" {
+			label = model
+		}
+		seen[label]++
+		if n := seen[label]; n > 1 {
+			label = fmt.Sprintf("%s#%d", label, n)
+		}
+		out = append(out, ResolvedReviewer{
+			Label:    label,
+			Model:    model,
+			Prompt:   joinPrompts(t.Prompt, e.Prompt),
+			Thinking: strings.TrimSpace(e.Thinking),
+		})
+	}
+	return out
+}
+
+// joinPrompts combines the tier-wide reviewer prompt with a per-reviewer focus
+// prompt, dropping empties.
+func joinPrompts(tier, reviewer string) string {
+	tier, reviewer = strings.TrimSpace(tier), strings.TrimSpace(reviewer)
+	switch {
+	case tier == "":
+		return reviewer
+	case reviewer == "":
+		return tier
+	default:
+		return tier + "\n\n" + reviewer
+	}
 }
 
 // Reviews configures the named review tiers and the default tier (spec §13). The
@@ -570,11 +680,26 @@ func (c *Config) validate() error {
 		if !validReviewStrategy(t.Strategy) {
 			return fmt.Errorf("reviews.tiers.%s: unknown strategy %q", name, t.Strategy)
 		}
-		if !isSelfReviewStrategy(t.Strategy) {
-			for _, mdl := range t.Models {
-				if _, ok := c.Models[mdl]; !ok {
-					return fmt.Errorf("reviews.tiers.%s: unknown model %q", name, mdl)
-				}
+		if isSelfReviewStrategy(t.Strategy) {
+			continue // models/reviewers are ignored for a coordinator self-review tier
+		}
+		if len(t.Models) > 0 && len(t.Reviewers) > 0 {
+			return fmt.Errorf("reviews.tiers.%s: set either models or reviewers, not both", name)
+		}
+		for _, mdl := range t.Models {
+			if _, ok := c.Models[mdl]; !ok {
+				return fmt.Errorf("reviews.tiers.%s: unknown model %q", name, mdl)
+			}
+		}
+		for i, rv := range t.Reviewers {
+			if strings.TrimSpace(rv.Model) == "" {
+				return fmt.Errorf("reviews.tiers.%s: reviewer %d has no model", name, i+1)
+			}
+			if _, ok := c.Models[rv.Model]; !ok {
+				return fmt.Errorf("reviews.tiers.%s: unknown model %q", name, rv.Model)
+			}
+			if rv.Thinking != "" && !validThinkingLevel(rv.Thinking) {
+				return fmt.Errorf("reviews.tiers.%s: reviewer %q: unknown thinking level %q", name, rv.Model, rv.Thinking)
 			}
 		}
 	}
@@ -810,17 +935,54 @@ func (r *Registry) ReviewTier(requested string) ReviewTierResolved {
 	t, ok := tiers[name]
 	if !ok { // default itself missing/misconfigured — last-resort safe tier
 		return ReviewTierResolved{
-			Name:     name,
-			Models:   append([]string(nil), r.cfg.Roles.Reviewers...),
-			Fallback: fallback,
+			Name:      name,
+			Reviewers: ReviewTier{Models: append([]string(nil), r.cfg.Roles.Reviewers...)}.resolveReviewers(),
+			Fallback:  fallback,
 		}
 	}
 	return ReviewTierResolved{
-		Name:       name,
-		SelfReview: isSelfReviewStrategy(t.Strategy),
-		Models:     append([]string(nil), t.Models...),
-		Fallback:   fallback,
+		Name:        name,
+		Description: t.Description,
+		SelfReview:  isSelfReviewStrategy(t.Strategy),
+		Reviewers:   t.resolveReviewers(),
+		Fallback:    fallback,
 	}
+}
+
+// ReviewTierInfo describes one available review tier for the coordinator's
+// spawn_reviewers tool description, so custom tiers are discoverable by the
+// model instead of hard-coded in a prompt (spec §13.1).
+type ReviewTierInfo struct {
+	Name        string
+	Description string
+	Default     bool
+	SelfReview  bool
+	Reviewers   []ResolvedReviewer
+}
+
+// ReviewTiers lists every effective review tier (built-ins overlaid with
+// configured tiers), sorted with the default first and the rest by name.
+func (r *Registry) ReviewTiers() []ReviewTierInfo {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	tiers, def := r.cfg.effectiveReviewTiers()
+	out := make([]ReviewTierInfo, 0, len(tiers))
+	for name, t := range tiers {
+		out = append(out, ReviewTierInfo{
+			Name:        name,
+			Description: t.Description,
+			Default:     name == def,
+			SelfReview:  isSelfReviewStrategy(t.Strategy),
+			Reviewers:   t.resolveReviewers(),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Default != out[j].Default {
+			return out[i].Default
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
 }
 
 // RoleThinking returns the configured per-role thinking level for a role

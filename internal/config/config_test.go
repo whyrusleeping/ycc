@@ -563,8 +563,8 @@ func TestReviewTierBuiltins(t *testing.T) {
 	if def.Name != "single-opus" || def.Fallback {
 		t.Fatalf("empty request = %+v, want single-opus no fallback", def)
 	}
-	if def.SelfReview || len(def.Models) != 1 || def.Models[0] != "claude" {
-		t.Fatalf("single-opus models = %+v, want [claude] agents", def)
+	if def.SelfReview || len(def.Reviewers) != 1 || def.Reviewers[0].Model != "claude" {
+		t.Fatalf("single-opus reviewers = %+v, want [claude] agents", def)
 	}
 	// simple built-in is coordinator self-review.
 	simple := reg.ReviewTier("simple")
@@ -602,7 +602,7 @@ func TestReviewTierConfiguredOverrides(t *testing.T) {
 		t.Fatalf("configured simple should be self-review: %+v", simple)
 	}
 	hp := reg.ReviewTier("high-powered")
-	if hp.SelfReview || len(hp.Models) != 2 || hp.Models[0] != "claude" || hp.Models[1] != "gpt" {
+	if hp.SelfReview || len(hp.Reviewers) != 2 || hp.Reviewers[0].Model != "claude" || hp.Reviewers[1].Model != "gpt" {
 		t.Fatalf("overridden high-powered = %+v, want [claude gpt] agents", hp)
 	}
 }
@@ -656,6 +656,93 @@ func TestReviewTierSaveLoadRoundTrip(t *testing.T) {
 	}
 }
 
+// A tier may task distinct reviewers — different models, or the same model twice
+// — each with its own focus prompt and label (spec §13.1).
+func TestReviewTierFocusedReviewers(t *testing.T) {
+	reg := NewRegistry(&Config{
+		Models: map[string]Model{
+			"claude": {Backend: "anthropic", Model: "claude-x"},
+			"gpt":    {Backend: "openai", Model: "gpt-x"},
+		},
+		Roles: Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"}},
+		Reviews: Reviews{
+			Default: "deep",
+			Tiers: map[string]ReviewTier{
+				"deep": {
+					Description: "risky changes",
+					Prompt:      "Be concrete.",
+					Reviewers: []Reviewer{
+						{Name: "readability", Model: "claude", Prompt: "Focus on conciseness.", Thinking: "low"},
+						{Name: "performance", Model: "gpt", Prompt: "Focus on performance."},
+						{Model: "claude"},
+						{Model: "claude"}, // duplicate label gets disambiguated
+					},
+				},
+			},
+		},
+	})
+	td := reg.ReviewTier("")
+	if td.Name != "deep" || td.SelfReview || td.Description != "risky changes" {
+		t.Fatalf("resolved deep tier = %+v", td)
+	}
+	want := []ResolvedReviewer{
+		{Label: "readability", Model: "claude", Prompt: "Be concrete.\n\nFocus on conciseness.", Thinking: "low"},
+		{Label: "performance", Model: "gpt", Prompt: "Be concrete.\n\nFocus on performance."},
+		{Label: "claude", Model: "claude", Prompt: "Be concrete."},
+		{Label: "claude#2", Model: "claude", Prompt: "Be concrete."},
+	}
+	if !reflect.DeepEqual(td.Reviewers, want) {
+		t.Fatalf("resolved reviewers = %+v, want %+v", td.Reviewers, want)
+	}
+	// ReviewTiers lists every effective tier, default first.
+	tiers := reg.ReviewTiers()
+	if len(tiers) == 0 || tiers[0].Name != "deep" || !tiers[0].Default {
+		t.Fatalf("ReviewTiers should list the default first: %+v", tiers)
+	}
+	byName := map[string]ReviewTierInfo{}
+	for _, ti := range tiers {
+		byName[ti.Name] = ti
+	}
+	if s, ok := byName["simple"]; !ok || !s.SelfReview || s.Description == "" {
+		t.Fatalf("built-in simple tier missing/incomplete: %+v", byName)
+	}
+}
+
+// The long-form reviewers list round-trips through Save/Load.
+func TestReviewTierReviewersRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ycc.toml")
+	c := &Config{
+		Models: map[string]Model{
+			"claude": {Backend: "anthropic", Model: "claude-x"},
+			"gpt":    {Backend: "openai", Model: "gpt-x"},
+		},
+		Roles: Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"}},
+		Reviews: Reviews{
+			Default: "deep",
+			Tiers: map[string]ReviewTier{
+				"deep": {
+					Description: "risky changes",
+					Prompt:      "Be concrete.",
+					Reviewers: []Reviewer{
+						{Name: "readability", Model: "claude", Prompt: "Focus on conciseness."},
+						{Name: "performance", Model: "gpt", Prompt: "Focus on performance.", Thinking: "max"},
+					},
+				},
+			},
+		},
+	}
+	if err := Save(path, c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !reflect.DeepEqual(loaded.Reviews.Tiers["deep"], c.Reviews.Tiers["deep"]) {
+		t.Fatalf("round-trip deep tier = %+v, want %+v", loaded.Reviews.Tiers["deep"], c.Reviews.Tiers["deep"])
+	}
+}
+
 func TestReviewTierValidation(t *testing.T) {
 	base := func() *Config {
 		return &Config{
@@ -680,6 +767,30 @@ func TestReviewTierValidation(t *testing.T) {
 	c.Reviews.Default = "ghost-tier"
 	if err := c.validate(); err == nil || !strings.Contains(err.Error(), "unknown tier") {
 		t.Fatalf("expected unknown tier error, got %v", err)
+	}
+	// A reviewer entry referencing an unknown model.
+	c = base()
+	c.Reviews.Tiers = map[string]ReviewTier{"x": {Reviewers: []Reviewer{{Model: "ghost"}}}}
+	if err := c.validate(); err == nil || !strings.Contains(err.Error(), "unknown model") {
+		t.Fatalf("expected unknown model error, got %v", err)
+	}
+	// A reviewer entry with no model at all.
+	c = base()
+	c.Reviews.Tiers = map[string]ReviewTier{"x": {Reviewers: []Reviewer{{Prompt: "focus"}}}}
+	if err := c.validate(); err == nil || !strings.Contains(err.Error(), "no model") {
+		t.Fatalf("expected missing-model error, got %v", err)
+	}
+	// A reviewer with an invalid thinking level.
+	c = base()
+	c.Reviews.Tiers = map[string]ReviewTier{"x": {Reviewers: []Reviewer{{Model: "claude", Thinking: "turbo"}}}}
+	if err := c.validate(); err == nil || !strings.Contains(err.Error(), "unknown thinking level") {
+		t.Fatalf("expected thinking-level error, got %v", err)
+	}
+	// models and reviewers are mutually exclusive.
+	c = base()
+	c.Reviews.Tiers = map[string]ReviewTier{"x": {Models: []string{"claude"}, Reviewers: []Reviewer{{Model: "claude"}}}}
+	if err := c.validate(); err == nil || !strings.Contains(err.Error(), "not both") {
+		t.Fatalf("expected models/reviewers conflict error, got %v", err)
 	}
 	// A self-review tier with stray models is allowed (models ignored).
 	c = base()
@@ -987,4 +1098,72 @@ func TestWorkImplementationValidation(t *testing.T) {
 			t.Fatalf("validate work.implementation=%q failed: %v", v, err)
 		}
 	}
+}
+
+// The [reviews] TOML shape documented in spec §13.1 parses and resolves as
+// written: named tiers, a shorthand models tier, and a long-form tier whose
+// reviewers each carry their own model, label, focus prompt, and thinking level.
+func TestReviewTierSpecTOMLShape(t *testing.T) {
+	toml := `
+[models.claude]
+backend = "anthropic"
+model = "claude-x"
+[models.gpt]
+backend = "openai"
+model = "gpt-x"
+
+[roles]
+coordinator = "claude"
+implementer = "claude"
+reviewers = ["claude"]
+
+[reviews]
+default = "standard"
+
+[reviews.tiers.standard]
+models = ["claude"]
+
+[reviews.tiers.deep]
+description = "large, risky, or performance-sensitive changes"
+prompt = "Cite file:line for every finding."
+
+  [[reviews.tiers.deep.reviewers]]
+  name   = "readability"
+  model  = "claude"
+  prompt = "Focus on conciseness."
+  thinking = "high"
+
+  [[reviews.tiers.deep.reviewers]]
+  name   = "performance"
+  model  = "gpt"
+  prompt = "Focus on performance."
+
+[reviews.tiers.simple]
+strategy = "coordinator"
+`
+	c, err := loadSpecTOML(t, toml)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	reg := NewRegistry(c)
+	td := reg.ReviewTier("deep")
+	t.Logf("%+v", td)
+	if len(td.Reviewers) != 2 || td.Reviewers[1].Model != "gpt" {
+		t.Fatalf("bad: %+v", td)
+	}
+	if td.Reviewers[0].Prompt != "Cite file:line for every finding.\n\nFocus on conciseness." {
+		t.Fatalf("prompt: %q", td.Reviewers[0].Prompt)
+	}
+	if reg.ReviewTier("").Name != "standard" {
+		t.Fatalf("default: %+v", reg.ReviewTier(""))
+	}
+}
+
+func loadSpecTOML(t *testing.T, s string) (*Config, error) {
+	t.Helper()
+	p := t.TempDir() + "/ycc.toml"
+	if err := os.WriteFile(p, []byte(s), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return Load(p)
 }

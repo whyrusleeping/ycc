@@ -35,16 +35,33 @@ const implementerMinTok = 16384
 
 // AgentSpec describes how to build a subagent's backend.
 type AgentSpec struct {
-	Name      string // logical name, used as the actor label "reviewer:<name>"
+	Name      string // logical model name (used for usage attribution / pricing)
 	NewClient func() engine.Turner
 	Model     string
 	Backend   string // logical backend family (e.g. "anthropic"); labels usage events
+	// Label is the display/actor label for this agent ("reviewer:<label>"). It
+	// defaults to Name; a review tier that tasks several reviewers with distinct
+	// focuses (possibly on the same model) gives each its own label so the
+	// transcript, work log, and usage rows stay distinguishable (spec §13.1).
+	Label string
+	// Focus is extra role guidance appended to the agent's system prompt — the
+	// per-reviewer review focus configured on a tier ("concentrate on
+	// performance characteristics", …). Empty means the stock role prompt.
+	Focus string
 	// Thinking carries the per-model reasoning settings (Anthropic extended
 	// thinking / effort) so spawned subagents reason like the coordinator does
 	// (spec §7, §13). Zero value means reasoning is off for this model.
 	Thinking        string
 	Effort          string
 	ThinkingDisplay string
+}
+
+// label returns the agent's display/actor label, defaulting to its model name.
+func (s AgentSpec) label() string {
+	if strings.TrimSpace(s.Label) != "" {
+		return s.Label
+	}
+	return s.Name
 }
 
 // Question is one prompt in a batch ask_user call, with its own optional set of
@@ -79,6 +96,17 @@ type ReviewPlan struct {
 	Fallback   bool        // requested tier was unknown; degraded to default
 }
 
+// ReviewTierInfo describes one available review tier so the spawn_reviewers tool
+// description can enumerate the tiers this project actually has — including
+// custom ones with their own reviewer line-up and focuses (spec §13.1).
+type ReviewTierInfo struct {
+	Name        string
+	Description string   // "when to pick me" guidance
+	Default     bool     // this is the configured default tier
+	SelfReview  bool     // coordinator self-reviews; no reviewer agent
+	Reviewers   []string // human-readable reviewer line-up ("readability (claude)", …)
+}
+
 // Deps is everything the coordinator tools need to orchestrate a work session.
 // It also holds the live subagent handles so the revise loop can reuse their
 // conversation contexts across rounds.
@@ -100,6 +128,10 @@ type Deps struct {
 	// coordinator self-reviews (spec §13). Nil-safe: when unset, spawn_reviewers
 	// falls back to the configured reviewer fan-out (current default behaviour).
 	ReviewTier func(name string) ReviewPlan
+	// ReviewTiers lists the review tiers available in this project so the
+	// spawn_reviewers tool description can name them (custom tiers included).
+	// Nil-safe: when unset the description falls back to the built-in blurb.
+	ReviewTiers func() []ReviewTierInfo
 
 	// WriteRoots are configured extra writable roots outside the workspace,
 	// passed through to tool workspaces so Write/Edit can target them (e.g.
@@ -154,8 +186,23 @@ func (d *Deps) emitFocus(taskID string) {
 }
 
 type reviewerHandle struct {
-	name string
-	loop *engine.Loop
+	name  string // display label (tier reviewer name, or the model name)
+	model string // logical model backing this reviewer
+	loop  *engine.Loop
+}
+
+// reviewerLabels renders a reviewer line-up for the work log / tool description,
+// naming the backing model when the label differs from it.
+func reviewerLabels(specs []AgentSpec) []string {
+	out := make([]string, 0, len(specs))
+	for _, s := range specs {
+		if s.label() != s.Name {
+			out = append(out, s.label()+" ("+s.Name+")")
+			continue
+		}
+		out = append(out, s.Name)
+	}
+	return out
 }
 
 // SetImplementer swaps the implementer spec used by future spawn_implementer
@@ -545,21 +592,65 @@ func sendToImplementer(d *Deps) *gollama.Tool {
 	}
 }
 
+// reviewTierBlurb describes the review tiers available to the coordinator. When
+// the session supplies the project's effective tiers (Deps.ReviewTiers) it names
+// each one with its guidance and reviewer line-up, so a project that configures
+// custom tiers (e.g. a "deep" tier with a readability reviewer and a performance
+// reviewer) has them discoverable in the tool schema rather than only in config.
+func reviewTierBlurb(d *Deps) string {
+	var tiers []ReviewTierInfo
+	if d.ReviewTiers != nil {
+		tiers = d.ReviewTiers()
+	}
+	if len(tiers) == 0 {
+		return "Match review intensity to the change via the optional review_tier: 'simple' (you, the " +
+			"coordinator, review the change yourself — NO reviewer agent is spawned; only for tiny, low-risk " +
+			"changes), 'single-opus' (one reviewer; the sensible default for ordinary changes), or " +
+			"'high-powered' (parallel multi-model review when configured with multiple models — for large, " +
+			"risky, security-sensitive, or hard-to-reverse changes). Omit review_tier to use the configured default."
+	}
+	var b strings.Builder
+	b.WriteString("Match review intensity to the change via the optional review_tier. Available tiers:")
+	for _, t := range tiers {
+		b.WriteString("\n- '" + t.Name + "'")
+		if t.Default {
+			b.WriteString(" (default)")
+		}
+		if t.Description != "" {
+			b.WriteString(": " + t.Description)
+		}
+		switch {
+		case t.SelfReview:
+			b.WriteString(" [no reviewer agent is spawned — you review the change yourself]")
+		case len(t.Reviewers) > 0:
+			b.WriteString(" [reviewers: " + strings.Join(t.Reviewers, ", ") + "]")
+		}
+	}
+	b.WriteString("\nOmit review_tier to use the default tier.")
+	return b.String()
+}
+
 func spawnReviewers(d *Deps) *gollama.Tool {
+	tierNames := "e.g. simple, single-opus, high-powered"
+	if d.ReviewTiers != nil {
+		var names []string
+		for _, t := range d.ReviewTiers() {
+			names = append(names, t.Name)
+		}
+		if len(names) > 0 {
+			tierNames = "one of: " + strings.Join(names, ", ")
+		}
+	}
 	return &gollama.Tool{
 		Name: "spawn_reviewers",
-		Description: "Get independent reviews of the implementer's changes, running concurrently. Match review " +
-			"intensity to the change via the optional review_tier: 'simple' (you, the coordinator, review the change " +
-			"yourself — NO reviewer agent is spawned; only for tiny, low-risk changes), 'single-opus' (one reviewer; " +
-			"the sensible default for ordinary changes), or 'high-powered' (parallel multi-model review when " +
-			"configured with multiple models — for large, risky, security-sensitive, or hard-to-reverse changes). " +
-			"Omit review_tier to use the configured default. " +
+		Description: "Get independent reviews of the implementer's changes, running concurrently. " +
+			reviewTierBlurb(d) + " " +
 			"Returns each verdict (accept/revise) and findings; the chosen tier is recorded in the work log. " +
 			"Pass background:true to run the review set as a background job (returns a job_id immediately; verdicts " +
 			"arrive via wait or automatically). Reviewers are read-only and run freely in parallel with other work.",
 		Params: tools.Obj(map[string]any{
 			"task_id":     tools.StrProp("task id"),
-			"review_tier": tools.StrProp("review tier to use (e.g. simple, single-opus, high-powered); default is the configured default"),
+			"review_tier": tools.StrProp("review tier to use (" + tierNames + "); default is the configured default"),
 			"background":  tools.BoolProp("run the reviewers as a background job: return a job_id immediately instead of blocking; verdicts arrive automatically or via wait. Reviewers are read-only so this is always allowed"),
 		}, "task_id"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
@@ -576,20 +667,25 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 				plan = ReviewPlan{Tier: "default", Requested: tier, Specs: d.reviewerSpecs()}
 			}
 
-			// Surface the tier selection in events and the work log (always).
+			// Surface the tier selection in events and the work log (always). A
+			// reviewer's label may differ from its model (a tier can task two
+			// focuses at the same model), so both are recorded.
 			revNames := make([]string, 0, len(plan.Specs))
+			revModels := make([]string, 0, len(plan.Specs))
 			for _, s := range plan.Specs {
-				revNames = append(revNames, s.Name)
+				revNames = append(revNames, s.label())
+				revModels = append(revModels, s.Name)
 			}
 			d.Emitter.Emit(event.ReviewTierSelected, map[string]any{
 				"task": id, "tier": plan.Tier, "requested": plan.Requested,
-				"self_review": plan.SelfReview, "fallback": plan.Fallback, "reviewers": revNames,
+				"self_review": plan.SelfReview, "fallback": plan.Fallback,
+				"reviewers": revNames, "models": revModels,
 			})
 			logLine := fmt.Sprintf("review tier: %s", plan.Tier)
 			if plan.SelfReview {
 				logLine += " (coordinator self-review)"
 			} else if len(revNames) > 0 {
-				logLine += " — reviewers: " + strings.Join(revNames, ", ")
+				logLine += " — reviewers: " + strings.Join(reviewerLabels(plan.Specs), ", ")
 			}
 			if plan.Fallback && plan.Requested != "" {
 				logLine += fmt.Sprintf(" [requested %q unknown; used default]", plan.Requested)
@@ -600,9 +696,10 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 				d.mu.Lock()
 				d.reviewers = nil
 				d.mu.Unlock()
-				return tools.OkResult("Review tier 'simple': no reviewer agent was spawned — you (the coordinator) " +
-					"must review this change yourself. Inspect the diff (run 'git diff'), check it against the task's " +
-					"acceptance criteria, and decide whether to commit or send revisions to the implementer."), nil
+				return tools.OkResult(fmt.Sprintf("Review tier %q is a coordinator self-review: no reviewer agent was "+
+					"spawned — you (the coordinator) must review this change yourself. Inspect the diff (run 'git diff'), "+
+					"check it against the task's acceptance criteria, and decide whether to commit or send revisions to "+
+					"the implementer.", plan.Tier)), nil
 			}
 
 			specs := plan.Specs
@@ -622,9 +719,9 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 			for _, spec := range specs {
 				reg := tools.New()
 				reg.Add(tools.Reviewer(&tools.Workspace{Root: d.Workspace})...)
-				loop := d.newLoop(spec, inspectSys(reviewerSystem, d.Workspace), reg, "reviewer:"+spec.Name)
-				loop.Seed(reviewerPrompt(t))
-				d.reviewers = append(d.reviewers, &reviewerHandle{name: spec.Name, loop: loop})
+				loop := d.newLoop(spec, inspectSys(reviewerSystemFocused(spec.Focus), d.Workspace), reg, "reviewer:"+spec.label())
+				loop.Seed(reviewerPrompt(t, spec.Focus))
+				d.reviewers = append(d.reviewers, &reviewerHandle{name: spec.label(), model: spec.Name, loop: loop})
 			}
 			handles := d.reviewers
 			d.reviewJob = nil // cleared for a foreground run; set below for background
@@ -820,7 +917,7 @@ func runReviewers(ctx context.Context, d *Deps, handles []*reviewerHandle, taskI
 		wg.Add(1)
 		go func(i int, h *reviewerHandle) {
 			defer wg.Done()
-			d.Emitter.Emit(event.SubagentSpawned, map[string]any{"role": "reviewer", "model": h.name})
+			d.Emitter.Emit(event.SubagentSpawned, map[string]any{"role": "reviewer", "model": h.name, "logical_model": h.model})
 			res, err := h.loop.Run(ctx)
 			rv := review{Verdict: "unknown"}
 			if err != nil {
@@ -829,15 +926,16 @@ func runReviewers(ctx context.Context, d *Deps, handles []*reviewerHandle, taskI
 				rv = parseReview(res.Report)
 			}
 			d.Emitter.Emit(event.ReviewSubmitted, map[string]any{
-				"model": h.name, "verdict": rv.Verdict, "summary": rv.Summary, "findings": len(rv.Findings),
+				"model": h.name, "logical_model": h.model,
+				"verdict": rv.Verdict, "summary": rv.Summary, "findings": len(rv.Findings),
 			})
-			d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "reviewer", "model": h.name})
-			results[i] = reviewResult{name: h.name, rv: rv}
+			d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "reviewer", "model": h.name, "logical_model": h.model})
+			results[i] = reviewResult{name: h.name, model: h.model, rv: rv}
 		}(i, h)
 	}
 	wg.Wait()
 	for _, r := range results {
-		d.Docs.AppendWorkLog(taskID, fmt.Sprintf("review (%s): %s — %s", r.name, r.rv.Verdict, oneLine(r.rv.Summary)))
+		d.Docs.AppendWorkLog(taskID, fmt.Sprintf("review (%s): %s — %s", r.label(), r.rv.Verdict, oneLine(r.rv.Summary)))
 	}
 	return results
 }
@@ -915,8 +1013,18 @@ type review struct {
 }
 
 type reviewResult struct {
-	name string
-	rv   review
+	name  string // display label (tier reviewer name, or the model name)
+	model string // logical model that produced the review
+	rv    review
+}
+
+// label names the reviewer for humans, disambiguating a focus label from the
+// model behind it ("performance/gpt") when a tier gave the reviewer its own name.
+func (r reviewResult) label() string {
+	if r.model != "" && r.model != r.name {
+		return r.name + "/" + r.model
+	}
+	return r.name
 }
 
 // parseReview decodes a submit_review payload, tolerating a reviewer that yielded
@@ -939,7 +1047,7 @@ func aggregateReviews(results []reviewResult) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "REVIEW SUMMARY: %d/%d reviewers accept\n\n", accepts, len(results))
 	for _, r := range results {
-		fmt.Fprintf(&b, "--- %s: %s ---\n%s\n", r.name, r.rv.Verdict, r.rv.Summary)
+		fmt.Fprintf(&b, "--- %s: %s ---\n%s\n", r.label(), r.rv.Verdict, r.rv.Summary)
 		for _, f := range r.rv.Findings {
 			fmt.Fprintf(&b, "  - [%s] %s\n", f.Severity, f.Message)
 		}
@@ -981,7 +1089,7 @@ func aggregateReviewsView(results []reviewResult) *tools.ResultView {
 		default:
 			kind = "warn"
 		}
-		node := tools.ViewNode{Label: r.name, Detail: r.rv.Verdict, Kind: kind}
+		node := tools.ViewNode{Label: r.label(), Detail: r.rv.Verdict, Kind: kind}
 		if s := strings.TrimSpace(r.rv.Summary); s != "" {
 			node.Children = append(node.Children, tools.ViewNode{Label: oneLine(s), Kind: "muted"})
 		}

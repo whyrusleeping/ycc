@@ -274,3 +274,51 @@ func TestThinkingPerRoleResolution(t *testing.T) {
 		t.Fatalf("coordinator unchanged = %+v, want xhigh", th)
 	}
 }
+
+// A configured review tier resolves to reviewer agent specs carrying their tier
+// label, focus prompt, and per-reviewer thinking level (spec §13.1) — including
+// two focuses on the SAME logical model, which get distinct labels.
+func TestResolveReviewTierFocusedReviewers(t *testing.T) {
+	cfg := &config.Config{
+		Models: map[string]config.Model{
+			"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"},
+			"b": {Backend: "ollama", BaseURL: "http://localhost:2", Model: "model-b"},
+		},
+		Roles: config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
+		Reviews: config.Reviews{
+			Default: "deep",
+			Tiers: map[string]config.ReviewTier{
+				"deep": {Reviewers: []config.Reviewer{
+					{Name: "readability", Model: "a", Prompt: "Focus on readability.", Thinking: "low"},
+					{Name: "performance", Model: "b", Prompt: "Focus on performance."},
+				}},
+			},
+		},
+	}
+	s := &Session{reg: config.NewRegistry(cfg), reviewers: []string{"a"}, thinkLevels: map[string]string{}}
+
+	plan := s.resolveReviewTier("")
+	if plan.Tier != "deep" || plan.SelfReview || len(plan.Specs) != 2 {
+		t.Fatalf("resolved plan = %+v, want the 2-reviewer deep tier", plan)
+	}
+	r0, r1 := plan.Specs[0], plan.Specs[1]
+	if r0.Label != "readability" || r0.Name != "a" || r0.Focus != "Focus on readability." || r0.Effort != "low" {
+		t.Fatalf("first reviewer = %+v", r0)
+	}
+	if r1.Label != "performance" || r1.Name != "b" || r1.Focus != "Focus on performance." {
+		t.Fatalf("second reviewer = %+v", r1)
+	}
+	// An unknown tier degrades to the default rather than failing.
+	if got := s.resolveReviewTier("nope"); !got.Fallback || got.Tier != "deep" {
+		t.Fatalf("unknown tier = %+v, want fallback to deep", got)
+	}
+	// The tier list handed to the tool description names the custom tier first
+	// (it is the default) with its reviewer line-up.
+	tiers := s.reviewTiers()
+	if len(tiers) == 0 || tiers[0].Name != "deep" || !tiers[0].Default {
+		t.Fatalf("reviewTiers = %+v, want deep first", tiers)
+	}
+	if len(tiers[0].Reviewers) != 2 || tiers[0].Reviewers[0] != "readability (a)" {
+		t.Fatalf("deep tier reviewer line-up = %+v", tiers[0].Reviewers)
+	}
+}

@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -368,5 +369,98 @@ func TestSpawnReviewersTierWithSpecs(t *testing.T) {
 	}
 	if !workLogContains(t, store, "0001", "review tier: single-opus — reviewers: rev") {
 		t.Fatalf("work log missing tier-with-reviewers line")
+	}
+}
+
+// A review tier may task several reviewers with distinct focuses — including two
+// slots on the SAME logical model under different labels (spec §13.1). Each
+// reviewer's system prompt carries its own focus, the actor labels stay distinct,
+// and the work log names both the label and the model behind it.
+func TestSpawnReviewersFocusedTier(t *testing.T) {
+	ws := t.TempDir()
+	repo, err := git.Open(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := docs.NewStore(ws)
+	if _, err := store.Create("a task", "## Work log\n", 1, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	accept := func() *scripted {
+		return &scripted{resp: []*gollama.ResponseMessageGenerate{
+			call("submit_review", `{"verdict":"accept","summary":"ok"}`),
+		}}
+	}
+	readable, fast := accept(), accept()
+	rec := &captureRec{}
+	d := &Deps{
+		Workspace: ws,
+		Docs:      store,
+		Repo:      repo,
+		Emitter:   event.NewEmitter(rec, "coordinator"),
+		Asker:     noopAsker{},
+		ReviewTier: func(name string) ReviewPlan {
+			return ReviewPlan{Tier: "deep", Requested: name, Specs: []AgentSpec{
+				{Name: "claude", Label: "readability", Focus: "Focus on conciseness and code readability.",
+					Model: "m", NewClient: func() engine.Turner { return readable }},
+				{Name: "claude", Label: "performance", Focus: "Focus on performance characteristics.",
+					Model: "m", NewClient: func() engine.Turner { return fast }},
+			}}
+		},
+	}
+	res, err := spawnReviewers(d).Call(context.Background(), map[string]any{"task_id": "0001", "review_tier": "deep"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Content, "2/2 reviewers accept") {
+		t.Fatalf("expected both reviewers to accept:\n%s", res.Content)
+	}
+	// Each reviewer's system prompt carries only its own focus.
+	if !strings.Contains(readable.system, "conciseness and code readability") || strings.Contains(readable.system, "performance characteristics") {
+		t.Fatalf("readability reviewer got the wrong focus:\n%s", readable.system)
+	}
+	if !strings.Contains(fast.system, "performance characteristics") {
+		t.Fatalf("performance reviewer missing its focus:\n%s", fast.system)
+	}
+	// Distinct actor labels, both attributed to the same logical model.
+	actors := map[string]bool{}
+	for _, ev := range rec.events {
+		actors[ev.Actor] = true
+	}
+	for _, want := range []string{"reviewer:readability", "reviewer:performance"} {
+		if !actors[want] {
+			t.Fatalf("missing actor %q; got %v", want, actors)
+		}
+	}
+	if !workLogContains(t, store, "0001", "review tier: deep — reviewers: readability (claude), performance (claude)") {
+		task, _ := store.Get("0001")
+		t.Fatalf("work log missing focused reviewer line:\n%s", task.Body)
+	}
+	if !workLogContains(t, store, "0001", "review (readability/claude): accept") {
+		t.Fatalf("work log missing per-reviewer verdict line")
+	}
+}
+
+// The spawn_reviewers tool description enumerates the project's actual tiers
+// (including custom ones and their reviewer line-up) when the session supplies
+// them, so configured tiers are discoverable by the model.
+func TestSpawnReviewersDescriptionListsTiers(t *testing.T) {
+	d := &Deps{
+		ReviewTiers: func() []ReviewTierInfo {
+			return []ReviewTierInfo{
+				{Name: "standard", Description: "ordinary changes", Default: true, Reviewers: []string{"claude"}},
+				{Name: "deep", Description: "risky changes", Reviewers: []string{"readability (claude)", "performance (gpt)"}},
+				{Name: "simple", Description: "tiny changes", SelfReview: true},
+			}
+		},
+	}
+	desc := spawnReviewers(d).Description
+	for _, want := range []string{"'standard' (default)", "risky changes", "readability (claude)", "no reviewer agent is spawned"} {
+		if !strings.Contains(desc, want) {
+			t.Fatalf("tool description missing %q:\n%s", want, desc)
+		}
+	}
+	if params := spawnReviewers(d).Params; !strings.Contains(fmt.Sprint(params), "one of: standard, deep, simple") {
+		t.Fatalf("review_tier param should name the available tiers: %v", params)
 	}
 }

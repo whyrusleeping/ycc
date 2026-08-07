@@ -849,9 +849,11 @@ func (s *Session) agentSpec(role, name string) (orchestrator.AgentSpec, error) {
 }
 
 // resolveReviewTier turns a requested tier name into a concrete ReviewPlan,
-// resolving the configured tier to reviewer agent specs (spec §13). Unknown
-// models are skipped (graceful degradation); a tier that resolves to no agents
-// falls back to the session's current reviewer assignment, and finally to
+// resolving the configured tier to reviewer agent specs (spec §13.1). Each
+// reviewer carries its tier label and its extra focus prompt, so one tier can
+// task several models (or the same model twice) with different review lenses.
+// Unknown models are skipped (graceful degradation); a tier that resolves to no
+// agents falls back to the session's current reviewer assignment, and finally to
 // coordinator self-review if even that is empty.
 func (s *Session) resolveReviewTier(requested string) orchestrator.ReviewPlan {
 	td := s.reg.ReviewTier(requested)
@@ -860,25 +862,20 @@ func (s *Session) resolveReviewTier(requested string) orchestrator.ReviewPlan {
 		plan.SelfReview = true
 		return plan
 	}
-	models := td.Models
-	if len(models) == 0 {
-		s.mu.Lock()
-		models = append([]string(nil), s.reviewers...)
-		s.mu.Unlock()
+	reviewers := td.Reviewers
+	if len(reviewers) == 0 {
+		reviewers = s.currentReviewers()
 	}
-	for _, name := range models {
-		spec, err := s.agentSpec(roleReviewers, name)
+	for _, rv := range reviewers {
+		spec, err := s.reviewerSpec(rv)
 		if err != nil {
 			continue // skip unbuildable/unknown model — degrade gracefully
 		}
 		plan.Specs = append(plan.Specs, spec)
 	}
 	if len(plan.Specs) == 0 {
-		s.mu.Lock()
-		cur := append([]string(nil), s.reviewers...)
-		s.mu.Unlock()
-		for _, name := range cur {
-			if spec, err := s.agentSpec(roleReviewers, name); err == nil {
+		for _, rv := range s.currentReviewers() {
+			if spec, err := s.reviewerSpec(rv); err == nil {
 				plan.Specs = append(plan.Specs, spec)
 			}
 		}
@@ -887,6 +884,62 @@ func (s *Session) resolveReviewTier(requested string) orchestrator.ReviewPlan {
 		}
 	}
 	return plan
+}
+
+// currentReviewers is the session's live reviewer role assignment expressed as
+// plain (unfocused) reviewer slots — the fallback whenever a tier names no
+// reviewers of its own.
+func (s *Session) currentReviewers() []config.ResolvedReviewer {
+	s.mu.Lock()
+	names := append([]string(nil), s.reviewers...)
+	s.mu.Unlock()
+	out := make([]config.ResolvedReviewer, 0, len(names))
+	for _, n := range names {
+		out = append(out, config.ResolvedReviewer{Label: n, Model: n})
+	}
+	return out
+}
+
+// reviewerSpec builds the agent spec for one resolved reviewer slot: its logical
+// model's backend, its tier label, its focus prompt, and its reasoning level
+// (a per-reviewer `thinking` overrides the reviewers-role resolution).
+func (s *Session) reviewerSpec(rv config.ResolvedReviewer) (orchestrator.AgentSpec, error) {
+	spec, err := s.agentSpec(roleReviewers, rv.Model)
+	if err != nil {
+		return orchestrator.AgentSpec{}, err
+	}
+	spec.Label = rv.Label
+	spec.Focus = rv.Prompt
+	if rv.Thinking != "" {
+		if th, ok := thinkingForLevel(rv.Thinking); ok {
+			spec.Thinking, spec.Effort, spec.ThinkingDisplay = th.Thinking, th.Effort, th.ThinkingDisplay
+		}
+	}
+	return spec, nil
+}
+
+// reviewTiers exposes the project's effective review tiers to the coordinator's
+// spawn_reviewers tool description so custom tiers are discoverable by the model.
+func (s *Session) reviewTiers() []orchestrator.ReviewTierInfo {
+	tiers := s.reg.ReviewTiers()
+	out := make([]orchestrator.ReviewTierInfo, 0, len(tiers))
+	for _, t := range tiers {
+		info := orchestrator.ReviewTierInfo{
+			Name:        t.Name,
+			Description: t.Description,
+			Default:     t.Default,
+			SelfReview:  t.SelfReview,
+		}
+		for _, rv := range t.Reviewers {
+			if rv.Label != rv.Model {
+				info.Reviewers = append(info.Reviewers, rv.Label+" ("+rv.Model+")")
+				continue
+			}
+			info.Reviewers = append(info.Reviewers, rv.Model)
+		}
+		out = append(out, info)
+	}
+	return out
 }
 
 func (s *Session) run() {
@@ -1623,9 +1676,13 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 	}
 
 	// Wire the review-tier resolver so spawn_reviewers can pick a tier per change
-	// (spec §13). It resolves the configured tier to concrete reviewer specs.
+	// (spec §13.1). It resolves the configured tier to concrete reviewer specs,
+	// and ReviewTiers lets the tool description enumerate the available tiers.
 	deps.ReviewTier = func(name string) orchestrator.ReviewPlan {
 		return s.resolveReviewTier(name)
+	}
+	deps.ReviewTiers = func() []orchestrator.ReviewTierInfo {
+		return s.reviewTiers()
 	}
 
 	// Attach the daemon-side notification watcher when a notifier is configured

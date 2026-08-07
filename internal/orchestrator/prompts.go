@@ -99,15 +99,14 @@ stop early whenever the situation calls for it:
      Repeat, but cap at ~3 rounds; if it still isn't accepted, update_task "in_review",
      summarize what remains, and finish.
 
-REVIEWS — match intensity to the change via spawn_reviewers' optional review_tier:
-- 'simple': you review the change YOURSELF; no reviewer agent is spawned. Only for tiny,
-  low-risk changes — and the call only RECORDS your decision to self-review, it does not
-  review anything for you. You must then actually do the review: inspect the diff, check it
-  against the task's acceptance criteria, and only then commit or send revisions.
-- 'single-opus': one reviewer — the sensible default for ordinary changes.
-- 'high-powered': multiple reviewers in parallel (when so configured) — for large, risky,
-  security-sensitive, or hard-to-reverse changes.
-Omit review_tier to use the configured default. The chosen tier is recorded in the work log.
+REVIEWS — match intensity to the change via spawn_reviewers' optional review_tier. Tiers are
+PROJECT-CONFIGURABLE: the spawn_reviewers tool description lists the tiers this project has,
+what each is for, and which reviewers (and review focuses) each one runs. Read that list and
+pick the tier whose intensity and focus fit the change; omit review_tier to use the default.
+A self-review tier (no reviewer agent) only RECORDS your decision to self-review — it does not
+review anything for you. You must then actually do the review: inspect the diff, check it
+against the task's acceptance criteria, and only then commit or send revisions.
+The chosen tier is recorded in the work log.
 
 BLOCKED TASKS: if a task can't responsibly be worked without the user — an unresolved design
 decision, ambiguous or conflicting requirements, or a choice that's hard to reverse — set it
@@ -207,15 +206,14 @@ stop early whenever the situation calls for it:
      (reviewers keep their context). Repeat, but cap at ~3 rounds; if it still isn't accepted,
      update_task "in_review", summarize what remains, and finish.
 
-REVIEWS — match intensity to the change via spawn_reviewers' optional review_tier:
-- 'simple': you review the change YOURSELF; no reviewer agent is spawned. Only for tiny,
-  low-risk changes — and the call only RECORDS your decision to self-review, it does not
-  review anything for you. You must then actually do the review: inspect the diff, check it
-  against the task's acceptance criteria, and only then commit or send revisions.
-- 'single-opus': one reviewer — the sensible default for ordinary changes.
-- 'high-powered': multiple reviewers in parallel (when so configured) — for large, risky,
-  security-sensitive, or hard-to-reverse changes.
-Omit review_tier to use the configured default. The chosen tier is recorded in the work log.
+REVIEWS — match intensity to the change via spawn_reviewers' optional review_tier. Tiers are
+PROJECT-CONFIGURABLE: the spawn_reviewers tool description lists the tiers this project has,
+what each is for, and which reviewers (and review focuses) each one runs. Read that list and
+pick the tier whose intensity and focus fit the change; omit review_tier to use the default.
+A self-review tier (no reviewer agent) only RECORDS your decision to self-review — it does not
+review anything for you. You must then actually do the review: inspect the diff, check it
+against the task's acceptance criteria, and only then commit or send revisions.
+The chosen tier is recorded in the work log.
 
 BLOCKED TASKS: if a task can't responsibly be worked without the user — an unresolved design
 decision, ambiguous or conflicting requirements, or a choice that's hard to reverse — set it
@@ -309,6 +307,28 @@ submit_review again with your updated verdict.`
 const reReviewPrompt = `The implementer has revised the changes to address the previous findings. Re-inspect the
 workspace now (run 'git diff' again to see the current state) and submit_review again with
 your updated verdict.`
+
+// reviewerSystemFocused appends a review tier's per-reviewer focus (spec §13.1)
+// to the stock reviewer system prompt: a tier can task one reviewer with
+// conciseness/readability and another with performance characteristics, and each
+// gets its own lens. The focus SHARPENS the review; it never narrows the duty to
+// report a blocker found outside it, so a focused fan-out cannot collectively
+// miss a serious defect nobody was assigned to look for.
+func reviewerSystemFocused(focus string) string {
+	focus = strings.TrimSpace(focus)
+	if focus == "" {
+		return reviewerSystem
+	}
+	return reviewerSystem + `
+
+YOUR REVIEW FOCUS (this assignment, in addition to the duties above):
+` + focus + `
+
+Lead with this focus: it is what you were spawned for, and the other reviewers in this round
+cover other angles. Weigh its findings first and be concrete about them. Still report any
+blocker or major defect you notice outside your focus — correctness always outranks it — and
+still judge the change against the task's acceptance criteria before your specialty.`
+}
 
 const chatModeSystem = `You are an open-ended coding assistant. Help the user with whatever they ask: answer
 questions, explore and explain the codebase, make changes, run commands, and iterate
@@ -537,8 +557,8 @@ with a report of what you changed:
 %s`, instructions)
 }
 
-func reviewerPrompt(t *docs.Task) string {
-	return fmt.Sprintf(`Review the changes just made for this task.
+func reviewerPrompt(t *docs.Task, focus string) string {
+	p := fmt.Sprintf(`Review the changes just made for this task.
 
 Task %s: %s
 
@@ -546,4 +566,8 @@ Task %s: %s
 
 Inspect the working tree (start with 'git diff') and decide whether the change satisfies
 the task. Call submit_review when done.`, t.ID, t.Title, t.Body)
+	if f := strings.TrimSpace(focus); f != "" {
+		p += "\n\nYour assigned focus for this review:\n" + f
+	}
+	return p
 }

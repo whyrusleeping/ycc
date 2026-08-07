@@ -1135,14 +1135,34 @@ run accumulate more conversation history, so until context budgeting lands a ver
 ### 13.1 Review tiers
 
 Review intensity is **tiered** and the work coordinator picks a tier per change based on its
-size/risk, rather than every change getting the same fixed review. Tiers are named and
-configurable under an optional `[reviews]` table:
+size/risk, rather than every change getting the same fixed review. Tiers are named,
+fully user-defined, and configurable under an optional `[reviews]` table. A tier names its
+own reviewer line-up: **which logical model fills each reviewer slot, and what that reviewer
+is told to focus on**, so one review round can pair a readability critic with a performance
+critic instead of running the same generic review N times:
 
 ```toml
 [reviews]
-default = "single-opus"           # tier used when the coordinator doesn't pick one
-[reviews.tiers.high-powered]
-models = ["claude", "gpt"]        # parallel multi-model review
+default = "standard"              # tier used when the coordinator doesn't pick one
+
+[reviews.tiers.standard]
+models = ["claude"]               # shorthand: one generic reviewer per logical model
+
+[reviews.tiers.deep]
+description = "large, risky, or performance-sensitive changes"   # shown to the coordinator
+prompt = "Cite file:line for every finding."                     # applies to EVERY reviewer of the tier
+
+  [[reviews.tiers.deep.reviewers]]
+  name   = "readability"          # label (defaults to model); labels the actor + work log
+  model  = "claude"               # any configured [models.X]
+  prompt = "Focus on conciseness, naming, dead code, and code readability."
+  thinking = "high"               # optional per-reviewer reasoning level
+
+  [[reviews.tiers.deep.reviewers]]
+  name   = "performance"
+  model  = "gpt"
+  prompt = "Focus on performance characteristics: allocations, N+1 work, hot paths, complexity."
+
 [reviews.tiers.simple]
 strategy = "coordinator"          # coordinator self-reviews; no reviewer agent
 ```
@@ -1157,24 +1177,50 @@ Three **built-in tiers** always exist (and may be overridden by a same-named `[r
   large, risky, security-sensitive, or hard-to-reverse changes. Out of the box the built-in
   `high-powered` tier resolves to the **same reviewer set as `single-opus`** (the configured
   `roles.reviewers`); it only runs a genuinely parallel multi-model review once
-  `[reviews.tiers.high-powered]` is configured with more than one model (e.g.
-  `models = ["claude", "gpt"]`).
+  `[reviews.tiers.high-powered]` is configured with more than one reviewer.
 
-Each tier maps to a **strategy** plus a model/agent set: `strategy = "agents"` (the default
-when empty) spawns a reviewer subagent for each logical model in `models`; `strategy =
-"coordinator"` (aliases `self` / `self-review`) means the coordinator self-reviews with no
-separate reviewer agent. The coordinator selects a tier per change via the `spawn_reviewers`
-tool's optional `review_tier` parameter; omitting it uses `reviews.default` (which itself
-defaults to `single-opus` — the sensible default for ordinary changes).
+Each tier maps to a **strategy** plus a reviewer set. `strategy = "coordinator"` (aliases
+`self` / `self-review`) means the coordinator self-reviews with no separate reviewer agent.
+`strategy = "agents"` (the default when empty) spawns one reviewer subagent per reviewer
+slot, described either way:
+
+- **`models = [...]`** — the shorthand: one generic reviewer per logical model, labelled by
+  the model name.
+- **`[[reviews.tiers.X.reviewers]]`** — the long form, one table per reviewer slot with
+  `model` (required), optional `name` (the label; defaults to the model), optional `prompt`
+  (the reviewer's **focus**), and optional `thinking` (a per-reviewer reasoning level that
+  overrides the `reviewers` role level for that slot). Slots are independent, so the **same
+  model may appear several times** under different focuses; duplicate labels are
+  disambiguated (`claude`, `claude#2`).
+
+The two forms are mutually exclusive per tier (setting both is a config error). A tier-level
+`prompt` is extra guidance prepended to **every** reviewer's focus in that tier.
+
+A focus is a **lens, not a blinker**: the reviewer system prompt tells a focused reviewer to
+lead with its assignment while still judging the change against the task's acceptance
+criteria and reporting any blocker/major defect it notices outside its focus — so a focused
+fan-out cannot collectively miss a serious defect nobody was assigned to look for.
+
+The coordinator selects a tier per change via the `spawn_reviewers` tool's optional
+`review_tier` parameter; omitting it uses `reviews.default` (which itself defaults to
+`single-opus`). Because tiers are user-defined, the **tool description is generated from the
+project's effective tiers** — each tier's name, its `description`, and its reviewer line-up
+(`readability (claude), performance (gpt)`) — so a custom tier is discoverable by the model
+rather than hard-coded in a prompt; the coordinator system prompt just points at that list.
 
 Selection is **auditable**: every `spawn_reviewers` call emits a `review_tier_selected` event
-(`{ task, tier, requested, self_review, fallback, reviewers }`) and writes a `review tier: …`
-line to the task's work log. An **unknown or missing tier degrades gracefully** — an unknown
-`review_tier` falls back to the default (recorded with `fallback=true`), an `agents` tier whose
-models don't resolve falls back to the session's current reviewer assignment, and a tier that
-resolves to no reviewer at all degrades to coordinator self-review. The explicitly configured
-tiers are validated at load (unknown strategy, an `agents` tier referencing an unknown model,
-or a `reviews.default` naming no tier are rejected); the built-ins are always valid.
+(`{ task, tier, requested, self_review, fallback, reviewers, models }` — reviewer *labels*
+plus the logical model behind each) and writes a `review tier: …` line to the task's work log
+naming each reviewer as `label (model)`. Each reviewer's verdict is logged as
+`review (label/model): …`, and its events carry the actor `reviewer:<label>` while usage is
+still attributed to the underlying logical model. An **unknown or missing tier degrades
+gracefully** — an unknown `review_tier` falls back to the default (recorded with
+`fallback=true`), an `agents` tier whose models don't resolve falls back to the session's
+current reviewer assignment, and a tier that resolves to no reviewer at all degrades to
+coordinator self-review. The explicitly configured tiers are validated at load (unknown
+strategy, a reviewer slot with no or an unknown model, an invalid per-reviewer thinking
+level, `models` and `reviewers` both set, or a `reviews.default` naming no tier are
+rejected); the built-ins are always valid.
 
 ## 14. Persistence & remote sync
 
