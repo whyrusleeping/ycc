@@ -499,6 +499,81 @@ func TestLoopStripsEmptyThinkingBlocks(t *testing.T) {
 	}
 }
 
+func TestLoopCanonicalizesRepairedToolCallsBeforeHistory(t *testing.T) {
+	const leaked = `{"question":"Pick one?</question>\n<parameter name=\"options\">[\"a\",\"b\"]"}`
+	call := assistantToolCall("repair_test", leaked)
+	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{call, assistantText("done")}}
+	rec := &captureRecorder{}
+	reg := tools.New()
+	reg.Add(&gollama.Tool{
+		Name: "repair_test",
+		Params: tools.Obj(map[string]any{
+			"question": tools.StrProp("question"),
+			"options":  tools.StrArrProp("options"),
+		}, "question"),
+		Call: func(context.Context, any) (*gollama.ToolResult, error) {
+			return &gollama.ToolResult{Content: "ok"}, nil
+		},
+	})
+	loop := &Loop{Client: turner, Model: "test", Tools: reg, Emitter: event.NewEmitter(rec, "agent")}
+	if _, err := loop.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	var assistant *gollama.Message
+	for i := range loop.history {
+		if loop.history[i].Role == "assistant" && len(loop.history[i].ToolCalls) > 0 {
+			assistant = &loop.history[i]
+			break
+		}
+	}
+	if assistant == nil {
+		t.Fatalf("no tool-call assistant in history: %+v", loop.history)
+	}
+	canonicalArgs := assistant.ToolCalls[0].Function.Arguments
+	if canonicalArgs == leaked || strings.Contains(canonicalArgs, "<parameter") || !strings.Contains(canonicalArgs, `"options":["a","b"]`) {
+		t.Fatalf("history arguments were not canonicalized: %q", canonicalArgs)
+	}
+
+	var toolCall, toolResult *event.Event
+	for i := range rec.evs {
+		switch rec.evs[i].Type {
+		case event.ToolCall:
+			toolCall = &rec.evs[i]
+		case event.ToolResult:
+			toolResult = &rec.evs[i]
+		}
+	}
+	if toolCall == nil || toolCall.Data["args"] != canonicalArgs {
+		t.Fatalf("tool_call event does not match canonical history: %+v", toolCall)
+	}
+	repaired, ok := toolCall.Data["repaired"].([]string)
+	if !ok || len(repaired) != 1 || repaired[0] != "options" {
+		t.Fatalf("tool_call repaired payload = %#v", toolCall.Data["repaired"])
+	}
+	if toolResult == nil || toolResult.Data["result"] != "ok" {
+		t.Fatalf("tool_result changed: %+v", toolResult)
+	}
+}
+
+func TestMessagesForBackendStripsOnlyCodexItemsBlocks(t *testing.T) {
+	codexBlock := gollama.ThinkingBlock{Redacted: codexItemsBlockMarker + `{"model":"m","items":[]}`}
+	anthropicBlock := gollama.ThinkingBlock{Thinking: "thought", Signature: "sig"}
+	history := []gollama.Message{{Role: "assistant", ThinkingBlocks: []gollama.ThinkingBlock{codexBlock, anthropicBlock}}}
+
+	openai := messagesForBackend(history, "openai")
+	if len(openai[0].ThinkingBlocks) != 2 {
+		t.Fatalf("openai blocks = %+v", openai[0].ThinkingBlocks)
+	}
+	anthropic := messagesForBackend(history, "anthropic")
+	if len(anthropic[0].ThinkingBlocks) != 1 || anthropic[0].ThinkingBlocks[0] != anthropicBlock {
+		t.Fatalf("anthropic blocks = %+v", anthropic[0].ThinkingBlocks)
+	}
+	if len(history[0].ThinkingBlocks) != 2 {
+		t.Fatalf("filter mutated history: %+v", history)
+	}
+}
+
 // model_turn events carry per-turn token usage and model identity sourced from
 // resp.Usage and the loop's model labelling (spec §20.1).
 func TestLoopModelTurnCarriesUsage(t *testing.T) {

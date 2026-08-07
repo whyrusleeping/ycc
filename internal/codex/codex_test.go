@@ -11,6 +11,7 @@ import (
 
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/engine"
+	"github.com/whyrusleeping/ycc/internal/event"
 )
 
 func testTokens(tok, acct string) TokenSource {
@@ -44,6 +45,9 @@ func TestBuildRequest(t *testing.T) {
 	req := buildRequest(opts)
 	if !req.Stream || req.Store {
 		t.Errorf("stream/store wrong: stream=%v store=%v", req.Stream, req.Store)
+	}
+	if len(req.Include) != 1 || req.Include[0] != "reasoning.encrypted_content" {
+		t.Errorf("include = %v", req.Include)
 	}
 	if req.Instructions != "Be terse." {
 		t.Errorf("instructions = %q", req.Instructions)
@@ -104,11 +108,14 @@ func codexStub(t *testing.T, gotReq *map[string]any, gotHdr *http.Header) *httpt
 		*gotReq = body
 		w.Header().Set("Content-Type", "text/event-stream")
 		sse(w, map[string]any{"type": "response.created"})
-		sse(w, map[string]any{"type": "response.reasoning_summary_text.delta", "delta": "planning"})
+		sse(w, map[string]any{"type": "response.reasoning_summary_text.delta", "item_id": "rs_9", "summary_index": 0, "delta": "planning"})
+		sse(w, map[string]any{"type": "response.output_item.done", "item": map[string]any{
+			"id": "rs_9", "type": "reasoning", "encrypted_content": "encrypted-secret", "summary": []map[string]any{{"type": "summary_text", "text": "planning"}},
+		}})
 		sse(w, map[string]any{"type": "response.output_text.delta", "delta": "hel"})
 		sse(w, map[string]any{"type": "response.output_text.delta", "delta": "lo"})
 		sse(w, map[string]any{"type": "response.output_item.done", "item": map[string]any{
-			"type": "function_call", "call_id": "call_9", "name": "bash", "arguments": `{"cmd":"ls"}`,
+			"id": "fc_9", "type": "function_call", "call_id": "call_9", "name": "bash", "arguments": `{"cmd":"ls"}`,
 		}})
 		sse(w, map[string]any{"type": "response.completed", "response": map[string]any{
 			"status": "completed",
@@ -168,6 +175,16 @@ func TestTurnStream(t *testing.T) {
 	}
 	if len(msg.ToolCalls) != 1 || msg.ToolCalls[0].ID != "call_9" || msg.ToolCalls[0].Function.Name != "bash" {
 		t.Errorf("tool calls = %+v", msg.ToolCalls)
+	}
+	if len(msg.ThinkingBlocks) != 1 {
+		t.Fatalf("thinking blocks = %+v", msg.ThinkingBlocks)
+	}
+	blockModel, responseItems, ok := DecodeItemsBlock(msg.ThinkingBlocks[0])
+	if !ok || blockModel != "gpt-5.3-codex" || len(responseItems) != 2 || responseItems[0].ID != "rs_9" || responseItems[0].EncryptedContent != "encrypted-secret" || responseItems[1].ID != "fc_9" {
+		t.Fatalf("items block model=%q items=%+v ok=%v", blockModel, responseItems, ok)
+	}
+	if strings.Contains(msg.Thinking, "encrypted-secret") || strings.Contains(msg.Content, "encrypted-secret") {
+		t.Fatal("encrypted provider state leaked into visible transcript")
 	}
 	if resp.StopReason != "tool_calls" {
 		t.Errorf("stop reason = %q", resp.StopReason)
@@ -234,6 +251,96 @@ func TestParseStreamUsesReasoningItemSummaryFallback(t *testing.T) {
 	}
 	if got, want := resp.Choices[0].Message.Thinking, "first section\n\nsecond section"; got != want {
 		t.Fatalf("thinking = %q, want %q", got, want)
+	}
+}
+
+func TestBuildRequestReplaysTwoToolTurnsAndReopen(t *testing.T) {
+	model := "gpt-5.5"
+	call := func(id, name, args string) gollama.ToolCall {
+		return gollama.ToolCall{ID: id, Type: "function", Function: gollama.ToolCallFunction{Name: name, Arguments: args}}
+	}
+	firstBlock := EncodeItemsBlock(model, []ResponseItem{
+		{Type: "reasoning", ID: "rs_1", EncryptedContent: "enc-1", Summary: []SummaryPart{}},
+		{Type: "function_call", ID: "fc_1", CallID: "provider-call-1"},
+	})
+	secondBlock := EncodeItemsBlock(model, []ResponseItem{
+		{Type: "reasoning", ID: "rs_2", EncryptedContent: "enc-2", Summary: []SummaryPart{{Type: "summary_text", Text: "next step"}}},
+		{Type: "function_call", ID: "fc_2", CallID: "provider-call-2"},
+	})
+	live := []gollama.Message{
+		{Role: "user", Content: "start"},
+		{Role: "assistant", ThinkingBlocks: []gollama.ThinkingBlock{firstBlock}, ToolCalls: []gollama.ToolCall{call("call_1", "read", `{"path":"a"}`)}},
+		{Role: "tool", ToolCallID: "call_1", Content: "one"},
+		{Role: "assistant", ThinkingBlocks: []gollama.ThinkingBlock{secondBlock}, ToolCalls: []gollama.ToolCall{call("call_2", "write", `{"path":"b"}`)}},
+		{Role: "tool", ToolCallID: "call_2", Content: "two"},
+	}
+	liveReq := buildRequest(gollama.RequestOptions{Model: model, Messages: live})
+	wantTypes := []string{"message", "reasoning", "function_call", "function_call_output", "reasoning", "function_call", "function_call_output"}
+	if len(liveReq.Input) != len(wantTypes) {
+		t.Fatalf("input = %+v", liveReq.Input)
+	}
+	for i, want := range wantTypes {
+		if liveReq.Input[i].Type != want {
+			t.Fatalf("input[%d].type=%q want %q; input=%+v", i, liveReq.Input[i].Type, want, liveReq.Input)
+		}
+	}
+	if liveReq.Input[1].ID != "rs_1" || liveReq.Input[1].EncryptedContent != "enc-1" || liveReq.Input[1].Summary == nil || len(*liveReq.Input[1].Summary) != 0 {
+		t.Fatalf("first reasoning = %+v", liveReq.Input[1])
+	}
+	if liveReq.Input[2].ID != "fc_1" || liveReq.Input[2].CallID != "call_1" || liveReq.Input[4].ID != "rs_2" || liveReq.Input[5].ID != "fc_2" || liveReq.Input[5].CallID != "call_2" {
+		t.Fatalf("provider/canonical ids not reconciled: %+v", liveReq.Input)
+	}
+	body, err := json.Marshal(liveReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"summary":[]`) || !strings.Contains(string(body), `"include":["reasoning.encrypted_content"]`) {
+		t.Fatalf("required stateless fields absent: %s", body)
+	}
+
+	// Exercise the same generic-map path used after reading events.jsonl. The
+	// model_turn stores only provider state; tool_call events restore canonical
+	// calls exactly as the live loop does.
+	events := []event.Event{
+		{Seq: 1, Actor: "user", Type: event.UserInput, Data: map[string]any{"text": "start"}},
+		{Seq: 2, Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{"text": "", "tool_calls": 1, "thinking_blocks": []event.ThinkingBlock{{Redacted: firstBlock.Redacted}}}},
+		{Seq: 3, Actor: "coordinator", Type: event.ToolCall, Data: map[string]any{"id": "call_1", "name": "read", "args": `{"path":"a"}`}},
+		{Seq: 4, Actor: "coordinator", Type: event.ToolResult, Data: map[string]any{"id": "call_1", "result": "one"}},
+		{Seq: 5, Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{"text": "", "tool_calls": 1, "thinking_blocks": []event.ThinkingBlock{{Redacted: secondBlock.Redacted}}}},
+		{Seq: 6, Actor: "coordinator", Type: event.ToolCall, Data: map[string]any{"id": "call_2", "name": "write", "args": `{"path":"b"}`}},
+		{Seq: 7, Actor: "coordinator", Type: event.ToolResult, Data: map[string]any{"id": "call_2", "result": "two"}},
+	}
+	decoded := make([]event.Event, len(events))
+	for i, ev := range events {
+		data, err := json.Marshal(ev)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(data, &decoded[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reopenedReq := buildRequest(gollama.RequestOptions{Model: model, Messages: engine.ReplayHistory(decoded)})
+	liveInput, _ := json.Marshal(liveReq.Input)
+	reopenedInput, _ := json.Marshal(reopenedReq.Input)
+	if string(reopenedInput) != string(liveInput) {
+		t.Fatalf("reopen input differs from live:\nlive: %s\nopen: %s", liveInput, reopenedInput)
+	}
+}
+
+func TestBuildInputItemsBlockSafety(t *testing.T) {
+	call := gollama.ToolCall{ID: "call", Type: "function", Function: gollama.ToolCallFunction{Name: "bash", Arguments: `{}`}}
+	foreign := gollama.ThinkingBlock{Thinking: "anthropic thinking", Signature: "sig"}
+	wrongModel := EncodeItemsBlock("old-model", []ResponseItem{{Type: "reasoning", ID: "old", EncryptedContent: "stale"}, {Type: "function_call", ID: "old-call"}})
+	items := buildInput([]gollama.Message{{Role: "assistant", ThinkingBlocks: []gollama.ThinkingBlock{foreign, wrongModel}, ToolCalls: []gollama.ToolCall{call}}}, "new-model")
+	if len(items) != 1 || items[0].Type != "function_call" || items[0].ID != "" || items[0].CallID != "call" {
+		t.Fatalf("foreign/wrong-model state was not ignored: %+v", items)
+	}
+
+	dangling := EncodeItemsBlock("m", []ResponseItem{{Type: "reasoning", ID: "rs", EncryptedContent: "enc", Summary: []SummaryPart{}}})
+	items = buildInput([]gollama.Message{{Role: "assistant", ThinkingBlocks: []gollama.ThinkingBlock{dangling}}}, "m")
+	if len(items) != 0 {
+		t.Fatalf("dangling reasoning was replayed: %+v", items)
 	}
 }
 

@@ -382,6 +382,50 @@ func sanitizeThinkingBlocks(blocks []gollama.ThinkingBlock) []gollama.ThinkingBl
 	return kept
 }
 
+const codexItemsBlockMarker = "codex-response-items-v1:"
+
+// messagesForBackend prevents Codex's marked opaque Responses state from being
+// serialized as an Anthropic redacted_thinking block after a model switch. It
+// copy-on-writes only affected messages, leaving loop history (and therefore a
+// later switch back to Codex) untouched. Native Anthropic thinking blocks pass
+// through unchanged. Keep this marker in sync with internal/codex/items.go; it
+// is repeated here to avoid an engine<->codex test import cycle.
+func messagesForBackend(history []gollama.Message, backend string) []gollama.Message {
+	if backend == "openai" {
+		return history
+	}
+	isCodexItemsBlock := func(block gollama.ThinkingBlock) bool {
+		return strings.HasPrefix(block.Redacted, codexItemsBlockMarker)
+	}
+	var result []gollama.Message
+	for i, msg := range history {
+		remove := false
+		for _, block := range msg.ThinkingBlocks {
+			if isCodexItemsBlock(block) {
+				remove = true
+				break
+			}
+		}
+		if !remove {
+			continue
+		}
+		if result == nil {
+			result = append([]gollama.Message(nil), history...)
+		}
+		blocks := make([]gollama.ThinkingBlock, 0, len(msg.ThinkingBlocks))
+		for _, block := range msg.ThinkingBlocks {
+			if !isCodexItemsBlock(block) {
+				blocks = append(blocks, block)
+			}
+		}
+		result[i].ThinkingBlocks = blocks
+	}
+	if result == nil {
+		return history
+	}
+	return result
+}
+
 // toEventThinking maps gollama reasoning blocks to the serializable event shape
 // so they round-trip through the JSONL log (and back, for reopen replay).
 func toEventThinking(blocks []gollama.ThinkingBlock) []event.ThinkingBlock {
@@ -686,7 +730,7 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		opts := gollama.RequestOptions{
 			Model:           modelID,
 			System:          l.System,
-			Messages:        l.history,
+			Messages:        messagesForBackend(l.history, ident.Backend),
 			Tools:           l.Tools.APIDefs(),
 			Thinking:        think.Thinking,
 			Effort:          think.Effort,
@@ -746,6 +790,17 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		// history we echo back and the event log we replay from (see
 		// sanitizeThinkingBlocks). Anthropic 400s on a thinking block with no text.
 		msg.ThinkingBlocks = sanitizeThinkingBlocks(msg.ThinkingBlocks)
+
+		// Some models leak XML-ish invoke syntax into a JSON string argument,
+		// swallowing sibling arguments. Repair every call before this assistant
+		// message enters history so the engine-owned arguments are canonical for
+		// both live continuation (including Codex stateless item replay) and durable
+		// event-log reopen. Keep the recovery details parallel to the calls so each
+		// later tool_call event retains its existing forensic `repaired` payload.
+		repairedToolCalls := make([][]string, len(msg.ToolCalls))
+		for ci, call := range msg.ToolCalls {
+			msg.ToolCalls[ci], repairedToolCalls[ci] = l.Tools.Repair(call)
+		}
 
 		// Read optional backend-specific reasoning usage before emitting either
 		// display or durable usage events. This count is a subset of output tokens,
@@ -886,6 +941,8 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		}
 		truncRetries = 0
 		// Record the assistant turn (text + tool_use) so context carries forward.
+		// Its tool arguments were canonicalized before this append, so no fragile
+		// mid-batch history mutation is needed while tool results are being posted.
 		l.history = append(l.history, msg)
 
 		// deferred collects checkpoint messages (steered corrections, finished-job
@@ -907,13 +964,7 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		}
 
 		for ci, call := range msg.ToolCalls {
-			// Some models leak the XML-ish invoke syntax into a JSON string
-			// argument, swallowing their own sibling arguments (an ask_user whose
-			// `question` ends in `</question><parameter name="options">[…]` and
-			// reaches the user as raw markup with no picker). Repair before the
-			// event so the transcript shows what the tool actually ran with; the
-			// recovery is recorded on the event for forensics.
-			call, recovered := l.Tools.Repair(call)
+			recovered := repairedToolCalls[ci]
 			callData := map[string]any{
 				"name": call.Function.Name,
 				"args": call.Function.Arguments,

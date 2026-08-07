@@ -592,9 +592,13 @@ turn returns a reasoning summary, the loop emits a dedicated `thinking` event (b
 `detailed` provider-authored summary with sequential-cutoff delivery, assembles every completed
 summary section in provider order (authoritative `reasoning_summary_text.done` text replaces its
 partial deltas), and records the reported hidden reasoning-token count on the thinking event and
-model-turn usage. Delta-only streams remain supported for compatibility. The count is a subset of
-output tokens—not an extra billable class—and makes explicit that even a short displayed summary
-is not the full private reasoning trace.
+model-turn usage. Codex requests also include `reasoning.encrypted_content`; each turn's reasoning
+response items are preserved verbatim as a marked opaque provider-state block on
+`model_turn.thinking_blocks`, then replayed in provider order before their message/function-call
+items. This makes stateless live continuation and event-log reopen equivalent without ever
+rendering the opaque state as transcript text. Delta-only streams remain supported for
+compatibility. The count is a subset of output tokens—not an extra billable class—and makes
+explicit that even a short displayed summary is not the full private reasoning trace.
 
 **Per-backend mapping.** These backend-agnostic fields are translated to each provider's
 request shape by gollama (`Turn`/`ChatCompletion`):
@@ -1067,7 +1071,11 @@ backends additionally support **subscription auth** with `auth = "oauth"` on the
   gollama's "status code NNN" shape so engine retry/classification work unchanged —
   including in-stream `error`/`response.failed` frames, whose provider error **code** is
   kept in the message (`server_error: …`) so a transient backend failure over a 200
-  stream is classified retryable (§7.2) instead of `unknown`.
+  stream is classified retryable (§7.2) instead of `unknown`. Stateless requests include
+  `reasoning.encrypted_content`; opaque reasoning output items and provider ids are durably
+  retained on `model_turn.thinking_blocks` and replayed in original order with their canonical
+  message/function-call items after either a live tool result or session reopen, but are never
+  exposed as ordinary transcript text.
   Model ids differ from the platform catalog (curated set in `internal/codex.Models`,
   e.g. `gpt-5.6-sol`; no listing endpoint).
 

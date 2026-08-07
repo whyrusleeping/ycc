@@ -85,6 +85,7 @@ func New(baseURL string, tokens TokenSource) *Client {
 // "function_call_output").
 type inputItem struct {
 	Type string `json:"type"`
+	ID   string `json:"id,omitempty"`
 	// message
 	Role    string         `json:"role,omitempty"`
 	Content []contentBlock `json:"content,omitempty"`
@@ -94,6 +95,10 @@ type inputItem struct {
 	CallID    string `json:"call_id,omitempty"`
 	// function_call_output
 	Output string `json:"output,omitempty"`
+	// reasoning. Summary is a pointer so an explicitly empty slice marshals as
+	// the required [], while the field remains absent from other item types.
+	EncryptedContent string         `json:"encrypted_content,omitempty"`
+	Summary          *[]SummaryPart `json:"summary,omitempty"`
 }
 
 type contentBlock struct {
@@ -136,6 +141,7 @@ type request struct {
 	Stream            bool           `json:"stream"`
 	StreamOptions     *streamOpts    `json:"stream_options,omitempty"`
 	Reasoning         *reasoningOpts `json:"reasoning,omitempty"`
+	Include           []string       `json:"include,omitempty"`
 }
 
 // buildRequest translates gollama.RequestOptions into the codex request body.
@@ -143,11 +149,12 @@ func buildRequest(opts gollama.RequestOptions) request {
 	req := request{
 		Model:             opts.Model,
 		Instructions:      opts.System,
-		Input:             buildInput(opts.Messages),
+		Input:             buildInput(opts.Messages, opts.Model),
 		ToolChoice:        "auto",
 		ParallelToolCalls: false,
 		Store:             false,
 		Stream:            true,
+		Include:           []string{"reasoning.encrypted_content"},
 	}
 	// The backend rejects an empty instructions field.
 	if strings.TrimSpace(req.Instructions) == "" {
@@ -189,8 +196,11 @@ func buildRequest(opts gollama.RequestOptions) request {
 
 // buildInput converts engine history into Responses input items. Assistant
 // tool calls become function_call items; tool results (role "tool") become
-// function_call_output items keyed by the same call_id.
-func buildInput(msgs []gollama.Message) []inputItem {
+// function_call_output items keyed by the same call_id. When an assistant turn
+// carries a Codex items block, its opaque reasoning and provider item ordering
+// are restored while visible text and tool data still come from canonical
+// engine history.
+func buildInput(msgs []gollama.Message, model string) []inputItem {
 	items := make([]inputItem, 0, len(msgs))
 	for _, m := range msgs {
 		switch m.Role {
@@ -201,20 +211,7 @@ func buildInput(msgs []gollama.Message) []inputItem {
 				Output: m.Content,
 			})
 		case "assistant":
-			if m.Content != "" {
-				items = append(items, inputItem{
-					Type: "message", Role: "assistant",
-					Content: []contentBlock{{Type: "output_text", Text: m.Content}},
-				})
-			}
-			for _, tc := range m.ToolCalls {
-				items = append(items, inputItem{
-					Type:      "function_call",
-					CallID:    tc.ID,
-					Name:      tc.Function.Name,
-					Arguments: tc.Function.Arguments,
-				})
-			}
+			items = append(items, buildAssistantItems(m, model)...)
 		default: // user (and any stray system messages ride along as developer)
 			role := m.Role
 			if role == "system" {
@@ -247,6 +244,89 @@ func buildInput(msgs []gollama.Message) []inputItem {
 	return items
 }
 
+func buildAssistantItems(m gollama.Message, model string) []inputItem {
+	var recorded []ResponseItem
+	for _, block := range m.ThinkingBlocks {
+		recordedModel, candidate, ok := DecodeItemsBlock(block)
+		if ok && recordedModel == model {
+			recorded = candidate
+			break
+		}
+	}
+
+	messageConsumed := false
+	toolIndex := 0
+	items := make([]inputItem, 0, len(recorded)+len(m.ToolCalls)+1)
+	for _, item := range recorded {
+		switch item.Type {
+		case "reasoning":
+			summary := item.Summary
+			if summary == nil {
+				summary = []SummaryPart{}
+			}
+			items = append(items, inputItem{
+				Type:             "reasoning",
+				ID:               item.ID,
+				EncryptedContent: item.EncryptedContent,
+				Summary:          &summary,
+			})
+		case "message":
+			if messageConsumed || m.Content == "" {
+				continue
+			}
+			items = append(items, inputItem{
+				Type: "message", ID: item.ID, Role: "assistant",
+				Content: []contentBlock{{Type: "output_text", Text: m.Content}},
+			})
+			messageConsumed = true
+		case "function_call":
+			if toolIndex >= len(m.ToolCalls) {
+				continue
+			}
+			tc := m.ToolCalls[toolIndex]
+			toolIndex++
+			items = append(items, inputItem{
+				Type:      "function_call",
+				ID:        item.ID,
+				CallID:    tc.ID,
+				Name:      tc.Function.Name,
+				Arguments: tc.Function.Arguments,
+			})
+		}
+	}
+	if !messageConsumed && m.Content != "" {
+		items = append(items, inputItem{
+			Type: "message", Role: "assistant",
+			Content: []contentBlock{{Type: "output_text", Text: m.Content}},
+		})
+	}
+	for ; toolIndex < len(m.ToolCalls); toolIndex++ {
+		tc := m.ToolCalls[toolIndex]
+		items = append(items, inputItem{
+			Type:      "function_call",
+			CallID:    tc.ID,
+			Name:      tc.Function.Name,
+			Arguments: tc.Function.Arguments,
+		})
+	}
+
+	// The Responses API rejects a reasoning item without its required following
+	// message/function_call. Work backwards so each kept reasoning item has such
+	// an item later in this same assistant turn.
+	hasFollowing := false
+	for i := len(items) - 1; i >= 0; i-- {
+		switch items[i].Type {
+		case "message", "function_call":
+			hasFollowing = true
+		case "reasoning":
+			if !hasFollowing {
+				items = append(items[:i], items[i+1:]...)
+			}
+		}
+	}
+	return items
+}
+
 // --- SSE response handling ---
 
 // sseEvent mirrors the fields we consume across codex stream event types.
@@ -257,12 +337,13 @@ type sseEvent struct {
 	SummaryIndex *int   `json:"summary_index"`
 	ItemID       string `json:"item_id"`
 	Item         *struct {
-		ID        string `json:"id"`
-		Type      string `json:"type"`
-		Name      string `json:"name"`
-		Arguments string `json:"arguments"`
-		CallID    string `json:"call_id"`
-		Content   []struct {
+		ID               string `json:"id"`
+		Type             string `json:"type"`
+		Name             string `json:"name"`
+		Arguments        string `json:"arguments"`
+		CallID           string `json:"call_id"`
+		EncryptedContent string `json:"encrypted_content"`
+		Content          []struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"content"`
@@ -375,6 +456,7 @@ func parseStream(r io.Reader, model string, onDelta func(string)) (*gollama.Resp
 		legacyThinking  strings.Builder
 		summaryParts    []*summaryPart
 		toolCalls       []gollama.ToolCall
+		responseItems   []ResponseItem
 		out             = &gollama.ResponseMessageGenerate{Model: model, Done: true, StopReason: "stop"}
 		completed       bool
 		reasoningTokens int
@@ -448,12 +530,21 @@ func parseStream(r io.Reader, model string, onDelta func(string)) (*gollama.Resp
 			case "reasoning":
 				// Non-streaming-compatible fallback: a completed reasoning item
 				// may carry its summary array without summary text events.
+				summaryPartsForReplay := make([]SummaryPart, 0, len(ev.Item.Summary))
 				for i, summary := range ev.Item.Summary {
+					summaryPartsForReplay = append(summaryPartsForReplay, SummaryPart{Type: summary.Type, Text: summary.Text})
 					if summary.Type == "summary_text" && summary.Text != "" {
 						findSummaryPart(ev.Item.ID, i).text = summary.Text
 					}
 				}
+				responseItems = append(responseItems, ResponseItem{
+					Type:             "reasoning",
+					ID:               ev.Item.ID,
+					EncryptedContent: ev.Item.EncryptedContent,
+					Summary:          summaryPartsForReplay,
+				})
 			case "function_call":
+				responseItems = append(responseItems, ResponseItem{Type: "function_call", ID: ev.Item.ID, CallID: ev.Item.CallID})
 				toolCalls = append(toolCalls, gollama.ToolCall{
 					ID:   ev.Item.CallID,
 					Type: "function",
@@ -463,6 +554,7 @@ func parseStream(r io.Reader, model string, onDelta func(string)) (*gollama.Resp
 					},
 				})
 			case "message":
+				responseItems = append(responseItems, ResponseItem{Type: "message", ID: ev.Item.ID})
 				// Authoritative final text for the item; prefer it if the
 				// delta path produced nothing (e.g. no streaming callbacks).
 				if text.Len() == 0 {
@@ -521,12 +613,17 @@ func parseStream(r io.Reader, model string, onDelta func(string)) (*gollama.Resp
 			thinking = append(thinking, s)
 		}
 	}
+	var blocks []gollama.ThinkingBlock
+	if len(responseItems) > 0 {
+		blocks = []gollama.ThinkingBlock{EncodeItemsBlock(model, responseItems)}
+	}
 	out.Choices = []gollama.GenChoice{{
 		Message: gollama.Message{
-			Role:      "assistant",
-			Content:   text.String(),
-			Thinking:  strings.Join(thinking, "\n\n"),
-			ToolCalls: toolCalls,
+			Role:           "assistant",
+			Content:        text.String(),
+			Thinking:       strings.Join(thinking, "\n\n"),
+			ThinkingBlocks: blocks,
+			ToolCalls:      toolCalls,
 		},
 		FinishReason: out.StopReason,
 	}}
