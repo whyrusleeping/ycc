@@ -65,3 +65,7 @@ Steps:
 - 2026-08-07 review (sol): accept — The revision addresses the prior documentation gap: both the CLI reference and remote API guide now recommend `YCC_TOKEN`, warn against argv exposure, and use environment-based examples. The implement
 …[truncated]
 - 2026-08-07 decision: accept — commit: Pass daemon bearer token via YCC_TOKEN env, never child argv (task 0203)
+- 2026-08-07 usage: 1,234,682 tok (in 371,324, out 17,022, cache_r 1,212,059, cache_w 28,355) · cost n/a (unpriced)
+  implementer: 921,172 tok (in 214,863, out 7,941, cache_r 698,368, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 307,298 tok (in 156,437, out 2,893, cache_r 147,968, cache_w 0) · cost n/a (unpriced)
+  coordinator: 6,212 tok (in 24, out 6,188, cache_r 365,723, cache_w 28,355) · cost n/a (unpriced)

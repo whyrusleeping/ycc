@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -65,11 +66,16 @@ func repoRoot() string {
 // output is streamed into. Tests interact through send* (keystrokes) and waitFor
 // (screen predicates).
 type harness struct {
-	t          *testing.T
-	stub       *llmStub
-	cmd        *exec.Cmd
-	ptmx       *os.File
-	emu        *vt.SafeEmulator
+	t    *testing.T
+	stub *llmStub
+	cmd  *exec.Cmd
+	ptmx *os.File
+	emu  *vt.SafeEmulator
+	// emuMu serializes every emulator mutation (Write/Resize) with every
+	// complete cell read (CellAt plus field access, including screenshots).
+	// emu.Read intentionally stays outside this lock: it drains the emulator's
+	// terminal-query reply pipe and is safe to run concurrently with Write.
+	emuMu      sync.Mutex
 	cols, rows int
 	workspace  string
 	exited     chan struct{}
@@ -118,7 +124,9 @@ func launch(t *testing.T, script []scriptedTurn) *harness {
 		for {
 			n, rerr := ptmx.Read(buf)
 			if n > 0 {
+				h.emuMu.Lock()
 				_, _ = h.emu.Write(buf[:n])
+				h.emuMu.Unlock()
 			}
 			if rerr != nil {
 				return
@@ -132,6 +140,8 @@ func launch(t *testing.T, script []scriptedTurn) *harness {
 	// input pipe, and if nothing drains it that Write blocks while holding the
 	// emulator lock, deadlocking every screen read. Piping it back to the child
 	// both drains the pipe and gives the real app the query answers it expects.
+	// SafeEmulator.Read directly reads that concurrency-safe pipe without taking
+	// the emulator mutex, so it deliberately must not take emuMu either.
 	go func() {
 		buf := make([]byte, 1024)
 		for {
@@ -231,6 +241,9 @@ func writeFile(t *testing.T, path, content string) {
 // by newlines, unset/empty cells as spaces). This is the oracle every assertion
 // runs against.
 func (h *harness) screenText() string {
+	h.emuMu.Lock()
+	defer h.emuMu.Unlock()
+
 	var b strings.Builder
 	for y := 0; y < h.rows; y++ {
 		for x := 0; x < h.cols; x++ {
@@ -296,8 +309,10 @@ func (h *harness) resize(cols, rows int) {
 	if err := pty.Setsize(h.ptmx, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)}); err != nil {
 		h.t.Fatalf("pty resize: %v", err)
 	}
+	h.emuMu.Lock()
 	h.cols, h.rows = cols, rows
 	h.emu.Resize(cols, rows)
+	h.emuMu.Unlock()
 }
 
 // Common key byte sequences for xterm-compatible terminals.
@@ -324,7 +339,10 @@ func (h *harness) screenshot(name string) {
 		return
 	}
 	path := filepath.Join(dir, "e2e_"+name+".png")
-	if err := snapshot.WriteScreenPNG(path, h.emu, h.cols, h.rows); err != nil {
+	h.emuMu.Lock()
+	err := snapshot.WriteScreenPNG(path, h.emu, h.cols, h.rows)
+	h.emuMu.Unlock()
+	if err != nil {
 		h.t.Logf("screenshot %s: %v", path, err)
 		return
 	}
