@@ -104,3 +104,7 @@ Acceptance mapping: ctx into both blocking+streaming turns (B loop.go); adapters
 …[truncated]
 - 2026-08-07 decision: accept — commit: Propagate session cancellation into in-flight model requests (task 0204)  gollama db217a6 adds additive ctx-aware turns (TurnCtx/TurnStreamCtx) threading caller cancellation through retries, HTTP requ
 …[truncated]
+- 2026-08-07 usage: 14,445,787 tok (in 1,341,685, out 52,198, cache_r 15,228,362, cache_w 238,596) · cost n/a (unpriced)
+  implementer: 12,085,730 tok (in 842,260, out 29,902, cache_r 11,213,568, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 2,347,349 tok (in 499,379, out 9,634, cache_r 1,838,336, cache_w 0) · cost n/a (unpriced)
+  coordinator: 12,708 tok (in 46, out 12,662, cache_r 2,176,458, cache_w 238,596) · cost n/a (unpriced)

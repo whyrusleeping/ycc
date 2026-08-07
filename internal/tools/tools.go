@@ -274,6 +274,9 @@ func okResult(content string) *gollama.ToolResult {
 // configured WriteRoots (see resolve).
 type Workspace struct {
 	Root string
+	// Env contains extra KEY=VALUE entries appended to the inherited environment
+	// for foreground and background Bash commands.
+	Env []string
 	// WriteRoots are absolute, trusted roots OUTSIDE the workspace that Write
 	// and Edit may also target (e.g. a sibling project the user wants the agent
 	// to modify). Configured via write_roots in ycc.toml. Containment against

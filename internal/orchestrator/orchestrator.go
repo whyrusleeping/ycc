@@ -111,7 +111,10 @@ type ReviewTierInfo struct {
 // It also holds the live subagent handles so the revise loop can reuse their
 // conversation contexts across rounds.
 type Deps struct {
-	Workspace   string
+	Workspace string
+	// Env contains extra KEY=VALUE entries inherited by every agent shell in
+	// this session (used by per-project worktree bootstrap configuration).
+	Env         []string
 	Docs        *docs.Store
 	Repo        *git.Repo
 	Emitter     *event.Emitter // coordinator emitter (actor "coordinator")
@@ -466,6 +469,7 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 			reg := tools.New()
 			reg.Add(tools.Worker(&tools.Workspace{
 				Root:       d.Workspace,
+				Env:        append([]string(nil), d.Env...),
 				WriteRoots: tools.NormalizeRoots(d.WriteRoots),
 				Jobs:       d.Jobs,
 				Emitter:    d.Emitter.With("implementer"),
@@ -740,7 +744,7 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 			d.reviewers = nil
 			for _, spec := range specs {
 				reg := tools.New()
-				reg.Add(tools.Reviewer(&tools.Workspace{Root: d.Workspace})...)
+				reg.Add(tools.Reviewer(&tools.Workspace{Root: d.Workspace, Env: append([]string(nil), d.Env...)})...)
 				loop := d.newLoop(spec, inspectSys(reviewerSystemFocused(spec.Focus), d.Workspace), reg, "reviewer:"+spec.label())
 				loop.Seed(reviewerPrompt(t, spec.Focus))
 				d.reviewers = append(d.reviewers, &reviewerHandle{name: spec.label(), model: spec.Name, loop: loop})

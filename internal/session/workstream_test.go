@@ -2,6 +2,7 @@ package session
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -94,6 +95,79 @@ func TestSpawnWorkstream(t *testing.T) {
 	// Workstreams accessor filters by project.
 	if got := m.Workstreams("demo"); len(got) != 1 || got[0].ID != ws.ID {
 		t.Fatalf("Workstreams(demo) = %+v", got)
+	}
+}
+
+func TestSpawnWorkstreamAppliesProjectBootstrap(t *testing.T) {
+	m, proj := newWorkstreamManager(t)
+	if err := os.WriteFile(filepath.Join(proj, ".env.local"), []byte("local-secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	shared := filepath.Join(proj, "node_modules")
+	if err := os.Mkdir(shared, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := `
+[worktree]
+copy = [".env.local"]
+link = ["node_modules"]
+setup = ["printf '%s' \"$BOOTSTRAP_TOKEN\" > prepared.txt"]
+env = { BOOTSTRAP_TOKEN = "ready", ALPHA = "first" }
+`
+	if err := os.WriteFile(filepath.Join(proj, "ycc.toml"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ws, s, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
+	if err != nil {
+		t.Fatalf("SpawnWorkstream: %v", err)
+	}
+	defer m.Stop(s.ID)
+	if data, err := os.ReadFile(filepath.Join(ws.WorktreePath, ".env.local")); err != nil || string(data) != "local-secret" {
+		t.Fatalf("bootstrap copy = %q, err=%v", data, err)
+	}
+	if target, err := os.Readlink(filepath.Join(ws.WorktreePath, "node_modules")); err != nil || target != shared {
+		t.Fatalf("bootstrap link = %q, err=%v, want %q", target, err, shared)
+	}
+	if data, err := os.ReadFile(filepath.Join(ws.WorktreePath, "prepared.txt")); err != nil || string(data) != "ready" {
+		t.Fatalf("bootstrap setup = %q, err=%v", data, err)
+	}
+	if got := s.deps.Env; len(got) != 2 || got[0] != "ALPHA=first" || got[1] != "BOOTSTRAP_TOKEN=ready" {
+		t.Fatalf("workstream session env = %v", got)
+	}
+}
+
+func TestSpawnWorkstreamSetupFailureRollsBack(t *testing.T) {
+	m, proj := newWorkstreamManager(t)
+	cfg := `
+[worktree]
+setup = ["echo bootstrap-broke >&2; exit 9"]
+`
+	if err := os.WriteFile(filepath.Join(proj, "ycc.toml"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
+	if err == nil || !strings.Contains(err.Error(), "bootstrap-broke") {
+		t.Fatalf("SpawnWorkstream failure = %v", err)
+	}
+	repo, openErr := git.Open(proj)
+	if openErr != nil {
+		t.Fatal(openErr)
+	}
+	trees, listErr := repo.ListWorktrees()
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	if len(trees) != 1 || filepath.Clean(trees[0].Path) != filepath.Clean(proj) {
+		t.Fatalf("failed bootstrap left a linked worktree: %+v", trees)
+	}
+	out, branchErr := exec.Command("git", "-C", proj, "branch", "--list", "ycc/ws/*").CombinedOutput()
+	if branchErr != nil {
+		t.Fatalf("list workstream branches: %v: %s", branchErr, out)
+	}
+	if strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("failed bootstrap left branch: %s", out)
 	}
 }
 

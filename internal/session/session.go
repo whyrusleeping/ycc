@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -1439,6 +1440,29 @@ func (m *Manager) backlogStore(absWS string) *docs.Store {
 	return store
 }
 
+// worktreeConfigFor resolves a project's bootstrap configuration. A non-empty
+// [worktree] table in the primary tree wins as one complete unit; otherwise the
+// daemon registry configuration is the fallback.
+func (m *Manager) worktreeConfigFor(primary string) config.Worktree {
+	if cfg, ok := config.LoadWorktree(primary); ok {
+		return cfg
+	}
+	return m.reg.WorktreeConfig()
+}
+
+func sortedWorktreeEnv(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([]string, 0, len(keys))
+	for _, key := range keys {
+		result = append(result, key+"="+values[key])
+	}
+	return result
+}
+
 // primaryTreeFor resolves a session workspace to its daemon-registered primary
 // project tree. The worktrees-root fallback covers newly spawned workstreams,
 // whose session starts immediately before their registry entry is added.
@@ -1716,6 +1740,12 @@ func (m *Manager) SpawnWorkstream(cfg SpawnWorkstreamConfig) (workstream.Workstr
 		repo.PruneWorktrees()
 	}
 
+	wtCfg := m.worktreeConfigFor(primary)
+	if err := workstream.Bootstrap(primary, dir, wtCfg); err != nil {
+		cleanup()
+		return workstream.Workstream{}, nil, fmt.Errorf("bootstrap worktree: %w", err)
+	}
+
 	s, err := m.start(Config{
 		Workspace: dir,
 		Mode:      "work",
@@ -1896,8 +1926,13 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 		}
 		reviewers = append(reviewers, rs)
 	}
+	var worktreeEnv []string
+	if primary := m.primaryTreeFor(absWS); filepath.Clean(primary) != filepath.Clean(absWS) {
+		worktreeEnv = sortedWorktreeEnv(m.worktreeConfigFor(primary).Env)
+	}
 	deps := &orchestrator.Deps{
 		Workspace:          absWS,
+		Env:                worktreeEnv,
 		Docs:               m.backlogStore(absWS),
 		Repo:               repo,
 		Emitter:            emitter,

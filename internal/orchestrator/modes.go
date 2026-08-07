@@ -72,6 +72,7 @@ func Presets() []Preset {
 func BuildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) {
 	ws := &tools.Workspace{
 		Root:       d.Workspace,
+		Env:        append([]string(nil), d.Env...),
 		WriteRoots: tools.NormalizeRoots(d.WriteRoots),
 		Jobs:       d.Jobs,
 		Emitter:    d.Emitter,

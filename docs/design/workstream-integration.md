@@ -128,7 +128,18 @@ copy  = [".env", ".env.local"]   # untracked files seeded from the primary tree
 link  = ["node_modules", ".venv"]# symlinked (heavy, and safe to share read-mostly)
 setup = ["go mod download"]      # run once after creation, before the session starts
 env   = { }                      # extra env for sessions in this worktree
+setup_timeout_seconds = 300      # per command; 300s is also the default when omitted
 ```
+
+This bootstrap runs after `git worktree add` and before the session starts, in
+`copy` → `link` → `setup` order. A `[worktree]` table in the project's primary-tree
+`ycc.toml` wins as a whole; otherwise the daemon config's table is used. Paths are
+workspace-relative and may not escape the tree. Missing sources and destinations
+that already exist are skipped, so optional local files are safe and tracked files
+are never clobbered. Setup commands run sequentially with the configured `env`; a
+failure aborts the spawn, removes its worktree and branch, and includes the command
+output in the reported error. The same environment is supplied to agent shells in
+freshly spawned and reopened workstream sessions.
 
 Two more pieces of grit that parallelism exposes:
 

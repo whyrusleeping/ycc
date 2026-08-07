@@ -19,6 +19,7 @@
 - 2026-08-07: Manager goroutines running git after session events must be joinable (Manager.Stop waits on workstreamWatches) or TempDir tests race; server.workstreamError maps manager errors BY STRING — rewording breaks Connect codes.
 - 2026-08-07: Event-log failure is TERMINAL (0198): Record returns Seq==0, OnFailure cancels the session; new durable emit sites must check Emitter.Err()/ctx before mutating history/workspace/config.
 - 2026-08-07: Backlog ids are daemon-allocated per project (docs.IDAllocator, state in <state>/ycc/backlog-ids.json, floored against the primary tree each call); plain docs.NewStore without SetIDSource still scans only its own tree — wire daemon stores through Manager.backlogStore (task 0249).
+- 2026-08-07: Model turns are ctx-aware end to end since task 0204: engine.Turner/StreamTurner use TurnCtx/TurnStreamCtx (names match gollama for zero-adapter satisfaction); gollama's legacy Turn/TurnStream still fall back to context.Background — never use them in ycc inference paths.
 
 ## Environment & tooling
 

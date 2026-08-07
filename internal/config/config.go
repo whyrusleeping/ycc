@@ -494,11 +494,26 @@ type Config struct {
 	// the local branch advanced by the rebase-then-fast-forward flow; when absent,
 	// the repository's default branch is used.
 	Integration Integration `toml:"integration,omitempty"`
+	// Worktree configures bootstrap steps for newly-created linked worktrees. A
+	// project-tree ycc.toml [worktree] block takes precedence over this daemon
+	// configuration (task 0250).
+	Worktree Worktree `toml:"worktree,omitempty"`
 }
 
 // Integration configures workstream integration into a repository base branch.
 type Integration struct {
 	Base string `toml:"base,omitempty"`
+}
+
+// Worktree configures bootstrap of a newly-created linked worktree. Copy and
+// Link contain workspace-relative paths in the primary tree, Setup commands run
+// sequentially in the new tree, and Env is supplied to setup and agent shells.
+type Worktree struct {
+	Copy                []string          `toml:"copy,omitempty"`
+	Link                []string          `toml:"link,omitempty"`
+	Setup               []string          `toml:"setup,omitempty"`
+	Env                 map[string]string `toml:"env,omitempty"`
+	SetupTimeoutSeconds int               `toml:"setup_timeout_seconds,omitempty"`
 }
 
 // Work configures the work-mode coordinator's implementation strategy (spec §10).
@@ -611,6 +626,28 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 	return &c, nil
+}
+
+// LoadWorktree leniently reads only the [worktree] table from dir/ycc.toml.
+// Unknown top-level configuration is intentionally ignored: project repositories
+// may carry a partial bootstrap file even when the daemon's complete config lives
+// elsewhere. Missing, malformed, and empty tables all return ok=false.
+func LoadWorktree(dir string) (cfg Worktree, ok bool) {
+	data, err := os.ReadFile(filepath.Join(dir, "ycc.toml"))
+	if err != nil {
+		return Worktree{}, false
+	}
+	var wrapper struct {
+		Worktree Worktree `toml:"worktree"`
+	}
+	if err := toml.Unmarshal(data, &wrapper); err != nil {
+		return Worktree{}, false
+	}
+	cfg = wrapper.Worktree
+	if len(cfg.Copy) == 0 && len(cfg.Link) == 0 && len(cfg.Setup) == 0 && len(cfg.Env) == 0 && cfg.SetupTimeoutSeconds == 0 {
+		return Worktree{}, false
+	}
+	return cfg, true
 }
 
 // Save validates c and writes it to path as TOML that Load reads back to an equal
@@ -739,6 +776,9 @@ func (c *Config) validate() error {
 	if c.Retry.BaseDelayMS > 0 && c.Retry.MaxDelayMS > 0 && c.Retry.MaxDelayMS < c.Retry.BaseDelayMS {
 		return fmt.Errorf("retry: max_delay_ms (%d) must be >= base_delay_ms (%d)", c.Retry.MaxDelayMS, c.Retry.BaseDelayMS)
 	}
+	if c.Worktree.SetupTimeoutSeconds < 0 {
+		return fmt.Errorf("worktree.setup_timeout_seconds must be non-negative")
+	}
 	switch c.Work.Implementation {
 	case "", ImplementationDelegate, ImplementationDirect:
 	default:
@@ -806,6 +846,24 @@ func (r *Registry) IntegrationBase() string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.cfg.Integration.Base
+}
+
+// WorktreeConfig returns a deep copy of the daemon-level worktree bootstrap
+// fallback. Project-tree ycc.toml resolution is performed by the session manager.
+func (r *Registry) WorktreeConfig() Worktree {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	cfg := r.cfg.Worktree
+	cfg.Copy = append([]string(nil), cfg.Copy...)
+	cfg.Link = append([]string(nil), cfg.Link...)
+	cfg.Setup = append([]string(nil), cfg.Setup...)
+	if cfg.Env != nil {
+		cfg.Env = make(map[string]string, len(cfg.Env))
+		for key, value := range r.cfg.Worktree.Env {
+			cfg.Env[key] = value
+		}
+	}
+	return cfg
 }
 
 // Notify returns the configured daemon-side push-notifier settings (task 0142).

@@ -1165,6 +1165,90 @@ strategy = "coordinator"
 	}
 }
 
+func TestWorktreeConfigParseRoundTripAndValidation(t *testing.T) {
+	cfg := DefaultAnthropic("https://api", "claude", "KEY", 4096)
+	cfg.Worktree = Worktree{
+		Copy:                []string{".env", ".env.local"},
+		Link:                []string{"node_modules", ".venv"},
+		Setup:               []string{"go mod download"},
+		Env:                 map[string]string{"FOO": "bar", "COUNT": "2"},
+		SetupTimeoutSeconds: 42,
+	}
+	path := filepath.Join(t.TempDir(), "ycc.toml")
+	if err := Save(path, cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !reflect.DeepEqual(got.Worktree, cfg.Worktree) {
+		t.Fatalf("worktree round trip = %+v, want %+v", got.Worktree, cfg.Worktree)
+	}
+
+	cfg.Worktree.SetupTimeoutSeconds = -1
+	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "worktree.setup_timeout_seconds") {
+		t.Fatalf("negative worktree timeout validation = %v", err)
+	}
+}
+
+func TestLoadWorktreeLenient(t *testing.T) {
+	dir := t.TempDir()
+	partial := `
+unknown_top_level = "ignored"
+[worktree]
+copy = [".env"]
+link = ["node_modules"]
+setup = ["make prepare"]
+setup_timeout_seconds = 17
+env = { FOO = "bar" }
+`
+	if err := os.WriteFile(filepath.Join(dir, "ycc.toml"), []byte(partial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := LoadWorktree(dir)
+	if !ok {
+		t.Fatal("LoadWorktree did not find partial [worktree] table")
+	}
+	want := Worktree{
+		Copy: []string{".env"}, Link: []string{"node_modules"}, Setup: []string{"make prepare"},
+		Env: map[string]string{"FOO": "bar"}, SetupTimeoutSeconds: 17,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("LoadWorktree = %+v, want %+v", got, want)
+	}
+
+	if _, ok := LoadWorktree(t.TempDir()); ok {
+		t.Fatal("missing ycc.toml reported a worktree config")
+	}
+	absent := t.TempDir()
+	if err := os.WriteFile(filepath.Join(absent, "ycc.toml"), []byte("other = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := LoadWorktree(absent); ok {
+		t.Fatal("absent [worktree] table reported a config")
+	}
+	empty := t.TempDir()
+	if err := os.WriteFile(filepath.Join(empty, "ycc.toml"), []byte("[worktree]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := LoadWorktree(empty); ok {
+		t.Fatal("empty [worktree] table reported a config")
+	}
+}
+
+func TestRegistryWorktreeConfigIsDeepCopy(t *testing.T) {
+	original := Worktree{Copy: []string{".env"}, Env: map[string]string{"FOO": "bar"}}
+	reg := NewRegistry(&Config{Worktree: original})
+	got := reg.WorktreeConfig()
+	got.Copy[0] = "changed"
+	got.Env["FOO"] = "changed"
+	again := reg.WorktreeConfig()
+	if again.Copy[0] != ".env" || again.Env["FOO"] != "bar" {
+		t.Fatalf("registry worktree config was aliased: %+v", again)
+	}
+}
+
 func loadSpecTOML(t *testing.T, s string) (*Config, error) {
 	t.Helper()
 	p := t.TempDir() + "/ycc.toml"

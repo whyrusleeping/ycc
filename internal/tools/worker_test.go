@@ -137,6 +137,15 @@ func TestBash(t *testing.T) {
 	}
 }
 
+func TestBashWorkspaceEnv(t *testing.T) {
+	reg := New()
+	reg.Add(Worker(&Workspace{Root: t.TempDir(), Env: []string{"YCC_WORKTREE_ENV=visible"}})...)
+	res := dispatch(t, reg, "Bash", `{"command":"printf '%s' \"$YCC_WORKTREE_ENV\""}`)
+	if res.IsError || res.Content != "visible" {
+		t.Fatalf("bash workspace env = %q (err=%v)", res.Content, res.IsError)
+	}
+}
+
 func TestBashCustomForegroundTimeout(t *testing.T) {
 	reg := workerReg(t.TempDir())
 	start := time.Now()

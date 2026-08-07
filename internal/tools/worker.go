@@ -430,6 +430,9 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 			cmd = exec.CommandContext(cctx, "sh", "-c", cmdStr)
 		}
 		cmd.Dir = ws.Root
+		if len(ws.Env) > 0 {
+			cmd.Env = append(os.Environ(), ws.Env...)
+		}
 		// Run the command in its own process group so a timeout kills the whole
 		// tree (the shell plus every pipeline child), not just the direct `sh`
 		// child — exec's default cancel only signals the leader, leaving
@@ -490,6 +493,9 @@ func startBackgroundBash(ws *Workspace, cmdStr string) *jobs.Job {
 
 	cmd := exec.CommandContext(job.Context(), "sh", "-c", cmdStr)
 	cmd.Dir = ws.Root
+	if len(ws.Env) > 0 {
+		cmd.Env = append(os.Environ(), ws.Env...)
+	}
 	cmd.Stdout = job.Writer()
 	cmd.Stderr = job.Writer()
 	// Own process group so a kill signals the whole tree (shell + pipeline
