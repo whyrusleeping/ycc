@@ -41,10 +41,11 @@ func Reachable(addr, token string) bool {
 // LocalAddr, spawning a detached `ycc daemon` (which survives this process) if
 // none is reachable. It returns once the daemon answers. This is the opt-in
 // persistence path used by `ycc --background`; configPath is auto-discovered
-// when empty. token is the bearer token to probe with (and is passed to a
-// newly spawned daemon so remote clients keep working): an already-running
-// token-protected daemon rejects an empty-token probe, and spawning a second
-// daemon on the same port would just fail to bind.
+// when empty. token is the bearer token to probe with and is passed to a newly
+// spawned daemon through YCC_TOKEN so it never appears in process listings or
+// /proc/*/cmdline. An already-running token-protected daemon rejects an
+// empty-token probe, and spawning a second daemon on the same port would just
+// fail to bind.
 func EnsureBackgroundDaemon(workspace, configPath, token string) error {
 	if Reachable(LocalAddr, token) {
 		return nil
@@ -63,20 +64,9 @@ func EnsureBackgroundDaemon(workspace, configPath, token string) error {
 		fmt.Fprintln(os.Stderr, "ycc: warning: ANTHROPIC_API_KEY is unset and no ycc.toml found; the daemon won't be able to reach a model")
 	}
 
-	host := strings.TrimPrefix(LocalAddr, "http://")
-	args := []string{"daemon", "-addr", host}
-	if workspace != "" {
-		args = append(args, "-workspace", workspace)
-	}
-	if configPath != "" {
-		args = append(args, "-config", configPath)
-	}
-	if token != "" {
-		args = append(args, "-token", token)
-	}
-
+	args, env := backgroundDaemonCmdline(workspace, configPath, token, os.Environ())
 	cmd := exec.Command(self, args...)
-	cmd.Env = os.Environ()
+	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // detach: survive ycc exit
 	// A detached daemon must NOT inherit our std{in,out,err}. If we were spawned
 	// from inside a shell pipeline (e.g. an agent running `ycc ... | tail`), an
@@ -107,6 +97,33 @@ func EnsureBackgroundDaemon(workspace, configPath, token string) error {
 		time.Sleep(150 * time.Millisecond)
 	}
 	return fmt.Errorf("local daemon did not become ready; see %s", logPath)
+}
+
+// backgroundDaemonCmdline builds the arguments and environment for a detached
+// daemon. The bearer token is deliberately environment-only: argv is commonly
+// visible to other users through process listings and /proc/*/cmdline.
+func backgroundDaemonCmdline(workspace, configPath, token string, baseEnv []string) (args, env []string) {
+	host := strings.TrimPrefix(LocalAddr, "http://")
+	args = []string{"daemon", "-addr", host}
+	if workspace != "" {
+		args = append(args, "-workspace", workspace)
+	}
+	if configPath != "" {
+		args = append(args, "-config", configPath)
+	}
+
+	// Remove every inherited copy first so a stale parent value cannot win over
+	// (or survive in addition to) the token supplied by the caller.
+	env = make([]string, 0, len(baseEnv)+1)
+	for _, entry := range baseEnv {
+		if !strings.HasPrefix(entry, "YCC_TOKEN=") {
+			env = append(env, entry)
+		}
+	}
+	if token != "" {
+		env = append(env, "YCC_TOKEN="+token)
+	}
+	return args, env
 }
 
 // DiscoverConfig looks for a ycc.toml in the workspace, then the user config dir.

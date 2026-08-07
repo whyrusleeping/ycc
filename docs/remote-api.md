@@ -56,11 +56,12 @@ Connect error JSON body, on unary *and* streaming RPCs alike:
 ### Starting the daemon for remote access
 
 Run the persistent daemon on the workspace machine, bound to a reachable address,
-with a token:
+with a token supplied through `YCC_TOKEN`. Keep the secret out of command-line
+arguments, which are exposed in process listings:
 
-```
+```sh
 YCC_TOKEN=$(head -c 32 /dev/urandom | base64)         # generate once
-YCC_TOKEN=$YCC_TOKEN ycc daemon --addr 100.64.0.1:8787
+YCC_TOKEN="$YCC_TOKEN" ycc daemon --addr 100.64.0.1:8787
 ```
 
 `ycc daemon` flags relevant to remote access:
@@ -68,7 +69,7 @@ YCC_TOKEN=$YCC_TOKEN ycc daemon --addr 100.64.0.1:8787
 | flag | meaning |
 |------|---------|
 | `--addr <ip:port>` | listen address (default `127.0.0.1:8787`). A non-loopback bind **requires** a token. |
-| `--token <t>` | bearer token clients must present. Also read from the `YCC_TOKEN` env var. Empty disables auth (loopback only). |
+| `--token <t>` | compatibility option for the bearer token clients must present. Prefer `YCC_TOKEN`, because command-line values are exposed in process listings. Empty disables auth (loopback only). |
 | `--tls-cert <file>` / `--tls-key <file>` | enable HTTPS. Optional on a private tailnet. |
 | `--workspace <dir>` | startup project directory, registered by basename. |
 
@@ -794,7 +795,7 @@ of the persisted `model_turn`.
 ## Verification
 
 The examples here were copy-paste-verified against a real daemon on loopback with a
-token (`ycc daemon --addr 127.0.0.1:8790 --workspace <tmp>`, `YCC_TOKEN=testtok`),
+token (`YCC_TOKEN=testtok ycc daemon --addr 127.0.0.1:8790 --workspace <tmp>`),
 seeded with a persisted session (`events.jsonl` + `ResumeSession`). The
 `ListSessions` / `GetSessionTranscript` / `ResumeSession` unary responses and the
 `Subscribe` `connect+json` enveloped stream (data frames flag `0x00`, end-of-stream

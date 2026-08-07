@@ -13,8 +13,8 @@
 //	ycc attach s_abc123 --from 0         # re-attach, replay from a seq offset
 //	ycc list | ycc modes
 //	ycc cost --by task --since 2026-06-01  # usage/cost breakdown by backlog task
-//	ycc --addr https://host:8787 --token T # attach to a remote daemon
-//	ycc daemon --addr 0.0.0.0:8787 --token T --tls-cert c.pem --tls-key k.pem
+//	YCC_TOKEN=T ycc --addr https://host:8787 list # attach to a remote daemon
+//	YCC_TOKEN=T ycc daemon --addr 0.0.0.0:8787 --tls-cert c.pem --tls-key k.pem
 //
 // The command tree is built with urfave/cli (v3), which gives every subcommand
 // discoverable `--help` output and a generated command list (`ycc --help`).
@@ -82,7 +82,7 @@ func newRootCommand(a *app) *cli.Command {
 		},
 		&cli.StringFlag{
 			Name:        "token",
-			Usage:       "bearer `token` for --addr (or set YCC_TOKEN)",
+			Usage:       "bearer `token` for --addr (prefer YCC_TOKEN so secrets stay out of process arguments)",
 			Sources:     cli.EnvVars("YCC_TOKEN"),
 			Destination: &a.token,
 			Local:       true,
@@ -553,24 +553,25 @@ func daemonCommand() *cli.Command {
 		Description: "Runs the workspace daemon in the foreground until killed. It serves the\n" +
 			"Connect API (session control + event streaming) that clients attach to.\n\n" +
 			"Remote access (spec §12/§14): the deployment model is a private network\n" +
-			"(Tailscale/VPN). A bearer --token is REQUIRED to bind any non-loopback\n" +
+			"(Tailscale/VPN). Bearer authentication is REQUIRED to bind any non-loopback\n" +
 			"address — the daemon refuses to start on e.g. 0.0.0.0 or a tailnet IP\n" +
-			"without one. TLS is optional: without --tls-cert/--tls-key a non-loopback\n" +
-			"bind logs a cleartext warning (fine inside an encrypted tailnet). The token\n" +
-			"may also be supplied via the YCC_TOKEN environment variable.\n\n" +
-			"Clients attach with `ycc --addr <url> --token <t>` (or YCC_TOKEN), e.g.\n" +
-			"`ycc --addr http://100.64.0.1:8787 --token $YCC_TOKEN list`. The same\n" +
-			"endpoints are reachable over the Connect HTTP/JSON protocol with curl by\n" +
-			"presenting the `Authorization: Bearer <token>` header.",
+			"without it. TLS is optional: without --tls-cert/--tls-key a non-loopback\n" +
+			"bind logs a cleartext warning (fine inside an encrypted tailnet). Supply\n" +
+			"secrets with YCC_TOKEN so they do not appear in process arguments; the\n" +
+			"--token flag remains available for compatibility.\n\n" +
+			"Clients should attach with YCC_TOKEN in their environment, e.g.\n" +
+			"`YCC_TOKEN=… ycc --addr http://100.64.0.1:8787 list`. The same endpoints\n" +
+			"are reachable over the Connect HTTP/JSON protocol with curl by presenting\n" +
+			"the `Authorization: Bearer <token>` header.",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "addr", Value: "127.0.0.1:8787", Usage: "`address` to listen on (non-loopback requires --token)"},
+			&cli.StringFlag{Name: "addr", Value: "127.0.0.1:8787", Usage: "`address` to listen on (non-loopback requires bearer authentication)"},
 			&cli.StringFlag{Name: "workspace", Value: ".", Usage: "startup project directory (registered by basename)"},
 			&cli.StringFlag{Name: "config", Usage: "TOML config `file` (models + roles)"},
 			&cli.StringFlag{Name: "model", Value: "claude-opus-4-8", Usage: "fallback model id (when no --config)"},
 			&cli.StringFlag{Name: "base-url", Value: "https://api.anthropic.com", Usage: "fallback API base URL (when no --config)"},
 			&cli.StringFlag{Name: "key-env", Value: "ANTHROPIC_API_KEY", Usage: "fallback API key env var (when no --config)"},
 			&cli.IntFlag{Name: "max-tokens", Value: config.DefaultMaxTokens, Usage: "fallback max tokens per turn (when no --config)"},
-			&cli.StringFlag{Name: "token", Sources: cli.EnvVars("YCC_TOKEN"), Usage: "bearer `token` clients must present; required for non-loopback binds (empty disables auth, loopback only)"},
+			&cli.StringFlag{Name: "token", Sources: cli.EnvVars("YCC_TOKEN"), Usage: "bearer `token` clients must present; prefer YCC_TOKEN so secrets stay out of process arguments (required for non-loopback binds)"},
 			&cli.StringFlag{Name: "tls-cert", Usage: "TLS certificate `file` (enables HTTPS; optional on a private tailnet)"},
 			&cli.StringFlag{Name: "tls-key", Usage: "TLS key `file`"},
 			&cli.BoolFlag{Name: "web", Usage: "serve the embedded web client at / (static assets are unauthenticated; RPCs still require the bearer token)"},

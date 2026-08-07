@@ -23,7 +23,7 @@ These precede the subcommand (e.g. `ycc --addr URL list`).
 | Flag | Description |
 |------|-------------|
 | `--addr URL` | remote/explicit daemon URL to attach to |
-| `--token T` | bearer token (for `--addr`); also from `$YCC_TOKEN` |
+| `--token T` | compatibility option for the bearer token used with `--addr`; prefer `YCC_TOKEN`, because command-line values are exposed in process listings |
 | `--workspace DIR` | workspace for new sessions (default: current directory) |
 | `--config FILE` | TOML model config for the local daemon |
 | `--background` | spawn a detached persistent daemon and attach (opt-in persistence) |
@@ -213,8 +213,8 @@ Checks, in order:
 - **model keys** — each configured model's `key_env` resolved from the environment
   or the machine-local secrets store (or `MISSING`). With no config file the built-in
   Anthropic fallback (`ANTHROPIC_API_KEY`) is checked. Secret values are never printed.
-- **daemon** — whether a persistent daemon is reachable (`--addr`/`--token` or the
-  local loopback); degrades to a warning otherwise.
+- **daemon** — whether a persistent daemon is reachable (`--addr` with `YCC_TOKEN`,
+  or the local loopback); degrades to a warning otherwise.
 - **sandbox** — reviewer bash confinement mechanism (Landlock / bwrap / none).
 - **git** — repo present and working tree clean/dirty, or not a repo. Read-only: it
   never runs `git init`.
@@ -284,15 +284,18 @@ does not dial a client of its own.
 | `--base-url URL` | `https://api.anthropic.com` | fallback API base URL (when no `--config`) |
 | `--key-env VAR` | `ANTHROPIC_API_KEY` | fallback API key env var (when no `--config`) |
 | `--max-tokens N` | `32000` | fallback max tokens per turn (when no `--config`) |
-| `--token T` | `$YCC_TOKEN` | bearer token clients must present (empty disables auth) |
+| `--token T` | `$YCC_TOKEN` | compatibility option for the bearer token clients must present; prefer `YCC_TOKEN`, because command-line values are exposed in process listings (empty disables auth) |
 | `--tls-cert FILE` | | TLS certificate file (enables HTTPS) |
 | `--tls-key FILE` | | TLS key file |
 | `--web` | off | serve the embedded web client at `/` — static assets are unauthenticated, RPCs still require the bearer token |
 
 ```sh
 ycc daemon
-ycc daemon --addr 0.0.0.0:8787 --token "$YCC_TOKEN" --tls-cert c.pem --tls-key k.pem
+YCC_TOKEN=… ycc daemon --addr 0.0.0.0:8787 --tls-cert c.pem --tls-key k.pem
 ```
+
+Use the `--token` flag only for compatibility with existing invocations; passing a
+secret through it exposes the value in process listings.
 
 ### `ycc completion <shell>` — shell completion scripts
 

@@ -83,3 +83,7 @@ Design:
 - 2026-08-07 review (sol): accept — The change satisfies task 0249. It introduces a process-shared, mutex-serialized per-primary-backlog allocator with durable high-water marks for persistent daemons, re-floors against the primary tree 
 …[truncated]
 - 2026-08-07 decision: accept — commit: Serialize backlog id allocation per project via a daemon-shared allocator (task 0249)
+- 2026-08-07 usage: 1,441,386 tok (in 444,725, out 17,205, cache_r 1,772,402, cache_w 74,421) · cost n/a (unpriced)
+  implementer: 1,126,492 tok (in 266,766, out 9,294, cache_r 850,432, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 309,439 tok (in 177,933, out 2,482, cache_r 129,024, cache_w 0) · cost n/a (unpriced)
+  coordinator: 5,455 tok (in 26, out 5,429, cache_r 792,946, cache_w 74,421) · cost n/a (unpriced)
