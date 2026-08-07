@@ -38,3 +38,4 @@ Verify: go test -race -count=10 ./internal/orchestrator passes; then full go tes
 - 2026-08-07 context hints: 4 recorded with plan
 - 2026-08-07 review tier: simple (coordinator self-review)
 - 2026-08-07 decision: accept — commit: Synchronize captureRec test recorder to fix reviewer fan-out data race (task 0292)
+- 2026-08-07 usage: 6,468 tok (in 42, out 6,426, cache_r 539,120, cache_w 19,049) · cost n/a (unpriced)

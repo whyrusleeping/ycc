@@ -90,6 +90,35 @@ func TestBuildRequest(t *testing.T) {
 	}
 }
 
+func TestBuildRequestMaxOutputTokens(t *testing.T) {
+	tests := []struct {
+		name    string
+		options *gollama.Options
+		want    string
+	}{
+		{name: "configured", options: &gollama.Options{MaxTokens: 12_345}, want: `"max_output_tokens":12345`},
+		{name: "nil options"},
+		{name: "zero cap", options: &gollama.Options{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, err := json.Marshal(buildRequest(gollama.RequestOptions{Model: "m", Options: tt.options}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.want == "" {
+				if strings.Contains(string(body), `"max_output_tokens"`) {
+					t.Fatalf("max_output_tokens must be omitted: %s", body)
+				}
+				return
+			}
+			if !strings.Contains(string(body), tt.want) {
+				t.Fatalf("serialized request = %s, want %s", body, tt.want)
+			}
+		})
+	}
+}
+
 // sse writes one SSE data frame.
 func sse(w http.ResponseWriter, v map[string]any) {
 	data, _ := json.Marshal(v)
@@ -452,6 +481,49 @@ func TestTurnIncompleteMaxTokens(t *testing.T) {
 	}
 	if resp.Choices[0].Message.Content != "partial" {
 		t.Errorf("content = %q", resp.Choices[0].Message.Content)
+	}
+}
+
+func TestTurnIncompleteMaxTokensReasoningOnly(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		sse(w, map[string]any{
+			"type": "response.reasoning_summary_text.delta", "item_id": "rs_1", "summary_index": 0, "delta": "planning",
+		})
+		sse(w, map[string]any{"type": "response.incomplete", "response": map[string]any{
+			"status":             "incomplete",
+			"incomplete_details": map[string]any{"reason": "max_output_tokens"},
+			"usage": map[string]any{
+				"input_tokens":          11,
+				"input_tokens_details":  map[string]any{"cached_tokens": 7},
+				"output_tokens":         13,
+				"output_tokens_details": map[string]any{"reasoning_tokens": 13},
+				"total_tokens":          24,
+			},
+		}})
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, testTokens("t", "a"))
+	resp, err := c.Turn(gollama.RequestOptions{Model: "m", Messages: []gollama.Message{{Role: "user", Content: "x"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Truncated() {
+		t.Errorf("want truncated response, got stop reason %q", resp.StopReason)
+	}
+	if got := resp.Choices[0].Message.Content; got != "" {
+		t.Errorf("visible content = %q, want empty", got)
+	}
+	if got := resp.Choices[0].Message.Thinking; got != "planning" {
+		t.Errorf("thinking = %q, want planning", got)
+	}
+	if resp.Usage.PromptTokens != 11 || resp.Usage.CompletionTokens != 13 || resp.Usage.TotalTokens != 24 ||
+		resp.Usage.PromptTokensDetails == nil || resp.Usage.PromptTokensDetails.CachedTokens != 7 {
+		t.Errorf("usage = %+v", resp.Usage)
+	}
+	if got := c.ReasoningTokens(); got != 13 {
+		t.Errorf("reasoning tokens = %d, want 13", got)
 	}
 }
 

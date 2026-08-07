@@ -1,10 +1,10 @@
 ---
 id: "0201"
 title: 'Codex: honor max_output_tokens and truncation semantics'
-status: todo
+status: done
 priority: 2
 created: "2026-07-15"
-updated: "2026-07-15"
+updated: "2026-08-07"
 depends_on: []
 spec_refs:
     - Agent engine
@@ -22,4 +22,34 @@ The engine maps the configured per-turn cap into `gollama.RequestOptions.Options
 - [ ] Usage accounting remains correct.
 - [ ] `go test ./...` passes.
 
+## Plan
+
+Goal: Codex (ChatGPT OAuth Responses API) requests must honor the engine's configured per-turn output cap.
+
+1. In internal/codex/codex.go:
+   - Add `MaxOutputTokens int `json:"max_output_tokens,omitempty"`` to the `request` struct (placed near Model/Instructions fields).
+   - In `buildRequest`, set `req.MaxOutputTokens = opts.Options.MaxTokens` when `opts.Options != nil && opts.Options.MaxTokens > 0`. When no cap is configured (nil Options or MaxTokens <= 0), the field must be omitted from the serialized JSON (omitempty handles this).
+2. Tests in internal/codex/codex_test.go:
+   - New test that serializes buildRequest output (json.Marshal) and asserts `"max_output_tokens":N` appears with the exact configured value when Options.MaxTokens is set, and that the key is absent when Options is nil and when MaxTokens is 0.
+   - Truncation: TestTurnIncompleteMaxTokens already covers visible-text truncation (StopReason mapped to "length", resp.Truncated() true). Add a reasoning-only truncation case: stream only reasoning summary deltas (no output_text), then `response.incomplete` with reason max_output_tokens — assert no error, resp.Truncated() true, and empty visible content (parseStream sets completed=true on response.incomplete, so it must not fall into the "stream ended without a completed response" error path). Also assert usage fields carried through (usage accounting unchanged).
+3. Run `go build ./... && go test ./internal/codex/...` and then `go test ./...` (note memory.md: some pre-existing flaky tests in internal/session, internal/setup, internal/tools — compare against HEAD before blaming).
+
+Notes: the engine already maps the configured cap into gollama.RequestOptions.Options.MaxTokens (internal/engine/loop.go ~line 762), so no engine change is needed. gollama's OpenAI adapter uses the same `opts.Options.MaxTokens > 0` guard — mirror it.
+
+### Starting points
+- internal/codex/codex.go: `request` struct (~line 133) and `buildRequest` (~line 148); truncation mapping at ~line 585 already maps incomplete/max_output_tokens -> StopReason "length"
+- internal/codex/codex_test.go: TestTurnIncompleteMaxTokens (~line 434) and the `sse` helper pattern
+- internal/engine/loop.go:762 — opts.Options = &gollama.Options{MaxTokens: l.MaxTok}
+- gollama openai.go:141 uses `if opts.Options.MaxTokens > 0` guard (note: check opts.Options != nil first; codex path may receive nil Options)
+
 ## Work log
+- 2026-08-07 plan: Goal: Codex (ChatGPT OAuth Responses API) requests must honor the engine's configured per-turn output cap.  1. In internal/codex/codex.go:    - Add `MaxOutputTokens int `json:"max_output_tokens,omitem
+…[truncated]
+- 2026-08-07 context hints: 4 recorded with plan
+- 2026-08-07 context hints: internal/codex/codex.go: `request` struct ~line 133, `buildRequest` ~line 148, truncation mapping ~line 585 (response.incomplete -> StopReason "length"); internal/codex/codex_test.go: TestTurnIncomple
+…[truncated]
+- 2026-08-07 preload: 1 file(s), ~4 KiB seeded into implementer context
+- 2026-08-07 implementer report: Implemented task 0201. Added `request.MaxOutputTokens` with `json:"max_output_tokens,omitempty"` and populated it only when `opts.Options != nil && opts.Options.MaxTokens > 0`, preserving the configur
+…[truncated]
+- 2026-08-07 review tier: simple (coordinator self-review)
+- 2026-08-07 decision: accept — commit: Codex: send max_output_tokens from the configured per-turn cap (task 0201)

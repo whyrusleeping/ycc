@@ -132,6 +132,7 @@ type streamOpts struct {
 
 type request struct {
 	Model             string         `json:"model"`
+	MaxOutputTokens   int            `json:"max_output_tokens,omitempty"`
 	Instructions      string         `json:"instructions"`
 	Input             []inputItem    `json:"input"`
 	Tools             []toolDef      `json:"tools,omitempty"`
@@ -159,6 +160,9 @@ func buildRequest(opts gollama.RequestOptions) request {
 	// The backend rejects an empty instructions field.
 	if strings.TrimSpace(req.Instructions) == "" {
 		req.Instructions = "You are a helpful coding assistant."
+	}
+	if opts.Options != nil && opts.Options.MaxTokens > 0 {
+		req.MaxOutputTokens = opts.Options.MaxTokens
 	}
 	for _, t := range opts.Tools {
 		if t.Function == nil {
