@@ -149,6 +149,10 @@ func GetStringSlice(params any, key string) []string { return getStringSlice(par
 // a map[string]any. Returns nil when the argument is absent or not an array.
 func GetMapSlice(params any, key string) []map[string]any { return getMapSlice(params, key) }
 
+// GetInt pulls an integer argument (JSON numbers arrive as float64), returning
+// def when absent or not numeric.
+func GetInt(params any, key string, def int) int { return getInt(params, key, def) }
+
 // GetBool pulls a boolean argument, returning def when absent or not a boolean.
 func GetBool(params any, key string, def bool) bool { return getBool(params, key, def) }
 

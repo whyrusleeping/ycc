@@ -1,10 +1,10 @@
 ---
 id: "0175"
 title: 'Preloaded context: coordinator supplies file+line-range tuples injected as synthetic Read tool calls in the implementer''s seed history'
-status: todo
+status: done
 priority: 3
 created: "2026-07-07"
-updated: "2026-07-08"
+updated: "2026-08-07"
 depends_on: []
 spec_refs: []
 ---
@@ -40,4 +40,68 @@ Savings: N API round trips and the per-turn output/thinking tokens the model wou
 - Total preload size is bounded; stale paths produce error tool-results rather than spawn failure.
 - Unit tests cover history construction, bounding, and replay round-trip.
 
+## Plan
+
+Add a structured `preload_files` param to spawn_implementer: the coordinator supplies {path, offset?, limit?} tuples, and the orchestrator constructs the implementer's seed history with a synthetic tool exchange (real Read outputs executed at spawn time), seed prompt last.
+
+## Design
+
+**History shape** (implementer loop, installed via `loop.SetHistory` on the fresh loop, then `loop.Seed(implementerPrompt(...))` so the real seed prompt is the LAST message):
+1. user: fixed nudge constant (e.g. "Orient yourself: read these coordinator-preselected files before starting.")
+2. assistant: Content "" + one Read ToolCall per tuple, ids `preload_1..N`, args JSON `{"file_path":..., "offset":..., "limit":...}` (omit offset/limit when unset)
+3. tool: one result per call — produced by dispatching the REAL Read tool through the implementer's registry (`reg.Dispatch` with a constructed gollama.ToolCall), so formatting/read-policy/error behavior are byte-identical. Stale paths yield honest error tool-results, never spawn failure.
+4. user: implementerPrompt seed (via loop.Seed)
+
+Seed-prompt-last means the synthetic assistant tool_use turn is never in Anthropic's constrained final position, so no signed thinking block is required. Codex buildInput handles this history generically (assistant with tool_calls but no recorded items → plain function_call items; tool role → function_call_output).
+
+**Bounds** (new file internal/orchestrator/preload.go):
+- maxPreloadFiles = 16 tuples; extra tuples are dropped and noted in the nudge/last result.
+- maxPreloadBytes = 64*1024 total result content. Once the budget is exhausted, the current result is truncated with a visible marker ("…[preload truncated: total preload budget exceeded; Read the rest yourself]") and remaining tuples get a "(preload skipped: budget exhausted; Read this file yourself)" result instead of a real read.
+- Media results (Images/Documents from Read of a png/pdf): strip the attachments, keep/replace text with a note telling the model to Read the file itself — synthetic seed messages must stay text-only for cross-backend validity.
+
+**Event-log fidelity**: after bounding, emit with actor "implementer" (d.Emitter.With("implementer")): one minimal model_turn {text:"", tool_calls:N, model_name/backend/model_id, synthetic:true}, then per tuple tool_call {name:"Read", args, id, synthetic:true} and tool_result {name, result (the FINAL content that entered history), error, id, duration_ms, synthetic:true}. Do NOT emit user_input (ReplayHistory treats all user_input events as coordinator conversation regardless of actor — that would corrupt coordinator replay; the implementer's real seed prompt is likewise unlogged today). Coordinator ReplayHistory ignores actor-"implementer" events by its existing actor filter — add a regression test. (Implementer loops are not reconstructed on session reopen by existing design — Deps.impl starts nil — so event-log recording is the replay surface here; the transcript renders the synthetic exchange like normal implementer tool calls.)
+
+**Orchestrator wiring** (internal/orchestrator/orchestrator.go, spawnImplementer):
+- New schema param `preload_files`: array of objects {path:string (required), offset:int?, limit:int?}; parse via tools.GetMapSlice + a new exported tools.GetInt wrapper (getInt already exists unexported in internal/tools).
+- Build the synthetic exchange after `loop := d.newLoop(...)` / before `loop.Seed`; works identically for foreground and background spawns (reads execute synchronously at spawn time in the tool call, before the fork).
+- Work-log breadcrumb: "preloaded N file(s) (~X KB) into implementer context" (best-effort, like context hints).
+- Keep string context_hints fully working alongside; preload is additive. Reviewers/propose_plan are out of scope.
+- Tool description + the CONTEXT HINTS paragraph in coordinatorSystem (prompts.go) get a short mention of preload_files (structured tuples → files pre-read into the implementer's context; use for files the implementer will certainly need).
+
+**Empirical verification**:
+- Anthropic: live test (skipped without ANTHROPIC_API_KEY) that builds exactly this seed history (nudge, synthetic Read exchange with a real Read output, seed prompt last), Thinking "adaptive", registry including Read, runs one Loop turn against api.anthropic.com and asserts no API error (model pattern: internal/engine/stream_live_test.go). ANTHROPIC_API_KEY is set on this box — run it for real.
+- OpenAI: an equivalent live test gated on OPENAI_API_KEY (skips here; no key), plus unit coverage that codex buildInput converts the synthetic history into a valid Responses item sequence (message/function_call/function_call_output in order, call_ids preserved).
+
+**Unit tests** (internal/orchestrator/preload_test.go + small additions):
+- history construction: exact message order/roles, ids, args JSON, genuine Read output content, seed prompt last (spawn integration via the existing `scripted` fake pattern asserting the first request's messages).
+- bounding: total-budget truncation marker, skipped-tuple results, tuple-count cap.
+- stale path → error tool result, spawn still succeeds.
+- media read → attachments stripped with note.
+- ReplayHistory ignores the synthetic implementer-actor events (coordinator history unchanged).
+- tools.GetInt wrapper.
+
+Run gofmt, go vet, `go test ./internal/orchestrator ./internal/tools ./internal/engine ./internal/codex`, plus the live Anthropic test.
+
+### Starting points
+- internal/orchestrator/orchestrator.go: spawnImplementer (~line 402), runImplementer, Deps
+- internal/orchestrator/prompts.go: implementerPrompt, contextHintsBlock, coordinatorSystem CONTEXT HINTS paragraph
+- internal/tools/tools.go: Registry.Dispatch, exported Get* helpers (add GetInt); worker.go readFile (Read tool, defaultReadLines=2000, maxReadBytes=128KB)
+- internal/engine/loop.go: SetHistory/Seed/Post; event emission shapes for model_turn/tool_call/tool_result (Run, ~lines 867-994)
+- internal/engine/replay.go: ReplayHistory filters ev.Actor != "coordinator" for model_turn/tool_call/tool_result but takes ALL user_input events — never emit user_input for the synthetic nudge
+- internal/engine/stream_live_test.go: live-test pattern gated on ANTHROPIC_API_KEY (key IS set on this box)
+- internal/codex/codex.go: buildInput/buildAssistantItems — synthetic assistant tool_calls fall through to plain function_call items (no recorded-items block needed)
+- internal/orchestrator/hints_test.go + revise_test.go: `scripted` fake Turner pattern for spawn integration tests
+
 ## Work log
+- 2026-08-07 plan: Add a structured `preload_files` param to spawn_implementer: the coordinator supplies {path, offset?, limit?} tuples, and the orchestrator constructs the implementer's seed history with a synthetic to
+…[truncated]
+- 2026-08-07 context hints: 8 recorded with plan
+- 2026-08-07 context hints: internal/orchestrator/orchestrator.go: spawnImplementer (~line 402), runImplementer, Deps; internal/orchestrator/prompts.go: implementerPrompt, contextHintsBlock, coordinatorSystem CONTEXT HINTS parag
+…[truncated]
+- 2026-08-07 implementer report: Implemented task 0175.  Changes: - Added `spawn_implementer.preload_files` schema/parsing for `{path, offset?, limit?}` tuples while preserving `context_hints`. - Added `internal/orchestrator/preload.
+…[truncated]
+- 2026-08-07 review tier: single-opus — reviewers: sol
+- 2026-08-07 review (sol): accept — The change correctly adds structured `preload_files` support, executes the real scoped Read handler before the implementer’s first turn, installs the synthetic user/assistant/tool exchange with the 
+…[truncated]
+- 2026-08-07 verification: live checks passed — Anthropic (claude-opus-4-8, adaptive thinking) via TestSyntheticPreloadLiveAnthropic, and OpenAI/codex (gpt-5.6-sol via ChatGPT subscription OAuth) via a one-off scratch run: both accepted the synthetic seed history and the codex model quoted the preloaded content back. OPENAI_API_KEY-gated live test remains for platform-API runs. Note: implementer loops are not reconstructed on session reopen (existing design), so replay fidelity is at the event-log level: synthetic events record the exact seeded content and coordinator ReplayHistory is provably unaffected.
+- 2026-08-07 decision: accept — commit: spawn_implementer: preload_files seeds real Read outputs as a synthetic tool exchange in the implementer's initial history (task 0175)

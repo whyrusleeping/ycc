@@ -405,7 +405,8 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 		Description: "Delegate implementation of a task to a coding subagent. It edits the workspace and returns a " +
 			"report plus the staged diff. Provide the task id and your plan. Optionally attach concise, advisory " +
 			"context_hints (relevant file paths, function/symbol refs, or small snippets) surfaced to the worker as " +
-			"non-prescriptive 'starting points'. Call once per task; use send_to_implementer for follow-up revisions. " +
+			"non-prescriptive 'starting points'. For files the worker will certainly need, preload_files accepts " +
+			"structured path/offset/limit tuples and pre-reads them into its initial context. Call once per task; use send_to_implementer for follow-up revisions. " +
 			"Pass background:true to run it as a background job (returns a job_id immediately, report arrives via wait " +
 			"or automatically) — only when you have genuinely independent work to do meanwhile; at most one mutating " +
 			"job per tree.",
@@ -413,13 +414,28 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 			"task_id":       tools.StrProp("task id"),
 			"plan":          tools.StrProp("the plan the implementer should follow"),
 			"context_hints": tools.StrArrProp("optional, concise advisory starting points — relevant file paths, function/symbol refs, or small snippets — surfaced to the worker as non-prescriptive hints to cut redundant exploration; keep them short, no full-file dumps"),
-			"background":    tools.BoolProp("run as a background job: return a job_id immediately instead of blocking; its report arrives automatically or via wait. Use only for genuinely independent work — refused while another mutating job is live in this tree (route parallel mutating work through a workstream)"),
+			"preload_files": map[string]any{
+				"type": "array",
+				"description": "optional files to pre-read into the implementer's seed context; at most 16 tuples and 64 KiB total. " +
+					"Each tuple is {path, offset?, limit?}; stale paths become visible Read errors rather than failing the spawn",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"path":   tools.StrProp("file path accepted by Read"),
+						"offset": map[string]any{"type": "integer", "description": "optional 1-based start line"},
+						"limit":  map[string]any{"type": "integer", "description": "optional line limit; capped at 2000"},
+					},
+					"required": []string{"path"},
+				},
+			},
+			"background": tools.BoolProp("run as a background job: return a job_id immediately instead of blocking; its report arrives automatically or via wait. Use only for genuinely independent work — refused while another mutating job is live in this tree (route parallel mutating work through a workstream)"),
 		}, "task_id", "plan"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			id, _ := tools.GetString(params, "task_id")
 			plan, _ := tools.GetString(params, "plan")
 			background := tools.GetBool(params, "background", false)
 			hints := boundHints(tools.GetStringSlice(params, "context_hints"))
+			preloads := parsePreloadFiles(params)
 			t, err := d.Docs.Get(id)
 			if err != nil {
 				return tools.ErrResult("spawn_implementer: %v", err), nil
@@ -463,6 +479,12 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 			// engine.Run). Floor it so a thorough turn isn't cut off mid-thought.
 			if loop.MaxTok < implementerMinTok {
 				loop.MaxTok = implementerMinTok
+			}
+			preloaded := buildPreloadHistory(ctx, reg, preloads)
+			if len(preloaded.History) > 0 {
+				loop.SetHistory(preloaded.History)
+				emitSyntheticPreload(d.Emitter, impl, preloaded)
+				d.Docs.AppendWorkLog(id, fmt.Sprintf("preload: %d file(s), ~%d KiB seeded into implementer context", preloaded.Files, (preloaded.Bytes+1023)/1024))
 			}
 			loop.Seed(implementerPrompt(t, plan, hints))
 			d.mu.Lock()

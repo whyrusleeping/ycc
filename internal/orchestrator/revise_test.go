@@ -21,13 +21,15 @@ import (
 // subagent's Loop is reused across rounds, one scripted turner serves both the
 // initial run and the revision run.
 type scripted struct {
-	resp   []*gollama.ResponseMessageGenerate
-	i      int
-	system string
+	resp     []*gollama.ResponseMessageGenerate
+	i        int
+	system   string
+	messages []gollama.Message
 }
 
 func (s *scripted) Turn(opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
 	s.system = opts.System
+	s.messages = append([]gollama.Message(nil), opts.Messages...)
 	if s.i >= len(s.resp) {
 		return text("(no more scripted responses)"), nil
 	}

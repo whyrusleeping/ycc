@@ -328,6 +328,22 @@ func TestBuildRequestReplaysTwoToolTurnsAndReopen(t *testing.T) {
 	}
 }
 
+func TestBuildInputSyntheticPreloadExchange(t *testing.T) {
+	call := gollama.ToolCall{ID: "preload_1", Type: "function", Function: gollama.ToolCallFunction{Name: "Read", Arguments: `{"file_path":"x.go"}`}}
+	items := buildInput([]gollama.Message{
+		{Role: "user", Content: "preload nudge"},
+		{Role: "assistant", ToolCalls: []gollama.ToolCall{call}},
+		{Role: "tool", ToolCallID: "preload_1", Content: "file contents"},
+		{Role: "user", Content: "implement seed"},
+	}, "model")
+	if len(items) != 4 {
+		t.Fatalf("item count = %d, want 4: %+v", len(items), items)
+	}
+	if items[0].Type != "message" || items[0].Role != "user" || items[1].Type != "function_call" || items[1].CallID != "preload_1" || items[1].Name != "Read" || items[2].Type != "function_call_output" || items[2].CallID != "preload_1" || items[2].Output != "file contents" || items[3].Type != "message" || items[3].Role != "user" {
+		t.Fatalf("synthetic exchange converted incorrectly: %+v", items)
+	}
+}
+
 func TestBuildInputItemsBlockSafety(t *testing.T) {
 	call := gollama.ToolCall{ID: "call", Type: "function", Function: gollama.ToolCallFunction{Name: "bash", Arguments: `{}`}}
 	foreign := gollama.ThinkingBlock{Thinking: "anthropic thinking", Signature: "sig"}

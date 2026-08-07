@@ -12,6 +12,88 @@ import (
 	"github.com/whyrusleeping/ycc/internal/tools"
 )
 
+func syntheticPreloadLiveHistory(t *testing.T, reg *tools.Registry, filePath string) []gollama.Message {
+	t.Helper()
+	args := `{"file_path":"` + filePath + `","limit":5}`
+	call := gollama.ToolCall{ID: "preload_1", Type: "function", Function: gollama.ToolCallFunction{Name: "Read", Arguments: args}}
+	res := reg.Dispatch(context.Background(), call)
+	if res.IsError {
+		t.Fatalf("preload Read: %s", res.Content)
+	}
+	return []gollama.Message{
+		{Role: "user", Content: "Orient yourself: read these coordinator-preselected files before starting."},
+		{Role: "assistant", ToolCalls: []gollama.ToolCall{call}},
+		{Role: "tool", ToolCallID: call.ID, Content: res.Content},
+		{Role: "user", Content: "Briefly say which file was preloaded, then stop. Do not use tools."},
+	}
+}
+
+// TestSyntheticPreloadLiveAnthropic verifies the seed-prompt-last exchange is
+// accepted by Anthropic with adaptive thinking, despite the synthetic assistant
+// tool-use turn having no signed thinking block.
+func TestSyntheticPreloadLiveAnthropic(t *testing.T) {
+	key := os.Getenv("ANTHROPIC_API_KEY")
+	if key == "" {
+		t.Skip("ANTHROPIC_API_KEY not set; skipping synthetic preload live test")
+	}
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "preloaded.txt"), []byte("live preload proof\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg := tools.New()
+	reg.Add(tools.Worker(&tools.Workspace{Root: root})...)
+	client := gollama.NewClient("https://api.anthropic.com")
+	client.SetAnthropicMode(true)
+	client.SetAPIKey(key)
+	client.SetMaxRetries(0)
+	loop := &Loop{
+		Client: client, Model: "claude-opus-4-8", ModelName: "claude", Backend: "anthropic",
+		System: "Answer concisely.", Tools: reg, Emitter: event.NewEmitter(nil, "agent"),
+		Thinking: "adaptive", Effort: "low", MaxTurns: 3, MaxTok: 4096,
+	}
+	loop.SetHistory(syntheticPreloadLiveHistory(t, reg, "preloaded.txt"))
+	res, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Anthropic rejected synthetic preload history: %v", err)
+	}
+	if strings.TrimSpace(res.Report) == "" {
+		t.Fatal("expected non-empty report")
+	}
+	t.Logf("Anthropic accepted synthetic preload history: %s", res.Report)
+}
+
+// TestSyntheticPreloadLiveOpenAI provides the corresponding OpenAI-compatible
+// empirical check when OPENAI_API_KEY is available.
+func TestSyntheticPreloadLiveOpenAI(t *testing.T) {
+	key := os.Getenv("OPENAI_API_KEY")
+	if key == "" {
+		t.Skip("OPENAI_API_KEY not set; skipping synthetic preload live test")
+	}
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "preloaded.txt"), []byte("live preload proof\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg := tools.New()
+	reg.Add(tools.Worker(&tools.Workspace{Root: root})...)
+	client := gollama.NewClient("https://api.openai.com/v1")
+	client.SetAnthropicMode(false)
+	client.SetAPIKey(key)
+	client.SetMaxRetries(0)
+	loop := &Loop{
+		Client: client, Model: "gpt-4o", ModelName: "gpt", Backend: "openai",
+		System: "Answer concisely.", Tools: reg, Emitter: event.NewEmitter(nil, "agent"), MaxTurns: 3, MaxTok: 4096,
+	}
+	loop.SetHistory(syntheticPreloadLiveHistory(t, reg, "preloaded.txt"))
+	res, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("OpenAI rejected synthetic preload history: %v", err)
+	}
+	if strings.TrimSpace(res.Report) == "" {
+		t.Fatal("expected non-empty report")
+	}
+	t.Logf("OpenAI accepted synthetic preload history: %s", res.Report)
+}
+
 // TestLoopStreamsLiveAnthropic is the end-to-end proof (folded task 0114) that a
 // real gollama Anthropic client streams a turn through the engine seam onto the
 // transient turn_delta path: TurnStream deltas → throttled turn_delta broadcasts

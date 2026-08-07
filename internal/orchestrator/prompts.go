@@ -153,7 +153,10 @@ CONTEXT HINTS: propose_plan and spawn_implementer accept optional context_hints 
 advisory list of likely-relevant file paths, function/symbol refs, or small snippets,
 surfaced to the implementer as non-prescriptive starting points to cut redundant
 exploration. Keep them concise (no full-file dumps) and supply them only when they genuinely
-help; they are hints, not mandated steps.
+help; they are hints, not mandated steps. spawn_implementer also accepts preload_files:
+structured {path, offset?, limit?} tuples whose real Read outputs are placed in the worker's
+initial context. Use those for files the implementer will certainly need; keep symbols and
+advice in context_hints.
 
 BACKGROUND SUBAGENTS: spawn_implementer and spawn_reviewers accept background:true — they
 return a job_id immediately and the subagent runs as a background job. Run FOREGROUND (the

@@ -13,6 +13,19 @@ import (
 	"github.com/whyrusleeping/gollama"
 )
 
+func TestGetIntExported(t *testing.T) {
+	params := map[string]any{"json": float64(7), "native": 9, "bad": "10"}
+	if got := GetInt(params, "json", 1); got != 7 {
+		t.Fatalf("GetInt float64 = %d, want 7", got)
+	}
+	if got := GetInt(params, "native", 1); got != 9 {
+		t.Fatalf("GetInt int = %d, want 9", got)
+	}
+	if got := GetInt(params, "bad", 3); got != 3 {
+		t.Fatalf("GetInt invalid = %d, want default 3", got)
+	}
+}
+
 func dispatch(t *testing.T, reg *Registry, name, args string) *gollama.ToolResult {
 	t.Helper()
 	return reg.Dispatch(context.Background(), gollama.ToolCall{

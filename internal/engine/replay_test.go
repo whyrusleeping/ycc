@@ -43,6 +43,19 @@ func coordinatorSession() []event.Event {
 	}
 }
 
+func TestReplayHistoryIgnoresSyntheticImplementerPreload(t *testing.T) {
+	base := []event.Event{{Seq: 1, Actor: "user", Type: event.UserInput, Data: map[string]any{"text": "coordinate"}}}
+	want := ReplayHistory(base)
+	withPreload := append(append([]event.Event(nil), base...),
+		event.Event{Seq: 2, Actor: "implementer", Type: event.ModelTurn, Data: map[string]any{"text": "", "tool_calls": 1, "synthetic": true}},
+		event.Event{Seq: 3, Actor: "implementer", Type: event.ToolCall, Data: map[string]any{"name": "Read", "args": `{"file_path":"x"}`, "id": "preload_1", "synthetic": true}},
+		event.Event{Seq: 4, Actor: "implementer", Type: event.ToolResult, Data: map[string]any{"name": "Read", "result": "contents", "id": "preload_1", "synthetic": true}},
+	)
+	if got := ReplayHistory(withPreload); !reflect.DeepEqual(got, want) {
+		t.Fatalf("synthetic implementer events changed coordinator replay\n got: %+v\nwant: %+v", got, want)
+	}
+}
+
 func wantHistory() []gollama.Message {
 	return []gollama.Message{
 		{Role: "user", Content: "do the thing"},
