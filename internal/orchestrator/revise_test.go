@@ -27,7 +27,7 @@ type scripted struct {
 	messages []gollama.Message
 }
 
-func (s *scripted) Turn(opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+func (s *scripted) TurnCtx(_ context.Context, opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
 	s.system = opts.System
 	s.messages = append([]gollama.Message(nil), opts.Messages...)
 	if s.i >= len(s.resp) {

@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/whyrusleeping/gollama"
 )
@@ -17,12 +18,12 @@ type captureTurner struct {
 	err        error
 }
 
-func (c *captureTurner) Turn(opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+func (c *captureTurner) TurnCtx(_ context.Context, opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
 	c.turnOpts = opts
 	return nil, c.err
 }
 
-func (c *captureTurner) TurnStream(opts gollama.RequestOptions, onDelta func(string)) (*gollama.ResponseMessageGenerate, error) {
+func (c *captureTurner) TurnStreamCtx(_ context.Context, opts gollama.RequestOptions, onDelta func(string)) (*gollama.ResponseMessageGenerate, error) {
 	c.streamOpts = opts
 	if c.delta != "" {
 		onDelta(c.delta)
@@ -69,11 +70,11 @@ func TestTurnerPrefixesStreamingAndNonStreaming(t *testing.T) {
 	inner := &captureTurner{delta: "live", err: errors.New("stop")}
 	turner := NewTurner(inner)
 	opts := gollama.RequestOptions{System: "You are ycc."}
-	if _, err := turner.Turn(opts); !errors.Is(err, inner.err) {
+	if _, err := turner.TurnCtx(context.Background(), opts); !errors.Is(err, inner.err) {
 		t.Fatalf("Turn error = %v", err)
 	}
 	var delta string
-	if _, err := turner.TurnStream(opts, func(s string) { delta = s }); !errors.Is(err, inner.err) {
+	if _, err := turner.TurnStreamCtx(context.Background(), opts, func(s string) { delta = s }); !errors.Is(err, inner.err) {
 		t.Fatalf("TurnStream error = %v", err)
 	}
 	if delta != "live" {
@@ -107,11 +108,11 @@ func (s *scriptedTurner) next() error {
 	return err
 }
 
-func (s *scriptedTurner) Turn(gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+func (s *scriptedTurner) TurnCtx(context.Context, gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
 	return nil, s.next()
 }
 
-func (s *scriptedTurner) TurnStream(_ gollama.RequestOptions, onDelta func(string)) (*gollama.ResponseMessageGenerate, error) {
+func (s *scriptedTurner) TurnStreamCtx(_ context.Context, _ gollama.RequestOptions, onDelta func(string)) (*gollama.ResponseMessageGenerate, error) {
 	err := s.next()
 	if err == nil {
 		s.deltas++
@@ -159,14 +160,14 @@ func revoked() error {
 // by another process is picked up instead of sending a dead token.
 func TestOAuthTurnerResolvesTokenEveryTurn(t *testing.T) {
 	f := newOAuthFixture(t, "tok-1", nil, nil, nil)
-	if _, err := f.turner.Turn(gollama.RequestOptions{System: "sys"}); err != nil {
+	if _, err := f.turner.TurnCtx(context.Background(), gollama.RequestOptions{System: "sys"}); err != nil {
 		t.Fatal(err)
 	}
 	f.stored = "tok-2" // another ycc process refreshed underneath us
-	if _, err := f.turner.Turn(gollama.RequestOptions{System: "sys"}); err != nil {
+	if _, err := f.turner.TurnCtx(context.Background(), gollama.RequestOptions{System: "sys"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.turner.TurnStream(gollama.RequestOptions{System: "sys"}, func(string) {}); err != nil {
+	if _, err := f.turner.TurnStreamCtx(context.Background(), gollama.RequestOptions{System: "sys"}, func(string) {}); err != nil {
 		t.Fatal(err)
 	}
 	if want := []string{"tok-1", "tok-2", "tok-2"}; !reflect.DeepEqual(f.inner.seen, want) {
@@ -189,11 +190,11 @@ func TestOAuthTurnerRetriesOnceAfterRevoked(t *testing.T) {
 		run  func(*oauthFixture) error
 	}{
 		{"turn", func(f *oauthFixture) error {
-			_, err := f.turner.Turn(gollama.RequestOptions{System: "sys"})
+			_, err := f.turner.TurnCtx(context.Background(), gollama.RequestOptions{System: "sys"})
 			return err
 		}},
 		{"stream", func(f *oauthFixture) error {
-			_, err := f.turner.TurnStream(gollama.RequestOptions{System: "sys"}, func(string) {})
+			_, err := f.turner.TurnStreamCtx(context.Background(), gollama.RequestOptions{System: "sys"}, func(string) {})
 			return err
 		}},
 	} {
@@ -218,7 +219,7 @@ func TestOAuthTurnerRetriesOnceAfterRevoked(t *testing.T) {
 func TestOAuthTurnerReportsUnrecoverableRevocation(t *testing.T) {
 	f := newOAuthFixture(t, "tok-revoked", revoked(), revoked())
 	err := func() error {
-		_, err := f.turner.Turn(gollama.RequestOptions{System: "sys"})
+		_, err := f.turner.TurnCtx(context.Background(), gollama.RequestOptions{System: "sys"})
 		return err
 	}()
 	if err == nil || !strings.Contains(err.Error(), "revoked") {
@@ -232,11 +233,45 @@ func TestOAuthTurnerReportsUnrecoverableRevocation(t *testing.T) {
 // A rejection that is not about the credential must not burn a refresh.
 func TestOAuthTurnerDoesNotRefreshOnOtherErrors(t *testing.T) {
 	f := newOAuthFixture(t, "tok", errors.New("API returned non-200 status code 429: rate_limit_error"))
-	if _, err := f.turner.Turn(gollama.RequestOptions{System: "sys"}); err == nil {
+	if _, err := f.turner.TurnCtx(context.Background(), gollama.RequestOptions{System: "sys"}); err == nil {
 		t.Fatal("want the rate-limit error")
 	}
 	if f.refreshN != 0 || len(f.inner.seen) != 1 {
 		t.Fatalf("refreshes = %d, attempts = %v", f.refreshN, f.inner.seen)
+	}
+}
+
+func TestOAuthTurnerTokenResolutionUsesTurnContext(t *testing.T) {
+	started := make(chan struct{})
+	inner := &captureTurner{}
+	turner := NewOAuthTurner(inner, TokenSource{
+		Token: func(ctx context.Context) (string, error) {
+			close(started)
+			<-ctx.Done()
+			return "", ctx.Err()
+		},
+		Refresh: func(context.Context, string) (string, error) { return "", nil },
+		Apply:   func(string) {},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := turner.TurnCtx(ctx, gollama.RequestOptions{})
+		done <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("token resolution did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("turn error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("token resolution did not stop promptly")
 	}
 }
 

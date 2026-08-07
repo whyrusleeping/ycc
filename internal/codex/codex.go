@@ -393,20 +393,19 @@ type sseEvent struct {
 // details.
 func (c *Client) ReasoningTokens() int { return int(c.reasoningTokens.Load()) }
 
-// Turn runs one model turn against the codex backend. The backend is
-// streaming-only, so Turn accumulates the stream silently.
-func (c *Client) Turn(opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
-	return c.TurnStream(opts, nil)
+// TurnCtx runs one model turn against the codex backend. The backend is
+// streaming-only, so TurnCtx accumulates the stream silently.
+func (c *Client) TurnCtx(ctx context.Context, opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+	return c.TurnStreamCtx(ctx, opts, nil)
 }
 
-// TurnStream runs one model turn, invoking onDelta with a snapshot of the full
+// TurnStreamCtx runs one model turn, invoking onDelta with a snapshot of the full
 // accumulated output text after each fragment arrives (nil onDelta = accumulate
 // silently). Snapshot semantics satisfy engine.StreamTurner's contract and let
 // lossy clients replace their live tail rather than having to retain every delta.
-func (c *Client) TurnStream(opts gollama.RequestOptions, onDelta func(text string)) (*gollama.ResponseMessageGenerate, error) {
+func (c *Client) TurnStreamCtx(ctx context.Context, opts gollama.RequestOptions, onDelta func(text string)) (*gollama.ResponseMessageGenerate, error) {
 	// Never leak a previous successful turn's count through an errored turn.
 	c.reasoningTokens.Store(0)
-	ctx := context.Background()
 	tok, accountID, err := c.tokens(ctx)
 	if err != nil {
 		return nil, err

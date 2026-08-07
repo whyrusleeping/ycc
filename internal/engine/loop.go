@@ -19,15 +19,15 @@ import (
 )
 
 // Turner is the single capability the loop needs from a backend: run one
-// (non-streaming) model turn. *gollama.Client satisfies it via its Turn method,
+// (non-streaming) model turn. *gollama.Client satisfies it via its TurnCtx method,
 // and it keeps the loop testable with a scripted fake.
 type Turner interface {
-	Turn(gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error)
+	TurnCtx(context.Context, gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error)
 }
 
 // StreamTurner is the optional capability of a backend client that can stream a
 // turn's output incrementally (spec §5.2/§18.4, task 0114/0129). When a client
-// implements it, the loop uses TurnStream instead of Turn so live subscribers
+// implements it, the loop uses TurnStreamCtx instead of TurnCtx so live subscribers
 // see the model's output as it is produced.
 //
 // CONTRACT: onDelta receives SNAPSHOTS — the full accumulated assistant text so
@@ -36,17 +36,17 @@ type Turner interface {
 // retries harmless: a client just replaces its live tail with the latest
 // snapshot, and a retried attempt simply restarts from a short snapshot with no
 // reset protocol. onDelta is assumed to be invoked serially (never concurrently
-// with itself) for a single TurnStream call, and may be called zero times (e.g.
-// a turn that produces only tool calls). The returned response is equivalent to
-// what Turn would have returned for the same options.
+// with itself) for a single TurnStreamCtx call, and may be called zero times
+// (e.g. a turn that produces only tool calls). The returned response is equivalent
+// to what TurnCtx would have returned for the same options.
 type StreamTurner interface {
 	Turner
-	TurnStream(opts gollama.RequestOptions, onDelta func(text string)) (*gollama.ResponseMessageGenerate, error)
+	TurnStreamCtx(ctx context.Context, opts gollama.RequestOptions, onDelta func(text string)) (*gollama.ResponseMessageGenerate, error)
 }
 
 // ReasoningTokenReporter is an optional backend capability exposing the hidden
 // reasoning-token subset of output tokens for the most recently completed turn.
-// It is read immediately after Turn/TurnStream returns successfully.
+// It is read immediately after TurnCtx/TurnStreamCtx returns successfully.
 //
 // Reasoning tokens are observability metadata, not a sixth billable class: they
 // are already included in completion/output tokens.
@@ -558,19 +558,19 @@ const turnDeltaInterval = 100 * time.Millisecond
 // snapshot plus optional append/base optimization hints) throttled to ~10/s,
 // then broadcasts a clearing delta ({"text": "", "done":
 // true}) on turn end — success OR error — so no stale live tail survives.
-// Otherwise it calls Turn exactly as before, emitting no deltas. The returned
+// Otherwise it calls TurnCtx, emitting no deltas. The returned
 // response/error is identical in both paths; final model_turn emission is
 // handled by the caller.
-func (l *Loop) turnOnce(client Turner, opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+func (l *Loop) turnOnce(ctx context.Context, client Turner, opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
 	streamer, ok := client.(StreamTurner)
 	if !ok || l.Emitter == nil {
-		return client.Turn(opts)
+		return client.TurnCtx(ctx, opts)
 	}
 	// Probe broadcast support once; if the recorder can't broadcast (e.g. a
 	// stdout/func recorder), fall back to a plain non-streaming turn so we don't
 	// pay the streaming callback cost for output nobody can see.
 	if !l.Emitter.CanBroadcast() {
-		return client.Turn(opts)
+		return client.TurnCtx(ctx, opts)
 	}
 
 	// onDelta is assumed to be invoked serially (see StreamTurner), so lastSent
@@ -602,7 +602,7 @@ func (l *Loop) turnOnce(client Turner, opts gollama.RequestOptions) (*gollama.Re
 	// model_turn is emitted. Sent unconditionally (once per ATTEMPT, so a failed
 	// attempt clears its partial tail before the retry restarts snapshots).
 	defer l.Emitter.Broadcast(event.TurnDelta, map[string]any{"text": "", "done": true})
-	return streamer.TurnStream(opts, onDelta)
+	return streamer.TurnStreamCtx(ctx, opts, onDelta)
 }
 
 // runTurn executes one model turn, retrying transient API failures (as judged
@@ -632,7 +632,7 @@ func (l *Loop) runTurn(ctx context.Context, client Turner, opts gollama.RequestO
 
 	var lastErr error
 	for attempt := 1; attempt <= policy.MaxAttempts; attempt++ {
-		resp, err := l.turnOnce(client, opts)
+		resp, err := l.turnOnce(ctx, client, opts)
 		if err == nil {
 			return resp, attempt, nil
 		}
@@ -763,8 +763,8 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		}
 
 		// This is the final continuation barrier before entering a backend API. The
-		// non-streaming Turner API carries no context, so cancellation after this
-		// point cannot stop the request until it returns.
+		// turn receives ctx, so cancellation after this point tears down in-flight
+		// token refresh and inference network I/O.
 		if err := l.durableEmitError(ctx); err != nil {
 			return nil, err
 		}

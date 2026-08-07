@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +22,7 @@ type refusalTurner struct {
 	text     string
 }
 
-func (f *refusalTurner) Turn(gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+func (f *refusalTurner) TurnCtx(context.Context, gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
 	f.calls++
 	if f.calls <= f.refusals {
 		return &gollama.ResponseMessageGenerate{

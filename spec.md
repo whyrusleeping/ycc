@@ -434,9 +434,9 @@ gollama already gives us: per-backend single-shot completions
 
 What it lacks and we add (in gollama, since edits are allowed):
 
-1. **Unified turn dispatch** — a single `func (c *Client) Turn(ctx, opts) (*ResponseMessageGenerate, error)`
-   (name TBD) that routes to the right backend method based on the client's mode, so
-   the agent loop doesn't branch per provider. Normalizes tool-call + usage shapes.
+1. **Unified turn dispatch** — a single `func (c *Client) Turn(opts) (*ResponseMessageGenerate, error)`
+   that routes to the right backend method based on the client's mode, so the agent loop
+   doesn't branch per provider. Normalizes tool-call + usage shapes.
 2. Optionally, a `Backend` enum on the client so the registry can introspect.
 3. **Streaming turns** — `func (c *Client) TurnStream(opts, onDelta func(text string)) (*ResponseMessageGenerate, error)`:
    the streaming counterpart to `Turn` that delivers the assistant text incrementally via
@@ -447,6 +447,12 @@ What it lacks and we add (in gollama, since edits are allowed):
    path `Turn` uses). Bedrock has no native streaming path and falls back to a blocking turn
    delivered as one whole-text snapshot delta, so callers never branch. This feeds ycc's
    transient `turn_delta` path (§5.2).
+4. **Context-aware turns** — additive `TurnCtx(ctx, opts)` and
+   `TurnStreamCtx(ctx, opts, onDelta)` variants thread caller cancellation through retries,
+   token refresh, HTTP requests, and streaming body reads. The compatibility `Turn` and
+   `TurnStream` methods delegate with a background context for existing gollama consumers;
+   ycc's engine exclusively uses the context-aware variants so hard session stop and daemon
+   shutdown promptly cancel in-flight inference.
 
 The **agent loop itself lives in `ycc`**, not gollama — gollama stays a transport.
 

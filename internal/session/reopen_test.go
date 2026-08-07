@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -20,7 +21,7 @@ type scriptTurner struct {
 	calls int
 }
 
-func (s *scriptTurner) Turn(gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+func (s *scriptTurner) TurnCtx(context.Context, gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
 	s.calls++
 	return &gollama.ResponseMessageGenerate{Choices: []gollama.GenChoice{{
 		Message: gollama.Message{Role: "assistant", Content: s.text},

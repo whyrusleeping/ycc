@@ -15,7 +15,7 @@ import (
 // exercise the loop's error handling.
 type errTurner struct{ err error }
 
-func (e *errTurner) Turn(gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+func (e *errTurner) TurnCtx(context.Context, gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
 	return nil, e.err
 }
 

@@ -40,13 +40,13 @@ func (s *scriptStreamTurner) next() streamAttempt {
 	return a
 }
 
-func (s *scriptStreamTurner) Turn(opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+func (s *scriptStreamTurner) TurnCtx(_ context.Context, opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
 	s.turnCalls++
 	a := s.next()
 	return a.resp, a.err
 }
 
-func (s *scriptStreamTurner) TurnStream(opts gollama.RequestOptions, onDelta func(text string)) (*gollama.ResponseMessageGenerate, error) {
+func (s *scriptStreamTurner) TurnStreamCtx(_ context.Context, opts gollama.RequestOptions, onDelta func(text string)) (*gollama.ResponseMessageGenerate, error) {
 	s.streamCalls++
 	a := s.attempts[s.n]
 	if s.n < len(s.attempts)-1 {

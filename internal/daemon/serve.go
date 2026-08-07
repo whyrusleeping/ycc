@@ -58,12 +58,12 @@ type Options struct {
 // buildHandler constructs the session manager and Connect HTTP handler from
 // Options. It is shared by the foreground/persistent Serve path and the
 // one-shot in-process path so both expose an identical tool surface.
-func buildHandler(o Options) (http.Handler, error) {
+func buildHandler(o Options) (http.Handler, *session.Manager, error) {
 	var cfg *config.Config
 	if o.ConfigPath != "" {
 		c, err := config.Load(o.ConfigPath)
 		if err != nil {
-			return nil, fmt.Errorf("load config: %w", err)
+			return nil, nil, fmt.Errorf("load config: %w", err)
 		}
 		cfg = c
 		log.Printf("loaded config %s: coordinator=%s implementer=%s reviewers=%v",
@@ -87,7 +87,7 @@ func buildHandler(o Options) (http.Handler, error) {
 	if o.Persist {
 		preg, err := project.Open(project.StateFile())
 		if err != nil {
-			return nil, fmt.Errorf("load project registry: %w", err)
+			return nil, nil, fmt.Errorf("load project registry: %w", err)
 		}
 		mgr.SetProjects(preg)
 		mgr.SetIDStateFile(docs.DefaultIDStateFile())
@@ -95,7 +95,7 @@ func buildHandler(o Options) (http.Handler, error) {
 		// normal named project so every RPC/UI uses the same project model.
 		if o.Workspace != "" {
 			if _, err := mgr.AddProject(o.Workspace, ""); err != nil {
-				return nil, fmt.Errorf("register startup project: %w", err)
+				return nil, nil, fmt.Errorf("register startup project: %w", err)
 			}
 		}
 		// The workstream registry (parallel worktrees, design §5/§7) is likewise
@@ -104,7 +104,7 @@ func buildHandler(o Options) (http.Handler, error) {
 		// non-fatal (log and continue).
 		wreg, err := workstream.Open(workstream.StateFile())
 		if err != nil {
-			return nil, fmt.Errorf("load workstream registry: %w", err)
+			return nil, nil, fmt.Errorf("load workstream registry: %w", err)
 		}
 		mgr.SetWorkstreams(wreg, workstream.DefaultWorktreesRoot())
 		if err := mgr.ReconcileWorkstreams(); err != nil {
@@ -135,17 +135,18 @@ func buildHandler(o Options) (http.Handler, error) {
 	if o.Web {
 		mux.Handle("/", web.Handler())
 	}
-	return h2c.NewHandler(mux, &http2.Server{}), nil
+	return h2c.NewHandler(mux, &http2.Server{}), mgr, nil
 }
 
 // Serve builds the registry, session manager, and Connect handler and serves
 // until the process exits. It blocks. Used by the explicit, persistent
 // `ycc daemon`.
 func Serve(o Options) error {
-	handler, err := buildHandler(o)
+	handler, mgr, err := buildHandler(o)
 	if err != nil {
 		return err
 	}
+	defer mgr.ReclaimAll()
 
 	usingTLS := o.TLSCert != "" && o.TLSKey != ""
 	if !isLoopback(o.Addr) {
@@ -171,6 +172,7 @@ func Serve(o Options) error {
 type InProcess struct {
 	Addr    string // base URL, e.g. "http://127.0.0.1:54321"
 	httpSrv *http.Server
+	mgr     *session.Manager
 }
 
 // StartInProcess starts the daemon in-process on an ephemeral loopback address
@@ -183,7 +185,7 @@ func StartInProcess(o Options) (*InProcess, error) {
 	// TUI, not a remote-access surface, so it never serves the web client even
 	// if the caller sets Web (matching how Addr is forced above).
 	o.Web = false
-	handler, err := buildHandler(o)
+	handler, mgr, err := buildHandler(o)
 	if err != nil {
 		return nil, err
 	}
@@ -195,6 +197,7 @@ func StartInProcess(o Options) (*InProcess, error) {
 	ip := &InProcess{
 		Addr:    "http://" + ln.Addr().String(),
 		httpSrv: httpSrv,
+		mgr:     mgr,
 	}
 	go func() {
 		if err := httpSrv.Serve(ln); err != nil && err != http.ErrServerClosed {
@@ -209,9 +212,20 @@ func (p *InProcess) Shutdown() error {
 	if p == nil || p.httpSrv == nil {
 		return nil
 	}
+	// Session runs are detached from their originating RPC context. Reclaim them
+	// explicitly so their run contexts cancel before HTTP shutdown waits for
+	// streaming handlers. Repeating after Shutdown closes the narrow race with an
+	// already-running StartSession RPC; ReclaimAll is idempotent.
+	if p.mgr != nil {
+		p.mgr.ReclaimAll()
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	return p.httpSrv.Shutdown(ctx)
+	err := p.httpSrv.Shutdown(ctx)
+	if p.mgr != nil {
+		p.mgr.ReclaimAll()
+	}
+	return err
 }
 
 // Close forcibly stops the in-process daemon. Safe to call multiple times.
@@ -219,7 +233,14 @@ func (p *InProcess) Close() error {
 	if p == nil || p.httpSrv == nil {
 		return nil
 	}
-	return p.httpSrv.Close()
+	if p.mgr != nil {
+		p.mgr.ReclaimAll()
+	}
+	err := p.httpSrv.Close()
+	if p.mgr != nil {
+		p.mgr.ReclaimAll()
+	}
+	return err
 }
 
 // persistPath returns the config file path a runtime config mutation should be

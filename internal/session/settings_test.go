@@ -2,6 +2,7 @@ package session
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
@@ -16,7 +17,7 @@ import (
 // fakeTurner is a no-op backend (unused placeholder kept minimal).
 type fakeTurner struct{}
 
-func (fakeTurner) Turn(gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+func (fakeTurner) TurnCtx(context.Context, gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
 	return &gollama.ResponseMessageGenerate{}, nil
 }
 

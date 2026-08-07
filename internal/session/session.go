@@ -2317,6 +2317,26 @@ func (m *Manager) reclaim(id string) {
 	m.waitWorkstreamWatcher(id)
 }
 
+// ReclaimAll releases every live session without writing session_stopped markers.
+// It is used during daemon teardown: cancellation stops in-flight turns, while
+// leaving each durable log exactly as it was keeps the session reopenable. The
+// live map is drained atomically before cancellation, so repeated calls are safe.
+func (m *Manager) ReclaimAll() {
+	m.mu.Lock()
+	sessions := m.sessions
+	m.sessions = make(map[string]*Session)
+	m.mu.Unlock()
+
+	// Cancel every session before joining any watcher so independent in-flight
+	// turns are torn down together rather than serially.
+	for _, s := range sessions {
+		s.reap()
+	}
+	for id := range sessions {
+		m.waitWorkstreamWatcher(id)
+	}
+}
+
 // List returns all live sessions.
 func (m *Manager) List() []*Session {
 	m.mu.Lock()

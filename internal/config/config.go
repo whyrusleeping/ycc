@@ -26,6 +26,10 @@ import (
 	"github.com/whyrusleeping/ycc/internal/secrets"
 )
 
+// Keep the zero-adapter registry seam explicit: ordinary gollama clients must
+// satisfy the engine's context-aware streaming contract directly.
+var _ engine.StreamTurner = (*gollama.Client)(nil)
+
 // Model describes one logical backend.
 type Model struct {
 	Backend string `toml:"backend"` // anthropic | openai | ollama
@@ -1307,12 +1311,11 @@ func (r *Registry) Build(name string) (engine.Turner, string, error) {
 		return nil, "", fmt.Errorf("unknown model %q", name)
 	}
 	c := gollama.NewClient(providerBaseURL(m.Backend, m.BaseURL))
-	// Disable gollama's internal HTTP transport retry ring (429/503/529). That
-	// ring uses uncancellable time.Sleep and is invisible to subscribers, and
-	// stacking it under the loop-level ring double-counts a persistent rate
-	// limit. Transient API failures are instead retried solely by the engine
-	// loop (engine.Loop.runTurn, spec §7.2), which is ctx-aware and broadcasts
-	// transient `retry` events.
+	// Disable gollama's internal HTTP transport retry ring (429/503/529). Although
+	// it is context-aware, it is invisible to subscribers, and stacking it under
+	// the loop-level ring double-counts a persistent rate limit. Transient API
+	// failures are instead retried solely by the engine loop (engine.Loop.runTurn,
+	// spec §7.2), which broadcasts transient `retry` events.
 	c.SetMaxRetries(0)
 	key := resolveKey(m)
 	anthropicSubscription := false

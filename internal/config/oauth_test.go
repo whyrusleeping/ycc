@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -87,7 +88,7 @@ func turnOnce(t *testing.T, reg *Registry, name string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Turn(gollama.RequestOptions{Model: modelID, Messages: []gollama.Message{{Role: "user", Content: "hi"}}}); err != nil {
+	if _, err := c.TurnCtx(context.Background(), gollama.RequestOptions{Model: modelID, Messages: []gollama.Message{{Role: "user", Content: "hi"}}}); err != nil {
 		t.Fatalf("Turn: %v", err)
 	}
 }
@@ -191,7 +192,7 @@ func TestBuildAnthropicOAuthTokenFollowsBackgroundRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	turn := func() error {
-		_, err := client.Turn(gollama.RequestOptions{Model: modelID, Messages: []gollama.Message{{Role: "user", Content: "hi"}}})
+		_, err := client.TurnCtx(context.Background(), gollama.RequestOptions{Model: modelID, Messages: []gollama.Message{{Role: "user", Content: "hi"}}})
 		return err
 	}
 	if err := turn(); err == nil {
@@ -291,7 +292,7 @@ func TestBuildAnthropicAPIKeyDoesNotPrefixSystem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Turn(gollama.RequestOptions{Model: model, System: "You are ycc.", Messages: []gollama.Message{{Role: "user", Content: "hi"}}}); err != nil {
+	if _, err := client.TurnCtx(context.Background(), gollama.RequestOptions{Model: model, System: "You are ycc.", Messages: []gollama.Message{{Role: "user", Content: "hi"}}}); err != nil {
 		t.Fatal(err)
 	}
 	if len(system) != 1 || system[0].Text != "You are ycc." {
@@ -374,7 +375,7 @@ func TestBuildOpenAIOAuthUsesCodex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := c.Turn(gollama.RequestOptions{Model: modelID, Messages: []gollama.Message{{Role: "user", Content: "hi"}}})
+	resp, err := c.TurnCtx(context.Background(), gollama.RequestOptions{Model: modelID, Messages: []gollama.Message{{Role: "user", Content: "hi"}}})
 	if err != nil {
 		t.Fatal(err)
 	}

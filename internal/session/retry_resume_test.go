@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -28,7 +29,7 @@ type gatedRetryTurner struct {
 	release chan struct{}
 }
 
-func (g *gatedRetryTurner) Turn(gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+func (g *gatedRetryTurner) TurnCtx(context.Context, gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
 	g.calls++
 	if g.calls == 1 {
 		return nil, errors.New("boom: connection reset by peer")
@@ -40,7 +41,7 @@ func (g *gatedRetryTurner) Turn(gollama.RequestOptions) (*gollama.ResponseMessag
 	}}}, nil
 }
 
-func (f *flakyTurner) Turn(gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+func (f *flakyTurner) TurnCtx(context.Context, gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
 	f.calls++
 	if f.calls <= f.failures {
 		return nil, errors.New("boom: connection reset by peer")

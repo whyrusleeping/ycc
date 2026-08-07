@@ -53,3 +53,6 @@ Notes: the engine already maps the configured cap into gollama.RequestOptions.Op
 …[truncated]
 - 2026-08-07 review tier: simple (coordinator self-review)
 - 2026-08-07 decision: accept — commit: Codex: send max_output_tokens from the configured per-turn cap (task 0201)
+- 2026-08-07 usage: 327,845 tok (in 140,319, out 8,326, cache_r 448,396, cache_w 16,942) · cost n/a (unpriced)
+  implementer: 322,963 tok (in 140,297, out 3,466, cache_r 179,200, cache_w 0) · cost n/a (unpriced)
+  coordinator: 4,882 tok (in 22, out 4,860, cache_r 269,196, cache_w 16,942) · cost n/a (unpriced)

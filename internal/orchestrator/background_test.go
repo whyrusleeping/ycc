@@ -61,7 +61,7 @@ func newBlockingTurner(resp *gollama.ResponseMessageGenerate) *blockingTurner {
 	return &blockingTurner{release: make(chan struct{}), resp: resp, started: make(chan struct{})}
 }
 
-func (b *blockingTurner) Turn(gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+func (b *blockingTurner) TurnCtx(context.Context, gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
 	b.once.Do(func() { close(b.started) })
 	<-b.release
 	return b.resp, nil

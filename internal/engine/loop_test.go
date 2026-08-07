@@ -19,7 +19,7 @@ type scriptedTurner struct {
 	lastOpts  gollama.RequestOptions
 }
 
-func (s *scriptedTurner) Turn(opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+func (s *scriptedTurner) TurnCtx(_ context.Context, opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
 	s.lastMsgs = opts.Messages
 	s.lastOpts = opts
 	r := s.responses[s.calls]

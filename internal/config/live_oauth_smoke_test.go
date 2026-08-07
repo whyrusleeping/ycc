@@ -3,6 +3,7 @@
 package config
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -25,13 +26,13 @@ func TestLiveAnthropicOAuthReservedPrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 	stream, ok := client.(interface {
-		TurnStream(gollama.RequestOptions, func(string)) (*gollama.ResponseMessageGenerate, error)
+		TurnStreamCtx(context.Context, gollama.RequestOptions, func(string)) (*gollama.ResponseMessageGenerate, error)
 	})
 	if !ok {
 		t.Fatalf("OAuth client %T does not stream", client)
 	}
 	var live string
-	resp, err := stream.TurnStream(gollama.RequestOptions{
+	resp, err := stream.TurnStreamCtx(context.Background(), gollama.RequestOptions{
 		Model:    model,
 		System:   "You are ycc, a coding assistant. Reply exactly as requested.",
 		Messages: []gollama.Message{{Role: "user", Content: "Reply exactly OK."}},

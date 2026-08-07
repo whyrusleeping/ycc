@@ -96,19 +96,19 @@ func NewOAuthTurner(inner engine.Turner, src TokenSource) *Turner {
 	return &Turner{inner: inner, src: &src}
 }
 
-func (t *Turner) Turn(opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
-	return t.run(opts, func(o gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
-		return t.inner.Turn(o)
+func (t *Turner) TurnCtx(ctx context.Context, opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+	return t.run(ctx, opts, func(o gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+		return t.inner.TurnCtx(ctx, o)
 	})
 }
 
-func (t *Turner) TurnStream(opts gollama.RequestOptions, onDelta func(string)) (*gollama.ResponseMessageGenerate, error) {
+func (t *Turner) TurnStreamCtx(ctx context.Context, opts gollama.RequestOptions, onDelta func(string)) (*gollama.ResponseMessageGenerate, error) {
 	stream, ok := t.inner.(engine.StreamTurner)
 	if !ok {
-		return t.Turn(opts)
+		return t.TurnCtx(ctx, opts)
 	}
-	return t.run(opts, func(o gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
-		return stream.TurnStream(o, onDelta)
+	return t.run(ctx, opts, func(o gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+		return stream.TurnStreamCtx(ctx, o, onDelta)
 	})
 }
 
@@ -121,15 +121,15 @@ func (t *Turner) TurnStream(opts gollama.RequestOptions, onDelta func(string)) (
 // transport's header map, which a request in flight on the same client reads.
 // A client is built per loop and its turns are already sequential, so this only
 // makes an unsupported sharing pattern slow instead of racy.
-func (t *Turner) run(opts gollama.RequestOptions, do func(gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error)) (*gollama.ResponseMessageGenerate, error) {
+func (t *Turner) run(ctx context.Context, opts gollama.RequestOptions, do func(gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error)) (*gollama.ResponseMessageGenerate, error) {
 	opts = PrefixSystem(opts)
 	if t.src == nil {
 		return do(opts)
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), tokenTimeout)
-	tok, err := t.src.Token(ctx)
+	tokenCtx, cancel := context.WithTimeout(ctx, tokenTimeout)
+	tok, err := t.src.Token(tokenCtx)
 	cancel()
 	if err != nil {
 		return nil, err
@@ -139,8 +139,8 @@ func (t *Turner) run(opts gollama.RequestOptions, do func(gollama.RequestOptions
 	if err == nil || !IsRevokedCredential(err) {
 		return resp, err
 	}
-	ctx, cancel = context.WithTimeout(context.Background(), tokenTimeout)
-	fresh, refreshErr := t.src.Refresh(ctx, tok)
+	tokenCtx, cancel = context.WithTimeout(ctx, tokenTimeout)
+	fresh, refreshErr := t.src.Refresh(tokenCtx, tok)
 	cancel()
 	// A failed recovery is reported as the provider's original rejection: it is
 	// the actionable error, and the refresh failure is its consequence.

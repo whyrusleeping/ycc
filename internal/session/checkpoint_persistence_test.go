@@ -40,7 +40,7 @@ type countingTurner struct {
 	resp  *gollama.ResponseMessageGenerate
 }
 
-func (t *countingTurner) Turn(gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+func (t *countingTurner) TurnCtx(context.Context, gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
 	t.calls++
 	return t.resp, nil
 }

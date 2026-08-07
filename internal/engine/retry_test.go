@@ -20,7 +20,7 @@ type retryFakeTurner struct {
 	calls int
 }
 
-func (s *retryFakeTurner) Turn(gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+func (s *retryFakeTurner) TurnCtx(context.Context, gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
 	idx := s.calls
 	s.calls++
 	if idx < len(s.errs) {

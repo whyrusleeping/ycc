@@ -3,11 +3,13 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/engine"
@@ -167,7 +169,7 @@ func TestTurnStream(t *testing.T) {
 
 	c := New(srv.URL, testTokens("tok-1", "acct-1"))
 	var deltas []string
-	resp, err := c.TurnStream(gollama.RequestOptions{
+	resp, err := c.TurnStreamCtx(context.Background(), gollama.RequestOptions{
 		Model:    "gpt-5.3-codex",
 		System:   "sys",
 		Messages: []gollama.Message{{Role: "user", Content: "hi"}},
@@ -389,13 +391,54 @@ func TestBuildInputItemsBlockSafety(t *testing.T) {
 	}
 }
 
+func TestTurnContextCancellationTearsDownHTTP(t *testing.T) {
+	started := make(chan struct{}, 1)
+	serverCanceled := make(chan struct{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		started <- struct{}{}
+		<-r.Context().Done()
+		serverCanceled <- struct{}{}
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, testTokens("t", "a"))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.TurnStreamCtx(ctx, gollama.RequestOptions{Model: "m"}, nil)
+		done <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("request did not reach server")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("turn error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("turn did not return promptly after cancellation")
+	}
+	select {
+	case <-serverCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("server did not observe HTTP request cancellation")
+	}
+}
+
 func TestTurnHTTPErrorMatchesClassifier(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"detail":"rate limited"}`, http.StatusTooManyRequests)
 	}))
 	defer srv.Close()
 	c := New(srv.URL, testTokens("t", "a"))
-	_, err := c.Turn(gollama.RequestOptions{Model: "m", Messages: []gollama.Message{{Role: "user", Content: "x"}}})
+	_, err := c.TurnCtx(context.Background(), gollama.RequestOptions{Model: "m", Messages: []gollama.Message{{Role: "user", Content: "x"}}})
 	if err == nil || !strings.Contains(err.Error(), "status code 429") {
 		t.Fatalf("want gollama-shaped status error, got %v", err)
 	}
@@ -410,7 +453,7 @@ func TestTurnResponseFailed(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := New(srv.URL, testTokens("t", "a"))
-	_, err := c.Turn(gollama.RequestOptions{Model: "m", Messages: []gollama.Message{{Role: "user", Content: "x"}}})
+	_, err := c.TurnCtx(context.Background(), gollama.RequestOptions{Model: "m", Messages: []gollama.Message{{Role: "user", Content: "x"}}})
 	if err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("want response.failed error, got %v", err)
 	}
@@ -432,7 +475,7 @@ func TestTurnStreamErrorIsClassifiedRetryable(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := New(srv.URL, testTokens("t", "a"))
-	_, err := c.Turn(gollama.RequestOptions{Model: "m", Messages: []gollama.Message{{Role: "user", Content: "x"}}})
+	_, err := c.TurnCtx(context.Background(), gollama.RequestOptions{Model: "m", Messages: []gollama.Message{{Role: "user", Content: "x"}}})
 	if err == nil {
 		t.Fatal("want a stream error")
 	}
@@ -454,7 +497,7 @@ func TestTurnStreamErrorFallsBackToRawFrame(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := New(srv.URL, testTokens("t", "a"))
-	_, err := c.Turn(gollama.RequestOptions{Model: "m", Messages: []gollama.Message{{Role: "user", Content: "x"}}})
+	_, err := c.TurnCtx(context.Background(), gollama.RequestOptions{Model: "m", Messages: []gollama.Message{{Role: "user", Content: "x"}}})
 	if err == nil || !strings.Contains(err.Error(), "weird shape") {
 		t.Fatalf("want the raw frame preserved, got %v", err)
 	}
@@ -472,7 +515,7 @@ func TestTurnIncompleteMaxTokens(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := New(srv.URL, testTokens("t", "a"))
-	resp, err := c.Turn(gollama.RequestOptions{Model: "m", Messages: []gollama.Message{{Role: "user", Content: "x"}}})
+	resp, err := c.TurnCtx(context.Background(), gollama.RequestOptions{Model: "m", Messages: []gollama.Message{{Role: "user", Content: "x"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -505,7 +548,7 @@ func TestTurnIncompleteMaxTokensReasoningOnly(t *testing.T) {
 	defer srv.Close()
 
 	c := New(srv.URL, testTokens("t", "a"))
-	resp, err := c.Turn(gollama.RequestOptions{Model: "m", Messages: []gollama.Message{{Role: "user", Content: "x"}}})
+	resp, err := c.TurnCtx(context.Background(), gollama.RequestOptions{Model: "m", Messages: []gollama.Message{{Role: "user", Content: "x"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
