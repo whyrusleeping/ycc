@@ -156,6 +156,12 @@ func (l *Loop) steerCheckpoint(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// A checkpoint may have durably recorded the messages it returns. Do not
+	// append them to model history if that persistence failed (or cancelled the
+	// session) while the checkpoint was running.
+	if err := l.durableEmitError(ctx); err != nil {
+		return err
+	}
 	for _, m := range msgs {
 		l.PostMessage(m)
 	}
@@ -697,6 +703,19 @@ func (e *TurnError) Error() string {
 
 func (e *TurnError) Unwrap() error { return e.Err }
 
+// durableEmitError is checked immediately after events whose successful
+// persistence gates a model-history or workspace mutation. Recorder failure wins
+// over the cancellation it triggers so callers receive the actionable cause.
+func (l *Loop) durableEmitError(ctx context.Context) error {
+	if err := l.Emitter.Err(); err != nil {
+		return fmt.Errorf("event log persistence failed: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nil
+}
+
 // Run executes the loop to completion. It returns when a control tool signals
 // stop, the model produces a turn with no tool calls, or MaxTurns is reached.
 func (l *Loop) Run(ctx context.Context) (*Result, error) {
@@ -720,6 +739,9 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		if err := l.steerCheckpoint(ctx); err != nil {
 			return nil, err
 		}
+		if err := l.durableEmitError(ctx); err != nil {
+			return nil, err
+		}
 
 		client, modelID, ident, think := l.backend()
 		// One-time session-log warning if this backend can't express the
@@ -740,6 +762,12 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			opts.Options = &gollama.Options{MaxTokens: l.MaxTok}
 		}
 
+		// This is the final continuation barrier before entering a backend API. The
+		// non-streaming Turner API carries no context, so cancellation after this
+		// point cannot stop the request until it returns.
+		if err := l.durableEmitError(ctx); err != nil {
+			return nil, err
+		}
 		start := time.Now()
 		resp, attempts, err := l.runTurn(ctx, client, opts)
 		elapsedMS := time.Since(start).Milliseconds()
@@ -889,6 +917,9 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 				ReasoningTokens: reasoningTokens,
 			},
 		})
+		if err := l.durableEmitError(ctx); err != nil {
+			return nil, err
+		}
 
 		if len(msg.ToolCalls) == 0 {
 			// Branch on the actual stop reason (resp.Truncated() is true only for
@@ -974,6 +1005,9 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 				callData["repaired"] = recovered
 			}
 			l.Emitter.Emit(event.ToolCall, callData)
+			if err := l.durableEmitError(ctx); err != nil {
+				return nil, err
+			}
 			toolStart := time.Now()
 			res := l.Tools.Dispatch(ctx, call)
 			toolMS := time.Since(toolStart).Milliseconds()
@@ -992,6 +1026,9 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 				resultData["view"] = v
 			}
 			l.Emitter.Emit(event.ToolResult, resultData)
+			if err := l.durableEmitError(ctx); err != nil {
+				return nil, err
+			}
 			l.appendToolResult(call.ID, res)
 			if ctrl := tools.ControlOf(res); ctrl != nil && ctrl.Stop {
 				// The model may batch a control-stop tool (e.g. finish) alongside
@@ -1035,6 +1072,9 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 					}
 				}
 				if err != nil {
+					return nil, err
+				}
+				if err := l.durableEmitError(ctx); err != nil {
 					return nil, err
 				}
 				deferred = append(deferred, msgs...)

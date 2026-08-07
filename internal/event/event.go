@@ -220,6 +220,19 @@ func (e *Emitter) With(actor string) *Emitter {
 // Actor returns the emitter's default actor label.
 func (e *Emitter) Actor() string { return e.actor }
 
+// Err reports a terminal recorder failure when the underlying Recorder exposes
+// one (notably *Log). Recorders without an error state, and nil emitters or
+// recorders, remain healthy from the emitter's perspective.
+func (e *Emitter) Err() error {
+	if e == nil || e.rec == nil {
+		return nil
+	}
+	if reporter, ok := e.rec.(interface{ Err() error }); ok {
+		return reporter.Err()
+	}
+	return nil
+}
+
 // Emit records an event with the emitter's default actor.
 func (e *Emitter) Emit(t Type, data map[string]any) Event {
 	return e.EmitAs(e.actor, t, data)

@@ -83,6 +83,10 @@ type Session struct {
 
 	inputCh   chan string
 	messageCh chan engine.UserMessage
+	// sendMu serializes idle senders across the capacity-check, durable echo, and
+	// channel delivery. The run goroutine only drains these channels, so once a
+	// slot is observed the post-record send is guaranteed not to block or fail.
+	sendMu sync.Mutex
 	// retryCh nudges the idle-after-error run loop to re-run the failed turn on
 	// the existing history (no new user message). Unbuffered so a Retry while the
 	// loop is running/paused is a harmless no-op (nothing is receiving).
@@ -175,6 +179,18 @@ func (s *Session) setStatus(st event.Status) {
 	s.mu.Unlock()
 }
 
+func (s *Session) logFailure() error {
+	if s.log != nil {
+		if err := s.log.Err(); err != nil {
+			return err
+		}
+	}
+	if s.emitter != nil {
+		return s.emitter.Err()
+	}
+	return nil
+}
+
 // BudgetBreached reports whether this session crossed a configured spend cap and
 // handled it (task 0137, spec §20.6). The daemon work loop reads it after a loop
 // session finishes to decide whether to halt the loop at a safe point.
@@ -254,6 +270,9 @@ func (s *Session) takeSeedImages() []engine.Image {
 // Image bytes remain in live model history only; user_input events contain safe
 // metadata so events.jsonl never becomes a binary payload store.
 func (s *Session) SendInputMessage(input engine.UserMessage) error {
+	if err := s.logFailure(); err != nil {
+		return fmt.Errorf("session event log failed: %w", err)
+	}
 	// A refused session (provider safety refusal, task 0238) rejects new input:
 	// per documented provider semantics the conversation would just keep being
 	// refused, silently eating every message. Recovery is a model switch (which
@@ -285,33 +304,54 @@ func (s *Session) SendInputMessage(input engine.UserMessage) error {
 	s.steerMu.Lock()
 	if s.paused || s.pauseReq || s.running {
 		ev := s.emitter.EmitAs("user", event.UserInput, eventData(true))
+		if err := s.logFailure(); err != nil {
+			s.steerMu.Unlock()
+			return fmt.Errorf("session event log failed: %w", err)
+		}
 		s.corrections = append(s.corrections, correction{message: input, seq: ev.Seq})
 		s.steerMu.Unlock()
 		return nil
 	}
 	s.steerMu.Unlock()
+
+	// Idle delivery is transactional with respect to the durable user_input echo:
+	// reject a full queue before recording, then record before making the input
+	// visible to the run goroutine. sendMu excludes competing producers, while the
+	// sole consumer can only create more capacity, so the final send cannot block.
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
+	if err := s.logFailure(); err != nil {
+		return fmt.Errorf("session event log failed: %w", err)
+	}
 	if len(input.Images) == 0 {
-		select {
-		case s.inputCh <- input.Text:
-			s.emitter.EmitAs("user", event.UserInput, eventData(false))
-			return nil
-		default:
+		if len(s.inputCh) >= cap(s.inputCh) {
 			return fmt.Errorf("session %s input buffer full", s.ID)
 		}
-	}
-	select {
-	case s.messageCh <- input:
-		// Emit metadata at acceptance; the image bytes stay only in messageCh and
-		// model history, never in events.jsonl.
 		s.emitter.EmitAs("user", event.UserInput, eventData(false))
+		if err := s.logFailure(); err != nil {
+			return fmt.Errorf("session event log failed: %w", err)
+		}
+		s.inputCh <- input.Text
 		return nil
-	default:
+	}
+	if len(s.messageCh) >= cap(s.messageCh) {
 		return fmt.Errorf("session %s input buffer full", s.ID)
 	}
+	// Emit metadata before delivery; image bytes stay only in messageCh and model
+	// history, never in events.jsonl.
+	s.emitter.EmitAs("user", event.UserInput, eventData(false))
+	if err := s.logFailure(); err != nil {
+		return fmt.Errorf("session event log failed: %w", err)
+	}
+	s.messageCh <- input
+	return nil
 }
 
 // Answer responds to a pending question. Errors if none is pending.
 func (s *Session) Answer(text string) error {
+	if err := s.logFailure(); err != nil {
+		return fmt.Errorf("session event log failed: %w", err)
+	}
 	if !s.inter.Answer(text) {
 		return fmt.Errorf("session %s has no pending question", s.ID)
 	}
@@ -321,6 +361,9 @@ func (s *Session) Answer(text string) error {
 // AnswerOption responds to a pending question with a chosen option (resolved by
 // index when idx >= 0 and in range) or free text. Errors if none is pending.
 func (s *Session) AnswerOption(idx int, text string) error {
+	if err := s.logFailure(); err != nil {
+		return fmt.Errorf("session event log failed: %w", err)
+	}
 	if !s.inter.AnswerOption(idx, text) {
 		return fmt.Errorf("session %s has no pending question", s.ID)
 	}
@@ -332,6 +375,9 @@ func (s *Session) AnswerOption(idx int, text string) error {
 // idxs[i] of the i-th question when in range, otherwise to free text texts[i].
 // Errors if no batch question is pending.
 func (s *Session) AnswerBatch(idxs []int, texts []string) error {
+	if err := s.logFailure(); err != nil {
+		return fmt.Errorf("session event log failed: %w", err)
+	}
 	n := len(idxs)
 	if len(texts) > n {
 		n = len(texts)
@@ -358,6 +404,10 @@ func (s *Session) AnswerBatch(idxs []int, texts []string) error {
 // cancels the agent loop (unblocking any ask_user / checkpoint waiting on the
 // ctx), and closes the event log. It is idempotent (runs at most once).
 func (s *Session) Stop() {
+	if s.logFailure() != nil {
+		s.cancel()
+		return
+	}
 	s.stopOnce.Do(func() {
 		s.setStatus(event.StatusStopped)
 		s.emitter.Emit(event.SessionStopped, map[string]any{})
@@ -435,6 +485,9 @@ func (s *Session) Checkpoint(ctx context.Context) ([]string, error) {
 
 // CheckpointMessages is engine.MessageSteer's multimodal checkpoint path.
 func (s *Session) CheckpointMessages(ctx context.Context) ([]engine.UserMessage, error) {
+	if err := s.logFailure(); err != nil {
+		return nil, fmt.Errorf("session event log failed: %w", err)
+	}
 	s.steerMu.Lock()
 	if !s.pauseReq {
 		// Steer-by-default fast path: deliver any queued corrections and any
@@ -443,9 +496,22 @@ func (s *Session) CheckpointMessages(ctx context.Context) ([]engine.UserMessage,
 		corr := s.corrections
 		s.corrections = nil
 		s.steerMu.Unlock()
-		msgs := s.deliverCorrections(corr)
-		msgs = append(msgs, textMessages(s.drainJobNotes())...)
+		msgs, err := s.deliverCorrections(corr)
+		if err != nil {
+			return nil, err
+		}
+		notes, err := s.drainJobNotes()
+		if err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, textMessages(notes)...)
 		msgs = append(msgs, textMessages(s.checkBudget(ctx))...)
+		if err := s.logFailure(); err != nil {
+			return nil, fmt.Errorf("session event log failed: %w", err)
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if len(msgs) == 0 {
 			return nil, nil
 		}
@@ -457,6 +523,12 @@ func (s *Session) CheckpointMessages(ctx context.Context) ([]engine.UserMessage,
 
 	s.setStatus(event.StatusPaused)
 	s.emitter.Emit(event.Interrupted, map[string]any{})
+	if err := s.logFailure(); err != nil {
+		return nil, fmt.Errorf("session event log failed: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	s.steerMu.Lock()
 	for !s.resumeReq {
@@ -483,9 +555,25 @@ func (s *Session) CheckpointMessages(ctx context.Context) ([]engine.UserMessage,
 
 	s.setStatus(event.StatusRunning)
 	s.emitter.Emit(event.Resumed, map[string]any{})
-	msgs := s.deliverCorrections(corr)
-	msgs = append(msgs, textMessages(s.drainJobNotes())...)
+	if err := s.logFailure(); err != nil {
+		return nil, fmt.Errorf("session event log failed: %w", err)
+	}
+	msgs, err := s.deliverCorrections(corr)
+	if err != nil {
+		return nil, err
+	}
+	notes, err := s.drainJobNotes()
+	if err != nil {
+		return nil, err
+	}
+	msgs = append(msgs, textMessages(notes)...)
 	msgs = append(msgs, textMessages(s.checkBudget(ctx))...)
+	if err := s.logFailure(); err != nil {
+		return nil, fmt.Errorf("session event log failed: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return msgs, nil
 }
 
@@ -502,13 +590,13 @@ func textMessages(texts []string) []engine.UserMessage {
 // is recorded as a user-actor job_notified event — the same rule as a steer
 // correction — so reopen replays the identical history. Returns the texts for
 // the engine to Post before the next turn. Nil-safe: no registry ⇒ no notes.
-func (s *Session) drainJobNotes() []string {
+func (s *Session) drainJobNotes() ([]string, error) {
 	if s.deps == nil || s.deps.Jobs == nil {
-		return nil
+		return nil, nil
 	}
 	reports := s.deps.Jobs.DrainFinished("coordinator")
 	if len(reports) == 0 {
-		return nil
+		return nil, nil
 	}
 	out := make([]string, 0, len(reports))
 	for _, r := range reports {
@@ -517,9 +605,12 @@ func (s *Session) drainJobNotes() []string {
 			"id": r.ID, "kind": r.Kind, "label": r.Label,
 			"status": string(r.Status), "text": text,
 		})
+		if err := s.logFailure(); err != nil {
+			return nil, fmt.Errorf("session event log failed: %w", err)
+		}
 		out = append(out, text)
 	}
-	return out
+	return out, nil
 }
 
 // killJobs terminates every background job for this session (session end). It is
@@ -535,13 +626,12 @@ func (s *Session) killJobs() {
 // the conversation — and returns their texts, in order, for the engine to Post
 // before the next turn (spec §18.7). The delivered event references the queued
 // echo by seq so replay and the TUI can pair them.
-func (s *Session) deliverCorrections(corr []correction) []engine.UserMessage {
+func (s *Session) deliverCorrections(corr []correction) ([]engine.UserMessage, error) {
 	if len(corr) == 0 {
-		return nil
+		return nil, nil
 	}
-	messages := make([]engine.UserMessage, len(corr))
-	for i, c := range corr {
-		messages[i] = c.message
+	messages := make([]engine.UserMessage, 0, len(corr))
+	for _, c := range corr {
 		data := map[string]any{"seq": c.seq, "text": c.message.Text}
 		if len(c.message.Images) > 0 {
 			images := make([]map[string]any, len(c.message.Images))
@@ -551,8 +641,12 @@ func (s *Session) deliverCorrections(corr []correction) []engine.UserMessage {
 			data["images"] = images
 		}
 		s.emitter.EmitAs("user", event.UserInputDelivered, data)
+		if err := s.logFailure(); err != nil {
+			return nil, fmt.Errorf("session event log failed: %w", err)
+		}
+		messages = append(messages, c.message)
 	}
-	return messages
+	return messages, nil
 }
 
 // signalResumeLocked wakes a blocked Checkpoint. Call only while holding steerMu.
@@ -568,6 +662,9 @@ func (s *Session) signalResumeLocked() {
 // checkpoint (between turns / after a tool result) without aborting a tool
 // mid-run (spec §18.7). Resume or a steered SendInput continues it.
 func (s *Session) Interrupt() error {
+	if err := s.logFailure(); err != nil {
+		return fmt.Errorf("session event log failed: %w", err)
+	}
 	s.steerMu.Lock()
 	s.pauseReq = true
 	s.steerMu.Unlock()
@@ -581,6 +678,9 @@ func (s *Session) Interrupt() error {
 // (that is what "retry by sending another message" was standing in for). It is a
 // no-op if nothing is paused and the session is not errored.
 func (s *Session) Resume() error {
+	if err := s.logFailure(); err != nil {
+		return fmt.Errorf("session event log failed: %w", err)
+	}
 	s.steerMu.Lock()
 	if s.paused {
 		s.signalResumeLocked()
@@ -609,6 +709,9 @@ func (s *Session) Resume() error {
 // new assignment is also persisted as the default (roles in ycc.toml) so it
 // survives a restart and applies to future sessions.
 func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []string) error {
+	if err := s.logFailure(); err != nil {
+		return fmt.Errorf("session event log failed: %w", err)
+	}
 	s.mu.Lock()
 	newCoord, newImpl, newRevs := s.coordinator, s.implementer, s.reviewers
 	s.mu.Unlock()
@@ -632,14 +735,6 @@ func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []str
 			}
 		}
 		newRevs = append([]string(nil), reviewers...)
-	}
-
-	// Persist the new assignment as the default (roles in ycc.toml) so the choice
-	// survives a restart and applies to future sessions — a settings change should
-	// stick, not just live for this session (spec §18.2). Done before the live
-	// rebuild so a persist failure aborts without half-applying.
-	if err := s.reg.SetRoles(newCoord, newImpl, newRevs); err != nil {
-		return fmt.Errorf("persist role config: %w", err)
 	}
 
 	// Rebuild the implementer / reviewer specs so the next spawn uses the new
@@ -678,6 +773,20 @@ func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []str
 		s.refused = false
 	}
 	s.mu.Unlock()
+
+	s.emitter.Emit(event.RoleConfigChanged, map[string]any{
+		"coordinator": newCoord,
+		"implementer": newImpl,
+		"reviewers":   newRevs,
+	})
+	if err := s.logFailure(); err != nil {
+		return fmt.Errorf("session event log failed: %w", err)
+	}
+	// Persist defaults only after the session mutation is replayable. A failed
+	// event append must never leak an unrecorded role selection into ycc.toml.
+	if err := s.reg.SetRoles(newCoord, newImpl, newRevs); err != nil {
+		return fmt.Errorf("persist role config: %w", err)
+	}
 	if wasRefused {
 		// Non-blocking, like Resume: if the loop is mid-run (not parked on the
 		// retry-aware wait) the nudge falls through as a harmless no-op.
@@ -686,12 +795,6 @@ func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []str
 		default:
 		}
 	}
-
-	s.emitter.Emit(event.RoleConfigChanged, map[string]any{
-		"coordinator": newCoord,
-		"implementer": newImpl,
-		"reviewers":   newRevs,
-	})
 	return nil
 }
 
@@ -719,6 +822,9 @@ func (s *Session) ReferencesModel(name string) bool {
 // live coordinator loop and rebuilds the implementer/reviewer specs as relevant so
 // the next spawn uses it; the change is recorded in the event log with the role.
 func (s *Session) SetThinking(role, level string) error {
+	if err := s.logFailure(); err != nil {
+		return fmt.Errorf("session event log failed: %w", err)
+	}
 	if _, ok := thinkingForLevel(level); !ok {
 		return fmt.Errorf("unknown thinking level %q", level)
 	}
@@ -785,6 +891,9 @@ func (s *Session) SetThinking(role, level string) error {
 		emittedRole = "all"
 	}
 	s.emitter.Emit(event.ThinkingLevelChanged, map[string]any{"role": emittedRole, "from": from, "to": level})
+	if err := s.logFailure(); err != nil {
+		return fmt.Errorf("session event log failed: %w", err)
+	}
 	// Persist the new level as the default (roles.thinking.* in ycc.toml) so a
 	// thinking-level change survives a restart and applies to future sessions.
 	if err := s.reg.SetRoleThinking(role, level); err != nil {
@@ -952,6 +1061,9 @@ func (s *Session) run() {
 		// fresh SessionStarted / initial UserInput nor seed. Mark the reopen in the
 		// continuous log.
 		s.emitter.Emit(event.SessionReopened, map[string]any{})
+		if s.ctx.Err() != nil {
+			return
+		}
 		// If the reconstructed history ends mid-turn — the model still owes a
 		// response to a user message or to tool results (e.g. the session was
 		// reopened after tools ran but before the model replied, or a dangling
@@ -966,8 +1078,14 @@ func (s *Session) run() {
 			s.setStatus(event.StatusIdle)
 			select {
 			case text := <-s.inputCh:
+				if s.ctx.Err() != nil {
+					return
+				}
 				s.currentLoop().Post(text)
 			case input := <-s.messageCh:
+				if s.ctx.Err() != nil {
+					return
+				}
 				s.currentLoop().PostMessage(input)
 			case <-s.ctx.Done():
 				return
@@ -985,6 +1103,9 @@ func (s *Session) run() {
 			// picked at StartSession (spec §13, §18.2).
 			"coordinator": coord,
 		})
+		if s.ctx.Err() != nil {
+			return
+		}
 		// The opening prompt echoes like any other user input; pictures are
 		// recorded as metadata only (bytes live in model history alone, and a
 		// replayed session gets the "unavailable after replay" note).
@@ -996,6 +1117,9 @@ func (s *Session) run() {
 	}
 
 	for {
+		if s.ctx.Err() != nil {
+			return
+		}
 		s.setStatus(event.StatusRunning)
 		// A starting run clears the refusal gate: this iteration IS the retry
 		// (via Resume, a model switch, or reopen re-running the pending turn).
@@ -1050,6 +1174,9 @@ func (s *Session) run() {
 			}
 			if next, berr := s.buildLoop(res.NextMode, seed); berr == nil {
 				s.emitter.Emit(event.ModeChanged, map[string]any{"from": s.Mode, "to": res.NextMode})
+				if s.logFailure() != nil || s.ctx.Err() != nil {
+					return
+				}
 				s.Mode = res.NextMode
 				s.setLoop(next)
 				continue // run the new mode's loop immediately (its first checkpoint drains any pending corrections)
@@ -1059,7 +1186,13 @@ func (s *Session) run() {
 		} else {
 			s.setStatus(event.StatusIdle)
 			s.emitter.Emit(event.SessionIdle, map[string]any{"report": s.withAssumptions(res.Report)})
+			if s.logFailure() != nil || s.ctx.Err() != nil {
+				return
+			}
 			s.summarizeUsage()
+		}
+		if s.logFailure() != nil || s.ctx.Err() != nil {
+			return
 		}
 
 		// Steer-by-default race: input that arrived after the run's final
@@ -1071,7 +1204,11 @@ func (s *Session) run() {
 		s.corrections = nil
 		s.steerMu.Unlock()
 		if len(corr) > 0 {
-			for _, input := range s.deliverCorrections(corr) {
+			messages, err := s.deliverCorrections(corr)
+			if err != nil {
+				return
+			}
+			for _, input := range messages {
 				s.currentLoop().PostMessage(input)
 			}
 			continue
@@ -1079,10 +1216,19 @@ func (s *Session) run() {
 
 		select {
 		case text := <-s.inputCh:
+			if s.ctx.Err() != nil {
+				return
+			}
 			s.currentLoop().Post(text)
 		case input := <-s.messageCh:
+			if s.ctx.Err() != nil {
+				return
+			}
 			s.currentLoop().PostMessage(input)
 		case <-s.retryCh:
+			if s.ctx.Err() != nil {
+				return
+			}
 			// Retry after a session error: mark the retry as resumed only when the
 			// parked run loop actually consumes it, then re-run the failed turn on
 			// existing history without injecting a user message.
@@ -1673,6 +1819,14 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 		thinkLevels:     map[string]string{},
 		usageSummarized: map[string]bool{},
 	}
+	// Durability loss is terminal for a live session: continuing would mutate
+	// model/tool state from history that cannot be replayed after restart. Log
+	// itself sends live subscribers a transient session_error, so do not attempt
+	// to record another error through the already-broken log here.
+	log.OnFailure(func(error) {
+		s.setStatus(event.StatusError)
+		s.cancel()
+	})
 
 	// buildLoop assembles the agent loop for a mode; reused on mode transitions.
 	// It reads the session's current coordinator assignment so a mid-session

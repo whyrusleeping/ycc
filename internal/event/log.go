@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"log"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -23,16 +23,31 @@ type Log struct {
 	mu     sync.Mutex
 	cond   *sync.Cond
 	path   string
-	f      *os.File
+	f      logFile
 	events []Event
 	seq    int
 	closed bool
+	failed error
+
+	// onFailure lets the owning session stop as soon as durability is lost. The
+	// callback is captured exactly once under mu and invoked after mu is released.
+	onFailure       func(error)
+	failureNotified bool
 
 	// subs tracks live subscribers so Broadcast can deliver transient events to
 	// them. Each subscriber owns a small bounded queue that Broadcast appends to
 	// under mu; the subscriber's pump drains it after the persisted tail.
 	subs   map[int]*subscriber
 	nextID int
+}
+
+// logFile is the durability surface used by Log. Keeping it small lets tests
+// inject write and sync failures while production OpenLog continues to use an
+// *os.File.
+type logFile interface {
+	Write([]byte) (int, error)
+	Sync() error
+	Close() error
 }
 
 // transientQueueMax bounds each subscriber's pending transient events. Transient
@@ -45,6 +60,15 @@ const transientQueueMax = 256
 // subscriber holds a live subscriber's transient delivery queue.
 type subscriber struct {
 	transient []Event
+}
+
+func enqueueTransient(sub *subscriber, ev Event) {
+	if len(sub.transient) >= transientQueueMax {
+		// Drop the oldest queued transient to bound memory and keep the freshest
+		// output flowing; transients are lossy by design.
+		sub.transient = sub.transient[1:]
+	}
+	sub.transient = append(sub.transient, ev)
 }
 
 // OpenLog opens (creating if needed) the JSONL log at path, loading any existing
@@ -122,29 +146,118 @@ func (l *Log) Snapshot() []Event {
 	return out
 }
 
-// Record assigns the next seq, persists, and broadcasts the event. It is the
-// session's single sequence authority and satisfies Recorder.
+// Record assigns the next seq, durably persists the event, and only then makes
+// it visible to snapshots and subscribers. It is the session's single sequence
+// authority and satisfies Recorder.
+//
+// An encode, append, or sync failure terminally fails the log. The candidate
+// sequence is not committed and the returned event is unstamped (Seq=0), so a
+// caller can never mistake the event for durable history. No later records or
+// broadcasts are accepted after a failure.
 func (l *Log) Record(actor string, t Type, data map[string]any) Event {
+	unstamped := Event{Actor: actor, Type: t, Data: data}
+
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	if l.closed {
-		// Don't burn a sequence number on a closed log; the event isn't recorded.
-		return Event{Actor: actor, Type: t, Data: data}
+		l.mu.Unlock()
+		return unstamped
 	}
-	l.seq++
-	ev := Event{Seq: l.seq, TS: time.Now(), Actor: actor, Type: t, Data: data}
-	if line, err := json.Marshal(ev); err == nil {
-		if _, werr := l.f.Write(append(line, '\n')); werr != nil {
-			// The log is the source of truth; surface a failed append rather than
-			// silently diverging from the in-memory/subscriber view.
-			log.Printf("ycc: event log append failed (%s, seq %d): %v", l.path, ev.Seq, werr)
-		} else {
-			l.f.Sync()
-		}
+
+	// Do not advance l.seq until the append and fsync have both succeeded. Since
+	// failures are terminal, a failed candidate can never be reused by this log;
+	// reopening derives the next sequence from whatever is actually on disk.
+	ev := Event{Seq: l.seq + 1, TS: time.Now(), Actor: actor, Type: t, Data: data}
+	line, err := json.Marshal(ev)
+	if err != nil {
+		cb, failure := l.failLocked(fmt.Errorf("event log persistence failed: encode event: %w", err))
+		l.mu.Unlock()
+		invokeFailure(cb, failure)
+		return unstamped
 	}
+	line = append(line, '\n')
+	if n, err := l.f.Write(line); err != nil {
+		cb, failure := l.failLocked(fmt.Errorf("event log persistence failed: append event: %w", err))
+		l.mu.Unlock()
+		invokeFailure(cb, failure)
+		return unstamped
+	} else if n != len(line) {
+		cb, failure := l.failLocked(fmt.Errorf("event log persistence failed: append event: wrote %d of %d bytes: %w", n, len(line), io.ErrShortWrite))
+		l.mu.Unlock()
+		invokeFailure(cb, failure)
+		return unstamped
+	}
+	if err := l.f.Sync(); err != nil {
+		cb, failure := l.failLocked(fmt.Errorf("event log persistence failed: sync event log: %w", err))
+		l.mu.Unlock()
+		invokeFailure(cb, failure)
+		return unstamped
+	}
+
+	l.seq = ev.Seq
 	l.events = append(l.events, ev)
 	l.cond.Broadcast()
+	l.mu.Unlock()
 	return ev
+}
+
+// failLocked transitions the log into its terminal failed state and returns the
+// owner callback to invoke after releasing mu. The failure itself is delivered
+// to current subscribers as a transient session_error: it must not pretend to
+// be durable by attempting another append to the broken log.
+func (l *Log) failLocked(err error) (func(error), error) {
+	l.failed = err
+	l.closed = true
+	failureEvent := Event{
+		TS:        time.Now(),
+		Actor:     "system",
+		Type:      SessionError,
+		Data:      map[string]any{"msg": err.Error(), "kind": "event_log"},
+		Transient: true,
+	}
+	for _, sub := range l.subs {
+		enqueueTransient(sub, failureEvent)
+	}
+	// Closing after a failed append prevents any accidental future writes. Its
+	// error cannot supersede the append/sync error that caused the terminal state.
+	_ = l.f.Close()
+	l.cond.Broadcast()
+
+	if l.onFailure != nil && !l.failureNotified {
+		l.failureNotified = true
+		return l.onFailure, l.failed
+	}
+	return nil, l.failed
+}
+
+func invokeFailure(fn func(error), err error) {
+	if fn != nil {
+		fn(err)
+	}
+}
+
+// Err reports the terminal persistence failure, or nil while the log is
+// healthy (including after an ordinary Close).
+func (l *Log) Err() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.failed
+}
+
+// OnFailure registers the owning session's terminal-failure handler. At most
+// one handler is retained. If the log has already failed, fn is invoked once
+// before OnFailure returns. Handlers are always called without holding l.mu.
+func (l *Log) OnFailure(fn func(error)) {
+	l.mu.Lock()
+	l.onFailure = fn
+	var err error
+	if l.failed != nil && fn != nil && !l.failureNotified {
+		l.failureNotified = true
+		err = l.failed
+	}
+	l.mu.Unlock()
+	if err != nil {
+		fn(err)
+	}
 }
 
 // Broadcast delivers a transient, non-persisted event to live subscribers only
@@ -167,12 +280,7 @@ func (l *Log) Broadcast(actor string, t Type, data map[string]any) Event {
 		return ev
 	}
 	for _, sub := range l.subs {
-		if len(sub.transient) >= transientQueueMax {
-			// Drop the oldest queued transient to bound memory and keep the
-			// freshest output flowing; transients are lossy by design.
-			sub.transient = sub.transient[1:]
-		}
-		sub.transient = append(sub.transient, ev)
+		enqueueTransient(sub, ev)
 	}
 	l.cond.Broadcast()
 	return ev
