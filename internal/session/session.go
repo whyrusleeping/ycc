@@ -1574,6 +1574,47 @@ func (m *Manager) SpawnWorkstream(cfg SpawnWorkstreamConfig) (workstream.Workstr
 		return workstream.Workstream{}, nil, fmt.Errorf("resolve base ref %q: %w", baseRef, err)
 	}
 
+	// The immutable spawn commit and mutable integration branch are separate: an
+	// explicit local branch names both; an arbitrary commit-ish still spawns from
+	// that commit but integrates into the configured/default branch.
+	var baseBranch string
+	if cfg.BaseRef != "" {
+		name, local, lerr := repo.LocalBranch(cfg.BaseRef)
+		if lerr != nil {
+			return workstream.Workstream{}, nil, fmt.Errorf("resolve base branch from %q: %w", cfg.BaseRef, lerr)
+		}
+		if local {
+			baseBranch = name
+		}
+	}
+	if baseBranch == "" {
+		baseBranch = strings.TrimSpace(m.reg.IntegrationBase())
+		if baseBranch != "" {
+			name, local, lerr := repo.LocalBranch(baseBranch)
+			if lerr != nil {
+				return workstream.Workstream{}, nil, fmt.Errorf("resolve configured integration base %q: %w", baseBranch, lerr)
+			}
+			if !local {
+				return workstream.Workstream{}, nil, fmt.Errorf("configured integration base %q is not a local branch", baseBranch)
+			}
+			baseBranch = name
+		}
+	}
+	if baseBranch == "" {
+		baseBranch, err = repo.DefaultBranch()
+		if err != nil {
+			return workstream.Workstream{}, nil, fmt.Errorf("resolve workstream base branch: %w", err)
+		}
+		name, local, lerr := repo.LocalBranch(baseBranch)
+		if lerr != nil {
+			return workstream.Workstream{}, nil, fmt.Errorf("resolve default base branch %q: %w", baseBranch, lerr)
+		}
+		if !local {
+			return workstream.Workstream{}, nil, fmt.Errorf("default base branch %q is not a local branch", baseBranch)
+		}
+		baseBranch = name
+	}
+
 	id, err := newWorkstreamID()
 	if err != nil {
 		return workstream.Workstream{}, nil, err
@@ -1632,6 +1673,7 @@ func (m *Manager) SpawnWorkstream(cfg SpawnWorkstreamConfig) (workstream.Workstr
 		ID:           id,
 		Project:      cfg.Project,
 		BaseCommit:   baseCommit,
+		BaseBranch:   baseBranch,
 		Branch:       branch,
 		WorktreePath: dir,
 		SessionID:    s.ID,
@@ -1647,12 +1689,13 @@ func (m *Manager) SpawnWorkstream(cfg SpawnWorkstreamConfig) (workstream.Workstr
 	// Record the workstream's creation on its own session stream so the merge
 	// flow is auditable and projectable (design §6, §8).
 	m.emitWorkstreamEvent(ws, event.WorkstreamCreated, map[string]any{
-		"workstream": ws.ID,
-		"branch":     ws.Branch,
-		"base":       ws.BaseCommit,
-		"worktree":   ws.WorktreePath,
-		"project":    ws.Project,
-		"task":       ws.TaskID,
+		"workstream":  ws.ID,
+		"branch":      ws.Branch,
+		"base":        ws.BaseCommit,
+		"base_branch": ws.BaseBranch,
+		"worktree":    ws.WorktreePath,
+		"project":     ws.Project,
+		"task":        ws.TaskID,
 	})
 	// Registration happens after the session starts, so attach explicitly here;
 	// newSession cannot discover a fresh workstream yet. The immediate status

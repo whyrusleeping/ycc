@@ -486,6 +486,15 @@ type Config struct {
 	// Work configures the work-mode implementation pipeline (spec §10). An absent
 	// [work] block keeps the default "delegate" behaviour.
 	Work Work `toml:"work,omitempty"`
+	// Integration configures how completed workstreams are integrated. Base names
+	// the local branch advanced by the rebase-then-fast-forward flow; when absent,
+	// the repository's default branch is used.
+	Integration Integration `toml:"integration,omitempty"`
+}
+
+// Integration configures workstream integration into a repository base branch.
+type Integration struct {
+	Base string `toml:"base,omitempty"`
 }
 
 // Work configures the work-mode coordinator's implementation strategy (spec §10).
@@ -785,6 +794,14 @@ func (r *Registry) Budget() Budget {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.cfg.Budget
+}
+
+// IntegrationBase returns the configured local branch to advance when a
+// workstream is integrated. An empty value means to use the repository default.
+func (r *Registry) IntegrationBase() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.cfg.Integration.Base
 }
 
 // Notify returns the configured daemon-side push-notifier settings (task 0142).

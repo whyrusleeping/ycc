@@ -64,3 +64,7 @@ Goal: workstream worktree paths must always live beneath the configured worktree
 …[truncated]
 - 2026-08-07 decision: accept — commit: Confine workstream paths under the daemon worktrees root (task 0199)  Worktree dirs are now derived via workstream.SafeProjectDir (verbatim only for conservative ASCII names outside the reserved -<16 
 …[truncated]
+- 2026-08-07 usage: 2,121,237 tok (in 562,721, out 31,220, cache_r 1,984,277, cache_w 68,528) · cost n/a (unpriced)
+  implementer: 1,631,142 tok (in 360,314, out 16,940, cache_r 1,253,888, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 483,995 tok (in 202,389, out 8,198, cache_r 273,408, cache_w 0) · cost n/a (unpriced)
+  coordinator: 6,100 tok (in 18, out 6,082, cache_r 456,981, cache_w 68,528) · cost n/a (unpriced)

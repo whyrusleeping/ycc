@@ -8,6 +8,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/whyrusleeping/ycc/internal/git"
 	"github.com/whyrusleeping/ycc/internal/session"
 	"github.com/whyrusleeping/ycc/internal/workstream"
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
@@ -21,6 +22,7 @@ func toWorkstreamInfo(w workstream.Workstream) *v1.WorkstreamInfo {
 		Id:           w.ID,
 		Project:      w.Project,
 		BaseCommit:   w.BaseCommit,
+		BaseBranch:   w.BaseBranch,
 		Branch:       w.Branch,
 		WorktreePath: w.WorktreePath,
 		SessionId:    w.SessionID,
@@ -36,7 +38,7 @@ func toWorkstreamInfo(w workstream.Workstream) *v1.WorkstreamInfo {
 // each to the closest client/precondition code and fall back to Internal.
 func workstreamError(err error) *connect.Error {
 	switch {
-	case errors.Is(err, workstream.ErrWorktreeInUse):
+	case errors.Is(err, workstream.ErrWorktreeInUse), errors.Is(err, git.ErrBaseTreeDirty):
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	case errors.Is(err, session.ErrUnknownProject):
 		return connect.NewError(connect.CodeNotFound, err)

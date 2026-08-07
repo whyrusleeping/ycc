@@ -64,6 +64,9 @@ type Workstream struct {
 	Project string `json:"project"`
 	// BaseCommit is the commit the worktree branch was created from.
 	BaseCommit string `json:"base_commit"`
+	// BaseBranch is the local branch integration advances. It is distinct from
+	// BaseCommit, which remains the immutable spawn-time commit.
+	BaseBranch string `json:"base_branch,omitempty"`
 	// Branch is the worktree's branch ref (ycc/ws/<id>[-<task>]).
 	Branch string `json:"branch"`
 	// WorktreePath is the absolute path of the linked worktree directory.

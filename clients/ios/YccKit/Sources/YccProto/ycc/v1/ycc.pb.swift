@@ -1990,6 +1990,9 @@ public nonisolated struct Ycc_V1_WorkstreamInfo: Sendable {
   /// live session status: running|idle|paused|stopped|error (empty if unknown)
   public var sessionStatus: String = String()
 
+  /// local branch advanced when this workstream integrates
+  public var baseBranch: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -5866,7 +5869,7 @@ nonisolated extension Ycc_V1_GetWorkLoopResponse: SwiftProtobuf.Message, SwiftPr
 
 nonisolated extension Ycc_V1_WorkstreamInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".WorkstreamInfo"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}project\0\u{3}base_commit\0\u{1}branch\0\u{3}worktree_path\0\u{3}session_id\0\u{3}task_id\0\u{1}status\0\u{3}created_at\0\u{3}commit_count\0\u{3}session_status\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}project\0\u{3}base_commit\0\u{1}branch\0\u{3}worktree_path\0\u{3}session_id\0\u{3}task_id\0\u{1}status\0\u{3}created_at\0\u{3}commit_count\0\u{3}session_status\0\u{3}base_branch\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -5885,6 +5888,7 @@ nonisolated extension Ycc_V1_WorkstreamInfo: SwiftProtobuf.Message, SwiftProtobu
       case 9: try { try decoder.decodeSingularStringField(value: &self.createdAt) }()
       case 10: try { try decoder.decodeSingularInt64Field(value: &self.commitCount) }()
       case 11: try { try decoder.decodeSingularStringField(value: &self.sessionStatus) }()
+      case 12: try { try decoder.decodeSingularStringField(value: &self.baseBranch) }()
       default: break
       }
     }
@@ -5924,6 +5928,9 @@ nonisolated extension Ycc_V1_WorkstreamInfo: SwiftProtobuf.Message, SwiftProtobu
     if !self.sessionStatus.isEmpty {
       try visitor.visitSingularStringField(value: self.sessionStatus, fieldNumber: 11)
     }
+    if !self.baseBranch.isEmpty {
+      try visitor.visitSingularStringField(value: self.baseBranch, fieldNumber: 12)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -5939,6 +5946,7 @@ nonisolated extension Ycc_V1_WorkstreamInfo: SwiftProtobuf.Message, SwiftProtobu
     if lhs.createdAt != rhs.createdAt {return false}
     if lhs.commitCount != rhs.commitCount {return false}
     if lhs.sessionStatus != rhs.sessionStatus {return false}
+    if lhs.baseBranch != rhs.baseBranch {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

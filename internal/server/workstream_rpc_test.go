@@ -139,6 +139,9 @@ func TestWorkstreamRPCEndToEnd(t *testing.T) {
 	if ws1.GetSessionId() == "" || ws2.GetSessionId() == "" {
 		t.Fatalf("spawned workstreams missing session ids: %+v %+v", ws1, ws2)
 	}
+	if ws1.GetBaseBranch() == "" || ws2.GetBaseBranch() == "" {
+		t.Fatalf("spawned workstreams missing base branches: %+v %+v", ws1, ws2)
+	}
 	defer mgr.Stop(ws1.GetSessionId())
 	defer mgr.Stop(ws2.GetSessionId())
 

@@ -47,6 +47,9 @@ func TestSpawnWorkstream(t *testing.T) {
 	if !strings.HasPrefix(ws.Branch, "ycc/ws/"+ws.ID) || !strings.HasSuffix(ws.Branch, "-0042") {
 		t.Fatalf("unexpected branch %q for id %q", ws.Branch, ws.ID)
 	}
+	if ws.BaseBranch == "" {
+		t.Fatal("spawned workstream did not record its base branch")
+	}
 	// The worktree dir exists and the session is scoped to it.
 	if _, err := os.Stat(ws.WorktreePath); err != nil {
 		t.Fatalf("worktree dir missing: %v", err)
@@ -91,6 +94,45 @@ func TestSpawnWorkstream(t *testing.T) {
 	// Workstreams accessor filters by project.
 	if got := m.Workstreams("demo"); len(got) != 1 || got[0].ID != ws.ID {
 		t.Fatalf("Workstreams(demo) = %+v", got)
+	}
+}
+
+func TestSpawnWorkstreamHonorsConfiguredIntegrationBase(t *testing.T) {
+	proj := t.TempDir()
+	repo, err := git.Open(proj)
+	if err != nil {
+		t.Fatalf("git.Open: %v", err)
+	}
+	base, err := repo.RevParse("HEAD")
+	if err != nil {
+		t.Fatalf("RevParse: %v", err)
+	}
+	fixture := filepath.Join(t.TempDir(), "integration-fixture")
+	if err := repo.AddWorktree(fixture, "integration", base); err != nil {
+		t.Fatalf("create integration branch: %v", err)
+	}
+	if err := repo.RemoveWorktree(fixture); err != nil {
+		t.Fatalf("remove integration fixture: %v", err)
+	}
+
+	m := NewManager(testRegistryWithIntegration("integration"), t.TempDir())
+	m.SetProjects(project.NewMemory())
+	if _, err := m.AddProject(proj, "demo"); err != nil {
+		t.Fatalf("AddProject: %v", err)
+	}
+	m.SetWorkstreams(workstream.NewMemory(), filepath.Join(t.TempDir(), "worktrees"))
+
+	ws, s, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
+	if err != nil {
+		t.Fatalf("SpawnWorkstream: %v", err)
+	}
+	defer m.Stop(s.ID)
+	defer m.DiscardWorkstream(ws.ID)
+	if ws.BaseBranch != "integration" {
+		t.Fatalf("BaseBranch = %q, want configured integration", ws.BaseBranch)
+	}
+	if got, _ := m.workstreams.Get(ws.ID); got.BaseBranch != "integration" {
+		t.Fatalf("registry BaseBranch = %q, want integration", got.BaseBranch)
 	}
 }
 

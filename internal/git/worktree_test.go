@@ -80,7 +80,7 @@ func TestWorktreeLifecycle(t *testing.T) {
 
 	// --- TrialMerge (clean) does not mutate base ---
 	headBefore := gitAt(t, base, "rev-parse", "HEAD")
-	res, err := r.TrialMerge(branch)
+	res, err := r.TrialMerge("HEAD", branch)
 	if err != nil {
 		t.Fatalf("TrialMerge (clean): %v", err)
 	}
@@ -159,7 +159,7 @@ func TestTrialMergeAndMergeConflict(t *testing.T) {
 	headBefore := gitAt(t, base, "rev-parse", "HEAD")
 
 	// TrialMerge reports the conflict without mutating base.
-	res, err := r.TrialMerge(branch)
+	res, err := r.TrialMerge("HEAD", branch)
 	if err != nil {
 		t.Fatalf("TrialMerge (conflict): %v", err)
 	}

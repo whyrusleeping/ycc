@@ -21,13 +21,18 @@ func (fakeTurner) Turn(gollama.RequestOptions) (*gollama.ResponseMessageGenerate
 }
 
 func testRegistry() *config.Registry {
+	return testRegistryWithIntegration("")
+}
+
+func testRegistryWithIntegration(base string) *config.Registry {
 	cfg := &config.Config{
 		Models: map[string]config.Model{
 			"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"},
 			"b": {Backend: "ollama", BaseURL: "http://localhost:2", Model: "model-b"},
 			"c": {Backend: "ollama", BaseURL: "http://localhost:3", Model: "model-c"},
 		},
-		Roles: config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
+		Roles:       config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
+		Integration: config.Integration{Base: base},
 	}
 	return config.NewRegistry(cfg)
 }

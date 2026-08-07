@@ -5769,6 +5769,7 @@ type WorkstreamInfo struct {
 	CreatedAt     string                 `protobuf:"bytes,9,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`              // RFC3339
 	CommitCount   int64                  `protobuf:"varint,10,opt,name=commit_count,json=commitCount,proto3" json:"commit_count,omitempty"`      // commits on the branch since base_commit (0 if unknown)
 	SessionStatus string                 `protobuf:"bytes,11,opt,name=session_status,json=sessionStatus,proto3" json:"session_status,omitempty"` // live session status: running|idle|paused|stopped|error (empty if unknown)
+	BaseBranch    string                 `protobuf:"bytes,12,opt,name=base_branch,json=baseBranch,proto3" json:"base_branch,omitempty"`          // local branch advanced when this workstream integrates
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5876,6 +5877,13 @@ func (x *WorkstreamInfo) GetCommitCount() int64 {
 func (x *WorkstreamInfo) GetSessionStatus() string {
 	if x != nil {
 		return x.SessionStatus
+	}
+	return ""
+}
+
+func (x *WorkstreamInfo) GetBaseBranch() string {
+	if x != nil {
+		return x.BaseBranch
 	}
 	return ""
 }
@@ -6826,7 +6834,7 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x12GetWorkLoopRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\"?\n" +
 	"\x13GetWorkLoopResponse\x12(\n" +
-	"\x04loop\x18\x01 \x01(\v2\x14.ycc.v1.WorkLoopInfoR\x04loop\"\xd1\x02\n" +
+	"\x04loop\x18\x01 \x01(\v2\x14.ycc.v1.WorkLoopInfoR\x04loop\"\xf2\x02\n" +
 	"\x0eWorkstreamInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
 	"\aproject\x18\x02 \x01(\tR\aproject\x12\x1f\n" +
@@ -6842,7 +6850,9 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"created_at\x18\t \x01(\tR\tcreatedAt\x12!\n" +
 	"\fcommit_count\x18\n" +
 	" \x01(\x03R\vcommitCount\x12%\n" +
-	"\x0esession_status\x18\v \x01(\tR\rsessionStatus\"\x84\x01\n" +
+	"\x0esession_status\x18\v \x01(\tR\rsessionStatus\x12\x1f\n" +
+	"\vbase_branch\x18\f \x01(\tR\n" +
+	"baseBranch\"\x84\x01\n" +
 	"\x16SpawnWorkstreamRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12\x19\n" +
 	"\bbase_ref\x18\x02 \x01(\tR\abaseRef\x12\x17\n" +

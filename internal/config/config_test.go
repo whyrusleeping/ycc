@@ -47,6 +47,9 @@ model = "qwen2.5-coder"
 coordinator = "claude"
 implementer = "claude"
 reviewers = ["claude", "haiku", "local"]
+
+[integration]
+base = "main"
 `
 
 func TestLoadAndRegistry(t *testing.T) {
@@ -66,6 +69,9 @@ func TestLoadAndRegistry(t *testing.T) {
 	}
 	if NewRegistry(cfg).MaxTurns() != 250 {
 		t.Fatalf("registry MaxTurns = %d", NewRegistry(cfg).MaxTurns())
+	}
+	if got := NewRegistry(cfg).IntegrationBase(); got != "main" {
+		t.Fatalf("registry IntegrationBase = %q, want main", got)
 	}
 	if len(cfg.Roles.Reviewers) != 3 {
 		t.Fatalf("reviewers = %v", cfg.Roles.Reviewers)

@@ -80,6 +80,31 @@ func (m *Manager) primaryRepo(ws workstream.Workstream) (*git.Repo, error) {
 	return git.Open(primary)
 }
 
+// workstreamBaseBranch resolves and validates the local branch integration must
+// advance. The config/default fallback keeps registry entries written before
+// BaseBranch was introduced mergeable.
+func (m *Manager) workstreamBaseBranch(repo *git.Repo, ws workstream.Workstream) (string, error) {
+	base := ws.BaseBranch
+	if base == "" {
+		base = m.reg.IntegrationBase()
+	}
+	if base == "" {
+		var err error
+		base, err = repo.DefaultBranch()
+		if err != nil {
+			return "", fmt.Errorf("resolve base branch for workstream %q: %w", ws.ID, err)
+		}
+	}
+	name, local, err := repo.LocalBranch(base)
+	if err != nil {
+		return "", fmt.Errorf("resolve base branch %q for workstream %q: %w", base, ws.ID, err)
+	}
+	if !local {
+		return "", fmt.Errorf("base branch %q for workstream %q is not a local branch", base, ws.ID)
+	}
+	return name, nil
+}
+
 // WorkstreamSessionStatus reports the live status of a workstream's session as a
 // string (running | idle | paused | stopped | error), for the Workstreams panel
 // (design §8). It returns the in-memory status when the session is live; when
@@ -170,14 +195,18 @@ func (m *Manager) PreviewWorkstreamMerge(id string) (MergePreview, error) {
 	if err != nil {
 		return MergePreview{}, err
 	}
-	trial, err := repo.TrialMerge(ws.Branch)
+	base, err := m.workstreamBaseBranch(repo, ws)
+	if err != nil {
+		return MergePreview{}, err
+	}
+	trial, err := repo.TrialMerge(base, ws.Branch)
 	if err != nil {
 		return MergePreview{}, err
 	}
 	if !trial.Clean {
 		return MergePreview{Clean: false, Conflicts: trial.Conflicts}, nil
 	}
-	diff, err := repo.DiffMergeBase(ws.Branch)
+	diff, err := repo.DiffMergeBase(base, ws.Branch)
 	if err != nil {
 		return MergePreview{}, err
 	}
@@ -192,9 +221,10 @@ func (m *Manager) PreviewWorkstreamMerge(id string) (MergePreview, error) {
 // The outcome depends on the trial merge and explicit acceptance:
 //   - conflict → a workstream_conflict event listing the paths; base untouched,
 //     worktree + active status kept so the conflict can be resolved.
-//   - clean and accept=true → the branch is merged --no-ff, a workstream_merged
-//     event recorded, the session stopped, and the worktree + branch cleaned up;
-//     registry status set to merged. The session log is preserved into the
+//   - clean and accept=true → the branch is rebased onto the current base, which
+//     is advanced by fast-forward only; a workstream_merged event is recorded,
+//     the session stopped, and the worktree + branch cleaned up; registry status
+//     set to merged. The session log is preserved into the
 //     primary workspace before cleanup so its transcript remains viewable.
 //   - clean and accept=false → NeedsAccept with the integrated diff; nothing is
 //     mutated and no event is recorded.
@@ -213,10 +243,14 @@ func (m *Manager) MergeWorkstream(id string, accept bool) (MergeOutcome, error) 
 	if err != nil {
 		return MergeOutcome{}, err
 	}
+	base, err := m.workstreamBaseBranch(repo, ws)
+	if err != nil {
+		return MergeOutcome{}, err
+	}
 
-	// Step 1: trial-merge against the current base HEAD to detect conflicts
+	// Step 1: trial-merge against the current base branch to detect conflicts
 	// without touching the base branch.
-	trial, err := repo.TrialMerge(ws.Branch)
+	trial, err := repo.TrialMerge(base, ws.Branch)
 	if err != nil {
 		return MergeOutcome{}, err
 	}
@@ -226,31 +260,45 @@ func (m *Manager) MergeWorkstream(id string, accept bool) (MergeOutcome, error) 
 
 	// Step 2: every clean merge requires explicit acceptance after preview.
 	if !accept {
-		diff, derr := repo.DiffMergeBase(ws.Branch)
+		diff, derr := repo.DiffMergeBase(base, ws.Branch)
 		if derr != nil {
 			return MergeOutcome{}, derr
 		}
 		return MergeOutcome{NeedsAccept: true, Diff: diff}, nil
 	}
 
-	// Step 3: integrate for real. A conflict here (should be impossible under
-	// mergeMu, but a live session could have pushed commits between trial and
-	// merge) is handled exactly like the trial conflict — Merge already aborted
-	// so the base is restored.
-	res, err := repo.Merge(ws.Branch, git.MergeNoFF)
+	// Step 3: preflight the base before rebasing so a dirty checked-out base
+	// refuses the attempt without rewriting the workstream branch or tree.
+	// AdvanceBranch repeats this check after the rebase to close the race window.
+	if err := repo.CheckBaseClean(base); err != nil {
+		return MergeOutcome{}, err
+	}
+
+	// Reconcile in the workstream itself, then mechanically fast-forward the
+	// selected base. Persisted worktree paths are untrusted, so never run git there
+	// until containment under daemon-owned state has been verified.
+	if err := workstream.VerifyUnderRoot(m.worktreesRoot, ws.WorktreePath); err != nil {
+		return MergeOutcome{}, fmt.Errorf("workstream %q has invalid worktree path: %w", ws.ID, err)
+	}
+	rebase, err := repo.RebaseOnto(ws.WorktreePath, base)
 	if err != nil {
 		return MergeOutcome{}, err
 	}
-	if !res.Clean {
-		return m.surfaceConflict(ws, res.Conflicts), nil
+	if !rebase.Clean {
+		return m.surfaceConflict(ws, rebase.Conflicts), nil
+	}
+	commit, err := repo.AdvanceBranch(base, ws.Branch)
+	if err != nil {
+		return MergeOutcome{}, err
 	}
 
-	// Step 4: record the merge on the session stream while its log still exists,
-	// then stop the session and clean up the worktree + branch (design §5 step 4).
+	// Step 4: record the integration on the session stream while its log still
+	// exists, then stop the session and clean up the worktree + branch.
 	m.emitWorkstreamEvent(ws, event.WorkstreamMerged, map[string]any{
-		"workstream": ws.ID,
-		"branch":     ws.Branch,
-		"commit":     res.Commit,
+		"workstream":  ws.ID,
+		"branch":      ws.Branch,
+		"base_branch": base,
+		"commit":      commit,
 	})
 	// Mark terminal before Stop emits session_stopped, otherwise the readiness
 	// watcher can race the merge and briefly resurrect an integration state.
@@ -262,7 +310,7 @@ func (m *Manager) MergeWorkstream(id string, accept bool) (MergeOutcome, error) 
 	}
 	m.preserveWorkstreamSession(ws)
 	m.cleanupWorktree(repo, ws)
-	return MergeOutcome{Merged: true, Commit: res.Commit}, nil
+	return MergeOutcome{Merged: true, Commit: commit}, nil
 }
 
 // surfaceConflict records a workstream_conflict event and returns the conflict

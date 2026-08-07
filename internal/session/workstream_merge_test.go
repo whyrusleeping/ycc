@@ -1,14 +1,28 @@
 package session
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/git"
 	"github.com/whyrusleeping/ycc/internal/workstream"
 )
+
+func sessionGitAt(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s (in %s): %v\n%s", strings.Join(args, " "), dir, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
 
 // commitInto opens the git tree at dir, writes name=content, and commits it,
 // returning the new short sha. It is the test idiom for making a branch/base
@@ -78,6 +92,95 @@ func TestMergeWorkstreamCleanAccepted(t *testing.T) {
 	// The merge is auditable on the session stream.
 	if _, ok := snapshotHasEvent(s, event.WorkstreamMerged); !ok {
 		t.Fatalf("no workstream_merged event in session log")
+	}
+}
+
+func TestMergeWorkstreamAdvancesBaseWithPrimaryOnUnrelatedBranch(t *testing.T) {
+	m, proj := newWorkstreamManager(t)
+	ws, s, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
+	if err != nil {
+		t.Fatalf("SpawnWorkstream: %v", err)
+	}
+	defer m.Stop(s.ID)
+	commitInto(t, ws.WorktreePath, "feature.txt", "feature\n", "feature")
+
+	// Move the primary tree away from the integration base. AdvanceBranch must use
+	// its no-checkout ref path and leave this unrelated tree entirely untouched.
+	sessionGitAt(t, proj, "checkout", "-b", "unrelated")
+	unrelatedBefore := sessionGitAt(t, proj, "rev-parse", "HEAD")
+	out, err := m.MergeWorkstream(ws.ID, true)
+	if err != nil || !out.Merged {
+		t.Fatalf("MergeWorkstream: out=%+v err=%v", out, err)
+	}
+	if got := sessionGitAt(t, proj, "rev-parse", "--abbrev-ref", "HEAD"); got != "unrelated" {
+		t.Fatalf("primary checkout changed to %q", got)
+	}
+	if got := sessionGitAt(t, proj, "rev-parse", "HEAD"); got != unrelatedBefore {
+		t.Fatalf("unrelated HEAD changed: %s -> %s", unrelatedBefore, got)
+	}
+	if _, err := os.Stat(filepath.Join(proj, "feature.txt")); !os.IsNotExist(err) {
+		t.Fatalf("unrelated primary tree was updated: %v", err)
+	}
+	if got := sessionGitAt(t, proj, "show", ws.BaseBranch+":feature.txt"); got != "feature" {
+		t.Fatalf("feature missing from advanced base: %q", got)
+	}
+	if merges := sessionGitAt(t, proj, "rev-list", "--merges", ws.BaseCommit+".."+ws.BaseBranch); merges != "" {
+		t.Fatalf("integration created merge commits: %s", merges)
+	}
+}
+
+func TestMergeWorkstreamDirtyBaseTreeRefused(t *testing.T) {
+	m, proj := newWorkstreamManager(t)
+	ws, s, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
+	if err != nil {
+		t.Fatalf("SpawnWorkstream: %v", err)
+	}
+	defer m.Stop(s.ID)
+	defer m.DiscardWorkstream(ws.ID)
+	commitInto(t, ws.WorktreePath, "feature.txt", "feature\n", "feature")
+
+	// Advance the base after spawn so a rebase would rewrite the workstream. The
+	// dirty-base preflight must reject before that can happen.
+	commitInto(t, proj, "base-after-spawn.txt", "base\n", "advance base after spawn")
+	baseBefore := sessionGitAt(t, proj, "rev-parse", ws.BaseBranch)
+	branchBefore := sessionGitAt(t, proj, "rev-parse", ws.Branch)
+	worktreeStatusBefore := sessionGitAt(t, ws.WorktreePath, "status", "--porcelain")
+	featureBefore, err := os.ReadFile(filepath.Join(ws.WorktreePath, "feature.txt"))
+	if err != nil {
+		t.Fatalf("read workstream feature before merge: %v", err)
+	}
+
+	dirtyPath := filepath.Join(proj, "dirty.txt")
+	if err := os.WriteFile(dirtyPath, []byte("preserve\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := m.MergeWorkstream(ws.ID, true)
+	if !errors.Is(err, git.ErrBaseTreeDirty) {
+		t.Fatalf("MergeWorkstream: out=%+v err=%v, want ErrBaseTreeDirty", out, err)
+	}
+	if got := sessionGitAt(t, proj, "rev-parse", ws.BaseBranch); got != baseBefore {
+		t.Fatalf("base advanced despite dirty tree: %s -> %s", baseBefore, got)
+	}
+	if got := sessionGitAt(t, proj, "rev-parse", ws.Branch); got != branchBefore {
+		t.Fatalf("workstream branch was rebased despite dirty base: %s -> %s", branchBefore, got)
+	}
+	if got := sessionGitAt(t, ws.WorktreePath, "status", "--porcelain"); got != worktreeStatusBefore {
+		t.Fatalf("workstream status changed despite dirty base: %q -> %q", worktreeStatusBefore, got)
+	}
+	if got, err := os.ReadFile(filepath.Join(ws.WorktreePath, "feature.txt")); err != nil || string(got) != string(featureBefore) {
+		t.Fatalf("workstream contents changed: %q err=%v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(ws.WorktreePath, "base-after-spawn.txt")); !os.IsNotExist(err) {
+		t.Fatalf("base commit appeared in workstream, so rebase ran: %v", err)
+	}
+	if got, err := os.ReadFile(dirtyPath); err != nil || string(got) != "preserve\n" {
+		t.Fatalf("dirty file changed: %q err=%v", got, err)
+	}
+	if got, _ := m.workstreams.Get(ws.ID); !got.Status.InFlight() {
+		t.Fatalf("status = %s, want in flight", got.Status)
+	}
+	if _, err := os.Stat(ws.WorktreePath); err != nil {
+		t.Fatalf("worktree removed after dirty-base refusal: %v", err)
 	}
 }
 
