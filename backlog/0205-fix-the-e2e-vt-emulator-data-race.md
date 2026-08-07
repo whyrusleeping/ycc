@@ -61,3 +61,7 @@ Verification:
 - 2026-08-07 review (sol): accept — The harness-level mutex correctly serializes PTY-driven emulator writes, resize mutations, complete screenText cell reads, and screenshot rendering. The terminal-query reply drain intentionally remain
 …[truncated]
 - 2026-08-07 decision: accept — commit: Fix E2E VT emulator data race with harness-level emulator mutex (task 0205)
+- 2026-08-07 usage: 462,311 tok (in 259,548, out 11,531, cache_r 495,832, cache_w 18,675) · cost n/a (unpriced)
+  implementer: 338,208 tok (in 171,237, out 3,131, cache_r 163,840, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 117,380 tok (in 88,289, out 1,699, cache_r 27,392, cache_w 0) · cost n/a (unpriced)
+  coordinator: 6,723 tok (in 22, out 6,701, cache_r 304,600, cache_w 18,675) · cost n/a (unpriced)

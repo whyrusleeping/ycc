@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/whyrusleeping/gollama"
@@ -371,15 +372,25 @@ func (declineAsker) AskMany(_ context.Context, qs []Question) ([]string, error) 
 func (declineAsker) Confirm(context.Context, string) (bool, error) { return false, nil }
 
 // captureRec records every event in memory so tests can assert on emission.
-type captureRec struct{ events []event.Event }
+// Record is called concurrently (e.g. reviewer fan-out in runReviewers), so it
+// must honor the event.Recorder contract and synchronize; direct reads of
+// r.events are safe only after the recording call has returned.
+type captureRec struct {
+	mu     sync.Mutex
+	events []event.Event
+}
 
 func (r *captureRec) Record(actor string, t event.Type, data map[string]any) event.Event {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	ev := event.Event{Seq: len(r.events) + 1, Actor: actor, Type: t, Data: data}
 	r.events = append(r.events, ev)
 	return ev
 }
 
 func (r *captureRec) focusTasks() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	var out []string
 	for _, ev := range r.events {
 		if ev.Type == event.TaskFocus {
