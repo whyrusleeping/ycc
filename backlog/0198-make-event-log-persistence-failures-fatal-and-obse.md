@@ -91,3 +91,7 @@ Out of scope: tolerating a partially-written trailing JSONL line on restart (rea
 …[truncated]
 - 2026-08-07 decision: accept — commit: Make event-log persistence failures fatal and observable (task 0198)  Log.Record now validates encode/write/sync before exposing an event: any failure terminally fails the log (no seq advance, no in-m
 …[truncated]
+- 2026-08-07 usage: 14,776,848 tok (in 1,608,316, out 80,532, cache_r 15,439,830, cache_w 323,301) · cost n/a (unpriced)
+  implementer: 10,382,697 tok (in 831,213, out 39,804, cache_r 9,511,680, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 4,372,973 tok (in 777,035, out 19,618, cache_r 3,576,320, cache_w 0) · cost n/a (unpriced)
+  coordinator: 21,178 tok (in 68, out 21,110, cache_r 2,351,830, cache_w 323,301) · cost n/a (unpriced)
