@@ -85,6 +85,9 @@ type Store struct {
 	// path and docs-set globs, loaded once at construction from
 	// <workspace>/.ycc/config.toml (defaults when absent/malformed).
 	cfg specConfig
+	// idSource, when set by a daemon-owned session manager, reserves ids from a
+	// per-project allocator rather than scanning this Store's current tree.
+	idSource func() (string, error)
 }
 
 // NewStore returns a Store for the backlog under workspaceRoot.
@@ -95,6 +98,11 @@ func NewStore(workspaceRoot string) *Store {
 
 // Dir returns the backlog directory path.
 func (s *Store) Dir() string { return s.dir }
+
+// SetIDSource configures the daemon-owned id reservation function used by
+// Create. Stores without an id source retain the daemon-less scan fallback.
+// Configure it before using the Store.
+func (s *Store) SetIDSource(fn func() (string, error)) { s.idSource = fn }
 
 // List returns all tasks sorted by id. Files without YAML frontmatter are skipped.
 func (s *Store) List() ([]*Task, error) {
@@ -352,6 +360,11 @@ func upsertSection(body, header, content string) string {
 }
 
 func (s *Store) nextID() (string, error) {
+	if s.idSource != nil {
+		return s.idSource()
+	}
+	// A Store outside a daemon-owned project has no parallel worktrees, so retain
+	// the original current-tree scan behavior for that path.
 	tasks, err := s.listLocked()
 	if err != nil {
 		return "", err

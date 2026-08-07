@@ -20,6 +20,7 @@ import (
 	"golang.org/x/net/http2/h2c"
 
 	"github.com/whyrusleeping/ycc/internal/config"
+	"github.com/whyrusleeping/ycc/internal/docs"
 	"github.com/whyrusleeping/ycc/internal/notify"
 	"github.com/whyrusleeping/ycc/internal/project"
 	"github.com/whyrusleeping/ycc/internal/server"
@@ -89,6 +90,7 @@ func buildHandler(o Options) (http.Handler, error) {
 			return nil, fmt.Errorf("load project registry: %w", err)
 		}
 		mgr.SetProjects(preg)
+		mgr.SetIDStateFile(docs.DefaultIDStateFile())
 		// The startup workspace is not a privileged "default"; register it as a
 		// normal named project so every RPC/UI uses the same project model.
 		if o.Workspace != "" {

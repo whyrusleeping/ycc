@@ -1334,6 +1334,7 @@ type Manager struct {
 	projects          *project.Registry
 	workstreams       *workstream.Registry
 	worktreesRoot     string
+	idAlloc           *docs.IDAllocator
 	workstreamWatches map[string]chan struct{}
 	// notifier pushes best-effort daemon-side notifications when an agent needs
 	// the user (task 0142). Nil when unconfigured; all uses are nil-safe.
@@ -1370,6 +1371,7 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 		projects:          projects,
 		workstreams:       workstream.NewMemory(),
 		worktreesRoot:     workstream.DefaultWorktreesRoot(),
+		idAlloc:           docs.AllocatorFor(""),
 		workstreamWatches: map[string]chan struct{}{},
 		workLoops:         map[string]*workLoop{},
 	}
@@ -1416,6 +1418,61 @@ func (m *Manager) SetWorkstreams(w *workstream.Registry, root string) {
 	if root != "" {
 		m.worktreesRoot = root
 	}
+}
+
+// SetIDStateFile selects the shared backlog id allocator for this daemon. An
+// empty path uses the process-wide in-memory allocator (the one-shot path).
+func (m *Manager) SetIDStateFile(path string) { m.idAlloc = docs.AllocatorFor(path) }
+
+// backlogStore constructs a Store whose id reservations are keyed by the
+// registered project's primary backlog, even when absWS is a linked worktree.
+func (m *Manager) backlogStore(absWS string) *docs.Store {
+	if abs, err := filepath.Abs(absWS); err == nil {
+		absWS = abs
+	}
+	absWS = filepath.Clean(absWS)
+	primary := m.primaryTreeFor(absWS)
+	store := docs.NewStore(absWS)
+	store.SetIDSource(func() (string, error) {
+		return m.idAlloc.NextID(filepath.Join(primary, "backlog"))
+	})
+	return store
+}
+
+// primaryTreeFor resolves a session workspace to its daemon-registered primary
+// project tree. The worktrees-root fallback covers newly spawned workstreams,
+// whose session starts immediately before their registry entry is added.
+func (m *Manager) primaryTreeFor(absWS string) string {
+	absWS = filepath.Clean(absWS)
+	projects := m.projects.List()
+	for _, p := range projects {
+		if filepath.Clean(p.Path) == absWS {
+			return filepath.Clean(p.Path)
+		}
+	}
+	for _, ws := range m.workstreams.List() {
+		if filepath.Clean(ws.WorktreePath) != absWS {
+			continue
+		}
+		if primary, ok := m.projects.Resolve(ws.Project); ok {
+			return filepath.Clean(primary)
+		}
+	}
+
+	root := m.worktreesRoot
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
+	}
+	root = filepath.Clean(root)
+	if rel, err := filepath.Rel(root, absWS); err == nil && rel != "." && rel != ".." && !filepath.IsAbs(rel) && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		projectDir := strings.Split(rel, string(filepath.Separator))[0]
+		for _, p := range projects {
+			if workstream.SafeProjectDir(p.Name) == projectDir {
+				return filepath.Clean(p.Path)
+			}
+		}
+	}
+	return absWS
 }
 
 // Projects returns the registered projects (name + path) for ListProjects.
@@ -1841,7 +1898,7 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 	}
 	deps := &orchestrator.Deps{
 		Workspace:          absWS,
-		Docs:               docs.NewStore(absWS),
+		Docs:               m.backlogStore(absWS),
 		Repo:               repo,
 		Emitter:            emitter,
 		Implementer:        implSpec,
@@ -2390,7 +2447,7 @@ func (m *Manager) Backlog(project string) (*docs.Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve workspace: %w", err)
 	}
-	return docs.NewStore(absWS), nil
+	return m.backlogStore(absWS), nil
 }
 
 // CaptureBacklogItem runs the lightweight, off-stream "quick-add backlog item"
@@ -2413,7 +2470,7 @@ func (m *Manager) CaptureBacklogItem(ctx context.Context, project, description, 
 	if err != nil {
 		return orchestrator.CaptureResult{}, fmt.Errorf("resolve workspace: %w", err)
 	}
-	store := docs.NewStore(absWS)
+	store := m.backlogStore(absWS)
 	coord := m.reg.CoordinatorName()
 	client, model, err := m.reg.Build(coord)
 	if err != nil {

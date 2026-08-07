@@ -114,3 +114,7 @@ Goal: model the workstream base BRANCH first-class and make integration a rebase
 …[truncated]
 - 2026-08-07 decision: accept — commit: Model workstream base branch; integrate by rebase + fast-forward-only advance (task 0248)  Workstreams now record a first-class BaseBranch (explicit local BaseRef > [integration] base in ycc.toml > re
 …[truncated]
+- 2026-08-07 usage: 5,706,901 tok (in 809,031, out 40,782, cache_r 6,623,309, cache_w 112,690) · cost n/a (unpriced)
+  implementer: 4,730,938 tok (in 523,741, out 24,413, cache_r 4,182,784, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 967,301 tok (in 285,250, out 7,747, cache_r 674,304, cache_w 0) · cost n/a (unpriced)
+  coordinator: 8,662 tok (in 40, out 8,622, cache_r 1,766,221, cache_w 112,690) · cost n/a (unpriced)
