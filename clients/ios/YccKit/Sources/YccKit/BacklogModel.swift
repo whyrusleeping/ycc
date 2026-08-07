@@ -110,6 +110,25 @@ public enum TaskStatus: String, Sendable, CaseIterable, Identifiable {
     }
 }
 
+/// The ordering used for cards within a board lane and rows within a list
+/// section. Backlog ids are allocated monotonically, so id-descending is the
+/// closest available proxy for creation time.
+public enum BacklogSort: String, Sendable, CaseIterable, Identifiable {
+    case newestFirst
+    case oldestFirst
+    case priority
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .newestFirst: return "Newest first"
+        case .oldestFirst: return "Oldest first"
+        case .priority: return "Priority"
+        }
+    }
+}
+
 /// A group of backlog tasks sharing a status, for a sectioned list.
 public struct BacklogSection: Identifiable, Sendable {
     public let status: TaskStatus
@@ -134,6 +153,8 @@ public final class BacklogModel {
     /// The selected registered project. Empty means no choice has been made yet.
     /// Setting it does not auto-refresh — the view calls ``refresh()``.
     public var selectedProject: String = ""
+    /// Ordering within each status section or board lane.
+    public var sort: BacklogSort = .newestFirst
 
     public private(set) var isLoading = false
     public private(set) var errorMessage: String?
@@ -163,10 +184,10 @@ public final class BacklogModel {
     public var showsProjectFilter: Bool { projects.count > 1 }
 
     /// Tasks grouped into ordered status sections.
-    public var sections: [BacklogSection] { Self.sections(from: tasks) }
+    public var sections: [BacklogSection] { Self.sections(from: tasks, sort: sort) }
 
     /// Tasks grouped into board lanes, in workflow order.
-    public var board: [BacklogSection] { Self.board(from: tasks) }
+    public var board: [BacklogSection] { Self.board(from: tasks, sort: sort) }
 
     /// (Re)load the backlog for the selected project and the project list.
     /// Unauthorized bubbles up via ``unauthorized`` for the view to handle.
@@ -285,14 +306,38 @@ public final class BacklogModel {
 
     // MARK: - Pure logic (unit-tested)
 
+    /// Return tasks in the selected display order. Numeric ids sort numerically
+    /// before all non-numeric ids, with their original strings breaking numeric
+    /// ties; non-numeric ids sort lexicographically. Exact id ties retain their
+    /// incoming order.
+    public static func sorted(
+        _ tasks: [Ycc_V1_BacklogTaskSummary], by sort: BacklogSort
+    ) -> [Ycc_V1_BacklogTaskSummary] {
+        tasks.enumerated().sorted { lhs, rhs in
+            if sort == .priority {
+                let leftPriority = lhs.element.priority > 0 ? lhs.element.priority : Int32.max
+                let rightPriority = rhs.element.priority > 0 ? rhs.element.priority : Int32.max
+                if leftPriority != rightPriority { return leftPriority < rightPriority }
+            }
+
+            let idOrder = compareIDs(lhs.element.id, rhs.element.id)
+            if idOrder != 0 {
+                return sort == .oldestFirst ? idOrder < 0 : idOrder > 0
+            }
+            return lhs.offset < rhs.offset
+        }.map(\.element)
+    }
+
     /// Group tasks by status into ordered sections (active work first, done
-    /// trailing — see ``TaskStatus/sortOrder``). Within a section, tasks keep
-    /// their incoming order (the daemon sorts by id ascending). Empty statuses
-    /// produce no section.
-    public static func sections(from tasks: [Ycc_V1_BacklogTaskSummary]) -> [BacklogSection] {
+    /// trailing — see ``TaskStatus/sortOrder``). Within a section, tasks use the
+    /// selected display order, newest-first by default. Empty statuses produce no
+    /// section.
+    public static func sections(
+        from tasks: [Ycc_V1_BacklogTaskSummary], sort: BacklogSort = .newestFirst
+    ) -> [BacklogSection] {
         var byStatus: [TaskStatus: [Ycc_V1_BacklogTaskSummary]] = [:]
         var order: [TaskStatus] = []
-        for task in tasks {
+        for task in sorted(tasks, by: sort) {
             let status = TaskStatus(status: task.status)
             if byStatus[status] == nil { order.append(status) }
             byStatus[status, default: []].append(task)
@@ -303,13 +348,16 @@ public final class BacklogModel {
     }
 
     /// Group tasks into board lanes in workflow order (see
-    /// ``TaskStatus/boardOrder``). Unlike ``sections(from:)`` this keeps **empty
-    /// lanes** — a board with a missing "In review" column stops being a board,
-    /// and an empty lane is also the target you want to move a card into. A lane
-    /// for ``unknown`` is appended only when some task actually has one.
-    public static func board(from tasks: [Ycc_V1_BacklogTaskSummary]) -> [BacklogSection] {
+    /// ``TaskStatus/boardOrder``), ordering cards within each lane newest-first by
+    /// default. Unlike ``sections(from:)`` this keeps **empty lanes** — a board
+    /// with a missing "In review" column stops being a board, and an empty lane is
+    /// also the target you want to move a card into. A lane for ``unknown`` is
+    /// appended only when some task actually has one.
+    public static func board(
+        from tasks: [Ycc_V1_BacklogTaskSummary], sort: BacklogSort = .newestFirst
+    ) -> [BacklogSection] {
         var byStatus: [TaskStatus: [Ycc_V1_BacklogTaskSummary]] = [:]
-        for task in tasks {
+        for task in sorted(tasks, by: sort) {
             byStatus[TaskStatus(status: task.status), default: []].append(task)
         }
         var lanes = TaskStatus.boardColumns.map {
@@ -319,6 +367,21 @@ public final class BacklogModel {
             lanes.append(BacklogSection(status: .unknown, tasks: strays))
         }
         return lanes
+    }
+
+    /// Ascending total id comparison: numeric ids first, then non-numeric ids.
+    private static func compareIDs(_ lhs: String, _ rhs: String) -> Int {
+        switch (Int(lhs), Int(rhs)) {
+        case let (leftNumber?, rightNumber?) where leftNumber != rightNumber:
+            return leftNumber < rightNumber ? -1 : 1
+        case (_?, nil):
+            return -1
+        case (nil, _?):
+            return 1
+        default:
+            if lhs == rhs { return 0 }
+            return lhs < rhs ? -1 : 1
+        }
     }
 
     /// A short readiness annotation for a summary row: `nil` when ready (no

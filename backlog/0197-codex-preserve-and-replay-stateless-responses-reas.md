@@ -146,3 +146,7 @@ continuation and reopen are identical; the opaque state is never rendered as tra
 …[truncated]
 - 2026-08-07 decision: accept — commit: codex: preserve and replay stateless Responses reasoning items (task 0197)  Codex requests now send include=["reasoning.encrypted_content"], and each turn's reasoning output items (id, encrypted conte
 …[truncated]
+- 2026-08-07 usage: 4,939,007 tok (in 807,101, out 55,618, cache_r 5,995,996, cache_w 235,489) · cost n/a (unpriced)
+  implementer: 3,552,039 tok (in 411,299, out 28,036, cache_r 3,112,704, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 1,373,670 tok (in 395,762, out 14,324, cache_r 963,584, cache_w 0) · cost n/a (unpriced)
+  coordinator: 13,298 tok (in 40, out 13,258, cache_r 1,919,708, cache_w 235,489) · cost n/a (unpriced)

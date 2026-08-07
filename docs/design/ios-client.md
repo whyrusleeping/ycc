@@ -345,8 +345,11 @@ do not permanently remove access to the daemon-wide inbox.
    the work progresses. Each card carries a move menu offering its workflow
    neighbours first, then any status, driving `UpdateTask`; long-press gives the
    same menu. A toolbar toggle switches to the compact **list** (sectioned by
-   status), and the choice is remembered. Task detail (`GetTask`) renders the
-   markdown body; status changes go through `UpdateTask`; "start work on this
+   status), and the choice is remembered. Cards within each lane and rows within
+   each section are newest-first by default (backlog id descending); a toolbar
+   sort control can select oldest-first or priority order, and remembers that
+   choice too. Task detail (`GetTask`) renders the markdown body; status changes
+   go through `UpdateTask`; "start work on this
    task" → `StartSession` (mode `work`, task-focused prompt). For an
    `in_progress` task, task detail cross-references `ListSessionHistory` task
    focus and offers **Open active session** for each live `running`/`paused`

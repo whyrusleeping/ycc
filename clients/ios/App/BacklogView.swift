@@ -22,6 +22,8 @@ struct BacklogView: View {
     @State private var showCapture = false
     /// Board vs list, remembered across launches.
     @AppStorage("backlog.presentation") private var presentation: Presentation = .board
+    /// Card/row ordering, shared by both presentations and remembered across launches.
+    @AppStorage("backlog.sort") private var backlogSort: BacklogSort = .newestFirst
 
     /// The project to scope the backlog to (carried from the landing view).
     private let initialProject: String
@@ -54,6 +56,9 @@ struct BacklogView: View {
                 presentationToggle
             }
             ToolbarItem(placement: .topBarTrailing) {
+                sortControl
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Button { showCapture = true } label: {
                     Label("Capture task", systemImage: "plus")
                 }
@@ -69,6 +74,9 @@ struct BacklogView: View {
         .onChange(of: model?.unauthorized ?? false) { _, isUnauthorized in
             if isUnauthorized { app.handleUnauthorized() }
         }
+        .onChange(of: backlogSort) { _, sort in
+            model?.sort = sort
+        }
     }
 
     private var presentationToggle: some View {
@@ -82,6 +90,19 @@ struct BacklogView: View {
                 systemImage: presentation == .board
                     ? "list.bullet"
                     : "rectangle.split.3x1")
+        }
+        .disabled(model == nil)
+    }
+
+    private var sortControl: some View {
+        Menu {
+            Picker("Sort", selection: $backlogSort) {
+                ForEach(BacklogSort.allCases) { sort in
+                    Text(sort.title).tag(sort)
+                }
+            }
+        } label: {
+            Label("Sort backlog", systemImage: "arrow.up.arrow.down")
         }
         .disabled(model == nil)
     }
@@ -208,7 +229,9 @@ struct BacklogView: View {
     private func ensureLoaded() async {
         if model == nil {
             guard let client = app.client else { return }
-            model = BacklogModel(source: client, selectedProject: initialProject)
+            let backlogModel = BacklogModel(source: client, selectedProject: initialProject)
+            backlogModel.sort = backlogSort
+            model = backlogModel
         }
         await model?.refresh()
     }

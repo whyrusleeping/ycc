@@ -110,8 +110,21 @@ final class BacklogModelTests: XCTestCase {
             summary("0002", status: "todo"),
             summary("0003", status: "done"),
         ])
-        XCTAssertEqual(lanes.first(where: { $0.status == .todo })?.tasks.map(\.id), ["0001", "0002"])
+        XCTAssertEqual(lanes.first(where: { $0.status == .todo })?.tasks.map(\.id), ["0002", "0001"])
         XCTAssertEqual(lanes.first(where: { $0.status == .done })?.tasks.map(\.id), ["0003"])
+    }
+
+    func testBoardCanSortOldestFirst() {
+        let lanes = BacklogModel.board(
+            from: [
+                summary("0010", status: "todo"),
+                summary("0002", status: "todo"),
+                summary("0007", status: "todo"),
+            ],
+            sort: .oldestFirst)
+        XCTAssertEqual(
+            lanes.first(where: { $0.status == .todo })?.tasks.map(\.id),
+            ["0002", "0007", "0010"])
     }
 
     func testAdjacentBoardColumns() {
@@ -153,7 +166,61 @@ final class BacklogModelTests: XCTestCase {
         XCTAssertEqual(sections.count, 2)
         XCTAssertEqual(sections.first?.status, .inProgress)
         XCTAssertEqual(sections.last?.status, .todo)
-        XCTAssertEqual(sections.last?.tasks.count, 2)
+        XCTAssertEqual(sections.last?.tasks.map(\.id), ["0002", "0001"])
+    }
+
+    func testSectionsCanSortOldestFirst() {
+        let sections = BacklogModel.sections(
+            from: [
+                summary("12", status: "todo"),
+                summary("2", status: "todo"),
+                summary("10", status: "todo"),
+            ],
+            sort: .oldestFirst)
+        XCTAssertEqual(sections.first?.tasks.map(\.id), ["2", "10", "12"])
+    }
+
+    func testPrioritySortPutsUnsetLastAndBreaksTiesNewestFirst() {
+        let tasks = [
+            summary("0002", status: "todo", priority: 0),
+            summary("0004", status: "todo", priority: 2),
+            summary("0001", status: "todo", priority: 1),
+            summary("0005", status: "todo", priority: 2),
+            summary("0003", status: "todo", priority: 0),
+        ]
+        XCTAssertEqual(
+            BacklogModel.sorted(tasks, by: .priority).map(\.id),
+            ["0001", "0005", "0004", "0003", "0002"])
+    }
+
+    func testOddIDsSortDeterministicallyWithoutCrashing() {
+        let tasks = [
+            summary("alpha", status: "todo"),
+            summary("2", status: "todo"),
+            summary("0010", status: "todo"),
+            summary("beta", status: "todo"),
+            summary("10", status: "todo"),
+        ]
+        XCTAssertEqual(
+            BacklogModel.sorted(tasks, by: .oldestFirst).map(\.id),
+            ["2", "0010", "10", "alpha", "beta"])
+        XCTAssertEqual(
+            BacklogModel.sorted(tasks, by: .newestFirst).map(\.id),
+            ["beta", "alpha", "10", "0010", "2"])
+    }
+
+    func testMixedWidthAndNonNumericIDsHaveATotalOrder() {
+        let tasks = [
+            summary("1a", status: "todo"),
+            summary("10", status: "todo"),
+            summary("9", status: "todo"),
+        ]
+        XCTAssertEqual(
+            BacklogModel.sorted(tasks, by: .oldestFirst).map(\.id),
+            ["9", "10", "1a"])
+        XCTAssertEqual(
+            BacklogModel.sorted(tasks, by: .newestFirst).map(\.id),
+            ["1a", "10", "9"])
     }
 
     func testUnknownStatusKeptVisible() {
