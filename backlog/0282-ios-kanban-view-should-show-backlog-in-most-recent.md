@@ -42,3 +42,6 @@ Verification: Swift can't be built on this Linux workspace (no toolchain) — th
 - 2026-08-07 revision: Fixed the reviewer-identified comparator issue: - `compareIDs` now defines a strict total order: numeric ids first in numeric order, numeric ties by raw string, then non-numeric ids lexicographically.
 …[truncated]
 - 2026-08-07 decision: accept — commit: ios: order backlog newest-first with a persisted sort control (task 0282)
+- 2026-08-07 usage: 880,630 tok (in 219,726, out 27,816, cache_r 2,053,714, cache_w 76,928) · cost n/a (unpriced)
+  implementer: 868,265 tok (in 219,678, out 15,499, cache_r 633,088, cache_w 0) · cost n/a (unpriced)
+  coordinator: 12,365 tok (in 48, out 12,317, cache_r 1,420,626, cache_w 76,928) · cost n/a (unpriced)

@@ -96,3 +96,7 @@ Rules for Phase A:
 - 2026-08-07 review (sol): accept — The refactor satisfies the task as a behavior-preserving same-package split. `tui.go` is reduced from 10,772 to 1,579 lines and now contains shared model/core dispatch, major domains and their tests a
 …[truncated]
 - 2026-08-07 decision: accept — commit: tui: split the monolith into cohesive per-domain files + component map (task 0210)
+- 2026-08-07 usage: 2,184,550 tok (in 550,900, out 40,050, cache_r 2,926,823, cache_w 95,391) · cost n/a (unpriced)
+  implementer: 2,041,307 tok (in 456,499, out 17,320, cache_r 1,567,488, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 123,789 tok (in 94,365, out 3,312, cache_r 26,112, cache_w 0) · cost n/a (unpriced)
+  coordinator: 19,454 tok (in 36, out 19,418, cache_r 1,333,223, cache_w 95,391) · cost n/a (unpriced)

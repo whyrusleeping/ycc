@@ -84,3 +84,7 @@ Add a test that forces "no forge CLI" hermetically by `t.Setenv("PATH", t.TempDi
 - 2026-08-07 review (sol): accept — The implementation satisfies Task 0155. It adds a dependency-free, injectable forge probe with installed/version/auth/host reporting, actionable sentinel-wrapping readiness errors, and robust GitHub/G
 …[truncated]
 - 2026-08-07 decision: accept — commit: forge: gh/glab probe helper + warn-only ycc doctor check (task 0155)
+- 2026-08-07 usage: 881,226 tok (in 391,589, out 30,373, cache_r 1,705,600, cache_w 81,085) · cost n/a (unpriced)
+  implementer: 739,489 tok (in 292,283, out 14,822, cache_r 432,384, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 130,489 tok (in 99,266, out 4,343, cache_r 26,880, cache_w 0) · cost n/a (unpriced)
+  coordinator: 11,248 tok (in 40, out 11,208, cache_r 1,246,336, cache_w 81,085) · cost n/a (unpriced)
