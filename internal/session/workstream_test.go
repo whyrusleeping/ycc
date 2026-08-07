@@ -104,6 +104,50 @@ func TestSpawnWorkstreamUnknownProject(t *testing.T) {
 	}
 }
 
+func TestSpawnWorkstreamTraversalProjectIsConfined(t *testing.T) {
+	proj := t.TempDir()
+	if _, err := git.Open(proj); err != nil {
+		t.Fatalf("git.Open: %v", err)
+	}
+
+	m := NewManager(testRegistry(), t.TempDir())
+	m.SetProjects(project.NewMemory())
+	const hostile = "../../escape"
+	if _, err := m.AddProject(proj, hostile); err != nil {
+		t.Fatalf("AddProject: %v", err)
+	}
+	base := t.TempDir()
+	root := filepath.Join(base, "state", "worktrees")
+	m.SetWorkstreams(workstream.NewMemory(), root)
+
+	// This is the directory the old display-name-derived join escaped into.
+	outside := filepath.Clean(filepath.Join(root, hostile))
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Fatalf("outside fixture unexpectedly exists before spawn: %v", err)
+	}
+
+	ws, s, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: hostile})
+	if err != nil {
+		t.Fatalf("SpawnWorkstream: %v", err)
+	}
+	defer m.Stop(s.ID)
+	defer m.DiscardWorkstream(ws.ID)
+
+	if err := workstream.VerifyUnderRoot(root, ws.WorktreePath); err != nil {
+		t.Fatalf("spawned worktree escaped root: path=%q root=%q: %v", ws.WorktreePath, root, err)
+	}
+	wantParent := filepath.Join(root, workstream.SafeProjectDir(hostile))
+	if got := filepath.Dir(ws.WorktreePath); got != wantParent {
+		t.Fatalf("worktree parent = %q, want safe project dir %q", got, wantParent)
+	}
+	if _, err := os.Stat(ws.WorktreePath); err != nil {
+		t.Fatalf("confined worktree missing: %v", err)
+	}
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Fatalf("spawn created traversal directory outside root: %s (err=%v)", outside, err)
+	}
+}
+
 // TestSpawnWorkstreamSecondWriterRejected verifies the single-writer invariant:
 // a spawn targeting a path already recorded by an active workstream is refused
 // before any worktree is created.
@@ -131,6 +175,65 @@ func TestSpawnWorkstreamSecondWriterRejected(t *testing.T) {
 // TestReconcileWorkstreams verifies startup recovery marks a workstream whose
 // worktree directory has vanished as stale while leaving a live one active, and
 // that the change persists across a fresh registry Open.
+func TestReconcileWorkstreamsOutOfRootNeedsAttention(t *testing.T) {
+	m, proj := newWorkstreamManager(t)
+	repo, err := git.Open(proj)
+	if err != nil {
+		t.Fatalf("git.Open: %v", err)
+	}
+	base, err := repo.RevParse("HEAD")
+	if err != nil {
+		t.Fatalf("RevParse HEAD: %v", err)
+	}
+
+	outside := filepath.Join(t.TempDir(), "legacy-outside-worktree")
+	const branch = "ycc/ws/ws_reconcile_outside"
+	if err := repo.AddWorktree(outside, branch, base); err != nil {
+		t.Fatalf("AddWorktree outside fixture: %v", err)
+	}
+	defer func() {
+		repo.RemoveWorktree(outside)
+		repo.DeleteBranch(branch, true)
+		repo.PruneWorktrees()
+	}()
+	marker := filepath.Join(outside, "must-survive.txt")
+	if err := os.WriteFile(marker, []byte("untouched\n"), 0o644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+
+	ws := workstream.Workstream{
+		ID:           "ws_reconcile_outside",
+		Project:      "demo",
+		BaseCommit:   base,
+		Branch:       branch,
+		WorktreePath: outside,
+		Status:       workstream.StatusActive,
+	}
+	if err := m.workstreams.Add(ws); err != nil {
+		t.Fatalf("register legacy workstream: %v", err)
+	}
+
+	if err := m.ReconcileWorkstreams(); err != nil {
+		t.Fatalf("ReconcileWorkstreams: %v", err)
+	}
+	got, ok := m.workstreams.Get(ws.ID)
+	if !ok {
+		t.Fatal("reconciled workstream disappeared")
+	}
+	if got.Status != workstream.StatusNeedsAttention {
+		t.Fatalf("status = %v, want needs_attention", got.Status)
+	}
+	if !strings.Contains(got.StatusReason, outside) || !strings.Contains(got.StatusReason, "git worktree remove") {
+		t.Fatalf("status reason does not explain manual migration: %q", got.StatusReason)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("reconcile touched or removed out-of-root worktree: %v", err)
+	}
+	if _, err := repo.RevParse(branch); err != nil {
+		t.Fatalf("reconcile removed outside worktree branch: %v", err)
+	}
+}
+
 func TestReconcileWorkstreams(t *testing.T) {
 	proj := t.TempDir()
 	if _, err := git.Open(proj); err != nil {

@@ -1582,7 +1582,8 @@ func (m *Manager) SpawnWorkstream(cfg SpawnWorkstreamConfig) (workstream.Workstr
 	if cfg.TaskID != "" {
 		branch += "-" + cfg.TaskID
 	}
-	dir, err := filepath.Abs(filepath.Join(m.worktreesRoot, cfg.Project, id))
+	projectDir := workstream.SafeProjectDir(cfg.Project)
+	dir, err := workstream.ContainedPath(m.worktreesRoot, projectDir, id)
 	if err != nil {
 		return workstream.Workstream{}, nil, fmt.Errorf("resolve worktree path: %w", err)
 	}
@@ -1669,17 +1670,30 @@ func (m *Manager) Workstreams(project string) []workstream.Workstream {
 }
 
 // ReconcileWorkstreams reconciles the workstream registry against git and the
-// durable session log on startup (design §5, §7). All in-flight states retain a
-// live worktree; missing trees become stale, while non-live terminal session
-// logs have readiness re-derived so daemon restarts cannot lose completion.
+// durable session log on startup (design §5, §7). In-root in-flight states retain
+// a live worktree; missing trees become stale, while out-of-root legacy entries
+// become needs-attention with a manual migration reason. Non-live terminal
+// session logs have readiness re-derived so daemon restarts cannot lose completion.
 func (m *Manager) ReconcileWorkstreams() error {
 	all := m.workstreams.List()
-	// Group all worktree-owning states by project.
+	// Group all worktree-owning states by project. Persisted paths are untrusted:
+	// pre-upgrade unsafe project names may have created a still-live worktree beyond
+	// the daemon root. Surface those entries for manual migration, but never pass
+	// their paths to git or traverse their session logs.
 	byProject := map[string][]workstream.Workstream{}
 	for _, w := range all {
-		if w.Status.InFlight() {
-			byProject[w.Project] = append(byProject[w.Project], w)
+		if !w.Status.InFlight() {
+			continue
 		}
+		if err := workstream.VerifyUnderRoot(m.worktreesRoot, w.WorktreePath); err != nil {
+			reason := fmt.Sprintf("worktree path %q is outside the daemon worktrees root; merge its branch if wanted, then remove it manually with `git worktree remove`", w.WorktreePath)
+			if _, err := m.workstreams.Transition(w.ID, workstream.StatusNeedsAttention, reason,
+				workstream.StatusActive, workstream.StatusReady, workstream.StatusNeedsAttention); err != nil {
+				return fmt.Errorf("mark out-of-root workstream %q needs attention: %w", w.ID, err)
+			}
+			continue
+		}
+		byProject[w.Project] = append(byProject[w.Project], w)
 	}
 	for proj, list := range byProject {
 		primary, ok := m.projects.Resolve(proj)
@@ -1721,6 +1735,9 @@ func (m *Manager) ReconcileWorkstreams() error {
 	// before any session is reopened following a daemon restart.
 	for _, w := range m.workstreams.List() {
 		if !w.Status.InFlight() || w.SessionID == "" {
+			continue
+		}
+		if err := workstream.VerifyUnderRoot(m.worktreesRoot, w.WorktreePath); err != nil {
 			continue
 		}
 		m.mu.Lock()

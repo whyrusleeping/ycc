@@ -293,6 +293,58 @@ func TestDiscardWorkstream(t *testing.T) {
 	}
 }
 
+func TestDiscardWorkstreamRefusesOutOfRootRegistryPath(t *testing.T) {
+	m, proj := newWorkstreamManager(t)
+	repo, err := git.Open(proj)
+	if err != nil {
+		t.Fatalf("git.Open: %v", err)
+	}
+	base, err := repo.RevParse("HEAD")
+	if err != nil {
+		t.Fatalf("RevParse HEAD: %v", err)
+	}
+
+	outside := filepath.Join(t.TempDir(), "outside-worktree")
+	const branch = "ycc/ws/ws_outside"
+	if err := repo.AddWorktree(outside, branch, base); err != nil {
+		t.Fatalf("AddWorktree outside fixture: %v", err)
+	}
+	defer func() {
+		repo.RemoveWorktree(outside)
+		repo.DeleteBranch(branch, true)
+		repo.PruneWorktrees()
+	}()
+	marker := filepath.Join(outside, "must-survive.txt")
+	if err := os.WriteFile(marker, []byte("untouched\n"), 0o644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+
+	ws := workstream.Workstream{
+		ID:           "ws_outside",
+		Project:      "demo",
+		BaseCommit:   base,
+		Branch:       branch,
+		WorktreePath: outside,
+		Status:       workstream.StatusActive,
+	}
+	if err := m.workstreams.Add(ws); err != nil {
+		t.Fatalf("register tampered workstream: %v", err)
+	}
+
+	if err := m.DiscardWorkstream(ws.ID); err != nil {
+		t.Fatalf("DiscardWorkstream: %v", err)
+	}
+	if got, _ := m.workstreams.Get(ws.ID); got.Status != workstream.StatusDiscarded {
+		t.Fatalf("status = %v, want discarded", got.Status)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("out-of-root worktree was touched or removed: %v", err)
+	}
+	if _, err := repo.RevParse(branch); err != nil {
+		t.Fatalf("checked-out branch unexpectedly removed: %v", err)
+	}
+}
+
 // transcriptHasEvent reports whether a slice of events contains the given type.
 func transcriptHasEvent(events []event.Event, t event.Type) bool {
 	for _, ev := range events {

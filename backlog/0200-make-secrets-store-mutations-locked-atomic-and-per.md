@@ -72,3 +72,7 @@ Rework internal/secrets so mutations are serialized (in-process and cross-proces
 …[truncated]
 - 2026-08-07 decision: accept — commit: Make secrets-store mutations locked, atomic, and permission-safe (task 0200)  Set/Remove/Save now serialize the whole read-modify-write via a package mutex plus a cross-process flock on a sibling secr
 …[truncated]
+- 2026-08-07 usage: 339,193 tok (in 212,973, out 19,980, cache_r 425,273, cache_w 19,473) · cost n/a (unpriced)
+  implementer: 217,646 tok (in 131,775, out 9,583, cache_r 76,288, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 115,684 tok (in 81,174, out 4,558, cache_r 29,952, cache_w 0) · cost n/a (unpriced)
+  coordinator: 5,863 tok (in 24, out 5,839, cache_r 319,033, cache_w 19,473) · cost n/a (unpriced)

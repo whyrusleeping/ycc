@@ -56,6 +56,11 @@ func (m *Manager) emitWorkstreamEvent(ws workstream.Workstream, t event.Type, da
 	if ws.SessionID == "" || ws.WorktreePath == "" {
 		return
 	}
+	// Persisted registry paths are untrusted. Do not open (and potentially create)
+	// an event log through a path outside daemon-owned worktree state.
+	if err := workstream.VerifyUnderRoot(m.worktreesRoot, ws.WorktreePath); err != nil {
+		return
+	}
 	logPath := filepath.Join(ws.WorktreePath, ".ycc", "sessions", ws.SessionID, "events.jsonl")
 	log, err := event.OpenLog(logPath)
 	if err != nil {
@@ -288,6 +293,10 @@ func (m *Manager) preserveWorkstreamSession(ws workstream.Workstream) {
 	if ws.SessionID == "" || ws.WorktreePath == "" {
 		return
 	}
+	// Never traverse a persisted source path outside the daemon's worktrees root.
+	if err := workstream.VerifyUnderRoot(m.worktreesRoot, ws.WorktreePath); err != nil {
+		return
+	}
 	primary, ok := m.projects.Resolve(ws.Project)
 	if !ok {
 		return
@@ -350,7 +359,11 @@ func copyFile(src, dst string) error {
 // to remove a tree/branch must not block the lifecycle transition.
 func (m *Manager) cleanupWorktree(repo *git.Repo, ws workstream.Workstream) {
 	if ws.WorktreePath != "" {
-		repo.RemoveWorktree(ws.WorktreePath)
+		// Registry entries are untrusted. Fail closed for paths outside daemon-owned
+		// worktree state while still allowing branch cleanup and lifecycle progress.
+		if err := workstream.VerifyUnderRoot(m.worktreesRoot, ws.WorktreePath); err == nil {
+			repo.RemoveWorktree(ws.WorktreePath)
+		}
 	}
 	if ws.Branch != "" {
 		// Prefer a safe delete; fall back to force when the branch isn't reported
@@ -387,10 +400,14 @@ func (m *Manager) DiscardWorkstream(id string) error {
 		m.Stop(ws.SessionID)
 	}
 	m.preserveWorkstreamSession(ws)
-	// Cleanup is best-effort; a stale entry's tree may already be gone.
+	// Cleanup is best-effort; a stale entry's tree may already be gone. Persisted
+	// paths are untrusted, so an out-of-root path is never passed to git. Branch
+	// cleanup and the discarded transition still proceed in that fail-closed case.
 	if repo, err := m.primaryRepo(ws); err == nil {
 		if ws.WorktreePath != "" {
-			repo.RemoveWorktree(ws.WorktreePath)
+			if err := workstream.VerifyUnderRoot(m.worktreesRoot, ws.WorktreePath); err == nil {
+				repo.RemoveWorktree(ws.WorktreePath)
+			}
 		}
 		if ws.Branch != "" {
 			repo.DeleteBranch(ws.Branch, true)
