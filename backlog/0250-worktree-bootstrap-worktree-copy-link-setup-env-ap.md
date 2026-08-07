@@ -102,3 +102,7 @@ Implement per-project `[worktree]` bootstrap (copy / link / setup / env) applied
 …[truncated]
 - 2026-08-07 decision: accept — commit: Worktree bootstrap: [worktree] copy/link/setup/env applied on spawn (task 0250)  SpawnWorkstream now seeds a fresh linked worktree before its session starts: copy untracked files from the primary tree
 …[truncated]
+- 2026-08-07 usage: 3,086,429 tok (in 650,197, out 41,864, cache_r 4,206,216, cache_w 143,566) · cost n/a (unpriced)
+  implementer: 2,485,692 tok (in 404,194, out 17,114, cache_r 2,064,384, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 580,537 tok (in 245,931, out 4,622, cache_r 329,984, cache_w 0) · cost n/a (unpriced)
+  coordinator: 20,200 tok (in 72, out 20,128, cache_r 1,811,848, cache_w 143,566) · cost n/a (unpriced)

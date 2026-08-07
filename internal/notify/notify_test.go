@@ -93,6 +93,23 @@ func TestSendPostsBodyAndHeaders(t *testing.T) {
 	}
 }
 
+func TestAuthEnvAndInlinePrecedence(t *testing.T) {
+	t.Setenv("YCC_TEST_NOTIFY_AUTH", "Bearer from-env")
+	n := New(config.Notify{URL: "https://example.invalid", AuthEnv: "YCC_TEST_NOTIFY_AUTH"})
+	if got := n.auth; got != "Bearer from-env" {
+		t.Fatalf("auth from AuthEnv = %q, want %q", got, "Bearer from-env")
+	}
+
+	n = New(config.Notify{
+		URL:     "https://example.invalid",
+		Auth:    "Bearer inline",
+		AuthEnv: "YCC_TEST_NOTIFY_AUTH",
+	})
+	if got := n.auth; got != "Bearer inline" {
+		t.Fatalf("inline Auth precedence = %q, want %q", got, "Bearer inline")
+	}
+}
+
 func TestPriorityDefaultForIdleAndDigest(t *testing.T) {
 	s := newSink(t)
 	n := New(config.Notify{URL: s.URL})

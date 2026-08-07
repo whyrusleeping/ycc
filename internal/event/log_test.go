@@ -1,7 +1,9 @@
 package event
 
 import (
+	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -31,6 +33,69 @@ func collect(t *testing.T, ch <-chan Event, n int) []Event {
 		}
 	}
 	return got
+}
+
+func TestOpenLogPrivateModes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not provide Unix permission semantics")
+	}
+	root := t.TempDir()
+	dir := filepath.Join(root, ".ycc", "sessions", "s1")
+	path := filepath.Join(dir, "events.jsonl")
+	l, err := OpenLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Close()
+	for name, path := range map[string]string{
+		"state directory":   filepath.Join(root, ".ycc"),
+		"session root":      filepath.Join(root, ".ycc", "sessions"),
+		"session directory": dir,
+		"event log":         path,
+	} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm() & 0o077; got != 0 {
+			t.Errorf("%s mode %04o has group/other permissions", name, info.Mode().Perm())
+		}
+	}
+}
+
+func TestOpenLogRepairsBroadModes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not provide Unix permission semantics")
+	}
+	dir := filepath.Join(t.TempDir(), "session")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "events.jsonl")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Explicit chmod avoids depending on the test process's umask.
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	l, err := OpenLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Close()
+	for name, path := range map[string]string{"session directory": dir, "event log": path} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm() & 0o077; got != 0 {
+			t.Errorf("%s mode %04o was not repaired", name, info.Mode().Perm())
+		}
+	}
 }
 
 func TestLogPersistAndReopen(t *testing.T) {

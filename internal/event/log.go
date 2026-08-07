@@ -74,17 +74,23 @@ func enqueueTransient(sub *subscriber, ev Event) {
 // OpenLog opens (creating if needed) the JSONL log at path, loading any existing
 // events into memory so seq numbering and replay continue across restarts.
 func OpenLog(path string) (*Log, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
 	existing, err := readEvents(path)
 	if err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, err
 	}
+	// MkdirAll/OpenFile retain the mode of existing paths. Repair old broadly
+	// readable session state when we own it; inability to chmod must never make an
+	// otherwise usable durable log fail to open.
+	_ = os.Chmod(dir, 0o700)
+	_ = f.Chmod(0o600)
 	l := &Log{path: path, f: f, events: existing, subs: map[int]*subscriber{}}
 	if n := len(existing); n > 0 {
 		l.seq = existing[n-1].Seq

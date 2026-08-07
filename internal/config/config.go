@@ -591,14 +591,16 @@ type Budget struct {
 // Notify configures the daemon-side push notifier (task 0142). URL is the webhook
 // endpoint (e.g. https://ntfy.sh/mytopic); empty disables notifications entirely.
 // Auth, when set, is sent verbatim as the Authorization request header (e.g.
-// "Bearer tk_..."). Events optionally restricts which event kinds fire — an empty
-// slice enables all kinds; a non-empty slice enables only the listed kinds (valid
-// kinds: question, idle, error, digest, blocked) so unattended-loop users can pick
-// "questions + digest only".
+// "Bearer tk_..."). Otherwise AuthEnv names an environment variable containing the
+// header, keeping the credential out of committed config. Events optionally
+// restricts which event kinds fire — an empty slice enables all kinds; a non-empty
+// slice enables only the listed kinds (valid kinds: question, idle, error, digest,
+// blocked) so unattended-loop users can pick "questions + digest only".
 type Notify struct {
-	URL    string   `toml:"url,omitempty"`
-	Auth   string   `toml:"auth,omitempty"`
-	Events []string `toml:"events,omitempty"`
+	URL     string   `toml:"url,omitempty"`
+	Auth    string   `toml:"auth,omitempty"`
+	AuthEnv string   `toml:"auth_env,omitempty"`
+	Events  []string `toml:"events,omitempty"`
 }
 
 // NotifyEventKinds is the set of valid notify.events entries (task 0142). Kept
@@ -650,11 +652,16 @@ func LoadWorktree(dir string) (cfg Worktree, ok bool) {
 	return cfg, true
 }
 
-// Save validates c and writes it to path as TOML that Load reads back to an equal
-// *Config. Parent directories are created as needed. Keys are persisted as
-// key_env references only (the Model struct has no inline-secret field), so no
-// secret values are ever written. An invalid config is rejected before anything
-// is written, so we never persist a config Load would reject.
+// Save validates c and writes it to path as private (0600) TOML that Load reads
+// back to an equal *Config. Parent directories are created as private (0700)
+// directories as needed. Model keys are persisted as key_env references only,
+// though Notify.Auth may contain a credential. These local modes do not protect a
+// project-local ycc.toml committed to git: committed config must use notify.auth_env,
+// never an inline credential. Config discovery is workspace-first and single-file;
+// an inline credential in user-global config is only an alternative when that file
+// is the complete active config and no workspace ycc.toml shadows it. An invalid
+// config is rejected before anything is written, so we never persist a
+// config Load would reject.
 func Save(path string, c *Config) error {
 	if c == nil {
 		return fmt.Errorf("config: cannot Save nil config")
@@ -667,13 +674,19 @@ func Save(path string, c *Config) error {
 		return fmt.Errorf("marshal config: %w", err)
 	}
 	if dir := filepath.Dir(path); dir != "" {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return fmt.Errorf("create config dir %s: %w", dir, err)
 		}
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	// WriteFile preserves an existing file's mode, so narrow a legacy file before
+	// replacing its credential-bearing contents when possible. Repeat after the
+	// write to assert the final mode. Chmod failures remain best-effort: unsupported
+	// mode bits or ownership must not turn a successful config save into an error.
+	_ = os.Chmod(path, 0o600)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
+	_ = os.Chmod(path, 0o600)
 	return nil
 }
 

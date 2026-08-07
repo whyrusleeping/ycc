@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pelletier/go-toml/v2"
 	cli "github.com/urfave/cli/v3"
 
 	"github.com/whyrusleeping/ycc/internal/anthropicauth"
@@ -106,6 +107,9 @@ func runDoctor(workspace, configPath, addr, token string, out io.Writer) (hardFa
 	for _, c := range modelKeyChecks(cfg) {
 		add(c)
 	}
+	for _, c := range credentialHygieneChecks(ws) {
+		add(c)
+	}
 
 	// 3. Daemon (best-effort probe, never hard).
 	add(daemonCheck(addr, token))
@@ -179,6 +183,66 @@ func configChecks(ws, configPath string) (*config.Config, []check) {
 		label:  "config file",
 		detail: "loaded " + relOrAbs(ws, path),
 	}}
+}
+
+// credentialHygieneChecks warns about credentials exposed by committed config or
+// broad Unix file modes. It only parses ycc's known workspace config and never
+// reads arbitrary loose key files or prints a credential value.
+func credentialHygieneChecks(ws string) []check {
+	var out []check
+	workspaceConfig := filepath.Join(ws, "ycc.toml")
+	// Parse only the table this check needs. A workspace file may intentionally be
+	// a partial bootstrap config (for example [worktree] + [notify]) and therefore
+	// fail full runtime validation; that must not hide an inline credential warning.
+	var partial struct {
+		Notify config.Notify `toml:"notify"`
+	}
+	if data, err := os.ReadFile(workspaceConfig); err == nil {
+		if err := toml.Unmarshal(data, &partial); err == nil && partial.Notify.Auth != "" {
+			out = append(out, check{
+				status: statusWarn,
+				label:  "credential hygiene",
+				detail: "workspace ycc.toml contains inline notify.auth; file modes cannot protect a credential committed to git",
+				remedy: "use notify.auth_env in the workspace config; discovery is single-file and workspace-first, so user-global config applies only when no workspace ycc.toml shadows it",
+			})
+		}
+	}
+
+	if runtime.GOOS == "windows" {
+		return out
+	}
+	if dir, err := os.UserConfigDir(); err == nil {
+		if c, ok := broadFileModeCheck(filepath.Join(dir, "ycc", "ycc.toml"), "user config"); ok {
+			out = append(out, c)
+		}
+	}
+	if dir, err := os.UserCacheDir(); err == nil {
+		if c, ok := broadFileModeCheck(filepath.Join(dir, "ycc", "daemon.log"), "daemon log"); ok {
+			out = append(out, c)
+		}
+	}
+	if path := secrets.Path(); path != "" {
+		if c, ok := broadFileModeCheck(path, "secrets store"); ok {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// broadFileModeCheck reports an existing regular ycc-owned file whose group or
+// other permission bits are set. Missing files and platforms without meaningful
+// Unix mode bits produce no check.
+func broadFileModeCheck(path, name string) (check, bool) {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 == 0 {
+		return check{}, false
+	}
+	return check{
+		status: statusWarn,
+		label:  "file permissions",
+		detail: fmt.Sprintf("%s is group/other-accessible: %s", name, path),
+		remedy: "run `chmod 600 " + path + "`",
+	}, true
 }
 
 // modelKeyChecks resolves each configured model's key with the same precedence

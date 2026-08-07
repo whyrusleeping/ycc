@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -228,6 +229,46 @@ func TestSaveRoundTrip(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, orig) {
 		t.Fatalf("round-trip mismatch:\n got=%+v\nwant=%+v", got, orig)
+	}
+}
+
+func TestSavePrivateModesAndRepairsExistingFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not provide Unix permission semantics")
+	}
+	root := t.TempDir()
+	dir := filepath.Join(root, "nested", "deeper")
+	path := filepath.Join(dir, "ycc.toml")
+	cfg := DefaultAnthropic("https://api.anthropic.com", "claude-opus-4-8", "ANTHROPIC_API_KEY", 8192)
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	for name, path := range map[string]string{
+		"config parent": filepath.Join(root, "nested"),
+		"config dir":    dir,
+		"config file":   path,
+	} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm() & 0o077; got != 0 {
+			t.Errorf("%s mode %04o has group/other permissions", name, info.Mode().Perm())
+		}
+	}
+
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm() & 0o077; got != 0 {
+		t.Errorf("existing config mode %04o was not repaired", info.Mode().Perm())
 	}
 }
 
@@ -895,7 +936,7 @@ func TestNotifyRoundTripAndValidation(t *testing.T) {
 	orig := &Config{
 		Models: map[string]Model{"claude": {Backend: "anthropic", BaseURL: "u", Model: "m", KeyEnv: "K"}},
 		Roles:  Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"}},
-		Notify: Notify{URL: "https://ntfy.sh/mytopic", Auth: "Bearer tk_x", Events: []string{"question", "digest"}},
+		Notify: Notify{URL: "https://ntfy.sh/mytopic", Auth: "Bearer tk_x", AuthEnv: "NTFY_AUTH", Events: []string{"question", "digest"}},
 	}
 	if err := Save(path, orig); err != nil {
 		t.Fatalf("Save: %v", err)

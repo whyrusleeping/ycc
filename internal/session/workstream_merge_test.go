@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -483,6 +484,20 @@ func TestMergeWorkstreamPreservesTranscript(t *testing.T) {
 	preserved := filepath.Join(proj, ".ycc", "sessions", sessionID, "events.jsonl")
 	if _, err := os.Stat(preserved); err != nil {
 		t.Fatalf("preserved log missing at %s: %v", preserved, err)
+	}
+	if runtime.GOOS != "windows" {
+		for name, path := range map[string]string{
+			"preserved session directory": filepath.Dir(preserved),
+			"preserved event log":         preserved,
+		} {
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := info.Mode().Perm() & 0o077; got != 0 {
+				t.Errorf("%s mode %04o has group/other permissions", name, info.Mode().Perm())
+			}
+		}
 	}
 	// And the transcript is viewable (session no longer live), including the merge.
 	events, err := m.SessionTranscript("demo", sessionID)

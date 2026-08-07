@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -14,7 +16,8 @@ func isolateEnv(t *testing.T) {
 	t.Helper()
 	cfgDir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfgDir) // secrets.Path + config discovery on linux
-	t.Setenv("HOME", cfgDir)            // fallback for os.UserConfigDir elsewhere
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(cfgDir, "cache"))
+	t.Setenv("HOME", cfgDir) // fallback for os.UserConfigDir/UserCacheDir elsewhere
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("EXA_API_KEY", "")
 }
@@ -53,6 +56,112 @@ func TestRunDoctorValidConfigKeyInEnv(t *testing.T) {
 	}
 	if bytes.Contains(out.Bytes(), []byte("sk-test-value")) {
 		t.Fatalf("secret value must never be printed:\n%s", s)
+	}
+}
+
+func TestRunDoctorWarnsForWorkspaceInlineNotifyAuth(t *testing.T) {
+	isolateEnv(t)
+	ws := t.TempDir()
+	secret := "Bearer must-not-appear"
+	contents := validConfig + `
+[notify]
+url = "https://ntfy.sh/topic"
+auth = "` + secret + `"
+`
+	if err := os.WriteFile(filepath.Join(ws, "ycc.toml"), []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
+
+	var out bytes.Buffer
+	if hard := runDoctor(ws, "", "", "", &out); hard {
+		t.Fatalf("credential hygiene warning must not hard-fail:\n%s", out.String())
+	}
+	if !bytes.Contains(out.Bytes(), []byte("workspace ycc.toml contains inline notify.auth")) {
+		t.Fatalf("expected inline notify.auth warning:\n%s", out.String())
+	}
+	if !bytes.Contains(out.Bytes(), []byte("notify.auth_env")) || !bytes.Contains(out.Bytes(), []byte("workspace-first")) {
+		t.Fatalf("expected accurate auth_env/single-file discovery remedy:\n%s", out.String())
+	}
+	if bytes.Contains(out.Bytes(), []byte(secret)) {
+		t.Fatalf("doctor must never print the credential value:\n%s", out.String())
+	}
+}
+
+func TestRunDoctorWarnsForInlineNotifyAuthInPartialWorkspaceConfig(t *testing.T) {
+	isolateEnv(t)
+	ws := t.TempDir()
+	secret := "Bearer partial-must-not-appear"
+	contents := `[worktree]
+copy = ["README.md"]
+
+[notify]
+url = "https://ntfy.sh/topic"
+auth = "` + secret + `"
+`
+	if err := os.WriteFile(filepath.Join(ws, "ycc.toml"), []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
+
+	var out bytes.Buffer
+	if hard := runDoctor(ws, "", "", "", &out); !hard {
+		t.Fatalf("partial config should still fail full runtime validation:\n%s", out.String())
+	}
+	if !bytes.Contains(out.Bytes(), []byte("workspace ycc.toml contains inline notify.auth")) {
+		t.Fatalf("expected inline notify.auth warning despite full-config validation failure:\n%s", out.String())
+	}
+	if bytes.Contains(out.Bytes(), []byte(secret)) {
+		t.Fatalf("doctor must never print the credential value:\n%s", out.String())
+	}
+}
+
+func TestCredentialHygieneWarnsForBroadKnownFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not provide Unix permission semantics")
+	}
+	isolateEnv(t)
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cacheDir, err := os.UserCacheDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := []string{
+		filepath.Join(configDir, "ycc", "ycc.toml"),
+		filepath.Join(configDir, "ycc", "secrets.json"),
+		filepath.Join(cacheDir, "ycc", "daemon.log"),
+	}
+	for _, path := range paths {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("must-not-be-read-or-printed"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(path, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	checks := credentialHygieneChecks(t.TempDir())
+	var rendered strings.Builder
+	for _, c := range checks {
+		rendered.WriteString(c.detail)
+		rendered.WriteString("\n")
+		rendered.WriteString(c.remedy)
+		rendered.WriteString("\n")
+	}
+	got := rendered.String()
+	for _, want := range []string{"user config", "secrets store", "daemon log", "chmod 600"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("permission warnings missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "must-not-be-read-or-printed") {
+		t.Fatalf("permission check printed file contents:\n%s", got)
 	}
 }
 

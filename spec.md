@@ -154,6 +154,11 @@ in an unattended work loop); a client reconnecting just replays the log from an 
 
 - Source of truth: **append-only JSONL** per session at
   `<workspace>/.ycc/sessions/<session-id>/events.jsonl`.
+- Session state can contain prompts, source excerpts, tool output, and credentials echoed
+  by external programs. On Unix, newly created `.ycc/` session-state directories are
+  owner-only (`0700`) and event logs are owner-only (`0600`). Opening a legacy log repairs
+  the log and its session directory to those modes best-effort when ycc owns them; a chmod
+  failure does not make an otherwise usable transcript unavailable.
 - Optional periodic **snapshot** (`state.json`) of the reduced projection for fast
   resume on large logs.
 - Sync/remote = copy or stream the JSONL (it is the whole state). A future remote store
@@ -1031,8 +1036,13 @@ a possible future normalization, not required for this).
 
 **Credential mechanisms** (`auth`). By default a model authenticates with an API key
 resolved from `key_env` (environment first, then the machine-local secrets store —
-`~/.config/ycc/secrets.json`, mode 0600, managed by `ycc token set/list/rm`). Two
-backends additionally support **subscription auth** with `auth = "oauth"` on the
+`~/.config/ycc/secrets.json`, mode 0600, managed by `ycc token set/list/rm`). Migrate loose
+plaintext key files (for example an ignored root `ant-key`) by running
+`ycc token set <KEY_ENV>`, entering the value through stdin, verifying the named key with
+`ycc token list`, and then deleting the loose file yourself. ycc deliberately never searches
+for, opens, migrates, or prints arbitrary local key files; migration is user-directed so a
+filename is never treated as consent to inspect its contents. Two backends additionally
+support **subscription auth** with `auth = "oauth"` on the
 `[models.X]` block (`key_env` is then ignored; both default to **unpriced**, §20.4):
 
 - **anthropic — Claude Pro/Max.** `ycc login anthropic` runs the current Claude Code
@@ -1274,9 +1284,34 @@ rejected); the built-ins are always valid.
   ```toml
   [notify]
   url = "https://ntfy.sh/my-secret-topic"
-  auth = "Bearer tk_xxx"          # optional Authorization header
+  auth_env = "NTFY_AUTH"          # required for committed config; header from env
+  # auth = "Bearer tk_xxx"        # inline fallback only in a private active config
   events = ["question", "digest"] # optional; omit for all kinds
   ```
+
+### File permissions & credential hygiene
+
+On Unix, ycc-owned files use permissions according to their contents rather than applying a
+misleading blanket policy:
+
+| State | Creation / repair policy | Rationale |
+|---|---|---|
+| Workspace session state under `<workspace>/.ycc/` | directories `0700`, logs `0600`; the opened session directory and `events.jsonl` are repaired best-effort | transcripts contain prompts, source, and tool output |
+| User config `~/.config/ycc/ycc.toml` written by ycc | new directory `0700`, file `0600`; an existing file is repaired best-effort | `[notify].auth` may contain an Authorization credential |
+| `~/.config/ycc/secrets.json` | directory `0700`, file `0600` (existing secrets-store policy) | dedicated machine-local credentials |
+| `~/.cache/ycc/daemon.log` | directory `0700`, file `0600`; legacy paths are repaired best-effort | stderr and diagnostics may echo sensitive errors or context |
+| Committed docs (`backlog/`, `plans/`, `memory.md`, spec and `ycc export` output), daemon state registries (`projects.json`, `workstreams.json`, `backlog-ids.json`), client UI preferences, worktree bootstrap copies, and tool Write/Edit output | intentional normal working-tree/state modes (`0755` directories, `0644` files, subject to umask) | these are ordinary project content or path/id/preference metadata, not secret stores |
+
+Private filesystem modes protect only the local copy. They **do not** make an inline bearer
+credential safe once a project-local `ycc.toml` is committed, copied, or shared. Committed
+workspace config must use `notify.auth_env`; that is the fix whenever a workspace config is
+present. Config discovery is workspace-first and selects exactly one file—it does not merge
+`[notify]` from the user-global config. Inline `auth` is acceptable in a private user-global
+file only when that file is the **complete active config** and no workspace `ycc.toml` shadows
+it. Inline `auth` takes precedence over `auth_env` only for backward compatibility. `ycc
+doctor` warns about inline workspace notification credentials and broad modes on known
+credential-bearing ycc files, but never prints credential values or inspects arbitrary loose
+key files.
 
 ### 14.1 Parallel workstreams (git worktrees)
 

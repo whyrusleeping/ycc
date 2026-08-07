@@ -360,14 +360,14 @@ func (m *Manager) preserveWorkstreamSession(ws workstream.Workstream) {
 	copyDir(src, dst)
 }
 
-// copyDir recursively copies the directory at src to dst, best-effort. It does
-// not overwrite files that already exist at the destination.
+// copyDir recursively copies the private session-state directory at src to dst,
+// best-effort. It does not overwrite files that already exist at the destination.
 func copyDir(src, dst string) error {
 	entries, err := os.ReadDir(src)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dst, 0o755); err != nil {
+	if err := os.MkdirAll(dst, 0o700); err != nil {
 		return err
 	}
 	for _, e := range entries {
@@ -393,7 +393,7 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	defer in.Close()
-	out, err := os.Create(dst)
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}

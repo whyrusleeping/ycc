@@ -81,7 +81,7 @@ func EnsureBackgroundDaemon(workspace, configPath, token string) error {
 		cmd.Stdout, cmd.Stderr = devnull, devnull
 	}
 	logPath := daemonLogPath()
-	if f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+	if f, err := openDaemonLog(logPath); err == nil {
 		defer f.Close()
 		cmd.Stdout, cmd.Stderr = f, f
 	}
@@ -143,13 +143,27 @@ func DiscoverConfig(workspace string) string {
 	return ""
 }
 
+func openDaemonLog(path string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	// OpenFile retains a legacy log's mode. Repair it when possible without
+	// preventing daemon startup on filesystems where chmod is unavailable.
+	_ = f.Chmod(0o600)
+	return f, nil
+}
+
 func daemonLogPath() string {
 	dir, err := os.UserCacheDir()
 	if err != nil {
 		return filepath.Join(os.TempDir(), "ycc-daemon.log")
 	}
 	d := filepath.Join(dir, "ycc")
-	os.MkdirAll(d, 0o755)
+	_ = os.MkdirAll(d, 0o700)
+	// MkdirAll retains an existing directory's mode; keep daemon diagnostics private
+	// when ownership permits a best-effort repair.
+	_ = os.Chmod(d, 0o700)
 	return filepath.Join(d, "daemon.log")
 }
 

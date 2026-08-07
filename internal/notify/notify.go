@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -47,11 +48,16 @@ type Notifier struct {
 }
 
 // New builds a Notifier from config. It returns nil (notifications disabled) when
-// the URL is empty. An empty Events list enables every kind; a non-empty list
+// the URL is empty. Inline Auth takes precedence over the environment variable
+// named by AuthEnv. An empty Events list enables every kind; a non-empty list
 // enables only the listed kinds.
 func New(cfg config.Notify) *Notifier {
 	if cfg.URL == "" {
 		return nil
+	}
+	auth := cfg.Auth
+	if auth == "" && cfg.AuthEnv != "" {
+		auth = os.Getenv(cfg.AuthEnv)
 	}
 	var events map[string]bool
 	if len(cfg.Events) > 0 {
@@ -62,7 +68,7 @@ func New(cfg config.Notify) *Notifier {
 	}
 	return &Notifier{
 		url:    cfg.URL,
-		auth:   cfg.Auth,
+		auth:   auth,
 		events: events,
 		client: &http.Client{Timeout: sendTimeout},
 	}

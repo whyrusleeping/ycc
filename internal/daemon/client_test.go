@@ -1,9 +1,56 @@
 package daemon
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+func TestDaemonLogPrivateModesAndRepair(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not provide Unix permission semantics")
+	}
+	root := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", root)
+	t.Setenv("HOME", root)
+	path := daemonLogPath()
+	f, err := openDaemonLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for name, path := range map[string]string{"daemon log directory": filepath.Dir(path), "daemon log": path} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm() & 0o077; got != 0 {
+			t.Errorf("%s mode %04o has group/other permissions", name, info.Mode().Perm())
+		}
+	}
+
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f, err = openDaemonLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm() & 0o077; got != 0 {
+		t.Errorf("existing daemon log mode %04o was not repaired", info.Mode().Perm())
+	}
+}
 
 func TestBackgroundDaemonCmdlineKeepsTokenOutOfArgv(t *testing.T) {
 	const fakeToken = "fake-test-token"
