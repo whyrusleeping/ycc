@@ -32,7 +32,7 @@ struct LandingView: View {
     @State private var showNewSessionProjectPicker = false
     /// The last project the user actually looked at, remembered across launches.
     /// The unscoped Recent Sessions feed has no project of its own, so this is
-    /// what "New chat" defaults to from there.
+    /// the choice the new-chat chooser offers first (it never picks silently).
     @AppStorage("ycc.lastViewedProject") private var lastViewedProject = ""
     /// A resume failure message to surface as an alert.
     @State private var resumeError: String?
@@ -58,7 +58,7 @@ struct LandingView: View {
             titleVisibility: .visible
         ) {
             if let model {
-                ForEach(model.newSessionProjectChoices, id: \.self) { project in
+                ForEach(newSessionProjectChoices(model), id: \.self) { project in
                     Button(project) {
                         newSessionRequest = NewSessionRequest(project: project)
                     }
@@ -232,11 +232,16 @@ struct LandingView: View {
                     }
                     .overlay(alignment: .topTrailing) {
                         // Mirror the drawer's loudest badge on the closed menu
-                        // button so a question in another project is visible
-                        // without opening anything.
+                        // button so a question — or unread agent output — in
+                        // another project is visible without opening anything.
                         if (model?.totalActivity.needsAnswer ?? 0) > 0 {
                             Circle()
                                 .fill(Color.orange)
+                                .frame(width: 8, height: 8)
+                                .offset(x: 3, y: -2)
+                        } else if (model?.totalActivity.unread ?? 0) > 0 {
+                            Circle()
+                                .fill(Color.accentColor)
                                 .frame(width: 8, height: 8)
                                 .offset(x: 3, y: -2)
                         }
@@ -260,7 +265,9 @@ struct LandingView: View {
     /// none — which is exactly why they no longer live in the drawer, where they
     /// were most often tapped from the unscoped feed and opened unscoped.
     /// Backlog earns its own glyph (it is the one users reach for constantly);
-    /// the rest sit behind an overflow menu, as in the session view.
+    /// the rest sit behind an overflow menu, as in the session view. The
+    /// overflow itself is not project-scoped: it also carries "Mark all read",
+    /// which the unscoped feed needs just as much.
     @ToolbarContentBuilder
     private var projectDestinations: some ToolbarContent {
         if let project = model?.selectedProject {
@@ -269,8 +276,10 @@ struct LandingView: View {
                     Label("Backlog", systemImage: "checklist")
                 }
             }
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            Menu {
+                if let project = model?.selectedProject {
                     NavigationLink(value: HomeDestination.workLoop(project: project)) {
                         Label("Work loop", systemImage: "arrow.triangle.2.circlepath")
                     }
@@ -280,10 +289,18 @@ struct LandingView: View {
                     NavigationLink(value: HomeDestination.usage(project: project)) {
                         Label("Usage", systemImage: "chart.bar")
                     }
-                } label: {
-                    Label("\(project) actions", systemImage: "ellipsis.circle")
                 }
+                if (model?.unreadCount ?? 0) > 0 {
+                    if model?.selectedProject != nil { Divider() }
+                    Button { model?.markAllRead() } label: {
+                        Label("Mark all read", systemImage: "envelope.open")
+                    }
+                }
+            } label: {
+                Label("More", systemImage: "ellipsis.circle")
             }
+            // Nothing to offer on the unscoped feed with everything read.
+            .disabled(model?.selectedProject == nil && (model?.unreadCount ?? 0) == 0)
         }
     }
 
@@ -316,33 +333,36 @@ struct LandingView: View {
         drawerOpen = false
     }
 
-    /// Open the composer in the project the user was last looking at: the
-    /// current scope, or — from the unscoped Recent Sessions feed — the last
-    /// project they viewed. Only a user who has never opened a project (and has
-    /// more than one to choose from) is asked outright.
+    /// Open the composer. A project-scoped list already answers "which project",
+    /// so it starts straight away; the unscoped Recent sessions feed does not,
+    /// so it *asks* — silently inheriting the last project the user happened to
+    /// browse put chats in the wrong workspace with no visible choice. The
+    /// chooser lists the last-viewed project first, so the common case is still
+    /// one tap away.
     private func beginNewSession() {
         guard let model else { return }
-        if let project = defaultNewSessionProject(model) {
+        if !model.requiresProjectChoiceForNewSession, let project = model.selectedProject {
             newSessionRequest = NewSessionRequest(project: project)
-        } else if model.requiresProjectChoiceForNewSession,
-                  model.newSessionProjectChoices.count > 1 {
+            return
+        }
+        let choices = newSessionProjectChoices(model)
+        if choices.count > 1 {
             showNewSessionProjectPicker = true
         } else {
-            // Nothing to default to: let the composer pick (sole project, or the
-            // last-used one) and show its project chip.
-            newSessionRequest = NewSessionRequest(project: nil)
+            // Sole project (or none registered): nothing to choose between — let
+            // the composer resolve it and show its project chip.
+            newSessionRequest = NewSessionRequest(project: choices.first)
         }
     }
 
-    /// The project a new session should start in, or nil when there is nothing
-    /// trustworthy to preselect. A remembered project that has since been
-    /// deregistered is ignored.
-    private func defaultNewSessionProject(_ model: SessionListModel) -> String? {
-        if let selected = model.selectedProject { return selected }
-        guard !lastViewedProject.isEmpty,
-              model.projects.contains(where: { $0.name == lastViewedProject })
-        else { return nil }
-        return lastViewedProject
+    /// Registered projects for the new-chat chooser, with the last project the
+    /// user viewed hoisted to the top as the likely intent.
+    private func newSessionProjectChoices(_ model: SessionListModel) -> [String] {
+        let choices = model.newSessionProjectChoices
+        guard !lastViewedProject.isEmpty, choices.contains(lastViewedProject) else {
+            return choices
+        }
+        return [lastViewedProject] + choices.filter { $0 != lastViewedProject }
     }
 
     /// Re-open a persisted session on its existing log, then navigate into the
@@ -447,7 +467,8 @@ struct LandingView: View {
                                 session: session,
                                 project: model.project(for: session),
                                 showsProject: model.selectedProject == nil,
-                                isLoopOwned: model.isLoopSession(session))
+                                isLoopOwned: model.isLoopSession(session),
+                                isUnread: model.isUnread(session))
                         }
                         .listRowBackground(section.kind == .needsAnswer
                             ? Color.orange.opacity(0.12) : nil)
@@ -461,10 +482,26 @@ struct LandingView: View {
                                 .tint(.green)
                             }
                         }
+                        // Acknowledging new agent output without reading it is a
+                        // legitimate answer to a badge, so it gets the trailing
+                        // (dismissive) edge.
+                        .swipeActions(edge: .trailing) {
+                            if model.isUnread(session) {
+                                Button { model.markRead(session) } label: {
+                                    Label("Mark read", systemImage: "envelope.open")
+                                }
+                                .tint(.gray)
+                            }
+                        }
                         .contextMenu {
                             if !session.live {
                                 Button { resume(session) } label: {
                                     Label("Resume session", systemImage: "play.circle")
+                                }
+                            }
+                            if model.isUnread(session) {
+                                Button { model.markRead(session) } label: {
+                                    Label("Mark read", systemImage: "envelope.open")
                                 }
                             }
                         }
@@ -501,7 +538,7 @@ struct LandingView: View {
     private func ensureLoaded() async {
         if model == nil {
             guard let client = app.client else { return }
-            model = SessionListModel(source: client)
+            model = SessionListModel(source: client, readMarks: app.readMarks)
         }
         await model?.refresh()
     }
@@ -582,12 +619,15 @@ private struct NewSessionRequest: Identifiable {
 }
 
 /// A single session row: title, status badge, live marker, needs-answer marker,
-/// turns, and a relative last-activity time.
+/// turns, and a relative last-activity time. An unread row (agent activity this
+/// device has not been shown) is marked the way a mail inbox marks one: a
+/// leading dot and a heavier title.
 private struct SessionRow: View {
     let session: Ycc_V1_SessionSummary
     var project = ""
     var showsProject = false
     var isLoopOwned = false
+    var isUnread = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -596,9 +636,14 @@ private struct SessionRow: View {
                     Image(systemName: "bell.badge.fill")
                         .foregroundStyle(.orange)
                         .font(.subheadline)
+                } else if isUnread {
+                    Circle()
+                        .fill(Color.accentColor)
+                        .frame(width: 9, height: 9)
+                        .accessibilityLabel("unread")
                 }
                 Text(SessionListModel.displayTitle(for: session))
-                    .font(.headline)
+                    .font(isUnread ? .headline.weight(.bold) : .headline)
                     // Titles are derived from the opening prompt, so one line
                     // truncates almost every row into uselessness.
                     .lineLimit(2)
@@ -612,6 +657,20 @@ private struct SessionRow: View {
             }
             HStack(spacing: 8) {
                 StatusBadge(status: session.status)
+                if isUnread {
+                    // Says *what* is unread. A finished session that wrapped up
+                    // while the phone was away is exactly the case this exists
+                    // for, so name the agent, not the row. Kept to one word so
+                    // it can sit alongside the project/turns metadata.
+                    Label("new", systemImage: "text.bubble.fill")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(Color.accentColor.opacity(0.16), in: Capsule())
+                        .foregroundStyle(Color.accentColor)
+                        .lineLimit(1)
+                        .accessibilityLabel("unread agent messages")
+                }
                 if isLoopOwned {
                     Label("loop", systemImage: "arrow.triangle.2.circlepath")
                         .font(.caption2.weight(.semibold))

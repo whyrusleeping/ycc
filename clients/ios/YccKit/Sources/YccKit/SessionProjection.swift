@@ -88,6 +88,13 @@ public struct SessionProjection: Sendable, Equatable {
     /// Highest **persisted** seq folded so far — the reconnect resume cursor.
     /// Transient events (seq 0) never advance it.
     public private(set) var lastPersistedSeq: Int64 = 0
+    /// RFC3339 timestamp of the newest durable event folded so far, in the
+    /// *daemon's* clock. This is what the client records as "seen up to here"
+    /// for unread tracking (``SessionReadStore``): comparing daemon stamps to
+    /// daemon stamps keeps a skewed phone clock out of the decision. It counts
+    /// every durable event, not only the ones that produce a row, so a session
+    /// whose tail is render-suppressed lifecycle noise still reads as fully seen.
+    public private(set) var lastEventTimestamp: String = ""
     /// The currently-open question, if any (cleared by `question_answered`).
     public private(set) var pendingQuestion: PendingQuestion?
     /// Row id of the most recent `question_asked` row, kept even after the gate
@@ -195,6 +202,7 @@ public struct SessionProjection: Sendable, Equatable {
             return
         }
         lastPersistedSeq = event.seq
+        if !event.ts.isEmpty { lastEventTimestamp = event.ts }
 
         let data = Self.parse(event.dataJson)
         foldPhase(type: event.type, data: data)

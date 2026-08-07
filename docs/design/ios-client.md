@@ -156,7 +156,7 @@ The drawer has two levels of navigation:
    workspace cannot be hidden by the currently selected project. It carries no
    project-scoped destinations, because it has no project.
 2. **Projects** — the registered workspace list, each with active /
-   needs-answer badges. Selecting a project closes the drawer and scopes the
+   needs-answer / unread badges. Selecting a project closes the drawer and scopes the
    session list and project destinations (backlog, usage, workstreams, and new
    session) to it. “Add project…” and a confirmed “Remove project…” action remain at
    the bottom of this list. Removing a registration never deletes workspace files.
@@ -169,23 +169,62 @@ unscoped — landing on a "choose a project" filter instead of the backlog the u
 asked for. They belong to a project, so they hang off the toolbar of that
 project's own session list: **Backlog** as a one-tap glyph, Workstreams and Usage
 in an overflow menu, exactly as in the session view. On the Recent sessions feed
-those toolbar items are absent rather than unscoped. The menu button keeps
-mirroring the drawer's loudest needs-answer badge, so a question in another
-project is visible while the drawer is shut. The drawer overlays the
+those toolbar items are absent rather than unscoped (the overflow menu itself
+stays, carrying "Mark all read"). The menu button keeps mirroring the drawer's
+loudest badge — a needs-answer question, else unread agent output — so work
+demanding attention in another project is visible while the drawer is shut. The drawer overlays the
 whole navigation stack, so the current destination survives underneath it; the
 left-edge reveal gesture is disabled while a screen is pushed, leaving that edge
 to the system's interactive back gesture.
 
-**New chat always starts where the user was last looking.** From a project-scoped
-list that is the current project; from the unscoped Recent sessions feed it is the
-last project the user *viewed* (persisted across launches), which is not the same
-as the last project they *started a session in* — defaulting to the latter put
-chats in the wrong workspace. Only a user who has never opened a project, on a
-daemon with more than one, is asked outright with a cancellable chooser. The
-chosen project is carried as the composer sheet's presentation *item*, never as a
-flag plus a separately-stored project: the latter can present with a value
-captured before the assignment lands, silently falling back to the remembered
-project. The composer's project chip can still redirect the session.
+**New chat always asks when the answer is ambiguous.** From a project-scoped list
+the project is the current scope and the composer opens straight away. From the
+unscoped Recent sessions feed there is no scope, so the user is asked with a
+cancellable chooser listing every registered project — the last project they
+*viewed* (persisted across launches) first, so the common case stays one tap away.
+Defaulting silently from that feed — to the last project started in, or to the
+last one viewed — is what put chats in the wrong workspace: the composer is a
+full-screen sheet whose project chip is easy to miss, so an implicit choice reads
+as no choice at all. Only a daemon with a single project skips the chooser, having
+nothing to choose between. The chosen project is carried as the composer sheet's
+presentation *item*, never as a flag plus a separately-stored project: the latter
+can present with a value captured before the assignment lands, silently falling
+back to the remembered project. The composer's project chip can still redirect the
+session.
+
+**Unread agent activity.** A phone user's core question is "did anything happen
+while I was away" — above all, *did the agent finish*. The daemon keeps no
+per-device read state, so the client tracks it (`SessionReadStore`, persisted in
+`UserDefaults`): for each session id it remembers the timestamp of the newest
+event this device has been shown, and a row is **unread** when the daemon reports
+later activity than that mark. Two rules keep it honest:
+
+- **Daemon clocks only.** Marks are recorded from event / summary timestamps
+  produced by the daemon (`SessionProjection.lastEventTimestamp`, which advances
+  on every durable event — including those that render no row — and never on a
+  transient `turn_delta`), never from the phone's clock. Comparing daemon stamps
+  to daemon stamps keeps device clock skew out of the decision.
+- **First sighting is read.** A session the store has never seen is baselined at
+  its current activity, so installing the app — or registering a project with
+  months of history — does not present a wall of false unread rows. Everything
+  after that first sighting is unread until read.
+- **A running session is never unread.** Its row already announces itself as
+  live, and its log grows every few seconds, so badging it would keep the
+  indicator permanently lit and therefore meaningless. It goes unread the moment
+  it stops producing (idle / paused / error / stopped) — which is exactly the
+  "the agent finished while you were away" case the badge exists for.
+
+A session is marked read through its newest folded event when the user leaves the
+transcript (or backgrounds the app while inside it), not on a timer while they
+watch: leaving is the moment they have actually seen it, and it is one write
+instead of one per streamed event. Unread rows are marked the way a mail inbox
+marks them — a leading accent dot, a bolder title, and a "new" pill — and are
+counted into `ProjectActivity.unread` so the drawer's project rows, the Recent
+sessions row and the closed menu button carry a badge too (a waiting question
+still outranks it: that one needs the user *now*). Acknowledging without reading
+is a legitimate answer to a badge, so a row has a trailing "Mark read" swipe and
+context-menu action, with "Mark all read" in the session list's overflow menu for
+the current scope.
 
 Because the drawer is *not* reachable from a pushed screen either, screens that
 users live inside repeat those shortcuts: the session view keeps **Backlog** as a
@@ -231,8 +270,9 @@ do not permanently remove access to the daemon-wide inbox.
    **Recent sessions** feed and project-scoped `ListSessionHistory` views. The
    aggregate feed is strictly most-recent-first by last activity; each row shows
    its project, plus status badge (`running`/`idle`/`error`), live marker, and
-   turns. `waitingInput:true` rows remain styled loudly. Pull-to-refresh +
-   refresh on foreground.
+   turns. `waitingInput:true` rows remain styled loudly, and rows with unread
+   agent activity (see "Unread agent activity" above) carry a dot, a bolder
+   title and a "new" pill. Pull-to-refresh + refresh on foreground.
 3. **Session view** — the transcript feed from `SessionProjection`: live
    sessions via `Subscribe`, persisted via `GetSessionTranscript`. Auto-follow
    scroll with a "jump to latest" pill when the user scrolls up. Follow mode is

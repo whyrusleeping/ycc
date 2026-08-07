@@ -182,6 +182,32 @@ final class SessionProjectionTests: XCTestCase {
         XCTAssertEqual(proj.lastPersistedSeq, 0, "transient events never advance the cursor")
     }
 
+    /// The unread tracker records "seen up to here" from the daemon's own event
+    /// timestamps, so every durable event must advance the watermark — including
+    /// ones that render no row — while transient tail deltas must not.
+    func testLastEventTimestampTracksDurableEventsOnly() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(seq: 1, type: "session_started", ts: "2026-08-06T10:00:00Z"))
+        XCTAssertEqual(proj.lastEventTimestamp, "2026-08-06T10:00:00Z")
+
+        proj.apply(makeEvent(
+            seq: 2, type: "model_turn", dataJson: #"{"text":"hi"}"#,
+            ts: "2026-08-06T10:00:05Z"))
+        XCTAssertEqual(proj.lastEventTimestamp, "2026-08-06T10:00:05Z")
+
+        // A render-suppressed lifecycle event still counts as seen.
+        proj.apply(makeEvent(seq: 3, type: "usage_totals", ts: "2026-08-06T10:00:06Z"))
+        XCTAssertEqual(proj.lastEventTimestamp, "2026-08-06T10:00:06Z")
+
+        // Transient deltas are not persisted and must not move the watermark.
+        proj.apply(delta("streaming…"))
+        XCTAssertEqual(proj.lastEventTimestamp, "2026-08-06T10:00:06Z")
+
+        // A replayed (already-folded) event must not move it backwards either.
+        proj.apply(makeEvent(seq: 2, type: "model_turn", ts: "2026-08-06T10:00:05Z"))
+        XCTAssertEqual(proj.lastEventTimestamp, "2026-08-06T10:00:06Z")
+    }
+
     func testLiveTailCarriesOptionalVerifiedAppendHint() {
         var proj = SessionProjection()
         proj.apply(delta("Hel"))

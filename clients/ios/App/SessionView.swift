@@ -179,10 +179,29 @@ struct SessionView: View {
             Text("This hard-terminates the agent — there is no resume.")
         }
         .task { model.start() }
-        .onDisappear { model.stop() }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active { model.reconnect() }
+        .onDisappear {
+            // Leaving the transcript is the moment the user has "read" it: record
+            // the newest event they were shown, so later agent activity — a turn
+            // that lands, or the session finishing while the phone is away —
+            // shows up as unread on the list.
+            markRead()
+            model.stop()
         }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                model.reconnect()
+            } else {
+                // Backgrounding may be the last thing that happens to this view;
+                // don't leave what is on screen counted as unread.
+                markRead()
+            }
+        }
+    }
+
+    /// Record everything folded so far as seen for this session.
+    private func markRead() {
+        app.readMarks.markRead(
+            sessionID: sessionID, through: model.lastEventTimestamp)
     }
 
     // MARK: - Bottom chrome (banner + input bar)

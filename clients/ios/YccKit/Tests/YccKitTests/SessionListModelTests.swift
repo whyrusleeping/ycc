@@ -565,4 +565,109 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertEqual(model.errorMessage, "boom")
         XCTAssertFalse(model.unauthorized)
     }
+
+    // MARK: - Unread agent activity
+
+    /// A fresh, isolated read-mark store so unread tests never share state.
+    private func makeReadStore() -> SessionReadStore { .ephemeral() }
+
+    func testFirstLoadReportsNothingUnread() async {
+        let source = MockListSource()
+        source.projects = [project("one")]
+        source.sessionsByProject = ["one": [
+            session(id: "a", lastActivity: "2026-08-06T10:00:00Z"),
+        ]]
+        let model = SessionListModel(source: source, readMarks: makeReadStore())
+
+        await model.refresh()
+
+        XCTAssertFalse(model.isUnread(model.sessions[0]))
+        XCTAssertEqual(model.unreadCount, 0)
+        XCTAssertEqual(model.totalActivity.unread, 0)
+    }
+
+    func testActivityAfterALoadMarksTheRowUnread() async {
+        let source = MockListSource()
+        source.projects = [project("one")]
+        source.sessionsByProject = ["one": [
+            session(id: "a", lastActivity: "2026-08-06T10:00:00Z"),
+        ]]
+        let model = SessionListModel(source: source, readMarks: makeReadStore())
+        await model.refresh()
+
+        // The agent worked (and finished) while the phone was away.
+        source.sessionsByProject = ["one": [
+            session(id: "a", status: "idle", lastActivity: "2026-08-06T10:30:00Z", turns: 4),
+        ]]
+        await model.refresh()
+
+        XCTAssertTrue(model.isUnread(model.sessions[0]))
+        XCTAssertEqual(model.unreadCount, 1)
+        XCTAssertEqual(model.totalActivity.unread, 1)
+        XCTAssertEqual(model.activity(forProject: "one").unread, 1)
+    }
+
+    func testMarkReadClearsTheRowAndTheProjectBadge() async {
+        let source = MockListSource()
+        source.projects = [project("one")]
+        source.sessionsByProject = ["one": [
+            session(id: "a", lastActivity: "2026-08-06T10:00:00Z"),
+        ]]
+        let model = SessionListModel(source: source, readMarks: makeReadStore())
+        await model.refresh()
+        source.sessionsByProject = ["one": [
+            session(id: "a", lastActivity: "2026-08-06T10:30:00Z"),
+        ]]
+        await model.refresh()
+
+        model.markRead(model.sessions[0])
+
+        XCTAssertFalse(model.isUnread(model.sessions[0]))
+        XCTAssertEqual(model.activity(forProject: "one").unread, 0)
+    }
+
+    func testMarkAllReadOnlyClearsTheSelectedScope() async {
+        let source = MockListSource()
+        source.projects = [project("one"), project("two")]
+        source.sessionsByProject = [
+            "one": [session(id: "a", lastActivity: "2026-08-06T10:00:00Z")],
+            "two": [session(id: "b", lastActivity: "2026-08-06T10:00:00Z")],
+        ]
+        let model = SessionListModel(source: source, readMarks: makeReadStore())
+        await model.refresh()
+        source.sessionsByProject = [
+            "one": [session(id: "a", lastActivity: "2026-08-06T11:00:00Z")],
+            "two": [session(id: "b", lastActivity: "2026-08-06T11:00:00Z")],
+        ]
+        await model.refresh()
+        XCTAssertEqual(model.totalActivity.unread, 2)
+
+        model.selectedProject = "one"
+        model.markAllRead()
+
+        XCTAssertEqual(model.activity(forProject: "one").unread, 0)
+        XCTAssertEqual(model.activity(forProject: "two").unread, 1)
+        XCTAssertEqual(model.totalActivity.unread, 1)
+    }
+
+    func testSessionViewedThroughItsLatestEventIsRead() async {
+        let source = MockListSource()
+        source.projects = [project("one")]
+        source.sessionsByProject = ["one": [
+            session(id: "a", lastActivity: "2026-08-06T10:00:00Z"),
+        ]]
+        let readMarks = makeReadStore()
+        let model = SessionListModel(source: source, readMarks: readMarks)
+        await model.refresh()
+        source.sessionsByProject = ["one": [
+            session(id: "a", lastActivity: "2026-08-06T10:30:00Z"),
+        ]]
+        await model.refresh()
+        XCTAssertTrue(model.isUnread(model.sessions[0]))
+
+        // What the session view does on leaving: record the newest folded event.
+        readMarks.markRead(sessionID: "a", through: "2026-08-06T10:30:00Z")
+
+        XCTAssertFalse(model.isUnread(model.sessions[0]))
+    }
 }

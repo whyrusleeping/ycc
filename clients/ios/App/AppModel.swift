@@ -12,6 +12,11 @@ import YccKit
 final class AppModel {
     let store: ConnectionStore
 
+    /// Durable per-session "seen up to here" marks driving the unread badges on
+    /// the session list and drawer. Owned here so the list model and every
+    /// session view share one set of marks.
+    let readMarks = SessionReadStore()
+
     /// The authenticated client for the active server, or `nil` when
     /// disconnected (which shows the connect screen).
     private(set) var client: YccClient?

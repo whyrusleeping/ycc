@@ -90,3 +90,7 @@ Only if stale: check `spec.md` §9/§20.6 and `docs/remote-api.md` for lingering
 …[truncated]
 - 2026-08-06 decision: accept — commit: tui: drive work (loop) from the daemon RPCs; delete the client driver (task 0267)  The TUI no longer runs its own loop: StartWorkLoop/StopWorkLoop/GetWorkLoop own iteration, the no-progress guard, bud
 …[truncated]
+- 2026-08-06 usage: 19,053,314 tok (in 1,209,139, out 105,679, cache_r 23,414,481, cache_w 636,726) · cost n/a (unpriced)
+  implementer: 14,552,190 tok (in 615,864, out 42,950, cache_r 13,893,376, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 4,478,880 tok (in 593,207, out 40,553, cache_r 3,845,120, cache_w 0) · cost n/a (unpriced)
+  coordinator: 22,244 tok (in 68, out 22,176, cache_r 5,675,985, cache_w 636,726) · cost n/a (unpriced)

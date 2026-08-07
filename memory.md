@@ -16,6 +16,8 @@
 - 2026-08-06: Models sometimes leak XML invoke syntax into a JSON string tool argument (question swallowing options, description swallowing priority); internal/tools/argrepair.go repairs it schema-aware in Registry.Repair (engine loop pre-emit) + Dispatch — check the tool_call event's `repaired` field when a tool looks like it lost arguments.
 - 2026-08-06: Anthropic OAuth tokens are resolved PER TURN by anthropicauth.NewOAuthTurner (config.Build passes TokenSource{AccessToken, ForceRefresh, c.SetBearerToken}); a token frozen at Build dies whenever any other process refreshes, because Anthropic invalidates the previous access token on every refresh-token redemption.
 - 2026-08-06: iOS composers: clearing a SwiftUI TextField binding on send is not enough — UIKit commits a pending autocorrection afterwards and writes the text back; fix is a one-runloop `.autocorrectionDisabled` pulse + deferred re-clear (done in SessionView.send, task 0278).
+- 2026-08-06: The work loop is daemon-owned end to end since tasks 0179/0190/0267: TUI and iOS both only call StartWorkLoop/StopWorkLoop/GetWorkLoop and poll for state (TUI guards poll responses with a loopSeq generation and attaches to WorkLoopInfo.CurrentSessionId via reopenSession); loop state is still in-memory only, so a daemon restart loses a running loop and its digest (task 0280).
+- 2026-08-06: iOS unread ("new agent messages") is client-side only: YccKit/SessionReadStore keeps a per-session watermark in UserDefaults from DAEMON timestamps (SessionProjection.lastEventTimestamp), baselines first sightings as read, never badges a still-running session, and SessionView marks read on disappear/background (task 0283).
 
 ## Environment & tooling
 

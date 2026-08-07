@@ -322,13 +322,15 @@ private struct DrawerRow: View {
         guard let activity, !activity.isEmpty else { return title }
         var parts = [title]
         if activity.needsAnswer > 0 { parts.append("\(activity.needsAnswer) waiting for an answer") }
+        if activity.unread > 0 { parts.append("\(activity.unread) with unread agent messages") }
         if activity.active > 0 { parts.append("\(activity.active) active") }
         return parts.joined(separator: ", ")
     }
 }
 
 /// Live-activity badges for a drawer row. A waiting question is the loudest
-/// state a phone client exists to surface, so it outranks plain activity.
+/// state a phone client exists to surface, so it outranks plain activity; unread
+/// agent output sits between the two — it needs the user eventually, not now.
 private struct ActivityBadge: View {
     let activity: ProjectActivity
 
@@ -346,6 +348,15 @@ private struct ActivityBadge: View {
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
                 .background(Color.orange, in: Capsule())
+            }
+            if activity.unread > 0 {
+                Text("\(activity.unread)")
+                    .font(.caption2.weight(.bold))
+                    .monospacedDigit()
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.accentColor, in: Capsule())
             }
             if activity.active > 0 {
                 HStack(spacing: 3) {

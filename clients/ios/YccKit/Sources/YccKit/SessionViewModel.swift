@@ -79,6 +79,10 @@ public final class SessionViewModel {
     public var pendingQuestion: SessionProjection.PendingQuestion? { projection.pendingQuestion }
     /// The session's derived lifecycle phase (running/paused/idle/error/stopped).
     public var phase: SessionProjection.Phase { projection.phase }
+    /// Daemon timestamp of the newest durable event this view has folded — the
+    /// "seen up to here" watermark the unread tracker records when the user
+    /// leaves the session (``SessionReadStore``).
+    public var lastEventTimestamp: String { projection.lastEventTimestamp }
     /// The logical model driving this session's coordinator, folded from the log
     /// (`session_started` / `role_config_changed` / coordinator `model_turn`).
     /// Empty until an event names it. Chrome uses this to answer "which model is

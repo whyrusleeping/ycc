@@ -63,13 +63,18 @@ public struct ProjectActivity: Sendable, Equatable {
     /// Live sessions blocked on an unanswered question. The loudest state a
     /// phone client exists to surface.
     public var needsAnswer = 0
+    /// Sessions carrying agent activity this device has not looked at yet —
+    /// including finished ones, which is the whole point: an agent that wrapped
+    /// up while the phone was in a pocket must still say so.
+    public var unread = 0
 
-    public init(active: Int = 0, needsAnswer: Int = 0) {
+    public init(active: Int = 0, needsAnswer: Int = 0, unread: Int = 0) {
         self.active = active
         self.needsAnswer = needsAnswer
+        self.unread = unread
     }
 
-    public var isEmpty: Bool { active == 0 && needsAnswer == 0 }
+    public var isEmpty: Bool { active == 0 && needsAnswer == 0 && unread == 0 }
 }
 
 /// A grouped list of sessions for display. Needs-answer sessions are pinned to
@@ -121,10 +126,21 @@ public final class SessionListModel {
     public private(set) var unauthorized = false
 
     private let source: SessionListSource
+    /// Durable "which sessions have agent activity I haven't seen" marks. Owned
+    /// by the app (one per process) and injected so the list, the drawer badges
+    /// and the session view all agree on what is unread. Defaults to a
+    /// memory-only store, so a model built outside the app (tests, previews)
+    /// neither reads nor writes the user's real marks.
+    @ObservationIgnored public let readMarks: SessionReadStore
 
-    public init(source: SessionListSource, selectedProject: String? = nil) {
+    public init(
+        source: SessionListSource,
+        selectedProject: String? = nil,
+        readMarks: SessionReadStore? = nil
+    ) {
         self.source = source
         self.selectedProject = selectedProject
+        self.readMarks = readMarks ?? .ephemeral()
     }
 
     /// The sessions to display: everything, or just the selected project's.
@@ -171,6 +187,27 @@ public final class SessionListModel {
         loopSessionIDs.contains(sessionID)
     }
 
+    // MARK: - Unread agent activity
+
+    /// Whether a row carries agent activity this device has not seen yet.
+    public func isUnread(_ session: Ycc_V1_SessionSummary) -> Bool {
+        readMarks.isUnread(session)
+    }
+
+    /// Unread rows in the current scope — what the list's "mark all read"
+    /// affordance would clear.
+    public var unreadCount: Int { readMarks.unreadCount(in: sessions) }
+
+    /// Clear the unread flag on a single row without opening it.
+    public func markRead(_ session: Ycc_V1_SessionSummary) {
+        readMarks.markRead(session)
+    }
+
+    /// Clear every unread row in the current scope.
+    public func markAllRead() {
+        readMarks.markAllRead(sessions)
+    }
+
     /// Live-activity counts per project name, for the drawer's badges. Computed
     /// from the loaded rows rather than cached at load time, so a local
     /// correction like ``markAnswered(sessionID:)`` is reflected immediately.
@@ -181,6 +218,7 @@ public final class SessionListModel {
             guard let project = sessionProjects[session.sessionID] else { continue }
             var activity = counts[project] ?? ProjectActivity()
             Self.accumulate(session, into: &activity)
+            if readMarks.isUnread(session) { activity.unread += 1 }
             counts[project] = activity
         }
         return counts
@@ -194,6 +232,7 @@ public final class SessionListModel {
     public var totalActivity: ProjectActivity {
         allSessions.reduce(into: ProjectActivity()) { total, session in
             Self.accumulate(session, into: &total)
+            if readMarks.isUnread(session) { total.unread += 1 }
         }
     }
 
@@ -318,6 +357,10 @@ public final class SessionListModel {
             }
         }
         allSessions = Self.sortedByRecency(merged)
+        // Sessions this device has never seen are baselined as read: a first
+        // load (or a freshly registered project's back-catalogue) must not shout
+        // "unread" about history the user was never shown.
+        readMarks.noteSeen(allSessions)
         sessionProjects = routes
         loopSessionIDs = loads.reduce(into: Set<String>()) { ids, load in
             ids.formUnion(load.loopSessionIDs)
