@@ -48,13 +48,25 @@ struct LandingView: View {
     /// A project-removal failure to show independently of session-list content.
     @State private var projectRemovalError: String?
 
+    // Split into shell → presentations → observers because a single modifier
+    // chain of this length makes the type checker give up ("unable to
+    // type-check this expression in reasonable time").
     var body: some View {
+        observers(presentations(shell))
+    }
+
+    private var shell: some View {
         DrawerContainer(isOpen: $drawerOpen, edgeSwipeEnabled: router.path.isEmpty) {
             drawer
         } content: {
             navigation
         }
         .environment(router)
+    }
+
+    /// The sheets, dialogs, and alerts hung off the shell.
+    private func presentations(_ content: some View) -> some View {
+        content
         .confirmationDialog(
             "Start a new chat in…",
             isPresented: $showNewSessionProjectPicker,
@@ -148,6 +160,11 @@ struct LandingView: View {
         } message: { message in
             Text(message)
         }
+    }
+
+    /// The lifecycle and change observers hung off the shell.
+    private func observers(_ content: some View) -> some View {
+        content
         .task {
             await ensureLoaded()
             await consumePendingDeepLink()
