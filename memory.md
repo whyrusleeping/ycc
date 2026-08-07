@@ -16,6 +16,7 @@
 - 2026-08-07: Codex stateless replay: Responses items ride as ONE marked ThinkingBlock ("codex-response-items-v1:…"); engine.messagesForBackend strips them for non-openai backends (task 0197).
 - 2026-08-07: Never emit user_input events for synthetic/subagent history — engine.ReplayHistory folds ALL user_input into coordinator history regardless of actor (task 0175 preload keeps seed prompt last; verified live on Anthropic thinking + codex).
 - iOS: question rows resolve via openQuestionRowID, not pendingQuestion (0247); composer clear needs the autocorrect-pulse trick (SessionView.send, 0278); unread badges are client-side watermarks from daemon timestamps (SessionReadStore, 0283); all nav pushes go through HomeRouter.open/HomeDestination with dedupe (0288).
+- 2026-08-07: Manager goroutines that run git subprocesses after session events (e.g. workstream readiness watchers) must be joinable — Manager.Stop waits on workstreamWatches[sessionID] or TempDir test cleanup races with "directory not empty"; also server.workstreamError maps manager errors BY STRING ("is not active"/"is not in flight"/"cannot be discarded"), so rewording them breaks Connect codes.
 
 ## Environment & tooling
 

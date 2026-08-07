@@ -115,3 +115,7 @@ Out of scope (follow-on): iOS WorkstreamStatus enum renders the new statuses (fa
 …[truncated]
 - 2026-08-07 decision: accept — commit: workstream_ready: derive and emit workstream completion state (task 0251)  Workstreams now transition to ready / needs_attention when their session reaches a terminal state: new registry statuses (wit
 …[truncated]
+- 2026-08-07 usage: 13,192,659 tok (in 1,489,209, out 84,890, cache_r 14,082,840, cache_w 351,949) · cost n/a (unpriced)
+  implementer: 9,845,809 tok (in 884,493, out 40,228, cache_r 8,921,088, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 3,327,236 tok (in 604,664, out 25,100, cache_r 2,697,472, cache_w 0) · cost n/a (unpriced)
+  coordinator: 19,614 tok (in 52, out 19,562, cache_r 2,464,280, cache_w 351,949) · cost n/a (unpriced)
