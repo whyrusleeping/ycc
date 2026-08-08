@@ -10,7 +10,7 @@
 - Provider errors can arrive INSIDE an HTTP 200 stream (codex SSE `error` frame); apierror.go treats server_error/internal_error as retryable.
 - Anthropic refusals are STICKY (0238); OAuth tokens resolved PER TURN (anthropicauth.NewOAuthTurner) — refresh invalidates the prior access token; retired-flow creds can show as HTTP 429.
 - Models sometimes leak XML invoke syntax into JSON tool args; internal/tools/argrepair.go repairs (see tool_call `repaired`).
-- Work loop is daemon-owned, in-memory only; daemon restart loses a running loop (0280 open).
+- Work loop is daemon-owned; snapshots/digests persist per workspace (workloop_persist.go, 0280) — restart restores a running loop as finished/interrupted, never auto-resumes.
 - Codex stateless replay: Responses items ride as ONE marked ThinkingBlock; engine.messagesForBackend strips them for non-openai backends (0197).
 - Never emit user_input events for synthetic/subagent history — ReplayHistory folds ALL user_input into coordinator history (0175).
 - iOS: question rows resolve via openQuestionRowID (0247); composer clear needs the autocorrect-pulse trick (0278); unread badges are client-side watermarks (SessionReadStore); nav pushes go through HomeRouter.open with dedupe.
@@ -42,4 +42,4 @@
 
 - For user-reported TUI/session issues, check .ycc/sessions in ALL workspaces; filter events.jsonl for `session_error`.
 - For verbatim code-move refactors, diff sorted go/ast decl dumps of HEAD vs new trees (0210).
-- Selective commit (tree holds other tasks' uncommitted work): no snapshot needed — replay the implementer's Edit calls from .ycc/sessions/<sid>/events.jsonl onto `git show HEAD:file` (skip tool_result error:true edits), diff vs worktree to classify clean/shared files, verify an overlaid `git archive HEAD` temp tree (build/tests/spec-check), stage shared blobs via hash-object -w + update-index --cacheinfo (0289). Generated protos: never interdiff — buf generate in the temp tree and stage those blobs (0253/0217).
+- Selective commit (tree holds other tasks' uncommitted work): interdiff onto `git show HEAD:file` — either replay the implementer's Edit calls from .ycc/sessions/<sid>/events.jsonl (skip error:true), or patch pre-task index blobs (hashes from an early `git diff HEAD` header) → worktree delta onto the HEAD blob; verify an overlaid `git archive` temp tree (build/tests/spec-check); commit via GIT_INDEX_FILE temp index + commit-tree so other tasks' staged state is untouched (0289, 0207). Generated protos: never interdiff — buf generate in the temp tree and stage those blobs (0253/0217).
