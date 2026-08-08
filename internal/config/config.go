@@ -229,16 +229,6 @@ func (m Model) ResolveThinking() Thinking {
 	return Thinking{Thinking: think, Effort: effort, ThinkingDisplay: display}
 }
 
-// RoleThinking carries an optional per-role reasoning override (spec §7.4, §13,
-// §18.2). Each field is a single-knob level (off|low|medium|high|xhigh|max); an
-// empty field means "unset" and falls back to the per-model config then package
-// defaults. The reviewers level applies uniformly to the whole reviewer fan-out.
-type RoleThinking struct {
-	Coordinator string `toml:"coordinator,omitempty"`
-	Implementer string `toml:"implementer,omitempty"`
-	Reviewers   string `toml:"reviewers,omitempty"`
-}
-
 // Roles assigns logical model names to workflow roles.
 type Roles struct {
 	Coordinator string   `toml:"coordinator"`
@@ -248,9 +238,6 @@ type Roles struct {
 	// by that session's coordinator. Bindings are resolved at session start rather
 	// than validated here so a stale/unknown model can degrade to the default.
 	Presets map[string]string `toml:"presets,omitempty"`
-	// Thinking optionally overrides the reasoning level per role, layered above
-	// the per-model config (spec §7.4). Unset roles fall back to per-model.
-	Thinking RoleThinking `toml:"thinking,omitempty"`
 }
 
 // Role name constants for per-role lookups.
@@ -747,15 +734,6 @@ func (c *Config) validate() error {
 			return err
 		}
 	}
-	for role, lvl := range map[string]string{
-		RoleCoordinator: c.Roles.Thinking.Coordinator,
-		RoleImplementer: c.Roles.Thinking.Implementer,
-		RoleReviewers:   c.Roles.Thinking.Reviewers,
-	} {
-		if lvl != "" && !validThinkingLevel(lvl) {
-			return fmt.Errorf("roles.thinking.%s: unknown thinking level %q", role, lvl)
-		}
-	}
 	// Validate only the explicitly configured review tiers; the built-ins are
 	// always valid. An unknown strategy, an agents-tier referencing an unknown
 	// model, or a default naming no tier are configuration errors.
@@ -1147,74 +1125,50 @@ func (r *Registry) ReviewTiers() []ReviewTierInfo {
 	return out
 }
 
-// RoleThinking returns the configured per-role thinking level for a role
-// ("coordinator"|"implementer"|"reviewers"). ok is false when the role has no
-// per-role override configured (so callers fall back to per-model config).
-func (r *Registry) RoleThinking(role string) (string, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	var lvl string
-	switch role {
-	case RoleCoordinator:
-		lvl = r.cfg.Roles.Thinking.Coordinator
-	case RoleImplementer:
-		lvl = r.cfg.Roles.Thinking.Implementer
-	case RoleReviewers:
-		lvl = r.cfg.Roles.Thinking.Reviewers
-	}
-	if lvl == "" {
-		return "", false
-	}
-	return lvl, true
-}
-
-// SetRoleThinking sets the default per-role reasoning level (roles.thinking.* in
-// ycc.toml) and persists it so a thinking-level change survives a restart (spec
-// §7.4, §18.2). An empty role updates all three roles; a specific role updates
-// just that one. The level must be a valid single-knob level (off|low|medium|
-// high|xhigh|max). On a persist failure the change is reverted.
-func (r *Registry) SetRoleThinking(role, level string) error {
+// SetModelThinking sets and persists the single-knob reasoning level for the
+// logical model named name (spec §7.4, §18.2). "off" disables reasoning; an
+// effort level enables adaptive thinking at that effort. ThinkingDisplay is
+// deliberately preserved. On a persist failure the model record is reverted.
+func (r *Registry) SetModelThinking(name, level string) error {
 	if !validThinkingLevel(level) {
 		return fmt.Errorf("unknown thinking level %q", level)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	prev := r.cfg.Roles.Thinking
-	switch role {
-	case "":
-		r.cfg.Roles.Thinking.Coordinator = level
-		r.cfg.Roles.Thinking.Implementer = level
-		r.cfg.Roles.Thinking.Reviewers = level
-	case RoleCoordinator:
-		r.cfg.Roles.Thinking.Coordinator = level
-	case RoleImplementer:
-		r.cfg.Roles.Thinking.Implementer = level
-	case RoleReviewers:
-		r.cfg.Roles.Thinking.Reviewers = level
-	default:
-		return fmt.Errorf("unknown thinking role %q", role)
+	m, ok := r.cfg.Models[name]
+	if !ok {
+		return fmt.Errorf("unknown model %q", name)
 	}
+	prev := m
+	if level == "off" {
+		m.Thinking = "off"
+	} else {
+		m.Thinking = "adaptive"
+		m.Effort = level
+	}
+	r.cfg.Models[name] = m
 	if err := r.persistLocked(); err != nil {
-		r.cfg.Roles.Thinking = prev
+		r.cfg.Models[name] = prev
 		return err
 	}
 	return nil
 }
 
-// RoleThinkingLevels returns the effective default thinking level for each role,
-// resolving unset per-role overrides to the package default (high) so the
-// settings overlay can seed its pickers with the real current values.
-func (r *Registry) RoleThinkingLevels() (coordinator, implementer, reviewers string) {
+// ModelThinkingLevel returns a model's resolved reasoning as the single-knob
+// level used by settings clients: "off" when disabled, otherwise its effort.
+// Unknown names resolve to the package default, matching ThinkingFor.
+func (r *Registry) ModelThinkingLevel(name string) string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	pick := func(lvl string) string {
-		if lvl == "" {
-			return defaultEffort
-		}
-		return lvl
+	m, ok := r.cfg.Models[name]
+	if !ok {
+		m = Model{}
 	}
-	t := r.cfg.Roles.Thinking
-	return pick(t.Coordinator), pick(t.Implementer), pick(t.Reviewers)
+	th := m.ResolveThinking()
+	if th.Thinking == "" {
+		return "off"
+	}
+	return th.Effort
 }
 
 type ModelInfo struct {

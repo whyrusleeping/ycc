@@ -19,8 +19,8 @@ public protocol GlobalSettingsSource: Sendable {
 
 extension YccClient: GlobalSettingsSource {}
 
-/// Observable state for global role defaults, per-role thinking, and the logical
-/// model registry. An empty session id tells the daemon to update persisted defaults
+/// Observable state for global role defaults, assigned-model thinking, and the
+/// logical model registry. An empty session id tells the daemon to update persisted defaults
 /// without targeting a live session.
 @MainActor
 @Observable

@@ -15,14 +15,17 @@ import (
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 )
 
-// SetThinking with no live session persists the new level as the default
-// (roles.thinking.*) rather than erroring — a thinking change from the home menu
-// must survive a restart (spec §7.4, §18.2). An invalid level is still rejected.
+// SetThinking with no live session resolves the requested role to its current
+// model and persists the level in that model's config — a home-menu change must
+// survive a restart (spec §7.4, §18.2). An invalid level is still rejected.
 func TestSetThinkingNoSessionPersists(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ycc.toml")
 	if err := config.Save(path, &config.Config{
-		Models: map[string]config.Model{"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"}},
-		Roles:  config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
+		Models: map[string]config.Model{
+			"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"},
+			"b": {Backend: "ollama", BaseURL: "http://localhost:2", Model: "model-b"},
+		},
+		Roles: config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a", "b"}},
 	}); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}
@@ -52,8 +55,35 @@ func TestSetThinkingNoSessionPersists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if reloaded.Roles.Thinking.Coordinator != "low" {
-		t.Fatalf("persisted thinking = %q, want low", reloaded.Roles.Thinking.Coordinator)
+	if mdl := reloaded.Models["a"]; mdl.Thinking != "adaptive" || mdl.Effort != "low" {
+		t.Fatalf("persisted model thinking = %+v, want adaptive/low", mdl)
+	}
+	if mdl := reloaded.Models["b"]; mdl.Thinking != "" || mdl.Effort != "" {
+		t.Fatalf("untargeted reviewer model changed = %+v", mdl)
+	}
+
+	// The reviewer role targets every reviewer model. Here a is shared with the
+	// coordinator, so the coordinator row also resolves the newly stored level.
+	if _, err := srv.SetThinking(ctx, connect.NewRequest(&v1.SetThinkingRequest{
+		Role: "reviewers", Level: "max",
+	})); err != nil {
+		t.Fatalf("SetThinking(reviewers): %v", err)
+	}
+	list, err = srv.ListModels(ctx, connect.NewRequest(&v1.ListModelsRequest{}))
+	if err != nil {
+		t.Fatalf("ListModels after reviewer update: %v", err)
+	}
+	if list.Msg.CoordinatorThinking != "max" || list.Msg.ReviewersThinking != "max" {
+		t.Fatalf("shared model levels: coordinator=%q reviewers=%q, want max/max", list.Msg.CoordinatorThinking, list.Msg.ReviewersThinking)
+	}
+	reloaded, err = config.Load(path)
+	if err != nil {
+		t.Fatalf("reload after reviewer update: %v", err)
+	}
+	for _, name := range []string{"a", "b"} {
+		if mdl := reloaded.Models[name]; mdl.Thinking != "adaptive" || mdl.Effort != "max" {
+			t.Fatalf("persisted reviewer model %s = %+v, want adaptive/max", name, mdl)
+		}
 	}
 
 	// An invalid level is still rejected.

@@ -272,16 +272,16 @@ func TestSavePrivateModesAndRepairsExistingFile(t *testing.T) {
 	}
 }
 
-func TestRoleThinkingRoundTripAndValidation(t *testing.T) {
+func TestSetModelThinkingPersistsAndResolves(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ycc.toml")
 	orig := &Config{
 		Models: map[string]Model{
-			"claude": {Backend: "anthropic", BaseURL: "u", Model: "m", KeyEnv: "K"},
+			"claude": {
+				Backend: "anthropic", BaseURL: "u", Model: "m", KeyEnv: "K",
+				Thinking: "adaptive", Effort: "medium", ThinkingDisplay: "omitted",
+			},
 		},
-		Roles: Roles{
-			Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"},
-			Thinking: RoleThinking{Coordinator: "xhigh", Implementer: "low", Reviewers: "high"},
-		},
+		Roles: Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"}},
 	}
 	if err := Save(path, orig); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -290,38 +290,82 @@ func TestRoleThinkingRoundTripAndValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !reflect.DeepEqual(got, orig) {
-		t.Fatalf("round-trip mismatch:\n got=%+v\nwant=%+v", got, orig)
-	}
-
-	// Registry exposes per-role overrides; unset roles report ok=false.
 	reg := NewRegistry(got)
-	if lvl, ok := reg.RoleThinking(RoleCoordinator); !ok || lvl != "xhigh" {
-		t.Fatalf("RoleThinking(coordinator) = %q,%v", lvl, ok)
+	reg.SetPath(path)
+
+	if level := reg.ModelThinkingLevel("claude"); level != "medium" {
+		t.Fatalf("initial ModelThinkingLevel = %q, want medium", level)
 	}
-	if lvl, ok := reg.RoleThinking(RoleImplementer); !ok || lvl != "low" {
-		t.Fatalf("RoleThinking(implementer) = %q,%v", lvl, ok)
+	if err := reg.SetModelThinking("claude", "xhigh"); err != nil {
+		t.Fatalf("SetModelThinking: %v", err)
+	}
+	mdl, _ := reg.GetModel("claude")
+	if mdl.Thinking != "adaptive" || mdl.Effort != "xhigh" || mdl.ThinkingDisplay != "omitted" {
+		t.Fatalf("updated model = %+v", mdl)
+	}
+	reloaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if mdl := reloaded.Models["claude"]; mdl.Thinking != "adaptive" || mdl.Effort != "xhigh" || mdl.ThinkingDisplay != "omitted" {
+		t.Fatalf("persisted model = %+v", mdl)
 	}
 
-	// An unset role falls back (ok=false).
-	noOverride := NewRegistry(&Config{
-		Models: map[string]Model{"claude": {Backend: "anthropic", BaseURL: "u", Model: "m"}},
-		Roles:  Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"}},
-	})
-	if lvl, ok := noOverride.RoleThinking(RoleReviewers); ok || lvl != "" {
-		t.Fatalf("unset RoleThinking(reviewers) = %q,%v, want \"\",false", lvl, ok)
+	if err := reg.SetModelThinking("claude", "off"); err != nil {
+		t.Fatalf("SetModelThinking(off): %v", err)
+	}
+	if level := reg.ModelThinkingLevel("claude"); level != "off" {
+		t.Fatalf("disabled ModelThinkingLevel = %q, want off", level)
 	}
 
-	// Invalid per-role level is rejected.
-	bad := &Config{
-		Models: map[string]Model{"claude": {Backend: "anthropic", BaseURL: "u", Model: "m"}},
-		Roles: Roles{
-			Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"},
-			Thinking: RoleThinking{Coordinator: "bogus"},
-		},
+	// A failed persist reverts the in-memory model record.
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if err := bad.validate(); err == nil {
-		t.Fatal("expected validation error for invalid per-role thinking level")
+	reg.SetPath(filepath.Join(blocker, "ycc.toml"))
+	if err := reg.SetModelThinking("claude", "low"); err == nil {
+		t.Fatal("SetModelThinking with unwritable path should fail")
+	}
+	if level := reg.ModelThinkingLevel("claude"); level != "off" {
+		t.Fatalf("failed persist left model at %q, want reverted off", level)
+	}
+	if err := reg.SetModelThinking("missing", "low"); err == nil {
+		t.Fatal("unknown model should be rejected")
+	}
+	if err := reg.SetModelThinking("claude", "bogus"); err == nil {
+		t.Fatal("invalid level should be rejected")
+	}
+}
+
+func TestLegacyRolesThinkingIsIgnored(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ycc.toml")
+	const legacy = `
+[models.a]
+backend = "ollama"
+base_url = "http://localhost:11434"
+model = "a"
+
+[roles]
+coordinator = "a"
+implementer = "a"
+reviewers = ["a"]
+
+[roles.thinking]
+coordinator = "low"
+implementer = "off"
+reviewers = "max"
+`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("legacy roles.thinking should be ignored: %v", err)
+	}
+	reg := NewRegistry(cfg)
+	if level := reg.ModelThinkingLevel("a"); level != "high" {
+		t.Fatalf("legacy role table affected model level: got %q, want high", level)
 	}
 }
 

@@ -113,10 +113,10 @@ type Session struct {
 	coordinator string   // logical model name driving the coordinator
 	implementer string   // logical model name for the implementer role
 	reviewers   []string // logical model names for the reviewer role
-	// thinkLevels holds per-role reasoning overrides (spec §7.4, §18.2) keyed by
-	// roleCoordinator/roleImplementer/roleReviewers. An empty/missing entry means
-	// "use the per-role config then per-model config"; any of
-	// off/low/medium/high/xhigh/max forces that level on the role until changed.
+	// thinkLevels holds per-model reasoning overrides (spec §7.4, §18.2), keyed
+	// by logical model name. An empty/missing entry means "use the model config";
+	// any of off/low/medium/high/xhigh/max forces that level for the model until
+	// changed.
 	thinkLevels map[string]string
 	// usageSummarized tracks tasks whose usage/cost summary has already been
 	// appended to the work log this session, so each accrues at most one summary
@@ -166,7 +166,7 @@ type correction struct {
 	seq     int
 }
 
-// Role name constants used to key per-role thinking overrides and resolution.
+// Role name constants used to resolve settings requests to assigned models.
 const (
 	roleCoordinator = config.RoleCoordinator
 	roleImplementer = config.RoleImplementer
@@ -749,13 +749,13 @@ func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []str
 
 	// Rebuild the implementer / reviewer specs so the next spawn uses the new
 	// backends (the running subagents keep their context until then).
-	implSpec, err := s.agentSpec(roleImplementer, newImpl)
+	implSpec, err := s.agentSpec(newImpl)
 	if err != nil {
 		return err
 	}
 	var revSpecs []orchestrator.AgentSpec
 	for _, name := range newRevs {
-		rs, err := s.agentSpec(roleReviewers, name)
+		rs, err := s.agentSpec(name)
 		if err != nil {
 			return err
 		}
@@ -770,7 +770,7 @@ func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []str
 	if err != nil {
 		return fmt.Errorf("build coordinator backend: %w", err)
 	}
-	s.currentLoop().SetBackend(client, model, newCoord, s.reg.BackendFor(newCoord), s.thinkingFor(roleCoordinator, newCoord))
+	s.currentLoop().SetBackend(client, model, newCoord, s.reg.BackendFor(newCoord), s.thinkingFor(newCoord))
 
 	s.mu.Lock()
 	s.coordinator, s.implementer, s.reviewers = newCoord, newImpl, newRevs
@@ -826,11 +826,11 @@ func (s *Session) ReferencesModel(name string) bool {
 	return false
 }
 
-// SetThinking sets a per-role reasoning override (spec §7.4, §18.2). An empty
-// role updates all three roles (back-compat / "all"); a specific role
-// ("coordinator"|"implementer"|"reviewers") updates just that one. It updates the
-// live coordinator loop and rebuilds the implementer/reviewer specs as relevant so
-// the next spawn uses it; the change is recorded in the event log with the role.
+// SetThinking applies a reasoning level to the model(s) assigned to role (spec
+// §7.4, §18.2). An empty role targets all assigned models; reviewers targets the
+// whole reviewer fan-out. Models are deduplicated, so shared role assignments
+// receive one override and one persisted update. Every role backed by a targeted
+// model is refreshed for its next turn/spawn.
 func (s *Session) SetThinking(role, level string) error {
 	if err := s.logFailure(); err != nil {
 		return fmt.Errorf("session event log failed: %w", err)
@@ -844,36 +844,60 @@ func (s *Session) SetThinking(role, level string) error {
 		return fmt.Errorf("unknown thinking role %q", role)
 	}
 
-	// Determine the affected roles (empty => all three).
-	affected := map[string]bool{}
+	s.mu.Lock()
+	coord, impl := s.coordinator, s.implementer
+	revs := append([]string(nil), s.reviewers...)
+	byRole := map[string][]string{
+		roleCoordinator: {coord},
+		roleImplementer: {impl},
+		roleReviewers:   revs,
+	}
+	targets := map[string]bool{}
 	if role == "" {
-		affected[roleCoordinator] = true
-		affected[roleImplementer] = true
-		affected[roleReviewers] = true
+		for _, names := range byRole {
+			for _, name := range names {
+				targets[name] = true
+			}
+		}
 	} else {
-		affected[role] = true
+		for _, name := range byRole[role] {
+			targets[name] = true
+		}
+	}
+	models := make([]string, 0, len(targets))
+	for name := range targets {
+		models = append(models, name)
+	}
+	sort.Strings(models)
+	fromModel := coord // empty/all preserves the old coordinator-based "from" value
+	if role != "" && len(byRole[role]) > 0 {
+		fromModel = byRole[role][0]
 	}
 
-	s.mu.Lock()
+	// A shared model means a request naming one role can affect other roles too.
+	affected := map[string]bool{}
+	for r, names := range byRole {
+		for _, name := range names {
+			if targets[name] {
+				affected[r] = true
+				break
+			}
+		}
+	}
 	if s.thinkLevels == nil {
 		s.thinkLevels = map[string]string{}
 	}
-	from := ""
-	if role == "" {
-		from = s.thinkLevels[roleCoordinator]
-	} else {
-		from = s.thinkLevels[role]
+	from := s.thinkLevels[fromModel]
+	for _, name := range models {
+		s.thinkLevels[name] = level
 	}
-	for r := range affected {
-		s.thinkLevels[r] = level
-	}
-	impl, revs := s.implementer, append([]string(nil), s.reviewers...)
-	coord := s.coordinator
 	s.mu.Unlock()
+	if from == "" && fromModel != "" {
+		from = s.reg.ModelThinkingLevel(fromModel)
+	}
 
-	// Rebuild the implementer spec so the next spawn uses the new thinking level.
 	if affected[roleImplementer] {
-		implSpec, err := s.agentSpec(roleImplementer, impl)
+		implSpec, err := s.agentSpec(impl)
 		if err != nil {
 			return err
 		}
@@ -882,7 +906,7 @@ func (s *Session) SetThinking(role, level string) error {
 	if affected[roleReviewers] {
 		var revSpecs []orchestrator.AgentSpec
 		for _, name := range revs {
-			rs, err := s.agentSpec(roleReviewers, name)
+			rs, err := s.agentSpec(name)
 			if err != nil {
 				return err
 			}
@@ -893,21 +917,25 @@ func (s *Session) SetThinking(role, level string) error {
 	if affected[roleCoordinator] {
 		// Update the live coordinator loop's reasoning settings for its next turn
 		// (its conversation history is preserved).
-		s.currentLoop().SetThinking(s.thinkingFor(roleCoordinator, coord))
+		s.currentLoop().SetThinking(s.thinkingFor(coord))
 	}
 
 	emittedRole := role
 	if emittedRole == "" {
 		emittedRole = "all"
 	}
-	s.emitter.Emit(event.ThinkingLevelChanged, map[string]any{"role": emittedRole, "from": from, "to": level})
+	s.emitter.Emit(event.ThinkingLevelChanged, map[string]any{
+		"role": emittedRole, "models": models, "from": from, "to": level,
+	})
 	if err := s.logFailure(); err != nil {
 		return fmt.Errorf("session event log failed: %w", err)
 	}
-	// Persist the new level as the default (roles.thinking.* in ycc.toml) so a
-	// thinking-level change survives a restart and applies to future sessions.
-	if err := s.reg.SetRoleThinking(role, level); err != nil {
-		return fmt.Errorf("persist thinking level: %w", err)
+	// Persist only after the live mutation is replayable. Each target model keeps
+	// its level when role assignments later change.
+	for _, name := range models {
+		if err := s.reg.SetModelThinking(name, level); err != nil {
+			return fmt.Errorf("persist thinking level for model %q: %w", name, err)
+		}
 	}
 	return nil
 }
@@ -926,33 +954,28 @@ func thinkingForLevel(level string) (engine.Thinking, bool) {
 	}
 }
 
-// thinkingFor resolves the reasoning settings for a role/model pair applying the
-// documented precedence (spec §7.4): per-role session override → per-role config
-// → per-model config → package defaults.
-func (s *Session) thinkingFor(role, name string) engine.Thinking {
+// thinkingFor resolves reasoning for a logical model using the documented
+// precedence (spec §7.4): per-model session override → per-model config →
+// package defaults.
+func (s *Session) thinkingFor(name string) engine.Thinking {
 	s.mu.Lock()
-	level := s.thinkLevels[role]
+	level := s.thinkLevels[name]
 	s.mu.Unlock()
 	if level != "" {
 		th, _ := thinkingForLevel(level)
 		return th
 	}
-	if lvl, ok := s.reg.RoleThinking(role); ok {
-		if th, ok := thinkingForLevel(lvl); ok {
-			return th
-		}
-	}
 	th := s.reg.ThinkingFor(name)
 	return engine.Thinking{Thinking: th.Thinking, Effort: th.Effort, ThinkingDisplay: th.ThinkingDisplay}
 }
 
-// agentSpec builds an orchestrator.AgentSpec for a logical model name in a role.
-func (s *Session) agentSpec(role, name string) (orchestrator.AgentSpec, error) {
+// agentSpec builds an orchestrator.AgentSpec for a logical model name.
+func (s *Session) agentSpec(name string) (orchestrator.AgentSpec, error) {
 	_, model, err := s.reg.Build(name)
 	if err != nil {
 		return orchestrator.AgentSpec{}, fmt.Errorf("build backend %q: %w", name, err)
 	}
-	th := s.thinkingFor(role, name)
+	th := s.thinkingFor(name)
 	return orchestrator.AgentSpec{
 		Name:    name,
 		Model:   model,
@@ -1021,9 +1044,9 @@ func (s *Session) currentReviewers() []config.ResolvedReviewer {
 
 // reviewerSpec builds the agent spec for one resolved reviewer slot: its logical
 // model's backend, its tier label, its focus prompt, and its reasoning level
-// (a per-reviewer `thinking` overrides the reviewers-role resolution).
+// (a per-reviewer `thinking` overrides the model-level resolution).
 func (s *Session) reviewerSpec(rv config.ResolvedReviewer) (orchestrator.AgentSpec, error) {
-	spec, err := s.agentSpec(roleReviewers, rv.Model)
+	spec, err := s.agentSpec(rv.Model)
 	if err != nil {
 		return orchestrator.AgentSpec{}, err
 	}
@@ -2006,13 +2029,13 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 	}
 	implName := m.reg.ImplementerName()
 	reviewerNames := append([]string(nil), m.reg.ReviewerNames()...)
-	implSpec, err := m.agentSpec(roleImplementer, implName)
+	implSpec, err := m.agentSpec(implName)
 	if err != nil {
 		return nil, err
 	}
 	var reviewers []orchestrator.AgentSpec
 	for _, name := range reviewerNames {
-		rs, err := m.agentSpec(roleReviewers, name)
+		rs, err := m.agentSpec(name)
 		if err != nil {
 			return nil, err
 		}
@@ -2084,7 +2107,7 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 		if err != nil {
 			return nil, fmt.Errorf("build coordinator backend: %w", err)
 		}
-		th := s.thinkingFor(roleCoordinator, coord)
+		th := s.thinkingFor(coord)
 		loop := &engine.Loop{
 			Client: client, Model: model, ModelName: coord, Backend: m.reg.BackendFor(coord),
 			System: sys, Tools: reg, Emitter: emitter,
@@ -2361,16 +2384,16 @@ func (m *Manager) CommitDiff(project, sha string) (string, error) {
 	return repo.Show(sha)
 }
 
-// agentSpec builds an orchestrator.AgentSpec for a logical model name in a role,
-// validating that it resolves now so the per-spawn closures can assume success. It
-// honors the per-role thinking config (per-role config → per-model config →
-// defaults); session-level overrides are layered on later via Session.SetThinking.
-func (m *Manager) agentSpec(role, name string) (orchestrator.AgentSpec, error) {
+// agentSpec builds an orchestrator.AgentSpec for a logical model name,
+// validating that it resolves now so the per-spawn closures can assume success.
+// Thinking comes from the model config and package defaults; live session
+// overrides are layered on later via Session.SetThinking.
+func (m *Manager) agentSpec(name string) (orchestrator.AgentSpec, error) {
 	_, model, err := m.reg.Build(name)
 	if err != nil {
 		return orchestrator.AgentSpec{}, fmt.Errorf("build backend %q: %w", name, err)
 	}
-	th := m.thinkingFor(role, name)
+	th := m.reg.ThinkingFor(name)
 	return orchestrator.AgentSpec{
 		Name:    name,
 		Model:   model,
@@ -2383,18 +2406,6 @@ func (m *Manager) agentSpec(role, name string) (orchestrator.AgentSpec, error) {
 		Effort:          th.Effort,
 		ThinkingDisplay: th.ThinkingDisplay,
 	}, nil
-}
-
-// thinkingFor resolves reasoning settings for a role/model pair at startup,
-// applying per-role config → per-model config → defaults (the session-level
-// override layer applies once the session is live).
-func (m *Manager) thinkingFor(role, name string) config.Thinking {
-	if lvl, ok := m.reg.RoleThinking(role); ok {
-		if th, ok := thinkingForLevel(lvl); ok {
-			return config.Thinking{Thinking: th.Thinking, Effort: th.Effort, ThinkingDisplay: th.ThinkingDisplay}
-		}
-	}
-	return m.reg.ThinkingFor(name)
 }
 
 // Get returns a session by id.
@@ -2572,12 +2583,43 @@ func (m *Manager) SetRoles(coordinator, implementer string, reviewers []string) 
 	return m.reg.SetRoles(coordinator, implementer, reviewers)
 }
 
-// SetRoleThinking updates the default per-role reasoning level (roles.thinking.*)
-// and persists it to ycc.toml (spec §7.4, §18.2). Used when a thinking change is
-// made with no live session; an in-session change goes through
-// Session.SetThinking, which applies it live before persisting the same way.
-func (m *Manager) SetRoleThinking(role, level string) error {
-	return m.reg.SetRoleThinking(role, level)
+// SetThinking resolves role to its currently assigned model(s) and persists the
+// level in each model's config (spec §7.4, §18.2). An empty role targets all
+// assigned models; shared assignments are deduplicated. Used when there is no
+// live session to update.
+func (m *Manager) SetThinking(role, level string) error {
+	if _, ok := thinkingForLevel(level); !ok {
+		return fmt.Errorf("unknown thinking level %q", level)
+	}
+	var names []string
+	switch role {
+	case "":
+		names = append(names, m.reg.CoordinatorName(), m.reg.ImplementerName())
+		names = append(names, m.reg.ReviewerNames()...)
+	case roleCoordinator:
+		names = []string{m.reg.CoordinatorName()}
+	case roleImplementer:
+		names = []string{m.reg.ImplementerName()}
+	case roleReviewers:
+		names = m.reg.ReviewerNames()
+	default:
+		return fmt.Errorf("unknown thinking role %q", role)
+	}
+	seen := make(map[string]bool, len(names))
+	models := make([]string, 0, len(names))
+	for _, name := range names {
+		if name != "" && !seen[name] {
+			seen[name] = true
+			models = append(models, name)
+		}
+	}
+	sort.Strings(models)
+	for _, name := range models {
+		if err := m.reg.SetModelThinking(name, level); err != nil {
+			return fmt.Errorf("persist thinking level for model %q: %w", name, err)
+		}
+	}
+	return nil
 }
 
 // Roles returns the current default per-role assignment (config.Roles) so the
@@ -2586,10 +2628,15 @@ func (m *Manager) Roles() (coordinator, implementer string, reviewers []string) 
 	return m.reg.CoordinatorName(), m.reg.ImplementerName(), m.reg.ReviewerNames()
 }
 
-// ThinkingLevels returns the effective default thinking level per role so the
-// settings overlay can seed its thinking pickers with the real current values.
+// ThinkingLevels returns each role's current model-level setting so the overlay
+// can seed its role-oriented controls. Reviewers use the first assigned model.
 func (m *Manager) ThinkingLevels() (coordinator, implementer, reviewers string) {
-	return m.reg.RoleThinkingLevels()
+	coord, impl, revs := m.Roles()
+	reviewer := ""
+	if len(revs) > 0 {
+		reviewer = revs[0]
+	}
+	return m.reg.ModelThinkingLevel(coord), m.reg.ModelThinkingLevel(impl), m.reg.ModelThinkingLevel(reviewer)
 }
 
 // RemoveModel deletes a logical model backend; persist also writes ycc.toml

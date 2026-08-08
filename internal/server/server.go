@@ -425,8 +425,9 @@ func (s *Server) AnswerQuestions(_ context.Context, req *connect.Request[v1.Answ
 	return connect.NewResponse(&v1.AnswerQuestionsResponse{}), nil
 }
 
-// ListModels enumerates the configured logical models for the settings overlay
-// pickers (spec §13, §18.2).
+// ListModels enumerates the configured logical models and current role assignments
+// for the settings overlay (spec §13, §18.2). The three role-oriented thinking
+// fields resolve from each role's currently assigned model (first reviewer model).
 func (s *Server) ListModels(_ context.Context, _ *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error) {
 	var models []*v1.ModelInfo
 	for _, m := range s.mgr.Models() {
@@ -576,10 +577,10 @@ func (s *Server) SetRoleConfig(_ context.Context, req *connect.Request[v1.SetRol
 	return connect.NewResponse(&v1.SetRoleConfigResponse{}), nil
 }
 
-// SetThinking changes a thinking/effort level per role (empty role = all roles)
-// (spec §7.4, §18.2). When session_id names a live session the change applies to
-// it immediately and is persisted; with an empty/unknown session_id it just
-// updates the persisted default (roles.thinking.*) so it survives a restart.
+// SetThinking maps a role (empty = all roles) to its currently assigned model(s)
+// and stores the requested thinking/effort level on those models (spec §7.4,
+// §18.2). A live session is updated immediately; without one, the current default
+// role assignments are resolved and their model entries are persisted.
 func (s *Server) SetThinking(_ context.Context, req *connect.Request[v1.SetThinkingRequest]) (*connect.Response[v1.SetThinkingResponse], error) {
 	if sess, ok := s.mgr.Get(req.Msg.SessionId); ok {
 		if err := sess.SetThinking(req.Msg.Role, req.Msg.Level); err != nil {
@@ -587,7 +588,7 @@ func (s *Server) SetThinking(_ context.Context, req *connect.Request[v1.SetThink
 		}
 		return connect.NewResponse(&v1.SetThinkingResponse{}), nil
 	}
-	if err := s.mgr.SetRoleThinking(req.Msg.Role, req.Msg.Level); err != nil {
+	if err := s.mgr.SetThinking(req.Msg.Role, req.Msg.Level); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	return connect.NewResponse(&v1.SetThinkingResponse{}), nil

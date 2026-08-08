@@ -14,10 +14,10 @@ import (
 	"github.com/whyrusleeping/ycc/internal/clientconfig"
 )
 
-// setThinking issues SetThinking per role (spec §7.4, §18.2). With a live session
-// it applies to that session and persists; with no session an empty session_id
-// just persists the new default. An empty role updates all roles. Either way the
-// level is written to ycc.toml so it survives a restart.
+// setThinking issues SetThinking for the model(s) currently assigned to a role
+// (spec §7.4, §18.2). With a live session it applies immediately; without one it
+// resolves the default assignment. An empty role targets all assigned models.
+// Either way the model entries are persisted to ycc.toml.
 func (m model) setThinking(role, level string) tea.Cmd {
 	return func() tea.Msg {
 		if _, err := m.client.SetThinking(m.ctx, connect.NewRequest(&v1.SetThinkingRequest{
@@ -191,9 +191,9 @@ func (m model) overlayAdjust(d int) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// overlayAdjustThinking cycles the per-role thinking level under the cursor
-// (+/-). The thinking level lives inline on each role's row (e.g. "claude opus
-// (xhigh)") rather than as a separate menu entry.
+// overlayAdjustThinking cycles the current role model's thinking level (+/-).
+// The control lives inline on each role's row (e.g. "claude opus (xhigh)"); for
+// reviewers it updates every currently assigned reviewer model.
 func (m model) overlayAdjustThinking(d int) (tea.Model, tea.Cmd) {
 	var role string
 	switch m.ovCursor {

@@ -928,7 +928,7 @@ service SessionService {
   rpc RemoveModel(RemoveModelRequest) returns (RemoveModelResponse);    // delete a model backend (§18.2, task 0041)
   rpc DiscoverModels(DiscoverModelsRequest) returns (DiscoverModelsResponse); // list a connection's model ids (§13, §18.2)
   rpc SetRoleConfig(SetRoleConfigRequest) returns (SetRoleConfigResponse);
-  rpc SetThinking(SetThinkingRequest) returns (SetThinkingResponse);    // per-role reasoning level
+  rpc SetThinking(SetThinkingRequest) returns (SetThinkingResponse);    // reasoning level for a role's model(s)
   rpc SetWorkImplementation(SetWorkImplementationRequest) returns (SetWorkImplementationResponse); // next session
 
   rpc GetSessionTranscript(GetSessionTranscriptRequest) returns (GetSessionTranscriptResponse); // read-only transcript (§18.6)
@@ -958,12 +958,13 @@ Notable message shapes for the settings + structured-question work:
   repeated string reviewers }` — per-role model assignment by logical model name (§13).
   Empty fields leave that role unchanged.
 - `SetThinkingRequest { session_id; string role; string level }` — set a reasoning level
-  (`off | low | medium | high | xhigh | max`) for one **role** (`coordinator | implementer |
-  reviewers`); an empty `role` applies the level to **every** role at once. The override takes
-  precedence over that role's config thinking until changed (§13). `off` disables reasoning;
-  any effort level maps to adaptive thinking at that effort with summarized display. (The
-  prior shape was session-wide with no `role` — adding `role` makes thinking independently
-  configurable per agent.)
+  (`off | low | medium | high | xhigh | max`) on the logical model(s) currently assigned to
+  `role` (`coordinator | implementer | reviewers`). `reviewers` means every reviewer model;
+  an empty `role` means all three roles' models, deduplicated. The role is therefore a model
+  selector, not a place where reasoning state is stored. The daemon persists the level in
+  each affected `[models.X]` entry. A live session also keeps a per-model override so the
+  next turn/spawn changes immediately. `off` disables reasoning; any effort level maps to
+  adaptive thinking at that effort with summarized display (§13).
 - `ListModelsResponse { repeated ModelInfo models; string work_implementation }` reports the
   effective `work.implementation` (`delegate` when unset) alongside the settings seed data.
   `SetWorkImplementationRequest { string implementation }` accepts `delegate | direct`, always
@@ -1026,11 +1027,6 @@ reviewers   = ["claude", "gpt", "glm"]   # multi-model review
 [roles.presets]                # optional preset → logical-model session binding
 memory-groom = "gemini"        # run doc cleanup from a different perspective
 spec-doctor  = "gpt"
-
-[roles.thinking]               # optional per-role reasoning override (see below)
-coordinator = "xhigh"          # off | low | medium | high | xhigh | max
-implementer = "low"
-reviewers   = "high"           # one level for the whole reviewer fan-out
 
 max_tokens  = 32000  # per-turn output token cap (0 => backend default)
 max_turns   = 1000   # per-Run tool-call turn cap; runaway/cost backstop (0 => engine default, 1000)
@@ -1162,24 +1158,24 @@ per-session/role warning in the session log (see §7.4).
 **Defaults are reasoning-on** (`thinking="adaptive"`, `effort="high"`,
 `thinking_display="summarized"`) — this is an agentic coding harness, so reasoning is
 desired by default, including on the no-config single-backend path. Set `thinking="off"`
-(or `""`) on a model to disable reasoning.
+on a model to disable reasoning.
 
-**Per-role reasoning** lets each agent reason at a different depth even when roles share a
-backend (e.g. coordinator `xhigh`, implementer `low`, reviewers `high`). An optional
-`[roles.thinking]` sub-table assigns a single-knob level (`off | low | medium | high | xhigh
-| max`) per role; `reviewers` takes one level applied to the whole fan-out. The same levels
-are settable mid-session per role via `SetThinking(role, level)` (§12, §18.2). Reasoning for
-an agent is resolved with this precedence (highest wins):
+Thinking levels attach to **logical models, not roles**. Roles that share a model necessarily
+share its reasoning depth; swapping a role to another model picks up the newly assigned
+model's own level. `SetThinking(role, level)` keeps its role-oriented wire shape for client
+compatibility, but the daemon resolves that role to its current model(s), deduplicates them,
+and updates each model. `reviewers` selects every reviewer model and an empty role selects
+all coordinator, implementer, and reviewer models. Reasoning for an agent is resolved with
+this precedence (highest wins):
 
-1. **per-role session override** (settings overlay / `SetThinking`),
-2. **per-role config** (`[roles.thinking]`),
-3. **per-model config** (`[models.X]` thinking/effort/display),
-4. **package defaults** (adaptive / high / summarized).
+1. **per-model session override** (a live-session `SetThinking`),
+2. **per-model config** (`[models.X]` thinking/effort/display),
+3. **package defaults** (adaptive / high / summarized).
 
 A level maps to adaptive thinking at that effort with summarized display; `off` disables
-reasoning. The resolved settings are applied per **role** to every agent: coordinator,
-implementer, and each reviewer (a reviewer resolves its model fallback independently, but the
-`reviewers` role override/config applies to all reviewers uniformly).
+reasoning. Settings changes persist into each affected `[models.X]` entry, so they survive a
+restart and follow that model through later role reassignment. Legacy `[roles.thinking]`
+tables are silently ignored when loading existing `ycc.toml` files.
 
 `max_turns` bounds how many tool-call turns a single engine `Run` may take. It is a
 **runaway backstop**, not a normal stopping condition: the high default (1000) keeps the
@@ -1247,7 +1243,7 @@ slot, described either way:
 - **`[[reviews.tiers.X.reviewers]]`** — the long form, one table per reviewer slot with
   `model` (required), optional `name` (the label; defaults to the model), optional `prompt`
   (the reviewer's **focus**), and optional `thinking` (a per-reviewer reasoning level that
-  overrides the `reviewers` role level for that slot). Slots are independent, so the **same
+  overrides the slot model's resolved per-model thinking, for that slot only). Slots are independent, so the **same
   model may appear several times** under different focuses; duplicate labels are
   disambiguated (`claude`, `claude#2`).
 
@@ -1515,16 +1511,18 @@ the user can't fat-finger their way out of a running session.
 Overlay contents:
 
 - **Thinking level** — `off | low | medium | high | xhigh | max`, changeable
-  **mid-session**, set **per role** (coordinator / implementer / reviewers). Each role has
-  its own reasoning override that applies to that agent (and the reviewer fan-out for
-  `reviewers`), taking precedence over that role's config thinking (§13) until changed.
-  Selecting a value issues `SetThinking(sessionID, role, level)`; the daemon updates the live
-  coordinator loop (when the coordinator role changes) and rebuilds the implementer/reviewer
-  specs so the next spawn uses it, emits a `thinking_level_changed` event carrying the role,
-  and **persists** the new level as the default (`roles.thinking.*` in `ycc.toml`) so it
-  survives a restart. With no live session (changed from the home menu) an empty `session_id`
-  just persists the default. `off` disables reasoning; any effort level maps to adaptive
-  thinking at that effort with summarized display.
+  **mid-session** from role-oriented rows (coordinator / implementer / reviewers). Selecting
+  a value issues `SetThinking(sessionID, role, level)`; the role selects the currently assigned
+  model(s), rather than owning an independent setting. The reviewer row updates every reviewer
+  model; an empty role updates all assigned models, deduplicated. The daemon refreshes every
+  live role backed by an affected model, emits a `thinking_level_changed` event carrying the
+  requested role and affected model names, and **persists** the level in each `[models.X]`
+  entry so it survives a restart and follows the model through role changes. With no live
+  session (changed from the home menu), an empty `session_id` resolves the default role
+  assignments and persists those model entries. `ListModels` seeds each role row from its
+  current model's resolved level (the first reviewer model for the reviewer row). `off`
+  disables reasoning; any effort level maps to adaptive thinking at that effort with
+  summarized display.
 - **Model / role configuration** — the headline feature. Per-role model selection:
   - **coordinator** — pick one model
   - **implementer** — pick one model

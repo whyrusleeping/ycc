@@ -317,7 +317,7 @@ type model struct {
 	overlay      bool
 	ovCursor     int
 	models       []*v1.ModelInfo   // populated from ListModels
-	thinkLevels  map[string]string // per-role thinking levels (coordinator|implementer|reviewers)
+	thinkLevels  map[string]string // role-row views of assigned models' thinking levels
 	roleCoord    string            // logical model driving the coordinator
 	roleImpl     string            // logical model for the implementer
 	roleReviewrs []string          // logical models for reviewers (multi-select)

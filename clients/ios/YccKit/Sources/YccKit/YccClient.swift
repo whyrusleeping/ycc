@@ -471,9 +471,9 @@ public final class YccClient: Sendable {
 
     // MARK: - Session settings (task 0187)
 
-    /// List the configured logical models plus the CURRENT per-role assignments
-    /// and per-role thinking levels (`ListModels`, spec §13/§18.2). The settings
-    /// sheet seeds its pickers from this so it reflects reality, not defaults.
+    /// List configured logical models plus CURRENT role assignments and each
+    /// assigned model's thinking level (`ListModels`, spec §13/§18.2). The
+    /// settings sheet seeds its pickers from this so it reflects reality.
     public func listModels() async throws -> Ycc_V1_ListModelsResponse {
         let response = await generated.listModels(request: Ycc_V1_ListModelsRequest())
         switch response.result {

@@ -381,7 +381,7 @@ do not permanently remove access to the daemon-wide inbox.
    - a **session settings sheet** uses `SetThinking` and
      `SetRoleConfig` (+ `ListModels`) against a live session;
    - a home-screen **global Settings destination** edits persisted default role
-     assignments and per-role thinking without requiring a live session, and manages
+     assignments and the assigned models' thinking without requiring a live session, and manages
      logical model backends (add/edit/duplicate/remove, provider discovery, auth,
      endpoint, reasoning, and pricing) through `GetModelConfig`, `UpsertModel`,
      `RemoveModel`, and `DiscoverModels`. Secret values never cross the wire; the

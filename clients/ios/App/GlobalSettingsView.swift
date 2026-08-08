@@ -4,7 +4,7 @@ import YccProto
 
 /// Daemon-wide settings reachable from the iOS home screen. Unlike
 /// `SessionSettingsView`, these controls do not require a live session: they edit
-/// persisted role/thinking defaults and the logical model registry itself.
+/// persisted role assignments, model thinking, and the logical model registry.
 struct GlobalSettingsView: View {
     @Environment(AppModel.self) private var app
     @State private var model: GlobalSettingsModel

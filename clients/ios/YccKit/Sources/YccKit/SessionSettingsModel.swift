@@ -8,14 +8,14 @@ import YccProto
 /// production conformer. (Mirrors the ``UsageSource`` / ``NewSessionSource``
 /// patterns.)
 public protocol SessionSettingsSource: Sendable {
-    /// Configured logical models + CURRENT per-role assignments and per-role
-    /// thinking levels (`ListModels`); seeds the pickers with reality.
+    /// Configured logical models + CURRENT role assignments and each assigned
+    /// model's thinking level (`ListModels`); seeds the pickers with reality.
     func listModels() async throws -> Ycc_V1_ListModelsResponse
     /// Reassign per-role logical models (`SetRoleConfig`); empty fields unchanged.
     func setRoleConfig(
         sessionId: String, coordinator: String, implementer: String, reviewers: [String]
     ) async throws
-    /// Change a thinking/effort level (`SetThinking`); empty role = all roles.
+    /// Change assigned model thinking (`SetThinking`); empty role = all role models.
     func setThinking(sessionId: String, level: String, role: String) async throws
 }
 
@@ -56,9 +56,9 @@ public enum ThinkingLevel: String, CaseIterable, Sendable, Identifiable {
     }
 }
 
-/// The role a thinking-level change targets (spec §7.4/§18.2). `all` maps to an
-/// empty wire role (the daemon applies it to every role); the others map to
-/// their name. Kept typed so the scope picker is exhaustive.
+/// The role whose assigned model(s) a thinking-level change targets (spec
+/// §7.4/§18.2). `all` maps to an empty wire role (all assigned models); the
+/// others map to their name. Kept typed so the scope picker is exhaustive.
 public enum ThinkingRole: String, CaseIterable, Sendable, Identifiable {
     case all
     case coordinator
@@ -67,7 +67,7 @@ public enum ThinkingRole: String, CaseIterable, Sendable, Identifiable {
 
     public var id: String { rawValue }
 
-    /// The value sent in `SetThinkingRequest.role` (`""` = all roles).
+    /// The value sent in `SetThinkingRequest.role` (`""` = all assigned models).
     public var wireValue: String { self == .all ? "" : rawValue }
 
     /// A human-facing label for the picker.
@@ -83,8 +83,8 @@ public enum ThinkingRole: String, CaseIterable, Sendable, Identifiable {
 
 /// Drives the per-session settings sheet (spec §18.2 analog; docs/design/
 /// ios-client.md §6 phase 3 step 8): the phone analog of the TUI settings
-/// overlay. Seeds its pickers from ``ListModels`` (per-role model assignments +
-/// per-role thinking), then applies each change against the live session via
+/// overlay. Seeds its pickers from ``ListModels`` (role model assignments + each
+/// assigned model's thinking), then applies each change against the live session via
 /// the injected ``SessionSettingsSource`` — surfacing the daemon's error verbatim
 /// on an invalid combination. `@MainActor` because it publishes observable UI
 /// state; the source is injected so the logic is testable headlessly.
@@ -105,8 +105,8 @@ public final class SessionSettingsModel {
     /// The selected thinking level for ``thinkingRole``.
     public var thinkingLevel: ThinkingLevel = .medium
 
-    /// Per-role thinking levels last known from the daemon, so switching the
-    /// scope picker reflects that role's current level.
+    /// Role-row views of model thinking last known from the daemon, so switching
+    /// scope reflects the currently assigned model's level.
     public private(set) var coordinatorThinking: ThinkingLevel = .medium
     public private(set) var implementerThinking: ThinkingLevel = .medium
     public private(set) var reviewersThinking: ThinkingLevel = .medium
@@ -146,8 +146,8 @@ public final class SessionSettingsModel {
         self.sessionCoordinator = sessionCoordinator
     }
 
-    /// Load the model list and seed every picker from the daemon's CURRENT
-    /// per-role assignments + per-role thinking. Unauthorized bubbles up via
+    /// Load the model list and seed every picker from the daemon's CURRENT role
+    /// assignments + assigned-model thinking. Unauthorized bubbles up via
     /// ``unauthorized`` for the view to handle.
     public func load() async {
         isLoading = true
@@ -188,14 +188,14 @@ public final class SessionSettingsModel {
         }
     }
 
-    /// Reflect the current-per-role thinking level when the scope picker changes.
+    /// Reflect the assigned model's thinking level when the scope picker changes.
     public func selectThinkingRole(_ role: ThinkingRole) {
         thinkingRole = role
         thinkingLevel = thinkingLevelFor(role)
     }
 
     /// Whether applying `level` at `role` scope would change anything. For the
-    /// `all` scope every role is checked, so unifying divergent per-role levels
+    /// `all` scope every role row is checked, so unifying divergent model levels
     /// is never suppressed.
     private func needsThinkingApply(role: ThinkingRole, level: ThinkingLevel) -> Bool {
         switch role {
@@ -229,9 +229,8 @@ public final class SessionSettingsModel {
         }
     }
 
-    /// Apply the selected thinking level for the selected scope (`SetThinking`).
-    /// On success updates the cached per-role level(s) so the scope picker stays
-    /// consistent.
+    /// Apply the selected thinking level to the selected scope's model(s)
+    /// (`SetThinking`). On success updates the cached role-row level(s).
     public func applyThinking() async {
         let role = thinkingRole
         let level = thinkingLevel
