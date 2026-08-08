@@ -68,7 +68,7 @@ func scanSessionHistory(workspace string) ([]SessionSummary, error) {
 			Mode:         proj.Mode,
 			Status:       proj.Status,
 			Workspace:    ws,
-			Title:        firstUserPrompt(evs),
+			Title:        deriveTitle(evs),
 			StartedAt:    evs[0].TS,
 			LastActivity: evs[len(evs)-1].TS,
 			FocusTasks:   focusTasks(evs),
@@ -111,20 +111,52 @@ func readEventsTolerant(path string) []event.Event {
 	return out
 }
 
-// firstUserPrompt derives a short, single-line title from the first non-empty
-// user_input text (the opening prompt / kickoff), truncated to ~80 runes. Empty
-// if the session has no user input yet.
-func firstUserPrompt(evs []event.Event) string {
+// deriveTitle uses the first user_input as the session title unless it is one
+// of the canned mode kickoffs (or is absent). In that case, the first task focus
+// is more useful: its id and optional title identify the work the session chose.
+// Custom user prompts remain authoritative even when the session later focuses
+// a task.
+func deriveTitle(evs []event.Event) string {
+	var opening string
 	for _, ev := range evs {
 		if ev.Type != event.UserInput {
 			continue
 		}
 		text, _ := ev.Data["text"].(string)
-		if title := truncateTitle(text); title != "" {
-			return title
+		if text = strings.TrimSpace(text); text != "" {
+			opening = text
+			break
 		}
 	}
-	return ""
+
+	if opening == "" || isDefaultPrompt(opening) {
+		for _, ev := range evs {
+			if ev.Type != event.TaskFocus {
+				continue
+			}
+			task, _ := ev.Data["task"].(string)
+			if task = strings.TrimSpace(task); task == "" {
+				continue
+			}
+			title, _ := ev.Data["title"].(string)
+			if title = strings.TrimSpace(title); title != "" {
+				return truncateTitle(task + " — " + title)
+			}
+			return truncateTitle(task)
+		}
+	}
+
+	return truncateTitle(opening)
+}
+
+func isDefaultPrompt(prompt string) bool {
+	prompt = strings.TrimSpace(prompt)
+	for _, mode := range []string{"work", "chat", "pm"} {
+		if prompt == strings.TrimSpace(defaultPrompt(mode)) {
+			return true
+		}
+	}
+	return false
 }
 
 // focusTasks collects the distinct, non-empty task ids from task_focus events,

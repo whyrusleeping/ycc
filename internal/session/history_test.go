@@ -105,6 +105,55 @@ func TestScanSessionHistoryTitleAndFocus(t *testing.T) {
 	}
 }
 
+func TestDeriveTitleFromTaskFocus(t *testing.T) {
+	canned := defaultPrompt("work")
+	tests := []struct {
+		name string
+		evs  []event.Event
+		want string
+	}{
+		{
+			name: "canned kickoff with task title",
+			evs: []event.Event{
+				{Type: event.UserInput, Data: map[string]any{"text": canned}},
+				{Type: event.TaskFocus, Data: map[string]any{"task": "0007", "title": "Implement the widget"}},
+			},
+			want: "0007 — Implement the widget",
+		},
+		{
+			name: "task focus without title",
+			evs: []event.Event{
+				{Type: event.UserInput, Data: map[string]any{"text": canned}},
+				{Type: event.TaskFocus, Data: map[string]any{"task": "0008"}},
+			},
+			want: "0008",
+		},
+		{
+			name: "custom prompt remains authoritative",
+			evs: []event.Event{
+				{Type: event.UserInput, Data: map[string]any{"text": "Fix the flaky session test"}},
+				{Type: event.TaskFocus, Data: map[string]any{"task": "0009", "title": "Different task"}},
+			},
+			want: "Fix the flaky session test",
+		},
+		{
+			name: "canned kickoff without focus",
+			evs: []event.Event{
+				{Type: event.UserInput, Data: map[string]any{"text": canned}},
+			},
+			want: truncateTitle(canned),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := deriveTitle(tt.evs); got != tt.want {
+				t.Fatalf("deriveTitle() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestTruncateTitle(t *testing.T) {
 	if got := truncateTitle("  hello\nworld  "); got != "hello world" {
 		t.Fatalf("collapse: %q", got)
