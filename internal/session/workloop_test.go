@@ -2,12 +2,14 @@ package session
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/docs"
+	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/notify"
 )
 
@@ -24,6 +26,26 @@ func TestDecideLoopStopsOnNoProgress(t *testing.T) {
 	d := decideLoop(loopDecideInput{next: "0001", loopStarted: true, fp: "same", prevFP: "same"})
 	if !d.stop || d.outcome != "loop stopped: session made no progress" {
 		t.Fatalf("expected no-progress stop, got %+v", d)
+	}
+}
+
+func TestDecideLoopErroredSessionSkipsNoProgress(t *testing.T) {
+	d := decideLoop(loopDecideInput{
+		next: "0001", loopStarted: true, fp: "same", prevFP: "same", prevErrored: true,
+	})
+	if d.stop {
+		t.Fatalf("expected errored session to skip no-progress guard, got %+v", d)
+	}
+
+	// Empty backlog and loop budgets remain authoritative even after an error.
+	if d := decideLoop(loopDecideInput{loopStarted: true, prevErrored: true}); !d.stop {
+		t.Fatalf("expected empty backlog to stop, got %+v", d)
+	}
+	if d := decideLoop(loopDecideInput{
+		next: "0001", loopStarted: true, prevErrored: true,
+		cumTokens: 10, loopTokens: 10,
+	}); !d.stop || !strings.Contains(d.outcome, "budget reached") {
+		t.Fatalf("expected budget cap to stop, got %+v", d)
 	}
 }
 
@@ -101,6 +123,22 @@ func TestTopReadyTaskDaemon(t *testing.T) {
 	// Highest priority ready task is 0003 (prio 2, ties break by id vs 0004).
 	if got := topReadyTask(tasks); got != "0003" {
 		t.Fatalf("topReadyTask = %q, want 0003", got)
+	}
+}
+
+func TestLoopSessionFailureUsesLastStructuredError(t *testing.T) {
+	events := []event.Event{
+		{Type: event.SessionError, Data: map[string]any{"kind": "auth", "retryable": false}},
+		{Type: event.ModelTurn},
+		{Type: event.SessionError, Data: map[string]any{"kind": "rate_limit", "retryable": true}},
+	}
+	kind, retryable := loopSessionFailure(events)
+	if kind != "rate_limit" || !retryable {
+		t.Fatalf("failure = %q/%v", kind, retryable)
+	}
+	kind, retryable = loopSessionFailure([]event.Event{{Type: event.SessionError}})
+	if kind != "unknown" || retryable {
+		t.Fatalf("missing fields failure = %q/%v", kind, retryable)
 	}
 }
 
@@ -351,6 +389,151 @@ func TestWorkLoopNoProgressStops(t *testing.T) {
 	}
 	if final.SessionsRun != 1 {
 		t.Fatalf("sessions run = %d, want 1", final.SessionsRun)
+	}
+}
+
+func TestWorkLoopRetryableFailureWaitsThenResumes(t *testing.T) {
+	var m *Manager
+	var ws string
+	calls := 0
+	factory := func(wl *workLoop) func(context.Context) (loopSessRec, bool, error) {
+		return func(context.Context) (loopSessRec, bool, error) {
+			calls++
+			if calls == 1 {
+				return loopSessRec{id: "failed", errKind: "rate_limit", errRetryable: true}, false, nil
+			}
+			store := docs.NewStore(ws)
+			tasks, _ := store.List()
+			id := topReadyTask(tasks)
+			_, err := store.Update(id, func(task *docs.Task) { task.Status = docs.StatusDone })
+			return loopSessRec{id: "recovered", focus: id, priceStatus: "unpriced"}, false, err
+		}
+	}
+	m, _, ws = loopTestManager(t, factory)
+	var waits []time.Duration
+	m.newLoopWait = func(*workLoop) func(time.Duration) bool {
+		return func(delay time.Duration) bool {
+			waits = append(waits, delay)
+			return true
+		}
+	}
+	store := docs.NewStore(ws)
+	if _, err := store.Create("recover after limit reset", "", 1, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.StartWorkLoop("demo"); err != nil {
+		t.Fatal(err)
+	}
+	final := waitLoopFinished(t, m, "demo")
+	if final.Outcome != "loop complete: no ready tasks remain" || final.SessionsRun != 2 {
+		t.Fatalf("final loop = %+v", final)
+	}
+	if len(waits) != 1 || waits[0] != time.Minute {
+		t.Fatalf("waits = %v, want [1m]", waits)
+	}
+}
+
+func TestWorkLoopNonRetryableFailureStopsTruthfully(t *testing.T) {
+	var store *docs.Store
+	factory := func(*workLoop) func(context.Context) (loopSessRec, bool, error) {
+		return func(context.Context) (loopSessRec, bool, error) {
+			tasks, _ := store.List()
+			id := topReadyTask(tasks)
+			_, _ = store.Update(id, func(task *docs.Task) { task.Status = docs.StatusBlocked })
+			return loopSessRec{id: "failed", focus: id, errKind: "auth"}, false, nil
+		}
+	}
+	m, _, ws := loopTestManager(t, factory)
+	store = docs.NewStore(ws)
+	if _, err := store.Create("requires provider", "", 1, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.StartWorkLoop("demo"); err != nil {
+		t.Fatal(err)
+	}
+	final := waitLoopFinished(t, m, "demo")
+	if want := "loop stopped: session failed (auth)"; final.Outcome != want {
+		t.Fatalf("outcome = %q, want %q", final.Outcome, want)
+	}
+	if len(final.Blocked) != 1 {
+		t.Fatalf("blocked digest = %+v, want session's pre-failure backlog update", final.Blocked)
+	}
+}
+
+func TestWorkLoopProviderPatienceExhaustion(t *testing.T) {
+	calls := 0
+	factory := func(*workLoop) func(context.Context) (loopSessRec, bool, error) {
+		return func(context.Context) (loopSessRec, bool, error) {
+			calls++
+			return loopSessRec{id: fmt.Sprintf("failed-%d", calls), errKind: "overloaded", errRetryable: true}, false, nil
+		}
+	}
+	m, _, ws := loopTestManager(t, factory)
+	var waited time.Duration
+	m.newLoopWait = func(*workLoop) func(time.Duration) bool {
+		return func(delay time.Duration) bool { waited += delay; return true }
+	}
+	if _, err := docs.NewStore(ws).Create("provider outage", "", 1, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.StartWorkLoop("demo"); err != nil {
+		t.Fatal(err)
+	}
+	final := waitLoopFinished(t, m, "demo")
+	if want := "loop stopped: provider unavailable (overloaded), gave up after 8h"; final.Outcome != want {
+		t.Fatalf("outcome = %q, want %q", final.Outcome, want)
+	}
+	if waited != workLoopProviderPatience {
+		t.Fatalf("waited = %v, want exactly %v", waited, workLoopProviderPatience)
+	}
+}
+
+func TestStopWorkLoopDuringProviderWait(t *testing.T) {
+	factory := func(*workLoop) func(context.Context) (loopSessRec, bool, error) {
+		return func(context.Context) (loopSessRec, bool, error) {
+			return loopSessRec{id: "failed", errKind: "network", errRetryable: true}, false, nil
+		}
+	}
+	m, _, ws := loopTestManager(t, factory)
+	m.newLoopWait = func(wl *workLoop) func(time.Duration) bool {
+		return func(time.Duration) bool {
+			<-wl.stopCh
+			return false
+		}
+	}
+	if _, err := docs.NewStore(ws).Create("provider outage", "", 1, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.StartWorkLoop("demo"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		current, err := m.GetWorkLoop("demo")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if current != nil && current.State == "waiting" {
+			if current.WaitKind != "network" || current.ResumeAt.IsZero() {
+				t.Fatalf("waiting snapshot = %+v", current)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("loop did not enter waiting")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if _, err := m.StartWorkLoop("demo"); err == nil {
+		t.Fatal("waiting loop did not reject duplicate start")
+	}
+	stopped, err := m.StopWorkLoop("demo")
+	if err != nil || stopped.State != "stopping" {
+		t.Fatalf("StopWorkLoop = %+v, %v", stopped, err)
+	}
+	final := waitLoopFinished(t, m, "demo")
+	if final.Outcome != "loop stopped: requested" {
+		t.Fatalf("outcome = %q", final.Outcome)
 	}
 }
 

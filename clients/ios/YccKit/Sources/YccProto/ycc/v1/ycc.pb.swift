@@ -1833,53 +1833,112 @@ public nonisolated struct Ycc_V1_WorkLoopSession: Sendable {
 /// WorkLoopInfo is a snapshot of a work loop: its lifecycle state, the session it
 /// is currently driving (Subscribe target), and — once finished — the rolled-up
 /// batch digest classifying every task against the backlog baseline at loop start.
-public nonisolated struct Ycc_V1_WorkLoopInfo: Sendable {
+public nonisolated struct Ycc_V1_WorkLoopInfo: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var loopID: String = String()
+  public var loopID: String {
+    get {_storage._loopID}
+    set {_uniqueStorage()._loopID = newValue}
+  }
 
-  public var project: String = String()
+  public var project: String {
+    get {_storage._project}
+    set {_uniqueStorage()._project = newValue}
+  }
 
-  /// running | stopping | finished
-  public var state: String = String()
+  /// running | waiting | stopping | finished
+  public var state: String {
+    get {_storage._state}
+    set {_uniqueStorage()._state = newValue}
+  }
 
   /// the session being driven now (Subscribe target); empty between sessions
-  public var currentSessionID: String = String()
+  public var currentSessionID: String {
+    get {_storage._currentSessionID}
+    set {_uniqueStorage()._currentSessionID = newValue}
+  }
 
   /// human outcome line once finished
-  public var outcome: String = String()
+  public var outcome: String {
+    get {_storage._outcome}
+    set {_uniqueStorage()._outcome = newValue}
+  }
 
   /// RFC3339
-  public var startedAt: String = String()
+  public var startedAt: String {
+    get {_storage._startedAt}
+    set {_uniqueStorage()._startedAt = newValue}
+  }
 
-  public var sessionsRun: Int32 = 0
+  public var sessionsRun: Int32 {
+    get {_storage._sessionsRun}
+    set {_uniqueStorage()._sessionsRun = newValue}
+  }
 
-  public var sessions: [Ycc_V1_WorkLoopSession] = []
+  public var sessions: [Ycc_V1_WorkLoopSession] {
+    get {_storage._sessions}
+    set {_uniqueStorage()._sessions = newValue}
+  }
 
-  public var completed: [Ycc_V1_WorkLoopDigestTask] = []
+  public var completed: [Ycc_V1_WorkLoopDigestTask] {
+    get {_storage._completed}
+    set {_uniqueStorage()._completed = newValue}
+  }
 
-  public var blocked: [Ycc_V1_WorkLoopDigestTask] = []
+  public var blocked: [Ycc_V1_WorkLoopDigestTask] {
+    get {_storage._blocked}
+    set {_uniqueStorage()._blocked = newValue}
+  }
 
-  public var inReview: [Ycc_V1_WorkLoopDigestTask] = []
+  public var inReview: [Ycc_V1_WorkLoopDigestTask] {
+    get {_storage._inReview}
+    set {_uniqueStorage()._inReview = newValue}
+  }
 
-  public var created: [Ycc_V1_WorkLoopDigestTask] = []
+  public var created: [Ycc_V1_WorkLoopDigestTask] {
+    get {_storage._created}
+    set {_uniqueStorage()._created = newValue}
+  }
 
-  public var totalTokens: Int64 = 0
+  public var totalTokens: Int64 {
+    get {_storage._totalTokens}
+    set {_uniqueStorage()._totalTokens = newValue}
+  }
 
-  public var totalCost: Double = 0
+  public var totalCost: Double {
+    get {_storage._totalCost}
+    set {_uniqueStorage()._totalCost = newValue}
+  }
 
   /// priced | unpriced | partial
-  public var costStatus: String = String()
+  public var costStatus: String {
+    get {_storage._costStatus}
+    set {_uniqueStorage()._costStatus = newValue}
+  }
+
+  /// RFC3339; empty unless waiting
+  public var resumeAt: String {
+    get {_storage._resumeAt}
+    set {_uniqueStorage()._resumeAt = newValue}
+  }
+
+  /// provider failure kind; empty unless waiting
+  public var waitKind: String {
+    get {_storage._waitKind}
+    set {_uniqueStorage()._waitKind = newValue}
+  }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 /// StartWorkLoop starts an unattended work loop for a project (spec §9). It fails
-/// (FailedPrecondition) if a loop is already running/stopping for that workspace.
+/// (FailedPrecondition) if a loop is already running/waiting/stopping for that workspace.
 public nonisolated struct Ycc_V1_StartWorkLoopRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -1913,8 +1972,9 @@ public nonisolated struct Ycc_V1_StartWorkLoopResponse: Sendable {
   fileprivate var _loop: Ycc_V1_WorkLoopInfo? = nil
 }
 
-/// StopWorkLoop gracefully stops a running loop: the current session finishes and
-/// no next session is picked. Returns the loop snapshot (unset when none running).
+/// StopWorkLoop gracefully stops a live loop: the current session finishes and no
+/// next session is picked, or a provider wait wakes immediately. Returns the loop
+/// snapshot (unset when none running).
 public nonisolated struct Ycc_V1_StopWorkLoopRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -5671,99 +5731,177 @@ nonisolated extension Ycc_V1_WorkLoopSession: SwiftProtobuf.Message, SwiftProtob
 
 nonisolated extension Ycc_V1_WorkLoopInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".WorkLoopInfo"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}loop_id\0\u{1}project\0\u{1}state\0\u{3}current_session_id\0\u{1}outcome\0\u{3}started_at\0\u{3}sessions_run\0\u{1}sessions\0\u{1}completed\0\u{1}blocked\0\u{3}in_review\0\u{1}created\0\u{3}total_tokens\0\u{3}total_cost\0\u{3}cost_status\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}loop_id\0\u{1}project\0\u{1}state\0\u{3}current_session_id\0\u{1}outcome\0\u{3}started_at\0\u{3}sessions_run\0\u{1}sessions\0\u{1}completed\0\u{1}blocked\0\u{3}in_review\0\u{1}created\0\u{3}total_tokens\0\u{3}total_cost\0\u{3}cost_status\0\u{3}resume_at\0\u{3}wait_kind\0")
+
+  fileprivate class _StorageClass {
+    var _loopID: String = String()
+    var _project: String = String()
+    var _state: String = String()
+    var _currentSessionID: String = String()
+    var _outcome: String = String()
+    var _startedAt: String = String()
+    var _sessionsRun: Int32 = 0
+    var _sessions: [Ycc_V1_WorkLoopSession] = []
+    var _completed: [Ycc_V1_WorkLoopDigestTask] = []
+    var _blocked: [Ycc_V1_WorkLoopDigestTask] = []
+    var _inReview: [Ycc_V1_WorkLoopDigestTask] = []
+    var _created: [Ycc_V1_WorkLoopDigestTask] = []
+    var _totalTokens: Int64 = 0
+    var _totalCost: Double = 0
+    var _costStatus: String = String()
+    var _resumeAt: String = String()
+    var _waitKind: String = String()
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _loopID = source._loopID
+      _project = source._project
+      _state = source._state
+      _currentSessionID = source._currentSessionID
+      _outcome = source._outcome
+      _startedAt = source._startedAt
+      _sessionsRun = source._sessionsRun
+      _sessions = source._sessions
+      _completed = source._completed
+      _blocked = source._blocked
+      _inReview = source._inReview
+      _created = source._created
+      _totalTokens = source._totalTokens
+      _totalCost = source._totalCost
+      _costStatus = source._costStatus
+      _resumeAt = source._resumeAt
+      _waitKind = source._waitKind
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.loopID) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.project) }()
-      case 3: try { try decoder.decodeSingularStringField(value: &self.state) }()
-      case 4: try { try decoder.decodeSingularStringField(value: &self.currentSessionID) }()
-      case 5: try { try decoder.decodeSingularStringField(value: &self.outcome) }()
-      case 6: try { try decoder.decodeSingularStringField(value: &self.startedAt) }()
-      case 7: try { try decoder.decodeSingularInt32Field(value: &self.sessionsRun) }()
-      case 8: try { try decoder.decodeRepeatedMessageField(value: &self.sessions) }()
-      case 9: try { try decoder.decodeRepeatedMessageField(value: &self.completed) }()
-      case 10: try { try decoder.decodeRepeatedMessageField(value: &self.blocked) }()
-      case 11: try { try decoder.decodeRepeatedMessageField(value: &self.inReview) }()
-      case 12: try { try decoder.decodeRepeatedMessageField(value: &self.created) }()
-      case 13: try { try decoder.decodeSingularInt64Field(value: &self.totalTokens) }()
-      case 14: try { try decoder.decodeSingularDoubleField(value: &self.totalCost) }()
-      case 15: try { try decoder.decodeSingularStringField(value: &self.costStatus) }()
-      default: break
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularStringField(value: &_storage._loopID) }()
+        case 2: try { try decoder.decodeSingularStringField(value: &_storage._project) }()
+        case 3: try { try decoder.decodeSingularStringField(value: &_storage._state) }()
+        case 4: try { try decoder.decodeSingularStringField(value: &_storage._currentSessionID) }()
+        case 5: try { try decoder.decodeSingularStringField(value: &_storage._outcome) }()
+        case 6: try { try decoder.decodeSingularStringField(value: &_storage._startedAt) }()
+        case 7: try { try decoder.decodeSingularInt32Field(value: &_storage._sessionsRun) }()
+        case 8: try { try decoder.decodeRepeatedMessageField(value: &_storage._sessions) }()
+        case 9: try { try decoder.decodeRepeatedMessageField(value: &_storage._completed) }()
+        case 10: try { try decoder.decodeRepeatedMessageField(value: &_storage._blocked) }()
+        case 11: try { try decoder.decodeRepeatedMessageField(value: &_storage._inReview) }()
+        case 12: try { try decoder.decodeRepeatedMessageField(value: &_storage._created) }()
+        case 13: try { try decoder.decodeSingularInt64Field(value: &_storage._totalTokens) }()
+        case 14: try { try decoder.decodeSingularDoubleField(value: &_storage._totalCost) }()
+        case 15: try { try decoder.decodeSingularStringField(value: &_storage._costStatus) }()
+        case 16: try { try decoder.decodeSingularStringField(value: &_storage._resumeAt) }()
+        case 17: try { try decoder.decodeSingularStringField(value: &_storage._waitKind) }()
+        default: break
+        }
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.loopID.isEmpty {
-      try visitor.visitSingularStringField(value: self.loopID, fieldNumber: 1)
-    }
-    if !self.project.isEmpty {
-      try visitor.visitSingularStringField(value: self.project, fieldNumber: 2)
-    }
-    if !self.state.isEmpty {
-      try visitor.visitSingularStringField(value: self.state, fieldNumber: 3)
-    }
-    if !self.currentSessionID.isEmpty {
-      try visitor.visitSingularStringField(value: self.currentSessionID, fieldNumber: 4)
-    }
-    if !self.outcome.isEmpty {
-      try visitor.visitSingularStringField(value: self.outcome, fieldNumber: 5)
-    }
-    if !self.startedAt.isEmpty {
-      try visitor.visitSingularStringField(value: self.startedAt, fieldNumber: 6)
-    }
-    if self.sessionsRun != 0 {
-      try visitor.visitSingularInt32Field(value: self.sessionsRun, fieldNumber: 7)
-    }
-    if !self.sessions.isEmpty {
-      try visitor.visitRepeatedMessageField(value: self.sessions, fieldNumber: 8)
-    }
-    if !self.completed.isEmpty {
-      try visitor.visitRepeatedMessageField(value: self.completed, fieldNumber: 9)
-    }
-    if !self.blocked.isEmpty {
-      try visitor.visitRepeatedMessageField(value: self.blocked, fieldNumber: 10)
-    }
-    if !self.inReview.isEmpty {
-      try visitor.visitRepeatedMessageField(value: self.inReview, fieldNumber: 11)
-    }
-    if !self.created.isEmpty {
-      try visitor.visitRepeatedMessageField(value: self.created, fieldNumber: 12)
-    }
-    if self.totalTokens != 0 {
-      try visitor.visitSingularInt64Field(value: self.totalTokens, fieldNumber: 13)
-    }
-    if self.totalCost.bitPattern != 0 {
-      try visitor.visitSingularDoubleField(value: self.totalCost, fieldNumber: 14)
-    }
-    if !self.costStatus.isEmpty {
-      try visitor.visitSingularStringField(value: self.costStatus, fieldNumber: 15)
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      if !_storage._loopID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._loopID, fieldNumber: 1)
+      }
+      if !_storage._project.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._project, fieldNumber: 2)
+      }
+      if !_storage._state.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._state, fieldNumber: 3)
+      }
+      if !_storage._currentSessionID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._currentSessionID, fieldNumber: 4)
+      }
+      if !_storage._outcome.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._outcome, fieldNumber: 5)
+      }
+      if !_storage._startedAt.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._startedAt, fieldNumber: 6)
+      }
+      if _storage._sessionsRun != 0 {
+        try visitor.visitSingularInt32Field(value: _storage._sessionsRun, fieldNumber: 7)
+      }
+      if !_storage._sessions.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._sessions, fieldNumber: 8)
+      }
+      if !_storage._completed.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._completed, fieldNumber: 9)
+      }
+      if !_storage._blocked.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._blocked, fieldNumber: 10)
+      }
+      if !_storage._inReview.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._inReview, fieldNumber: 11)
+      }
+      if !_storage._created.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._created, fieldNumber: 12)
+      }
+      if _storage._totalTokens != 0 {
+        try visitor.visitSingularInt64Field(value: _storage._totalTokens, fieldNumber: 13)
+      }
+      if _storage._totalCost.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._totalCost, fieldNumber: 14)
+      }
+      if !_storage._costStatus.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._costStatus, fieldNumber: 15)
+      }
+      if !_storage._resumeAt.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._resumeAt, fieldNumber: 16)
+      }
+      if !_storage._waitKind.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._waitKind, fieldNumber: 17)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Ycc_V1_WorkLoopInfo, rhs: Ycc_V1_WorkLoopInfo) -> Bool {
-    if lhs.loopID != rhs.loopID {return false}
-    if lhs.project != rhs.project {return false}
-    if lhs.state != rhs.state {return false}
-    if lhs.currentSessionID != rhs.currentSessionID {return false}
-    if lhs.outcome != rhs.outcome {return false}
-    if lhs.startedAt != rhs.startedAt {return false}
-    if lhs.sessionsRun != rhs.sessionsRun {return false}
-    if lhs.sessions != rhs.sessions {return false}
-    if lhs.completed != rhs.completed {return false}
-    if lhs.blocked != rhs.blocked {return false}
-    if lhs.inReview != rhs.inReview {return false}
-    if lhs.created != rhs.created {return false}
-    if lhs.totalTokens != rhs.totalTokens {return false}
-    if lhs.totalCost != rhs.totalCost {return false}
-    if lhs.costStatus != rhs.costStatus {return false}
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._loopID != rhs_storage._loopID {return false}
+        if _storage._project != rhs_storage._project {return false}
+        if _storage._state != rhs_storage._state {return false}
+        if _storage._currentSessionID != rhs_storage._currentSessionID {return false}
+        if _storage._outcome != rhs_storage._outcome {return false}
+        if _storage._startedAt != rhs_storage._startedAt {return false}
+        if _storage._sessionsRun != rhs_storage._sessionsRun {return false}
+        if _storage._sessions != rhs_storage._sessions {return false}
+        if _storage._completed != rhs_storage._completed {return false}
+        if _storage._blocked != rhs_storage._blocked {return false}
+        if _storage._inReview != rhs_storage._inReview {return false}
+        if _storage._created != rhs_storage._created {return false}
+        if _storage._totalTokens != rhs_storage._totalTokens {return false}
+        if _storage._totalCost != rhs_storage._totalCost {return false}
+        if _storage._costStatus != rhs_storage._costStatus {return false}
+        if _storage._resumeAt != rhs_storage._resumeAt {return false}
+        if _storage._waitKind != rhs_storage._waitKind {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

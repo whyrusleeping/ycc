@@ -27,16 +27,30 @@ import (
 // enforcing the no-progress guard and the per-loop budget caps daemon-side, and
 // rolling every session up into an end-of-batch digest pushed via the notifier.
 
+// Retry waits escalate quickly enough to recover from brief provider outages but
+// settle at a low request rate for subscription allowance exhaustion.
+var workLoopRetrySchedule = [...]time.Duration{
+	time.Minute, 2 * time.Minute, 5 * time.Minute, 10 * time.Minute,
+	20 * time.Minute, 30 * time.Minute,
+}
+
+// workLoopProviderPatience bounds one consecutive provider outage. Eight hours
+// covers Anthropic's five-hour allowance window with margin while still ensuring
+// an unattended loop eventually terminates.
+const workLoopProviderPatience = 8 * time.Hour
+
 // WorkLoop is a snapshot of a work loop's state for the RPC layer. It carries no
 // mutex (the live loop keeps that internally) so it is safe to hand to callers.
 type WorkLoop struct {
 	LoopID           string
 	Project          string // human project label
 	Workspace        string // resolved absolute workspace
-	State            string // running | stopping | finished
+	State            string // running | waiting | stopping | finished
 	CurrentSessionID string // session being driven now (Subscribe target); empty between sessions
 	Outcome          string // human outcome line once finished
 	StartedAt        time.Time
+	ResumeAt         time.Time // next retry time; zero unless waiting
+	WaitKind         string    // provider failure kind; empty unless waiting
 	SessionsRun      int
 	Sessions         []WorkLoopSession
 	Completed        []WorkLoopDigestTask
@@ -77,13 +91,15 @@ type loopCommit struct{ task, sha, message string }
 // id, focus task, summed tokens, commits, review verdicts, and (folded in as the
 // session completes) its priced cost/status.
 type loopSessRec struct {
-	id          string
-	focus       string
-	tokens      int64
-	commits     []loopCommit
-	verdicts    []string
-	cost        float64
-	priceStatus string
+	id           string
+	focus        string
+	tokens       int64
+	commits      []loopCommit
+	verdicts     []string
+	cost         float64
+	priceStatus  string
+	errKind      string
+	errRetryable bool
 }
 
 // workLoop is the live, mutating loop the daemon drives in a goroutine.
@@ -104,7 +120,11 @@ type workLoop struct {
 	loopStarted      bool
 	prevFP           string
 	prevBreach       bool
+	prevErrored      bool
 	stopReq          bool
+	resumeAt         time.Time
+	waitKind         string
+	stopCh           chan struct{}
 
 	// caps captured once at loop start (task 0137, spec §20.6).
 	loopCost   float64
@@ -129,6 +149,9 @@ type workLoop struct {
 	// runSession is the injectable seam: the default runs a real unattended work
 	// session; tests substitute a fake returning canned records.
 	runSession func(ctx context.Context) (loopSessRec, bool, error)
+	// waitFn waits for a retry delay and reports whether it elapsed. The default is
+	// stop-aware; tests replace it to avoid real multi-minute sleeps.
+	waitFn func(time.Duration) bool
 }
 
 // snapshot copies the live loop's public state into a mutex-free WorkLoop.
@@ -148,6 +171,8 @@ func (wl *workLoop) snapshotLocked() *WorkLoop {
 		CurrentSessionID: wl.currentSessionID,
 		Outcome:          wl.outcome,
 		StartedAt:        wl.startedAt,
+		ResumeAt:         wl.resumeAt,
+		WaitKind:         wl.waitKind,
 		SessionsRun:      len(wl.sessions),
 		TotalTokens:      wl.cumTokens,
 		TotalCost:        wl.cumCost,
@@ -175,6 +200,20 @@ func (wl *workLoop) stopRequested() bool {
 	return wl.stopReq
 }
 
+// waitForRetry sleeps until the retry deadline or a graceful stop request. A
+// dedicated channel makes StopWorkLoop wake a waiting loop immediately rather
+// than waiting for a polling interval.
+func (wl *workLoop) waitForRetry(delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-wl.stopCh:
+		return false
+	}
+}
+
 // --- Manager plumbing ---
 
 // StartWorkLoop starts an unattended work loop for a project (spec §9). It errors
@@ -192,7 +231,7 @@ func (m *Manager) StartWorkLoop(project string) (*WorkLoop, error) {
 	}
 	if existing := m.workLoops[absWS]; existing != nil {
 		st := existing.snapshot().State
-		if st == "running" || st == "stopping" {
+		if st == "running" || st == "waiting" || st == "stopping" {
 			m.loopMu.Unlock()
 			return nil, fmt.Errorf("%w: a work loop is already %s for %s", ErrLoopRunning, st, label)
 		}
@@ -209,10 +248,15 @@ func (m *Manager) StartWorkLoop(project string) (*WorkLoop, error) {
 		loopCost:   b.LoopCost,
 		loopTokens: b.LoopTokens,
 		baseline:   map[string]docs.Status{},
+		stopCh:     make(chan struct{}),
 	}
 	wl.runSession = wl.realRunSession
+	wl.waitFn = wl.waitForRetry
 	if m.newRunSession != nil {
 		wl.runSession = m.newRunSession(wl)
+	}
+	if m.newLoopWait != nil {
+		wl.waitFn = m.newLoopWait(wl)
 	}
 	m.workLoops[absWS] = wl
 	m.loopMu.Unlock()
@@ -224,8 +268,9 @@ func (m *Manager) StartWorkLoop(project string) (*WorkLoop, error) {
 	return wl.snapshot(), nil
 }
 
-// StopWorkLoop gracefully stops a running loop for a project: the current session
-// finishes and no next session is picked. Returns the loop snapshot, or a nil loop
+// StopWorkLoop gracefully stops a live loop for a project: the current session
+// finishes and no next session is picked, or a provider wait wakes immediately.
+// Returns the loop snapshot, or a nil loop
 // when none is running.
 func (m *Manager) StopWorkLoop(project string) (*WorkLoop, error) {
 	absWS, _, err := m.resolveWorkspace(project)
@@ -239,16 +284,20 @@ func (m *Manager) StopWorkLoop(project string) (*WorkLoop, error) {
 		return nil, nil
 	}
 	wl.mu.Lock()
-	changed := wl.state == "running"
+	changed := wl.state == "running" || wl.state == "waiting"
 	if changed {
 		wl.stopReq = true
 		wl.state = "stopping"
+		if wl.stopCh != nil {
+			close(wl.stopCh)
+		}
 	}
+	stoppedSnapshot := wl.snapshotLocked()
 	wl.mu.Unlock()
 	if changed {
 		wl.persist()
 	}
-	return wl.snapshot(), nil
+	return stoppedSnapshot, nil
 }
 
 // GetWorkLoop returns the current loop snapshot for a project (nil when none has
@@ -311,6 +360,8 @@ func (wl *workLoop) run() {
 	}
 	wl.mu.Unlock()
 
+	var outageFailures int
+	var outageWait time.Duration
 	for {
 		if wl.stopRequested() {
 			wl.finish("loop stopped: requested", tasks)
@@ -328,7 +379,8 @@ func (wl *workLoop) run() {
 		in := loopDecideInput{
 			next: next, fp: fp,
 			loopStarted: wl.loopStarted, prevFP: wl.prevFP, prevBreach: wl.prevBreach,
-			cumTokens: wl.cumTokens, cumCost: wl.cumCost,
+			prevErrored: wl.prevErrored,
+			cumTokens:   wl.cumTokens, cumCost: wl.cumCost,
 			loopTokens: wl.loopTokens, loopCost: wl.loopCost,
 		}
 		wl.mu.Unlock()
@@ -353,6 +405,72 @@ func (wl *workLoop) run() {
 			wl.finish("loop stopped: "+err.Error(), tasks)
 			return
 		}
+
+		errored := rec.errKind != ""
+		wl.mu.Lock()
+		wl.prevErrored = errored
+		wl.mu.Unlock()
+		if !errored {
+			// Any successful session ends the consecutive provider outage, even if a
+			// later no-progress decision stops the loop for an unrelated reason.
+			outageFailures = 0
+			outageWait = 0
+			continue
+		}
+		// A session may have changed the backlog before its final provider call
+		// failed. Keep every terminal digest below fresh enough to include that work.
+		if final, lerr := store.List(); lerr == nil {
+			tasks = final
+		}
+		if !rec.errRetryable {
+			wl.finish("loop stopped: session failed ("+rec.errKind+")", tasks)
+			return
+		}
+		// Stop may have been requested while the failed session was still running.
+		// Do not overwrite its stopping state with a transient waiting snapshot.
+		if wl.stopRequested() {
+			wl.finish("loop stopped: requested", tasks)
+			return
+		}
+
+		delay := workLoopRetrySchedule[len(workLoopRetrySchedule)-1]
+		if outageFailures < len(workLoopRetrySchedule) {
+			delay = workLoopRetrySchedule[outageFailures]
+		}
+		remaining := workLoopProviderPatience - outageWait
+		if remaining <= 0 {
+			wl.finish("loop stopped: provider unavailable ("+rec.errKind+"), gave up after 8h", tasks)
+			return
+		}
+		if delay > remaining {
+			delay = remaining
+		}
+		outageFailures++
+		outageWait += delay
+
+		wl.mu.Lock()
+		wl.state = "waiting"
+		wl.resumeAt = time.Now().Add(delay)
+		wl.waitKind = rec.errKind
+		wl.mu.Unlock()
+		wl.persist()
+
+		elapsed := wl.waitFn(delay)
+		if !elapsed || wl.stopRequested() {
+			wl.finish("loop stopped: requested", tasks)
+			return
+		}
+		wl.mu.Lock()
+		if wl.stopReq {
+			wl.mu.Unlock()
+			wl.finish("loop stopped: requested", tasks)
+			return
+		}
+		wl.state = "running"
+		wl.resumeAt = time.Time{}
+		wl.waitKind = ""
+		wl.mu.Unlock()
+		wl.persist()
 	}
 }
 
@@ -363,6 +481,7 @@ type loopDecideInput struct {
 	loopStarted bool
 	prevFP      string
 	prevBreach  bool
+	prevErrored bool
 	cumTokens   int64
 	cumCost     float64
 	loopTokens  int64
@@ -383,7 +502,7 @@ func decideLoop(in loopDecideInput) loopDecision {
 	switch {
 	case in.next == "":
 		return loopDecision{stop: true, outcome: "loop complete: no ready tasks remain"}
-	case in.loopStarted && in.fp == in.prevFP:
+	case in.loopStarted && !in.prevErrored && in.fp == in.prevFP:
 		// A session ran but the backlog is byte-for-byte unchanged: it advanced
 		// nothing, so starting another would loop forever on the same state.
 		return loopDecision{stop: true, outcome: "loop stopped: session made no progress"}
@@ -437,6 +556,8 @@ func (wl *workLoop) finish(outcome string, final []*docs.Task) {
 	wl.mu.Lock()
 	wl.buildDigestLocked(final)
 	wl.state = "finished"
+	wl.resumeAt = time.Time{}
+	wl.waitKind = ""
 	wl.outcome = outcome
 	nComplete, nBlocked, nReview := len(wl.completed), len(wl.blocked), len(wl.inReview)
 	pushed := len(wl.sessions) > 0
@@ -543,6 +664,7 @@ waitLoop:
 		}
 	}
 
+	endedWithError := sess.Status() == event.StatusError
 	events := sess.Log().Snapshot()
 	rec := loopSessRec{id: sess.ID, priceStatus: string(usage.StatusUnpriced)}
 	for _, ev := range events {
@@ -560,6 +682,9 @@ waitLoop:
 				rec.verdicts = append(rec.verdicts, v)
 			}
 		}
+	}
+	if endedWithError {
+		rec.errKind, rec.errRetryable = loopSessionFailure(events)
 	}
 	res := usage.Aggregate(usage.ReduceEvents(sess.ID, events), wl.m.reg, usage.Options{})
 	rec.tokens = int64(res.Total.Tokens.Total)
@@ -683,6 +808,27 @@ func fmtTokens(n int64) string {
 	default:
 		return fmt.Sprintf("%d", n)
 	}
+}
+
+// loopSessionFailure reads the last structured session failure. StatusError with
+// no usable session_error is conservatively unknown and non-retryable.
+func loopSessionFailure(events []event.Event) (string, bool) {
+	for i := len(events) - 1; i >= 0; i-- {
+		ev := events[i]
+		if ev.Type != event.SessionError {
+			continue
+		}
+		kind := strField(ev, "kind")
+		if kind == "" {
+			kind = "unknown"
+		}
+		retryable := false
+		if ev.Data != nil {
+			retryable, _ = ev.Data["retryable"].(bool)
+		}
+		return kind, retryable
+	}
+	return "unknown", false
 }
 
 // strField reads a string data field from an event, tolerating absent data.

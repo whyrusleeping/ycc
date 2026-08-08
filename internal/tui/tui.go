@@ -1064,7 +1064,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		switch msg.info.State {
-		case "running", "stopping":
+		case "running", "waiting", "stopping":
 			m.looping = true
 			if !msg.initiated && !wasLooping {
 				// A menu discovery is the root of a new single poll chain.
@@ -1072,13 +1072,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if msg.alreadyRunning {
 				m.status = "loop already running — attached"
+			} else if msg.info.State == "waiting" {
+				m.status = workLoopWaitingStatus(msg.info)
 			} else if msg.info.State == "stopping" {
 				m.status = "loop stopping: current task finishes, next not picked"
 			} else if !wasLooping {
 				m.status = "loop started"
 			}
 			cmds := []tea.Cmd{m.loopRefreshTick()}
-			if id := msg.info.CurrentSessionId; id != "" && id != m.sessionID {
+			if msg.info.State == "waiting" {
+				m.status = workLoopWaitingStatus(msg.info)
+			} else if id := msg.info.CurrentSessionId; id != "" && id != m.sessionID {
 				cmds = append(cmds, m.reopenSession(id))
 			} else if id == "" && wasLooping {
 				m.status = "loop: waiting for the next task"

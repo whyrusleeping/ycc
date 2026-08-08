@@ -81,8 +81,16 @@ func (m model) statusBar() string {
 	loopLabel := ""
 	if m.looping {
 		loopLabel = "⟳ loop"
-		if m.loopInfo != nil && m.loopInfo.State == "stopping" {
-			loopLabel = "⟳ loop (stopping)"
+		if m.loopInfo != nil {
+			switch m.loopInfo.State {
+			case "waiting":
+				loopLabel = "⟳ waiting"
+				if resumeAt, err := time.Parse(time.RFC3339, m.loopInfo.ResumeAt); err == nil {
+					loopLabel += " (resumes " + resumeAt.Local().Format("15:04") + ")"
+				}
+			case "stopping":
+				loopLabel = "⟳ loop (stopping)"
+			}
 		}
 	} else if m.loopArmed {
 		loopLabel = "⟳ loop (armed)"

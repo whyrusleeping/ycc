@@ -1408,6 +1408,9 @@ type Manager struct {
 	// newRunSession, when non-nil, overrides the loop's session runner (the test
 	// seam that drives control logic without a live model). Nil => the real runner.
 	newRunSession func(*workLoop) func(context.Context) (loopSessRec, bool, error)
+	// newLoopWait, when non-nil, overrides provider retry waiting. Tests use it to
+	// exercise multi-hour patience schedules without sleeping.
+	newLoopWait func(*workLoop) func(time.Duration) bool
 }
 
 // NewManager creates a session manager backed by the given model registry. It
@@ -2738,7 +2741,7 @@ var ErrUnknownSession = errors.New("unknown session")
 // map it to an invalid-argument code.
 var ErrUnknownModel = errors.New("unknown model")
 
-// ErrLoopRunning indicates a work loop is already running/stopping for a
+// ErrLoopRunning indicates a work loop is already running/waiting/stopping for a
 // workspace, so StartWorkLoop handlers can map it to a failed-precondition code.
 var ErrLoopRunning = errors.New("work loop already running")
 

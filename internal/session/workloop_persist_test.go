@@ -179,6 +179,29 @@ func TestRunningWorkLoopRestoresInterruptedAndCanRestart(t *testing.T) {
 	}
 }
 
+func TestWaitingWorkLoopRestoresInterrupted(t *testing.T) {
+	ws := t.TempDir()
+	resumeAt := time.Now().Add(30 * time.Minute).UTC().Truncate(time.Second)
+	old := &workLoop{
+		loopID: "loop_waiting", project: filepath.Base(ws), workspace: ws,
+		state: "waiting", startedAt: time.Now().Add(-time.Hour).UTC(),
+		resumeAt: resumeAt, waitKind: "rate_limit",
+	}
+	old.persist()
+
+	restarted := NewManager(workLoopPersistTestRegistry(), ws)
+	got, err := restarted.GetWorkLoop("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.State != "finished" || got.Outcome != "loop interrupted: daemon restarted" {
+		t.Fatalf("restored waiting loop = %+v", got)
+	}
+	if !got.ResumeAt.IsZero() || got.WaitKind != "" {
+		t.Fatalf("finished interrupted loop retained wait metadata: %+v", got)
+	}
+}
+
 func TestGetWorkLoopIgnoresAbsentAndCorruptPersistence(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

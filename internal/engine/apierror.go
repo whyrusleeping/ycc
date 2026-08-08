@@ -114,6 +114,18 @@ var providerServerSignatures = []string{
 	"internal server error",
 }
 
+// providerRateLimitSignatures are provider-reported subscription/rate-limit
+// failures delivered inside an HTTP 200 response stream. Codex uses
+// `usage_limit_reached` for subscription exhaustion, so there is no HTTP 429 for
+// the status parser to see. As with providerServerSignatures, these are consulted
+// only after status-code classification so text in a real 4xx body cannot
+// override its HTTP classification.
+var providerRateLimitSignatures = []string{
+	"usage_limit_reached",
+	"rate_limit_error",
+	"usage limit",
+}
+
 // ClassifyAPIError classifies an LLM API call failure. nil returns the zero
 // APIErrorInfo (Kind ""). See the APIErrorKind constants for the taxonomy; the
 // Retryable field is what the loop's retry policy keys on.
@@ -151,10 +163,15 @@ func ClassifyAPIError(err error) APIErrorInfo {
 		}
 	}
 
-	// No HTTP status. A provider may still report a server-side failure inside
-	// a 200 stream; treat it like the 5xx it stands for (checked before the
-	// generic transport heuristics, which it would otherwise fall past into
+	// No HTTP status. A provider may still report a rate limit or server-side
+	// failure inside a 200 stream; treat it like the 429/5xx it stands for (checked
+	// before generic transport heuristics, which it would otherwise fall past into
 	// `unknown`).
+	for _, sig := range providerRateLimitSignatures {
+		if strings.Contains(lower, sig) {
+			return APIErrorInfo{Kind: KindRateLimit, Retryable: true}
+		}
+	}
 	for _, sig := range providerServerSignatures {
 		if strings.Contains(lower, sig) {
 			return APIErrorInfo{Kind: KindServer, Retryable: true}

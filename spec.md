@@ -794,8 +794,14 @@ the daemon, a loop **survives client disconnects** and any client (including a p
 suspends in the background) can start it, poll `GetWorkLoop` for state, `Subscribe` to the
 current session, and stop it later. The no-progress guard, the per-loop budget caps (§20.6),
 and the completion digest all run daemon-side; the digest is pushed via the notifier (`digest`
-kind, §21) with no client `Notify` call. The **tab/shift+tab** toggle and the running session
-view's `⟳ loop` indicator remain client affordances over these RPCs. (Real-time
+kind, §21) with no client `Notify` call. A session that dies on a retryable provider failure
+(rate/usage limit exhaustion, overload, server, timeout, or network failure) puts the loop into
+a live `waiting` state with escalating retries (1m, 2m, 5m, 10m, 20m, then 30m), up to eight
+hours of consecutive-outage patience, and automatically resumes when the provider recovers.
+A non-retryable failure instead stops truthfully with `session failed (<kind>)`; `waiting`
+counts as live for Start/Stop and is restored as interrupted, never auto-resumed, after a daemon
+restart. The **tab/shift+tab** toggle and the running session view's `⟳ loop` indicator remain
+client affordances over these RPCs. (Real-time
 loop-lifecycle streaming is deferred; `GetWorkLoop` polling plus `Subscribe` on the current
 session covers observation.)
 

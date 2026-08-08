@@ -23,6 +23,8 @@ type persistedWorkLoop struct {
 	CurrentSessionID string                     `json:"current_session_id,omitempty"`
 	Outcome          string                     `json:"outcome,omitempty"`
 	StartedAt        time.Time                  `json:"started_at"`
+	ResumeAt         *time.Time                 `json:"resume_at,omitempty"`
+	WaitKind         string                     `json:"wait_kind,omitempty"`
 	Sessions         []persistedWorkLoopSession `json:"sessions,omitempty"`
 	Completed        []persistedWorkLoopTask    `json:"completed,omitempty"`
 	Blocked          []persistedWorkLoopTask    `json:"blocked,omitempty"`
@@ -85,9 +87,14 @@ func persistedWorkLoopFromSnapshot(snapshot *WorkLoop) persistedWorkLoop {
 		CurrentSessionID: snapshot.CurrentSessionID,
 		Outcome:          snapshot.Outcome,
 		StartedAt:        snapshot.StartedAt,
+		WaitKind:         snapshot.WaitKind,
 		TotalTokens:      snapshot.TotalTokens,
 		TotalCost:        snapshot.TotalCost,
 		CostStatus:       snapshot.CostStatus,
+	}
+	if !snapshot.ResumeAt.IsZero() {
+		resumeAt := snapshot.ResumeAt
+		p.ResumeAt = &resumeAt
 	}
 	for _, s := range snapshot.Sessions {
 		p.Sessions = append(p.Sessions, persistedWorkLoopSession{
@@ -177,6 +184,7 @@ func (m *Manager) restoreWorkLoopLocked(workspace string) {
 		currentSessionID: p.CurrentSessionID,
 		outcome:          p.Outcome,
 		startedAt:        p.StartedAt,
+		waitKind:         p.WaitKind,
 		cumTokens:        p.TotalTokens,
 		cumCost:          p.TotalCost,
 		costStatus:       p.CostStatus,
@@ -184,6 +192,9 @@ func (m *Manager) restoreWorkLoopLocked(workspace string) {
 		blocked:          restoredTasks(p.Blocked),
 		inReview:         restoredTasks(p.InReview),
 		created:          restoredTasks(p.Created),
+	}
+	if p.ResumeAt != nil {
+		wl.resumeAt = *p.ResumeAt
 	}
 	if wl.project == "" {
 		wl.project = m.projectLabel(workspace)
@@ -195,11 +206,13 @@ func (m *Manager) restoreWorkLoopLocked(workspace string) {
 		})
 	}
 
-	interrupted := wl.state == "running" || wl.state == "stopping"
+	interrupted := wl.state == "running" || wl.state == "waiting" || wl.state == "stopping"
 	if interrupted {
 		wl.state = "finished"
 		wl.outcome = "loop interrupted: daemon restarted"
 		wl.currentSessionID = ""
+		wl.resumeAt = time.Time{}
+		wl.waitKind = ""
 	}
 	m.workLoops[workspace] = wl
 	if interrupted {
@@ -223,7 +236,7 @@ func readPersistedWorkLoop(workspace string) (persistedWorkLoop, bool) {
 		return persistedWorkLoop{}, false
 	}
 	switch p.State {
-	case "running", "stopping", "finished":
+	case "running", "waiting", "stopping", "finished":
 	default:
 		return persistedWorkLoop{}, false
 	}

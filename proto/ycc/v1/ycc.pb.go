@@ -5434,7 +5434,7 @@ type WorkLoopInfo struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	LoopId           string                 `protobuf:"bytes,1,opt,name=loop_id,json=loopId,proto3" json:"loop_id,omitempty"`
 	Project          string                 `protobuf:"bytes,2,opt,name=project,proto3" json:"project,omitempty"`
-	State            string                 `protobuf:"bytes,3,opt,name=state,proto3" json:"state,omitempty"`                                                 // running | stopping | finished
+	State            string                 `protobuf:"bytes,3,opt,name=state,proto3" json:"state,omitempty"`                                                 // running | waiting | stopping | finished
 	CurrentSessionId string                 `protobuf:"bytes,4,opt,name=current_session_id,json=currentSessionId,proto3" json:"current_session_id,omitempty"` // the session being driven now (Subscribe target); empty between sessions
 	Outcome          string                 `protobuf:"bytes,5,opt,name=outcome,proto3" json:"outcome,omitempty"`                                             // human outcome line once finished
 	StartedAt        string                 `protobuf:"bytes,6,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`                        // RFC3339
@@ -5447,6 +5447,8 @@ type WorkLoopInfo struct {
 	TotalTokens      int64                  `protobuf:"varint,13,opt,name=total_tokens,json=totalTokens,proto3" json:"total_tokens,omitempty"`
 	TotalCost        float64                `protobuf:"fixed64,14,opt,name=total_cost,json=totalCost,proto3" json:"total_cost,omitempty"`
 	CostStatus       string                 `protobuf:"bytes,15,opt,name=cost_status,json=costStatus,proto3" json:"cost_status,omitempty"` // priced | unpriced | partial
+	ResumeAt         string                 `protobuf:"bytes,16,opt,name=resume_at,json=resumeAt,proto3" json:"resume_at,omitempty"`       // RFC3339; empty unless waiting
+	WaitKind         string                 `protobuf:"bytes,17,opt,name=wait_kind,json=waitKind,proto3" json:"wait_kind,omitempty"`       // provider failure kind; empty unless waiting
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -5586,8 +5588,22 @@ func (x *WorkLoopInfo) GetCostStatus() string {
 	return ""
 }
 
+func (x *WorkLoopInfo) GetResumeAt() string {
+	if x != nil {
+		return x.ResumeAt
+	}
+	return ""
+}
+
+func (x *WorkLoopInfo) GetWaitKind() string {
+	if x != nil {
+		return x.WaitKind
+	}
+	return ""
+}
+
 // StartWorkLoop starts an unattended work loop for a project (spec §9). It fails
-// (FailedPrecondition) if a loop is already running/stopping for that workspace.
+// (FailedPrecondition) if a loop is already running/waiting/stopping for that workspace.
 type StartWorkLoopRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
@@ -5676,8 +5692,9 @@ func (x *StartWorkLoopResponse) GetLoop() *WorkLoopInfo {
 	return nil
 }
 
-// StopWorkLoop gracefully stops a running loop: the current session finishes and
-// no next session is picked. Returns the loop snapshot (unset when none running).
+// StopWorkLoop gracefully stops a live loop: the current session finishes and no
+// next session is picked, or a provider wait wakes immediately. Returns the loop
+// snapshot (unset when none running).
 type StopWorkLoopRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
@@ -6911,7 +6928,7 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x05focus\x18\x02 \x01(\tR\x05focus\x12\x16\n" +
 	"\x06tokens\x18\x03 \x01(\x03R\x06tokens\x12\x12\n" +
 	"\x04cost\x18\x04 \x01(\x01R\x04cost\x12!\n" +
-	"\fprice_status\x18\x05 \x01(\tR\vpriceStatus\"\xd8\x04\n" +
+	"\fprice_status\x18\x05 \x01(\tR\vpriceStatus\"\x92\x05\n" +
 	"\fWorkLoopInfo\x12\x17\n" +
 	"\aloop_id\x18\x01 \x01(\tR\x06loopId\x12\x18\n" +
 	"\aproject\x18\x02 \x01(\tR\aproject\x12\x14\n" +
@@ -6931,7 +6948,9 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\n" +
 	"total_cost\x18\x0e \x01(\x01R\ttotalCost\x12\x1f\n" +
 	"\vcost_status\x18\x0f \x01(\tR\n" +
-	"costStatus\"0\n" +
+	"costStatus\x12\x1b\n" +
+	"\tresume_at\x18\x10 \x01(\tR\bresumeAt\x12\x1b\n" +
+	"\twait_kind\x18\x11 \x01(\tR\bwaitKind\"0\n" +
 	"\x14StartWorkLoopRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\"A\n" +
 	"\x15StartWorkLoopResponse\x12(\n" +

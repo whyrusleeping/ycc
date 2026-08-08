@@ -55,7 +55,7 @@ func (m model) fetchWorkLoop() tea.Cmd {
 			return workLoopMsg{err: err, continuePoll: m.looping, seq: seq}
 		}
 		info := resp.Msg.Loop
-		attach := !m.looping && info != nil && (info.State == "running" || info.State == "stopping")
+		attach := !m.looping && info != nil && (info.State == "running" || info.State == "waiting" || info.State == "stopping")
 		return workLoopMsg{info: info, alreadyRunning: attach, seq: seq}
 	}
 }
@@ -75,6 +75,17 @@ func (m model) fetchWorkLoopDigest() tea.Cmd {
 func (m model) loopRefreshTick() tea.Cmd {
 	seq := m.loopSeq
 	return tea.Tick(2*time.Second, func(time.Time) tea.Msg { return loopTickMsg{seq} })
+}
+
+func workLoopWaitingStatus(info *v1.WorkLoopInfo) string {
+	status := "loop waiting for provider"
+	if info.WaitKind != "" {
+		status += " (" + info.WaitKind + ")"
+	}
+	if resumeAt, err := time.Parse(time.RFC3339, info.ResumeAt); err == nil {
+		status += "; resumes " + resumeAt.Local().Format("15:04")
+	}
+	return status
 }
 
 // loopSessRec mirrors the per-session summary supplied by WorkLoopInfo.

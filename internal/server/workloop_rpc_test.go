@@ -49,6 +49,7 @@ func TestWorkLoopToProto(t *testing.T) {
 		t.Fatal("expected nil for nil loop")
 	}
 	started := time.Date(2026, 7, 15, 10, 0, 0, 0, time.UTC)
+	resume := time.Date(2026, 7, 15, 10, 30, 0, 0, time.UTC)
 	wl := &session.WorkLoop{
 		LoopID:           "loop_abcd",
 		Project:          "demo",
@@ -56,6 +57,8 @@ func TestWorkLoopToProto(t *testing.T) {
 		CurrentSessionID: "s1",
 		Outcome:          "loop complete: no ready tasks remain",
 		StartedAt:        started,
+		ResumeAt:         resume,
+		WaitKind:         "rate_limit",
 		SessionsRun:      2,
 		Sessions: []session.WorkLoopSession{
 			{SessionID: "s1", Focus: "0001", Tokens: 100, Cost: 0.01, PriceStatus: "priced"},
@@ -76,6 +79,9 @@ func TestWorkLoopToProto(t *testing.T) {
 	}
 	if info.StartedAt != "2026-07-15T10:00:00Z" {
 		t.Fatalf("started_at = %q", info.StartedAt)
+	}
+	if info.ResumeAt != "2026-07-15T10:30:00Z" || info.WaitKind != "rate_limit" {
+		t.Fatalf("wait fields = %q/%q", info.ResumeAt, info.WaitKind)
 	}
 	if info.SessionsRun != 2 || len(info.Sessions) != 1 || info.Sessions[0].SessionId != "s1" {
 		t.Fatalf("sessions wrong: %+v", info.Sessions)

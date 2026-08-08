@@ -34,6 +34,14 @@ func TestDigestFromWorkLoop(t *testing.T) {
 	}
 }
 
+func TestWorkLoopWaitingStatus(t *testing.T) {
+	resume := time.Now().Add(time.Minute).UTC().Format(time.RFC3339)
+	got := workLoopWaitingStatus(&v1.WorkLoopInfo{State: "waiting", WaitKind: "rate_limit", ResumeAt: resume})
+	if !strings.Contains(got, "rate_limit") || !strings.Contains(got, "resumes") {
+		t.Fatalf("waiting status = %q", got)
+	}
+}
+
 func TestWorkLoopMessagesAndTick(t *testing.T) {
 	fc := newFakeClient()
 	m := model{client: fc, ctx: context.Background(), state: stateMenu, project: "p", loopSeq: 4,
