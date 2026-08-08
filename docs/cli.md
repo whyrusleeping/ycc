@@ -109,6 +109,31 @@ ycc project list
 ycc project remove myapp
 ```
 
+### `ycc ws <list|path>` — reach workstream worktrees
+
+List workstreams or print the filesystem path of one worktree. `ycc ws` with no
+subcommand behaves like `ycc ws list`. Aliases: `ycc workstream`, `ycc
+workstreams`.
+
+| Subcommand | Description |
+|------------|-------------|
+| `list [--project NAME]` | list id, task, branch, commit count, status, and session id; optionally restrict results to a registered project |
+| `path <id>` | print only the absolute worktree path, suitable for command substitution |
+
+`path` accepts a full id or any unambiguous prefix. The `ws_` namespace is
+optional, so `3f9a` can resolve `ws_3f9abc01`. Unknown and ambiguous prefixes
+produce an error; ambiguous errors name the matching ids.
+
+```sh
+ycc ws list
+ycc ws list --project myapp
+cd $(ycc ws path 3f9a)
+ycc --addr https://host:8787 ws list --project myapp
+```
+
+Both subcommands use the daemon's `ListWorkstreams` RPC, including when a remote
+daemon is selected with `--addr`.
+
 ### `ycc cost` — usage & cost breakdown
 
 Renders the usage/cost table from the daemon. By default it groups by backlog
