@@ -96,6 +96,7 @@ type workLoop struct {
 	workspace  string // resolved absolute workspace
 
 	mu               sync.Mutex
+	persistMu        sync.Mutex // serializes atomic snapshots to .ycc/workloop.json
 	state            string
 	currentSessionID string
 	outcome          string
@@ -134,6 +135,11 @@ type workLoop struct {
 func (wl *workLoop) snapshot() *WorkLoop {
 	wl.mu.Lock()
 	defer wl.mu.Unlock()
+	return wl.snapshotLocked()
+}
+
+// snapshotLocked copies the loop state while the caller holds wl.mu.
+func (wl *workLoop) snapshotLocked() *WorkLoop {
 	out := &WorkLoop{
 		LoopID:           wl.loopID,
 		Project:          wl.project,
@@ -181,6 +187,9 @@ func (m *Manager) StartWorkLoop(project string) (*WorkLoop, error) {
 		return nil, err
 	}
 	m.loopMu.Lock()
+	if m.workLoops[absWS] == nil {
+		m.restoreWorkLoopLocked(absWS)
+	}
 	if existing := m.workLoops[absWS]; existing != nil {
 		st := existing.snapshot().State
 		if st == "running" || st == "stopping" {
@@ -208,6 +217,9 @@ func (m *Manager) StartWorkLoop(project string) (*WorkLoop, error) {
 	m.workLoops[absWS] = wl
 	m.loopMu.Unlock()
 
+	// Record the live state before launching the goroutine. If the daemon exits at
+	// any later point, restoration can report an interruption instead of "no loop".
+	wl.persist()
 	go wl.run()
 	return wl.snapshot(), nil
 }
@@ -227,11 +239,15 @@ func (m *Manager) StopWorkLoop(project string) (*WorkLoop, error) {
 		return nil, nil
 	}
 	wl.mu.Lock()
-	if wl.state == "running" {
+	changed := wl.state == "running"
+	if changed {
 		wl.stopReq = true
 		wl.state = "stopping"
 	}
 	wl.mu.Unlock()
+	if changed {
+		wl.persist()
+	}
 	return wl.snapshot(), nil
 }
 
@@ -243,6 +259,9 @@ func (m *Manager) GetWorkLoop(project string) (*WorkLoop, error) {
 		return nil, err
 	}
 	m.loopMu.Lock()
+	if m.workLoops[absWS] == nil {
+		m.restoreWorkLoopLocked(absWS)
+	}
 	wl := m.workLoops[absWS]
 	m.loopMu.Unlock()
 	if wl == nil {
@@ -403,12 +422,18 @@ func (wl *workLoop) accumulate(rec loopSessRec, breach bool) {
 	wl.costStatus = mergeCostStatus(wl.costStatus, rec.priceStatus)
 	wl.prevBreach = breach
 	wl.mu.Unlock()
+	wl.persist()
 }
 
 // finish stops the loop: it builds the batch digest against the baseline snapshot
 // and the final backlog, marks the loop finished, and — when at least one session
 // ran — pushes the completion digest via the daemon notifier (`digest` kind).
 func (wl *workLoop) finish(outcome string, final []*docs.Task) {
+	// Serialize the final write and keep state locked until its persistence attempt
+	// completes. Otherwise
+	// StartWorkLoop could observe "finished", install a new loop, and have that new
+	// running snapshot overwritten by this old loop's delayed final write.
+	wl.persistMu.Lock()
 	wl.mu.Lock()
 	wl.buildDigestLocked(final)
 	wl.state = "finished"
@@ -416,7 +441,9 @@ func (wl *workLoop) finish(outcome string, final []*docs.Task) {
 	nComplete, nBlocked, nReview := len(wl.completed), len(wl.blocked), len(wl.inReview)
 	pushed := len(wl.sessions) > 0
 	label := wl.project
+	wl.persistSnapshot(wl.snapshotLocked())
 	wl.mu.Unlock()
+	wl.persistMu.Unlock()
 
 	if pushed {
 		line := fmt.Sprintf("work loop finished: %d completed, %d blocked, %d in review",
@@ -497,6 +524,7 @@ func (wl *workLoop) realRunSession(ctx context.Context) (loopSessRec, bool, erro
 	wl.mu.Lock()
 	wl.currentSessionID = sess.ID
 	wl.mu.Unlock()
+	wl.persist()
 
 	// An unattended work session reaches Idle only after `finish` (it then blocks
 	// on input), so Idle == done here; Error is also terminal.
