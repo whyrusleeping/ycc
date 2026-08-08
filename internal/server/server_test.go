@@ -64,6 +64,60 @@ func TestSetThinkingNoSessionPersists(t *testing.T) {
 	}
 }
 
+// TestSetWorkImplementationPersists covers the settings-overlay path: the
+// resolved default is listed, valid changes persist, and invalid values map to
+// InvalidArgument.
+func TestSetWorkImplementationPersists(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ycc.toml")
+	if err := config.Save(path, &config.Config{
+		Models: map[string]config.Model{"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"}},
+		Roles:  config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
+	}); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	reg := config.NewRegistry(cfg)
+	reg.SetPath(path)
+	srv := New(session.NewManager(reg, t.TempDir()))
+	ctx := context.Background()
+
+	initial, err := srv.ListModels(ctx, connect.NewRequest(&v1.ListModelsRequest{}))
+	if err != nil {
+		t.Fatalf("initial ListModels: %v", err)
+	}
+	if initial.Msg.WorkImplementation != "delegate" {
+		t.Fatalf("initial work implementation = %q, want delegate", initial.Msg.WorkImplementation)
+	}
+	if _, err := srv.SetWorkImplementation(ctx, connect.NewRequest(&v1.SetWorkImplementationRequest{
+		Implementation: "direct",
+	})); err != nil {
+		t.Fatalf("SetWorkImplementation: %v", err)
+	}
+	list, err := srv.ListModels(ctx, connect.NewRequest(&v1.ListModelsRequest{}))
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if list.Msg.WorkImplementation != "direct" {
+		t.Fatalf("work implementation = %q, want direct", list.Msg.WorkImplementation)
+	}
+	reloaded, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if reloaded.Work.Implementation != "direct" {
+		t.Fatalf("persisted work implementation = %q, want direct", reloaded.Work.Implementation)
+	}
+
+	if _, err := srv.SetWorkImplementation(ctx, connect.NewRequest(&v1.SetWorkImplementationRequest{
+		Implementation: "bogus",
+	})); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("invalid implementation code = %v, want InvalidArgument", connect.CodeOf(err))
+	}
+}
+
 // AnswerQuestions maps an unknown session to a NotFound connect error, mirroring
 // the single-question AnswerQuestion RPC.
 func TestAnswerQuestionsUnknownSession(t *testing.T) {

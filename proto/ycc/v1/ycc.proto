@@ -264,6 +264,9 @@ message ListModelsResponse {
   string coordinator_thinking = 5;
   string implementer_thinking = 6;
   string reviewers_thinking = 7;
+  // Effective work-mode implementation strategy (work.implementation), resolved
+  // to "delegate" when unset, so settings clients show the real current default.
+  string work_implementation = 8;
 }
 
 // ModelConfig mirrors a [models.X] block (spec §13, §18.2) for the settings
@@ -349,6 +352,14 @@ message SetThinkingRequest {
   string role = 3;  // empty = all roles; coordinator | implementer | reviewers
 }
 message SetThinkingResponse {}
+
+// SetWorkImplementation changes the persisted work-mode implementation strategy.
+// The coordinator toolset and system prompt are fixed when a session starts, so
+// this setting applies to the next session rather than rebuilding a live loop.
+message SetWorkImplementationRequest {
+  string implementation = 1; // delegate | direct
+}
+message SetWorkImplementationResponse {}
 
 // Backlog browser (spec §18.5): read-only RPCs that expose the durable backlog
 // (internal/docs Store) so clients can list and inspect tasks independent of any
@@ -718,6 +729,7 @@ service SessionService {
   rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
   rpc SetRoleConfig(SetRoleConfigRequest) returns (SetRoleConfigResponse);
   rpc SetThinking(SetThinkingRequest) returns (SetThinkingResponse);
+  rpc SetWorkImplementation(SetWorkImplementationRequest) returns (SetWorkImplementationResponse);
 
   // Model backends (spec §18.2): add/edit/remove a logical model backend at
   // runtime; optionally persisted to ycc.toml.

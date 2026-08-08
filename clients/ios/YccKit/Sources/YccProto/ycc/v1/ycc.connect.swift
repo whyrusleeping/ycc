@@ -97,6 +97,9 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `setThinking`(request: Ycc_V1_SetThinkingRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_SetThinkingResponse>
 
+    @available(iOS 13, *)
+    func `setWorkImplementation`(request: Ycc_V1_SetWorkImplementationRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_SetWorkImplementationResponse>
+
     /// Model backends (spec §18.2): add/edit/remove a logical model backend at
     /// runtime; optionally persisted to ycc.toml.
     @available(iOS 13, *)
@@ -317,6 +320,11 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     }
 
     @available(iOS 13, *)
+    public func `setWorkImplementation`(request: Ycc_V1_SetWorkImplementationRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_SetWorkImplementationResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/SetWorkImplementation", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
     public func `upsertModel`(request: Ycc_V1_UpsertModelRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_UpsertModelResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/UpsertModel", idempotencyLevel: .unknown, request: request, headers: headers)
     }
@@ -454,6 +462,7 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let listModels = Connect.MethodSpec(name: "ListModels", service: "ycc.v1.SessionService", type: .unary)
             public static let setRoleConfig = Connect.MethodSpec(name: "SetRoleConfig", service: "ycc.v1.SessionService", type: .unary)
             public static let setThinking = Connect.MethodSpec(name: "SetThinking", service: "ycc.v1.SessionService", type: .unary)
+            public static let setWorkImplementation = Connect.MethodSpec(name: "SetWorkImplementation", service: "ycc.v1.SessionService", type: .unary)
             public static let upsertModel = Connect.MethodSpec(name: "UpsertModel", service: "ycc.v1.SessionService", type: .unary)
             public static let removeModel = Connect.MethodSpec(name: "RemoveModel", service: "ycc.v1.SessionService", type: .unary)
             public static let getModelConfig = Connect.MethodSpec(name: "GetModelConfig", service: "ycc.v1.SessionService", type: .unary)

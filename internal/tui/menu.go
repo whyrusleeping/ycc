@@ -39,6 +39,7 @@ func (m model) fetchModels() tea.Msg {
 		coordThink:  resp.Msg.CoordinatorThinking,
 		implThink:   resp.Msg.ImplementerThinking,
 		revThink:    resp.Msg.ReviewersThinking,
+		workImpl:    resp.Msg.WorkImplementation,
 	}
 }
 

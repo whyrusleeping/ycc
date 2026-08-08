@@ -447,6 +447,7 @@ func (s *Server) ListModels(_ context.Context, _ *connect.Request[v1.ListModelsR
 	return connect.NewResponse(&v1.ListModelsResponse{
 		Models: models, Coordinator: coord, Implementer: impl, Reviewers: revs,
 		CoordinatorThinking: ct, ImplementerThinking: it, ReviewersThinking: rt,
+		WorkImplementation: s.mgr.WorkImplementation(),
 	}), nil
 }
 
@@ -590,6 +591,16 @@ func (s *Server) SetThinking(_ context.Context, req *connect.Request[v1.SetThink
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	return connect.NewResponse(&v1.SetThinkingResponse{}), nil
+}
+
+// SetWorkImplementation persists the work-mode coordinator strategy (spec §10,
+// §18.2). A coordinator's toolset and system prompt are fixed at session start,
+// so the new default applies to the next session and does not rebuild live loops.
+func (s *Server) SetWorkImplementation(_ context.Context, req *connect.Request[v1.SetWorkImplementationRequest]) (*connect.Response[v1.SetWorkImplementationResponse], error) {
+	if err := s.mgr.SetWorkImplementation(req.Msg.Implementation); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	return connect.NewResponse(&v1.SetWorkImplementationResponse{}), nil
 }
 
 // ListBacklog returns summary rows for the backlog, with per-task readiness

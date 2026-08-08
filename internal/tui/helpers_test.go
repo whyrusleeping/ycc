@@ -54,8 +54,9 @@ type fakeClient struct {
 	discoverNote string
 	lastDiscover *v1.DiscoverModelsRequest
 
-	lastRoleReq  *v1.SetRoleConfigRequest // most recent SetRoleConfig call
-	lastStartReq *v1.StartSessionRequest  // most recent StartSession call
+	lastRoleReq  *v1.SetRoleConfigRequest         // most recent SetRoleConfig call
+	lastWorkImpl *v1.SetWorkImplementationRequest // most recent SetWorkImplementation call
+	lastStartReq *v1.StartSessionRequest          // most recent StartSession call
 
 	// previous-sessions screen (spec §18.6)
 	history      []*v1.SessionSummary
@@ -117,7 +118,7 @@ func (f *fakeClient) ListModels(_ context.Context, _ *connect.Request[v1.ListMod
 		c := f.models[name]
 		out = append(out, &v1.ModelInfo{Name: c.Name, Backend: c.Backend, Model: c.Model})
 	}
-	return connect.NewResponse(&v1.ListModelsResponse{Models: out}), nil
+	return connect.NewResponse(&v1.ListModelsResponse{Models: out, WorkImplementation: "delegate"}), nil
 }
 
 // SetRoleConfig records the most recent role-config request so tests can assert
@@ -125,6 +126,11 @@ func (f *fakeClient) ListModels(_ context.Context, _ *connect.Request[v1.ListMod
 func (f *fakeClient) SetRoleConfig(_ context.Context, req *connect.Request[v1.SetRoleConfigRequest]) (*connect.Response[v1.SetRoleConfigResponse], error) {
 	f.lastRoleReq = req.Msg
 	return connect.NewResponse(&v1.SetRoleConfigResponse{}), nil
+}
+
+func (f *fakeClient) SetWorkImplementation(_ context.Context, req *connect.Request[v1.SetWorkImplementationRequest]) (*connect.Response[v1.SetWorkImplementationResponse], error) {
+	f.lastWorkImpl = req.Msg
+	return connect.NewResponse(&v1.SetWorkImplementationResponse{}), nil
 }
 
 // StopSession records the stopped session id; the loop-idle test exercises it

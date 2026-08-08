@@ -2553,6 +2553,16 @@ func (m *Manager) UpsertModel(name string, mdl config.Model, persist bool) error
 	return m.reg.UpsertModel(name, mdl, persist)
 }
 
+// WorkImplementation returns the effective work-mode implementation strategy
+// used when the next session is built (spec §10, §18.2).
+func (m *Manager) WorkImplementation() string { return m.reg.WorkImplementation() }
+
+// SetWorkImplementation updates and persists the work-mode implementation
+// strategy. Existing sessions retain the toolset and prompt they started with.
+func (m *Manager) SetWorkImplementation(impl string) error {
+	return m.reg.SetWorkImplementation(impl)
+}
+
 // SetRoles updates the default per-role model assignment (config.Roles) and
 // persists it to ycc.toml (spec §18.2). Used when a role change is made with no
 // live session to apply it to (e.g. from the home-menu settings overlay); a

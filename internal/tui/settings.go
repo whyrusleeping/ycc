@@ -44,6 +44,20 @@ func (m model) setRoleConfig(coord, impl string, reviewers []string) tea.Cmd {
 	}
 }
 
+// setWorkImplementation persists the work-mode coordinator strategy. Unlike
+// role and thinking changes, this applies when the next session is built because
+// an existing coordinator's toolset and system prompt cannot be swapped in place.
+func (m model) setWorkImplementation(impl string) tea.Cmd {
+	return func() tea.Msg {
+		if _, err := m.client.SetWorkImplementation(m.ctx, connect.NewRequest(&v1.SetWorkImplementationRequest{
+			Implementation: impl,
+		})); err != nil {
+			return errMsg{err}
+		}
+		return nil
+	}
+}
+
 // openOverlay enters the modal settings overlay, seeding role defaults from the
 // configured models when this is a fresh session.
 func (m *model) openOverlay() {
@@ -62,6 +76,7 @@ const (
 	ovImpl
 	ovReviewers
 	ovBackends
+	ovWorkImpl
 	ovTheme
 	ovFollow
 	ovAutoExpand
@@ -74,8 +89,9 @@ const (
 )
 
 var (
-	thinkLevels = []string{"off", "low", "medium", "high", "xhigh", "max"}
-	themes      = []string{"dark", "light"}
+	thinkLevels         = []string{"off", "low", "medium", "high", "xhigh", "max"}
+	workImplementations = []string{"delegate", "direct"}
+	themes              = []string{"dark", "light"}
 )
 
 func (m model) updateOverlay(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -141,6 +157,9 @@ func (m model) overlayAdjust(d int) (tea.Model, tea.Cmd) {
 			m.reviewerSub = (m.reviewerSub + d + n) % n
 		}
 		return m, nil
+	case ovWorkImpl:
+		m.workImpl = cycle(workImplementations, m.workImpl, d)
+		return m, m.setWorkImplementation(m.workImpl)
 	case ovTheme:
 		m.prefs.Theme = cycle(themes, m.prefs.Theme, d)
 		clientconfig.Save(m.prefs)
@@ -205,6 +224,9 @@ func (m model) overlayActivate() (tea.Model, tea.Cmd) {
 		m.mbCursor = 0
 		m.mbErr = ""
 		return m, m.fetchModels
+	case ovWorkImpl:
+		m.workImpl = cycle(workImplementations, m.workImpl, 1)
+		return m, m.setWorkImplementation(m.workImpl)
 	case ovInterrupt:
 		// Interrupt the running agent (or resume a paused one) — the overlay
 		// route promised by spec §18.7, and the reliable path on terminals where
@@ -368,6 +390,7 @@ func (m model) overlayView() string {
 		{"implementer model", m.roleImpl + " (" + m.thinkLevels["implementer"] + ")"},
 		{"reviewers", strings.Join(m.roleReviewrs, ", ")},
 		{"model backends", "add / edit / remove…"},
+		{"work implementation", m.workImpl + " (applies to next session)"},
 		{"theme", m.prefs.Theme},
 		{"follow / auto-scroll", boolStr(m.prefs.Follow)},
 		{"auto-expand agent logs", boolStr(m.prefs.AutoExpandLogs)},

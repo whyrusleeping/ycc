@@ -94,6 +94,9 @@ const (
 	// SessionServiceSetThinkingProcedure is the fully-qualified name of the SessionService's
 	// SetThinking RPC.
 	SessionServiceSetThinkingProcedure = "/ycc.v1.SessionService/SetThinking"
+	// SessionServiceSetWorkImplementationProcedure is the fully-qualified name of the SessionService's
+	// SetWorkImplementation RPC.
+	SessionServiceSetWorkImplementationProcedure = "/ycc.v1.SessionService/SetWorkImplementation"
 	// SessionServiceUpsertModelProcedure is the fully-qualified name of the SessionService's
 	// UpsertModel RPC.
 	SessionServiceUpsertModelProcedure = "/ycc.v1.SessionService/UpsertModel"
@@ -205,6 +208,7 @@ type SessionServiceClient interface {
 	ListModels(context.Context, *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error)
 	SetRoleConfig(context.Context, *connect.Request[v1.SetRoleConfigRequest]) (*connect.Response[v1.SetRoleConfigResponse], error)
 	SetThinking(context.Context, *connect.Request[v1.SetThinkingRequest]) (*connect.Response[v1.SetThinkingResponse], error)
+	SetWorkImplementation(context.Context, *connect.Request[v1.SetWorkImplementationRequest]) (*connect.Response[v1.SetWorkImplementationResponse], error)
 	// Model backends (spec §18.2): add/edit/remove a logical model backend at
 	// runtime; optionally persisted to ycc.toml.
 	UpsertModel(context.Context, *connect.Request[v1.UpsertModelRequest]) (*connect.Response[v1.UpsertModelResponse], error)
@@ -403,6 +407,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("SetThinking")),
 			connect.WithClientOptions(opts...),
 		),
+		setWorkImplementation: connect.NewClient[v1.SetWorkImplementationRequest, v1.SetWorkImplementationResponse](
+			httpClient,
+			baseURL+SessionServiceSetWorkImplementationProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("SetWorkImplementation")),
+			connect.WithClientOptions(opts...),
+		),
 		upsertModel: connect.NewClient[v1.UpsertModelRequest, v1.UpsertModelResponse](
 			httpClient,
 			baseURL+SessionServiceUpsertModelProcedure,
@@ -546,50 +556,51 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 
 // sessionServiceClient implements SessionServiceClient.
 type sessionServiceClient struct {
-	listModes            *connect.Client[v1.ListModesRequest, v1.ListModesResponse]
-	startSession         *connect.Client[v1.StartSessionRequest, v1.StartSessionResponse]
-	listSessions         *connect.Client[v1.ListSessionsRequest, v1.ListSessionsResponse]
-	listSessionHistory   *connect.Client[v1.ListSessionHistoryRequest, v1.ListSessionHistoryResponse]
-	getSessionTranscript *connect.Client[v1.GetSessionTranscriptRequest, v1.GetSessionTranscriptResponse]
-	getCommitDiff        *connect.Client[v1.GetCommitDiffRequest, v1.GetCommitDiffResponse]
-	subscribe            *connect.Client[v1.SubscribeRequest, v1.Event]
-	sendInput            *connect.Client[v1.SendInputRequest, v1.SendInputResponse]
-	answerQuestion       *connect.Client[v1.AnswerQuestionRequest, v1.AnswerQuestionResponse]
-	answerQuestions      *connect.Client[v1.AnswerQuestionsRequest, v1.AnswerQuestionsResponse]
-	interrupt            *connect.Client[v1.InterruptRequest, v1.InterruptResponse]
-	resume               *connect.Client[v1.ResumeRequest, v1.ResumeResponse]
-	stopSession          *connect.Client[v1.StopSessionRequest, v1.StopSessionResponse]
-	resumeSession        *connect.Client[v1.ResumeSessionRequest, v1.ResumeSessionResponse]
-	listProjects         *connect.Client[v1.ListProjectsRequest, v1.ListProjectsResponse]
-	addProject           *connect.Client[v1.AddProjectRequest, v1.AddProjectResponse]
-	removeProject        *connect.Client[v1.RemoveProjectRequest, v1.RemoveProjectResponse]
-	listDir              *connect.Client[v1.ListDirRequest, v1.ListDirResponse]
-	listModels           *connect.Client[v1.ListModelsRequest, v1.ListModelsResponse]
-	setRoleConfig        *connect.Client[v1.SetRoleConfigRequest, v1.SetRoleConfigResponse]
-	setThinking          *connect.Client[v1.SetThinkingRequest, v1.SetThinkingResponse]
-	upsertModel          *connect.Client[v1.UpsertModelRequest, v1.UpsertModelResponse]
-	removeModel          *connect.Client[v1.RemoveModelRequest, v1.RemoveModelResponse]
-	getModelConfig       *connect.Client[v1.GetModelConfigRequest, v1.GetModelConfigResponse]
-	discoverModels       *connect.Client[v1.DiscoverModelsRequest, v1.DiscoverModelsResponse]
-	listBacklog          *connect.Client[v1.ListBacklogRequest, v1.ListBacklogResponse]
-	getTask              *connect.Client[v1.GetTaskRequest, v1.GetTaskResponse]
-	updateTask           *connect.Client[v1.UpdateTaskRequest, v1.UpdateTaskResponse]
-	createTask           *connect.Client[v1.CreateTaskRequest, v1.CreateTaskResponse]
-	listPlans            *connect.Client[v1.ListPlansRequest, v1.ListPlansResponse]
-	getPlan              *connect.Client[v1.GetPlanRequest, v1.GetPlanResponse]
-	captureBacklogItem   *connect.Client[v1.CaptureBacklogItemRequest, v1.Event]
-	getUsage             *connect.Client[v1.GetUsageRequest, v1.GetUsageResponse]
-	getSubscriptionUsage *connect.Client[v1.GetSubscriptionUsageRequest, v1.GetSubscriptionUsageResponse]
-	getBudget            *connect.Client[v1.GetBudgetRequest, v1.GetBudgetResponse]
-	notify               *connect.Client[v1.NotifyRequest, v1.NotifyResponse]
-	startWorkLoop        *connect.Client[v1.StartWorkLoopRequest, v1.StartWorkLoopResponse]
-	stopWorkLoop         *connect.Client[v1.StopWorkLoopRequest, v1.StopWorkLoopResponse]
-	getWorkLoop          *connect.Client[v1.GetWorkLoopRequest, v1.GetWorkLoopResponse]
-	spawnWorkstream      *connect.Client[v1.SpawnWorkstreamRequest, v1.SpawnWorkstreamResponse]
-	listWorkstreams      *connect.Client[v1.ListWorkstreamsRequest, v1.ListWorkstreamsResponse]
-	previewMerge         *connect.Client[v1.PreviewMergeRequest, v1.PreviewMergeResponse]
-	mergeWorkstream      *connect.Client[v1.MergeWorkstreamRequest, v1.MergeWorkstreamResponse]
-	discardWorkstream    *connect.Client[v1.DiscardWorkstreamRequest, v1.DiscardWorkstreamResponse]
+	listModes             *connect.Client[v1.ListModesRequest, v1.ListModesResponse]
+	startSession          *connect.Client[v1.StartSessionRequest, v1.StartSessionResponse]
+	listSessions          *connect.Client[v1.ListSessionsRequest, v1.ListSessionsResponse]
+	listSessionHistory    *connect.Client[v1.ListSessionHistoryRequest, v1.ListSessionHistoryResponse]
+	getSessionTranscript  *connect.Client[v1.GetSessionTranscriptRequest, v1.GetSessionTranscriptResponse]
+	getCommitDiff         *connect.Client[v1.GetCommitDiffRequest, v1.GetCommitDiffResponse]
+	subscribe             *connect.Client[v1.SubscribeRequest, v1.Event]
+	sendInput             *connect.Client[v1.SendInputRequest, v1.SendInputResponse]
+	answerQuestion        *connect.Client[v1.AnswerQuestionRequest, v1.AnswerQuestionResponse]
+	answerQuestions       *connect.Client[v1.AnswerQuestionsRequest, v1.AnswerQuestionsResponse]
+	interrupt             *connect.Client[v1.InterruptRequest, v1.InterruptResponse]
+	resume                *connect.Client[v1.ResumeRequest, v1.ResumeResponse]
+	stopSession           *connect.Client[v1.StopSessionRequest, v1.StopSessionResponse]
+	resumeSession         *connect.Client[v1.ResumeSessionRequest, v1.ResumeSessionResponse]
+	listProjects          *connect.Client[v1.ListProjectsRequest, v1.ListProjectsResponse]
+	addProject            *connect.Client[v1.AddProjectRequest, v1.AddProjectResponse]
+	removeProject         *connect.Client[v1.RemoveProjectRequest, v1.RemoveProjectResponse]
+	listDir               *connect.Client[v1.ListDirRequest, v1.ListDirResponse]
+	listModels            *connect.Client[v1.ListModelsRequest, v1.ListModelsResponse]
+	setRoleConfig         *connect.Client[v1.SetRoleConfigRequest, v1.SetRoleConfigResponse]
+	setThinking           *connect.Client[v1.SetThinkingRequest, v1.SetThinkingResponse]
+	setWorkImplementation *connect.Client[v1.SetWorkImplementationRequest, v1.SetWorkImplementationResponse]
+	upsertModel           *connect.Client[v1.UpsertModelRequest, v1.UpsertModelResponse]
+	removeModel           *connect.Client[v1.RemoveModelRequest, v1.RemoveModelResponse]
+	getModelConfig        *connect.Client[v1.GetModelConfigRequest, v1.GetModelConfigResponse]
+	discoverModels        *connect.Client[v1.DiscoverModelsRequest, v1.DiscoverModelsResponse]
+	listBacklog           *connect.Client[v1.ListBacklogRequest, v1.ListBacklogResponse]
+	getTask               *connect.Client[v1.GetTaskRequest, v1.GetTaskResponse]
+	updateTask            *connect.Client[v1.UpdateTaskRequest, v1.UpdateTaskResponse]
+	createTask            *connect.Client[v1.CreateTaskRequest, v1.CreateTaskResponse]
+	listPlans             *connect.Client[v1.ListPlansRequest, v1.ListPlansResponse]
+	getPlan               *connect.Client[v1.GetPlanRequest, v1.GetPlanResponse]
+	captureBacklogItem    *connect.Client[v1.CaptureBacklogItemRequest, v1.Event]
+	getUsage              *connect.Client[v1.GetUsageRequest, v1.GetUsageResponse]
+	getSubscriptionUsage  *connect.Client[v1.GetSubscriptionUsageRequest, v1.GetSubscriptionUsageResponse]
+	getBudget             *connect.Client[v1.GetBudgetRequest, v1.GetBudgetResponse]
+	notify                *connect.Client[v1.NotifyRequest, v1.NotifyResponse]
+	startWorkLoop         *connect.Client[v1.StartWorkLoopRequest, v1.StartWorkLoopResponse]
+	stopWorkLoop          *connect.Client[v1.StopWorkLoopRequest, v1.StopWorkLoopResponse]
+	getWorkLoop           *connect.Client[v1.GetWorkLoopRequest, v1.GetWorkLoopResponse]
+	spawnWorkstream       *connect.Client[v1.SpawnWorkstreamRequest, v1.SpawnWorkstreamResponse]
+	listWorkstreams       *connect.Client[v1.ListWorkstreamsRequest, v1.ListWorkstreamsResponse]
+	previewMerge          *connect.Client[v1.PreviewMergeRequest, v1.PreviewMergeResponse]
+	mergeWorkstream       *connect.Client[v1.MergeWorkstreamRequest, v1.MergeWorkstreamResponse]
+	discardWorkstream     *connect.Client[v1.DiscardWorkstreamRequest, v1.DiscardWorkstreamResponse]
 }
 
 // ListModes calls ycc.v1.SessionService.ListModes.
@@ -695,6 +706,11 @@ func (c *sessionServiceClient) SetRoleConfig(ctx context.Context, req *connect.R
 // SetThinking calls ycc.v1.SessionService.SetThinking.
 func (c *sessionServiceClient) SetThinking(ctx context.Context, req *connect.Request[v1.SetThinkingRequest]) (*connect.Response[v1.SetThinkingResponse], error) {
 	return c.setThinking.CallUnary(ctx, req)
+}
+
+// SetWorkImplementation calls ycc.v1.SessionService.SetWorkImplementation.
+func (c *sessionServiceClient) SetWorkImplementation(ctx context.Context, req *connect.Request[v1.SetWorkImplementationRequest]) (*connect.Response[v1.SetWorkImplementationResponse], error) {
+	return c.setWorkImplementation.CallUnary(ctx, req)
 }
 
 // UpsertModel calls ycc.v1.SessionService.UpsertModel.
@@ -856,6 +872,7 @@ type SessionServiceHandler interface {
 	ListModels(context.Context, *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error)
 	SetRoleConfig(context.Context, *connect.Request[v1.SetRoleConfigRequest]) (*connect.Response[v1.SetRoleConfigResponse], error)
 	SetThinking(context.Context, *connect.Request[v1.SetThinkingRequest]) (*connect.Response[v1.SetThinkingResponse], error)
+	SetWorkImplementation(context.Context, *connect.Request[v1.SetWorkImplementationRequest]) (*connect.Response[v1.SetWorkImplementationResponse], error)
 	// Model backends (spec §18.2): add/edit/remove a logical model backend at
 	// runtime; optionally persisted to ycc.toml.
 	UpsertModel(context.Context, *connect.Request[v1.UpsertModelRequest]) (*connect.Response[v1.UpsertModelResponse], error)
@@ -1050,6 +1067,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("SetThinking")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceSetWorkImplementationHandler := connect.NewUnaryHandler(
+		SessionServiceSetWorkImplementationProcedure,
+		svc.SetWorkImplementation,
+		connect.WithSchema(sessionServiceMethods.ByName("SetWorkImplementation")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sessionServiceUpsertModelHandler := connect.NewUnaryHandler(
 		SessionServiceUpsertModelProcedure,
 		svc.UpsertModel,
@@ -1232,6 +1255,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceSetRoleConfigHandler.ServeHTTP(w, r)
 		case SessionServiceSetThinkingProcedure:
 			sessionServiceSetThinkingHandler.ServeHTTP(w, r)
+		case SessionServiceSetWorkImplementationProcedure:
+			sessionServiceSetWorkImplementationHandler.ServeHTTP(w, r)
 		case SessionServiceUpsertModelProcedure:
 			sessionServiceUpsertModelHandler.ServeHTTP(w, r)
 		case SessionServiceRemoveModelProcedure:
@@ -1369,6 +1394,10 @@ func (UnimplementedSessionServiceHandler) SetRoleConfig(context.Context, *connec
 
 func (UnimplementedSessionServiceHandler) SetThinking(context.Context, *connect.Request[v1.SetThinkingRequest]) (*connect.Response[v1.SetThinkingResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.SetThinking is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) SetWorkImplementation(context.Context, *connect.Request[v1.SetWorkImplementationRequest]) (*connect.Response[v1.SetWorkImplementationResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.SetWorkImplementation is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) UpsertModel(context.Context, *connect.Request[v1.UpsertModelRequest]) (*connect.Response[v1.UpsertModelResponse], error) {

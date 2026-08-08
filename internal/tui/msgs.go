@@ -30,6 +30,7 @@ type modelsMsg struct {
 	coordThink  string
 	implThink   string
 	revThink    string
+	workImpl    string
 }
 
 type projectsMsg struct{ projects []*v1.ProjectInfo }

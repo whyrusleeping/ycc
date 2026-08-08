@@ -322,6 +322,7 @@ type model struct {
 	roleImpl     string            // logical model for the implementer
 	roleReviewrs []string          // logical models for reviewers (multi-select)
 	reviewerSub  int               // visible sub-cursor: which reviewer chip the next toggle affects
+	workImpl     string            // work-mode implementation strategy used by the next session
 	prefs        clientconfig.Prefs
 
 	// backlog browser (spec §18.5): modal over menu/session, opened with ctrl+b.
@@ -800,6 +801,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.revThink != "" {
 			m.thinkLevels["reviewers"] = msg.revThink
+		}
+		if msg.workImpl != "" {
+			m.workImpl = msg.workImpl
 		}
 		// Build the per-model pricing table (task 0062) used by the live status
 		// bar's token/cost readout. Only models flagged priced get an entry, so an

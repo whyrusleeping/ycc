@@ -851,9 +851,13 @@ coordinator's tool set and it is given a coder-framed system prompt (do the work
 then review); everything else (planning, review tiers, revise loop via `re_review`, blocked
 tasks, commit) is unchanged. The setting resolves at session start
 (`config.Registry.WorkImplementation()`, default `delegate`) and is threaded to the work-mode
-coordinator via `orchestrator.Deps.WorkImplementation`. Exposing it as a live, persisted
-setting in the settings overlay (§18.2) is a follow-up. The "Blocked implementer" note below
-applies only to `delegate` (there is no implementer subagent to block in `direct`).
+coordinator via `orchestrator.Deps.WorkImplementation`. The settings overlay (§18.2) seeds its
+**work implementation** row from `ListModelsResponse.work_implementation`; changing the row
+issues `SetWorkImplementation`, which validates `delegate | direct` and persists the choice to
+`work.implementation` in `ycc.toml`. Because the coordinator's toolset and system prompt are
+fixed when its loop is built, the change applies to the **next session**, not an already-running
+session. The "Blocked implementer" note below applies only to `delegate` (there is no
+implementer subagent to block in `direct`).
 
 **Blocked implementer (step 4).** Instead of a normal report, the implementer can end its
 run BLOCKED (via `report_blocked`) with a reason — a decision that isn't its to make. The
@@ -925,6 +929,7 @@ service SessionService {
   rpc DiscoverModels(DiscoverModelsRequest) returns (DiscoverModelsResponse); // list a connection's model ids (§13, §18.2)
   rpc SetRoleConfig(SetRoleConfigRequest) returns (SetRoleConfigResponse);
   rpc SetThinking(SetThinkingRequest) returns (SetThinkingResponse);    // per-role reasoning level
+  rpc SetWorkImplementation(SetWorkImplementationRequest) returns (SetWorkImplementationResponse); // next session
 
   rpc GetSessionTranscript(GetSessionTranscriptRequest) returns (GetSessionTranscriptResponse); // read-only transcript (§18.6)
   rpc GetCommitDiff(GetCommitDiffRequest) returns (GetCommitDiffResponse); // git show for a commit_made row (§18.6, task 0140)
@@ -959,11 +964,14 @@ Notable message shapes for the settings + structured-question work:
   any effort level maps to adaptive thinking at that effort with summarized display. (The
   prior shape was session-wide with no `role` — adding `role` makes thinking independently
   configurable per agent.)
-- `ListModelsResponse { repeated ModelInfo models }` where `ModelInfo` carries the
-  logical name + backend + model id, so the client can populate the role pickers. For
-  *editing* backends the client needs the full record: a `ModelConfig` message mirrors a
-  `[models.X]` block (name, backend, base_url, model, key_env, thinking/effort/display,
-  pricing) and is returned by an extended `ListModels` (or a `GetModelConfig`).
+- `ListModelsResponse { repeated ModelInfo models; string work_implementation }` reports the
+  effective `work.implementation` (`delegate` when unset) alongside the settings seed data.
+  `SetWorkImplementationRequest { string implementation }` accepts `delegate | direct`, always
+  persists to `ycc.toml`, and applies to the next session (§10). `ModelInfo` carries the logical
+  name + backend + model id, so the client can populate the role pickers. For *editing* backends
+  the client needs the full record: a `ModelConfig` message mirrors a `[models.X]` block (name,
+  backend, base_url, model, key_env, thinking/effort/display, pricing) and is returned by an
+  extended `ListModels` (or a `GetModelConfig`).
   `UpsertModelRequest { ModelConfig model; bool persist }` adds or replaces a logical model
   by name; `RemoveModelRequest { string name; bool persist }` deletes one. The daemon
   **always** writes the change back to `ycc.toml` via `config.Save` (§19.1) so it survives
@@ -1533,6 +1541,11 @@ Overlay contents:
     default (which the next session picks up). The overlay seeds its pickers from the
     daemon's current default assignment (returned by `ListModels`) so it always shows
     the real current selection rather than a guess.
+- **Work implementation** — a two-choice `delegate | direct` row seeded from
+  `ListModelsResponse.work_implementation`. Changing it issues `SetWorkImplementation` and
+  immediately persists `work.implementation` to `ycc.toml`. The row is explicitly marked
+  **applies to next session**: the strategy changes the work coordinator's toolset and system
+  prompt, which are fixed when the session loop is built, so a live session is not rebuilt.
 - **Model backends (add / edit / remove)** — beyond *choosing* among configured models,
   the overlay can **manage the model backends themselves**, so the user can configure
   everything about a provider from the TUI without hand-editing `ycc.toml` or re-running

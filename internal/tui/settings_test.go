@@ -108,6 +108,35 @@ func TestOverlayCoordinatorAppliesImmediately(t *testing.T) {
 	}
 }
 
+// TestOverlayWorkImplementationAppliesImmediately verifies that the work
+// implementation row toggles delegate↔direct and persists each change via
+// SetWorkImplementation immediately.
+func TestOverlayWorkImplementationAppliesImmediately(t *testing.T) {
+	f := newFakeClient(&v1.ModelConfig{Name: "claude", Backend: "anthropic", Model: "claude-x"})
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	m = runCmds(t, m, m.fetchModels)
+	m.openOverlay()
+	m.ovCursor = ovWorkImpl
+
+	if m.workImpl != "delegate" {
+		t.Fatalf("seeded work implementation = %q, want delegate", m.workImpl)
+	}
+	m = drive(t, m, "right")
+	if m.workImpl != "direct" {
+		t.Fatalf("work implementation after right = %q, want direct", m.workImpl)
+	}
+	if f.lastWorkImpl == nil || f.lastWorkImpl.Implementation != "direct" {
+		t.Fatalf("SetWorkImplementation request = %+v, want direct", f.lastWorkImpl)
+	}
+	m = drive(t, m, "enter")
+	if m.workImpl != "delegate" {
+		t.Fatalf("work implementation after enter = %q, want delegate", m.workImpl)
+	}
+	if f.lastWorkImpl == nil || f.lastWorkImpl.Implementation != "delegate" {
+		t.Fatalf("SetWorkImplementation request = %+v, want delegate", f.lastWorkImpl)
+	}
+}
+
 // TestOverlayReviewerSubCursorMoves verifies that ←/→ on the reviewers row moves
 // the visible sub-cursor with wraparound and does not change the reviewer set.
 func TestOverlayReviewerSubCursorMoves(t *testing.T) {

@@ -851,6 +851,10 @@ public nonisolated struct Ycc_V1_ListModelsResponse: Sendable {
 
   public var reviewersThinking: String = String()
 
+  /// Effective work-mode implementation strategy (work.implementation), resolved
+  /// to "delegate" when unset, so settings clients show the real current default.
+  public var workImplementation: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1132,6 +1136,32 @@ public nonisolated struct Ycc_V1_SetThinkingRequest: Sendable {
 }
 
 public nonisolated struct Ycc_V1_SetThinkingResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// SetWorkImplementation changes the persisted work-mode implementation strategy.
+/// The coordinator toolset and system prompt are fixed when a session starts, so
+/// this setting applies to the next session rather than rebuilding a live loop.
+public nonisolated struct Ycc_V1_SetWorkImplementationRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// delegate | direct
+  public var implementation: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_SetWorkImplementationResponse: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3775,7 +3805,7 @@ nonisolated extension Ycc_V1_ModelInfo: SwiftProtobuf.Message, SwiftProtobuf._Me
 
 nonisolated extension Ycc_V1_ListModelsResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ListModelsResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}models\0\u{1}coordinator\0\u{1}implementer\0\u{1}reviewers\0\u{3}coordinator_thinking\0\u{3}implementer_thinking\0\u{3}reviewers_thinking\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}models\0\u{1}coordinator\0\u{1}implementer\0\u{1}reviewers\0\u{3}coordinator_thinking\0\u{3}implementer_thinking\0\u{3}reviewers_thinking\0\u{3}work_implementation\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -3790,6 +3820,7 @@ nonisolated extension Ycc_V1_ListModelsResponse: SwiftProtobuf.Message, SwiftPro
       case 5: try { try decoder.decodeSingularStringField(value: &self.coordinatorThinking) }()
       case 6: try { try decoder.decodeSingularStringField(value: &self.implementerThinking) }()
       case 7: try { try decoder.decodeSingularStringField(value: &self.reviewersThinking) }()
+      case 8: try { try decoder.decodeSingularStringField(value: &self.workImplementation) }()
       default: break
       }
     }
@@ -3817,6 +3848,9 @@ nonisolated extension Ycc_V1_ListModelsResponse: SwiftProtobuf.Message, SwiftPro
     if !self.reviewersThinking.isEmpty {
       try visitor.visitSingularStringField(value: self.reviewersThinking, fieldNumber: 7)
     }
+    if !self.workImplementation.isEmpty {
+      try visitor.visitSingularStringField(value: self.workImplementation, fieldNumber: 8)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -3828,6 +3862,7 @@ nonisolated extension Ycc_V1_ListModelsResponse: SwiftProtobuf.Message, SwiftPro
     if lhs.coordinatorThinking != rhs.coordinatorThinking {return false}
     if lhs.implementerThinking != rhs.implementerThinking {return false}
     if lhs.reviewersThinking != rhs.reviewersThinking {return false}
+    if lhs.workImplementation != rhs.workImplementation {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -4301,6 +4336,55 @@ nonisolated extension Ycc_V1_SetThinkingResponse: SwiftProtobuf.Message, SwiftPr
   }
 
   public static func ==(lhs: Ycc_V1_SetThinkingResponse, rhs: Ycc_V1_SetThinkingResponse) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_SetWorkImplementationRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SetWorkImplementationRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}implementation\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.implementation) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.implementation.isEmpty {
+      try visitor.visitSingularStringField(value: self.implementation, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_SetWorkImplementationRequest, rhs: Ycc_V1_SetWorkImplementationRequest) -> Bool {
+    if lhs.implementation != rhs.implementation {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_SetWorkImplementationResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SetWorkImplementationResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_SetWorkImplementationResponse, rhs: Ycc_V1_SetWorkImplementationResponse) -> Bool {
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
