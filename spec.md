@@ -1,9 +1,9 @@
 # ycc — a docs-driven coding harness
 
-> Status: **design** (pre-implementation). This document is the living spec.
-> It is meant to be edited continuously as the design firms up and the code lands.
-> The harness we are building maintains specs exactly like this one — so this file
-> is also the first dogfood of the workflow.
+> Status: **implemented and actively developed**. This document is the living spec.
+> It is edited continuously as shipped behavior evolves and future design firms up.
+> The harness maintains specs exactly like this one — so this file is also the first
+> dogfood of the workflow.
 
 ## 1. Vision & philosophy
 
@@ -76,7 +76,7 @@ Daemon + clients, from day one.
                                     │
               ┌─────────────────────┼─────────────────────┐
               │                     │                     │
-        ycc TUI (local)      ycc CLI (scripted)     phone app (future)
+        ycc TUI (local)      ycc CLI (scripted)     iOS app (shipped)
         subscribe + prod     subscribe + prod        subscribe + prod
 ```
 
@@ -87,8 +87,8 @@ they render an event stream and send commands. The TUI is just the first client.
 
 **Why Connect-RPC** (connectrpc.com/connect):
 - Native Go, generates from `.proto`, and speaks gRPC, gRPC-Web, **and** plain
-  HTTP/JSON from the *same* server — so a future phone app (or `curl`) can talk to it
-  without a gRPC stack.
+  HTTP/JSON from the *same* server — the shipped iOS app (and `curl`) use that remote
+  surface without a separate API facade.
 - Supports server-streaming, which is exactly what an event subscription needs.
 - Commands are simple unary RPCs.
 
@@ -161,8 +161,9 @@ in an unattended work loop); a client reconnecting just replays the log from an 
   failure does not make an otherwise usable transcript unavailable.
 - Optional periodic **snapshot** (`state.json`) of the reduced projection for fast
   resume on large logs.
-- Sync/remote = copy or stream the JSONL (it is the whole state). A future remote store
-  is "an `events.jsonl` somewhere else, plus an input channel."
+- The JSONL remains the whole durable session state for local replay and reopen. Remote
+  access does **not** replicate it: clients dial the owning daemon and consume
+  `Subscribe(from_seq)` plus the input RPCs directly (§14).
 
 ### 5.2 Event shape
 
@@ -699,8 +700,8 @@ private unattended-execution note so they never wait for a user who is not prese
 `options` parameter is a list of suggested answers; when present, the client renders a
 selectable picker (Claude-Code style) with an "other…" escape to free text. When
 absent, the user answers with free (multiline) text. See §18.3 for the UI side. The
-`Asker.Ask(ctx, question, options)` interface already carries `options` end-to-end;
-exposing it on the tool schema + answering by option is the remaining wiring.
+shipped tool schema exposes `options`, and `Asker.Ask(ctx, question, options)` carries
+the selected option or free-text answer end-to-end.
 Questions must be **self-contained**: the user is not following the agent's transcript,
 so the tool description directs the agent to lead each
 question with the context needed to answer it (what it was doing, what it found, why
@@ -1301,9 +1302,9 @@ rejected); the built-ins are always valid.
   [`docs/remote-api.md`](docs/remote-api.md) (connection & auth, protocol primer,
   endpoint catalog, and the event model for client authors). Two clients of that
   surface exist beyond the TUI: the daemon-served embedded web client (**shipped**;
-  `docs/design/web-client.md`, tasks 0151–0153) and a native SwiftUI iOS app in
-  `clients/ios/` (**planned**; `docs/design/ios-client.md` — connect-swift generated
-  client, phased toward TUI parity, tasks 0178–0190).
+  `docs/design/web-client.md`, tasks 0151–0153) and the native SwiftUI iOS app
+  (**shipped and actively developed** in `clients/ios/`; `docs/design/ios-client.md` —
+  connect-swift generated client, tasks 0178–0190 and ongoing follow-ons).
 - **Daemon-side push notifications (task 0142).** Terminal notifications (§18, task
   0108) only help when the terminal is visible. For the "kick off unattended work,
   walk away, answer from your phone" flow the daemon can also *reach out* via a
@@ -1449,13 +1450,13 @@ ycc/
 - **M5 — Remote access.** Direct-dial remote clients over a private network
   (Tailscale/VPN): bearer token required on non-loopback binds, TLS optional; verified
   end-to-end remote Subscribe/prod path + a documented Connect HTTP/JSON surface for
-  phone clients. Daemon-to-daemon log sync/replication is **dropped** (§14).
+  phone clients. Daemon-to-daemon log sync/replication is **dropped** (§14). — **done**
 - **M6 — Interactive UX polish.** Multiline `textarea` input (Enter sends, Shift+Enter
   newline), the **settings overlay** (esc; per-role
   model configuration + UI prefs + intentional "back to home menu"), and
   **structured `ask_user` questions** (option pickers). New RPCs: `ListModels`,
   `SetRoleConfig`; `AnswerQuestion`/`question_asked` extended for
-  options. See §18.
+  options. See §18. — **done**
 
 ## 17. Open questions
 
@@ -1662,9 +1663,8 @@ deltas.
 
 ### 18.5 Backlog browser
 
-The backlog is durable project state (§6), but until now a client could only see it
-indirectly through the agent. A **backlog browser** lets the human open and inspect the
-backlog directly from the TUI — independent of any session.
+The backlog is durable project state (§6). The shipped **backlog browser** lets the
+human open and inspect it directly from the TUI — independent of any session.
 
 - **Open.** A key/menu entry opens a modal backlog view (over the home menu or a session,
   like the settings overlay). It lists tasks with id, status, priority, title, and a
@@ -1676,32 +1676,30 @@ backlog directly from the TUI — independent of any session.
 - **Read-only first.** The browser only *views*; mutation (quick-add, status changes) is
   separate work — see the capture overlay (task 0016).
 
-This needs the backlog exposed to clients over RPC. The daemon gains read RPCs —
-`ListBacklog` (summary rows) and `GetTask` (full task) — backed by `docs.Store`
-(`List`/`Get`); the TUI renders the list + detail views by calling them. Because clients
-are thin event/RPC consumers (§5), the same surface is reusable by the future phone client.
+The daemon exposes the backlog through read RPCs — `ListBacklog` (summary rows) and
+`GetTask` (full task) — backed by `docs.Store` (`List`/`Get`); the TUI renders the list +
+detail views by calling them. Because clients are thin event/RPC consumers (§5), the
+shipped iOS client reuses the same surface.
 
 ### 18.6 Session history browser & reopen
 
-Every session is already durable: its event log is the source of truth on disk at
-`<workspace>/.ycc/sessions/<id>/events.jsonl` (§5.1). But today a client can only see
-*live, in-memory* sessions (`ListSessions` reflects the manager's map). Once the daemon
-restarts or an idle session is GC'd (§ task 0009), the on-disk logs are orphaned: nothing
-lists them, nothing lets the human re-read a finished session, and the promised "the
-session persists and can be **resumed or re-entered**" (§4.5) is unimplemented. This
-section closes that gap.
+Every session is durable: its event log is the source of truth on disk at
+`<workspace>/.ycc/sessions/<id>/events.jsonl` (§5.1). The shipped history and reopen
+surface complements live-only `ListSessions`: `ListSessionHistory` enumerates persisted
+logs, `GetSessionTranscript` reads them, and `ResumeSession` re-enters one on its existing
+log. Finished sessions therefore remain browsable after live-session GC or a daemon
+restart (task 0009).
 
 **Durable session index.** The daemon can enumerate *all* sessions for a project —
 live and persisted — by scanning `.ycc/sessions/*/events.jsonl` and reducing each log to
 a summary (`event.Reduce`, §5/§20.3): id, mode, status
 (running/idle/error/paused/stopped), started-at and last-activity timestamps, focused task(s),
-a short title (derived from the first user prompt / kickoff), and — once usage lands (§20) —
-token/cost totals. Live sessions in the manager's map take precedence over their on-disk
-snapshot so a running session shows live status. A persisted-only log whose projection is
-still `running` is an orphan left by an abrupt daemon exit and is reported as `stopped`; only
-a matching in-memory session may appear `running`. A new read RPC (`ListSessionHistory`,
-project-scoped) returns these summary rows;
-the existing `ListSessions` continues to mean "live only".
+a short title (derived from the first user prompt / kickoff), and token/cost totals (§20).
+Live sessions in the manager's map take precedence over their on-disk snapshot so a running
+session shows live status. A persisted-only log whose projection is still `running` is an
+orphan left by an abrupt daemon exit and is reported as `stopped`; only a matching in-memory
+session may appear `running`. The project-scoped `ListSessionHistory` read RPC returns these
+summary rows; the existing `ListSessions` continues to mean "live only".
 
 **Browser UI.** A **session browser** is a modal list+detail view, opened from the home
 menu or settings overlay exactly like the backlog browser (§18.5). The list shows the
@@ -1755,7 +1753,7 @@ session and dismissed with Esc. These share one reusable TUI component (a generi
 list+detail modal, `browser`/`browserRow`/`browserCard` in `internal/tui`) reused by the
 backlog and session browsers, plus a small "browse" selector (ctrl+o) that routes to
 backlog / sessions today and is ready to add cost (§20.5, task 0029) as a third row. The
-same read RPCs back the future phone client (§5).
+same read RPCs back the shipped iOS client (§5).
 
 ### 18.7 Interrupt & steer (pause / correct / resume)
 
@@ -1818,8 +1816,8 @@ case feel responsive.
 settings overlay) issues `Interrupt`. The paused state is shown distinctly ("⏸ paused — type a
 correction and Enter to steer, or Resume to continue"); Enter on a non-empty buffer steers,
 an explicit Resume action (empty buffer / a key) continues. Because state lives in the event
-log (`interrupted` / `resumed` events), any subscribed client — including a future phone
-client — sees and can drive the pause.
+log (`interrupted` / `resumed` events), any subscribed client — including the iOS client —
+sees and can drive the pause.
 
 **Relation to `ask_user` and Stop.** When the agent is *blocked on a question* it is already
 suspended at a clean point (§4, interaction layer); steer-interrupt targets the *running*
@@ -1958,12 +1956,12 @@ second `DiscoverConfig` candidate, so every later run finds it.
    `reviewers` from the configured logical models. With a single provider, all three default
    to it (mirroring `DefaultAnthropic`) and the user can accept without choosing.
 
-**Output.** A valid `config.Config` written as TOML. This requires a new `config.Save(path,
-*Config)` (the package currently only `Load`s). After writing, the wizard hands the path to
-the daemon resolution path (§3.1) exactly as a discovered config would be, so the first real
-session uses it. Re-running setup later is available from the settings overlay (§18.2,
-"Model / role configuration") — that overlay already edits role assignments live; first-run
-setup is the bootstrap that creates the file those edits then mutate.
+**Output.** The wizard writes a valid `config.Config` as TOML through
+`config.Save(path, *Config)`, then hands that path to daemon resolution (§3.1) exactly as a
+discovered config would be, so the first real session uses it. Re-running setup later is
+available from the settings overlay (§18.2, "Model / role configuration") — that overlay
+edits role assignments live; first-run setup is the bootstrap that creates the file those
+edits then mutate.
 
 **Skipping.** If a usable config or env key already exists, first-run setup does not trigger;
 plain `ycc` proceeds straight to the home menu. The wizard is also skippable on purpose (the
@@ -1978,10 +1976,11 @@ empty one) and no `backlog/`. The client detects this when a project is opened/s
 offers the appropriate onboarding entry prominently in the home menu (it remains available as
 a preset thereafter, since "onboard later" is valid).
 
-This flow is **agent-driven**, and it is a `pm`-mode flow (planning/intake/docs — §9), so it
-is exposed as a single **pm preset** (opening-prompt + first message): `onboard`, now the
-**only** home-menu preset (the former `feature` / `bug` / `spec` / `backlog` presets have
-been dropped — they were just ordinary `pm` work; see §9). The agent itself distinguishes
+The shipped flow is **agent-driven**, and it is a `pm`-mode flow
+(planning/intake/docs — §9), exposed as a single **pm preset** (opening-prompt + first
+message): `onboard`, the dedicated onboarding preset (the former `feature` / `bug` /
+`spec` / `backlog` presets have been dropped — they were just ordinary `pm` work; see
+§9). The agent itself distinguishes
 new vs. existing:
 
 **New project (empty / greenfield).** Signal: the workspace is essentially empty of code
@@ -2014,7 +2013,7 @@ project" entry can route to the right behaviour; the prompt encodes both branche
 feature/bug intake (explore → propose) but differs in intent: it is the *first* time ycc
 sees the project and it also establishes the initial spec slice + backlog conventions,
 whereas ordinary `pm` work assumes those already exist. Keeping `onboard` a distinct,
-prominently-surfaced preset — one of the two pm presets, alongside `spec-doctor` (§6.4) —
+prominently-surfaced preset — alongside `spec-doctor` (§6.4) and `memory-groom` (§6.5) —
 is what makes onboarding discoverable.
 
 ## 20. Token usage & cost accounting

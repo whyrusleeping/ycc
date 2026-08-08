@@ -1,9 +1,8 @@
 # Design: MCP client support (mount external tool servers into sessions)
 
-> Status: **proposal** (design spike, task 0147). No code lands with this doc;
-> the follow-on implementation tasks in §9 are filed separately as backlog
-> tasks **0164–0167** (matching the precedent of the forge spike, task 0146 /
-> `docs/design/forge-integration.md`).
+> Status: **proposal only** (design spike, task 0147); no MCP implementation ships.
+> The follow-on backlog tasks **0164–0167** were closed not planned, so this document
+> remains a design record unless the scope is re-opened.
 > Grounded in the current architecture: spec §8 (tools + the reviewer bash
 > sandbox), §13 (backends & model registry — the config TOML idiom), the tool
 > registry and workspace confinement in `internal/tools`, the per-mode / per-role
@@ -350,10 +349,10 @@ enough for v1 and adds no schema surface.
 | server process crashes / connection drops | the failing call returns an `IsError` result; on the **next** call ycc makes **one lazy reconnect attempt**. Success ⇒ transparent recovery; failure ⇒ another `IsError` result. No crash-loop (bounded to one reconnect per call). |
 | session end | all MCP connections closed / children killed via the session teardown path. |
 
-## 9. Proposed follow-on implementation tasks
+## 9. Proposed implementation slices (closed not planned)
 
-Filed from this doc (as `proposed` — the spike is accepted scope; implementation
-awaits user acceptance, matching tasks 0155–0163 filed from the forge spike).
+Tasks 0164–0167 were filed from this design and later closed without implementation.
+The decomposition is retained below as a design record, not an active rollout:
 
 1. **`internal/mcp`: client manager + config parsing + `gollama.Tool` bridge.**
    *(task 0164)* — Add the `[mcp.servers.X]` config types + validation (§4:
@@ -388,6 +387,6 @@ awaits user acceptance, matching tasks 0155–0163 filed from the forge spike).
    hard-exclusion, and the Narration/event representation — keeping the spec true
    (spec §1). *Depends on tasks 0164–0165 landing.*
 
-**Rollout order:** 0164 → 0165 → (0166, 0167 in parallel). Task 0164 is the
-self-contained, unit-testable core; 0165 makes it user-visible; 0166/0167 are
-the observability and spec-truth follow-ups.
+**If revived, proposed rollout order:** 0164 → 0165 → (0166, 0167 in parallel).
+Task 0164 is the self-contained, unit-testable core; 0165 makes it user-visible;
+0166/0167 are the observability and spec-truth follow-ups.

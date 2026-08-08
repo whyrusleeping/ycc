@@ -1,7 +1,8 @@
 # Design: git-forge integration (issues → tasks, workstreams → PRs)
 
-> Status: **proposal** (design spike, task 0146). No code lands with this doc;
-> the follow-on implementation tasks in §11 are filed separately.
+> Status: **partially implemented** (design task 0146; the forge CLI probe helper,
+> task 0155, ships in `internal/forge` and `ycc doctor`). Issue import, workstream
+> publish, and the remaining follow-ons in §11 are still proposed.
 > Grounded in the current architecture: spec §6.2 (backlog structure, per-file
 > tasks, `spec_refs`), §8 (tools), §11 (questions, unattended work, and confirmation gates), §12 (RPC surface), §14.1 (parallel workstreams:
 > branch `ycc/ws/<id>`, `workstreams.json` registry, conflict-aware
@@ -353,15 +354,14 @@ the PR URL is confirmed; before that, the operation is safe to retry.
 | Forge auth                         | delegated to `gh`/`glab`; doctor probe | API-client option for headless      |
 | Forge detection                    | doctor check + per-flow probe        | settings-overlay status             |
 
-### Proposed follow-on implementation tasks
+### Follow-on implementation tasks
 
-Filed from this doc (as `proposed` — the spike is accepted scope, the
-implementation awaits user acceptance, matching the precedent of tasks
-0150/0154). Rough scope + dependencies noted. Filed as backlog tasks
-0155 (1), 0156 (2), 0159 (3), 0160 (4), 0157 (5), 0161 (6), 0162 (7),
-0158 (8), 0163 (9).
+The forge probe shipped as task 0155. The remaining slices are still proposed:
+0156 (2), 0159 (3), 0160 (4), 0157 (5), 0161 (6), 0162 (7), 0158 (8),
+and 0163 (9).
 
-1. **Forge probe + doctor check.** A small `internal/forge` (or similar) helper
+1. **Shipped (task 0155) — forge probe + doctor check.** A small `internal/forge`
+   (or similar) helper
    that detects `gh`/`glab` availability + auth (`--version`, `auth status`) and
    infers forge/host from a URL or remote. Wire a non-fatal forge check into
    `ycc doctor` (`cmd/ycc/doctor.go`). *Foundation for the others; no deps.*
@@ -401,6 +401,7 @@ implementation awaits user acceptance, matching the precedent of tasks
    confirmation-gate semantics. *Depends on whichever of 2/5 land; keeps the spec
    true (spec §1).*
 
-**Rollout order:** 1 → (2, 8 in parallel) → 5 → 3/4/6/7 → 9. Task 1 unblocks
-everything; import (2) and the runbook (8) are the cheapest user-visible wins;
-publish (5) is the flagship and gates the TUI (7) and GitLab-MR (6) work.
+**Remaining proposed rollout order:** (2, 8 in parallel) → 5 → 3/4/6/7 → 9.
+The shipped probe (1) unblocks everything; import (2) and the runbook (8) are the
+cheapest user-visible wins; publish (5) is the flagship and gates the TUI (7) and
+GitLab-MR (6) work.

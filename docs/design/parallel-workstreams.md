@@ -1,6 +1,7 @@
 # Design: Parallel agent workstreams via git worktrees
 
-> Status: **proposal** (design spike, task 0078). No code lands with this doc.
+> Status: **implemented** (design task 0078; worktree isolation, lifecycle, RPCs,
+> and client surfaces ship in `internal/workstream`, `internal/session`, and the clients).
 > Grounded in the current architecture: spec §3 (daemon is the single writer;
 > clients are thin), §3.1 (one-shot vs persistent multi-project daemon; project
 > registry name→path), §4 (process & data-flow), §5 (append-only JSONL event log
@@ -10,8 +11,10 @@
 
 ## 1. Context / problem
 
-Today a `work` session runs one coordinator that delegates to an implementer
-which **edits the codebase directly**, one task at a time. From spec §17:
+A non-workstream `work` session still runs one coordinator that delegates to an
+implementer which **edits that working tree directly**, one task at a time. The
+workstream implementation adds isolated trees for parallel tasks. This design
+revisited the earlier spec §17 decision:
 
 > **Implementer isolation:** *Decided.* Implementers work **directly on the
 > codebase** (single task at a time). Git worktrees revisited only if/when we
@@ -56,7 +59,8 @@ without a plan and at least one review pass")?**
 **Non-goals**
 
 - Distributed execution across machines (still one daemon, one repo on one
-  workspace machine; remote *observation* remains the §7/§14 sync story).
+  workspace machine; remote clients observe and steer it through the direct-dial
+  Connect surface in spec §14).
 - Automatic task **decomposition** (deciding which tasks can run in parallel is a
   separate planning concern; here we assume the user or pm mode picks them).
 - Removing the human review gate. Parallelism speeds up *doing*; it does not
@@ -283,37 +287,31 @@ chosen resolve agent) owns any genuine merge decision.
   root by `tools.Workspace`), so workstream isolation and reviewer-bash isolation
   are complementary, not conflicting.
 
-## 8. UX sketch (TUI + RPC)
+## 8. Shipped UX (TUI + RPC)
 
-Conceptually we introduce a first-class **Workstream** alongside Session.
+A first-class **Workstream** is exposed alongside Session through the following
+shipped surface:
 
-- **Spawn.** From the backlog browser or home menu, the user multi-selects ready
-  tasks and chooses "Run in parallel (N workstreams)." Each selection becomes a
-  workstream: the daemon creates the worktree + branch and starts a `work`
-  session inside it. RPC sketch: `SpawnWorkstream(project, base_ref, task_id?,
-  prompt?)` → `{workstream_id, branch, worktree_path,
-  session_id}`.
-- **Monitor.** A **Workstreams** panel lists active workstreams with status
-  (running / idle / awaiting-review / conflict), focused task, branch, and commit
-  count. Each row drills into its session transcript (the existing session view,
-  unchanged — it's just a session). RPC sketch: `ListWorkstreams(project)` →
-  rows; `Subscribe(session_id)` reused verbatim for live event streaming.
-- **Reconcile / merge.** A "Merge" action on a workstream (or "Merge all clean")
-  triggers the §6 flow. The TUI shows, per workstream: trial-merge result (clean
-  / conflicted paths), the integrated diff for the accept gate, and merge
-  outcome. RPC sketch: `PreviewMerge(workstream_id)` → `{clean, conflicts[],
-  diff}`; `MergeWorkstream(workstream_id, strategy)` →
-  `{merged_commit | conflict}`; `DiscardWorkstream(workstream_id)` for cleanup
-  without merging.
-- **Surfacing progress & conflicts.** New event types on the workstream's
-  session stream — `workstream_created`, `workstream_merged`,
-  `workstream_conflict` (with paths/hunks), `workstream_discarded` — so any
-  client renders the lifecycle the same way it renders today's `commit_made` /
-  `decision_made`. Conflicts are loud (a distinct row state + event), never a
-  silent failure.
-
-This is a **sketch**, not a final proto; the exact message shapes land in the
-follow-up tasks.
+- **Spawn.** In the TUI backlog browser, the user selects ready tasks and presses
+  `P` to run them in parallel. Each `SpawnWorkstreamRequest` carries `project`,
+  optional `base_ref`, `task_id`, and `prompt`; `SpawnWorkstream` creates the
+  worktree + branch, starts its `work` session, and returns a `WorkstreamInfo`
+  containing the workstream, branch, worktree path, and session ids.
+- **Monitor.** The TUI **Workstreams** panel lists `ListWorkstreams(project)` rows
+  with registry and live-session status, task, branch, base branch, and commit
+  count. Enter drills into the existing session view; `Subscribe(session_id)` is
+  reused verbatim for live event streaming.
+- **Reconcile / merge.** The panel's merge action calls
+  `PreviewMerge(workstream_id)` for `{clean, conflicts[], diff}`. A clean result
+  is review-gated: `MergeWorkstream(workstream_id, accept=false)` returns
+  `needs_accept` plus the integrated diff without mutating base, and the accepted
+  call repeats with `accept=true`. The response reports `merged`, `commit`, or
+  conflicted paths. `DiscardWorkstream(workstream_id)` cleans up without merging.
+- **Surfacing progress & conflicts.** The workstream session stream records
+  `workstream_created`, `workstream_ready`, `workstream_integrating`,
+  `workstream_needs_attention`, `workstream_merged`, `workstream_conflict`, and
+  `workstream_discarded`. Clients render those lifecycle events like ordinary
+  session events; the TUI gives conflicts a distinct, loud row state.
 
 ## 9. Rejected alternatives
 
@@ -334,10 +332,10 @@ follow-up tasks.
   project picker with ephemeral entries; a workstream is a child of a project,
   tracked in a separate daemon-side registry.
 
-## 10. Follow-up implementation tasks
+## 10. Implementation tasks (shipped)
 
-Proposed, well-scoped tasks to realize the recommendation (to be filed in the
-backlog by the coordinator):
+The recommendation was delivered through these implementation slices (tasks
+0081–0086, all done):
 
 1. **Worktree primitives in `internal/git`.**
    - Add `AddWorktree(dir, branch, baseRef)`, `RemoveWorktree(dir)`,

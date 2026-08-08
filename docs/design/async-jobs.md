@@ -1,15 +1,16 @@
 # Async jobs: background subagents & background bash
 
-> Status: **design** (approved direction, pre-implementation). Companion to spec §7.3
-> (subagents), §8 (tools), and §14.1 (parallel workstreams). Backlog: 0131 (jobs core +
-> background bash), 0132 (background subagents + wait).
+> Status: **implemented** for the jobs core, background bash, and background
+> implementer/reviewer subagents (tasks 0131–0132); the later investigate role remains
+> future work. Companion to spec §7.3 (subagents), §8 (tools), and §14.1 (parallel
+> workstreams).
 
 ## 1. Problem
 
-Today every delegation is synchronous: `spawn_implementer` blocks its tool call until the
-child loop finishes; reviewers fan out concurrently but only *inside* one
-`spawn_reviewers` call (a wait-all barrier the coordinator cannot see into). The
-coordinator cannot:
+Before the async-jobs implementation, every delegation was synchronous:
+`spawn_implementer` blocked its tool call until the child loop finished; reviewers fanned
+out concurrently only *inside* one `spawn_reviewers` call (a wait-all barrier the
+coordinator could not see into). The missing capabilities were:
 
 - kick off several subagents and keep working while they run;
 - choose *when* to wait (and on *which* one);
@@ -43,7 +44,8 @@ the guts differ.
 
 ### 3.1 Job registry
 
-New `internal/jobs` package (session-scoped, held by `orchestrator.Deps`):
+The shipped `internal/jobs` package is session-scoped and held by
+`orchestrator.Deps`:
 
 ```go
 type Job struct {
@@ -143,12 +145,12 @@ Two agents mutating one worktree race (spec §14.1 exists precisely for this).
 
 ## 5. Phasing
 
-1. **Jobs core + background bash** (task 0131): registry, `run_in_background` on Bash,
-   `job_output`, `kill_job`, `wait`, checkpoint injection, events + replay, kill-on-exit.
-   Exercises the whole mechanism with the simplest job kind.
-2. **Background subagents** (task 0132): `background: true` on spawn tools, agent jobs
-   in the registry, single-writer guard, revise-flow addressing by job id,
-   prompt guidance (foreground when the result gates the next step; background only
+1. **Shipped — jobs core + background bash** (task 0131): registry,
+   `run_in_background` on Bash, `job_output`, `kill_job`, `wait`, checkpoint injection,
+   events + replay, and kill-on-exit.
+2. **Shipped — background subagents** (task 0132): `background: true` on spawn tools,
+   agent jobs in the registry, the single-writer guard, revise-flow addressing by job id,
+   and prompt guidance (foreground when the result gates the next step; background only
    with genuinely independent work; never poll).
-3. Later: an explore/investigate read-only role (where parallel background agents pay
+3. **Future:** an explore/investigate read-only role (where parallel background agents pay
    off most), and workstream-scoped background implementers for true parallel coding.

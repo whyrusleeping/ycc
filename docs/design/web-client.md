@@ -1,6 +1,8 @@
 # Design: Embedded web client served by the daemon (+ optional tsnet)
 
-> Status: **proposal** (design spike, task 0145). No code lands with this doc.
+> Status: **implemented** for the embedded client (design task 0145; tasks
+> 0151–0153 shipped in `internal/web` and the daemon's `--web` serving path).
+> Optional tsnet embedding remains design-only (§8).
 > Grounded in the current architecture: spec §12 (RPC protocol — the daemon
 > serves Connect handlers), §14 ("no separate REST/SSE facade" — the Connect
 > surface *is* the phone API), and §18 (client UI / event rendering, the
@@ -18,16 +20,12 @@ decided there is **no separate REST/SSE facade**:
 > Connect endpoint directly — `Subscribe(from_seq)` already *is* "ship events
 > after seq N".
 
-That surface is documented, verified, and reachable from `curl` today
-([`docs/remote-api.md`](../remote-api.md)). What is missing is a *client a human
-can actually use from a phone*. The remote-api doc's own framing is that
-official Connect client libs exist "for someone to build a client someday" —
-there is no shipping client, so remote observation/answering is real only for
-people who write code against the RPC surface.
-
-A minimal **embedded web client**, a single static SPA served by the daemon
-behind the existing bearer auth, closes that gap with no app-store story and no
-extra moving parts:
+That surface is documented, verified, and reachable from `curl`
+([`docs/remote-api.md`](../remote-api.md)). This design supplied the first
+human-usable phone surface: a minimal **embedded web client**, implemented as a
+single static SPA served by the daemon behind the existing bearer auth. It
+closed the original client gap with no app-store story or extra moving parts;
+the native iOS client now uses the same RPC surface as well:
 
 ```
 ycc daemon --web            # serve the SPA alongside the Connect handlers
@@ -341,15 +339,15 @@ Why defer:
   not *require* changing auth, and the WhoIs-identity option is an enhancement we
   can evaluate independently once the web client proves out.
 
-It stays on the table as a **proposed follow-on** (§9, task iv), to revisit after
-the web client ships and if "no host tailscaled" turns out to matter.
+It remains a **design-only follow-on** (§9), to revisit if "no host tailscaled"
+turns out to matter.
 
-## 9. Follow-on implementation tasks
+## 9. Implementation tasks
 
-Proposed, well-scoped tasks realizing this doc (to be filed in the backlog by the
-coordinator):
+The first three slices shipped as tasks 0151–0153. The fourth remains deferred
+and is not part of the implemented web client:
 
-1. **Daemon: `--web` flag + `go:embed` asset serving.**
+1. **Shipped (0151) — daemon: `--web` flag + `go:embed` asset serving.**
    - New `internal/web` package: embedded static FS + `Handler()`.
    - `Web bool` on `daemon.Options`; `buildHandler` mounts the asset handler at
      `/` when set, leaving the Connect handler at `/ycc.v1.SessionService/`; the
@@ -358,7 +356,7 @@ coordinator):
      still require a token; without `--web`, `/` is 404; the non-loopback
      no-token guardrail is unchanged with `--web` set.
 
-2. **Web SPA first cut: token entry + session list + live event stream.**
+2. **Shipped (0152) — web SPA first cut: token entry + session list + live event stream.**
    - Token-entry screen → `localStorage`; validate via `ListProjects`.
    - Session list from `ListSessionHistory` (+ `ListProjects` filter chips,
      status/`waitingInput` badges, live marker).
@@ -366,7 +364,7 @@ coordinator):
      `Subscribe` envelope parser (§6) with replay-from-seq reconnect and the
      `turn_delta` live-tail row; persisted sessions via `GetSessionTranscript`.
 
-3. **Web SPA interactions: prod / answer / control.**
+3. **Shipped (0153) — web SPA interactions: prod / answer / control.**
    - Sticky input bar → `SendInput`.
    - Question bottom-sheet → `AnswerQuestion` / `AnswerQuestions` (options +
      free text), dismissed by `question_answered`.

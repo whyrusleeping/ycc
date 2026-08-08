@@ -1,6 +1,7 @@
 # Design: SwiftUI iOS client (`clients/ios/`)
 
-> Status: **accepted** (planned; implementation tasks filed in the backlog).
+> Status: **implemented and actively developed** (the native client ships in
+> `clients/ios/`; remaining enhancements continue through the backlog).
 > Grounded in spec §12 (RPC protocol), §14 (remote access — the Connect surface
 > *is* the phone API, no separate facade), and §18 (client UI / event
 > rendering). The authoritative wire contract is
@@ -15,12 +16,12 @@ names [connect-swift](https://github.com/connectrpc/connect-swift) as the
 intended iOS client library. The embedded web client (tasks 0151–0153) covers
 "observe + answer from a phone browser" with a deliberately minimal scope.
 
-This design goes further: a **native SwiftUI iPhone app** whose end-state is
-**feature parity with the TUI** — connect to a persistent daemon on a server
-(over Tailscale/VPN + bearer token), pick a project, browse live and persisted
-sessions, watch a live event stream, reply to questions, steer/interrupt/stop,
-start new sessions in any mode, browse the backlog, and eventually settings,
-usage/cost, and workstreams.
+This design is implemented as a **native SwiftUI iPhone app**, actively developed
+toward **feature parity with the TUI**. It connects to a persistent daemon on a
+server (over Tailscale/VPN + bearer token), picks a project, browses live and
+persisted sessions, watches a live event stream, replies to questions,
+steers/interrupts/stops, starts sessions in any mode, and provides backlog,
+settings, usage/cost, and workstream surfaces.
 
 ## 2. Goals & non-goals
 
@@ -38,9 +39,9 @@ usage/cost, and workstreams.
 - iPad / macOS layouts (iPhone-only, **iOS 17+**; revisit later).
 - App Store distribution (personal tool; sideload / TestFlight / dev build).
 - Native APNs push (deferred — see §8; ntfy + deep links instead).
-- Any change to the RPC/proto surface *for the client's own sake*. (The one
-  daemon change this plan does motivate — the daemon-side work loop, §9 — is a
-  client-independent improvement filed as its own task.)
+- Changes to the RPC/proto surface *for the client's own sake*. The daemon-side
+  work loop (§9) shipped as a client-independent improvement shared by every
+  client, rather than as an iOS-only API.
 - Multi-user auth / RBAC. Single-user tool, private network.
 - Offline mode beyond cached connection settings.
 
@@ -73,8 +74,8 @@ Swift protos stay next to their proto source.
 unit-tested headlessly lives in `YccKit` and runs under plain `swift test` on
 the macOS workspace machine — the work pipeline can build and verify without
 booting a simulator. The app target is a thin view layer over `YccKit`
-observables; simulator/device verification is a manual smoke (runbook to be
-added as `plans/ios-client-smoke.md` when the first cut lands).
+observables; simulator/device verification remains a manual smoke, documented in
+the shipped `plans/ios-client-smoke.md` runbook.
 
 ## 4. Generated Swift client (decision)
 
@@ -430,22 +431,21 @@ app registers the `ycc://` scheme (`ycc://session/<id>[?server=<name>]`,
 Native APNs (needing a push relay + signing identity) is deferred indefinitely;
 revisit only if ntfy proves inadequate.
 
-## 9. Daemon-side work loop (decision, prerequisite for loop parity)
+## 9. Daemon-side work loop (shipped)
 
-The `work (loop)` backlog drain is today a **client** concern (spec §9): the
-TUI starts the next `work` session when one finishes, enforces the per-loop
-budget caps (§20.6), and accumulates the digest. A phone cannot host that
-driver — iOS suspends backgrounded apps, so a client-driven loop would silently
-die mid-drain.
+The `work (loop)` backlog drain is daemon-owned (task 0179, spec §9): the daemon
+starts each successive `work` session, enforces the per-loop budget caps (§20.6),
+and accumulates the final digest even when every client disconnects. The shipped
+`StartWorkLoop`, `GetWorkLoop`, and `StopWorkLoop` RPCs let the TUI and iOS app
+start, observe, and gracefully halt that same loop; stopping lets the current
+session finish but prevents the next task from starting.
 
-**Decision (user-accepted): move the loop driver into the daemon**, exposed
-over the RPC surface (e.g. `StartWorkLoop` / `StopWorkLoop` / loop status in
-session listings, exact shape to be designed in its task). The TUI migrates to
-the same RPCs (shedding its client driver), the loop keeps running when every
-client disconnects, and any client — TUI, web, iOS — can start, observe, and
-gracefully halt it. Loop-cap enforcement (§20.6 "loop cap (client-driven)")
-moves daemon-side with it. Filed as its own backlog task; the iOS loop screen
-(§6 phase 3) depends on it.
+Work-loop snapshots and finished digests persist per workspace (task 0280). A
+daemon restart deliberately does **not** resume unattended spend: a loop that was
+running or stopping is restored as finished with an explicit interrupted outcome,
+and the user may start a new loop. The iOS `WorkLoopView` and `WorkLoopModel`
+implement start/status/digest/stop control, while task 0190 remains `in_review`
+pending on-device validation.
 
 ## 10. Verification strategy
 
