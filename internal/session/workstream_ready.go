@@ -5,6 +5,7 @@ import (
 
 	"github.com/whyrusleeping/ycc/internal/docs"
 	"github.com/whyrusleeping/ycc/internal/event"
+	"github.com/whyrusleeping/ycc/internal/notify"
 	"github.com/whyrusleeping/ycc/internal/workstream"
 )
 
@@ -65,6 +66,9 @@ func (m *Manager) evaluateWorkstreamReadiness(wsID string, sessStatus event.Stat
 			"commits":    commits,
 			"task":       ws.TaskID,
 		})
+		if m.effectiveIntegrationMode() == "auto" {
+			m.enqueueWorkstreamIntegration(ws)
+		}
 		return
 	}
 	m.emitWorkstreamEvent(ws, event.WorkstreamNeedsAttention, map[string]any{
@@ -72,6 +76,8 @@ func (m *Manager) evaluateWorkstreamReadiness(wsID string, sessStatus event.Stat
 		"branch":     ws.Branch,
 		"reason":     reason,
 	})
+	m.Notify(notify.KindAttention, ws.Project, ws.SessionID,
+		fmt.Sprintf("workstream %s needs attention: %s", ws.ID, reason))
 }
 
 // startWorkstreamWatcher maps terminal session events into durable workstream

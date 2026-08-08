@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -123,6 +124,28 @@ func TestRebaseOntoCleanAndConflict(t *testing.T) {
 	})
 }
 
+func TestWorktreeStatusPorcelainIncludesTrackedAndUntracked(t *testing.T) {
+	r, _ := newIntegrationRepo(t)
+	commitFile(t, r, r.Dir, "tracked.txt", "committed\n", "tracked")
+	writeFile(t, filepath.Join(r.Dir, "tracked.txt"), "modified\n")
+	writeFile(t, filepath.Join(r.Dir, "untracked.txt"), "local\n")
+
+	snapshot, err := r.WorktreeStatusPorcelain(r.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(snapshot, " M tracked.txt\n") || !strings.Contains(snapshot, "?? untracked.txt\n") {
+		t.Fatalf("porcelain snapshot = %q", snapshot)
+	}
+	again, err := r.WorktreeStatusPorcelain(r.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != snapshot {
+		t.Fatalf("snapshot changed without content change: %q -> %q", snapshot, again)
+	}
+}
+
 func TestAdvanceBranchCheckedOutCleanAndDirty(t *testing.T) {
 	t.Run("clean", func(t *testing.T) {
 		r, base := newIntegrationRepo(t)
@@ -136,7 +159,8 @@ func TestAdvanceBranchCheckedOutCleanAndDirty(t *testing.T) {
 			t.Fatalf("CheckBaseClean(clean): %v", err)
 		}
 
-		got, err := r.AdvanceBranch(base, "feature")
+		// A pinned commit SHA is accepted as the target, not just a branch name.
+		got, err := r.AdvanceBranch(base, want)
 		if err != nil {
 			t.Fatalf("AdvanceBranch: %v", err)
 		}
@@ -187,7 +211,8 @@ func TestAdvanceBranchWhenBaseNotCheckedOut(t *testing.T) {
 
 	gitAt(t, r.Dir, "checkout", "-b", "unrelated")
 	unrelatedBefore := gitAt(t, r.Dir, "rev-parse", "HEAD")
-	if _, err := r.AdvanceBranch(base, "feature"); err != nil {
+	// The no-checked-out-base fetch path also accepts the pinned commit SHA.
+	if _, err := r.AdvanceBranch(base, want); err != nil {
 		t.Fatalf("AdvanceBranch: %v", err)
 	}
 	if got := gitAt(t, r.Dir, "rev-parse", base); got != want {

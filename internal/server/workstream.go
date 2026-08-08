@@ -45,6 +45,8 @@ func workstreamError(err error) *connect.Error {
 	}
 	msg := err.Error()
 	switch {
+	case strings.Contains(msg, "max_parallel"):
+		return connect.NewError(connect.CodeResourceExhausted, err)
 	case strings.Contains(msg, "unknown workstream"), strings.Contains(msg, "unknown project"):
 		return connect.NewError(connect.CodeNotFound, err)
 	case strings.Contains(msg, "is not active"),

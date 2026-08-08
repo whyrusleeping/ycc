@@ -95,6 +95,9 @@ const (
 	// WorkstreamReady marks a completed session whose branch has reviewable work
 	// (data: { workstream, branch, commits, task }).
 	WorkstreamReady Type = "workstream_ready"
+	// WorkstreamIntegrating marks the start of an automatic rebase/verify/advance
+	// attempt (data: { workstream, branch, base_branch }).
+	WorkstreamIntegrating Type = "workstream_integrating"
 	// WorkstreamNeedsAttention marks completed work that cannot be integrated
 	// automatically (data: { workstream, branch, reason }).
 	WorkstreamNeedsAttention Type = "workstream_needs_attention"

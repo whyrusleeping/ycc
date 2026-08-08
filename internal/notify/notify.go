@@ -1,8 +1,8 @@
 // Package notify implements the daemon-side push notifier (task 0142): a
 // best-effort, asynchronous webhook (ntfy.sh-compatible) that reaches out to the
 // user when an agent needs them — a question was asked, a session went idle with a
-// final report, a session errored, a work-loop run finished (digest), or an
-// implementer subagent reported blocked.
+// final report, a session errored, a work-loop run finished (digest), an
+// implementer subagent reported blocked, or a workstream merged/needs attention.
 //
 // Delivery is fire-and-forget: Send never blocks the caller and never returns an
 // error; a failed POST is only logged. The notifier is intentionally trivial to
@@ -26,11 +26,13 @@ import (
 // Event kinds. These mirror config.NotifyEventKinds and are the values accepted
 // in the notify.events allow-list.
 const (
-	KindQuestion = "question"
-	KindIdle     = "idle"
-	KindError    = "error"
-	KindDigest   = "digest"
-	KindBlocked  = "blocked"
+	KindQuestion  = "question"
+	KindIdle      = "idle"
+	KindError     = "error"
+	KindDigest    = "digest"
+	KindBlocked   = "blocked"
+	KindAttention = "attention"
+	KindMerged    = "merged"
 )
 
 // sendTimeout bounds a single webhook POST so a slow/hung endpoint can never leak
@@ -97,7 +99,7 @@ func (n *Notifier) Send(kind, project, sessionID, line string) {
 	title := fmt.Sprintf("ycc %s: %s", project, kind)
 	priority := "default"
 	switch kind {
-	case KindQuestion, KindError, KindBlocked:
+	case KindQuestion, KindError, KindBlocked, KindAttention:
 		priority = "high"
 	}
 	body := line

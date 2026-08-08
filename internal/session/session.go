@@ -1337,9 +1337,17 @@ type Manager struct {
 	worktreesRoot     string
 	idAlloc           *docs.IDAllocator
 	workstreamWatches map[string]chan struct{}
+	integrators       map[string]*workstreamIntegrator
+	integrationWG     sync.WaitGroup
+	integrationCtx    context.Context
+	integrationCancel context.CancelFunc
+	integrationStop   bool
 	// notifier pushes best-effort daemon-side notifications when an agent needs
 	// the user (task 0142). Nil when unconfigured; all uses are nil-safe.
 	notifier *notify.Notifier
+	// workstreamSpawnMu makes the max_parallel check and subsequent registration
+	// atomic with respect to other spawns.
+	workstreamSpawnMu sync.Mutex
 	// mergeMu serializes MergeWorkstream across all workstreams so integrations
 	// happen one at a time and each trial-merges against the latest base HEAD
 	// (sequential reconciliation, design §6).
@@ -1366,6 +1374,7 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 		// daemon exactly one listable project instead of a synthetic "Default".
 		_, _ = projects.EnsureWorkspace(initialWorkspace)
 	}
+	integrationCtx, integrationCancel := context.WithCancel(context.Background())
 	return &Manager{
 		sessions:          map[string]*Session{},
 		reg:               reg,
@@ -1374,6 +1383,9 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 		worktreesRoot:     workstream.DefaultWorktreesRoot(),
 		idAlloc:           docs.AllocatorFor(""),
 		workstreamWatches: map[string]chan struct{}{},
+		integrators:       map[string]*workstreamIntegrator{},
+		integrationCtx:    integrationCtx,
+		integrationCancel: integrationCancel,
 		workLoops:         map[string]*workLoop{},
 	}
 }
@@ -1635,12 +1647,26 @@ type SpawnWorkstreamConfig struct {
 // after the worktree exists it best-effort tears it down (remove + delete
 // branch + prune).
 func (m *Manager) SpawnWorkstream(cfg SpawnWorkstreamConfig) (workstream.Workstream, *Session, error) {
+	m.workstreamSpawnMu.Lock()
+	defer m.workstreamSpawnMu.Unlock()
+
 	if cfg.Project == "" {
 		return workstream.Workstream{}, nil, fmt.Errorf("project required")
 	}
 	primary, ok := m.projects.Resolve(cfg.Project)
 	if !ok {
 		return workstream.Workstream{}, nil, fmt.Errorf("unknown project %q", cfg.Project)
+	}
+	if limit := m.reg.IntegrationConfig().MaxParallel; limit > 0 {
+		active := 0
+		for _, ws := range m.workstreams.ListByProject(cfg.Project) {
+			if ws.Status == workstream.StatusActive {
+				active++
+			}
+		}
+		if active >= limit {
+			return workstream.Workstream{}, nil, fmt.Errorf("project %q already has %d active workstreams (integration.max_parallel = %d)", cfg.Project, active, limit)
+		}
 	}
 	repo, err := git.Open(primary)
 	if err != nil {
@@ -1884,6 +1910,20 @@ func (m *Manager) ReconcileWorkstreams() error {
 		status := workstreamTerminalStatus(events)
 		if status == event.StatusIdle || status == event.StatusError || status == event.StatusStopped {
 			m.evaluateWorkstreamReadiness(w.ID, status, workstreamRunBlocked(events))
+		}
+	}
+
+	// A ready state is durable while the queue is in-memory. Re-enqueue every
+	// eligible stream after reconciliation so daemon restarts cannot strand it.
+	var ready []workstream.Workstream
+	for _, w := range m.workstreams.List() {
+		if w.Status == workstream.StatusReady {
+			ready = append(ready, w)
+		}
+	}
+	if len(ready) > 0 && m.effectiveIntegrationMode() == "auto" {
+		for _, w := range ready {
+			m.enqueueWorkstreamIntegration(w)
 		}
 	}
 	return nil
@@ -2357,6 +2397,16 @@ func (m *Manager) reclaim(id string) {
 // leaving each durable log exactly as it was keeps the session reopenable. The
 // live map is drained atomically before cancellation, so repeated calls are safe.
 func (m *Manager) ReclaimAll() {
+	// Stop and join automatic integration commands before tearing down sessions or
+	// their worktrees. This keeps daemon shutdown free of background git races.
+	m.mu.Lock()
+	if !m.integrationStop {
+		m.integrationStop = true
+		m.integrationCancel()
+	}
+	m.mu.Unlock()
+	m.integrationWG.Wait()
+
 	m.mu.Lock()
 	sessions := m.sessions
 	m.sessions = make(map[string]*Session)

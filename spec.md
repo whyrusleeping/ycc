@@ -1341,22 +1341,23 @@ ycc adopts **git worktrees** (design spike task 0078; full rationale/alternative
   resolution. On merge or discard, cleanup runs `git worktree remove`, deletes the branch,
   and `git worktree prune`.
 - **Lifecycle events** on the workstream's own session stream: `workstream_created`,
+  `workstream_ready`, `workstream_integrating`, `workstream_needs_attention`,
   `workstream_merged`, `workstream_conflict`, `workstream_discarded` — clients render them
   like any other session event.
 - **RPC surface** (§12): `SpawnWorkstream`, `ListWorkstreams`, `PreviewMerge`,
   `MergeWorkstream`, `DiscardWorkstream`; `Subscribe` is reused verbatim for the
   workstream's session stream.
-- **Automatic integration** (**planned**; `docs/design/workstream-integration.md`). The
-  manual, review-gated merge above is the current behaviour and stays available as
-  `mode = "manual"`/`"gate"`. The decided direction is an **auto-integrating merge queue**
-  per project: a workstream that ends cleanly emits `workstream_ready`; a serialized
-  integrator rebases its branch onto the configured **base branch** *inside the
-  workstream's own worktree*, runs the project's `verify` command there, and only then
-  advances base by **fast-forward** (never merging into whatever the primary tree happens
-  to have checked out). A conflict or a red verify spawns an **`integrate`-mode agent
-  session in the worktree** to resolve/fix and re-verify; if it can't, the workstream goes
-  to `needs_attention` and notifies rather than touching base. Auto requires a configured
-  `verify` — without one it degrades to the review gate.
+- **Automatic integration** (`docs/design/workstream-integration.md`). A completed
+  workstream with commits emits `workstream_ready`; the daemon's serialized per-project
+  queue rebases it onto the current configured **base branch** *inside the workstream's own
+  worktree*, runs `integration.verify` there, and only then advances base by
+  **fast-forward**. A conflict or red verify leaves base untouched and the worktree intact,
+  sets `needs_attention`, and notifies. The clean/green fast path makes no model calls; the
+  integrate-agent recovery path remains planned. `[integration]` supports `mode = "auto" |
+  "gate" | "manual"` (default auto), `verify`, `strategy = "rebase-ff" | "squash" |
+  "merge-no-ff"` (default rebase-ff), and `max_parallel` (zero = unlimited). Auto without
+  `verify`, or auto with a strategy not yet executable by the queue, safely degrades to the
+  review gate. Gate keeps explicit accept-diff; manual preserves the original merge flow.
 
 ## 15. Package layout
 

@@ -1,0 +1,390 @@
+package session
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"os"
+	"os/exec"
+	"strings"
+	"time"
+
+	"github.com/whyrusleeping/ycc/internal/event"
+	"github.com/whyrusleeping/ycc/internal/git"
+	"github.com/whyrusleeping/ycc/internal/notify"
+	"github.com/whyrusleeping/ycc/internal/workstream"
+)
+
+const (
+	integrationVerifyTimeout = 30 * time.Minute
+	integrationOutputLimit   = 2 * 1024
+)
+
+// workstreamIntegrator is one project's in-memory integration queue. Access to
+// every field is guarded by Manager.mu. queued includes the currently-running id,
+// so repeated readiness signals coalesce instead of scheduling a second attempt.
+type workstreamIntegrator struct {
+	pending  []string
+	queued   map[string]bool
+	draining bool
+}
+
+// effectiveIntegrationMode applies the safety degradations for the fast-path
+// queue. Empty mode/strategy resolve to auto/rebase-ff. Warnings are emitted only
+// for configurations that asked for auto but cannot safely auto-integrate.
+func (m *Manager) effectiveIntegrationMode() string {
+	cfg := m.reg.IntegrationConfig()
+	mode := cfg.Mode
+	if mode == "" {
+		mode = "auto"
+	}
+	if mode != "auto" {
+		return mode
+	}
+	if strings.TrimSpace(cfg.Verify) == "" {
+		log.Printf("ycc: integration: mode auto requires integration.verify; degrading to gate")
+		return "gate"
+	}
+	strategy := cfg.Strategy
+	if strategy == "" {
+		strategy = "rebase-ff"
+	}
+	if strategy != "rebase-ff" {
+		log.Printf("ycc: integration: mode auto with strategy %q is not implemented; degrading to gate", strategy)
+		return "gate"
+	}
+	return "auto"
+}
+
+// enqueueWorkstreamIntegration adds a ready workstream to its project's queue.
+// A project has exactly one drainer, and ids already pending/running are ignored.
+func (m *Manager) enqueueWorkstreamIntegration(ws workstream.Workstream) {
+	m.mu.Lock()
+	if m.integrationStop {
+		m.mu.Unlock()
+		return
+	}
+	q := m.integrators[ws.Project]
+	if q == nil {
+		q = &workstreamIntegrator{queued: make(map[string]bool)}
+		m.integrators[ws.Project] = q
+	}
+	if q.queued[ws.ID] {
+		m.mu.Unlock()
+		return
+	}
+	q.queued[ws.ID] = true
+	q.pending = append(q.pending, ws.ID)
+	if q.draining {
+		m.mu.Unlock()
+		return
+	}
+	q.draining = true
+	m.integrationWG.Add(1)
+	m.mu.Unlock()
+
+	go m.drainWorkstreamIntegrations(ws.Project, q)
+}
+
+func (m *Manager) drainWorkstreamIntegrations(project string, q *workstreamIntegrator) {
+	defer m.integrationWG.Done()
+	for {
+		m.mu.Lock()
+		if len(q.pending) == 0 || m.integrationStop {
+			q.draining = false
+			if len(q.pending) == 0 {
+				delete(m.integrators, project)
+			}
+			m.mu.Unlock()
+			return
+		}
+		id := q.pending[0]
+		q.pending = q.pending[1:]
+		m.mu.Unlock()
+
+		m.integrateReadyWorkstream(id)
+
+		m.mu.Lock()
+		delete(q.queued, id)
+		m.mu.Unlock()
+	}
+}
+
+// integrateReadyWorkstream runs the zero-token integration fast path. The global
+// merge mutex also excludes manual merge and discard while git refs/worktrees are
+// being inspected or changed.
+func (m *Manager) integrateReadyWorkstream(id string) {
+	m.mergeMu.Lock()
+	defer m.mergeMu.Unlock()
+
+	if m.effectiveIntegrationMode() != "auto" {
+		return
+	}
+	ws, ok := m.workstreams.Get(id)
+	if !ok || ws.Status != workstream.StatusReady {
+		return
+	}
+	cfg := m.reg.IntegrationConfig()
+
+	repo, err := m.primaryRepo(ws)
+	if err != nil {
+		m.integrationNeedsAttention(ws, fmt.Sprintf("integration failed: %v", err), nil)
+		return
+	}
+	base, err := m.workstreamBaseBranch(repo, ws)
+	if err != nil {
+		m.integrationNeedsAttention(ws, fmt.Sprintf("integration failed: %v", err), nil)
+		return
+	}
+	if err := repo.CheckBaseClean(base); err != nil {
+		if errors.Is(err, git.ErrBaseTreeDirty) {
+			m.deferWorkstreamIntegration(ws, fmt.Sprintf("integration deferred: base tree dirty: %v", err))
+			return
+		}
+		m.integrationNeedsAttention(ws, fmt.Sprintf("check base branch %s: %v", base, err), nil)
+		return
+	}
+	if err := workstream.VerifyUnderRoot(m.worktreesRoot, ws.WorktreePath); err != nil {
+		m.integrationNeedsAttention(ws, fmt.Sprintf("invalid worktree path: %v", err), nil)
+		return
+	}
+
+	m.emitWorkstreamEvent(ws, event.WorkstreamIntegrating, map[string]any{
+		"workstream":  ws.ID,
+		"branch":      ws.Branch,
+		"base_branch": base,
+	})
+
+	rebase, err := repo.RebaseOnto(ws.WorktreePath, base)
+	if err != nil {
+		m.integrationNeedsAttention(ws, fmt.Sprintf("rebase onto %s failed: %v", base, err), map[string]any{"error": err.Error()})
+		return
+	}
+	if !rebase.Clean {
+		reason := fmt.Sprintf("rebase onto %s conflicts: %s", base, strings.Join(rebase.Conflicts, ", "))
+		m.integrationNeedsAttention(ws, reason, map[string]any{"conflicts": rebase.Conflicts})
+		return
+	}
+
+	// Pin the exact rebased revision before verification. The workstream branch is
+	// a live ref: a resumed session or a user's shell may advance it while verify
+	// runs, and those later commits must never ride into base unverified.
+	verifiedTip, err := repo.RevParse("refs/heads/" + ws.Branch)
+	if err != nil {
+		m.integrationNeedsAttention(ws, fmt.Sprintf("resolve rebased tip for verification: %v", err), map[string]any{"error": err.Error()})
+		return
+	}
+	statusBefore, err := repo.WorktreeStatusPorcelain(ws.WorktreePath)
+	if err != nil {
+		reason := fmt.Sprintf("integration aborted: snapshot worktree before verify: %v", err)
+		m.abortReadyIntegration(ws, reason, map[string]any{"error": err.Error()})
+		return
+	}
+	if tracked := trackedWorktreeChanges(statusBefore); tracked != "" {
+		reason := "integration aborted: rebased worktree has staged or unstaged tracked-file changes"
+		m.abortReadyIntegration(ws, reason, map[string]any{
+			"tracked_changes": boundedIntegrationOutput(tracked),
+			"status_before":   boundedIntegrationOutput(statusBefore),
+		})
+		return
+	}
+
+	output, err := m.runIntegrationVerify(ws, cfg.Verify)
+	if err != nil {
+		tail := boundedIntegrationOutput(output)
+		display := tail
+		if display == "" {
+			display = "(no output)"
+		}
+		reason := fmt.Sprintf("verify %q failed: %v\n%s", cfg.Verify, err, display)
+		m.integrationNeedsAttention(ws, reason, map[string]any{
+			"verify": cfg.Verify,
+			"output": tail,
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	// Verification is valid only while both the branch and lifecycle state remain
+	// unchanged. A resumed session legitimately flips ready to active; abort without
+	// touching base and let its next readiness event enqueue a fresh attempt.
+	currentTip, tipErr := repo.RevParse("refs/heads/" + ws.Branch)
+	currentWS, statusOK := m.workstreams.Get(ws.ID)
+	statusAfter, contentErr := repo.WorktreeStatusPorcelain(ws.WorktreePath)
+	if tipErr != nil || currentTip != verifiedTip || !statusOK || currentWS.Status != workstream.StatusReady || contentErr != nil || statusAfter != statusBefore {
+		reason := "integration aborted: workstream changed while verify was running"
+		extra := map[string]any{}
+		notifyUser := false
+		if contentErr != nil {
+			reason = fmt.Sprintf("integration aborted: snapshot worktree after verify: %v", contentErr)
+			extra["error"] = contentErr.Error()
+			notifyUser = true
+		} else if statusAfter != statusBefore {
+			reason = "integration aborted: worktree contents changed while verify was running"
+			extra["status_before"] = boundedIntegrationOutput(statusBefore)
+			extra["status_after"] = boundedIntegrationOutput(statusAfter)
+			notifyUser = true
+		} else if tipErr != nil {
+			reason = fmt.Sprintf("integration aborted: resolve branch after verify: %v", tipErr)
+		} else if currentTip != verifiedTip {
+			reason = fmt.Sprintf("integration aborted: branch moved from verified tip %s to %s", verifiedTip, currentTip)
+		} else if !statusOK {
+			reason = "integration aborted: workstream was removed while verify was running"
+		} else {
+			reason = fmt.Sprintf("integration aborted: workstream status changed from ready to %s", currentWS.Status)
+		}
+		if notifyUser {
+			m.abortReadyIntegration(ws, reason, extra)
+		} else {
+			m.restoreWorkstreamReadyProjectionData(ws, reason, extra)
+		}
+		return
+	}
+
+	// Advance to the immutable SHA that passed verify, never to the mutable branch
+	// name. AdvanceBranch retains its fast-forward-only ancestry and clean-tree
+	// checks for commit-ish targets.
+	commit, err := repo.AdvanceBranch(base, verifiedTip)
+	if err != nil {
+		if errors.Is(err, git.ErrBaseTreeDirty) {
+			reason := fmt.Sprintf("integration deferred: base tree dirty: %v", err)
+			m.restoreWorkstreamReadyProjection(ws, reason)
+			m.deferWorkstreamIntegration(ws, reason)
+			return
+		}
+		m.integrationNeedsAttention(ws, fmt.Sprintf("advance base branch %s failed: %v", base, err), map[string]any{"error": err.Error()})
+		return
+	}
+
+	// Base now contains exactly the verified tip. Do not clean up if the branch
+	// advanced concurrently: its additional, unmerged commits must be preserved.
+	finalTip, finalErr := repo.RevParse("refs/heads/" + ws.Branch)
+	if finalErr != nil || finalTip != verifiedTip {
+		reason := fmt.Sprintf("base advanced to verified tip %s, but branch gained commits during integration; worktree kept", verifiedTip)
+		if finalErr != nil {
+			reason = fmt.Sprintf("base advanced to verified tip %s, but branch could not be re-read: %v; worktree kept", verifiedTip, finalErr)
+		}
+		m.integrationNeedsAttentionFrom(ws, reason, map[string]any{
+			"verified_tip": verifiedTip,
+			"branch_tip":   finalTip,
+		}, workstream.StatusReady, workstream.StatusActive)
+		return
+	}
+
+	changed, err := m.workstreams.Transition(ws.ID, workstream.StatusMerged, "", workstream.StatusReady)
+	if err != nil || !changed {
+		m.restoreWorkstreamReadyProjection(ws, "integration finish aborted: workstream is no longer ready")
+		return
+	}
+	m.emitWorkstreamEvent(ws, event.WorkstreamMerged, map[string]any{
+		"workstream":  ws.ID,
+		"branch":      ws.Branch,
+		"base_branch": base,
+		"commit":      commit,
+	})
+	if ws.SessionID != "" {
+		_ = m.Stop(ws.SessionID)
+	}
+	m.preserveWorkstreamSession(ws)
+	m.cleanupWorktree(repo, ws)
+	m.Notify(notify.KindMerged, ws.Project, ws.SessionID,
+		fmt.Sprintf("workstream %s merged into %s at %s", ws.ID, base, commit))
+}
+
+func (m *Manager) runIntegrationVerify(ws workstream.Workstream, command string) (string, error) {
+	ctx, cancel := context.WithTimeout(m.integrationCtx, integrationVerifyTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	cmd.Dir = ws.WorktreePath
+	wtCfg := m.reg.WorktreeConfig()
+	if primary, ok := m.projects.Resolve(ws.Project); ok {
+		wtCfg = m.worktreeConfigFor(primary)
+	}
+	cmd.Env = append(os.Environ(), sortedWorktreeEnv(wtCfg.Env)...)
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return string(out), ctx.Err()
+	}
+	return string(out), err
+}
+
+func boundedIntegrationOutput(output string) string {
+	output = strings.TrimSpace(output)
+	if len(output) <= integrationOutputLimit {
+		return output
+	}
+	return "..." + output[len(output)-integrationOutputLimit:]
+}
+
+// trackedWorktreeChanges filters a porcelain-v1 snapshot to staged/unstaged
+// tracked-file entries. Untracked files (??) are intentionally allowed before
+// verify because worktree bootstrap commonly seeds files such as .env.
+func trackedWorktreeChanges(snapshot string) string {
+	var tracked []string
+	for _, line := range strings.Split(strings.TrimSpace(snapshot), "\n") {
+		if line == "" || strings.HasPrefix(line, "?? ") {
+			continue
+		}
+		tracked = append(tracked, line)
+	}
+	return strings.Join(tracked, "\n")
+}
+
+func (m *Manager) integrationNeedsAttention(ws workstream.Workstream, reason string, extra map[string]any) {
+	m.integrationNeedsAttentionFrom(ws, reason, extra, workstream.StatusReady)
+}
+
+func (m *Manager) integrationNeedsAttentionFrom(ws workstream.Workstream, reason string, extra map[string]any, from ...workstream.Status) {
+	changed, err := m.workstreams.Transition(ws.ID, workstream.StatusNeedsAttention, reason, from...)
+	if err != nil || !changed {
+		return
+	}
+	data := map[string]any{
+		"workstream": ws.ID,
+		"branch":     ws.Branch,
+		"reason":     reason,
+	}
+	for key, value := range extra {
+		data[key] = value
+	}
+	m.emitWorkstreamEvent(ws, event.WorkstreamNeedsAttention, data)
+	m.Notify(notify.KindAttention, ws.Project, ws.SessionID,
+		fmt.Sprintf("workstream %s needs attention: %s", ws.ID, reason))
+}
+
+// restoreWorkstreamReadyProjection closes a post-workstream_integrating abort by
+// recording that the durable integration state is ready again. It deliberately
+// does not change the registry: a resumed session may already have moved it to
+// active, while an ordinary defer remains ready.
+func (m *Manager) restoreWorkstreamReadyProjection(ws workstream.Workstream, reason string) {
+	m.restoreWorkstreamReadyProjectionData(ws, reason, nil)
+}
+
+func (m *Manager) restoreWorkstreamReadyProjectionData(ws workstream.Workstream, reason string, extra map[string]any) {
+	data := map[string]any{
+		"workstream": ws.ID,
+		"branch":     ws.Branch,
+		"reason":     reason,
+	}
+	for key, value := range extra {
+		data[key] = value
+	}
+	m.emitWorkstreamEvent(ws, event.WorkstreamReady, data)
+}
+
+// abortReadyIntegration leaves registry state untouched, restores the durable
+// projection from integrating to ready, and alerts unattended users that the
+// worktree must be stable before the safe fast path can retry.
+func (m *Manager) abortReadyIntegration(ws workstream.Workstream, reason string, extra map[string]any) {
+	m.restoreWorkstreamReadyProjectionData(ws, reason, extra)
+	m.Notify(notify.KindAttention, ws.Project, ws.SessionID,
+		fmt.Sprintf("workstream %s: %s", ws.ID, reason))
+}
+
+func (m *Manager) deferWorkstreamIntegration(ws workstream.Workstream, reason string) {
+	// Deferred attempts intentionally remain ready. A retry/restart may enqueue the
+	// stream again after the user's base worktree is clean.
+	m.Notify(notify.KindAttention, ws.Project, ws.SessionID,
+		fmt.Sprintf("workstream %s: %s", ws.ID, reason))
+}

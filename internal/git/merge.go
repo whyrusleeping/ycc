@@ -175,6 +175,17 @@ func (r *Repo) IsAncestor(a, b string) (bool, error) {
 	return false, fmt.Errorf("git merge-base --is-ancestor %s %s: %v: %s", a, b, err, strings.TrimSpace(stderr))
 }
 
+// WorktreeStatusPorcelain returns git's stable porcelain-v1 content snapshot for
+// dir, including every untracked file. The raw output is suitable for exact
+// before/after comparisons around commands that must not mutate the worktree.
+func (r *Repo) WorktreeStatusPorcelain(dir string) (string, error) {
+	stdout, stderr, err := r.runAllow(dir, "status", "--porcelain=v1", "--untracked-files=all")
+	if err != nil {
+		return "", fmt.Errorf("git status --porcelain in %s: %v: %s", dir, err, strings.TrimSpace(stderr))
+	}
+	return stdout, nil
+}
+
 // RebaseOnto rebases the branch checked out at dir onto onto. Content conflicts
 // are reported after a best-effort abort, leaving the worktree restored and
 // available for continued work.
@@ -223,10 +234,10 @@ func (r *Repo) CheckBaseClean(base string) error {
 	return err
 }
 
-// AdvanceBranch advances base to branch with fast-forward-only semantics without
-// assuming anything about the primary checkout. If base is checked out, git runs
-// in that worktree after a clean-tree check; otherwise fetch updates the ref
-// directly without touching any worktree.
+// AdvanceBranch advances base to a branch or other commit-ish with
+// fast-forward-only semantics without assuming anything about the primary
+// checkout. If base is checked out, git runs in that worktree after a clean-tree
+// check; otherwise fetch updates the ref directly without touching any worktree.
 func (r *Repo) AdvanceBranch(base, branch string) (string, error) {
 	base = strings.TrimPrefix(base, "refs/heads/")
 	ok, err := r.IsAncestor(base, branch)

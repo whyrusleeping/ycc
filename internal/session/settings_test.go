@@ -26,6 +26,10 @@ func testRegistry() *config.Registry {
 }
 
 func testRegistryWithIntegration(base string) *config.Registry {
+	return testRegistryWithIntegrationConfig(config.Integration{Base: base})
+}
+
+func testRegistryWithIntegrationConfig(integration config.Integration) *config.Registry {
 	cfg := &config.Config{
 		Models: map[string]config.Model{
 			"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"},
@@ -33,7 +37,7 @@ func testRegistryWithIntegration(base string) *config.Registry {
 			"c": {Backend: "ollama", BaseURL: "http://localhost:3", Model: "model-c"},
 		},
 		Roles:       config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
-		Integration: config.Integration{Base: base},
+		Integration: integration,
 	}
 	return config.NewRegistry(cfg)
 }

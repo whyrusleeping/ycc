@@ -121,6 +121,9 @@ func Reduce(events []Event) Projection {
 		case WorkstreamReady:
 			p.WorkstreamState = "ready"
 			p.WorkstreamAttentionReason = ""
+		case WorkstreamIntegrating:
+			p.WorkstreamState = "integrating"
+			p.WorkstreamAttentionReason = ""
 		case WorkstreamNeedsAttention:
 			p.WorkstreamState = "needs_attention"
 			p.WorkstreamAttentionReason = str(ev.Data, "reason")

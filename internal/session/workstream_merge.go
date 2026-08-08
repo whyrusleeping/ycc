@@ -430,6 +430,9 @@ func (m *Manager) cleanupWorktree(repo *git.Repo, ws workstream.Workstream) {
 // 4). It is allowed for active or stale workstreams; git cleanup is best-effort
 // so a stale entry whose tree is already gone still transitions cleanly.
 func (m *Manager) DiscardWorkstream(id string) error {
+	m.mergeMu.Lock()
+	defer m.mergeMu.Unlock()
+
 	ws, ok := m.workstreams.Get(id)
 	if !ok {
 		return fmt.Errorf("unknown workstream %q", id)

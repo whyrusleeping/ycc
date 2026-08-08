@@ -490,9 +490,8 @@ type Config struct {
 	// Work configures the work-mode implementation pipeline (spec §10). An absent
 	// [work] block keeps the default "delegate" behaviour.
 	Work Work `toml:"work,omitempty"`
-	// Integration configures how completed workstreams are integrated. Base names
-	// the local branch advanced by the rebase-then-fast-forward flow; when absent,
-	// the repository's default branch is used.
+	// Integration configures how completed workstreams are integrated: base branch,
+	// auto/gate/manual mode, verify command, history strategy, and parallelism cap.
 	Integration Integration `toml:"integration,omitempty"`
 	// Worktree configures bootstrap steps for newly-created linked worktrees. A
 	// project-tree ycc.toml [worktree] block takes precedence over this daemon
@@ -503,6 +502,17 @@ type Config struct {
 // Integration configures workstream integration into a repository base branch.
 type Integration struct {
 	Base string `toml:"base,omitempty"`
+	// Mode controls readiness handling: auto (default), gate, or manual. Auto
+	// requires Verify and currently requires Strategy rebase-ff; otherwise it
+	// safely degrades to gate.
+	Mode string `toml:"mode,omitempty"`
+	// Verify is the shell command run in a rebased worktree before auto-integration.
+	Verify string `toml:"verify,omitempty"`
+	// Strategy selects the history shape. The queue currently executes only
+	// rebase-ff; squash and merge-no-ff are accepted for gated/manual workflows.
+	Strategy string `toml:"strategy,omitempty"`
+	// MaxParallel caps active workstreams per project; zero means unlimited.
+	MaxParallel int `toml:"max_parallel,omitempty"`
 }
 
 // Worktree configures bootstrap of a newly-created linked worktree. Copy and
@@ -595,7 +605,8 @@ type Budget struct {
 // header, keeping the credential out of committed config. Events optionally
 // restricts which event kinds fire — an empty slice enables all kinds; a non-empty
 // slice enables only the listed kinds (valid kinds: question, idle, error, digest,
-// blocked) so unattended-loop users can pick "questions + digest only".
+// blocked, attention, merged) so unattended-loop users can pick only the events
+// they want.
 type Notify struct {
 	URL     string   `toml:"url,omitempty"`
 	Auth    string   `toml:"auth,omitempty"`
@@ -607,11 +618,13 @@ type Notify struct {
 // here (not in internal/notify) so config validation has no dependency on the
 // notifier package.
 var NotifyEventKinds = map[string]bool{
-	"question": true,
-	"idle":     true,
-	"error":    true,
-	"digest":   true,
-	"blocked":  true,
+	"question":  true,
+	"idle":      true,
+	"error":     true,
+	"digest":    true,
+	"blocked":   true,
+	"attention": true,
+	"merged":    true,
 }
 
 // Load reads and validates a TOML config file.
@@ -780,8 +793,21 @@ func (c *Config) validate() error {
 	}
 	for _, k := range c.Notify.Events {
 		if !NotifyEventKinds[k] {
-			return fmt.Errorf("notify.events: unknown event kind %q (valid: question, idle, error, digest, blocked)", k)
+			return fmt.Errorf("notify.events: unknown event kind %q (valid: question, idle, error, digest, blocked, attention, merged)", k)
 		}
+	}
+	switch c.Integration.Mode {
+	case "", "auto", "gate", "manual":
+	default:
+		return fmt.Errorf("integration.mode: unknown value %q (want auto, gate, or manual)", c.Integration.Mode)
+	}
+	switch c.Integration.Strategy {
+	case "", "rebase-ff", "squash", "merge-no-ff":
+	default:
+		return fmt.Errorf("integration.strategy: unknown value %q (want rebase-ff, squash, or merge-no-ff)", c.Integration.Strategy)
+	}
+	if c.Integration.MaxParallel < 0 {
+		return fmt.Errorf("integration.max_parallel must be non-negative")
 	}
 	if c.Retry.MaxAttempts < 0 || c.Retry.BaseDelayMS < 0 || c.Retry.MaxDelayMS < 0 {
 		return fmt.Errorf("retry: max_attempts, base_delay_ms, and max_delay_ms must be non-negative")
@@ -859,6 +885,14 @@ func (r *Registry) IntegrationBase() string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.cfg.Integration.Base
+}
+
+// IntegrationConfig returns the workstream integration settings. Integration
+// currently contains only value fields, so returning it by value is a full copy.
+func (r *Registry) IntegrationConfig() Integration {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.cfg.Integration
 }
 
 // WorktreeConfig returns a deep copy of the daemon-level worktree bootstrap
