@@ -576,6 +576,44 @@ func TestSetRolesPersists(t *testing.T) {
 	}
 }
 
+func TestPresetModelBindingsRoundTripAndAllowUnknownModels(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ycc.toml")
+	contents := sample + `
+[roles.presets]
+memory-groom = "local"
+spec-doctor = "removed-model"
+`
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load with stale preset binding: %v", err)
+	}
+	reg := NewRegistry(cfg)
+	if got, ok := reg.PresetModel("memory-groom"); !ok || got != "local" {
+		t.Fatalf("PresetModel(memory-groom) = %q, %v", got, ok)
+	}
+	if got, ok := reg.PresetModel("spec-doctor"); !ok || got != "removed-model" {
+		t.Fatalf("PresetModel(spec-doctor) = %q, %v", got, ok)
+	}
+	if _, ok := reg.PresetModel("onboard"); ok {
+		t.Fatal("unbound preset reported as bound")
+	}
+
+	// Exercise the normal persistence encoder and verify [roles.presets] survives.
+	if err := reg.SetRoles(cfg.Roles.Coordinator, "", nil); err != nil {
+		t.Fatalf("persist config: %v", err)
+	}
+	reloaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("reload persisted config: %v", err)
+	}
+	if !reflect.DeepEqual(reloaded.Roles.Presets, cfg.Roles.Presets) {
+		t.Fatalf("preset bindings after round trip = %v, want %v", reloaded.Roles.Presets, cfg.Roles.Presets)
+	}
+}
+
 func TestPersistWithoutPathIsInMemory(t *testing.T) {
 	// With no config path, a persisted edit still applies in-memory instead of
 	// failing — a runtime change should never be rejected just because there is

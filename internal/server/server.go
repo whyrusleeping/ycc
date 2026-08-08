@@ -71,6 +71,7 @@ func (s *Server) StartSession(_ context.Context, req *connect.Request[v1.StartSe
 		Prompt:           m.Prompt,
 		Project:          m.Project,
 		CoordinatorModel: m.CoordinatorModel,
+		Preset:           m.Preset,
 		Images:           images,
 	})
 	if err != nil {

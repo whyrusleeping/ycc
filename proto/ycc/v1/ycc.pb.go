@@ -126,7 +126,11 @@ type StartSessionRequest struct {
 	// prompt (same limits and validation as SendInputRequest.images), so a
 	// session whose whole subject is a screenshot does not have to waste its
 	// first turn. Spec §12.
-	Images        []*ImageAttachment `protobuf:"bytes,7,rep,name=images,proto3" json:"images,omitempty"`
+	Images []*ImageAttachment `protobuf:"bytes,7,rep,name=images,proto3" json:"images,omitempty"`
+	// preset identifies the opening-prompt preset selected by the client. The
+	// daemon uses it to apply an optional roles.presets model binding for this
+	// session only; empty or unbound means the configured coordinator default.
+	Preset        string `protobuf:"bytes,8,opt,name=preset,proto3" json:"preset,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -201,6 +205,13 @@ func (x *StartSessionRequest) GetImages() []*ImageAttachment {
 		return x.Images
 	}
 	return nil
+}
+
+func (x *StartSessionRequest) GetPreset() string {
+	if x != nil {
+		return x.Preset
+	}
+	return ""
 }
 
 type StartSessionResponse struct {
@@ -6428,14 +6439,15 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x05actor\x18\x03 \x01(\tR\x05actor\x12\x12\n" +
 	"\x04type\x18\x04 \x01(\tR\x04type\x12\x1b\n" +
 	"\tdata_json\x18\x05 \x01(\tR\bdataJson\x12\x1c\n" +
-	"\ttransient\x18\x06 \x01(\bR\ttransient\"\xdd\x01\n" +
+	"\ttransient\x18\x06 \x01(\bR\ttransient\"\xf5\x01\n" +
 	"\x13StartSessionRequest\x12\x1c\n" +
 	"\tworkspace\x18\x01 \x01(\tR\tworkspace\x12\x12\n" +
 	"\x04mode\x18\x02 \x01(\tR\x04mode\x12\x16\n" +
 	"\x06prompt\x18\x04 \x01(\tR\x06prompt\x12\x18\n" +
 	"\aproject\x18\x05 \x01(\tR\aproject\x12+\n" +
 	"\x11coordinator_model\x18\x06 \x01(\tR\x10coordinatorModel\x12/\n" +
-	"\x06images\x18\a \x03(\v2\x17.ycc.v1.ImageAttachmentR\x06imagesJ\x04\b\x03\x10\x04\"5\n" +
+	"\x06images\x18\a \x03(\v2\x17.ycc.v1.ImageAttachmentR\x06images\x12\x16\n" +
+	"\x06preset\x18\b \x01(\tR\x06presetJ\x04\b\x03\x10\x04\"5\n" +
 	"\x14StartSessionResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\"5\n" +

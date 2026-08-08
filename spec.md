@@ -181,7 +181,7 @@ Event `type`s (initial set):
 
 | type | meaning |
 |------|---------|
-| `session_started` | mode, workspace, coordinator model (so a resume replays on the model the session was started with) |
+| `session_started` | mode, workspace, preset (if any), coordinator model (so a resume replays/re-resolves the model the session was started with) |
 | `mode_changed` | transitioned modes within a session |
 | `model_turn` | a model produced a message (text + any tool calls) |
 | `tool_call` / `tool_result` | a tool was invoked / returned |
@@ -196,6 +196,7 @@ Event `type`s (initial set):
 | `doc_updated` | spec or task file changed (with diff) |
 | `commit_made` | git sha + message |
 | `session_idle` / `session_error` | terminal-ish states |
+| `session_notice` | visible non-fatal lifecycle notice (for example a stale preset-model fallback) |
 | `log` | free-text narration for the UI |
 
 Subagents get their own session-scoped event substreams (`subagent_spawned` carries a
@@ -750,6 +751,16 @@ Each mode = a coordinator system prompt + a tool subset + a state machine. There
   (dedupe/prune + promotion path). A prompt typed alongside a selected preset **composes** with it —
   the preset supplies the framing and the typed text is appended as the user's upfront
   context — rather than replacing it.
+
+  Presets may optionally select a different coordinator model through
+  `[roles.presets]` (§13). The client sends the selected preset name with `StartSession`; the
+  daemon applies its binding only to that session's initial coordinator and never rewrites
+  the persisted role defaults. This is especially useful for `memory-groom` and
+  `spec-doctor`: having (for example) Gemini groom docs primarily authored by Claude breaks
+  the single-model dialect/self-instruction reinforcement loop and extends ycc's
+  multi-perspective principle to its own future context. Unbound presets keep the normal
+  coordinator. A binding whose logical model is missing or was removed falls back to the
+  configured coordinator and emits a visible warning rather than preventing cleanup.
 - **`chat`** — open-ended assistant that *can* edit code directly, with no fixed workflow.
   Kept as the freeform "just do it" counterpart to `pm`'s "just plan it."
 - **`work`** — the orchestrated implementation pipeline (§10): pick/accept a task, plan,
@@ -995,6 +1006,10 @@ coordinator = "claude"
 implementer = "claude"
 reviewers   = ["claude", "gpt", "glm"]   # multi-model review
 
+[roles.presets]                # optional preset → logical-model session binding
+memory-groom = "gemini"        # run doc cleanup from a different perspective
+spec-doctor  = "gpt"
+
 [roles.thinking]               # optional per-role reasoning override (see below)
 coordinator = "xhigh"          # off | low | medium | high | xhigh | max
 implementer = "low"
@@ -1015,7 +1030,17 @@ max_turns   = 1000   # per-Run tool-call turn cap; runaway/cost backstop (0 => e
 ```
 
 The registry hands the engine a configured gollama `Client` + model string for any
-logical name. Reviewer fan-out iterates `roles.reviewers`.
+logical name. Reviewer fan-out iterates `roles.reviewers`. `[roles.presets]` is an optional
+map from an opening-prompt preset name to a logical model. It changes only the initial
+coordinator of a session started from that preset: it does not call the persistent role
+configuration path, and implementer/reviewer assignments remain unchanged. Reopen records
+and re-resolves the preset binding so the cross-model choice survives resume, unless a later
+`role_config_changed` coordinator selection superseded it; that explicit mid-session choice
+is replayed instead. Unknown bound models are intentionally not a config-load error; at
+session use time they degrade to
+`roles.coordinator` with a visible warning. This permits config/model-set evolution without
+making the documentation-repair entry points unavailable, while using a second model for
+`memory-groom` / `spec-doctor` to counter author-model dialect drift (§9).
 
 **Logical model = credentials/endpoint + model id.** A `[models.X]` block bundles a
 backend's *credentials/endpoint* (`backend`, `base_url`, `key_env`) with a specific

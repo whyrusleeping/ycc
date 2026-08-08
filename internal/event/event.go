@@ -37,6 +37,9 @@ const (
 	ToolResult   Type = "tool_result"
 	SessionIdle  Type = "session_idle"
 	SessionError Type = "session_error"
+	// SessionNotice is a visible, non-fatal lifecycle message. A warning level is
+	// used when a stale preset-model binding safely falls back to the default.
+	SessionNotice Type = "session_notice"
 	// SessionStopped is an informational marker that a session's live process
 	// was terminated via StopSession (spec §12): its agent loop was cancelled and
 	// its log closed. It does NOT prevent resume — reopening replays the durable

@@ -363,6 +363,28 @@ func TestPreviousSessionsEscReturnsToMenu(t *testing.T) {
 	}
 }
 
+func TestPresetMenuEntrySendsPresetName(t *testing.T) {
+	fc := newFakeClient()
+	m := model{
+		client: fc, ctx: context.Background(), state: stateMenu, project: "p",
+		entries:  []menuEntry{{label: "memory-groom", mode: "pm", preset: "memory-groom", openingPrompt: "groom memory"}},
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+	}
+	_, cmd := m.Update(keyMsg("enter"))
+	if cmd == nil {
+		t.Fatal("preset enter did not issue StartSession")
+	}
+	if msg := cmd(); msg == nil {
+		t.Fatal("StartSession command returned nil")
+	}
+	if fc.lastStartReq == nil {
+		t.Fatal("StartSession request was not recorded")
+	}
+	if fc.lastStartReq.Preset != "memory-groom" || fc.lastStartReq.Mode != "pm" {
+		t.Fatalf("StartSession preset/mode = %q/%q", fc.lastStartReq.Preset, fc.lastStartReq.Mode)
+	}
+}
+
 func TestWorkLoopMenuStartsAndAttachesExisting(t *testing.T) {
 	fc := newFakeClient()
 	m := model{client: fc, ctx: context.Background(), state: stateMenu, project: "p", loop: true,

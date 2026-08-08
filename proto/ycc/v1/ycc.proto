@@ -35,6 +35,10 @@ message StartSessionRequest {
   // session whose whole subject is a screenshot does not have to waste its
   // first turn. Spec §12.
   repeated ImageAttachment images = 7;
+  // preset identifies the opening-prompt preset selected by the client. The
+  // daemon uses it to apply an optional roles.presets model binding for this
+  // session only; empty or unbound means the configured coordinator default.
+  string preset = 8;
 }
 message StartSessionResponse { string session_id = 1; }
 

@@ -753,7 +753,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.entries = append(m.entries, menuEntry{label: md.Name, description: md.Description, mode: md.Name})
 		}
 		for _, p := range msg.presets {
-			m.entries = append(m.entries, menuEntry{label: p.Name, description: p.Description, mode: p.Mode, openingPrompt: p.OpeningPrompt})
+			m.entries = append(m.entries, menuEntry{label: p.Name, description: p.Description, mode: p.Mode, preset: p.Name, openingPrompt: p.OpeningPrompt})
 		}
 		// When the workspace looks un-onboarded, surface the onboarding entry
 		// prominently at the top of the menu (spec §19.2). It stays a normal

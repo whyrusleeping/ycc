@@ -1,10 +1,10 @@
 ---
 id: "0176"
 title: 'Preset → model binding: run cleanup presets (memory-groom, spec-doctor) on a non-default model'
-status: todo
+status: done
 priority: 3
 created: "2026-07-08"
-updated: "2026-07-08"
+updated: "2026-08-08"
 depends_on: []
 spec_refs:
     - Modes (the home menu)
@@ -66,3 +66,14 @@ Goal: an optional config binding preset → logical model so cleanup presets (me
 - 2026-07-08 plan: Goal: an optional config binding preset → logical model so cleanup presets (memory-groom, spec-doctor) run their pm coordinator on a non-default model, without persisting a role change.  1. Config: 
 …[truncated]
 - 2026-07-08 context hints: 7 recorded with plan
+- 2026-08-08 context hints: internal/session/session.go ~1290-1310: newSession hardcodes coordName := m.reg.CoordinatorName() — the override point; internal/session/session.go: Manager.Start ~1023, Manager.Reopen ~1497; SetRol
+…[truncated]
+- 2026-08-08 implementer report: Implemented task 0176 end-to-end.  Changes: - Added `roles.presets` config support and `Registry.PresetModel`, intentionally allowing stale/unknown model names at load time. - Added `preset` to `Start
+…[truncated]
+- 2026-08-08 review tier: single-opus — reviewers: sol
+- 2026-08-08 review (sol): revise — The preset binding is otherwise plumbed end-to-end, preserves config defaults, falls back safely with a TUI-visible notice, is documented, and the Go test suite passes. However, reopen currently lets 
+…[truncated]
+- 2026-08-08 revision: Addressed both review findings.  Changes: - Added `Projection.CoordinatorChanged`, set only when a post-`session_started` `role_config_changed` event actually changes the coordinator (not when an impl
+…[truncated]
+- 2026-08-08 review (sol): accept — The revision addresses both prior findings. Reopen now preserves an actual post-start coordinator change while still re-resolving untouched preset bindings, with projection and manager regression cove
+…[truncated]

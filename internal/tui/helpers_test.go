@@ -54,7 +54,8 @@ type fakeClient struct {
 	discoverNote string
 	lastDiscover *v1.DiscoverModelsRequest
 
-	lastRoleReq *v1.SetRoleConfigRequest // most recent SetRoleConfig call
+	lastRoleReq  *v1.SetRoleConfigRequest // most recent SetRoleConfig call
+	lastStartReq *v1.StartSessionRequest  // most recent StartSession call
 
 	// previous-sessions screen (spec §18.6)
 	history      []*v1.SessionSummary
@@ -134,7 +135,8 @@ func (f *fakeClient) StopSession(_ context.Context, req *connect.Request[v1.Stop
 	return connect.NewResponse(&v1.StopSessionResponse{}), nil
 }
 
-func (f *fakeClient) StartSession(_ context.Context, _ *connect.Request[v1.StartSessionRequest]) (*connect.Response[v1.StartSessionResponse], error) {
+func (f *fakeClient) StartSession(_ context.Context, req *connect.Request[v1.StartSessionRequest]) (*connect.Response[v1.StartSessionResponse], error) {
+	f.lastStartReq = req.Msg
 	return connect.NewResponse(&v1.StartSessionResponse{SessionId: "s-new"}), nil
 }
 

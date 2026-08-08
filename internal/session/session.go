@@ -46,6 +46,10 @@ type Config struct {
 	// THIS SESSION ONLY (spec §13, §18.2): the persisted per-role defaults are
 	// untouched and implementer/reviewers keep them. An unknown name is an error.
 	CoordinatorModel string
+	// Preset identifies the client-side opening-prompt preset. A configured
+	// roles.presets binding selects this session's initial coordinator without
+	// changing the persisted role defaults. An unbound preset behaves normally.
+	Preset string
 	// Images optionally attaches validated pictures to the OPENING prompt (spec
 	// §12). The bytes live only in model history; the initial user_input event
 	// records metadata, exactly like SendInputMessage.
@@ -60,14 +64,19 @@ type Session struct {
 
 	unattended bool
 
-	log       *event.Log
-	emitter   *event.Emitter
-	loop      *engine.Loop
-	inter     *interaction
-	deps      *orchestrator.Deps
-	reg       *config.Registry
-	prompt    string
-	buildLoop func(mode, prompt string) (*engine.Loop, error)
+	log                 *event.Log
+	emitter             *event.Emitter
+	loop                *engine.Loop
+	inter               *interaction
+	deps                *orchestrator.Deps
+	reg                 *config.Registry
+	prompt              string
+	preset              string
+	coordinatorExplicit bool // StartSession coordinator_model won over any preset binding
+	// startupNotice is emitted as a visible, non-fatal event after the session
+	// lifecycle marker (used when a stale preset binding falls back safely).
+	startupNotice string
+	buildLoop     func(mode, prompt string) (*engine.Loop, error)
 
 	// promptImages are pictures attached to the OPENING prompt (spec §12). The
 	// bytes seed the first loop's history exactly once — a later mode transition
@@ -1062,6 +1071,9 @@ func (s *Session) run() {
 		// fresh SessionStarted / initial UserInput nor seed. Mark the reopen in the
 		// continuous log.
 		s.emitter.Emit(event.SessionReopened, map[string]any{})
+		if s.startupNotice != "" {
+			s.emitter.Emit(event.SessionNotice, map[string]any{"msg": s.startupNotice, "level": "warning"})
+		}
 		if s.ctx.Err() != nil {
 			return
 		}
@@ -1097,13 +1109,18 @@ func (s *Session) run() {
 		coord := s.coordinator
 		s.mu.Unlock()
 		s.emitter.Emit(event.SessionStarted, map[string]any{
-			"workspace": s.Workspace,
-			"mode":      s.Mode,
+			"workspace":            s.Workspace,
+			"mode":                 s.Mode,
+			"preset":               s.preset,
+			"coordinator_explicit": s.coordinatorExplicit,
 			// The coordinator model is recorded so a resume replays the session on
 			// the model it was started with, including a per-session override
 			// picked at StartSession (spec §13, §18.2).
 			"coordinator": coord,
 		})
+		if s.startupNotice != "" {
+			s.emitter.Emit(event.SessionNotice, map[string]any{"msg": s.startupNotice, "level": "warning"})
+		}
 		if s.ctx.Err() != nil {
 			return
 		}
@@ -1557,6 +1574,28 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 	return m.start(cfg, true)
 }
 
+// initialCoordinator resolves the session-only coordinator selection. An
+// explicit API override wins; otherwise a preset binding is applied. Unlike an
+// explicit unknown override, a stale preset binding is non-fatal: it falls back
+// to the configured coordinator and returns a warning for the session log/UI.
+func (m *Manager) initialCoordinator(preset, explicit string) (coordinator, warning string, err error) {
+	if explicit != "" {
+		if !m.reg.Has(explicit) {
+			return "", "", fmt.Errorf("%w %q", ErrUnknownModel, explicit)
+		}
+		return explicit, "", nil
+	}
+	model, bound := m.reg.PresetModel(preset)
+	if !bound {
+		return "", "", nil // newSession resolves the configured default
+	}
+	if m.reg.Has(model) {
+		return model, "", nil
+	}
+	fallback := m.reg.CoordinatorName()
+	return "", fmt.Sprintf("preset %q is bound to unknown model %q; using default coordinator %q", preset, model, fallback), nil
+}
+
 // start is the shared session-launch body. When autoRegisterProject is true a
 // not-yet-known workspace is auto-registered as a first-class project (spec
 // §3.1). Workstream sessions pass false so an ephemeral worktree path never
@@ -1595,10 +1634,11 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 		prompt = defaultPrompt(mode)
 	}
 
-	// A per-session coordinator override is validated before anything is created,
-	// so a bad model name never leaves a stray session log behind.
-	if cfg.CoordinatorModel != "" && !m.reg.Has(cfg.CoordinatorModel) {
-		return nil, fmt.Errorf("%w %q", ErrUnknownModel, cfg.CoordinatorModel)
+	// Resolve an explicit or preset coordinator before creating the log. Explicit
+	// bad input remains an error; stale config bindings safely produce a warning.
+	coord, startupNotice, err := m.initialCoordinator(cfg.Preset, cfg.CoordinatorModel)
+	if err != nil {
+		return nil, err
 	}
 
 	id, err := newID()
@@ -1611,11 +1651,14 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 		return nil, fmt.Errorf("open event log: %w", err)
 	}
 
-	s, err := m.newSession(absWS, id, mode, cfg.Unattended, prompt, log, false, cfg.CoordinatorModel)
+	s, err := m.newSession(absWS, id, mode, cfg.Unattended, prompt, log, false, coord)
 	if err != nil {
 		log.Close()
 		return nil, err
 	}
+	s.preset = cfg.Preset
+	s.coordinatorExplicit = cfg.CoordinatorModel != ""
+	s.startupNotice = startupNotice
 	// Opening-prompt pictures must be attached BEFORE the first loop is built:
 	// buildLoop consumes them so the seed message is multimodal (spec §12).
 	s.promptImages = cfg.Images
@@ -2213,11 +2256,19 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 	if mode == "" {
 		mode = "work"
 	}
-	// Replay on the model the session last ran on (which may be a per-session
-	// override picked at StartSession). A model that has since been removed from
-	// the config falls back to the current default rather than failing the resume.
+	// A preset session re-resolves its binding so it retains the configured
+	// cross-model coordinator (and gets the same graceful stale-binding fallback),
+	// unless an explicit start override or later role change superseded it. Those
+	// sessions replay on the model they last ran on from the projection.
 	coord := proj.Coordinator
-	if coord != "" && !m.reg.Has(coord) {
+	startupNotice := ""
+	if proj.Preset != "" && !proj.CoordinatorExplicit && !proj.CoordinatorChanged {
+		coord, startupNotice, err = m.initialCoordinator(proj.Preset, "")
+		if err != nil { // preset resolution is currently non-fatal; keep defensive
+			log.Close()
+			return nil, err
+		}
+	} else if coord != "" && !m.reg.Has(coord) {
 		coord = ""
 	}
 	s, err := m.newSession(absWS, id, mode, false, "", log, true, coord)
@@ -2225,6 +2276,8 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 		log.Close()
 		return nil, err
 	}
+	s.preset = proj.Preset
+	s.startupNotice = startupNotice
 	loop, err := s.buildLoop(mode, "")
 	if err != nil {
 		log.Close()

@@ -17,6 +17,7 @@ type menuEntry struct {
 	label         string
 	description   string
 	mode          string
+	preset        string // preset name sent to StartSession; empty for plain modes
 	openingPrompt string
 	prominent     bool // surfaced at the top (e.g. onboarding on an un-onboarded workspace)
 }

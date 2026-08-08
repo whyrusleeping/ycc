@@ -244,6 +244,10 @@ type Roles struct {
 	Coordinator string   `toml:"coordinator"`
 	Implementer string   `toml:"implementer"`
 	Reviewers   []string `toml:"reviewers"`
+	// Presets optionally binds an opening-prompt preset to the logical model used
+	// by that session's coordinator. Bindings are resolved at session start rather
+	// than validated here so a stale/unknown model can degrade to the default.
+	Presets map[string]string `toml:"presets,omitempty"`
 	// Thinking optionally overrides the reasoning level per role, layered above
 	// the per-model config (spec §7.4). Unset roles fall back to per-model.
 	Thinking RoleThinking `toml:"thinking,omitempty"`
@@ -1026,6 +1030,16 @@ func (r *Registry) ReviewerNames() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return append([]string(nil), r.cfg.Roles.Reviewers...)
+}
+
+// PresetModel returns the logical model bound to an opening-prompt preset. The
+// model is intentionally not validated here: stale bindings must remain
+// loadable and are resolved with a graceful fallback when a session starts.
+func (r *Registry) PresetModel(name string) (model string, bound bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	model, bound = r.cfg.Roles.Presets[name]
+	return model, bound
 }
 
 // SetRoles updates the default per-role model assignments (roles.coordinator /

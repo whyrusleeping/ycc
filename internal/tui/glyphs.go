@@ -126,6 +126,8 @@ func typeGlyph(t string) string {
 		return "■"
 	case "session_error":
 		return "✗"
+	case "session_notice":
+		return "⚠"
 	case "budget_warning", "budget_exceeded":
 		return "⚠"
 	default:
@@ -142,7 +144,7 @@ func typeGlyphStyle(t string) lipgloss.Style {
 		return errStyle
 	case "budget_exceeded":
 		return errStyle
-	case "budget_warning":
+	case "budget_warning", "session_notice":
 		return recoStyle
 	case "commit_made", "question_answered", "session_idle":
 		return successStyle

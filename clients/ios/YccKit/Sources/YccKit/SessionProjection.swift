@@ -575,6 +575,9 @@ public struct SessionProjection: Sendable, Equatable {
             // internal/session/session.go); tolerate "error"/"text" fallbacks.
             let msg = [s("msg"), s("error"), s("text")].first { !$0.isEmpty } ?? ""
             return msg.isEmpty ? "Session error" : "Session error: \(msg)"
+        case "session_notice":
+            let msg = s("msg")
+            return msg.isEmpty ? "Session notice" : "Session notice: \(msg)"
         case "session_stopped":
             return "Session stopped"
         case "session_reopened":

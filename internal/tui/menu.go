@@ -42,11 +42,12 @@ func (m model) fetchModels() tea.Msg {
 	}
 }
 
-// startSession starts a normal attended session in the given mode.
-func (m model) startSession(mode, prompt string) tea.Cmd {
+// startSession starts a normal attended session in the given mode. preset is
+// empty for a plain mode and identifies an opening-prompt preset otherwise.
+func (m model) startSession(mode, preset, prompt string) tea.Cmd {
 	return func() tea.Msg {
 		resp, err := m.client.StartSession(m.ctx, connect.NewRequest(&v1.StartSessionRequest{
-			Mode: mode, Prompt: prompt, Workspace: m.workspace, Project: m.project,
+			Mode: mode, Preset: preset, Prompt: prompt, Workspace: m.workspace, Project: m.project,
 		}))
 		if err != nil {
 			return errMsg{err}
@@ -327,7 +328,7 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case e.openingPrompt != "":
 				prompt = e.openingPrompt + "\n\nContext from the user (supplied upfront with this request):\n" + prompt
 			}
-			return m, m.startSession(e.mode, prompt)
+			return m, m.startSession(e.mode, e.preset, prompt)
 		}
 	}
 	var cmd tea.Cmd

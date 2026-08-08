@@ -10,6 +10,17 @@ import (
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 )
 
+func TestRenderSessionNoticeIsVisible(t *testing.T) {
+	m := model{w: 80}
+	body := m.renderBody(&v1.Event{Type: "session_notice", DataJson: `{"msg":"preset fallback warning"}`})
+	if !strings.Contains(body, "preset fallback warning") {
+		t.Fatalf("session notice body = %q", body)
+	}
+	if got := typeGlyph("session_notice"); got != "⚠" {
+		t.Fatalf("session notice glyph = %q", got)
+	}
+}
+
 // The actor name is spelled out only when an actor first starts a run of rows;
 // continuation rows by the same actor show its compact glyph instead. A
 // model_turn is rendered as framing prose, dropping the redundant type label.

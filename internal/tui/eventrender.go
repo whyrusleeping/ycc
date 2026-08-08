@@ -295,6 +295,12 @@ func (m *model) renderBody(ev *v1.Event) string {
 			body += "\n" + m.markdown(summary)
 		}
 		return indentLines(body, "  ")
+	case "session_notice":
+		msg := dataField(ev, "msg")
+		if w := m.w - lipgloss.Width(bodyBar); w > 0 {
+			msg = wrap.String(wordwrap.String(msg, w), w)
+		}
+		return indentLines(recoStyle.Render(msg), bodyBar)
 	case "session_error":
 		msg := dataField(ev, "msg")
 		// Error messages (e.g. a backend 400 invalid_request_error with a long
@@ -421,7 +427,7 @@ func detailLine(ev *v1.Event) string {
 		return dataField(ev, "from") + " → " + dataField(ev, "to")
 	case "session_idle":
 		return oneLine(dataField(ev, "report"), 120)
-	case "session_error":
+	case "session_notice", "session_error":
 		return oneLine(dataField(ev, "msg"), 120)
 	case "budget_warning":
 		return "⚠ budget warning — " + budgetSummary(ev)

@@ -79,11 +79,14 @@ func TestReduceWorkstreamLifecycle(t *testing.T) {
 // later role_config_changed, so a resume replays on the right model.
 func TestReduceCoordinatorModel(t *testing.T) {
 	p := Reduce([]Event{
-		{Seq: 1, Type: SessionStarted, Data: map[string]any{"mode": "chat", "coordinator": "gpt"}},
+		{Seq: 1, Type: SessionStarted, Data: map[string]any{"mode": "chat", "coordinator": "gpt", "preset": "memory-groom"}},
 		{Seq: 2, Type: ModelTurn},
 	})
 	if p.Coordinator != "gpt" {
 		t.Fatalf("Coordinator = %q, want gpt", p.Coordinator)
+	}
+	if p.Preset != "memory-groom" {
+		t.Fatalf("Preset = %q, want memory-groom", p.Preset)
 	}
 
 	p = Reduce([]Event{
@@ -92,6 +95,19 @@ func TestReduceCoordinatorModel(t *testing.T) {
 	})
 	if p.Coordinator != "claude" {
 		t.Fatalf("Coordinator after role change = %q, want claude", p.Coordinator)
+	}
+	if !p.CoordinatorChanged {
+		t.Fatal("CoordinatorChanged = false after coordinator role change")
+	}
+
+	// A role_config_changed event that only changes another role carries the
+	// current coordinator too; it must not suppress preset re-resolution.
+	p = Reduce([]Event{
+		{Seq: 1, Type: SessionStarted, Data: map[string]any{"mode": "pm", "coordinator": "gpt", "preset": "memory-groom"}},
+		{Seq: 2, Type: RoleConfigChanged, Data: map[string]any{"coordinator": "gpt", "implementer": "claude"}},
+	})
+	if p.CoordinatorChanged {
+		t.Fatal("CoordinatorChanged = true when coordinator stayed the same")
 	}
 
 	// Older logs without the field simply leave it empty (caller falls back to

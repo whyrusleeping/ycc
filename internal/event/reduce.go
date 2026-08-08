@@ -40,6 +40,16 @@ type Projection struct {
 	// on it, so a per-session model choice (StartSession's coordinator_model)
 	// survives a resume. Empty for logs written before it was recorded.
 	Coordinator string
+	// Preset is the client-side opening-prompt preset recorded when the session
+	// started. Reopen uses it to re-resolve any per-preset coordinator binding.
+	Preset string
+	// CoordinatorExplicit distinguishes an explicit coordinator_model selection
+	// (which wins over preset config) from a coordinator chosen by preset binding.
+	CoordinatorExplicit bool
+	// CoordinatorChanged is set when a later role_config_changed event actually
+	// changes the coordinator selected at session start. Reopen must preserve that
+	// user choice instead of re-applying the session's original preset binding.
+	CoordinatorChanged bool
 	// Parallel-workstream projection (docs/design/parallel-workstreams.md §6, §8):
 	// the workstream lifecycle folded from its own session stream. WorkstreamID is
 	// set once created; WorkstreamConflicts and WorkstreamAttentionReason preserve
@@ -53,18 +63,25 @@ type Projection struct {
 // Reduce folds an event slice into a Projection.
 func Reduce(events []Event) Projection {
 	p := Projection{TurnsByTask: map[string]int{}}
+	started := false
 	for _, ev := range events {
 		p.LastSeq = ev.Seq
 		switch ev.Type {
 		case SessionStarted:
+			started = true
 			p.Status = StatusRunning
 			p.Mode = str(ev.Data, "mode")
 			p.Workspace = str(ev.Data, "workspace")
+			p.Preset = str(ev.Data, "preset")
+			p.CoordinatorExplicit, _ = ev.Data["coordinator_explicit"].(bool)
 			if c := str(ev.Data, "coordinator"); c != "" {
 				p.Coordinator = c
 			}
 		case RoleConfigChanged:
 			if c := str(ev.Data, "coordinator"); c != "" {
+				if started && c != p.Coordinator {
+					p.CoordinatorChanged = true
+				}
 				p.Coordinator = c
 			}
 		case TaskFocus:
