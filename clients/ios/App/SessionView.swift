@@ -18,6 +18,9 @@ struct SessionView: View {
 
     @State private var model: SessionViewModel
     @FocusState private var composerFocused: Bool
+    /// Keyboard overlap for manual avoidance of the bottom chrome — see
+    /// KeyboardObserver for why the automatic keyboard safe area is not used.
+    @StateObject private var keyboard = KeyboardObserver()
     /// Whether new content should keep the feed pinned to its newest row. The
     /// bottom marker can disappear briefly when the keyboard/composer changes the
     /// viewport or a streaming row grows, neither of which is a user request to
@@ -122,6 +125,13 @@ struct SessionView: View {
                 content: .commit(project: project, sha: target.sha))
         }
         .safeAreaInset(edge: .bottom) { bottomChrome }
+        // Manual keyboard avoidance (see KeyboardObserver): the automatic
+        // keyboard safe area under a bottom `safeAreaInset` can get stuck after
+        // sheet dismissals/navigation races (open SwiftUI bug, FB13296535),
+        // stranding the input bar mid-screen with no keyboard beneath it. Opt
+        // the whole screen out of the keyboard safe area and let `bottomChrome`
+        // pad itself by the observed keyboard overlap instead.
+        .ignoresSafeArea(.keyboard, edges: .bottom)
         .sheet(isPresented: $showSettings) {
             SessionSettingsView(
                 client: client, sessionID: sessionID, coordinator: model.coordinatorModel)
@@ -222,6 +232,11 @@ struct SessionView: View {
             }
             inputBar
         }
+        // Ride the keyboard by measured overlap (KeyboardObserver) rather than
+        // the automatic keyboard safe area — see `.ignoresSafeArea(.keyboard)`
+        // above. Padding sits *inside* the bar background so the material
+        // covers the gap while the keyboard animates.
+        .padding(.bottom, keyboard.overlap)
         .background(.bar)
     }
 

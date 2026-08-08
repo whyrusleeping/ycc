@@ -687,6 +687,9 @@ private struct SessionRow: View {
                     // while the phone was away is exactly the case this exists
                     // for, so name the agent, not the row. Kept to one word so
                     // it can sit alongside the project/turns metadata.
+                    // `fixedSize` keeps the pill from being squeezed by a tight
+                    // row: without it SwiftUI compresses the label and wraps or
+                    // truncates the text inside the capsule, which looks broken.
                     Label("new", systemImage: "text.bubble.fill")
                         .font(.caption2.weight(.semibold))
                         .padding(.horizontal, 7)
@@ -694,6 +697,7 @@ private struct SessionRow: View {
                         .background(Color.accentColor.opacity(0.16), in: Capsule())
                         .foregroundStyle(Color.accentColor)
                         .lineLimit(1)
+                        .fixedSize()
                         .accessibilityLabel("unread agent messages")
                 }
                 if isLoopOwned {
@@ -703,6 +707,8 @@ private struct SessionRow: View {
                         .padding(.vertical, 2)
                         .background(Color.accentColor.opacity(0.14), in: Capsule())
                         .foregroundStyle(Color.accentColor)
+                        .lineLimit(1)
+                        .fixedSize()
                         .accessibilityLabel("work loop session")
                 }
                 if showsProject {
@@ -710,11 +716,17 @@ private struct SessionRow: View {
                         .lineLimit(1)
                 }
                 if session.turns > 0 {
+                    // No `fixedSize` here: if the row is still too tight after
+                    // the pills claim their space, the turn count is the least
+                    // important field, so it truncates rather than overflowing.
                     Text("\(session.turns) turns")
+                        .lineLimit(1)
                 }
                 Spacer(minLength: 4)
                 if let text = relativeLastActivity {
                     Text(text)
+                        .lineLimit(1)
+                        .fixedSize()
                 }
             }
             .font(.caption)
@@ -725,7 +737,10 @@ private struct SessionRow: View {
 
     private var relativeLastActivity: String? {
         guard let date = SessionListModel.recencyDate(session) else { return nil }
-        return date.formatted(Date.RelativeFormatStyle(presentation: .named))
+        // Abbreviated units ("12 min. ago" instead of "12 minutes ago") keep
+        // the timestamp on one line even when badges crowd the metadata row.
+        return date.formatted(
+            Date.RelativeFormatStyle(presentation: .named, unitsStyle: .abbreviated))
     }
 }
 
@@ -741,6 +756,8 @@ private struct StatusBadge: View {
             .padding(.vertical, 2)
             .background(color.opacity(0.18), in: Capsule())
             .foregroundStyle(color)
+            .lineLimit(1)
+            .fixedSize()
     }
 
     private var kind: SessionStatusKind { SessionStatusKind(status: status) }

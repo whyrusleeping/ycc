@@ -87,3 +87,7 @@ VERIFY: gofmt, go build ./..., go test ./... (known flaky: internal/session, int
 …[truncated]
 - 2026-08-07 decision: accept — commit: Private-by-default permissions for session logs, config, and daemon log (task 0208)  Session .ycc dirs/events.jsonl now 0700/0600 with best-effort repair of legacy modes on open; config.Save writes 06
 …[truncated]
+- 2026-08-07 usage: 5,565,041 tok (in 865,901, out 44,036, cache_r 5,863,191, cache_w 128,964) · cost n/a (unpriced)
+  implementer: 4,501,152 tok (in 513,184, out 22,528, cache_r 3,965,440, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 1,049,881 tok (in 352,675, out 7,542, cache_r 689,664, cache_w 0) · cost n/a (unpriced)
+  coordinator: 14,008 tok (in 42, out 13,966, cache_r 1,208,087, cache_w 128,964) · cost n/a (unpriced)

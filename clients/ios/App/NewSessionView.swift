@@ -15,6 +15,9 @@ struct NewSessionView: View {
 
     @State private var model: NewSessionModel
     @FocusState private var composerFocused: Bool
+    /// Keyboard overlap for manual avoidance of the bottom chrome — see
+    /// KeyboardObserver for why the automatic keyboard safe area is not used.
+    @StateObject private var keyboard = KeyboardObserver()
     /// Whether the "add project" sheet is shown (from the project chip).
     @State private var showAddProject = false
     /// Pictures staged for the OPENING prompt (shared composer affordances in
@@ -61,6 +64,10 @@ struct NewSessionView: View {
                 }
             }
             .safeAreaInset(edge: .bottom) { bottomChrome }
+            // Manual keyboard avoidance, same as SessionView: the automatic
+            // keyboard safe area under a bottom `safeAreaInset` can wedge
+            // (FB13296535), leaving the composer floating with no keyboard.
+            .ignoresSafeArea(.keyboard, edges: .bottom)
         }
         .task {
             await model.load()
@@ -141,6 +148,10 @@ struct NewSessionView: View {
             optionChips
             composer
         }
+        // Ride the keyboard by measured overlap (KeyboardObserver); padding
+        // sits inside the bar background so the material covers the gap while
+        // the keyboard animates.
+        .padding(.bottom, keyboard.overlap)
         .background(.bar)
     }
 
