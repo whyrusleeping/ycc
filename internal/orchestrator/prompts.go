@@ -420,7 +420,9 @@ observation that implies work becomes a create_task; and operational trivia foun
 moves OUT to memory (keeping the spec normative-only makes the spec doctor's job tractable).
 GROOMING is your job: dedupe, merge repeats, prune stale/disproven entries, and run the
 promotion path — especially once memory passes its ~4 KB soft budget (remember keeps
-recording but nudges you to groom; it only refuses at a ~12 KB hard ceiling). Never treat memory entries as normative claims.
+recording but nudges you to groom; it only refuses at a ~12 KB hard ceiling). Never treat
+memory entries as normative claims. When the project provides docs/design/doc-style.md, use its
+doc-style contract as the norm for memory and spec entries.
 
 Hand-off to work is deliberate. When a plan is agreed and its task exists, you MAY call
 switch_to_work to start implementing — but only that one specific task, and only with the
@@ -490,7 +492,8 @@ Guiding principle: spec the work, not the repo — coverage grows incrementally,
 // backlog tasks and spec edits for the user's approval. It is on-demand only —
 // there is no scheduling or auto-trigger — and it holds a hard false-positive
 // discipline: the spec is intentionally higher-level than the code, so it flags
-// only genuine contradictions, never missing low-level detail.
+// only genuine contradictions, never missing low-level detail; framing cleanup is
+// surfaced separately as a suggestion.
 const specDoctorPresetPrompt = `This is the SPEC-DOCTOR flow: check the project's design docs against the actual code to find ` +
 	`drift and coverage gaps. Founding principle: "the durable state of a project lives in documents" and "a ` +
 	`drifted spec is a bug" — your job is to find where the spec and the code have diverged, and where the code ` +
@@ -506,11 +509,17 @@ PHASE 1 — DETERMINISTIC PRE-PASS. Run ` + "`ycc spec-check`" + ` FIRST with th
 
 PHASE 2 — LLM COMPARISON. Walk the spec section by section (Read the spec entry point and any linked docs), and ` +
 	`for each section read the RELEVANT code (Read + ripgrep) to compare what the spec claims against what the code ` +
-	`actually does. Flag exactly two things:
+	`actually does. For factual findings, flag exactly two things:
   - DRIFT: the spec states behavior, an interface, a name, or a flow that the code now CONTRADICTS (does ` +
 	`differently, no longer does, or renamed).
   - COVERAGE GAPS: a SIGNIFICANT part of the system with no spec section at all — e.g. an internal/* package, an ` +
 	`RPC, or a user-facing tool that carries real behavior yet is undocumented.
+
+Alongside those factual findings, you may surface FRAMING/REGISTER drift as cleanup suggestions: self-addressed ` +
+	`instructions, emphasis inflation, or abstraction reframing that changed meaning. When docs/design/doc-style.md ` +
+	`exists, Read it and check against its contract. Label these as CLEANUP SUGGESTIONS, keep them distinct from ` +
+	`confirmed factual drift, and re-derive suggested wording from verified evidence rather than paraphrasing the ` +
+	`existing prose.
 
 FALSE-POSITIVE DISCIPLINE (critical): the spec is INTENTIONALLY higher-level than the code. Do NOT flag the spec ` +
 	`for omitting implementation detail, helper functions, private fields, or exhaustive lists — that is by design, ` +
@@ -520,7 +529,8 @@ FALSE-POSITIVE DISCIPLINE (critical): the spec is INTENTIONALLY higher-level tha
 	`excluded from the docs set for exactly this reason.
 
 OUTPUT. Present the user a single consolidated report with three parts: (1) stale references (from ` + "`ycc spec-check`" + `), ` +
-	`(2) drift findings, (3) coverage gaps — each with the doc section and the code it concerns. Then, for the ` +
+	`(2) drift findings, with any framing/register cleanup suggestions in a clearly separate subsection, (3) ` +
+	`coverage gaps — each with the doc section and the code it concerns. Then, for the ` +
 	`actionable findings, OFFER to: create a backlog task per finding (create_task, well-scoped with clear ` +
 	`acceptance criteria and spec_refs), and DRAFT concrete spec edits. Apply spec edits only with the user's ` +
 	`explicit approval (ask_user) — draft first, then edit on approval; never rewrite the spec unprompted.
@@ -530,7 +540,7 @@ This is ON-DEMAND: run the check now, report, and act on approval. Do not set up
 
 // memoryGroomPresetPrompt drives the on-demand memory-groom flow (spec §6.5):
 // tend the empirical, advisory memory.md — dedupe/merge, prune stale entries,
-// and run the promotion path (memory → spec / plans / backlog) so hardened
+// dedialect retained wording, and run the promotion path (memory → spec / plans / backlog) so hardened
 // observations become intent while memory stays small and useful.
 const memoryGroomPresetPrompt = `This is the MEMORY-GROOM flow: tend the project's memory.md — the empirical, ADVISORY notes ` +
 	`agents recorded about working on this project (environment/tooling quirks, codebase gotchas, user ` +
@@ -539,15 +549,19 @@ const memoryGroomPresetPrompt = `This is the MEMORY-GROOM flow: tend the project
 	`and useful, and to run the promotion path when an observation has hardened into intent.
 
 Steps:
-1. Read memory.md at the workspace root. If it is absent or empty, say so and finish — nothing to groom.
+1. Read memory.md at the workspace root. If it is absent or empty, say so and finish — nothing to groom. ` +
+	`When docs/design/doc-style.md exists, Read it too and use its doc-style contract.
 2. DEDUPE & MERGE: combine repeated or overlapping entries into one clear, dated bullet under the right ` +
 	`category (Environment & tooling / Codebase gotchas / User preferences / Lessons learned).
 3. PRUNE: drop entries that are stale, disproven, superseded, or no longer relevant.
-4. PROMOTE (repeated re-confirmation is the promotion signal): for an observation that is really a design ` +
+4. DEDIALECT: remove self-exhortations, emphasis inflation, and hedging boilerplate. Preserve the project's ` +
+	`existing register, and rewrite each retained entry from verified evidence rather than paraphrasing prior ` +
+	`model output. Memory records empirical observations, not instructions to future agents.
+5. PROMOTE (repeated re-confirmation is the promotion signal): for an observation that is really a design ` +
 	`constraint, DRAFT a concrete spec edit and apply it only with the user's explicit approval (ask_user), ` +
 	`then remove it from memory; for a matured multi-step procedure, propose a plans/*.md runbook; for an ` +
 	`observation that implies work, create_task. Present the promotions for approval before applying spec edits.
-5. REWRITE memory.md (Edit/Write) keeping the "# Project memory" title and the advisory header blockquote and ` +
+6. REWRITE memory.md (Edit/Write) keeping the "# Project memory" title and the advisory header blockquote and ` +
 	`the category sections, entries dated, and the whole file back under the ~4 KB soft budget.
 
 Use ask_user when intent is unclear; finish when memory.md is groomed and any approved promotions are recorded.`

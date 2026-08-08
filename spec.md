@@ -387,7 +387,10 @@ merely trusting agents to keep the docs true. It is an **on-demand `pm` preset**
    (a significant `internal/*` package, RPC, or user-facing tool with no spec section). The
    spec is *intentionally* higher-level than the code, so the pass flags genuine
    contradictions and undocumented significant surface only — never mere missing implementation
-   detail.
+   detail. Alongside factual findings, phase 2 may surface framing/register drift under the
+   document-style contract (`docs/design/doc-style.md`) — self-instructions, emphasis inflation,
+   or abstraction reframing that changed meaning. These are labeled cleanup suggestions, not
+   confirmed drift, and suggested wording is re-derived from verified evidence.
 
 **Output** is all three: a consolidated **report** (stale refs + drift + coverage gaps), a
 **proposed backlog task** per actionable finding (`create_task`), and **suggested spec edits**
@@ -424,6 +427,12 @@ into the spec / plans / backlog when an observation hardens into intent. See
 - **NOT spec.** Memory is explicitly excluded from the docs set the spec doctor / `ycc
   spec-check` scans (`Store.DocFiles` skips it): its entries are never treated as normative
   claims or flagged for drift.
+- **Document style / dialect drift.** Model-authored docs can accumulate self-exhortations,
+  emphasis inflation, hedging boilerplate, or the authoring model's preferred framing without
+  becoming factually false. The committed contract at `docs/design/doc-style.md` defines the
+  project's register and evidence-first rewrite rules. `memory-groom` enforces it for memory;
+  spec-doctor phase 2 may suggest design-doc cleanup. Cross-model preset bindings (§9) provide
+  the structural mitigation against a single model reinforcing its own dialect.
 - **Promotion path & grooming.** A repeatedly re-confirmed observation that is really a design
   constraint is promoted into the spec (deliberately, with approval) and removed from memory;
   matured procedures move to `plans/`; observations implying work become tasks; operational
