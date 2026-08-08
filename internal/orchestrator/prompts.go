@@ -287,8 +287,8 @@ complete a task. Judge whether the change correctly and completely satisfies the
 acceptance criteria and is of reasonable quality.
 
 How to review:
-- Start with 'git diff' to see the change, then read the touched files for surrounding
-  context; build or test when it helps ('go build ./...', 'go test ./...').
+- Start with the current diff (run 'git diff' if it was not preloaded), then read the touched
+  files for surrounding context; build or test when it helps ('go build ./...', 'go test ./...').
 - Judge the change against the task, not against your taste: correctness first, then
   completeness against the acceptance criteria, integration with the surrounding code, and
   real defects.
@@ -578,15 +578,18 @@ with a report of what you changed:
 %s`, instructions)
 }
 
-func reviewerPrompt(t *docs.Task, focus string) string {
+func reviewerPrompt(t *docs.Task, focus string, hasDiff bool) string {
+	inspection := "Inspect the working tree (start with 'git diff')"
+	if hasDiff {
+		inspection = "The current diff is already in your context above; inspect further with Read/Bash as needed"
+	}
 	p := fmt.Sprintf(`Review the changes just made for this task.
 
 Task %s: %s
 
 %s
 
-Inspect the working tree (start with 'git diff') and decide whether the change satisfies
-the task. Call submit_review when done.`, t.ID, t.Title, t.Body)
+%s and decide whether the change satisfies the task. Call submit_review when done.`, t.ID, t.Title, t.Body, inspection)
 	if f := strings.TrimSpace(focus); f != "" {
 		p += "\n\nYour assigned focus for this review:\n" + f
 	}

@@ -369,6 +369,42 @@ func TestSpawnReviewersTierWithSpecs(t *testing.T) {
 	if !strings.Contains(res.Content, "1/1 reviewers accept") {
 		t.Fatalf("expected one reviewer to accept:\n%s", res.Content)
 	}
+	msgs := revTurner.messages
+	if len(msgs) != 4 || msgs[0].Role != "user" || msgs[1].Role != "assistant" || msgs[2].Role != "tool" || msgs[3].Role != "user" {
+		t.Fatalf("reviewer history should be diff exchange followed by seed prompt: %+v", msgs)
+	}
+	if len(msgs[1].ToolCalls) != 1 || msgs[1].ToolCalls[0].Function.Name != "Bash" || msgs[1].ToolCalls[0].ID != reviewDiffCallID {
+		t.Fatalf("synthetic diff call = %+v", msgs[1])
+	}
+	if !strings.Contains(msgs[2].Content, "review tier: single-opus") {
+		t.Fatalf("preloaded result does not contain current staged diff: %q", msgs[2].Content)
+	}
+	if !strings.Contains(msgs[3].Content, "already in your context above") || strings.Contains(msgs[3].Content, "start with 'git diff'") {
+		t.Fatalf("seed prompt did not acknowledge preloaded diff: %q", msgs[3].Content)
+	}
+	var syntheticTurns, syntheticCalls, syntheticResults int
+	for _, ev := range rec.events {
+		if ev.Type == event.UserInput && ev.Data["synthetic"] == true {
+			t.Fatalf("synthetic reviewer history emitted user_input: %+v", ev)
+		}
+		if ev.Actor != "reviewer:rev" || ev.Data["synthetic"] != true {
+			continue
+		}
+		switch ev.Type {
+		case event.ModelTurn:
+			syntheticTurns++
+		case event.ToolCall:
+			syntheticCalls++
+		case event.ToolResult:
+			syntheticResults++
+			if ev.Data["result"] != msgs[2].Content {
+				t.Fatalf("synthetic event and seeded result differ")
+			}
+		}
+	}
+	if syntheticTurns != 1 || syntheticCalls != 1 || syntheticResults != 1 {
+		t.Fatalf("synthetic reviewer events = turn %d call %d result %d", syntheticTurns, syntheticCalls, syntheticResults)
+	}
 	if !workLogContains(t, store, "0001", "review tier: single-opus — reviewers: rev") {
 		t.Fatalf("work log missing tier-with-reviewers line")
 	}

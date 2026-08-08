@@ -740,13 +740,22 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 					"msg": "reviewer bash sandbox unavailable on this platform; reviewer non-mutation is prompt-enforced only",
 				})
 			}
+			preloadedDiff := buildReviewDiffHistory(d.Repo)
+			hasDiff := len(preloadedDiff.History) > 0
 			d.mu.Lock()
 			d.reviewers = nil
 			for _, spec := range specs {
 				reg := tools.New()
 				reg.Add(tools.Reviewer(&tools.Workspace{Root: d.Workspace, Env: append([]string(nil), d.Env...)})...)
-				loop := d.newLoop(spec, inspectSys(reviewerSystemFocused(spec.Focus), d.Workspace), reg, "reviewer:"+spec.label())
-				loop.Seed(reviewerPrompt(t, spec.Focus))
+				actor := "reviewer:" + spec.label()
+				loop := d.newLoop(spec, inspectSys(reviewerSystemFocused(spec.Focus), d.Workspace), reg, actor)
+				if hasDiff {
+					// Each loop owns its history slice even though every reviewer sees
+					// the same stable staged snapshot.
+					loop.SetHistory(append([]gollama.Message(nil), preloadedDiff.History...))
+					emitSyntheticReviewDiff(d.Emitter, spec, actor, preloadedDiff)
+				}
+				loop.Seed(reviewerPrompt(t, spec.Focus, hasDiff))
 				d.reviewers = append(d.reviewers, &reviewerHandle{name: spec.label(), model: spec.Name, loop: loop})
 			}
 			handles := d.reviewers
