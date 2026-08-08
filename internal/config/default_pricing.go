@@ -14,22 +14,23 @@ import (
 // published price lists and can drift when vendors change prices — configure
 // price_* in [models.X] to override.
 //
-// Sources (fetched 2026-07):
-//   - https://platform.claude.com/docs/en/about-claude/pricing
-//   - https://developers.openai.com/api/docs/pricing
+// Sources:
+//   - https://platform.claude.com/docs/en/about-claude/pricing (fetched 2026-07)
+//   - https://developers.openai.com/api/docs/pricing (fetched 2026-08)
 //
 // Semantics per backend:
 //   - Anthropic reports cache reads/writes DISJOINT from input_tokens, and
 //     charges cache writes at a premium. CacheWrite here uses the default
 //     5-minute cache-write rate (1.25× input); 1-hour caching (2× input) would
 //     be slightly underestimated.
-//   - OpenAI has no cache-write surcharge (CacheWrite rate 0 — the write
-//     tokens are just billed as normal input) and bills cached reads at the
-//     discounted "cached input" rate. "-pro" models have no caching discount,
-//     so their CacheRead rate equals the input rate.
-//   - Long-context premiums (e.g. gpt-5.5 >272K, Sonnet legacy 1M pricing)
-//     and priority/batch tiers are NOT modeled; standard-tier short-context
-//     rates are used.
+//   - OpenAI generally has no cache-write surcharge (CacheWrite rate 0 — the
+//     write tokens are just billed as normal input), but GPT-5.6 charges cache
+//     writes at 1.25× input. Cached reads use the discounted "cached input"
+//     rate. "-pro" models have no caching discount, so their CacheRead rate
+//     equals the input rate.
+//   - Long-context premiums (e.g. GPT-5.6 and GPT-5.5 >272K, Sonnet legacy 1M
+//     pricing) and priority/batch tiers are NOT modeled; standard-tier
+//     short-context rates are used.
 
 // defaultPrice is one row of the built-in table: rates for a normalized
 // model-id prefix.
@@ -74,6 +75,10 @@ var anthropicDefaults = []defaultPrice{
 // boundary check in matchDefault keeps "gpt-5-2" from swallowing date-stamped
 // ids like "gpt-5-2025-08-07".
 var openaiDefaults = []defaultPrice{
+	{"gpt-5-6-sol", 5, 30, 0.50, 6.25},
+	{"gpt-5-6-terra", 2, 12, 0.20, 2.50},
+	{"gpt-5-6-luna", 0.20, 1.20, 0.02, 0.25},
+	{"gpt-5-6", 5, 30, 0.50, 6.25}, // Bare GPT-5.6 routes to Sol.
 	{"gpt-5-5-pro", 30, 180, 30, 0},
 	{"gpt-5-5", 5, 30, 0.50, 0},
 	{"gpt-5-4-mini", 0.75, 4.5, 0.075, 0},

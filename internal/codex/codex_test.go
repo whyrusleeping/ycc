@@ -20,6 +20,24 @@ func testTokens(tok, acct string) TokenSource {
 	return func(context.Context) (string, string, error) { return tok, acct, nil }
 }
 
+func TestModelsIncludeGPT56TiersWithSolDefault(t *testing.T) {
+	if len(Models) == 0 {
+		t.Fatal("Models is empty")
+	}
+	if Models[0] != "gpt-5.6-sol" {
+		t.Fatalf("Models[0] = %q, want gpt-5.6-sol", Models[0])
+	}
+	seen := make(map[string]bool, len(Models))
+	for _, model := range Models {
+		seen[model] = true
+	}
+	for _, want := range []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} {
+		if !seen[want] {
+			t.Errorf("Models does not contain %q: %v", want, Models)
+		}
+	}
+}
+
 func TestBuildRequest(t *testing.T) {
 	opts := gollama.RequestOptions{
 		Model:  "gpt-5.3-codex",

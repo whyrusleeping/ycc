@@ -18,7 +18,7 @@ import (
 // remove ids by hand.
 var curatedModelIDs = map[string][]string{
 	"anthropic": {"claude-opus-4-8", "claude-sonnet-4-5", "claude-fable-5", "claude-haiku-4-5"},
-	"openai":    {"gpt-5.5", "gpt-5-mini", "gpt-4o", "o3"},
+	"openai":    {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5-mini", "gpt-4o", "o3"},
 	"glm":       {"glm-4.6", "glm-4.5-air"},
 	"ollama":    {"qwen2.5-coder", "llama3.3", "deepseek-r1"},
 }
