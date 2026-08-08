@@ -26,8 +26,22 @@ struct SessionView: View {
     /// viewport or a streaming row grows, neither of which is a user request to
     /// stop following.
     @State private var isFollowingLatest = true
-    /// Suppresses marker-driven re-follow while the user is actively scrolling.
+    /// User drags opt out of follow mode while the follow-state reconciler
+    /// resumes it once the live edge is visible and dragging has gone quiet.
+    /// Corrective scrolls keep a following transcript pinned through late layout.
     @State private var isDraggingTranscript = false
+    /// Tracks scroll intent without invalidating the view on every movement. The
+    /// raw drag flag can remain set when ScrollView swallows the gesture's
+    /// `onEnded`; the reconciler treats it as stale after a short interval.
+    /// `sawLiveEdge` preserves that the user reached the bottom if streaming growth
+    /// moves the marker away before a quiet-period reconciler gets to run.
+    private final class DragActivity {
+        var last = Date.distantPast
+        var watchdogScheduled = false
+        var sawLiveEdge = false
+        var lastTopY = CGFloat.nan
+    }
+    @State private var dragActivity = DragActivity()
     /// Whether the transcript's bottom marker is inside the viewport. This is
     /// measured geometrically: rows live in an eager VStack, so onAppear/onDisappear
     /// describes mounting, not viewport visibility.
@@ -75,6 +89,8 @@ struct SessionView: View {
     private let title: String
     private static let bottomAnchor = "transcript-bottom"
     private static let transcriptCoordinateSpace = "transcript-scroll"
+    private static let dragQuietPeriod: TimeInterval = 0.35
+    private static let dragActivityStalePeriod: TimeInterval = 1.0
     init(client: YccClient, project: String = "", sessionID: String, live: Bool, title: String = "") {
         self.client = client
         self.project = project
@@ -91,7 +107,7 @@ struct SessionView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ZStack(alignment: .bottom) {
-                transcript
+                transcript(proxy: proxy)
                 if !isFollowingLatest {
                     jumpToLatestPill(proxy: proxy)
                         .padding(.bottom, 12)
@@ -362,7 +378,7 @@ struct SessionView: View {
         app.noteQuestionAnswered(sessionID: sessionID)
     }
 
-    private var transcript: some View {
+    private func transcript(proxy: ScrollViewProxy) -> some View {
         ScrollView {
             // Keep transcript rows eagerly mounted. A LazyVStack can lose its
             // estimated content geometry when the last row changes height many
@@ -411,33 +427,135 @@ struct SessionView: View {
                     }
             }
             .padding()
+            // Content growth below leaves this top edge fixed while unpinned;
+            // user scrolling changes it. That lets the reconciler distinguish a
+            // deliberate scroll away from streaming layout growth.
+            .background {
+                GeometryReader { geometry in
+                    Color.clear.preference(
+                        key: TranscriptTopPreferenceKey.self,
+                        value: geometry.frame(
+                            in: .named(Self.transcriptCoordinateSpace)).minY)
+                }
+            }
         }
         .coordinateSpace(name: Self.transcriptCoordinateSpace)
         .onPreferenceChange(TranscriptBottomPreferenceKey.self) { bottomY in
             let tolerance: CGFloat = 8
+            let now = Date()
+            let dragAge = now.timeIntervalSince(dragActivity.last)
+            // Only a currently active raw drag may stop follow here, so content
+            // growth after release cannot masquerade as user scrollback. Bound the
+            // flag by recency in case ScrollView swallows `onEnded`; the top-edge
+            // handler intentionally uses recency alone to include deceleration.
+            let dragging = isDraggingTranscript && dragAge < Self.dragActivityStalePeriod
             isLatestVisible = bottomY <= transcriptViewportHeight + tolerance
-            // Only a user's drag can opt out of follow mode. Content growth while
-            // pinned can briefly move the marker below the viewport before the
-            // explicit scroll request settles, and must not look like scrollback.
-            if isDraggingTranscript, !isLatestVisible {
+            if isLatestVisible {
+                // Preserve that the user reached the live edge even if streaming
+                // growth moves it away before drag reconciliation goes quiet.
+                dragActivity.sawLiveEdge = true
+            }
+            // Only a recent user drag can opt out of follow mode. Content growth
+            // while pinned can briefly move the marker below the viewport before
+            // the explicit scroll request settles, and must not look like scrollback.
+            if dragging, !isLatestVisible {
                 stopFollowingLatest()
+            } else if isLatestVisible || dragActivity.sawLiveEdge,
+                      !isFollowingLatest, !dragging,
+                      dragAge >= Self.dragQuietPeriod {
+                // Reaching the live edge by scrolling is equivalent to tapping the
+                // pill. If growth moved it again, restore the pin immediately.
+                isFollowingLatest = true
+                if !isLatestVisible {
+                    requestScrollToLatest(proxy: proxy)
+                }
+            } else if !isLatestVisible, isFollowingLatest, !dragging {
+                // A scroll can land before late text or keyboard layout finishes.
+                // Coalesce a corrective non-animated pin rather than waiting for
+                // the next transcript event to trigger another request.
+                requestScrollToLatest(proxy: proxy)
+            }
+        }
+        .onPreferenceChange(TranscriptTopPreferenceKey.self) { topY in
+            let previousTopY = dragActivity.lastTopY
+            let moved = !previousTopY.isNaN && abs(topY - previousTopY) > 0.5
+            dragActivity.lastTopY = topY
+            let dragAge = Date().timeIntervalSince(dragActivity.last)
+            let dragging = dragAge < Self.dragActivityStalePeriod
+            // Offset movement during a recent drag is user scrolling; unlike pure
+            // growth below, it revokes a previously observed live-edge intent.
+            if moved, dragging, !isLatestVisible {
+                dragActivity.sawLiveEdge = false
             }
         }
         .simultaneousGesture(
             DragGesture(minimumDistance: 4)
                 .onChanged { value in
+                    dragActivity.last = Date()
+                    // Schedule from activity, not onEnded: ScrollView can swallow
+                    // onEnded, and an idle transcript may produce no later geometry
+                    // preference change to clear the wedged drag state.
+                    if !dragActivity.watchdogScheduled {
+                        dragActivity.watchdogScheduled = true
+                        Task { @MainActor in
+                            defer { dragActivity.watchdogScheduled = false }
+                            while true {
+                                let elapsed = Date().timeIntervalSince(dragActivity.last)
+                                guard elapsed < Self.dragActivityStalePeriod else { break }
+                                let remaining = Self.dragActivityStalePeriod - elapsed
+                                do {
+                                    try await Task.sleep(
+                                        nanoseconds: UInt64(remaining * 1_000_000_000))
+                                } catch {
+                                    return
+                                }
+                            }
+                            isDraggingTranscript = false
+                            if isLatestVisible || dragActivity.sawLiveEdge,
+                               !isFollowingLatest {
+                                isFollowingLatest = true
+                                if !isLatestVisible {
+                                    requestScrollToLatest(proxy: proxy)
+                                }
+                            }
+                        }
+                    }
                     if !isDraggingTranscript { isDraggingTranscript = true }
                     // At gesture recognition time the geometry preference can lag
                     // the finger by one layout pass. A downward swipe is explicitly
                     // toward older content, so it must win even before that pass.
                     if !isLatestVisible || value.translation.height > 0 {
+                        dragActivity.sawLiveEdge = false
                         stopFollowingLatest()
                     }
                 }
-                .onEnded { _ in
+                .onEnded { value in
                     // Deceleration continues after this callback. Follow mode was
                     // already disabled as soon as the drag moved off the live edge.
                     isDraggingTranscript = false
+                    dragActivity.last = Date()
+                    // Even if the marker is or recently was within tolerance at
+                    // release, do not re-pin against a downward fling toward older
+                    // content.
+                    if value.predictedEndTranslation.height <= 0,
+                       isLatestVisible || dragActivity.sawLiveEdge,
+                       !isFollowingLatest {
+                        isFollowingLatest = true
+                        requestScrollToLatest(proxy: proxy)
+                    }
+                    // Rubber-band and deceleration can settle at the live edge after
+                    // the last geometry preference change. Reconcile once more after
+                    // they have gone quiet so an idle transcript can resume too.
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 450_000_000)
+                        guard !isFollowingLatest,
+                              isLatestVisible || dragActivity.sawLiveEdge,
+                              !isDraggingTranscript else { return }
+                        isFollowingLatest = true
+                        if !isLatestVisible {
+                            requestScrollToLatest(proxy: proxy)
+                        }
+                    }
                 }
         )
         .background {
@@ -658,6 +776,15 @@ struct SessionView: View {
 /// moved during live layout.
 private struct TranscriptBottomPreferenceKey: PreferenceKey {
     static let defaultValue = CGFloat.greatestFiniteMagnitude
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+/// Carries the transcript content's top edge so drag-driven viewport movement can
+/// be distinguished from a streaming tail growing below a stationary viewport.
+private struct TranscriptTopPreferenceKey: PreferenceKey {
+    static let defaultValue = CGFloat.nan
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
     }
