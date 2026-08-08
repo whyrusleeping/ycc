@@ -21,8 +21,7 @@
 - Event-log failure is TERMINAL (0198): Record returns Seq==0; durable emit sites must check Emitter.Err()/ctx before mutating state.
 - Backlog ids are daemon-allocated per project (docs.IDAllocator, <state>/ycc/backlog-ids.json); wire daemon stores through Manager.backlogStore (0249).
 - Model turns are ctx-aware via TurnCtx/TurnStreamCtx (0204); gollama's legacy Turn/TurnStream use context.Background — never use in inference paths.
-- Tree often holds uncommitted in_review work (other tasks); commit selectively: git add files + hunk-filtered `git apply --cached`, verify index via `git checkout-index --prefix=/tmp/x/ -a`.
-- 2026-08-08: ycc spec-check symbol search matches untracked .ycc/ session logs, so it can pass in the live workspace while failing on a clean checkout (HEAD currently has 4 stale spec.md symbols: Think, list_dir, update_spec, ChooseMode) — verify via git archive to a temp dir.
+- ycc spec-check symbol search matches untracked .ycc/ session logs — it can pass in the live workspace yet fail on a clean checkout; verify via git archive to a temp dir (0301 open).
 
 ## Environment & tooling
 
@@ -32,8 +31,6 @@
 - `go test ./...` has known flaky tests (internal/session, internal/setup, internal/tools background-bash); verify against HEAD first.
 - The `commit` tool does `git add -A` — don't use it when unrelated work is in the tree (see gotcha on selective commits).
 - Live-model checks feasible: ANTHROPIC_API_KEY set; codex.New("", openaiauth.AccessToken) uses ycc's ChatGPT OAuth login.
-- 2026-08-08: Selective commit when shared files carry other tasks' hunks: snapshot pre-existing diff before implementing, then build index blobs as HEAD-file + interdiff via `patch` (git show HEAD:f > tmp; patch tmp < interdiff; git hash-object -w + git update-index --cacheinfo), verify with checkout-index build/test — worked cleanly for 0253.
-- 2026-08-08: Selective commit when one file mixes tasks: snapshot pre-existing hunks (git diff file > pre.diff) before implementing, then `cp file tmp && patch -R tmp < pre.diff && git hash-object -w + git update-index --cacheinfo` — simpler than interdiff, worked for 0272.
 
 ## User preferences
 
@@ -46,3 +43,4 @@
 
 - For user-reported TUI/session issues, check .ycc/sessions in ALL workspaces; filter events.jsonl for `session_error`.
 - For verbatim code-move refactors, diff sorted go/ast decl dumps of HEAD vs new trees (0210).
+- Selective commit (tree holds other tasks' uncommitted work): snapshot each shared file's diff BEFORE implementing; stage blobs via git hash-object -w + update-index --cacheinfo, either HEAD-file+interdiff or `patch -R` of pre-existing hunks; for generated protos interdiff is WRONG (descriptor blobs) — build a temp tree from `git archive HEAD` + source interdiffs, buf generate there, verify build/tests/spec-check, stage those blobs (0253/0272/0217).
