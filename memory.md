@@ -21,6 +21,8 @@
 - Event-log failure is TERMINAL (0198): Record returns Seq==0; durable emit sites must check Emitter.Err()/ctx before mutating state.
 - Backlog ids are daemon-allocated per project (docs.IDAllocator, <state>/ycc/backlog-ids.json); wire daemon stores through Manager.backlogStore (0249).
 - Model turns are ctx-aware via TurnCtx/TurnStreamCtx (0204); gollama's legacy Turn/TurnStream use context.Background — never use in inference paths.
+- Tree often holds uncommitted in_review work (other tasks); commit selectively: git add files + hunk-filtered `git apply --cached`, verify index via `git checkout-index --prefix=/tmp/x/ -a`.
+- 2026-08-08: ycc spec-check symbol search matches untracked .ycc/ session logs, so it can pass in the live workspace while failing on a clean checkout (HEAD currently has 4 stale spec.md symbols: Think, list_dir, update_spec, ChooseMode) — verify via git archive to a temp dir.
 
 ## Environment & tooling
 
@@ -28,8 +30,10 @@
 - Tool-failure forensics: <workspace>/.ycc/sessions/\*/events.jsonl; Edit diagnostics in internal/tools/editdiag.go.
 - buf in ~/go/bin; Swift proto regen uses REMOTE BSR plugins (network), Go regen local.
 - `go test ./...` has known flaky tests (internal/session, internal/setup, internal/tools background-bash); verify against HEAD first.
-- The `commit` tool does `git add -A` — stash unrelated work first.
+- The `commit` tool does `git add -A` — don't use it when unrelated work is in the tree (see gotcha on selective commits).
 - Live-model checks feasible: ANTHROPIC_API_KEY set; codex.New("", openaiauth.AccessToken) uses ycc's ChatGPT OAuth login.
+- 2026-08-08: Selective commit when shared files carry other tasks' hunks: snapshot pre-existing diff before implementing, then build index blobs as HEAD-file + interdiff via `patch` (git show HEAD:f > tmp; patch tmp < interdiff; git hash-object -w + git update-index --cacheinfo), verify with checkout-index build/test — worked cleanly for 0253.
+- 2026-08-08: Selective commit when one file mixes tasks: snapshot pre-existing hunks (git diff file > pre.diff) before implementing, then `cp file tmp && patch -R tmp < pre.diff && git hash-object -w + git update-index --cacheinfo` — simpler than interdiff, worked for 0272.
 
 ## User preferences
 
