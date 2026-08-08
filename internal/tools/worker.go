@@ -564,6 +564,20 @@ func Finish() *gollama.Tool {
 	}
 }
 
+// RequestIntegration is the integrate agent's successful control tool. It ends
+// the run and asks the daemon to independently re-verify and advance the base.
+func RequestIntegration() *gollama.Tool {
+	return &gollama.Tool{
+		Name:        "request_integration",
+		Description: "Call when the workstream branch is rebased onto the base branch, conflicts are resolved or the verify failure is fixed, the result is committed, and the verify command is green. This ends the run and asks the daemon to independently re-verify and integrate.",
+		Params:      obj(map[string]any{"report": strProp("summary of the resolution or fix and verification performed")}, "report"),
+		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
+			report, _ := getString(params, "report")
+			return &gollama.ToolResult{Content: "integration requested", Structured: &Control{Stop: true, Report: report}}, nil
+		},
+	}
+}
+
 // ReportBlocked is a control tool: it ends the agent loop and escalates a
 // blocking decision to whoever spawned the agent, distinct from a normal finish.
 func ReportBlocked() *gollama.Tool {

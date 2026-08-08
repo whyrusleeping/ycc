@@ -1186,7 +1186,11 @@ func (s *Session) run() {
 			}
 		} else {
 			s.setStatus(event.StatusIdle)
-			s.emitter.Emit(event.SessionIdle, map[string]any{"report": s.withAssumptions(res.Report)})
+			data := map[string]any{"report": s.withAssumptions(res.Report)}
+			if res.Blocked {
+				data["blocked"] = true
+			}
+			s.emitter.Emit(event.SessionIdle, data)
 			if s.logFailure() != nil || s.ctx.Err() != nil {
 				return
 			}
@@ -1342,6 +1346,9 @@ type Manager struct {
 	integrationCtx    context.Context
 	integrationCancel context.CancelFunc
 	integrationStop   bool
+	// integrateAgent is the injectable recovery seam. The default starts a real
+	// unattended integrate-mode session in the workstream's linked worktree.
+	integrateAgent func(workstream.Workstream, int, integrationOutcome) integrateAgentResult
 	// notifier pushes best-effort daemon-side notifications when an agent needs
 	// the user (task 0142). Nil when unconfigured; all uses are nil-safe.
 	notifier *notify.Notifier
@@ -1375,7 +1382,7 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 		_, _ = projects.EnsureWorkspace(initialWorkspace)
 	}
 	integrationCtx, integrationCancel := context.WithCancel(context.Background())
-	return &Manager{
+	m := &Manager{
 		sessions:          map[string]*Session{},
 		reg:               reg,
 		projects:          projects,
@@ -1388,6 +1395,8 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 		integrationCancel: integrationCancel,
 		workLoops:         map[string]*workLoop{},
 	}
+	m.integrateAgent = m.runIntegrateSession
+	return m
 }
 
 // SetProjects replaces the manager's project registry. Daemon construction is

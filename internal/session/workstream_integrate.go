@@ -18,8 +18,47 @@ import (
 
 const (
 	integrationVerifyTimeout = 30 * time.Minute
+	integrationAgentTimeout  = time.Hour
 	integrationOutputLimit   = 2 * 1024
 )
+
+type integrationOutcomeKind int
+
+const (
+	integrationHandled integrationOutcomeKind = iota
+	integrationConflict
+	integrationVerifyFailed
+)
+
+type integrationOutcome struct {
+	kind         integrationOutcomeKind
+	base         string
+	reason       string
+	conflicts    []string
+	verifyCmd    string
+	verifyOutput string
+	verifyErr    string
+}
+
+func (o integrationOutcome) agentFixable() bool {
+	return o.kind == integrationConflict || o.kind == integrationVerifyFailed
+}
+
+func (o integrationOutcome) eventData() map[string]any {
+	if o.kind == integrationConflict {
+		return map[string]any{"conflicts": o.conflicts}
+	}
+	if o.kind == integrationVerifyFailed {
+		return map[string]any{"verify": o.verifyCmd, "output": o.verifyOutput, "error": o.verifyErr}
+	}
+	return nil
+}
+
+type integrateAgentResult struct {
+	report  string
+	blocked bool
+	err     error
+}
 
 // workstreamIntegrator is one project's in-memory integration queue. Access to
 // every field is guarded by Manager.mu. queued includes the currently-running id,
@@ -111,43 +150,100 @@ func (m *Manager) drainWorkstreamIntegrations(project string, q *workstreamInteg
 	}
 }
 
-// integrateReadyWorkstream runs the zero-token integration fast path. The global
-// merge mutex also excludes manual merge and discard while git refs/worktrees are
-// being inspected or changed.
+// integrateReadyWorkstream first tries the zero-token fast path, then delegates
+// only content conflicts and red verification to bounded integrate-mode sessions.
+// Every successful agent attempt is distrusted: the daemon reruns the complete
+// fast path before it can advance base.
 func (m *Manager) integrateReadyWorkstream(id string) {
+	out := m.integrationFastPath(id)
+	maxAttempts := m.reg.IntegrationConfig().EffectiveAgentAttempts()
+	attempts := maxAttempts
+	for out.agentFixable() {
+		ws, ok := m.workstreams.Get(id)
+		if !ok || ws.Status != workstream.StatusReady {
+			return
+		}
+		if attempts == 0 {
+			m.integrationNeedsAttention(ws, out.reason, out.eventData())
+			return
+		}
+		m.mu.Lock()
+		stopping := m.integrationStop
+		m.mu.Unlock()
+		if stopping || m.integrationCtx.Err() != nil {
+			m.restoreWorkstreamReadyProjection(ws, "integration agent recovery interrupted")
+			return
+		}
+
+		attempt := maxAttempts - attempts + 1
+		res := m.integrateAgent(ws, attempt, out)
+		attempts--
+		if m.integrationCtx.Err() != nil {
+			m.restoreWorkstreamReadyProjection(ws, "integration agent recovery interrupted")
+			return
+		}
+		if res.blocked || res.err != nil {
+			status := "failed"
+			detail := res.report
+			if res.blocked {
+				status = "blocked"
+			}
+			if res.err != nil {
+				if detail != "" {
+					detail += ": "
+				}
+				detail += res.err.Error()
+			}
+			reason := fmt.Sprintf("integration agent %s", status)
+			if detail != "" {
+				reason += ": " + detail
+			}
+			reason += "\noriginal integration failure: " + out.reason
+			m.integrationNeedsAttention(ws, reason, out.eventData())
+			return
+		}
+		out = m.integrationFastPath(id)
+	}
+}
+
+// integrationFastPath owns each inspection/rebase/verify/base-advance attempt.
+// The global merge mutex excludes manual merge and discard while git refs and
+// worktrees are being inspected or changed; it is deliberately released before
+// an agent session runs.
+func (m *Manager) integrationFastPath(id string) integrationOutcome {
 	m.mergeMu.Lock()
 	defer m.mergeMu.Unlock()
 
 	if m.effectiveIntegrationMode() != "auto" {
-		return
+		return integrationOutcome{kind: integrationHandled}
 	}
 	ws, ok := m.workstreams.Get(id)
 	if !ok || ws.Status != workstream.StatusReady {
-		return
+		return integrationOutcome{kind: integrationHandled}
 	}
 	cfg := m.reg.IntegrationConfig()
 
 	repo, err := m.primaryRepo(ws)
 	if err != nil {
 		m.integrationNeedsAttention(ws, fmt.Sprintf("integration failed: %v", err), nil)
-		return
+		return integrationOutcome{kind: integrationHandled}
 	}
 	base, err := m.workstreamBaseBranch(repo, ws)
 	if err != nil {
 		m.integrationNeedsAttention(ws, fmt.Sprintf("integration failed: %v", err), nil)
-		return
+		return integrationOutcome{kind: integrationHandled}
 	}
 	if err := repo.CheckBaseClean(base); err != nil {
 		if errors.Is(err, git.ErrBaseTreeDirty) {
 			m.deferWorkstreamIntegration(ws, fmt.Sprintf("integration deferred: base tree dirty: %v", err))
-			return
+			return integrationOutcome{kind: integrationHandled}
 		}
 		m.integrationNeedsAttention(ws, fmt.Sprintf("check base branch %s: %v", base, err), nil)
-		return
+		return integrationOutcome{kind: integrationHandled}
 	}
 	if err := workstream.VerifyUnderRoot(m.worktreesRoot, ws.WorktreePath); err != nil {
 		m.integrationNeedsAttention(ws, fmt.Sprintf("invalid worktree path: %v", err), nil)
-		return
+		return integrationOutcome{kind: integrationHandled}
 	}
 
 	m.emitWorkstreamEvent(ws, event.WorkstreamIntegrating, map[string]any{
@@ -159,12 +255,14 @@ func (m *Manager) integrateReadyWorkstream(id string) {
 	rebase, err := repo.RebaseOnto(ws.WorktreePath, base)
 	if err != nil {
 		m.integrationNeedsAttention(ws, fmt.Sprintf("rebase onto %s failed: %v", base, err), map[string]any{"error": err.Error()})
-		return
+		return integrationOutcome{kind: integrationHandled}
 	}
 	if !rebase.Clean {
 		reason := fmt.Sprintf("rebase onto %s conflicts: %s", base, strings.Join(rebase.Conflicts, ", "))
-		m.integrationNeedsAttention(ws, reason, map[string]any{"conflicts": rebase.Conflicts})
-		return
+		return integrationOutcome{
+			kind: integrationConflict, base: base, reason: reason, conflicts: rebase.Conflicts,
+			verifyCmd: cfg.Verify,
+		}
 	}
 
 	// Pin the exact rebased revision before verification. The workstream branch is
@@ -173,13 +271,13 @@ func (m *Manager) integrateReadyWorkstream(id string) {
 	verifiedTip, err := repo.RevParse("refs/heads/" + ws.Branch)
 	if err != nil {
 		m.integrationNeedsAttention(ws, fmt.Sprintf("resolve rebased tip for verification: %v", err), map[string]any{"error": err.Error()})
-		return
+		return integrationOutcome{kind: integrationHandled}
 	}
 	statusBefore, err := repo.WorktreeStatusPorcelain(ws.WorktreePath)
 	if err != nil {
 		reason := fmt.Sprintf("integration aborted: snapshot worktree before verify: %v", err)
 		m.abortReadyIntegration(ws, reason, map[string]any{"error": err.Error()})
-		return
+		return integrationOutcome{kind: integrationHandled}
 	}
 	if tracked := trackedWorktreeChanges(statusBefore); tracked != "" {
 		reason := "integration aborted: rebased worktree has staged or unstaged tracked-file changes"
@@ -187,7 +285,7 @@ func (m *Manager) integrateReadyWorkstream(id string) {
 			"tracked_changes": boundedIntegrationOutput(tracked),
 			"status_before":   boundedIntegrationOutput(statusBefore),
 		})
-		return
+		return integrationOutcome{kind: integrationHandled}
 	}
 
 	output, err := m.runIntegrationVerify(ws, cfg.Verify)
@@ -198,12 +296,10 @@ func (m *Manager) integrateReadyWorkstream(id string) {
 			display = "(no output)"
 		}
 		reason := fmt.Sprintf("verify %q failed: %v\n%s", cfg.Verify, err, display)
-		m.integrationNeedsAttention(ws, reason, map[string]any{
-			"verify": cfg.Verify,
-			"output": tail,
-			"error":  err.Error(),
-		})
-		return
+		return integrationOutcome{
+			kind: integrationVerifyFailed, base: base, reason: reason,
+			verifyCmd: cfg.Verify, verifyOutput: tail, verifyErr: err.Error(),
+		}
 	}
 
 	// Verification is valid only while both the branch and lifecycle state remain
@@ -239,7 +335,7 @@ func (m *Manager) integrateReadyWorkstream(id string) {
 		} else {
 			m.restoreWorkstreamReadyProjectionData(ws, reason, extra)
 		}
-		return
+		return integrationOutcome{kind: integrationHandled}
 	}
 
 	// Advance to the immutable SHA that passed verify, never to the mutable branch
@@ -251,10 +347,10 @@ func (m *Manager) integrateReadyWorkstream(id string) {
 			reason := fmt.Sprintf("integration deferred: base tree dirty: %v", err)
 			m.restoreWorkstreamReadyProjection(ws, reason)
 			m.deferWorkstreamIntegration(ws, reason)
-			return
+			return integrationOutcome{kind: integrationHandled}
 		}
 		m.integrationNeedsAttention(ws, fmt.Sprintf("advance base branch %s failed: %v", base, err), map[string]any{"error": err.Error()})
-		return
+		return integrationOutcome{kind: integrationHandled}
 	}
 
 	// Base now contains exactly the verified tip. Do not clean up if the branch
@@ -269,13 +365,13 @@ func (m *Manager) integrateReadyWorkstream(id string) {
 			"verified_tip": verifiedTip,
 			"branch_tip":   finalTip,
 		}, workstream.StatusReady, workstream.StatusActive)
-		return
+		return integrationOutcome{kind: integrationHandled}
 	}
 
 	changed, err := m.workstreams.Transition(ws.ID, workstream.StatusMerged, "", workstream.StatusReady)
 	if err != nil || !changed {
 		m.restoreWorkstreamReadyProjection(ws, "integration finish aborted: workstream is no longer ready")
-		return
+		return integrationOutcome{kind: integrationHandled}
 	}
 	m.emitWorkstreamEvent(ws, event.WorkstreamMerged, map[string]any{
 		"workstream":  ws.ID,
@@ -283,13 +379,142 @@ func (m *Manager) integrateReadyWorkstream(id string) {
 		"base_branch": base,
 		"commit":      commit,
 	})
-	if ws.SessionID != "" {
-		_ = m.Stop(ws.SessionID)
+	if fresh, ok := m.workstreams.Get(ws.ID); ok {
+		ws = fresh
 	}
-	m.preserveWorkstreamSession(ws)
+	m.stopWorkstreamSessions(ws)
+	m.preserveWorkstreamSessions(ws)
 	m.cleanupWorktree(repo, ws)
 	m.Notify(notify.KindMerged, ws.Project, ws.SessionID,
 		fmt.Sprintf("workstream %s merged into %s at %s", ws.ID, base, commit))
+	return integrationOutcome{kind: integrationHandled}
+}
+
+// runIntegrateSession starts one normal unattended session rooted in the linked
+// worktree and waits for its control-tool result. It never holds mergeMu, so the
+// agent can run git in its worktree without giving it access to daemon-owned base
+// advancement.
+func (m *Manager) runIntegrateSession(ws workstream.Workstream, attempt int, out integrationOutcome) (result integrateAgentResult) {
+	current, ok := m.workstreams.Get(ws.ID)
+	if !ok || current.Status != workstream.StatusReady {
+		return integrateAgentResult{err: fmt.Errorf("workstream is no longer ready")}
+	}
+	ws = current
+
+	data := map[string]any{
+		"workstream": ws.ID, "branch": ws.Branch, "base_branch": out.base,
+		"agent": true, "attempt": attempt,
+	}
+	if len(out.conflicts) > 0 {
+		data["conflicts"] = out.conflicts
+	}
+	if out.verifyOutput != "" {
+		data["verify_output"] = boundedIntegrationOutput(out.verifyOutput)
+	}
+	m.emitWorkstreamEvent(ws, event.WorkstreamIntegrating, data)
+
+	failure := out.reason
+	if out.kind == integrationConflict {
+		failure += "\nThe daemon aborted the conflicted rebase and restored the worktree; re-run git rebase yourself."
+	}
+	seed := fmt.Sprintf(`Recover integration for workstream %s on branch %s.
+Base branch: %s
+Verify command: %s
+Failure to resolve:
+%s
+
+Work only in this linked worktree. Re-run the rebase onto the named base when needed, resolve or fix the failure, commit the result on the workstream branch, and run the verify command until green. Then call request_integration. Never check out, merge into, advance, reset, or otherwise modify the base branch; never push. The daemon will independently re-rebase and re-run verify and alone owns advancing base. If the correct resolution is not yours to decide, call report_blocked.`,
+		ws.ID, ws.Branch, out.base, out.verifyCmd, failure)
+
+	s, err := m.start(Config{Workspace: ws.WorktreePath, Mode: "integrate", Prompt: seed, Unattended: true}, false)
+	if err != nil {
+		return integrateAgentResult{err: fmt.Errorf("start integrate session: %w", err)}
+	}
+	// The registry exposes the latest recovery session for drill-in. Preserve an
+	// earlier attempt before replacing that hook so bounded retries do not lose
+	// their transcripts when the worktree is eventually removed.
+	if ws.IntegrateSessionID != "" && ws.IntegrateSessionID != s.ID {
+		m.preserveWorkstreamSessionID(ws, ws.IntegrateSessionID)
+	}
+	if err := m.workstreams.SetIntegrateSessionID(ws.ID, s.ID); err != nil {
+		_ = m.Stop(s.ID)
+		return integrateAgentResult{err: fmt.Errorf("record integrate session: %w", err)}
+	}
+	defer func() { _ = m.Stop(s.ID) }()
+
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	timer := time.NewTimer(integrationAgentTimeout)
+	defer timer.Stop()
+	var terminal event.Status
+	for terminal == "" {
+		switch status := s.Status(); status {
+		case event.StatusIdle, event.StatusError, event.StatusStopped:
+			terminal = status
+			continue
+		}
+		select {
+		case <-m.integrationCtx.Done():
+			return integrateAgentResult{err: m.integrationCtx.Err()}
+		case <-timer.C:
+			return integrateAgentResult{err: fmt.Errorf("integrate session timed out after %s", integrationAgentTimeout)}
+		case <-ticker.C:
+		}
+	}
+
+	// Status is set immediately before its terminal event is emitted. Wait for that
+	// event as well so a fast poll cannot miss the blocked flag or final report.
+	var events []event.Event
+	for {
+		events = s.Log().Snapshot()
+		recorded := terminal == event.StatusStopped
+		for _, ev := range events {
+			if (terminal == event.StatusIdle && ev.Type == event.SessionIdle) ||
+				(terminal == event.StatusError && ev.Type == event.SessionError) {
+				recorded = true
+				break
+			}
+		}
+		if recorded {
+			break
+		}
+		select {
+		case <-m.integrationCtx.Done():
+			return integrateAgentResult{err: m.integrationCtx.Err()}
+		case <-timer.C:
+			return integrateAgentResult{err: fmt.Errorf("integrate session timed out after %s", integrationAgentTimeout)}
+		case <-ticker.C:
+		}
+	}
+
+	var report, sessionErr string
+	blocked, requested := false, false
+	for _, ev := range events {
+		switch ev.Type {
+		case event.ToolCall:
+			if str(ev.Data, "name") == "request_integration" {
+				requested = true
+			}
+		case event.SessionIdle:
+			report = str(ev.Data, "report")
+			blocked = boolVal(ev.Data, "blocked")
+		case event.SessionError:
+			sessionErr = str(ev.Data, "msg")
+		}
+	}
+	if terminal == event.StatusError {
+		if sessionErr == "" {
+			sessionErr = "integrate session ended in error"
+		}
+		return integrateAgentResult{report: report, err: errors.New(sessionErr)}
+	}
+	if terminal == event.StatusStopped {
+		return integrateAgentResult{report: report, err: errors.New("integrate session stopped before requesting integration")}
+	}
+	if !blocked && !requested {
+		return integrateAgentResult{report: report, err: errors.New("integrate session ended without requesting integration")}
+	}
+	return integrateAgentResult{report: report, blocked: blocked}
 }
 
 func (m *Manager) runIntegrationVerify(ws workstream.Workstream, command string) (string, error) {

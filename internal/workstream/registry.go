@@ -74,6 +74,9 @@ type Workstream struct {
 	// SessionID is the id of the session scoped to the worktree (empty until the
 	// session is started).
 	SessionID string `json:"session_id,omitempty"`
+	// IntegrateSessionID is the latest integrate-agent session scoped to this
+	// worktree, retained so its transcript remains drillable.
+	IntegrateSessionID string `json:"integrate_session_id,omitempty"`
 	// TaskID optionally records the backlog task this workstream targets.
 	TaskID string `json:"task_id,omitempty"`
 	// Status is the lifecycle state.
@@ -314,6 +317,26 @@ func (r *Registry) SetSessionID(id, sessionID string) error {
 	r.byID[id] = w
 	if err := r.save(); err != nil {
 		w.SessionID = prev
+		r.byID[id] = w
+		return err
+	}
+	return nil
+}
+
+// SetIntegrateSessionID records the latest integration-recovery session scoped
+// to a workstream, persisting it for transcript drill-in and cleanup.
+func (r *Registry) SetIntegrateSessionID(id, sessionID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	w, ok := r.byID[id]
+	if !ok {
+		return fmt.Errorf("unknown workstream %q", id)
+	}
+	prev := w.IntegrateSessionID
+	w.IntegrateSessionID = sessionID
+	r.byID[id] = w
+	if err := r.save(); err != nil {
+		w.IntegrateSessionID = prev
 		r.byID[id] = w
 		return err
 	}

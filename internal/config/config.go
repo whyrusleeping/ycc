@@ -513,6 +513,9 @@ type Integration struct {
 	Strategy string `toml:"strategy,omitempty"`
 	// MaxParallel caps active workstreams per project; zero means unlimited.
 	MaxParallel int `toml:"max_parallel,omitempty"`
+	// AgentAttempts bounds integrate-mode recovery sessions after a conflicted
+	// rebase or red verify. Nil defaults to one; zero disables agent recovery.
+	AgentAttempts *int `toml:"agent_attempts,omitempty"`
 }
 
 // Worktree configures bootstrap of a newly-created linked worktree. Copy and
@@ -809,6 +812,9 @@ func (c *Config) validate() error {
 	if c.Integration.MaxParallel < 0 {
 		return fmt.Errorf("integration.max_parallel must be non-negative")
 	}
+	if c.Integration.AgentAttempts != nil && *c.Integration.AgentAttempts < 0 {
+		return fmt.Errorf("integration.agent_attempts must be non-negative")
+	}
 	if c.Retry.MaxAttempts < 0 || c.Retry.BaseDelayMS < 0 || c.Retry.MaxDelayMS < 0 {
 		return fmt.Errorf("retry: max_attempts, base_delay_ms, and max_delay_ms must be non-negative")
 	}
@@ -887,12 +893,28 @@ func (r *Registry) IntegrationBase() string {
 	return r.cfg.Integration.Base
 }
 
-// IntegrationConfig returns the workstream integration settings. Integration
-// currently contains only value fields, so returning it by value is a full copy.
+// EffectiveAgentAttempts resolves the integrate-mode recovery limit. A missing
+// setting defaults to one attempt; validation rejects negative explicit values.
+func (i Integration) EffectiveAgentAttempts() int {
+	if i.AgentAttempts == nil {
+		return 1
+	}
+	if *i.AgentAttempts < 0 {
+		return 0
+	}
+	return *i.AgentAttempts
+}
+
+// IntegrationConfig returns an isolated copy of the workstream integration settings.
 func (r *Registry) IntegrationConfig() Integration {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.cfg.Integration
+	cfg := r.cfg.Integration
+	if cfg.AgentAttempts != nil {
+		attempts := *cfg.AgentAttempts
+		cfg.AgentAttempts = &attempts
+	}
+	return cfg
 }
 
 // WorktreeConfig returns a deep copy of the daemon-level worktree bootstrap

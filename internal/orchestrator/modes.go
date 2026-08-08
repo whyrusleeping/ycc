@@ -110,6 +110,15 @@ func BuildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 		reg.Add(tools.Editing(ws)...)
 		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d), proposePlan(d), switchToWork(d), askUser(d), remember(d), tools.Finish())
 		return reg, sys(pmModeSystem, unattended, d.Workspace)
+	case "integrate":
+		// Integration recovery is deliberately scoped to the linked worktree and
+		// has no project-management or delegation tools. Do not inherit configured
+		// extra write roots: this mode's file-tool blast radius is this worktree only.
+		// The daemon, not this mode, owns re-verification and the base advance.
+		ws.WriteRoots = nil
+		reg.Add(tools.Editing(ws)...)
+		reg.Add(tools.RequestIntegration(), tools.ReportBlocked())
+		return reg, sys(integrateModeSystem, unattended, d.Workspace)
 	default: // work
 		if d.WorkImplementation == "direct" {
 			return CoordinatorTools(d, ws, true), sys(coordinatorDirectSystem, unattended, d.Workspace)

@@ -144,9 +144,12 @@ func TestSetSessionIDAndRemove(t *testing.T) {
 	if err := r.SetSessionID("ws_a", "s_123"); err != nil {
 		t.Fatalf("SetSessionID: %v", err)
 	}
+	if err := r.SetIntegrateSessionID("ws_a", "s_integrate"); err != nil {
+		t.Fatalf("SetIntegrateSessionID: %v", err)
+	}
 	got, _ := r.Get("ws_a")
-	if got.SessionID != "s_123" {
-		t.Fatalf("session id not set: %+v", got)
+	if got.SessionID != "s_123" || got.IntegrateSessionID != "s_integrate" {
+		t.Fatalf("session ids not set: %+v", got)
 	}
 	if err := r.Remove("ws_a"); err != nil {
 		t.Fatalf("Remove: %v", err)

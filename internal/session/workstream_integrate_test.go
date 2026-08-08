@@ -16,7 +16,8 @@ import (
 func autoIntegrationManager(t *testing.T, verify string) (*Manager, string) {
 	t.Helper()
 	m, proj := newWorkstreamManager(t)
-	m.reg = testRegistryWithIntegrationConfig(config.Integration{Mode: "auto", Verify: verify})
+	attempts := 0 // legacy fast-path tests exercise 0252 behavior without a model
+	m.reg = testRegistryWithIntegrationConfig(config.Integration{Mode: "auto", Verify: verify, AgentAttempts: &attempts})
 	t.Cleanup(m.ReclaimAll)
 	return m, proj
 }
@@ -57,6 +58,244 @@ func TestWorkstreamAutoIntegrationFastPath(t *testing.T) {
 		if ev.Type == event.ModelTurn || ev.Type == event.SubagentFinished {
 			t.Fatalf("zero-token fast path emitted agent event %s", ev.Type)
 		}
+	}
+}
+
+func TestWorkstreamAutoIntegrationConflictResolvedByAgent(t *testing.T) {
+	m, proj := newWorkstreamManager(t)
+	attempts := 1
+	m.reg = testRegistryWithIntegrationConfig(config.Integration{Mode: "auto", Verify: "true", AgentAttempts: &attempts})
+	t.Cleanup(m.ReclaimAll)
+	commitInto(t, proj, "shared.txt", "original\n", "shared base")
+	ws, _, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitInto(t, ws.WorktreePath, "shared.txt", "workstream\n", "workstream edit")
+	commitInto(t, proj, "shared.txt", "base\n", "base edit")
+	baseBefore := sessionGitAt(t, proj, "rev-parse", ws.BaseBranch)
+	calls := 0
+	m.integrateAgent = func(got workstream.Workstream, attempt int, out integrationOutcome) integrateAgentResult {
+		calls++
+		if attempt != 1 || out.kind != integrationConflict || len(out.conflicts) != 1 || out.conflicts[0] != "shared.txt" {
+			t.Fatalf("agent input = attempt %d, outcome %+v", attempt, out)
+		}
+		if out.verifyCmd != "true" {
+			t.Fatalf("conflict recovery verify command = %q, want true", out.verifyCmd)
+		}
+		if baseAtAgent := sessionGitAt(t, proj, "rev-parse", got.BaseBranch); baseAtAgent != baseBefore {
+			t.Fatalf("daemon advanced base before agent: %s -> %s", baseBefore, baseAtAgent)
+		}
+		sessionGitAt(t, got.WorktreePath, "reset", "--hard", out.base)
+		commitInto(t, got.WorktreePath, "shared.txt", "base + workstream\n", "resolve shared intent")
+		return integrateAgentResult{report: "resolved shared.txt preserving both changes"}
+	}
+
+	readyForIntegration(t, m, ws)
+
+	got, _ := m.workstreams.Get(ws.ID)
+	if got.Status != workstream.StatusMerged || calls != 1 {
+		t.Fatalf("status = %s (%q), agent calls = %d", got.Status, got.StatusReason, calls)
+	}
+	content, err := os.ReadFile(filepath.Join(proj, "shared.txt"))
+	if err != nil || string(content) != "base + workstream\n" {
+		t.Fatalf("resolved primary content = %q, %v", content, err)
+	}
+}
+
+func TestWorkstreamAutoIntegrationVerifyFailureFixedByAgent(t *testing.T) {
+	m, proj := newWorkstreamManager(t)
+	attempts := 1
+	verify := `test ! -f base-required.txt || test -f agent-fixed.txt`
+	m.reg = testRegistryWithIntegrationConfig(config.Integration{Mode: "auto", Verify: verify, AgentAttempts: &attempts})
+	t.Cleanup(m.ReclaimAll)
+	ws, _, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitInto(t, ws.WorktreePath, "candidate.txt", "candidate\n", "candidate")
+	commitInto(t, proj, "base-required.txt", "new base contract\n", "advance base contract")
+	baseBefore := sessionGitAt(t, proj, "rev-parse", ws.BaseBranch)
+	calls := 0
+	m.integrateAgent = func(got workstream.Workstream, attempt int, out integrationOutcome) integrateAgentResult {
+		calls++
+		if out.kind != integrationVerifyFailed || out.verifyCmd != verify {
+			t.Fatalf("agent outcome = %+v", out)
+		}
+		if baseAtAgent := sessionGitAt(t, proj, "rev-parse", got.BaseBranch); baseAtAgent != baseBefore {
+			t.Fatalf("daemon advanced base before agent: %s -> %s", baseBefore, baseAtAgent)
+		}
+		commitInto(t, got.WorktreePath, "agent-fixed.txt", "fixed\n", "adapt to advanced base")
+		return integrateAgentResult{report: "adapted candidate to advanced base"}
+	}
+
+	readyForIntegration(t, m, ws)
+
+	got, _ := m.workstreams.Get(ws.ID)
+	if got.Status != workstream.StatusMerged || calls != 1 {
+		t.Fatalf("status = %s (%q), calls = %d", got.Status, got.StatusReason, calls)
+	}
+	if _, err := os.Stat(filepath.Join(proj, "agent-fixed.txt")); err != nil {
+		t.Fatalf("agent fix did not land: %v", err)
+	}
+}
+
+func TestWorkstreamAutoIntegrationAgentBlocked(t *testing.T) {
+	m, proj := newWorkstreamManager(t)
+	attempts := 1
+	m.reg = testRegistryWithIntegrationConfig(config.Integration{Mode: "auto", Verify: "false", AgentAttempts: &attempts})
+	t.Cleanup(m.ReclaimAll)
+	ws, _, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitInto(t, ws.WorktreePath, "candidate.txt", "candidate\n", "candidate")
+	baseBefore := sessionGitAt(t, proj, "rev-parse", ws.BaseBranch)
+	calls := 0
+	m.integrateAgent = func(workstream.Workstream, int, integrationOutcome) integrateAgentResult {
+		calls++
+		return integrateAgentResult{blocked: true, report: "product decision required"}
+	}
+
+	readyForIntegration(t, m, ws)
+
+	got, _ := m.workstreams.Get(ws.ID)
+	if got.Status != workstream.StatusNeedsAttention || calls != 1 || !strings.Contains(got.StatusReason, "product decision required") {
+		t.Fatalf("status = %s, reason = %q, calls = %d", got.Status, got.StatusReason, calls)
+	}
+	if baseAfter := sessionGitAt(t, proj, "rev-parse", ws.BaseBranch); baseAfter != baseBefore {
+		t.Fatalf("base advanced in blocked case: %s -> %s", baseBefore, baseAfter)
+	}
+	if _, err := os.Stat(ws.WorktreePath); err != nil {
+		t.Fatalf("blocked worktree removed: %v", err)
+	}
+}
+
+func TestWorkstreamAutoIntegrationAgentAttemptsExhausted(t *testing.T) {
+	m, _ := newWorkstreamManager(t)
+	attempts := 1
+	m.reg = testRegistryWithIntegrationConfig(config.Integration{Mode: "auto", Verify: "printf still-red; exit 1", AgentAttempts: &attempts})
+	t.Cleanup(m.ReclaimAll)
+	ws, _, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitInto(t, ws.WorktreePath, "candidate.txt", "candidate\n", "candidate")
+	calls := 0
+	m.integrateAgent = func(workstream.Workstream, int, integrationOutcome) integrateAgentResult {
+		calls++
+		return integrateAgentResult{report: "could not improve it"}
+	}
+
+	readyForIntegration(t, m, ws)
+
+	got, _ := m.workstreams.Get(ws.ID)
+	if got.Status != workstream.StatusNeedsAttention || calls != 1 || !strings.Contains(got.StatusReason, "still-red") {
+		t.Fatalf("status = %s, reason = %q, calls = %d", got.Status, got.StatusReason, calls)
+	}
+}
+
+func TestWorkstreamAutoIntegrationSecondAgentAttemptFixes(t *testing.T) {
+	m, _ := newWorkstreamManager(t)
+	attempts := 2
+	m.reg = testRegistryWithIntegrationConfig(config.Integration{Mode: "auto", Verify: "test -f fixed.txt", AgentAttempts: &attempts})
+	t.Cleanup(m.ReclaimAll)
+	ws, _, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitInto(t, ws.WorktreePath, "candidate.txt", "candidate\n", "candidate")
+	calls := 0
+	m.integrateAgent = func(got workstream.Workstream, attempt int, _ integrationOutcome) integrateAgentResult {
+		calls++
+		if attempt == 2 {
+			commitInto(t, got.WorktreePath, "fixed.txt", "fixed\n", "fix on second attempt")
+		}
+		return integrateAgentResult{}
+	}
+
+	readyForIntegration(t, m, ws)
+
+	got, _ := m.workstreams.Get(ws.ID)
+	if got.Status != workstream.StatusMerged || calls != 2 {
+		t.Fatalf("status = %s (%q), calls = %d", got.Status, got.StatusReason, calls)
+	}
+}
+
+func TestWorkstreamAutoIntegrationPreservesAgentTranscript(t *testing.T) {
+	m, proj := newWorkstreamManager(t)
+	attempts := 1
+	m.reg = testRegistryWithIntegrationConfig(config.Integration{Mode: "auto", Verify: "test -f fixed.txt", AgentAttempts: &attempts})
+	t.Cleanup(m.ReclaimAll)
+	ws, _, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitInto(t, ws.WorktreePath, "candidate.txt", "candidate\n", "candidate")
+	const fakeID = "s_integrate_fake"
+	m.integrateAgent = func(got workstream.Workstream, _ int, _ integrationOutcome) integrateAgentResult {
+		if err := m.workstreams.SetIntegrateSessionID(got.ID, fakeID); err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Join(got.WorktreePath, ".ycc", "sessions", fakeID)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "events.jsonl"), []byte("agent resolution transcript\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		commitInto(t, got.WorktreePath, "fixed.txt", "fixed\n", "agent fix")
+		return integrateAgentResult{report: "fixed verification"}
+	}
+
+	readyForIntegration(t, m, ws)
+
+	preserved := filepath.Join(proj, ".ycc", "sessions", fakeID, "events.jsonl")
+	content, err := os.ReadFile(preserved)
+	if err != nil || !strings.Contains(string(content), "agent resolution transcript") {
+		t.Fatalf("preserved integrate transcript = %q, %v", content, err)
+	}
+}
+
+func TestRunIntegrateSessionCreatesScopedSessionAndSurfacesBackendError(t *testing.T) {
+	m, _ := newWorkstreamManager(t)
+	m.reg = config.NewRegistry(&config.Config{
+		Models: map[string]config.Model{
+			"offline": {Backend: "ollama", BaseURL: "http://127.0.0.1:1", Model: "offline"},
+		},
+		Roles: config.Roles{Coordinator: "offline", Implementer: "offline", Reviewers: []string{"offline"}},
+		Retry: config.Retry{MaxAttempts: 1},
+	})
+	t.Cleanup(m.ReclaimAll)
+	ws, original, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = m.Stop(original.ID)
+	commitInto(t, ws.WorktreePath, "candidate.txt", "candidate\n", "candidate")
+	if _, err := m.workstreams.Transition(ws.ID, workstream.StatusReady, "",
+		workstream.StatusActive, workstream.StatusNeedsAttention); err != nil {
+		t.Fatal(err)
+	}
+
+	res := m.runIntegrateSession(ws, 1, integrationOutcome{
+		kind: integrationVerifyFailed, base: ws.BaseBranch, reason: "verify failed",
+		verifyCmd: "false", verifyErr: "exit status 1",
+	})
+	if res.err == nil {
+		t.Fatalf("offline integrate session result = %+v, want backend error", res)
+	}
+	got, _ := m.workstreams.Get(ws.ID)
+	if got.IntegrateSessionID == "" {
+		t.Fatal("integrate session id was not recorded")
+	}
+	path := filepath.Join(ws.WorktreePath, ".ycc", "sessions", got.IntegrateSessionID, "events.jsonl")
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read integrate session log: %v", err)
+	}
+	if !strings.Contains(string(contents), `"mode":"integrate"`) && !strings.Contains(string(contents), `"mode": "integrate"`) {
+		t.Fatalf("integrate session_started not present in log:\n%s", contents)
 	}
 }
 

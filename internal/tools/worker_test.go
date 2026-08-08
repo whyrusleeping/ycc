@@ -223,6 +223,16 @@ func TestFinishIsControl(t *testing.T) {
 	}
 }
 
+func TestRequestIntegrationIsControl(t *testing.T) {
+	reg := New()
+	reg.Add(RequestIntegration())
+	res := dispatch(t, reg, "request_integration", `{"report":"rebased and green"}`)
+	ctrl := ControlOf(res)
+	if ctrl == nil || !ctrl.Stop || ctrl.Blocked || ctrl.Report != "rebased and green" {
+		t.Fatalf("request_integration control = %+v", ctrl)
+	}
+}
+
 func TestUnknownTool(t *testing.T) {
 	reg := workerReg(t.TempDir())
 	res := dispatch(t, reg, "nope", `{}`)

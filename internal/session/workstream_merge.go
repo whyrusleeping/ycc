@@ -305,10 +305,11 @@ func (m *Manager) MergeWorkstream(id string, accept bool) (MergeOutcome, error) 
 	if err := m.workstreams.SetStatus(ws.ID, workstream.StatusMerged); err != nil {
 		return MergeOutcome{}, err
 	}
-	if ws.SessionID != "" {
-		m.Stop(ws.SessionID)
+	if fresh, ok := m.workstreams.Get(ws.ID); ok {
+		ws = fresh
 	}
-	m.preserveWorkstreamSession(ws)
+	m.stopWorkstreamSessions(ws)
+	m.preserveWorkstreamSessions(ws)
 	m.cleanupWorktree(repo, ws)
 	return MergeOutcome{Merged: true, Commit: commit}, nil
 }
@@ -326,19 +327,30 @@ func (m *Manager) surfaceConflict(ws workstream.Workstream, conflicts []string) 
 	return MergeOutcome{Conflicts: conflicts}
 }
 
-// preserveWorkstreamSession copies a workstream's durable session log out of its
-// worktree into the project's primary workspace so the transcript remains
-// viewable (panel drill-in / session browser) after the worktree is removed at
-// merge/discard time. Session logs are resolved against the primary workspace at
-// <primary>/.ycc/sessions/<id>/events.jsonl, but a workstream's live log lives at
-// <worktree>/.ycc/sessions/<id>/events.jsonl, which cleanup destroys.
-//
-// It is entirely best-effort: any error is swallowed so preservation never
-// blocks the lifecycle transition, matching the best-effort cleanup philosophy.
-// An existing destination is left untouched (session ids are unique, so a
-// collision means the log was already preserved).
-func (m *Manager) preserveWorkstreamSession(ws workstream.Workstream) {
-	if ws.SessionID == "" || ws.WorktreePath == "" {
+// stopWorkstreamSessions ensures neither the implementation session nor the
+// integrate recovery session can write while transcripts are copied and the
+// linked worktree is removed. Stops are best-effort because a completed recovery
+// session is normally already stopped by its runner.
+func (m *Manager) stopWorkstreamSessions(ws workstream.Workstream) {
+	for _, id := range []string{ws.SessionID, ws.IntegrateSessionID} {
+		if id != "" {
+			_ = m.Stop(id)
+		}
+	}
+}
+
+// preserveWorkstreamSessions copies both normal and integrate-agent transcripts
+// from the linked worktree before lifecycle cleanup removes it.
+func (m *Manager) preserveWorkstreamSessions(ws workstream.Workstream) {
+	m.preserveWorkstreamSessionID(ws, ws.SessionID)
+	m.preserveWorkstreamSessionID(ws, ws.IntegrateSessionID)
+}
+
+// preserveWorkstreamSessionID copies one durable session log out of a worktree
+// into the project's primary workspace. It is entirely best-effort: preservation
+// never blocks a lifecycle transition, and an existing destination is untouched.
+func (m *Manager) preserveWorkstreamSessionID(ws workstream.Workstream, sessionID string) {
+	if sessionID == "" || ws.WorktreePath == "" {
 		return
 	}
 	// Never traverse a persisted source path outside the daemon's worktrees root.
@@ -349,11 +361,11 @@ func (m *Manager) preserveWorkstreamSession(ws workstream.Workstream) {
 	if !ok {
 		return
 	}
-	src := filepath.Join(ws.WorktreePath, ".ycc", "sessions", ws.SessionID)
+	src := filepath.Join(ws.WorktreePath, ".ycc", "sessions", sessionID)
 	if info, err := os.Stat(src); err != nil || !info.IsDir() {
 		return
 	}
-	dst := filepath.Join(primary, ".ycc", "sessions", ws.SessionID)
+	dst := filepath.Join(primary, ".ycc", "sessions", sessionID)
 	if _, err := os.Stat(dst); err == nil {
 		return // already preserved
 	}
@@ -447,10 +459,11 @@ func (m *Manager) DiscardWorkstream(id string) error {
 	if err := m.workstreams.SetStatus(ws.ID, workstream.StatusDiscarded); err != nil {
 		return err
 	}
-	if ws.SessionID != "" {
-		m.Stop(ws.SessionID)
+	if fresh, ok := m.workstreams.Get(ws.ID); ok {
+		ws = fresh
 	}
-	m.preserveWorkstreamSession(ws)
+	m.stopWorkstreamSessions(ws)
+	m.preserveWorkstreamSessions(ws)
 	// Cleanup is best-effort; a stale entry's tree may already be gone. Persisted
 	// paths are untrusted, so an out-of-root path is never passed to git. Branch
 	// cleanup and the discarded transition still proceed in that fail-closed case.

@@ -136,3 +136,7 @@ Verify with: go build ./... && go vet ./... && go test ./internal/session/... ./
 …[truncated]
 - 2026-08-08 review (sol): accept — The revision now protects the verification boundary by pinning the rebased commit, snapshotting the worktree before and after verification, rejecting tracked dirt before verification, aborting on cont
 …[truncated]
+- 2026-08-08 usage: 10,218,920 tok (in 2,440,309, out 77,875, cache_r 11,245,561, cache_w 279,903) · cost n/a (unpriced)
+  implementer: 7,597,904 tok (in 1,349,105, out 35,935, cache_r 6,212,864, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 2,591,260 tok (in 1,091,144, out 12,244, cache_r 1,487,872, cache_w 0) · cost n/a (unpriced)
+  coordinator: 29,756 tok (in 60, out 29,696, cache_r 3,544,825, cache_w 279,903) · cost n/a (unpriced)

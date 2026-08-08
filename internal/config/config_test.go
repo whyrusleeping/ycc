@@ -1290,6 +1290,37 @@ func TestRegistryWorktreeConfigIsDeepCopy(t *testing.T) {
 	}
 }
 
+func TestIntegrationAgentAttempts(t *testing.T) {
+	if got := (Integration{}).EffectiveAgentAttempts(); got != 1 {
+		t.Fatalf("nil agent_attempts = %d, want 1", got)
+	}
+	zero := 0
+	cfg := DefaultAnthropic("https://api", "claude", "KEY", 4096)
+	cfg.Integration = Integration{AgentAttempts: &zero}
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("explicit zero agent_attempts rejected: %v", err)
+	}
+	if got := cfg.Integration.EffectiveAgentAttempts(); got != 0 {
+		t.Fatalf("explicit zero agent_attempts = %d", got)
+	}
+	negative := -1
+	cfg.Integration.AgentAttempts = &negative
+	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "integration.agent_attempts") {
+		t.Fatalf("negative agent_attempts validation = %v", err)
+	}
+}
+
+func TestRegistryIntegrationConfigIsDeepCopy(t *testing.T) {
+	attempts := 2
+	reg := NewRegistry(&Config{Integration: Integration{AgentAttempts: &attempts}})
+	got := reg.IntegrationConfig()
+	*got.AgentAttempts = 9
+	again := reg.IntegrationConfig()
+	if again.AgentAttempts == nil || *again.AgentAttempts != 2 {
+		t.Fatalf("registry integration config pointer was aliased: %+v", again)
+	}
+}
+
 func loadSpecTOML(t *testing.T, s string) (*Config, error) {
 	t.Helper()
 	p := t.TempDir() + "/ycc.toml"

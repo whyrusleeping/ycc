@@ -137,6 +137,37 @@ func TestBuildModeToolsets(t *testing.T) {
 			t.Fatalf("chat mode should not have %s", gone)
 		}
 	}
+	// integrate is a narrowly scoped worker: editing/git-via-Bash plus only the
+	// success and blocked control tools. In particular it cannot delegate, manage
+	// backlog, commit through the daemon, or finish without requesting integration.
+	extraWriteRoot := t.TempDir()
+	d.WriteRoots = []string{extraWriteRoot}
+	integrateReg, integratePrompt := BuildMode("integrate", d, true)
+	for _, want := range []string{"Read", "Edit", "Write", "Bash", "request_integration", "report_blocked"} {
+		if !hasTool(integrateReg, want) {
+			t.Fatalf("integrate mode missing %s", want)
+		}
+	}
+	for _, gone := range []string{"spawn_implementer", "spawn_reviewers", "list_backlog", "commit", "finish"} {
+		if hasTool(integrateReg, gone) {
+			t.Fatalf("integrate mode should not have %s", gone)
+		}
+	}
+	outside := filepath.Join(extraWriteRoot, "must-not-write.txt")
+	writeResult := integrateReg.Dispatch(context.Background(), gollama.ToolCall{
+		ID: "outside", Type: "function",
+		Function: gollama.ToolCallFunction{Name: "Write", Arguments: `{"file_path":"` + outside + `","content":"no"}`},
+	})
+	if !writeResult.IsError {
+		t.Fatalf("integrate mode inherited an outside write root: %s", writeResult.Content)
+	}
+	lowerPrompt := strings.ToLower(integratePrompt)
+	for _, want := range []string{"never", "advance", "base branch", "daemon", "request_integration"} {
+		if !strings.Contains(lowerPrompt, want) {
+			t.Fatalf("integrate prompt missing %q:\n%s", want, integratePrompt)
+		}
+	}
+
 	// The removed authoring modes no longer build.
 	for _, mode := range []string{"spec", "backlog", "feature", "bug"} {
 		reg, _ := BuildMode(mode, d, false)

@@ -1351,11 +1351,15 @@ ycc adopts **git worktrees** (design spike task 0078; full rationale/alternative
   workstream with commits emits `workstream_ready`; the daemon's serialized per-project
   queue rebases it onto the current configured **base branch** *inside the workstream's own
   worktree*, runs `integration.verify` there, and only then advances base by
-  **fast-forward**. A conflict or red verify leaves base untouched and the worktree intact,
-  sets `needs_attention`, and notifies. The clean/green fast path makes no model calls; the
-  integrate-agent recovery path remains planned. `[integration]` supports `mode = "auto" |
-  "gate" | "manual"` (default auto), `verify`, `strategy = "rebase-ff" | "squash" |
-  "merge-no-ff"` (default rebase-ff), and `max_parallel` (zero = unlimited). Auto without
+  **fast-forward**. The clean/green fast path makes no model calls. On a conflicted rebase or
+  red verify, the daemon starts a bounded number of unattended `integrate`-mode sessions
+  scoped to that worktree (`agent_attempts`, default 1; zero disables recovery). The agent
+  resolves or fixes, commits, verifies, and requests integration; the daemon independently
+  re-rebases and re-runs verify, and it alone advances base. A blocked/failed agent or exhausted
+  attempts sets `needs_attention` and notifies with base untouched and the worktree intact.
+  `[integration]` supports `mode = "auto" | "gate" | "manual"` (default auto), `verify`,
+  `strategy = "rebase-ff" | "squash" | "merge-no-ff"` (default rebase-ff), `max_parallel`
+  (zero = unlimited), and `agent_attempts` (default 1; zero disables). Auto without
   `verify`, or auto with a strategy not yet executable by the queue, safely degrades to the
   review gate. Gate keeps explicit accept-diff; manual preserves the original merge flow.
 
