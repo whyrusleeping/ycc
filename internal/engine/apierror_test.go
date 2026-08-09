@@ -37,6 +37,9 @@ func TestClassifyAPIError(t *testing.T) {
 		{"codex in-stream server_error", errors.New(`codex: stream error: server_error: An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID a66a36ef-2cb7-4c1c-be17-22f116c1a0ba in your message.`), KindServer, 0, true},
 		{"codex response.failed server_error", errors.New("codex: server_error: boom"), KindServer, 0, true},
 		{"provider internal error", errors.New("codex: stream error: internal_error: transient blip"), KindServer, 0, true},
+		{"anthropic in-stream api_error", errors.New("anthropic stream error (api_error): Internal server error"), KindServer, 0, true},
+		{"anthropic in-stream overloaded", errors.New("anthropic stream error (overloaded_error): Overloaded"), KindOverloaded, 0, true},
+		{"codex in-stream overloaded", errors.New("codex: stream error: server_is_overloaded: Our servers are currently overloaded. Please try again later."), KindOverloaded, 0, true},
 		{"codex usage limit", errors.New(`codex: stream error: usage_limit_reached: You have 0 weighted tokens left`), KindRateLimit, 0, true},
 		{"provider rate limit error", errors.New("anthropic: rate_limit_error: allowance exhausted"), KindRateLimit, 0, true},
 		{"provider usage limit text", errors.New("provider usage limit reached; try later"), KindRateLimit, 0, true},
@@ -44,6 +47,7 @@ func TestClassifyAPIError(t *testing.T) {
 		// classification — the signature must not override a parsed status.
 		{"400 mentioning server_error", errors.New(`API returned non-200 status code 400: {"error":{"code":"not_server_error"}}`), KindInvalidRequest, 400, false},
 		{"400 mentioning usage limit", errors.New(`API returned non-200 status code 400: {"error":{"message":"usage limit is invalid"}}`), KindInvalidRequest, 400, false},
+		{"400 mentioning overloaded", errors.New("API returned non-200 status code 400: the field overloaded is invalid"), KindInvalidRequest, 400, false},
 		{"unknown", errors.New("something completely different"), KindUnknown, 0, false},
 	}
 	for _, c := range cases {

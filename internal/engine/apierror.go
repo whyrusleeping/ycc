@@ -24,7 +24,8 @@ type APIErrorKind string
 const (
 	// KindRateLimit: HTTP 429 — the provider is rate limiting. Retryable.
 	KindRateLimit APIErrorKind = "rate_limit"
-	// KindOverloaded: HTTP 503/529 — the provider is overloaded. Retryable.
+	// KindOverloaded: HTTP 503/529 or an equivalent in-stream provider error —
+	// the provider is overloaded. Retryable.
 	KindOverloaded APIErrorKind = "overloaded"
 	// KindServer: any other 5xx. Retryable.
 	KindServer APIErrorKind = "server"
@@ -102,16 +103,19 @@ var networkSignatures = []string{
 // reach us with no HTTP status, because they are delivered inside an otherwise
 // healthy (HTTP 200) response stream rather than as an HTTP error. The codex
 // backend does this: `{"type":"error","error":{"code":"server_error",...}}` mid
-// stream, with a message that explicitly tells the client to retry. These are
+// stream, with a message that explicitly tells the client to retry; Anthropic
+// similarly emits `api_error` for an in-stream 500 equivalent. These are
 // transient — the request/transcript is still valid and the next attempt
 // normally succeeds — so they classify exactly like their 5xx equivalents
 // instead of falling through to the non-retryable `unknown` bucket. Matched
 // only when no status code was parsed, so a 4xx body mentioning "server_error"
-// is unaffected.
+// is unaffected. These signatures are checked after rate-limit signatures so
+// provider-specific rate-limit errors retain their more specific classification.
 var providerServerSignatures = []string{
 	"server_error",
 	"internal_error",
 	"internal server error",
+	"api_error",
 }
 
 // providerRateLimitSignatures are provider-reported subscription/rate-limit
@@ -124,6 +128,18 @@ var providerRateLimitSignatures = []string{
 	"usage_limit_reached",
 	"rate_limit_error",
 	"usage limit",
+}
+
+// providerOverloadedSignatures are provider-reported overload failures delivered
+// inside an HTTP 200 response stream. Anthropic emits `overloaded_error` as its
+// in-stream 529 equivalent, while codex emits `server_is_overloaded`. The generic
+// signature catches other provider phrasings. These are consulted only when no
+// status code was parsed, so text in a real 4xx body cannot override its HTTP
+// classification.
+var providerOverloadedSignatures = []string{
+	"overloaded_error",
+	"server_is_overloaded",
+	"overloaded",
 }
 
 // ClassifyAPIError classifies an LLM API call failure. nil returns the zero
@@ -163,13 +179,18 @@ func ClassifyAPIError(err error) APIErrorInfo {
 		}
 	}
 
-	// No HTTP status. A provider may still report a rate limit or server-side
-	// failure inside a 200 stream; treat it like the 429/5xx it stands for (checked
-	// before generic transport heuristics, which it would otherwise fall past into
-	// `unknown`).
+	// No HTTP status. A provider may still report a rate limit, overload, or
+	// server-side failure inside a 200 stream; treat it like the 429/5xx it stands
+	// for (checked before generic transport heuristics, which it would otherwise
+	// fall past into `unknown`).
 	for _, sig := range providerRateLimitSignatures {
 		if strings.Contains(lower, sig) {
 			return APIErrorInfo{Kind: KindRateLimit, Retryable: true}
+		}
+	}
+	for _, sig := range providerOverloadedSignatures {
+		if strings.Contains(lower, sig) {
+			return APIErrorInfo{Kind: KindOverloaded, Retryable: true}
 		}
 	}
 	for _, sig := range providerServerSignatures {
