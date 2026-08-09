@@ -47,3 +47,7 @@ Verify: go build ./... && go test ./internal/engine/
 - 2026-08-09 review tier: single-opus — reviewers: sol
 - 2026-08-09 review (sol): accept — The change satisfies Task 0307. Statusless Anthropic and Codex overload signatures now classify as retryable KindOverloaded errors, Anthropic api_error classifies as retryable KindServer, and parsed H
 …[truncated]
+- 2026-08-09 usage: 195,778 tok (in 103,822, out 11,828, cache_r 583,677, cache_w 28,156) · cost n/a (unpriced)
+  implementer: 148,749 tok (in 84,491, out 2,562, cache_r 61,696, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 38,350 tok (in 19,297, out 621, cache_r 18,432, cache_w 0) · cost n/a (unpriced)
+  coordinator: 8,679 tok (in 34, out 8,645, cache_r 503,549, cache_w 28,156) · cost n/a (unpriced)

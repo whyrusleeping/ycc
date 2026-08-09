@@ -60,3 +60,7 @@ Verification: go build ./... && go test ./internal/config ./internal/session ./i
 - 2026-08-08 review tier: single-opus — reviewers: sol
 - 2026-08-08 review (sol): accept — The implementation satisfies task 0289: role-level config/state is removed, model-level resolution and persistence are implemented with validation and rollback, live-session role-to-model mapping dedu
 …[truncated]
+- 2026-08-08 usage: 10,653,520 tok (in 2,027,434, out 61,606, cache_r 10,898,994, cache_w 98,250) · cost n/a (unpriced)
+  implementer: 9,522,864 tok (in 1,443,184, out 25,408, cache_r 8,054,272, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 1,099,806 tok (in 584,186, out 5,412, cache_r 510,208, cache_w 0) · cost n/a (unpriced)
+  coordinator: 30,850 tok (in 64, out 30,786, cache_r 2,334,514, cache_w 98,250) · cost n/a (unpriced)

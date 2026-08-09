@@ -17,6 +17,8 @@ enum HomeDestination: Hashable {
     case workLoop(project: String)
     case workstreams(project: String)
     case usage(project: String)
+    /// The agents' project memory (memory.md), read-only.
+    case memory(project: String)
     case settings
 }
 
@@ -164,10 +166,9 @@ struct DrawerContainer<Drawer: View, Content: View>: View {
 
 /// The workspace drawer's contents: the daemon-wide recent-session inbox, the
 /// registered projects with live-activity badges, and the account footer. The
-/// project-scoped destinations (backlog / workstreams / usage) deliberately do
-/// NOT live here: the drawer is usually opened from the unscoped Recent Sessions
-/// feed, which would open them without a project. They hang off the toolbar of
-/// the project's own session list instead.
+/// Usage lives here as an unscoped, all-projects rollup. The other project-scoped
+/// destinations (backlog / workstreams), along with a project-scoped Usage entry,
+/// hang off the toolbar of each project's session list instead.
 struct WorkspaceDrawer: View {
     /// The active server profile's display name, shown under the wordmark.
     let serverName: String
@@ -177,6 +178,7 @@ struct WorkspaceDrawer: View {
     let onSelectProject: (String?) -> Void
     let onOpen: (HomeDestination) -> Void
     let onAddProject: () -> Void
+    let onRenameProject: (Ycc_V1_ProjectInfo) -> Void
     let onRemoveProject: (Ycc_V1_ProjectInfo) -> Void
     let onDisconnect: () -> Void
 
@@ -203,6 +205,11 @@ struct WorkspaceDrawer: View {
                             activity: model.activity(forProject: project.name)
                         ) { onSelectProject(project.name) }
                             .contextMenu {
+                                Button {
+                                    onRenameProject(project)
+                                } label: {
+                                    Label("Rename project…", systemImage: "pencil")
+                                }
                                 Button(role: .destructive) {
                                     onRemoveProject(project)
                                 } label: {
@@ -249,6 +256,9 @@ struct WorkspaceDrawer: View {
 
     private var footer: some View {
         VStack(alignment: .leading, spacing: 2) {
+            DrawerRow(title: "Usage", systemImage: "chart.bar") {
+                onOpen(.usage(project: ""))
+            }
             DrawerRow(title: "Settings", systemImage: "gearshape") {
                 onOpen(.settings)
             }

@@ -49,7 +49,11 @@ struct WorkLoopView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The current session will finish. The daemon will not pick another backlog task.")
+            if model?.state == .waiting {
+                Text("The loop is waiting for the provider; stopping ends the wait immediately. The daemon will not pick another backlog task.")
+            } else {
+                Text("The current session will finish. The daemon will not pick another backlog task.")
+            }
         }
         .alert(
             "Action failed",
@@ -202,6 +206,11 @@ struct WorkLoopView: View {
             Text(WorkLoopModel.totalsLine(for: loop))
                 .font(.subheadline.monospacedDigit())
                 .foregroundStyle(.secondary)
+            if model.state == .waiting {
+                Label(WorkLoopModel.waitingLine(for: loop), systemImage: "hourglass")
+                    .font(.subheadline)
+                    .foregroundStyle(.orange)
+            }
             if model.state == .finished && !loop.outcome.isEmpty {
                 Label(loop.outcome, systemImage: "flag.checkered")
                     .font(.subheadline)
@@ -216,7 +225,14 @@ struct WorkLoopView: View {
     }
 
     private func workLoopSessionRow(_ session: Ycc_V1_WorkLoopSession) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let totals = WorkLoopModel.totalsLine(
+            tokens: session.tokens,
+            cost: session.cost,
+            priceStatus: session.priceStatus)
+        let secondary = WorkLoopModel.durationText(secs: session.durationSecs)
+            .map { "\(totals) · \($0)" } ?? totals
+
+        return VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(String(session.sessionID.prefix(8)))
                     .font(.headline.monospaced())
@@ -228,10 +244,7 @@ struct WorkLoopView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.tertiary)
             }
-            Text(WorkLoopModel.totalsLine(
-                tokens: session.tokens,
-                cost: session.cost,
-                priceStatus: session.priceStatus))
+            Text(secondary)
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
         }
@@ -301,7 +314,7 @@ struct WorkLoopView: View {
     }
 }
 
-private struct WorkLoopStateBadge: View {
+struct WorkLoopStateBadge: View {
     let state: WorkLoopState
 
     var body: some View {
@@ -316,6 +329,7 @@ private struct WorkLoopStateBadge: View {
     private var color: Color {
         switch state {
         case .running: return .green
+        case .waiting: return .yellow
         case .stopping: return .orange
         case .finished: return .blue
         case .none, .unknown: return .gray

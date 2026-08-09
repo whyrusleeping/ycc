@@ -164,6 +164,36 @@ func (r *Registry) EnsureWorkspace(absPath string) (Project, error) {
 	return r.Add(absPath, "")
 }
 
+// Rename changes a project's name, keeping its path, and persists the change.
+// Unlike Add's collision handling, a newName already registered to a different
+// path is an error — a rename must never silently pick a different name than
+// the one the user asked for. Renaming to the current name is a no-op.
+func (r *Registry) Rename(oldName, newName string) (Project, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	path, ok := r.byName[oldName]
+	if !ok {
+		return Project{}, fmt.Errorf("unknown project %q", oldName)
+	}
+	if newName == "" {
+		return Project{}, fmt.Errorf("new project name must not be empty")
+	}
+	if newName == oldName {
+		return Project{Name: oldName, Path: path}, nil
+	}
+	if _, taken := r.byName[newName]; taken {
+		return Project{}, fmt.Errorf("project name %q is already in use", newName)
+	}
+	delete(r.byName, oldName)
+	r.byName[newName] = path
+	if err := r.save(); err != nil {
+		delete(r.byName, newName)
+		r.byName[oldName] = path
+		return Project{}, err
+	}
+	return Project{Name: newName, Path: path}, nil
+}
+
 // Remove deletes a project by name, persisting the change. Removing an unknown
 // name is a no-op.
 func (r *Registry) Remove(name string) error {

@@ -10,8 +10,10 @@ struct GlobalSettingsView: View {
     @State private var model: GlobalSettingsModel
     @State private var editorTarget: ModelEditorTarget?
     @State private var pendingRemoval: String?
+    private let client: YccClient
 
     init(client: YccClient) {
+        self.client = client
         _model = State(initialValue: GlobalSettingsModel(source: client))
     }
 
@@ -26,6 +28,7 @@ struct GlobalSettingsView: View {
             }
             rolesSection
             thinkingSection
+            reviewTiersSection
             modelsSection
         }
         .navigationTitle("Settings")
@@ -105,7 +108,7 @@ struct GlobalSettingsView: View {
     }
 
     private var thinkingSection: some View {
-        Section("Default thinking") {
+        Section {
             ThinkingLevelRow(
                 title: "Coordinator",
                 selection: model.coordinatorThinking,
@@ -118,6 +121,22 @@ struct GlobalSettingsView: View {
                 title: "Reviewers",
                 selection: model.reviewersThinking,
                 onSelect: { level in Task { await model.setThinking(level, for: .reviewers) } })
+        } header: {
+            Text("Default thinking")
+        } footer: {
+            Text("Levels attach to each role's current model — changing a role updates that model's config, and roles sharing a model share its level. Per-reviewer overrides live in review tiers below.")
+        }
+    }
+
+    private var reviewTiersSection: some View {
+        Section {
+            NavigationLink {
+                ReviewTiersView(client: client)
+            } label: {
+                Label("Review tiers", systemImage: "checklist")
+            }
+        } footer: {
+            Text("Named review line-ups the coordinator picks per change — each reviewer slot with its own model, focus, and thinking level.")
         }
     }
 

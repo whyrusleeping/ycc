@@ -2,16 +2,17 @@ import SwiftUI
 import YccKit
 import YccProto
 
-/// The "Add project" sheet (task 0192): registers a workspace on the DAEMON's
-/// filesystem as a named project via `AddProject`. The path is typed manually
-/// for now — a server-backed directory picker layers on later (task 0194).
-/// On success the daemon-resolved project is handed back to the presenter,
-/// which refreshes its picker and selects it.
+/// The "Add project" sheet: registers a workspace on the DAEMON's filesystem as
+/// a named project via `AddProject`. A `ListDir`-backed picker offers likely
+/// project suggestions and directory browsing, while manual path entry remains
+/// available as a fallback. On success the daemon-resolved project is handed
+/// back to the presenter, which refreshes its picker and selects it.
 struct AddProjectView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
 
     @State private var model: AddProjectModel
+    @State private var browserModel: DirectoryBrowserModel
 
     /// Called with the registered project once `AddProject` succeeds. The
     /// presenter dismisses the sheet, refreshes its project list, and selects
@@ -20,6 +21,7 @@ struct AddProjectView: View {
 
     init(client: YccClient, onAdded: @escaping (Ycc_V1_ProjectInfo) -> Void) {
         _model = State(initialValue: AddProjectModel(source: client))
+        _browserModel = State(initialValue: DirectoryBrowserModel(source: client))
         self.onAdded = onAdded
     }
 
@@ -27,6 +29,44 @@ struct AddProjectView: View {
         @Bindable var model = model
         NavigationStack {
             Form {
+                if !browserModel.suggestions.isEmpty && !model.isSubmitting {
+                    Section("Suggestions") {
+                        ForEach(browserModel.suggestions, id: \.self) { suggestion in
+                            Button {
+                                model.path = suggestion
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: "folder.badge.plus")
+                                        .foregroundStyle(.tint)
+                                    Text(suggestion)
+                                        .font(.callout.monospaced())
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                        .foregroundStyle(.primary)
+                                    Spacer(minLength: 4)
+                                    if model.path == suggestion {
+                                        Image(systemName: "checkmark")
+                                            .foregroundStyle(.tint)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Section {
+                    NavigationLink {
+                        DirectoryBrowserView(model: browserModel) { path in
+                            self.model.path = path
+                        }
+                    } label: {
+                        Label("Browse server…", systemImage: "folder")
+                    }
+                    .disabled(model.isSubmitting)
+                } footer: {
+                    Text("Browse directories on the server where the daemon runs.")
+                }
+
                 Section {
                     TextField("/home/me/code/project", text: $model.path)
                         .autocorrectionDisabled()
@@ -69,10 +109,17 @@ struct AddProjectView: View {
                 }
             }
         }
+        .task {
+            await browserModel.loadInitial()
+        }
         .onChange(of: model.unauthorized) { _, isUnauthorized in
             if isUnauthorized {
-                dismiss()
-                app.handleUnauthorized()
+                dismissForUnauthorized()
+            }
+        }
+        .onChange(of: browserModel.unauthorized) { _, isUnauthorized in
+            if isUnauthorized {
+                dismissForUnauthorized()
             }
         }
     }
@@ -84,5 +131,10 @@ struct AddProjectView: View {
                 onAdded(project)
             }
         }
+    }
+
+    private func dismissForUnauthorized() {
+        dismiss()
+        app.handleUnauthorized()
     }
 }

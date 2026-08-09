@@ -67,6 +67,11 @@ message AddProjectRequest {
 message AddProjectResponse { ProjectInfo project = 1; }
 message RemoveProjectRequest { string name = 1; }
 message RemoveProjectResponse {}
+message RenameProjectRequest {
+  string name = 1;     // current registered name
+  string new_name = 2; // desired name; must not collide with another project
+}
+message RenameProjectResponse { ProjectInfo project = 1; }
 
 // ListDir — remote directory browsing for the add-project flow (task 0193).
 // Lists DIRECTORIES ONLY (never files or file contents) so a remote client can
@@ -269,8 +274,8 @@ message ListModelsResponse {
   string coordinator = 2;
   string implementer = 3;
   repeated string reviewers = 4;
-  // Current default per-role thinking level (roles.thinking.*, resolved to the
-  // package default when unset) so the overlay seeds its thinking pickers too.
+  // Resolved thinking level of each role's currently assigned model (reviewers
+  // use the first model), so the overlay seeds its role-row controls accurately.
   string coordinator_thinking = 5;
   string implementer_thinking = 6;
   string reviewers_thinking = 7;
@@ -350,12 +355,11 @@ message SetRoleConfigRequest {
 }
 message SetRoleConfigResponse {}
 
-// SetThinking changes a thinking/effort level (spec §7.4, §18.2). The override
-// applies per role (empty role = all roles) and is persisted as the default
-// (roles.thinking.* in ycc.toml) so it survives a restart. When session_id names
-// a live session the change also applies to it immediately; an empty/unknown
-// session_id just updates the persisted default (e.g. changed from the home menu).
-// Levels: off | low | medium | high | xhigh | max.
+// SetThinking maps role to its currently assigned model(s) and stores the level
+// in each model's [models.X] config (empty role = all assigned models, deduped;
+// reviewers = every reviewer model). When session_id names a live session the
+// change also applies immediately; an empty/unknown session_id resolves the
+// default role assignments. Levels: off | low | medium | high | xhigh | max.
 message SetThinkingRequest {
   string session_id = 1;
   string level = 2; // off | low | medium | high | xhigh | max
@@ -370,6 +374,64 @@ message SetWorkImplementationRequest {
   string implementation = 1; // delegate | direct
 }
 message SetWorkImplementationResponse {}
+
+// Review tiers (spec §13.1): list/edit the named review-intensity tiers and the
+// default tier. Tiers are stored under [reviews] in ycc.toml; the built-in
+// simple/single-opus/high-powered tiers always exist and may be overridden by a
+// same-named configured tier.
+
+// ReviewerSlot is one reviewer slot of a tier's long form
+// ([[reviews.tiers.X.reviewers]]): which logical model reviews, under which
+// label, with what focus prompt and optional per-reviewer thinking level.
+message ReviewerSlot {
+  string name = 1;     // label; empty defaults to model
+  string model = 2;    // logical model name (required)
+  string prompt = 3;   // extra focus guidance for this reviewer
+  string thinking = 4; // "" = model default; off | low | medium | high | xhigh | max
+}
+
+// ReviewTierInfo mirrors a [reviews.tiers.X] block plus derived flags. The
+// models shorthand and the reviewers long form are mutually exclusive (setting
+// both is rejected, matching config validation).
+message ReviewTierInfo {
+  string name = 1;                    // tier name (map key in ycc.toml)
+  string strategy = 2;                // "" | "agents" | "coordinator" (aliases self/self-review)
+  string description = 3;             // "when to pick me" guidance shown to the coordinator
+  string prompt = 4;                  // extra guidance prepended to EVERY reviewer of the tier
+  repeated string models = 5;         // shorthand: one generic reviewer per logical model
+  repeated ReviewerSlot reviewers = 6;// long form: one slot per reviewer
+  bool builtin = 7;                   // one of the always-present tiers (simple/single-opus/high-powered)
+  bool configured = 8;                // has an explicit [reviews.tiers.X] entry (custom tier or built-in override)
+}
+
+// ListReviewTiers returns the EFFECTIVE tiers (built-ins overlaid with the
+// configured entries) plus the effective default tier name, so a client can
+// render exactly what spawn_reviewers would resolve.
+message ListReviewTiersRequest {}
+message ListReviewTiersResponse {
+  repeated ReviewTierInfo tiers = 1; // sorted by name
+  string default_tier = 2;           // effective default (reviews.default, or "single-opus")
+}
+
+// UpsertReviewTier adds or replaces the configured tier named tier.name and
+// persists it to ycc.toml. Validated like config load (unknown strategy/model/
+// thinking level, or models+reviewers both set, are invalid_argument). Takes
+// effect on the next spawn_reviewers (tiers resolve per call).
+message UpsertReviewTierRequest { ReviewTierInfo tier = 1; }
+message UpsertReviewTierResponse {}
+
+// RemoveReviewTier deletes the CONFIGURED entry for a tier and persists. A
+// built-in name reverts to its built-in behaviour; a custom tier disappears.
+// Rejected when reviews.default names the removed custom tier (change the
+// default first) or when the tier has no configured entry.
+message RemoveReviewTierRequest { string name = 1; }
+message RemoveReviewTierResponse {}
+
+// SetReviewDefault sets reviews.default (persisted). The tier must exist among
+// the effective tiers; an empty name clears the setting (falling back to
+// single-opus).
+message SetReviewDefaultRequest { string name = 1; }
+message SetReviewDefaultResponse {}
 
 // Backlog browser (spec §18.5): read-only RPCs that expose the durable backlog
 // (internal/docs Store) so clients can list and inspect tasks independent of any
@@ -451,6 +513,17 @@ message GetPlanResponse {
   string name = 1;
   string title = 2;
   string content = 3;
+}
+
+// Project memory (spec §6.5): read-only access to memory.md — the advisory
+// operational notes agents record across sessions — so clients can view what
+// the agents have learned about working on the project.
+message GetMemoryRequest {
+  string project = 1; // registered project; empty allowed only when exactly one exists
+}
+message GetMemoryResponse {
+  string content = 1; // full markdown; "" when memory.md does not exist yet
+  string path = 2;    // absolute path to memory.md
 }
 
 // Quick-add backlog capture (spec §18.2, task 0016): a TUI overlay lets the user
@@ -581,6 +654,7 @@ message WorkLoopSession {
   int64 tokens = 3;
   double cost = 4;
   string price_status = 5; // priced | unpriced | partial
+  int64 duration_secs = 6; // wall-clock seconds the session took
 }
 
 // WorkLoopInfo is a snapshot of a work loop: its lifecycle state, the session it
@@ -743,6 +817,7 @@ service SessionService {
   rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
   rpc AddProject(AddProjectRequest) returns (AddProjectResponse);
   rpc RemoveProject(RemoveProjectRequest) returns (RemoveProjectResponse);
+  rpc RenameProject(RenameProjectRequest) returns (RenameProjectResponse);
   // ListDir lists subdirectories of a daemon-host path (directories only) so
   // remote clients can browse to a workspace for AddProject (task 0193).
   rpc ListDir(ListDirRequest) returns (ListDirResponse);
@@ -761,6 +836,13 @@ service SessionService {
   rpc GetModelConfig(GetModelConfigRequest) returns (GetModelConfigResponse);
   rpc DiscoverModels(DiscoverModelsRequest) returns (DiscoverModelsResponse);
 
+  // Review tiers (spec §13.1): list the effective tiers and edit the configured
+  // ones (plus the default tier) at runtime; always persisted to ycc.toml.
+  rpc ListReviewTiers(ListReviewTiersRequest) returns (ListReviewTiersResponse);
+  rpc UpsertReviewTier(UpsertReviewTierRequest) returns (UpsertReviewTierResponse);
+  rpc RemoveReviewTier(RemoveReviewTierRequest) returns (RemoveReviewTierResponse);
+  rpc SetReviewDefault(SetReviewDefaultRequest) returns (SetReviewDefaultResponse);
+
   // Backlog browser (spec §18.5): read-only access to the durable backlog.
   rpc ListBacklog(ListBacklogRequest) returns (ListBacklogResponse);
   rpc GetTask(GetTaskRequest) returns (GetTaskResponse);
@@ -775,6 +857,9 @@ service SessionService {
   // in-repo plans/*.md so clients can browse and view saved plans.
   rpc ListPlans(ListPlansRequest) returns (ListPlansResponse);
   rpc GetPlan(GetPlanRequest) returns (GetPlanResponse);
+  // Project memory (spec §6.5): read-only view of memory.md, the agents'
+  // advisory operational notes for the project.
+  rpc GetMemory(GetMemoryRequest) returns (GetMemoryResponse);
 
   // Quick-add backlog capture (spec §18.2, task 0016): run a lightweight,
   // off-stream capture agent that turns a natural-language description into a

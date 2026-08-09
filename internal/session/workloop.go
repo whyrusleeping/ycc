@@ -64,11 +64,12 @@ type WorkLoop struct {
 
 // WorkLoopSession is a per-session record captured as each loop session finishes.
 type WorkLoopSession struct {
-	SessionID   string
-	Focus       string
-	Tokens      int64
-	Cost        float64
-	PriceStatus string
+	SessionID    string
+	Focus        string
+	Tokens       int64
+	Cost         float64
+	PriceStatus  string
+	DurationSecs int64
 }
 
 // WorkLoopDigestTask is one task row in a finished loop's batch digest.
@@ -98,6 +99,7 @@ type loopSessRec struct {
 	verdicts     []string
 	cost         float64
 	priceStatus  string
+	duration     time.Duration
 	errKind      string
 	errRetryable bool
 }
@@ -186,6 +188,7 @@ func (wl *workLoop) snapshotLocked() *WorkLoop {
 		out.Sessions = append(out.Sessions, WorkLoopSession{
 			SessionID: s.id, Focus: s.focus, Tokens: s.tokens,
 			Cost: s.cost, PriceStatus: s.priceStatus,
+			DurationSecs: int64(s.duration / time.Second),
 		})
 	}
 	out.Completed = append(out.Completed, wl.completed...)
@@ -659,6 +662,7 @@ func (wl *workLoop) buildDigestLocked(final []*docs.Task) {
 // snapshots + prices it, then reclaims it. Graceful stop still lets the current
 // session complete (checked before the NEXT pick, not here).
 func (wl *workLoop) realRunSession(ctx context.Context) (loopSessRec, bool, error) {
+	start := time.Now()
 	sess, err := wl.m.Start(Config{Project: wl.projectArg, Mode: "work", Unattended: true})
 	if err != nil {
 		return loopSessRec{}, false, err
@@ -720,6 +724,7 @@ waitLoop:
 	wl.currentSessionID = ""
 	wl.mu.Unlock()
 	wl.m.reclaim(sess.ID)
+	rec.duration = time.Since(start)
 	return rec, breach, nil
 }
 

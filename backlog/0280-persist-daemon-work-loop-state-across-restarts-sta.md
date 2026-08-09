@@ -66,3 +66,7 @@ No proto/RPC changes needed: GetWorkLoop already returns the full snapshot; clie
 - 2026-08-08 review tier: single-opus — reviewers: sol
 - 2026-08-08 review (sol): accept — The change satisfies Task 0280. It adds versioned, atomic per-workspace work-loop snapshots; persists running, stopping, per-session accumulation/current-session updates, and final digest/outcome stat
 …[truncated]
+- 2026-08-08 usage: 1,356,632 tok (in 622,977, out 26,839, cache_r 1,309,244, cache_w 83,440) · cost n/a (unpriced)
+  implementer: 1,072,331 tok (in 427,115, out 13,920, cache_r 631,296, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 275,206 tok (in 195,832, out 3,854, cache_r 75,520, cache_w 0) · cost n/a (unpriced)
+  coordinator: 9,095 tok (in 30, out 9,065, cache_r 602,428, cache_w 83,440) · cost n/a (unpriced)

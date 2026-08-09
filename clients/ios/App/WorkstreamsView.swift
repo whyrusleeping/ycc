@@ -20,6 +20,8 @@ struct WorkstreamsView: View {
     @State private var mergeSheet: MergeSheet?
     /// The workstream pending a destructive discard confirmation.
     @State private var discardTarget: Ycc_V1_WorkstreamInfo?
+    @State private var confirmMergeAll = false
+    @State private var mergeAllSummary: String?
 
     private let initialProject: String
 
@@ -39,6 +41,16 @@ struct WorkstreamsView: View {
         .toolbar {
             if let model, model.showsProjectFilter {
                 ToolbarItem(placement: .topBarLeading) { projectFilter(model) }
+            }
+            if let model, !model.gatedWorkstreams.isEmpty {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        confirmMergeAll = true
+                    } label: {
+                        Label("Merge all ready", systemImage: "arrow.triangle.merge")
+                    }
+                    .disabled(model.busyWorkstreamID != nil)
+                }
             }
         }
         .sheet(item: $previewSheet) { sheet in
@@ -62,6 +74,32 @@ struct WorkstreamsView: View {
             Button("Cancel", role: .cancel) { discardTarget = nil }
         } message: { _ in
             Text("This stops the session and deletes the worktree + branch. It cannot be undone.")
+        }
+        .confirmationDialog(
+            "Merge all ready workstreams?",
+            isPresented: $confirmMergeAll,
+            titleVisibility: .visible
+        ) {
+            Button("Merge all ready") {
+                guard let model else { return }
+                Task {
+                    mergeAllSummary = await model.mergeAllReady().message
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Ready workstreams will be merged sequentially. The operation stops at the first failure.")
+        }
+        .alert(
+            "Merge ready workstreams",
+            isPresented: Binding(
+                get: { mergeAllSummary != nil },
+                set: { if !$0 { mergeAllSummary = nil } }),
+            presenting: mergeAllSummary
+        ) { _ in
+            Button("OK", role: .cancel) { mergeAllSummary = nil }
+        } message: { summary in
+            Text(summary)
         }
         .alert(
             "Action failed",
@@ -102,9 +140,13 @@ struct WorkstreamsView: View {
     private func workstreamList(_ model: WorkstreamsModel) -> some View {
         List {
             ForEach(model.workstreams, id: \.id) { workstream in
-                WorkstreamRow(workstream: workstream)
+                WorkstreamRow(
+                    workstream: workstream,
+                    isBusy: model.busyWorkstreamID == workstream.id,
+                    onRetry: { Task { await model.retry(workstream) } },
+                    onOpenIntegration: { openIntegrationSession(workstream) })
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        if WorkstreamsModel.status(for: workstream).isActionable {
+                        if WorkstreamsModel.status(for: workstream).isDiscardable {
                             Button(role: .destructive) {
                                 discardTarget = workstream
                             } label: {
@@ -122,8 +164,8 @@ struct WorkstreamsView: View {
 
     @ViewBuilder
     private func rowActions(_ model: WorkstreamsModel, _ workstream: Ycc_V1_WorkstreamInfo) -> some View {
-        let actionable = WorkstreamsModel.status(for: workstream).isActionable
-        if actionable {
+        let status = WorkstreamsModel.status(for: workstream)
+        if status.isMergeable {
             Button {
                 Task { await runPreview(model, workstream) }
             } label: {
@@ -133,6 +175,13 @@ struct WorkstreamsView: View {
                 Task { await runMerge(model, workstream, accept: false) }
             } label: {
                 Label("Merge…", systemImage: "arrow.triangle.merge")
+            }
+        }
+        if status == .needsAttention || status == .ready {
+            Button {
+                Task { await model.retry(workstream) }
+            } label: {
+                Label("Retry integration", systemImage: "arrow.clockwise")
             }
         }
         if !workstream.sessionID.isEmpty {
@@ -147,7 +196,14 @@ struct WorkstreamsView: View {
                 Label("Open session", systemImage: "bubble.left.and.bubble.right")
             }
         }
-        if actionable {
+        if WorkstreamsModel.integrateSessionID(for: workstream) != nil {
+            Button {
+                openIntegrationSession(workstream)
+            } label: {
+                Label("Integration log", systemImage: "wrench.and.screwdriver")
+            }
+        }
+        if status.isDiscardable {
             Divider()
             Button(role: .destructive) {
                 discardTarget = workstream
@@ -158,6 +214,16 @@ struct WorkstreamsView: View {
     }
 
     // MARK: - Action runners
+
+    private func openIntegrationSession(_ workstream: Ycc_V1_WorkstreamInfo) {
+        guard let sessionID = WorkstreamsModel.integrateSessionID(for: workstream) else { return }
+        router.open(.session(
+            id: sessionID,
+            project: workstream.project,
+            live: true,
+            title: workstream.taskID.isEmpty
+                ? "Integration log" : "Integration \(workstream.taskID)"))
+    }
 
     private func runPreview(_ model: WorkstreamsModel, _ workstream: Ycc_V1_WorkstreamInfo) async {
         guard let outcome = await model.preview(workstream) else { return }
@@ -299,6 +365,9 @@ private struct MergeSheet: Identifiable {
 /// and commit count.
 private struct WorkstreamRow: View {
     let workstream: Ycc_V1_WorkstreamInfo
+    let isBusy: Bool
+    let onRetry: () -> Void
+    let onOpenIntegration: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -307,7 +376,14 @@ private struct WorkstreamRow: View {
                     .font(.headline.monospaced())
                     .lineLimit(1)
                 Spacer(minLength: 4)
-                WorkstreamStatusBadge(status: WorkstreamsModel.status(for: workstream))
+                WorkstreamStatusBadge(workstream: workstream)
+            }
+            if let reason = WorkstreamsModel.statusReason(for: workstream),
+               WorkstreamsModel.status(for: workstream) == .needsAttention {
+                Label(reason, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 8) {
                 if !workstream.taskID.isEmpty {
@@ -323,6 +399,21 @@ private struct WorkstreamRow: View {
             }
             .font(.caption)
             .foregroundStyle(.secondary)
+            if WorkstreamsModel.status(for: workstream) == .needsAttention {
+                Button(action: onRetry) {
+                    Label("Retry integration", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .disabled(isBusy)
+            }
+            if WorkstreamsModel.integrateSessionID(for: workstream) != nil {
+                Button(action: onOpenIntegration) {
+                    Label("Integration log", systemImage: "wrench.and.screwdriver")
+                }
+                .buttonStyle(.borderless)
+                .font(.caption)
+            }
         }
         .padding(.vertical, 2)
     }
@@ -335,20 +426,38 @@ private struct WorkstreamRow: View {
 
 /// A coloured status pill for a workstream's lifecycle state.
 private struct WorkstreamStatusBadge: View {
-    let status: WorkstreamStatus
+    let workstream: Ycc_V1_WorkstreamInfo
+
+    private var status: WorkstreamStatus { WorkstreamsModel.status(for: workstream) }
+    private var integrationState: WorkstreamIntegrationState {
+        WorkstreamsModel.integrationState(for: workstream)
+    }
 
     var body: some View {
-        Text(status.title)
-            .font(.caption2.weight(.semibold))
-            .padding(.horizontal, 7)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.18), in: Capsule())
-            .foregroundStyle(color)
+        HStack(spacing: 4) {
+            if status == .needsAttention {
+                Image(systemName: "exclamationmark.triangle.fill")
+            } else if integrationState == .integrating {
+                ProgressView().controlSize(.mini)
+            }
+            Text(WorkstreamsModel.badgeTitle(for: workstream))
+        }
+        .font(.caption2.weight(.semibold))
+        .padding(.horizontal, 7)
+        .padding(.vertical, 2)
+        .background(color.opacity(0.18), in: Capsule())
+        .foregroundStyle(color)
     }
 
     private var color: Color {
+        if (status == .active || status == .ready) &&
+            (integrationState == .queued || integrationState == .integrating) {
+            return .indigo
+        }
         switch status {
         case .active: return .green
+        case .ready: return .teal
+        case .needsAttention: return .red
         case .merged: return .blue
         case .discarded: return .gray
         case .stale: return .orange

@@ -76,3 +76,7 @@ Verification: no Swift toolchain in this environment — verification is by care
 …[truncated]
 - 2026-08-08 review (sol): accept — The revision addresses the outstanding race by preserving live-edge intent across content-only growth and invalidating it on drag/deceleration-driven viewport movement. The inactivity watchdog now cov
 …[truncated]
+- 2026-08-08 usage: 2,130,880 tok (in 801,466, out 62,982, cache_r 3,773,957, cache_w 208,253) · cost n/a (unpriced)
+  implementer: 1,811,823 tok (in 591,979, out 14,596, cache_r 1,205,248, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 281,698 tok (in 209,423, out 11,091, cache_r 61,184, cache_w 0) · cost n/a (unpriced)
+  coordinator: 37,359 tok (in 64, out 37,295, cache_r 2,507,525, cache_w 208,253) · cost n/a (unpriced)

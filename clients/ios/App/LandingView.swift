@@ -32,6 +32,8 @@ struct LandingView: View {
     @State private var newSessionRequest: NewSessionRequest?
     /// Whether the Recent Sessions project picker is visible.
     @State private var showNewSessionProjectPicker = false
+    /// Whether the unscoped feed's backlog project picker is visible.
+    @State private var showBacklogProjectPicker = false
     /// The last project the user actually looked at, remembered across launches.
     /// The unscoped Recent Sessions feed has no project of its own, so this is
     /// the choice the new-chat chooser offers first (it never picks silently).
@@ -47,6 +49,12 @@ struct LandingView: View {
     @State private var projectToRemove: Ycc_V1_ProjectInfo?
     /// A project-removal failure to show independently of session-list content.
     @State private var projectRemovalError: String?
+    /// A registered project awaiting a new name in the rename prompt.
+    @State private var projectToRename: Ycc_V1_ProjectInfo?
+    /// The rename prompt's draft text, seeded with the current name.
+    @State private var renameDraft = ""
+    /// A rename failure (collision, unknown name) surfaced as its own alert.
+    @State private var projectRenameError: String?
 
     // Split into shell → presentations → observers because a single modifier
     // chain of this length makes the type checker give up ("unable to
@@ -82,6 +90,22 @@ struct LandingView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Choose which project this chat should work in.")
+        }
+        .confirmationDialog(
+            "Open backlog for…",
+            isPresented: $showBacklogProjectPicker,
+            titleVisibility: .visible
+        ) {
+            if let model {
+                ForEach(newSessionProjectChoices(model), id: \.self) { project in
+                    Button(project) {
+                        router.open(.backlog(project: project))
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Choose which project's backlog to open.")
         }
         .sheet(item: $newSessionRequest) { request in
             if let client = app.client {
@@ -135,6 +159,32 @@ struct LandingView: View {
             presenting: projectRemovalError
         ) { _ in
             Button("OK", role: .cancel) { projectRemovalError = nil }
+        } message: { message in
+            Text(message)
+        }
+        .alert(
+            "Rename \(projectToRename?.name ?? "project")",
+            isPresented: Binding(
+                get: { projectToRename != nil },
+                set: { if !$0 { projectToRename = nil } }),
+            presenting: projectToRename
+        ) { project in
+            TextField("Project name", text: $renameDraft)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+            Button("Rename") { renameProject(project) }
+            Button("Cancel", role: .cancel) { projectToRename = nil }
+        } message: { _ in
+            Text("Only the registry name changes — the workspace path, sessions, and workstreams follow it.")
+        }
+        .alert(
+            "Couldn’t rename project",
+            isPresented: Binding(
+                get: { projectRenameError != nil },
+                set: { if !$0 { projectRenameError = nil } }),
+            presenting: projectRenameError
+        ) { _ in
+            Button("OK", role: .cancel) { projectRenameError = nil }
         } message: { message in
             Text(message)
         }
@@ -236,6 +286,11 @@ struct LandingView: View {
                     closeDrawer()
                     showAddProject = true
                 },
+                onRenameProject: { project in
+                    closeDrawer()
+                    renameDraft = project.name
+                    projectToRename = project
+                },
                 onRemoveProject: { project in
                     closeDrawer()
                     projectToRemove = project
@@ -296,21 +351,32 @@ struct LandingView: View {
         }
     }
 
-    /// The project-scoped destinations, shown only on a project's own session
-    /// list. They need a project, and the daemon-wide Recent Sessions feed has
-    /// none — which is exactly why they no longer live in the drawer, where they
-    /// were most often tapped from the unscoped feed and opened unscoped.
-    /// Backlog earns its own glyph (it is the one users reach for constantly);
-    /// the rest sit behind an overflow menu, as in the session view. The
-    /// overflow itself is not project-scoped: it also carries "Mark all read",
-    /// which the unscoped feed needs just as much.
+    /// The project-scoped destinations. Backlog earns its own glyph (it is the
+    /// one users reach for constantly) and remains available on the daemon-wide
+    /// Recent Sessions feed, where it asks which project's backlog to open. The
+    /// rest sit behind an overflow menu, as in the session view. The overflow
+    /// itself is not project-scoped: it also carries "Mark all read", which the
+    /// unscoped feed needs just as much.
     @ToolbarContentBuilder
     private var projectDestinations: some ToolbarContent {
-        if let project = model?.selectedProject {
-            ToolbarItem(placement: .topBarTrailing) {
+        ToolbarItem(placement: .topBarTrailing) {
+            if let project = model?.selectedProject {
                 NavigationLink(value: HomeDestination.backlog(project: project)) {
                     Label("Backlog", systemImage: "checklist")
                 }
+            } else {
+                Button {
+                    guard let model else { return }
+                    let choices = newSessionProjectChoices(model)
+                    if choices.count > 1 {
+                        showBacklogProjectPicker = true
+                    } else if let project = choices.first {
+                        router.open(.backlog(project: project))
+                    }
+                } label: {
+                    Label("Backlog", systemImage: "checklist")
+                }
+                .disabled(model?.newSessionProjectChoices.isEmpty ?? true)
             }
         }
         ToolbarItem(placement: .topBarTrailing) {
@@ -324,6 +390,9 @@ struct LandingView: View {
                     }
                     NavigationLink(value: HomeDestination.usage(project: project)) {
                         Label("Usage", systemImage: "chart.bar")
+                    }
+                    NavigationLink(value: HomeDestination.memory(project: project)) {
+                        Label("Memory", systemImage: "brain")
                     }
                 }
                 if (model?.unreadCount ?? 0) > 0 {
@@ -363,6 +432,8 @@ struct LandingView: View {
                 WorkstreamsView(initialProject: project)
             case let .usage(project):
                 UsageView(initialProject: project)
+            case let .memory(project):
+                MemoryView(client: client, project: project)
             case .settings:
                 GlobalSettingsView(client: client)
             }
@@ -571,6 +642,24 @@ struct LandingView: View {
             let removed = await model.removeProject(named: project.name)
             if !removed, !model.unauthorized {
                 projectRemovalError = model.errorMessage ?? "The project could not be removed."
+            }
+        }
+    }
+
+    private func renameProject(_ project: Ycc_V1_ProjectInfo) {
+        guard let model else { return }
+        projectToRename = nil
+        let newName = renameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Empty or unchanged: nothing to ask the daemon for.
+        guard !newName.isEmpty, newName != project.name else { return }
+        Task {
+            let renamed = await model.renameProject(named: project.name, to: newName)
+            if renamed {
+                // Keep the "last viewed" chooser default pointing at the same
+                // project under its new name.
+                if lastViewedProject == project.name { lastViewedProject = newName }
+            } else if !model.unauthorized {
+                projectRenameError = model.errorMessage ?? "The project could not be renamed."
             }
         }
     }

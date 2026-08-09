@@ -90,6 +90,63 @@ func TestEnsureWorkspaceAutoRegisters(t *testing.T) {
 	}
 }
 
+// TestRename verifies renaming keeps the path, persists across reload, rejects
+// collisions and unknown names, and treats a same-name rename as a no-op.
+func TestRename(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "projects.json")
+	r, err := Open(file)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	a := t.TempDir()
+	b := t.TempDir()
+	if _, err := r.Add(a, "alpha"); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if _, err := r.Add(b, "beta"); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	p, err := r.Rename("alpha", "gamma")
+	if err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	if p.Name != "gamma" || p.Path != a {
+		t.Fatalf("Rename returned %+v, want {gamma %s}", p, a)
+	}
+	if _, ok := r.Resolve("alpha"); ok {
+		t.Fatal("old name still resolvable after Rename")
+	}
+	if got, ok := r.Resolve("gamma"); !ok || got != a {
+		t.Fatalf("Resolve(gamma) = %q,%v want %q", got, ok, a)
+	}
+
+	// A collision with a different project's name must fail loudly.
+	if _, err := r.Rename("gamma", "beta"); err == nil {
+		t.Fatal("Rename onto an existing name succeeded, want error")
+	}
+	// Unknown old names and empty new names are errors too.
+	if _, err := r.Rename("nope", "x"); err == nil {
+		t.Fatal("Rename of unknown project succeeded, want error")
+	}
+	if _, err := r.Rename("gamma", ""); err == nil {
+		t.Fatal("Rename to empty name succeeded, want error")
+	}
+	// Same-name rename is a no-op success.
+	if p, err := r.Rename("gamma", "gamma"); err != nil || p.Name != "gamma" {
+		t.Fatalf("same-name Rename = %+v, %v", p, err)
+	}
+
+	// The rename persisted.
+	r2, err := Open(file)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if got, ok := r2.Resolve("gamma"); !ok || got != a {
+		t.Fatalf("after reload Resolve(gamma) = %q,%v want %q", got, ok, a)
+	}
+}
+
 // TestRemove verifies a project can be deregistered.
 func TestRemove(t *testing.T) {
 	r := NewMemory()

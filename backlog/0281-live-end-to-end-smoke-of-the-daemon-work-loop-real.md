@@ -1,10 +1,10 @@
 ---
 id: "0281"
 title: Live end-to-end smoke of the daemon work loop (real sessions) + plans/work-loop-smoke.md
-status: todo
+status: proposed
 priority: 2
 created: "2026-08-06"
-updated: "2026-08-06"
+updated: "2026-08-08"
 depends_on: []
 spec_refs:
     - 9. Modes (the home menu)

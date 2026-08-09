@@ -81,6 +81,9 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `removeProject`(request: Ycc_V1_RemoveProjectRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_RemoveProjectResponse>
 
+    @available(iOS 13, *)
+    func `renameProject`(request: Ycc_V1_RenameProjectRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_RenameProjectResponse>
+
     /// ListDir lists subdirectories of a daemon-host path (directories only) so
     /// remote clients can browse to a workspace for AddProject (task 0193).
     @available(iOS 13, *)
@@ -114,6 +117,20 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `discoverModels`(request: Ycc_V1_DiscoverModelsRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_DiscoverModelsResponse>
 
+    /// Review tiers (spec §13.1): list the effective tiers and edit the configured
+    /// ones (plus the default tier) at runtime; always persisted to ycc.toml.
+    @available(iOS 13, *)
+    func `listReviewTiers`(request: Ycc_V1_ListReviewTiersRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ListReviewTiersResponse>
+
+    @available(iOS 13, *)
+    func `upsertReviewTier`(request: Ycc_V1_UpsertReviewTierRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_UpsertReviewTierResponse>
+
+    @available(iOS 13, *)
+    func `removeReviewTier`(request: Ycc_V1_RemoveReviewTierRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_RemoveReviewTierResponse>
+
+    @available(iOS 13, *)
+    func `setReviewDefault`(request: Ycc_V1_SetReviewDefaultRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_SetReviewDefaultResponse>
+
     /// Backlog browser (spec §18.5): read-only access to the durable backlog.
     @available(iOS 13, *)
     func `listBacklog`(request: Ycc_V1_ListBacklogRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ListBacklogResponse>
@@ -139,6 +156,11 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
 
     @available(iOS 13, *)
     func `getPlan`(request: Ycc_V1_GetPlanRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetPlanResponse>
+
+    /// Project memory (spec §6.5): read-only view of memory.md, the agents'
+    /// advisory operational notes for the project.
+    @available(iOS 13, *)
+    func `getMemory`(request: Ycc_V1_GetMemoryRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetMemoryResponse>
 
     /// Quick-add backlog capture (spec §18.2, task 0016): run a lightweight,
     /// off-stream capture agent that turns a natural-language description into a
@@ -303,6 +325,11 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     }
 
     @available(iOS 13, *)
+    public func `renameProject`(request: Ycc_V1_RenameProjectRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_RenameProjectResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/RenameProject", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
     public func `listDir`(request: Ycc_V1_ListDirRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_ListDirResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/ListDir", idempotencyLevel: .unknown, request: request, headers: headers)
     }
@@ -348,6 +375,26 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     }
 
     @available(iOS 13, *)
+    public func `listReviewTiers`(request: Ycc_V1_ListReviewTiersRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_ListReviewTiersResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/ListReviewTiers", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `upsertReviewTier`(request: Ycc_V1_UpsertReviewTierRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_UpsertReviewTierResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/UpsertReviewTier", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `removeReviewTier`(request: Ycc_V1_RemoveReviewTierRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_RemoveReviewTierResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/RemoveReviewTier", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `setReviewDefault`(request: Ycc_V1_SetReviewDefaultRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_SetReviewDefaultResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/SetReviewDefault", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
     public func `listBacklog`(request: Ycc_V1_ListBacklogRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_ListBacklogResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/ListBacklog", idempotencyLevel: .unknown, request: request, headers: headers)
     }
@@ -375,6 +422,11 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     @available(iOS 13, *)
     public func `getPlan`(request: Ycc_V1_GetPlanRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_GetPlanResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/GetPlan", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `getMemory`(request: Ycc_V1_GetMemoryRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_GetMemoryResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/GetMemory", idempotencyLevel: .unknown, request: request, headers: headers)
     }
 
     @available(iOS 13, *)
@@ -466,6 +518,7 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let listProjects = Connect.MethodSpec(name: "ListProjects", service: "ycc.v1.SessionService", type: .unary)
             public static let addProject = Connect.MethodSpec(name: "AddProject", service: "ycc.v1.SessionService", type: .unary)
             public static let removeProject = Connect.MethodSpec(name: "RemoveProject", service: "ycc.v1.SessionService", type: .unary)
+            public static let renameProject = Connect.MethodSpec(name: "RenameProject", service: "ycc.v1.SessionService", type: .unary)
             public static let listDir = Connect.MethodSpec(name: "ListDir", service: "ycc.v1.SessionService", type: .unary)
             public static let listModels = Connect.MethodSpec(name: "ListModels", service: "ycc.v1.SessionService", type: .unary)
             public static let setRoleConfig = Connect.MethodSpec(name: "SetRoleConfig", service: "ycc.v1.SessionService", type: .unary)
@@ -475,12 +528,17 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let removeModel = Connect.MethodSpec(name: "RemoveModel", service: "ycc.v1.SessionService", type: .unary)
             public static let getModelConfig = Connect.MethodSpec(name: "GetModelConfig", service: "ycc.v1.SessionService", type: .unary)
             public static let discoverModels = Connect.MethodSpec(name: "DiscoverModels", service: "ycc.v1.SessionService", type: .unary)
+            public static let listReviewTiers = Connect.MethodSpec(name: "ListReviewTiers", service: "ycc.v1.SessionService", type: .unary)
+            public static let upsertReviewTier = Connect.MethodSpec(name: "UpsertReviewTier", service: "ycc.v1.SessionService", type: .unary)
+            public static let removeReviewTier = Connect.MethodSpec(name: "RemoveReviewTier", service: "ycc.v1.SessionService", type: .unary)
+            public static let setReviewDefault = Connect.MethodSpec(name: "SetReviewDefault", service: "ycc.v1.SessionService", type: .unary)
             public static let listBacklog = Connect.MethodSpec(name: "ListBacklog", service: "ycc.v1.SessionService", type: .unary)
             public static let getTask = Connect.MethodSpec(name: "GetTask", service: "ycc.v1.SessionService", type: .unary)
             public static let updateTask = Connect.MethodSpec(name: "UpdateTask", service: "ycc.v1.SessionService", type: .unary)
             public static let createTask = Connect.MethodSpec(name: "CreateTask", service: "ycc.v1.SessionService", type: .unary)
             public static let listPlans = Connect.MethodSpec(name: "ListPlans", service: "ycc.v1.SessionService", type: .unary)
             public static let getPlan = Connect.MethodSpec(name: "GetPlan", service: "ycc.v1.SessionService", type: .unary)
+            public static let getMemory = Connect.MethodSpec(name: "GetMemory", service: "ycc.v1.SessionService", type: .unary)
             public static let captureBacklogItem = Connect.MethodSpec(name: "CaptureBacklogItem", service: "ycc.v1.SessionService", type: .serverStream)
             public static let getUsage = Connect.MethodSpec(name: "GetUsage", service: "ycc.v1.SessionService", type: .unary)
             public static let getSubscriptionUsage = Connect.MethodSpec(name: "GetSubscriptionUsage", service: "ycc.v1.SessionService", type: .unary)

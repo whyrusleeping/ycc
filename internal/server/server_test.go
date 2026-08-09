@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -205,6 +206,30 @@ func TestProjectRPCs(t *testing.T) {
 	list2, _ := srv.ListProjects(ctx, connect.NewRequest(&v1.ListProjectsRequest{}))
 	if len(list2.Msg.Projects) != 1 || list2.Msg.Projects[0].GetPath() != startupDir {
 		t.Fatalf("ListProjects after remove = %+v, want startup project", list2.Msg.Projects)
+	}
+
+	// RenameProject: re-register, rename, and confirm the new name resolves to
+	// the same path while the old one is gone.
+	if _, err := srv.AddProject(ctx, connect.NewRequest(&v1.AddProjectRequest{Path: dir, Name: "demo"})); err != nil {
+		t.Fatalf("re-AddProject: %v", err)
+	}
+	renamed, err := srv.RenameProject(ctx, connect.NewRequest(&v1.RenameProjectRequest{Name: "demo", NewName: "demo2"}))
+	if err != nil {
+		t.Fatalf("RenameProject: %v", err)
+	}
+	if renamed.Msg.Project.GetName() != "demo2" || renamed.Msg.Project.GetPath() != dir {
+		t.Fatalf("RenameProject = %+v, want name=demo2 path=%s", renamed.Msg.Project, dir)
+	}
+	// Unknown name → NotFound; collision → AlreadyExists.
+	if _, err := srv.RenameProject(ctx, connect.NewRequest(&v1.RenameProjectRequest{Name: "demo", NewName: "x"})); connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("rename unknown: code = %v, want NotFound", connect.CodeOf(err))
+	}
+	startupName := list2.Msg.Projects[0].GetName()
+	if _, err := srv.RenameProject(ctx, connect.NewRequest(&v1.RenameProjectRequest{Name: "demo2", NewName: startupName})); connect.CodeOf(err) != connect.CodeAlreadyExists {
+		t.Fatalf("rename collision: code = %v, want AlreadyExists", connect.CodeOf(err))
+	}
+	if _, err := srv.RemoveProject(ctx, connect.NewRequest(&v1.RemoveProjectRequest{Name: "demo2"})); err != nil {
+		t.Fatalf("RemoveProject demo2: %v", err)
 	}
 
 	// AddProject without a path is an InvalidArgument error.
@@ -487,6 +512,49 @@ func TestPlanRPCs(t *testing.T) {
 	}
 }
 
+// TestGetMemory exercises the read-only project-memory viewer surface: a
+// missing memory.md is empty content (not an error), an existing file is
+// returned verbatim with its absolute path, and an unknown project is
+// InvalidArgument.
+func TestGetMemory(t *testing.T) {
+	reg := config.NewRegistry(&config.Config{
+		Models: map[string]config.Model{"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"}},
+		Roles:  config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
+	})
+	ws := t.TempDir()
+	srv := New(session.NewManager(reg, ws))
+	ctx := context.Background()
+
+	got, err := srv.GetMemory(ctx, connect.NewRequest(&v1.GetMemoryRequest{}))
+	if err != nil {
+		t.Fatalf("GetMemory (no file): %v", err)
+	}
+	if got.Msg.GetContent() != "" || got.Msg.GetPath() == "" {
+		t.Fatalf("GetMemory (no file) = %+v, want empty content + path set", got.Msg)
+	}
+
+	const body = "# Project memory\n\n## Lessons learned\n- 2025-01-01: a note\n"
+	if err := os.WriteFile(filepath.Join(ws, "memory.md"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write memory.md: %v", err)
+	}
+	got, err = srv.GetMemory(ctx, connect.NewRequest(&v1.GetMemoryRequest{}))
+	if err != nil {
+		t.Fatalf("GetMemory: %v", err)
+	}
+	if got.Msg.GetContent() != body {
+		t.Fatalf("GetMemory content = %q, want %q", got.Msg.GetContent(), body)
+	}
+	if got.Msg.GetPath() != filepath.Join(ws, "memory.md") {
+		t.Fatalf("GetMemory path = %q, want %q", got.Msg.GetPath(), filepath.Join(ws, "memory.md"))
+	}
+
+	if _, err := srv.GetMemory(ctx, connect.NewRequest(&v1.GetMemoryRequest{Project: "nope"})); err == nil {
+		t.Fatal("GetMemory with bogus project: expected error")
+	} else if code := connect.CodeOf(err); code != connect.CodeInvalidArgument {
+		t.Fatalf("code = %v, want InvalidArgument", code)
+	}
+}
+
 func TestModelBackendRPCs(t *testing.T) {
 	reg := config.NewRegistry(&config.Config{
 		Models: map[string]config.Model{"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"}},
@@ -721,5 +789,114 @@ func TestGetBudgetDefaultUnlimited(t *testing.T) {
 	m := resp.Msg
 	if m.SessionCost != 0 || m.SessionTokens != 0 || m.LoopCost != 0 || m.LoopTokens != 0 {
 		t.Fatalf("GetBudget default = %+v, want all zero", m)
+	}
+}
+
+// Review-tier RPCs (task 0297, spec §13.1/§18.2): list the effective tiers,
+// upsert/remove configured ones, and set the default — all persisted to
+// ycc.toml, with validation errors surfaced as connect errors.
+func TestReviewTierRPCs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ycc.toml")
+	if err := config.Save(path, &config.Config{
+		Models: map[string]config.Model{
+			"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"},
+			"b": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-b"},
+		},
+		Roles: config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
+	}); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	reg := config.NewRegistry(cfg)
+	reg.SetPath(path)
+	srv := New(session.NewManager(reg, t.TempDir()))
+	ctx := context.Background()
+
+	// The builtins come back with the effective default.
+	list, err := srv.ListReviewTiers(ctx, connect.NewRequest(&v1.ListReviewTiersRequest{}))
+	if err != nil {
+		t.Fatalf("ListReviewTiers: %v", err)
+	}
+	if list.Msg.DefaultTier != "single-opus" || len(list.Msg.Tiers) != 3 {
+		t.Fatalf("initial tiers = %v default=%q", list.Msg.Tiers, list.Msg.DefaultTier)
+	}
+	for _, tier := range list.Msg.Tiers {
+		if !tier.Builtin || tier.Configured {
+			t.Fatalf("builtin tier flags wrong: %+v", tier)
+		}
+	}
+
+	// Upsert a custom tier with per-reviewer focus + thinking, set it default.
+	if _, err := srv.UpsertReviewTier(ctx, connect.NewRequest(&v1.UpsertReviewTierRequest{
+		Tier: &v1.ReviewTierInfo{
+			Name:        "deep",
+			Description: "risky changes",
+			Prompt:      "Cite file:line.",
+			Reviewers: []*v1.ReviewerSlot{
+				{Name: "perf", Model: "b", Prompt: "Focus on perf.", Thinking: "max"},
+				{Model: "a"},
+			},
+		},
+	})); err != nil {
+		t.Fatalf("UpsertReviewTier: %v", err)
+	}
+	if _, err := srv.SetReviewDefault(ctx, connect.NewRequest(&v1.SetReviewDefaultRequest{Name: "deep"})); err != nil {
+		t.Fatalf("SetReviewDefault: %v", err)
+	}
+	list, err = srv.ListReviewTiers(ctx, connect.NewRequest(&v1.ListReviewTiersRequest{}))
+	if err != nil {
+		t.Fatalf("ListReviewTiers: %v", err)
+	}
+	if list.Msg.DefaultTier != "deep" {
+		t.Fatalf("default = %q, want deep", list.Msg.DefaultTier)
+	}
+	var deep *v1.ReviewTierInfo
+	for _, tier := range list.Msg.Tiers {
+		if tier.Name == "deep" {
+			deep = tier
+		}
+	}
+	if deep == nil || deep.Builtin || !deep.Configured || len(deep.Reviewers) != 2 {
+		t.Fatalf("deep = %+v", deep)
+	}
+	if rv := deep.Reviewers[0]; rv.Name != "perf" || rv.Model != "b" || rv.Thinking != "max" {
+		t.Fatalf("deep reviewer[0] = %+v", rv)
+	}
+
+	// Persisted: a reload sees the tier and default.
+	reloaded, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if reloaded.Reviews.Default != "deep" || len(reloaded.Reviews.Tiers["deep"].Reviewers) != 2 {
+		t.Fatalf("persisted reviews = %+v", reloaded.Reviews)
+	}
+
+	// Validation errors surface as invalid_argument.
+	if _, err := srv.UpsertReviewTier(ctx, connect.NewRequest(&v1.UpsertReviewTierRequest{
+		Tier: &v1.ReviewTierInfo{Name: "bad", Models: []string{"missing"}},
+	})); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("bad upsert error = %v, want invalid_argument", err)
+	}
+	if _, err := srv.SetReviewDefault(ctx, connect.NewRequest(&v1.SetReviewDefaultRequest{Name: "nope"})); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("bad default error = %v, want invalid_argument", err)
+	}
+
+	// The default custom tier can't be removed until the default moves.
+	if _, err := srv.RemoveReviewTier(ctx, connect.NewRequest(&v1.RemoveReviewTierRequest{Name: "deep"})); connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("remove default tier error = %v, want failed_precondition", err)
+	}
+	if _, err := srv.SetReviewDefault(ctx, connect.NewRequest(&v1.SetReviewDefaultRequest{})); err != nil {
+		t.Fatalf("clear default: %v", err)
+	}
+	if _, err := srv.RemoveReviewTier(ctx, connect.NewRequest(&v1.RemoveReviewTierRequest{Name: "deep"})); err != nil {
+		t.Fatalf("RemoveReviewTier: %v", err)
+	}
+	list, _ = srv.ListReviewTiers(ctx, connect.NewRequest(&v1.ListReviewTiersRequest{}))
+	if len(list.Msg.Tiers) != 3 || list.Msg.DefaultTier != "single-opus" {
+		t.Fatalf("after removal tiers=%d default=%q", len(list.Msg.Tiers), list.Msg.DefaultTier)
 	}
 }

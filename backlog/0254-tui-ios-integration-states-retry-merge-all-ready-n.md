@@ -103,3 +103,7 @@ Verification: go build ./... ; go test ./internal/session ./internal/server ./in
 …[truncated]
 - 2026-08-09 revision: Fixed the TUI retry-success notice: - `wsRetriedMsg` now carries the `WorkstreamInfo` returned by `RetryIntegration`. - `retryIntegrationCmd` preserves that response instead of discarding it. - Succes
 …[truncated]
+- 2026-08-09 usage: 18,619,768 tok (in 2,530,967, out 76,769, cache_r 18,602,470, cache_w 243,583) · cost n/a (unpriced)
+  implementer: 15,712,432 tok (in 1,485,144, out 41,816, cache_r 14,185,472, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 2,882,768 tok (in 1,045,769, out 10,439, cache_r 1,826,560, cache_w 0) · cost n/a (unpriced)
+  coordinator: 24,568 tok (in 54, out 24,514, cache_r 2,590,438, cache_w 243,583) · cost n/a (unpriced)

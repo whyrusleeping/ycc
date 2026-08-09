@@ -400,6 +400,30 @@ func (a *app) projectCommand() *cli.Command {
 				},
 			},
 			{
+				Name:      "rename",
+				Aliases:   []string{"mv"},
+				Usage:     "rename a registered project",
+				ArgsUsage: "<name> <new-name>",
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					name, newName := cmd.Args().Get(0), cmd.Args().Get(1)
+					if name == "" || newName == "" {
+						return fmt.Errorf("usage: ycc project rename <name> <new-name>")
+					}
+					client, _, cleanup, err := a.dial()
+					if err != nil {
+						return err
+					}
+					defer cleanup()
+					resp, err := client.RenameProject(ctx, connect.NewRequest(&v1.RenameProjectRequest{Name: name, NewName: newName}))
+					if err != nil {
+						return fmt.Errorf("RenameProject: %w", err)
+					}
+					p := resp.Msg.Project
+					fmt.Printf("renamed %s -> %s  %s\n", name, p.Name, p.Path)
+					return nil
+				},
+			},
+			{
 				Name:  "list",
 				Usage: "list registered projects",
 				Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -440,7 +464,7 @@ func (a *app) costCommand() *cli.Command {
 		Usage:         "show a usage/cost breakdown",
 		ShellComplete: a.completeWithProject(nil),
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "project", Usage: "registered project `name` (required when multiple exist)"},
+			&cli.StringFlag{Name: "project", Usage: "registered project `name` (omit for all projects)"},
 			&cli.StringFlag{Name: "by", Value: "task", Usage: "group by, comma-separated: task,model,session,agent,day"},
 			&cli.StringFlag{Name: "task", Usage: "restrict to one backlog task `id`"},
 			&cli.StringFlag{Name: "since", Usage: "include usage on/after this day (`YYYY-MM-DD`)"},
@@ -745,9 +769,11 @@ func renderCost(msg *v1.GetUsageResponse, groupBy []string) {
 	if len(groupBy) == 0 {
 		groupBy = []string{"task"}
 	}
-	if msg.Workspace != "" {
-		fmt.Printf("usage breakdown for %s\n", msg.Workspace)
+	workspace := msg.Workspace
+	if workspace == "" {
+		workspace = "all projects"
 	}
+	fmt.Printf("usage breakdown for %s\n", workspace)
 	if len(msg.Rows) == 0 {
 		fmt.Println("(no usage recorded)")
 		return

@@ -13,6 +13,8 @@ public protocol SessionListSource: Sendable {
     func listProjects() async throws -> [Ycc_V1_ProjectInfo]
     /// Deregister a project. Workspace files remain untouched.
     func removeProject(name: String) async throws
+    /// Rename a project in the daemon registry, returning the renamed project.
+    func renameProject(name: String, to newName: String) async throws -> Ycc_V1_ProjectInfo
     /// Fetch a project's daemon-side work-loop snapshot for row ownership badges.
     func workLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo?
 }
@@ -126,6 +128,12 @@ public final class SessionListModel {
     public private(set) var unauthorized = false
 
     private let source: SessionListSource
+    /// Foregrounding can leave pooled TCP connections dead, and CFNetwork does
+    /// not automatically retry our POSTs. Briefly retry those transient failures.
+    private let retryDelays: [TimeInterval]
+    /// `.task`, foregrounding, and router changes can request a refresh together.
+    /// They share one load so those triggers do not multiply the POST burst.
+    @ObservationIgnored private var refreshTask: Task<Void, Never>?
     /// Durable "which sessions have agent activity I haven't seen" marks. Owned
     /// by the app (one per process) and injected so the list, the drawer badges
     /// and the session view all agree on what is unread. Defaults to a
@@ -136,11 +144,13 @@ public final class SessionListModel {
     public init(
         source: SessionListSource,
         selectedProject: String? = nil,
-        readMarks: SessionReadStore? = nil
+        readMarks: SessionReadStore? = nil,
+        retryDelays: [TimeInterval] = [0.4, 1.2]
     ) {
         self.source = source
         self.selectedProject = selectedProject
         self.readMarks = readMarks ?? .ephemeral()
+        self.retryDelays = retryDelays
     }
 
     /// The sessions to display: everything, or just the selected project's.
@@ -259,40 +269,19 @@ public final class SessionListModel {
     /// queries each distinct registered workspace once, merges and deduplicates
     /// the results, and keeps successful projects when another project fails —
     /// so the drawer's badges stay accurate no matter which project is selected.
+    /// Concurrent callers await the same load rather than issuing overlapping
+    /// foreground POST bursts.
     public func refresh() async {
-        isLoading = true
-        defer { isLoading = false }
-        unauthorized = false
-        do {
-            let loadedProjects = try await source.listProjects()
-            projects = loadedProjects
-
-            guard !loadedProjects.isEmpty else {
-                // A daemon that reports no registered project can still own a
-                // session log for its startup workspace; query it by the selected
-                // name (an empty name resolves server-side).
-                let name = selectedProject ?? ""
-                let source = source
-                async let history = source.listSessionHistory(project: name)
-                async let loop = Self.loadWorkLoop(from: source, project: name)
-                let loaded = try await history
-                apply(loads: [HistoryLoad(
-                    project: name,
-                    sessions: loaded,
-                    loopSessionIDs: Self.loopSessionIDs(from: await loop))])
-                return
-            }
-
-            await refreshAcrossProjects(loadedProjects)
-        } catch YccError.unauthorized {
-            unauthorized = true
-        } catch let YccError.rpc(message) {
-            errorMessage = message
-        } catch {
-            errorMessage = error.localizedDescription
+        if let refreshTask {
+            await refreshTask.value
+            return
         }
-    }
 
+        let task = Task { await performRefresh() }
+        refreshTask = task
+        await task.value
+        refreshTask = nil
+    }
 
     /// Refresh only the lightweight project rows used by the visible drawer.
     /// ListProjects reads local refs plus daemon-cached fetch metadata, so this
@@ -312,6 +301,45 @@ public final class SessionListModel {
         }
     }
 
+    private func performRefresh() async {
+        isLoading = true
+        defer { isLoading = false }
+        unauthorized = false
+        do {
+            let source = source
+            let retryDelays = retryDelays
+            let loadedProjects = try await Self.retrying(delays: retryDelays) {
+                try await source.listProjects()
+            }
+            projects = loadedProjects
+
+            guard !loadedProjects.isEmpty else {
+                // A daemon that reports no registered project can still own a
+                // session log for its startup workspace; query it by the selected
+                // name (an empty name resolves server-side).
+                let name = selectedProject ?? ""
+                async let history = Self.retrying(delays: retryDelays) {
+                    try await source.listSessionHistory(project: name)
+                }
+                async let loop = Self.loadWorkLoop(from: source, project: name)
+                let loaded = try await history
+                apply(loads: [HistoryLoad(
+                    project: name,
+                    sessions: loaded,
+                    loopSessionIDs: Self.loopSessionIDs(from: await loop))])
+                return
+            }
+
+            await refreshAcrossProjects(loadedProjects)
+        } catch YccError.unauthorized {
+            unauthorized = true
+        } catch let YccError.rpc(message) {
+            errorMessage = message
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     /// The project argument needed to open or resume a loaded row.
     public func project(for session: Ycc_V1_SessionSummary) -> String {
         sessionProjects[session.sessionID] ?? selectedProject ?? ""
@@ -327,13 +355,16 @@ public final class SessionListModel {
             return seenPaths.insert(identity).inserted ? project.name : nil
         }
         let queryTargets = targets
+        let retryDelays = retryDelays
 
         let loads = await withTaskGroup(of: HistoryLoad.self, returning: [HistoryLoad].self) { group in
             for project in queryTargets {
                 let source = source
                 group.addTask {
                     do {
-                        async let history = source.listSessionHistory(project: project)
+                        async let history = Self.retrying(delays: retryDelays) {
+                            try await source.listSessionHistory(project: project)
+                        }
                         async let loop = Self.loadWorkLoop(from: source, project: project)
                         return HistoryLoad(
                             project: project,
@@ -364,15 +395,38 @@ public final class SessionListModel {
     /// Merge per-project history loads into the aggregate feed, its routing
     /// table, the drawer's activity counts, and the error/partial-warning state.
     private func apply(loads: [HistoryLoad]) {
+        // A project that stays unreachable after retries should not disappear from
+        // the drawer. Preserve its last successful rows and routing while still
+        // surfacing the persistent warning/error below.
+        let previousSessions = allSessions
+        let previousRoutes = sessionProjects
+        let previouslyLoaded = Set(loadedProjects)
+        let previousLoopSessionIDs = loopSessionIDs
+
         var merged: [Ycc_V1_SessionSummary] = []
         var routes: [String: String] = [:]
         var seenSessionIDs = Set<String>()
         var succeeded: [String] = []
-        for load in loads where load.error == nil {
-            succeeded.append(load.project)
-            for session in load.sessions where seenSessionIDs.insert(session.sessionID).inserted {
-                merged.append(session)
-                routes[session.sessionID] = load.project
+        var retainedLoopSessionIDs = Set<String>()
+        for load in loads {
+            if load.error == nil {
+                succeeded.append(load.project)
+                for session in load.sessions where seenSessionIDs.insert(session.sessionID).inserted {
+                    merged.append(session)
+                    routes[session.sessionID] = load.project
+                }
+            } else if previouslyLoaded.contains(load.project) {
+                succeeded.append(load.project)
+                for session in previousSessions
+                where previousRoutes[session.sessionID] == load.project
+                    && seenSessionIDs.insert(session.sessionID).inserted
+                {
+                    merged.append(session)
+                    routes[session.sessionID] = load.project
+                    if previousLoopSessionIDs.contains(session.sessionID) {
+                        retainedLoopSessionIDs.insert(session.sessionID)
+                    }
+                }
             }
         }
         allSessions = Self.sortedByRecency(merged)
@@ -381,7 +435,7 @@ public final class SessionListModel {
         // "unread" about history the user was never shown.
         readMarks.noteSeen(allSessions)
         sessionProjects = routes
-        loopSessionIDs = loads.reduce(into: Set<String>()) { ids, load in
+        loopSessionIDs = loads.reduce(into: retainedLoopSessionIDs) { ids, load in
             ids.formUnion(load.loopSessionIDs)
         }
         loadedProjects = succeeded
@@ -397,6 +451,29 @@ public final class SessionListModel {
         } else {
             partialWarning = nil
             errorMessage = failed.first?.error ?? "Couldn’t load sessions."
+        }
+    }
+
+    /// Retry short-lived foreground connection failures. Authorization failures
+    /// are definitive and must route back to Connect without extra requests.
+    nonisolated private static func retrying<Value: Sendable>(
+        delays: [TimeInterval],
+        operation: @Sendable () async throws -> Value
+    ) async throws -> Value {
+        var nextDelay = delays.makeIterator()
+        while true {
+            do {
+                return try await operation()
+            } catch YccError.unauthorized {
+                throw YccError.unauthorized
+            } catch {
+                guard let delay = nextDelay.next() else { throw error }
+                if delay > 0, delay.isFinite {
+                    let maximum = TimeInterval(UInt64.max / 1_000_000_000)
+                    let nanoseconds = UInt64(min(delay, maximum) * 1_000_000_000)
+                    try await Task<Never, Never>.sleep(nanoseconds: nanoseconds)
+                }
+            }
         }
     }
 
@@ -435,6 +512,29 @@ public final class SessionListModel {
             try await source.removeProject(name: name)
             projects.removeAll { $0.name == name }
             if selectedProject == name { selectedProject = nil }
+            await refresh()
+            return true
+        } catch YccError.unauthorized {
+            unauthorized = true
+            return false
+        } catch {
+            errorMessage = (error as? YccError)?.displayMessage ?? error.localizedDescription
+            return false
+        }
+    }
+
+    /// Rename a project and reload the home screen. Selection follows the
+    /// rename so the user stays where they were, under the new name. Returns
+    /// true on success so the view can dismiss its prompt state; on failure
+    /// ``errorMessage`` carries the daemon's reason (collision, unknown name).
+    @discardableResult
+    public func renameProject(named name: String, to newName: String) async -> Bool {
+        do {
+            let renamed = try await source.renameProject(name: name, to: newName)
+            if let index = projects.firstIndex(where: { $0.name == name }) {
+                projects[index] = renamed
+            }
+            if selectedProject == name { selectedProject = renamed.name }
             await refresh()
             return true
         } catch YccError.unauthorized {

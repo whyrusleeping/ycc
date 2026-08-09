@@ -83,6 +83,9 @@ const (
 	// SessionServiceRemoveProjectProcedure is the fully-qualified name of the SessionService's
 	// RemoveProject RPC.
 	SessionServiceRemoveProjectProcedure = "/ycc.v1.SessionService/RemoveProject"
+	// SessionServiceRenameProjectProcedure is the fully-qualified name of the SessionService's
+	// RenameProject RPC.
+	SessionServiceRenameProjectProcedure = "/ycc.v1.SessionService/RenameProject"
 	// SessionServiceListDirProcedure is the fully-qualified name of the SessionService's ListDir RPC.
 	SessionServiceListDirProcedure = "/ycc.v1.SessionService/ListDir"
 	// SessionServiceListModelsProcedure is the fully-qualified name of the SessionService's ListModels
@@ -109,6 +112,18 @@ const (
 	// SessionServiceDiscoverModelsProcedure is the fully-qualified name of the SessionService's
 	// DiscoverModels RPC.
 	SessionServiceDiscoverModelsProcedure = "/ycc.v1.SessionService/DiscoverModels"
+	// SessionServiceListReviewTiersProcedure is the fully-qualified name of the SessionService's
+	// ListReviewTiers RPC.
+	SessionServiceListReviewTiersProcedure = "/ycc.v1.SessionService/ListReviewTiers"
+	// SessionServiceUpsertReviewTierProcedure is the fully-qualified name of the SessionService's
+	// UpsertReviewTier RPC.
+	SessionServiceUpsertReviewTierProcedure = "/ycc.v1.SessionService/UpsertReviewTier"
+	// SessionServiceRemoveReviewTierProcedure is the fully-qualified name of the SessionService's
+	// RemoveReviewTier RPC.
+	SessionServiceRemoveReviewTierProcedure = "/ycc.v1.SessionService/RemoveReviewTier"
+	// SessionServiceSetReviewDefaultProcedure is the fully-qualified name of the SessionService's
+	// SetReviewDefault RPC.
+	SessionServiceSetReviewDefaultProcedure = "/ycc.v1.SessionService/SetReviewDefault"
 	// SessionServiceListBacklogProcedure is the fully-qualified name of the SessionService's
 	// ListBacklog RPC.
 	SessionServiceListBacklogProcedure = "/ycc.v1.SessionService/ListBacklog"
@@ -125,6 +140,9 @@ const (
 	SessionServiceListPlansProcedure = "/ycc.v1.SessionService/ListPlans"
 	// SessionServiceGetPlanProcedure is the fully-qualified name of the SessionService's GetPlan RPC.
 	SessionServiceGetPlanProcedure = "/ycc.v1.SessionService/GetPlan"
+	// SessionServiceGetMemoryProcedure is the fully-qualified name of the SessionService's GetMemory
+	// RPC.
+	SessionServiceGetMemoryProcedure = "/ycc.v1.SessionService/GetMemory"
 	// SessionServiceCaptureBacklogItemProcedure is the fully-qualified name of the SessionService's
 	// CaptureBacklogItem RPC.
 	SessionServiceCaptureBacklogItemProcedure = "/ycc.v1.SessionService/CaptureBacklogItem"
@@ -203,6 +221,7 @@ type SessionServiceClient interface {
 	ListProjects(context.Context, *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error)
 	AddProject(context.Context, *connect.Request[v1.AddProjectRequest]) (*connect.Response[v1.AddProjectResponse], error)
 	RemoveProject(context.Context, *connect.Request[v1.RemoveProjectRequest]) (*connect.Response[v1.RemoveProjectResponse], error)
+	RenameProject(context.Context, *connect.Request[v1.RenameProjectRequest]) (*connect.Response[v1.RenameProjectResponse], error)
 	// ListDir lists subdirectories of a daemon-host path (directories only) so
 	// remote clients can browse to a workspace for AddProject (task 0193).
 	ListDir(context.Context, *connect.Request[v1.ListDirRequest]) (*connect.Response[v1.ListDirResponse], error)
@@ -218,6 +237,12 @@ type SessionServiceClient interface {
 	RemoveModel(context.Context, *connect.Request[v1.RemoveModelRequest]) (*connect.Response[v1.RemoveModelResponse], error)
 	GetModelConfig(context.Context, *connect.Request[v1.GetModelConfigRequest]) (*connect.Response[v1.GetModelConfigResponse], error)
 	DiscoverModels(context.Context, *connect.Request[v1.DiscoverModelsRequest]) (*connect.Response[v1.DiscoverModelsResponse], error)
+	// Review tiers (spec §13.1): list the effective tiers and edit the configured
+	// ones (plus the default tier) at runtime; always persisted to ycc.toml.
+	ListReviewTiers(context.Context, *connect.Request[v1.ListReviewTiersRequest]) (*connect.Response[v1.ListReviewTiersResponse], error)
+	UpsertReviewTier(context.Context, *connect.Request[v1.UpsertReviewTierRequest]) (*connect.Response[v1.UpsertReviewTierResponse], error)
+	RemoveReviewTier(context.Context, *connect.Request[v1.RemoveReviewTierRequest]) (*connect.Response[v1.RemoveReviewTierResponse], error)
+	SetReviewDefault(context.Context, *connect.Request[v1.SetReviewDefaultRequest]) (*connect.Response[v1.SetReviewDefaultResponse], error)
 	// Backlog browser (spec §18.5): read-only access to the durable backlog.
 	ListBacklog(context.Context, *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error)
 	GetTask(context.Context, *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error)
@@ -232,6 +257,9 @@ type SessionServiceClient interface {
 	// in-repo plans/*.md so clients can browse and view saved plans.
 	ListPlans(context.Context, *connect.Request[v1.ListPlansRequest]) (*connect.Response[v1.ListPlansResponse], error)
 	GetPlan(context.Context, *connect.Request[v1.GetPlanRequest]) (*connect.Response[v1.GetPlanResponse], error)
+	// Project memory (spec §6.5): read-only view of memory.md, the agents'
+	// advisory operational notes for the project.
+	GetMemory(context.Context, *connect.Request[v1.GetMemoryRequest]) (*connect.Response[v1.GetMemoryResponse], error)
 	// Quick-add backlog capture (spec §18.2, task 0016): run a lightweight,
 	// off-stream capture agent that turns a natural-language description into a
 	// backlog task without disturbing the running session. May ask ONE clarifying
@@ -387,6 +415,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("RemoveProject")),
 			connect.WithClientOptions(opts...),
 		),
+		renameProject: connect.NewClient[v1.RenameProjectRequest, v1.RenameProjectResponse](
+			httpClient,
+			baseURL+SessionServiceRenameProjectProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("RenameProject")),
+			connect.WithClientOptions(opts...),
+		),
 		listDir: connect.NewClient[v1.ListDirRequest, v1.ListDirResponse](
 			httpClient,
 			baseURL+SessionServiceListDirProcedure,
@@ -441,6 +475,30 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("DiscoverModels")),
 			connect.WithClientOptions(opts...),
 		),
+		listReviewTiers: connect.NewClient[v1.ListReviewTiersRequest, v1.ListReviewTiersResponse](
+			httpClient,
+			baseURL+SessionServiceListReviewTiersProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("ListReviewTiers")),
+			connect.WithClientOptions(opts...),
+		),
+		upsertReviewTier: connect.NewClient[v1.UpsertReviewTierRequest, v1.UpsertReviewTierResponse](
+			httpClient,
+			baseURL+SessionServiceUpsertReviewTierProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("UpsertReviewTier")),
+			connect.WithClientOptions(opts...),
+		),
+		removeReviewTier: connect.NewClient[v1.RemoveReviewTierRequest, v1.RemoveReviewTierResponse](
+			httpClient,
+			baseURL+SessionServiceRemoveReviewTierProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("RemoveReviewTier")),
+			connect.WithClientOptions(opts...),
+		),
+		setReviewDefault: connect.NewClient[v1.SetReviewDefaultRequest, v1.SetReviewDefaultResponse](
+			httpClient,
+			baseURL+SessionServiceSetReviewDefaultProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("SetReviewDefault")),
+			connect.WithClientOptions(opts...),
+		),
 		listBacklog: connect.NewClient[v1.ListBacklogRequest, v1.ListBacklogResponse](
 			httpClient,
 			baseURL+SessionServiceListBacklogProcedure,
@@ -475,6 +533,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			httpClient,
 			baseURL+SessionServiceGetPlanProcedure,
 			connect.WithSchema(sessionServiceMethods.ByName("GetPlan")),
+			connect.WithClientOptions(opts...),
+		),
+		getMemory: connect.NewClient[v1.GetMemoryRequest, v1.GetMemoryResponse](
+			httpClient,
+			baseURL+SessionServiceGetMemoryProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("GetMemory")),
 			connect.WithClientOptions(opts...),
 		),
 		captureBacklogItem: connect.NewClient[v1.CaptureBacklogItemRequest, v1.Event](
@@ -583,6 +647,7 @@ type sessionServiceClient struct {
 	listProjects          *connect.Client[v1.ListProjectsRequest, v1.ListProjectsResponse]
 	addProject            *connect.Client[v1.AddProjectRequest, v1.AddProjectResponse]
 	removeProject         *connect.Client[v1.RemoveProjectRequest, v1.RemoveProjectResponse]
+	renameProject         *connect.Client[v1.RenameProjectRequest, v1.RenameProjectResponse]
 	listDir               *connect.Client[v1.ListDirRequest, v1.ListDirResponse]
 	listModels            *connect.Client[v1.ListModelsRequest, v1.ListModelsResponse]
 	setRoleConfig         *connect.Client[v1.SetRoleConfigRequest, v1.SetRoleConfigResponse]
@@ -592,12 +657,17 @@ type sessionServiceClient struct {
 	removeModel           *connect.Client[v1.RemoveModelRequest, v1.RemoveModelResponse]
 	getModelConfig        *connect.Client[v1.GetModelConfigRequest, v1.GetModelConfigResponse]
 	discoverModels        *connect.Client[v1.DiscoverModelsRequest, v1.DiscoverModelsResponse]
+	listReviewTiers       *connect.Client[v1.ListReviewTiersRequest, v1.ListReviewTiersResponse]
+	upsertReviewTier      *connect.Client[v1.UpsertReviewTierRequest, v1.UpsertReviewTierResponse]
+	removeReviewTier      *connect.Client[v1.RemoveReviewTierRequest, v1.RemoveReviewTierResponse]
+	setReviewDefault      *connect.Client[v1.SetReviewDefaultRequest, v1.SetReviewDefaultResponse]
 	listBacklog           *connect.Client[v1.ListBacklogRequest, v1.ListBacklogResponse]
 	getTask               *connect.Client[v1.GetTaskRequest, v1.GetTaskResponse]
 	updateTask            *connect.Client[v1.UpdateTaskRequest, v1.UpdateTaskResponse]
 	createTask            *connect.Client[v1.CreateTaskRequest, v1.CreateTaskResponse]
 	listPlans             *connect.Client[v1.ListPlansRequest, v1.ListPlansResponse]
 	getPlan               *connect.Client[v1.GetPlanRequest, v1.GetPlanResponse]
+	getMemory             *connect.Client[v1.GetMemoryRequest, v1.GetMemoryResponse]
 	captureBacklogItem    *connect.Client[v1.CaptureBacklogItemRequest, v1.Event]
 	getUsage              *connect.Client[v1.GetUsageRequest, v1.GetUsageResponse]
 	getSubscriptionUsage  *connect.Client[v1.GetSubscriptionUsageRequest, v1.GetSubscriptionUsageResponse]
@@ -699,6 +769,11 @@ func (c *sessionServiceClient) RemoveProject(ctx context.Context, req *connect.R
 	return c.removeProject.CallUnary(ctx, req)
 }
 
+// RenameProject calls ycc.v1.SessionService.RenameProject.
+func (c *sessionServiceClient) RenameProject(ctx context.Context, req *connect.Request[v1.RenameProjectRequest]) (*connect.Response[v1.RenameProjectResponse], error) {
+	return c.renameProject.CallUnary(ctx, req)
+}
+
 // ListDir calls ycc.v1.SessionService.ListDir.
 func (c *sessionServiceClient) ListDir(ctx context.Context, req *connect.Request[v1.ListDirRequest]) (*connect.Response[v1.ListDirResponse], error) {
 	return c.listDir.CallUnary(ctx, req)
@@ -744,6 +819,26 @@ func (c *sessionServiceClient) DiscoverModels(ctx context.Context, req *connect.
 	return c.discoverModels.CallUnary(ctx, req)
 }
 
+// ListReviewTiers calls ycc.v1.SessionService.ListReviewTiers.
+func (c *sessionServiceClient) ListReviewTiers(ctx context.Context, req *connect.Request[v1.ListReviewTiersRequest]) (*connect.Response[v1.ListReviewTiersResponse], error) {
+	return c.listReviewTiers.CallUnary(ctx, req)
+}
+
+// UpsertReviewTier calls ycc.v1.SessionService.UpsertReviewTier.
+func (c *sessionServiceClient) UpsertReviewTier(ctx context.Context, req *connect.Request[v1.UpsertReviewTierRequest]) (*connect.Response[v1.UpsertReviewTierResponse], error) {
+	return c.upsertReviewTier.CallUnary(ctx, req)
+}
+
+// RemoveReviewTier calls ycc.v1.SessionService.RemoveReviewTier.
+func (c *sessionServiceClient) RemoveReviewTier(ctx context.Context, req *connect.Request[v1.RemoveReviewTierRequest]) (*connect.Response[v1.RemoveReviewTierResponse], error) {
+	return c.removeReviewTier.CallUnary(ctx, req)
+}
+
+// SetReviewDefault calls ycc.v1.SessionService.SetReviewDefault.
+func (c *sessionServiceClient) SetReviewDefault(ctx context.Context, req *connect.Request[v1.SetReviewDefaultRequest]) (*connect.Response[v1.SetReviewDefaultResponse], error) {
+	return c.setReviewDefault.CallUnary(ctx, req)
+}
+
 // ListBacklog calls ycc.v1.SessionService.ListBacklog.
 func (c *sessionServiceClient) ListBacklog(ctx context.Context, req *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error) {
 	return c.listBacklog.CallUnary(ctx, req)
@@ -772,6 +867,11 @@ func (c *sessionServiceClient) ListPlans(ctx context.Context, req *connect.Reque
 // GetPlan calls ycc.v1.SessionService.GetPlan.
 func (c *sessionServiceClient) GetPlan(ctx context.Context, req *connect.Request[v1.GetPlanRequest]) (*connect.Response[v1.GetPlanResponse], error) {
 	return c.getPlan.CallUnary(ctx, req)
+}
+
+// GetMemory calls ycc.v1.SessionService.GetMemory.
+func (c *sessionServiceClient) GetMemory(ctx context.Context, req *connect.Request[v1.GetMemoryRequest]) (*connect.Response[v1.GetMemoryResponse], error) {
+	return c.getMemory.CallUnary(ctx, req)
 }
 
 // CaptureBacklogItem calls ycc.v1.SessionService.CaptureBacklogItem.
@@ -880,6 +980,7 @@ type SessionServiceHandler interface {
 	ListProjects(context.Context, *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error)
 	AddProject(context.Context, *connect.Request[v1.AddProjectRequest]) (*connect.Response[v1.AddProjectResponse], error)
 	RemoveProject(context.Context, *connect.Request[v1.RemoveProjectRequest]) (*connect.Response[v1.RemoveProjectResponse], error)
+	RenameProject(context.Context, *connect.Request[v1.RenameProjectRequest]) (*connect.Response[v1.RenameProjectResponse], error)
 	// ListDir lists subdirectories of a daemon-host path (directories only) so
 	// remote clients can browse to a workspace for AddProject (task 0193).
 	ListDir(context.Context, *connect.Request[v1.ListDirRequest]) (*connect.Response[v1.ListDirResponse], error)
@@ -895,6 +996,12 @@ type SessionServiceHandler interface {
 	RemoveModel(context.Context, *connect.Request[v1.RemoveModelRequest]) (*connect.Response[v1.RemoveModelResponse], error)
 	GetModelConfig(context.Context, *connect.Request[v1.GetModelConfigRequest]) (*connect.Response[v1.GetModelConfigResponse], error)
 	DiscoverModels(context.Context, *connect.Request[v1.DiscoverModelsRequest]) (*connect.Response[v1.DiscoverModelsResponse], error)
+	// Review tiers (spec §13.1): list the effective tiers and edit the configured
+	// ones (plus the default tier) at runtime; always persisted to ycc.toml.
+	ListReviewTiers(context.Context, *connect.Request[v1.ListReviewTiersRequest]) (*connect.Response[v1.ListReviewTiersResponse], error)
+	UpsertReviewTier(context.Context, *connect.Request[v1.UpsertReviewTierRequest]) (*connect.Response[v1.UpsertReviewTierResponse], error)
+	RemoveReviewTier(context.Context, *connect.Request[v1.RemoveReviewTierRequest]) (*connect.Response[v1.RemoveReviewTierResponse], error)
+	SetReviewDefault(context.Context, *connect.Request[v1.SetReviewDefaultRequest]) (*connect.Response[v1.SetReviewDefaultResponse], error)
 	// Backlog browser (spec §18.5): read-only access to the durable backlog.
 	ListBacklog(context.Context, *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error)
 	GetTask(context.Context, *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error)
@@ -909,6 +1016,9 @@ type SessionServiceHandler interface {
 	// in-repo plans/*.md so clients can browse and view saved plans.
 	ListPlans(context.Context, *connect.Request[v1.ListPlansRequest]) (*connect.Response[v1.ListPlansResponse], error)
 	GetPlan(context.Context, *connect.Request[v1.GetPlanRequest]) (*connect.Response[v1.GetPlanResponse], error)
+	// Project memory (spec §6.5): read-only view of memory.md, the agents'
+	// advisory operational notes for the project.
+	GetMemory(context.Context, *connect.Request[v1.GetMemoryRequest]) (*connect.Response[v1.GetMemoryResponse], error)
 	// Quick-add backlog capture (spec §18.2, task 0016): run a lightweight,
 	// off-stream capture agent that turns a natural-language description into a
 	// backlog task without disturbing the running session. May ask ONE clarifying
@@ -1060,6 +1170,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("RemoveProject")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceRenameProjectHandler := connect.NewUnaryHandler(
+		SessionServiceRenameProjectProcedure,
+		svc.RenameProject,
+		connect.WithSchema(sessionServiceMethods.ByName("RenameProject")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sessionServiceListDirHandler := connect.NewUnaryHandler(
 		SessionServiceListDirProcedure,
 		svc.ListDir,
@@ -1114,6 +1230,30 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("DiscoverModels")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceListReviewTiersHandler := connect.NewUnaryHandler(
+		SessionServiceListReviewTiersProcedure,
+		svc.ListReviewTiers,
+		connect.WithSchema(sessionServiceMethods.ByName("ListReviewTiers")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceUpsertReviewTierHandler := connect.NewUnaryHandler(
+		SessionServiceUpsertReviewTierProcedure,
+		svc.UpsertReviewTier,
+		connect.WithSchema(sessionServiceMethods.ByName("UpsertReviewTier")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceRemoveReviewTierHandler := connect.NewUnaryHandler(
+		SessionServiceRemoveReviewTierProcedure,
+		svc.RemoveReviewTier,
+		connect.WithSchema(sessionServiceMethods.ByName("RemoveReviewTier")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceSetReviewDefaultHandler := connect.NewUnaryHandler(
+		SessionServiceSetReviewDefaultProcedure,
+		svc.SetReviewDefault,
+		connect.WithSchema(sessionServiceMethods.ByName("SetReviewDefault")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sessionServiceListBacklogHandler := connect.NewUnaryHandler(
 		SessionServiceListBacklogProcedure,
 		svc.ListBacklog,
@@ -1148,6 +1288,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		SessionServiceGetPlanProcedure,
 		svc.GetPlan,
 		connect.WithSchema(sessionServiceMethods.ByName("GetPlan")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceGetMemoryHandler := connect.NewUnaryHandler(
+		SessionServiceGetMemoryProcedure,
+		svc.GetMemory,
+		connect.WithSchema(sessionServiceMethods.ByName("GetMemory")),
 		connect.WithHandlerOptions(opts...),
 	)
 	sessionServiceCaptureBacklogItemHandler := connect.NewServerStreamHandler(
@@ -1270,6 +1416,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceAddProjectHandler.ServeHTTP(w, r)
 		case SessionServiceRemoveProjectProcedure:
 			sessionServiceRemoveProjectHandler.ServeHTTP(w, r)
+		case SessionServiceRenameProjectProcedure:
+			sessionServiceRenameProjectHandler.ServeHTTP(w, r)
 		case SessionServiceListDirProcedure:
 			sessionServiceListDirHandler.ServeHTTP(w, r)
 		case SessionServiceListModelsProcedure:
@@ -1288,6 +1436,14 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceGetModelConfigHandler.ServeHTTP(w, r)
 		case SessionServiceDiscoverModelsProcedure:
 			sessionServiceDiscoverModelsHandler.ServeHTTP(w, r)
+		case SessionServiceListReviewTiersProcedure:
+			sessionServiceListReviewTiersHandler.ServeHTTP(w, r)
+		case SessionServiceUpsertReviewTierProcedure:
+			sessionServiceUpsertReviewTierHandler.ServeHTTP(w, r)
+		case SessionServiceRemoveReviewTierProcedure:
+			sessionServiceRemoveReviewTierHandler.ServeHTTP(w, r)
+		case SessionServiceSetReviewDefaultProcedure:
+			sessionServiceSetReviewDefaultHandler.ServeHTTP(w, r)
 		case SessionServiceListBacklogProcedure:
 			sessionServiceListBacklogHandler.ServeHTTP(w, r)
 		case SessionServiceGetTaskProcedure:
@@ -1300,6 +1456,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceListPlansHandler.ServeHTTP(w, r)
 		case SessionServiceGetPlanProcedure:
 			sessionServiceGetPlanHandler.ServeHTTP(w, r)
+		case SessionServiceGetMemoryProcedure:
+			sessionServiceGetMemoryHandler.ServeHTTP(w, r)
 		case SessionServiceCaptureBacklogItemProcedure:
 			sessionServiceCaptureBacklogItemHandler.ServeHTTP(w, r)
 		case SessionServiceGetUsageProcedure:
@@ -1405,6 +1563,10 @@ func (UnimplementedSessionServiceHandler) RemoveProject(context.Context, *connec
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.RemoveProject is not implemented"))
 }
 
+func (UnimplementedSessionServiceHandler) RenameProject(context.Context, *connect.Request[v1.RenameProjectRequest]) (*connect.Response[v1.RenameProjectResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.RenameProject is not implemented"))
+}
+
 func (UnimplementedSessionServiceHandler) ListDir(context.Context, *connect.Request[v1.ListDirRequest]) (*connect.Response[v1.ListDirResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ListDir is not implemented"))
 }
@@ -1441,6 +1603,22 @@ func (UnimplementedSessionServiceHandler) DiscoverModels(context.Context, *conne
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.DiscoverModels is not implemented"))
 }
 
+func (UnimplementedSessionServiceHandler) ListReviewTiers(context.Context, *connect.Request[v1.ListReviewTiersRequest]) (*connect.Response[v1.ListReviewTiersResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ListReviewTiers is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) UpsertReviewTier(context.Context, *connect.Request[v1.UpsertReviewTierRequest]) (*connect.Response[v1.UpsertReviewTierResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.UpsertReviewTier is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) RemoveReviewTier(context.Context, *connect.Request[v1.RemoveReviewTierRequest]) (*connect.Response[v1.RemoveReviewTierResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.RemoveReviewTier is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) SetReviewDefault(context.Context, *connect.Request[v1.SetReviewDefaultRequest]) (*connect.Response[v1.SetReviewDefaultResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.SetReviewDefault is not implemented"))
+}
+
 func (UnimplementedSessionServiceHandler) ListBacklog(context.Context, *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ListBacklog is not implemented"))
 }
@@ -1463,6 +1641,10 @@ func (UnimplementedSessionServiceHandler) ListPlans(context.Context, *connect.Re
 
 func (UnimplementedSessionServiceHandler) GetPlan(context.Context, *connect.Request[v1.GetPlanRequest]) (*connect.Response[v1.GetPlanResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetPlan is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) GetMemory(context.Context, *connect.Request[v1.GetMemoryRequest]) (*connect.Response[v1.GetMemoryResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetMemory is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) CaptureBacklogItem(context.Context, *connect.Request[v1.CaptureBacklogItemRequest], *connect.ServerStream[v1.Event]) error {

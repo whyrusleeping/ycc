@@ -240,6 +240,43 @@ public nonisolated struct Ycc_V1_RemoveProjectResponse: Sendable {
   public init() {}
 }
 
+public nonisolated struct Ycc_V1_RenameProjectRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// current registered name
+  public var name: String = String()
+
+  /// desired name; must not collide with another project
+  public var newName: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_RenameProjectResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var project: Ycc_V1_ProjectInfo {
+    get {_project ?? Ycc_V1_ProjectInfo()}
+    set {_project = newValue}
+  }
+  /// Returns true if `project` has been explicitly set.
+  public var hasProject: Bool {self._project != nil}
+  /// Clears the value of `project`. Subsequent reads from it will return its default value.
+  public mutating func clearProject() {self._project = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _project: Ycc_V1_ProjectInfo? = nil
+}
+
 /// ListDir — remote directory browsing for the add-project flow (task 0193).
 /// Lists DIRECTORIES ONLY (never files or file contents) so a remote client can
 /// navigate the daemon host's filesystem to pick a workspace to register with
@@ -881,8 +918,8 @@ public nonisolated struct Ycc_V1_ListModelsResponse: Sendable {
 
   public var reviewers: [String] = []
 
-  /// Current default per-role thinking level (roles.thinking.*, resolved to the
-  /// package default when unset) so the overlay seeds its thinking pickers too.
+  /// Resolved thinking level of each role's currently assigned model (reviewers
+  /// use the first model), so the overlay seeds its role-row controls accurately.
   public var coordinatorThinking: String = String()
 
   public var implementerThinking: String = String()
@@ -1149,12 +1186,11 @@ public nonisolated struct Ycc_V1_SetRoleConfigResponse: Sendable {
   public init() {}
 }
 
-/// SetThinking changes a thinking/effort level (spec §7.4, §18.2). The override
-/// applies per role (empty role = all roles) and is persisted as the default
-/// (roles.thinking.* in ycc.toml) so it survives a restart. When session_id names
-/// a live session the change also applies to it immediately; an empty/unknown
-/// session_id just updates the persisted default (e.g. changed from the home menu).
-/// Levels: off | low | medium | high | xhigh | max.
+/// SetThinking maps role to its currently assigned model(s) and stores the level
+/// in each model's [models.X] config (empty role = all assigned models, deduped;
+/// reviewers = every reviewer model). When session_id names a live session the
+/// change also applies immediately; an empty/unknown session_id resolves the
+/// default role assignments. Levels: off | low | medium | high | xhigh | max.
 public nonisolated struct Ycc_V1_SetThinkingRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -1200,6 +1236,183 @@ public nonisolated struct Ycc_V1_SetWorkImplementationRequest: Sendable {
 }
 
 public nonisolated struct Ycc_V1_SetWorkImplementationResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// ReviewerSlot is one reviewer slot of a tier's long form
+/// ([[reviews.tiers.X.reviewers]]): which logical model reviews, under which
+/// label, with what focus prompt and optional per-reviewer thinking level.
+public nonisolated struct Ycc_V1_ReviewerSlot: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// label; empty defaults to model
+  public var name: String = String()
+
+  /// logical model name (required)
+  public var model: String = String()
+
+  /// extra focus guidance for this reviewer
+  public var prompt: String = String()
+
+  /// "" = model default; off | low | medium | high | xhigh | max
+  public var thinking: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// ReviewTierInfo mirrors a [reviews.tiers.X] block plus derived flags. The
+/// models shorthand and the reviewers long form are mutually exclusive (setting
+/// both is rejected, matching config validation).
+public nonisolated struct Ycc_V1_ReviewTierInfo: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// tier name (map key in ycc.toml)
+  public var name: String = String()
+
+  /// "" | "agents" | "coordinator" (aliases self/self-review)
+  public var strategy: String = String()
+
+  /// "when to pick me" guidance shown to the coordinator
+  public var description_p: String = String()
+
+  /// extra guidance prepended to EVERY reviewer of the tier
+  public var prompt: String = String()
+
+  /// shorthand: one generic reviewer per logical model
+  public var models: [String] = []
+
+  /// long form: one slot per reviewer
+  public var reviewers: [Ycc_V1_ReviewerSlot] = []
+
+  /// one of the always-present tiers (simple/single-opus/high-powered)
+  public var builtin: Bool = false
+
+  /// has an explicit [reviews.tiers.X] entry (custom tier or built-in override)
+  public var configured: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// ListReviewTiers returns the EFFECTIVE tiers (built-ins overlaid with the
+/// configured entries) plus the effective default tier name, so a client can
+/// render exactly what spawn_reviewers would resolve.
+public nonisolated struct Ycc_V1_ListReviewTiersRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_ListReviewTiersResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// sorted by name
+  public var tiers: [Ycc_V1_ReviewTierInfo] = []
+
+  /// effective default (reviews.default, or "single-opus")
+  public var defaultTier: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// UpsertReviewTier adds or replaces the configured tier named tier.name and
+/// persists it to ycc.toml. Validated like config load (unknown strategy/model/
+/// thinking level, or models+reviewers both set, are invalid_argument). Takes
+/// effect on the next spawn_reviewers (tiers resolve per call).
+public nonisolated struct Ycc_V1_UpsertReviewTierRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var tier: Ycc_V1_ReviewTierInfo {
+    get {_tier ?? Ycc_V1_ReviewTierInfo()}
+    set {_tier = newValue}
+  }
+  /// Returns true if `tier` has been explicitly set.
+  public var hasTier: Bool {self._tier != nil}
+  /// Clears the value of `tier`. Subsequent reads from it will return its default value.
+  public mutating func clearTier() {self._tier = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _tier: Ycc_V1_ReviewTierInfo? = nil
+}
+
+public nonisolated struct Ycc_V1_UpsertReviewTierResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// RemoveReviewTier deletes the CONFIGURED entry for a tier and persists. A
+/// built-in name reverts to its built-in behaviour; a custom tier disappears.
+/// Rejected when reviews.default names the removed custom tier (change the
+/// default first) or when the tier has no configured entry.
+public nonisolated struct Ycc_V1_RemoveReviewTierRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var name: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_RemoveReviewTierResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// SetReviewDefault sets reviews.default (persisted). The tier must exist among
+/// the effective tiers; an empty name clears the setting (falling back to
+/// single-opus).
+public nonisolated struct Ycc_V1_SetReviewDefaultRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var name: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_SetReviewDefaultResponse: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -1534,6 +1747,38 @@ public nonisolated struct Ycc_V1_GetPlanResponse: Sendable {
   public init() {}
 }
 
+/// Project memory (spec §6.5): read-only access to memory.md — the advisory
+/// operational notes agents record across sessions — so clients can view what
+/// the agents have learned about working on the project.
+public nonisolated struct Ycc_V1_GetMemoryRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// registered project; empty allowed only when exactly one exists
+  public var project: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_GetMemoryResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// full markdown; "" when memory.md does not exist yet
+  public var content: String = String()
+
+  /// absolute path to memory.md
+  public var path: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 /// Quick-add backlog capture (spec §18.2, task 0016): a TUI overlay lets the user
 /// quick-add a backlog item mid-session WITHOUT disturbing the running session.
 /// The daemon runs a lightweight, off-stream capture agent that turns the
@@ -1862,6 +2107,9 @@ public nonisolated struct Ycc_V1_WorkLoopSession: Sendable {
 
   /// priced | unpriced | partial
   public var priceStatus: String = String()
+
+  /// wall-clock seconds the session took
+  public var durationSecs: Int64 = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -2767,6 +3015,75 @@ nonisolated extension Ycc_V1_RemoveProjectResponse: SwiftProtobuf.Message, Swift
   }
 
   public static func ==(lhs: Ycc_V1_RemoveProjectResponse, rhs: Ycc_V1_RemoveProjectResponse) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_RenameProjectRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RenameProjectRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{3}new_name\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.newName) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 1)
+    }
+    if !self.newName.isEmpty {
+      try visitor.visitSingularStringField(value: self.newName, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_RenameProjectRequest, rhs: Ycc_V1_RenameProjectRequest) -> Bool {
+    if lhs.name != rhs.name {return false}
+    if lhs.newName != rhs.newName {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_RenameProjectResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RenameProjectResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._project) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._project {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_RenameProjectResponse, rhs: Ycc_V1_RenameProjectResponse) -> Bool {
+    if lhs._project != rhs._project {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -4605,6 +4922,321 @@ nonisolated extension Ycc_V1_SetWorkImplementationResponse: SwiftProtobuf.Messag
   }
 }
 
+nonisolated extension Ycc_V1_ReviewerSlot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ReviewerSlot"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}model\0\u{1}prompt\0\u{1}thinking\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.model) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.prompt) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.thinking) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 1)
+    }
+    if !self.model.isEmpty {
+      try visitor.visitSingularStringField(value: self.model, fieldNumber: 2)
+    }
+    if !self.prompt.isEmpty {
+      try visitor.visitSingularStringField(value: self.prompt, fieldNumber: 3)
+    }
+    if !self.thinking.isEmpty {
+      try visitor.visitSingularStringField(value: self.thinking, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_ReviewerSlot, rhs: Ycc_V1_ReviewerSlot) -> Bool {
+    if lhs.name != rhs.name {return false}
+    if lhs.model != rhs.model {return false}
+    if lhs.prompt != rhs.prompt {return false}
+    if lhs.thinking != rhs.thinking {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_ReviewTierInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ReviewTierInfo"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}strategy\0\u{1}description\0\u{1}prompt\0\u{1}models\0\u{1}reviewers\0\u{1}builtin\0\u{1}configured\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.strategy) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.description_p) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.prompt) }()
+      case 5: try { try decoder.decodeRepeatedStringField(value: &self.models) }()
+      case 6: try { try decoder.decodeRepeatedMessageField(value: &self.reviewers) }()
+      case 7: try { try decoder.decodeSingularBoolField(value: &self.builtin) }()
+      case 8: try { try decoder.decodeSingularBoolField(value: &self.configured) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 1)
+    }
+    if !self.strategy.isEmpty {
+      try visitor.visitSingularStringField(value: self.strategy, fieldNumber: 2)
+    }
+    if !self.description_p.isEmpty {
+      try visitor.visitSingularStringField(value: self.description_p, fieldNumber: 3)
+    }
+    if !self.prompt.isEmpty {
+      try visitor.visitSingularStringField(value: self.prompt, fieldNumber: 4)
+    }
+    if !self.models.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.models, fieldNumber: 5)
+    }
+    if !self.reviewers.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.reviewers, fieldNumber: 6)
+    }
+    if self.builtin != false {
+      try visitor.visitSingularBoolField(value: self.builtin, fieldNumber: 7)
+    }
+    if self.configured != false {
+      try visitor.visitSingularBoolField(value: self.configured, fieldNumber: 8)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_ReviewTierInfo, rhs: Ycc_V1_ReviewTierInfo) -> Bool {
+    if lhs.name != rhs.name {return false}
+    if lhs.strategy != rhs.strategy {return false}
+    if lhs.description_p != rhs.description_p {return false}
+    if lhs.prompt != rhs.prompt {return false}
+    if lhs.models != rhs.models {return false}
+    if lhs.reviewers != rhs.reviewers {return false}
+    if lhs.builtin != rhs.builtin {return false}
+    if lhs.configured != rhs.configured {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_ListReviewTiersRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ListReviewTiersRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_ListReviewTiersRequest, rhs: Ycc_V1_ListReviewTiersRequest) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_ListReviewTiersResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ListReviewTiersResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}tiers\0\u{3}default_tier\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.tiers) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.defaultTier) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.tiers.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.tiers, fieldNumber: 1)
+    }
+    if !self.defaultTier.isEmpty {
+      try visitor.visitSingularStringField(value: self.defaultTier, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_ListReviewTiersResponse, rhs: Ycc_V1_ListReviewTiersResponse) -> Bool {
+    if lhs.tiers != rhs.tiers {return false}
+    if lhs.defaultTier != rhs.defaultTier {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_UpsertReviewTierRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".UpsertReviewTierRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}tier\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._tier) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._tier {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_UpsertReviewTierRequest, rhs: Ycc_V1_UpsertReviewTierRequest) -> Bool {
+    if lhs._tier != rhs._tier {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_UpsertReviewTierResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".UpsertReviewTierResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_UpsertReviewTierResponse, rhs: Ycc_V1_UpsertReviewTierResponse) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_RemoveReviewTierRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RemoveReviewTierRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_RemoveReviewTierRequest, rhs: Ycc_V1_RemoveReviewTierRequest) -> Bool {
+    if lhs.name != rhs.name {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_RemoveReviewTierResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RemoveReviewTierResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_RemoveReviewTierResponse, rhs: Ycc_V1_RemoveReviewTierResponse) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_SetReviewDefaultRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SetReviewDefaultRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_SetReviewDefaultRequest, rhs: Ycc_V1_SetReviewDefaultRequest) -> Bool {
+    if lhs.name != rhs.name {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_SetReviewDefaultResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SetReviewDefaultResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_SetReviewDefaultResponse, rhs: Ycc_V1_SetReviewDefaultResponse) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 nonisolated extension Ycc_V1_ListBacklogRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ListBacklogRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0")
@@ -5231,6 +5863,71 @@ nonisolated extension Ycc_V1_GetPlanResponse: SwiftProtobuf.Message, SwiftProtob
   }
 }
 
+nonisolated extension Ycc_V1_GetMemoryRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetMemoryRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.project.isEmpty {
+      try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_GetMemoryRequest, rhs: Ycc_V1_GetMemoryRequest) -> Bool {
+    if lhs.project != rhs.project {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_GetMemoryResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetMemoryResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}content\0\u{1}path\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.content) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.path) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.content.isEmpty {
+      try visitor.visitSingularStringField(value: self.content, fieldNumber: 1)
+    }
+    if !self.path.isEmpty {
+      try visitor.visitSingularStringField(value: self.path, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_GetMemoryResponse, rhs: Ycc_V1_GetMemoryResponse) -> Bool {
+    if lhs.content != rhs.content {return false}
+    if lhs.path != rhs.path {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 nonisolated extension Ycc_V1_CaptureBacklogItemRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CaptureBacklogItemRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{1}description\0\u{3}prior_question\0\u{3}prior_answer\0")
@@ -5836,7 +6533,7 @@ nonisolated extension Ycc_V1_WorkLoopDigestTask: SwiftProtobuf.Message, SwiftPro
 
 nonisolated extension Ycc_V1_WorkLoopSession: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".WorkLoopSession"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}focus\0\u{1}tokens\0\u{1}cost\0\u{3}price_status\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}focus\0\u{1}tokens\0\u{1}cost\0\u{3}price_status\0\u{3}duration_secs\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -5849,6 +6546,7 @@ nonisolated extension Ycc_V1_WorkLoopSession: SwiftProtobuf.Message, SwiftProtob
       case 3: try { try decoder.decodeSingularInt64Field(value: &self.tokens) }()
       case 4: try { try decoder.decodeSingularDoubleField(value: &self.cost) }()
       case 5: try { try decoder.decodeSingularStringField(value: &self.priceStatus) }()
+      case 6: try { try decoder.decodeSingularInt64Field(value: &self.durationSecs) }()
       default: break
       }
     }
@@ -5870,6 +6568,9 @@ nonisolated extension Ycc_V1_WorkLoopSession: SwiftProtobuf.Message, SwiftProtob
     if !self.priceStatus.isEmpty {
       try visitor.visitSingularStringField(value: self.priceStatus, fieldNumber: 5)
     }
+    if self.durationSecs != 0 {
+      try visitor.visitSingularInt64Field(value: self.durationSecs, fieldNumber: 6)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -5879,6 +6580,7 @@ nonisolated extension Ycc_V1_WorkLoopSession: SwiftProtobuf.Message, SwiftProtob
     if lhs.tokens != rhs.tokens {return false}
     if lhs.cost != rhs.cost {return false}
     if lhs.priceStatus != rhs.priceStatus {return false}
+    if lhs.durationSecs != rhs.durationSecs {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

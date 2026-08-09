@@ -16,6 +16,7 @@ extension YccClient: WorkLoopSource {}
 /// The daemon-side work loop lifecycle. Unknown future wire values remain safe.
 public enum WorkLoopState: String, Sendable, CaseIterable, Equatable {
     case running
+    case waiting
     case stopping
     case finished
     case none
@@ -32,6 +33,7 @@ public enum WorkLoopState: String, Sendable, CaseIterable, Equatable {
     public var title: String {
         switch self {
         case .running: return "Running"
+        case .waiting: return "Waiting"
         case .stopping: return "Stopping"
         case .finished: return "Finished"
         case .none: return "Not running"
@@ -40,8 +42,8 @@ public enum WorkLoopState: String, Sendable, CaseIterable, Equatable {
     }
 
     public var canStart: Bool { self == .none || self == .finished }
-    public var canStop: Bool { self == .running }
-    public var isActive: Bool { self == .running || self == .stopping }
+    public var canStop: Bool { self == .running || self == .waiting }
+    public var isActive: Bool { self == .running || self == .waiting || self == .stopping }
     public var shouldPoll: Bool { isActive }
 }
 
@@ -177,6 +179,23 @@ public final class WorkLoopModel {
         ].filter { !$0.rows.isEmpty }
     }
 
+    /// A compact status line for the backlog's work-loop banner.
+    public static func bannerLine(for loop: Ycc_V1_WorkLoopInfo?) -> String {
+        guard let loop else { return WorkLoopState.none.title }
+        switch state(for: loop) {
+        case .running:
+            return "Running · \(summaryLine(for: loop))"
+        case .waiting:
+            return waitingLine(for: loop)
+        case .stopping:
+            return "Stopping…"
+        case .finished:
+            return "Finished · \(summaryLine(for: loop))"
+        case .none, .unknown:
+            return state(for: loop).title
+        }
+    }
+
     /// A compact lifecycle/digest summary such as
     /// "3 sessions · 2 completed, 1 blocked".
     public static func summaryLine(for loop: Ycc_V1_WorkLoopInfo) -> String {
@@ -202,6 +221,18 @@ public final class WorkLoopModel {
         "\(UsageModel.formatTokens(tokens)) tokens · \(formatCost(cost, status: priceStatus))"
     }
 
+    /// Compact wall-clock duration for a completed work-loop session.
+    public static func durationText(secs: Int64) -> String? {
+        guard secs > 0 else { return nil }
+        if secs < 60 {
+            return "\(secs)s"
+        }
+        if secs < 3_600 {
+            return "\(secs / 60)m \(secs % 60)s"
+        }
+        return "\(secs / 3_600)h \((secs % 3_600) / 60)m"
+    }
+
     /// Cost text never presents incomplete pricing as exact.
     public static func formatCost(_ cost: Double, status: String) -> String {
         let status = status.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -218,6 +249,24 @@ public final class WorkLoopModel {
 
     public static func startedAtDate(for loop: Ycc_V1_WorkLoopInfo) -> Date? {
         parseTimestamp(loop.startedAt)
+    }
+
+    public static func resumeAtDate(for loop: Ycc_V1_WorkLoopInfo) -> Date? {
+        parseTimestamp(loop.resumeAt)
+    }
+
+    /// A localized waiting status such as
+    /// "Waiting for provider (rate_limit) — resumes 03:15".
+    public static func waitingLine(for loop: Ycc_V1_WorkLoopInfo) -> String {
+        let kind = loop.waitKind.trimmingCharacters(in: .whitespacesAndNewlines)
+        var line = "Waiting for provider"
+        if !kind.isEmpty {
+            line += " (\(kind))"
+        }
+        if let resumeAt = resumeAtDate(for: loop) {
+            line += " — resumes \(resumeAt.formatted(date: .omitted, time: .shortened))"
+        }
+        return line
     }
 
     private static func parseTimestamp(_ value: String) -> Date? {

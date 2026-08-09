@@ -36,11 +36,12 @@ type persistedWorkLoop struct {
 }
 
 type persistedWorkLoopSession struct {
-	SessionID   string  `json:"session_id"`
-	Focus       string  `json:"focus,omitempty"`
-	Tokens      int64   `json:"tokens"`
-	Cost        float64 `json:"cost"`
-	PriceStatus string  `json:"price_status"`
+	SessionID    string  `json:"session_id"`
+	Focus        string  `json:"focus,omitempty"`
+	Tokens       int64   `json:"tokens"`
+	Cost         float64 `json:"cost"`
+	PriceStatus  string  `json:"price_status"`
+	DurationSecs int64   `json:"duration_secs,omitempty"`
 }
 
 type persistedWorkLoopTask struct {
@@ -99,7 +100,7 @@ func persistedWorkLoopFromSnapshot(snapshot *WorkLoop) persistedWorkLoop {
 	for _, s := range snapshot.Sessions {
 		p.Sessions = append(p.Sessions, persistedWorkLoopSession{
 			SessionID: s.SessionID, Focus: s.Focus, Tokens: s.Tokens,
-			Cost: s.Cost, PriceStatus: s.PriceStatus,
+			Cost: s.Cost, PriceStatus: s.PriceStatus, DurationSecs: s.DurationSecs,
 		})
 	}
 	p.Completed = persistedTasks(snapshot.Completed)
@@ -203,6 +204,7 @@ func (m *Manager) restoreWorkLoopLocked(workspace string) {
 		wl.sessions = append(wl.sessions, loopSessRec{
 			id: s.SessionID, focus: s.Focus, tokens: s.Tokens,
 			cost: s.Cost, priceStatus: s.PriceStatus,
+			duration: time.Duration(s.DurationSecs) * time.Second,
 		})
 	}
 

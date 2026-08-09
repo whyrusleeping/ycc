@@ -1614,6 +1614,25 @@ func (m *Manager) AddProject(path, name string) (project.Project, error) {
 // RemoveProject deregisters a project by name.
 func (m *Manager) RemoveProject(name string) error { return m.projects.Remove(name) }
 
+// RenameProject renames a registered project, carrying its workstreams to the
+// new name. Live sessions and daemon work loops are keyed by the workspace's
+// absolute path — name resolution happens per request — so they follow the
+// rename with no further bookkeeping.
+func (m *Manager) RenameProject(oldName, newName string) (project.Project, error) {
+	p, err := m.projects.Rename(oldName, newName)
+	if err != nil {
+		return project.Project{}, err
+	}
+	if m.workstreams != nil {
+		if err := m.workstreams.RenameProject(oldName, newName); err != nil {
+			// The project rename itself committed; surface the label failure
+			// rather than half-undoing (a retry of the rename is a no-op).
+			return p, fmt.Errorf("project renamed, but relabeling workstreams failed: %w", err)
+		}
+	}
+	return p, nil
+}
+
 // Start creates, persists, and launches a new session.
 func (m *Manager) Start(cfg Config) (*Session, error) {
 	return m.start(cfg, true)
@@ -2589,6 +2608,31 @@ func (m *Manager) UpsertModel(name string, mdl config.Model, persist bool) error
 	return m.reg.UpsertModel(name, mdl, persist)
 }
 
+// ReviewTierConfigs lists the effective review tiers in configuration form plus
+// the effective default tier name (spec §13.1, §18.2) so clients can render and
+// edit them.
+func (m *Manager) ReviewTierConfigs() ([]config.ReviewTierListing, string) {
+	return m.reg.ReviewTierConfigs()
+}
+
+// UpsertReviewTier adds or replaces a configured review tier and persists it to
+// ycc.toml (spec §13.1, §18.2). Takes effect on the next spawn_reviewers.
+func (m *Manager) UpsertReviewTier(name string, t config.ReviewTier) error {
+	return m.reg.UpsertReviewTier(name, t)
+}
+
+// RemoveReviewTier deletes a configured review tier (a built-in name reverts to
+// its built-in behaviour) and persists (spec §13.1, §18.2).
+func (m *Manager) RemoveReviewTier(name string) error {
+	return m.reg.RemoveReviewTier(name)
+}
+
+// SetReviewDefault sets reviews.default (empty clears it) and persists (spec
+// §13.1, §18.2).
+func (m *Manager) SetReviewDefault(name string) error {
+	return m.reg.SetReviewDefault(name)
+}
+
 // WorkImplementation returns the effective work-mode implementation strategy
 // used when the next session is built (spec §10, §18.2).
 func (m *Manager) WorkImplementation() string { return m.reg.WorkImplementation() }
@@ -2767,10 +2811,33 @@ var ErrUnknownModel = errors.New("unknown model")
 // workspace, so StartWorkLoop handlers can map it to a failed-precondition code.
 var ErrLoopRunning = errors.New("work loop already running")
 
-// UsageReport scans the named project's workspace (or the sole project when
-// omitted) and returns the aggregated, priced usage breakdown (spec §20.3,
-// §20.5). Pricing comes from the daemon's model registry.
+// UsageReport scans the named project's workspace, or all registered project
+// workspaces when omitted, and returns the aggregated, priced usage breakdown
+// (spec §20.3, §20.5). Pricing comes from the daemon's model registry.
 func (m *Manager) UsageReport(project string, opts usage.Options) (*usage.Result, error) {
+	projects := m.projects.List()
+	if project == "" && len(projects) > 1 {
+		seen := make(map[string]struct{}, len(projects))
+		var entries []usage.Entry
+		for _, p := range projects {
+			absWS, err := filepath.Abs(p.Path)
+			if err != nil {
+				return nil, fmt.Errorf("resolve workspace for project %q: %w", p.Name, err)
+			}
+			if _, ok := seen[absWS]; ok {
+				continue
+			}
+			seen[absWS] = struct{}{}
+			projectEntries, err := usage.Scan(absWS)
+			if err != nil {
+				return nil, err
+			}
+			entries = append(entries, projectEntries...)
+		}
+		res := usage.Aggregate(entries, m.reg, opts)
+		return &res, nil
+	}
+
 	ws, err := m.resolveProjectWorkspace(project)
 	if err != nil {
 		return nil, err

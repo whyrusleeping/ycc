@@ -57,6 +57,7 @@ func TestFinishedWorkLoopRestoresDigest(t *testing.T) {
 			return loopSessRec{
 				id: "sess_" + id, focus: id, tokens: 125, cost: 0.25,
 				priceStatus: "priced",
+				duration:    90 * time.Second,
 				commits:     []loopCommit{{task: id, sha: "abc" + id}},
 				verdicts:    []string{"approve"},
 			}, false, nil
@@ -69,6 +70,9 @@ func TestFinishedWorkLoopRestoresDigest(t *testing.T) {
 	want := waitLoopFinished(t, m, "")
 	if len(want.Completed) != 1 || len(want.Blocked) != 1 {
 		t.Fatalf("source digest missing expected rows: completed=%d blocked=%d", len(want.Completed), len(want.Blocked))
+	}
+	if len(want.Sessions) != 2 || want.Sessions[0].DurationSecs != 90 || want.Sessions[1].DurationSecs != 90 {
+		t.Fatalf("source session durations = %#v, want two 90-second sessions", want.Sessions)
 	}
 
 	// A fresh manager simulates a daemon restart. It has no in-memory loop map,

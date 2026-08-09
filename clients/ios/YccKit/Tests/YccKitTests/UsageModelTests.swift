@@ -88,6 +88,19 @@ final class UsageModelTests: XCTestCase {
         XCTAssertEqual(source.usageArgs?.until, "")
     }
 
+    func testRefreshKeepsOverallScopeWithOneProject() async {
+        let source = MockUsageSource()
+        var project = Ycc_V1_ProjectInfo()
+        project.name = "only"
+        source.projects = [project]
+        let model = UsageModel(source: source)
+
+        await model.refresh()
+
+        XCTAssertEqual(source.usageArgs?.project, "")
+        XCTAssertEqual(model.selectedProject, "")
+    }
+
     func testDateFilterRoundTripsWhenEnabled() async {
         let source = MockUsageSource()
         let model = UsageModel(source: source)

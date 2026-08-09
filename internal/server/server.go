@@ -124,6 +124,26 @@ func (s *Server) RemoveProject(_ context.Context, req *connect.Request[v1.Remove
 	return connect.NewResponse(&v1.RemoveProjectResponse{}), nil
 }
 
+// RenameProject renames a registered project (spec §3.1). Unknown names map to
+// not_found and collisions to already_exists so clients can present precise
+// errors instead of a generic failure.
+func (s *Server) RenameProject(_ context.Context, req *connect.Request[v1.RenameProjectRequest]) (*connect.Response[v1.RenameProjectResponse], error) {
+	p, err := s.mgr.RenameProject(req.Msg.Name, req.Msg.NewName)
+	if err != nil {
+		code := connect.CodeInternal
+		switch {
+		case strings.Contains(err.Error(), "unknown project"):
+			code = connect.CodeNotFound
+		case strings.Contains(err.Error(), "already in use"):
+			code = connect.CodeAlreadyExists
+		case strings.Contains(err.Error(), "must not be empty"):
+			code = connect.CodeInvalidArgument
+		}
+		return nil, connect.NewError(code, err)
+	}
+	return connect.NewResponse(&v1.RenameProjectResponse{Project: &v1.ProjectInfo{Name: p.Name, Path: p.Path}}), nil
+}
+
 // ListSessions returns all live sessions and their current status, optionally
 // filtered to a single project (spec §3.1).
 func (s *Server) ListSessions(_ context.Context, req *connect.Request[v1.ListSessionsRequest]) (*connect.Response[v1.ListSessionsResponse], error) {
@@ -569,6 +589,87 @@ func (s *Server) DiscoverModels(ctx context.Context, req *connect.Request[v1.Dis
 	}), nil
 }
 
+// reviewTierToProto translates a config-form tier listing into the wire shape.
+func reviewTierToProto(l config.ReviewTierListing) *v1.ReviewTierInfo {
+	out := &v1.ReviewTierInfo{
+		Name:        l.Name,
+		Strategy:    l.Tier.Strategy,
+		Description: l.Tier.Description,
+		Prompt:      l.Tier.Prompt,
+		Models:      l.Tier.Models,
+		Builtin:     l.Builtin,
+		Configured:  l.Configured,
+	}
+	for _, rv := range l.Tier.Reviewers {
+		out.Reviewers = append(out.Reviewers, &v1.ReviewerSlot{
+			Name: rv.Name, Model: rv.Model, Prompt: rv.Prompt, Thinking: rv.Thinking,
+		})
+	}
+	return out
+}
+
+// protoToReviewTier translates the wire shape into a config.ReviewTier (the
+// derived builtin/configured flags are ignored on the way in).
+func protoToReviewTier(t *v1.ReviewTierInfo) config.ReviewTier {
+	out := config.ReviewTier{
+		Strategy:    t.Strategy,
+		Description: t.Description,
+		Prompt:      t.Prompt,
+		Models:      t.Models,
+	}
+	for _, rv := range t.Reviewers {
+		out.Reviewers = append(out.Reviewers, config.Reviewer{
+			Name: rv.Name, Model: rv.Model, Prompt: rv.Prompt, Thinking: rv.Thinking,
+		})
+	}
+	return out
+}
+
+// ListReviewTiers returns the effective review tiers (built-ins overlaid with
+// configured entries) plus the effective default tier (spec §13.1, §18.2).
+func (s *Server) ListReviewTiers(_ context.Context, _ *connect.Request[v1.ListReviewTiersRequest]) (*connect.Response[v1.ListReviewTiersResponse], error) {
+	listings, def := s.mgr.ReviewTierConfigs()
+	resp := &v1.ListReviewTiersResponse{DefaultTier: def}
+	for _, l := range listings {
+		resp.Tiers = append(resp.Tiers, reviewTierToProto(l))
+	}
+	return connect.NewResponse(resp), nil
+}
+
+// UpsertReviewTier adds or replaces a configured review tier; always persisted
+// to ycc.toml. Validation matches config load (spec §13.1).
+func (s *Server) UpsertReviewTier(_ context.Context, req *connect.Request[v1.UpsertReviewTierRequest]) (*connect.Response[v1.UpsertReviewTierResponse], error) {
+	t := req.Msg.Tier
+	if t == nil || strings.TrimSpace(t.Name) == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("tier name is required"))
+	}
+	if err := s.mgr.UpsertReviewTier(t.Name, protoToReviewTier(t)); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	return connect.NewResponse(&v1.UpsertReviewTierResponse{}), nil
+}
+
+// RemoveReviewTier deletes a configured review tier entry (a built-in name
+// reverts to built-in behaviour); always persisted (spec §13.1).
+func (s *Server) RemoveReviewTier(_ context.Context, req *connect.Request[v1.RemoveReviewTierRequest]) (*connect.Response[v1.RemoveReviewTierResponse], error) {
+	if req.Msg.Name == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("tier name is required"))
+	}
+	if err := s.mgr.RemoveReviewTier(req.Msg.Name); err != nil {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	return connect.NewResponse(&v1.RemoveReviewTierResponse{}), nil
+}
+
+// SetReviewDefault sets reviews.default (empty clears it back to single-opus);
+// always persisted (spec §13.1).
+func (s *Server) SetReviewDefault(_ context.Context, req *connect.Request[v1.SetReviewDefaultRequest]) (*connect.Response[v1.SetReviewDefaultResponse], error) {
+	if err := s.mgr.SetReviewDefault(req.Msg.Name); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	return connect.NewResponse(&v1.SetReviewDefaultResponse{}), nil
+}
+
 // SetRoleConfig reassigns per-role logical models (spec §13, §18.2). When
 // session_id names a live session the change applies to it immediately and is
 // persisted; with an empty/unknown session_id (e.g. changed from the home menu
@@ -793,6 +894,22 @@ func (s *Server) GetPlan(_ context.Context, req *connect.Request[v1.GetPlanReque
 	return connect.NewResponse(&v1.GetPlanResponse{Name: req.Msg.Name, Title: title, Content: content}), nil
 }
 
+// GetMemory returns the project's memory.md — the agents' advisory operational
+// notes (spec §6.5) — so clients can view what the agents have learned about
+// working on the project. Read-only; a missing file is not an error (empty
+// content), matching docs.Store.ReadMemory.
+func (s *Server) GetMemory(_ context.Context, req *connect.Request[v1.GetMemoryRequest]) (*connect.Response[v1.GetMemoryResponse], error) {
+	store, err := s.mgr.Backlog(req.Msg.Project)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	content, err := store.ReadMemory()
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&v1.GetMemoryResponse{Content: content, Path: store.MemoryPath()}), nil
+}
+
 // CaptureBacklogItem runs the lightweight, off-stream quick-add capture agent to
 // turn a natural-language description into a backlog task without disturbing any
 // running session (spec §18.2, task 0016). It streams the capture agent's action
@@ -1009,7 +1126,7 @@ func workLoopToProto(wl *session.WorkLoop) *v1.WorkLoopInfo {
 	for _, sn := range wl.Sessions {
 		info.Sessions = append(info.Sessions, &v1.WorkLoopSession{
 			SessionId: sn.SessionID, Focus: sn.Focus, Tokens: sn.Tokens,
-			Cost: sn.Cost, PriceStatus: sn.PriceStatus,
+			Cost: sn.Cost, PriceStatus: sn.PriceStatus, DurationSecs: sn.DurationSecs,
 		})
 	}
 	info.Completed = digestTasksToProto(wl.Completed)

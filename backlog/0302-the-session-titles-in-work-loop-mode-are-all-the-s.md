@@ -51,3 +51,7 @@ Fix (derivation-side, no new events; task_focus already carries the task id AND 
 - 2026-08-08 review tier: single-opus — reviewers: sol
 - 2026-08-08 review (sol): accept — The change correctly derives persisted session titles from the first non-empty task focus when the opening prompt is absent or exactly matches a canned work/chat/pm prompt, while preserving custom use
 …[truncated]
+- 2026-08-08 usage: 240,155 tok (in 152,822, out 14,117, cache_r 678,034, cache_w 35,721) · cost n/a (unpriced)
+  implementer: 172,405 tok (in 103,648, out 2,709, cache_r 66,048, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 57,093 tok (in 49,134, out 791, cache_r 7,168, cache_w 0) · cost n/a (unpriced)
+  coordinator: 10,657 tok (in 40, out 10,617, cache_r 604,818, cache_w 35,721) · cost n/a (unpriced)

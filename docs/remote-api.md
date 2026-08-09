@@ -203,6 +203,7 @@ JSON="Content-Type: application/json"
 |--------|---------|
 | [`ListProjects`](#listprojects) | list registered projects (multi-project daemon) |
 | [`AddProject`](#addproject--listdir) / [`ListDir`](#addproject--listdir) | register a workspace / browse daemon-host directories |
+| [`RemoveProject` / `RenameProject`](#addproject--listdir) | deregister / rename a registered project |
 | [`ListSessions`](#listsessions) | live sessions (optionally filtered by project) |
 | [`ListSessionHistory`](#listsessionhistory) | live + persisted sessions, most-recent first |
 | [`GetSessionTranscript`](#getsessiontranscript) | full event log for one session |
@@ -214,6 +215,7 @@ JSON="Content-Type: application/json"
 | [`StopSession`](#stopsession) | hard-terminate a session |
 | [`ResumeSession`](#resumesession) | re-open a persisted session on its existing log |
 | [`ListBacklog`](#listbacklog) / [`GetTask`](#gettask) | browse the durable backlog |
+| [`GetMemory`](#getmemory) | read the project's agent memory (memory.md) |
 | [`GetUsage`](#getusage) | priced token-usage breakdown |
 | [`GetBudget`](#getbudget) | configured spend-guard caps |
 | [`Notify`](#notify) | route a push notification through the daemon-side notifier |
@@ -276,6 +278,17 @@ curl -sS -H "$AUTH" -H "$JSON" -d '{"path":"/home/me/code/otherrepo"}' \
 
 ```json
 {"project":{"name":"otherrepo","path":"/home/me/code/otherrepo"}}
+```
+
+`RemoveProject` (`{"name": …}`) deregisters a project — registry entry only,
+no files touched. `RenameProject` (`{"name": …, "newName": …}`) renames one in
+place: the workspace path is unchanged (live sessions and work loops are keyed
+by path and follow automatically) and workstream registry entries are relabeled.
+Unknown name → `not_found`; collision with another project → `already_exists`.
+
+```
+curl -sS -H "$AUTH" -H "$JSON" -d '{"name":"otherrepo","newName":"webapp"}' \
+  $B/ycc.v1.SessionService/RenameProject
 ```
 
 ### ListSessions
@@ -573,6 +586,21 @@ curl -sS -H "$AUTH" -H "$JSON" -d '{"id":"0130"}' \
 ```
 
 Unknown id → `{"code":"not_found","message":"no task with id \"9999\""}`.
+
+### GetMemory
+
+The project's agent memory — memory.md at the workspace root (spec §6.5), the
+advisory operational notes agents record across sessions via the `remember`
+tool. Read-only; a missing file returns empty `content` (not an error).
+
+```
+curl -sS -H "$AUTH" -H "$JSON" -d '{}' \
+  $B/ycc.v1.SessionService/GetMemory
+```
+
+```json
+{"content":"# Project memory\n\n## Lessons learned\n- 2026-07-01: ...","path":"/home/me/code/ycc/memory.md"}
+```
 
 ### GetUsage
 

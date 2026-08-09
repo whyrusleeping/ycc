@@ -55,3 +55,7 @@ Verification: go build ./... && go test ./internal/session/ (plus go vet). Note 
 - 2026-08-09 review (sol): accept — The change correctly rebuilds and persists the digest after each successfully completed session, with accumulation happening first, so running GetWorkLoop snapshots expose incremental session counts a
 …[truncated]
 - 2026-08-09 decision: accept — selective commit (0293 Go edits only; 0303's uncommitted duration changes and other tasks' in_review work left in tree/index)
+- 2026-08-09 usage: 815,054 tok (in 446,889, out 23,589, cache_r 2,477,286, cache_w 31,906) · cost n/a (unpriced)
+  implementer: 472,419 tok (in 254,889, out 5,050, cache_r 212,480, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 327,187 tok (in 191,946, out 3,145, cache_r 132,096, cache_w 0) · cost n/a (unpriced)
+  coordinator: 15,448 tok (in 54, out 15,394, cache_r 2,132,710, cache_w 31,906) · cost n/a (unpriced)

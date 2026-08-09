@@ -13,7 +13,7 @@ struct UsageView: View {
 
     @State private var model: UsageModel?
 
-    /// The project to scope usage to (carried from the landing view).
+    /// The initial project scope; empty opens the all-projects rollup.
     private let initialProject: String
 
     init(initialProject: String) {
@@ -214,13 +214,14 @@ struct UsageView: View {
         @Bindable var model = model
         return Menu {
             Picker("Project", selection: $model.selectedProject) {
+                Text("All projects").tag("")
                 ForEach(model.projects, id: \.name) { project in
                     Text(project.name).tag(project.name)
                 }
             }
         } label: {
             Label(
-                model.selectedProject.isEmpty ? "Choose project" : model.selectedProject,
+                model.selectedProject.isEmpty ? "All projects" : model.selectedProject,
                 systemImage: "line.3.horizontal.decrease.circle")
         }
         .onChange(of: model.selectedProject) { _, _ in
@@ -238,8 +239,10 @@ struct UsageView: View {
 }
 
 /// A single usage row: the group label + a price-status badge on top, then the
-/// token classes (in/out/cache) and total, with the cost trailing.
-private struct UsageRowView: View {
+/// token classes (in/out/cache) and total, with the cost trailing. Internal
+/// (not file-private) so the per-session usage sheet renders identical rows
+/// (SessionUsageView.swift, task 0309).
+struct UsageRowView: View {
     let label: String
     let row: Ycc_V1_UsageRow
     var isTotal = false

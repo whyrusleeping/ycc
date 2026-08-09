@@ -161,3 +161,43 @@ func TestSetSessionIDAndRemove(t *testing.T) {
 		t.Fatalf("Remove unknown should be no-op: %v", err)
 	}
 }
+
+// TestRenameProjectRelabelsWorkstreams verifies a project rename carries its
+// workstreams (and only its workstreams) to the new name, persistently.
+func TestRenameProjectRelabelsWorkstreams(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "workstreams.json")
+	r, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := r.Add(mk("ws_a", "old", "/tmp/wt/a")); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if err := r.Add(mk("ws_b", "other", "/tmp/wt/b")); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if err := r.RenameProject("old", "new"); err != nil {
+		t.Fatalf("RenameProject: %v", err)
+	}
+	if got := r.ListByProject("new"); len(got) != 1 || got[0].ID != "ws_a" {
+		t.Fatalf("ListByProject(new) = %+v, want [ws_a]", got)
+	}
+	if got := r.ListByProject("old"); len(got) != 0 {
+		t.Fatalf("ListByProject(old) = %+v, want empty", got)
+	}
+	if got := r.ListByProject("other"); len(got) != 1 || got[0].ID != "ws_b" {
+		t.Fatalf("ListByProject(other) = %+v, want [ws_b] untouched", got)
+	}
+	// Persisted: a reopened registry sees the new label.
+	r2, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if got, ok := r2.Get("ws_a"); !ok || got.Project != "new" {
+		t.Fatalf("reopened ws_a = %+v, want project new", got)
+	}
+	// No matching workstreams is a no-op success.
+	if err := r.RenameProject("nobody", "anything"); err != nil {
+		t.Fatalf("no-op RenameProject: %v", err)
+	}
+}

@@ -17,9 +17,14 @@ import YccProto
 /// ``AppModel/handleUnauthorized()``.
 struct BacklogView: View {
     @Environment(AppModel.self) private var app
+    @Environment(HomeRouter.self) private var router
 
     @State private var model: BacklogModel?
+    @State private var loopModel: WorkLoopModel?
+    @State private var lastLoopKey: LoopSnapshotKey?
     @State private var showCapture = false
+    @State private var showLoopStartConfirmation = false
+    @State private var showLoopStopConfirmation = false
     /// Board vs list, remembered across launches.
     @AppStorage("backlog.presentation") private var presentation: Presentation = .board
     /// Card/row ordering, shared by both presentations and remembered across launches.
@@ -30,6 +35,12 @@ struct BacklogView: View {
 
     enum Presentation: String {
         case board, list
+    }
+
+    private struct LoopSnapshotKey: Equatable {
+        let project: String
+        let state: WorkLoopState
+        let sessionsRun: Int32
     }
 
     init(initialProject: String) {
@@ -70,8 +81,53 @@ struct BacklogView: View {
                 QuickCaptureView(model: model)
             }
         }
+        .confirmationDialog(
+            "Start unattended work loop?",
+            isPresented: $showLoopStartConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Start loop") {
+                guard let loopModel = scopedLoopModel else { return }
+                Task { await loopModel.start() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The daemon will drain ready backlog tasks unattended until none remain or a budget cap trips. This can spend tokens while your phone is locked or suspended.")
+        }
+        .confirmationDialog(
+            "Stop work loop gracefully?",
+            isPresented: $showLoopStopConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Stop loop", role: .destructive) {
+                guard let loopModel = scopedLoopModel else { return }
+                Task { await loopModel.stop() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if scopedLoopModel?.state == .waiting {
+                Text("The loop is waiting for the provider; stopping ends the wait immediately. The daemon will not pick another backlog task.")
+            } else {
+                Text("The current session will finish. The daemon will not pick another backlog task.")
+            }
+        }
+        .alert(
+            "Action failed",
+            isPresented: Binding(
+                get: { scopedLoopModel?.actionError != nil },
+                set: { if !$0 { scopedLoopModel?.actionError = nil } }),
+            presenting: scopedLoopModel?.actionError
+        ) { _ in
+            Button("OK", role: .cancel) { scopedLoopModel?.actionError = nil }
+        } message: { message in
+            Text(message)
+        }
         .task { await ensureLoaded() }
+        .task(id: workLoopTaskID) { await loadAndPollWorkLoop() }
         .onChange(of: model?.unauthorized ?? false) { _, isUnauthorized in
+            if isUnauthorized { app.handleUnauthorized() }
+        }
+        .onChange(of: loopModel?.unauthorized ?? false) { _, isUnauthorized in
             if isUnauthorized { app.handleUnauthorized() }
         }
         .onChange(of: backlogSort) { _, sort in
@@ -107,8 +163,18 @@ struct BacklogView: View {
         .disabled(model == nil)
     }
 
-    @ViewBuilder
     private func content(_ model: BacklogModel) -> some View {
+        VStack(spacing: 0) {
+            if !model.selectedProject.isEmpty, app.client != nil {
+                workLoopBanner(model)
+                Divider()
+            }
+            backlogContent(model)
+        }
+    }
+
+    @ViewBuilder
+    private func backlogContent(_ model: BacklogModel) -> some View {
         if model.isLoading && model.tasks.isEmpty {
             ProgressView()
         } else if let errorMessage = model.errorMessage, model.tasks.isEmpty {
@@ -138,6 +204,56 @@ struct BacklogView: View {
         } else {
             taskList(model)
         }
+    }
+
+    private func workLoopBanner(_ model: BacklogModel) -> some View {
+        let loopModel = scopedLoopModel
+        let state = loopModel?.state ?? .none
+        return HStack(spacing: 10) {
+            Button {
+                router.open(.workLoop(project: model.selectedProject))
+            } label: {
+                HStack(spacing: 8) {
+                    WorkLoopStateBadge(state: state)
+                    Text(WorkLoopModel.bannerLine(for: loopModel?.loop))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if loopModel?.canStart == true {
+                Button {
+                    showLoopStartConfirmation = true
+                } label: {
+                    Label("Start loop", systemImage: "play.circle")
+                        .labelStyle(.iconOnly)
+                }
+                .accessibilityLabel("Start work loop")
+            } else if state == .stopping {
+                Button {} label: {
+                    Label("Stopping…", systemImage: "stop.circle")
+                        .font(.caption)
+                }
+                .disabled(true)
+                .accessibilityLabel("Stopping work loop")
+            } else if state.isActive {
+                Button(role: .destructive) {
+                    showLoopStopConfirmation = true
+                } label: {
+                    Label("Stop loop", systemImage: "stop.circle")
+                        .labelStyle(.iconOnly)
+                }
+                .disabled(loopModel?.canStop != true)
+                .accessibilityLabel("Stop work loop")
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(Color(.secondarySystemGroupedBackground))
     }
 
     private func updateErrorBinding(_ model: BacklogModel) -> Binding<Bool> {
@@ -222,6 +338,87 @@ struct BacklogView: View {
         }
     }
 
+    private var scopedLoopModel: WorkLoopModel? {
+        guard let model, let loopModel,
+              !model.selectedProject.isEmpty,
+              loopModel.project == model.selectedProject else { return nil }
+        return loopModel
+    }
+
+    /// The project scopes the model; the polling flag restarts this task when an
+    /// action moves the loop into or out of an active state.
+    private var workLoopTaskID: String {
+        let project = model?.selectedProject ?? ""
+        let polling = scopedLoopModel?.shouldPoll == true
+        let clientAvailable = app.client != nil
+        return "\(project)|\(polling)|\(clientAvailable)"
+    }
+
+    /// Refresh once, then poll while active. Loop lifecycle/session changes also
+    /// reload the backlog so cards track unattended progress across lanes.
+    private func loadAndPollWorkLoop() async {
+        guard let backlogModel = model else {
+            loopModel = nil
+            return
+        }
+        let project = backlogModel.selectedProject
+        guard !project.isEmpty, let client = app.client else {
+            loopModel = nil
+            return
+        }
+        if loopModel?.project != project {
+            loopModel = WorkLoopModel(source: client, project: project)
+        }
+        guard let activeLoopModel = loopModel else { return }
+
+        await activeLoopModel.refresh()
+        recordLoopSnapshot(
+            activeLoopModel,
+            backlogModel: backlogModel,
+            project: project)
+
+        while !Task.isCancelled, activeLoopModel.shouldPoll {
+            do {
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+            } catch {
+                return
+            }
+            guard let currentLoopModel = loopModel,
+                  currentLoopModel === activeLoopModel,
+                  backlogModel.selectedProject == project else { return }
+
+            await activeLoopModel.refresh()
+            recordLoopSnapshot(
+                activeLoopModel,
+                backlogModel: backlogModel,
+                project: project)
+        }
+    }
+
+    /// Persist the last observed loop snapshot across `.task(id:)` restarts. The
+    /// backlog reload runs in an unstructured task so a polling-flag transition
+    /// cannot cancel the final lane update as the loop finishes.
+    private func recordLoopSnapshot(
+        _ loopModel: WorkLoopModel,
+        backlogModel: BacklogModel,
+        project: String
+    ) {
+        let key = LoopSnapshotKey(
+            project: project,
+            state: loopModel.state,
+            sessionsRun: loopModel.loop?.sessionsRun ?? 0)
+        let previousKey = lastLoopKey
+        lastLoopKey = key
+
+        guard let previousKey,
+              previousKey.project == project,
+              previousKey != key else { return }
+        Task {
+            guard backlogModel.selectedProject == project else { return }
+            await backlogModel.refresh()
+        }
+    }
+
     private func ensureLoaded() async {
         if model == nil {
             guard let client = app.client else { return }
@@ -257,13 +454,14 @@ func statusMenu(_ model: BacklogModel, task: Ycc_V1_BacklogTaskSummary) -> some 
 
 // MARK: - Board
 
-/// Horizontally snapping kanban lanes. Each lane is a fixed fraction of the
-/// screen so the neighbouring column peeks in, which is what makes it read as a
-/// board you can push cards across rather than a paged carousel.
+/// Horizontally snapping kanban lanes in workflow order, with proposed kept
+/// leftmost. The board initially focuses todo, while the previous lane's trailing
+/// edge peeks in on the left as a hint that the user can swipe back.
 private struct BacklogBoard: View {
     let model: BacklogModel
 
     @State private var containerWidth: CGFloat = 375
+    @State private var focusedLane: String? = TaskStatus.todo.rawValue
 
     private var laneWidth: CGFloat { min(max(containerWidth * 0.82, 250), 340) }
 
@@ -280,9 +478,11 @@ private struct BacklogBoard: View {
             // rather than padding for the inset.
             .scrollTargetLayout()
         }
-        .contentMargins(.horizontal, 12, for: .scrollContent)
+        .contentMargins(.leading, 30, for: .scrollContent)
+        .contentMargins(.trailing, 12, for: .scrollContent)
         .contentMargins(.vertical, 10, for: .scrollContent)
         .scrollTargetBehavior(.viewAligned)
+        .scrollPosition(id: $focusedLane, anchor: .leading)
         .background(Color(.systemGroupedBackground))
         .background {
             GeometryReader { geometry in

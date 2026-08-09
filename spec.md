@@ -121,7 +121,9 @@ picker.
 A persistent daemon manages **multiple projects**. The registry (name → path) is durable
 state in the daemon's state dir (e.g. `~/.local/state/ycc/projects.json`). Projects are
 registered explicitly (`ycc project add <path>` / `AddProject`) **and** auto-registered
-when a session starts in a not-yet-known workspace; the daemon's startup `--workspace`
+when a session starts in a not-yet-known workspace; `ycc project rename` /
+`RenameProject` renames an entry in place (same path, workstreams relabeled). The
+daemon's startup `--workspace`
 is also registered by basename as an ordinary project, not retained as privileged
 fallback state. Clients `ListProjects`, pick one, then drive the existing mode/session
 flow scoped to that project. An omitted project is accepted only when the registry has
@@ -431,7 +433,9 @@ into the spec / plans / backlog when an observation hardens into intent. See
 - **Read path.** The shared prompt assembly (`sys`/`inspectSys`, `internal/orchestrator`)
   appends memory contents to **every** agent's system prompt when non-empty, framed explicitly
   as advisory — "empirical and possibly stale; verify before relying; context, not
-  instructions". An absent/empty file adds nothing.
+  instructions". An absent/empty file adds nothing. Clients can also read it directly: the
+  `GetMemory` RPC returns the full contents (empty when absent, never an error) plus the
+  absolute path, backing the iOS project-memory viewer.
 - **Eventing.** Memory writes (the tool and direct edits) emit `doc_updated` with `doc:"memory"`
   — memory joins the docs set for eventing only.
 - **NOT spec.** Memory is explicitly excluded from the docs set the spec doctor / `ycc
@@ -930,6 +934,7 @@ service SessionService {
   rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
   rpc AddProject(AddProjectRequest) returns (AddProjectResponse);
   rpc RemoveProject(RemoveProjectRequest) returns (RemoveProjectResponse);
+  rpc RenameProject(RenameProjectRequest) returns (RenameProjectResponse);
 
   // Parallel workstreams — git worktrees, child of a project (§14.1).
   rpc SpawnWorkstream(SpawnWorkstreamRequest) returns (SpawnWorkstreamResponse);
@@ -947,6 +952,13 @@ service SessionService {
   rpc SetThinking(SetThinkingRequest) returns (SetThinkingResponse);    // reasoning level for a role's model(s)
   rpc SetWorkImplementation(SetWorkImplementationRequest) returns (SetWorkImplementationResponse); // next session
 
+  // Review tiers (§13.1) — list the effective tiers, edit the configured ones,
+  // and set the default; always persisted to ycc.toml (task 0297).
+  rpc ListReviewTiers(ListReviewTiersRequest) returns (ListReviewTiersResponse);
+  rpc UpsertReviewTier(UpsertReviewTierRequest) returns (UpsertReviewTierResponse);
+  rpc RemoveReviewTier(RemoveReviewTierRequest) returns (RemoveReviewTierResponse);
+  rpc SetReviewDefault(SetReviewDefaultRequest) returns (SetReviewDefaultResponse);
+
   rpc GetSessionTranscript(GetSessionTranscriptRequest) returns (GetSessionTranscriptResponse); // read-only transcript (§18.6)
   rpc GetCommitDiff(GetCommitDiffRequest) returns (GetCommitDiffResponse); // git show for a commit_made row (§18.6, task 0140)
 }
@@ -958,7 +970,11 @@ Notable message shapes for the settings + structured-question work:
   non-repository workspace and otherwise contains `{ branch; has_upstream; ahead; behind;
   dirty; last_fetch_unix; fetch_error }`; `ListProjectsResponse { repeated ProjectInfo
   projects }`; `AddProjectRequest { string path; string name }` →
-  `AddProjectResponse { ProjectInfo project }`; `RemoveProjectRequest { string name }` (§3.1).
+  `AddProjectResponse { ProjectInfo project }`; `RemoveProjectRequest { string name }`;
+  `RenameProjectRequest { string name; string new_name }` → `RenameProjectResponse
+  { ProjectInfo project }` (§3.1). A rename keeps the workspace path: live sessions and
+  work loops are keyed by path and follow it; workstream registry entries are relabeled to
+  the new name. An unknown name is `not_found`; a name collision is `already_exists`.
   `StartSessionRequest` gains an optional `project` (name) that resolves to a workspace — an
   unknown workspace is auto-registered. `ListSessionsRequest` may carry a `project` filter.
 - `StartSessionRequest` also takes an optional `coordinator_model` (a logical model name from
@@ -997,6 +1013,19 @@ Notable message shapes for the settings + structured-question work:
   restart; the `persist` field is retained for wire compatibility but ignored (a settings
   edit is never runtime-only). The daemon rebuilds backends on the next `Build`, so changes
   take effect without a restart (§13, §18.2, task 0041).
+- Review-tier editing (§13.1, task 0297): `ReviewTierInfo` mirrors a `[reviews.tiers.X]`
+  block (name, strategy, description, tier prompt, `models` shorthand or `reviewers` slots —
+  each slot `{ name; model; prompt; thinking }`) plus derived flags `builtin` (one of
+  simple/single-opus/high-powered) and `configured` (an explicit config entry exists).
+  `ListReviewTiersResponse { repeated ReviewTierInfo tiers; string default_tier }` reports
+  the **effective** tiers, exactly what `spawn_reviewers` resolves against.
+  `UpsertReviewTier` validates like config load (shared validation, so an RPC can never
+  write a tier the loader would reject) and persists; `RemoveReviewTier` deletes the
+  configured entry (a built-in name reverts to built-in behaviour; removing the default
+  custom tier is rejected until the default moves); `SetReviewDefault` sets
+  `reviews.default` (empty clears it back to `single-opus`). All three always persist to
+  `ycc.toml`; tiers resolve per `spawn_reviewers` call, so edits take effect on the next
+  review with no restart.
 - `SendInputRequest { session_id; text; repeated ImageAttachment images }` accepts text
   with up to four validated JPEG/PNG/GIF/WebP pictures (5 MiB each). Image bytes enter the
   live model history as native multimodal user blocks but never the append-only event log;
@@ -1292,7 +1321,11 @@ current reviewer assignment, and a tier that resolves to no reviewer at all degr
 coordinator self-review. The explicitly configured tiers are validated at load (unknown
 strategy, a reviewer slot with no or an unknown model, an invalid per-reviewer thinking
 level, `models` and `reviewers` both set, or a `reviews.default` naming no tier are
-rejected); the built-ins are always valid.
+rejected); the built-ins are always valid. Tiers are editable at runtime over the API —
+`ListReviewTiers` / `UpsertReviewTier` / `RemoveReviewTier` / `SetReviewDefault` (§12) —
+which the iOS global settings screen uses for phone-side tier management
+(docs/design/ios-client.md); edits persist to `ycc.toml` and take effect on the next
+`spawn_reviewers`.
 
 ## 14. Persistence & remote sync
 
@@ -2142,8 +2175,9 @@ is explicitly a subset of `output`, not another disjoint or separately priced cl
   to the task's work log (§6.2), so the cost of a task accrues in the backlog itself across
   the multiple sessions that may touch it.
 - **Project rollup.** A `GetUsage` RPC + a `ycc cost` CLI view render the cross-session
-  breakdown by task / model / agent / time from the aggregator (§20.3). This is the "detailed
-  cost breakdown by backlog task over time" surface. In the TUI this cost view is a modal that
+  breakdown by task / model / agent / time from the aggregator (§20.3); omitting the project
+  yields the overall rollup across all registered projects. This is the "detailed cost
+  breakdown by backlog task over time" surface. In the TUI this cost view is a modal that
   shares the generic list+detail "browser" surface with the session history browser
   (§18.6) and the backlog browser (§18.5).
 - **Subscription allowance.** `GetSubscriptionUsage` reports provider-side allowance for

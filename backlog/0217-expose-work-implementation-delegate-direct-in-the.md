@@ -86,3 +86,7 @@ IMPORTANT: the working tree contains OTHER tasks' uncommitted in_review work (se
 - 2026-08-08 review tier: single-opus — reviewers: sol
 - 2026-08-08 review (sol): accept — The change fully implements task 0217. The protobuf API and generated Go/Swift bindings expose the resolved setting and setter RPC; the server delegates validation/persistence to the registry and repo
 …[truncated]
+- 2026-08-08 usage: 3,650,402 tok (in 1,069,594, out 35,400, cache_r 4,752,758, cache_w 105,939) · cost n/a (unpriced)
+  implementer: 3,186,406 tok (in 832,140, out 10,074, cache_r 2,344,192, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 440,805 tok (in 237,376, out 2,213, cache_r 201,216, cache_w 0) · cost n/a (unpriced)
+  coordinator: 23,191 tok (in 78, out 23,113, cache_r 2,207,350, cache_w 105,939) · cost n/a (unpriced)

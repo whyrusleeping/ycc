@@ -72,3 +72,7 @@ NOTE for commit stage (coordinator): tree holds other tasks' uncommitted work; m
 - 2026-08-08 review tier: single-opus — reviewers: sol
 - 2026-08-08 review (sol): accept — The new `ycc ws` command group satisfies the task: list and path both use `ListWorkstreams` through the existing daemon-aware dial path, list supports project filtering and mirrors the TUI row semanti
 …[truncated]
+- 2026-08-08 usage: 856,725 tok (in 483,154, out 19,523, cache_r 1,061,562, cache_w 45,413) · cost n/a (unpriced)
+  implementer: 658,734 tok (in 346,592, out 8,014, cache_r 304,128, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 188,604 tok (in 136,530, out 2,154, cache_r 49,920, cache_w 0) · cost n/a (unpriced)
+  coordinator: 9,387 tok (in 32, out 9,355, cache_r 707,514, cache_w 45,413) · cost n/a (unpriced)

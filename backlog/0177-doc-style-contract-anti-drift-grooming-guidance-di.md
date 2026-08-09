@@ -67,3 +67,7 @@ Keep the contract doc itself an exemplar of the rules: terse, no bold warnings, 
 - 2026-08-08 review tier: single-opus — reviewers: sol
 - 2026-08-08 review (sol): accept — The change fully satisfies task 0177. It adds a concise, evidence-first document-style contract; references it from both PM and grooming prompts; explicitly directs memory grooming to remove self-exho
 …[truncated]
+- 2026-08-08 usage: 852,303 tok (in 395,171, out 19,628, cache_r 1,180,454, cache_w 31,712) · cost n/a (unpriced)
+  implementer: 729,294 tok (in 311,381, out 6,521, cache_r 411,392, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 111,299 tok (in 83,762, out 1,425, cache_r 26,112, cache_w 0) · cost n/a (unpriced)
+  coordinator: 11,710 tok (in 28, out 11,682, cache_r 742,950, cache_w 31,712) · cost n/a (unpriced)

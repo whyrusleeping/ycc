@@ -1,10 +1,10 @@
 ---
 id: "0206"
 title: Make the full design-doc set committable and spec-checkable
-status: todo
+status: proposed
 priority: 2
 created: "2026-07-15"
-updated: "2026-07-15"
+updated: "2026-08-08"
 depends_on: []
 spec_refs:
     - Document model#Design docs — entry point + docs set

@@ -115,3 +115,8 @@ NOTE: the worktree contains OTHER tasks' uncommitted work (proto, server.go, ses
 …[truncated]
 - 2026-08-09 review (sol): accept — The revision addresses the stale-snapshot issue: the TUI now re-polls the local-only `ListProjects` status while the picker is active, with a test covering refresh and cancellation after leaving the p
 …[truncated]
+- 2026-08-09 decision: accept — reviewed (sol accept after refresh-loop revision); selective commit b2290d7 via temp index onto HEAD blobs (other tasks' uncommitted work left in tree); status in_review pending on-device iOS badge validation; commit also fixed stale ycc.connect.swift (0254 drift) and hardened Repo.Fetch against credential prompts
+- 2026-08-09 usage: 6,956,980 tok (in 1,562,007, out 58,141, cache_r 9,583,303, cache_w 174,725) · cost n/a (unpriced)
+  implementer: 5,732,544 tok (in 991,892, out 21,548, cache_r 4,719,104, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 1,196,007 tok (in 570,011, out 8,268, cache_r 617,728, cache_w 0) · cost n/a (unpriced)
+  coordinator: 28,429 tok (in 104, out 28,325, cache_r 4,246,471, cache_w 174,725) · cost n/a (unpriced)

@@ -71,12 +71,44 @@ public final class YccClient: Sendable {
         }
     }
 
+    /// Lists child directories on the daemon host for the add-project browser.
+    /// An empty `path` resolves to the daemon user's home directory; `suggest`
+    /// additionally asks for likely project paths near registered workspaces.
+    public func listDir(path: String, suggest: Bool) async throws -> Ycc_V1_ListDirResponse {
+        var request = Ycc_V1_ListDirRequest()
+        request.path = path
+        request.suggest = suggest
+        let response = await generated.listDir(request: request)
+        switch response.result {
+        case .success(let message):
+            return message
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
     /// Deregister a project from the daemon. This only removes the registry entry;
     /// it does not delete the workspace or any files on the daemon host.
     public func removeProject(name: String) async throws {
         var request = Ycc_V1_RemoveProjectRequest()
         request.name = name
         try unary(await generated.removeProject(request: request))
+    }
+
+    /// Rename a registered project. The workspace path is unchanged — live
+    /// sessions, history, and work loops follow the rename daemon-side. Fails
+    /// with `.notFound` for an unknown name and `.rpc` on a name collision.
+    public func renameProject(name: String, to newName: String) async throws -> Ycc_V1_ProjectInfo {
+        var request = Ycc_V1_RenameProjectRequest()
+        request.name = name
+        request.newName = newName
+        let response = await generated.renameProject(request: request)
+        switch response.result {
+        case .success(let message):
+            return message.project
+        case .failure(let error):
+            throw Self.map(error)
+        }
     }
 
     /// Lists the daemon's session history — live and persisted, most-recent
@@ -417,6 +449,25 @@ public final class YccClient: Sendable {
         }
     }
 
+    // MARK: - Project memory
+
+    /// Fetch the project's memory.md (`GetMemory`, spec §6.5): the agents'
+    /// advisory operational notes recorded across sessions. `content` is empty
+    /// when no memory has been recorded yet (not an error); `path` is the
+    /// absolute file path on the daemon host. `project` is optional for a
+    /// single-project daemon.
+    public func getMemory(project: String = "") async throws -> Ycc_V1_GetMemoryResponse {
+        var request = Ycc_V1_GetMemoryRequest()
+        request.project = project
+        let response = await generated.getMemory(request: request)
+        switch response.result {
+        case .success(let message):
+            return message
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
     // MARK: - Usage & budget (task 0188)
 
     /// Priced token-usage breakdown, grouped and filtered (`GetUsage`, spec
@@ -554,6 +605,41 @@ public final class YccClient: Sendable {
         }
     }
 
+    // MARK: - Review tiers (task 0297, spec §13.1)
+
+    /// List the effective review tiers (built-ins overlaid with configured
+    /// entries) plus the effective default tier name.
+    public func listReviewTiers() async throws -> Ycc_V1_ListReviewTiersResponse {
+        let response = await generated.listReviewTiers(request: Ycc_V1_ListReviewTiersRequest())
+        switch response.result {
+        case .success(let message): return message
+        case .failure(let error): throw Self.map(error)
+        }
+    }
+
+    /// Add or replace a configured review tier; the daemon validates it like
+    /// config load and persists to ycc.toml.
+    public func upsertReviewTier(_ tier: Ycc_V1_ReviewTierInfo) async throws {
+        var request = Ycc_V1_UpsertReviewTierRequest()
+        request.tier = tier
+        try unary(await generated.upsertReviewTier(request: request))
+    }
+
+    /// Remove a configured review tier entry. A built-in name reverts to its
+    /// built-in behaviour; the daemon rejects removing the default custom tier.
+    public func removeReviewTier(name: String) async throws {
+        var request = Ycc_V1_RemoveReviewTierRequest()
+        request.name = name
+        try unary(await generated.removeReviewTier(request: request))
+    }
+
+    /// Set `reviews.default` (empty clears back to single-opus); persisted.
+    public func setReviewDefault(name: String) async throws {
+        var request = Ycc_V1_SetReviewDefaultRequest()
+        request.name = name
+        try unary(await generated.setReviewDefault(request: request))
+    }
+
     // MARK: - Workstreams & commit diff (task 0189)
 
     /// List a project's workstreams (`ListWorkstreams`, design §6/§8). `project`
@@ -617,6 +703,19 @@ public final class YccClient: Sendable {
         var request = Ycc_V1_DiscardWorkstreamRequest()
         request.workstreamID = workstreamId
         try unary(await generated.discardWorkstream(request: request))
+    }
+
+    /// Re-queue a ready or needs-attention workstream for automatic integration.
+    public func retryIntegration(workstreamId: String) async throws -> Ycc_V1_WorkstreamInfo {
+        var request = Ycc_V1_RetryIntegrationRequest()
+        request.workstreamID = workstreamId
+        let response = await generated.retryIntegration(request: request)
+        switch response.result {
+        case .success(let message):
+            return message.workstream
+        case .failure(let error):
+            throw Self.map(error)
+        }
     }
 
     /// Fetch a commit's `git show` diff (`GetCommitDiff`, task 0140). `sha` is a

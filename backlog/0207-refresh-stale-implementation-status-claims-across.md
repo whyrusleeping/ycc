@@ -80,3 +80,7 @@ Commit (coordinator): selective commit per the 0289 lesson — replay 0207's edi
 - 2026-08-08 review (sol): accept — The revision resolves the prior contradictions. The iOS design now accurately describes the shipped daemon-side work loop, persisted/interrupted restart behavior, iOS validation status, and existing s
 …[truncated]
 - 2026-08-08 decision: accept — selective commit (0207 doc edits only; other tasks' uncommitted in_review work left in tree)
+- 2026-08-08 usage: 7,224,487 tok (in 1,896,480, out 51,847, cache_r 7,828,094, cache_w 131,201) · cost n/a (unpriced)
+  implementer: 5,655,514 tok (in 1,136,863, out 18,427, cache_r 4,500,224, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 1,543,211 tok (in 759,535, out 7,740, cache_r 775,936, cache_w 0) · cost n/a (unpriced)
+  coordinator: 25,762 tok (in 82, out 25,680, cache_r 2,551,934, cache_w 131,201) · cost n/a (unpriced)

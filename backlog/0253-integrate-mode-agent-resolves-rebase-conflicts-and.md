@@ -110,3 +110,7 @@ Verify: go build ./... && go vet ./... && go test ./internal/session/... ./inter
 …[truncated]
 - 2026-08-08 review (sol): accept — The revision fixes the conflict-recovery prompt path by carrying the configured verify command in the conflict outcome, with an assertion covering that handoff. The integrate agent now receives the ba
 …[truncated]
+- 2026-08-08 usage: 9,568,774 tok (in 2,154,894, out 53,112, cache_r 12,144,851, cache_w 187,811) · cost n/a (unpriced)
+  implementer: 7,877,916 tok (in 1,406,199, out 27,941, cache_r 6,443,776, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 1,672,265 tok (in 748,631, out 6,642, cache_r 916,992, cache_w 0) · cost n/a (unpriced)
+  coordinator: 18,593 tok (in 64, out 18,529, cache_r 4,784,083, cache_w 187,811) · cost n/a (unpriced)

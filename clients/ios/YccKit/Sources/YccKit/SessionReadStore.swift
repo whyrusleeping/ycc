@@ -14,19 +14,22 @@ import YccProto
 /// - **Daemon clocks only.** Marks are recorded from event / summary timestamps
 ///   produced by the daemon, never from the phone's clock, so a skewed device
 ///   clock cannot make a just-read session look unread (or vice versa).
-/// - **First sighting is read.** A session the store has never seen is baselined
-///   at its current activity rather than shouted about, so installing the app —
-///   or connecting to a daemon with months of history — does not present a
-///   wall of false unread rows. Anything that happens *after* that first sighting
-///   is unread until the session view is opened.
+/// - **The first list is read.** The newest activity shown in any session list
+///   is retained as a daemon-clock watermark. A fresh install baselines its whole
+///   first list as read, and previously unseen sessions at or before the watermark
+///   are treated as back-catalogue. Sessions first appearing after the watermark
+///   are genuinely new and remain unread until the session view is opened.
 ///
-/// Marks are persisted in `UserDefaults` (they are a UI convenience, not a
-/// secret) and capped, evicting the least recently active sessions first.
+/// Marks and the watermark are persisted in `UserDefaults` (they are a UI
+/// convenience, not a secret). Marks are capped, evicting the least recently
+/// active sessions first.
 @MainActor
 @Observable
 public final class SessionReadStore {
     /// sessionID → RFC3339 timestamp of the newest event this device has seen.
     private var marks: [String: String] = [:]
+    /// RFC3339 timestamp of the newest session activity ever shown in a list.
+    private var watermark: String?
 
     /// Backing store, or `nil` for a memory-only store (tests, previews, and any
     /// model constructed without the app's shared store).
@@ -46,6 +49,18 @@ public final class SessionReadStore {
         self.limit = limit
         if let stored = defaults?.dictionary(forKey: key) as? [String: String] {
             marks = stored
+        }
+        if let storedWatermark = defaults?.string(forKey: key + ".watermark") {
+            watermark = storedWatermark
+        } else if !marks.isEmpty {
+            // Stores written before the watermark was introduced should classify
+            // new sessions correctly on their first refresh after an upgrade.
+            let derived = marks.values.compactMap { value -> (String, Date)? in
+                guard let date = SessionListModel.parseTimestamp(value) else { return nil }
+                return (value, date)
+            }.max { $0.1 < $1.1 }?.0
+            watermark = derived
+            if let derived { defaults?.set(derived, forKey: key + ".watermark") }
         }
     }
 
@@ -81,17 +96,47 @@ public final class SessionReadStore {
 
     // MARK: - Marking
 
-    /// Baseline every session the store has not seen before at its current
-    /// activity, so a first load never reports history as unread. Sessions
-    /// already known keep their mark (that is what makes them go unread).
+    /// Baseline sessions from the first list and later back-catalogue as read.
+    /// An unknown session newer than the pre-refresh watermark is genuinely new,
+    /// so its mark starts at that watermark and its later activity is unread.
+    /// Sessions already known keep their mark (that is what makes them go unread).
     public func noteSeen(_ sessions: [Ycc_V1_SessionSummary]) {
+        let priorWatermarkText = watermark
+        let priorWatermarkDate = priorWatermarkText.flatMap(SessionListModel.parseTimestamp)
         var changed = false
+
         for session in sessions where marks[session.sessionID] == nil {
-            // A row with no usable timestamp cannot be compared later either;
-            // record what we have (possibly empty) so it is still "known".
-            marks[session.sessionID] = Self.stamp(session)
+            let recency = Self.recencyStamp(session)
+            if let priorWatermarkText,
+               let priorWatermarkDate,
+               let recency,
+               recency.date > priorWatermarkDate {
+                marks[session.sessionID] = priorWatermarkText
+            } else {
+                // A row with no usable timestamp cannot be compared later either;
+                // record what we have (possibly empty) so it is still "known".
+                marks[session.sessionID] = recency?.text ?? Self.stamp(session)
+            }
             changed = true
         }
+
+        var newestWatermark = priorWatermarkText.flatMap { text -> (text: String, date: Date)? in
+            guard let date = priorWatermarkDate else { return nil }
+            return (text, date)
+        }
+        for session in sessions {
+            guard let recency = Self.recencyStamp(session) else { continue }
+            if let newest = newestWatermark {
+                if recency.date > newest.date { newestWatermark = recency }
+            } else {
+                newestWatermark = recency
+            }
+        }
+        if let newestWatermark, newestWatermark.text != watermark {
+            watermark = newestWatermark.text
+            changed = true
+        }
+
         if changed { persist() }
     }
 
@@ -139,11 +184,28 @@ public final class SessionReadStore {
         session.lastActivity.isEmpty ? session.startedAt : session.lastActivity
     }
 
+    /// The text and parsed date for a summary's recency, preserving
+    /// `recencyDate`'s fallback to `startedAt` when `lastActivity` is unusable.
+    private static func recencyStamp(
+        _ session: Ycc_V1_SessionSummary
+    ) -> (text: String, date: Date)? {
+        guard let date = SessionListModel.recencyDate(session) else { return nil }
+        if SessionListModel.parseTimestamp(session.lastActivity) != nil {
+            return (session.lastActivity, date)
+        }
+        return (session.startedAt, date)
+    }
+
     // MARK: - Persistence
 
     private func persist() {
         evictIfNeeded()
         defaults?.set(marks, forKey: key)
+        if let watermark {
+            defaults?.set(watermark, forKey: key + ".watermark")
+        } else {
+            defaults?.removeObject(forKey: key + ".watermark")
+        }
     }
 
     /// Keep the most recently active marks when over the cap. Marks that carry

@@ -1,10 +1,10 @@
 ---
 id: "0209"
 title: Add CI gates for Go, Swift, protobuf drift, race, and spec checks
-status: todo
+status: proposed
 priority: 2
 created: "2026-07-15"
-updated: "2026-07-15"
+updated: "2026-08-08"
 depends_on:
     - "0205"
     - "0206"

@@ -108,7 +108,7 @@ public final class UsageModel {
     /// Registered projects; drives the project filter menu.
     public private(set) var projects: [Ycc_V1_ProjectInfo] = []
 
-    /// The selected registered project. Empty means no choice has been made yet.
+    /// The selected registered project. Empty means all projects (overall usage).
     /// Setting it does not auto-refresh — the view calls ``refresh()``.
     public var selectedProject: String = ""
     /// The grouping dimension. Setting it does not auto-refresh.
@@ -162,9 +162,6 @@ public final class UsageModel {
             workspace = loadedWorkspace
             budget = loadedBudget
             projects = loadedProjects
-            if selectedProject.isEmpty, loadedProjects.count == 1 {
-                selectedProject = loadedProjects[0].name
-            }
             errorMessage = nil
             // Provider allowance is informational and served best-effort. A
             // telemetry failure must not hide local token usage or budget data.

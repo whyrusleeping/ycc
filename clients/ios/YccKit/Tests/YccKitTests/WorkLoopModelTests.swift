@@ -39,7 +39,9 @@ final class WorkLoopModelTests: XCTestCase {
         completed: [Ycc_V1_WorkLoopDigestTask] = [],
         blocked: [Ycc_V1_WorkLoopDigestTask] = [],
         inReview: [Ycc_V1_WorkLoopDigestTask] = [],
-        created: [Ycc_V1_WorkLoopDigestTask] = []
+        created: [Ycc_V1_WorkLoopDigestTask] = [],
+        resumeAt: String = "",
+        waitKind: String = ""
     ) -> Ycc_V1_WorkLoopInfo {
         var value = Ycc_V1_WorkLoopInfo()
         value.project = "demo"
@@ -50,6 +52,8 @@ final class WorkLoopModelTests: XCTestCase {
         value.blocked = blocked
         value.inReview = inReview
         value.created = created
+        value.resumeAt = resumeAt
+        value.waitKind = waitKind
         return value
     }
 
@@ -89,6 +93,33 @@ final class WorkLoopModelTests: XCTestCase {
         XCTAssertTrue(model.shouldPoll)
         XCTAssertTrue(model.canStop)
         XCTAssertFalse(model.canStart)
+    }
+
+    func testRefreshWaitingLoopPollsAndStopAppliesStoppingSnapshot() async {
+        XCTAssertEqual(WorkLoopState(state: "waiting"), .waiting)
+        XCTAssertEqual(WorkLoopState.waiting.title, "Waiting")
+        XCTAssertTrue(WorkLoopState.waiting.isActive)
+        XCTAssertTrue(WorkLoopState.waiting.shouldPoll)
+        XCTAssertTrue(WorkLoopState.waiting.canStop)
+        XCTAssertFalse(WorkLoopState.waiting.canStart)
+
+        let source = MockWorkLoopSource()
+        source.snapshot = loop(
+            state: "waiting",
+            resumeAt: "2026-08-06T10:20:30Z",
+            waitKind: "rate_limit")
+        let model = WorkLoopModel(source: source, project: "demo")
+
+        await model.refresh()
+
+        XCTAssertEqual(model.state, .waiting)
+        XCTAssertTrue(model.shouldPoll)
+        XCTAssertTrue(model.canStop)
+        XCTAssertFalse(model.canStart)
+
+        source.stopSnapshot = loop(state: "stopping")
+        await model.stop()
+        XCTAssertEqual(model.state, .stopping)
     }
 
     func testStartAppliesSnapshotAndFailedSecondStartPreservesIt() async {
@@ -179,9 +210,79 @@ final class WorkLoopModelTests: XCTestCase {
         XCTAssertEqual(WorkLoopModel.totalsLine(for: value), "12.3k tokens · ≈$1.2500 (partial)")
     }
 
+    func testDurationText() {
+        XCTAssertNil(WorkLoopModel.durationText(secs: 0))
+        XCTAssertNil(WorkLoopModel.durationText(secs: -1))
+        XCTAssertEqual(WorkLoopModel.durationText(secs: 45), "45s")
+        XCTAssertEqual(WorkLoopModel.durationText(secs: 272), "4m 32s")
+        XCTAssertEqual(WorkLoopModel.durationText(secs: 3_900), "1h 5m")
+    }
+
     func testUnknownStateDoesNotCrash() {
         XCTAssertEqual(WorkLoopState(state: "future-state"), .unknown)
         XCTAssertEqual(WorkLoopModel.state(for: loop(state: "future-state")), .unknown)
+    }
+
+    func testBannerLineCoversWorkLoopStates() {
+        XCTAssertEqual(WorkLoopModel.bannerLine(for: nil), "Not running")
+
+        let running = loop(
+            state: "running", sessionsRun: 3,
+            completed: [task("done")], blocked: [task("blocked")])
+        XCTAssertEqual(
+            WorkLoopModel.bannerLine(for: running),
+            "Running · 3 sessions · 1 completed, 1 blocked")
+
+        let waiting = loop(
+            state: "waiting",
+            resumeAt: "2026-08-06T10:20:30Z",
+            waitKind: "rate_limit")
+        XCTAssertEqual(
+            WorkLoopModel.bannerLine(for: waiting),
+            WorkLoopModel.waitingLine(for: waiting))
+        XCTAssertTrue(WorkLoopModel.bannerLine(for: waiting).contains("resumes"))
+
+        XCTAssertEqual(
+            WorkLoopModel.bannerLine(for: loop(state: "stopping")),
+            "Stopping…")
+
+        var finished = loop(
+            state: "finished", sessionsRun: 2,
+            completed: [task("done")], created: [task("new")])
+        finished.outcome = "no ready tasks"
+        XCTAssertEqual(
+            WorkLoopModel.bannerLine(for: finished),
+            "Finished · 2 sessions · 1 completed, 1 created")
+    }
+
+    func testWaitingLineComposition() {
+        let complete = loop(
+            state: "waiting",
+            resumeAt: "2026-08-06T10:20:30Z",
+            waitKind: "rate_limit")
+        let completeLine = WorkLoopModel.waitingLine(for: complete)
+        XCTAssertTrue(completeLine.hasPrefix("Waiting for provider (rate_limit)"))
+        XCTAssertTrue(completeLine.contains("resumes"))
+
+        let kindOnly = loop(state: "waiting", waitKind: "overloaded")
+        XCTAssertEqual(WorkLoopModel.waitingLine(for: kindOnly), "Waiting for provider (overloaded)")
+        XCTAssertFalse(WorkLoopModel.waitingLine(for: kindOnly).contains("resumes"))
+
+        let bare = loop(state: "waiting")
+        XCTAssertEqual(WorkLoopModel.waitingLine(for: bare), "Waiting for provider")
+
+        let invalidResume = loop(state: "waiting", resumeAt: "not-a-timestamp")
+        XCTAssertEqual(WorkLoopModel.waitingLine(for: invalidResume), "Waiting for provider")
+        XCTAssertFalse(WorkLoopModel.waitingLine(for: invalidResume).contains("resumes"))
+    }
+
+    func testResumeAtParsesFractionalAndPlainRFC3339() {
+        var value = loop(state: "waiting", resumeAt: "2026-08-06T10:20:30.123Z")
+        XCTAssertNotNil(WorkLoopModel.resumeAtDate(for: value))
+        value.resumeAt = "2026-08-06T10:20:30Z"
+        XCTAssertNotNil(WorkLoopModel.resumeAtDate(for: value))
+        value.resumeAt = ""
+        XCTAssertNil(WorkLoopModel.resumeAtDate(for: value))
     }
 
     func testStartedAtParsesFractionalAndPlainRFC3339() {

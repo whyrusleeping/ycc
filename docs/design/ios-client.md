@@ -164,11 +164,11 @@ The drawer has two levels of navigation:
 
 Below those two levels the drawer carries only the account footer (**Settings**,
 **Disconnect**). The project-scoped destinations (**Backlog**, **Workstreams**,
-**Usage**) deliberately do *not* live in the drawer: it is opened most often from
+**Usage**, **Memory**) deliberately do *not* live in the drawer: it is opened most often from
 the unscoped Recent sessions feed, from which those entries could only open
 unscoped — landing on a "choose a project" filter instead of the backlog the user
 asked for. They belong to a project, so they hang off the toolbar of that
-project's own session list: **Backlog** as a one-tap glyph, Workstreams and Usage
+project's own session list: **Backlog** as a one-tap glyph, the rest
 in an overflow menu, exactly as in the session view. On the Recent sessions feed
 those toolbar items are absent rather than unscoped (the overflow menu itself
 stays, carrying "Mark all read"). The menu button keeps mirroring the drawer's
@@ -245,8 +245,13 @@ the current scope.
 
 Because the drawer is *not* reachable from a pushed screen either, screens that
 users live inside repeat those shortcuts: the session view keeps **Backlog** as a
-one-tap toolbar link (with Workstreams and Usage in its overflow menu), all
-scoped to that session's project. The session
+one-tap toolbar link (with Workstreams, Usage, and Memory in its overflow menu), all
+scoped to that session's project. The overflow menu also carries **Session
+usage**: a sheet showing what *this* session has spent so far — a per-model
+token/cost breakdown plus a total, the app's counterpart of the TUI's Σ
+status-bar readout. The daemon's `GetUsage` has no session filter, so the sheet
+requests `group_by: ["session", "model"]` and filters client-side to the
+session id (`SessionUsageModel` in YccKit). The session
 view also folds its stream state (live / reconnecting / offline) into the
 navigation subtitle beside the project name rather than spending a toolbar slot
 on it.
@@ -387,8 +392,18 @@ do not permanently remove access to the daemon-wide inbox.
      endpoint, reasoning, and pricing) through `GetModelConfig`, `UpsertModel`,
      `RemoveModel`, and `DiscoverModels`. Secret values never cross the wire; the
      form configures only the daemon-side credential mechanism / `key_env` reference.
+     The global screen also manages **review tiers** (spec §13.1, task 0297): a
+     "Review tiers" destination lists the effective tiers (built-in badges,
+     override state), sets `reviews.default`, and offers a full tier editor —
+     strategy (agents vs coordinator self-review), description, tier-wide prompt,
+     and reviewer slots each carrying model, label, focus prompt, and a
+     per-reviewer thinking override — via `ListReviewTiers`, `UpsertReviewTier`,
+     `RemoveReviewTier`, and `SetReviewDefault`. Drafts round-trip the `models`
+     shorthand: a tier whose slots are all generic saves back in the compact
+     form; removal of a built-in override reverts it to built-in behaviour.
 9. **Usage & budget** — `GetUsage` (group by task/model/day) and `GetBudget`
-   views (§20.5).
+   views (§20.5); the session screen adds a per-session usage sheet
+   (`group_by: ["session", "model"]`, filtered to the session id).
 10. **Workstreams & diffs** — `ListWorkstreams`, `PreviewMerge`,
     `MergeWorkstream`/`DiscardWorkstream`; `GetCommitDiff` viewer for
     `commit_made` events (§14.1, §18).
@@ -398,6 +413,10 @@ do not permanently remove access to the daemon-wide inbox.
     completed session links, the end-of-batch digest, and a `⟳ loop` marker on
     loop-owned session rows. The daemon continues independently while the phone
     is locked; its existing ntfy integration delivers the completed digest.
+12. **Project memory viewer** — read-only render of memory.md (the agents'
+    advisory operational notes, spec §6.5) via `GetMemory`, reached from the
+    project overflow menu on the session list and session views. The file is
+    prompt-budget-small by design, so a single markdown render suffices.
 
 ## 7. RPC coverage map
 
@@ -407,12 +426,15 @@ cross-project recent-session feed), `GetSessionTranscript`, `Subscribe`,
 `StopSession`. Phase 2 adds: `ListModes`, `StartSession`, `ResumeSession`,
 `ListBacklog`, `GetTask`, `UpdateTask` (optionally `CreateTask`). Phase 3 adds:
 `SetThinking`, `SetRoleConfig`, `ListModels`,
-`GetModelConfig`, `UpsertModel`, `RemoveModel`, `DiscoverModels`, `GetUsage`,
+`GetModelConfig`, `UpsertModel`, `RemoveModel`, `DiscoverModels`,
+`ListReviewTiers`, `UpsertReviewTier`, `RemoveReviewTier`, `SetReviewDefault`,
+`GetUsage`,
 `GetBudget`, `GetCommitDiff`, workstream RPCs, and the loop control surface
 from §9. `Notify` remains unnecessary because daemon-side pushes already fire
-without a client call. `AddProject` (with the `ListDir` browse RPC, tasks
-0192–0194) has since been pulled into client scope so a new workspace can be
-registered from the phone. `RemoveProject` is also exposed behind destructive
+without a client call. `AddProject` and its `ListDir`-backed likely-project
+suggestions and directory browser (tasks 0192–0194) are in client scope, so a
+new workspace can be found and registered from the phone while retaining manual
+path entry as a fallback. `RemoveProject` is also exposed behind destructive
 confirmation; it only deregisters the workspace and never deletes files.
 
 ## 8. Notifications (decision)

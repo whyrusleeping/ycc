@@ -72,6 +72,58 @@ final class SessionReadStoreTests: XCTestCase {
         XCTAssertTrue(store.isUnread(finished))
     }
 
+    // MARK: - New sessions
+
+    func testNewSessionAfterWatermarkIsUnreadAndMarkReadClearsIt() {
+        let store = makeStore()
+        let existing = session(id: "existing", lastActivity: "2026-08-06T10:00:00Z")
+        store.noteSeen([existing])
+
+        let new = session(id: "new", lastActivity: "2026-08-06T11:00:00Z")
+        store.noteSeen([existing, new])
+        XCTAssertTrue(store.isUnread(new))
+
+        store.markRead(new)
+        XCTAssertFalse(store.isUnread(new))
+    }
+
+    func testNewRunningSessionWaitsUntilItStopsToBecomeUnread() {
+        let store = makeStore()
+        let existing = session(id: "existing", lastActivity: "2026-08-06T10:00:00Z")
+        store.noteSeen([existing])
+
+        let running = session(
+            id: "new", lastActivity: "2026-08-06T11:00:00Z", status: "running", live: true)
+        store.noteSeen([existing, running])
+        XCTAssertFalse(store.isUnread(running))
+
+        let stopped = session(
+            id: "new", lastActivity: "2026-08-06T11:00:00Z", status: "idle", live: true)
+        XCTAssertTrue(store.isUnread(stopped))
+    }
+
+    func testBackCatalogueFirstSeenBeforeWatermarkIsRead() {
+        let store = makeStore()
+        let existing = session(id: "existing", lastActivity: "2026-08-06T10:00:00Z")
+        store.noteSeen([existing])
+
+        let backCatalogue = session(id: "old", lastActivity: "2026-08-05T10:00:00Z")
+        let tiedWithWatermark = session(id: "tied", lastActivity: "2026-08-06T10:00:00Z")
+        store.noteSeen([existing, backCatalogue, tiedWithWatermark])
+        XCTAssertFalse(store.isUnread(backCatalogue))
+        XCTAssertFalse(store.isUnread(tiedWithWatermark))
+    }
+
+    func testFreshInstallFirstListIsAllRead() {
+        let store = makeStore()
+        let firstList = [
+            session(id: "older", lastActivity: "2026-08-05T10:00:00Z"),
+            session(id: "newer", lastActivity: "2026-08-06T10:00:00Z"),
+        ]
+        store.noteSeen(firstList)
+        XCTAssertEqual(store.unreadCount(in: firstList), 0)
+    }
+
     // MARK: - Marking read
 
     func testMarkReadThroughEventTimestampClears() {
@@ -130,6 +182,41 @@ final class SessionReadStoreTests: XCTestCase {
         let reloaded = SessionReadStore(defaults: defaults, key: "marks")
         XCTAssertTrue(reloaded.isUnread(session(id: "a", lastActivity: "2026-08-06T10:05:00Z")))
         XCTAssertFalse(reloaded.isUnread(session(id: "a", lastActivity: "2026-08-06T10:00:00Z")))
+    }
+
+    func testWatermarkPersistsAcrossStoreInstances() {
+        let suite = "ycc.tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let original = SessionReadStore(defaults: defaults, key: "marks")
+        let first = session(id: "a", lastActivity: "2026-08-06T10:00:00Z")
+        original.noteSeen([first])
+        let progressed = session(id: "a", lastActivity: "2026-08-06T12:00:00Z")
+        original.noteSeen([progressed])
+
+        // The mark for a remains at 10:00, while the separately persisted
+        // watermark has advanced to 12:00. A session from 11:00 is back-catalogue.
+        let reloaded = SessionReadStore(defaults: defaults, key: "marks")
+        let backCatalogue = session(id: "b", lastActivity: "2026-08-06T11:00:00Z")
+        reloaded.noteSeen([progressed, backCatalogue])
+        XCTAssertFalse(reloaded.isUnread(backCatalogue))
+    }
+
+    func testLegacyMarksDeriveWatermarkOnUpgrade() {
+        let suite = "ycc.tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(["known": "2026-08-06T10:00:00Z"], forKey: "marks")
+        XCTAssertNil(defaults.string(forKey: "marks.watermark"))
+
+        let upgraded = SessionReadStore(defaults: defaults, key: "marks")
+        XCTAssertEqual(defaults.string(forKey: "marks.watermark"), "2026-08-06T10:00:00Z")
+        let new = session(id: "new", lastActivity: "2026-08-06T11:00:00Z")
+        upgraded.noteSeen([new])
+        XCTAssertTrue(upgraded.isUnread(new))
     }
 
     func testEvictionKeepsTheMostRecentMarks() {

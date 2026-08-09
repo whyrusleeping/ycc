@@ -53,3 +53,7 @@ Acceptance:
 - 2026-08-08 review tier: single-opus — reviewers: sol
 - 2026-08-08 review (sol): accept — The change correctly seeds each spawned reviewer with a three-message synthetic Bash diff exchange built from one stable `Repo.Diff()` snapshot, gives each loop its own history slice, updates prompts 
 …[truncated]
+- 2026-08-08 usage: 1,105,582 tok (in 580,547, out 17,899, cache_r 1,195,331, cache_w 22,627) · cost n/a (unpriced)
+  implementer: 771,810 tok (in 367,493, out 7,261, cache_r 397,056, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 326,017 tok (in 213,028, out 2,909, cache_r 110,080, cache_w 0) · cost n/a (unpriced)
+  coordinator: 7,755 tok (in 26, out 7,729, cache_r 688,195, cache_w 22,627) · cost n/a (unpriced)

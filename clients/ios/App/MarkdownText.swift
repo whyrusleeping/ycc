@@ -1,13 +1,15 @@
 import SwiftUI
 import UIKit
+import YccKit
 
 /// Renders a markdown string block-by-block with native SwiftUI markdown
-/// (`AttributedString(markdown:)`) — dependency-free and predictable. Blocks
-/// are split on blank lines; fenced code blocks render monospaced in a card
-/// with a language label and a copy button, `#` headings render bold at a
-/// stepped size, `>` quotes get a rule, `---` becomes a divider, and `-`/`*`
-/// list markers become bullets. Everything else is parsed as inline markdown
-/// (bold, italic, `code`, links) with soft line breaks preserved. Used for
+/// (`AttributedString(markdown:)`). Blocks are split on blank lines; fenced
+/// code blocks render monospaced in a card with a language label and a copy
+/// button, GFM pipe tables render in a horizontally scrollable grid, `#`
+/// headings render bold at a stepped size, `>` quotes get a rule, `---` becomes
+/// a divider, and `-`/`*` list markers become bullets. Everything else is parsed
+/// as inline markdown (bold, italic, `code`, links) with soft line breaks
+/// preserved. Used for
 /// agent message bubbles in the session transcript and for backlog task bodies.
 struct MarkdownText: View {
     let text: String
@@ -18,6 +20,8 @@ struct MarkdownText: View {
                 switch block {
                 case .code(let language, let code):
                     CodeBlock(language: language, code: code)
+                case .table(let table):
+                    TableBlock(table: table)
                 case .heading(let level, let md):
                     Text(rendered(md))
                         .font(headingFont(level))
@@ -48,13 +52,14 @@ struct MarkdownText: View {
         case heading(Int, String)
         case quote(String)
         case code(language: String, code: String)
+        case table(MarkdownTable)
         case rule
     }
 
-    /// Split the text into fenced code blocks, headings, quotes, rules, and
-    /// paragraph groups (blank-line separated). List markers are normalised to
-    /// bullets so `- item` reads as `• item` (the inline parser would otherwise
-    /// show the raw dash).
+    /// Split the text into fenced code blocks, tables, headings, quotes, rules,
+    /// and paragraph groups (blank-line separated). List markers are normalised
+    /// to bullets so `- item` reads as `• item` (the inline parser would
+    /// otherwise show the raw dash).
     private var blocks: [Block] {
         var result: [Block] = []
         var paragraph: [String] = []
@@ -80,7 +85,10 @@ struct MarkdownText: View {
             flushParagraph()
         }
 
-        for line in text.components(separatedBy: "\n") {
+        let lines = text.components(separatedBy: "\n")
+        var index = 0
+        while index < lines.count {
+            let line = lines[index]
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
                 if inCode {
@@ -95,10 +103,19 @@ struct MarkdownText: View {
                         .trimmingCharacters(in: .whitespaces)
                     inCode = true
                 }
+                index += 1
                 continue
             }
             if inCode {
                 code.append(line)
+                index += 1
+                continue
+            }
+            if !trimmed.isEmpty,
+               let parsed = MarkdownTable.parse(lines: lines, startIndex: index) {
+                flushProse()
+                result.append(.table(parsed.table))
+                index += parsed.consumedLineCount
                 continue
             }
             if trimmed.isEmpty {
@@ -116,6 +133,7 @@ struct MarkdownText: View {
                 flushQuote()
                 paragraph.append(bulleted(line))
             }
+            index += 1
         }
         if inCode, !code.isEmpty {
             result.append(.code(language: codeLanguage, code: code.joined(separator: "\n")))
@@ -159,16 +177,83 @@ struct MarkdownText: View {
         }
         return line
     }
+}
 
-    /// Parse one block as inline markdown, preserving soft line breaks. Falls
-    /// back to plain text if it doesn't parse.
-    private func rendered(_ md: String) -> AttributedString {
-        var options = AttributedString.MarkdownParsingOptions()
-        options.interpretedSyntax = .inlineOnlyPreservingWhitespace
-        if let attributed = try? AttributedString(markdown: md, options: options) {
-            return attributed
+/// Parse one block as inline markdown, preserving soft line breaks. Falls back
+/// to plain text if it doesn't parse. Shared by prose and table cells so inline
+/// syntax has identical behavior in both.
+private func rendered(_ markdown: String) -> AttributedString {
+    var options = AttributedString.MarkdownParsingOptions()
+    options.interpretedSyntax = .inlineOnlyPreservingWhitespace
+    if let attributed = try? AttributedString(markdown: markdown, options: options) {
+        return attributed
+    }
+    return AttributedString(markdown)
+}
+
+/// A pipe table rendered as a horizontally scrollable grid. Keeping the card
+/// around the scroll view makes wide agent-generated tables usable without
+/// squeezing the surrounding transcript.
+private struct TableBlock: View {
+    let table: MarkdownTable
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+                GridRow {
+                    ForEach(Array(table.header.enumerated()), id: \.offset) { column, cell in
+                        tableCell(cell, column: column, isHeader: true)
+                    }
+                }
+
+                Divider()
+                    .gridCellUnsizedAxes(.horizontal)
+
+                ForEach(Array(table.rows.enumerated()), id: \.offset) { _, row in
+                    GridRow {
+                        ForEach(Array(row.enumerated()), id: \.offset) { column, cell in
+                            tableCell(cell, column: column, isHeader: false)
+                        }
+                    }
+                }
+            }
         }
-        return AttributedString(md)
+        .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.secondary.opacity(0.15)))
+    }
+
+    private func tableCell(_ value: String, column: Int, isHeader: Bool) -> some View {
+        let font: Font = isHeader ? .subheadline.weight(.semibold) : .subheadline
+        return Text(rendered(value))
+            .font(font)
+            .multilineTextAlignment(textAlignment(for: column))
+            .textSelection(.enabled)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .gridColumnAlignment(horizontalAlignment(for: column))
+    }
+
+    private func horizontalAlignment(for column: Int) -> HorizontalAlignment {
+        switch alignment(for: column) {
+        case .leading: return .leading
+        case .center: return .center
+        case .trailing: return .trailing
+        }
+    }
+
+    private func textAlignment(for column: Int) -> TextAlignment {
+        switch alignment(for: column) {
+        case .leading: return .leading
+        case .center: return .center
+        case .trailing: return .trailing
+        }
+    }
+
+    private func alignment(for column: Int) -> MarkdownTable.ColumnAlignment {
+        guard table.alignments.indices.contains(column) else { return .leading }
+        return table.alignments[column]
     }
 }
 

@@ -55,6 +55,7 @@ extension HomeDestination {
         case .workLoop(let project): return "workLoop:\(project)"
         case .workstreams(let project): return "workstreams:\(project)"
         case .usage(let project): return "usage:\(project)"
+        case .memory(let project): return "memory:\(project)"
         case .settings: return "settings"
         }
     }

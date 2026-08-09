@@ -11,28 +11,51 @@ private final class MockListSource: SessionListSource, @unchecked Sendable {
     var projects: [Ycc_V1_ProjectInfo] = []
     var historyError: Error?
     var historyErrorsByProject: [String: Error] = [:]
+    var historyFailuresRemainingByProject: [String: Int] = [:]
+    var projectsError: Error?
+    var projectFailuresRemaining = 0
+    var historyDelayNanoseconds: UInt64 = 0
     var removeError: Error?
+    var renameError: Error?
     var loopsByProject: [String: Ycc_V1_WorkLoopInfo] = [:]
     var loopErrorsByProject: [String: Error] = [:]
     private(set) var requestedProjects: [String] = []
     private(set) var listProjectsRequestCount = 0
     private(set) var removedProjects: [String] = []
+    private(set) var renamedProjects: [(from: String, to: String)] = []
     private let lock = NSLock()
 
     func listSessionHistory(project: String) async throws -> [Ycc_V1_SessionSummary] {
         lock.lock()
         requestedProjects.append(project)
+        let shouldFailTransiently = (historyFailuresRemainingByProject[project] ?? 0) > 0
+        if shouldFailTransiently {
+            historyFailuresRemainingByProject[project, default: 0] -= 1
+        }
+        let projectError = historyErrorsByProject[project]
+        let generalError = historyError
+        let response = sessionsByProject[project] ?? sessions
+        let delay = historyDelayNanoseconds
         lock.unlock()
-        if let error = historyErrorsByProject[project] { throw error }
-        if let historyError { throw historyError }
-        return sessionsByProject[project] ?? sessions
+
+        if delay > 0 { try await Task.sleep(nanoseconds: delay) }
+        if shouldFailTransiently { throw YccError.rpc(message: "transient history failure") }
+        if let projectError { throw projectError }
+        if let generalError { throw generalError }
+        return response
     }
 
     func listProjects() async throws -> [Ycc_V1_ProjectInfo] {
         lock.lock()
         listProjectsRequestCount += 1
+        let shouldFailTransiently = projectFailuresRemaining > 0
+        if shouldFailTransiently { projectFailuresRemaining -= 1 }
+        let error = projectsError
         let response = projects
         lock.unlock()
+
+        if shouldFailTransiently { throw YccError.rpc(message: "transient project failure") }
+        if let error { throw error }
         return response
     }
 
@@ -42,6 +65,22 @@ private final class MockListSource: SessionListSource, @unchecked Sendable {
         removedProjects.append(name)
         projects.removeAll { $0.name == name }
         lock.unlock()
+    }
+
+    func renameProject(name: String, to newName: String) async throws -> Ycc_V1_ProjectInfo {
+        if let renameError { throw renameError }
+        lock.lock()
+        defer { lock.unlock() }
+        renamedProjects.append((from: name, to: newName))
+        guard let index = projects.firstIndex(where: { $0.name == name }) else {
+            throw YccError.notFound(message: "unknown project \(name)")
+        }
+        projects[index].name = newName
+        // Re-key any scripted history so a post-rename refresh finds it.
+        if let history = sessionsByProject.removeValue(forKey: name) {
+            sessionsByProject[newName] = history
+        }
+        return projects[index]
     }
 
     func workLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo? {
@@ -291,7 +330,7 @@ final class SessionListModelTests: XCTestCase {
         staleGit.fetchError = "offline"
         stale.git = staleGit
         source.projects = [stale]
-        let model = SessionListModel(source: source)
+        let model = SessionListModel(source: source, retryDelays: [])
 
         await model.refreshProjects()
         XCTAssertEqual(model.projects.first?.git.fetchError, "offline")
@@ -341,18 +380,86 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertEqual(model.project(for: model.sessions[0]), "primary")
     }
 
-    func testRecentFeedPreservesPartialResultsAndWarns() async {
+    func testPerProjectTransientFailureRetriesAndSucceeds() async {
+        let source = MockListSource()
+        source.projects = [project("one")]
+        source.sessionsByProject["one"] = [session(id: "available")]
+        source.historyFailuresRemainingByProject["one"] = 1
+        let model = SessionListModel(source: source, retryDelays: [0, 0])
+
+        await model.refresh()
+
+        XCTAssertEqual(source.requestedProjects, ["one", "one"])
+        XCTAssertEqual(model.sessions.map(\.sessionID), ["available"])
+        XCTAssertNil(model.partialWarning)
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testRecentFeedPreservesPartialResultsAndWarnsAfterRetries() async {
         let source = MockListSource()
         source.projects = [project("good"), project("bad")]
         source.sessionsByProject["good"] = [session(id: "available")]
         source.historyErrorsByProject["bad"] = YccError.rpc(message: "offline")
-        let model = SessionListModel(source: source)
+        let model = SessionListModel(source: source, retryDelays: [0, 0])
 
         await model.refresh()
 
         XCTAssertEqual(model.sessions.map(\.sessionID), ["available"])
         XCTAssertEqual(model.partialWarning, "Some projects couldn’t be loaded: bad.")
         XCTAssertNil(model.errorMessage)
+        XCTAssertEqual(source.requestedProjects.filter { $0 == "bad" }.count, 3)
+    }
+
+    func testFailedProjectRetainsLastKnownRowsAndRouting() async {
+        let source = MockListSource()
+        source.projects = [project("good"), project("failing")]
+        source.sessionsByProject = [
+            "good": [session(id: "fresh")],
+            "failing": [session(id: "cached")],
+        ]
+        let model = SessionListModel(source: source, retryDelays: [0, 0])
+        await model.refresh()
+
+        source.historyErrorsByProject["failing"] = YccError.rpc(message: "offline")
+        source.sessionsByProject["good"] = [session(id: "new-fresh")]
+        await model.refresh()
+
+        XCTAssertEqual(Set(model.sessions.map(\.sessionID)), Set(["new-fresh", "cached"]))
+        let cached = model.sessions.first { $0.sessionID == "cached" }!
+        XCTAssertEqual(model.project(for: cached), "failing")
+        XCTAssertEqual(model.partialWarning, "Some projects couldn’t be loaded: failing.")
+        XCTAssertNotNil(model.activityByProject["failing"])
+        XCTAssertEqual(model.activity(forProject: "failing"), ProjectActivity())
+    }
+
+    func testListProjectsTransientFailureRetriesAndSucceeds() async {
+        let source = MockListSource()
+        source.projects = [project("one")]
+        source.sessionsByProject["one"] = [session(id: "available")]
+        source.projectFailuresRemaining = 1
+        let model = SessionListModel(source: source, retryDelays: [0, 0])
+
+        await model.refresh()
+
+        XCTAssertEqual(source.listProjectsRequestCount, 2)
+        XCTAssertEqual(model.projects.map(\.name), ["one"])
+        XCTAssertEqual(model.sessions.map(\.sessionID), ["available"])
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testOverlappingRefreshesShareOneLoad() async {
+        let source = MockListSource()
+        source.projects = [project("one")]
+        source.sessionsByProject["one"] = [session(id: "available")]
+        source.historyDelayNanoseconds = 50_000_000
+        let model = SessionListModel(source: source, retryDelays: [0, 0])
+
+        async let first: Void = model.refresh()
+        async let second: Void = model.refresh()
+        _ = await (first, second)
+
+        XCTAssertEqual(source.listProjectsRequestCount, 1)
+        XCTAssertEqual(source.requestedProjects, ["one"])
     }
 
     func testOneShotFeedQueriesItsNamedProject() async {
@@ -366,6 +473,19 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertEqual(source.requestedProjects, ["only"])
         XCTAssertEqual(model.sessions.map(\.sessionID), ["named"])
         XCTAssertEqual(model.project(for: model.sessions[0]), "only")
+    }
+
+    func testNoProjectsFallbackHistoryRetriesAndSucceeds() async {
+        let source = MockListSource()
+        source.sessionsByProject[""] = [session(id: "fallback")]
+        source.historyFailuresRemainingByProject[""] = 1
+        let model = SessionListModel(source: source, retryDelays: [0, 0])
+
+        await model.refresh()
+
+        XCTAssertEqual(source.requestedProjects, ["", ""])
+        XCTAssertEqual(model.sessions.map(\.sessionID), ["fallback"])
+        XCTAssertNil(model.errorMessage)
     }
 
     func testProjectFilterRoundTrips() async {
@@ -573,20 +693,65 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertTrue(model.unauthorized)
     }
 
-    func testUnauthorizedSurfacesFlag() async {
+    // MARK: - Rename project
+
+    func testRenameProjectFollowsSelection() async {
         let source = MockListSource()
-        source.historyError = YccError.unauthorized
+        source.projects = [project("one"), project("two")]
+        source.sessionsByProject = ["one": [session(id: "s1")], "two": []]
+        let model = SessionListModel(source: source, selectedProject: "one")
+        await model.refresh()
+
+        let renamed = await model.renameProject(named: "one", to: "uno")
+
+        XCTAssertTrue(renamed)
+        XCTAssertEqual(source.renamedProjects.map(\.to), ["uno"])
+        XCTAssertEqual(model.selectedProject, "uno")
+        XCTAssertEqual(model.projects.map(\.name).sorted(), ["two", "uno"])
+        // The renamed project's history still shows under the new scope.
+        XCTAssertEqual(model.sessions.map(\.sessionID), ["s1"])
+    }
+
+    func testRenameProjectFailureKeepsNameAndSurfacesError() async {
+        let source = MockListSource()
+        source.projects = [project("one")]
+        source.renameError = YccError.rpc(message: "name taken")
+        let model = SessionListModel(source: source, selectedProject: "one")
+
+        let renamed = await model.renameProject(named: "one", to: "two")
+
+        XCTAssertFalse(renamed)
+        XCTAssertEqual(model.selectedProject, "one")
+        XCTAssertEqual(model.errorMessage, "name taken")
+    }
+
+    func testRenameProjectUnauthorizedSurfacesFlag() async {
+        let source = MockListSource()
+        source.renameError = YccError.unauthorized
         let model = SessionListModel(source: source)
+
+        let renamed = await model.renameProject(named: "one", to: "two")
+
+        XCTAssertFalse(renamed)
+        XCTAssertTrue(model.unauthorized)
+    }
+
+    func testUnauthorizedSurfacesFlagWithoutRetrying() async {
+        let source = MockListSource()
+        source.projectsError = YccError.unauthorized
+        let model = SessionListModel(source: source, retryDelays: [0, 0])
 
         await model.refresh()
 
         XCTAssertTrue(model.unauthorized)
+        XCTAssertEqual(source.listProjectsRequestCount, 1)
+        XCTAssertTrue(source.requestedProjects.isEmpty)
     }
 
     func testRpcErrorSurfacesMessage() async {
         let source = MockListSource()
         source.historyError = YccError.rpc(message: "boom")
-        let model = SessionListModel(source: source)
+        let model = SessionListModel(source: source, retryDelays: [0, 0])
 
         await model.refresh()
 

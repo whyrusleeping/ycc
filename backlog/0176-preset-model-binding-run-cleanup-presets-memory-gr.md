@@ -77,3 +77,7 @@ Goal: an optional config binding preset → logical model so cleanup presets (me
 …[truncated]
 - 2026-08-08 review (sol): accept — The revision addresses both prior findings. Reopen now preserves an actual post-start coordinator change while still re-resolving untouched preset bindings, with projection and manager regression cove
 …[truncated]
+- 2026-08-08 usage: 8,847,755 tok (in 1,821,115, out 43,984, cache_r 7,963,111, cache_w 69,345) · cost n/a (unpriced)
+  implementer: 7,783,688 tok (in 1,307,281, out 22,903, cache_r 6,453,504, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 1,049,456 tok (in 513,790, out 6,514, cache_r 529,152, cache_w 0) · cost n/a (unpriced)
+  coordinator: 14,611 tok (in 44, out 14,567, cache_r 980,455, cache_w 69,345) · cost n/a (unpriced)

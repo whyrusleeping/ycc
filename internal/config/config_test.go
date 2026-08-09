@@ -1411,3 +1411,230 @@ func loadSpecTOML(t *testing.T, s string) (*Config, error) {
 	}
 	return Load(p)
 }
+
+// --- Review-tier runtime mutation (task 0297) ---
+
+// twoModelRegistry is baseRegistry plus a second "gpt" model, for tier tests
+// that need more than one logical model.
+func twoModelRegistry() *Registry {
+	return NewRegistry(&Config{
+		Models: map[string]Model{
+			"claude": {Backend: "anthropic", Model: "claude-x"},
+			"gpt":    {Backend: "openai", Model: "gpt-x"},
+		},
+		Roles: Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"}},
+	})
+}
+
+func TestReviewTierConfigsListing(t *testing.T) {
+	reg := twoModelRegistry()
+	listings, def := reg.ReviewTierConfigs()
+	if def != "single-opus" {
+		t.Fatalf("default = %q, want single-opus", def)
+	}
+	names := make([]string, 0, len(listings))
+	for _, l := range listings {
+		names = append(names, l.Name)
+		if !l.Builtin {
+			t.Fatalf("unexpected non-builtin tier %q with no config", l.Name)
+		}
+		if l.Configured {
+			t.Fatalf("tier %q reported configured with no config entry", l.Name)
+		}
+		if l.Tier.Description == "" {
+			t.Fatalf("builtin tier %q missing inherited description", l.Name)
+		}
+	}
+	want := []string{"high-powered", "simple", "single-opus"} // sorted
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("tier names = %v, want %v", names, want)
+	}
+
+	// A custom tier and a built-in override both show up flagged correctly.
+	if err := reg.UpsertReviewTier("deep", ReviewTier{
+		Reviewers: []Reviewer{{Name: "perf", Model: "gpt", Thinking: "max"}},
+	}); err != nil {
+		t.Fatalf("UpsertReviewTier(deep): %v", err)
+	}
+	if err := reg.UpsertReviewTier("simple", ReviewTier{Strategy: "coordinator"}); err != nil {
+		t.Fatalf("UpsertReviewTier(simple override): %v", err)
+	}
+	listings, _ = reg.ReviewTierConfigs()
+	byName := map[string]ReviewTierListing{}
+	for _, l := range listings {
+		byName[l.Name] = l
+	}
+	if l := byName["deep"]; l.Builtin || !l.Configured || len(l.Tier.Reviewers) != 1 || l.Tier.Reviewers[0].Thinking != "max" {
+		t.Fatalf("deep listing = %+v", l)
+	}
+	if l := byName["simple"]; !l.Builtin || !l.Configured {
+		t.Fatalf("simple override listing = %+v", l)
+	}
+}
+
+func TestUpsertReviewTierValidatesLikeLoad(t *testing.T) {
+	reg := twoModelRegistry()
+	cases := []struct {
+		name string
+		tier ReviewTier
+	}{
+		{"badstrat", ReviewTier{Strategy: "nope"}},
+		{"both", ReviewTier{Models: []string{"claude"}, Reviewers: []Reviewer{{Model: "gpt"}}}},
+		{"unkmodel", ReviewTier{Models: []string{"missing"}}},
+		{"nomodel", ReviewTier{Reviewers: []Reviewer{{Name: "x"}}}},
+		{"badlevel", ReviewTier{Reviewers: []Reviewer{{Model: "gpt", Thinking: "ultra"}}}},
+		{"", ReviewTier{Models: []string{"claude"}}}, // empty name
+	}
+	for _, c := range cases {
+		if err := reg.UpsertReviewTier(c.name, c.tier); err == nil {
+			t.Fatalf("UpsertReviewTier(%q, %+v) accepted, want error", c.name, c.tier)
+		}
+	}
+	// Nothing was written.
+	if listings, _ := reg.ReviewTierConfigs(); len(listings) != 3 {
+		t.Fatalf("expected only the 3 builtins after rejected upserts, got %d", len(listings))
+	}
+}
+
+func TestUpsertReviewTierResolvesLive(t *testing.T) {
+	reg := twoModelRegistry()
+	if err := reg.UpsertReviewTier("deep", ReviewTier{
+		Prompt:    "Cite file:line.",
+		Reviewers: []Reviewer{{Name: "perf", Model: "gpt", Prompt: "Focus on perf.", Thinking: "high"}},
+	}); err != nil {
+		t.Fatalf("UpsertReviewTier: %v", err)
+	}
+	res := reg.ReviewTier("deep")
+	if res.Fallback || res.SelfReview || len(res.Reviewers) != 1 {
+		t.Fatalf("resolved deep = %+v", res)
+	}
+	rv := res.Reviewers[0]
+	if rv.Label != "perf" || rv.Model != "gpt" || rv.Thinking != "high" {
+		t.Fatalf("resolved reviewer = %+v", rv)
+	}
+}
+
+func TestRemoveReviewTier(t *testing.T) {
+	reg := twoModelRegistry()
+	// No configured entry: both a builtin and an unknown name are rejected.
+	if err := reg.RemoveReviewTier("simple"); err == nil {
+		t.Fatal("removing unconfigured builtin should fail")
+	}
+	if err := reg.RemoveReviewTier("nope"); err == nil {
+		t.Fatal("removing unknown tier should fail")
+	}
+
+	// A builtin override is removable (reverts to builtin behaviour).
+	if err := reg.UpsertReviewTier("high-powered", ReviewTier{Models: []string{"claude", "gpt"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.RemoveReviewTier("high-powered"); err != nil {
+		t.Fatalf("RemoveReviewTier(high-powered override): %v", err)
+	}
+	if hp := reg.ReviewTier("high-powered"); len(hp.Reviewers) != 1 || hp.Reviewers[0].Model != "claude" {
+		t.Fatalf("high-powered after override removal = %+v, want builtin (roles.reviewers)", hp)
+	}
+
+	// A custom tier that is the current default cannot be removed...
+	if err := reg.UpsertReviewTier("deep", ReviewTier{Models: []string{"gpt"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.SetReviewDefault("deep"); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.RemoveReviewTier("deep"); err == nil {
+		t.Fatal("removing the default custom tier should fail")
+	}
+	// ...until the default moves away.
+	if err := reg.SetReviewDefault(""); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.RemoveReviewTier("deep"); err != nil {
+		t.Fatalf("RemoveReviewTier(deep): %v", err)
+	}
+	if res := reg.ReviewTier("deep"); !res.Fallback {
+		t.Fatalf("deep should be unknown after removal, got %+v", res)
+	}
+}
+
+func TestSetReviewDefault(t *testing.T) {
+	reg := twoModelRegistry()
+	if err := reg.SetReviewDefault("nope"); err == nil {
+		t.Fatal("unknown default should be rejected")
+	}
+	if err := reg.SetReviewDefault("simple"); err != nil {
+		t.Fatalf("SetReviewDefault(simple): %v", err)
+	}
+	if def := reg.ReviewTier(""); def.Name != "simple" || !def.SelfReview {
+		t.Fatalf("default after SetReviewDefault = %+v, want simple", def)
+	}
+	if err := reg.SetReviewDefault(""); err != nil {
+		t.Fatalf("clearing default: %v", err)
+	}
+	if def := reg.ReviewTier(""); def.Name != "single-opus" {
+		t.Fatalf("cleared default = %+v, want single-opus", def)
+	}
+}
+
+// Review-tier edits persist to ycc.toml and survive a reload; a persist failure
+// reverts the in-memory change.
+func TestReviewTierMutationsPersistAndRevert(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ycc.toml")
+	cfg := &Config{
+		Models: map[string]Model{
+			"claude": {Backend: "anthropic", Model: "claude-x"},
+			"gpt":    {Backend: "openai", Model: "gpt-x"},
+		},
+		Roles: Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"}},
+	}
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	reg := NewRegistry(cfg)
+	reg.SetPath(path)
+
+	if err := reg.UpsertReviewTier("deep", ReviewTier{
+		Description: "risky changes",
+		Reviewers:   []Reviewer{{Name: "perf", Model: "gpt", Thinking: "max"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.SetReviewDefault("deep"); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if loaded.Reviews.Default != "deep" {
+		t.Fatalf("persisted default = %q, want deep", loaded.Reviews.Default)
+	}
+	dt := loaded.Reviews.Tiers["deep"]
+	if dt.Description != "risky changes" || len(dt.Reviewers) != 1 || dt.Reviewers[0].Thinking != "max" {
+		t.Fatalf("persisted deep = %+v", dt)
+	}
+
+	// Point the registry at an unwritable path (parent is a regular file, so
+	// Save's MkdirAll fails): the mutation must revert.
+	blocker := filepath.Join(dir, "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reg.SetPath(filepath.Join(blocker, "ycc.toml"))
+	if err := reg.UpsertReviewTier("another", ReviewTier{Models: []string{"claude"}}); err == nil {
+		t.Fatal("upsert with unwritable path should fail")
+	}
+	if _, ok := reg.cfg.Reviews.Tiers["another"]; ok {
+		t.Fatal("failed persist should revert the in-memory upsert")
+	}
+	if err := reg.SetReviewDefault("simple"); err == nil {
+		t.Fatal("set default with unwritable path should fail")
+	}
+	if reg.cfg.Reviews.Default != "deep" {
+		t.Fatalf("failed persist should revert default, got %q", reg.cfg.Reviews.Default)
+	}
+	if err := reg.RemoveReviewTier("deep"); err == nil {
+		t.Fatal("remove with unwritable path should fail (or default guard)")
+	}
+}

@@ -18,16 +18,21 @@ public protocol WorkstreamsSource: Sendable {
         -> (merged: Bool, commit: String, needsAccept: Bool, diff: String, conflicts: [String])
     /// Abandon a workstream without merging.
     func discardWorkstream(workstreamId: String) async throws
+    /// Re-queue a ready or needs-attention workstream for automatic integration.
+    func retryIntegration(workstreamId: String) async throws -> Ycc_V1_WorkstreamInfo
 }
 
 extension YccClient: WorkstreamsSource {}
 
 /// A workstream's lifecycle status (proto `WorkstreamInfo.status`: `active |
-/// merged | discarded | stale`), parsed from the daemon's free-form string.
-/// Kept here so the badge colour/label mapping is a single, unit-testable source
-/// of truth. Unknown strings fall back to ``unknown`` rather than crashing.
+/// ready | needs_attention | merged | discarded | stale`), parsed from the
+/// daemon's free-form string. Kept here so the badge colour/label mapping is a
+/// single, unit-testable source of truth. Unknown strings fall back to
+/// ``unknown`` rather than crashing.
 public enum WorkstreamStatus: String, Sendable, CaseIterable, Equatable {
     case active
+    case ready
+    case needsAttention = "needs_attention"
     case merged
     case discarded
     case stale
@@ -40,7 +45,9 @@ public enum WorkstreamStatus: String, Sendable, CaseIterable, Equatable {
     /// A human-facing badge label.
     public var title: String {
         switch self {
-        case .active: return "Active"
+        case .active: return "Working"
+        case .ready: return "Ready"
+        case .needsAttention: return "Needs attention"
         case .merged: return "Merged"
         case .discarded: return "Discarded"
         case .stale: return "Stale"
@@ -48,10 +55,52 @@ public enum WorkstreamStatus: String, Sendable, CaseIterable, Equatable {
         }
     }
 
-    /// Whether merge/discard actions apply — only a live (`active`/`stale`)
-    /// workstream can be merged or discarded.
-    public var isActionable: Bool {
-        self == .active || self == .stale
+    /// Preview and merge are allowed for the daemon's in-flight statuses.
+    public var isMergeable: Bool {
+        self == .active || self == .ready || self == .needsAttention
+    }
+
+    /// Discard is allowed for in-flight workstreams and stale registry entries.
+    public var isDiscardable: Bool {
+        isMergeable || self == .stale
+    }
+}
+
+/// Best-effort live queue state enriching the durable workstream lifecycle.
+public enum WorkstreamIntegrationState: String, Sendable, Equatable {
+    case queued
+    case integrating
+    case idle = ""
+    case unknown
+
+    public init(state: String) {
+        self = WorkstreamIntegrationState(rawValue: state.lowercased()) ?? .unknown
+    }
+
+    public var title: String? {
+        switch self {
+        case .queued: return "Queued"
+        case .integrating: return "Integrating"
+        case .idle: return nil
+        case .unknown: return nil
+        }
+    }
+}
+
+/// Summary returned by merge-all-ready so the UI can report partial progress.
+public struct MergeAllReadySummary: Sendable, Equatable {
+    public let mergedCount: Int
+    public let firstError: String?
+
+    public init(mergedCount: Int, firstError: String? = nil) {
+        self.mergedCount = mergedCount
+        self.firstError = firstError
+    }
+
+    public var message: String {
+        let merged = "Merged \(mergedCount) workstream\(mergedCount == 1 ? "" : "s")"
+        guard let firstError else { return merged }
+        return "\(merged), then failed: \(firstError)"
     }
 }
 
@@ -114,6 +163,12 @@ public final class WorkstreamsModel {
 
     /// Whether the last successful load produced any workstreams.
     public var hasWorkstreams: Bool { !workstreams.isEmpty }
+
+    /// Gate-mode ready rows eligible for the one-action merge-all operation.
+    /// Manual rows retain per-stream review and auto rows remain queue-owned.
+    public var gatedWorkstreams: [Ycc_V1_WorkstreamInfo] {
+        workstreams.filter(Self.isGateEligible)
+    }
 
     /// (Re)load the workstreams for the selected project and the project list.
     /// Unauthorized bubbles up via ``unauthorized`` for the view to handle.
@@ -207,6 +262,66 @@ public final class WorkstreamsModel {
         }
     }
 
+    /// Re-queue a ready or needs-attention workstream, then refresh its live queue
+    /// projection. The daemon treats retries of an already-queued row idempotently.
+    @discardableResult
+    public func retry(_ workstream: Ycc_V1_WorkstreamInfo) async -> Bool {
+        guard busyWorkstreamID == nil else { return false }
+        busyWorkstreamID = workstream.id
+        defer { busyWorkstreamID = nil }
+        do {
+            _ = try await source.retryIntegration(workstreamId: workstream.id)
+            actionError = nil
+            await refreshAfterAction()
+            return true
+        } catch {
+            handle(error)
+            return false
+        }
+    }
+
+    /// Sequentially accept every gate-mode ready row that was eligible when the
+    /// action began. Manual and auto-mode rows are deliberately excluded. Stops
+    /// at the first failure/non-merged response and returns an honest partial count.
+    public func mergeAllReady() async -> MergeAllReadySummary {
+        guard busyWorkstreamID == nil else {
+            return MergeAllReadySummary(mergedCount: 0, firstError: "another workstream action is in progress")
+        }
+        let gated = gatedWorkstreams
+        defer { busyWorkstreamID = nil }
+        var mergedCount = 0
+        var firstError: String?
+        actionError = nil
+
+        for workstream in gated {
+            busyWorkstreamID = workstream.id
+            do {
+                let result = try await source.mergeWorkstream(workstreamId: workstream.id, accept: true)
+                if result.merged {
+                    mergedCount += 1
+                    continue
+                }
+                if !result.conflicts.isEmpty {
+                    firstError = "\(workstream.id) conflicts: \(result.conflicts.joined(separator: ", "))"
+                } else if result.needsAccept {
+                    firstError = "\(workstream.id) still needs review"
+                } else {
+                    firstError = "\(workstream.id) was not merged"
+                }
+                break
+            } catch YccError.unauthorized {
+                unauthorized = true
+                firstError = "unauthorized"
+                break
+            } catch {
+                firstError = (error as? YccError)?.displayMessage ?? error.localizedDescription
+                break
+            }
+        }
+        await refreshAfterAction()
+        return MergeAllReadySummary(mergedCount: mergedCount, firstError: firstError)
+    }
+
     /// Refresh the list after a mutating action without toggling the row's busy
     /// flag off first (it is cleared by the caller's `defer`). Errors here are
     /// swallowed to the list-level `errorMessage`, not the action alert.
@@ -235,6 +350,41 @@ public final class WorkstreamsModel {
     /// The lifecycle status for a workstream row.
     public static func status(for workstream: Ycc_V1_WorkstreamInfo) -> WorkstreamStatus {
         WorkstreamStatus(status: workstream.status)
+    }
+
+    /// The live integration queue state for a row.
+    public static func integrationState(for workstream: Ycc_V1_WorkstreamInfo) -> WorkstreamIntegrationState {
+        WorkstreamIntegrationState(state: workstream.integrationState)
+    }
+
+    /// Whether a row is eligible for gate mode's batch merge action.
+    public static func isGateEligible(_ workstream: Ycc_V1_WorkstreamInfo) -> Bool {
+        status(for: workstream) == .ready && workstream.integrationMode.lowercased() == "gate"
+    }
+
+    /// Queue state wins over the durable lifecycle label while queued/running;
+    /// otherwise a gate-mode ready row is shown as the distinct Gated state.
+    public static func badgeTitle(for workstream: Ycc_V1_WorkstreamInfo) -> String {
+        let lifecycle = status(for: workstream)
+        if lifecycle == .needsAttention || lifecycle == .merged || lifecycle == .discarded || lifecycle == .stale {
+            return lifecycle.title
+        }
+        if let integrationTitle = integrationState(for: workstream).title {
+            return integrationTitle
+        }
+        if isGateEligible(workstream) {
+            return "Gated"
+        }
+        return lifecycle.title
+    }
+
+    public static func statusReason(for workstream: Ycc_V1_WorkstreamInfo) -> String? {
+        let reason = workstream.statusReason.trimmingCharacters(in: .whitespacesAndNewlines)
+        return reason.isEmpty ? nil : reason
+    }
+
+    public static func integrateSessionID(for workstream: Ycc_V1_WorkstreamInfo) -> String? {
+        workstream.integrateSessionID.isEmpty ? nil : workstream.integrateSessionID
     }
 
     /// A short one-line commit summary for a row, e.g. "3 commits" / "1 commit"

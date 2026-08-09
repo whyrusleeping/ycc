@@ -50,3 +50,6 @@ Non-goals: no thinking-effort ladder changes (xhigh/ultra), no long-context prem
 - 2026-08-08 implementer report: Implemented task 0291: - Expanded `internal/codex.Models` with `gpt-5.6-terra` and `gpt-5.6-luna`, retaining `gpt-5.6-sol` first; documented live-verification date and deprecated-but-serving 5.4 tail 
 …[truncated]
 - 2026-08-08 review tier: simple (coordinator self-review)
+- 2026-08-08 usage: 348,429 tok (in 213,658, out 13,939, cache_r 795,066, cache_w 25,004) · cost n/a (unpriced)
+  implementer: 339,731 tok (in 213,638, out 5,261, cache_r 120,832, cache_w 0) · cost n/a (unpriced)
+  coordinator: 8,698 tok (in 20, out 8,678, cache_r 674,234, cache_w 25,004) · cost n/a (unpriced)

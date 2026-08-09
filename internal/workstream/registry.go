@@ -343,6 +343,34 @@ func (r *Registry) SetIntegrateSessionID(id, sessionID string) error {
 	return nil
 }
 
+// RenameProject re-labels every workstream of oldProject to newProject,
+// persisting the change. Workstreams are keyed by id — the project field is a
+// grouping label — so this is what keeps existing workstreams listed under a
+// project after it is renamed (worktree paths on disk are stored explicitly and
+// keep working unchanged). Renaming a project with no workstreams is a no-op.
+func (r *Registry) RenameProject(oldProject, newProject string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	changed := map[string]Workstream{}
+	for id, w := range r.byID {
+		if w.Project == oldProject {
+			changed[id] = w
+			w.Project = newProject
+			r.byID[id] = w
+		}
+	}
+	if len(changed) == 0 {
+		return nil
+	}
+	if err := r.save(); err != nil {
+		for id, prev := range changed {
+			r.byID[id] = prev
+		}
+		return err
+	}
+	return nil
+}
+
 // Remove deletes a workstream by id, persisting the change. Removing an unknown
 // id is a no-op.
 func (r *Registry) Remove(id string) error {

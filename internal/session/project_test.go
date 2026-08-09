@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/whyrusleeping/ycc/internal/project"
+	"github.com/whyrusleeping/ycc/internal/workstream"
 )
 
 // TestManagerProjectCRUD exercises the manager's project registry surface used by
@@ -30,6 +31,41 @@ func TestManagerProjectCRUD(t *testing.T) {
 	}
 	if got := m.Projects(); len(got) != 0 {
 		t.Fatalf("Projects after remove = %+v, want empty", got)
+	}
+}
+
+// TestManagerRenameProject verifies the manager-level rename updates the project
+// registry and relabels the project's workstreams (spec §3.1).
+func TestManagerRenameProject(t *testing.T) {
+	m := NewManager(testRegistry(), t.TempDir())
+	m.SetProjects(project.NewMemory())
+
+	dir := t.TempDir()
+	if _, err := m.AddProject(dir, "demo"); err != nil {
+		t.Fatalf("AddProject: %v", err)
+	}
+	if err := m.workstreams.Add(workstream.Workstream{
+		ID: "ws_1", Project: "demo", Branch: "ycc/ws/ws_1",
+		WorktreePath: t.TempDir(), Status: workstream.StatusActive,
+	}); err != nil {
+		t.Fatalf("workstreams.Add: %v", err)
+	}
+
+	p, err := m.RenameProject("demo", "demo2")
+	if err != nil {
+		t.Fatalf("RenameProject: %v", err)
+	}
+	if p.Name != "demo2" || p.Path != dir {
+		t.Fatalf("RenameProject = %+v, want name=demo2 path=%s", p, dir)
+	}
+	if got := m.Projects(); len(got) != 1 || got[0].Name != "demo2" {
+		t.Fatalf("Projects = %+v, want [demo2]", got)
+	}
+	if got := m.workstreams.ListByProject("demo2"); len(got) != 1 || got[0].ID != "ws_1" {
+		t.Fatalf("workstreams under demo2 = %+v, want [ws_1]", got)
+	}
+	if _, err := m.RenameProject("demo", "x"); err == nil {
+		t.Fatal("rename of stale old name succeeded, want error")
 	}
 }
 

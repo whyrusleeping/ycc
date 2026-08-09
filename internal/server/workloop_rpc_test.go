@@ -61,7 +61,7 @@ func TestWorkLoopToProto(t *testing.T) {
 		WaitKind:         "rate_limit",
 		SessionsRun:      2,
 		Sessions: []session.WorkLoopSession{
-			{SessionID: "s1", Focus: "0001", Tokens: 100, Cost: 0.01, PriceStatus: "priced"},
+			{SessionID: "s1", Focus: "0001", Tokens: 100, Cost: 0.01, PriceStatus: "priced", DurationSecs: 372},
 		},
 		Completed: []session.WorkLoopDigestTask{
 			{ID: "0001", Title: "First", Status: "done", SHA: "abc", VerdictTally: "approve×2", Tokens: 100, Cost: 0.01, PriceStatus: "priced"},
@@ -83,7 +83,7 @@ func TestWorkLoopToProto(t *testing.T) {
 	if info.ResumeAt != "2026-07-15T10:30:00Z" || info.WaitKind != "rate_limit" {
 		t.Fatalf("wait fields = %q/%q", info.ResumeAt, info.WaitKind)
 	}
-	if info.SessionsRun != 2 || len(info.Sessions) != 1 || info.Sessions[0].SessionId != "s1" {
+	if info.SessionsRun != 2 || len(info.Sessions) != 1 || info.Sessions[0].SessionId != "s1" || info.Sessions[0].DurationSecs != 372 {
 		t.Fatalf("sessions wrong: %+v", info.Sessions)
 	}
 	if len(info.Completed) != 1 || info.Completed[0].VerdictTally != "approve×2" {

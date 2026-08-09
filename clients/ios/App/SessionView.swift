@@ -78,6 +78,8 @@ struct SessionView: View {
     @State private var showStopConfirm = false
     /// Whether the per-session settings sheet is shown.
     @State private var showSettings = false
+    /// Presents the per-session usage sheet (task 0309).
+    @State private var showSessionUsage = false
     /// A commit to drill into via the diff viewer (set by tapping a commit row).
     @State private var commitTarget: CommitDiffTarget?
 
@@ -151,6 +153,9 @@ struct SessionView: View {
         .sheet(isPresented: $showSettings) {
             SessionSettingsView(
                 client: client, sessionID: sessionID, coordinator: model.coordinatorModel)
+        }
+        .sheet(isPresented: $showSessionUsage) {
+            SessionUsageSheet(client: client, project: project, sessionID: sessionID)
         }
         .sheet(isPresented: $showQuestionSheet) {
             if let pending = model.pendingQuestion {
@@ -733,6 +738,11 @@ struct SessionView: View {
                     Label("Session settings", systemImage: "gearshape")
                 }
                 Button {
+                    showSessionUsage = true
+                } label: {
+                    Label("Session usage", systemImage: "sum")
+                }
+                Button {
                     router.open(.workLoop(project: project))
                 } label: {
                     Label("Work loop", systemImage: "arrow.triangle.2.circlepath")
@@ -746,6 +756,11 @@ struct SessionView: View {
                     router.open(.usage(project: project))
                 } label: {
                     Label("Usage", systemImage: "chart.bar")
+                }
+                Button {
+                    router.open(.memory(project: project))
+                } label: {
+                    Label("Memory", systemImage: "brain")
                 }
                 Divider()
                 Button {

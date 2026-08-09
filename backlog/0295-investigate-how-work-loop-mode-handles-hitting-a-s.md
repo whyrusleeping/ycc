@@ -77,3 +77,7 @@ Verify: `go build ./... && go test ./internal/engine ./internal/session ./intern
 …[truncated]
 - 2026-08-08 review (sol): accept — The revision addresses both prior findings. Errored-session paths now refresh the backlog before terminal handling, with a regression test proving pre-failure backlog updates appear in the digest. The
 …[truncated]
+- 2026-08-08 usage: 9,858,939 tok (in 1,722,979, out 72,728, cache_r 13,116,099, cache_w 198,047) · cost n/a (unpriced)
+  implementer: 9,011,840 tok (in 1,324,660, out 24,332, cache_r 7,662,848, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 804,156 tok (in 398,217, out 5,555, cache_r 400,384, cache_w 0) · cost n/a (unpriced)
+  coordinator: 42,943 tok (in 102, out 42,841, cache_r 5,052,867, cache_w 198,047) · cost n/a (unpriced)

@@ -715,6 +715,38 @@ func DefaultAnthropic(baseURL, model, keyEnv string, maxTokens int) *Config {
 	}
 }
 
+// validateReviewTier checks one configured review tier against the model set —
+// shared between config-load validation and the runtime UpsertReviewTier path
+// so a tier that would be rejected at load can never be written by an RPC.
+func validateReviewTier(name string, t ReviewTier, models map[string]Model) error {
+	if !validReviewStrategy(t.Strategy) {
+		return fmt.Errorf("reviews.tiers.%s: unknown strategy %q", name, t.Strategy)
+	}
+	if isSelfReviewStrategy(t.Strategy) {
+		return nil // models/reviewers are ignored for a coordinator self-review tier
+	}
+	if len(t.Models) > 0 && len(t.Reviewers) > 0 {
+		return fmt.Errorf("reviews.tiers.%s: set either models or reviewers, not both", name)
+	}
+	for _, mdl := range t.Models {
+		if _, ok := models[mdl]; !ok {
+			return fmt.Errorf("reviews.tiers.%s: unknown model %q", name, mdl)
+		}
+	}
+	for i, rv := range t.Reviewers {
+		if strings.TrimSpace(rv.Model) == "" {
+			return fmt.Errorf("reviews.tiers.%s: reviewer %d has no model", name, i+1)
+		}
+		if _, ok := models[rv.Model]; !ok {
+			return fmt.Errorf("reviews.tiers.%s: unknown model %q", name, rv.Model)
+		}
+		if rv.Thinking != "" && !validThinkingLevel(rv.Thinking) {
+			return fmt.Errorf("reviews.tiers.%s: reviewer %q: unknown thinking level %q", name, rv.Model, rv.Thinking)
+		}
+	}
+	return nil
+}
+
 func (c *Config) validate() error {
 	if c.Roles.Coordinator == "" || c.Roles.Implementer == "" {
 		return fmt.Errorf("roles.coordinator and roles.implementer are required")
@@ -738,30 +770,8 @@ func (c *Config) validate() error {
 	// always valid. An unknown strategy, an agents-tier referencing an unknown
 	// model, or a default naming no tier are configuration errors.
 	for name, t := range c.Reviews.Tiers {
-		if !validReviewStrategy(t.Strategy) {
-			return fmt.Errorf("reviews.tiers.%s: unknown strategy %q", name, t.Strategy)
-		}
-		if isSelfReviewStrategy(t.Strategy) {
-			continue // models/reviewers are ignored for a coordinator self-review tier
-		}
-		if len(t.Models) > 0 && len(t.Reviewers) > 0 {
-			return fmt.Errorf("reviews.tiers.%s: set either models or reviewers, not both", name)
-		}
-		for _, mdl := range t.Models {
-			if _, ok := c.Models[mdl]; !ok {
-				return fmt.Errorf("reviews.tiers.%s: unknown model %q", name, mdl)
-			}
-		}
-		for i, rv := range t.Reviewers {
-			if strings.TrimSpace(rv.Model) == "" {
-				return fmt.Errorf("reviews.tiers.%s: reviewer %d has no model", name, i+1)
-			}
-			if _, ok := c.Models[rv.Model]; !ok {
-				return fmt.Errorf("reviews.tiers.%s: unknown model %q", name, rv.Model)
-			}
-			if rv.Thinking != "" && !validThinkingLevel(rv.Thinking) {
-				return fmt.Errorf("reviews.tiers.%s: reviewer %q: unknown thinking level %q", name, rv.Model, rv.Thinking)
-			}
+		if err := validateReviewTier(name, t, c.Models); err != nil {
+			return err
 		}
 	}
 	if c.Reviews.Default != "" {
@@ -1272,6 +1282,122 @@ func (r *Registry) RemoveModel(name string, persist bool) error {
 			r.cfg.Models[name] = prev
 			return err
 		}
+	}
+	return nil
+}
+
+// ReviewTierListing is one effective review tier as reported to clients (spec
+// §13.1, §18.2): the tier's configuration plus whether it is one of the
+// always-present built-ins and whether an explicit [reviews.tiers.X] entry
+// exists for it (a custom tier, or a built-in override).
+type ReviewTierListing struct {
+	Name       string
+	Tier       ReviewTier
+	Builtin    bool // simple / single-opus / high-powered
+	Configured bool // has an explicit [reviews.tiers.X] entry
+}
+
+// ReviewTierConfigs returns the effective tiers (built-ins overlaid with
+// configured entries) in their CONFIGURATION form (unlike ReviewTiers, which
+// resolves them for the tool description), sorted by name, plus the effective
+// default tier name — so an editing client renders exactly what is stored.
+func (r *Registry) ReviewTierConfigs() ([]ReviewTierListing, string) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	tiers, def := r.cfg.effectiveReviewTiers()
+	names := make([]string, 0, len(tiers))
+	for name := range tiers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]ReviewTierListing, 0, len(names))
+	for _, name := range names {
+		_, configured := r.cfg.Reviews.Tiers[name]
+		out = append(out, ReviewTierListing{
+			Name:       name,
+			Tier:       tiers[name],
+			Builtin:    builtinReviewTiers[name],
+			Configured: configured,
+		})
+	}
+	return out, def
+}
+
+// UpsertReviewTier adds or replaces the configured review tier named name,
+// validating it exactly like config load (shared validateReviewTier), and
+// persists the config, reverting the in-memory change on a persist failure so
+// the live config and the file never diverge. Takes effect on the next
+// spawn_reviewers — tiers resolve per call via Registry.ReviewTier.
+func (r *Registry) UpsertReviewTier(name string, t ReviewTier) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("review tier needs a name")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := validateReviewTier(name, t, r.cfg.Models); err != nil {
+		return err
+	}
+	prev, prevOK := r.cfg.Reviews.Tiers[name]
+	if r.cfg.Reviews.Tiers == nil {
+		r.cfg.Reviews.Tiers = make(map[string]ReviewTier)
+	}
+	r.cfg.Reviews.Tiers[name] = t
+	if err := r.persistLocked(); err != nil {
+		if prevOK {
+			r.cfg.Reviews.Tiers[name] = prev
+		} else {
+			delete(r.cfg.Reviews.Tiers, name)
+		}
+		return err
+	}
+	return nil
+}
+
+// RemoveReviewTier deletes the configured entry for a tier and persists. A
+// built-in name reverts to its built-in behaviour (the tier itself remains); a
+// custom tier disappears. Rejected when there is no configured entry, or when
+// reviews.default names the removed CUSTOM tier (the default would dangle —
+// change it first; a built-in default stays valid without an entry).
+func (r *Registry) RemoveReviewTier(name string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	prev, ok := r.cfg.Reviews.Tiers[name]
+	if !ok {
+		if builtinReviewTiers[name] {
+			return fmt.Errorf("tier %q is built-in with no configured override to remove", name)
+		}
+		return fmt.Errorf("unknown review tier %q", name)
+	}
+	if r.cfg.Reviews.Default == name && !builtinReviewTiers[name] {
+		return fmt.Errorf("cannot remove tier %q: it is the default review tier (change reviews.default first)", name)
+	}
+	delete(r.cfg.Reviews.Tiers, name)
+	if err := r.persistLocked(); err != nil {
+		r.cfg.Reviews.Tiers[name] = prev
+		return err
+	}
+	return nil
+}
+
+// SetReviewDefault sets reviews.default to an existing effective tier name and
+// persists it; an empty name clears the setting (falling back to the built-in
+// default, single-opus). Reverts on a persist failure.
+func (r *Registry) SetReviewDefault(name string) error {
+	name = strings.TrimSpace(name)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if name != "" {
+		_, configured := r.cfg.Reviews.Tiers[name]
+		if !configured && !builtinReviewTiers[name] {
+			return fmt.Errorf("unknown review tier %q", name)
+		}
+	}
+	prev := r.cfg.Reviews.Default
+	r.cfg.Reviews.Default = name
+	if err := r.persistLocked(); err != nil {
+		r.cfg.Reviews.Default = prev
+		return err
 	}
 	return nil
 }
