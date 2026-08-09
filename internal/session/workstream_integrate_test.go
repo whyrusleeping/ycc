@@ -518,6 +518,104 @@ func TestWorkstreamLateDirtyBaseRestoresReadyProjection(t *testing.T) {
 	}
 }
 
+func TestRetryIntegrationNeedsAttentionTransitionsReadyAndEmits(t *testing.T) {
+	m, _ := newWorkstreamManager(t)
+	m.reg = testRegistryWithIntegrationConfig(config.Integration{Mode: "gate"})
+	ws, s, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := m.workstreams.Transition(ws.ID, workstream.StatusNeedsAttention, "verification failed", workstream.StatusActive)
+	if err != nil || !changed {
+		t.Fatalf("set needs_attention: changed=%v err=%v", changed, err)
+	}
+
+	got, err := m.RetryIntegration(ws.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != workstream.StatusReady || got.StatusReason != "" {
+		t.Fatalf("status = %s reason=%q, want ready with no reason", got.Status, got.StatusReason)
+	}
+	found := false
+	for _, ev := range s.Log().Snapshot() {
+		retry, _ := ev.Data["retry"].(bool)
+		if ev.Type == event.WorkstreamReady && retry {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("missing workstream_ready event with retry=true")
+	}
+}
+
+func TestRetryIntegrationReadyAlreadyQueuedIsIdempotent(t *testing.T) {
+	m, _ := newWorkstreamManager(t)
+	m.reg = testRegistryWithIntegrationConfig(config.Integration{Mode: "auto", Verify: "true"})
+	ws := workstream.Workstream{ID: "ws_retry", Project: "demo", Status: workstream.StatusReady}
+	if err := m.workstreams.Add(ws); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	m.integrators[ws.Project] = &workstreamIntegrator{
+		pending:  []string{ws.ID},
+		queued:   map[string]bool{ws.ID: true},
+		draining: true,
+	}
+	m.mu.Unlock()
+
+	for i := 0; i < 2; i++ {
+		got, err := m.RetryIntegration(ws.ID)
+		if err != nil || got.Status != workstream.StatusReady {
+			t.Fatalf("retry %d: status=%s err=%v", i+1, got.Status, err)
+		}
+	}
+	if state := m.WorkstreamIntegrationState(ws); state != "queued" {
+		t.Fatalf("integration state = %q, want queued", state)
+	}
+	m.mu.Lock()
+	q := m.integrators[ws.Project]
+	pending := append([]string(nil), q.pending...)
+	q.pending = nil // simulate the drainer popping this id
+	q.active = ws.ID
+	m.mu.Unlock()
+	if len(pending) != 1 || pending[0] != ws.ID {
+		t.Fatalf("pending = %v, want one %s", pending, ws.ID)
+	}
+	if state := m.WorkstreamIntegrationState(ws); state != "integrating" {
+		t.Fatalf("active integration state = %q, want integrating", state)
+	}
+	if _, err := m.workstreams.Transition(ws.ID, workstream.StatusNeedsAttention, "failed", workstream.StatusReady); err != nil {
+		t.Fatal(err)
+	}
+
+	// An attention retry racing the tail of the failed active attempt must leave
+	// one follow-up queued. The repeated ready-state calls above cover idempotency.
+	if _, err := m.RetryIntegration(ws.ID); err != nil {
+		t.Fatalf("active retry: %v", err)
+	}
+	m.mu.Lock()
+	pending = append([]string(nil), q.pending...)
+	m.mu.Unlock()
+	if len(pending) != 1 || pending[0] != ws.ID {
+		t.Fatalf("active retry pending = %v, want one %s", pending, ws.ID)
+	}
+}
+
+func TestRetryIntegrationMergedFails(t *testing.T) {
+	m, _ := newWorkstreamManager(t)
+	ws, _, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.workstreams.SetStatus(ws.ID, workstream.StatusMerged); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.RetryIntegration(ws.ID); err == nil || !strings.Contains(err.Error(), "cannot be retried") {
+		t.Fatalf("error = %v, want cannot be retried", err)
+	}
+}
+
 func TestWorkstreamAutoWithoutVerifyDegradesToGate(t *testing.T) {
 	m, proj := autoIntegrationManager(t, "")
 	ws, _, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})

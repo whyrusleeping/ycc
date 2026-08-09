@@ -341,6 +341,9 @@ func TestWorkstreamRPCErrorMapping(t *testing.T) {
 	if _, err := srv.DiscardWorkstream(ctx, connect.NewRequest(&v1.DiscardWorkstreamRequest{WorkstreamId: "ws_nope"})); connect.CodeOf(err) != connect.CodeNotFound {
 		t.Fatalf("DiscardWorkstream unknown id code = %v, want NotFound", connect.CodeOf(err))
 	}
+	if _, err := srv.RetryIntegration(ctx, connect.NewRequest(&v1.RetryIntegrationRequest{WorkstreamId: "ws_nope"})); connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("RetryIntegration unknown id code = %v, want NotFound", connect.CodeOf(err))
+	}
 	if _, err := srv.SpawnWorkstream(ctx, connect.NewRequest(&v1.SpawnWorkstreamRequest{})); connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("SpawnWorkstream empty project code = %v, want InvalidArgument", connect.CodeOf(err))
 	}
@@ -360,10 +363,54 @@ func TestWorkstreamRPCErrorMapping(t *testing.T) {
 	if _, err := srv.DiscardWorkstream(ctx, connect.NewRequest(&v1.DiscardWorkstreamRequest{WorkstreamId: terminal.ID})); connect.CodeOf(err) != connect.CodeFailedPrecondition {
 		t.Fatalf("DiscardWorkstream terminal code = %v, want FailedPrecondition", connect.CodeOf(err))
 	}
+	if _, err := srv.RetryIntegration(ctx, connect.NewRequest(&v1.RetryIntegrationRequest{WorkstreamId: terminal.ID})); connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("RetryIntegration terminal code = %v, want FailedPrecondition", connect.CodeOf(err))
+	}
+	active := workstream.Workstream{ID: "ws_active", Project: "demo", Status: workstream.StatusActive}
+	if err := wreg.Add(active); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.RetryIntegration(ctx, connect.NewRequest(&v1.RetryIntegrationRequest{WorkstreamId: active.ID})); connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("RetryIntegration active code = %v, want FailedPrecondition", connect.CodeOf(err))
+	}
+
+	attention := workstream.Workstream{
+		ID: "ws_attention", Project: "demo", Status: workstream.StatusNeedsAttention,
+		StatusReason: "verification failed", IntegrateSessionID: "s_integrate",
+	}
+	if err := wreg.Add(attention); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := srv.ListWorkstreams(ctx, connect.NewRequest(&v1.ListWorkstreamsRequest{Project: "demo"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found *v1.WorkstreamInfo
+	for _, info := range listed.Msg.GetWorkstreams() {
+		if info.GetId() == attention.ID {
+			found = info
+		}
+	}
+	if found == nil || found.GetStatusReason() != attention.StatusReason || found.GetIntegrateSessionId() != attention.IntegrateSessionID {
+		t.Fatalf("attention proto = %+v, want reason/session round trip", found)
+	}
+	if found.GetIntegrationMode() != "gate" {
+		t.Fatalf("attention integration_mode = %q, want effective gate", found.GetIntegrationMode())
+	}
+	retried, err := srv.RetryIntegration(ctx, connect.NewRequest(&v1.RetryIntegrationRequest{WorkstreamId: attention.ID}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retried.Msg.GetWorkstream().GetIntegrationMode() != "gate" {
+		t.Fatalf("retry integration_mode = %q, want effective gate", retried.Msg.GetWorkstream().GetIntegrationMode())
+	}
 
 	// A missing workstream_id is likewise InvalidArgument.
 	if _, err := srv.PreviewMerge(ctx, connect.NewRequest(&v1.PreviewMergeRequest{})); connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("PreviewMerge empty id code = %v, want InvalidArgument", connect.CodeOf(err))
+	}
+	if _, err := srv.RetryIntegration(ctx, connect.NewRequest(&v1.RetryIntegrationRequest{})); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("RetryIntegration empty id code = %v, want InvalidArgument", connect.CodeOf(err))
 	}
 }
 

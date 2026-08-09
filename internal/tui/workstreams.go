@@ -88,6 +88,57 @@ func (m model) discardWorkstreamCmd(id string) tea.Cmd {
 	}
 }
 
+// retryIntegrationCmd re-queues one ready/needs-attention workstream. The daemon
+// makes retries of an already-queued ready stream idempotent.
+func (m model) retryIntegrationCmd(id string) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := m.client.RetryIntegration(m.ctx, connect.NewRequest(&v1.RetryIntegrationRequest{WorkstreamId: id}))
+		if err != nil {
+			return wsRetriedMsg{id: id, err: err}
+		}
+		return wsRetriedMsg{id: id, workstream: resp.Msg.GetWorkstream()}
+	}
+}
+
+// wsGateEligible identifies ready rows whose project's effective integration
+// mode is gate. Manual rows retain per-stream review; auto rows stay queue-owned.
+func wsGateEligible(w *v1.WorkstreamInfo) bool {
+	return w.GetStatus() == "ready" && w.GetIntegrationMode() == "gate"
+}
+
+// mergeAllReadyCmd sequentially accepts every gate-mode ready row that was
+// eligible when the key was pressed. It stops on the first RPC or non-merged
+// response so the notice is an honest count of completed integrations.
+func (m model) mergeAllReadyCmd(list []*v1.WorkstreamInfo) tea.Cmd {
+	return func() tea.Msg {
+		count := 0
+		for _, w := range list {
+			if !wsGateEligible(w) {
+				continue
+			}
+			resp, err := m.client.MergeWorkstream(m.ctx, connect.NewRequest(&v1.MergeWorkstreamRequest{
+				WorkstreamId: w.GetId(), Accept: true,
+			}))
+			if err != nil {
+				return wsMergeAllMsg{count: count, err: err}
+			}
+			if !resp.Msg.GetMerged() {
+				switch {
+				case len(resp.Msg.GetConflicts()) > 0:
+					err = fmt.Errorf("%s conflicts: %s", short(w.GetId()), strings.Join(resp.Msg.GetConflicts(), ", "))
+				case resp.Msg.GetNeedsAccept():
+					err = fmt.Errorf("%s still needs review", short(w.GetId()))
+				default:
+					err = fmt.Errorf("%s was not merged", short(w.GetId()))
+				}
+				return wsMergeAllMsg{count: count, err: err}
+			}
+			count++
+		}
+		return wsMergeAllMsg{count: count}
+	}
+}
+
 // openWorkstreams enters the modal Workstreams panel, resetting its transient
 // state and bumping the refresh-tick generation so an older tick can't multiply
 // the in-flight timers.
@@ -116,9 +167,18 @@ func (m model) wsRowStatus(w *v1.WorkstreamInfo) (string, bool) {
 	case "conflict":
 		return "conflict", true
 	case "awaiting-review":
-		return "awaiting-review", false
+		return "gated", false
+	}
+	switch w.GetIntegrationState() {
+	case "integrating":
+		return "integrating…", false
+	case "queued":
+		return "queued", false
 	}
 	if w.GetStatus() == "ready" {
+		if w.GetIntegrationMode() == "gate" {
+			return "gated", false
+		}
 		return "ready", false
 	}
 	if s := w.GetSessionStatus(); s != "" {
@@ -198,6 +258,36 @@ func (m model) updateWorkstreams(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.reopenSession(w.GetSessionId())
 		}
 		return m, nil
+	case "i":
+		if w := m.wsCurrent(); w != nil && w.GetIntegrateSessionId() != "" {
+			m.status = "reopening " + short(w.GetIntegrateSessionId()) + "…"
+			return m, m.reopenSession(w.GetIntegrateSessionId())
+		}
+		m.wsNotice = "no integrate session"
+		return m, nil
+	case "t":
+		if w := m.wsCurrent(); w != nil {
+			if w.GetStatus() != "needs_attention" && w.GetStatus() != "ready" {
+				m.wsNotice = "cannot retry: workstream is " + w.GetStatus()
+				return m, nil
+			}
+			m.wsNotice = "retrying integration " + short(w.GetId()) + "…"
+			return m, m.retryIntegrationCmd(w.GetId())
+		}
+		return m, nil
+	case "a":
+		gated := 0
+		for _, w := range m.wsList {
+			if wsGateEligible(w) {
+				gated++
+			}
+		}
+		if gated == 0 {
+			m.wsNotice = "no gated workstreams (merge all applies to gate mode)"
+			return m, nil
+		}
+		m.wsNotice = fmt.Sprintf("merging %d gated workstream(s)…", gated)
+		return m, m.mergeAllReadyCmd(m.wsList)
 	case "m":
 		if w := m.wsCurrent(); w != nil {
 			status := w.GetStatus()
@@ -241,19 +331,26 @@ func (m model) workstreamsView() string {
 	b := browser{
 		title:  " ycc — workstreams ",
 		cursor: m.wsCursor,
-		hint:   "↑/↓ select · enter open session · m merge · d discard · r refresh · esc close",
+		hint:   "↑/↓ select · enter work log · i integrate log · t retry · a merge gated · m merge · d discard · r refresh · esc close",
 		empty:  "(no workstreams — spawn from the backlog with space + P)",
 	}
 	if m.wsDiscardID != "" {
 		b.hint = "discard " + short(m.wsDiscardID) + "? y confirm · any other key cancel"
 	} else if m.wsNotice != "" {
 		b.hint = m.wsNotice
+	} else if w := m.wsCurrent(); w != nil && w.GetStatus() == "needs_attention" && strings.TrimSpace(w.GetStatusReason()) != "" {
+		// browserCard clamps the footer to the terminal width, so a long daemon
+		// reason stays on one line and is visibly ellipsized.
+		b.hint = "needs attention: " + w.GetStatusReason()
 	}
 	for _, w := range m.wsList {
 		status, conflict := m.wsRowStatus(w)
 		statusCell := fmt.Sprintf("%-15s", status)
 		if conflict {
-			statusCell = errStyle.Render(fmt.Sprintf("%-15s", "⚠ conflict"))
+			if !strings.HasPrefix(status, "⚠") {
+				status = "⚠ " + status
+			}
+			statusCell = errStyle.Render(fmt.Sprintf("%-15s", status))
 		}
 		task := w.GetTaskId()
 		if task == "" {

@@ -100,7 +100,9 @@ type fakeClient struct {
 	mergeResp     *v1.MergeWorkstreamResponse
 	lastPreviewID string
 	lastMergeID   string
+	mergeIDs      []string
 	lastDiscardID string
+	lastRetryID   string
 }
 
 func newFakeClient(cfgs ...*v1.ModelConfig) *fakeClient {
@@ -331,6 +333,7 @@ func (f *fakeClient) PreviewMerge(_ context.Context, req *connect.Request[v1.Pre
 
 func (f *fakeClient) MergeWorkstream(_ context.Context, req *connect.Request[v1.MergeWorkstreamRequest]) (*connect.Response[v1.MergeWorkstreamResponse], error) {
 	f.lastMergeID = req.Msg.WorkstreamId
+	f.mergeIDs = append(f.mergeIDs, req.Msg.WorkstreamId)
 	resp := f.mergeResp
 	if resp == nil {
 		resp = &v1.MergeWorkstreamResponse{Merged: true, Commit: "abc1234"}
@@ -341,6 +344,13 @@ func (f *fakeClient) MergeWorkstream(_ context.Context, req *connect.Request[v1.
 func (f *fakeClient) DiscardWorkstream(_ context.Context, req *connect.Request[v1.DiscardWorkstreamRequest]) (*connect.Response[v1.DiscardWorkstreamResponse], error) {
 	f.lastDiscardID = req.Msg.WorkstreamId
 	return connect.NewResponse(&v1.DiscardWorkstreamResponse{}), nil
+}
+
+func (f *fakeClient) RetryIntegration(_ context.Context, req *connect.Request[v1.RetryIntegrationRequest]) (*connect.Response[v1.RetryIntegrationResponse], error) {
+	f.lastRetryID = req.Msg.WorkstreamId
+	return connect.NewResponse(&v1.RetryIntegrationResponse{Workstream: &v1.WorkstreamInfo{
+		Id: req.Msg.WorkstreamId, Status: "ready", IntegrationState: "queued",
+	}}), nil
 }
 
 // GetUsage backs the cost view route (spec §20.5, tasks 0039/0174). It records

@@ -1,7 +1,8 @@
 # Design: automatic workstream integration (agent-driven merge queue)
 
-> Status: **partially implemented** (serialized fast-path queue, configuration, and bounded
-> integrate-agent recovery shipped; client retry/merge-all surfaces remain follow-ups). Sequel to
+> Status: **implemented** (serialized fast-path queue, configuration, bounded integrate-agent
+> recovery, RetryIntegration RPC, and TUI/iOS retry + merge-all-ready surfaces shipped; iOS
+> remains pending on-device verification). Sequel to
 > `docs/design/parallel-workstreams.md` (worktree isolation, shipped) and spec
 > §14.1. This doc covers what happens *after* a workstream has done its work:
 > how its branch gets back onto the base branch automatically, safely, and

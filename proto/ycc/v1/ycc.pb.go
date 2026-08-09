@@ -5878,21 +5878,25 @@ func (x *GetWorkLoopResponse) GetLoop() *WorkLoopInfo {
 // is a linked git worktree + branch plus the `work` session scoped to it, tracked
 // as a child of a project. WorkstreamInfo mirrors workstream.Workstream.
 type WorkstreamInfo struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                                             // stable short id (ws_<8-hex>)
-	Project       string                 `protobuf:"bytes,2,opt,name=project,proto3" json:"project,omitempty"`                                   // parent project NAME
-	BaseCommit    string                 `protobuf:"bytes,3,opt,name=base_commit,json=baseCommit,proto3" json:"base_commit,omitempty"`           // commit the branch was created from
-	Branch        string                 `protobuf:"bytes,4,opt,name=branch,proto3" json:"branch,omitempty"`                                     // worktree branch ref (ycc/ws/<id>[-<task>])
-	WorktreePath  string                 `protobuf:"bytes,5,opt,name=worktree_path,json=worktreePath,proto3" json:"worktree_path,omitempty"`     // absolute worktree directory
-	SessionId     string                 `protobuf:"bytes,6,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`              // session scoped to the worktree (Subscribe target)
-	TaskId        string                 `protobuf:"bytes,7,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`                       // optional backlog task this workstream targets
-	Status        string                 `protobuf:"bytes,8,opt,name=status,proto3" json:"status,omitempty"`                                     // active | merged | discarded | stale
-	CreatedAt     string                 `protobuf:"bytes,9,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`              // RFC3339
-	CommitCount   int64                  `protobuf:"varint,10,opt,name=commit_count,json=commitCount,proto3" json:"commit_count,omitempty"`      // commits on the branch since base_commit (0 if unknown)
-	SessionStatus string                 `protobuf:"bytes,11,opt,name=session_status,json=sessionStatus,proto3" json:"session_status,omitempty"` // live session status: running|idle|paused|stopped|error (empty if unknown)
-	BaseBranch    string                 `protobuf:"bytes,12,opt,name=base_branch,json=baseBranch,proto3" json:"base_branch,omitempty"`          // local branch advanced when this workstream integrates
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	Id                 string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                                                              // stable short id (ws_<8-hex>)
+	Project            string                 `protobuf:"bytes,2,opt,name=project,proto3" json:"project,omitempty"`                                                    // parent project NAME
+	BaseCommit         string                 `protobuf:"bytes,3,opt,name=base_commit,json=baseCommit,proto3" json:"base_commit,omitempty"`                            // commit the branch was created from
+	Branch             string                 `protobuf:"bytes,4,opt,name=branch,proto3" json:"branch,omitempty"`                                                      // worktree branch ref (ycc/ws/<id>[-<task>])
+	WorktreePath       string                 `protobuf:"bytes,5,opt,name=worktree_path,json=worktreePath,proto3" json:"worktree_path,omitempty"`                      // absolute worktree directory
+	SessionId          string                 `protobuf:"bytes,6,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`                               // session scoped to the worktree (Subscribe target)
+	TaskId             string                 `protobuf:"bytes,7,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`                                        // optional backlog task this workstream targets
+	Status             string                 `protobuf:"bytes,8,opt,name=status,proto3" json:"status,omitempty"`                                                      // active | ready | needs_attention | merged | discarded | stale
+	CreatedAt          string                 `protobuf:"bytes,9,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`                               // RFC3339
+	CommitCount        int64                  `protobuf:"varint,10,opt,name=commit_count,json=commitCount,proto3" json:"commit_count,omitempty"`                       // commits on the branch since base_commit (0 if unknown)
+	SessionStatus      string                 `protobuf:"bytes,11,opt,name=session_status,json=sessionStatus,proto3" json:"session_status,omitempty"`                  // live session status: running|idle|paused|stopped|error (empty if unknown)
+	BaseBranch         string                 `protobuf:"bytes,12,opt,name=base_branch,json=baseBranch,proto3" json:"base_branch,omitempty"`                           // local branch advanced when this workstream integrates
+	StatusReason       string                 `protobuf:"bytes,13,opt,name=status_reason,json=statusReason,proto3" json:"status_reason,omitempty"`                     // why this workstream needs attention (empty otherwise)
+	IntegrateSessionId string                 `protobuf:"bytes,14,opt,name=integrate_session_id,json=integrateSessionId,proto3" json:"integrate_session_id,omitempty"` // latest integrate-recovery session (Subscribe target)
+	IntegrationState   string                 `protobuf:"bytes,15,opt,name=integration_state,json=integrationState,proto3" json:"integration_state,omitempty"`         // live queue state: queued | integrating (empty otherwise)
+	IntegrationMode    string                 `protobuf:"bytes,16,opt,name=integration_mode,json=integrationMode,proto3" json:"integration_mode,omitempty"`            // effective project mode: manual | gate | auto
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *WorkstreamInfo) Reset() {
@@ -6005,6 +6009,34 @@ func (x *WorkstreamInfo) GetSessionStatus() string {
 func (x *WorkstreamInfo) GetBaseBranch() string {
 	if x != nil {
 		return x.BaseBranch
+	}
+	return ""
+}
+
+func (x *WorkstreamInfo) GetStatusReason() string {
+	if x != nil {
+		return x.StatusReason
+	}
+	return ""
+}
+
+func (x *WorkstreamInfo) GetIntegrateSessionId() string {
+	if x != nil {
+		return x.IntegrateSessionId
+	}
+	return ""
+}
+
+func (x *WorkstreamInfo) GetIntegrationState() string {
+	if x != nil {
+		return x.IntegrationState
+	}
+	return ""
+}
+
+func (x *WorkstreamInfo) GetIntegrationMode() string {
+	if x != nil {
+		return x.IntegrationMode
 	}
 	return ""
 }
@@ -6538,6 +6570,97 @@ func (*DiscardWorkstreamResponse) Descriptor() ([]byte, []int) {
 	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{108}
 }
 
+// RetryIntegration re-queues a ready or needs-attention workstream for automatic
+// integration (docs/design/workstream-integration.md §7). Repeated calls while
+// already queued are idempotent.
+type RetryIntegrationRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	WorkstreamId  string                 `protobuf:"bytes,1,opt,name=workstream_id,json=workstreamId,proto3" json:"workstream_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RetryIntegrationRequest) Reset() {
+	*x = RetryIntegrationRequest{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[109]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RetryIntegrationRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RetryIntegrationRequest) ProtoMessage() {}
+
+func (x *RetryIntegrationRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[109]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RetryIntegrationRequest.ProtoReflect.Descriptor instead.
+func (*RetryIntegrationRequest) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{109}
+}
+
+func (x *RetryIntegrationRequest) GetWorkstreamId() string {
+	if x != nil {
+		return x.WorkstreamId
+	}
+	return ""
+}
+
+type RetryIntegrationResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Workstream    *WorkstreamInfo        `protobuf:"bytes,1,opt,name=workstream,proto3" json:"workstream,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RetryIntegrationResponse) Reset() {
+	*x = RetryIntegrationResponse{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[110]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RetryIntegrationResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RetryIntegrationResponse) ProtoMessage() {}
+
+func (x *RetryIntegrationResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[110]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RetryIntegrationResponse.ProtoReflect.Descriptor instead.
+func (*RetryIntegrationResponse) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{110}
+}
+
+func (x *RetryIntegrationResponse) GetWorkstream() *WorkstreamInfo {
+	if x != nil {
+		return x.Workstream
+	}
+	return nil
+}
+
 var File_ycc_v1_ycc_proto protoreflect.FileDescriptor
 
 const file_ycc_v1_ycc_proto_rawDesc = "" +
@@ -6962,7 +7085,7 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x12GetWorkLoopRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\"?\n" +
 	"\x13GetWorkLoopResponse\x12(\n" +
-	"\x04loop\x18\x01 \x01(\v2\x14.ycc.v1.WorkLoopInfoR\x04loop\"\xf2\x02\n" +
+	"\x04loop\x18\x01 \x01(\v2\x14.ycc.v1.WorkLoopInfoR\x04loop\"\xa1\x04\n" +
 	"\x0eWorkstreamInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
 	"\aproject\x18\x02 \x01(\tR\aproject\x12\x1f\n" +
@@ -6980,7 +7103,11 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	" \x01(\x03R\vcommitCount\x12%\n" +
 	"\x0esession_status\x18\v \x01(\tR\rsessionStatus\x12\x1f\n" +
 	"\vbase_branch\x18\f \x01(\tR\n" +
-	"baseBranch\"\x84\x01\n" +
+	"baseBranch\x12#\n" +
+	"\rstatus_reason\x18\r \x01(\tR\fstatusReason\x120\n" +
+	"\x14integrate_session_id\x18\x0e \x01(\tR\x12integrateSessionId\x12+\n" +
+	"\x11integration_state\x18\x0f \x01(\tR\x10integrationState\x12)\n" +
+	"\x10integration_mode\x18\x10 \x01(\tR\x0fintegrationMode\"\x84\x01\n" +
 	"\x16SpawnWorkstreamRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12\x19\n" +
 	"\bbase_ref\x18\x02 \x01(\tR\abaseRef\x12\x17\n" +
@@ -7011,7 +7138,13 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\tconflicts\x18\x05 \x03(\tR\tconflicts\"?\n" +
 	"\x18DiscardWorkstreamRequest\x12#\n" +
 	"\rworkstream_id\x18\x01 \x01(\tR\fworkstreamId\"\x1b\n" +
-	"\x19DiscardWorkstreamResponse2\xa8\x1a\n" +
+	"\x19DiscardWorkstreamResponse\">\n" +
+	"\x17RetryIntegrationRequest\x12#\n" +
+	"\rworkstream_id\x18\x01 \x01(\tR\fworkstreamId\"R\n" +
+	"\x18RetryIntegrationResponse\x126\n" +
+	"\n" +
+	"workstream\x18\x01 \x01(\v2\x16.ycc.v1.WorkstreamInfoR\n" +
+	"workstream2\xff\x1a\n" +
 	"\x0eSessionService\x12@\n" +
 	"\tListModes\x12\x18.ycc.v1.ListModesRequest\x1a\x19.ycc.v1.ListModesResponse\x12I\n" +
 	"\fStartSession\x12\x1b.ycc.v1.StartSessionRequest\x1a\x1c.ycc.v1.StartSessionResponse\x12I\n" +
@@ -7061,7 +7194,8 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x0fListWorkstreams\x12\x1e.ycc.v1.ListWorkstreamsRequest\x1a\x1f.ycc.v1.ListWorkstreamsResponse\x12I\n" +
 	"\fPreviewMerge\x12\x1b.ycc.v1.PreviewMergeRequest\x1a\x1c.ycc.v1.PreviewMergeResponse\x12R\n" +
 	"\x0fMergeWorkstream\x12\x1e.ycc.v1.MergeWorkstreamRequest\x1a\x1f.ycc.v1.MergeWorkstreamResponse\x12X\n" +
-	"\x11DiscardWorkstream\x12 .ycc.v1.DiscardWorkstreamRequest\x1a!.ycc.v1.DiscardWorkstreamResponseB1Z/github.com/whyrusleeping/ycc/proto/ycc/v1;yccv1b\x06proto3"
+	"\x11DiscardWorkstream\x12 .ycc.v1.DiscardWorkstreamRequest\x1a!.ycc.v1.DiscardWorkstreamResponse\x12U\n" +
+	"\x10RetryIntegration\x12\x1f.ycc.v1.RetryIntegrationRequest\x1a .ycc.v1.RetryIntegrationResponseB1Z/github.com/whyrusleeping/ycc/proto/ycc/v1;yccv1b\x06proto3"
 
 var (
 	file_ycc_v1_ycc_proto_rawDescOnce sync.Once
@@ -7075,7 +7209,7 @@ func file_ycc_v1_ycc_proto_rawDescGZIP() []byte {
 	return file_ycc_v1_ycc_proto_rawDescData
 }
 
-var file_ycc_v1_ycc_proto_msgTypes = make([]protoimpl.MessageInfo, 109)
+var file_ycc_v1_ycc_proto_msgTypes = make([]protoimpl.MessageInfo, 111)
 var file_ycc_v1_ycc_proto_goTypes = []any{
 	(*Event)(nil),                         // 0: ycc.v1.Event
 	(*StartSessionRequest)(nil),           // 1: ycc.v1.StartSessionRequest
@@ -7186,6 +7320,8 @@ var file_ycc_v1_ycc_proto_goTypes = []any{
 	(*MergeWorkstreamResponse)(nil),       // 106: ycc.v1.MergeWorkstreamResponse
 	(*DiscardWorkstreamRequest)(nil),      // 107: ycc.v1.DiscardWorkstreamRequest
 	(*DiscardWorkstreamResponse)(nil),     // 108: ycc.v1.DiscardWorkstreamResponse
+	(*RetryIntegrationRequest)(nil),       // 109: ycc.v1.RetryIntegrationRequest
+	(*RetryIntegrationResponse)(nil),      // 110: ycc.v1.RetryIntegrationResponse
 }
 var file_ycc_v1_ycc_proto_depIdxs = []int32{
 	14,  // 0: ycc.v1.StartSessionRequest.images:type_name -> ycc.v1.ImageAttachment
@@ -7221,101 +7357,104 @@ var file_ycc_v1_ycc_proto_depIdxs = []int32{
 	91,  // 30: ycc.v1.GetWorkLoopResponse.loop:type_name -> ycc.v1.WorkLoopInfo
 	98,  // 31: ycc.v1.SpawnWorkstreamResponse.workstream:type_name -> ycc.v1.WorkstreamInfo
 	98,  // 32: ycc.v1.ListWorkstreamsResponse.workstreams:type_name -> ycc.v1.WorkstreamInfo
-	30,  // 33: ycc.v1.SessionService.ListModes:input_type -> ycc.v1.ListModesRequest
-	1,   // 34: ycc.v1.SessionService.StartSession:input_type -> ycc.v1.StartSessionRequest
-	34,  // 35: ycc.v1.SessionService.ListSessions:input_type -> ycc.v1.ListSessionsRequest
-	37,  // 36: ycc.v1.SessionService.ListSessionHistory:input_type -> ycc.v1.ListSessionHistoryRequest
-	40,  // 37: ycc.v1.SessionService.GetSessionTranscript:input_type -> ycc.v1.GetSessionTranscriptRequest
-	42,  // 38: ycc.v1.SessionService.GetCommitDiff:input_type -> ycc.v1.GetCommitDiffRequest
-	13,  // 39: ycc.v1.SessionService.Subscribe:input_type -> ycc.v1.SubscribeRequest
-	15,  // 40: ycc.v1.SessionService.SendInput:input_type -> ycc.v1.SendInputRequest
-	17,  // 41: ycc.v1.SessionService.AnswerQuestion:input_type -> ycc.v1.AnswerQuestionRequest
-	20,  // 42: ycc.v1.SessionService.AnswerQuestions:input_type -> ycc.v1.AnswerQuestionsRequest
-	22,  // 43: ycc.v1.SessionService.Interrupt:input_type -> ycc.v1.InterruptRequest
-	24,  // 44: ycc.v1.SessionService.Resume:input_type -> ycc.v1.ResumeRequest
-	26,  // 45: ycc.v1.SessionService.StopSession:input_type -> ycc.v1.StopSessionRequest
-	28,  // 46: ycc.v1.SessionService.ResumeSession:input_type -> ycc.v1.ResumeSessionRequest
-	4,   // 47: ycc.v1.SessionService.ListProjects:input_type -> ycc.v1.ListProjectsRequest
-	6,   // 48: ycc.v1.SessionService.AddProject:input_type -> ycc.v1.AddProjectRequest
-	8,   // 49: ycc.v1.SessionService.RemoveProject:input_type -> ycc.v1.RemoveProjectRequest
-	11,  // 50: ycc.v1.SessionService.ListDir:input_type -> ycc.v1.ListDirRequest
-	44,  // 51: ycc.v1.SessionService.ListModels:input_type -> ycc.v1.ListModelsRequest
-	56,  // 52: ycc.v1.SessionService.SetRoleConfig:input_type -> ycc.v1.SetRoleConfigRequest
-	58,  // 53: ycc.v1.SessionService.SetThinking:input_type -> ycc.v1.SetThinkingRequest
-	60,  // 54: ycc.v1.SessionService.SetWorkImplementation:input_type -> ycc.v1.SetWorkImplementationRequest
-	48,  // 55: ycc.v1.SessionService.UpsertModel:input_type -> ycc.v1.UpsertModelRequest
-	50,  // 56: ycc.v1.SessionService.RemoveModel:input_type -> ycc.v1.RemoveModelRequest
-	52,  // 57: ycc.v1.SessionService.GetModelConfig:input_type -> ycc.v1.GetModelConfigRequest
-	54,  // 58: ycc.v1.SessionService.DiscoverModels:input_type -> ycc.v1.DiscoverModelsRequest
-	62,  // 59: ycc.v1.SessionService.ListBacklog:input_type -> ycc.v1.ListBacklogRequest
-	65,  // 60: ycc.v1.SessionService.GetTask:input_type -> ycc.v1.GetTaskRequest
-	68,  // 61: ycc.v1.SessionService.UpdateTask:input_type -> ycc.v1.UpdateTaskRequest
-	70,  // 62: ycc.v1.SessionService.CreateTask:input_type -> ycc.v1.CreateTaskRequest
-	72,  // 63: ycc.v1.SessionService.ListPlans:input_type -> ycc.v1.ListPlansRequest
-	75,  // 64: ycc.v1.SessionService.GetPlan:input_type -> ycc.v1.GetPlanRequest
-	77,  // 65: ycc.v1.SessionService.CaptureBacklogItem:input_type -> ycc.v1.CaptureBacklogItemRequest
-	78,  // 66: ycc.v1.SessionService.GetUsage:input_type -> ycc.v1.GetUsageRequest
-	81,  // 67: ycc.v1.SessionService.GetSubscriptionUsage:input_type -> ycc.v1.GetSubscriptionUsageRequest
-	85,  // 68: ycc.v1.SessionService.GetBudget:input_type -> ycc.v1.GetBudgetRequest
-	87,  // 69: ycc.v1.SessionService.Notify:input_type -> ycc.v1.NotifyRequest
-	92,  // 70: ycc.v1.SessionService.StartWorkLoop:input_type -> ycc.v1.StartWorkLoopRequest
-	94,  // 71: ycc.v1.SessionService.StopWorkLoop:input_type -> ycc.v1.StopWorkLoopRequest
-	96,  // 72: ycc.v1.SessionService.GetWorkLoop:input_type -> ycc.v1.GetWorkLoopRequest
-	99,  // 73: ycc.v1.SessionService.SpawnWorkstream:input_type -> ycc.v1.SpawnWorkstreamRequest
-	101, // 74: ycc.v1.SessionService.ListWorkstreams:input_type -> ycc.v1.ListWorkstreamsRequest
-	103, // 75: ycc.v1.SessionService.PreviewMerge:input_type -> ycc.v1.PreviewMergeRequest
-	105, // 76: ycc.v1.SessionService.MergeWorkstream:input_type -> ycc.v1.MergeWorkstreamRequest
-	107, // 77: ycc.v1.SessionService.DiscardWorkstream:input_type -> ycc.v1.DiscardWorkstreamRequest
-	33,  // 78: ycc.v1.SessionService.ListModes:output_type -> ycc.v1.ListModesResponse
-	2,   // 79: ycc.v1.SessionService.StartSession:output_type -> ycc.v1.StartSessionResponse
-	36,  // 80: ycc.v1.SessionService.ListSessions:output_type -> ycc.v1.ListSessionsResponse
-	39,  // 81: ycc.v1.SessionService.ListSessionHistory:output_type -> ycc.v1.ListSessionHistoryResponse
-	41,  // 82: ycc.v1.SessionService.GetSessionTranscript:output_type -> ycc.v1.GetSessionTranscriptResponse
-	43,  // 83: ycc.v1.SessionService.GetCommitDiff:output_type -> ycc.v1.GetCommitDiffResponse
-	0,   // 84: ycc.v1.SessionService.Subscribe:output_type -> ycc.v1.Event
-	16,  // 85: ycc.v1.SessionService.SendInput:output_type -> ycc.v1.SendInputResponse
-	18,  // 86: ycc.v1.SessionService.AnswerQuestion:output_type -> ycc.v1.AnswerQuestionResponse
-	21,  // 87: ycc.v1.SessionService.AnswerQuestions:output_type -> ycc.v1.AnswerQuestionsResponse
-	23,  // 88: ycc.v1.SessionService.Interrupt:output_type -> ycc.v1.InterruptResponse
-	25,  // 89: ycc.v1.SessionService.Resume:output_type -> ycc.v1.ResumeResponse
-	27,  // 90: ycc.v1.SessionService.StopSession:output_type -> ycc.v1.StopSessionResponse
-	29,  // 91: ycc.v1.SessionService.ResumeSession:output_type -> ycc.v1.ResumeSessionResponse
-	5,   // 92: ycc.v1.SessionService.ListProjects:output_type -> ycc.v1.ListProjectsResponse
-	7,   // 93: ycc.v1.SessionService.AddProject:output_type -> ycc.v1.AddProjectResponse
-	9,   // 94: ycc.v1.SessionService.RemoveProject:output_type -> ycc.v1.RemoveProjectResponse
-	12,  // 95: ycc.v1.SessionService.ListDir:output_type -> ycc.v1.ListDirResponse
-	46,  // 96: ycc.v1.SessionService.ListModels:output_type -> ycc.v1.ListModelsResponse
-	57,  // 97: ycc.v1.SessionService.SetRoleConfig:output_type -> ycc.v1.SetRoleConfigResponse
-	59,  // 98: ycc.v1.SessionService.SetThinking:output_type -> ycc.v1.SetThinkingResponse
-	61,  // 99: ycc.v1.SessionService.SetWorkImplementation:output_type -> ycc.v1.SetWorkImplementationResponse
-	49,  // 100: ycc.v1.SessionService.UpsertModel:output_type -> ycc.v1.UpsertModelResponse
-	51,  // 101: ycc.v1.SessionService.RemoveModel:output_type -> ycc.v1.RemoveModelResponse
-	53,  // 102: ycc.v1.SessionService.GetModelConfig:output_type -> ycc.v1.GetModelConfigResponse
-	55,  // 103: ycc.v1.SessionService.DiscoverModels:output_type -> ycc.v1.DiscoverModelsResponse
-	64,  // 104: ycc.v1.SessionService.ListBacklog:output_type -> ycc.v1.ListBacklogResponse
-	67,  // 105: ycc.v1.SessionService.GetTask:output_type -> ycc.v1.GetTaskResponse
-	69,  // 106: ycc.v1.SessionService.UpdateTask:output_type -> ycc.v1.UpdateTaskResponse
-	71,  // 107: ycc.v1.SessionService.CreateTask:output_type -> ycc.v1.CreateTaskResponse
-	74,  // 108: ycc.v1.SessionService.ListPlans:output_type -> ycc.v1.ListPlansResponse
-	76,  // 109: ycc.v1.SessionService.GetPlan:output_type -> ycc.v1.GetPlanResponse
-	0,   // 110: ycc.v1.SessionService.CaptureBacklogItem:output_type -> ycc.v1.Event
-	80,  // 111: ycc.v1.SessionService.GetUsage:output_type -> ycc.v1.GetUsageResponse
-	84,  // 112: ycc.v1.SessionService.GetSubscriptionUsage:output_type -> ycc.v1.GetSubscriptionUsageResponse
-	86,  // 113: ycc.v1.SessionService.GetBudget:output_type -> ycc.v1.GetBudgetResponse
-	88,  // 114: ycc.v1.SessionService.Notify:output_type -> ycc.v1.NotifyResponse
-	93,  // 115: ycc.v1.SessionService.StartWorkLoop:output_type -> ycc.v1.StartWorkLoopResponse
-	95,  // 116: ycc.v1.SessionService.StopWorkLoop:output_type -> ycc.v1.StopWorkLoopResponse
-	97,  // 117: ycc.v1.SessionService.GetWorkLoop:output_type -> ycc.v1.GetWorkLoopResponse
-	100, // 118: ycc.v1.SessionService.SpawnWorkstream:output_type -> ycc.v1.SpawnWorkstreamResponse
-	102, // 119: ycc.v1.SessionService.ListWorkstreams:output_type -> ycc.v1.ListWorkstreamsResponse
-	104, // 120: ycc.v1.SessionService.PreviewMerge:output_type -> ycc.v1.PreviewMergeResponse
-	106, // 121: ycc.v1.SessionService.MergeWorkstream:output_type -> ycc.v1.MergeWorkstreamResponse
-	108, // 122: ycc.v1.SessionService.DiscardWorkstream:output_type -> ycc.v1.DiscardWorkstreamResponse
-	78,  // [78:123] is the sub-list for method output_type
-	33,  // [33:78] is the sub-list for method input_type
-	33,  // [33:33] is the sub-list for extension type_name
-	33,  // [33:33] is the sub-list for extension extendee
-	0,   // [0:33] is the sub-list for field type_name
+	98,  // 33: ycc.v1.RetryIntegrationResponse.workstream:type_name -> ycc.v1.WorkstreamInfo
+	30,  // 34: ycc.v1.SessionService.ListModes:input_type -> ycc.v1.ListModesRequest
+	1,   // 35: ycc.v1.SessionService.StartSession:input_type -> ycc.v1.StartSessionRequest
+	34,  // 36: ycc.v1.SessionService.ListSessions:input_type -> ycc.v1.ListSessionsRequest
+	37,  // 37: ycc.v1.SessionService.ListSessionHistory:input_type -> ycc.v1.ListSessionHistoryRequest
+	40,  // 38: ycc.v1.SessionService.GetSessionTranscript:input_type -> ycc.v1.GetSessionTranscriptRequest
+	42,  // 39: ycc.v1.SessionService.GetCommitDiff:input_type -> ycc.v1.GetCommitDiffRequest
+	13,  // 40: ycc.v1.SessionService.Subscribe:input_type -> ycc.v1.SubscribeRequest
+	15,  // 41: ycc.v1.SessionService.SendInput:input_type -> ycc.v1.SendInputRequest
+	17,  // 42: ycc.v1.SessionService.AnswerQuestion:input_type -> ycc.v1.AnswerQuestionRequest
+	20,  // 43: ycc.v1.SessionService.AnswerQuestions:input_type -> ycc.v1.AnswerQuestionsRequest
+	22,  // 44: ycc.v1.SessionService.Interrupt:input_type -> ycc.v1.InterruptRequest
+	24,  // 45: ycc.v1.SessionService.Resume:input_type -> ycc.v1.ResumeRequest
+	26,  // 46: ycc.v1.SessionService.StopSession:input_type -> ycc.v1.StopSessionRequest
+	28,  // 47: ycc.v1.SessionService.ResumeSession:input_type -> ycc.v1.ResumeSessionRequest
+	4,   // 48: ycc.v1.SessionService.ListProjects:input_type -> ycc.v1.ListProjectsRequest
+	6,   // 49: ycc.v1.SessionService.AddProject:input_type -> ycc.v1.AddProjectRequest
+	8,   // 50: ycc.v1.SessionService.RemoveProject:input_type -> ycc.v1.RemoveProjectRequest
+	11,  // 51: ycc.v1.SessionService.ListDir:input_type -> ycc.v1.ListDirRequest
+	44,  // 52: ycc.v1.SessionService.ListModels:input_type -> ycc.v1.ListModelsRequest
+	56,  // 53: ycc.v1.SessionService.SetRoleConfig:input_type -> ycc.v1.SetRoleConfigRequest
+	58,  // 54: ycc.v1.SessionService.SetThinking:input_type -> ycc.v1.SetThinkingRequest
+	60,  // 55: ycc.v1.SessionService.SetWorkImplementation:input_type -> ycc.v1.SetWorkImplementationRequest
+	48,  // 56: ycc.v1.SessionService.UpsertModel:input_type -> ycc.v1.UpsertModelRequest
+	50,  // 57: ycc.v1.SessionService.RemoveModel:input_type -> ycc.v1.RemoveModelRequest
+	52,  // 58: ycc.v1.SessionService.GetModelConfig:input_type -> ycc.v1.GetModelConfigRequest
+	54,  // 59: ycc.v1.SessionService.DiscoverModels:input_type -> ycc.v1.DiscoverModelsRequest
+	62,  // 60: ycc.v1.SessionService.ListBacklog:input_type -> ycc.v1.ListBacklogRequest
+	65,  // 61: ycc.v1.SessionService.GetTask:input_type -> ycc.v1.GetTaskRequest
+	68,  // 62: ycc.v1.SessionService.UpdateTask:input_type -> ycc.v1.UpdateTaskRequest
+	70,  // 63: ycc.v1.SessionService.CreateTask:input_type -> ycc.v1.CreateTaskRequest
+	72,  // 64: ycc.v1.SessionService.ListPlans:input_type -> ycc.v1.ListPlansRequest
+	75,  // 65: ycc.v1.SessionService.GetPlan:input_type -> ycc.v1.GetPlanRequest
+	77,  // 66: ycc.v1.SessionService.CaptureBacklogItem:input_type -> ycc.v1.CaptureBacklogItemRequest
+	78,  // 67: ycc.v1.SessionService.GetUsage:input_type -> ycc.v1.GetUsageRequest
+	81,  // 68: ycc.v1.SessionService.GetSubscriptionUsage:input_type -> ycc.v1.GetSubscriptionUsageRequest
+	85,  // 69: ycc.v1.SessionService.GetBudget:input_type -> ycc.v1.GetBudgetRequest
+	87,  // 70: ycc.v1.SessionService.Notify:input_type -> ycc.v1.NotifyRequest
+	92,  // 71: ycc.v1.SessionService.StartWorkLoop:input_type -> ycc.v1.StartWorkLoopRequest
+	94,  // 72: ycc.v1.SessionService.StopWorkLoop:input_type -> ycc.v1.StopWorkLoopRequest
+	96,  // 73: ycc.v1.SessionService.GetWorkLoop:input_type -> ycc.v1.GetWorkLoopRequest
+	99,  // 74: ycc.v1.SessionService.SpawnWorkstream:input_type -> ycc.v1.SpawnWorkstreamRequest
+	101, // 75: ycc.v1.SessionService.ListWorkstreams:input_type -> ycc.v1.ListWorkstreamsRequest
+	103, // 76: ycc.v1.SessionService.PreviewMerge:input_type -> ycc.v1.PreviewMergeRequest
+	105, // 77: ycc.v1.SessionService.MergeWorkstream:input_type -> ycc.v1.MergeWorkstreamRequest
+	107, // 78: ycc.v1.SessionService.DiscardWorkstream:input_type -> ycc.v1.DiscardWorkstreamRequest
+	109, // 79: ycc.v1.SessionService.RetryIntegration:input_type -> ycc.v1.RetryIntegrationRequest
+	33,  // 80: ycc.v1.SessionService.ListModes:output_type -> ycc.v1.ListModesResponse
+	2,   // 81: ycc.v1.SessionService.StartSession:output_type -> ycc.v1.StartSessionResponse
+	36,  // 82: ycc.v1.SessionService.ListSessions:output_type -> ycc.v1.ListSessionsResponse
+	39,  // 83: ycc.v1.SessionService.ListSessionHistory:output_type -> ycc.v1.ListSessionHistoryResponse
+	41,  // 84: ycc.v1.SessionService.GetSessionTranscript:output_type -> ycc.v1.GetSessionTranscriptResponse
+	43,  // 85: ycc.v1.SessionService.GetCommitDiff:output_type -> ycc.v1.GetCommitDiffResponse
+	0,   // 86: ycc.v1.SessionService.Subscribe:output_type -> ycc.v1.Event
+	16,  // 87: ycc.v1.SessionService.SendInput:output_type -> ycc.v1.SendInputResponse
+	18,  // 88: ycc.v1.SessionService.AnswerQuestion:output_type -> ycc.v1.AnswerQuestionResponse
+	21,  // 89: ycc.v1.SessionService.AnswerQuestions:output_type -> ycc.v1.AnswerQuestionsResponse
+	23,  // 90: ycc.v1.SessionService.Interrupt:output_type -> ycc.v1.InterruptResponse
+	25,  // 91: ycc.v1.SessionService.Resume:output_type -> ycc.v1.ResumeResponse
+	27,  // 92: ycc.v1.SessionService.StopSession:output_type -> ycc.v1.StopSessionResponse
+	29,  // 93: ycc.v1.SessionService.ResumeSession:output_type -> ycc.v1.ResumeSessionResponse
+	5,   // 94: ycc.v1.SessionService.ListProjects:output_type -> ycc.v1.ListProjectsResponse
+	7,   // 95: ycc.v1.SessionService.AddProject:output_type -> ycc.v1.AddProjectResponse
+	9,   // 96: ycc.v1.SessionService.RemoveProject:output_type -> ycc.v1.RemoveProjectResponse
+	12,  // 97: ycc.v1.SessionService.ListDir:output_type -> ycc.v1.ListDirResponse
+	46,  // 98: ycc.v1.SessionService.ListModels:output_type -> ycc.v1.ListModelsResponse
+	57,  // 99: ycc.v1.SessionService.SetRoleConfig:output_type -> ycc.v1.SetRoleConfigResponse
+	59,  // 100: ycc.v1.SessionService.SetThinking:output_type -> ycc.v1.SetThinkingResponse
+	61,  // 101: ycc.v1.SessionService.SetWorkImplementation:output_type -> ycc.v1.SetWorkImplementationResponse
+	49,  // 102: ycc.v1.SessionService.UpsertModel:output_type -> ycc.v1.UpsertModelResponse
+	51,  // 103: ycc.v1.SessionService.RemoveModel:output_type -> ycc.v1.RemoveModelResponse
+	53,  // 104: ycc.v1.SessionService.GetModelConfig:output_type -> ycc.v1.GetModelConfigResponse
+	55,  // 105: ycc.v1.SessionService.DiscoverModels:output_type -> ycc.v1.DiscoverModelsResponse
+	64,  // 106: ycc.v1.SessionService.ListBacklog:output_type -> ycc.v1.ListBacklogResponse
+	67,  // 107: ycc.v1.SessionService.GetTask:output_type -> ycc.v1.GetTaskResponse
+	69,  // 108: ycc.v1.SessionService.UpdateTask:output_type -> ycc.v1.UpdateTaskResponse
+	71,  // 109: ycc.v1.SessionService.CreateTask:output_type -> ycc.v1.CreateTaskResponse
+	74,  // 110: ycc.v1.SessionService.ListPlans:output_type -> ycc.v1.ListPlansResponse
+	76,  // 111: ycc.v1.SessionService.GetPlan:output_type -> ycc.v1.GetPlanResponse
+	0,   // 112: ycc.v1.SessionService.CaptureBacklogItem:output_type -> ycc.v1.Event
+	80,  // 113: ycc.v1.SessionService.GetUsage:output_type -> ycc.v1.GetUsageResponse
+	84,  // 114: ycc.v1.SessionService.GetSubscriptionUsage:output_type -> ycc.v1.GetSubscriptionUsageResponse
+	86,  // 115: ycc.v1.SessionService.GetBudget:output_type -> ycc.v1.GetBudgetResponse
+	88,  // 116: ycc.v1.SessionService.Notify:output_type -> ycc.v1.NotifyResponse
+	93,  // 117: ycc.v1.SessionService.StartWorkLoop:output_type -> ycc.v1.StartWorkLoopResponse
+	95,  // 118: ycc.v1.SessionService.StopWorkLoop:output_type -> ycc.v1.StopWorkLoopResponse
+	97,  // 119: ycc.v1.SessionService.GetWorkLoop:output_type -> ycc.v1.GetWorkLoopResponse
+	100, // 120: ycc.v1.SessionService.SpawnWorkstream:output_type -> ycc.v1.SpawnWorkstreamResponse
+	102, // 121: ycc.v1.SessionService.ListWorkstreams:output_type -> ycc.v1.ListWorkstreamsResponse
+	104, // 122: ycc.v1.SessionService.PreviewMerge:output_type -> ycc.v1.PreviewMergeResponse
+	106, // 123: ycc.v1.SessionService.MergeWorkstream:output_type -> ycc.v1.MergeWorkstreamResponse
+	108, // 124: ycc.v1.SessionService.DiscardWorkstream:output_type -> ycc.v1.DiscardWorkstreamResponse
+	110, // 125: ycc.v1.SessionService.RetryIntegration:output_type -> ycc.v1.RetryIntegrationResponse
+	80,  // [80:126] is the sub-list for method output_type
+	34,  // [34:80] is the sub-list for method input_type
+	34,  // [34:34] is the sub-list for extension type_name
+	34,  // [34:34] is the sub-list for extension extendee
+	0,   // [0:34] is the sub-list for field type_name
 }
 
 func init() { file_ycc_v1_ycc_proto_init() }
@@ -7332,7 +7471,7 @@ func file_ycc_v1_ycc_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ycc_v1_ycc_proto_rawDesc), len(file_ycc_v1_ycc_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   109,
+			NumMessages:   111,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

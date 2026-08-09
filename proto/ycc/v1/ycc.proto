@@ -624,11 +624,15 @@ message WorkstreamInfo {
   string worktree_path = 5; // absolute worktree directory
   string session_id = 6;    // session scoped to the worktree (Subscribe target)
   string task_id = 7;       // optional backlog task this workstream targets
-  string status = 8;        // active | merged | discarded | stale
+  string status = 8;        // active | ready | needs_attention | merged | discarded | stale
   string created_at = 9;    // RFC3339
   int64 commit_count = 10;  // commits on the branch since base_commit (0 if unknown)
   string session_status = 11; // live session status: running|idle|paused|stopped|error (empty if unknown)
   string base_branch = 12;    // local branch advanced when this workstream integrates
+  string status_reason = 13;  // why this workstream needs attention (empty otherwise)
+  string integrate_session_id = 14; // latest integrate-recovery session (Subscribe target)
+  string integration_state = 15; // live queue state: queued | integrating (empty otherwise)
+  string integration_mode = 16; // effective project mode: manual | gate | auto
 }
 
 // SpawnWorkstream creates a worktree + branch off the project's base and starts a
@@ -681,6 +685,12 @@ message MergeWorkstreamResponse {
 // (design §6).
 message DiscardWorkstreamRequest { string workstream_id = 1; }
 message DiscardWorkstreamResponse {}
+
+// RetryIntegration re-queues a ready or needs-attention workstream for automatic
+// integration (docs/design/workstream-integration.md §7). Repeated calls while
+// already queued are idempotent.
+message RetryIntegrationRequest { string workstream_id = 1; }
+message RetryIntegrationResponse { WorkstreamInfo workstream = 1; }
 
 // SessionService is the daemon's RPC surface (spec §12). M1 implements the core
 // four; mode/question RPCs arrive in later milestones.
@@ -800,4 +810,5 @@ service SessionService {
   rpc PreviewMerge(PreviewMergeRequest) returns (PreviewMergeResponse);
   rpc MergeWorkstream(MergeWorkstreamRequest) returns (MergeWorkstreamResponse);
   rpc DiscardWorkstream(DiscardWorkstreamRequest) returns (DiscardWorkstreamResponse);
+  rpc RetryIntegration(RetryIntegrationRequest) returns (RetryIntegrationResponse);
 }

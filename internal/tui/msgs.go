@@ -193,6 +193,20 @@ type wsDiscardedMsg struct {
 	err error
 }
 
+// wsRetriedMsg reports a RetryIntegration action for one ready/attention row.
+type wsRetriedMsg struct {
+	id         string
+	workstream *v1.WorkstreamInfo
+	err        error
+}
+
+// wsMergeAllMsg reports the sequential merge-all-ready action. count includes
+// only responses that confirmed the workstream was merged.
+type wsMergeAllMsg struct {
+	count int
+	err   error
+}
+
 // wsTickMsg is the panel's live-refresh tick (task 0085); seq guards against
 // compounding timers across panel visits.
 type wsTickMsg struct{ seq int }

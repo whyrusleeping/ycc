@@ -162,6 +162,9 @@ const (
 	// SessionServiceDiscardWorkstreamProcedure is the fully-qualified name of the SessionService's
 	// DiscardWorkstream RPC.
 	SessionServiceDiscardWorkstreamProcedure = "/ycc.v1.SessionService/DiscardWorkstream"
+	// SessionServiceRetryIntegrationProcedure is the fully-qualified name of the SessionService's
+	// RetryIntegration RPC.
+	SessionServiceRetryIntegrationProcedure = "/ycc.v1.SessionService/RetryIntegration"
 )
 
 // SessionServiceClient is a client for the ycc.v1.SessionService service.
@@ -268,6 +271,7 @@ type SessionServiceClient interface {
 	PreviewMerge(context.Context, *connect.Request[v1.PreviewMergeRequest]) (*connect.Response[v1.PreviewMergeResponse], error)
 	MergeWorkstream(context.Context, *connect.Request[v1.MergeWorkstreamRequest]) (*connect.Response[v1.MergeWorkstreamResponse], error)
 	DiscardWorkstream(context.Context, *connect.Request[v1.DiscardWorkstreamRequest]) (*connect.Response[v1.DiscardWorkstreamResponse], error)
+	RetryIntegration(context.Context, *connect.Request[v1.RetryIntegrationRequest]) (*connect.Response[v1.RetryIntegrationResponse], error)
 }
 
 // NewSessionServiceClient constructs a client for the ycc.v1.SessionService service. By default, it
@@ -551,6 +555,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("DiscardWorkstream")),
 			connect.WithClientOptions(opts...),
 		),
+		retryIntegration: connect.NewClient[v1.RetryIntegrationRequest, v1.RetryIntegrationResponse](
+			httpClient,
+			baseURL+SessionServiceRetryIntegrationProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("RetryIntegration")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -601,6 +611,7 @@ type sessionServiceClient struct {
 	previewMerge          *connect.Client[v1.PreviewMergeRequest, v1.PreviewMergeResponse]
 	mergeWorkstream       *connect.Client[v1.MergeWorkstreamRequest, v1.MergeWorkstreamResponse]
 	discardWorkstream     *connect.Client[v1.DiscardWorkstreamRequest, v1.DiscardWorkstreamResponse]
+	retryIntegration      *connect.Client[v1.RetryIntegrationRequest, v1.RetryIntegrationResponse]
 }
 
 // ListModes calls ycc.v1.SessionService.ListModes.
@@ -828,6 +839,11 @@ func (c *sessionServiceClient) DiscardWorkstream(ctx context.Context, req *conne
 	return c.discardWorkstream.CallUnary(ctx, req)
 }
 
+// RetryIntegration calls ycc.v1.SessionService.RetryIntegration.
+func (c *sessionServiceClient) RetryIntegration(ctx context.Context, req *connect.Request[v1.RetryIntegrationRequest]) (*connect.Response[v1.RetryIntegrationResponse], error) {
+	return c.retryIntegration.CallUnary(ctx, req)
+}
+
 // SessionServiceHandler is an implementation of the ycc.v1.SessionService service.
 type SessionServiceHandler interface {
 	ListModes(context.Context, *connect.Request[v1.ListModesRequest]) (*connect.Response[v1.ListModesResponse], error)
@@ -932,6 +948,7 @@ type SessionServiceHandler interface {
 	PreviewMerge(context.Context, *connect.Request[v1.PreviewMergeRequest]) (*connect.Response[v1.PreviewMergeResponse], error)
 	MergeWorkstream(context.Context, *connect.Request[v1.MergeWorkstreamRequest]) (*connect.Response[v1.MergeWorkstreamResponse], error)
 	DiscardWorkstream(context.Context, *connect.Request[v1.DiscardWorkstreamRequest]) (*connect.Response[v1.DiscardWorkstreamResponse], error)
+	RetryIntegration(context.Context, *connect.Request[v1.RetryIntegrationRequest]) (*connect.Response[v1.RetryIntegrationResponse], error)
 }
 
 // NewSessionServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -1211,6 +1228,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("DiscardWorkstream")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceRetryIntegrationHandler := connect.NewUnaryHandler(
+		SessionServiceRetryIntegrationProcedure,
+		svc.RetryIntegration,
+		connect.WithSchema(sessionServiceMethods.ByName("RetryIntegration")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/ycc.v1.SessionService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case SessionServiceListModesProcedure:
@@ -1303,6 +1326,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceMergeWorkstreamHandler.ServeHTTP(w, r)
 		case SessionServiceDiscardWorkstreamProcedure:
 			sessionServiceDiscardWorkstreamHandler.ServeHTTP(w, r)
+		case SessionServiceRetryIntegrationProcedure:
+			sessionServiceRetryIntegrationHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1490,4 +1515,8 @@ func (UnimplementedSessionServiceHandler) MergeWorkstream(context.Context, *conn
 
 func (UnimplementedSessionServiceHandler) DiscardWorkstream(context.Context, *connect.Request[v1.DiscardWorkstreamRequest]) (*connect.Response[v1.DiscardWorkstreamResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.DiscardWorkstream is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) RetryIntegration(context.Context, *connect.Request[v1.RetryIntegrationRequest]) (*connect.Response[v1.RetryIntegrationResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.RetryIntegration is not implemented"))
 }

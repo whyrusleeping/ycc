@@ -66,6 +66,25 @@ func TestWorkstreamCompletionRows(t *testing.T) {
 	if status, loud := m.wsRowStatus(&v1.WorkstreamInfo{Status: "needs_attention", SessionStatus: "stopped"}); status != "⚠ needs attention" || !loud {
 		t.Fatalf("attention row = %q, %v", status, loud)
 	}
+	if status, loud := m.wsRowStatus(&v1.WorkstreamInfo{Status: "ready", IntegrationMode: "gate"}); status != "gated" || loud {
+		t.Fatalf("gated row = %q, %v", status, loud)
+	}
+	if status, loud := m.wsRowStatus(&v1.WorkstreamInfo{Status: "ready", IntegrationMode: "auto", IntegrationState: "queued"}); status != "queued" || loud {
+		t.Fatalf("queued row = %q, %v", status, loud)
+	}
+	if status, loud := m.wsRowStatus(&v1.WorkstreamInfo{Status: "ready", IntegrationMode: "auto", IntegrationState: "integrating"}); status != "integrating…" || loud {
+		t.Fatalf("integrating row = %q, %v", status, loud)
+	}
+}
+
+func TestWorkstreamAttentionReasonRendersInHint(t *testing.T) {
+	m := model{ws: true, wsList: []*v1.WorkstreamInfo{{
+		Id: "ws_1", Status: "needs_attention", StatusReason: "verification failed in package server",
+	}}}
+	view := m.workstreamsView()
+	if !strings.Contains(view, "verification failed in package server") {
+		t.Fatalf("panel missing attention reason:\n%s", view)
+	}
 }
 
 func TestWorkstreamMergeFlow(t *testing.T) {
@@ -176,6 +195,92 @@ func TestWorkstreamDrillIntoSession(t *testing.T) {
 	_ = runCmds(t, m, cmd)
 	if f.lastReopened != "s-ws-1" {
 		t.Fatalf("ResumeSession id = %q, want s-ws-1", f.lastReopened)
+	}
+}
+
+func TestWorkstreamDrillIntoIntegrationSession(t *testing.T) {
+	f := newFakeClient()
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	m.ws = true
+	m.wsList = []*v1.WorkstreamInfo{{Id: "ws_1", IntegrateSessionId: "s-integrate", Status: "needs_attention"}}
+
+	updated, cmd := m.updateWorkstreams(keyMsg("i"))
+	m = updated.(model)
+	_ = runCmds(t, m, cmd)
+	if f.lastReopened != "s-integrate" {
+		t.Fatalf("ResumeSession id = %q, want s-integrate", f.lastReopened)
+	}
+}
+
+func TestWorkstreamRetryNoticesReflectIntegrationMode(t *testing.T) {
+	id := "ws_notice"
+	tests := []struct {
+		mode string
+		want string
+	}{
+		{mode: "auto", want: "integration queued for " + short(id)},
+		{mode: "gate", want: short(id) + " ready for gated merge"},
+		{mode: "manual", want: short(id) + " ready"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.mode, func(t *testing.T) {
+			m := model{}
+			updated, _ := m.Update(wsRetriedMsg{
+				id: id, workstream: &v1.WorkstreamInfo{Id: id, IntegrationMode: tc.mode},
+			})
+			got := updated.(model)
+			if got.wsNotice != tc.want {
+				t.Fatalf("notice = %q, want %q", got.wsNotice, tc.want)
+			}
+		})
+	}
+}
+
+func TestWorkstreamRetryAndMergeAllReady(t *testing.T) {
+	f := newFakeClient()
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	m.ws = true
+	m.wsList = []*v1.WorkstreamInfo{
+		{Id: "ws_attention", Status: "needs_attention"},
+		{Id: "ws_gate", Status: "ready", IntegrationMode: "gate"},
+		{Id: "ws_manual", Status: "ready", IntegrationMode: "manual"},
+		{Id: "ws_auto_queued", Status: "ready", IntegrationMode: "auto", IntegrationState: "queued"},
+		{Id: "ws_auto_integrating", Status: "ready", IntegrationMode: "auto", IntegrationState: "integrating"},
+		{Id: "ws_active", Status: "active", IntegrationMode: "gate"},
+	}
+	f.workstreams = m.wsList
+
+	m = drive(t, m, "t")
+	if f.lastRetryID != "ws_attention" {
+		t.Fatalf("RetryIntegration id = %q, want ws_attention", f.lastRetryID)
+	}
+
+	m = drive(t, m, "a")
+	if len(f.mergeIDs) != 1 || f.mergeIDs[0] != "ws_gate" {
+		t.Fatalf("MergeWorkstream ids = %v, want [ws_gate]", f.mergeIDs)
+	}
+	if !strings.Contains(m.wsNotice, "merged 1") {
+		t.Fatalf("notice = %q, want merged count", m.wsNotice)
+	}
+}
+
+// TestWorkstreamMergeAllRejectsNonGateReadyRows keeps manual review and auto
+// queue ownership intact when the merge-all key is pressed.
+func TestWorkstreamMergeAllRejectsNonGateReadyRows(t *testing.T) {
+	f := newFakeClient()
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+	m.ws = true
+	m.wsList = []*v1.WorkstreamInfo{
+		{Id: "ws_manual", Status: "ready", IntegrationMode: "manual"},
+		{Id: "ws_auto", Status: "ready", IntegrationMode: "auto", IntegrationState: "queued"},
+	}
+
+	m = drive(t, m, "a")
+	if len(f.mergeIDs) != 0 {
+		t.Fatalf("MergeWorkstream ids = %v, want none", f.mergeIDs)
+	}
+	if !strings.Contains(m.wsNotice, "gate mode") {
+		t.Fatalf("notice = %q, want gate-mode explanation", m.wsNotice)
 	}
 }
 

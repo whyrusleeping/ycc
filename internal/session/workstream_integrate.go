@@ -66,6 +66,7 @@ type integrateAgentResult struct {
 type workstreamIntegrator struct {
 	pending  []string
 	queued   map[string]bool
+	active   string
 	draining bool
 }
 
@@ -73,6 +74,17 @@ type workstreamIntegrator struct {
 // queue. Empty mode/strategy resolve to auto/rebase-ff. Warnings are emitted only
 // for configurations that asked for auto but cannot safely auto-integrate.
 func (m *Manager) effectiveIntegrationMode() string {
+	return m.resolveIntegrationMode(true)
+}
+
+// EffectiveIntegrationMode exposes the effective mode to RPC clients without
+// emitting degradation warnings on every polling ListWorkstreams call. Internal
+// integration decisions use effectiveIntegrationMode and retain those warnings.
+func (m *Manager) EffectiveIntegrationMode() string {
+	return m.resolveIntegrationMode(false)
+}
+
+func (m *Manager) resolveIntegrationMode(warn bool) string {
 	cfg := m.reg.IntegrationConfig()
 	mode := cfg.Mode
 	if mode == "" {
@@ -82,7 +94,9 @@ func (m *Manager) effectiveIntegrationMode() string {
 		return mode
 	}
 	if strings.TrimSpace(cfg.Verify) == "" {
-		log.Printf("ycc: integration: mode auto requires integration.verify; degrading to gate")
+		if warn {
+			log.Printf("ycc: integration: mode auto requires integration.verify; degrading to gate")
+		}
 		return "gate"
 	}
 	strategy := cfg.Strategy
@@ -90,7 +104,9 @@ func (m *Manager) effectiveIntegrationMode() string {
 		strategy = "rebase-ff"
 	}
 	if strategy != "rebase-ff" {
-		log.Printf("ycc: integration: mode auto with strategy %q is not implemented; degrading to gate", strategy)
+		if warn {
+			log.Printf("ycc: integration: mode auto with strategy %q is not implemented; degrading to gate", strategy)
+		}
 		return "gate"
 	}
 	return "auto"
@@ -99,6 +115,18 @@ func (m *Manager) effectiveIntegrationMode() string {
 // enqueueWorkstreamIntegration adds a ready workstream to its project's queue.
 // A project has exactly one drainer, and ids already pending/running are ignored.
 func (m *Manager) enqueueWorkstreamIntegration(ws workstream.Workstream) {
+	m.queueWorkstreamIntegration(ws, false)
+}
+
+// retryWorkstreamIntegration is like the ordinary enqueue, except a retry that
+// races the tail of the same active attempt schedules exactly one follow-up run.
+// Without this distinction the active attempt's queued bit would make the retry
+// look redundant, then be cleared as that failed attempt returned.
+func (m *Manager) retryWorkstreamIntegration(ws workstream.Workstream) {
+	m.queueWorkstreamIntegration(ws, true)
+}
+
+func (m *Manager) queueWorkstreamIntegration(ws workstream.Workstream, retry bool) {
 	m.mu.Lock()
 	if m.integrationStop {
 		m.mu.Unlock()
@@ -110,6 +138,18 @@ func (m *Manager) enqueueWorkstreamIntegration(ws workstream.Workstream) {
 		m.integrators[ws.Project] = q
 	}
 	if q.queued[ws.ID] {
+		if retry && q.active == ws.ID {
+			pending := false
+			for _, id := range q.pending {
+				if id == ws.ID {
+					pending = true
+					break
+				}
+			}
+			if !pending {
+				q.pending = append(q.pending, ws.ID)
+			}
+		}
 		m.mu.Unlock()
 		return
 	}
@@ -126,6 +166,71 @@ func (m *Manager) enqueueWorkstreamIntegration(ws workstream.Workstream) {
 	go m.drainWorkstreamIntegrations(ws.Project, q)
 }
 
+// WorkstreamIntegrationState reports the best-effort live queue projection used
+// by ListWorkstreams. Registry lifecycle state remains the durable authority.
+func (m *Manager) WorkstreamIntegrationState(ws workstream.Workstream) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	q := m.integrators[ws.Project]
+	if q == nil {
+		return ""
+	}
+	if q.active == ws.ID {
+		return "integrating"
+	}
+	if q.queued[ws.ID] {
+		return "queued"
+	}
+	return ""
+}
+
+// RetryIntegration moves a needs-attention workstream back to ready and queues
+// it in auto mode. Retrying an already-ready (including already-queued) stream
+// is an idempotent success.
+func (m *Manager) RetryIntegration(id string) (workstream.Workstream, error) {
+	for {
+		ws, ok := m.workstreams.Get(id)
+		if !ok {
+			return workstream.Workstream{}, fmt.Errorf("unknown workstream %s", id)
+		}
+		switch ws.Status {
+		case workstream.StatusNeedsAttention:
+			changed, err := m.workstreams.Transition(id, workstream.StatusReady, "", workstream.StatusNeedsAttention)
+			if err != nil {
+				return workstream.Workstream{}, err
+			}
+			if !changed {
+				// A concurrent lifecycle action won the CAS. Re-read and apply the
+				// rules for its resulting state rather than overwriting it.
+				continue
+			}
+			ready, ok := m.workstreams.Get(id)
+			if !ok {
+				return workstream.Workstream{}, fmt.Errorf("unknown workstream %s", id)
+			}
+			m.emitWorkstreamEvent(ready, event.WorkstreamReady, map[string]any{
+				"workstream": ready.ID,
+				"branch":     ready.Branch,
+				"task":       ready.TaskID,
+				"retry":      true,
+			})
+			if m.effectiveIntegrationMode() == "auto" {
+				m.retryWorkstreamIntegration(ready)
+			}
+			latest, _ := m.workstreams.Get(id)
+			return latest, nil
+		case workstream.StatusReady:
+			if m.effectiveIntegrationMode() == "auto" {
+				m.enqueueWorkstreamIntegration(ws)
+			}
+			latest, _ := m.workstreams.Get(id)
+			return latest, nil
+		default:
+			return workstream.Workstream{}, fmt.Errorf("workstream %s is %s and cannot be retried", id, ws.Status)
+		}
+	}
+}
+
 func (m *Manager) drainWorkstreamIntegrations(project string, q *workstreamIntegrator) {
 	defer m.integrationWG.Done()
 	for {
@@ -140,12 +245,23 @@ func (m *Manager) drainWorkstreamIntegrations(project string, q *workstreamInteg
 		}
 		id := q.pending[0]
 		q.pending = q.pending[1:]
+		q.active = id
 		m.mu.Unlock()
 
 		m.integrateReadyWorkstream(id)
 
 		m.mu.Lock()
-		delete(q.queued, id)
+		q.active = ""
+		pendingAgain := false
+		for _, pendingID := range q.pending {
+			if pendingID == id {
+				pendingAgain = true
+				break
+			}
+		}
+		if !pendingAgain {
+			delete(q.queued, id)
+		}
 		m.mu.Unlock()
 	}
 }

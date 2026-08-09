@@ -19,16 +19,18 @@ import (
 // workstream's live event stream (design §8).
 func toWorkstreamInfo(w workstream.Workstream) *v1.WorkstreamInfo {
 	return &v1.WorkstreamInfo{
-		Id:           w.ID,
-		Project:      w.Project,
-		BaseCommit:   w.BaseCommit,
-		BaseBranch:   w.BaseBranch,
-		Branch:       w.Branch,
-		WorktreePath: w.WorktreePath,
-		SessionId:    w.SessionID,
-		TaskId:       w.TaskID,
-		Status:       string(w.Status),
-		CreatedAt:    rfc3339(w.CreatedAt),
+		Id:                 w.ID,
+		Project:            w.Project,
+		BaseCommit:         w.BaseCommit,
+		BaseBranch:         w.BaseBranch,
+		Branch:             w.Branch,
+		WorktreePath:       w.WorktreePath,
+		SessionId:          w.SessionID,
+		TaskId:             w.TaskID,
+		Status:             string(w.Status),
+		CreatedAt:          rfc3339(w.CreatedAt),
+		StatusReason:       w.StatusReason,
+		IntegrateSessionId: w.IntegrateSessionID,
 	}
 }
 
@@ -51,7 +53,8 @@ func workstreamError(err error) *connect.Error {
 		return connect.NewError(connect.CodeNotFound, err)
 	case strings.Contains(msg, "is not active"),
 		strings.Contains(msg, "is not in flight"),
-		strings.Contains(msg, "cannot be discarded"):
+		strings.Contains(msg, "cannot be discarded"),
+		strings.Contains(msg, "cannot be retried"):
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	default:
 		return connect.NewError(connect.CodeInternal, err)
@@ -95,11 +98,14 @@ func (s *Server) ListWorkstreams(_ context.Context, req *connect.Request[v1.List
 		}
 	}
 	counts := s.mgr.WorkstreamCommitCounts(nonTerminal)
+	integrationMode := s.mgr.EffectiveIntegrationMode()
 	for _, w := range all {
 		info := toWorkstreamInfo(w)
 		if !w.Status.Terminal() {
 			info.CommitCount = int64(counts[w.ID])
 			info.SessionStatus = s.mgr.WorkstreamSessionStatus(w)
+			info.IntegrationState = s.mgr.WorkstreamIntegrationState(w)
+			info.IntegrationMode = integrationMode
 		}
 		out = append(out, info)
 	}
@@ -154,4 +160,22 @@ func (s *Server) DiscardWorkstream(_ context.Context, req *connect.Request[v1.Di
 		return nil, workstreamError(err)
 	}
 	return connect.NewResponse(&v1.DiscardWorkstreamResponse{}), nil
+}
+
+// RetryIntegration moves a needs-attention stream back to ready and re-queues
+// automatic integration. Retrying an already-ready/queued stream is idempotent.
+func (s *Server) RetryIntegration(_ context.Context, req *connect.Request[v1.RetryIntegrationRequest]) (*connect.Response[v1.RetryIntegrationResponse], error) {
+	if strings.TrimSpace(req.Msg.WorkstreamId) == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("workstream_id is required"))
+	}
+	ws, err := s.mgr.RetryIntegration(req.Msg.WorkstreamId)
+	if err != nil {
+		return nil, workstreamError(err)
+	}
+	info := toWorkstreamInfo(ws)
+	info.IntegrationMode = s.mgr.EffectiveIntegrationMode()
+	if !ws.Status.Terminal() {
+		info.IntegrationState = s.mgr.WorkstreamIntegrationState(ws)
+	}
+	return connect.NewResponse(&v1.RetryIntegrationResponse{Workstream: info}), nil
 }

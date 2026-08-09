@@ -1344,6 +1344,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.wsNotice = "discarded " + short(msg.id)
 		return m, m.fetchWorkstreams
+	case wsRetriedMsg:
+		if msg.err != nil {
+			m.wsNotice = "retry failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.rpcOK()
+		switch msg.workstream.GetIntegrationMode() {
+		case "auto":
+			m.wsNotice = "integration queued for " + short(msg.id)
+		case "gate":
+			m.wsNotice = short(msg.id) + " ready for gated merge"
+		default:
+			m.wsNotice = short(msg.id) + " ready"
+		}
+		return m, m.fetchWorkstreams
+	case wsMergeAllMsg:
+		if msg.err != nil {
+			m.wsNotice = fmt.Sprintf("merged %d workstream(s), then failed: %s", msg.count, msg.err)
+		} else {
+			m.rpcOK()
+			m.wsNotice = fmt.Sprintf("merged %d workstream(s)", msg.count)
+		}
+		return m, m.fetchWorkstreams
 	case captureEvMsg:
 		ev := msg.ev
 		if ev.Type == "capture_result" {
