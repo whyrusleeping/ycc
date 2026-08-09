@@ -196,6 +196,40 @@ func TestBuildLoopDigest(t *testing.T) {
 	}
 }
 
+func TestBuildLoopDigestExcludesUntouchedBaselineStates(t *testing.T) {
+	wl := &workLoop{
+		baseline: map[string]docs.Status{
+			"0001": docs.StatusBlocked,
+			"0002": docs.StatusInReview,
+			"0003": docs.StatusInReview,
+			"0004": docs.StatusTodo,
+			"0005": docs.StatusTodo,
+			"0006": docs.StatusBlocked,
+		},
+		sessions: []loopSessRec{{
+			id: "s1", focus: "0003", priceStatus: "unpriced",
+			commits: []loopCommit{{task: "0006", sha: "abcdef"}},
+		}},
+	}
+	final := []*docs.Task{
+		{ID: "0001", Status: docs.StatusBlocked},
+		{ID: "0002", Status: docs.StatusInReview},
+		{ID: "0003", Status: docs.StatusInReview},
+		{ID: "0004", Status: docs.StatusBlocked},
+		{ID: "0005", Status: docs.StatusInReview},
+		{ID: "0006", Status: docs.StatusBlocked},
+	}
+
+	wl.buildDigestLocked(final)
+
+	if len(wl.blocked) != 2 || wl.blocked[0].ID != "0004" || wl.blocked[1].ID != "0006" {
+		t.Fatalf("blocked = %+v, want changed 0004 and commit-touched 0006", wl.blocked)
+	}
+	if len(wl.inReview) != 2 || wl.inReview[0].ID != "0003" || wl.inReview[1].ID != "0005" {
+		t.Fatalf("in review = %+v, want focus-touched 0003 and changed 0005", wl.inReview)
+	}
+}
+
 func TestMergeCostStatus(t *testing.T) {
 	cases := []struct{ a, b, want string }{
 		{"", "priced", "priced"},
@@ -360,6 +394,66 @@ func TestWorkLoopDrainsBacklogAndPushesDigest(t *testing.T) {
 	}
 	if want := "work loop finished: 2 completed, 0 blocked, 0 in review"; !strings.Contains(digestPush.body, want) {
 		t.Fatalf("digest body = %q, want to contain %q", digestPush.body, want)
+	}
+}
+
+func TestWorkLoopPublishesIncrementalDigest(t *testing.T) {
+	type observation struct {
+		loop *WorkLoop
+		err  error
+	}
+	observed := make(chan observation, 1)
+	var m *Manager
+	var ws string
+	calls := 0
+	factory := func(*workLoop) func(context.Context) (loopSessRec, bool, error) {
+		return func(context.Context) (loopSessRec, bool, error) {
+			calls++
+			if calls == 2 {
+				loop, err := m.GetWorkLoop("demo")
+				observed <- observation{loop: loop, err: err}
+			}
+			store := docs.NewStore(ws)
+			tasks, err := store.List()
+			if err != nil {
+				return loopSessRec{}, false, err
+			}
+			id := topReadyTask(tasks)
+			_, err = store.Update(id, func(task *docs.Task) { task.Status = docs.StatusDone })
+			return loopSessRec{id: fmt.Sprintf("session-%d", calls), focus: id, priceStatus: "unpriced"}, false, err
+		}
+	}
+	m, _, ws = loopTestManager(t, factory)
+	store := docs.NewStore(ws)
+	first, err := store.Create("first task", "", 1, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Create("second task", "", 2, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := m.StartWorkLoop("demo"); err != nil {
+		t.Fatal(err)
+	}
+	final := waitLoopFinished(t, m, "demo")
+	if final.SessionsRun != 2 {
+		t.Fatalf("sessions run = %d, want 2", final.SessionsRun)
+	}
+
+	select {
+	case got := <-observed:
+		if got.err != nil {
+			t.Fatalf("mid-loop GetWorkLoop: %v", got.err)
+		}
+		if got.loop == nil || got.loop.State != "running" {
+			t.Fatalf("mid-loop snapshot = %+v, want running", got.loop)
+		}
+		if len(got.loop.Completed) != 1 || got.loop.Completed[0].ID != first.ID || got.loop.Completed[0].Title != first.Title {
+			t.Fatalf("mid-loop completed = %+v, want first task %+v", got.loop.Completed, first)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second session did not observe a mid-loop snapshot")
 	}
 }
 

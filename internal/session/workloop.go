@@ -140,7 +140,8 @@ type workLoop struct {
 	cumCost    float64
 	costStatus string
 
-	// digest fields, populated at finish.
+	// Digest fields, rebuilt after every session for incremental observers and
+	// finalized when the loop finishes.
 	completed []WorkLoopDigestTask
 	blocked   []WorkLoopDigestTask
 	inReview  []WorkLoopDigestTask
@@ -406,6 +407,17 @@ func (wl *workLoop) run() {
 			return
 		}
 
+		// Publish an incremental digest after every completed session. Accumulation
+		// must happen first because the digest rolls up session focus, usage, commits,
+		// and verdicts as well as the latest backlog state.
+		if latest, lerr := store.List(); lerr == nil {
+			tasks = latest
+			wl.mu.Lock()
+			wl.buildDigestLocked(tasks)
+			wl.mu.Unlock()
+			wl.persist()
+		}
+
 		errored := rec.errKind != ""
 		wl.mu.Lock()
 		wl.prevErrored = errored
@@ -574,7 +586,8 @@ func (wl *workLoop) finish(outcome string, final []*docs.Task) {
 }
 
 // buildDigestLocked rolls the run's session records up against the baseline and
-// the final backlog into the digest fields. Caller holds wl.mu.
+// latest backlog into the digest fields. It is rebuilt after every session for
+// incremental observers and once more at finish. Caller holds wl.mu.
 func (wl *workLoop) buildDigestLocked(final []*docs.Task) {
 	wl.completed, wl.blocked, wl.inReview, wl.created = nil, nil, nil, nil
 
@@ -618,16 +631,24 @@ func (wl *workLoop) buildDigestLocked(final []*docs.Task) {
 			wl.created = append(wl.created, dt)
 			continue
 		}
+		touched := shaByTask[t.ID] != ""
+		if _, focused := statusByTask[t.ID]; focused {
+			touched = true
+		}
 		switch t.Status {
 		case docs.StatusDone:
 			if base != docs.StatusDone {
 				wl.completed = append(wl.completed, dt)
 			}
 		case docs.StatusBlocked:
-			dt.Reason = blockedReasonFromBody(t.Body)
-			wl.blocked = append(wl.blocked, dt)
+			if base != docs.StatusBlocked || touched {
+				dt.Reason = blockedReasonFromBody(t.Body)
+				wl.blocked = append(wl.blocked, dt)
+			}
 		case docs.StatusInReview:
-			wl.inReview = append(wl.inReview, dt)
+			if base != docs.StatusInReview || touched {
+				wl.inReview = append(wl.inReview, dt)
+			}
 		}
 	}
 }
