@@ -110,13 +110,14 @@ func TestBuildRequest(t *testing.T) {
 	}
 }
 
+// The Codex backend rejects max_output_tokens ("Unsupported parameter"), so a
+// configured engine cap must never reach the wire.
 func TestBuildRequestMaxOutputTokens(t *testing.T) {
 	tests := []struct {
 		name    string
 		options *gollama.Options
-		want    string
 	}{
-		{name: "configured", options: &gollama.Options{MaxTokens: 12_345}, want: `"max_output_tokens":12345`},
+		{name: "configured cap dropped", options: &gollama.Options{MaxTokens: 12_345}},
 		{name: "nil options"},
 		{name: "zero cap", options: &gollama.Options{}},
 	}
@@ -126,14 +127,8 @@ func TestBuildRequestMaxOutputTokens(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tt.want == "" {
-				if strings.Contains(string(body), `"max_output_tokens"`) {
-					t.Fatalf("max_output_tokens must be omitted: %s", body)
-				}
-				return
-			}
-			if !strings.Contains(string(body), tt.want) {
-				t.Fatalf("serialized request = %s, want %s", body, tt.want)
+			if strings.Contains(string(body), `"max_output_tokens"`) {
+				t.Fatalf("max_output_tokens must be omitted: %s", body)
 			}
 		})
 	}

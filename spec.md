@@ -1168,7 +1168,9 @@ support **subscription auth** with `auth = "oauth"` on the
   backend (`chatgpt.com/backend-api/codex/responses`; an empty or platform base_url is
   swapped automatically, an explicit proxy URL honored). The transport is
   streaming-only with `store:false`, sends the required `chatgpt-account-id` /
-  `originator` / `OpenAI-Beta: responses=experimental` headers, and formats errors in
+  `originator` / `OpenAI-Beta: responses=experimental` headers, **never sends
+  `max_output_tokens`** (the backend rejects it as an unsupported parameter; the
+  server-enforced cap still surfaces as stop reason `length`), and formats errors in
   gollama's "status code NNN" shape so engine retry/classification work unchanged —
   including in-stream `error`/`response.failed` frames, whose provider error **code** is
   kept in the message (`server_error: …`) so a transient backend failure over a 200

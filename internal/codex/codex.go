@@ -134,7 +134,6 @@ type streamOpts struct {
 
 type request struct {
 	Model             string         `json:"model"`
-	MaxOutputTokens   int            `json:"max_output_tokens,omitempty"`
 	Instructions      string         `json:"instructions"`
 	Input             []inputItem    `json:"input"`
 	Tools             []toolDef      `json:"tools,omitempty"`
@@ -163,9 +162,11 @@ func buildRequest(opts gollama.RequestOptions) request {
 	if strings.TrimSpace(req.Instructions) == "" {
 		req.Instructions = "You are a helpful coding assistant."
 	}
-	if opts.Options != nil && opts.Options.MaxTokens > 0 {
-		req.MaxOutputTokens = opts.Options.MaxTokens
-	}
+	// max_output_tokens is deliberately NOT forwarded: the Codex backend
+	// rejects it with 400 "Unsupported parameter: max_output_tokens"
+	// (server-side change observed 2026-08-09). The server enforces its own
+	// output cap and still reports incomplete_details.reason
+	// "max_output_tokens", which Turn maps to StopReason "length".
 	for _, t := range opts.Tools {
 		if t.Function == nil {
 			continue
