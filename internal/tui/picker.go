@@ -4,6 +4,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"connectrpc.com/connect"
 
@@ -18,6 +19,13 @@ func (m model) fetchProjects() tea.Msg {
 		return errMsg{err}
 	}
 	return projectsMsg{resp.Msg.Projects}
+}
+
+// projectsRefreshTick keeps the picker snapshot current as the daemon's
+// background fetches complete. The tick chain is armed only for the picker and
+// stops rescheduling as soon as another screen is active.
+func (m model) projectsRefreshTick() tea.Cmd {
+	return tea.Tick(3*time.Second, func(time.Time) tea.Msg { return projectsTickMsg{} })
 }
 
 // addProject registers the current workspace as a project and refreshes the
@@ -70,6 +78,31 @@ func (m model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // pickerScreenView renders the project picker (spec §3.1).
+// gitStatusBadge formats the compact project-list sync indicator. A question
+// mark means remote refs have not been fetched successfully yet or the latest
+// fetch failed; the view renders the whole badge dimly so it stays unobtrusive.
+func gitStatusBadge(status *v1.GitStatus) string {
+	if status == nil {
+		return ""
+	}
+	var parts []string
+	if status.HasUpstream {
+		if status.Ahead > 0 {
+			parts = append(parts, fmt.Sprintf("↑%d", status.Ahead))
+		}
+		if status.Behind > 0 {
+			parts = append(parts, fmt.Sprintf("↓%d", status.Behind))
+		}
+	}
+	if status.Dirty {
+		parts = append(parts, "●")
+	}
+	if status.LastFetchUnix == 0 || status.FetchError != "" {
+		parts = append(parts, "?")
+	}
+	return strings.Join(parts, " ")
+}
+
 func (m model) pickerScreenView() string {
 	var b strings.Builder
 	b.WriteString(m.titleBar(" ycc — projects ") + "\n\n")
@@ -81,10 +114,15 @@ func (m model) pickerScreenView() string {
 	}
 	for i, p := range m.projects {
 		cursor := "  "
-		label := fmt.Sprintf("%-20s %s", p.Name, dimStyle.Render(p.Path))
+		name := fmt.Sprintf("%-20s ", p.Name)
+		badge := gitStatusBadge(p.Git)
+		if badge != "" {
+			badge = dimStyle.Render(badge + " ")
+		}
+		label := name + badge + dimStyle.Render(p.Path)
 		if i == m.projectCur {
 			cursor = selStyle.Render("▸ ")
-			label = selStyle.Render(fmt.Sprintf("%-20s ", p.Name)) + dimStyle.Render(p.Path)
+			label = selStyle.Render(name) + badge + dimStyle.Render(p.Path)
 		}
 		b.WriteString("  " + cursor + label + "\n")
 	}

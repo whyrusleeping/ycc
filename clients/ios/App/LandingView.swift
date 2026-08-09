@@ -169,6 +169,21 @@ struct LandingView: View {
             await ensureLoaded()
             await consumePendingDeepLink()
         }
+        // Keep the drawer's cached git badges current while it is visible. Changing
+        // drawerOpen cancels this task, so the lightweight poll stops immediately
+        // when the drawer closes.
+        .task(id: drawerOpen) {
+            guard drawerOpen else { return }
+            await model?.refreshProjects()
+            while !Task.isCancelled {
+                do {
+                    try await Task<Never, Never>.sleep(nanoseconds: 10_000_000_000)
+                } catch {
+                    return
+                }
+                await model?.refreshProjects()
+            }
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { await model?.refresh() } }
         }

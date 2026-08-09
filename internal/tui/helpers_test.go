@@ -58,6 +58,9 @@ type fakeClient struct {
 	lastWorkImpl *v1.SetWorkImplementationRequest // most recent SetWorkImplementation call
 	lastStartReq *v1.StartSessionRequest          // most recent StartSession call
 
+	projects          []*v1.ProjectInfo
+	listProjectsCalls int
+
 	// previous-sessions screen (spec §18.6)
 	history      []*v1.SessionSummary
 	lastReopened string
@@ -112,6 +115,11 @@ func newFakeClient(cfgs ...*v1.ModelConfig) *fakeClient {
 		f.order = append(f.order, c.Name)
 	}
 	return f
+}
+
+func (f *fakeClient) ListProjects(_ context.Context, _ *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error) {
+	f.listProjectsCalls++
+	return connect.NewResponse(&v1.ListProjectsResponse{Projects: f.projects}), nil
 }
 
 func (f *fakeClient) ListModels(_ context.Context, _ *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error) {

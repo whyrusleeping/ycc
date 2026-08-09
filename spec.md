@@ -128,6 +128,15 @@ flow scoped to that project. An omitted project is accepted only when the regist
 exactly one entry; otherwise it is an explicit selection error. Sessions and their event
 logs still live under each project's own `<workspace>/.ycc/` (§5.1, §14).
 
+Each `ProjectInfo` also carries an optional `GitStatus` snapshot (`branch`, upstream
+presence, ahead/behind counts, dirty flag, last successful fetch time, and last fetch
+error). A daemon-owned background poller periodically runs `git fetch` per registered git
+workspace and caches only the network-dependent fetch metadata. `ListProjects` never
+contacts a remote: it computes dirty/ahead/behind from local refs at request time and
+merges that fresh local status with the cache. A workspace with no git checkout has no
+status; no upstream, offline operation, and authentication failures remain non-fatal and
+appear as unknown/stale status (zero `last_fetch_unix` and/or `fetch_error`).
+
 This supersedes the earlier "always auto-start a detached daemon that persists after
 exit" decision: that default orphaned daemons serving a stale binary and capturing a
 stale environment. Persistence now happens only when explicitly requested.
@@ -945,7 +954,9 @@ service SessionService {
 
 Notable message shapes for the settings + structured-question work:
 
-- `ProjectInfo { string name; string path }`; `ListProjectsResponse { repeated ProjectInfo
+- `ProjectInfo { string name; string path; GitStatus git }`, where `git` is absent for a
+  non-repository workspace and otherwise contains `{ branch; has_upstream; ahead; behind;
+  dirty; last_fetch_unix; fetch_error }`; `ListProjectsResponse { repeated ProjectInfo
   projects }`; `AddProjectRequest { string path; string name }` →
   `AddProjectResponse { ProjectInfo project }`; `RemoveProjectRequest { string name }` (§3.1).
   `StartSessionRequest` gains an optional `project` (name) that resolves to a workspace — an

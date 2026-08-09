@@ -204,6 +204,9 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
 
     @available(iOS 13, *)
     func `discardWorkstream`(request: Ycc_V1_DiscardWorkstreamRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_DiscardWorkstreamResponse>
+
+    @available(iOS 13, *)
+    func `retryIntegration`(request: Ycc_V1_RetryIntegrationRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_RetryIntegrationResponse>
 }
 
 /// Concrete implementation of `Ycc_V1_SessionServiceClientInterface`.
@@ -439,6 +442,11 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
         return await self.client.unary(path: "/ycc.v1.SessionService/DiscardWorkstream", idempotencyLevel: .unknown, request: request, headers: headers)
     }
 
+    @available(iOS 13, *)
+    public func `retryIntegration`(request: Ycc_V1_RetryIntegrationRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_RetryIntegrationResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/RetryIntegration", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
     public enum Metadata {
         public enum Methods {
             public static let listModes = Connect.MethodSpec(name: "ListModes", service: "ycc.v1.SessionService", type: .unary)
@@ -486,6 +494,7 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let previewMerge = Connect.MethodSpec(name: "PreviewMerge", service: "ycc.v1.SessionService", type: .unary)
             public static let mergeWorkstream = Connect.MethodSpec(name: "MergeWorkstream", service: "ycc.v1.SessionService", type: .unary)
             public static let discardWorkstream = Connect.MethodSpec(name: "DiscardWorkstream", service: "ycc.v1.SessionService", type: .unary)
+            public static let retryIntegration = Connect.MethodSpec(name: "RetryIntegration", service: "ycc.v1.SessionService", type: .unary)
         }
     }
 }

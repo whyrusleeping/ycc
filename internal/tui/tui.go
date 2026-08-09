@@ -510,6 +510,9 @@ func initialModel(ctx context.Context, client yccv1connect.SessionServiceClient,
 
 func (m model) Init() tea.Cmd {
 	cmds := []tea.Cmd{m.fetchModes, m.fetchModels, m.fetchProjects, m.menuRefreshTick()}
+	if m.state == statePicker {
+		cmds = append(cmds, m.projectsRefreshTick())
+	}
 	// A persistent multi-project client must pick a project before issuing scoped
 	// RPCs. A one-shot daemon has one project, so omission is unambiguous while the
 	// ListProjects response is still in flight.
@@ -831,6 +834,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	case projectsTickMsg:
+		if m.state != statePicker {
+			return m, nil
+		}
+		return m, tea.Batch(m.fetchProjects, m.projectsRefreshTick())
 	case projectsMsg:
 		m.rpcOK()
 		m.projects = msg.projects

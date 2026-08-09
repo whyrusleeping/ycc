@@ -88,7 +88,18 @@ func (s *Server) StartSession(_ context.Context, req *connect.Request[v1.StartSe
 func (s *Server) ListProjects(_ context.Context, _ *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error) {
 	var projs []*v1.ProjectInfo
 	for _, p := range s.mgr.Projects() {
-		projs = append(projs, &v1.ProjectInfo{Name: p.Name, Path: p.Path})
+		info := &v1.ProjectInfo{Name: p.Name, Path: p.Path}
+		if status := s.mgr.ProjectGitStatus(p.Path); status != nil {
+			info.Git = &v1.GitStatus{
+				Branch: status.Branch, HasUpstream: status.HasUpstream,
+				Ahead: int32(status.Ahead), Behind: int32(status.Behind), Dirty: status.Dirty,
+				LastFetchUnix: status.LastFetch.Unix(), FetchError: status.FetchError,
+			}
+			if status.LastFetch.IsZero() {
+				info.Git.LastFetchUnix = 0
+			}
+		}
+		projs = append(projs, info)
 	}
 	return connect.NewResponse(&v1.ListProjectsResponse{Projects: projs}), nil
 }

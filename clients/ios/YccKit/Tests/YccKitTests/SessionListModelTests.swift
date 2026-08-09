@@ -15,6 +15,7 @@ private final class MockListSource: SessionListSource, @unchecked Sendable {
     var loopsByProject: [String: Ycc_V1_WorkLoopInfo] = [:]
     var loopErrorsByProject: [String: Error] = [:]
     private(set) var requestedProjects: [String] = []
+    private(set) var listProjectsRequestCount = 0
     private(set) var removedProjects: [String] = []
     private let lock = NSLock()
 
@@ -28,7 +29,11 @@ private final class MockListSource: SessionListSource, @unchecked Sendable {
     }
 
     func listProjects() async throws -> [Ycc_V1_ProjectInfo] {
-        projects
+        lock.lock()
+        listProjectsRequestCount += 1
+        let response = projects
+        lock.unlock()
+        return response
     }
 
     func removeProject(name: String) async throws {
@@ -277,6 +282,29 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertTrue(model.showsProjectFilter)
         XCTAssertNil(model.errorMessage)
         XCTAssertEqual(Set(source.requestedProjects), Set(["one", "two"]))
+    }
+
+    func testRefreshProjectsUpdatesGitSnapshotWithoutReloadingHistory() async {
+        let source = MockListSource()
+        var stale = project("one")
+        var staleGit = Ycc_V1_GitStatus()
+        staleGit.fetchError = "offline"
+        stale.git = staleGit
+        source.projects = [stale]
+        let model = SessionListModel(source: source)
+
+        await model.refreshProjects()
+        XCTAssertEqual(model.projects.first?.git.fetchError, "offline")
+
+        var fresh = stale
+        fresh.git.fetchError = ""
+        fresh.git.lastFetchUnix = 123
+        source.projects = [fresh]
+        await model.refreshProjects()
+
+        XCTAssertEqual(model.projects.first?.git.lastFetchUnix, 123)
+        XCTAssertEqual(source.listProjectsRequestCount, 2)
+        XCTAssertTrue(source.requestedProjects.isEmpty)
     }
 
     func testRecentFeedAggregatesProjectsAndSortsGloballyByRecency() async {

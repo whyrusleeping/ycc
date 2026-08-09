@@ -199,6 +199,7 @@ struct WorkspaceDrawer: View {
                             title: project.name,
                             systemImage: "folder",
                             isSelected: model.selectedProject == project.name,
+                            detail: project.hasGit ? gitSyncBadge(project.git) : nil,
                             activity: model.activity(forProject: project.name)
                         ) { onSelectProject(project.name) }
                             .contextMenu {
@@ -281,6 +282,8 @@ private struct DrawerRow: View {
     var isMuted = false
     /// Overrides the icon + title colour, for affirmative actions.
     var tint: Color?
+    /// Quiet trailing context, used for a project's compact git-sync badge.
+    var detail: String?
     var activity: ProjectActivity?
     let action: () -> Void
 
@@ -305,6 +308,12 @@ private struct DrawerRow: View {
                     .font(.subheadline.weight(isSelected ? .semibold : .regular))
                     .foregroundStyle(titleColor)
                     .lineLimit(1)
+                if let detail, !detail.isEmpty {
+                    Text(detail)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
                 Spacer(minLength: 6)
                 if let activity, !activity.isEmpty {
                     ActivityBadge(activity: activity)

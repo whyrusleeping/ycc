@@ -11,6 +11,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/docs"
 	"github.com/whyrusleeping/ycc/internal/event"
+	"github.com/whyrusleeping/ycc/internal/git"
 	"github.com/whyrusleeping/ycc/internal/session"
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 )
@@ -211,6 +212,41 @@ func TestProjectRPCs(t *testing.T) {
 		t.Fatal("AddProject with empty path: expected error")
 	} else if got := connect.CodeOf(err); got != connect.CodeInvalidArgument {
 		t.Fatalf("code = %v, want InvalidArgument", got)
+	}
+}
+
+func TestListProjectsIncludesGitStatus(t *testing.T) {
+	reg := config.NewRegistry(&config.Config{})
+	nonRepo := t.TempDir()
+	mgr := session.NewManager(reg, nonRepo)
+	defer mgr.ReclaimAll()
+
+	gitDir := t.TempDir()
+	if _, err := git.Open(gitDir); err != nil {
+		t.Fatalf("initialize git project: %v", err)
+	}
+	if _, err := mgr.AddProject(gitDir, "git-project"); err != nil {
+		t.Fatalf("add git project: %v", err)
+	}
+
+	resp, err := New(mgr).ListProjects(context.Background(), connect.NewRequest(&v1.ListProjectsRequest{}))
+	if err != nil {
+		t.Fatalf("ListProjects: %v", err)
+	}
+	if len(resp.Msg.Projects) != 2 {
+		t.Fatalf("projects = %+v, want two", resp.Msg.Projects)
+	}
+	for _, p := range resp.Msg.Projects {
+		switch p.Name {
+		case "git-project":
+			if p.Git == nil || p.Git.Branch == "" || p.Git.LastFetchUnix != 0 {
+				t.Fatalf("git project status = %+v, want local status before first fetch", p.Git)
+			}
+		default:
+			if p.Git != nil {
+				t.Fatalf("non-repository project status = %+v, want nil", p.Git)
+			}
+		}
 	}
 }
 

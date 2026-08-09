@@ -1411,6 +1411,17 @@ type Manager struct {
 	// newLoopWait, when non-nil, overrides provider retry waiting. Tests use it to
 	// exercise multi-hour patience schedules without sleeping.
 	newLoopWait func(*workLoop) func(time.Duration) bool
+
+	// gitSync owns the periodic, networked fetch loop and its small per-workspace
+	// cache. Local status itself is computed on demand and never performs network
+	// I/O (task 0275).
+	gitSyncMu       sync.RWMutex
+	gitSyncCache    map[string]gitFetchState
+	gitSyncInterval time.Duration
+	gitSyncWake     chan struct{}
+	gitSyncCtx      context.Context
+	gitSyncCancel   context.CancelFunc
+	gitSyncWG       sync.WaitGroup
 }
 
 // NewManager creates a session manager backed by the given model registry. It
@@ -1425,6 +1436,7 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 		_, _ = projects.EnsureWorkspace(initialWorkspace)
 	}
 	integrationCtx, integrationCancel := context.WithCancel(context.Background())
+	gitSyncCtx, gitSyncCancel := context.WithCancel(context.Background())
 	m := &Manager{
 		sessions:          map[string]*Session{},
 		reg:               reg,
@@ -1437,8 +1449,15 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 		integrationCtx:    integrationCtx,
 		integrationCancel: integrationCancel,
 		workLoops:         map[string]*workLoop{},
+		gitSyncCache:      map[string]gitFetchState{},
+		gitSyncInterval:   defaultGitSyncInterval,
+		gitSyncWake:       make(chan struct{}, 1),
+		gitSyncCtx:        gitSyncCtx,
+		gitSyncCancel:     gitSyncCancel,
 	}
 	m.integrateAgent = m.runIntegrateSession
+	m.gitSyncWG.Add(1)
+	go m.runGitSyncPoller()
 	return m
 }
 
@@ -2473,8 +2492,11 @@ func (m *Manager) reclaim(id string) {
 // leaving each durable log exactly as it was keeps the session reopenable. The
 // live map is drained atomically before cancellation, so repeated calls are safe.
 func (m *Manager) ReclaimAll() {
-	// Stop and join automatic integration commands before tearing down sessions or
+	// Stop and join all manager-owned git commands before tearing down sessions or
 	// their worktrees. This keeps daemon shutdown free of background git races.
+	m.gitSyncCancel()
+	m.gitSyncWG.Wait()
+
 	m.mu.Lock()
 	if !m.integrationStop {
 		m.integrationStop = true

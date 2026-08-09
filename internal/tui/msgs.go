@@ -35,6 +35,11 @@ type modelsMsg struct {
 
 type projectsMsg struct{ projects []*v1.ProjectInfo }
 
+// projectsTickMsg refreshes the project picker's cheap cached git snapshots
+// while that screen is visible. Unlike the daemon poller, this never performs
+// network I/O; ListProjects reads local refs plus cached fetch metadata.
+type projectsTickMsg struct{}
+
 type startedMsg struct{ id, mode string }
 
 // workLoopMsg carries daemon-owned work-loop snapshots from start/stop/get.

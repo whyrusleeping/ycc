@@ -293,6 +293,25 @@ public final class SessionListModel {
         }
     }
 
+
+    /// Refresh only the lightweight project rows used by the visible drawer.
+    /// ListProjects reads local refs plus daemon-cached fetch metadata, so this
+    /// avoids repeatedly fanning out over every project's session history.
+    /// Transient failures preserve the last snapshot; authorization still routes
+    /// through the normal disconnect path.
+    public func refreshProjects() async {
+        do {
+            let loaded = try await source.listProjects()
+            guard !Task.isCancelled else { return }
+            projects = loaded
+        } catch YccError.unauthorized {
+            unauthorized = true
+        } catch {
+            // A background badge refresh is best-effort and must not blank the
+            // drawer or replace a useful screen-level error.
+        }
+    }
+
     /// The project argument needed to open or resume a loaded row.
     public func project(for session: Ycc_V1_SessionSummary) -> String {
         sessionProjects[session.sessionID] ?? selectedProject ?? ""

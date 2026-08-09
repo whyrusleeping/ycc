@@ -139,9 +139,19 @@ func (r *Repo) Status() (SyncStatus, error) {
 // origin) WITHOUT modifying the working tree. It performs network I/O and may
 // be slow or fail (offline, auth) — callers should treat failure as non-fatal
 // and fall back to the last cached Status. Returns an error on failure.
+// Credential prompts are disabled: Fetch runs from background pollers where an
+// interactive prompt would hang the daemon or scribble over the TUI, so a
+// remote needing interactive auth fails fast instead.
 func (r *Repo) Fetch() error {
-	_, err := r.run("fetch", "--quiet")
-	return err
+	cmd := exec.Command("git", "fetch", "--quiet")
+	cmd.Dir = r.Dir
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=true", "SSH_ASKPASS=")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git fetch: %v: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return nil
 }
 
 func (r *Repo) run(args ...string) (string, error) {

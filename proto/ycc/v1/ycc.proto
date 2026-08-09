@@ -47,6 +47,16 @@ message StartSessionResponse { string session_id = 1; }
 message ProjectInfo {
   string name = 1;
   string path = 2;
+  GitStatus git = 3;
+}
+message GitStatus {
+  string branch = 1;         // "" when detached
+  bool has_upstream = 2;
+  int32 ahead = 3;
+  int32 behind = 4;
+  bool dirty = 5;
+  int64 last_fetch_unix = 6; // 0 = poller has not fetched successfully yet
+  string fetch_error = 7;    // last fetch failure; "" when ok
 }
 message ListProjectsRequest {}
 message ListProjectsResponse { repeated ProjectInfo projects = 1; }
