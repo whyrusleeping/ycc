@@ -136,7 +136,7 @@ struct SessionView: View {
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbar { titleToolbar }
         .toolbar { backlogShortcut }
-        .toolbar { if model.mode == .live { actionMenu } }
+        .toolbar { actionMenu }
         .navigationDestination(item: $commitTarget) { target in
             DiffView(
                 title: "Commit \(target.shortSha)",
@@ -728,14 +728,20 @@ struct SessionView: View {
 
     /// One overflow menu rather than a row of glyphs: settings, the other
     /// project destinations, and the interrupt / resume / stop controls.
+    /// Shown for persisted transcripts too (task 0309 follow-up) — the
+    /// project destinations and the per-session usage sheet are just as
+    /// useful on a finished session; only the live controls (settings,
+    /// interrupt / resume / stop) are gated on `mode == .live`.
     @ToolbarContentBuilder
     private var actionMenu: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
-                Button {
-                    showSettings = true
-                } label: {
-                    Label("Session settings", systemImage: "gearshape")
+                if model.mode == .live {
+                    Button {
+                        showSettings = true
+                    } label: {
+                        Label("Session settings", systemImage: "gearshape")
+                    }
                 }
                 Button {
                     showSessionUsage = true
@@ -762,22 +768,24 @@ struct SessionView: View {
                 } label: {
                     Label("Memory", systemImage: "brain")
                 }
-                Divider()
-                Button {
-                    Task { await model.interrupt() }
-                } label: {
-                    Label("Interrupt", systemImage: "pause.circle")
-                }
-                Button {
-                    Task { await model.resumeSession() }
-                } label: {
-                    Label("Resume", systemImage: "play.circle")
-                }
-                Divider()
-                Button(role: .destructive) {
-                    showStopConfirm = true
-                } label: {
-                    Label("Stop…", systemImage: "stop.circle")
+                if model.mode == .live {
+                    Divider()
+                    Button {
+                        Task { await model.interrupt() }
+                    } label: {
+                        Label("Interrupt", systemImage: "pause.circle")
+                    }
+                    Button {
+                        Task { await model.resumeSession() }
+                    } label: {
+                        Label("Resume", systemImage: "play.circle")
+                    }
+                    Divider()
+                    Button(role: .destructive) {
+                        showStopConfirm = true
+                    } label: {
+                        Label("Stop…", systemImage: "stop.circle")
+                    }
                 }
             } label: {
                 Label("Session actions", systemImage: "ellipsis.circle")

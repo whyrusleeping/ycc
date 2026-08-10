@@ -8,6 +8,7 @@
 - Token classes are DISJOINT (engine/loop.go); pricing in internal/config/default_pricing.go.
 - E2E TUI harness (internal/e2e): a goroutine MUST drain emu.Read back into the PTY or screen reads deadlock; skips without a PTY.
 - Provider errors can arrive INSIDE an HTTP 200 stream (codex SSE `error` frame); apierror.go treats server_error/internal_error as retryable.
+- Codex backend rejects max_output_tokens (2026-08-09, 400 "Unsupported parameter") — buildRequest must not forward the engine cap (now in spec §7).
 - Anthropic refusals are STICKY (0238); OAuth tokens resolved PER TURN — refresh invalidates the prior access token; retired-flow creds can show as HTTP 429.
 - Models sometimes leak XML invoke syntax into JSON tool args; internal/tools/argrepair.go repairs.
 - Work loop is daemon-owned; snapshots/digests persist per workspace (workloop_persist.go) — restart restores a running loop as finished/interrupted, never auto-resumes.
@@ -17,7 +18,7 @@
 - Manager goroutines running git must be joinable (ReclaimAll waits — integrationWG, gitSyncWG) or TempDir tests race; server.workstreamError maps errors BY STRING.
 - Event-log failure is TERMINAL (0198): Record returns Seq==0; durable emit sites must check Emitter.Err()/ctx before mutating state.
 - Backlog ids are daemon-allocated per project (docs.IDAllocator); duplicate ids self-heal on docs.Store scan (`ycc doctor` reports moves).
-- Model turns are ctx-aware via TurnCtx/TurnStreamCtx (0204); gollama's legacy Turn/TurnStream use context.Background — never use in inference paths.
+- Model turns are ctx-aware via TurnCtx/TurnStreamCtx (0204); gollama legacy Turn/TurnStream use context.Background — never use in inference paths.
 - ycc spec-check symbol search matches untracked .ycc/ logs — can pass live yet fail on a clean checkout; verify via git archive temp dir (0301 open).
 - GetUsage with empty project + multiple projects returns the ALL-projects rollup instead of erroring (0287); iOS drawer's Usage row opens .usage(project: "").
 
@@ -25,7 +26,7 @@
 
 - No Swift toolchain here — iOS builds/tests on the user's Mac: `swift test` in clients/ios/YccKit; `xcodegen generate && xcodebuild …`; keep ad-hoc signing or simulator Keychain fails (-34018).
 - Tool-failure forensics: <workspace>/.ycc/sessions/\*/events.jsonl; Edit diagnostics in internal/tools/editdiag.go.
-- buf in ~/go/bin; Swift proto regen uses REMOTE BSR plugins (network), Go regen local. After ANY proto change, commit BOTH regens (0254 missed the Swift connect regen; fixed in b2290d7).
+- buf in ~/go/bin; Swift proto regen uses REMOTE BSR plugins (network), Go regen local. After ANY proto change, commit BOTH regens (0254 missed the Swift connect regen).
 - `go test ./...` has known flaky tests (internal/session, internal/setup, internal/tools background-bash); verify against HEAD first.
 - The `commit` tool does `git add -A` — don't use it when unrelated work is in the tree (see selective-commit lesson).
 - Live-model checks feasible: ANTHROPIC_API_KEY set; codex.New("", openaiauth.AccessToken) uses ycc's ChatGPT OAuth login.
@@ -41,5 +42,5 @@
 
 - For user-reported TUI/session issues, check .ycc/sessions in ALL workspaces; filter events.jsonl for `session_error`.
 - For verbatim code-move refactors, diff sorted go/ast decl dumps of HEAD vs new trees (0210).
-- Selective commit (tree holds other tasks' uncommitted work): snapshot the pre-task worktree first (tar + `git diff HEAD`); this task's delta = diff(pre, worktree) applied onto `git show HEAD:file` blobs; new/clean files copy as-is; generated protos are NEVER interdiffed — buf generate in the temp tree; verify the assembled `git archive`-based temp tree (build/vet/tests/spec-check); commit via GIT_INDEX_FILE temp index + commit-tree so the real index stays untouched (0289, 0207, 0275).
+- Selective commit (tree holds other tasks' uncommitted work): snapshot the pre-task worktree first (tar + `git diff HEAD`); this task's delta = diff(pre, worktree) applied onto `git show HEAD:file` blobs; new/clean files copy as-is; generated protos are NEVER interdiffed — buf generate in the temp tree; verify the assembled `git archive`-based temp tree; commit via GIT_INDEX_FILE temp index + commit-tree (0289, 0207, 0275).
 - Selective-commit pitfalls: interdiffed tests may reference OTHER tasks' uncommitted helpers/mocks — adapt the committed blob to HEAD's API (0275); gofmt replayed edits; when staging clobbered the pre-task index, filter combined hunks per task and verify the residual equals the other task's hunks (0293/0303).

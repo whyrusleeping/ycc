@@ -251,7 +251,9 @@ usage**: a sheet showing what *this* session has spent so far — a per-model
 token/cost breakdown plus a total, the app's counterpart of the TUI's Σ
 status-bar readout. The daemon's `GetUsage` has no session filter, so the sheet
 requests `group_by: ["session", "model"]` and filters client-side to the
-session id (`SessionUsageModel` in YccKit). The session
+session id (`SessionUsageModel` in YccKit). The overflow menu shows on
+persisted (finished) transcripts too — only the live controls (session
+settings, interrupt / resume / stop) are gated on a live stream. The session
 view also folds its stream state (live / reconnecting / offline) into the
 navigation subtitle beside the project name rather than spending a toolbar slot
 on it.
