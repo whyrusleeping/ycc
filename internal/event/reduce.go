@@ -7,18 +7,18 @@ const (
 	StatusRunning Status = "running"
 	StatusIdle    Status = "idle"
 	StatusError   Status = "error"
-	// StatusPaused is a running session gracefully paused at a steer checkpoint
-	// (spec §18.7); a Resume (or steered SendInput) returns it to running.
+	// StatusPaused is a running session gracefully paused at a steer checkpoint;
+	// a Resume (or steered SendInput) returns it to running.
 	StatusPaused Status = "paused"
 	// StatusStopped marks a session whose live process was terminated via
-	// StopSession (spec §12): its agent loop was cancelled and its log closed.
+	// StopSession: its agent loop was cancelled and its log closed.
 	// This is purely a display status for the on-disk history — the session is
-	// still reopenable (resume = log replay, §18.6); it is not a resume barrier.
+	// still reopenable (resume = log replay); it is not a resume barrier.
 	StatusStopped Status = "stopped"
 )
 
-// Projection is the reduced view of a session's event log (spec §5: UI state is
-// a projection over the log). It is rebuilt by replaying events and is the
+// Projection is the reduced view of a session's event log. It is rebuilt by
+// replaying events and is the
 // canonical source for things like "what mode is this, is it idle, last report".
 type Projection struct {
 	Mode       string
@@ -31,7 +31,7 @@ type Projection struct {
 	LastSeq    int
 	// FocusTask is the backlog task the session is currently working on, set by
 	// the most recent task_focus event ("" before any focus). TurnsByTask counts
-	// model_turns attributed to each focused task (spec §20.2); the empty-string
+	// model_turns attributed to each focused task; the empty-string
 	// key holds turns that occurred before any focus ("unattributed").
 	FocusTask   string
 	TurnsByTask map[string]int
@@ -50,7 +50,7 @@ type Projection struct {
 	// changes the coordinator selected at session start. Reopen must preserve that
 	// user choice instead of re-applying the session's original preset binding.
 	CoordinatorChanged bool
-	// Parallel-workstream projection (docs/design/parallel-workstreams.md §6, §8):
+	// Parallel-workstream projection:
 	// the workstream lifecycle folded from its own session stream. WorkstreamID is
 	// set once created; WorkstreamConflicts and WorkstreamAttentionReason preserve
 	// the detail of conflict and needs-attention states respectively.

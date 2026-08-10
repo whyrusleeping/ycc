@@ -72,7 +72,7 @@ func (m *model) searchableText(i int) string {
 }
 
 // yankText returns the plain text to copy to the clipboard for an event when the
-// user presses `y` on the selected transcript row (task 0141). For events whose
+// user presses `y` on the selected transcript row. For events whose
 // raw source pastes better than the glamour-rendered body (a commit sha, an error
 // message, a model's text) it returns that raw value; otherwise it falls back to
 // the on-screen expanded content stripped of styling. Returns "" when there's
@@ -216,7 +216,7 @@ func (m *model) clearSearch() {
 }
 
 // searchBar renders the one-row transcript search-entry line shown in place of
-// the input/footer while `/` search is being typed (task 0116). It is width-
+// the input/footer while `/` search is being typed. It is width-
 // clamped like the footer so it can never wrap to a second physical row.
 func (m model) searchBar() string {
 	total, cur := m.searchCount()

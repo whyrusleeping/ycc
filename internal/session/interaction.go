@@ -41,7 +41,7 @@ func newInteraction(unattended bool, emitter *event.Emitter) *interaction {
 }
 
 // unattendedAutoAnswer is the canned reply every ask_user call receives in
-// unattended execution (spec §11): no human is available, so the agent is told to
+// unattended execution: no human is available, so the agent is told to
 // proceed on its own judgement — or, when a wrong guess would be hard to
 // reverse, to mark the affected backlog task "blocked" instead of guessing.
 // One constant serves both the single-question and batch paths so the two
@@ -139,7 +139,7 @@ func (in *interaction) AskMany(ctx context.Context, questions []orchestrator.Que
 // Ask, it does NOT auto-answer in unattended execution: starting the work pipeline is
 // hard to reverse, so it always seeks a real human answer. When no human is
 // available (the session is cancelled before answering), it returns (false, nil)
-// so the action is declined rather than silently taken (spec §9, §11).
+// so the action is declined rather than silently taken.
 func (in *interaction) Confirm(ctx context.Context, question string) (bool, error) {
 	const (
 		yes = "Yes"

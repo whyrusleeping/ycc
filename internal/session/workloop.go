@@ -17,7 +17,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/usage"
 )
 
-// Daemon-side work loop (task 0179, spec §9/§20.6). The unattended "work (loop)"
+// Daemon-side work loop. The unattended "work (loop)"
 // backlog-drain driver used to live in the TUI; it now runs in the daemon so a
 // loop survives client disconnects and any client (including a phone that
 // suspends in the background) can start/observe/stop it via plain Connect RPCs.
@@ -128,7 +128,7 @@ type workLoop struct {
 	waitKind         string
 	stopCh           chan struct{}
 
-	// caps captured once at loop start (task 0137, spec §20.6).
+	// caps captured once at loop start.
 	loopCost   float64
 	loopTokens int64
 
@@ -220,7 +220,7 @@ func (wl *workLoop) waitForRetry(delay time.Duration) bool {
 
 // --- Manager plumbing ---
 
-// StartWorkLoop starts an unattended work loop for a project (spec §9). It errors
+// StartWorkLoop starts an unattended work loop for a project. It errors
 // if a loop is already running/stopping for that workspace. The loop runs in its
 // own goroutine and survives client disconnects; the returned snapshot lets the
 // caller observe state and Subscribe to the current session.
@@ -324,7 +324,7 @@ func (m *Manager) GetWorkLoop(project string) (*WorkLoop, error) {
 }
 
 // resolveWorkspace resolves a project label to its absolute workspace and human
-// label, matching the resolution used by Backlog/start (spec §3.1).
+// label, matching the resolution used by Backlog/start.
 func (m *Manager) resolveWorkspace(project string) (absWS, label string, err error) {
 	ws, err := m.resolveProjectWorkspace(project)
 	if err != nil {
@@ -510,7 +510,7 @@ type loopDecision struct {
 }
 
 // decideLoop decides whether to start another work session or stop the loop. It
-// mirrors the client driver's applyLoopDecision ordering (spec §9, §20.6) and is
+// mirrors the client driver's applyLoopDecision ordering and is
 // pure so the control logic is unit-testable without a live model. Graceful stop
 // and session errors are handled by the caller, before/after this.
 func decideLoop(in loopDecideInput) loopDecision {
@@ -522,11 +522,11 @@ func decideLoop(in loopDecideInput) loopDecision {
 		// nothing, so starting another would loop forever on the same state.
 		return loopDecision{stop: true, outcome: "loop stopped: session made no progress"}
 	case in.loopStarted && in.prevBreach:
-		// The previous loop session breached its own budget daemon-side (task 0137):
+		// The previous loop session breached its own budget daemon-side:
 		// halt at this safe decision point (the session already completed).
 		return loopDecision{stop: true, outcome: "loop stopped: session budget reached"}
 	}
-	// Per-loop-run spend cap (task 0137, spec §20.6): once cumulative tokens or
+	// Per-loop-run spend cap: once cumulative tokens or
 	// priced cost crosses a configured cap, stop before starting the next session.
 	// Unpriced runs contribute no dollars so a cost cap never breaches on them.
 	if in.loopStarted {
@@ -544,7 +544,7 @@ func decideLoop(in loopDecideInput) loopDecision {
 }
 
 // accumulate folds a finished session's record into the run accumulator. Cost is
-// the priced estimate (0 for unpriced models, never invented dollars, §20.4).
+// the priced estimate (0 for unpriced models, never invented dollars).
 func (wl *workLoop) accumulate(rec loopSessRec, breach bool) {
 	if rec.id == "" {
 		return
@@ -798,7 +798,7 @@ func mergeCostStatus(a, b string) string {
 
 // blockedReasonFromBody extracts a one-line reason a task is blocked from its
 // markdown body: the last "## Work log" bullet mentioning "blocked", else the last
-// bullet (spec §18.7). Empty when there is no work log.
+// bullet. Empty when there is no work log.
 func blockedReasonFromBody(body string) string {
 	lines := strings.Split(body, "\n")
 	inLog := false

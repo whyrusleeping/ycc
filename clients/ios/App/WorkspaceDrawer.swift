@@ -24,8 +24,8 @@ enum HomeDestination: Hashable {
 
 // MARK: - Slide-over container
 
-/// A left-edge slide-over drawer (the Slack / Discord interaction model, design
-/// §6 "Navigation shell"). The drawer overlays the *whole* navigation stack, so
+/// A left-edge slide-over drawer using the Slack / Discord interaction model.
+/// The drawer overlays the *whole* navigation stack, so
 /// the current destination is preserved underneath while it is open.
 ///
 /// It opens from a hamburger button (`isOpen`) or an interactive swipe from the

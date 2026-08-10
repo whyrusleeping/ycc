@@ -15,7 +15,7 @@ import (
 )
 
 // setThinking issues SetThinking for the model(s) currently assigned to a role
-// (spec §7.4, §18.2). With a live session it applies immediately; without one it
+// With a live session it applies immediately; without one it
 // resolves the default assignment. An empty role targets all assigned models.
 // Either way the model entries are persisted to ycc.toml.
 func (m model) setThinking(role, level string) tea.Cmd {
@@ -29,7 +29,7 @@ func (m model) setThinking(role, level string) tea.Cmd {
 	}
 }
 
-// setRoleConfig issues SetRoleConfig (spec §18.2). With a live session it applies
+// setRoleConfig issues SetRoleConfig. With a live session it applies
 // the change to that session and persists it; with no session (changed from the
 // home menu) an empty session_id just persists the new default. Either way the
 // selection is written to ycc.toml so it survives a restart.
@@ -101,7 +101,7 @@ func (m model) updateOverlay(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	switch key.String() {
 	case "esc":
-		// Esc closes the overlay without leaving the session (spec §18.2).
+		// Esc closes the overlay without leaving the session.
 		m.overlay = false
 		return m, nil
 	case "ctrl+c":
@@ -216,7 +216,7 @@ func (m model) overlayActivate() (tea.Model, tea.Cmd) {
 	case ovReviewers:
 		return m.toggleReviewerAndPersist()
 	case ovBackends:
-		// Open the model-backends management modal (task 0044) and refresh the
+		// Open the model-backends management modal and refresh the
 		// model list so it lists the current backends.
 		m.overlay = false
 		m.mbOpen = true
@@ -228,9 +228,8 @@ func (m model) overlayActivate() (tea.Model, tea.Cmd) {
 		m.workImpl = cycle(workImplementations, m.workImpl, 1)
 		return m, m.setWorkImplementation(m.workImpl)
 	case ovInterrupt:
-		// Interrupt the running agent (or resume a paused one) — the overlay
-		// route promised by spec §18.7, and the reliable path on terminals where
-		// ctrl+i can't be distinguished from tab (ctrl+x is the universal direct
+		// Interrupt the running agent (or resume a paused one). The overlay is the
+		// reliable path on terminals where ctrl+i can't be distinguished from tab (ctrl+x is the universal direct
 		// chord for the same action). Close the overlay so the user
 		// sees the paused/running state and can steer immediately.
 		if m.sessionID == "" || m.state != stateSession {
@@ -246,7 +245,7 @@ func (m model) overlayActivate() (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case ovBackHome:
-		// Explicit, intentional exit from the session (spec §18.2).
+		// Explicit, intentional exit from the session.
 		m.overlay = false
 		m.state = stateMenu
 		return m, m.refreshMenu()
@@ -373,7 +372,7 @@ func cycleModel(models []*v1.ModelInfo, cur string, d int) string {
 
 func (m model) overlayView() string {
 	var b strings.Builder
-	// The interrupt row doubles as resume while paused (spec §18.7). It also
+	// The interrupt row doubles as resume while paused. It also
 	// serves as the fallback route to interrupt on terminals where ctrl+i is
 	// indistinguishable from tab (no kitty keyboard protocol).
 	interruptLabel, interruptVal := "interrupt agent", "pause at next safe checkpoint"

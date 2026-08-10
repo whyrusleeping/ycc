@@ -16,7 +16,7 @@ import (
 )
 
 // fetchTranscript loads a session's full replayed event log for the read-only
-// transcript drill-in (spec §18.6) via the GetSessionTranscript RPC.
+// transcript drill-in via the GetSessionTranscript RPC.
 func (m model) fetchTranscript(id string) tea.Cmd {
 	return func() tea.Msg {
 		resp, err := m.client.GetSessionTranscript(m.ctx, connect.NewRequest(&v1.GetSessionTranscriptRequest{
@@ -30,7 +30,7 @@ func (m model) fetchTranscript(id string) tea.Cmd {
 }
 
 // reopenSession re-opens a persisted session on its existing event log via
-// ResumeSession ("resume = replay", spec §4.5/§18.6) and enters the session view.
+// ResumeSession ("resume = replay") and enters the session view.
 func (m model) reopenSession(id string) tea.Cmd {
 	return func() tea.Msg {
 		resp, err := m.client.ResumeSession(m.ctx, connect.NewRequest(&v1.ResumeSessionRequest{
@@ -78,8 +78,8 @@ func (m model) sendInput(text string) tea.Cmd {
 	}
 }
 
-// interrupt gracefully pauses the running session at its next safe checkpoint
-// (spec §18.7) so the user can steer or resume.
+// interrupt gracefully pauses the running session at its next safe checkpoint so
+// the user can steer or resume.
 func (m model) interrupt() tea.Cmd {
 	return func() tea.Msg {
 		if m.sessionID == "" {
@@ -92,7 +92,7 @@ func (m model) interrupt() tea.Cmd {
 	}
 }
 
-// resume continues a paused session unchanged (spec §18.7).
+// resume continues a paused session unchanged.
 func (m model) resume() tea.Cmd {
 	return func() tea.Msg {
 		if m.sessionID == "" {
@@ -154,7 +154,7 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		// While the transcript search bar owns input (task 0116), keystrokes edit
+		// While the transcript search bar owns input, keystrokes edit
 		// the query and incrementally re-jump the selection to the nearest match.
 		// It is entered by `/` below (only when the input textarea is empty) and
 		// blurs the input; esc/enter (handled at the top level / here) leave it.
@@ -211,7 +211,7 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, m.choosePickerOption(m.pickerCursor)
 			case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-				// Number keys select an option directly (spec §18.3); digits past
+				// Number keys select an option directly; digits past
 				// the option count are ignored so a stray press stays on the picker.
 				if idx := int(msg.String()[0] - '1'); idx < len(m.pickerOpts) {
 					return m, m.choosePickerOption(idx)
@@ -228,12 +228,12 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.follow = m.vp.AtBottom()
 				return m, nil
 			case "ctrl+n":
-				// Quick-add a backlog item without answering yet (task 0016); the
+				// Quick-add a backlog item without answering yet; the
 				// picker re-renders once the capture overlay closes.
 				m.openCapture()
 				return m, nil
 			case "ctrl+b":
-				// Open the read-only backlog browser (spec §18.5) — often exactly
+				// Open the read-only backlog browser — often exactly
 				// what's needed to answer "which task next?". m.picking is left set
 				// so sessionView restores the picker on return.
 				m.backlog, m.backlogCursor, m.backlogDetail = true, 0, nil
@@ -242,15 +242,15 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.fetchBacklog
 			case "ctrl+o":
 				// Open the browse selector (backlog / sessions / cost) — parity with
-				// the menu (task 0112). m.picking stays set so the picker restores.
+				// the menu. m.picking stays set so the picker restores.
 				m.openBrowse()
 				return m, nil
 			case "ctrl+r":
-				// Open the read-only session browser modal (task 0112).
+				// Open the read-only session browser modal.
 				m.openHistModal()
 				return m, m.fetchHistory
 			case "?", "ctrl+h", "ctrl+_":
-				// Open the keybinding help modal (task 0111). No free-text input is
+				// Open the keybinding help modal. No free-text input is
 				// focused in the picker, so "?"/ctrl+h open unconditionally here.
 				m.openHelp()
 				return m, nil
@@ -261,26 +261,26 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return m.confirmQuit()
 		case "ctrl+n":
-			// Quick-add a backlog item without pausing the session (task 0016).
+			// Quick-add a backlog item without pausing the session.
 			m.openCapture()
 			return m, nil
 		case "ctrl+b":
-			// Open the read-only backlog browser (spec §18.5).
+			// Open the read-only backlog browser.
 			m.backlog, m.backlogCursor, m.backlogDetail = true, 0, nil
 			m.backlogShowDone = false
 			m.backlogBlockedOnly = false
 			return m, m.fetchBacklog
 		case "ctrl+o":
 			// Open the browse selector (backlog / plans / sessions / cost) from a
-			// session — parity with the menu (task 0112).
+			// session — parity with the menu.
 			m.openBrowse()
 			return m, nil
 		case "ctrl+r":
-			// Open the read-only session browser modal over the session (task 0112).
+			// Open the read-only session browser modal over the session.
 			m.openHistModal()
 			return m, m.fetchHistory
 		case "?", "ctrl+h":
-			// Open the keybinding help modal (task 0111). Gated on empty input so a
+			// Open the keybinding help modal. Gated on empty input so a
 			// bare "?" still types and ctrl+h (== legacy BS byte 0x08, bound by the
 			// textarea to delete-char-backward) keeps deleting mid-edit; fall through
 			// to the textarea otherwise. ctrl+_ is the unconditional chord.
@@ -292,7 +292,7 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.openHelp()
 			return m, nil
 		case "ctrl+i", "ctrl+x":
-			// Gracefully interrupt the running agent to steer it (spec §18.7).
+			// Gracefully interrupt the running agent to steer it.
 			// ctrl+i is the historical chord but is byte-identical to Tab (0x09)
 			// and only distinguishable on terminals with the kitty keyboard
 			// protocol; ctrl+x (0x18) is a distinct control byte delivered on
@@ -328,8 +328,8 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.moveSelection(1)
 			return m, nil
 		case "q":
-			// Return to the main menu from a finished (idle / stream-closed) session
-			// (task 0127). Gated on empty input so a bare "q" still types into the
+			// Return to the main menu from a finished (idle / stream-closed) session.
+			// Gated on empty input so a bare "q" still types into the
 			// textarea mid-compose; falls through otherwise. Only fires on a finished,
 			// non-looping session (sessionFinished): the daemon owns loop sessions.
 			if m.sessionFinished() && strings.TrimSpace(m.input.Value()) == "" {
@@ -355,7 +355,7 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "y":
 			// Copy the selected transcript row's text to the clipboard via OSC 52
-			// (task 0141). Gated on empty input so a bare "y" still types into the
+			// Gated on empty input so a bare "y" still types into the
 			// textarea mid-compose; falls through otherwise. commit_made → sha,
 			// session_error → the error text, otherwise the row's body text.
 			if m.selected >= 0 && m.selected < len(m.evs) && strings.TrimSpace(m.input.Value()) == "" {
@@ -366,7 +366,7 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(tea.SetClipboard(text), m.noteFlash("copied ✓"))
 			}
 		case "/":
-			// Enter transcript search (task 0116). Gated on empty input so a bare
+			// Enter transcript search. Gated on empty input so a bare
 			// "/" still types into the textarea mid-compose; falls through otherwise.
 			if strings.TrimSpace(m.input.Value()) == "" {
 				m.searching = true
@@ -438,13 +438,13 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			text := strings.TrimSpace(m.input.Value())
 			if text == "" {
-				// While paused, an empty Enter resumes the agent unchanged (§18.7).
+				// While paused, an empty Enter resumes the agent unchanged.
 				if m.paused {
 					return m, m.resume()
 				}
 				// Empty input: Enter expands/collapses the selected turn — unless the
 				// selected row is a commit_made, in which case Enter drills into the
-				// commit's diff overlay (task 0140).
+				// commit's diff overlay.
 				if m.selected >= 0 {
 					if m.selected < len(m.evs) && m.evs[m.selected].Type == "commit_made" {
 						ev := m.evs[m.selected]
@@ -459,7 +459,7 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.input.SetValue("")
 			m.relayout()
 			// While paused, a non-empty Enter steers: send the correction AND
-			// resume so the agent continues with it (spec §18.7).
+			// resume so the agent continues with it.
 			if m.paused {
 				m.follow = true
 				return m, tea.Sequence(m.sendInput(text), m.resume())
@@ -499,7 +499,7 @@ func (m model) sessionView() string {
 		body = m.overlaySelection(m.vp.View())
 	}
 	// While `/` search is being typed, a single-row search bar replaces the whole
-	// footer stack (input/picker/wizard) and help line (task 0116). footerStackHeight
+	// footer stack (input/picker/wizard) and help line. footerStackHeight
 	// returns 0 so relayout leaves exactly one row for it below the viewport.
 	if m.searching {
 		return top + "\n" + body + "\n" + m.searchBar()
@@ -541,7 +541,7 @@ func (m model) sessionView() string {
 	}
 	if m.sessionFinished() {
 		// A finished (idle / stream-closed), non-looping session leads the footer with
-		// a clean way back to the menu (task 0127). This takes precedence over the
+		// a clean way back to the menu. This takes precedence over the
 		// work-mode loop-toggle hints above.
 		help = m.footer(searchHint + " ✔ session finished — q return to menu · ? help · enter expand · ↑↓ select · pgup/pgdn scroll · esc settings")
 	}
@@ -589,7 +589,7 @@ func (m *model) spinnerCmd() tea.Cmd {
 var notifyOut io.Writer = os.Stdout
 
 // notifyTrigger reports whether a live event type warrants a bell / desktop
-// notification when the user may be looking elsewhere (task 0108).
+// notification when the user may be looking elsewhere.
 func notifyTrigger(t string) bool {
 	switch t {
 	case "question_asked", "session_idle", "session_error", "interrupted":
@@ -602,7 +602,7 @@ func notifyTrigger(t string) bool {
 // genuinely-new live event, gated by client prefs. It is called only from the
 // live subscription path (evMsg) — never from transcript/replay loads — and it
 // suppresses events whose timestamp predates the subscribe instant so the
-// daemon's full-log replay on reopen stays silent (task 0108).
+// daemon's full-log replay on reopen stays silent.
 func (m *model) maybeNotify(ev *v1.Event) {
 	if ev == nil || (!m.prefs.NotifyBell && !m.prefs.NotifyDesktop) {
 		return

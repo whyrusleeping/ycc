@@ -1,7 +1,7 @@
 import SwiftUI
 import YccKit
 
-/// A monospaced, syntax-tinted unified-diff viewer (task 0189/0140): additions
+/// A monospaced, syntax-tinted unified-diff viewer: additions
 /// tinted green, deletions red, headers/hunks de-emphasised. Rows render lazily
 /// (a `List` of pre-parsed ``DiffFormatter/Line`` values) so a large diff scrolls
 /// without hanging the UI, and each line scrolls horizontally so long lines are

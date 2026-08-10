@@ -270,7 +270,7 @@ func (r *Repo) AdvanceBranch(base, branch string) (string, error) {
 	return strings.TrimSpace(sha), nil
 }
 
-// Merge integrates branch into the repo's current branch (design §6). On a
+// Merge integrates branch into the repo's current branch. On a
 // content conflict it runs `git merge --abort` so the base tree/HEAD is never
 // left in a conflicted state, and returns a MergeResult listing the conflicted
 // paths. On success it returns the resulting commit's short sha.

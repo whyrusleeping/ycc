@@ -1,5 +1,5 @@
 // Package codex implements the backend transport for ChatGPT subscription
-// (Plus/Pro) inference (spec §13): OpenAI's Codex Responses backend at
+// (Plus/Pro) inference: OpenAI's Codex Responses backend at
 // https://chatgpt.com/backend-api/codex/responses. Subscription tokens are
 // not valid on the regular platform API, and the codex backend speaks the
 // Responses API rather than /chat/completions, so this package provides a

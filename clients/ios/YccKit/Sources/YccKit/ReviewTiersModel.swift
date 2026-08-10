@@ -2,8 +2,8 @@ import Foundation
 import Observation
 import YccProto
 
-/// The data source ``ReviewTiersModel`` reads from and drives (task 0297, spec
-/// §13.1/§18.2). Abstracted behind a protocol so the logic is unit-testable
+/// The data source ``ReviewTiersModel`` reads from and drives. Abstracted behind
+/// a protocol so the logic is unit-testable
 /// headlessly with an in-memory mock; ``YccClient`` is the production conformer.
 public protocol ReviewTiersSource: Sendable {
     /// Effective tiers (built-ins overlaid with configured) + default tier name.
@@ -17,7 +17,7 @@ public protocol ReviewTiersSource: Sendable {
 
 extension YccClient: ReviewTiersSource {}
 
-/// A review tier's strategy (spec §13.1). `agents` spawns reviewer subagents;
+/// A review tier's strategy. `agents` spawns reviewer subagents;
 /// `selfReview` means the coordinator reviews the change itself.
 public enum ReviewStrategy: String, CaseIterable, Sendable, Identifiable {
     case agents
@@ -162,8 +162,8 @@ public struct ReviewTierDraft: Equatable, Sendable {
     }
 }
 
-/// Drives the review-tiers screen of the iOS global settings (task 0297, spec
-/// §13.1/§18.2): lists the effective tiers, sets the default, and saves/removes
+/// Drives the review-tiers screen of the iOS global settings: lists the effective
+/// tiers, sets the default, and saves/removes
 /// configured tiers via the injected ``ReviewTiersSource``. Daemon errors
 /// surface verbatim. `@MainActor` because it publishes observable UI state.
 @MainActor

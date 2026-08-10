@@ -17,8 +17,8 @@ public protocol TaskDetailSource: Sendable {
 
 extension YccClient: TaskDetailSource {}
 
-/// Drives the task-detail screen (docs/design/ios-client.md §6 phase 2 step 6,
-/// spec §18.5): loads ``GetTask`` and exposes the frontmatter fields + markdown
+/// Drives the task-detail screen: loads ``GetTask`` and exposes the frontmatter
+/// fields and markdown
 /// `body`, and applies status changes via ``UpdateTask`` (reflecting the
 /// refreshed detail from the response). The data source is injected
 /// (``TaskDetailSource``) so the logic is testable headlessly. `@MainActor`

@@ -9,8 +9,6 @@ import Connect
 import Foundation
 import SwiftProtobuf
 
-/// SessionService is the daemon's RPC surface (spec §12). M1 implements the core
-/// four; mode/question RPCs arrive in later milestones.
 public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
 
     @available(iOS 13, *)
@@ -23,17 +21,17 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     func `listSessions`(request: Ycc_V1_ListSessionsRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ListSessionsResponse>
 
     /// ListSessionHistory enumerates all sessions for a project (live + persisted
-    /// on-disk logs), most-recent first (spec §18.6). ListSessions stays live-only.
+    /// on-disk logs), most-recent first. ListSessions stays live-only.
     @available(iOS 13, *)
     func `listSessionHistory`(request: Ycc_V1_ListSessionHistoryRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ListSessionHistoryResponse>
 
     /// GetSessionTranscript returns a session's full event log (live or persisted)
-    /// for the read-only transcript drill-in (spec §18.6).
+    /// for the read-only transcript drill-in.
     @available(iOS 13, *)
     func `getSessionTranscript`(request: Ycc_V1_GetSessionTranscriptRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetSessionTranscriptResponse>
 
     /// GetCommitDiff returns a commit's `git show` diff so the transcript can drill
-    /// into what an agent committed from a commit_made row (task 0140, spec §18.6).
+    /// into what an agent committed from a commit_made row.
     @available(iOS 13, *)
     func `getCommitDiff`(request: Ycc_V1_GetCommitDiffRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetCommitDiffResponse>
 
@@ -50,7 +48,7 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `answerQuestions`(request: Ycc_V1_AnswerQuestionsRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_AnswerQuestionsResponse>
 
-    /// Interrupt & steer (spec §18.7): gracefully pause a running session at its
+    /// Interrupt & steer: gracefully pause a running session at its
     /// next safe checkpoint, then continue the same loop (optionally after a
     /// steered SendInput correction). Distinct from the hard Stop/terminate.
     @available(iOS 13, *)
@@ -61,17 +59,17 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
 
     /// StopSession hard-terminates a session: cancels its agent loop, closes its
     /// event log, and removes it from the daemon (no resume). Distinct from
-    /// Interrupt's graceful pause (spec §12, §18.7).
+    /// Interrupt's graceful pause.
     @available(iOS 13, *)
     func `stopSession`(request: Ycc_V1_StopSessionRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_StopSessionResponse>
 
     /// ResumeSession re-opens a persisted session on its existing event log
-    /// (reconstructs loop history; "resume = replay", spec §4.5/§18.6). Idempotent
+    /// (reconstructs loop history; "resume = replay"). Idempotent
     /// if the session is already live.
     @available(iOS 13, *)
     func `resumeSession`(request: Ycc_V1_ResumeSessionRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ResumeSessionResponse>
 
-    /// Projects — persistent multi-project daemon (spec §3.1).
+    /// Projects — persistent multi-project daemon.
     @available(iOS 13, *)
     func `listProjects`(request: Ycc_V1_ListProjectsRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ListProjectsResponse>
 
@@ -85,11 +83,11 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     func `renameProject`(request: Ycc_V1_RenameProjectRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_RenameProjectResponse>
 
     /// ListDir lists subdirectories of a daemon-host path (directories only) so
-    /// remote clients can browse to a workspace for AddProject (task 0193).
+    /// remote clients can browse to a workspace for AddProject.
     @available(iOS 13, *)
     func `listDir`(request: Ycc_V1_ListDirRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ListDirResponse>
 
-    /// Settings overlay (spec §18.2): enumerate models and change per-role model
+    /// Settings overlay: enumerate models and change per-role model
     /// assignment mid-flight.
     @available(iOS 13, *)
     func `listModels`(request: Ycc_V1_ListModelsRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ListModelsResponse>
@@ -103,7 +101,7 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `setWorkImplementation`(request: Ycc_V1_SetWorkImplementationRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_SetWorkImplementationResponse>
 
-    /// Model backends (spec §18.2): add/edit/remove a logical model backend at
+    /// Model backends: add/edit/remove a logical model backend at
     /// runtime; optionally persisted to ycc.toml.
     @available(iOS 13, *)
     func `upsertModel`(request: Ycc_V1_UpsertModelRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_UpsertModelResponse>
@@ -117,7 +115,7 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `discoverModels`(request: Ycc_V1_DiscoverModelsRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_DiscoverModelsResponse>
 
-    /// Review tiers (spec §13.1): list the effective tiers and edit the configured
+    /// Review tiers: list the effective tiers and edit the configured
     /// ones (plus the default tier) at runtime; always persisted to ycc.toml.
     @available(iOS 13, *)
     func `listReviewTiers`(request: Ycc_V1_ListReviewTiersRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ListReviewTiersResponse>
@@ -131,25 +129,25 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `setReviewDefault`(request: Ycc_V1_SetReviewDefaultRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_SetReviewDefaultResponse>
 
-    /// Backlog browser (spec §18.5): read-only access to the durable backlog.
+    /// Backlog browser: read-only access to the durable backlog.
     @available(iOS 13, *)
     func `listBacklog`(request: Ycc_V1_ListBacklogRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ListBacklogResponse>
 
     @available(iOS 13, *)
     func `getTask`(request: Ycc_V1_GetTaskRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetTaskResponse>
 
-    /// UpdateTask grooms a backlog task in place (spec §18.5, task 0099): change
+    /// UpdateTask grooms a backlog task in place: change
     /// status/priority/title, or (no mutation fields) refresh + regenerate the index.
     @available(iOS 13, *)
     func `updateTask`(request: Ycc_V1_UpdateTaskRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_UpdateTaskResponse>
 
-    /// CreateTask adds a new task to the backlog (task 0143): compose the canonical
+    /// CreateTask adds a new task to the backlog: compose the canonical
     /// task scaffold around a description and assign the next id. Used by
     /// `ycc task add` when a daemon is available.
     @available(iOS 13, *)
     func `createTask`(request: Ycc_V1_CreateTaskRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_CreateTaskResponse>
 
-    /// Plan library (reusable runbooks, task 0020/0077): read-only access to the
+    /// Plan library (reusable runbooks): read-only access to the
     /// in-repo plans/*.md so clients can browse and view saved plans.
     @available(iOS 13, *)
     func `listPlans`(request: Ycc_V1_ListPlansRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ListPlansResponse>
@@ -157,12 +155,12 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `getPlan`(request: Ycc_V1_GetPlanRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetPlanResponse>
 
-    /// Project memory (spec §6.5): read-only view of memory.md, the agents'
+    /// Project memory: read-only view of memory.md, the agents'
     /// advisory operational notes for the project.
     @available(iOS 13, *)
     func `getMemory`(request: Ycc_V1_GetMemoryRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetMemoryResponse>
 
-    /// Quick-add backlog capture (spec §18.2, task 0016): run a lightweight,
+    /// Quick-add backlog capture: run a lightweight,
     /// off-stream capture agent that turns a natural-language description into a
     /// backlog task without disturbing the running session. May ask ONE clarifying
     /// question, carried back via prior_question/prior_answer.
@@ -174,30 +172,29 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `captureBacklogItem`(headers: Connect.Headers) -> any Connect.ServerOnlyAsyncStreamInterface<Ycc_V1_CaptureBacklogItemRequest, Ycc_V1_Event>
 
-    /// Usage/cost breakdown (spec §20): aggregated, priced token usage by task ×
+    /// Usage/cost breakdown: aggregated, priced token usage by task ×
     /// model × day so clients can render the cost breakdown.
     @available(iOS 13, *)
     func `getUsage`(request: Ycc_V1_GetUsageRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetUsageResponse>
 
-    /// Best-effort provider-side subscription allowance (spec §20.5).
+    /// Best-effort provider-side subscription allowance.
     @available(iOS 13, *)
     func `getSubscriptionUsage`(request: Ycc_V1_GetSubscriptionUsageRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetSubscriptionUsageResponse>
 
-    /// Spend guard (task 0137, spec §20.6): return the configured budget caps so the
+    /// Spend guard: return the configured budget caps so the
     /// TUI work-loop driver can enforce the per-loop-run cap client-side.
     @available(iOS 13, *)
     func `getBudget`(request: Ycc_V1_GetBudgetRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetBudgetResponse>
 
-    /// Push notifications (task 0142): route a client-originated notification (the
+    /// Push notifications: route a client-originated notification (the
     /// work-loop completion digest) through the daemon-side webhook notifier.
     @available(iOS 13, *)
     func `notify`(request: Ycc_V1_NotifyRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_NotifyResponse>
 
-    /// Daemon-side work loop (task 0179, spec §9/§20.6): start/stop/observe the
+    /// Daemon-side work loop: start/stop/observe the
     /// unattended backlog-drain loop. The loop lives in the daemon, so it survives
     /// client disconnects; any client can start it, poll GetWorkLoop for state +
     /// digest, Subscribe to the current session, and gracefully StopWorkLoop it.
-    /// Real-time loop-lifecycle streaming is deferred (task 0195).
     @available(iOS 13, *)
     func `startWorkLoop`(request: Ycc_V1_StartWorkLoopRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_StartWorkLoopResponse>
 
@@ -207,7 +204,7 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `getWorkLoop`(request: Ycc_V1_GetWorkLoopRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetWorkLoopResponse>
 
-    /// Parallel workstreams (docs/design/parallel-workstreams.md §6, §8): spawn a
+    /// Spawn a parallel workstream:
     /// worktree+session, list them, preview/merge a branch back to base with the
     /// conflict-aware review gate, or discard one. Subscribe(session_id) is reused
     /// verbatim for per-workstream event streaming (the session_id rides inside

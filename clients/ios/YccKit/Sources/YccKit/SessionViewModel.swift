@@ -3,7 +3,7 @@ import Observation
 import YccProto
 
 /// Drives a session transcript view by folding events through a
-/// ``SessionProjection`` (spec §5.2 / §18). Two modes:
+/// ``SessionProjection``. Two modes:
 ///
 /// - **live** — catches up via a one-shot `GetSessionTranscript` folded as a
 ///   single mutation (so replayed history — e.g. an already-answered question —
@@ -238,7 +238,7 @@ public final class SessionViewModel {
         }
     }
 
-    // MARK: - Interactive actions (task 0183)
+    // MARK: - Interactive actions
 
     /// Send user input and optional picture attachments to the session
     /// (`SendInput`). A persisted transcript is first re-opened on its existing

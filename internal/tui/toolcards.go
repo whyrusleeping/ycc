@@ -187,7 +187,7 @@ func argField(call *v1.Event, key string) string {
 }
 
 // highlightToolResult renders successful tool result content with best-effort
-// syntax highlighting inferred from the originating tool call (task 0017):
+// syntax highlighting inferred from the originating tool call:
 //   - diffs are colorized as before;
 //   - Read's `cat -n` output is highlighted by the file_path extension, keeping
 //     the dimmed line-number gutter;

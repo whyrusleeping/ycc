@@ -1,9 +1,9 @@
-// Package usage aggregates captured per-turn token usage (spec §20.1) across a
+// Package usage aggregates captured per-turn token usage across a
 // workspace's sessions and produces the "detailed cost breakdown by backlog task
-// over time" (spec §20.3, §20.5). The session event logs are the source of truth:
+// over time". The session event logs are the source of truth:
 // the breakdown is recomputed by scanning and reducing every events.jsonl, never
 // kept as a separate ledger. It joins per-turn usage with the session's task
-// focus (spec §20.2) and per-model pricing (spec §20.4) so cost can be grouped by
+// focus and per-model pricing so cost can be grouped by
 // task × model × day, with priced dollars where pricing is configured and token
 // counts only where it is not.
 package usage
@@ -435,8 +435,8 @@ func rowSortKey(r Row, dims []Dim) string {
 	return strings.Join(parts, "\x00")
 }
 
-// FormatWorkLogLine renders a one-line usage/cost summary for a task's work log
-// (spec §6.2) so per-task cost accrues in the backlog across sessions.
+// FormatWorkLogLine renders a one-line usage/cost summary so per-task cost
+// accrues in the backlog across sessions.
 func FormatWorkLogLine(r Row) string {
 	return "usage: " + formatTokensCost(r)
 }

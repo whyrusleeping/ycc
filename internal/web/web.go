@@ -1,9 +1,8 @@
 // Package web owns the daemon's embedded web client: a dependency-free static
 // single-page app (index.html + app.js + app.css) compiled into the binary via
-// go:embed and served from the daemon's existing mux behind the `--web` flag
-// (design docs/design/web-client.md §3).
+// go:embed and served from the daemon's existing mux behind the `--web` flag.
 //
-// The assets are served UNauthenticated by design (web-client.md §4): they are
+// The assets are served unauthenticated by design (docs/design/web-client.md): they are
 // public application code that carry no secrets, so gating them behind the
 // bearer token would only complicate the initial page load. The RPC surface the
 // client talks to stays behind the bearer AuthInterceptor unchanged — the token

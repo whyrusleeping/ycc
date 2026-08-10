@@ -17,7 +17,7 @@ import (
 )
 
 // taskCommand implements `ycc task <add|list|show>`: backlog capture and
-// browsing from the shell (task 0143). It lets you jot a task from anywhere — a
+// browsing from the shell. It lets you jot a task from anywhere — a
 // git hook, another tool, or just the CLI — without opening the TUI.
 //
 // Daemon resolution (deliberately NOT a.dial(), which would spin up a one-shot

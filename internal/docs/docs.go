@@ -1,4 +1,4 @@
-// Package docs implements the structured backlog (spec §6.2): one markdown file
+// Package docs implements the structured backlog: one markdown file
 // per task with YAML frontmatter under backlog/. It is the canonical store the
 // coordinator reads and updates.
 package docs
@@ -18,7 +18,7 @@ import (
 )
 
 // dirLocks serializes backlog mutations per directory. A work session and a
-// capture agent (task 0016) use SEPARATE Store instances over the same backlog
+// capture agent use SEPARATE Store instances over the same backlog
 // dir, so a per-instance mutex would not serialize them; a package-level
 // registry of per-directory locks does. This keeps concurrent mutations (e.g.
 // next-id assignment) from racing and corrupting the task files.
@@ -77,11 +77,11 @@ type Store struct {
 	dir string // <workspace>/backlog
 	// mu serializes mutations for this backlog dir. It is
 	// shared across all Store instances for the same dir via lockFor, so concurrent
-	// sessions (e.g. a work session and a quick-add capture agent, task 0016)
+	// sessions (e.g. a work session and a quick-add capture agent)
 	// serialize their writes. It is NON-reentrant: public methods acquire it once
 	// and delegate to lock-free *Locked helpers to avoid self-deadlock.
 	mu *sync.Mutex
-	// cfg is the workspace docs configuration (task 0121): the spec entry-point
+	// cfg is the workspace docs configuration: the spec entry-point
 	// path and docs-set globs, loaded once at construction from
 	// <workspace>/.ycc/config.toml (defaults when absent/malformed).
 	cfg specConfig
@@ -281,7 +281,7 @@ func (s *Store) AppendWorkLog(id, line string) (*Task, error) {
 }
 
 // SetPlan upserts a "## Plan" section into the task body, persisting the FULL
-// coordinator plan next to its task (task 0020). The section is placed just above
+// coordinator plan next to its task. The section is placed just above
 // "## Work log" when present, else appended. Repeated calls REPLACE the section's
 // content rather than appending duplicate sections.
 func (s *Store) SetPlan(id, plan string) (*Task, error) {

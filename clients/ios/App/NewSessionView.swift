@@ -2,8 +2,7 @@ import SwiftUI
 import YccKit
 import YccProto
 
-/// The "new session" composer (docs/design/ios-client.md §6 phase 2 step 5),
-/// styled as a blank chat rather than a settings form: the prompt composer sits
+/// The "new session" composer is styled as a blank chat rather than a settings form: the prompt composer sits
 /// at the bottom with a send arrow (like the live session's input bar), a row of
 /// compact chips above it tucks away mode / project, and
 /// presets appear as tappable suggestion cards in the empty space. Sending calls
@@ -181,7 +180,7 @@ struct NewSessionView: View {
             HStack(spacing: 8) {
                 modeChip
                 // Always shown: the chip menu is also the home of the "Add
-                // project…" affordance (task 0192), which must be reachable on
+                // project…" affordance, which must be reachable on
                 // a daemon with no registered projects yet.
                 projectChip
                 if model.showsModelPicker {
@@ -294,7 +293,7 @@ struct NewSessionView: View {
 
     /// The message-style composer: multiline field plus a send arrow (mirrors
     /// the live session's input bar), including the same Photos picker — an
-    /// opening prompt may carry pictures (spec §12), so a session about a
+    /// opening prompt may carry pictures, so a session about a
     /// screenshot does not have to burn its first turn asking for it.
     /// Sending starts the session. Work mode may start with an empty prompt (the
     /// agent picks the next ready backlog task), like the TUI.

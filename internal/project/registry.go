@@ -1,5 +1,5 @@
 // Package project implements the persistent multi-project registry for a ycc
-// daemon (spec §3.1). A project is a named workspace (name → absolute path). The
+// daemon. A project is a named workspace (name → absolute path). The
 // registry is durable state in the daemon's state dir
 // (e.g. ~/.local/state/ycc/projects.json), separate from each project's own
 // per-workspace .ycc/. Projects are registered explicitly (`ycc project add` /
@@ -159,7 +159,7 @@ func (r *Registry) uniqueNameLocked(name string) string {
 }
 
 // EnsureWorkspace auto-registers the absolute workspace path if it isn't already
-// registered, returning its project. Used on session start (spec §3.1).
+// registered, returning its project. Used on session start.
 func (r *Registry) EnsureWorkspace(absPath string) (Project, error) {
 	return r.Add(absPath, "")
 }

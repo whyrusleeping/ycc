@@ -1,5 +1,5 @@
 // Syntax highlighting for tool-call result *content* in the TUI, gated on
-// confident language inference (task 0017). The inference is intentionally a set
+// confident language inference. The inference is intentionally a set
 // of pure, testable mappings (path/command → chroma lexer name); rendering is a
 // thin layer over chroma that never drops or mangles output — on any ambiguity,
 // unknown extension, oversized/binary content, or formatter error it falls back

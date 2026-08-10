@@ -14,7 +14,7 @@ import (
 )
 
 // fetchCommitDiff loads a commit's `git show` diff for the commit-diff overlay
-// (task 0140). The result carries the sha so the handler can drop a reply that
+// The result carries the sha so the handler can drop a reply that
 // arrives after the overlay closed or moved to a different commit.
 func (m model) fetchCommitDiff(sha string) tea.Cmd {
 	return func() tea.Msg {
@@ -35,7 +35,7 @@ type cdiffFile struct {
 }
 
 // Large-commit thresholds: past either, the overlay opens with every file folded
-// so it renders instantly (§18.9 safety) and the user unfolds what they want.
+// so it renders instantly and the user unfolds what they want.
 const (
 	cdiffFoldAllLines = 1500
 	cdiffFoldAllFiles = 25

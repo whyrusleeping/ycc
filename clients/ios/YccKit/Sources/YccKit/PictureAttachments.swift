@@ -11,7 +11,7 @@ import Foundation
 /// empty round is a no-op) makes that failure impossible rather than merely
 /// fixed.
 public enum PictureAttachments {
-    /// The daemon accepts at most four pictures per message (spec §12).
+    /// The daemon accepts at most four pictures per message.
     public static let maxCount = 4
 
     /// How many more pictures a draft holding `current` may accept.

@@ -9,7 +9,7 @@ import (
 )
 
 // SpecPath returns the absolute path to the spec ENTRY POINT — the single
-// well-known orientation document for the project (spec §6.1). It defaults to
+// well-known orientation document for the project. It defaults to
 // spec.md at the workspace root (alongside backlog/), and may be pointed at a
 // different file via the `spec_path` setting in <workspace>/.ycc/config.toml.
 func (s *Store) SpecPath() string {
@@ -32,7 +32,7 @@ func (s *Store) ReadSpec() (string, error) {
 	return string(data), nil
 }
 
-// IsDoc reports whether absPath is part of the project's docs set (spec §6.1):
+// IsDoc reports whether absPath is part of the project's docs set:
 // the spec entry point itself, or any file matching one of the configured
 // `doc_globs`. Globs are matched against the workspace-relative slash path; a
 // path outside the workspace never matches. This drives doc_updated so an edit
@@ -62,7 +62,7 @@ func (s *Store) IsDoc(absPath string) bool {
 	return false
 }
 
-// DocFiles enumerates the project's docs set (spec §6.1) as absolute paths: the
+// DocFiles enumerates the project's docs set as absolute paths: the
 // spec entry point (when it exists) plus every workspace file matching a
 // configured `doc_glob`. It walks the workspace once (skipping .git), matches the
 // workspace-relative slash path with the same glob rules as IsDoc, dedupes, and
@@ -72,7 +72,7 @@ func (s *Store) DocFiles() ([]string, error) {
 	seen := map[string]bool{}
 	var out []string
 	add := func(abs string) {
-		// memory.md is agent-learned, advisory notes — NOT spec (spec §6.5). It
+		// memory.md is agent-learned, advisory notes — NOT spec. It
 		// joins the docs set for eventing only; the spec doctor / spec-check must
 		// never scan it or reason over its entries as normative claims.
 		if s.IsMemory(abs) {

@@ -1,4 +1,4 @@
-// Centralized TUI color palette (task 0060). Every color used by the renderer
+// Centralized TUI color palette. Every color used by the renderer
 // lives here as a named semantic role, selected per the user's explicit dark/light
 // theme preference.
 //

@@ -15,7 +15,7 @@ import (
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 )
 
-// fetchBacklog loads the backlog summary rows for the backlog browser (spec §18.5).
+// fetchBacklog loads the backlog summary rows for the backlog browser.
 func (m model) fetchBacklog() tea.Msg {
 	resp, err := m.client.ListBacklog(m.ctx, connect.NewRequest(&v1.ListBacklogRequest{Project: m.project}))
 	if err != nil {
@@ -24,7 +24,7 @@ func (m model) fetchBacklog() tea.Msg {
 	return backlogMsg{resp.Msg.Tasks}
 }
 
-// fetchTask loads one task's full detail for the backlog browser (spec §18.5).
+// fetchTask loads one task's full detail for the backlog browser.
 func (m model) fetchTask(id string) tea.Cmd {
 	return func() tea.Msg {
 		resp, err := m.client.GetTask(m.ctx, connect.NewRequest(&v1.GetTaskRequest{Project: m.project, Id: id}))
@@ -35,8 +35,8 @@ func (m model) fetchTask(id string) tea.Cmd {
 	}
 }
 
-// updateTaskCmd grooms a backlog task via the daemon UpdateTask RPC (spec §18.5,
-// task 0099). status/priority are nil-passthrough (leave field untouched); a call
+// updateTaskCmd grooms a backlog task via the daemon UpdateTask RPC.
+// status/priority are nil-passthrough (leave field untouched); a call
 // with both nil is a "refresh" that re-reads the file.
 func (m model) updateTaskCmd(id string, status *string, priority *int32) tea.Cmd {
 	return func() tea.Msg {
@@ -50,7 +50,7 @@ func (m model) updateTaskCmd(id string, status *string, priority *int32) tea.Cmd
 }
 
 // editorCommand resolves the user's preferred editor: $EDITOR, then $VISUAL, then
-// "vi" (task 0099). Kept small and side-effect-free so it is unit-testable.
+// "vi". Kept small and side-effect-free so it is unit-testable.
 func editorCommand() string {
 	if e := strings.TrimSpace(os.Getenv("EDITOR")); e != "" {
 		return e
@@ -62,7 +62,7 @@ func editorCommand() string {
 }
 
 // openEditorCmd suspends the Bubble Tea program and opens path in the user's
-// $EDITOR, returning an editorClosedMsg when it exits (task 0099).
+// $EDITOR, returning an editorClosedMsg when it exits.
 func (m model) openEditorCmd(id, path string) tea.Cmd {
 	fields := strings.Fields(editorCommand())
 	name := fields[0]
@@ -77,7 +77,7 @@ func (m model) updateBacklog(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	// Status-choice mode (spec §18.5 grooming, task 0099): the next digit picks a
+	// In status-choice mode, the next digit picks a
 	// status; esc/any other key cancels. Applies to the cursor row (list) or the
 	// open detail task.
 	if m.backlogStatusPrompt {
@@ -156,7 +156,7 @@ func (m model) updateBacklog(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "space", " ":
-		// Toggle multi-select for a spawnable (todo) task (task 0085). Selection is
+		// Toggle multi-select for a spawnable (todo) task. Selection is
 		// a set of task ids, cleared when the browser closes.
 		if len(vis) > 0 {
 			t := vis[m.backlogCursor]
@@ -173,7 +173,7 @@ func (m model) updateBacklog(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "P":
-		// Run the selected tasks in parallel workstreams (task 0085, design §8).
+		// Run the selected tasks in parallel workstreams.
 		// Workstreams need a registered project (daemon-registry mode); a one-shot
 		// (empty project) can't spawn them.
 		sel := m.selectedBacklogTasks()
@@ -191,8 +191,7 @@ func (m model) updateBacklog(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// selectedBacklogTasks returns the currently multi-selected backlog tasks (task
-// 0085), restricted to those still visible and todo.
+// selectedBacklogTasks returns the multi-selected tasks that remain visible and todo.
 func (m model) selectedBacklogTasks() []*v1.BacklogTaskSummary {
 	if len(m.backlogSelected) == 0 {
 		return nil
@@ -207,7 +206,7 @@ func (m model) selectedBacklogTasks() []*v1.BacklogTaskSummary {
 }
 
 // backlogTargetID returns the task the grooming keys act on: the open detail task,
-// else the cursor row in the list (task 0099).
+// else the cursor row in the list.
 func (m model) backlogTargetID() string {
 	if m.backlogDetail != nil {
 		return m.backlogDetail.Id
@@ -219,7 +218,7 @@ func (m model) backlogTargetID() string {
 	return ""
 }
 
-// statusForDigit maps a status-prompt digit to a docs status (task 0099).
+// statusForDigit maps a status-prompt digit to a docs status.
 func statusForDigit(k string) (string, bool) {
 	switch k {
 	case "1":
@@ -239,7 +238,7 @@ func statusForDigit(k string) (string, bool) {
 }
 
 // reprioritizeCmd nudges a task's priority toward p1 (dir<0) or p5 (dir>0), clamped
-// to 1..5; it is a no-op at the clamp edge to avoid a needless RPC (task 0099).
+// to 1..5; it is a no-op at the clamp edge to avoid a needless RPC.
 func (m model) reprioritizeCmd(id string, cur, dir int) tea.Cmd {
 	next := cur + dir
 	if next < 1 {
@@ -258,7 +257,7 @@ func (m model) reprioritizeCmd(id string, cur, dir int) tea.Cmd {
 // openTaskInEditor opens the task's markdown file in $EDITOR when the workspace is
 // local to the client (the task file exists on this filesystem — the common
 // in-process/loopback case). Remote clients can't reach the workspace editor, so
-// the affordance degrades to a footer notice (task 0099).
+// the affordance degrades to a footer notice.
 func (m model) openTaskInEditor(id, path string) (tea.Model, tea.Cmd) {
 	if !taskFileLocal(path) {
 		m.backlogNotice = "open-in-editor unavailable: workspace not local"
@@ -269,7 +268,7 @@ func (m model) openTaskInEditor(id, path string) (tea.Model, tea.Cmd) {
 }
 
 // taskFileLocal reports whether the task's file is reachable on the client's
-// filesystem (gates the open-in-editor affordance, task 0099).
+// filesystem (gates the open-in-editor affordance).
 func taskFileLocal(path string) bool {
 	if path == "" {
 		return false
@@ -329,7 +328,7 @@ func (m model) backlogView() string {
 		b.hint += " · space select · P run in parallel"
 	}
 	for _, t := range m.visibleBacklogTasks() {
-		// Multi-select checkbox for spawnable (todo) tasks (task 0085).
+		// Multi-select checkbox for spawnable (todo) tasks.
 		mark := "   "
 		if t.Status == "todo" {
 			if m.backlogSelected[t.Id] {
@@ -401,7 +400,7 @@ func (m *model) refreshBacklogDetailVP() {
 	m.backlogVP.SetContent(m.taskDetailContent(m.backlogDetail))
 }
 
-// taskDetailView renders a single task's full, read-only detail (spec §18.5) as a
+// taskDetailView renders a single task's full, read-only detail as a
 // full-screen scrollable viewport (mirroring the transcript drill-in).
 func (m model) taskDetailView(t *v1.TaskDetail) string {
 	top := m.titleBar(" " + t.Id + " — " + t.Title + " ")
@@ -409,7 +408,7 @@ func (m model) taskDetailView(t *v1.TaskDetail) string {
 	if m.ready {
 		body = m.backlogVP.View()
 	}
-	// Grooming footer (task 0099): the status prompt and transient notices take
+	// Grooming footer: the status prompt and transient notices take
 	// precedence; the "e edit" affordance shows only when the file is local.
 	hint := " ↑↓/pgup/pgdn scroll · +/- priority · s status"
 	if taskFileLocal(t.Path) {

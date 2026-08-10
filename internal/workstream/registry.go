@@ -1,5 +1,5 @@
 // Package workstream implements the daemon-owned, persistent registry of
-// parallel agent workstreams (docs/design/parallel-workstreams.md §5, §7).
+// parallel agent workstreams (docs/design/parallel-workstreams.md).
 //
 // A workstream is the unit of parallel work: a linked git worktree + branch
 // (ycc/ws/<id>) plus the `work` session scoped to it. It is a CHILD of a
@@ -32,10 +32,10 @@ const (
 	// StatusNeedsAttention: the session completed but cannot be auto-integrated.
 	StatusNeedsAttention Status = "needs_attention"
 	// StatusMerged: the workstream's branch was integrated back to base and the
-	// worktree cleaned up (set by the merge flow, task 0083).
+	// worktree cleaned up (set by the merge flow).
 	StatusMerged Status = "merged"
 	// StatusDiscarded: the workstream was abandoned and its worktree cleaned up
-	// without merging (task 0084).
+	// without merging.
 	StatusDiscarded Status = "discarded"
 	// StatusStale: the worktree is gone (e.g. a crashed daemon) and the entry was
 	// reconciled on startup. Terminal for the worktree; kept for history.
@@ -88,7 +88,7 @@ type Workstream struct {
 }
 
 // ErrWorktreeInUse is returned by Add when another active workstream already
-// records the same worktree path (single-writer invariant, §7).
+// records the same worktree path (single-writer invariant).
 var ErrWorktreeInUse = errors.New("worktree path already has an active workstream")
 
 // Registry is a concurrency-safe, persistent map of workstream id → Workstream,
@@ -130,7 +130,7 @@ func StateFile() string {
 }
 
 // DefaultWorktreesRoot returns the default directory under which linked
-// worktrees are created: <state>/ycc/worktrees (design §5, keyed by project/id
+// worktrees are created: <state>/ycc/worktrees (keyed by project/id
 // below this root).
 func DefaultWorktreesRoot() string {
 	return filepath.Join(stateDir(), "ycc", "worktrees")

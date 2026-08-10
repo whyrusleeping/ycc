@@ -13,12 +13,12 @@ import (
 	"github.com/whyrusleeping/ycc/internal/specdoctor"
 )
 
-// specCheckCommand is the daemon-free deterministic spec/code drift check
-// (spec §6.4). It resolves the project's docs set (spec entry point + configured
+// specCheckCommand is the daemon-free deterministic spec/code drift check.
+// It resolves the project's docs set (spec entry point + configured
 // `doc_globs`), runs internal/specdoctor over it, prints the markdown stale-
 // reference report, and exits non-zero exactly when stale references are found —
-// so it doubles as a pre-commit / CI gate. It is the same reference pre-pass the
-// spec-doctor pm preset drives (via Bash) as phase 1.
+// so it doubles as a pre-commit / CI gate. The spec-doctor pm preset drives the
+// same reference pre-pass via Bash.
 func (a *app) specCheckCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "spec-check",

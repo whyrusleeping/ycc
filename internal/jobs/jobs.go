@@ -1,14 +1,13 @@
 // Package jobs implements the session-scoped registry of background jobs
-// (docs/design/async-jobs.md). A job is a unit of background work owned by the
-// session — in this first phase, a background shell command started via
-// Bash(run_in_background: true). Jobs are addressed by a monotonic "job_<n>" id
+// (docs/design/async-jobs.md). A job is session-owned background work, such as a
+// shell command started via Bash(run_in_background: true). Jobs are addressed by a monotonic "job_<n>" id
 // and expose incremental output (job_output), a blocking retrieval (wait), and a
 // kill.
 //
-// Delivery of a job's FINAL report is exactly-once (design §3.3): it is consumed
+// Delivery of a job's FINAL report is exactly-once: it is consumed
 // either by a wait() that covers it OR by checkpoint injection (DrainFinished),
 // whichever fires first, guarded by one per-job consumed flag. job_output (Read)
-// never consumes the final report. This is the Claude Code deadlock lesson (§2):
+// never consumes the final report. This is the Claude Code deadlock lesson:
 // one authoritative delivery path, not two competing queues.
 package jobs
 
@@ -53,7 +52,7 @@ type Job struct {
 	kind    string
 	label   string
 	owner   string // actor that started it (checkpoint drain filters on this)
-	mutates bool   // writes to the worktree (single-writer guard, design §3.4)
+	mutates bool   // writes to the worktree (single-writer guard)
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -81,7 +80,7 @@ func (j *Job) Label() string { return j.label }
 func (j *Job) Owner() string { return j.owner }
 
 // Mutates reports whether the job may write to the worktree. The single-writer
-// guard (design §3.4) refuses a background implementer while any mutating job is
+// guard refuses a background implementer while any mutating job is
 // live in the same tree; read-only jobs (reviewers) never set this.
 func (j *Job) Mutates() bool { return j.mutates }
 
@@ -123,7 +122,7 @@ func (w jobWriter) Write(p []byte) (int, error) {
 }
 
 // Read returns the output produced since the last Read and the current status,
-// advancing the read cursor. It NEVER consumes the final report (design §3.3):
+// advancing the read cursor. It NEVER consumes the final report:
 // job_output is not part of the exactly-once rule and can be re-read any time.
 func (j *Job) Read() (string, Status) {
 	j.mu.Lock()
@@ -187,7 +186,7 @@ func (j *Job) isDone() bool {
 
 // consume returns the job's report and marks it consumed, exactly once, if the
 // job is terminal and not already consumed. Shared by wait and DrainFinished so
-// the final report is delivered exactly once (design §3.3).
+// the final report is delivered exactly once.
 func (j *Job) consume() (Report, bool) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -234,7 +233,7 @@ func (r *Registry) Start(kind, label, owner string) *Job {
 }
 
 // StartMutating is like Start but marks the job as writing to the worktree, so
-// the single-writer guard (design §3.4) can refuse a second mutating job in the
+// the single-writer guard can refuse a second mutating job in the
 // same tree. Used for background implementers and (conservatively) unsandboxed
 // background bash.
 func (r *Registry) StartMutating(kind, label, owner string) *Job {
@@ -258,8 +257,8 @@ func (r *Registry) start(kind, label, owner string, mutates bool) *Job {
 }
 
 // LiveMutating returns a currently-running mutating job, or nil if none. Used by
-// the single-writer guard to refuse a second mutating job in the same tree
-// (design §3.4). When several are somehow live it returns the earliest-started.
+// the single-writer guard to refuse a second mutating job in the same tree.
+// When several are somehow live it returns the earliest-started.
 func (r *Registry) LiveMutating() *Job {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -308,7 +307,7 @@ func (r *Registry) targets(ids []string) []*Job {
 // mode "any" returns as soon as one target finishes; anything else ("all",
 // default) waits for all. Empty ids ⇒ all live jobs. timeout <= 0 ⇒ no timeout.
 // It never holds the registry mutex while blocking (lock-ordering discipline
-// from the design's §2 deadlock lesson).
+// from the design's deadlock lesson).
 func (r *Registry) Wait(ctx context.Context, ids []string, mode string, timeout time.Duration) (reports []Report, running []string) {
 	targets := r.targets(ids)
 	if len(targets) == 0 {

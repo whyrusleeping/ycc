@@ -1,4 +1,4 @@
-// Package server implements the daemon's Connect-RPC surface (spec §12): start
+// Package server implements the daemon's Connect-RPC surface: start
 // sessions, list them, subscribe to a session's event stream (with replay from
 // an offset), and send input. A bearer-token interceptor guards every RPC.
 package server
@@ -83,8 +83,7 @@ func (s *Server) StartSession(_ context.Context, req *connect.Request[v1.StartSe
 	return connect.NewResponse(&v1.StartSessionResponse{SessionId: sess.ID}), nil
 }
 
-// ListProjects returns the registered projects (name + path) for the picker
-// (spec §3.1).
+// ListProjects returns the registered projects (name + path) for the picker.
 func (s *Server) ListProjects(_ context.Context, _ *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error) {
 	var projs []*v1.ProjectInfo
 	for _, p := range s.mgr.Projects() {
@@ -104,7 +103,7 @@ func (s *Server) ListProjects(_ context.Context, _ *connect.Request[v1.ListProje
 	return connect.NewResponse(&v1.ListProjectsResponse{Projects: projs}), nil
 }
 
-// AddProject registers a workspace under an optional name (spec §3.1).
+// AddProject registers a workspace under an optional name.
 func (s *Server) AddProject(_ context.Context, req *connect.Request[v1.AddProjectRequest]) (*connect.Response[v1.AddProjectResponse], error) {
 	if req.Msg.Path == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errNoPath)
@@ -116,7 +115,7 @@ func (s *Server) AddProject(_ context.Context, req *connect.Request[v1.AddProjec
 	return connect.NewResponse(&v1.AddProjectResponse{Project: &v1.ProjectInfo{Name: p.Name, Path: p.Path}}), nil
 }
 
-// RemoveProject deregisters a project by name (spec §3.1).
+// RemoveProject deregisters a project by name.
 func (s *Server) RemoveProject(_ context.Context, req *connect.Request[v1.RemoveProjectRequest]) (*connect.Response[v1.RemoveProjectResponse], error) {
 	if err := s.mgr.RemoveProject(req.Msg.Name); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
@@ -124,7 +123,7 @@ func (s *Server) RemoveProject(_ context.Context, req *connect.Request[v1.Remove
 	return connect.NewResponse(&v1.RemoveProjectResponse{}), nil
 }
 
-// RenameProject renames a registered project (spec §3.1). Unknown names map to
+// RenameProject renames a registered project. Unknown names map to
 // not_found and collisions to already_exists so clients can present precise
 // errors instead of a generic failure.
 func (s *Server) RenameProject(_ context.Context, req *connect.Request[v1.RenameProjectRequest]) (*connect.Response[v1.RenameProjectResponse], error) {
@@ -145,7 +144,7 @@ func (s *Server) RenameProject(_ context.Context, req *connect.Request[v1.Rename
 }
 
 // ListSessions returns all live sessions and their current status, optionally
-// filtered to a single project (spec §3.1).
+// filtered to a single project.
 func (s *Server) ListSessions(_ context.Context, req *connect.Request[v1.ListSessionsRequest]) (*connect.Response[v1.ListSessionsResponse], error) {
 	var infos []*v1.SessionInfo
 	for _, sess := range s.mgr.ListByProject(req.Msg.Project) {
@@ -160,7 +159,7 @@ func (s *Server) ListSessions(_ context.Context, req *connect.Request[v1.ListSes
 }
 
 // ListSessionHistory enumerates all sessions for a project (live + persisted
-// on-disk logs), most-recent first (spec §18.6). Unlike ListSessions it includes
+// on-disk logs), most-recent first. Unlike ListSessions it includes
 // sessions that are no longer live in memory.
 func (s *Server) ListSessionHistory(_ context.Context, req *connect.Request[v1.ListSessionHistoryRequest]) (*connect.Response[v1.ListSessionHistoryResponse], error) {
 	sums, err := s.mgr.ListSessionHistory(req.Msg.Project)
@@ -192,7 +191,7 @@ func (s *Server) ListSessionHistory(_ context.Context, req *connect.Request[v1.L
 
 // GetSessionTranscript returns a session's full event log (live or persisted on
 // disk) so the session browser can render a read-only replayed transcript with
-// the same event components as the live view (spec §18.6).
+// the same event components as the live view.
 func (s *Server) GetSessionTranscript(_ context.Context, req *connect.Request[v1.GetSessionTranscriptRequest]) (*connect.Response[v1.GetSessionTranscriptResponse], error) {
 	evs, err := s.mgr.SessionTranscript(req.Msg.Project, req.Msg.SessionId)
 	if err != nil {
@@ -213,8 +212,8 @@ func (s *Server) GetSessionTranscript(_ context.Context, req *connect.Request[v1
 }
 
 // GetCommitDiff returns a commit's `git show` diff (stat + patch) so the
-// transcript can drill into what an agent committed from a commit_made row (task
-// 0140, spec §18.6). The diff is capped at maxCommitDiffBytes (truncated at a
+// transcript can drill into what an agent committed from a commit_made row.
+// The diff is capped at maxCommitDiffBytes (truncated at a
 // line boundary) to bound the wire payload and the client render; the client
 // renders a truncation notice when truncated is set.
 func (s *Server) GetCommitDiff(_ context.Context, req *connect.Request[v1.GetCommitDiffRequest]) (*connect.Response[v1.GetCommitDiffResponse], error) {
@@ -352,7 +351,7 @@ func (s *Server) SendInput(_ context.Context, req *connect.Request[v1.SendInputR
 		code := connect.CodeResourceExhausted
 		if sess.Refused() || (len(input.Images) > 0 && sess.PendingQuestion()) {
 			// Refused: the provider safety-refused the last turn and new input is
-			// gated until a model switch / retry (task 0238) — a precondition
+			// gated until a model switch / retry — a precondition
 			// failure, not backpressure.
 			code = connect.CodeFailedPrecondition
 		}
@@ -361,8 +360,8 @@ func (s *Server) SendInput(_ context.Context, req *connect.Request[v1.SendInputR
 	return connect.NewResponse(&v1.SendInputResponse{}), nil
 }
 
-// Interrupt requests a graceful pause-to-steer of a running session (spec
-// §18.7): it pauses at the next safe checkpoint without aborting a tool.
+// Interrupt requests a graceful pause-to-steer of a running session. It pauses
+// at the next safe checkpoint without aborting a tool.
 func (s *Server) Interrupt(_ context.Context, req *connect.Request[v1.InterruptRequest]) (*connect.Response[v1.InterruptResponse], error) {
 	sess, ok := s.mgr.Get(req.Msg.SessionId)
 	if !ok {
@@ -375,7 +374,7 @@ func (s *Server) Interrupt(_ context.Context, req *connect.Request[v1.InterruptR
 }
 
 // Resume continues a paused session (optionally after SendInput corrections),
-// continuing the same loop/conversation (spec §18.7).
+// continuing the same loop/conversation.
 func (s *Server) Resume(_ context.Context, req *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error) {
 	sess, ok := s.mgr.Get(req.Msg.SessionId)
 	if !ok {
@@ -387,9 +386,9 @@ func (s *Server) Resume(_ context.Context, req *connect.Request[v1.ResumeRequest
 	return connect.NewResponse(&v1.ResumeResponse{}), nil
 }
 
-// StopSession hard-terminates a running session (spec §12): it cancels the
+// StopSession hard-terminates a running session: it cancels the
 // agent loop, closes the log, and removes the session from the daemon. Distinct
-// from Interrupt's graceful pause (spec §18.7) — there is no resume.
+// from Interrupt's graceful pause — there is no resume.
 func (s *Server) StopSession(_ context.Context, req *connect.Request[v1.StopSessionRequest]) (*connect.Response[v1.StopSessionResponse], error) {
 	if err := s.mgr.Stop(req.Msg.SessionId); err != nil {
 		if errors.Is(err, session.ErrUnknownSession) {
@@ -401,7 +400,7 @@ func (s *Server) StopSession(_ context.Context, req *connect.Request[v1.StopSess
 }
 
 // ResumeSession re-opens a persisted session on its existing event log
-// ("resume = replay", spec §4.5/§18.6): the coordinator is re-instantiated with
+// ("resume = replay"): the coordinator is re-instantiated with
 // history reconstructed from the log and new activity appends to the same
 // continuous events.jsonl. Idempotent if the session is already live.
 func (s *Server) ResumeSession(_ context.Context, req *connect.Request[v1.ResumeSessionRequest]) (*connect.Response[v1.ResumeSessionResponse], error) {
@@ -457,14 +456,14 @@ func (s *Server) AnswerQuestions(_ context.Context, req *connect.Request[v1.Answ
 }
 
 // ListModels enumerates the configured logical models and current role assignments
-// for the settings overlay (spec §13, §18.2). The three role-oriented thinking
+// for the settings overlay. The three role-oriented thinking
 // fields resolve from each role's currently assigned model (first reviewer model).
 func (s *Server) ListModels(_ context.Context, _ *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error) {
 	var models []*v1.ModelInfo
 	for _, m := range s.mgr.Models() {
 		mi := &v1.ModelInfo{Name: m.Name, Backend: m.Backend, Model: m.Model, Priced: m.Pricing.Configured}
 		// Only attach the optional price_* fields when pricing is configured so an
-		// unset rate stays nil on the wire (spec §20.4): the TUI must never invent a
+		// unset rate stays nil on the wire: the TUI must never invent a
 		// cost for an unpriced model.
 		if m.Pricing.Configured {
 			mi.PriceInput = proto.Float64(m.Pricing.Input)
@@ -522,7 +521,7 @@ func configToModelConfig(name string, m config.Model) *v1.ModelConfig {
 	}
 }
 
-// UpsertModel adds or replaces a logical model backend at runtime (spec §18.2).
+// UpsertModel adds or replaces a logical model backend at runtime.
 // The change takes effect on the next turn/spawn and is always written back to
 // ycc.toml so settings edits survive a restart. The request's persist flag is
 // retained for wire compatibility but ignored — persistence is unconditional.
@@ -537,7 +536,7 @@ func (s *Server) UpsertModel(_ context.Context, req *connect.Request[v1.UpsertMo
 	return connect.NewResponse(&v1.UpsertModelResponse{}), nil
 }
 
-// RemoveModel deletes a logical model backend (spec §18.2). It is rejected if a
+// RemoveModel deletes a logical model backend. It is rejected if a
 // role still references it. Like UpsertModel the change is always written back
 // to ycc.toml; the request's persist flag is ignored.
 func (s *Server) RemoveModel(_ context.Context, req *connect.Request[v1.RemoveModelRequest]) (*connect.Response[v1.RemoveModelResponse], error) {
@@ -550,7 +549,7 @@ func (s *Server) RemoveModel(_ context.Context, req *connect.Request[v1.RemoveMo
 	return connect.NewResponse(&v1.RemoveModelResponse{}), nil
 }
 
-// GetModelConfig returns a model backend's full record for editing (spec §18.2).
+// GetModelConfig returns a model backend's full record for editing.
 func (s *Server) GetModelConfig(_ context.Context, req *connect.Request[v1.GetModelConfigRequest]) (*connect.Response[v1.GetModelConfigResponse], error) {
 	if req.Msg.Name == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("model name is required"))
@@ -562,8 +561,8 @@ func (s *Server) GetModelConfig(_ context.Context, req *connect.Request[v1.GetMo
 	return connect.NewResponse(&v1.GetModelConfigResponse{Model: configToModelConfig(req.Msg.Name, m)}), nil
 }
 
-// DiscoverModels lists the model ids available from a backend connection (spec
-// §13, §18.2) so the connection form can offer them for selection. On a
+// DiscoverModels lists the model ids available from a backend connection so the
+// connection form can offer them for selection. On a
 // discovery failure it degrades to curated defaults rather than erroring, so the
 // form is always usable offline / without a key.
 func (s *Server) DiscoverModels(ctx context.Context, req *connect.Request[v1.DiscoverModelsRequest]) (*connect.Response[v1.DiscoverModelsResponse], error) {
@@ -626,7 +625,7 @@ func protoToReviewTier(t *v1.ReviewTierInfo) config.ReviewTier {
 }
 
 // ListReviewTiers returns the effective review tiers (built-ins overlaid with
-// configured entries) plus the effective default tier (spec §13.1, §18.2).
+// configured entries) plus the effective default tier.
 func (s *Server) ListReviewTiers(_ context.Context, _ *connect.Request[v1.ListReviewTiersRequest]) (*connect.Response[v1.ListReviewTiersResponse], error) {
 	listings, def := s.mgr.ReviewTierConfigs()
 	resp := &v1.ListReviewTiersResponse{DefaultTier: def}
@@ -637,7 +636,7 @@ func (s *Server) ListReviewTiers(_ context.Context, _ *connect.Request[v1.ListRe
 }
 
 // UpsertReviewTier adds or replaces a configured review tier; always persisted
-// to ycc.toml. Validation matches config load (spec §13.1).
+// to ycc.toml. Validation matches config load.
 func (s *Server) UpsertReviewTier(_ context.Context, req *connect.Request[v1.UpsertReviewTierRequest]) (*connect.Response[v1.UpsertReviewTierResponse], error) {
 	t := req.Msg.Tier
 	if t == nil || strings.TrimSpace(t.Name) == "" {
@@ -650,7 +649,7 @@ func (s *Server) UpsertReviewTier(_ context.Context, req *connect.Request[v1.Ups
 }
 
 // RemoveReviewTier deletes a configured review tier entry (a built-in name
-// reverts to built-in behaviour); always persisted (spec §13.1).
+// reverts to built-in behaviour); always persisted.
 func (s *Server) RemoveReviewTier(_ context.Context, req *connect.Request[v1.RemoveReviewTierRequest]) (*connect.Response[v1.RemoveReviewTierResponse], error) {
 	if req.Msg.Name == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("tier name is required"))
@@ -662,7 +661,7 @@ func (s *Server) RemoveReviewTier(_ context.Context, req *connect.Request[v1.Rem
 }
 
 // SetReviewDefault sets reviews.default (empty clears it back to single-opus);
-// always persisted (spec §13.1).
+// always persisted.
 func (s *Server) SetReviewDefault(_ context.Context, req *connect.Request[v1.SetReviewDefaultRequest]) (*connect.Response[v1.SetReviewDefaultResponse], error) {
 	if err := s.mgr.SetReviewDefault(req.Msg.Name); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
@@ -670,7 +669,7 @@ func (s *Server) SetReviewDefault(_ context.Context, req *connect.Request[v1.Set
 	return connect.NewResponse(&v1.SetReviewDefaultResponse{}), nil
 }
 
-// SetRoleConfig reassigns per-role logical models (spec §13, §18.2). When
+// SetRoleConfig reassigns per-role logical models. When
 // session_id names a live session the change applies to it immediately and is
 // persisted; with an empty/unknown session_id (e.g. changed from the home menu
 // before any session exists) it just updates the persisted default in ycc.toml.
@@ -690,8 +689,8 @@ func (s *Server) SetRoleConfig(_ context.Context, req *connect.Request[v1.SetRol
 }
 
 // SetThinking maps a role (empty = all roles) to its currently assigned model(s)
-// and stores the requested thinking/effort level on those models (spec §7.4,
-// §18.2). A live session is updated immediately; without one, the current default
+// and stores the requested thinking/effort level on those models. A live session
+// is updated immediately; without one, the current default
 // role assignments are resolved and their model entries are persisted.
 func (s *Server) SetThinking(_ context.Context, req *connect.Request[v1.SetThinkingRequest]) (*connect.Response[v1.SetThinkingResponse], error) {
 	if sess, ok := s.mgr.Get(req.Msg.SessionId); ok {
@@ -706,9 +705,9 @@ func (s *Server) SetThinking(_ context.Context, req *connect.Request[v1.SetThink
 	return connect.NewResponse(&v1.SetThinkingResponse{}), nil
 }
 
-// SetWorkImplementation persists the work-mode coordinator strategy (spec §10,
-// §18.2). A coordinator's toolset and system prompt are fixed at session start,
-// so the new default applies to the next session and does not rebuild live loops.
+// SetWorkImplementation persists the work-mode coordinator strategy. A
+// coordinator's toolset and system prompt are fixed at session start, so the new
+// default applies to the next session and does not rebuild live loops.
 func (s *Server) SetWorkImplementation(_ context.Context, req *connect.Request[v1.SetWorkImplementationRequest]) (*connect.Response[v1.SetWorkImplementationResponse], error) {
 	if err := s.mgr.SetWorkImplementation(req.Msg.Implementation); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
@@ -717,7 +716,7 @@ func (s *Server) SetWorkImplementation(_ context.Context, req *connect.Request[v
 }
 
 // ListBacklog returns summary rows for the backlog, with per-task readiness
-// derived from dependency status (spec §18.5). Read-only.
+// derived from dependency status. Read-only.
 func (s *Server) ListBacklog(_ context.Context, req *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error) {
 	store, err := s.mgr.Backlog(req.Msg.Project)
 	if err != nil {
@@ -739,7 +738,7 @@ func (s *Server) ListBacklog(_ context.Context, req *connect.Request[v1.ListBack
 	return connect.NewResponse(&v1.ListBacklogResponse{Tasks: out}), nil
 }
 
-// GetTask returns one task's full detail for the backlog browser (spec §18.5).
+// GetTask returns one task's full detail for the backlog browser.
 func (s *Server) GetTask(_ context.Context, req *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error) {
 	store, err := s.mgr.Backlog(req.Msg.Project)
 	if err != nil {
@@ -761,8 +760,8 @@ func (s *Server) GetTask(_ context.Context, req *connect.Request[v1.GetTaskReque
 	}}), nil
 }
 
-// UpdateTask grooms a backlog task in place from the browser (spec §18.5, task
-// 0099): change status/priority/title. Unset optional fields are left untouched;
+// UpdateTask changes a backlog task's status, priority, or title. Unset fields
+// are left untouched;
 // a request with NO mutation fields set is a valid "refresh" that re-reads the
 // task file (used after hand-edits in $EDITOR). The
 // docs Store serializes writes per backlog dir, so this shares the same locking
@@ -818,7 +817,7 @@ func (s *Server) UpdateTask(_ context.Context, req *connect.Request[v1.UpdateTas
 	}}), nil
 }
 
-// CreateTask adds a new task to the backlog (task 0143). It composes the same
+// CreateTask adds a new task to the backlog. It composes the same
 // canonical scaffold as the capture agent (docs.TaskBody) and assigns the next
 // id via the docs Store, sharing the per-directory write lock with work sessions
 // and the capture agent. Used by `ycc task add` when a daemon is available.
@@ -854,7 +853,7 @@ func (s *Server) CreateTask(_ context.Context, req *connect.Request[v1.CreateTas
 }
 
 // ListPlans returns the in-repo plan library (plans/*.md) so clients can browse
-// saved runbooks (task 0020/0077). Read-only.
+// saved runbooks. Read-only.
 func (s *Server) ListPlans(_ context.Context, req *connect.Request[v1.ListPlansRequest]) (*connect.Response[v1.ListPlansResponse], error) {
 	store, err := s.mgr.Backlog(req.Msg.Project)
 	if err != nil {
@@ -871,7 +870,7 @@ func (s *Server) ListPlans(_ context.Context, req *connect.Request[v1.ListPlansR
 	return connect.NewResponse(&v1.ListPlansResponse{Plans: out}), nil
 }
 
-// GetPlan returns one saved plan's markdown content for viewing (task 0077).
+// GetPlan returns one saved plan's markdown content for viewing.
 func (s *Server) GetPlan(_ context.Context, req *connect.Request[v1.GetPlanRequest]) (*connect.Response[v1.GetPlanResponse], error) {
 	store, err := s.mgr.Backlog(req.Msg.Project)
 	if err != nil {
@@ -895,7 +894,7 @@ func (s *Server) GetPlan(_ context.Context, req *connect.Request[v1.GetPlanReque
 }
 
 // GetMemory returns the project's memory.md — the agents' advisory operational
-// notes (spec §6.5) — so clients can view what the agents have learned about
+// notes — so clients can view what the agents have learned about
 // working on the project. Read-only; a missing file is not an error (empty
 // content), matching docs.Store.ReadMemory.
 func (s *Server) GetMemory(_ context.Context, req *connect.Request[v1.GetMemoryRequest]) (*connect.Response[v1.GetMemoryResponse], error) {
@@ -912,7 +911,7 @@ func (s *Server) GetMemory(_ context.Context, req *connect.Request[v1.GetMemoryR
 
 // CaptureBacklogItem runs the lightweight, off-stream quick-add capture agent to
 // turn a natural-language description into a backlog task without disturbing any
-// running session (spec §18.2, task 0016). It streams the capture agent's action
+// running session. It streams the capture agent's action
 // log live (the same Event stream as Subscribe), ending with a terminal
 // `capture_result` event whose data carries {task_id,title,question} on success
 // (or {error} on failure / a clarifying question via `question`).
@@ -954,7 +953,7 @@ func (s *Server) CaptureBacklogItem(ctx context.Context, req *connect.Request[v1
 }
 
 // GetUsage returns the aggregated, priced usage/cost breakdown for a project's
-// workspace (spec §20.3, §20.5) so non-CLI clients can render it.
+// workspace so non-CLI clients can render it.
 func (s *Server) GetUsage(_ context.Context, req *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error) {
 	var groupBy []usage.Dim
 	for _, g := range req.Msg.GroupBy {
@@ -1023,7 +1022,7 @@ func (s *Server) GetSubscriptionUsage(ctx context.Context, req *connect.Request[
 	return connect.NewResponse(out), nil
 }
 
-// GetBudget returns the configured spend-guard caps (task 0137, spec §20.6) so
+// GetBudget returns the configured spend-guard caps so
 // the TUI work-loop driver can enforce the per-loop-run cap client-side. Session
 // caps are enforced daemon-side; this only exposes the configured values.
 func (s *Server) GetBudget(_ context.Context, _ *connect.Request[v1.GetBudgetRequest]) (*connect.Response[v1.GetBudgetResponse], error) {
@@ -1037,7 +1036,7 @@ func (s *Server) GetBudget(_ context.Context, _ *connect.Request[v1.GetBudgetReq
 }
 
 // Notify routes a client-originated notification (the work-loop digest) through
-// the daemon-side webhook notifier (task 0142). It validates the kind against the
+// the daemon-side webhook notifier. It validates the kind against the
 // known set and returns delivered=false when the daemon has no notifier configured
 // or the kind is muted.
 func (s *Server) Notify(_ context.Context, req *connect.Request[v1.NotifyRequest]) (*connect.Response[v1.NotifyResponse], error) {
@@ -1049,8 +1048,8 @@ func (s *Server) Notify(_ context.Context, req *connect.Request[v1.NotifyRequest
 	return connect.NewResponse(&v1.NotifyResponse{Delivered: delivered}), nil
 }
 
-// StartWorkLoop starts a daemon-side unattended work loop for a project (task
-// 0179, spec §9). The loop survives client disconnects; the returned snapshot
+// StartWorkLoop starts a daemon-side unattended work loop for a project. The
+// loop survives client disconnects; the returned snapshot
 // carries the current session id for Subscribe. An unknown project is client
 // input (InvalidArgument); an already-running loop is FailedPrecondition.
 func (s *Server) StartWorkLoop(_ context.Context, req *connect.Request[v1.StartWorkLoopRequest]) (*connect.Response[v1.StartWorkLoopResponse], error) {

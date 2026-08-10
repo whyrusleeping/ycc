@@ -3,7 +3,7 @@ import Foundation
 
 /// A connect-swift interceptor that attaches `Authorization: Bearer <token>` to
 /// every outbound request — unary **and** streaming — mirroring the TUI/web
-/// clients (docs/design/ios-client.md §4, docs/remote-api.md bearer auth).
+/// clients. See docs/remote-api.md for the shared bearer-auth contract.
 ///
 /// It is instantiated once per request/stream by connect-swift via an
 /// ``Connect/InterceptorFactory``; ``AuthInterceptor/factory(token:)`` builds

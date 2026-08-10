@@ -29,7 +29,7 @@ func (m model) projectsRefreshTick() tea.Cmd {
 }
 
 // addProject registers the current workspace as a project and refreshes the
-// picker list (spec §3.1).
+// picker list.
 func (m model) addProject(path string) tea.Cmd {
 	return func() tea.Msg {
 		if _, err := m.client.AddProject(m.ctx, connect.NewRequest(&v1.AddProjectRequest{Path: path})); err != nil {
@@ -39,7 +39,7 @@ func (m model) addProject(path string) tea.Cmd {
 	}
 }
 
-// updatePicker handles the project-picker screen (spec §3.1): navigate the list
+// updatePicker handles the project-picker screen: navigate the list
 // of registered projects, Enter scopes the session UI to one, `a` registers the
 // current workspace as a new project.
 func (m model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -77,7 +77,7 @@ func (m model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// pickerScreenView renders the project picker (spec §3.1).
+// pickerScreenView renders the project picker.
 // gitStatusBadge formats the compact project-list sync indicator. A question
 // mark means remote refs have not been fetched successfully yet or the latest
 // fetch failed; the view renders the whole badge dimly so it stays unobtrusive.

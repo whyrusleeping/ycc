@@ -1,5 +1,5 @@
 // Package tools provides the tool registry and the worker tools an agent uses to
-// act on a workspace (spec §8). Tools are plain gollama.Tool values; "control"
+// act on a workspace. Tools are plain gollama.Tool values; "control"
 // tools additionally signal the agent loop (e.g. to stop) via a *Control stashed
 // in ToolResult.Structured.
 package tools
@@ -287,7 +287,7 @@ type Workspace struct {
 	// successful Write or Edit. Callers use it to surface document updates
 	// (e.g. an edit to spec.md) as events; it must not block.
 	OnWrite func(path string)
-	// Jobs, when set, enables background jobs (docs/design/async-jobs.md): the
+	// Jobs, when set, enables background jobs: the
 	// Bash tool accepts run_in_background, and the job_output/wait/kill_job tools
 	// are added to the Editing set. Nil ⇒ background jobs are unavailable and
 	// run_in_background is rejected with a clear error.

@@ -44,7 +44,7 @@ public nonisolated struct Ycc_V1_Event: Sendable {
 
   public var dataJson: String = String()
 
-  /// broadcast-only, never persisted; seq is 0 (task 0114)
+  /// broadcast-only, never persisted; seq is 0
   public var transient: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -60,27 +60,26 @@ public nonisolated struct Ycc_V1_StartSessionRequest: Sendable {
   /// workspace dir; empty => resolve project
   public var workspace: String = String()
 
-  /// e.g. "work"; M1 runs a single worker agent
+  /// session mode, e.g. "work"
   public var mode: String = String()
 
   /// initial task prompt
   public var prompt: String = String()
 
   /// project is an optional registered project name; when set it resolves to that
-  /// project's workspace (overriding `workspace`). Spec §3.1.
+  /// project's workspace (overriding `workspace`).
   public var project: String = String()
 
   /// coordinator_model optionally overrides the coordinator's logical model
   /// (a name from ListModels) FOR THIS SESSION ONLY — the persisted per-role
   /// defaults in ycc.toml are untouched, and implementer/reviewers keep them.
   /// Empty means "use the configured default". Unknown name => InvalidArgument.
-  /// Spec §13, §18.2.
   public var coordinatorModel: String = String()
 
   /// images optionally attaches up to four validated pictures to the OPENING
   /// prompt (same limits and validation as SendInputRequest.images), so a
   /// session whose whole subject is a screenshot does not have to waste its
-  /// first turn. Spec §12.
+  /// first turn.
   public var images: [Ycc_V1_ImageAttachment] = []
 
   /// preset identifies the opening-prompt preset selected by the client. The
@@ -105,7 +104,7 @@ public nonisolated struct Ycc_V1_StartSessionResponse: Sendable {
   public init() {}
 }
 
-/// Projects — persistent multi-project daemon (spec §3.1). A project is a named
+/// Projects — persistent multi-project daemon. A project is a named
 /// workspace; the daemon's registry maps name -> path in its state dir.
 public nonisolated struct Ycc_V1_ProjectInfo: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
@@ -277,7 +276,7 @@ public nonisolated struct Ycc_V1_RenameProjectResponse: Sendable {
   fileprivate var _project: Ycc_V1_ProjectInfo? = nil
 }
 
-/// ListDir — remote directory browsing for the add-project flow (task 0193).
+/// ListDir — remote directory browsing for the add-project flow.
 /// Lists DIRECTORIES ONLY (never files or file contents) so a remote client can
 /// navigate the daemon host's filesystem to pick a workspace to register with
 /// AddProject. Note the bearer token already permits StartSession in an
@@ -475,8 +474,8 @@ public nonisolated struct Ycc_V1_AnswerQuestionsResponse: Sendable {
   public init() {}
 }
 
-/// Interrupt requests a graceful pause-to-steer of a running session (spec
-/// §18.7): it pauses at the next safe checkpoint without aborting a tool.
+/// Interrupt requests a graceful pause-to-steer of a running session. It pauses
+/// at the next safe checkpoint without aborting a tool.
 public nonisolated struct Ycc_V1_InterruptRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -522,9 +521,9 @@ public nonisolated struct Ycc_V1_ResumeResponse: Sendable {
   public init() {}
 }
 
-/// StopSession hard-terminates a session (spec §12): it cancels the agent loop,
+/// StopSession hard-terminates a session: it cancels the agent loop,
 /// closes the event log, and removes the session from the daemon. Distinct from
-/// Interrupt's graceful pause/steer (spec §18.7) — there is no resume.
+/// Interrupt's graceful pause/steer — there is no resume.
 public nonisolated struct Ycc_V1_StopSessionRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -548,7 +547,7 @@ public nonisolated struct Ycc_V1_StopSessionResponse: Sendable {
 }
 
 /// ResumeSession re-opens a persisted (finished/idle) session on its EXISTING
-/// event log ("resume = replay", spec §4.5/§18.6): its coordinator is
+/// event log ("resume = replay"): its coordinator is
 /// re-instantiated with history reconstructed from the log and new activity
 /// appends to the same continuous events.jsonl. Idempotent if already live.
 public nonisolated struct Ycc_V1_ResumeSessionRequest: Sendable {
@@ -610,8 +609,8 @@ public nonisolated struct Ycc_V1_Mode: Sendable {
 }
 
 /// Preset is a home-menu entry that starts a session in `mode` with a tailored
-/// `opening_prompt`. The pm mode exposes the old spec/backlog/feature/bug framings
-/// this way — one mode, four opening prompts (spec §9).
+/// `opening_prompt`. The pm mode exposes spec/backlog/feature/bug framings this
+/// way: one mode with four opening prompts.
 public nonisolated struct Ycc_V1_Preset: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -761,7 +760,7 @@ public nonisolated struct Ycc_V1_ListSessionHistoryResponse: Sendable {
 
 /// GetSessionTranscript returns the full event log for a session — live or
 /// persisted on disk — so the session browser can render a read-only replayed
-/// transcript with the same event components as the live view (spec §18.6).
+/// transcript with the same event components as the live view.
 public nonisolated struct Ycc_V1_GetSessionTranscriptRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -790,7 +789,7 @@ public nonisolated struct Ycc_V1_GetSessionTranscriptResponse: Sendable {
 }
 
 /// GetCommitDiff returns the `git show` output (stat + patch) for a commit, so the
-/// transcript can drill into what an agent actually committed (task 0140). The
+/// transcript can drill into what an agent actually committed. The
 /// daemon caps the returned diff to bound the wire payload; truncated reports when
 /// the cap was hit so the client can render a truncation notice.
 public nonisolated struct Ycc_V1_GetCommitDiffRequest: Sendable {
@@ -823,7 +822,7 @@ public nonisolated struct Ycc_V1_GetCommitDiffResponse: Sendable {
   public init() {}
 }
 
-/// ListModels enumerates the configured logical models (spec §13) so the settings
+/// ListModels enumerates the configured logical models so the settings
 /// overlay can populate the per-role pickers.
 public nonisolated struct Ycc_V1_ListModelsRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
@@ -850,7 +849,7 @@ public nonisolated struct Ycc_V1_ModelInfo: Sendable {
   public var model: String = String()
 
   /// Per-model pricing ($/Mtok) surfaced so the live session status bar can price
-  /// running usage (spec §20.4). The price_* fields are optional so an unset rate
+  /// running usage. The price_* fields are optional so an unset rate
   /// is distinguishable from an explicit 0.0; priced reports whether ANY rate is
   /// configured (mirrors config.Pricing.Configured) so unpriced models render
   /// tokens-only without inventing a cost.
@@ -911,7 +910,7 @@ public nonisolated struct Ycc_V1_ListModelsResponse: Sendable {
 
   /// Current default per-role assignment (config.Roles) so the settings overlay can
   /// seed its per-role pickers with the ACTUAL current selection — even when opened
-  /// from the home menu with no live session (spec §18.2).
+  /// from the home menu with no live session.
   public var coordinator: String = String()
 
   public var implementer: String = String()
@@ -935,7 +934,7 @@ public nonisolated struct Ycc_V1_ListModelsResponse: Sendable {
   public init() {}
 }
 
-/// ModelConfig mirrors a [models.X] block (spec §13, §18.2) for the settings
+/// ModelConfig mirrors a [models.X] block for the settings
 /// overlay's add/edit/remove of model backends. Keys are referenced via key_env
 /// only — no secret values cross the wire. The pricing fields are optional so an
 /// unset price is distinguishable from an explicit 0.0.
@@ -1003,7 +1002,7 @@ public nonisolated struct Ycc_V1_ModelConfig: Sendable {
   /// Clears the value of `priceCacheWrite`. Subsequent reads from it will return its default value.
   public mutating func clearPriceCacheWrite() {self._priceCacheWrite = nil}
 
-  /// credential mechanism: "" | "api-key" | "oauth" (spec §13)
+  /// credential mechanism: "" | "api-key" | "oauth"
   public var auth: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -1016,7 +1015,7 @@ public nonisolated struct Ycc_V1_ModelConfig: Sendable {
   fileprivate var _priceCacheWrite: Double? = nil
 }
 
-/// UpsertModel adds or replaces a logical model backend (spec §18.2). The change
+/// UpsertModel adds or replaces a logical model backend. The change
 /// takes effect on the next turn/spawn; persist=true also writes ycc.toml.
 public nonisolated struct Ycc_V1_UpsertModelRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
@@ -1111,8 +1110,8 @@ public nonisolated struct Ycc_V1_GetModelConfigResponse: Sendable {
   fileprivate var _model: Ycc_V1_ModelConfig? = nil
 }
 
-/// DiscoverModels lists the model ids available from a backend connection (spec
-/// §13) so the connection form can offer them for selection. base_url + key_env
+/// DiscoverModels lists the model ids available from a backend connection so the
+/// connection form can offer them for selection. base_url + key_env
 /// describe the connection to probe (the key value never crosses the wire — the
 /// daemon resolves key_env locally). On a discovery failure the daemon falls back
 /// to curated defaults and sets from_network=false with a human-readable note.
@@ -1152,7 +1151,7 @@ public nonisolated struct Ycc_V1_DiscoverModelsResponse: Sendable {
   public init() {}
 }
 
-/// SetRoleConfig reassigns per-role logical models (spec §13, §18.2). Empty
+/// SetRoleConfig reassigns per-role logical models. Empty
 /// coordinator/implementer leaves that role unchanged; an empty reviewers list
 /// leaves reviewers unchanged. The assignment is persisted as the default (roles
 /// in ycc.toml) so it survives a restart. When session_id names a live session the
@@ -1422,7 +1421,7 @@ public nonisolated struct Ycc_V1_SetReviewDefaultResponse: Sendable {
   public init() {}
 }
 
-/// Backlog browser (spec §18.5): read-only RPCs that expose the durable backlog
+/// Backlog browser: read-only RPCs that expose the durable backlog
 /// (internal/docs Store) so clients can list and inspect tasks independent of any
 /// agent session.
 public nonisolated struct Ycc_V1_ListBacklogRequest: Sendable {
@@ -1548,7 +1547,7 @@ public nonisolated struct Ycc_V1_GetTaskResponse: Sendable {
   fileprivate var _task: Ycc_V1_TaskDetail? = nil
 }
 
-/// Backlog grooming (spec §18.5, task 0099): direct mutation of a task from the
+/// Backlog grooming: direct mutation of a task from the
 /// browser. Unset optional fields are left untouched; a request with NO mutation
 /// fields set is a valid "refresh" that re-reads the task file (used after
 /// hand-edits in $EDITOR).
@@ -1621,7 +1620,7 @@ public nonisolated struct Ycc_V1_UpdateTaskResponse: Sendable {
   fileprivate var _task: Ycc_V1_TaskDetail? = nil
 }
 
-/// CreateTask adds a new task to the backlog (task 0143). It mirrors the
+/// CreateTask adds a new task to the backlog. It mirrors the
 /// docs.Store.Create path used by the capture agent, composing the canonical
 /// "## Description / ## Acceptance criteria / ## Work log" scaffold around the
 /// supplied body. Used by `ycc task add` when a daemon is available.
@@ -1672,7 +1671,7 @@ public nonisolated struct Ycc_V1_CreateTaskResponse: Sendable {
   fileprivate var _task: Ycc_V1_TaskDetail? = nil
 }
 
-/// Plan library (reusable runbooks, task 0020/0077): read-only access to the
+/// Plan library (reusable runbooks): read-only access to the
 /// in-repo plans/*.md so clients can browse and view saved plans.
 public nonisolated struct Ycc_V1_ListPlansRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
@@ -1747,7 +1746,7 @@ public nonisolated struct Ycc_V1_GetPlanResponse: Sendable {
   public init() {}
 }
 
-/// Project memory (spec §6.5): read-only access to memory.md — the advisory
+/// Project memory: read-only access to memory.md — the advisory
 /// operational notes agents record across sessions — so clients can view what
 /// the agents have learned about working on the project.
 public nonisolated struct Ycc_V1_GetMemoryRequest: Sendable {
@@ -1779,7 +1778,7 @@ public nonisolated struct Ycc_V1_GetMemoryResponse: Sendable {
   public init() {}
 }
 
-/// Quick-add backlog capture (spec §18.2, task 0016): a TUI overlay lets the user
+/// Quick-add backlog capture: a TUI overlay lets the user
 /// quick-add a backlog item mid-session WITHOUT disturbing the running session.
 /// The daemon runs a lightweight, off-stream capture agent that turns the
 /// description into a structured task via create_task. The agent may ask ONE
@@ -1807,7 +1806,7 @@ public nonisolated struct Ycc_V1_CaptureBacklogItemRequest: Sendable {
   public init() {}
 }
 
-/// Usage/cost breakdown (spec §20.3, §20.5): the daemon scans a workspace's
+/// Usage/cost breakdown: the daemon scans a workspace's
 /// session event logs, joins per-turn usage with task focus and per-model
 /// pricing, and returns a structured breakdown grouped by task × model × day so
 /// non-CLI clients (TUI/phone) can render it identically to `ycc cost`.
@@ -1897,7 +1896,7 @@ public nonisolated struct Ycc_V1_GetUsageResponse: Sendable {
   fileprivate var _total: Ycc_V1_UsageRow? = nil
 }
 
-/// Provider-side subscription allowance (spec §20.5). This is intentionally
+/// Provider-side subscription allowance. This is intentionally
 /// separate from GetUsage: it is shared account quota, not ycc-local token spend.
 /// No credential material crosses this boundary.
 public nonisolated struct Ycc_V1_GetSubscriptionUsageRequest: Sendable {
@@ -1979,7 +1978,7 @@ public nonisolated struct Ycc_V1_GetSubscriptionUsageResponse: Sendable {
   public init() {}
 }
 
-/// Spend guard budget caps (task 0137, spec §20.6). GetBudget returns the
+/// Spend guard budget caps. GetBudget returns the
 /// configured session and loop caps so the TUI work-loop driver can enforce the
 /// per-loop-run cap client-side (session caps are enforced daemon-side). Every
 /// field is 0 when unset (unlimited); a cost cap is in US dollars, a token cap
@@ -2017,7 +2016,7 @@ public nonisolated struct Ycc_V1_GetBudgetResponse: Sendable {
 }
 
 /// Notify routes a client-originated push notification through the daemon-side
-/// notifier (task 0142). It exists so the client-driven work-loop can emit its
+/// notifier. It exists so the client-driven work-loop can emit its
 /// completion digest via the same best-effort webhook channel the daemon uses for
 /// question/idle/error/blocked events. delivered is false when the daemon has no
 /// notifier configured or the kind is muted.
@@ -2223,7 +2222,7 @@ public nonisolated struct Ycc_V1_WorkLoopInfo: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-/// StartWorkLoop starts an unattended work loop for a project (spec §9). It fails
+/// StartWorkLoop starts an unattended work loop for a project. It fails
 /// (FailedPrecondition) if a loop is already running/waiting/stopping for that workspace.
 public nonisolated struct Ycc_V1_StartWorkLoopRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
@@ -2330,7 +2329,7 @@ public nonisolated struct Ycc_V1_GetWorkLoopResponse: Sendable {
   fileprivate var _loop: Ycc_V1_WorkLoopInfo? = nil
 }
 
-/// Parallel workstreams (docs/design/parallel-workstreams.md §5–§8): a workstream
+/// A parallel workstream
 /// is a linked git worktree + branch plus the `work` session scoped to it, tracked
 /// as a child of a project. WorkstreamInfo mirrors workstream.Workstream.
 public nonisolated struct Ycc_V1_WorkstreamInfo: Sendable {
@@ -2392,7 +2391,7 @@ public nonisolated struct Ycc_V1_WorkstreamInfo: Sendable {
 }
 
 /// SpawnWorkstream creates a worktree + branch off the project's base and starts a
-/// `work` session inside it (design §5, §8). The session_id for Subscribe rides
+/// `work` session inside it. The session_id for Subscribe rides
 /// inside the returned WorkstreamInfo.
 public nonisolated struct Ycc_V1_SpawnWorkstreamRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
@@ -2463,7 +2462,7 @@ public nonisolated struct Ycc_V1_ListWorkstreamsResponse: Sendable {
 }
 
 /// PreviewMerge trial-merges a workstream's branch into its project's current base
-/// WITHOUT mutating anything (design §6 step 1): clean reports whether the merge
+/// WITHOUT mutating anything: clean reports whether the merge
 /// applies without conflict, conflicts lists the conflicted paths otherwise, and
 /// diff holds the integrated diff preview when clean.
 public nonisolated struct Ycc_V1_PreviewMergeRequest: Sendable {
@@ -2494,12 +2493,10 @@ public nonisolated struct Ycc_V1_PreviewMergeResponse: Sendable {
   public init() {}
 }
 
-/// MergeWorkstream integrates a workstream's branch back to base with the
-/// conflict-aware, review-gated flow (design §6). The design §8 sketch calls the
-/// second field "strategy", but that sketch is explicitly non-final; the manager's
-/// real gate is `accept`: a clean trial merge returns needs_accept + the integrated
-/// diff (nothing mutated) until accept=true. A conflict returns the
-/// conflicted paths with base untouched and the worktree kept.
+/// MergeWorkstream integrates a workstream's branch back to base through an
+/// explicit accept gate. A clean trial merge returns needs_accept and the
+/// integrated diff without mutating the base until accept=true. A conflict returns
+/// the conflicted paths with the base untouched and the worktree kept.
 public nonisolated struct Ycc_V1_MergeWorkstreamRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -2507,7 +2504,7 @@ public nonisolated struct Ycc_V1_MergeWorkstreamRequest: Sendable {
 
   public var workstreamID: String = String()
 
-  /// accept a review-gated clean merge (design §6 step 2)
+  /// accept a review-gated clean merge
   public var accept: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -2540,8 +2537,7 @@ public nonisolated struct Ycc_V1_MergeWorkstreamResponse: Sendable {
 }
 
 /// DiscardWorkstream abandons a workstream without merging: it stops the session,
-/// cleans up the worktree + branch, and marks the registry entry discarded
-/// (design §6).
+/// cleans up the worktree + branch, and marks the registry entry discarded.
 public nonisolated struct Ycc_V1_DiscardWorkstreamRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -2565,7 +2561,7 @@ public nonisolated struct Ycc_V1_DiscardWorkstreamResponse: Sendable {
 }
 
 /// RetryIntegration re-queues a ready or needs-attention workstream for automatic
-/// integration (docs/design/workstream-integration.md §7). Repeated calls while
+/// integration. Repeated calls while
 /// already queued are idempotent.
 public nonisolated struct Ycc_V1_RetryIntegrationRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the

@@ -10,7 +10,7 @@ import SwiftUI
 /// stack without bound — the user then has to tap Back once per lap. `open`
 /// instead pops back to a screen that is already on the stack, so the stack
 /// depth is bounded by the number of *distinct* screens visited, not the number
-/// of hops (task 0288).
+/// of hops.
 @MainActor
 @Observable
 final class HomeRouter {

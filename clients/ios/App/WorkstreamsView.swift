@@ -2,8 +2,7 @@ import SwiftUI
 import YccKit
 import YccProto
 
-/// The workstreams pane (docs/design/ios-client.md §6 phase 3 step 10, spec
-/// §14.1, design/parallel-workstreams.md §6): lists a project's parallel
+/// The workstreams pane lists a project's parallel
 /// worktrees with per-stream status, and runs the review-gated Preview / Merge /
 /// Discard actions plus a jump into the workstream's live session. Destructive
 /// actions confirm first; the merge accept-gate shows the integrated diff before

@@ -19,7 +19,7 @@ import (
 // status updates silently hit the wrong task.
 //
 // The store therefore self-heals: any scan that sees a duplicate id renumbers
-// all but one holder onto fresh ids (spec §6.2).
+// all but one holder onto fresh ids.
 
 // Renumber records one duplicate-id resolution: a task that was moved off a
 // shared id onto a fresh one.

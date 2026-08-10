@@ -2,13 +2,13 @@ import SwiftUI
 import UIKit
 import YccKit
 
-/// Read-only-plus-interactive session transcript feed — the projection of the
-/// event log (docs/design/ios-client.md §6 phase 1 steps 3–4). Live sessions
+/// Read-only-plus-interactive session transcript feed projected from the event
+/// log. Live sessions
 /// stream via `Subscribe`; persisted sessions load once via
 /// `GetSessionTranscript`. The heavy lifting (folding, reconnect, actions) lives
 /// in ``SessionViewModel``; this view is a thin renderer.
 ///
-/// Interactions (task 0183): a sticky input bar (`SendInput`), an answer sheet
+/// Interactions: a sticky input bar (`SendInput`), an answer sheet
 /// for `ask_user` (`AnswerQuestion`/`AnswerQuestions`), and an overflow menu for
 /// interrupt/resume/stop. Chrome (banners) reflects the derived session phase.
 struct SessionView: View {
@@ -78,7 +78,7 @@ struct SessionView: View {
     @State private var showStopConfirm = false
     /// Whether the per-session settings sheet is shown.
     @State private var showSettings = false
-    /// Presents the per-session usage sheet (task 0309).
+    /// Presents the per-session usage sheet.
     @State private var showSessionUsage = false
     /// A commit to drill into via the diff viewer (set by tapping a commit row).
     @State private var commitTarget: CommitDiffTarget?
@@ -728,7 +728,7 @@ struct SessionView: View {
 
     /// One overflow menu rather than a row of glyphs: settings, the other
     /// project destinations, and the interrupt / resume / stop controls.
-    /// Shown for persisted transcripts too (task 0309 follow-up) — the
+    /// Shown for persisted transcripts too — the
     /// project destinations and the per-session usage sheet are just as
     /// useful on a finished session; only the live controls (settings,
     /// interrupt / resume / stop) are gated on `mode == .live`.
@@ -1078,7 +1078,7 @@ private struct ExpandableRow: View {
     /// "Thinking" rows says nothing about what the agent was actually weighing.
     var preview: String = ""
     let detail: String
-    /// Render the body as a quiet aside (dimmed + italic, spec §18.4) rather
+    /// Render the body as a quiet aside (dimmed + italic) rather
     /// than as prose competing with the model's actual reply.
     var detailIsAside = false
 

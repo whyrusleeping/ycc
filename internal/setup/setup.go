@@ -1,4 +1,4 @@
-// Package setup implements the first-run setup wizard (spec §19.1). The first
+// Package setup implements the first-run setup wizard. The first
 // time a user runs `ycc` with no usable model configuration and no fallback env
 // key, the wizard guides them through configuring one or more model providers
 // and assigning workflow roles, then writes ~/.config/ycc/ycc.toml via
@@ -79,7 +79,7 @@ func defaultKeyEnv(backend string) string {
 }
 
 // defaultModel returns the first curated model id for a backend, reusing the
-// same curated per-backend defaults the TUI backend manager seeds (spec §13).
+// same curated per-backend defaults the TUI backend manager seeds.
 func defaultModel(backend string) string {
 	if ids := config.CuratedModelIDs(backend); len(ids) > 0 {
 		return ids[0]
@@ -95,7 +95,7 @@ type provider struct {
 	model   string
 	keyEnv  string
 	key     string // pasted API key value (stored in secrets, never in ycc.toml)
-	auth    string // credential mechanism: "" (api-key default) | "oauth" (spec §13)
+	auth    string // credential mechanism: "" (api-key default) | "oauth"
 }
 
 // buildConfig turns the collected providers and role choices into a *config.Config.

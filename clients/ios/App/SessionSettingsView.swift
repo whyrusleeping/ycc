@@ -2,8 +2,8 @@ import SwiftUI
 import YccKit
 import YccProto
 
-/// The per-session settings sheet — the phone analog of the TUI settings overlay
-/// (spec §18.2; docs/design/ios-client.md §6 phase 3 step 8). Two sections:
+/// The per-session settings sheet is the phone analog of the TUI settings
+/// overlay, with two sections:
 ///
 /// - **Thinking** — a role-scope picker (all/coordinator/implementer/reviewers)
 ///   plus a level picker driving `SetThinking`.

@@ -1,6 +1,6 @@
 // Package anthropicauth implements Claude subscription (Pro/Max) OAuth
-// authentication for the anthropic backend, as an alternative to API keys
-// (spec §13). It follows the current Claude Code authorization-code + PKCE flow:
+// authentication for the anthropic backend, as an alternative to API keys.
+// It follows the current Claude Code authorization-code + PKCE flow:
 // `ycc login anthropic` sends the user to the browser, exchanges the pasted
 // code for an access/refresh token pair, and persists it in the machine-local
 // secrets store (internal/secrets, mode-0600 secrets.json) under the
@@ -88,8 +88,8 @@ type Credentials struct {
 	// treated as expired so we refresh rather than send a dead token).
 	ExpiresAt int64 `json:"expires_at"`
 	// FlowVersion identifies the endpoint/scope generation that minted the
-	// credentials. Zero is legacy (all credentials stored before this field was
-	// introduced) and deliberately requires a one-time login migration.
+	// credentials. Zero marks legacy credentials and requires a one-time login
+	// migration.
 	FlowVersion int `json:"flow_version"`
 }
 

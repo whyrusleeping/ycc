@@ -1,4 +1,4 @@
-// Package notify implements the daemon-side push notifier (task 0142): a
+// Package notify implements the daemon-side push notifier: a
 // best-effort, asynchronous webhook (ntfy.sh-compatible) that reaches out to the
 // user when an agent needs them — a question was asked, a session went idle with a
 // final report, a session errored, a work-loop run finished (digest), an
@@ -122,7 +122,7 @@ func (n *Notifier) Send(kind, project, sessionID, line string) {
 		req.Header.Set("Priority", priority)
 		req.Header.Set("Tags", kind)
 		// Deep-link the notification tap straight to the session (iOS ycc://
-		// scheme, task 0186). Any notification carrying a session id gets a
+		// scheme). Any notification carrying a session id gets a
 		// Click header — including a digest routed via the Notify RPC with the
 		// loop-driver session's id. Only session-less sends omit it.
 		if sessionID != "" {

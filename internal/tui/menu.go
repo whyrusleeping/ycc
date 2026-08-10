@@ -61,7 +61,7 @@ func (m model) startSession(mode, preset, prompt string) tea.Cmd {
 // which would carry an opening prompt). Only this entry supports the loop toggle.
 func isWorkEntry(e menuEntry) bool { return e.mode == "work" && e.openingPrompt == "" }
 
-// stopSession hard-terminates the current session via StopSession (spec §12).
+// stopSession hard-terminates the current session via StopSession.
 func (m model) stopSession() tea.Cmd {
 	id := m.sessionID
 	return func() tea.Msg {
@@ -73,7 +73,7 @@ func (m model) stopSession() tea.Cmd {
 }
 
 // sessionFinished reports whether the current session view has reached a terminal
-// state the user should be offered a clean exit from (task 0127): the agent went
+// state the user should be offered a clean exit from: the agent went
 // idle after finishing ("idle" — it now blocks in the daemon waiting for input, so
 // leaving must StopSession to avoid an orphan) or the event stream already ended
 // ("stream closed" — nothing left to stop). It deliberately EXCLUDES daemon-loop
@@ -85,8 +85,8 @@ func (m model) sessionFinished() bool {
 }
 
 // blockedTaskCount reports how many backlog tasks are currently marked "blocked"
-// (an unattended loop session set them aside pending user input — spec §10/§11).
-// The home menu uses it to surface a "waiting on you" indicator (task 0101).
+// (an unattended loop session set them aside pending user input).
+// The home menu uses it to surface a "waiting on you" indicator.
 func (m model) blockedTaskCount() int {
 	n := 0
 	for _, t := range m.backlogTasks {
@@ -99,7 +99,7 @@ func (m model) blockedTaskCount() int {
 
 // fetchWaitingSessions loads the session history and delivers just the live
 // sessions that need the user — a pending ask_user question or a paused
-// (mid-steer) session (task 0107). It reuses ListSessionHistory (which carries
+// (mid-steer) session. It reuses ListSessionHistory (which carries
 // status + waiting_input for both one-shot and persistent daemons) but delivers
 // to its own message so the session-browser list state is never clobbered.
 func (m model) fetchWaitingSessions() tea.Msg {
@@ -114,7 +114,7 @@ func (m model) fetchWaitingSessions() tea.Msg {
 		}
 	}
 	// The most-recent session (list is most-recent first) backs the "c continue
-	// last session" affordance on the home menu (task 0139).
+	// last session" affordance on the home menu.
 	var recent *v1.SessionSummary
 	if len(resp.Msg.Sessions) > 0 {
 		recent = resp.Msg.Sessions[0]
@@ -124,14 +124,14 @@ func (m model) fetchWaitingSessions() tea.Msg {
 
 // sessionNeedsUser reports whether a live session is waiting on the user: it is
 // blocked on an unanswered ask_user question, or it is paused mid-steer. Only
-// live sessions can hold either state (task 0107).
+// live sessions can hold either state.
 func sessionNeedsUser(s *v1.SessionSummary) bool {
 	return s.Live && (s.WaitingInput || s.Status == "paused")
 }
 
 // menuRefreshTick arms the next home-menu refresh of waiting sessions, tagged
 // with the current waitingSeq so a stale tick (from a previous menu visit) is
-// dropped rather than compounding timers (task 0107).
+// dropped rather than compounding timers.
 func (m model) menuRefreshTick() tea.Cmd {
 	seq := m.waitingSeq
 	return tea.Tick(5*time.Second, func(time.Time) tea.Msg { return menuRefreshMsg{seq} })
@@ -139,7 +139,7 @@ func (m model) menuRefreshTick() tea.Cmd {
 
 // refreshMenu re-polls the home-menu awareness data (backlog + waiting sessions)
 // and (re)arms the waiting-session refresh tick, bumping waitingSeq so an older
-// tick can't multiply the in-flight timers (task 0107).
+// tick can't multiply the in-flight timers.
 func (m *model) refreshMenu() tea.Cmd {
 	m.waitingSeq++
 	cmds := []tea.Cmd{m.fetchBacklog, m.fetchWaitingSessions, m.fetchGitInfo, m.fetchWorkLoop(), m.menuRefreshTick()}
@@ -153,7 +153,7 @@ func (m *model) refreshMenu() tea.Cmd {
 
 // maybeFetchSpend returns the today's-spend fetch cmd when it hasn't run within
 // the throttle window (~60s), and records the attempt so subsequent menu ticks
-// don't hammer the log-scanning aggregator (task 0139). Returns nil otherwise.
+// don't hammer the log-scanning aggregator. Returns nil otherwise.
 func (m *model) maybeFetchSpend() tea.Cmd {
 	if !m.lastSpendFetch.IsZero() && time.Since(m.lastSpendFetch) < 60*time.Second {
 		return nil
@@ -163,7 +163,7 @@ func (m *model) maybeFetchSpend() tea.Cmd {
 }
 
 // fetchGitInfo reads the current git branch and working-tree dirtiness of the
-// (local) workspace for the home-menu context header (task 0139). It shells out
+// (local) workspace for the home-menu context header. It shells out
 // to git directly (no shell) and returns an empty branch on any error — a
 // non-git workspace, a remote daemon whose workspace isn't local here, or git
 // being absent — so the header segment simply drops out.
@@ -188,7 +188,7 @@ func (m model) fetchGitInfo() tea.Msg {
 }
 
 // fetchTodaySpend aggregates today's token spend for the home-menu context
-// header (task 0139) via GetUsage scoped to today (Since=Until=today), grouped
+// header via GetUsage scoped to today (Since=Until=today), grouped
 // by day. Any error is delivered so the segment drops out silently.
 func (m model) fetchTodaySpend() tea.Msg {
 	today := time.Now().Format("2006-01-02")
@@ -210,17 +210,17 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return m.confirmQuit()
 		case "ctrl+n":
-			// Quick-add a backlog item (spec §18.2, task 0016).
+			// Quick-add a backlog item.
 			m.openCapture()
 			return m, nil
 		case "ctrl+b":
-			// Open the read-only backlog browser (spec §18.5).
+			// Open the read-only backlog browser.
 			m.backlog, m.backlogCursor, m.backlogDetail = true, 0, nil
 			m.backlogShowDone = false
 			m.backlogBlockedOnly = false
 			return m, m.fetchBacklog
 		case "ctrl+w":
-			// Jump to the blocked tasks the agent is waiting on (task 0101). Menu
+			// Jump to the blocked tasks the agent is waiting on. Menu
 			// affordances are ctrl-chords so a naked letter never triggers anything;
 			// still gated on an empty prompt because the textarea binds ctrl+w to
 			// delete-word-backward — mid-composition it must keep deleting.
@@ -232,7 +232,7 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "ctrl+s":
 			// Jump straight to a live session that needs the user — a pending
-			// ask_user question or a paused-mid-steer session (task 0107). Same
+			// ask_user question or a paused-mid-steer session. Same
 			// gating as ctrl+w: only intercept when a session actually needs the
 			// user AND the prompt is empty, so a jump never abandons a drafted prompt.
 			if len(m.waitingSessions) > 0 && strings.TrimSpace(m.prompt.Value()) == "" {
@@ -254,7 +254,7 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.fetchHistory
 			}
 		case "ctrl+l":
-			// One-key "continue last session" (task 0139): reopen the most recent
+			// One-key "continue last session": reopen the most recent
 			// session (resume = replay). ctrl+l = "last" (ctrl+c is quit). Same
 			// gating as ctrl+w/ctrl+s: only intercept when a session exists AND the
 			// prompt is empty, so the jump never abandons a drafted prompt.
@@ -264,7 +264,7 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.reopenSession(id)
 			}
 		case "ctrl+r":
-			// Open the session browser to inspect/reopen a session (spec §18.6).
+			// Open the session browser to inspect/reopen a session.
 			m.state = stateHistory
 			m.historyCursor = 0
 			m.history = nil
@@ -273,11 +273,11 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.historyMsgTxt = "loading…"
 			return m, m.fetchHistory
 		case "ctrl+o":
-			// Open the browse selector (backlog / sessions / cost) — spec §18.6/§20.5.
+			// Open the browse selector (backlog / sessions / cost).
 			m.openBrowse()
 			return m, nil
 		case "?", "ctrl+h":
-			// Open the keybinding help modal (task 0111). Gated on an empty prompt so
+			// Open the keybinding help modal. Gated on an empty prompt so
 			// a bare "?" still types into a composition and ctrl+h (== the legacy BS
 			// byte 0x08, bound by the textarea to delete-char-backward) keeps deleting
 			// mid-edit; fall through to the textarea otherwise. ctrl+_ is unconditional.
@@ -389,7 +389,7 @@ func (m model) menuView() string {
 		b.WriteString("  " + cursor + label + "\n")
 	}
 	b.WriteString(framedInput(m.prompt, 2) + "\n")
-	// One-key affordance to reopen the most recent session (task 0139): resume the
+	// One-key affordance to reopen the most recent session: resume the
 	// last conversation instead of ctrl+r → pick → o.
 	if m.lastSession != nil {
 		b.WriteString("  " + typeStyle.Render("ctrl+l") + dimStyle.Render(" continue last session · "+lastSessionLabel(m.lastSession)) + "\n")
@@ -404,7 +404,7 @@ func (m model) menuView() string {
 }
 
 // lastSessionLabel renders the compact descriptor for the "ctrl+l continue last
-// session" affordance (task 0139): the session's title (or short id when it has
+// session" affordance: the session's title (or short id when it has
 // none) plus its mode.
 func lastSessionLabel(s *v1.SessionSummary) string {
 	label := strings.TrimSpace(s.Title)
@@ -418,7 +418,7 @@ func lastSessionLabel(s *v1.SessionSummary) string {
 }
 
 // waitingSessionsLine builds the home-menu awareness line for live sessions that
-// need the user (task 0107). A single session waiting on an unanswered question
+// need the user. A single session waiting on an unanswered question
 // gets the pointed "waiting for your answer"; a paused session (or a mix) reads
 // "waiting for you". For several sessions the line invites a pick.
 func waitingSessionsLine(ws []*v1.SessionSummary) string {
@@ -432,7 +432,7 @@ func waitingSessionsLine(ws []*v1.SessionSummary) string {
 	return fmt.Sprintf("⚠ %d sessions waiting for you", n)
 }
 
-// needsOnboarding reports whether a workspace looks un-onboarded (spec §19.2): it
+// needsOnboarding reports whether a workspace looks un-onboarded: it
 // has no real spec.md AND no backlog tasks. It is conservative — on any unexpected
 // read error it returns false so onboarding is not surfaced spuriously.
 func needsOnboarding(workspace string) bool {

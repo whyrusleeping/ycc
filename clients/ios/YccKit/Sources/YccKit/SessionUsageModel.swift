@@ -14,9 +14,8 @@ public protocol SessionUsageSource: Sendable {
 
 extension YccClient: SessionUsageSource {}
 
-/// Drives the per-session usage sheet (task 0309): "what has *this* session
-/// spent so far", the iOS counterpart of the TUI's Σ status-bar readout (task
-/// 0062, spec §20.5).
+/// Drives the per-session usage sheet: "what has *this* session spent so far",
+/// the iOS counterpart of the TUI's Σ status-bar readout.
 ///
 /// The daemon's `GetUsageRequest` has no session filter, but it does support
 /// multi-dimension grouping — so this model asks for

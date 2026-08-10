@@ -15,7 +15,6 @@ import (
 )
 
 // fetchWorkstreams loads the workstreams for the current project for the panel
-// (task 0085, design §8).
 func (m model) fetchWorkstreams() tea.Msg {
 	resp, err := m.client.ListWorkstreams(m.ctx, connect.NewRequest(&v1.ListWorkstreamsRequest{Project: m.project}))
 	if err != nil {
@@ -26,15 +25,14 @@ func (m model) fetchWorkstreams() tea.Msg {
 
 // wsRefreshTick arms the next workstreams-panel refresh, tagged with the current
 // wsTick so a stale tick (from a previous panel visit) is dropped rather than
-// compounding timers (mirrors menuRefreshTick, task 0085).
+// compounding timers (mirrors menuRefreshTick).
 func (m model) wsRefreshTick() tea.Cmd {
 	seq := m.wsTick
 	return tea.Tick(3*time.Second, func(time.Time) tea.Msg { return wsTickMsg{seq} })
 }
 
-// spawnWorkstreamsCmd fires one SpawnWorkstream per selected backlog task (task
-// 0085, design §8), stopping at the first error. Each session is seeded with a
-// prompt naming the task.
+// spawnWorkstreamsCmd fires one SpawnWorkstream per selected backlog task,
+// stopping at the first error. Each session is seeded with a prompt naming the task.
 func (m model) spawnWorkstreamsCmd(tasks []*v1.BacklogTaskSummary) tea.Cmd {
 	project := m.project
 	ctx := m.ctx
@@ -54,8 +52,8 @@ func (m model) spawnWorkstreamsCmd(tasks []*v1.BacklogTaskSummary) tea.Cmd {
 	}
 }
 
-// previewMergeCmd trial-merges a workstream for the merge overlay (task 0085,
-// design §6 step 1): clean + integrated diff, or the conflicted paths.
+// previewMergeCmd trial-merges a workstream for the merge overlay, returning the
+// clean integrated diff or the conflicted paths.
 func (m model) previewMergeCmd(id string) tea.Cmd {
 	return func() tea.Msg {
 		resp, err := m.client.PreviewMerge(m.ctx, connect.NewRequest(&v1.PreviewMergeRequest{WorkstreamId: id}))
@@ -67,7 +65,7 @@ func (m model) previewMergeCmd(id string) tea.Cmd {
 }
 
 // mergeWorkstreamCmd integrates a workstream's branch back to base with accept=true
-// (task 0085, design §6). A conflict returns the conflicted paths; base untouched.
+// A conflict returns the conflicted paths; base untouched.
 func (m model) mergeWorkstreamCmd(id string) tea.Cmd {
 	return func() tea.Msg {
 		resp, err := m.client.MergeWorkstream(m.ctx, connect.NewRequest(&v1.MergeWorkstreamRequest{WorkstreamId: id, Accept: true}))
@@ -78,7 +76,7 @@ func (m model) mergeWorkstreamCmd(id string) tea.Cmd {
 	}
 }
 
-// discardWorkstreamCmd abandons a workstream without merging (task 0085, design §6).
+// discardWorkstreamCmd abandons a workstream without merging.
 func (m model) discardWorkstreamCmd(id string) tea.Cmd {
 	return func() tea.Msg {
 		if _, err := m.client.DiscardWorkstream(m.ctx, connect.NewRequest(&v1.DiscardWorkstreamRequest{WorkstreamId: id})); err != nil {
@@ -196,7 +194,7 @@ func (m model) updateWorkstreams(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Merge/accept overlay owns input while open (task 0085, design §6).
+	// Merge/accept overlay owns input while open.
 	if m.wsMerge != nil {
 		switch key.String() {
 		case "ctrl+c":
@@ -251,7 +249,7 @@ func (m model) updateWorkstreams(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.wsNotice = "refreshing…"
 		return m, m.fetchWorkstreams
 	case "enter":
-		// Drill into the workstream's session (design §8): ResumeSession is
+		// Drill into the workstream's session: ResumeSession is
 		// idempotent for a live session, so this attaches rather than restarts.
 		if w := m.wsCurrent(); w != nil && w.GetSessionId() != "" {
 			m.status = "reopening " + short(w.GetSessionId()) + "…"
@@ -381,7 +379,7 @@ func (m *model) refreshWsMergeVP() {
 	m.wsMergeVP.SetContent(m.wsMergeContent())
 }
 
-// wsMergeContent builds the scrollable body of the merge overlay (task 0085).
+// wsMergeContent builds the scrollable body of the merge overlay.
 func (m model) wsMergeContent() string {
 	var b strings.Builder
 	if m.wsMerge.GetClean() {

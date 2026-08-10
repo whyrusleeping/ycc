@@ -12,9 +12,9 @@ import (
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 )
 
-// exportCommand renders a session's transcript to shareable markdown (task
-// 0144): turns, collapsed tool-call summaries, folded ask_user Q&A, review
-// verdicts, commits, the final report, and a usage/cost footer. It serves live
+// exportCommand renders a session's transcript to shareable markdown: turns,
+// collapsed tool-call summaries, folded ask_user Q&A, review verdicts, commits,
+// the final report, and a usage/cost footer. It serves live
 // and persisted sessions identically (GetSessionTranscript resolves both).
 func (a *app) exportCommand() *cli.Command {
 	return &cli.Command{

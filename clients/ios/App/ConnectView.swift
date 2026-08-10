@@ -1,9 +1,9 @@
 import SwiftUI
 import YccKit
 
-/// Phase-1 step 1: enter a base URL + token, validate via `ListProjects`
-/// (401 → "invalid token"), and persist on success (docs/design/ios-client.md
-/// §6). Nothing is persisted unless validation succeeds.
+/// Enter a base URL and token, validate via `ListProjects` (401 → "invalid
+/// token"), and persist on success. Nothing is persisted unless validation
+/// succeeds.
 ///
 /// Saved profiles are offered as one-tap reconnects — after a `Disconnect` (or
 /// a mid-session 401) the profile survives but its Keychain token may not, so

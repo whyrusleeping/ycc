@@ -21,7 +21,7 @@ public protocol BacklogSource: Sendable {
 
 extension YccClient: BacklogSource {}
 
-/// A task's lifecycle status (spec §18.5 / internal/docs), parsed from the
+/// A task's lifecycle status (internal/docs), parsed from the
 /// daemon's free-form `status` string. Kept here so the section ordering, colour
 /// mapping, and the status-picker choices are a single, unit-testable source of
 /// truth. Unknown strings fall back to ``unknown`` rather than crashing.
@@ -40,7 +40,7 @@ public enum TaskStatus: String, Sendable, CaseIterable, Identifiable {
         self = TaskStatus(rawValue: status.lowercased()) ?? .unknown
     }
 
-    /// The statuses a user can pick in the status editor (spec §18.5 / the
+    /// The statuses a user can pick in the status editor (the
     /// daemon's UpdateTask validation accepts these six; `unknown` is excluded).
     public static var selectable: [TaskStatus] {
         [.proposed, .todo, .inProgress, .inReview, .blocked, .done]
@@ -137,8 +137,8 @@ public struct BacklogSection: Identifiable, Sendable {
     public var title: String { status.title }
 }
 
-/// Drives the backlog browser (docs/design/ios-client.md §6 phase 2 step 6,
-/// spec §18.5): loads ``ListBacklog`` + ``ListProjects``, holds the selected
+/// Drives the backlog browser: loads ``ListBacklog`` and ``ListProjects``, holds
+/// the selected
 /// project filter, groups tasks into ordered status sections, and handles
 /// quick-capture (`CreateTask`). The data source is injected (``BacklogSource``)
 /// so the sectioning / validation logic is testable headlessly. `@MainActor`

@@ -11,8 +11,8 @@ import (
 
 // This file ports the transcript-folding helpers from internal/tui/tui.go so the
 // markdown export applies the same fold/hide semantics without importing the TUI
-// (whose versions are entangled with the model struct). The pairing scans are
-// same-actor and id-matched, matching §18.3.
+// (whose versions are entangled with the model struct). Pairing scans are
+// same-actor and id-matched to mirror the TUI.
 
 // mergedResultIdx reports the index of the tool_result folded into the tool_call
 // at i (rendered as one combined row), or -1 when there is no adjacent matching
@@ -374,8 +374,7 @@ func eventUsage(ev *v1.Event) (usage, string) {
 	}, name
 }
 
-// deliveredSeq extracts the queued-echo seq a user_input_delivered event refers
-// to (spec §18.7).
+// deliveredSeq extracts the queued-echo seq referenced by user_input_delivered.
 func deliveredSeq(ev *v1.Event) (int64, bool) {
 	if ev.Type != "user_input_delivered" || ev.DataJson == "" {
 		return 0, false

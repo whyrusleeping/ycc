@@ -163,7 +163,7 @@ func (a *app) dial() (client yccv1connect.SessionServiceClient, persistent bool,
 }
 
 // runTUI is the no-subcommand action: optionally run the first-run setup wizard,
-// then attach a client and launch the interactive TUI (spec §19.1, §3.1).
+// then attach a client and launch the interactive TUI.
 func (a *app) runTUI(ctx context.Context, cmd *cli.Command) error {
 	// An unrecognised subcommand lands here as a leftover positional; reject it
 	// rather than silently launching the TUI.
@@ -334,7 +334,7 @@ func (a *app) stopCommand() *cli.Command {
 }
 
 // projectCommand implements `ycc project <add|list|remove>` against the daemon's
-// project registry (spec §3.1).
+// project registry.
 func (a *app) projectCommand() *cli.Command {
 	return &cli.Command{
 		Name:    "project",
@@ -454,7 +454,7 @@ func (a *app) projectList(ctx context.Context) error {
 	return nil
 }
 
-// costCommand renders the usage/cost breakdown (spec §20.3, §20.5) returned by
+// costCommand renders the usage/cost breakdown returned by
 // the daemon's GetUsage RPC. By default it groups by backlog task; --task filters
 // to one backlog task, --by selects other dimensions (comma-separated:
 // task,model,session,agent,day), and --since/--until bound an inclusive date range.
@@ -662,7 +662,7 @@ func resolveDaemon(addr, token string, background bool, ws, configPath string) (
 	// with the client token (--token / YCC_TOKEN): a daemon bound non-loopback
 	// for remote clients requires one, and an empty-token probe against it gets
 	// Unauthenticated — which would silently fall back to an isolated one-shot
-	// daemon instead of joining the shared multi-project one (spec §3.1). A
+	// daemon instead of joining the shared multi-project one. A
 	// tokenless loopback daemon ignores the header, so sending it is harmless.
 	if daemon.Reachable(daemon.LocalAddr, token) {
 		return daemon.LocalAddr, token, true, noop, nil

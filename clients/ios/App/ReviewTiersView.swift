@@ -2,7 +2,7 @@ import SwiftUI
 import YccKit
 import YccProto
 
-/// Review-tier management (task 0297, spec §13.1/§18.2), reached from the
+/// Review-tier management, reached from the
 /// global settings screen. Lists the effective tiers (built-ins overlaid with
 /// configured entries), lets the user pick the default tier, and offers full
 /// editing of a tier's strategy, prompts, and reviewer slots — including a

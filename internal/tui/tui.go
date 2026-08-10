@@ -1,4 +1,4 @@
-// Package tui is the Bubble Tea home-menu + session client for ycc (spec §3).
+// Package tui is the Bubble Tea home-menu + session client for ycc.
 // It lists modes, starts a session, and renders the live event stream with
 // click-to-expand turns, auto-expanded final responses, and syntax highlighting
 // (markdown via glamour, colorized diffs, dimmed cat -n line numbers).
@@ -39,10 +39,10 @@ const headerHeight = 1 // the session status bar occupies the first row
 const maxInputRows = 6 // session input grows up to this many rows, then scrolls
 
 // quitGuardWindow is how long the first ctrl+c stays "armed": a second ctrl+c
-// within this window quits, otherwise the guard disarms silently (task 0109).
+// within this window quits, otherwise the guard disarms silently.
 const quitGuardWindow = 2 * time.Second
 
-// quitGuardHint is the warning shown while the quit guard is armed (task 0109).
+// quitGuardHint is the warning shown while the quit guard is armed.
 const quitGuardHint = "agent running — ctrl+c again to quit"
 
 type model struct {
@@ -50,7 +50,7 @@ type model struct {
 	ctx       context.Context
 	workspace string
 
-	// project scoping (spec §3.1). When attached to a persistent/remote daemon
+	// project scoping. When attached to a persistent/remote daemon
 	// the picker selects a project; one-shot leaves these empty (cwd is the
 	// single implicit project) and skips the picker.
 	showPicker bool
@@ -76,7 +76,7 @@ type model struct {
 	digest       bool
 	digestCursor int
 
-	// session browser / previous-sessions screen (spec §18.6): a navigable list of
+	// session browser / previous-sessions screen: a navigable list of
 	// persisted + live sessions reached from the menu (ctrl+r) or the browse
 	// selector. Enter drills into a read-only replayed transcript; `o` reopens the
 	// selected session via ResumeSession ("resume = replay").
@@ -90,11 +90,11 @@ type model struct {
 	historyTransID    string // session id whose transcript is currently shown
 	// historyWaitingOnly restricts the session browser to live sessions that need
 	// the user (pending question or paused). Set when the browser is opened from
-	// the home menu's "session waiting for you" indicator (task 0107).
+	// the home menu's "session waiting for you" indicator.
 	historyWaitingOnly bool
 
 	// histModal is the session browser opened as a modal OVER a live session
-	// (ctrl+r / browse selector → sessions from within a session, task 0112).
+	// (ctrl+r / browse selector → sessions from within a session).
 	// Unlike stateHistory (a full state reached from the menu) it never touches
 	// the live session's event pipeline (m.evs/m.vp), so browsing here is strictly
 	// read-only: transcripts render into a separate viewport and reopen is disabled
@@ -104,7 +104,7 @@ type model struct {
 	histModalTranscript bool           // true => a transcript is drilled into (over the list)
 	histModalID         string         // session id whose transcript is shown
 	histModalVP         viewport.Model // scroll viewport for the modal transcript (never m.vp)
-	// Line-based search + jump navigation for the modal transcript (task 0119).
+	// Line-based search + jump navigation for the modal transcript.
 	// It mirrors the live-session transcript's / n/N and {}()<>[] keys but operates
 	// over the rendered string lines — it MUST NOT touch the live session's
 	// m.evs/m.vp or live search state (m.searching/m.searchQuery). histModalEvents
@@ -117,7 +117,7 @@ type model struct {
 	histModalCurLine    int             // current match/cursor line, or -1 for none
 
 	// waitingSessions holds the live sessions that need the user right now — a
-	// pending ask_user question or a paused-mid-steer session (task 0107). The home
+	// pending ask_user question or a paused-mid-steer session. The home
 	// menu surfaces a count + a one-key route in ("s"); refreshed on entry to the
 	// menu and on a modest tick so a background question appears without a keypress.
 	waitingSessions []*v1.SessionSummary
@@ -125,7 +125,7 @@ type model struct {
 	// visit can't multiply the in-flight timers.
 	waitingSeq int
 
-	// Home-menu project-context header (task 0139): orientation data shown as a
+	// Home-menu project-context header: orientation data shown as a
 	// one-line segment strip beneath the title — git branch/dirtiness, and today's
 	// spend. Every segment degrades gracefully (drops out) when its data is
 	// unavailable (non-git workspace, no priced usage, etc.).
@@ -140,12 +140,12 @@ type model struct {
 	// last session" one-key affordance. nil => no session to continue.
 	lastSession *v1.SessionSummary
 
-	// browse selector (spec §18.6/§20.5): a small modal routing to the list+detail
-	// browsers — backlog, sessions, and cost (spec §18.6/§20.5).
+	// browse selector: a small modal routing to the list+detail
+	// browsers — backlog, sessions, and cost.
 	browse       bool
 	browseCursor int
 
-	// help modal (task 0111): a scrollable keybinding cheat-sheet, modal over both
+	// help modal: a scrollable keybinding cheat-sheet, modal over both
 	// the menu and a session. See help.go for the binding catalog.
 	helpOpen   bool
 	helpScroll int
@@ -175,7 +175,7 @@ type model struct {
 	selected    int   // index into evs, or -1
 	follow      bool  // auto-scroll + auto-select latest
 	// liveTails holds the in-progress streamed output per actor, keyed by actor,
-	// fed by transient turn_delta events (spec §5.2/§18.4, task 0114/0129). Values
+	// fed by transient turn_delta events. Values
 	// are SNAPSHOTS (the full accumulated turn text so far), so a new delta simply
 	// replaces the actor's entry. An entry is cleared by a done/empty delta or when
 	// that actor's persisted model_turn / session_error arrives (the durable event
@@ -183,18 +183,18 @@ type model struct {
 	// seq tracking — they only drive this ephemeral tail row.
 	liveTails map[string]string
 	// retryNotes holds a per-actor "retrying…" note fed by transient retry
-	// events (engine loop backoff on a transient API failure, spec §7.2). Like
+	// events (engine loop backoff on a transient API failure). Like
 	// liveTails it is ephemeral live state: a note is replaced by the next retry
 	// event for the actor, and cleared when a fresh attempt starts streaming
 	// (non-empty turn_delta) or the actor's persisted model_turn / session_error
 	// arrives (the durable outcome supersedes the wait).
 	retryNotes map[string]string
 	// deliveredSeqs holds the seqs of queued mid-run user_input echoes that a
-	// later user_input_delivered event has marked as delivered (spec §18.7), so a
+	// later user_input_delivered event has marked as delivered, so a
 	// queued echo renders "(queued)" only until its delivery point.
 	deliveredSeqs map[int64]bool
 
-	// transcript search (task 0116): `/` starts an incremental case-insensitive
+	// transcript search: `/` starts an incremental case-insensitive
 	// search over the rendered event stream (headlines + expanded bodies), shared
 	// by the live session view and the read-only history transcript. searching is
 	// true while the query is being typed in the footer search bar; searchQuery
@@ -229,9 +229,9 @@ type model struct {
 	// the question is never rendered twice on screen at once.
 	pendingSeq int64
 	status     string
-	paused     bool // session is paused-to-steer (spec §18.7)
+	paused     bool // session is paused-to-steer
 
-	// live status-bar state (task 0062): a running per-model token tally summed
+	// live status-bar state: a running per-model token tally summed
 	// from model_turn usage blocks, per-model pricing surfaced via ListModels, the
 	// session/turn start used for the elapsed clock, and an activity spinner that
 	// ticks via the Bubble Tea command loop while the session is running (or a
@@ -243,7 +243,7 @@ type model struct {
 	spin         spinner.Model
 	spinning     bool // a spinner.Tick command is already in flight
 
-	// Spend guard status (task 0137, spec §20.6). budgetPct is the highest
+	// Spend guard status. budgetPct is the highest
 	// fraction-of-cap the current session has crossed (from budget_warning
 	// events); budgetExceeded is set once a budget_exceeded event is seen. Both
 	// feed a visually distinct status-bar segment and reset per session view.
@@ -291,28 +291,28 @@ type model struct {
 	err error
 	// flashErr is a transient, self-clearing inline error shown in the status
 	// bar / menu notice while the live view keeps rendering. flashSeq guards the
-	// clear timer so a stale timeout never wipes a newer error (task 0104).
+	// clear timer so a stale timeout never wipes a newer error.
 	flashErr string
 	flashSeq int
 	// flashNote is a parallel transient, self-clearing inline *notice* (e.g.
 	// "copied ✓" after an OSC 52 yank) shown in the status bar. It shares
-	// flashSeq's clear-timer guard with flashErr (task 0141).
+	// flashSeq's clear-timer guard with flashErr.
 	flashNote string
 	// quitArmed is set by the first ctrl+c while a one-shot daemon has live agent
 	// work (a running/paused/pending session, a loop, a waiting background session,
 	// or a capture in flight). A second ctrl+c within quitGuardWindow quits; the
 	// quitSeq-guarded disarm timer clears it otherwise, so an accidental keypress
-	// can't tear down in-flight work (task 0109).
+	// can't tear down in-flight work.
 	quitArmed bool
 	quitSeq   int
 	// connected records that the client has successfully talked to the daemon at
 	// least once. Until then an RPC error is treated as a fatal startup failure;
-	// afterwards every RPC failure is transient (task 0104).
+	// afterwards every RPC failure is transient.
 	connected bool
 	ready     bool
 	w, h      int
 
-	// settings overlay (spec §18.2): modal over both menu and session, opened by
+	// settings overlay: modal over both menu and session, opened by
 	// Esc. It exposes per-role model config, UI prefs, and Quit.
 	overlay      bool
 	ovCursor     int
@@ -325,7 +325,7 @@ type model struct {
 	workImpl     string            // work-mode implementation strategy used by the next session
 	prefs        clientconfig.Prefs
 
-	// backlog browser (spec §18.5): modal over menu/session, opened with ctrl+b.
+	// backlog browser: modal over menu/session, opened with ctrl+b.
 	// Read-only: lists tasks, drills into one task's full detail.
 	backlog         bool
 	backlogTasks    []*v1.BacklogTaskSummary
@@ -333,17 +333,17 @@ type model struct {
 	backlogDetail   *v1.TaskDetail // nil => list view; set => detail view
 	backlogShowDone bool           // when false (default), done tasks are hidden in the list view
 	// backlogBlockedOnly restricts the list to blocked tasks. Set when the browser
-	// is opened from the home menu's "blocked — waiting on you" indicator (task 0101).
+	// is opened from the home menu's "blocked — waiting on you" indicator.
 	backlogBlockedOnly bool
 	backlogVP          viewport.Model // scrollable viewport for the detail view
 	// backlogStatusPrompt is set while the browser waits for a status-choice digit
-	// (spec §18.5 grooming, task 0099): 1..6 map to todo/in_progress/in_review/done/blocked/proposed.
+	// In status-choice mode, 1..6 map to todo/in_progress/in_review/done/blocked/proposed.
 	backlogStatusPrompt bool
 	// backlogNotice is a transient message shown in the browser footer (update
 	// errors, "workspace not local", etc.); cleared on the next successful action.
 	backlogNotice string
 
-	// plan library browser (task 0020/0077): modal over menu/session, reached
+	// plan library browser: modal over menu/session, reached
 	// from the browse selector (ctrl+o). Read-only: lists saved plans (plans/*.md)
 	// and views one plan's markdown.
 	plans       bool
@@ -352,7 +352,7 @@ type model struct {
 	planDetail  *v1.GetPlanResponse // nil => list view; set => detail view
 	plansVP     viewport.Model      // scroll viewport for the plan detail markdown
 
-	// cost view (spec §20.5, task 0039): modal over menu/session, reached from the
+	// cost view: modal over menu/session, reached from the
 	// browse selector (ctrl+o). Read-only: shows the GetUsage token/cost breakdown
 	// for the selected project, grouped by a single dimension cycled with "g".
 	cost          bool
@@ -361,16 +361,16 @@ type model struct {
 	costWorkspace string
 	costGroupBy   []string // single dimension today: task|model|session|day|agent
 	costCursor    int
-	// costTask scopes the §20.5 table after a task drill-down; costTaskCursor
-	// preserves the parent-row selection while that task 0174 detail is open.
+	// costTask scopes the table after a task drill-down; costTaskCursor
+	// preserves the parent-row selection while that detail is open.
 	costTask       string
 	costTaskCursor int
-	// costGen guards task 0174 state against out-of-order GetUsage responses.
+	// costGen guards state against out-of-order GetUsage responses.
 	costGen          int
 	costMsg          string // status/empty line (loading…, (no usage recorded))
 	subUsageAccounts []*v1.SubscriptionUsageAccount
 
-	// quick-add backlog capture overlay (spec §18.2, task 0016): modal over
+	// quick-add backlog capture overlay: modal over
 	// menu/session, opened with ctrl+n. It runs a lightweight, off-stream capture
 	// agent server-side so the running session is undisturbed.
 	capture         bool
@@ -383,7 +383,7 @@ type model struct {
 	captureEvents   chan *v1.Event // live capture agent action-log stream
 	captureLog      []*v1.Event    // accumulated capture agent events for display
 
-	// workstreams panel (task 0085, design §8): a modal browser over menu/session,
+	// workstreams panel: a modal browser over menu/session,
 	// reached from the browse selector and opened after a multi-select spawn. It
 	// lists a project's workstreams with live per-workstream status, drills into
 	// the session view (reusing reopenSession), and hosts the merge/accept + discard
@@ -411,9 +411,9 @@ type model struct {
 	// prompt); "" => no pending confirm.
 	wsDiscardID string
 
-	// commit-diff drill-in overlay (task 0140): enter on a selected commit_made
+	// commit-diff drill-in overlay: enter on a selected commit_made
 	// transcript row opens a full-screen `git show` overlay (its own viewport, so
-	// the §18.9 render caches are never touched). It draws over the live session,
+	// the render caches are never touched). It draws over the live session,
 	// the read-only history transcript, and the histModal transcript alike.
 	cdiffOpen        bool
 	cdiffSha         string // sha being shown (guards a late/racy fetch reply)
@@ -428,14 +428,13 @@ type model struct {
 	cdiffCursor      int    // file cursor index
 	cdiffHeaderLines []int  // content line offset of each file's header (for scroll-into-view)
 
-	// backlog multi-select spawn (task 0085): the set of selected task ids in the
+	// backlog multi-select spawn: the set of selected task ids in the
 	// backlog browser LIST view (todo tasks only), toggled with space and cleared
 	// when the browser closes. `P` spawns one workstream per selected task.
 	backlogSelected map[string]bool
 
-	// model-backends management modal (spec §18.2, task 0044): list / add / edit /
-	// duplicate / remove logical model backends, wired to the 0041 RPCs
-	// (ListModels/GetModelConfig/UpsertModel/RemoveModel). Opened from the settings
+	// model-backends management modal: list / add / edit / duplicate / remove
+	// logical model backends. Opened from the settings
 	// overlay's "model backends" row; modal over both menu and session.
 	mbOpen       bool
 	mbView       int    // 0=list · 1=form · 2=confirm-remove
@@ -479,7 +478,7 @@ func initialModel(ctx context.Context, client yccv1connect.SessionServiceClient,
 
 	captureInput := newChatInput("describe a new backlog item…")
 
-	// Activity spinner (task 0062): a small dot animation tinted with the palette's
+	// Activity spinner: a small dot animation tinted with the palette's
 	// success role; it ticks via the Bubble Tea command loop while the session is
 	// running or a quick-capture RPC is in flight.
 	spin := spinner.New(spinner.WithSpinner(spinner.Dot))
@@ -526,7 +525,7 @@ func (m model) Init() tea.Cmd {
 // menu notice) while the live view keeps rendering, and returns a command that
 // clears it after a timeout unless a newer error supersedes it. When the client
 // has never reached the daemon it is a fatal startup failure instead: render()
-// short-circuits to the full-screen error with a retry affordance (task 0104).
+// short-circuits to the full-screen error with a retry affordance.
 func (m *model) flash(err error) tea.Cmd {
 	if err == nil {
 		return nil
@@ -542,7 +541,7 @@ func (m *model) flash(err error) tea.Cmd {
 }
 
 // clearFlash dismisses any transient inline error. Bumping flashSeq also disarms
-// the pending clear timer so it can't wipe a future error (task 0104).
+// the pending clear timer so it can't wipe a future error.
 func (m *model) clearFlash() {
 	m.flashErr = ""
 	m.flashNote = ""
@@ -552,7 +551,7 @@ func (m *model) clearFlash() {
 // noteFlash arms a transient, self-clearing inline notice (e.g. "copied ✓" after
 // a clipboard yank), mirroring flash() but for a success/info message instead of
 // an error. It clears any pending error, bumps flashSeq (disarming stale clear
-// timers), and arms a shorter clear tick (task 0141).
+// timers), and arms a shorter clear tick.
 func (m *model) noteFlash(msg string) tea.Cmd {
 	m.flashSeq++
 	m.flashErr = ""
@@ -563,7 +562,7 @@ func (m *model) noteFlash(msg string) tea.Cmd {
 
 // quitGuardActive reports whether quitting right now would tear down live agent
 // work on a one-shot in-process daemon. On a persistent daemon (showPicker) the
-// work survives the client disconnecting, so the guard never applies (task 0109).
+// work survives the client disconnecting, so the guard never applies.
 func (m *model) quitGuardActive() bool {
 	if m.showPicker {
 		return false
@@ -583,7 +582,6 @@ func (m *model) quitGuardActive() bool {
 // confirmQuit implements the two-step ctrl+c guard: when live agent work would
 // be killed, the first press arms the guard (and shows a warning) while a second
 // press within quitGuardWindow quits. When no work is at risk it quits at once
-// (task 0109).
 func (m model) confirmQuit() (tea.Model, tea.Cmd) {
 	if !m.quitGuardActive() || m.quitArmed {
 		return m, tea.Quit
@@ -596,14 +594,14 @@ func (m model) confirmQuit() (tea.Model, tea.Cmd) {
 
 // markConnected records that the client has reached the daemon at least once,
 // so subsequent RPC failures are treated as transient rather than a fatal
-// startup failure (task 0104). It does not touch the visible flash.
+// startup failure. It does not touch the visible flash.
 func (m *model) markConnected() {
 	m.connected = true
 }
 
 // rpcOK marks the client connected and clears any lingering transient error — a
-// successful user-facing RPC/action/fetch dismisses the previous flash (task
-// 0104). It also clears a lingering fatal startup error: Init fires several
+// successful user-facing RPC/action/fetch dismisses the previous flash. It also
+// clears a lingering fatal startup error: Init fires several
 // fetches concurrently, so one may fail (setting m.err while not yet connected)
 // just before another succeeds — proof the daemon is reachable after all.
 func (m *model) rpcOK() {
@@ -659,7 +657,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// A fatal startup failure owns the screen (render short-circuits to it). Only
 	// the retry/quit affordance is live here; retry re-runs the Init fetches and
-	// clears the fatal error so a recovered daemon brings the UI back (task 0104).
+	// clears the fatal error so a recovered daemon brings the UI back.
 	if m.err != nil {
 		if key, ok := msg.(tea.KeyMsg); ok {
 			switch key.String() {
@@ -678,7 +676,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Advance the activity spinner only while there is activity to indicate.
 		// When the session goes idle/paused/error (and no capture RPC is running)
 		// we stop ticking so the spinner doesn't resurrect on a stale error state
-		// (task 0051): the next start re-arms it via spinnerCmd.
+		// the next start re-arms it via spinnerCmd.
 		if m.status != "running" && !m.captureBusy {
 			m.spinning = false
 			return m, nil
@@ -726,8 +724,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshPlanDetailVP()
 		m.refreshWsMergeVP()
 		m.refreshCdiffVP()
-		// Keep the modal transcript viewport (task 0112) sized to the terminal, and
-		// re-wrap its retained events to the new width (task 0119). Preserve the
+		// Keep the modal transcript viewport sized to the terminal, and
+		// re-wrap its retained events to the new width. Preserve the
 		// current line highlight / scroll position when a search or jump is active.
 		if m.histModalVP.Height() != 0 || m.histModalVP.Width() != 0 {
 			h := msg.Height - 2
@@ -760,7 +758,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.entries = append(m.entries, menuEntry{label: p.Name, description: p.Description, mode: p.Mode, preset: p.Name, openingPrompt: p.OpeningPrompt})
 		}
 		// When the workspace looks un-onboarded, surface the onboarding entry
-		// prominently at the top of the menu (spec §19.2). It stays a normal
+		// prominently at the top of the menu. It stays a normal
 		// preset otherwise ("onboard later" is valid).
 		if needsOnboarding(m.workspace) {
 			for i := range m.entries {
@@ -808,7 +806,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.workImpl != "" {
 			m.workImpl = msg.workImpl
 		}
-		// Build the per-model pricing table (task 0062) used by the live status
+		// Build the per-model pricing table used by the live status
 		// bar's token/cost readout. Only models flagged priced get an entry, so an
 		// unpriced model is absent from the map and sessionUsage renders tokens-only
 		// rather than inventing a cost.
@@ -825,7 +823,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		// Keep the model-backends cursor in range: a removal can shrink the list
-		// out from under it (task 0044).
+		// out from under it.
 		if m.mbCursor >= len(m.models) {
 			if len(m.models) == 0 {
 				m.mbCursor = 0
@@ -863,7 +861,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.history = msg.sessions
 		if m.historyWaitingOnly {
 			// Opened from the home-menu "session waiting for you" indicator: show
-			// only the live sessions that need the user (task 0107).
+			// only the live sessions that need the user.
 			filtered := m.history[:0:0]
 			for _, s := range msg.sessions {
 				if sessionNeedsUser(s) {
@@ -891,7 +889,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastSession = msg.recent
 		return m, nil
 	case menuGitMsg:
-		// Awareness signal only (task 0139): on error clear the branch so the git
+		// Awareness signal only: on error clear the branch so the git
 		// segment drops out of the header rather than showing stale data.
 		if msg.err != nil {
 			m.gitBranch, m.gitDirty = "", false
@@ -900,7 +898,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.gitBranch, m.gitDirty = msg.branch, msg.dirty
 		return m, nil
 	case menuSpendMsg:
-		// Awareness signal only (task 0139): on error keep the last-known spend and
+		// Awareness signal only: on error keep the last-known spend and
 		// stay quiet — a transient RPC hiccup must not blank the header.
 		if msg.err != nil {
 			return m, nil
@@ -931,8 +929,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.rpcOK()
 		m.historyMsgTxt = ""
-		// When the session browser is open as a modal over a live session (task
-		// 0112), render the replayed transcript statelessly into its own viewport —
+		// When the session browser is open as a modal over a live session, render
+		// the replayed transcript statelessly into its own viewport —
 		// the live session's event pipeline (m.evs/m.vp/caches) must be left intact.
 		if m.histModal {
 			m.histModalTranscript = true
@@ -976,7 +974,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case startedMsg:
 		m.rpcOK()
 		// Reset any stale event/view state from a prior session so a reopened
-		// session renders cleanly from its replayed log (spec §18.6).
+		// session renders cleanly from its replayed log.
 		m.evs = nil
 		m.expanded = map[int]bool{}
 		m.invalidateRender()
@@ -996,11 +994,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.events = make(chan *v1.Event, 256)
 		m.sessionID, m.mode, m.state, m.status = msg.id, msg.mode, stateSession, "running"
 		// Reset the running usage tally and start the elapsed clock for the new (or
-		// reopened) session — usage accumulates only over the current view (task 0062).
+		// reopened) session — usage accumulates only over the current view.
 		m.usageByModel = map[string]event.Usage{}
 		m.sessionStart = time.Now()
 		// Reset the per-session spend-guard status for the new/reopened session
-		// view (task 0137). A reopened session that already crossed the line
+		// view. A reopened session that already crossed the line
 		// re-emits its budget_warning/budget_exceeded on replay, re-setting these.
 		m.budgetPct, m.budgetExceeded = 0, false
 		// Reset the focused-task readout: a reopened session that already focused
@@ -1008,7 +1006,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.focusTask, m.focusTaskTitle = "", ""
 		// Events already persisted before we subscribed are replayed by the daemon
 		// on reopen; only events genuinely newer than this instant should ring the
-		// terminal bell / raise a desktop notification (task 0108).
+		// terminal bell / raise a desktop notification.
 		m.notifyAfter = m.sessionStart
 		m.input.SetValue("")
 		fc := m.input.Focus()
@@ -1126,7 +1124,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// UI hints that are never persisted and carry no sequence number. Route them
 		// into live tail state (applyTransient) but NEVER through appendEvent /
 		// maybeNotify, so they can't enter the reducers, replay, or seq tracking
-		// (task 0129).
 		if msg.ev != nil && msg.ev.Transient {
 			m.applyTransient(msg.ev)
 		} else {
@@ -1188,7 +1185,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.backlogVP.GotoTop()
 		return m, nil
 	case taskUpdatedMsg:
-		// Backlog grooming result (task 0099): surface failures in the browser
+		// Backlog grooming result: surface failures in the browser
 		// footer, otherwise adopt the refreshed detail and re-read the list.
 		if msg.err != nil {
 			m.backlogNotice = "update failed: " + msg.err.Error()
@@ -1202,7 +1199,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.fetchBacklog
 	case editorClosedMsg:
-		// The external $EDITOR exited (task 0099): reload the task (a no-mutation
+		// The external $EDITOR exited: reload the task (a no-mutation
 		// UpdateTask re-reads the file) and the list.
 		if msg.err != nil {
 			m.backlogNotice = "editor: " + msg.err.Error()
@@ -1224,7 +1221,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.plansVP.GotoTop()
 		return m, nil
 	case commitDiffMsg:
-		// Drop a reply that arrived after the overlay closed or moved on (task 0140).
+		// Drop a reply that arrived after the overlay closed or moved on.
 		if !m.cdiffOpen || msg.sha != m.cdiffSha {
 			return m, nil
 		}
@@ -1240,7 +1237,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cdiffPreamble = pre
 		m.cdiffFiles = files
 		m.cdiffFold = make([]bool, len(files))
-		// Large-commit safety (§18.9): open with everything folded so the overlay
+		// Large-commit safety: open with everything folded so the overlay
 		// renders instantly; the user unfolds what they want.
 		if len(files) > cdiffFoldAllFiles || strings.Count(msg.diff, "\n") > cdiffFoldAllLines {
 			for i := range m.cdiffFold {
@@ -1278,7 +1275,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case wsTickMsg:
 		// Drop a stale tick from a previous panel visit; re-poll only while the
-		// panel is open (guards against compounding timers, task 0085).
+		// panel is open (guards against compounding timers).
 		if msg.seq != m.wsTick {
 			return m, nil
 		}
@@ -1446,13 +1443,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// The project picker (spec §3.1) is shown first when attached to a
+	// The project picker is shown first when attached to a
 	// persistent/remote daemon; it owns input until a project is chosen.
 	if m.state == statePicker {
 		return m.updatePicker(msg)
 	}
 
-	// The commit-diff drill-in overlay (task 0140) is modal over EVERYTHING —
+	// The commit-diff drill-in overlay is modal over EVERYTHING —
 	// the live session, the read-only history transcript, and the histModal
 	// transcript. This check must precede the stateHistory branch so enter on a
 	// commit row in the history transcript opens (and its keys drive) the overlay.
@@ -1461,68 +1458,67 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// The previous-sessions screen (ctrl+r from the menu) owns input until the
-	// user reopens a session or returns to the menu (spec §18.6).
+	// user reopens a session or returns to the menu.
 	if m.state == stateHistory {
 		return m.updateHistory(msg)
 	}
 
 	// The keybinding help modal (?) is modal over both the menu and a session
-	// (task 0111). It owns input while open — scroll + close.
+	// It owns input while open — scroll + close.
 	if m.helpOpen {
 		return m.updateHelp(msg)
 	}
 
 	// The quick-add backlog capture overlay (ctrl+n) is modal over both the menu
-	// and a session (spec §18.2, task 0016). It runs entirely server-side so the
+	// and a session. It runs entirely server-side so the
 	// session keeps streaming behind it.
 	if m.capture {
 		return m.updateCapture(msg)
 	}
 
 	// The backlog browser (ctrl+b) is modal over both the menu and a session
-	// (spec §18.5).
 	if m.backlog {
 		return m.updateBacklog(msg)
 	}
 
 	// The plan library browser (browse selector → plans) is modal over both the
-	// menu and a session (task 0077).
+	// menu and a session.
 	if m.plans {
 		return m.updatePlans(msg)
 	}
 
 	// The cost view (browse selector → cost) is modal over both the menu and a
-	// session (spec §20.5, task 0039).
+	// session.
 	if m.cost {
 		return m.updateCost(msg)
 	}
 
 	// The Workstreams panel (browse selector → workstreams, or opened after a
-	// multi-select spawn) is modal over both the menu and a session (task 0085).
+	// multi-select spawn) is modal over both the menu and a session.
 	if m.ws {
 		return m.updateWorkstreams(msg)
 	}
 
 	// The work-loop batch digest (shown when a loop ends, re-opened from the
-	// browse selector) is modal over both the menu and a session (task 0098).
+	// browse selector) is modal over both the menu and a session.
 	if m.digest {
 		return m.updateDigest(msg)
 	}
 
 	// The session browser opened as a modal over a live session (ctrl+r / browse
-	// selector → sessions from within a session, task 0112). Read-only: it owns
+	// selector → sessions from within a session). Read-only: it owns
 	// input while open and never disturbs the live session behind it.
 	if m.histModal {
 		return m.updateHistoryModal(msg)
 	}
 
-	// The browse selector (ctrl+o) is modal over the menu (spec §18.6/§20.5): it
+	// The browse selector (ctrl+o) is modal over the menu: it
 	// routes to the backlog / session browsers.
 	if m.browse {
 		return m.updateBrowse(msg)
 	}
 
-	// The model-backends management modal (task 0044) owns input while open. It is
+	// The model-backends management modal owns input while open. It is
 	// reached from the settings overlay and is modal over menu/session.
 	if m.mbOpen {
 		return m.updateModelBackends(msg)
@@ -1534,14 +1530,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if key, ok := msg.(tea.KeyMsg); ok && key.String() == "esc" {
 		// A live transcript search intercepts esc: clear it (and re-focus the
-		// input) instead of opening settings (task 0116). A second esc then opens
+		// input) instead of opening settings. A second esc then opens
 		// the overlay as usual.
 		if m.state == stateSession && (m.searching || m.searchQuery != "") {
 			m.clearSearch()
 			m.relayout()
 			return m, m.input.Focus()
 		}
-		// Esc opens the overlay rather than leaving the session (spec §18.2).
+		// Esc opens the overlay rather than leaving the session.
 		m.openOverlay()
 		return m, nil
 	}
@@ -1566,7 +1562,7 @@ func (m model) render() string {
 	if m.err != nil {
 		// Fatal, unrecoverable startup failure (e.g. daemon unreachable before any
 		// screen has data). Offer a retry as well as quit — a transient RPC hiccup
-		// never reaches here; it surfaces inline via flashErr (task 0104).
+		// never reaches here; it surfaces inline via flashErr.
 		return fmt.Sprintf("\n  error: %v\n\n  (r to retry · ctrl+c to quit)\n", m.err)
 	}
 	if m.helpOpen {

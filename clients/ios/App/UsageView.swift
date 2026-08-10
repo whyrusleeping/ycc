@@ -2,8 +2,8 @@ import SwiftUI
 import YccKit
 import YccProto
 
-/// The usage & budget screen (docs/design/ios-client.md §6 phase 3 step 9, spec
-/// §20.5/§20.6): a priced token-usage breakdown grouped by a chosen dimension
+/// The usage & budget screen shows a priced token-usage breakdown grouped by a
+/// chosen dimension
 /// with an optional date-range filter, plus the configured spend-guard caps.
 /// Rows show token classes, cost, and a badge for unpriced/partial pricing; a
 /// pinned totals row summarises the breakdown. A mid-screen `.unauthorized`
@@ -240,8 +240,7 @@ struct UsageView: View {
 
 /// A single usage row: the group label + a price-status badge on top, then the
 /// token classes (in/out/cache) and total, with the cost trailing. Internal
-/// (not file-private) so the per-session usage sheet renders identical rows
-/// (SessionUsageView.swift, task 0309).
+/// (not file-private) so the per-session usage sheet can reuse the same row.
 struct UsageRowView: View {
     let label: String
     let row: Ycc_V1_UsageRow

@@ -22,7 +22,7 @@ import (
 // LogRetention prunes on-disk session logs at
 // <workspace>/.ycc/sessions/<id>/events.jsonl whose events.jsonl has not been
 // modified within the retention window. It is OFF by default because those logs
-// back the durable session index / history + reopen view (tasks 0033/0034):
+// back the durable session index / history + reopen view:
 // enabling retention discards logs a user could otherwise reopen or inspect.
 // Live sessions' directories are never pruned.
 type GCConfig struct {

@@ -20,7 +20,7 @@ public protocol UsageSource: Sendable {
 
 extension YccClient: UsageSource {}
 
-/// The dimension a usage breakdown is grouped by (spec §20.5). The daemon
+/// The dimension a usage breakdown is grouped by. The daemon
 /// accepts `task | model | session | agent | day`; single-select here keeps the
 /// row label unambiguous. Kept as a single source of truth for the picker
 /// choices, the wire value, and the per-row label selection.
@@ -63,7 +63,7 @@ public enum UsageGrouping: String, Sendable, CaseIterable, Identifiable {
     }
 }
 
-/// The pricing confidence of a usage row (spec §20.5): `priced` (all models had
+/// The pricing confidence of a usage row: `priced` (all models had
 /// prices), `unpriced` (none did), or `partial` (some did). Unknown strings fall
 /// back to ``priced`` so a row without an explicit status still renders a cost.
 public enum PriceStatus: String, Sendable {
@@ -85,8 +85,8 @@ public enum PriceStatus: String, Sendable {
     }
 }
 
-/// Drives the usage & budget views (docs/design/ios-client.md §6 phase 3 step 9,
-/// spec §20.5/§20.6): loads ``GetUsage`` (grouped/filtered) and ``GetBudget``,
+/// Drives the usage & budget views by loading ``GetUsage`` (grouped/filtered)
+/// and ``GetBudget``,
 /// holds the selected project, grouping, and optional since/until date filters,
 /// and exposes formatting helpers so the token/cost rendering matches the TUI's
 /// `ycc cost`. The data source is injected (``UsageSource``) so the grouping /

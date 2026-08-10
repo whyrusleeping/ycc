@@ -70,7 +70,7 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
 
 /// A pure reducer that folds a session's ``Ycc_V1_Event`` stream into an ordered
 /// transcript of ``TranscriptRow`` values — "the UI is a projection of the log"
-/// (spec §5.2 / §18, docs/remote-api.md "Event model").
+/// (docs/remote-api.md "Event model").
 ///
 /// The same reducer serves live (`Subscribe`) and persisted
 /// (`GetSessionTranscript`) sources: persisted is simply "fold with no live
@@ -108,8 +108,8 @@ public struct SessionProjection: Sendable, Equatable {
     /// The logical model driving the session's coordinator — "which model is
     /// doing the work". Folded from the log itself rather than from `ListModels`,
     /// which only reports the daemon's GLOBAL role defaults and therefore lies
-    /// about a session started with a per-session `coordinator_model` override
-    /// (spec §13, §18.2). Sources, in increasing authority: `session_started`
+    /// about a session started with a per-session `coordinator_model` override.
+    /// Sources, in increasing authority: `session_started`
     /// (`coordinator`), `role_config_changed` (`coordinator`), and each
     /// coordinator `model_turn` (`model_name` — the model that actually produced
     /// the turn). Empty for logs written before the field existed.

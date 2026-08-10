@@ -10,7 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// newSessionInput builds the multi-line session input textarea (task 0011).
+// newSessionInput builds the multi-line session input textarea.
 func newSessionInput() textarea.Model {
 	return newChatInput("type to prod / answer · enter sends · shift+enter newline · ↑↓ select · click to expand")
 }
@@ -80,7 +80,7 @@ func framedInput(ta textarea.Model, n int) string {
 }
 
 // inputRow renders the framed session input with the activity spinner in the
-// left gutter (task 0076): the spinner sits next to the place the user types.
+// left gutter: the spinner sits next to the place the user types.
 // The spinner animates only while running (same gating as the old status-bar
 // glyph and spinnerCmd); otherwise the gutter is a blank column, preserving the
 // single-column indent framedInput(m.input, 1) used so the box does not shift.
@@ -92,7 +92,7 @@ func (m model) inputRow() string {
 		glyph = m.spin.View()
 	}
 	// The gutter must be the SAME display width on every row or the box's left
-	// border goes crooked (task 0094). Some spinner frames are wider than one
+	// border goes crooked. Some spinner frames are wider than one
 	// column — e.g. the Dot spinner's frames are a braille glyph + a trailing
 	// space (width 2) — so we can't assume the running glyph is one column. Pin
 	// the gutter to the widest frame the spinner can show (falling back to 1),
@@ -168,7 +168,7 @@ func (m *model) relayout() {
 func (m model) footerStackHeight() int {
 	// While the transcript search bar is active it replaces the whole footer
 	// stack AND the help line with a single row (see sessionView), so nothing is
-	// stacked above the one search-bar row (task 0116).
+	// stacked above the one search-bar row.
 	if m.searching {
 		return 0
 	}
@@ -196,7 +196,7 @@ func (m model) titleBar(text string) string {
 // zero width (before the first WindowSizeMsg) is a no-op.
 func (m model) footerBar(text string) string {
 	// When the quit guard is armed, lead with the warning so it survives the
-	// width clamp and is visible wherever the user is looking (task 0109).
+	// width clamp and is visible wherever the user is looking.
 	if m.quitArmed {
 		warn := errStyle.Render("⚠ " + quitGuardHint)
 		if strings.TrimSpace(text) == "" {

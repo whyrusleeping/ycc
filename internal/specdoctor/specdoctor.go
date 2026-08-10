@@ -1,12 +1,12 @@
 // Package specdoctor implements the DETERMINISTIC pre-pass of the spec-doctor
-// flow (task 0100): a reference checker that extracts the concrete file paths,
+// flow: a reference checker that extracts the concrete file paths,
 // package directories, and code symbols a project's design docs mention and
 // verifies they still exist in the repository. It finds stale references
 // mechanically — with a zero-false-positive discipline (when a code span is
 // ambiguous it is SKIPPED, never flagged) — and its markdown report seeds and
 // grounds the LLM comparison pass that follows.
 //
-// The founding principle is "a drifted spec is a bug" (spec §1): this catches
+// The founding principle is "a drifted spec is a bug": this catches
 // the mechanically-detectable half of drift (dead references) so the model can
 // spend its attention on the semantic half (behavioral drift + coverage gaps).
 package specdoctor

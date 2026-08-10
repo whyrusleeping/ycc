@@ -11,14 +11,14 @@ import (
 	"time"
 )
 
-// Log is the persistent, append-only event store for one session (spec §5.1).
+// Log is the persistent, append-only event store for one session.
 // It implements Sink (so an Emitter writes through it), persists every event to
 // an events.jsonl file, mirrors them in memory, and fans them out losslessly to
 // any number of subscribers — including late ones, via replay-from-offset.
 //
 // Alongside the lossless persisted stream it also fans out transient,
 // broadcast-only events (Broadcast): these are delivered to live subscribers
-// but never persisted, replayed, or seq-numbered (spec §5, task 0114).
+// but never persisted, replayed, or seq-numbered.
 type Log struct {
 	mu     sync.Mutex
 	cond   *sync.Cond
@@ -101,7 +101,7 @@ func OpenLog(path string) (*Log, error) {
 
 // ReadLog reads and parses all persisted events from a session's events.jsonl at
 // path, reusing the strict line-by-line decoder. A missing file yields (nil, nil);
-// a corrupt line is a hard error. It backs the read-only transcript view (spec §18.6).
+// a corrupt line is a hard error. It backs the read-only transcript view.
 func ReadLog(path string) ([]Event, error) {
 	return readEvents(path)
 }
@@ -266,8 +266,8 @@ func (l *Log) OnFailure(fn func(error)) {
 	}
 }
 
-// Broadcast delivers a transient, non-persisted event to live subscribers only
-// (spec §5, task 0114). Unlike Record it assigns NO sequence number (Seq stays
+// Broadcast delivers a transient, non-persisted event to live subscribers only.
+// Unlike Record it assigns NO sequence number (Seq stays
 // 0), never writes to events.jsonl, and never appends to the in-memory replay
 // slice — so the event is invisible to Snapshot, ReadLog, and late subscribers,
 // and it never advances a resume cursor. It is used for ephemeral UI hints such

@@ -1,6 +1,6 @@
 package session
 
-// Spend guard (task 0137, spec §20.6): converts the existing per-turn usage/cost
+// Spend guard: converts the existing per-turn usage/cost
 // telemetry into an enforced, optional ceiling. Session caps are checked at the
 // engine's safe checkpoint (Session.Checkpoint) so a breach never kills a tool
 // mid-write: the current turn/tool completes and the guard acts before the next
@@ -35,7 +35,7 @@ import (
 //     brings the current task to a safe stopping point, then finishes.
 //
 // Unpriced models contribute tokens but no dollars (usage.Aggregate), so a
-// cost-only cap never breaches on an unpriced model — matching §20.4's
+// cost-only cap never breaches on an unpriced model, matching the
 // degrade-gracefully rule (no invented dollars). A token cap still applies.
 func (s *Session) checkBudget(ctx context.Context) []string {
 	if s.reg == nil {
@@ -150,7 +150,7 @@ func budgetStatus(tokens int64, cost float64, caps config.Budget) string {
 
 // seedBudgetFromLog pre-sets the warned/breached flags from a replayed event log
 // so a reopened session that already crossed the line does not re-fire the
-// warning or re-ask the Confirm gate (task 0137).
+// warning or re-ask the Confirm gate.
 func (s *Session) seedBudgetFromLog(events []event.Event) {
 	warned, breached := false, false
 	for _, ev := range events {

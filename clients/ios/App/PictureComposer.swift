@@ -13,12 +13,12 @@ struct DraftPicture: Identifiable {
 
 /// Shared composer picture affordances, used by BOTH the live session input bar
 /// and the new-session composer (`StartSession` carries opening-prompt pictures
-/// too, spec §12 — a screenshot must not have to wait a turn).
+/// too, so a screenshot does not have to wait a turn).
 ///
 /// The merge/capacity rules live in `PictureAttachments` (YccKit) so they are
 /// unit-tested headlessly; only presentation and Photos plumbing live here.
 enum PictureComposer {
-    /// Mirrors the daemon's per-message cap (spec §12).
+    /// Mirrors the daemon's per-message cap.
     static let maxPictures = PictureAttachments.maxCount
     /// Mirrors the daemon's per-picture size cap.
     static let maxPictureBytes = 5 * 1_024 * 1_024

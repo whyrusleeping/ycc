@@ -19,7 +19,7 @@ var (
 	selBarStyle lipgloss.Style
 	dimStyle    lipgloss.Style
 	// histHighlightStyle marks the current search-match / jump-target line in the
-	// modal session-browser transcript (task 0119): a reverse-video bar.
+	// modal session-browser transcript: a reverse-video bar.
 	histHighlightStyle lipgloss.Style
 	thinkStyle         lipgloss.Style
 	typeStyle          lipgloss.Style

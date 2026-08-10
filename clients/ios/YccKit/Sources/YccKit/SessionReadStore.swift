@@ -4,7 +4,7 @@ import YccProto
 
 /// Tracks which sessions have **agent activity the user has not looked at yet**,
 /// so the session list can flag "there are new messages in here" the way a mail
-/// inbox does (docs/design/ios-client.md §6 "Unread agent activity").
+/// inbox does.
 ///
 /// The daemon has no per-device read state, so this is client-side and durable:
 /// for every session id we remember the timestamp of the newest event this

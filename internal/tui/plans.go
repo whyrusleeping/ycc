@@ -13,7 +13,7 @@ import (
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 )
 
-// fetchPlans loads the saved plan library list for the plans browser (task 0077).
+// fetchPlans loads the saved plan library list for the plans browser.
 func (m model) fetchPlans() tea.Msg {
 	resp, err := m.client.ListPlans(m.ctx, connect.NewRequest(&v1.ListPlansRequest{Project: m.project}))
 	if err != nil {
@@ -22,7 +22,7 @@ func (m model) fetchPlans() tea.Msg {
 	return plansMsg{resp.Msg.Plans}
 }
 
-// fetchPlan loads one saved plan's markdown for the plans browser (task 0077).
+// fetchPlan loads one saved plan's markdown for the plans browser.
 func (m model) fetchPlan(name string) tea.Cmd {
 	return func() tea.Msg {
 		resp, err := m.client.GetPlan(m.ctx, connect.NewRequest(&v1.GetPlanRequest{Project: m.project, Name: name}))
@@ -34,7 +34,7 @@ func (m model) fetchPlan(name string) tea.Cmd {
 }
 
 // updatePlans handles the modal plan library browser: a list of saved plans with
-// drill-down into one plan's read-only markdown (task 0077).
+// drill-down into one plan's read-only markdown.
 func (m model) updatePlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
@@ -96,7 +96,7 @@ func (m model) plansView() string {
 	return m.browserCard(b)
 }
 
-// planDetailView renders a single saved plan's markdown content (task 0077) as a
+// planDetailView renders a single saved plan's markdown content as a
 // full-screen scrollable viewport (mirroring the backlog task detail drill-in).
 func (m model) planDetailView(p *v1.GetPlanResponse) string {
 	top := m.titleBar(" " + p.Name + " — " + p.Title + " ")

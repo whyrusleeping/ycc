@@ -49,7 +49,7 @@ var imageMediaTypes = map[string]string{
 // control/finish tool — for open-ended modes (chat) where the agent yields
 // naturally rather than declaring the task complete. When ws.Jobs is set, the
 // background-job tools (job_output, wait, kill_job) are included too and Bash
-// gains run_in_background (docs/design/async-jobs.md).
+// gains run_in_background.
 func Editing(ws *Workspace) []*gollama.Tool {
 	ts := append([]*gollama.Tool{readFile(ws), writeFile(ws), editFile(ws), bash(ws)}, Web()...)
 	if ws.Jobs != nil {
@@ -58,7 +58,7 @@ func Editing(ws *Workspace) []*gollama.Tool {
 	return ts
 }
 
-// Worker returns the standard worker tool set scoped to ws (spec §8): the editing
+// Worker returns the standard worker tool set scoped to ws: the editing
 // tools plus finish, the control tool that ends the agent loop with a report, and
 // report_blocked, the structured escalation control tool for when the agent cannot
 // responsibly proceed without a decision that isn't its to make.
@@ -332,11 +332,10 @@ func bash(ws *Workspace) *gollama.Tool {
 		desc += " Use run_in_background only to overlap the command with meaningful independent work or to leave a " +
 			"watcher running. If you need the result before doing anything else, keep it foreground and increase timeout_s " +
 			"instead; do not start one background job and immediately wait for it. Do NOT poll a background job. "
-		// Phase 1: only the coordinator/pm/chat loop drains finished-job
-		// notifications at its session Checkpoint, so its background reports are
-		// PUSHED automatically. The implementer's loop has no drain hook, so its
-		// background jobs are wait-only — the report must be fetched with wait
-		// (docs/design/async-jobs.md §3.3). Word the guidance accordingly.
+		// Only the coordinator/pm/chat loop drains finished-job notifications at its
+		// session Checkpoint, so its background reports are pushed automatically.
+		// The implementer's loop has no drain hook, so its background jobs are
+		// wait-only — the report must be fetched with wait.
 		if bgAutoDelivered(ws) {
 			desc += "Its report is delivered automatically when it finishes, or call wait(job_ids) after your independent " +
 				"work when its result gates the next step. Use job_output to peek at partial output, kill_job to stop it."
@@ -394,8 +393,7 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 		if !ok {
 			return errResult("bash: missing 'command'"), nil
 		}
-		// Background jobs (docs/design/async-jobs.md): start the command as a job
-		// and return its id immediately. Not offered to the sandboxed reviewer Bash.
+		// Start a background command as a job and return its id immediately. Not offered to the sandboxed reviewer Bash.
 		if !sandboxed && getBool(params, "run_in_background", false) {
 			if ws.Jobs == nil || ws.Emitter == nil {
 				return errResult("bash: run_in_background is not available in this session"), nil
@@ -465,12 +463,10 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 	}
 }
 
-// bgAutoDelivered reports whether a background job started under ws will have its
-// final report PUSHED automatically at a session checkpoint. In phase 1 only the
-// coordinator loop (which owns the session Steer/Checkpoint that drains finished
-// jobs) gets automatic delivery; the implementer's loop has no drain hook, so its
-// background jobs are wait-only (docs/design/async-jobs.md §3.3). Nil emitter ⇒
-// treat as not auto-delivered (safe default: tell the caller to wait).
+// bgAutoDelivered reports whether a background job's final report is pushed at a
+// session checkpoint. Only the coordinator loop owns the Steer/Checkpoint that
+// drains finished jobs; implementer background jobs are wait-only. A nil emitter
+// is not auto-delivered, so callers are told to wait.
 func bgAutoDelivered(ws *Workspace) bool {
 	return ws.Emitter != nil && ws.Emitter.Actor() == "coordinator"
 }
@@ -483,7 +479,7 @@ func bgAutoDelivered(ws *Workspace) bool {
 func startBackgroundBash(ws *Workspace, cmdStr string) *jobs.Job {
 	owner := ws.Emitter.Actor()
 	// Unsandboxed background bash may write to the worktree, so it counts as a
-	// mutating job for the single-writer guard (design §3.4): a background
+	// mutating job for the single-writer guard: a background
 	// implementer is refused while one is live. Conservative — a read-only
 	// command is still marked mutating — but safe.
 	job := ws.Jobs.StartMutating("bash", cmdStr, owner)

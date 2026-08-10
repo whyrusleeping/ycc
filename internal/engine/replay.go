@@ -1,13 +1,13 @@
 package engine
 
-// This file implements "resume = replay" (spec §4.5/§5/§18.6): reconstructing a
+// This file implements "resume = replay": reconstructing a
 // coordinator loop's conversation history from a session's persisted event log so
 // a finished/idle session can be re-opened and continued on the SAME log.
 //
 // Known lossy edge, explicitly documented as unsupported: image/PDF bytes are
 // NOT restored on replay. Tool results retain only counts; user picture messages
 // retain metadata and replay as text with an explicit attachment-loss marker.
-// This is an accepted limitation (see spec §18.6).
+// This is an accepted limitation.
 //
 // The internal truncation-retry nudge IS reproduced on replay: when the live
 // loop hits a mid-Run output-token truncation it appends a sanitized assistant
@@ -127,7 +127,7 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 	}
 
 	// lostJobs tracks background jobs whose start was recorded but whose finish
-	// was not (docs/design/async-jobs.md §4): jobs do not survive a daemon
+	// was not (docs/design/async-jobs.md): jobs do not survive a daemon
 	// restart, so on reopen we synthesize a "(job lost: daemon restarted)" note
 	// to keep histories valid. Both a recorded job_finished and a job_notified
 	// (its report already injected) clear the entry.
@@ -174,7 +174,7 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			// All user inputs belong to the coordinator conversation regardless of
 			// actor (they are emitted as actor "user").
 			//
-			// A queued mid-run echo (queued:true, spec §18.7) has NOT yet entered the
+			// A queued mid-run echo (queued:true) has NOT yet entered the
 			// conversation at this position: the matching user_input_delivered event
 			// appends it at the real delivery point. Skip it here. A queued echo with
 			// no delivery (the session was stopped mid-run before the next checkpoint)
@@ -189,8 +189,8 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			assistantIdx = -1
 			lastTurnTruncated = false // a real user input breaks the truncation chain
 		case event.UserInputDelivered:
-			// A queued mid-run input entering the conversation at its safe checkpoint
-			// (spec §18.7): append it exactly where the live loop Posted it so the
+			// A queued mid-run input entering the conversation at its safe checkpoint:
+			// append it exactly where the live loop Posted it so the
 			// replayed history matches what the model saw, and reset turn state like
 			// a normal user input. Delivered at a MID-BATCH checkpoint (the current
 			// assistant turn's tool-call batch is still open), the live loop defers
@@ -332,7 +332,7 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			delete(lostJobs, str(ev.Data, "id"))
 		case event.JobNotified:
 			// A finished-job final report injected at a Steer checkpoint as a
-			// user-role message (docs/design/async-jobs.md §3.3): append it exactly
+			// user-role message (docs/design/async-jobs.md): append it exactly
 			// where the live loop Posted it and reset turn state like a user input.
 			// Recorded at a MID-BATCH checkpoint (the current turn's tool-call
 			// batch is still open), the live loop defers the Post to the batch
@@ -347,7 +347,7 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			assistantIdx = -1
 			lastTurnTruncated = false
 		case event.BudgetExceeded:
-			// A graceful spend-guard halt (task 0137, spec §20.6) injects a wrap-up
+			// A graceful spend-guard halt injects a wrap-up
 			// instruction as a USER-actor budget_exceeded event carrying "text".
 			// Reconstruct it as a user message exactly like job_notified so the
 			// reopened history keeps user/assistant alternation. The "continue"
@@ -383,7 +383,7 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 	flushDeferred()
 
 	// Synthesize a lost-job note for any background job that started but never
-	// finished before the log ended (docs/design/async-jobs.md §4): jobs do not
+	// finished before the log ended: jobs do not
 	// survive a daemon restart. Delivered as a user-role message so the model
 	// knows those jobs are gone. Merge into a trailing user message when present
 	// so we never place two consecutive user turns.

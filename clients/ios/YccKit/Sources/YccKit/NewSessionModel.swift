@@ -16,7 +16,7 @@ public protocol NewSessionSource: Sendable {
     func listModels() async throws -> Ycc_V1_ListModelsResponse
     /// Start a new session; returns its id to subscribe from seq 0.
     /// `coordinatorModel` is empty for "use the configured default"; `images`
-    /// attaches pictures to the opening prompt (spec §12).
+    /// attaches pictures to the opening prompt.
     func startSession(
         project: String, mode: String, prompt: String, coordinatorModel: String,
         images: [MessageImage]
@@ -28,7 +28,7 @@ public protocol NewSessionSource: Sendable {
 extension YccClient: NewSessionSource {}
 
 /// Client-side memory of the last-used mode/project so a returning user
-/// gets sensible defaults (docs/design/ios-client.md §6 phase 2 step 5).
+/// gets sensible defaults.
 /// Abstracted behind a protocol so tests can stub it without touching
 /// `UserDefaults`.
 public protocol SessionDefaultsStore: AnyObject {

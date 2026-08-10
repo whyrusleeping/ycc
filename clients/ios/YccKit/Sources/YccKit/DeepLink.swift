@@ -1,6 +1,6 @@
 import Foundation
 
-/// A parsed `ycc://` deep link (task 0186, design §6 phase 2 step 7 / §8).
+/// A parsed `ycc://` deep link.
 ///
 /// Two shapes are recognised:
 ///   - `ycc://session/<id>[?server=<name>]` → ``session(id:server:)`` — open the

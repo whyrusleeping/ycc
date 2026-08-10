@@ -1,6 +1,6 @@
 // Package git is a thin wrapper over the git CLI for the operations the
 // coordinator needs: ensure a repo exists, capture the implementer's changes as
-// a diff for review, and commit accepted work (spec §10).
+// a diff for review, and commit accepted work.
 package git
 
 import (
@@ -84,7 +84,7 @@ func (r *Repo) RevParse(ref string) (string, error) {
 }
 
 // Show returns the full `git show` output (stat + patch) for a commit, for the
-// transcript commit-diff drill-in (task 0140). sha must be a bare hex commit id
+// transcript commit-diff drill-in. sha must be a bare hex commit id
 // (short or full) — anything else is rejected so a flag/ref/pathspec can never be
 // smuggled into the git invocation. --end-of-options additionally guards the
 // positional argument.

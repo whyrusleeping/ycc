@@ -4,8 +4,8 @@ import Security
 #endif
 
 /// Storage for per-profile bearer tokens. Tokens live **only** here (a
-/// generic-password Keychain item on device), never in `UserDefaults`
-/// (docs/design/ios-client.md §5). Abstracted behind a protocol so the
+/// generic-password Keychain item on device), never in `UserDefaults`.
+/// Abstracted behind a protocol so the
 /// connection-store logic can be unit-tested with an in-memory fake, since the
 /// Keychain is not reliably available under plain `swift test`.
 public protocol KeychainStore: Sendable {

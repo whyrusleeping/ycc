@@ -6,9 +6,8 @@ import YccProto
 /// that pins a base URL + bearer token and exposes typed async methods.
 ///
 /// All requests carry the bearer token via ``AuthInterceptor`` (unary and
-/// streaming alike). The connect protocol + JSON codec are used so traffic is
-/// human-readable when debugging against the daemon (docs/design/ios-client.md
-/// §4). Later tasks reach the full RPC surface through ``YccClient/generated``.
+/// streaming alike). The connect protocol + JSON codec keep traffic
+/// human-readable when debugging against the daemon.
 public final class YccClient: Sendable {
     /// The underlying generated service client, for RPCs not yet wrapped here.
     public let generated: Ycc_V1_SessionServiceClient
@@ -51,10 +50,10 @@ public final class YccClient: Sendable {
         }
     }
 
-    // MARK: - Projects (task 0192)
+    // MARK: - Projects
 
-    /// Register a daemon-host workspace path as a named project (`AddProject`,
-    /// spec §3.1; docs/remote-api.md "AddProject / ListDir"). `path` must be an
+    /// Register a daemon-host workspace path as a named project with `AddProject`.
+    /// `path` must be an
     /// absolute path on the DAEMON's filesystem. `name` is optional — the daemon
     /// derives it from the directory basename when empty. Returns the registered
     /// project (with its resolved name).
@@ -127,7 +126,7 @@ public final class YccClient: Sendable {
         }
     }
 
-    // MARK: - Work loop (task 0190)
+    // MARK: - Work loop
 
     /// Start the daemon-owned unattended backlog drain for a project. The loop
     /// continues independently of this client connection.
@@ -236,12 +235,12 @@ public final class YccClient: Sendable {
         }
     }
 
-    // MARK: - Starting & resuming sessions (task 0185)
+    // MARK: - Starting & resuming sessions
 
-    /// Lists the daemon's session modes and presets (`ListModes`, spec §9).
+    /// Lists the daemon's session modes and presets (`ListModes`).
     /// Modes carry a `name`/`title`/`description`; presets are home-menu entries
     /// that start a `mode` with a tailored `opening_prompt`. Drives the new-session
-    /// mode/preset pickers (docs/design/ios-client.md §6 phase 2 step 5).
+    /// mode/preset pickers.
     public func listModes() async throws -> (modes: [Ycc_V1_Mode], presets: [Ycc_V1_Preset]) {
         let response = await generated.listModes(request: Ycc_V1_ListModesRequest())
         switch response.result {
@@ -257,7 +256,7 @@ public final class YccClient: Sendable {
     /// one project exists. `coordinatorModel` optionally overrides the coordinator's
     /// logical model for this session only (empty = the configured default).
     /// `images` attaches up to four pictures to the OPENING prompt, so a session
-    /// about a screenshot does not have to burn its first turn (spec §12).
+    /// about a screenshot does not have to burn its first turn.
     /// Returns the new session id to `Subscribe` from seq 0.
     public func startSession(
         project: String = "", mode: String, prompt: String, coordinatorModel: String = "",
@@ -280,8 +279,8 @@ public final class YccClient: Sendable {
         }
     }
 
-    /// Re-open a persisted session on its existing event log (`ResumeSession`,
-    /// spec §4.5/§18.6). Idempotent if the session is already live. `project` is
+    /// Re-open a persisted session on its existing event log with `ResumeSession`.
+    /// Idempotent if the session is already live. `project` is
     /// optional for a single-project daemon. Returns the session id, which is
     /// stable across the resume so the caller can `Subscribe` to the same log.
     public func resumeSession(project: String = "", sessionId: String) async throws -> String {
@@ -304,7 +303,7 @@ public final class YccClient: Sendable {
         _ = try await resumeSession(project: project, sessionId: sessionId)
     }
 
-    // MARK: - Session interactions (task 0183)
+    // MARK: - Session interactions
 
     /// Deliver user input to a running/idle session (`SendInput`). Steer-by-default:
     /// the daemon queues the text as a steer when the session is mid-turn.
@@ -356,7 +355,7 @@ public final class YccClient: Sendable {
         try unary(await generated.answerQuestions(request: request))
     }
 
-    /// Gracefully pause a running session to steer it (`Interrupt`, spec §18.7).
+    /// Gracefully pause a running session to steer it (`Interrupt`).
     public func interrupt(sessionId: String) async throws {
         var request = Ycc_V1_InterruptRequest()
         request.sessionID = sessionId
@@ -370,16 +369,16 @@ public final class YccClient: Sendable {
         try unary(await generated.resume(request: request))
     }
 
-    /// Hard-terminate a session (`StopSession`, spec §12) — no resume.
+    /// Hard-terminate a session (`StopSession`) — no resume.
     public func stopSession(sessionId: String) async throws {
         var request = Ycc_V1_StopSessionRequest()
         request.sessionID = sessionId
         try unary(await generated.stopSession(request: request))
     }
 
-    // MARK: - Backlog browser (task 0184)
+    // MARK: - Backlog browser
 
-    /// List the backlog's summary rows (`ListBacklog`, spec §18.5). `project`
+    /// List the backlog's summary rows (`ListBacklog`). `project`
     /// names a registered workspace; empty is accepted only when exactly one
     /// project exists. Each row carries readiness
     /// (`ready`/`blockedBy`) derived from dependency status.
@@ -395,7 +394,7 @@ public final class YccClient: Sendable {
         }
     }
 
-    /// Fetch one task's full detail (`GetTask`, spec §18.5): frontmatter fields
+    /// Fetch one task's full detail (`GetTask`): frontmatter fields
     /// plus the markdown `body`. `project` is optional for a single-project daemon.
     public func getTask(project: String = "", id: String) async throws -> Ycc_V1_TaskDetail {
         var request = Ycc_V1_GetTaskRequest()
@@ -411,7 +410,7 @@ public final class YccClient: Sendable {
     }
 
     /// Change a task's status (`UpdateTask` with only the optional `status` field
-    /// set, spec §18.5). Other fields are left untouched. Returns the refreshed
+    /// set). Other fields are left untouched. Returns the refreshed
     /// task detail from the daemon's response.
     public func updateTaskStatus(
         project: String = "", id: String, status: String
@@ -429,7 +428,7 @@ public final class YccClient: Sendable {
         }
     }
 
-    /// Add a new task to the backlog (`CreateTask`, task 0143): title, P1–P5
+    /// Add a new task to the backlog (`CreateTask`): title, P1–P5
     /// priority, and an optional markdown body (scaffolded server-side). `project`
     /// is optional for a single-project daemon. Returns the created task's detail.
     public func createTask(
@@ -451,7 +450,7 @@ public final class YccClient: Sendable {
 
     // MARK: - Project memory
 
-    /// Fetch the project's memory.md (`GetMemory`, spec §6.5): the agents'
+    /// Fetch the project's memory.md (`GetMemory`): the agents'
     /// advisory operational notes recorded across sessions. `content` is empty
     /// when no memory has been recorded yet (not an error); `path` is the
     /// absolute file path on the daemon host. `project` is optional for a
@@ -468,10 +467,10 @@ public final class YccClient: Sendable {
         }
     }
 
-    // MARK: - Usage & budget (task 0188)
+    // MARK: - Usage & budget
 
-    /// Priced token-usage breakdown, grouped and filtered (`GetUsage`, spec
-    /// §20.5). `groupBy` is any of `task` | `model` | `session` | `agent` | `day`
+    /// Priced token-usage breakdown, grouped and filtered by `GetUsage`.
+    /// `groupBy` is any of `task` | `model` | `session` | `agent` | `day`
     /// (empty => the daemon's default `task`); `since`/`until` are `YYYY-MM-DD`
     /// inclusive (empty => unbounded). Returns the per-group `rows`, the `total`
     /// row, and the resolved `workspace` path. int64 token counts arrive as
@@ -507,7 +506,7 @@ public final class YccClient: Sendable {
         }
     }
 
-    /// The configured spend-guard caps (`GetBudget`, spec §20.6). Every field is
+    /// The configured spend-guard caps (`GetBudget`). Every field is
     /// `0` when unset (unlimited); `sessionCost`/`loopCost` are US dollars and
     /// `sessionTokens`/`loopTokens` count total tokens.
     public func getBudget() async throws -> Ycc_V1_GetBudgetResponse {
@@ -520,10 +519,10 @@ public final class YccClient: Sendable {
         }
     }
 
-    // MARK: - Session settings (task 0187)
+    // MARK: - Session settings
 
     /// List configured logical models plus CURRENT role assignments and each
-    /// assigned model's thinking level (`ListModels`, spec §13/§18.2). The
+    /// assigned model's thinking level (`ListModels`). The
     /// settings sheet seeds its pickers from this so it reflects reality.
     public func listModels() async throws -> Ycc_V1_ListModelsResponse {
         let response = await generated.listModels(request: Ycc_V1_ListModelsRequest())
@@ -535,7 +534,7 @@ public final class YccClient: Sendable {
         }
     }
 
-    /// Reassign per-role logical models (`SetRoleConfig`, spec §13/§18.2). An
+    /// Reassign per-role logical models (`SetRoleConfig`). An
     /// empty `coordinator`/`implementer` leaves that role unchanged; an empty
     /// `reviewers` list leaves reviewers unchanged. The change applies to the live
     /// session (when `sessionId` names one) and persists as the default.
@@ -550,7 +549,7 @@ public final class YccClient: Sendable {
         try unary(await generated.setRoleConfig(request: request))
     }
 
-    /// Change a thinking/effort level (`SetThinking`, spec §7.4/§18.2). An empty
+    /// Change a thinking/effort level (`SetThinking`). An empty
     /// `role` applies to all roles; otherwise `coordinator` | `implementer` |
     /// `reviewers`. `level` is `off` | `low` | `medium` | `high` | `xhigh` |
     /// `max`. Applies live (when `sessionId` names a session) and persists.
@@ -605,7 +604,7 @@ public final class YccClient: Sendable {
         }
     }
 
-    // MARK: - Review tiers (task 0297, spec §13.1)
+    // MARK: - Review tiers
 
     /// List the effective review tiers (built-ins overlaid with configured
     /// entries) plus the effective default tier name.
@@ -640,9 +639,9 @@ public final class YccClient: Sendable {
         try unary(await generated.setReviewDefault(request: request))
     }
 
-    // MARK: - Workstreams & commit diff (task 0189)
+    // MARK: - Workstreams & commit diff
 
-    /// List a project's workstreams (`ListWorkstreams`, design §6/§8). `project`
+    /// List a project's workstreams (`ListWorkstreams`). `project`
     /// is optional: empty returns all workstreams across projects. Each
     /// ``Ycc_V1_WorkstreamInfo`` carries its lifecycle `status`, live
     /// `sessionStatus`, and `commitCount`.
@@ -659,7 +658,7 @@ public final class YccClient: Sendable {
     }
 
     /// Trial-merge a workstream's branch into its base WITHOUT mutating anything
-    /// (`PreviewMerge`, design §6 step 1). Returns whether the merge is `clean`,
+    /// (`PreviewMerge`). Returns whether the merge is `clean`,
     /// the `conflicts` paths otherwise, and the integrated `diff` preview when
     /// clean.
     public func previewMerge(
@@ -676,8 +675,8 @@ public final class YccClient: Sendable {
         }
     }
 
-    /// Integrate a workstream's branch back to base (`MergeWorkstream`, design
-    /// §6). Under interactive a clean trial merge returns
+    /// Integrate a workstream's branch back to base with `MergeWorkstream`.
+    /// Under interactive a clean trial merge returns
     /// `needsAccept` + the integrated `diff` (nothing mutated) until `accept:
     /// true`; a conflict returns the `conflicts` paths with base untouched. A
     /// merged result carries the merge `commit` sha.
@@ -696,7 +695,7 @@ public final class YccClient: Sendable {
         }
     }
 
-    /// Abandon a workstream without merging (`DiscardWorkstream`, design §6): it
+    /// Abandon a workstream without merging (`DiscardWorkstream`): it
     /// stops the session, cleans up the worktree + branch, and marks the registry
     /// entry discarded.
     public func discardWorkstream(workstreamId: String) async throws {
@@ -718,7 +717,7 @@ public final class YccClient: Sendable {
         }
     }
 
-    /// Fetch a commit's `git show` diff (`GetCommitDiff`, task 0140). `sha` is a
+    /// Fetch a commit's `git show` diff (`GetCommitDiff`). `sha` is a
     /// bare hex commit sha (from a `commit_made` event); `project` is optional for
     /// a single-project daemon. The daemon caps the payload — `truncated` reports
     /// when the cap was hit so the client can render a truncation notice.

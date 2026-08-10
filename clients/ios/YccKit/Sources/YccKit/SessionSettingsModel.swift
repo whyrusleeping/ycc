@@ -21,7 +21,7 @@ public protocol SessionSettingsSource: Sendable {
 
 extension YccClient: SessionSettingsSource {}
 
-/// A reasoning/effort level (spec §7.4/§18.2). The wire value is the single
+/// A reasoning/effort level. The wire value is the single
 /// source of truth for both the picker and the `SetThinking` request. `off`
 /// disables reasoning; the effort levels enable adaptive thinking at that effort.
 public enum ThinkingLevel: String, CaseIterable, Sendable, Identifiable {
@@ -56,8 +56,8 @@ public enum ThinkingLevel: String, CaseIterable, Sendable, Identifiable {
     }
 }
 
-/// The role whose assigned model(s) a thinking-level change targets (spec
-/// §7.4/§18.2). `all` maps to an empty wire role (all assigned models); the
+/// The role whose assigned model(s) a thinking-level change targets. `all` maps
+/// to an empty wire role (all assigned models); the
 /// others map to their name. Kept typed so the scope picker is exhaustive.
 public enum ThinkingRole: String, CaseIterable, Sendable, Identifiable {
     case all
@@ -81,8 +81,7 @@ public enum ThinkingRole: String, CaseIterable, Sendable, Identifiable {
     }
 }
 
-/// Drives the per-session settings sheet (spec §18.2 analog; docs/design/
-/// ios-client.md §6 phase 3 step 8): the phone analog of the TUI settings
+/// Drives the per-session settings sheet, the phone analog of the TUI settings
 /// overlay. Seeds its pickers from ``ListModels`` (role model assignments + each
 /// assigned model's thinking), then applies each change against the live session via
 /// the injected ``SessionSettingsSource`` — surfacing the daemon's error verbatim

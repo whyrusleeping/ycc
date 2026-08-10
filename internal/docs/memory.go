@@ -10,7 +10,7 @@ import (
 
 // memorySoftBudget is the size (bytes) beyond which memory.md is considered
 // "over budget" and due for grooming. Memory is injected wholesale into every
-// agent's system prompt (spec §6.5) — there is no retrieval machinery — so it
+// agent's system prompt — there is no retrieval machinery — so it
 // must stay small. Crucially, crossing the soft budget does NOT block a write:
 // AppendMemory still records the note (a learning is never lost mid-task) and
 // returns an escalating nudge to groom. A hard refusal only fires at
@@ -29,7 +29,7 @@ const memoryHardBudget = 12288
 const memoryEntryHint = 240
 
 // memoryHeader is written when memory.md is first created. It states the
-// advisory, non-normative contract (design doc §5.1): memory is empirical agent
+// advisory, non-normative contract: memory is empirical agent
 // notes about WORKING ON the project, not design truth.
 const memoryHeader = `# Project memory
 
@@ -47,7 +47,7 @@ var memoryCategories = map[string]string{
 }
 
 // MemoryPath returns the absolute path to the committed project memory file —
-// memory.md at the workspace root, beside spec.md and backlog/ (spec §6.5). The
+// memory.md at the workspace root, beside spec.md and backlog/. The
 // location is fixed, not configurable.
 func (s *Store) MemoryPath() string {
 	return filepath.Join(filepath.Dir(s.dir), "memory.md")

@@ -1,6 +1,6 @@
 // Package session manages the lifecycle of a daemon session: it binds an event
 // log, an emitter, and an agent loop, runs the agent in a goroutine, and accepts
-// follow-up input ("prods") and question answers between/within turns (spec §4).
+// follow-up input ("prods") and question answers between/within turns.
 //
 // The session's mode selects the agent: "work" runs the orchestrator coordinator
 // (which delegates to subagents); anything else runs a single worker agent.
@@ -40,18 +40,18 @@ type Config struct {
 	Unattended bool
 	Prompt     string
 	// Project, when set, names a registered project whose workspace is used,
-	// overriding Workspace (spec §3.1).
+	// overriding Workspace.
 	Project string
 	// CoordinatorModel, when set, overrides the coordinator's logical model FOR
-	// THIS SESSION ONLY (spec §13, §18.2): the persisted per-role defaults are
+	// THIS SESSION ONLY: the persisted per-role defaults are
 	// untouched and implementer/reviewers keep them. An unknown name is an error.
 	CoordinatorModel string
 	// Preset identifies the client-side opening-prompt preset. A configured
 	// roles.presets binding selects this session's initial coordinator without
 	// changing the persisted role defaults. An unbound preset behaves normally.
 	Preset string
-	// Images optionally attaches validated pictures to the OPENING prompt (spec
-	// §12). The bytes live only in model history; the initial user_input event
+	// Images optionally attaches validated pictures to the opening prompt. The
+	// bytes live only in model history; the initial user_input event
 	// records metadata, exactly like SendInputMessage.
 	Images []engine.Image
 }
@@ -78,7 +78,7 @@ type Session struct {
 	startupNotice string
 	buildLoop     func(mode, prompt string) (*engine.Loop, error)
 
-	// promptImages are pictures attached to the OPENING prompt (spec §12). The
+	// promptImages are pictures attached to the OPENING prompt. The
 	// bytes seed the first loop's history exactly once — a later mode transition
 	// re-seeds text only — while the initial user_input event records metadata.
 	promptImages []engine.Image
@@ -86,7 +86,7 @@ type Session struct {
 	promptImagesUsed bool
 
 	// resumed marks a session re-instantiated on an EXISTING log via Reopen
-	// ("resume = replay", spec §4.5/§18.6): run() then skips the SessionStarted /
+	// ("resume = replay"): run() then skips the SessionStarted /
 	// initial UserInput / seed, emits a SessionReopened marker, and waits idle for
 	// the first new input before continuing on the reconstructed history.
 	resumed bool
@@ -113,16 +113,16 @@ type Session struct {
 	coordinator string   // logical model name driving the coordinator
 	implementer string   // logical model name for the implementer role
 	reviewers   []string // logical model names for the reviewer role
-	// thinkLevels holds per-model reasoning overrides (spec §7.4, §18.2), keyed
+	// thinkLevels holds per-model reasoning overrides, keyed
 	// by logical model name. An empty/missing entry means "use the model config";
 	// any of off/low/medium/high/xhigh/max forces that level for the model until
 	// changed.
 	thinkLevels map[string]string
 	// usageSummarized tracks tasks whose usage/cost summary has already been
 	// appended to the work log this session, so each accrues at most one summary
-	// line even across repeated idle cycles (spec §6.2, §20.5).
+	// line even across repeated idle cycles.
 	usageSummarized map[string]bool
-	// Spend guard (task 0137, spec §20.6), guarded by s.mu. budgetWarned is set
+	// Spend guard, guarded by s.mu. budgetWarned is set
 	// once the session crosses ~80% of a configured cap (so the warning fires at
 	// most once); budgetBreached is set once a cap is crossed and handled (the
 	// attended Confirm is asked / the unattended wrap-up is injected at most once).
@@ -131,7 +131,7 @@ type Session struct {
 	budgetWarned   bool
 	budgetBreached bool
 	// refused marks a session parked after a provider-side safety refusal
-	// (engine Result.Refused, task 0238): the coordinator's last turn came back
+	// (engine Result.Refused): the coordinator's last turn came back
 	// with stop_reason "refusal" and was kept out of history. Refusals are
 	// sticky (per provider docs, continuing the conversation keeps being
 	// refused), so while set, SendInput is rejected with guidance; recovery is
@@ -140,7 +140,7 @@ type Session struct {
 	// automatically). Cleared at the start of every run-loop iteration.
 	refused bool
 
-	// Interrupt & steer state (spec §18.7), guarded by a dedicated mutex so it
+	// Interrupt & steer state, guarded by a dedicated mutex so it
 	// never contends with the s.mu hot paths. pauseReq is set by Interrupt and
 	// consumed at the next checkpoint; paused is true while a checkpoint blocks;
 	// resumeReq wakes it (Resume or a steered correction); corrections buffers
@@ -160,7 +160,7 @@ type Session struct {
 // correction is a steered-in user message buffered until the next checkpoint (or
 // explicit Resume when paused). seq is the sequence of the queued user_input echo
 // emitted when it was accepted, so the later user_input_delivered event can refer
-// back to it (spec §18.7).
+// back to it.
 type correction struct {
 	message engine.UserMessage
 	seq     int
@@ -202,7 +202,7 @@ func (s *Session) logFailure() error {
 }
 
 // BudgetBreached reports whether this session crossed a configured spend cap and
-// handled it (task 0137, spec §20.6). The daemon work loop reads it after a loop
+// handled it. The daemon work loop reads it after a loop
 // session finishes to decide whether to halt the loop at a safe point.
 func (s *Session) BudgetBreached() bool {
 	s.mu.Lock()
@@ -242,7 +242,7 @@ func (s *Session) setLoop(l *engine.Loop) {
 // back to it (see interaction.Answer), so a scripted reply is never silently
 // buffered and lost. If a run is in flight (or the loop is paused/pausing at a
 // steer checkpoint) the text is queued as a correction and delivered at the next
-// safe checkpoint (steer-by-default, spec §18.7) — its echo carries queued:true
+// safe checkpoint (steer-by-default) — its echo carries queued:true
 // so the transcript never claims delivery before it happens. Otherwise (idle) it
 // is enqueued as a follow-up prod for when the agent next picks it up.
 func (s *Session) SendInput(text string) error {
@@ -283,7 +283,7 @@ func (s *Session) SendInputMessage(input engine.UserMessage) error {
 	if err := s.logFailure(); err != nil {
 		return fmt.Errorf("session event log failed: %w", err)
 	}
-	// A refused session (provider safety refusal, task 0238) rejects new input:
+	// A refused session (provider safety refusal) rejects new input:
 	// per documented provider semantics the conversation would just keep being
 	// refused, silently eating every message. Recovery is a model switch (which
 	// retries automatically) or an explicit retry — not another message.
@@ -310,7 +310,7 @@ func (s *Session) SendInputMessage(input engine.UserMessage) error {
 	// flight drains corrections at its next safe checkpoint; a paused loop drains
 	// them only on an explicit Resume. Either way multiple sends land in FIFO
 	// order because the queued echo (which stamps the seq) and the append happen
-	// together under steerMu. It does NOT auto-resume a paused loop (§18.7).
+	// together under steerMu. It does NOT auto-resume a paused loop.
 	s.steerMu.Lock()
 	if s.paused || s.pauseReq || s.running {
 		ev := s.emitter.EmitAs("user", event.UserInput, eventData(true))
@@ -410,7 +410,7 @@ func (s *Session) AnswerBatch(idxs []int, texts []string) error {
 }
 
 // Stop terminates the session's live process: it records a session_stopped
-// event (informational — the session stays reopenable via log replay, §18.6),
+// event (informational — the session stays reopenable via log replay),
 // cancels the agent loop (unblocking any ask_user / checkpoint waiting on the
 // ctx), and closes the event log. It is idempotent (runs at most once).
 func (s *Session) Stop() {
@@ -427,7 +427,7 @@ func (s *Session) Stop() {
 }
 
 // reap releases a live but idle session's in-memory resources for the GC
-// reaper (task 0054) WITHOUT recording a session_stopped marker: it cancels the
+// reaper WITHOUT recording a session_stopped marker: it cancels the
 // loop and closes the event log, leaving the durable events.jsonl exactly as
 // the session left it. Both reap and Stop keep a session reopenable (resume =
 // log replay); reap simply avoids writing a spurious "terminated" marker into a
@@ -469,7 +469,7 @@ func (s *Session) PendingQuestion() bool {
 	return s.inter.pending()
 }
 
-// Checkpoint implements engine.Steer (spec §18.7). At a safe checkpoint the
+// Checkpoint implements engine.Steer. At a safe checkpoint the
 // loop calls it. If no pause is pending it drains any mid-run corrections queued
 // since the last checkpoint (steer-by-default) and returns their texts to append
 // before the next turn — with no pause ceremony; if none are pending it returns
@@ -596,7 +596,7 @@ func textMessages(texts []string) []engine.UserMessage {
 }
 
 // drainJobNotes delivers the final reports of finished, unconsumed coordinator
-// jobs as user-role notification messages (docs/design/async-jobs.md §3.3). Each
+// jobs as user-role notification messages. Each
 // is recorded as a user-actor job_notified event — the same rule as a steer
 // correction — so reopen replays the identical history. Returns the texts for
 // the engine to Post before the next turn. Nil-safe: no registry ⇒ no notes.
@@ -634,7 +634,7 @@ func (s *Session) killJobs() {
 // deliverCorrections emits a user_input_delivered event for each queued
 // correction — marking the checkpoint at which its (queued) echo actually enters
 // the conversation — and returns their texts, in order, for the engine to Post
-// before the next turn (spec §18.7). The delivered event references the queued
+// before the next turn. The delivered event references the queued
 // echo by seq so replay and the TUI can pair them.
 func (s *Session) deliverCorrections(corr []correction) ([]engine.UserMessage, error) {
 	if len(corr) == 0 {
@@ -670,7 +670,7 @@ func (s *Session) signalResumeLocked() {
 
 // Interrupt requests a graceful pause: the running loop stops at its next safe
 // checkpoint (between turns / after a tool result) without aborting a tool
-// mid-run (spec §18.7). Resume or a steered SendInput continues it.
+// mid-run. Resume or a steered SendInput continues it.
 func (s *Session) Interrupt() error {
 	if err := s.logFailure(); err != nil {
 		return fmt.Errorf("session event log failed: %w", err)
@@ -681,7 +681,7 @@ func (s *Session) Interrupt() error {
 	return nil
 }
 
-// Resume continues a paused loop with no correction (spec §18.7). It cancels a
+// Resume continues a paused loop with no correction. It cancels a
 // not-yet-effective pause request. When the session is idle after a session
 // error (retries exhausted), it instead nudges the run loop to re-run the failed
 // turn on the existing history — a true retry with no injected user message
@@ -714,7 +714,7 @@ func (s *Session) Resume() error {
 
 // SetRoleConfig reassigns per-role logical models mid-session and rebuilds the
 // relevant gollama clients so the next coordinator turn / next spawned subagent
-// uses the new assignment (spec §13, §18.2). Empty coordinator/implementer leaves
+// uses the new assignment. Empty coordinator/implementer leaves
 // that role unchanged; an empty reviewers slice leaves reviewers unchanged. The
 // new assignment is also persisted as the default (roles in ycc.toml) so it
 // survives a restart and applies to future sessions.
@@ -775,7 +775,7 @@ func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []str
 	s.mu.Lock()
 	s.coordinator, s.implementer, s.reviewers = newCoord, newImpl, newRevs
 	// A coordinator model change is the documented way out of a provider safety
-	// refusal (task 0238): retrying the refused turn on a DIFFERENT model is
+	// refusal: retrying the refused turn on a DIFFERENT model is
 	// the provider-recommended recovery, so clear the input gate and nudge the
 	// parked run loop to re-run the pending turn on the new backend.
 	wasRefused := s.refused && coordinator != ""
@@ -826,8 +826,8 @@ func (s *Session) ReferencesModel(name string) bool {
 	return false
 }
 
-// SetThinking applies a reasoning level to the model(s) assigned to role (spec
-// §7.4, §18.2). An empty role targets all assigned models; reviewers targets the
+// SetThinking applies a reasoning level to the model(s) assigned to role. An
+// empty role targets all assigned models; reviewers targets the
 // whole reviewer fan-out. Models are deduplicated, so shared role assignments
 // receive one override and one persisted update. Every role backed by a targeted
 // model is refreshed for its next turn/spawn.
@@ -955,7 +955,7 @@ func thinkingForLevel(level string) (engine.Thinking, bool) {
 }
 
 // thinkingFor resolves reasoning for a logical model using the documented
-// precedence (spec §7.4): per-model session override → per-model config →
+// precedence: per-model session override → per-model config →
 // package defaults.
 func (s *Session) thinkingFor(name string) engine.Thinking {
 	s.mu.Lock()
@@ -991,7 +991,7 @@ func (s *Session) agentSpec(name string) (orchestrator.AgentSpec, error) {
 }
 
 // resolveReviewTier turns a requested tier name into a concrete ReviewPlan,
-// resolving the configured tier to reviewer agent specs (spec §13.1). Each
+// resolving the configured tier to reviewer agent specs. Each
 // reviewer carries its tier label and its extra focus prompt, so one tier can
 // task several models (or the same model twice) with different review lenses.
 // Unknown models are skipped (graceful degradation); a tier that resolves to no
@@ -1086,10 +1086,10 @@ func (s *Session) reviewTiers() []orchestrator.ReviewTierInfo {
 
 func (s *Session) run() {
 	// Kill every background job when the coordinator loop's lifetime ends, so a
-	// session leaves no orphan processes (docs/design/async-jobs.md §3.1).
+	// session leaves no orphan processes.
 	defer s.killJobs()
 	if s.resumed {
-		// Reopened session ("resume = replay", spec §4.5/§18.6): the loop already
+		// Reopened session ("resume = replay"): the loop already
 		// carries a history reconstructed from the existing log, so do NOT emit a
 		// fresh SessionStarted / initial UserInput nor seed. Mark the reopen in the
 		// continuous log.
@@ -1138,7 +1138,7 @@ func (s *Session) run() {
 			"coordinator_explicit": s.coordinatorExplicit,
 			// The coordinator model is recorded so a resume replays the session on
 			// the model it was started with, including a per-session override
-			// picked at StartSession (spec §13, §18.2).
+			// picked at StartSession.
 			"coordinator": coord,
 		})
 		if s.startupNotice != "" {
@@ -1190,7 +1190,7 @@ func (s *Session) run() {
 				s.emitter.Emit(event.SessionError, map[string]any{"msg": err.Error()})
 			}
 		} else if res.Refused {
-			// Provider-side safety refusal (engine Result.Refused, task 0238):
+			// Provider-side safety refusal (engine Result.Refused):
 			// the refused turn was kept out of history, so the conversation
 			// still owes a response and the next Run re-runs the pending turn.
 			// Park in StatusError with an explanatory session_error (kind
@@ -1243,7 +1243,7 @@ func (s *Session) run() {
 		// Steer-by-default race: input that arrived after the run's final
 		// checkpoint but before running was cleared is buffered as corrections.
 		// Deliver it now (Post + user_input_delivered) and continue the loop so
-		// the model sees it, rather than dropping into the idle wait below (§18.7).
+		// the model sees it, rather than dropping into the idle wait below.
 		s.steerMu.Lock()
 		corr := s.corrections
 		s.corrections = nil
@@ -1304,7 +1304,7 @@ func modeTransitionPrompt(mode string) string {
 }
 
 // withAssumptions appends any assumptions recorded by unattended ask_user
-// calls to the final report (spec §11).
+// calls to the final report.
 func (s *Session) withAssumptions(report string) string {
 	as := s.inter.Assumptions()
 	if len(as) == 0 {
@@ -1321,7 +1321,7 @@ func (s *Session) withAssumptions(report string) string {
 
 // summarizeUsage appends a one-line usage/cost summary to the work log of EVERY
 // task that accrued usage in the session — not just the currently-focused task —
-// when a work-mode session goes idle (spec §6.2, §20.5), so per-task cost accrues
+// when a work-mode session goes idle, so per-task cost accrues
 // in the backlog across sessions. It is idempotent per task within a session: at
 // most one line per task.
 //
@@ -1390,18 +1390,18 @@ type Manager struct {
 	// unattended integrate-mode session in the workstream's linked worktree.
 	integrateAgent func(workstream.Workstream, int, integrationOutcome) integrateAgentResult
 	// notifier pushes best-effort daemon-side notifications when an agent needs
-	// the user (task 0142). Nil when unconfigured; all uses are nil-safe.
+	// the user. Nil when unconfigured; all uses are nil-safe.
 	notifier *notify.Notifier
 	// workstreamSpawnMu makes the max_parallel check and subsequent registration
 	// atomic with respect to other spawns.
 	workstreamSpawnMu sync.Mutex
 	// mergeMu serializes MergeWorkstream across all workstreams so integrations
 	// happen one at a time and each trial-merges against the latest base HEAD
-	// (sequential reconciliation, design §6).
+	// (sequential reconciliation).
 	mergeMu sync.Mutex
 
 	// workLoops holds the daemon-side work loops keyed by resolved absolute
-	// workspace (task 0179, spec §9). Guarded by loopMu, a dedicated mutex so loop
+	// workspace. Guarded by loopMu, a dedicated mutex so loop
 	// bookkeeping never contends with the session-map mu that Start/reclaim take.
 	loopMu    sync.Mutex
 	workLoops map[string]*workLoop
@@ -1414,7 +1414,7 @@ type Manager struct {
 
 	// gitSync owns the periodic, networked fetch loop and its small per-workspace
 	// cache. Local status itself is computed on demand and never performs network
-	// I/O (task 0275).
+	// I/O.
 	gitSyncMu       sync.RWMutex
 	gitSyncCache    map[string]gitFetchState
 	gitSyncInterval time.Duration
@@ -1426,7 +1426,7 @@ type Manager struct {
 
 // NewManager creates a session manager backed by the given model registry. It
 // starts with an in-memory project registry; call SetProjects to back it with a
-// persistent one (spec §3.1). The workstream registry likewise defaults to an
+// persistent one. The workstream registry likewise defaults to an
 // in-memory one; SetWorkstreams backs it with durable state.
 func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 	projects := project.NewMemory()
@@ -1465,7 +1465,7 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 // responsible for registering its startup workspace in the replacement registry.
 func (m *Manager) SetProjects(p *project.Registry) { m.projects = p }
 
-// SetNotifier installs the daemon-side push notifier (task 0142). A nil notifier
+// SetNotifier installs the daemon-side push notifier. A nil notifier
 // (the default / unconfigured case) disables notifications; every session watcher
 // and the Notify RPC are nil-safe.
 func (m *Manager) SetNotifier(n *notify.Notifier) { m.notifier = n }
@@ -1606,7 +1606,7 @@ func (m *Manager) resolveProjectWorkspace(name string) (string, error) {
 	return "", fmt.Errorf("%w: project is required when %d projects are registered", ErrUnknownProject, len(projects))
 }
 
-// AddProject registers a workspace under an optional name (spec §3.1).
+// AddProject registers a workspace under an optional name.
 func (m *Manager) AddProject(path, name string) (project.Project, error) {
 	return m.projects.Add(path, name)
 }
@@ -1661,9 +1661,9 @@ func (m *Manager) initialCoordinator(preset, explicit string) (coordinator, warn
 }
 
 // start is the shared session-launch body. When autoRegisterProject is true a
-// not-yet-known workspace is auto-registered as a first-class project (spec
-// §3.1). Workstream sessions pass false so an ephemeral worktree path never
-// pollutes the user-facing project picker (design §7).
+// not-yet-known workspace is auto-registered as a first-class project.
+// Workstream sessions pass false so an ephemeral worktree path never
+// pollutes the user-facing project picker.
 func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) {
 	ws := cfg.Workspace
 	// A named project resolves to its registered workspace, overriding ws. With
@@ -1681,7 +1681,7 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 		return nil, fmt.Errorf("resolve workspace: %w", err)
 	}
 	// Auto-register a not-yet-known workspace so it becomes a first-class,
-	// listable project (spec §3.1) — unless this is a workstream worktree.
+	// listable project — unless this is a workstream worktree.
 	if autoRegisterProject {
 		if _, err := m.projects.EnsureWorkspace(absWS); err != nil {
 			return nil, fmt.Errorf("register project: %w", err)
@@ -1724,7 +1724,7 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 	s.coordinatorExplicit = cfg.CoordinatorModel != ""
 	s.startupNotice = startupNotice
 	// Opening-prompt pictures must be attached BEFORE the first loop is built:
-	// buildLoop consumes them so the seed message is multimodal (spec §12).
+	// buildLoop consumes them so the seed message is multimodal.
 	s.promptImages = cfg.Images
 	loop, err := s.buildLoop(mode, prompt)
 	if err != nil {
@@ -1757,7 +1757,7 @@ type SpawnWorkstreamConfig struct {
 
 // SpawnWorkstream creates a linked git worktree + branch (ycc/ws/<id>) off the
 // parent project's primary tree and starts a `work` session scoped to that
-// worktree, recording the pair in the workstream registry (design §5, §7). It
+// worktree, recording the pair in the workstream registry. It
 // preserves the single-writer invariant: at most one active workstream per
 // worktree path, and no second live session for the same path. On any failure
 // after the worktree exists it best-effort tears it down (remove + delete
@@ -1916,7 +1916,7 @@ func (m *Manager) SpawnWorkstream(cfg SpawnWorkstreamConfig) (workstream.Workstr
 		return workstream.Workstream{}, nil, fmt.Errorf("register workstream: %w", err)
 	}
 	// Record the workstream's creation on its own session stream so the merge
-	// flow is auditable and projectable (design §6, §8).
+	// flow is auditable and projectable.
 	m.emitWorkstreamEvent(ws, event.WorkstreamCreated, map[string]any{
 		"workstream":  ws.ID,
 		"branch":      ws.Branch,
@@ -1942,7 +1942,7 @@ func (m *Manager) Workstreams(project string) []workstream.Workstream {
 }
 
 // ReconcileWorkstreams reconciles the workstream registry against git and the
-// durable session log on startup (design §5, §7). In-root in-flight states retain
+// durable session log on startup. In-root in-flight states retain
 // a live worktree; missing trees become stale, while out-of-root legacy entries
 // become needs-attention with a manual migration reason. Non-live terminal
 // session logs have readiness re-derived so daemon restarts cannot lose completion.
@@ -2049,10 +2049,10 @@ func (m *Manager) ReconcileWorkstreams() error {
 // buildLoop closure, and review-tier wiring) on a given event log, WITHOUT
 // creating/seeding its loop or registering it — callers do that, since Start
 // seeds the loop while Reopen installs a reconstructed history. resumed marks a
-// session re-instantiated on an existing log (spec §4.5).
+// session re-instantiated on an existing log.
 // newSession builds a Session on an open log. coordOverride, when non-empty,
 // names the logical model this session's coordinator uses INSTEAD of the
-// configured default (spec §13, §18.2) — a per-session choice that never touches
+// configured default — a per-session choice that never touches
 // the persisted role defaults; implementer/reviewers always follow the config.
 func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt string, log *event.Log, resumed bool, coordOverride string) (*Session, error) {
 	emitter := event.NewEmitter(log, "coordinator")
@@ -2138,7 +2138,7 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 
 	// buildLoop assembles the agent loop for a mode; reused on mode transitions.
 	// It reads the session's current coordinator assignment so a mid-session
-	// role-config change drives the next coordinator loop (spec §18.2).
+	// role-config change drives the next coordinator loop.
 	s.buildLoop = func(mode, prompt string) (*engine.Loop, error) {
 		reg, sys := orchestrator.BuildMode(mode, deps, unattended)
 		s.mu.Lock()
@@ -2169,7 +2169,7 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 	}
 
 	// Wire the review-tier resolver so spawn_reviewers can pick a tier per change
-	// (spec §13.1). It resolves the configured tier to concrete reviewer specs,
+	// It resolves the configured tier to concrete reviewer specs,
 	// and ReviewTiers lets the tool description enumerate the available tiers.
 	deps.ReviewTier = func(name string) orchestrator.ReviewPlan {
 		return s.resolveReviewTier(name)
@@ -2179,7 +2179,7 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 	}
 
 	// Attach the daemon-side notification watcher when a notifier is configured
-	// (task 0142). It subscribes from LastSeq at attach time so a reopened
+	// It subscribes from LastSeq at attach time so a reopened
 	// session's replayed history never re-fires; the goroutine exits when the log
 	// is closed (its channel closes).
 	if m.notifier != nil {
@@ -2190,7 +2190,7 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 }
 
 // startNotifyWatcher spawns a goroutine that maps session events to best-effort
-// push notifications (task 0142). It attaches at the log's current LastSeq so only
+// push notifications. It attaches at the log's current LastSeq so only
 // events emitted after attach fire — a reopened session's replayed history never
 // re-notifies. The goroutine exits when the log closes (the subscription channel
 // closes).
@@ -2278,7 +2278,7 @@ func firstLine(s string) string {
 }
 
 // Reopen re-instantiates a persisted session on its EXISTING event log ("resume
-// = replay", spec §4.5/§18.6): it re-opens the log, restores mode + interaction
+// = replay"): it re-opens the log, restores mode + interaction
 // level from the projection, reconstructs the coordinator loop's conversation
 // history from the log, and registers it as a live session whose new activity
 // appends to the same continuous events.jsonl. It is idempotent: reopening an
@@ -2313,7 +2313,7 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 
 	proj := event.Reduce(events)
 	// A previously Stop-terminated session is still reopenable: resume is pure
-	// log replay (spec §4.5/§18.6), so a session_stopped marker is informational
+	// log replay, so a session_stopped marker is informational
 	// (it records that the live process was terminated) and does NOT block
 	// reconstructing the conversation from the durable log.
 	mode := proj.Mode
@@ -2375,7 +2375,7 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 }
 
 // SessionTranscript returns the full event log for a session — live or persisted
-// on disk — for the read-only transcript view (spec §18.6). A live session
+// on disk — for the read-only transcript view. A live session
 // returns its in-memory snapshot; otherwise the persisted
 // <workspace>/.ycc/sessions/<id>/events.jsonl is read. The project must be
 // named unless it is the daemon's sole project; an unknown/ambiguous project is
@@ -2405,7 +2405,7 @@ func (m *Manager) SessionTranscript(project, id string) ([]event.Event, error) {
 }
 
 // CommitDiff returns the `git show` output (stat + patch) for a commit in a
-// project's workspace, for the transcript commit-diff drill-in (task 0140).
+// project's workspace, for the transcript commit-diff drill-in.
 // The project must be named unless it is the daemon's sole project. Linked-
 // worktree commits are visible from the primary repo since they share the object
 // database. A bad/unknown sha surfaces as the underlying git error.
@@ -2490,7 +2490,7 @@ func (m *Manager) waitWorkstreamWatcher(id string) {
 // reclaim removes an idle session from the live map to free memory WITHOUT
 // terminating it: it cancels the loop and closes the log via Session.reap but
 // does NOT emit the terminal session_stopped marker, so the durable log stays
-// resumable (spec §18.6). Used by the background GC reaper (task 0054); unknown
+// resumable. Used by the background GC reaper; unknown
 // ids are silently ignored.
 func (m *Manager) reclaim(id string) {
 	m.mu.Lock()
@@ -2587,54 +2587,53 @@ func (m *Manager) OAuthModels() map[string][]string {
 	return out
 }
 
-// Budget returns the configured spend caps (task 0137, spec §20.6) so the RPC
+// Budget returns the configured spend caps so the RPC
 // layer can serve the loop caps to the TUI work-loop driver.
 func (m *Manager) Budget() config.Budget { return m.reg.Budget() }
 
 // GetModel returns a copy of a logical model's record for editing in the
-// settings overlay (spec §18.2).
+// settings overlay.
 func (m *Manager) GetModel(name string) (config.Model, bool) { return m.reg.GetModel(name) }
 
 // DiscoverModels lists the model ids available from a backend connection for the
-// connection form (spec §13, §18.2). key_env is resolved locally; the secret
+// connection form. key_env is resolved locally; the secret
 // value never leaves the daemon.
 func (m *Manager) DiscoverModels(ctx context.Context, backend, baseURL, keyEnv string) ([]string, error) {
 	return m.reg.DiscoverConnModels(ctx, backend, baseURL, keyEnv)
 }
 
 // UpsertModel adds or replaces a logical model backend at runtime; persist also
-// writes ycc.toml (spec §18.2).
+// writes ycc.toml.
 func (m *Manager) UpsertModel(name string, mdl config.Model, persist bool) error {
 	return m.reg.UpsertModel(name, mdl, persist)
 }
 
 // ReviewTierConfigs lists the effective review tiers in configuration form plus
-// the effective default tier name (spec §13.1, §18.2) so clients can render and
+// the effective default tier name so clients can render and
 // edit them.
 func (m *Manager) ReviewTierConfigs() ([]config.ReviewTierListing, string) {
 	return m.reg.ReviewTierConfigs()
 }
 
 // UpsertReviewTier adds or replaces a configured review tier and persists it to
-// ycc.toml (spec §13.1, §18.2). Takes effect on the next spawn_reviewers.
+// ycc.toml. Takes effect on the next spawn_reviewers.
 func (m *Manager) UpsertReviewTier(name string, t config.ReviewTier) error {
 	return m.reg.UpsertReviewTier(name, t)
 }
 
 // RemoveReviewTier deletes a configured review tier (a built-in name reverts to
-// its built-in behaviour) and persists (spec §13.1, §18.2).
+// its built-in behaviour) and persists.
 func (m *Manager) RemoveReviewTier(name string) error {
 	return m.reg.RemoveReviewTier(name)
 }
 
-// SetReviewDefault sets reviews.default (empty clears it) and persists (spec
-// §13.1, §18.2).
+// SetReviewDefault sets reviews.default (empty clears it) and persists.
 func (m *Manager) SetReviewDefault(name string) error {
 	return m.reg.SetReviewDefault(name)
 }
 
 // WorkImplementation returns the effective work-mode implementation strategy
-// used when the next session is built (spec §10, §18.2).
+// used when the next session is built.
 func (m *Manager) WorkImplementation() string { return m.reg.WorkImplementation() }
 
 // SetWorkImplementation updates and persists the work-mode implementation
@@ -2644,7 +2643,7 @@ func (m *Manager) SetWorkImplementation(impl string) error {
 }
 
 // SetRoles updates the default per-role model assignment (config.Roles) and
-// persists it to ycc.toml (spec §18.2). Used when a role change is made with no
+// persists it to ycc.toml. Used when a role change is made with no
 // live session to apply it to (e.g. from the home-menu settings overlay); a
 // change made inside a session goes through Session.SetRoleConfig, which also
 // applies it live before persisting the same way.
@@ -2653,7 +2652,7 @@ func (m *Manager) SetRoles(coordinator, implementer string, reviewers []string) 
 }
 
 // SetThinking resolves role to its currently assigned model(s) and persists the
-// level in each model's config (spec §7.4, §18.2). An empty role targets all
+// level in each model's config. An empty role targets all
 // assigned models; shared assignments are deduplicated. Used when there is no
 // live session to update.
 func (m *Manager) SetThinking(role, level string) error {
@@ -2709,7 +2708,7 @@ func (m *Manager) ThinkingLevels() (coordinator, implementer, reviewers string) 
 }
 
 // RemoveModel deletes a logical model backend; persist also writes ycc.toml
-// (spec §18.2). The removal is rejected if a static role (cfg.Roles) references
+// The removal is rejected if a static role (cfg.Roles) references
 // the model, or if any running session's live role config (set via
 // SetRoleConfig, stored on the Session rather than cfg.Roles) still references
 // it — otherwise that session's next spawn would point at a missing backend.
@@ -2730,7 +2729,7 @@ func (m *Manager) RemoveModel(name string, persist bool) error {
 }
 
 // Backlog returns a docs.Store for the named project (or the sole project when
-// omitted). Used by the read-only backlog RPCs (spec §18.5).
+// omitted). Used by the read-only backlog RPCs.
 func (m *Manager) Backlog(project string) (*docs.Store, error) {
 	ws, err := m.resolveProjectWorkspace(project)
 	if err != nil {
@@ -2744,7 +2743,7 @@ func (m *Manager) Backlog(project string) (*docs.Store, error) {
 }
 
 // CaptureBacklogItem runs the lightweight, off-stream "quick-add backlog item"
-// capture agent for a project (task 0016, spec §18.2): it turns a natural-language
+// capture agent for a project: it turns a natural-language
 // description into a structured backlog task without disturbing any running
 // session. The agent may ask ONE clarifying question (returned via Question);
 // the client re-invokes with priorQuestion/priorAnswer so it creates the task.
@@ -2813,7 +2812,7 @@ var ErrLoopRunning = errors.New("work loop already running")
 
 // UsageReport scans the named project's workspace, or all registered project
 // workspaces when omitted, and returns the aggregated, priced usage breakdown
-// (spec §20.3, §20.5). Pricing comes from the daemon's model registry.
+// Pricing comes from the daemon's model registry.
 func (m *Manager) UsageReport(project string, opts usage.Options) (*usage.Result, error) {
 	projects := m.projects.List()
 	if project == "" && len(projects) > 1 {
@@ -2864,7 +2863,7 @@ func newID() (string, error) {
 }
 
 // newWorkstreamID mints a stable short workstream id (ws_<8-hex>), mirroring
-// newID (design §5).
+// newID.
 func newWorkstreamID() (string, error) {
 	b := make([]byte, 4)
 	if _, err := rand.Read(b); err != nil {

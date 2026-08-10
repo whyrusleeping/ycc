@@ -8,7 +8,7 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// help.go — the keybinding cheat-sheet modal (task 0111).
+// help.go — the keybinding cheat-sheet modal.
 //
 // SINGLE SOURCE OF TRUTH for the TUI's documented keybindings. The footer is
 // width-clamped and can only surface a handful of hints, so the full catalog
@@ -22,7 +22,7 @@ import (
 //     • question picker ...... updateSession (m.picking branch)
 //     • backlog browser ...... updateBacklog (+ detail / status-choice modes)
 //     • session browser ..... updateHistory + updateHistoryModal (read-only, over a session)
-//     • commit diff .......... updateCommitDiff (git-show overlay, task 0140)
+//     • commit diff .......... updateCommitDiff (git-show overlay)
 //     • workstreams .......... updateWorkstreams (+ merge / discard prompts)
 //     • plans ................ updatePlans
 //     • cost ................. updateCost
@@ -166,7 +166,7 @@ func (m model) helpSections() []helpSection {
 	}
 }
 
-// openHelp enters the keybinding help modal (task 0111), resetting the scroll.
+// openHelp enters the keybinding help modal, resetting the scroll.
 func (m *model) openHelp() {
 	m.helpOpen = true
 	m.helpScroll = 0

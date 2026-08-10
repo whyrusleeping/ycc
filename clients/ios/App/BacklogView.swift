@@ -2,8 +2,7 @@ import SwiftUI
 import YccKit
 import YccProto
 
-/// The backlog browser (docs/design/ios-client.md §6 phase 2 step 6, spec
-/// §18.5). Two presentations over the same data:
+/// The backlog browser has two presentations over the same data:
 ///
 /// - **Board** (default) — horizontally snapping kanban lanes in workflow order
 ///   (proposed → todo → in progress → in review → blocked → done), each a column

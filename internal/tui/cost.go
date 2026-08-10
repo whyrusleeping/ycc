@@ -16,8 +16,8 @@ import (
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 )
 
-// fetchUsage loads the token/cost breakdown for the cost view (spec §20.5, task
-// 0039). It respects the selected project, task drill-down, and group-by dimension.
+// fetchUsage loads the token/cost breakdown for the cost view. It respects the
+// selected project, task drill-down, and group-by dimension.
 func (m model) fetchUsage() tea.Msg {
 	resp, err := m.client.GetUsage(m.ctx, connect.NewRequest(&v1.GetUsageRequest{
 		Project: m.project, GroupBy: m.costGroupBy, Task: m.costTask,
@@ -39,7 +39,7 @@ func (m model) fetchUsage() tea.Msg {
 var costGroupOrder = []string{"task", "model", "session", "day", "agent"}
 
 // costDrillGroupOrder omits task because every row in a drill-down is already
-// scoped to the focused task (task 0174).
+// scoped to the focused task.
 var costDrillGroupOrder = []string{"agent", "model", "session", "day"}
 
 // updateCost handles navigation, grouping, and task drill-down in the modal cost
@@ -222,7 +222,7 @@ func subscriptionUsageTUI(accounts []*v1.SubscriptionUsageAccount) string {
 }
 
 // costView renders provider subscription allowance followed by the local
-// token/cost breakdown as a bordered modal card (spec §20.5).
+// token/cost breakdown as a bordered modal card.
 func (m model) costView() string {
 	groupBy := m.costGroupBy
 	if len(groupBy) == 0 {

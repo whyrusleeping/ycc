@@ -121,8 +121,7 @@ public enum MergeOutcome: Sendable, Equatable {
     case conflicts([String])
 }
 
-/// Drives the workstreams pane (docs/design/ios-client.md §6 phase 3 step 10,
-/// spec §14.1, design/parallel-workstreams.md §6): lists ``ListWorkstreams`` with
+/// Drives the workstreams pane: lists ``ListWorkstreams`` with
 /// per-stream status, and runs the review-gated ``PreviewMerge`` /
 /// ``MergeWorkstream`` / ``DiscardWorkstream`` actions. The data source is
 /// injected (``WorkstreamsSource``) so the listing / gate logic is testable

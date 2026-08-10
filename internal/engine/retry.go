@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// RetryPolicy controls automatic retry of transient LLM API call failures
-// (spec §7.2, task 0050). MaxAttempts is the total number of attempts including
+// RetryPolicy controls automatic retry of transient LLM API call failures.
+// MaxAttempts is the total number of attempts including
 // the first; a value of 1 disables retry entirely, and 0 means "use the
 // default" (see DefaultRetryPolicy). BaseDelay is the first backoff step and
 // doubles each attempt; MaxDelay caps it.

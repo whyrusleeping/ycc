@@ -41,7 +41,7 @@ func (m *model) toggle(i int) {
 
 // applyTransient routes a transient (broadcast-only) event into ephemeral live
 // UI state and reports whether that state changed. Transients NEVER enter m.evs,
-// the reducers, or seq tracking (task 0129) — they only drive the live tail row.
+// the reducers, or seq tracking — they only drive the live tail row.
 //
 // turn_delta carries {"text": <snapshot>} where text is the FULL accumulated
 // turn output so far (snapshot semantics), so a new delta simply replaces the
@@ -114,7 +114,7 @@ func retryNoteText(ev *v1.Event) string {
 }
 
 // sessionErrorHead renders the structured classification a session_error event
-// may carry (kind/status/attempts, emitted by the engine loop, spec §7.2) as a
+// may carry (kind/status/attempts, emitted by the engine loop) as a
 // compact lead line, plus an actionable hint for the kinds a user can act on.
 // Returns "" for legacy/unclassified errors so they render exactly as before.
 func sessionErrorHead(ev *v1.Event) string {
@@ -153,7 +153,7 @@ func (m *model) appendEvent(ev *v1.Event) {
 	}
 	if ev.Type == "user_input_delivered" {
 		// Mark the queued echo this delivery pairs with as delivered so it stops
-		// rendering "(queued)" once it actually entered the conversation (§18.7).
+		// rendering "(queued)" once it actually entered the conversation.
 		if seq, ok := deliveredSeq(ev); ok {
 			if m.deliveredSeqs == nil {
 				m.deliveredSeqs = map[int64]bool{}
@@ -181,13 +181,13 @@ func (m *model) appendEvent(ev *v1.Event) {
 		}
 		// The durable turn supersedes any live streamed tail for this actor: drop
 		// it so the persisted row replaces the in-progress row with no stale tail
-		// (task 0129). A clearing turn_delta usually arrives too, but clearing here
+		// A clearing turn_delta usually arrives too, but clearing here
 		// makes the swap deterministic even if that transient is lost. Any pending
 		// retry note is likewise superseded by the turn's outcome.
 		delete(m.liveTails, ev.Actor)
 		delete(m.retryNotes, ev.Actor)
 		// Accumulate the turn's usage into the running per-model tally that feeds
-		// the live token/cost readout (task 0062, spec §20.1). Parsing is best-effort:
+		// the live token/cost readout. Parsing is best-effort:
 		// a turn without a usage block contributes nothing.
 		if u, name := eventUsage(ev); u != (event.Usage{}) {
 			if m.usageByModel == nil {
@@ -202,7 +202,7 @@ func (m *model) appendEvent(ev *v1.Event) {
 			m.usageByModel[name] = cur
 		}
 	case "budget_warning":
-		// Session crossed ~80% of a configured cap (task 0137, spec §20.6): surface
+		// Session crossed ~80% of a configured cap: surface
 		// a distinct status-bar warning. Track the highest pct seen.
 		if p := floatField(ev, "pct"); p > m.budgetPct {
 			m.budgetPct = p
@@ -317,7 +317,7 @@ func (m *model) appendEvent(ev *v1.Event) {
 	case "session_error":
 		m.status = "error"
 		// A failed turn ends any in-progress stream: drop the actor's live tail so
-		// no stale streamed text lingers below the error (task 0129), and drop any
+		// no stale streamed text lingers below the error, and drop any
 		// pending retry note (the failure is now durable).
 		delete(m.liveTails, ev.Actor)
 		delete(m.retryNotes, ev.Actor)
@@ -352,7 +352,7 @@ func (m *model) appendEvent(ev *v1.Event) {
 			m.roleReviewrs = rv
 		}
 	}
-	// Clear a latched error status once real activity resumes (task 0051):
+	// Clear a latched error status once real activity resumes:
 	// the header must not stay stuck on "error" after recovery. An idle status
 	// clears the same way: prodding a finished session emits a user_input echo
 	// the moment the daemon accepts it, but the first model event can lag tens
@@ -635,7 +635,7 @@ func (m *model) computeHiddenRow(i int) bool {
 	if i >= 0 && i < len(m.evs) && m.evs[i].Type == "user_input_delivered" {
 		// The delivery marker is a bookkeeping event, not a message: its text is
 		// already shown by the (now-upgraded) queued user_input row, so it renders
-		// no block of its own — otherwise the message would appear twice (§18.7).
+		// no block of its own — otherwise the message would appear twice.
 		return true
 	}
 	return m.isMergedResult(i) || m.isEmptyModelTurn(i) || m.isFinishTurnEcho(i) ||
@@ -765,7 +765,7 @@ func (m *model) rebuild() {
 	}
 	// Append the in-progress streamed tail rows (transient turn_delta output)
 	// after the persisted conversation. They are ephemeral and carry no seq, so
-	// they are NOT added to m.eventStart / selection tracking (task 0129).
+	// they are NOT added to m.eventStart / selection tracking.
 	if tail := m.renderLiveTails(); tail != "" {
 		b.WriteString(tail)
 		b.WriteByte('\n')
@@ -782,9 +782,9 @@ func (m *model) rebuild() {
 const liveTailMaxLines = 6
 
 // renderLiveTails renders the in-progress streamed output (fed by transient
-// turn_delta snapshots, task 0129) as dim, visibly in-progress tail rows appended
+// turn_delta snapshots) as dim, visibly in-progress tail rows appended
 // after the persisted conversation, followed by any per-actor retry notes (fed
-// by transient retry events — an API-failure backoff in progress, spec §7.2).
+// by transient retry events — an API-failure backoff in progress).
 // Values are the full accumulated turn text so far, so each render just reflects
 // the latest snapshot; the durable model_turn replaces the tail seamlessly
 // (appendEvent clears the actor's entry when it arrives). Returns "" when
@@ -873,7 +873,7 @@ func (m *model) isFinishTurnEcho(i int) bool {
 }
 
 // deliveredSeq extracts the queued-echo seq a user_input_delivered event refers
-// to (spec §18.7). Returns false for other event types or malformed data.
+// to. Returns false for other event types or malformed data.
 func deliveredSeq(ev *v1.Event) (int64, bool) {
 	if ev.Type != "user_input_delivered" || ev.DataJson == "" {
 		return 0, false

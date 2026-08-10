@@ -8,15 +8,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// --- shared list+detail browser surface (spec §18.5/§18.6/§20.5) ---
+// --- shared list+detail browser surface ---
 //
-// browser is the reusable modal list+detail component behind every browser
-// (backlog today, sessions, and a future cost view): it owns generic list
-// navigation (cursor up/down with clamping) and bordered-card rendering via
-// modalCard. Each specific browser supplies the rendered row text, footer hint,
-// and any extra keybindings — the owner handles enter/extra keys while this
-// component handles up/down + cursor clamp + rendering. It deliberately stays
-// small: factor the duplicated list+card pattern, don't over-engineer.
+// browser provides clamped list navigation and modal-card rendering for the
+// backlog, session, and cost browsers. Each owner supplies rows, footer hints,
+// and browser-specific key handling.
 type browser struct {
 	title  string
 	rows   []browserRow
@@ -128,11 +124,11 @@ func (m model) browserCard(b browser) string {
 	return m.modalCard(b.title, strings.TrimRight(sb.String(), "\n"), hint)
 }
 
-// --- browse selector (spec §18.6 / §20.5) ---
+// --- browse selector ---
 //
 // browseTargets are the routes the browse selector offers. It is the single
 // extension point for the shared browser surface: each row maps to a case in
-// updateBrowse — no other plumbing is needed (spec §18.6/§20.5).
+// updateBrowse — no other plumbing is needed.
 var browseTargets = []struct{ label, desc string }{
 	{"backlog", "tasks · readiness · drill-in detail"},
 	{"plans", "saved runbooks · view markdown"},
@@ -179,7 +175,7 @@ func (m model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.plans, m.plansCursor, m.planDetail = true, 0, nil
 			return m, m.fetchPlans
 		case "sessions":
-			// From a live session, open the read-only modal variant (task 0112) so
+			// From a live session, open the read-only modal variant so
 			// browsing never disturbs (or reopens over) the session behind it. From
 			// the menu, use the full-state session browser as before.
 			if m.state == stateSession {
@@ -193,7 +189,7 @@ func (m model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.historyMsgTxt = "loading…"
 			return m, m.fetchHistory
 		case "cost":
-			// The cost view (spec §20.5, task 0039) opens grouped by task.
+			// The cost view opens grouped by task.
 			m.cost, m.costCursor = true, 0
 			m.costTask, m.costTaskCursor = "", 0
 			m.costGroupBy = []string{"task"}

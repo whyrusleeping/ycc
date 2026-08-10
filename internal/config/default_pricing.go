@@ -6,7 +6,7 @@ import (
 	"sync"
 )
 
-// Built-in default pricing (spec §20.4) for well-known Anthropic and OpenAI
+// Built-in default pricing for well-known Anthropic and OpenAI
 // models, in US dollars per million tokens. Explicit per-model pricing in
 // config always wins (see Model.EffectivePricing); this table only fills the
 // gap so cost estimates work out of the box instead of showing "—" for the

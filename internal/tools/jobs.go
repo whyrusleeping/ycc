@@ -10,8 +10,8 @@ import (
 	"github.com/whyrusleeping/ycc/internal/jobs"
 )
 
-// JobTools returns the background-job control tools (docs/design/async-jobs.md
-// §3.2): job_output (non-blocking incremental read + status), wait (blocking
+// JobTools returns the background-job control tools: job_output (non-blocking
+// incremental read + status), wait (blocking
 // final-report retrieval), and kill_job. They require ws.Jobs to be set; callers
 // add them only when background jobs are enabled (see Editing).
 func JobTools(ws *Workspace) []*gollama.Tool {

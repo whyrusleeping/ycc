@@ -13,27 +13,26 @@ message Event {
   string actor = 3;
   string type = 4;
   string data_json = 5;
-  bool transient = 6; // broadcast-only, never persisted; seq is 0 (task 0114)
+  bool transient = 6; // broadcast-only, never persisted; seq is 0
 }
 
 message StartSessionRequest {
   string workspace = 1; // workspace dir; empty => resolve project
-  string mode = 2; // e.g. "work"; M1 runs a single worker agent
+  string mode = 2; // session mode, e.g. "work"
   reserved 3; // retired session-policy field
   string prompt = 4; // initial task prompt
   // project is an optional registered project name; when set it resolves to that
-  // project's workspace (overriding `workspace`). Spec §3.1.
+  // project's workspace (overriding `workspace`).
   string project = 5;
   // coordinator_model optionally overrides the coordinator's logical model
   // (a name from ListModels) FOR THIS SESSION ONLY — the persisted per-role
   // defaults in ycc.toml are untouched, and implementer/reviewers keep them.
   // Empty means "use the configured default". Unknown name => InvalidArgument.
-  // Spec §13, §18.2.
   string coordinator_model = 6;
   // images optionally attaches up to four validated pictures to the OPENING
   // prompt (same limits and validation as SendInputRequest.images), so a
   // session whose whole subject is a screenshot does not have to waste its
-  // first turn. Spec §12.
+  // first turn.
   repeated ImageAttachment images = 7;
   // preset identifies the opening-prompt preset selected by the client. The
   // daemon uses it to apply an optional roles.presets model binding for this
@@ -42,7 +41,7 @@ message StartSessionRequest {
 }
 message StartSessionResponse { string session_id = 1; }
 
-// Projects — persistent multi-project daemon (spec §3.1). A project is a named
+// Projects — persistent multi-project daemon. A project is a named
 // workspace; the daemon's registry maps name -> path in its state dir.
 message ProjectInfo {
   string name = 1;
@@ -73,7 +72,7 @@ message RenameProjectRequest {
 }
 message RenameProjectResponse { ProjectInfo project = 1; }
 
-// ListDir — remote directory browsing for the add-project flow (task 0193).
+// ListDir — remote directory browsing for the add-project flow.
 // Lists DIRECTORIES ONLY (never files or file contents) so a remote client can
 // navigate the daemon host's filesystem to pick a workspace to register with
 // AddProject. Note the bearer token already permits StartSession in an
@@ -145,20 +144,20 @@ message AnswerQuestionsRequest {
 }
 message AnswerQuestionsResponse {}
 
-// Interrupt requests a graceful pause-to-steer of a running session (spec
-// §18.7): it pauses at the next safe checkpoint without aborting a tool.
+// Interrupt requests a graceful pause-to-steer of a running session. It pauses
+// at the next safe checkpoint without aborting a tool.
 message InterruptRequest { string session_id = 1; }
 message InterruptResponse {}
 // Resume continues a paused session (optionally after SendInput corrections).
 message ResumeRequest { string session_id = 1; }
 message ResumeResponse {}
-// StopSession hard-terminates a session (spec §12): it cancels the agent loop,
+// StopSession hard-terminates a session: it cancels the agent loop,
 // closes the event log, and removes the session from the daemon. Distinct from
-// Interrupt's graceful pause/steer (spec §18.7) — there is no resume.
+// Interrupt's graceful pause/steer — there is no resume.
 message StopSessionRequest { string session_id = 1; }
 message StopSessionResponse {}
 // ResumeSession re-opens a persisted (finished/idle) session on its EXISTING
-// event log ("resume = replay", spec §4.5/§18.6): its coordinator is
+// event log ("resume = replay"): its coordinator is
 // re-instantiated with history reconstructed from the log and new activity
 // appends to the same continuous events.jsonl. Idempotent if already live.
 message ResumeSessionRequest {
@@ -179,8 +178,8 @@ message Mode {
   string description = 3;
 }
 // Preset is a home-menu entry that starts a session in `mode` with a tailored
-// `opening_prompt`. The pm mode exposes the old spec/backlog/feature/bug framings
-// this way — one mode, four opening prompts (spec §9).
+// `opening_prompt`. The pm mode exposes spec/backlog/feature/bug framings this
+// way: one mode with four opening prompts.
 message Preset {
   string name = 1;        // menu key, distinct from the mode
   string title = 2;
@@ -228,7 +227,7 @@ message ListSessionHistoryResponse { repeated SessionSummary sessions = 1; }
 
 // GetSessionTranscript returns the full event log for a session — live or
 // persisted on disk — so the session browser can render a read-only replayed
-// transcript with the same event components as the live view (spec §18.6).
+// transcript with the same event components as the live view.
 message GetSessionTranscriptRequest {
   string project = 1;    // registered project; empty allowed only when exactly one exists
   string session_id = 2;
@@ -236,7 +235,7 @@ message GetSessionTranscriptRequest {
 message GetSessionTranscriptResponse { repeated Event events = 1; }
 
 // GetCommitDiff returns the `git show` output (stat + patch) for a commit, so the
-// transcript can drill into what an agent actually committed (task 0140). The
+// transcript can drill into what an agent actually committed. The
 // daemon caps the returned diff to bound the wire payload; truncated reports when
 // the cap was hit so the client can render a truncation notice.
 message GetCommitDiffRequest {
@@ -248,7 +247,7 @@ message GetCommitDiffResponse {
   bool truncated = 2;
 }
 
-// ListModels enumerates the configured logical models (spec §13) so the settings
+// ListModels enumerates the configured logical models so the settings
 // overlay can populate the per-role pickers.
 message ListModelsRequest {}
 message ModelInfo {
@@ -256,7 +255,7 @@ message ModelInfo {
   string backend = 2; // anthropic | openai | ollama | ...
   string model = 3;   // backend model id
   // Per-model pricing ($/Mtok) surfaced so the live session status bar can price
-  // running usage (spec §20.4). The price_* fields are optional so an unset rate
+  // running usage. The price_* fields are optional so an unset rate
   // is distinguishable from an explicit 0.0; priced reports whether ANY rate is
   // configured (mirrors config.Pricing.Configured) so unpriced models render
   // tokens-only without inventing a cost.
@@ -270,7 +269,7 @@ message ListModelsResponse {
   repeated ModelInfo models = 1;
   // Current default per-role assignment (config.Roles) so the settings overlay can
   // seed its per-role pickers with the ACTUAL current selection — even when opened
-  // from the home menu with no live session (spec §18.2).
+  // from the home menu with no live session.
   string coordinator = 2;
   string implementer = 3;
   repeated string reviewers = 4;
@@ -284,7 +283,7 @@ message ListModelsResponse {
   string work_implementation = 8;
 }
 
-// ModelConfig mirrors a [models.X] block (spec §13, §18.2) for the settings
+// ModelConfig mirrors a [models.X] block for the settings
 // overlay's add/edit/remove of model backends. Keys are referenced via key_env
 // only — no secret values cross the wire. The pricing fields are optional so an
 // unset price is distinguishable from an explicit 0.0.
@@ -301,10 +300,10 @@ message ModelConfig {
   optional double price_output = 10;
   optional double price_cache_read = 11;
   optional double price_cache_write = 12;
-  string auth = 13;            // credential mechanism: "" | "api-key" | "oauth" (spec §13)
+  string auth = 13;            // credential mechanism: "" | "api-key" | "oauth"
 }
 
-// UpsertModel adds or replaces a logical model backend (spec §18.2). The change
+// UpsertModel adds or replaces a logical model backend. The change
 // takes effect on the next turn/spawn; persist=true also writes ycc.toml.
 message UpsertModelRequest {
   ModelConfig model = 1;
@@ -324,8 +323,8 @@ message RemoveModelResponse {}
 message GetModelConfigRequest { string name = 1; }
 message GetModelConfigResponse { ModelConfig model = 1; }
 
-// DiscoverModels lists the model ids available from a backend connection (spec
-// §13) so the connection form can offer them for selection. base_url + key_env
+// DiscoverModels lists the model ids available from a backend connection so the
+// connection form can offer them for selection. base_url + key_env
 // describe the connection to probe (the key value never crosses the wire — the
 // daemon resolves key_env locally). On a discovery failure the daemon falls back
 // to curated defaults and sets from_network=false with a human-readable note.
@@ -341,7 +340,7 @@ message DiscoverModelsResponse {
 }
 
 
-// SetRoleConfig reassigns per-role logical models (spec §13, §18.2). Empty
+// SetRoleConfig reassigns per-role logical models. Empty
 // coordinator/implementer leaves that role unchanged; an empty reviewers list
 // leaves reviewers unchanged. The assignment is persisted as the default (roles
 // in ycc.toml) so it survives a restart. When session_id names a live session the
@@ -375,7 +374,7 @@ message SetWorkImplementationRequest {
 }
 message SetWorkImplementationResponse {}
 
-// Review tiers (spec §13.1): list/edit the named review-intensity tiers and the
+// Review tiers: list/edit the named review-intensity tiers and the
 // default tier. Tiers are stored under [reviews] in ycc.toml; the built-in
 // simple/single-opus/high-powered tiers always exist and may be overridden by a
 // same-named configured tier.
@@ -433,7 +432,7 @@ message RemoveReviewTierResponse {}
 message SetReviewDefaultRequest { string name = 1; }
 message SetReviewDefaultResponse {}
 
-// Backlog browser (spec §18.5): read-only RPCs that expose the durable backlog
+// Backlog browser: read-only RPCs that expose the durable backlog
 // (internal/docs Store) so clients can list and inspect tasks independent of any
 // agent session.
 message ListBacklogRequest {
@@ -469,7 +468,7 @@ message TaskDetail {
 }
 message GetTaskResponse { TaskDetail task = 1; }
 
-// Backlog grooming (spec §18.5, task 0099): direct mutation of a task from the
+// Backlog grooming: direct mutation of a task from the
 // browser. Unset optional fields are left untouched; a request with NO mutation
 // fields set is a valid "refresh" that re-reads the task file (used after
 // hand-edits in $EDITOR).
@@ -482,7 +481,7 @@ message UpdateTaskRequest {
 }
 message UpdateTaskResponse { TaskDetail task = 1; }
 
-// CreateTask adds a new task to the backlog (task 0143). It mirrors the
+// CreateTask adds a new task to the backlog. It mirrors the
 // docs.Store.Create path used by the capture agent, composing the canonical
 // "## Description / ## Acceptance criteria / ## Work log" scaffold around the
 // supplied body. Used by `ycc task add` when a daemon is available.
@@ -496,7 +495,7 @@ message CreateTaskRequest {
 }
 message CreateTaskResponse { TaskDetail task = 1; }
 
-// Plan library (reusable runbooks, task 0020/0077): read-only access to the
+// Plan library (reusable runbooks): read-only access to the
 // in-repo plans/*.md so clients can browse and view saved plans.
 message ListPlansRequest { string project = 1; }
 message PlanSummary {
@@ -515,7 +514,7 @@ message GetPlanResponse {
   string content = 3;
 }
 
-// Project memory (spec §6.5): read-only access to memory.md — the advisory
+// Project memory: read-only access to memory.md — the advisory
 // operational notes agents record across sessions — so clients can view what
 // the agents have learned about working on the project.
 message GetMemoryRequest {
@@ -526,7 +525,7 @@ message GetMemoryResponse {
   string path = 2;    // absolute path to memory.md
 }
 
-// Quick-add backlog capture (spec §18.2, task 0016): a TUI overlay lets the user
+// Quick-add backlog capture: a TUI overlay lets the user
 // quick-add a backlog item mid-session WITHOUT disturbing the running session.
 // The daemon runs a lightweight, off-stream capture agent that turns the
 // description into a structured task via create_task. The agent may ask ONE
@@ -539,7 +538,7 @@ message CaptureBacklogItemRequest {
   string prior_answer = 4;   // the user's answer to that question
 }
 
-// Usage/cost breakdown (spec §20.3, §20.5): the daemon scans a workspace's
+// Usage/cost breakdown: the daemon scans a workspace's
 // session event logs, joins per-turn usage with task focus and per-model
 // pricing, and returns a structured breakdown grouped by task × model × day so
 // non-CLI clients (TUI/phone) can render it identically to `ycc cost`.
@@ -570,7 +569,7 @@ message GetUsageResponse {
   string workspace = 3;
 }
 
-// Provider-side subscription allowance (spec §20.5). This is intentionally
+// Provider-side subscription allowance. This is intentionally
 // separate from GetUsage: it is shared account quota, not ycc-local token spend.
 // No credential material crosses this boundary.
 message GetSubscriptionUsageRequest {
@@ -596,7 +595,7 @@ message GetSubscriptionUsageResponse {
   repeated SubscriptionUsageAccount accounts = 1;
 }
 
-// Spend guard budget caps (task 0137, spec §20.6). GetBudget returns the
+// Spend guard budget caps. GetBudget returns the
 // configured session and loop caps so the TUI work-loop driver can enforce the
 // per-loop-run cap client-side (session caps are enforced daemon-side). Every
 // field is 0 when unset (unlimited); a cost cap is in US dollars, a token cap
@@ -610,7 +609,7 @@ message GetBudgetResponse {
 }
 
 // Notify routes a client-originated push notification through the daemon-side
-// notifier (task 0142). It exists so the client-driven work-loop can emit its
+// notifier. It exists so the client-driven work-loop can emit its
 // completion digest via the same best-effort webhook channel the daemon uses for
 // question/idle/error/blocked events. delivered is false when the daemon has no
 // notifier configured or the kind is muted.
@@ -622,14 +621,10 @@ message NotifyRequest {
 }
 message NotifyResponse { bool delivered = 1; }
 
-// Daemon-side work loop (task 0179, spec §9/§20.6). The unattended backlog-drain
-// driver moved from the client into the daemon: it starts fresh unattended `work`
-// sessions one after another, enforces the no-progress guard and per-loop budget
-// caps daemon-side, and accumulates the end-of-batch digest — so a loop survives
-// client disconnects and any client can start/observe/stop it via plain RPCs
-// (spec §14, no separate facade). Real-time loop-lifecycle streaming is
-// intentionally deferred (task 0195); GetWorkLoop polling + Subscribe on
-// current_session_id satisfies "observe".
+// The daemon-owned unattended backlog drain starts fresh `work` sessions one
+// after another, enforces the no-progress guard and per-loop budget caps, and
+// accumulates the end-of-batch digest. It survives client disconnects and clients
+// observe it through GetWorkLoop plus Subscribe on current_session_id.
 
 // WorkLoopDigestTask is one task row in a finished loop's batch digest, mirroring
 // the client digest surface: how the task changed plus its rolled-up commit sha,
@@ -680,7 +675,7 @@ message WorkLoopInfo {
   string wait_kind = 17;   // provider failure kind; empty unless waiting
 }
 
-// StartWorkLoop starts an unattended work loop for a project (spec §9). It fails
+// StartWorkLoop starts an unattended work loop for a project. It fails
 // (FailedPrecondition) if a loop is already running/waiting/stopping for that workspace.
 message StartWorkLoopRequest { string project = 1; }
 message StartWorkLoopResponse { WorkLoopInfo loop = 1; }
@@ -697,7 +692,7 @@ message StopWorkLoopResponse { WorkLoopInfo loop = 1; }
 message GetWorkLoopRequest { string project = 1; }
 message GetWorkLoopResponse { WorkLoopInfo loop = 1; }
 
-// Parallel workstreams (docs/design/parallel-workstreams.md §5–§8): a workstream
+// A parallel workstream
 // is a linked git worktree + branch plus the `work` session scoped to it, tracked
 // as a child of a project. WorkstreamInfo mirrors workstream.Workstream.
 message WorkstreamInfo {
@@ -720,7 +715,7 @@ message WorkstreamInfo {
 }
 
 // SpawnWorkstream creates a worktree + branch off the project's base and starts a
-// `work` session inside it (design §5, §8). The session_id for Subscribe rides
+// `work` session inside it. The session_id for Subscribe rides
 // inside the returned WorkstreamInfo.
 message SpawnWorkstreamRequest {
   string project = 1;           // parent project name (required)
@@ -736,7 +731,7 @@ message ListWorkstreamsRequest { string project = 1; }
 message ListWorkstreamsResponse { repeated WorkstreamInfo workstreams = 1; }
 
 // PreviewMerge trial-merges a workstream's branch into its project's current base
-// WITHOUT mutating anything (design §6 step 1): clean reports whether the merge
+// WITHOUT mutating anything: clean reports whether the merge
 // applies without conflict, conflicts lists the conflicted paths otherwise, and
 // diff holds the integrated diff preview when clean.
 message PreviewMergeRequest { string workstream_id = 1; }
@@ -746,15 +741,13 @@ message PreviewMergeResponse {
   string diff = 3;
 }
 
-// MergeWorkstream integrates a workstream's branch back to base with the
-// conflict-aware, review-gated flow (design §6). The design §8 sketch calls the
-// second field "strategy", but that sketch is explicitly non-final; the manager's
-// real gate is `accept`: a clean trial merge returns needs_accept + the integrated
-// diff (nothing mutated) until accept=true. A conflict returns the
-// conflicted paths with base untouched and the worktree kept.
+// MergeWorkstream integrates a workstream's branch back to base through an
+// explicit accept gate. A clean trial merge returns needs_accept and the
+// integrated diff without mutating the base until accept=true. A conflict returns
+// the conflicted paths with the base untouched and the worktree kept.
 message MergeWorkstreamRequest {
   string workstream_id = 1;
-  bool accept = 2; // accept a review-gated clean merge (design §6 step 2)
+  bool accept = 2; // accept a review-gated clean merge
 }
 message MergeWorkstreamResponse {
   bool merged = 1;            // branch integrated (commit holds the merge sha)
@@ -765,31 +758,28 @@ message MergeWorkstreamResponse {
 }
 
 // DiscardWorkstream abandons a workstream without merging: it stops the session,
-// cleans up the worktree + branch, and marks the registry entry discarded
-// (design §6).
+// cleans up the worktree + branch, and marks the registry entry discarded.
 message DiscardWorkstreamRequest { string workstream_id = 1; }
 message DiscardWorkstreamResponse {}
 
 // RetryIntegration re-queues a ready or needs-attention workstream for automatic
-// integration (docs/design/workstream-integration.md §7). Repeated calls while
+// integration. Repeated calls while
 // already queued are idempotent.
 message RetryIntegrationRequest { string workstream_id = 1; }
 message RetryIntegrationResponse { WorkstreamInfo workstream = 1; }
 
-// SessionService is the daemon's RPC surface (spec §12). M1 implements the core
-// four; mode/question RPCs arrive in later milestones.
 service SessionService {
   rpc ListModes(ListModesRequest) returns (ListModesResponse);
   rpc StartSession(StartSessionRequest) returns (StartSessionResponse);
   rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
   // ListSessionHistory enumerates all sessions for a project (live + persisted
-  // on-disk logs), most-recent first (spec §18.6). ListSessions stays live-only.
+  // on-disk logs), most-recent first. ListSessions stays live-only.
   rpc ListSessionHistory(ListSessionHistoryRequest) returns (ListSessionHistoryResponse);
   // GetSessionTranscript returns a session's full event log (live or persisted)
-  // for the read-only transcript drill-in (spec §18.6).
+  // for the read-only transcript drill-in.
   rpc GetSessionTranscript(GetSessionTranscriptRequest) returns (GetSessionTranscriptResponse);
   // GetCommitDiff returns a commit's `git show` diff so the transcript can drill
-  // into what an agent committed from a commit_made row (task 0140, spec §18.6).
+  // into what an agent committed from a commit_made row.
   rpc GetCommitDiff(GetCommitDiffRequest) returns (GetCommitDiffResponse);
   rpc Subscribe(SubscribeRequest) returns (stream Event);
   rpc SendInput(SendInputRequest) returns (SendInputResponse);
@@ -797,7 +787,7 @@ service SessionService {
   // AnswerQuestions replies to a batch of questions posed in one ask_user call.
   rpc AnswerQuestions(AnswerQuestionsRequest) returns (AnswerQuestionsResponse);
 
-  // Interrupt & steer (spec §18.7): gracefully pause a running session at its
+  // Interrupt & steer: gracefully pause a running session at its
   // next safe checkpoint, then continue the same loop (optionally after a
   // steered SendInput correction). Distinct from the hard Stop/terminate.
   rpc Interrupt(InterruptRequest) returns (InterruptResponse);
@@ -805,63 +795,63 @@ service SessionService {
 
   // StopSession hard-terminates a session: cancels its agent loop, closes its
   // event log, and removes it from the daemon (no resume). Distinct from
-  // Interrupt's graceful pause (spec §12, §18.7).
+  // Interrupt's graceful pause.
   rpc StopSession(StopSessionRequest) returns (StopSessionResponse);
 
   // ResumeSession re-opens a persisted session on its existing event log
-  // (reconstructs loop history; "resume = replay", spec §4.5/§18.6). Idempotent
+  // (reconstructs loop history; "resume = replay"). Idempotent
   // if the session is already live.
   rpc ResumeSession(ResumeSessionRequest) returns (ResumeSessionResponse);
 
-  // Projects — persistent multi-project daemon (spec §3.1).
+  // Projects — persistent multi-project daemon.
   rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
   rpc AddProject(AddProjectRequest) returns (AddProjectResponse);
   rpc RemoveProject(RemoveProjectRequest) returns (RemoveProjectResponse);
   rpc RenameProject(RenameProjectRequest) returns (RenameProjectResponse);
   // ListDir lists subdirectories of a daemon-host path (directories only) so
-  // remote clients can browse to a workspace for AddProject (task 0193).
+  // remote clients can browse to a workspace for AddProject.
   rpc ListDir(ListDirRequest) returns (ListDirResponse);
 
-  // Settings overlay (spec §18.2): enumerate models and change per-role model
+  // Settings overlay: enumerate models and change per-role model
   // assignment mid-flight.
   rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
   rpc SetRoleConfig(SetRoleConfigRequest) returns (SetRoleConfigResponse);
   rpc SetThinking(SetThinkingRequest) returns (SetThinkingResponse);
   rpc SetWorkImplementation(SetWorkImplementationRequest) returns (SetWorkImplementationResponse);
 
-  // Model backends (spec §18.2): add/edit/remove a logical model backend at
+  // Model backends: add/edit/remove a logical model backend at
   // runtime; optionally persisted to ycc.toml.
   rpc UpsertModel(UpsertModelRequest) returns (UpsertModelResponse);
   rpc RemoveModel(RemoveModelRequest) returns (RemoveModelResponse);
   rpc GetModelConfig(GetModelConfigRequest) returns (GetModelConfigResponse);
   rpc DiscoverModels(DiscoverModelsRequest) returns (DiscoverModelsResponse);
 
-  // Review tiers (spec §13.1): list the effective tiers and edit the configured
+  // Review tiers: list the effective tiers and edit the configured
   // ones (plus the default tier) at runtime; always persisted to ycc.toml.
   rpc ListReviewTiers(ListReviewTiersRequest) returns (ListReviewTiersResponse);
   rpc UpsertReviewTier(UpsertReviewTierRequest) returns (UpsertReviewTierResponse);
   rpc RemoveReviewTier(RemoveReviewTierRequest) returns (RemoveReviewTierResponse);
   rpc SetReviewDefault(SetReviewDefaultRequest) returns (SetReviewDefaultResponse);
 
-  // Backlog browser (spec §18.5): read-only access to the durable backlog.
+  // Backlog browser: read-only access to the durable backlog.
   rpc ListBacklog(ListBacklogRequest) returns (ListBacklogResponse);
   rpc GetTask(GetTaskRequest) returns (GetTaskResponse);
-  // UpdateTask grooms a backlog task in place (spec §18.5, task 0099): change
+  // UpdateTask grooms a backlog task in place: change
   // status/priority/title, or (no mutation fields) refresh + regenerate the index.
   rpc UpdateTask(UpdateTaskRequest) returns (UpdateTaskResponse);
-  // CreateTask adds a new task to the backlog (task 0143): compose the canonical
+  // CreateTask adds a new task to the backlog: compose the canonical
   // task scaffold around a description and assign the next id. Used by
   // `ycc task add` when a daemon is available.
   rpc CreateTask(CreateTaskRequest) returns (CreateTaskResponse);
-  // Plan library (reusable runbooks, task 0020/0077): read-only access to the
+  // Plan library (reusable runbooks): read-only access to the
   // in-repo plans/*.md so clients can browse and view saved plans.
   rpc ListPlans(ListPlansRequest) returns (ListPlansResponse);
   rpc GetPlan(GetPlanRequest) returns (GetPlanResponse);
-  // Project memory (spec §6.5): read-only view of memory.md, the agents'
+  // Project memory: read-only view of memory.md, the agents'
   // advisory operational notes for the project.
   rpc GetMemory(GetMemoryRequest) returns (GetMemoryResponse);
 
-  // Quick-add backlog capture (spec §18.2, task 0016): run a lightweight,
+  // Quick-add backlog capture: run a lightweight,
   // off-stream capture agent that turns a natural-language description into a
   // backlog task without disturbing the running session. May ask ONE clarifying
   // question, carried back via prior_question/prior_answer.
@@ -872,30 +862,29 @@ service SessionService {
   // success (or {error} on failure).
   rpc CaptureBacklogItem(CaptureBacklogItemRequest) returns (stream Event);
 
-  // Usage/cost breakdown (spec §20): aggregated, priced token usage by task ×
+  // Usage/cost breakdown: aggregated, priced token usage by task ×
   // model × day so clients can render the cost breakdown.
   rpc GetUsage(GetUsageRequest) returns (GetUsageResponse);
-  // Best-effort provider-side subscription allowance (spec §20.5).
+  // Best-effort provider-side subscription allowance.
   rpc GetSubscriptionUsage(GetSubscriptionUsageRequest) returns (GetSubscriptionUsageResponse);
 
-  // Spend guard (task 0137, spec §20.6): return the configured budget caps so the
+  // Spend guard: return the configured budget caps so the
   // TUI work-loop driver can enforce the per-loop-run cap client-side.
   rpc GetBudget(GetBudgetRequest) returns (GetBudgetResponse);
 
-  // Push notifications (task 0142): route a client-originated notification (the
+  // Push notifications: route a client-originated notification (the
   // work-loop completion digest) through the daemon-side webhook notifier.
   rpc Notify(NotifyRequest) returns (NotifyResponse);
 
-  // Daemon-side work loop (task 0179, spec §9/§20.6): start/stop/observe the
+  // Daemon-side work loop: start/stop/observe the
   // unattended backlog-drain loop. The loop lives in the daemon, so it survives
   // client disconnects; any client can start it, poll GetWorkLoop for state +
   // digest, Subscribe to the current session, and gracefully StopWorkLoop it.
-  // Real-time loop-lifecycle streaming is deferred (task 0195).
   rpc StartWorkLoop(StartWorkLoopRequest) returns (StartWorkLoopResponse);
   rpc StopWorkLoop(StopWorkLoopRequest) returns (StopWorkLoopResponse);
   rpc GetWorkLoop(GetWorkLoopRequest) returns (GetWorkLoopResponse);
 
-  // Parallel workstreams (docs/design/parallel-workstreams.md §6, §8): spawn a
+  // Spawn a parallel workstream:
   // worktree+session, list them, preview/merge a branch back to base with the
   // conflict-aware review gate, or discard one. Subscribe(session_id) is reused
   // verbatim for per-workstream event streaming (the session_id rides inside

@@ -12,7 +12,7 @@ import (
 )
 
 // MergePreview is the read-only result of trial-merging a workstream's branch
-// into its project's current base (design §6 step 1). Clean reports whether the
+// into its project's current base. Clean reports whether the
 // merge would apply without conflict; Conflicts lists the conflicted paths when
 // not clean; Diff is the integrated diff preview (only set when clean).
 type MergePreview struct {
@@ -29,7 +29,7 @@ type MergePreview struct {
 //     Diff holds the integrated diff to
 //     review. Nothing was mutated.
 //   - Conflicts: the merge conflicted; the base branch is untouched and the
-//     worktree is kept so the conflict can be resolved (design §6).
+//     worktree is kept so the conflict can be resolved.
 type MergeOutcome struct {
 	Merged      bool
 	Commit      string
@@ -39,7 +39,7 @@ type MergeOutcome struct {
 }
 
 // emitWorkstreamEvent records a workstream lifecycle event on the workstream's
-// own session stream (design §8). If the session is live in the manager it uses
+// own session stream. If the session is live in the manager it uses
 // the live emitter (sharing the single sequence authority); otherwise it opens
 // the durable log, appends, and closes it. Opening a live session's log a second
 // time would fork the sequence, so that case is explicitly avoided.
@@ -81,8 +81,7 @@ func (m *Manager) primaryRepo(ws workstream.Workstream) (*git.Repo, error) {
 }
 
 // workstreamBaseBranch resolves and validates the local branch integration must
-// advance. The config/default fallback keeps registry entries written before
-// BaseBranch was introduced mergeable.
+// advance. Registry entries without BaseBranch use the config/default fallback.
 func (m *Manager) workstreamBaseBranch(repo *git.Repo, ws workstream.Workstream) (string, error) {
 	base := ws.BaseBranch
 	if base == "" {
@@ -106,8 +105,8 @@ func (m *Manager) workstreamBaseBranch(repo *git.Repo, ws workstream.Workstream)
 }
 
 // WorkstreamSessionStatus reports the live status of a workstream's session as a
-// string (running | idle | paused | stopped | error), for the Workstreams panel
-// (design §8). It returns the in-memory status when the session is live; when
+// string (running | idle | paused | stopped | error), for the Workstreams panel.
+// It returns the in-memory status when the session is live; when
 // the session is not live it returns "stopped" for a session that exists on
 // disk, and "" (unknown) when there is no session at all.
 func (m *Manager) WorkstreamSessionStatus(ws workstream.Workstream) string {
@@ -138,7 +137,7 @@ func commitCount(repo *git.Repo, ws workstream.Workstream) int {
 }
 
 // WorkstreamCommitCount reports how many commits the workstream's branch has
-// added since its base commit (design §8). Best-effort: it returns 0 on any git
+// added since its base commit. Best-effort: it returns 0 on any git
 // error so a transient failure never blocks listing.
 func (m *Manager) WorkstreamCommitCount(ws workstream.Workstream) int {
 	if ws.Branch == "" || ws.BaseCommit == "" {
@@ -181,7 +180,7 @@ func (m *Manager) WorkstreamCommitCounts(wss []workstream.Workstream) map[string
 }
 
 // PreviewWorkstreamMerge trial-merges a workstream's branch into its project's
-// current base without mutating anything (design §6 step 1). On a clean trial it
+// current base without mutating anything. On a clean trial it
 // also computes the integrated diff. It emits no events and changes no state.
 func (m *Manager) PreviewWorkstreamMerge(id string) (MergePreview, error) {
 	ws, ok := m.workstreams.Get(id)
@@ -214,8 +213,8 @@ func (m *Manager) PreviewWorkstreamMerge(id string) (MergePreview, error) {
 }
 
 // MergeWorkstream integrates a completed workstream's branch back to its
-// project's base with an explicit, conflict-aware, review-gated flow (design
-// §6). The whole operation is serialized across workstreams so each merge sees
+// project's base with an explicit, conflict-aware, review-gated flow. The whole
+// operation is serialized across workstreams so each merge sees
 // the previous one's changes (sequential reconciliation).
 //
 // The outcome depends on the trial merge and explicit acceptance:
@@ -317,7 +316,7 @@ func (m *Manager) MergeWorkstream(id string, accept bool) (MergeOutcome, error) 
 // surfaceConflict records a workstream_conflict event and returns the conflict
 // outcome. The base branch is left untouched (Merge/TrialMerge already restored
 // it) and the worktree + active registry status are preserved so the conflict
-// can be resolved in place or handed off (design §6).
+// can be resolved in place or handed off.
 func (m *Manager) surfaceConflict(ws workstream.Workstream, conflicts []string) MergeOutcome {
 	m.emitWorkstreamEvent(ws, event.WorkstreamConflict, map[string]any{
 		"workstream": ws.ID,
@@ -415,7 +414,7 @@ func copyFile(src, dst string) error {
 }
 
 // cleanupWorktree tears down a workstream's worktree + branch after a successful
-// merge or a discard (design §5 step 4). Every git step is best-effort: a failure
+// merge or a discard. Every git step is best-effort: a failure
 // to remove a tree/branch must not block the lifecycle transition.
 func (m *Manager) cleanupWorktree(repo *git.Repo, ws workstream.Workstream) {
 	if ws.WorktreePath != "" {
@@ -438,8 +437,7 @@ func (m *Manager) cleanupWorktree(repo *git.Repo, ws workstream.Workstream) {
 // DiscardWorkstream abandons a workstream without merging: it records a
 // workstream_discarded event, stops the session, preserves the session log into
 // the primary workspace (so its transcript stays viewable), cleans up the
-// worktree + branch, and marks the registry entry discarded (design §6, §5 step
-// 4). It is allowed for active or stale workstreams; git cleanup is best-effort
+// worktree + branch, and marks the registry entry discarded. It is allowed for active or stale workstreams; git cleanup is best-effort
 // so a stale entry whose tree is already gone still transitions cleanly.
 func (m *Manager) DiscardWorkstream(id string) error {
 	m.mergeMu.Lock()

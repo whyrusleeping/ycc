@@ -18,7 +18,7 @@ public struct ServerProfile: Identifiable, Codable, Equatable, Sendable {
 
 /// Persistent connection settings: saved server profiles (name + base URL) in
 /// `UserDefaults`, one active at a time, with the per-profile bearer token in
-/// the Keychain (docs/design/ios-client.md §5). Observable so SwiftUI reacts to
+/// the Keychain. Observable so SwiftUI reacts to
 /// profile/active changes.
 @Observable
 public final class ConnectionStore {

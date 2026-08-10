@@ -1,4 +1,4 @@
-// Package event defines the session event model. Per spec §5, the event log is
+// Package event defines the session event model. The event log is
 // the source of truth for a session; everything else is a projection over it.
 //
 // Sequence numbers are assigned by the Recorder (the Log, or the spike's stdout
@@ -22,7 +22,7 @@ const (
 	ModeChanged    Type = "mode_changed"
 	UserInput      Type = "user_input"
 	// UserInputDelivered marks the safe checkpoint at which a queued mid-run
-	// user_input actually entered the conversation (steer-by-default, spec §18.7).
+	// user_input actually entered the conversation (steer-by-default).
 	// A user_input echoed while a run was in flight carries queued:true and is not
 	// yet part of the model's view; the matching UserInputDelivered event
 	// (data: { seq: <queued echo seq>, text }) records where it was appended, so
@@ -30,7 +30,7 @@ const (
 	// TUI can render the echo as "queued" until it is delivered.
 	UserInputDelivered Type = "user_input_delivered"
 	ModelTurn          Type = "model_turn"
-	// Thinking carries a model's reasoning summary for a turn (spec §7, §18).
+	// Thinking carries a model's reasoning summary for a turn.
 	// Emitted before the corresponding ModelTurn when non-empty.
 	Thinking     Type = "thinking"
 	ToolCall     Type = "tool_call"
@@ -41,14 +41,14 @@ const (
 	// used when a stale preset-model binding safely falls back to the default.
 	SessionNotice Type = "session_notice"
 	// SessionStopped is an informational marker that a session's live process
-	// was terminated via StopSession (spec §12): its agent loop was cancelled and
+	// was terminated via StopSession: its agent loop was cancelled and
 	// its log closed. It does NOT prevent resume — reopening replays the durable
-	// log (§18.6) regardless of this marker.
+	// log regardless of this marker.
 	SessionStopped   Type = "session_stopped"
 	Narration        Type = "log" // free-text narration line for the UI
 	SubagentSpawned  Type = "subagent_spawned"
 	SubagentFinished Type = "subagent_finished"
-	// Background jobs (docs/design/async-jobs.md §4). JobStarted marks a job
+	// Background jobs. JobStarted marks a job
 	// entering the registry (data: { id, kind, label }); JobFinished marks it
 	// reaching a terminal state (data: { id, kind, label, status, tail }). Both
 	// are tagged with the owning actor. JobNotified records a finished-job final
@@ -60,7 +60,7 @@ const (
 	JobNotified  Type = "job_notified"
 	PlanProposed Type = "plan_proposed"
 	// ReviewTierSelected records which review tier the coordinator chose for a
-	// change (spec §13), so tier selection is auditable in the work log/events.
+	// change, so tier selection is auditable in the work log/events.
 	ReviewTierSelected Type = "review_tier_selected"
 	ReviewSubmitted    Type = "review_submitted"
 	DecisionMade       Type = "decision_made"
@@ -69,26 +69,26 @@ const (
 	QuestionAsked      Type = "question_asked"
 	QuestionAnswered   Type = "question_answered"
 	// TaskFocus durably links a session to the backlog task it is working on so
-	// usage can be attributed "by backlog task" (spec §20.2). Emitted when focus
+	// usage can be attributed "by backlog task". Emitted when focus
 	// is established (data: { task: "0007", title?: "…" }); subsequent
 	// model_turns are attributed to the most recent focus by the projection.
 	TaskFocus Type = "task_focus"
-	// Settings overlay (spec §18.2): mid-session config changes recorded in the log.
+	// Settings overlay: mid-session config changes recorded in the log.
 	RoleConfigChanged    Type = "role_config_changed"
 	ThinkingLevelChanged Type = "thinking_level_changed"
-	// Interrupt & steer (spec §5.2, §18.7): a running agent is gracefully paused
+	// Interrupt & steer: a running agent is gracefully paused
 	// at a safe checkpoint (Interrupted ⇒ status paused) and later continues on
 	// the same loop/conversation (Resumed ⇒ status running), optionally after a
 	// steered-in correction.
 	Interrupted Type = "interrupted"
 	Resumed     Type = "resumed"
 	// SessionReopened is an informational marker emitted when a persisted session
-	// is re-opened ("resume = replay", spec §4.5/§18.6): its coordinator is
+	// is re-opened ("resume = replay"): its coordinator is
 	// re-instantiated on the EXISTING event log with history reconstructed from
 	// the log, and new activity appends to the same continuous stream. It does not
 	// change status (see Reduce).
 	SessionReopened Type = "session_reopened"
-	// Parallel workstreams lifecycle (docs/design/parallel-workstreams.md §6, §8).
+	// Parallel workstreams lifecycle.
 	// These are recorded on the workstream's own session stream so the merge flow
 	// is auditable in the log and projectable by the reducer.
 	//
@@ -115,20 +115,20 @@ const (
 	WorkstreamDiscarded Type = "workstream_discarded"
 	// TurnDelta carries a partial chunk of a model's in-progress turn output,
 	// streamed to live subscribers as a transient (non-persisted) event so the
-	// UI can tail model output incrementally (spec §5, task 0114). It is only
+	// UI can tail model output incrementally. It is only
 	// ever emitted via Log.Broadcast: it carries Transient=true and Seq=0, is
 	// never written to events.jsonl / the in-memory replay / transcripts, and
 	// the durable ModelTurn event remains the source of truth for the turn.
 	TurnDelta Type = "turn_delta"
 	// Retry marks an in-progress retry of a failed LLM API call: the engine loop
 	// hit a transient failure (rate limit / overload / network) and is backing
-	// off before the next attempt (spec §7.2). Like TurnDelta it is transient —
+	// off before the next attempt. Like TurnDelta it is transient —
 	// only ever emitted via Log.Broadcast (Transient=true, Seq=0), never
 	// persisted — so live UIs can show the wait while the durable log stays
 	// quiet unless the turn ultimately fails (which records a session_error).
 	// Data: { attempt, max_attempts, delay_ms, kind, status, msg }.
 	Retry Type = "retry"
-	// Budget spend guard (task 0137, spec §20.6). BudgetWarning marks a session
+	// Budget spend guard. BudgetWarning marks a session
 	// crossing ~80% of a configured cost/token cap (data: { tokens, token_cap,
 	// cost, cost_cap, pct }); it fires at most once per session. BudgetExceeded
 	// marks a cap being crossed (same data plus an "action" field): action
@@ -144,7 +144,7 @@ const (
 // ThinkingBlock mirrors gollama.ThinkingBlock for lossless serialization in the
 // event log: it lets a model_turn carry the signed/redacted reasoning blocks so
 // the conversation can be replayed verbatim on reopen (Anthropic verifies these
-// signatures, spec §5.1). For a normal block Thinking holds the summary text and
+// signatures). For a normal block Thinking holds the summary text and
 // Signature the verification signature; for a redacted block Redacted holds the
 // opaque data payload.
 type ThinkingBlock struct {
@@ -154,7 +154,7 @@ type ThinkingBlock struct {
 }
 
 // Usage is the per-turn token accounting attached to a model_turn event's data
-// (spec §20.1, cost tracking). It is the source of truth for usage in the JSONL
+// (cost tracking). It is the source of truth for usage in the JSONL
 // log: every field serializes (zeros for backends that don't report usage), so a
 // turn always carries a complete, attributable breakdown. The classes are
 // DISJOINT: Input is the fresh (uncached) prompt tokens, Output the completion
@@ -184,7 +184,7 @@ type Event struct {
 	// subscribers but never persisted: it carries Seq=0, is never written to
 	// events.jsonl, never appended to the in-memory replay slice, and is invisible
 	// to Snapshot / ReadLog / late subscribers. Used for streaming UI hints such
-	// as turn_delta (spec §5, task 0114). Subscribers must tolerate seq-less
+	// as turn_delta. Subscribers must tolerate seq-less
 	// events and must not use them to advance a resume cursor.
 	Transient bool `json:"transient,omitempty"`
 }
@@ -197,7 +197,7 @@ type Recorder interface {
 }
 
 // Broadcaster is the optional capability of a Recorder that can deliver
-// transient, non-persisted events to live subscribers (spec §5, task 0114).
+// transient, non-persisted events to live subscribers.
 // *event.Log satisfies it; recorders without a live subscriber notion (e.g.
 // StdoutRecorder, FuncRecorder) do not, so streaming hints degrade to no-ops.
 type Broadcaster interface {
@@ -279,8 +279,8 @@ func (e *Emitter) CanBroadcast() bool {
 	return ok && b != nil
 }
 
-// StdoutRecorder renders events to a writer for the M0 spike, assigning its own
-// sequence. It is terse and human-facing; the JSONL Log is the real store.
+// StdoutRecorder renders events tersely for humans and assigns its own sequence.
+// The JSONL Log remains the persistent store.
 type StdoutRecorder struct {
 	mu  sync.Mutex
 	seq int

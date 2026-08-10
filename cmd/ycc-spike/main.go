@@ -1,7 +1,6 @@
-// Command ycc-spike is the M0 proof: a single agent, backed by any gollama
-// backend, that completes a coding task in a workspace directory using the
-// worker tools. It is throwaway scaffolding — the real entrypoints are yccd and
-// ycc (M1+) — but it exercises the engine, tools, and event packages end to end.
+// Command ycc-spike runs a single gollama-backed coding agent in a workspace
+// using the worker tools. It exercises the engine, tools, and event packages end
+// to end without the main ycc entrypoint.
 //
 // Usage:
 //

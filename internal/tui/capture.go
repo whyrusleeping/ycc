@@ -14,7 +14,7 @@ import (
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 )
 
-// openCapture enters the quick-add backlog capture overlay (task 0016), resetting
+// openCapture enters the quick-add backlog capture overlay, resetting
 // it to the "describe" stage with a focused, empty input.
 func (m *model) openCapture() {
 	m.capture = true
@@ -152,7 +152,7 @@ func (m model) captureView() string {
 	case 2:
 		b.WriteString(selStyle.Render(m.captureMsg) + "\n")
 	}
-	// Stream the capture agent's action log live (task 0049): show the last few
+	// Stream the capture agent's action log live: show the last few
 	// events so the user sees progress instead of a blank wait.
 	if len(m.captureLog) > 0 {
 		b.WriteString("\n")
@@ -181,7 +181,7 @@ func (m model) captureView() string {
 		}
 	}
 	if m.captureBusy {
-		// Animate the same activity spinner (task 0062) while the capture RPC streams.
+		// Animate the same activity spinner while the capture RPC streams.
 		spin := dimStyle.Render("…")
 		if len(m.spin.Spinner.Frames) > 0 {
 			spin = m.spin.View()

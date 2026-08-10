@@ -16,7 +16,7 @@ import (
 )
 
 // fetchHistory loads the persisted session history for the previous-sessions
-// screen (spec §18.6), scoped to the current project.
+// screen, scoped to the current project.
 func (m model) fetchHistory() tea.Msg {
 	resp, err := m.client.ListSessionHistory(m.ctx, connect.NewRequest(&v1.ListSessionHistoryRequest{Project: m.project}))
 	if err != nil {
@@ -25,7 +25,7 @@ func (m model) fetchHistory() tea.Msg {
 	return historyMsg{sessions: resp.Msg.Sessions}
 }
 
-// updateHistory handles the session browser (spec §18.6): navigate the list of
+// updateHistory handles the session browser: navigate the list of
 // persisted + live sessions, Enter drills into a read-only replayed transcript,
 // `o` reopens the selected session via ResumeSession, `r` refreshes, Esc/q backs
 // out (transcript → list, list → menu).
@@ -58,7 +58,7 @@ func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
-		// While the search bar owns input (task 0116), keystrokes edit the query
+		// While the search bar owns input, keystrokes edit the query
 		// and incrementally re-jump the selection. Unconditional here (no input
 		// textarea to protect).
 		if m.searching {
@@ -149,7 +149,7 @@ func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "enter":
 			// Enter on a selected commit_made row drills into that commit's diff
-			// overlay (task 0140); otherwise it reopens the session (like `o`).
+			// overlay; otherwise it reopens the session (like `o`).
 			if m.selected >= 0 && m.selected < len(m.evs) && m.evs[m.selected].Type == "commit_made" {
 				ev := m.evs[m.selected]
 				if cmd := m.openCommitDiff(dataField(ev, "sha"), dataField(ev, "message")); cmd != nil {
@@ -211,7 +211,7 @@ func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // openHistModal opens the session browser as a read-only modal over the current
-// live session (task 0112). It reuses the shared history list/cursor but keeps
+// live session. It reuses the shared history list/cursor but keeps
 // the live session's event pipeline untouched. Callers should return
 // m.fetchHistory to populate the list.
 func (m *model) openHistModal() {
@@ -225,16 +225,16 @@ func (m *model) openHistModal() {
 }
 
 // updateHistoryModal handles the session browser when it is open as a modal over
-// a live session (task 0112). It mirrors updateHistory's navigation but is
+// a live session. It mirrors updateHistory's navigation but is
 // strictly read-only: there is no `o`/enter reopen (reopening over a live session
 // is a footgun). Transcripts scroll a separate viewport and support line-based
-// `/` search (n/N, esc) plus {}()<>[] jump-to-event keys (task 0119), so the live
+// `/` search (n/N, esc) plus {}()<>[] jump-to-event keys, so the live
 // session behind the modal is never disturbed.
 func (m model) updateHistoryModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Transcript drill-in: a read-only replayed view that scrolls its own viewport.
 	// It supports the same `/` search (n/N, esc) and {}()<>[] jump-to-event keys as
 	// the live transcript, but line-based over the rendered content so the live
-	// session behind the modal (m.evs/m.vp/search state) is never touched (0119).
+	// session behind the modal (m.evs/m.vp/search state) is never touched.
 	if m.histModalTranscript {
 		key, ok := msg.(tea.KeyMsg)
 		if !ok {
@@ -326,7 +326,7 @@ func (m model) updateHistoryModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "enter":
 			// Drill into a commit's diff when the current line is a commit_made
-			// event block (task 0140). Otherwise fall through to viewport handling.
+			// event block. Otherwise fall through to viewport handling.
 			for _, el := range m.histModalEventLines {
 				if el.line == m.histModalCurLine && el.typ == "commit_made" && el.idx >= 0 && el.idx < len(m.histModalEvents) {
 					ev := m.histModalEvents[el.idx]
@@ -377,10 +377,10 @@ func (m model) updateHistoryModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // refreshHistModalVP (re)sizes the modal session-browser transcript viewport and
-// loads a stateless render of the replayed events into it (task 0112). It never
+// loads a stateless render of the replayed events into it. It never
 // touches the live session's m.vp/m.evs. It also captures the rendered lines and
 // per-event start-line metadata used by the modal's line-based search/jump
-// navigation (task 0119).
+// navigation.
 func (m *model) refreshHistModalVP(events []*v1.Event) {
 	if !m.ready {
 		return
@@ -406,7 +406,7 @@ func (m *model) refreshHistModalVP(events []*v1.Event) {
 // histEventLine records, per VISIBLE event block in a modal transcript render,
 // the content line its block starts on plus its event Type — the metadata that
 // lets the {}()<>[] jump keys land on the right event without the live event
-// pipeline (task 0119).
+// pipeline.
 type histEventLine struct {
 	line int    // start content line of the event block
 	typ  string // event Type
@@ -415,7 +415,7 @@ type histEventLine struct {
 
 // renderTranscriptContent renders a replayed event log to a string using the same
 // pipeline as rebuild()/the live session view, WITHOUT mutating the live model
-// (task 0112). It works on a scratch copy of the model whose event state and
+// It works on a scratch copy of the model whose event state and
 // caches are freshly allocated, so renderBlock's cache mutations never leak into
 // the live session's shared maps.
 func (m model) renderTranscriptContent(events []*v1.Event) string {
@@ -426,7 +426,7 @@ func (m model) renderTranscriptContent(events []*v1.Event) string {
 // renderTranscript renders a replayed event log statelessly (like
 // renderTranscriptContent) and additionally returns the rendered content lines
 // and per-event start-line metadata used by the modal transcript's line-based
-// search + jump navigation (task 0119). It never mutates the live model.
+// search + jump navigation. It never mutates the live model.
 func (m model) renderTranscript(events []*v1.Event) (content string, lines []string, eventLines []histEventLine) {
 	scratch := m
 	scratch.evs = events
@@ -617,7 +617,7 @@ func (m *model) applyHistModalContent() {
 	m.histModalVP.SetYOffset(off)
 }
 
-// historyView renders the session browser (spec §18.6): a navigable list of
+// historyView renders the session browser: a navigable list of
 // persisted + live sessions, most-recent first, that can be inspected (read-only
 // transcript) or reopened. When a transcript is open it renders that instead.
 func (m model) historyView() string {
@@ -646,7 +646,7 @@ func (m model) historyView() string {
 
 // historyRows builds the session-browser list rows shared by the full-state
 // session browser (historyView) and the read-only modal variant (histModalView),
-// keeping the row format identical between them (task 0112).
+// keeping the row format identical between them.
 func (m model) historyRows() []browserRow {
 	// Clamp the title column so a row stays on a single physical line.
 	tw := 48
@@ -684,7 +684,7 @@ func (m model) historyRows() []browserRow {
 }
 
 // histModalView renders the read-only session browser modal shown over a live
-// session (task 0112). When a transcript is drilled into it shows that instead.
+// session. When a transcript is drilled into it shows that instead.
 // Unlike historyView it advertises no `o reopen` — browsing from a live session
 // is strictly read-only.
 func (m model) histModalView() string {
@@ -726,9 +726,8 @@ func (m model) histModalView() string {
 	return m.browserCard(b)
 }
 
-// transcriptView renders the read-only replayed transcript of a session (spec
-// §18.6): the same scrollable event viewport as the live session view, but with
-// no input box and read-only.
+// transcriptView renders the read-only replayed transcript of a session with the
+// same scrollable event viewport as the live view, but no input box.
 func (m model) transcriptView() string {
 	title := short(m.historyTransID)
 	if m.historyCursor < len(m.history) {
@@ -772,7 +771,7 @@ func historyWhen(s *v1.SessionSummary) string {
 }
 
 // histModalSearchBar renders the modal session-browser transcript's search-entry
-// line while `/` search is being typed (task 0119) — the line-based analogue of
+// line while `/` search is being typed — the line-based analogue of
 // searchBar, counting matching content lines rather than events.
 func (m model) histModalSearchBar() string {
 	total, cur := m.histSearchCount()

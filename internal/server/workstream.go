@@ -16,7 +16,7 @@ import (
 
 // toWorkstreamInfo converts a registry Workstream into its proto shape. The
 // session_id rides inside so a client can Subscribe(session_id) for the
-// workstream's live event stream (design §8).
+// workstream's live event stream.
 func toWorkstreamInfo(w workstream.Workstream) *v1.WorkstreamInfo {
 	return &v1.WorkstreamInfo{
 		Id:                 w.ID,
@@ -62,7 +62,7 @@ func workstreamError(err error) *connect.Error {
 }
 
 // SpawnWorkstream creates a linked worktree + branch off the project's base and
-// starts a `work` session inside it (design §5, §8). The session_id for
+// starts a `work` session inside it. The session_id for
 // Subscribe rides inside the returned WorkstreamInfo.
 func (s *Server) SpawnWorkstream(_ context.Context, req *connect.Request[v1.SpawnWorkstreamRequest]) (*connect.Response[v1.SpawnWorkstreamResponse], error) {
 	m := req.Msg
@@ -82,7 +82,7 @@ func (s *Server) SpawnWorkstream(_ context.Context, req *connect.Request[v1.Spaw
 }
 
 // ListWorkstreams returns the workstreams for a project (empty project => all)
-// for the Workstreams panel (design §8). Non-terminal entries are enriched with
+// for the Workstreams panel. Non-terminal entries are enriched with
 // a live commit count and session status so the panel can render per-workstream
 // progress; enrichment is best-effort (0 / empty on error).
 func (s *Server) ListWorkstreams(_ context.Context, req *connect.Request[v1.ListWorkstreamsRequest]) (*connect.Response[v1.ListWorkstreamsResponse], error) {
@@ -113,7 +113,7 @@ func (s *Server) ListWorkstreams(_ context.Context, req *connect.Request[v1.List
 }
 
 // PreviewMerge trial-merges a workstream's branch into its project's current base
-// WITHOUT mutating anything (design §6 step 1): clean/conflicts + the integrated
+// WITHOUT mutating anything: clean/conflicts + the integrated
 // diff when clean.
 func (s *Server) PreviewMerge(_ context.Context, req *connect.Request[v1.PreviewMergeRequest]) (*connect.Response[v1.PreviewMergeResponse], error) {
 	if strings.TrimSpace(req.Msg.WorkstreamId) == "" {
@@ -131,7 +131,7 @@ func (s *Server) PreviewMerge(_ context.Context, req *connect.Request[v1.Preview
 }
 
 // MergeWorkstream integrates a workstream's branch back to base with the
-// conflict-aware, review-gated flow (design §6). accept accepts a clean but gated
+// conflict-aware, review-gated flow. accept accepts a clean but gated
 // merge until explicitly accepted; a conflict surfaces the conflicted paths.
 func (s *Server) MergeWorkstream(_ context.Context, req *connect.Request[v1.MergeWorkstreamRequest]) (*connect.Response[v1.MergeWorkstreamResponse], error) {
 	if strings.TrimSpace(req.Msg.WorkstreamId) == "" {
@@ -151,7 +151,7 @@ func (s *Server) MergeWorkstream(_ context.Context, req *connect.Request[v1.Merg
 }
 
 // DiscardWorkstream abandons a workstream without merging: stop the session,
-// clean up the worktree + branch, mark the entry discarded (design §6).
+// clean up the worktree + branch, mark the entry discarded.
 func (s *Server) DiscardWorkstream(_ context.Context, req *connect.Request[v1.DiscardWorkstreamRequest]) (*connect.Response[v1.DiscardWorkstreamResponse], error) {
 	if strings.TrimSpace(req.Msg.WorkstreamId) == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("workstream_id is required"))

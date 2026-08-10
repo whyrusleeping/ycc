@@ -29,7 +29,7 @@ var curatedModelIDs = map[string][]string{
 // proxy or staging endpoint.
 const DefaultAnthropicBaseURL = "https://api.anthropic.com"
 
-// CuratedModelIDs returns the curated default model ids for a backend (spec §13).
+// CuratedModelIDs returns the curated default model ids for a backend.
 // The returned slice is a copy the caller may mutate.
 func CuratedModelIDs(backend string) []string {
 	ids := curatedModelIDs[backend]
@@ -49,7 +49,7 @@ func providerBaseURL(backend, baseURL string) string {
 }
 
 // DiscoverModels queries a backend's model-listing endpoint and returns the
-// available model ids (spec §13). It supports the OpenAI-compatible /models
+// available model ids. It supports the OpenAI-compatible /models
 // endpoint (openai, glm, openai-compatible), the Anthropic /v1/models endpoint,
 // and the Ollama /api/tags endpoint. A blank Anthropic base URL resolves to the
 // native Anthropic API. key is the resolved API credential (may be empty for

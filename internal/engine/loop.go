@@ -1,4 +1,4 @@
-// Package engine implements the core agent loop (spec §7.2): run a model turn,
+// Package engine implements the core agent loop: run a model turn,
 // dispatch any tool calls, feed results back, and repeat until the model yields
 // with no tool calls or a control tool signals stop.
 package engine
@@ -26,7 +26,7 @@ type Turner interface {
 }
 
 // StreamTurner is the optional capability of a backend client that can stream a
-// turn's output incrementally (spec §5.2/§18.4, task 0114/0129). When a client
+// turn's output incrementally. When a client
 // implements it, the loop uses TurnStreamCtx instead of TurnCtx so live subscribers
 // see the model's output as it is produced.
 //
@@ -69,8 +69,8 @@ type Image struct {
 	Filename  string
 }
 
-// Steer lets a session pause and steer a running loop at safe checkpoints
-// (spec §18.7). Checkpoint is consulted between turns and after each tool
+// Steer lets a session pause and steer a running loop at safe checkpoints.
+// Checkpoint is consulted between turns and after each tool
 // result. When a pause is pending it blocks until resume (or ctx
 // cancellation, returned as a normal stop) and returns any correction
 // messages to append before the next turn. A nil Steer is a cheap no-op.
@@ -88,7 +88,7 @@ type MessageSteer interface {
 type Loop struct {
 	Client Turner
 	Model  string // resolved backend model id (e.g. "claude-sonnet-4-...")
-	// ModelName is the logical model name per spec §13 (e.g. "claude", "gpt"),
+	// ModelName is the logical model name (e.g. "claude", "gpt"),
 	// recorded on model_turn events so per-turn usage is attributable per model
 	// independent of the resolved id. Backend is the logical backend family
 	// (e.g. "anthropic", "openai"). Both are display/accounting metadata only.
@@ -100,7 +100,7 @@ type Loop struct {
 	MaxTurns  int // 0 => default
 	MaxTok    int // per-turn max tokens; 0 => backend default
 
-	// Anthropic extended/adaptive reasoning (spec §7, §13). Thinking == ""
+	// Anthropic extended/adaptive reasoning. Thinking == ""
 	// disables reasoning; "adaptive" enables it. Effort tunes depth/spend
 	// ("low".."max"); ThinkingDisplay ("summarized") opts into reasoning
 	// summaries. Honored by the anthropic backend, ignored by others.
@@ -109,12 +109,12 @@ type Loop struct {
 	ThinkingDisplay string
 
 	// Steer, when set, is consulted at safe checkpoints (top of each turn and
-	// after each tool result) so a session can pause and steer the running loop
-	// (spec §18.7). Nil ⇒ a cheap no-op; the hot loop is unaffected.
+	// after each tool result) so a session can pause and steer the running loop.
+	// Nil means a cheap no-op; the hot loop is unaffected.
 	Steer Steer
 
-	// Retry controls automatic retry of transient LLM API call failures
-	// (spec §7.2). The zero value means DefaultRetryPolicy(); set
+	// Retry controls automatic retry of transient LLM API call failures.
+	// The zero value means DefaultRetryPolicy(); set
 	// MaxAttempts: 1 to disable retries explicitly.
 	Retry RetryPolicy
 
@@ -125,11 +125,11 @@ type Loop struct {
 	retryRand  *rand.Rand
 	retryLogf  func(string, ...any)
 
-	mu      sync.Mutex // guards Client/Model swaps mid-loop (settings overlay, §18.2)
+	mu      sync.Mutex // guards Client/Model swaps mid-loop (settings overlay)
 	history []gollama.Message
 	// thinkingWarned records that we have already emitted the one-time
 	// session-log warning that the current backend cannot express the requested
-	// thinking/effort setting (spec §7.4, §13). It resets on SetBackend and
+	// thinking/effort setting. It resets on SetBackend and
 	// SetThinking so a backend or level change may warn once more. Guarded by mu.
 	thinkingWarned bool
 }
@@ -170,7 +170,7 @@ func (l *Loop) steerCheckpoint(ctx context.Context) error {
 
 // SetBackend swaps the loop's backend client, model id, logical model identity,
 // and per-model reasoning settings while preserving the conversation history, so
-// a mid-session role-config change takes effect on the next turn (spec §18.2).
+// a mid-session role-config change takes effect on the next turn.
 // Safe to call concurrently with Run.
 func (l *Loop) SetBackend(client Turner, model, modelName, backend string, think Thinking) {
 	l.mu.Lock()
@@ -187,7 +187,7 @@ func (l *Loop) SetBackend(client Turner, model, modelName, backend string, think
 
 // SetThinking swaps only the loop's reasoning settings (thinking/effort/display)
 // while preserving the backend client, model id, and conversation history, so a
-// mid-session thinking-level change takes effect on the next turn (spec §18.2).
+// mid-session thinking-level change takes effect on the next turn.
 // Safe to call concurrently with Run.
 func (l *Loop) SetThinking(think Thinking) {
 	l.mu.Lock()
@@ -200,9 +200,8 @@ func (l *Loop) SetThinking(think Thinking) {
 
 // thinkingWarning returns a one-time session-log warning when the current
 // backend cannot (fully) express the requested thinking/effort setting, or ""
-// when none is due (spec §7.4, §13). Per the 2026-07-08 degrade decision,
-// unsupported settings are ignored rather than erroring, but we warn once so the
-// operator knows a per-role effort/thinking setting is silently degraded on a
+// when none is due. Unsupported settings are ignored rather than errors; one
+// warning tells the operator that a per-role effort/thinking setting is degraded on a
 // mixed-backend session. It emits at most once per Loop; the flag resets on
 // SetBackend/SetThinking so a backend or level change may warn once more.
 //
@@ -246,7 +245,7 @@ type Thinking struct {
 // modelIdentity is the loop's current model labelling for usage attribution.
 type modelIdentity struct {
 	ID      string // resolved backend model id
-	Name    string // logical model name (§13)
+	Name    string // logical model name
 	Backend string // logical backend family
 }
 
@@ -268,12 +267,6 @@ func (l *Loop) backend() (Turner, string, modelIdentity, Thinking) {
 // (see Run below), so a send_to_implementer revise round that calls Run again on
 // the same Loop gets a fresh budget rather than inheriting the previous round's
 // turn count.
-//
-// Interaction with task 0010 (context-window management): raising the turn cap
-// means more turns accumulate more conversation history. Until 0010 lands,
-// a high turn cap can trade a turn-limit abort for a context-window-limit abort
-// on a very long run. The turn cap is the runaway backstop; context budgeting is
-// 0010's concern.
 const defaultMaxTurns = 1000
 
 // maxTruncRetries bounds how many consecutive times the loop will nudge the
@@ -446,8 +439,8 @@ func toEventThinking(blocks []gollama.ThinkingBlock) []event.ThinkingBlock {
 }
 
 // SetHistory replaces the loop's conversation history. Used by session reopen to
-// install a history reconstructed from the event log before the first new turn
-// (spec §4.5). Safe to call concurrently with Run (guarded like backend()),
+// install a history reconstructed from the event log before the first new turn.
+// Safe to call concurrently with Run (guarded like backend()),
 // though in practice it is set before Run begins.
 func (l *Loop) SetHistory(h []gollama.Message) {
 	l.mu.Lock()
@@ -515,7 +508,7 @@ func (l *Loop) PendingResponse() bool {
 
 // appendToolResult appends a tool result message to the conversation, carrying
 // any native media (images/PDFs) the tool returned so multimodal Reads round-
-// trip to the model (spec §8).
+// trip to the model.
 //
 // Anthropic accepts image/document blocks inside a tool_result, so we attach them
 // directly to the tool message. OpenAI-compatible APIs do not allow media in a
@@ -606,8 +599,8 @@ func (l *Loop) turnOnce(ctx context.Context, client Turner, opts gollama.Request
 }
 
 // runTurn executes one model turn, retrying transient API failures (as judged
-// by ClassifyAPIError) with exponential backoff + jitter per l.Retry
-// (spec §7.2). Between attempts it broadcasts a transient "retry" event so live
+// by ClassifyAPIError) with exponential backoff + jitter per l.Retry.
+// Between attempts it broadcasts a transient "retry" event so live
 // subscribers can show the wait, and sleeps ctx-aware so a stopped session
 // cancels a pending backoff instead of sleeping it out. It returns the response,
 // the number of attempts actually made, and the FINAL attempt's error (the
@@ -735,7 +728,7 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			return nil, err
 		}
 
-		// Safe checkpoint between turns: pause-to-steer if requested (spec §18.7).
+		// Safe checkpoint between turns: pause-to-steer if requested.
 		if err := l.steerCheckpoint(ctx); err != nil {
 			return nil, err
 		}
@@ -745,7 +738,7 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 
 		client, modelID, ident, think := l.backend()
 		// One-time session-log warning if this backend can't express the
-		// requested thinking/effort setting (ignored, not an error — spec §7.4).
+		// requested thinking/effort setting (ignored, not an error).
 		if msg := l.thinkingWarning(); msg != "" {
 			l.Emitter.Emit(event.Narration, map[string]any{"msg": msg})
 		}
@@ -799,8 +792,7 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 				// A context-window-exceeded failure (history too large for the
 				// model) is terminal and opaque from the provider. Surface a
 				// clear, actionable message instead of the raw 400 so the user
-				// knows to start fresh or narrow scope rather than retry
-				// (task 0010).
+				// knows to start fresh or narrow scope rather than retry.
 				msg := fmt.Sprintf("context window exceeded for model %s: the conversation history (~%d tokens) is too large to continue. This session cannot proceed automatically — start a fresh session or narrow the task scope.", modelID, approxContextTokens(l.System, l.history))
 				data["msg"] = msg
 				l.Emitter.Emit(event.SessionError, data)
@@ -842,7 +834,7 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		}
 
 		// Surface the model's reasoning summary (if any) as its own event so the
-		// TUI can show it distinctly, collapsed by default (spec §18). The
+		// TUI can show it distinctly, collapsed by default. The
 		// ThinkingBlocks themselves round-trip via the appended assistant
 		// message; this event is purely for display. ReasoningTokens makes clear
 		// that the visible text is only a provider-authored summary.
@@ -854,11 +846,11 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			})
 		}
 
-		// Capture per-turn token usage (spec §20.1). resp.Usage is zero-valued for
+		// Capture per-turn token usage. resp.Usage is zero-valued for
 		// backends that don't report it, so usage records zeros without error.
 		u := resp.Usage
 		// Normalize the input count so token classes are DISJOINT across
-		// backends (spec §20.1): OpenAI reports cached tokens as a SUBSET of
+		// backends: OpenAI reports cached tokens as a SUBSET of
 		// prompt_tokens (prompt_tokens_details.cached_tokens), while Anthropic
 		// reports cache reads/writes separately from input_tokens. Subtract the
 		// OpenAI-style cached count from Input so Input is always the fresh
@@ -890,7 +882,7 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		}
 		// contextEst is a coarse estimate of the prompt size (system + history)
 		// that produced this turn, surfaced so long-session growth toward the
-		// context window is visible in telemetry (task 0010).
+		// context window is visible in telemetry.
 		contextEst := approxContextTokens(l.System, l.history)
 		l.Emitter.Emit(event.ModelTurn, map[string]any{
 			"text":               msg.Content,
@@ -906,7 +898,7 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			// ALWAYS-emitted model_turn (not the optional Thinking display event,
 			// which is skipped when display is "omitted" yet still produces signed
 			// blocks needed to replay the turn on Anthropic). This lets reopen
-			// reconstruct the conversation losslessly (spec §5.1).
+			// reconstruct the conversation losslessly.
 			"thinking_blocks": toEventThinking(msg.ThinkingBlocks),
 			"usage": event.Usage{
 				Input:           inputTokens,
@@ -1056,8 +1048,8 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 				return &Result{Report: report, Turns: turn, NextMode: ctrl.Mode, NextPrompt: ctrl.Prompt, Blocked: ctrl.Blocked}, nil
 			}
 
-			// Safe checkpoint after a tool result: pause-to-steer if requested
-			// (spec §18.7). Any returned messages are deferred to the end of the
+			// Safe checkpoint after a tool result: pause-to-steer if requested.
+			// Any returned messages are deferred to the end of the
 			// batch (see above) so they never split this turn's tool results.
 			if l.Steer != nil {
 				var msgs []UserMessage

@@ -1,5 +1,5 @@
 // Package openaiauth implements ChatGPT subscription (Plus/Pro) OAuth
-// authentication for OpenAI models (spec §13), as an alternative to API keys.
+// authentication for OpenAI models, as an alternative to API keys.
 // It mirrors the flow of the official Codex CLI: an OAuth 2.0 authorization-
 // code + PKCE flow against auth.openai.com using Codex's public client id,
 // with the browser redirecting to a short-lived local callback server on

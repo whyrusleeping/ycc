@@ -491,7 +491,7 @@ func docsChecks(ws string) []check {
 	if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
 		// Resolve duplicate ids first so the count below is honest and the
 		// renumbering is REPORTED here rather than happening silently inside a
-		// later List (spec §6.2).
+		// later List.
 		if renumbered, err := store.DedupeIDs(); err == nil && len(renumbered) > 0 {
 			var moves []string
 			for _, r := range renumbered {

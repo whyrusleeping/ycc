@@ -191,76 +191,76 @@ type SessionServiceClient interface {
 	StartSession(context.Context, *connect.Request[v1.StartSessionRequest]) (*connect.Response[v1.StartSessionResponse], error)
 	ListSessions(context.Context, *connect.Request[v1.ListSessionsRequest]) (*connect.Response[v1.ListSessionsResponse], error)
 	// ListSessionHistory enumerates all sessions for a project (live + persisted
-	// on-disk logs), most-recent first (spec §18.6). ListSessions stays live-only.
+	// on-disk logs), most-recent first. ListSessions stays live-only.
 	ListSessionHistory(context.Context, *connect.Request[v1.ListSessionHistoryRequest]) (*connect.Response[v1.ListSessionHistoryResponse], error)
 	// GetSessionTranscript returns a session's full event log (live or persisted)
-	// for the read-only transcript drill-in (spec §18.6).
+	// for the read-only transcript drill-in.
 	GetSessionTranscript(context.Context, *connect.Request[v1.GetSessionTranscriptRequest]) (*connect.Response[v1.GetSessionTranscriptResponse], error)
 	// GetCommitDiff returns a commit's `git show` diff so the transcript can drill
-	// into what an agent committed from a commit_made row (task 0140, spec §18.6).
+	// into what an agent committed from a commit_made row.
 	GetCommitDiff(context.Context, *connect.Request[v1.GetCommitDiffRequest]) (*connect.Response[v1.GetCommitDiffResponse], error)
 	Subscribe(context.Context, *connect.Request[v1.SubscribeRequest]) (*connect.ServerStreamForClient[v1.Event], error)
 	SendInput(context.Context, *connect.Request[v1.SendInputRequest]) (*connect.Response[v1.SendInputResponse], error)
 	AnswerQuestion(context.Context, *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error)
 	// AnswerQuestions replies to a batch of questions posed in one ask_user call.
 	AnswerQuestions(context.Context, *connect.Request[v1.AnswerQuestionsRequest]) (*connect.Response[v1.AnswerQuestionsResponse], error)
-	// Interrupt & steer (spec §18.7): gracefully pause a running session at its
+	// Interrupt & steer: gracefully pause a running session at its
 	// next safe checkpoint, then continue the same loop (optionally after a
 	// steered SendInput correction). Distinct from the hard Stop/terminate.
 	Interrupt(context.Context, *connect.Request[v1.InterruptRequest]) (*connect.Response[v1.InterruptResponse], error)
 	Resume(context.Context, *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error)
 	// StopSession hard-terminates a session: cancels its agent loop, closes its
 	// event log, and removes it from the daemon (no resume). Distinct from
-	// Interrupt's graceful pause (spec §12, §18.7).
+	// Interrupt's graceful pause.
 	StopSession(context.Context, *connect.Request[v1.StopSessionRequest]) (*connect.Response[v1.StopSessionResponse], error)
 	// ResumeSession re-opens a persisted session on its existing event log
-	// (reconstructs loop history; "resume = replay", spec §4.5/§18.6). Idempotent
+	// (reconstructs loop history; "resume = replay"). Idempotent
 	// if the session is already live.
 	ResumeSession(context.Context, *connect.Request[v1.ResumeSessionRequest]) (*connect.Response[v1.ResumeSessionResponse], error)
-	// Projects — persistent multi-project daemon (spec §3.1).
+	// Projects — persistent multi-project daemon.
 	ListProjects(context.Context, *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error)
 	AddProject(context.Context, *connect.Request[v1.AddProjectRequest]) (*connect.Response[v1.AddProjectResponse], error)
 	RemoveProject(context.Context, *connect.Request[v1.RemoveProjectRequest]) (*connect.Response[v1.RemoveProjectResponse], error)
 	RenameProject(context.Context, *connect.Request[v1.RenameProjectRequest]) (*connect.Response[v1.RenameProjectResponse], error)
 	// ListDir lists subdirectories of a daemon-host path (directories only) so
-	// remote clients can browse to a workspace for AddProject (task 0193).
+	// remote clients can browse to a workspace for AddProject.
 	ListDir(context.Context, *connect.Request[v1.ListDirRequest]) (*connect.Response[v1.ListDirResponse], error)
-	// Settings overlay (spec §18.2): enumerate models and change per-role model
+	// Settings overlay: enumerate models and change per-role model
 	// assignment mid-flight.
 	ListModels(context.Context, *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error)
 	SetRoleConfig(context.Context, *connect.Request[v1.SetRoleConfigRequest]) (*connect.Response[v1.SetRoleConfigResponse], error)
 	SetThinking(context.Context, *connect.Request[v1.SetThinkingRequest]) (*connect.Response[v1.SetThinkingResponse], error)
 	SetWorkImplementation(context.Context, *connect.Request[v1.SetWorkImplementationRequest]) (*connect.Response[v1.SetWorkImplementationResponse], error)
-	// Model backends (spec §18.2): add/edit/remove a logical model backend at
+	// Model backends: add/edit/remove a logical model backend at
 	// runtime; optionally persisted to ycc.toml.
 	UpsertModel(context.Context, *connect.Request[v1.UpsertModelRequest]) (*connect.Response[v1.UpsertModelResponse], error)
 	RemoveModel(context.Context, *connect.Request[v1.RemoveModelRequest]) (*connect.Response[v1.RemoveModelResponse], error)
 	GetModelConfig(context.Context, *connect.Request[v1.GetModelConfigRequest]) (*connect.Response[v1.GetModelConfigResponse], error)
 	DiscoverModels(context.Context, *connect.Request[v1.DiscoverModelsRequest]) (*connect.Response[v1.DiscoverModelsResponse], error)
-	// Review tiers (spec §13.1): list the effective tiers and edit the configured
+	// Review tiers: list the effective tiers and edit the configured
 	// ones (plus the default tier) at runtime; always persisted to ycc.toml.
 	ListReviewTiers(context.Context, *connect.Request[v1.ListReviewTiersRequest]) (*connect.Response[v1.ListReviewTiersResponse], error)
 	UpsertReviewTier(context.Context, *connect.Request[v1.UpsertReviewTierRequest]) (*connect.Response[v1.UpsertReviewTierResponse], error)
 	RemoveReviewTier(context.Context, *connect.Request[v1.RemoveReviewTierRequest]) (*connect.Response[v1.RemoveReviewTierResponse], error)
 	SetReviewDefault(context.Context, *connect.Request[v1.SetReviewDefaultRequest]) (*connect.Response[v1.SetReviewDefaultResponse], error)
-	// Backlog browser (spec §18.5): read-only access to the durable backlog.
+	// Backlog browser: read-only access to the durable backlog.
 	ListBacklog(context.Context, *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error)
 	GetTask(context.Context, *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error)
-	// UpdateTask grooms a backlog task in place (spec §18.5, task 0099): change
+	// UpdateTask grooms a backlog task in place: change
 	// status/priority/title, or (no mutation fields) refresh + regenerate the index.
 	UpdateTask(context.Context, *connect.Request[v1.UpdateTaskRequest]) (*connect.Response[v1.UpdateTaskResponse], error)
-	// CreateTask adds a new task to the backlog (task 0143): compose the canonical
+	// CreateTask adds a new task to the backlog: compose the canonical
 	// task scaffold around a description and assign the next id. Used by
 	// `ycc task add` when a daemon is available.
 	CreateTask(context.Context, *connect.Request[v1.CreateTaskRequest]) (*connect.Response[v1.CreateTaskResponse], error)
-	// Plan library (reusable runbooks, task 0020/0077): read-only access to the
+	// Plan library (reusable runbooks): read-only access to the
 	// in-repo plans/*.md so clients can browse and view saved plans.
 	ListPlans(context.Context, *connect.Request[v1.ListPlansRequest]) (*connect.Response[v1.ListPlansResponse], error)
 	GetPlan(context.Context, *connect.Request[v1.GetPlanRequest]) (*connect.Response[v1.GetPlanResponse], error)
-	// Project memory (spec §6.5): read-only view of memory.md, the agents'
+	// Project memory: read-only view of memory.md, the agents'
 	// advisory operational notes for the project.
 	GetMemory(context.Context, *connect.Request[v1.GetMemoryRequest]) (*connect.Response[v1.GetMemoryResponse], error)
-	// Quick-add backlog capture (spec §18.2, task 0016): run a lightweight,
+	// Quick-add backlog capture: run a lightweight,
 	// off-stream capture agent that turns a natural-language description into a
 	// backlog task without disturbing the running session. May ask ONE clarifying
 	// question, carried back via prior_question/prior_answer.
@@ -270,26 +270,25 @@ type SessionServiceClient interface {
 	// `capture_result` event whose data_json carries {task_id,title,question} on
 	// success (or {error} on failure).
 	CaptureBacklogItem(context.Context, *connect.Request[v1.CaptureBacklogItemRequest]) (*connect.ServerStreamForClient[v1.Event], error)
-	// Usage/cost breakdown (spec §20): aggregated, priced token usage by task ×
+	// Usage/cost breakdown: aggregated, priced token usage by task ×
 	// model × day so clients can render the cost breakdown.
 	GetUsage(context.Context, *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error)
-	// Best-effort provider-side subscription allowance (spec §20.5).
+	// Best-effort provider-side subscription allowance.
 	GetSubscriptionUsage(context.Context, *connect.Request[v1.GetSubscriptionUsageRequest]) (*connect.Response[v1.GetSubscriptionUsageResponse], error)
-	// Spend guard (task 0137, spec §20.6): return the configured budget caps so the
+	// Spend guard: return the configured budget caps so the
 	// TUI work-loop driver can enforce the per-loop-run cap client-side.
 	GetBudget(context.Context, *connect.Request[v1.GetBudgetRequest]) (*connect.Response[v1.GetBudgetResponse], error)
-	// Push notifications (task 0142): route a client-originated notification (the
+	// Push notifications: route a client-originated notification (the
 	// work-loop completion digest) through the daemon-side webhook notifier.
 	Notify(context.Context, *connect.Request[v1.NotifyRequest]) (*connect.Response[v1.NotifyResponse], error)
-	// Daemon-side work loop (task 0179, spec §9/§20.6): start/stop/observe the
+	// Daemon-side work loop: start/stop/observe the
 	// unattended backlog-drain loop. The loop lives in the daemon, so it survives
 	// client disconnects; any client can start it, poll GetWorkLoop for state +
 	// digest, Subscribe to the current session, and gracefully StopWorkLoop it.
-	// Real-time loop-lifecycle streaming is deferred (task 0195).
 	StartWorkLoop(context.Context, *connect.Request[v1.StartWorkLoopRequest]) (*connect.Response[v1.StartWorkLoopResponse], error)
 	StopWorkLoop(context.Context, *connect.Request[v1.StopWorkLoopRequest]) (*connect.Response[v1.StopWorkLoopResponse], error)
 	GetWorkLoop(context.Context, *connect.Request[v1.GetWorkLoopRequest]) (*connect.Response[v1.GetWorkLoopResponse], error)
-	// Parallel workstreams (docs/design/parallel-workstreams.md §6, §8): spawn a
+	// Spawn a parallel workstream:
 	// worktree+session, list them, preview/merge a branch back to base with the
 	// conflict-aware review gate, or discard one. Subscribe(session_id) is reused
 	// verbatim for per-workstream event streaming (the session_id rides inside
@@ -950,76 +949,76 @@ type SessionServiceHandler interface {
 	StartSession(context.Context, *connect.Request[v1.StartSessionRequest]) (*connect.Response[v1.StartSessionResponse], error)
 	ListSessions(context.Context, *connect.Request[v1.ListSessionsRequest]) (*connect.Response[v1.ListSessionsResponse], error)
 	// ListSessionHistory enumerates all sessions for a project (live + persisted
-	// on-disk logs), most-recent first (spec §18.6). ListSessions stays live-only.
+	// on-disk logs), most-recent first. ListSessions stays live-only.
 	ListSessionHistory(context.Context, *connect.Request[v1.ListSessionHistoryRequest]) (*connect.Response[v1.ListSessionHistoryResponse], error)
 	// GetSessionTranscript returns a session's full event log (live or persisted)
-	// for the read-only transcript drill-in (spec §18.6).
+	// for the read-only transcript drill-in.
 	GetSessionTranscript(context.Context, *connect.Request[v1.GetSessionTranscriptRequest]) (*connect.Response[v1.GetSessionTranscriptResponse], error)
 	// GetCommitDiff returns a commit's `git show` diff so the transcript can drill
-	// into what an agent committed from a commit_made row (task 0140, spec §18.6).
+	// into what an agent committed from a commit_made row.
 	GetCommitDiff(context.Context, *connect.Request[v1.GetCommitDiffRequest]) (*connect.Response[v1.GetCommitDiffResponse], error)
 	Subscribe(context.Context, *connect.Request[v1.SubscribeRequest], *connect.ServerStream[v1.Event]) error
 	SendInput(context.Context, *connect.Request[v1.SendInputRequest]) (*connect.Response[v1.SendInputResponse], error)
 	AnswerQuestion(context.Context, *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error)
 	// AnswerQuestions replies to a batch of questions posed in one ask_user call.
 	AnswerQuestions(context.Context, *connect.Request[v1.AnswerQuestionsRequest]) (*connect.Response[v1.AnswerQuestionsResponse], error)
-	// Interrupt & steer (spec §18.7): gracefully pause a running session at its
+	// Interrupt & steer: gracefully pause a running session at its
 	// next safe checkpoint, then continue the same loop (optionally after a
 	// steered SendInput correction). Distinct from the hard Stop/terminate.
 	Interrupt(context.Context, *connect.Request[v1.InterruptRequest]) (*connect.Response[v1.InterruptResponse], error)
 	Resume(context.Context, *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error)
 	// StopSession hard-terminates a session: cancels its agent loop, closes its
 	// event log, and removes it from the daemon (no resume). Distinct from
-	// Interrupt's graceful pause (spec §12, §18.7).
+	// Interrupt's graceful pause.
 	StopSession(context.Context, *connect.Request[v1.StopSessionRequest]) (*connect.Response[v1.StopSessionResponse], error)
 	// ResumeSession re-opens a persisted session on its existing event log
-	// (reconstructs loop history; "resume = replay", spec §4.5/§18.6). Idempotent
+	// (reconstructs loop history; "resume = replay"). Idempotent
 	// if the session is already live.
 	ResumeSession(context.Context, *connect.Request[v1.ResumeSessionRequest]) (*connect.Response[v1.ResumeSessionResponse], error)
-	// Projects — persistent multi-project daemon (spec §3.1).
+	// Projects — persistent multi-project daemon.
 	ListProjects(context.Context, *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error)
 	AddProject(context.Context, *connect.Request[v1.AddProjectRequest]) (*connect.Response[v1.AddProjectResponse], error)
 	RemoveProject(context.Context, *connect.Request[v1.RemoveProjectRequest]) (*connect.Response[v1.RemoveProjectResponse], error)
 	RenameProject(context.Context, *connect.Request[v1.RenameProjectRequest]) (*connect.Response[v1.RenameProjectResponse], error)
 	// ListDir lists subdirectories of a daemon-host path (directories only) so
-	// remote clients can browse to a workspace for AddProject (task 0193).
+	// remote clients can browse to a workspace for AddProject.
 	ListDir(context.Context, *connect.Request[v1.ListDirRequest]) (*connect.Response[v1.ListDirResponse], error)
-	// Settings overlay (spec §18.2): enumerate models and change per-role model
+	// Settings overlay: enumerate models and change per-role model
 	// assignment mid-flight.
 	ListModels(context.Context, *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error)
 	SetRoleConfig(context.Context, *connect.Request[v1.SetRoleConfigRequest]) (*connect.Response[v1.SetRoleConfigResponse], error)
 	SetThinking(context.Context, *connect.Request[v1.SetThinkingRequest]) (*connect.Response[v1.SetThinkingResponse], error)
 	SetWorkImplementation(context.Context, *connect.Request[v1.SetWorkImplementationRequest]) (*connect.Response[v1.SetWorkImplementationResponse], error)
-	// Model backends (spec §18.2): add/edit/remove a logical model backend at
+	// Model backends: add/edit/remove a logical model backend at
 	// runtime; optionally persisted to ycc.toml.
 	UpsertModel(context.Context, *connect.Request[v1.UpsertModelRequest]) (*connect.Response[v1.UpsertModelResponse], error)
 	RemoveModel(context.Context, *connect.Request[v1.RemoveModelRequest]) (*connect.Response[v1.RemoveModelResponse], error)
 	GetModelConfig(context.Context, *connect.Request[v1.GetModelConfigRequest]) (*connect.Response[v1.GetModelConfigResponse], error)
 	DiscoverModels(context.Context, *connect.Request[v1.DiscoverModelsRequest]) (*connect.Response[v1.DiscoverModelsResponse], error)
-	// Review tiers (spec §13.1): list the effective tiers and edit the configured
+	// Review tiers: list the effective tiers and edit the configured
 	// ones (plus the default tier) at runtime; always persisted to ycc.toml.
 	ListReviewTiers(context.Context, *connect.Request[v1.ListReviewTiersRequest]) (*connect.Response[v1.ListReviewTiersResponse], error)
 	UpsertReviewTier(context.Context, *connect.Request[v1.UpsertReviewTierRequest]) (*connect.Response[v1.UpsertReviewTierResponse], error)
 	RemoveReviewTier(context.Context, *connect.Request[v1.RemoveReviewTierRequest]) (*connect.Response[v1.RemoveReviewTierResponse], error)
 	SetReviewDefault(context.Context, *connect.Request[v1.SetReviewDefaultRequest]) (*connect.Response[v1.SetReviewDefaultResponse], error)
-	// Backlog browser (spec §18.5): read-only access to the durable backlog.
+	// Backlog browser: read-only access to the durable backlog.
 	ListBacklog(context.Context, *connect.Request[v1.ListBacklogRequest]) (*connect.Response[v1.ListBacklogResponse], error)
 	GetTask(context.Context, *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error)
-	// UpdateTask grooms a backlog task in place (spec §18.5, task 0099): change
+	// UpdateTask grooms a backlog task in place: change
 	// status/priority/title, or (no mutation fields) refresh + regenerate the index.
 	UpdateTask(context.Context, *connect.Request[v1.UpdateTaskRequest]) (*connect.Response[v1.UpdateTaskResponse], error)
-	// CreateTask adds a new task to the backlog (task 0143): compose the canonical
+	// CreateTask adds a new task to the backlog: compose the canonical
 	// task scaffold around a description and assign the next id. Used by
 	// `ycc task add` when a daemon is available.
 	CreateTask(context.Context, *connect.Request[v1.CreateTaskRequest]) (*connect.Response[v1.CreateTaskResponse], error)
-	// Plan library (reusable runbooks, task 0020/0077): read-only access to the
+	// Plan library (reusable runbooks): read-only access to the
 	// in-repo plans/*.md so clients can browse and view saved plans.
 	ListPlans(context.Context, *connect.Request[v1.ListPlansRequest]) (*connect.Response[v1.ListPlansResponse], error)
 	GetPlan(context.Context, *connect.Request[v1.GetPlanRequest]) (*connect.Response[v1.GetPlanResponse], error)
-	// Project memory (spec §6.5): read-only view of memory.md, the agents'
+	// Project memory: read-only view of memory.md, the agents'
 	// advisory operational notes for the project.
 	GetMemory(context.Context, *connect.Request[v1.GetMemoryRequest]) (*connect.Response[v1.GetMemoryResponse], error)
-	// Quick-add backlog capture (spec §18.2, task 0016): run a lightweight,
+	// Quick-add backlog capture: run a lightweight,
 	// off-stream capture agent that turns a natural-language description into a
 	// backlog task without disturbing the running session. May ask ONE clarifying
 	// question, carried back via prior_question/prior_answer.
@@ -1029,26 +1028,25 @@ type SessionServiceHandler interface {
 	// `capture_result` event whose data_json carries {task_id,title,question} on
 	// success (or {error} on failure).
 	CaptureBacklogItem(context.Context, *connect.Request[v1.CaptureBacklogItemRequest], *connect.ServerStream[v1.Event]) error
-	// Usage/cost breakdown (spec §20): aggregated, priced token usage by task ×
+	// Usage/cost breakdown: aggregated, priced token usage by task ×
 	// model × day so clients can render the cost breakdown.
 	GetUsage(context.Context, *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error)
-	// Best-effort provider-side subscription allowance (spec §20.5).
+	// Best-effort provider-side subscription allowance.
 	GetSubscriptionUsage(context.Context, *connect.Request[v1.GetSubscriptionUsageRequest]) (*connect.Response[v1.GetSubscriptionUsageResponse], error)
-	// Spend guard (task 0137, spec §20.6): return the configured budget caps so the
+	// Spend guard: return the configured budget caps so the
 	// TUI work-loop driver can enforce the per-loop-run cap client-side.
 	GetBudget(context.Context, *connect.Request[v1.GetBudgetRequest]) (*connect.Response[v1.GetBudgetResponse], error)
-	// Push notifications (task 0142): route a client-originated notification (the
+	// Push notifications: route a client-originated notification (the
 	// work-loop completion digest) through the daemon-side webhook notifier.
 	Notify(context.Context, *connect.Request[v1.NotifyRequest]) (*connect.Response[v1.NotifyResponse], error)
-	// Daemon-side work loop (task 0179, spec §9/§20.6): start/stop/observe the
+	// Daemon-side work loop: start/stop/observe the
 	// unattended backlog-drain loop. The loop lives in the daemon, so it survives
 	// client disconnects; any client can start it, poll GetWorkLoop for state +
 	// digest, Subscribe to the current session, and gracefully StopWorkLoop it.
-	// Real-time loop-lifecycle streaming is deferred (task 0195).
 	StartWorkLoop(context.Context, *connect.Request[v1.StartWorkLoopRequest]) (*connect.Response[v1.StartWorkLoopResponse], error)
 	StopWorkLoop(context.Context, *connect.Request[v1.StopWorkLoopRequest]) (*connect.Response[v1.StopWorkLoopResponse], error)
 	GetWorkLoop(context.Context, *connect.Request[v1.GetWorkLoopRequest]) (*connect.Response[v1.GetWorkLoopResponse], error)
-	// Parallel workstreams (docs/design/parallel-workstreams.md §6, §8): spawn a
+	// Spawn a parallel workstream:
 	// worktree+session, list them, preview/merge a branch back to base with the
 	// conflict-aware review gate, or discard one. Subscribe(session_id) is reused
 	// verbatim for per-workstream event streaming (the session_id rides inside

@@ -9,7 +9,7 @@ import (
 )
 
 // specConfig is the optional per-workspace docs configuration loaded from
-// <workspace>/.ycc/config.toml (task 0121). It names the spec ENTRY POINT and
+// <workspace>/.ycc/config.toml. It names the spec ENTRY POINT and
 // the docs SET that together make up the project's design-documentation surface.
 // Both fields are optional; a missing or malformed config falls back to defaults
 // (spec.md at the workspace root, no extra doc globs) and never fails Store

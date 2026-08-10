@@ -10,7 +10,7 @@ import (
 )
 
 // deriveWorkstreamReadiness implements the completion gate from
-// docs/design/workstream-integration.md §3. A blocked run is never ready even
+// docs/design/workstream-integration.md. A blocked run is never ready even
 // when its branch happens to contain commits.
 func deriveWorkstreamReadiness(ws workstream.Workstream, sessStatus event.Status, blocked bool, commitCount int, taskStatus docs.Status, taskErr error) (workstream.Status, string) {
 	if sessStatus == event.StatusError {

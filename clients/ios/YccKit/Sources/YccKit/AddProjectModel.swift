@@ -14,7 +14,7 @@ public protocol AddProjectSource: Sendable {
 
 extension YccClient: AddProjectSource {}
 
-/// Drives the "Add project" sheet (task 0192): holds the path/name drafts,
+/// Drives the "Add project" sheet: holds the path/name drafts,
 /// validates that the path is plausibly a daemon-host absolute path, and
 /// registers it via `AddProject`. The caller refreshes its project list from
 /// the returned ``Ycc_V1_ProjectInfo``. `@MainActor` because it publishes

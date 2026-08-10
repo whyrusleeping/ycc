@@ -2,8 +2,8 @@ import SwiftUI
 import YccKit
 import YccProto
 
-/// The task-detail screen (docs/design/ios-client.md §6 phase 2 step 6, spec
-/// §18.5): the frontmatter header (status, priority, dependencies, ready/blocked,
+/// The task-detail screen shows the frontmatter header (status, priority,
+/// dependencies, ready/blocked,
 /// dates) plus the markdown `body`, a status picker driving `UpdateTask`, and a
 /// "Start work on this task" action that starts a work session (`StartSession`)
 /// and navigates into its live stream.

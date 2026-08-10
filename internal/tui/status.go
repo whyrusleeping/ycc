@@ -16,7 +16,7 @@ import (
 // statusBar renders the single-row session status line as a set of colored,
 // glyph-prefixed segments — an activity spinner / state dot, a mode pill, the
 // coordinator model and thinking level, the elapsed clock, a live token/cost
-// readout (task 0062), and the location/id — joined by dim chevrons.
+// readout, and the location/id — joined by dim chevrons.
 //
 // It is ALWAYS exactly one physical row. Each segment carries a priority (lower =
 // keep longer); when the joined bar would exceed the terminal width we drop the
@@ -32,24 +32,24 @@ func (m model) statusBar() string {
 	var segs []seg
 
 	// The quit guard warning rides at the very highest priority so it's never
-	// dropped — the user pressed ctrl+c and needs to see why nothing quit (task 0109).
+	// dropped — the user pressed ctrl+c and needs to see why nothing quit.
 	if m.quitArmed {
 		segs = append(segs, seg{errStyle.Render("⚠ " + quitGuardHint), -2})
 	}
 	// A transient inline error (failed RPC on an otherwise-live session) rides at
-	// the highest priority so the width-greedy fitter never drops it (task 0104).
+	// the highest priority so the width-greedy fitter never drops it.
 	if m.flashErr != "" {
 		segs = append(segs, seg{errStyle.Render("✗ " + m.flashErr), -1})
 	}
 	// A transient inline notice (e.g. "copied ✓" after a yank) rides at the same
-	// high priority so it's never dropped (task 0141).
+	// high priority so it's never dropped.
 	if m.flashNote != "" {
 		segs = append(segs, seg{successStyle.Render(m.flashNote), -1})
 	}
 	// status: a state-colored dot. The header always shows the static dot; the
 	// activity spinner now lives next to the input box at the bottom of the
-	// session view (see inputRow / task 0076). The static dot covers
-	// idle/paused/error so a stale error never animates (task 0051).
+	// session view (see inputRow). The static dot covers
+	// idle/paused/error so a stale error never animates.
 	dot := dimStyle
 	switch m.status {
 	case "running":
@@ -98,7 +98,7 @@ func (m model) statusBar() string {
 	if loopLabel != "" {
 		segs = append(segs, seg{recoStyle.Render(loopLabel), 1})
 	}
-	// Spend guard (task 0137, spec §20.6): a visually distinct, high-priority
+	// Spend guard: a visually distinct, high-priority
 	// segment once the session crosses ~80% (warn) or the cap (err). Kept above
 	// the normal Σ readout so a budget breach is unmistakable.
 	if m.budgetExceeded {
@@ -188,7 +188,7 @@ func chosenSegs[T any](segs []T, keep []bool) []T {
 }
 
 // fitSeg is one width-fit segment: pre-styled text plus a drop priority (lower =
-// kept first, dropped last). Used by the home-menu context header (task 0139).
+// kept first, dropped last). Used by the home-menu context header.
 type fitSeg struct {
 	text string
 	prio int
@@ -196,7 +196,7 @@ type fitSeg struct {
 
 // fitSegmentStrip greedily fits priority-ordered segments into width w, joining
 // the kept ones (in original visual order) with sep. It mirrors the status bar's
-// priority-fit approach (task 0139): a zero/negative width keeps everything, and
+// priority-fit approach: a zero/negative width keeps everything, and
 // the result is ANSI-truncated to w as a final clamp so the strip never spills
 // past one physical row on a narrow terminal.
 func fitSegmentStrip(segs []fitSeg, sep string, w int) string {
@@ -226,7 +226,7 @@ func fitSegmentStrip(segs []fitSeg, sep string, w int) string {
 }
 
 // menuReadyCount reports how many backlog tasks a work session could pick up
-// right now: ready and either todo or a resumable in_progress (task 0139).
+// right now: ready and either todo or a resumable in_progress.
 func (m model) menuReadyCount() int {
 	n := 0
 	for _, t := range m.backlogTasks {
@@ -237,8 +237,8 @@ func (m model) menuReadyCount() int {
 	return n
 }
 
-// menuHeader builds the one-line project-context header for the home menu (task
-// 0139): project · git branch (+dirty marker) · N ready / M blocked · $ today.
+// menuHeader builds the one-line project-context header for the home menu:
+// project · git branch (+dirty marker) · N ready / M blocked · $ today.
 // Each segment drops out when its data is unavailable (non-git workspace, empty
 // backlog, no priced usage), and the strip is width-fit to exactly one physical
 // row like the session status bar so it never corrupts the frame.
@@ -308,8 +308,8 @@ func fmtElapsed(d time.Duration) string {
 	return fmt.Sprintf("%02d:%02d", mn, s)
 }
 
-// sessionUsage sums the running per-model usage and prices it (task 0062, spec
-// §20). tokens is the total token count across every model. cost is the dollar
+// sessionUsage sums the running per-model usage and prices it. tokens is the
+// total token count across every model. cost is the dollar
 // sum over models that have configured pricing; unpriced models contribute tokens
 // but never an invented cost. status reports the pricing coverage:
 //   - "priced":   every model that spent tokens is priced

@@ -3,13 +3,12 @@ import YccKit
 import YccProto
 
 /// The authenticated home screen: the daemon's session history, most-recent
-/// first, with a needs-answer section pinned to the top (docs/design/ios-client
-/// .md §6 phase 1 step 2). Live rows stream when opened; persisted rows render
-/// the replayed transcript. A mid-session `.unauthorized` failure routes back
+/// first, with a needs-answer section pinned to the top. Live rows stream when
+/// opened; persisted rows render the replayed transcript. A mid-session `.unauthorized` failure routes back
 /// to the connect screen via ``AppModel/handleUnauthorized()``.
 ///
-/// Navigation follows the design's shell (§6 "Navigation shell"): a left-edge
-/// workspace drawer owns project selection plus global settings, while the
+/// A left-edge workspace drawer owns project selection plus global settings,
+/// while the
 /// project-scoped destinations (backlog / workstreams / usage) hang off the
 /// toolbar of the project's own session list — they need a project, and the
 /// drawer's unscoped Recent-sessions feed has none to give them.
@@ -672,7 +671,7 @@ struct LandingView: View {
         await model?.refresh()
     }
 
-    // MARK: - Deep links (task 0186)
+    // MARK: - Deep links
 
     /// Consume a parked `ycc://` deep link once the landing view is loaded:
     /// a session link resolves to a live/persisted open (or a graceful alert on

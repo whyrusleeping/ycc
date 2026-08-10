@@ -31,7 +31,7 @@ type Event struct {
 	Actor         string                 `protobuf:"bytes,3,opt,name=actor,proto3" json:"actor,omitempty"`
 	Type          string                 `protobuf:"bytes,4,opt,name=type,proto3" json:"type,omitempty"`
 	DataJson      string                 `protobuf:"bytes,5,opt,name=data_json,json=dataJson,proto3" json:"data_json,omitempty"`
-	Transient     bool                   `protobuf:"varint,6,opt,name=transient,proto3" json:"transient,omitempty"` // broadcast-only, never persisted; seq is 0 (task 0114)
+	Transient     bool                   `protobuf:"varint,6,opt,name=transient,proto3" json:"transient,omitempty"` // broadcast-only, never persisted; seq is 0
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -111,21 +111,20 @@ func (x *Event) GetTransient() bool {
 type StartSessionRequest struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	Workspace string                 `protobuf:"bytes,1,opt,name=workspace,proto3" json:"workspace,omitempty"` // workspace dir; empty => resolve project
-	Mode      string                 `protobuf:"bytes,2,opt,name=mode,proto3" json:"mode,omitempty"`           // e.g. "work"; M1 runs a single worker agent
+	Mode      string                 `protobuf:"bytes,2,opt,name=mode,proto3" json:"mode,omitempty"`           // session mode, e.g. "work"
 	Prompt    string                 `protobuf:"bytes,4,opt,name=prompt,proto3" json:"prompt,omitempty"`       // initial task prompt
 	// project is an optional registered project name; when set it resolves to that
-	// project's workspace (overriding `workspace`). Spec §3.1.
+	// project's workspace (overriding `workspace`).
 	Project string `protobuf:"bytes,5,opt,name=project,proto3" json:"project,omitempty"`
 	// coordinator_model optionally overrides the coordinator's logical model
 	// (a name from ListModels) FOR THIS SESSION ONLY — the persisted per-role
 	// defaults in ycc.toml are untouched, and implementer/reviewers keep them.
 	// Empty means "use the configured default". Unknown name => InvalidArgument.
-	// Spec §13, §18.2.
 	CoordinatorModel string `protobuf:"bytes,6,opt,name=coordinator_model,json=coordinatorModel,proto3" json:"coordinator_model,omitempty"`
 	// images optionally attaches up to four validated pictures to the OPENING
 	// prompt (same limits and validation as SendInputRequest.images), so a
 	// session whose whole subject is a screenshot does not have to waste its
-	// first turn. Spec §12.
+	// first turn.
 	Images []*ImageAttachment `protobuf:"bytes,7,rep,name=images,proto3" json:"images,omitempty"`
 	// preset identifies the opening-prompt preset selected by the client. The
 	// daemon uses it to apply an optional roles.presets model binding for this
@@ -258,7 +257,7 @@ func (x *StartSessionResponse) GetSessionId() string {
 	return ""
 }
 
-// Projects — persistent multi-project daemon (spec §3.1). A project is a named
+// Projects — persistent multi-project daemon. A project is a named
 // workspace; the daemon's registry maps name -> path in its state dir.
 type ProjectInfo struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -764,7 +763,7 @@ func (x *RenameProjectResponse) GetProject() *ProjectInfo {
 	return nil
 }
 
-// ListDir — remote directory browsing for the add-project flow (task 0193).
+// ListDir — remote directory browsing for the add-project flow.
 // Lists DIRECTORIES ONLY (never files or file contents) so a remote client can
 // navigate the daemon host's filesystem to pick a workspace to register with
 // AddProject. Note the bearer token already permits StartSession in an
@@ -1408,8 +1407,8 @@ func (*AnswerQuestionsResponse) Descriptor() ([]byte, []int) {
 	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{24}
 }
 
-// Interrupt requests a graceful pause-to-steer of a running session (spec
-// §18.7): it pauses at the next safe checkpoint without aborting a tool.
+// Interrupt requests a graceful pause-to-steer of a running session. It pauses
+// at the next safe checkpoint without aborting a tool.
 type InterruptRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -1571,9 +1570,9 @@ func (*ResumeResponse) Descriptor() ([]byte, []int) {
 	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{28}
 }
 
-// StopSession hard-terminates a session (spec §12): it cancels the agent loop,
+// StopSession hard-terminates a session: it cancels the agent loop,
 // closes the event log, and removes the session from the daemon. Distinct from
-// Interrupt's graceful pause/steer (spec §18.7) — there is no resume.
+// Interrupt's graceful pause/steer — there is no resume.
 type StopSessionRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -1655,7 +1654,7 @@ func (*StopSessionResponse) Descriptor() ([]byte, []int) {
 }
 
 // ResumeSession re-opens a persisted (finished/idle) session on its EXISTING
-// event log ("resume = replay", spec §4.5/§18.6): its coordinator is
+// event log ("resume = replay"): its coordinator is
 // re-instantiated with history reconstructed from the log and new activity
 // appends to the same continuous events.jsonl. Idempotent if already live.
 type ResumeSessionRequest struct {
@@ -1875,8 +1874,8 @@ func (x *Mode) GetDescription() string {
 }
 
 // Preset is a home-menu entry that starts a session in `mode` with a tailored
-// `opening_prompt`. The pm mode exposes the old spec/backlog/feature/bug framings
-// this way — one mode, four opening prompts (spec §9).
+// `opening_prompt`. The pm mode exposes spec/backlog/feature/bug framings this
+// way: one mode with four opening prompts.
 type Preset struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"` // menu key, distinct from the mode
@@ -2386,7 +2385,7 @@ func (x *ListSessionHistoryResponse) GetSessions() []*SessionSummary {
 
 // GetSessionTranscript returns the full event log for a session — live or
 // persisted on disk — so the session browser can render a read-only replayed
-// transcript with the same event components as the live view (spec §18.6).
+// transcript with the same event components as the live view.
 type GetSessionTranscriptRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"` // registered project; empty allowed only when exactly one exists
@@ -2484,7 +2483,7 @@ func (x *GetSessionTranscriptResponse) GetEvents() []*Event {
 }
 
 // GetCommitDiff returns the `git show` output (stat + patch) for a commit, so the
-// transcript can drill into what an agent actually committed (task 0140). The
+// transcript can drill into what an agent actually committed. The
 // daemon caps the returned diff to bound the wire payload; truncated reports when
 // the cap was hit so the client can render a truncation notice.
 type GetCommitDiffRequest struct {
@@ -2591,7 +2590,7 @@ func (x *GetCommitDiffResponse) GetTruncated() bool {
 	return false
 }
 
-// ListModels enumerates the configured logical models (spec §13) so the settings
+// ListModels enumerates the configured logical models so the settings
 // overlay can populate the per-role pickers.
 type ListModelsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -2635,7 +2634,7 @@ type ModelInfo struct {
 	Backend string                 `protobuf:"bytes,2,opt,name=backend,proto3" json:"backend,omitempty"` // anthropic | openai | ollama | ...
 	Model   string                 `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`     // backend model id
 	// Per-model pricing ($/Mtok) surfaced so the live session status bar can price
-	// running usage (spec §20.4). The price_* fields are optional so an unset rate
+	// running usage. The price_* fields are optional so an unset rate
 	// is distinguishable from an explicit 0.0; priced reports whether ANY rate is
 	// configured (mirrors config.Pricing.Configured) so unpriced models render
 	// tokens-only without inventing a cost.
@@ -2739,7 +2738,7 @@ type ListModelsResponse struct {
 	Models []*ModelInfo           `protobuf:"bytes,1,rep,name=models,proto3" json:"models,omitempty"`
 	// Current default per-role assignment (config.Roles) so the settings overlay can
 	// seed its per-role pickers with the ACTUAL current selection — even when opened
-	// from the home menu with no live session (spec §18.2).
+	// from the home menu with no live session.
 	Coordinator string   `protobuf:"bytes,2,opt,name=coordinator,proto3" json:"coordinator,omitempty"`
 	Implementer string   `protobuf:"bytes,3,opt,name=implementer,proto3" json:"implementer,omitempty"`
 	Reviewers   []string `protobuf:"bytes,4,rep,name=reviewers,proto3" json:"reviewers,omitempty"`
@@ -2841,7 +2840,7 @@ func (x *ListModelsResponse) GetWorkImplementation() string {
 	return ""
 }
 
-// ModelConfig mirrors a [models.X] block (spec §13, §18.2) for the settings
+// ModelConfig mirrors a [models.X] block for the settings
 // overlay's add/edit/remove of model backends. Keys are referenced via key_env
 // only — no secret values cross the wire. The pricing fields are optional so an
 // unset price is distinguishable from an explicit 0.0.
@@ -2859,7 +2858,7 @@ type ModelConfig struct {
 	PriceOutput     *float64               `protobuf:"fixed64,10,opt,name=price_output,json=priceOutput,proto3,oneof" json:"price_output,omitempty"`
 	PriceCacheRead  *float64               `protobuf:"fixed64,11,opt,name=price_cache_read,json=priceCacheRead,proto3,oneof" json:"price_cache_read,omitempty"`
 	PriceCacheWrite *float64               `protobuf:"fixed64,12,opt,name=price_cache_write,json=priceCacheWrite,proto3,oneof" json:"price_cache_write,omitempty"`
-	Auth            string                 `protobuf:"bytes,13,opt,name=auth,proto3" json:"auth,omitempty"` // credential mechanism: "" | "api-key" | "oauth" (spec §13)
+	Auth            string                 `protobuf:"bytes,13,opt,name=auth,proto3" json:"auth,omitempty"` // credential mechanism: "" | "api-key" | "oauth"
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -2985,7 +2984,7 @@ func (x *ModelConfig) GetAuth() string {
 	return ""
 }
 
-// UpsertModel adds or replaces a logical model backend (spec §18.2). The change
+// UpsertModel adds or replaces a logical model backend. The change
 // takes effect on the next turn/spawn; persist=true also writes ycc.toml.
 type UpsertModelRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -3254,8 +3253,8 @@ func (x *GetModelConfigResponse) GetModel() *ModelConfig {
 	return nil
 }
 
-// DiscoverModels lists the model ids available from a backend connection (spec
-// §13) so the connection form can offer them for selection. base_url + key_env
+// DiscoverModels lists the model ids available from a backend connection so the
+// connection form can offer them for selection. base_url + key_env
 // describe the connection to probe (the key value never crosses the wire — the
 // daemon resolves key_env locally). On a discovery failure the daemon falls back
 // to curated defaults and sets from_network=false with a human-readable note.
@@ -3379,7 +3378,7 @@ func (x *DiscoverModelsResponse) GetNote() string {
 	return ""
 }
 
-// SetRoleConfig reassigns per-role logical models (spec §13, §18.2). Empty
+// SetRoleConfig reassigns per-role logical models. Empty
 // coordinator/implementer leaves that role unchanged; an empty reviewers list
 // leaves reviewers unchanged. The assignment is persisted as the default (roles
 // in ycc.toml) so it survives a restart. When session_id names a live session the
@@ -4189,7 +4188,7 @@ func (*SetReviewDefaultResponse) Descriptor() ([]byte, []int) {
 	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{74}
 }
 
-// Backlog browser (spec §18.5): read-only RPCs that expose the durable backlog
+// Backlog browser: read-only RPCs that expose the durable backlog
 // (internal/docs Store) so clients can list and inspect tasks independent of any
 // agent session.
 type ListBacklogRequest struct {
@@ -4600,7 +4599,7 @@ func (x *GetTaskResponse) GetTask() *TaskDetail {
 	return nil
 }
 
-// Backlog grooming (spec §18.5, task 0099): direct mutation of a task from the
+// Backlog grooming: direct mutation of a task from the
 // browser. Unset optional fields are left untouched; a request with NO mutation
 // fields set is a valid "refresh" that re-reads the task file (used after
 // hand-edits in $EDITOR).
@@ -4724,7 +4723,7 @@ func (x *UpdateTaskResponse) GetTask() *TaskDetail {
 	return nil
 }
 
-// CreateTask adds a new task to the backlog (task 0143). It mirrors the
+// CreateTask adds a new task to the backlog. It mirrors the
 // docs.Store.Create path used by the capture agent, composing the canonical
 // "## Description / ## Acceptance criteria / ## Work log" scaffold around the
 // supplied body. Used by `ycc task add` when a daemon is available.
@@ -4856,7 +4855,7 @@ func (x *CreateTaskResponse) GetTask() *TaskDetail {
 	return nil
 }
 
-// Plan library (reusable runbooks, task 0020/0077): read-only access to the
+// Plan library (reusable runbooks): read-only access to the
 // in-repo plans/*.md so clients can browse and view saved plans.
 type ListPlansRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -5118,7 +5117,7 @@ func (x *GetPlanResponse) GetContent() string {
 	return ""
 }
 
-// Project memory (spec §6.5): read-only access to memory.md — the advisory
+// Project memory: read-only access to memory.md — the advisory
 // operational notes agents record across sessions — so clients can view what
 // the agents have learned about working on the project.
 type GetMemoryRequest struct {
@@ -5217,7 +5216,7 @@ func (x *GetMemoryResponse) GetPath() string {
 	return ""
 }
 
-// Quick-add backlog capture (spec §18.2, task 0016): a TUI overlay lets the user
+// Quick-add backlog capture: a TUI overlay lets the user
 // quick-add a backlog item mid-session WITHOUT disturbing the running session.
 // The daemon runs a lightweight, off-stream capture agent that turns the
 // description into a structured task via create_task. The agent may ask ONE
@@ -5291,7 +5290,7 @@ func (x *CaptureBacklogItemRequest) GetPriorAnswer() string {
 	return ""
 }
 
-// Usage/cost breakdown (spec §20.3, §20.5): the daemon scans a workspace's
+// Usage/cost breakdown: the daemon scans a workspace's
 // session event logs, joins per-turn usage with task focus and per-model
 // pricing, and returns a structured breakdown grouped by task × model × day so
 // non-CLI clients (TUI/phone) can render it identically to `ycc cost`.
@@ -5563,7 +5562,7 @@ func (x *GetUsageResponse) GetWorkspace() string {
 	return ""
 }
 
-// Provider-side subscription allowance (spec §20.5). This is intentionally
+// Provider-side subscription allowance. This is intentionally
 // separate from GetUsage: it is shared account quota, not ycc-local token spend.
 // No credential material crosses this boundary.
 type GetSubscriptionUsageRequest struct {
@@ -5822,7 +5821,7 @@ func (x *GetSubscriptionUsageResponse) GetAccounts() []*SubscriptionUsageAccount
 	return nil
 }
 
-// Spend guard budget caps (task 0137, spec §20.6). GetBudget returns the
+// Spend guard budget caps. GetBudget returns the
 // configured session and loop caps so the TUI work-loop driver can enforce the
 // per-loop-run cap client-side (session caps are enforced daemon-side). Every
 // field is 0 when unset (unlimited); a cost cap is in US dollars, a token cap
@@ -5932,7 +5931,7 @@ func (x *GetBudgetResponse) GetLoopTokens() int64 {
 }
 
 // Notify routes a client-originated push notification through the daemon-side
-// notifier (task 0142). It exists so the client-driven work-loop can emit its
+// notifier. It exists so the client-driven work-loop can emit its
 // completion digest via the same best-effort webhook channel the daemon uses for
 // question/idle/error/blocked events. delivered is false when the daemon has no
 // notifier configured or the kind is muted.
@@ -6420,7 +6419,7 @@ func (x *WorkLoopInfo) GetWaitKind() string {
 	return ""
 }
 
-// StartWorkLoop starts an unattended work loop for a project (spec §9). It fails
+// StartWorkLoop starts an unattended work loop for a project. It fails
 // (FailedPrecondition) if a loop is already running/waiting/stopping for that workspace.
 type StartWorkLoopRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -6692,7 +6691,7 @@ func (x *GetWorkLoopResponse) GetLoop() *WorkLoopInfo {
 	return nil
 }
 
-// Parallel workstreams (docs/design/parallel-workstreams.md §5–§8): a workstream
+// A parallel workstream
 // is a linked git worktree + branch plus the `work` session scoped to it, tracked
 // as a child of a project. WorkstreamInfo mirrors workstream.Workstream.
 type WorkstreamInfo struct {
@@ -6860,7 +6859,7 @@ func (x *WorkstreamInfo) GetIntegrationMode() string {
 }
 
 // SpawnWorkstream creates a worktree + branch off the project's base and starts a
-// `work` session inside it (design §5, §8). The session_id for Subscribe rides
+// `work` session inside it. The session_id for Subscribe rides
 // inside the returned WorkstreamInfo.
 type SpawnWorkstreamRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -7064,7 +7063,7 @@ func (x *ListWorkstreamsResponse) GetWorkstreams() []*WorkstreamInfo {
 }
 
 // PreviewMerge trial-merges a workstream's branch into its project's current base
-// WITHOUT mutating anything (design §6 step 1): clean reports whether the merge
+// WITHOUT mutating anything: clean reports whether the merge
 // applies without conflict, conflicts lists the conflicted paths otherwise, and
 // diff holds the integrated diff preview when clean.
 type PreviewMergeRequest struct {
@@ -7171,16 +7170,14 @@ func (x *PreviewMergeResponse) GetDiff() string {
 	return ""
 }
 
-// MergeWorkstream integrates a workstream's branch back to base with the
-// conflict-aware, review-gated flow (design §6). The design §8 sketch calls the
-// second field "strategy", but that sketch is explicitly non-final; the manager's
-// real gate is `accept`: a clean trial merge returns needs_accept + the integrated
-// diff (nothing mutated) until accept=true. A conflict returns the
-// conflicted paths with base untouched and the worktree kept.
+// MergeWorkstream integrates a workstream's branch back to base through an
+// explicit accept gate. A clean trial merge returns needs_accept and the
+// integrated diff without mutating the base until accept=true. A conflict returns
+// the conflicted paths with the base untouched and the worktree kept.
 type MergeWorkstreamRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	WorkstreamId  string                 `protobuf:"bytes,1,opt,name=workstream_id,json=workstreamId,proto3" json:"workstream_id,omitempty"`
-	Accept        bool                   `protobuf:"varint,2,opt,name=accept,proto3" json:"accept,omitempty"` // accept a review-gated clean merge (design §6 step 2)
+	Accept        bool                   `protobuf:"varint,2,opt,name=accept,proto3" json:"accept,omitempty"` // accept a review-gated clean merge
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7306,8 +7303,7 @@ func (x *MergeWorkstreamResponse) GetConflicts() []string {
 }
 
 // DiscardWorkstream abandons a workstream without merging: it stops the session,
-// cleans up the worktree + branch, and marks the registry entry discarded
-// (design §6).
+// cleans up the worktree + branch, and marks the registry entry discarded.
 type DiscardWorkstreamRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	WorkstreamId  string                 `protobuf:"bytes,1,opt,name=workstream_id,json=workstreamId,proto3" json:"workstream_id,omitempty"`
@@ -7389,7 +7385,7 @@ func (*DiscardWorkstreamResponse) Descriptor() ([]byte, []int) {
 }
 
 // RetryIntegration re-queues a ready or needs-attention workstream for automatic
-// integration (docs/design/workstream-integration.md §7). Repeated calls while
+// integration. Repeated calls while
 // already queued are idempotent.
 type RetryIntegrationRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`

@@ -10,7 +10,7 @@ import (
 // EnsureSubscriptionModel makes sure c contains a model entry that uses
 // subscription (auth = "oauth") credentials for the given backend ("anthropic"
 // or "openai"), so a fresh `ycc login <backend>` is immediately usable without
-// hand-editing ycc.toml (spec §13). If a subscription model for that backend
+// hand-editing ycc.toml. If a subscription model for that backend
 // already exists it is returned unchanged (added=false). Otherwise a new
 // logical model is added under a sensible free name ("claude"/"chatgpt",
 // falling back to a "-oauth" suffix when taken) with the backend's curated

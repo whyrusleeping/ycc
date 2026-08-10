@@ -7,7 +7,7 @@ let package = Package(
         .iOS(.v17),
         // macOS is supported so the non-UI logic (client request shaping,
         // connection store) runs under `swift test` headlessly on the workspace
-        // machine — no simulator required. See docs/design/ios-client.md §3/§10.
+        // machine — no simulator required.
         .macOS(.v14),
     ],
     products: [

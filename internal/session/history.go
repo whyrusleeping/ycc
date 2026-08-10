@@ -15,7 +15,7 @@ import (
 )
 
 // SessionSummary is a read-only digest of one session — live or persisted on
-// disk — derived by reducing its event log (spec §18.6). It is the row type
+// disk — derived by reducing its event log. It is the row type
 // returned by ListSessionHistory so the session browser and cost views can
 // enumerate every session for a project, not just the live ones.
 type SessionSummary struct {
@@ -195,7 +195,7 @@ func truncateTitle(s string) string {
 
 // ListSessionHistory enumerates all sessions for a project — both live (from the
 // manager map) and persisted on-disk logs — and returns their summaries sorted
-// most-recent first (spec §18.6). The project may be omitted only when the
+// most-recent first. The project may be omitted only when the
 // daemon has one project; unknown or ambiguous selection returns
 // ErrUnknownProject. Live sessions override their on-disk snapshot (live
 // status/mode win, Live=true), and a live session with no disk snapshot yet is

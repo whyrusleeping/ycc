@@ -261,7 +261,7 @@ func (m *model) renderBody(ev *v1.Event) string {
 		return indentLines(m.markdown(txt), "  ")
 	case "thinking":
 		// Render the reasoning summary dimmed so it reads as the model's
-		// "inner voice", distinct from its actual response (spec §18).
+		// "inner voice", distinct from its actual response.
 		txt := dataField(ev, "text")
 		if strings.TrimSpace(txt) == "" {
 			return ""
@@ -311,7 +311,7 @@ func (m *model) renderBody(ev *v1.Event) string {
 			msg = wrap.String(wordwrap.String(msg, w), w)
 		}
 		body := errStyle.Render(msg)
-		// Structured classification (engine loop failures, spec §7.2): lead with
+		// Structured classification (engine loop failures): lead with
 		// a compact "kind (status) · N attempts — hint" line so the user sees
 		// what class of failure it was without reading the provider body.
 		if head := sessionErrorHead(ev); head != "" {
@@ -359,7 +359,7 @@ func styleLines(s string, st lipgloss.Style) string {
 // user_input echo (queued:true) that has not yet been delivered gets a dim
 // "(queued)" suffix, so the transcript never claims the message was delivered
 // before its checkpoint. Once the matching user_input_delivered event arrives,
-// rebuild() re-renders and the suffix disappears (spec §18.7).
+// rebuild() re-renders and the suffix disappears.
 func (m *model) detailLineFor(ev *v1.Event) string {
 	d := detailLine(ev)
 	if ev.Type == "user_input" && dataField(ev, "queued") == "true" && !m.deliveredSeqs[ev.Seq] {
@@ -446,7 +446,7 @@ func detailLine(ev *v1.Event) string {
 }
 
 // budgetSummary renders the spent/cap datum carried on a budget_warning /
-// budget_exceeded event for the transcript row (task 0137).
+// budget_exceeded event for the transcript row.
 func budgetSummary(ev *v1.Event) string {
 	tokens := int64(floatField(ev, "tokens"))
 	tokenCap := int64(floatField(ev, "token_cap"))
@@ -499,7 +499,7 @@ func fmtDurMS(ms int64) string {
 }
 
 // eventUsage extracts the per-turn token usage and the logical model name from a
-// model_turn event's data JSON (task 0062). It parses the proto DataJson directly
+// model_turn event's data JSON. It parses the proto DataJson directly
 // (the live stream carries proto Events, not event.Event) and reads the nested
 // "usage" object plus "model_name". Numbers decode as float64; a missing or
 // unparsable usage block yields the zero Usage so accumulation degrades gracefully.
@@ -551,7 +551,7 @@ func dataField(ev *v1.Event, key string) string {
 }
 
 // floatField pulls a numeric field from an event's data JSON as a float64,
-// returning 0 when absent or non-numeric (task 0137).
+// returning 0 when absent or non-numeric.
 func floatField(ev *v1.Event, key string) float64 {
 	if ev.DataJson == "" {
 		return 0

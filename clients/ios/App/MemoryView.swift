@@ -2,7 +2,7 @@ import SwiftUI
 import YccKit
 import YccProto
 
-/// Read-only viewer for the project's agent memory (memory.md, spec §6.5): the
+/// Read-only viewer for the project's agent memory (memory.md): the
 /// advisory operational notes agents record across sessions via the `remember`
 /// tool — environment quirks, codebase gotchas, user preferences, lessons.
 /// Reached from the project overflow menu (landing + session views). The file

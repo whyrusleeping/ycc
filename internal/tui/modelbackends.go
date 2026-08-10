@@ -49,12 +49,12 @@ var (
 	mbDisplayList  = []string{"", "summarized", "omitted"}
 	// mbAuthList mirrors config.Model.Auth: "" (the api-key default) or
 	// "oauth" (Claude/ChatGPT subscription; anthropic and openai backends
-	// only, spec §13). An explicit "api-key" value loaded from config maps
+	// only). An explicit "api-key" value loaded from config maps
 	// onto "" — the two are equivalent.
 	mbAuthList = []string{"", "oauth"}
 
 	// mbModelPresets offers a small built-in list of common model ids per backend
-	// as suggestions in the model field (spec §13, task 0042). They are
+	// as suggestions in the model field. They are
 	// suggestions only — free-text entry is always retained, so any id works. The
 	// model field stays a normal text input; ctrl+n/ctrl+p just fill it with the
 	// next/previous preset for the current backend.
@@ -131,7 +131,7 @@ func (m *model) mbNewInputs() {
 
 // mbStartAdd opens a blank "add connection" form. The backend defaults to
 // anthropic and the model field is prefilled with that backend's curated ids, so
-// a single connection produces sibling logical models out of the box (spec §13).
+// a single connection produces sibling logical models out of the box.
 func (m *model) mbStartAdd() {
 	m.mbNewInputs()
 	m.mbBackends = append([]string(nil), mbBackendList...)
@@ -153,7 +153,7 @@ func (m *model) mbStartAdd() {
 // backend (or, for openai, the auth mechanism) is changed in add mode, so
 // switching re-seeds sensible ids. A ChatGPT-subscription (oauth) openai
 // connection is seeded with the codex backend's catalog — the platform ids do
-// not apply there (spec §13).
+// not apply there.
 func (m *model) mbApplyCuratedIDs() {
 	presets := mbModelPresets[m.mbBackends[m.mbBackendIdx]]
 	if m.mbBackends[m.mbBackendIdx] == "openai" && mbAuthList[m.mbAuthIdx] == "oauth" {
@@ -271,13 +271,13 @@ func (m *model) mbCycleFocused(d int) {
 	case mbFieldBackend:
 		m.mbBackendIdx = (m.mbBackendIdx + d + len(m.mbBackends)) % len(m.mbBackends)
 		m.mbPresetIdx = -1
-		// Subscription auth is anthropic/openai-only (spec §13): leaving those
+		// Subscription auth is anthropic/openai-only: leaving those
 		// backends silently resets the auth picker to the api-key default.
 		if !mbOAuthBackend(m.mbBackends[m.mbBackendIdx]) {
 			m.mbAuthIdx = 0
 		}
 		// In add mode, re-seed the model-id field with the new backend's curated
-		// defaults so switching backend offers sensible ids (spec §13).
+		// defaults so switching backend offers sensible ids.
 		if m.mbFormMode == mbAdd {
 			m.mbApplyCuratedIDs()
 		}
@@ -419,7 +419,7 @@ func (m model) mbUpdateForm(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // mbCyclePreset fills the model field with the next/previous built-in id preset
-// for the current backend (task 0042). It is a convenience over free text — the
+// for the current backend. It is a convenience over free text — the
 // field remains a normal text input the user can overtype.
 func (m *model) mbCyclePreset(d int) {
 	presets := mbModelPresets[m.mbBackends[m.mbBackendIdx]]
@@ -451,7 +451,7 @@ func parseModelIDs(s string) []string {
 }
 
 // mbSubmitForm validates the connection form and issues UpsertModel for each
-// model id entered (spec §13, §18.2). A single connection (backend + base_url +
+// model id entered. A single connection (backend + base_url +
 // key_env + reasoning/pricing) with N model ids becomes N sibling logical models,
 // each named after its model id (so the role pickers can select opus vs sonnet vs
 // fable within one connection). With a single id an explicit name is honored. In
@@ -597,7 +597,7 @@ func (m model) mbUpsert(cfg *v1.ModelConfig) tea.Cmd {
 }
 
 // mbUpsertMany upserts several sibling logical models (one per model id) that
-// share a connection (spec §13). Any failure aborts and is surfaced inline; the
+// share a connection. Any failure aborts and is surfaced inline; the
 // models upserted before the failure remain (idempotent re-submit fixes it).
 func (m model) mbUpsertMany(cfgs []*v1.ModelConfig) tea.Cmd {
 	return func() tea.Msg {
@@ -613,7 +613,7 @@ func (m model) mbUpsertMany(cfgs []*v1.ModelConfig) tea.Cmd {
 }
 
 // mbDiscover queries the backend connection currently entered in the form for its
-// available model ids (spec §13). The result populates the model-id field.
+// available model ids. The result populates the model-id field.
 func (m model) mbDiscover() tea.Cmd {
 	backend := m.mbBackends[m.mbBackendIdx]
 	baseURL := strings.TrimSpace(m.mbInputs[mbFieldBaseURL].Value())

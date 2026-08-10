@@ -19,7 +19,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/setup"
 )
 
-// loginCommand authenticates a provider subscription via OAuth (spec §13).
+// loginCommand authenticates a provider subscription via OAuth.
 // Two providers are supported:
 //   - anthropic (Claude Pro/Max): paste-code flow — the login page shows a
 //     code#state string the user pastes back.

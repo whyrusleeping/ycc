@@ -1,4 +1,4 @@
-// Package config loads the model/role configuration (spec §13) and builds the
+// Package config loads the model/role configuration and builds the
 // per-role gollama backends the engine uses. A logical model name (e.g. "claude",
 // "gpt", "glm", "local") maps to a backend + base URL + model id + key env var;
 // roles (coordinator, implementer, reviewers) reference those logical names, so
@@ -37,7 +37,7 @@ type Model struct {
 	Model   string `toml:"model"`
 	KeyEnv  string `toml:"key_env"`
 
-	// Auth selects the credential mechanism (spec §13). Empty or "api-key"
+	// Auth selects the credential mechanism. Empty or "api-key"
 	// (the default) resolves key_env as usual. "oauth" — anthropic backend
 	// only — authenticates with a Claude subscription (Pro/Max) via the OAuth
 	// credentials stored by `ycc login anthropic`: requests carry an
@@ -46,7 +46,7 @@ type Model struct {
 	Auth string `toml:"auth,omitempty"` // "" | "api-key" | "oauth"
 
 	// Thinking / Effort / ThinkingDisplay control Anthropic extended/adaptive
-	// reasoning per-model (spec §7, §13). They are honored by the anthropic
+	// reasoning per-model. They are honored by the anthropic
 	// backend and ignored harmlessly by others. When unset, sensible
 	// reasoning-on defaults apply (see ResolveThinking) — this is an agentic
 	// coding harness, so reasoning is desired by default. Set thinking = "off"
@@ -55,7 +55,7 @@ type Model struct {
 	Effort          string `toml:"effort"`           // "low" | "medium" | "high" | "xhigh" | "max"
 	ThinkingDisplay string `toml:"thinking_display"` // "summarized" | "omitted"
 
-	// Optional per-model pricing in US dollars per million tokens (spec §20.4),
+	// Optional per-model pricing in US dollars per million tokens,
 	// split by token class so cache reads/writes can be priced separately from
 	// fresh input/output. Each is a pointer so an unset price is distinguishable
 	// from an explicit 0.0 (and round-trips through config.Save). When none are
@@ -70,7 +70,7 @@ type Model struct {
 }
 
 // Pricing holds the resolved per-token-class rates for a model in US dollars per
-// million tokens (spec §20.4). Configured reports whether ANY rate was set; when
+// million tokens. Configured reports whether ANY rate was set; when
 // false the model is unpriced and Cost returns priced=false so callers display
 // cost as unknown ("—") rather than 0.
 type Pricing struct {
@@ -115,7 +115,7 @@ func (m Model) EffectivePricing() Pricing {
 		return p
 	}
 	// Subscription (OAuth) usage is prepaid — pricing it at API-key rates would
-	// invent spend that never happened (spec §20.4: never invent numbers), so
+	// invent spend that never happened, so
 	// the built-in default table is skipped and the model is unpriced unless
 	// the config sets explicit price_* rates.
 	if m.Auth == "oauth" {
@@ -131,7 +131,7 @@ func (m Model) EffectivePricing() Pricing {
 // whether it could be priced. cost = Σ(tokens_class × rate_class) / 1e6 (rates
 // are $/Mtok). When pricing is not configured, priced is false and callers
 // should display cost as unknown ("—") rather than 0 — the feature must never
-// invent numbers (spec §20.4).
+// invent numbers.
 func (p Pricing) Cost(u event.Usage) (cost float64, priced bool) {
 	if !p.Configured {
 		return 0, false
@@ -343,7 +343,7 @@ type ResolvedReviewer struct {
 	Thinking string // optional per-reviewer reasoning level (off|low|…|max); "" => role/model default
 }
 
-// Reviewer is one configured reviewer slot inside a review tier (spec §13.1).
+// Reviewer is one configured reviewer slot inside a review tier.
 // It lets a tier task a specific logical model with a specific review focus
 // ("conciseness and readability", "performance characteristics", …) instead of
 // running the same generic review N times:
@@ -359,7 +359,7 @@ type Reviewer struct {
 	Thinking string `toml:"thinking,omitempty"` // optional per-reviewer reasoning level
 }
 
-// ReviewTier is one configurable review intensity tier (spec §13.1). Strategy
+// ReviewTier is one configurable review intensity tier. Strategy
 // "agents" (the default when empty) spawns reviewer subagents — either one per
 // logical model in Models (the shorthand) or one per entry in Reviewers (the
 // long form, which additionally carries a per-reviewer focus prompt);
@@ -433,7 +433,7 @@ func joinPrompts(tier, reviewer string) string {
 	}
 }
 
-// Reviews configures the named review tiers and the default tier (spec §13). The
+// Reviews configures the named review tiers and the default tier. The
 // built-in tiers (simple, single-opus, high-powered) always exist; entries here
 // add new tiers or override the built-ins.
 type Reviews struct {
@@ -451,34 +451,32 @@ type Config struct {
 	// runaway/cost backstop. 0 means "use the engine's high default" (see
 	// engine.defaultMaxTurns). It sits beside max_tokens in the config.
 	//
-	// Note (task 0010): raising this lets a run accumulate more context, so a
-	// very high value can trade a turn-limit abort for a context-window-limit
-	// abort until context-window management (0010) lands.
+	// Raising this lets a run accumulate more context, so a very high value can
+	// hit the model's context-window limit before the turn limit.
 	MaxTurns int `toml:"max_turns"`
 	// GC configures automatic reclamation of idle sessions and on-disk session
-	// logs (task 0054). All fields default to 0 (disabled) — conservative by
+	// logs. All fields default to 0 (disabled) — conservative by
 	// default so nothing is reaped or pruned unless explicitly opted in.
 	GC GC `toml:"gc,omitempty"`
 	// Budget configures optional spend caps that turn the existing usage/cost
-	// telemetry into an enforced guard (task 0137, spec §20.6). All fields
+	// telemetry into an enforced guard. All fields
 	// default to 0 (unlimited) — absent config preserves today's behaviour.
 	Budget Budget `toml:"budget,omitempty"`
 	// WriteRoots lists extra trusted writable roots OUTSIDE the workspace that
 	// the Write/Edit tools may target (e.g. sibling projects the agent should
 	// be able to modify). Reads are unrestricted (any path); writes default to
-	// the workspace only and these extend that guardrail. (Replaces the former
-	// read_roots option, which is now unnecessary and ignored.)
+	// the workspace only and these extend that guardrail. The obsolete read_roots
+	// option is accepted but ignored because reads are unrestricted.
 	WriteRoots []string `toml:"write_roots,omitempty"`
-	// Notify configures the daemon-side push notifier (task 0142): a best-effort,
+	// Notify configures the daemon-side push notifier: a best-effort,
 	// async webhook (ntfy.sh-compatible) that reaches out when an agent needs the
 	// user — questions, idle-with-report, errors, work-loop digests, and blocked
 	// implementers. Absent (empty URL) = disabled.
 	Notify Notify `toml:"notify,omitempty"`
-	// Retry configures automatic retry of transient LLM API failures (task 0133,
-	// spec §7.2). All fields default to 0 (unset) — an absent [retry] block keeps
-	// today's engine default (engine.DefaultRetryPolicy: 8 attempts, 500ms→30s).
+	// Retry configures automatic retry of transient LLM API failures. All fields
+	// default to 0 (unset), so an absent [retry] block keeps the engine default.
 	Retry Retry `toml:"retry,omitempty"`
-	// Work configures the work-mode implementation pipeline (spec §10). An absent
+	// Work configures the work-mode implementation pipeline. An absent
 	// [work] block keeps the default "delegate" behaviour.
 	Work Work `toml:"work,omitempty"`
 	// Integration configures how completed workstreams are integrated: base branch,
@@ -486,7 +484,7 @@ type Config struct {
 	Integration Integration `toml:"integration,omitempty"`
 	// Worktree configures bootstrap steps for newly-created linked worktrees. A
 	// project-tree ycc.toml [worktree] block takes precedence over this daemon
-	// configuration (task 0250).
+	// configuration.
 	Worktree Worktree `toml:"worktree,omitempty"`
 }
 
@@ -520,7 +518,7 @@ type Worktree struct {
 	SetupTimeoutSeconds int               `toml:"setup_timeout_seconds,omitempty"`
 }
 
-// Work configures the work-mode coordinator's implementation strategy (spec §10).
+// Work configures the work-mode coordinator's implementation strategy.
 // Implementation selects whether the coordinator delegates code changes to a
 // dedicated implementer subagent or makes them itself:
 //
@@ -553,8 +551,8 @@ func (w Work) ResolvedImplementation() string {
 	return w.Implementation
 }
 
-// Retry configures the loop-level retry of transient LLM API failures (task
-// 0133, spec §7.2). Each field is 0 when unset, meaning "keep the engine default
+// Retry configures loop-level retry of transient LLM API failures. Each field
+// is 0 when unset, meaning "keep the engine default
 // for that field" (see engine.DefaultRetryPolicy). MaxAttempts is the total
 // number of attempts including the first; MaxAttempts = 1 disables retry
 // entirely. BaseDelayMS is the first backoff step (milliseconds) and doubles
@@ -565,25 +563,25 @@ type Retry struct {
 	MaxDelayMS  int `toml:"max_delay_ms,omitempty"`
 }
 
-// GC configures the background session reaper (task 0054). IntervalSeconds sets
+// GC configures the background session reaper. IntervalSeconds sets
 // how often the reaper runs (0 => a sensible default). IdleTimeoutMinutes stops
 // sessions that have been idle (idle status, no pending question, not paused) for
 // that long; 0 disables idle reaping. LogRetentionDays prunes on-disk session
 // logs older than that many days; 0 disables pruning. Log pruning is OFF by
 // default because those logs back the durable session index / history + reopen
-// view (tasks 0033/0034) — enabling it discards logs a user could reopen.
+// view — enabling it discards logs a user could reopen.
 type GC struct {
 	IntervalSeconds    int `toml:"interval_seconds,omitempty"`
 	IdleTimeoutMinutes int `toml:"idle_timeout_minutes,omitempty"`
 	LogRetentionDays   int `toml:"log_retention_days,omitempty"`
 }
 
-// Budget configures optional spend caps (task 0137, spec §20.6). Session caps are
+// Budget configures optional spend caps. Session caps are
 // enforced daemon-side at safe checkpoints; loop caps are enforced client-side by
 // the TUI work-loop driver via GetBudget. Every field defaults to 0 meaning
 // "unlimited" so an absent [budget] block preserves the current no-ceiling
 // behaviour. Cost caps are in US dollars; token caps count total tokens. A model
-// with no configured pricing contributes tokens but no dollars (§20.4), so it can
+// with no configured pricing contributes tokens but no dollars, so it can
 // only ever breach a token cap — never an invented-dollars cost cap.
 type Budget struct {
 	SessionCost   float64 `toml:"session_cost,omitempty"`   // $ cap per session (0 = unlimited)
@@ -592,7 +590,7 @@ type Budget struct {
 	LoopTokens    int64   `toml:"loop_tokens,omitempty"`    // total-token cap per work-loop run (0 = unlimited)
 }
 
-// Notify configures the daemon-side push notifier (task 0142). URL is the webhook
+// Notify configures the daemon-side push notifier. URL is the webhook
 // endpoint (e.g. https://ntfy.sh/mytopic); empty disables notifications entirely.
 // Auth, when set, is sent verbatim as the Authorization request header (e.g.
 // "Bearer tk_..."). Otherwise AuthEnv names an environment variable containing the
@@ -608,7 +606,7 @@ type Notify struct {
 	Events  []string `toml:"events,omitempty"`
 }
 
-// NotifyEventKinds is the set of valid notify.events entries (task 0142). Kept
+// NotifyEventKinds is the set of valid notify.events entries. Kept
 // here (not in internal/notify) so config validation has no dependency on the
 // notifier package.
 var NotifyEventKinds = map[string]bool{
@@ -659,8 +657,8 @@ func LoadWorktree(dir string) (cfg Worktree, ok bool) {
 	return cfg, true
 }
 
-// Save validates c and writes it to path as private (0600) TOML that Load reads
-// back to an equal *Config. Parent directories are created as private (0700)
+// Save validates c and writes it to path as private TOML that Load reads
+// back to an equal *Config. Parent directories are created as private
 // directories as needed. Model keys are persisted as key_env references only,
 // though Notify.Auth may contain a credential. These local modes do not protect a
 // project-local ycc.toml committed to git: committed config must use notify.auth_env,
@@ -868,7 +866,7 @@ func (r *Registry) GC() (interval, idleTimeout, logRetention time.Duration) {
 		time.Duration(r.cfg.GC.LogRetentionDays) * 24 * time.Hour
 }
 
-// Budget returns the configured spend caps (task 0137, spec §20.6). Each field is
+// Budget returns the configured spend caps. Each field is
 // zero when unset/unlimited. Guarded by the registry lock like GC/MaxTokens so a
 // runtime config edit is picked up on the next check.
 func (r *Registry) Budget() Budget {
@@ -927,7 +925,7 @@ func (r *Registry) WorktreeConfig() Worktree {
 	return cfg
 }
 
-// Notify returns the configured daemon-side push-notifier settings (task 0142).
+// Notify returns the configured daemon-side push-notifier settings.
 // An empty URL means notifications are disabled. Guarded by the registry lock like
 // GC/Budget.
 func (r *Registry) Notify() Notify {
@@ -936,9 +934,8 @@ func (r *Registry) Notify() Notify {
 	return r.cfg.Notify
 }
 
-// RetryPolicy returns the loop-level transient-failure retry policy (task 0133,
-// spec §7.2). It starts from engine.DefaultRetryPolicy and overlays each nonzero
-// [retry] config field (delays converted from milliseconds). Because the result
+// RetryPolicy starts from engine.DefaultRetryPolicy and overlays each nonzero
+// [retry] config field, converting delays from milliseconds. Because the result
 // always has MaxAttempts >= 1, a configured max_attempts = 1 truly disables retry
 // (the loop's "zero value => default" fallback never kicks in). Guarded by the
 // registry lock like MaxTokens/MaxTurns so a runtime config edit is picked up on
@@ -972,7 +969,7 @@ func (r *Registry) WriteRoots() []string {
 }
 
 // WorkImplementation returns the configured work-mode implementation strategy
-// ("delegate" or "direct"), defaulting to "delegate" when unset (spec §10).
+// ("delegate" or "direct"), defaulting to "delegate" when unset.
 // Guarded by the registry lock so a runtime config edit is picked up on the next
 // session build.
 func (r *Registry) WorkImplementation() string {
@@ -983,7 +980,7 @@ func (r *Registry) WorkImplementation() string {
 
 // SetWorkImplementation updates the work-mode implementation strategy
 // (work.implementation in ycc.toml) and persists it so the choice survives a
-// restart (spec §10, §18.2). The value must be "delegate" or "direct". On a
+// restart. The value must be "delegate" or "direct". On a
 // persist failure the change is reverted so the live config and the file never
 // diverge.
 func (r *Registry) SetWorkImplementation(impl string) error {
@@ -1032,7 +1029,7 @@ func (r *Registry) PresetModel(name string) (model string, bound bool) {
 
 // SetRoles updates the default per-role model assignments (roles.coordinator /
 // implementer / reviewers) and writes the change back to ycc.toml so a role
-// selection made in the settings overlay survives a restart (spec §18.2). Empty
+// selection made in the settings overlay survives a restart. Empty
 // coordinator/implementer or an empty reviewers slice leaves that role unchanged.
 // Every named model must exist. On a persist failure the change is reverted so
 // the live config and the file never diverge.
@@ -1068,7 +1065,7 @@ func (r *Registry) SetRoles(coordinator, implementer string, reviewers []string)
 }
 
 // ReviewTier resolves a requested tier name (possibly empty) into the effective
-// tier (spec §13). An empty request selects the configured default (not a
+// tier. An empty request selects the configured default (not a
 // fallback). An unknown non-empty request degrades gracefully to the default
 // with Fallback=true.
 func (r *Registry) ReviewTier(requested string) ReviewTierResolved {
@@ -1101,7 +1098,7 @@ func (r *Registry) ReviewTier(requested string) ReviewTierResolved {
 
 // ReviewTierInfo describes one available review tier for the coordinator's
 // spawn_reviewers tool description, so custom tiers are discoverable by the
-// model instead of hard-coded in a prompt (spec §13.1).
+// model instead of hard-coded in a prompt.
 type ReviewTierInfo struct {
 	Name        string
 	Description string
@@ -1136,7 +1133,7 @@ func (r *Registry) ReviewTiers() []ReviewTierInfo {
 }
 
 // SetModelThinking sets and persists the single-knob reasoning level for the
-// logical model named name (spec §7.4, §18.2). "off" disables reasoning; an
+// logical model named name. "off" disables reasoning; an
 // effort level enables adaptive thinking at that effort. ThinkingDisplay is
 // deliberately preserved. On a persist failure the model record is reverted.
 func (r *Registry) SetModelThinking(name, level string) error {
@@ -1186,7 +1183,7 @@ type ModelInfo struct {
 	Backend string
 	Model   string
 	Auth    string
-	Pricing Pricing // resolved per-model pricing (spec §20.4); Configured=false ⇒ unpriced
+	Pricing Pricing // resolved per-model pricing; Configured=false ⇒ unpriced
 }
 
 // GetModel returns a copy of the model record stored under name (for editing in
@@ -1200,7 +1197,7 @@ func (r *Registry) GetModel(name string) (Model, bool) {
 
 // DiscoverConnModels lists the model ids available from a backend connection by
 // resolving key_env locally (env then secrets store) and querying the backend's
-// listing endpoint (spec §13). It never returns or logs the secret value. On any
+// listing endpoint. It never returns or logs the secret value. On any
 // failure the caller should fall back to CuratedModelIDs(backend).
 func (r *Registry) DiscoverConnModels(ctx context.Context, backend, baseURL, keyEnv string) ([]string, error) {
 	key := resolveKey(Model{KeyEnv: keyEnv})
@@ -1286,8 +1283,8 @@ func (r *Registry) RemoveModel(name string, persist bool) error {
 	return nil
 }
 
-// ReviewTierListing is one effective review tier as reported to clients (spec
-// §13.1, §18.2): the tier's configuration plus whether it is one of the
+// ReviewTierListing is one effective review tier as reported to clients: the
+// tier's configuration plus whether it is one of the
 // always-present built-ins and whether an explicit [reviews.tiers.X] entry
 // exists for it (a custom tier, or a built-in override).
 type ReviewTierListing struct {
@@ -1439,7 +1436,7 @@ func (r *Registry) ThinkingFor(name string) Thinking {
 	return m.ResolveThinking()
 }
 
-// PricingFor returns the resolved pricing for a logical model name (spec §20.4):
+// PricingFor returns the resolved pricing for a logical model name:
 // explicit config pricing when set, else the built-in default rates for
 // well-known Anthropic/OpenAI model ids (default_pricing.go). An unknown name
 // returns the zero (unconfigured) Pricing, so cost is reported as unknown
@@ -1463,8 +1460,8 @@ func (r *Registry) Has(name string) bool {
 }
 
 // BackendFor returns the logical backend family ("anthropic", "openai", ...) for
-// a configured model name, or "" if unknown. Used to label per-turn usage events
-// (spec §20.1) with the backend that produced them.
+// a configured model name, or "" if unknown. It labels per-turn usage events with
+// the backend that produced them.
 func (r *Registry) BackendFor(name string) string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -1475,7 +1472,7 @@ func (r *Registry) BackendFor(name string) string {
 }
 
 // Models returns the configured logical models sorted by name so the settings
-// overlay can populate the per-role pickers (spec §13, §18.2).
+// overlay can populate the per-role pickers.
 func (r *Registry) Models() []ModelInfo {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -1535,14 +1532,14 @@ func (r *Registry) Build(name string) (engine.Turner, string, error) {
 	// Disable gollama's internal HTTP transport retry ring (429/503/529). Although
 	// it is context-aware, it is invisible to subscribers, and stacking it under
 	// the loop-level ring double-counts a persistent rate limit. Transient API
-	// failures are instead retried solely by the engine loop (engine.Loop.runTurn,
-	// spec §7.2), which broadcasts transient `retry` events.
+	// failures are instead retried solely by engine.Loop.runTurn, which broadcasts
+	// transient `retry` events.
 	c.SetMaxRetries(0)
 	key := resolveKey(m)
 	anthropicSubscription := false
 	// Set for `auth = "oauth"` models only: their bearer credential is resolved
 	// per turn, because Anthropic invalidates the previous access token on every
-	// refresh (spec §13) and a token frozen here dies as soon as anything else
+	// refresh and a token frozen here dies as soon as anything else
 	// refreshes it.
 	var oauthTokens *anthropicauth.TokenSource
 	switch m.Backend {
@@ -1588,7 +1585,7 @@ func (r *Registry) Build(name string) (engine.Turner, string, error) {
 			c.SetAPIKey(key)
 		}
 	case "openai", "openai-compatible", "glm":
-		// ChatGPT subscription auth (spec §13): subscription tokens are not
+		// ChatGPT subscription auth: subscription tokens are not
 		// valid on the platform API — inference goes through the dedicated
 		// Codex Responses transport instead of gollama's OpenAI client. A
 		// base_url pointing at the platform API (or left empty) is swapped
@@ -1605,7 +1602,7 @@ func (r *Registry) Build(name string) (engine.Turner, string, error) {
 		return nil, "", fmt.Errorf("model %q: unsupported backend %q", name, m.Backend)
 	}
 	// Retry of transient API failures is handled solely by the engine loop
-	// (engine.Loop.runTurn, spec §7.2) — ctx-aware and visible to live
+	// (engine.Loop.runTurn) — ctx-aware and visible to live
 	// subscribers. gollama's own transport retry ring was disabled above
 	// (SetMaxRetries(0)), so this is the only retry ring.
 	if anthropicSubscription {

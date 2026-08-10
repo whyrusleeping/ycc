@@ -42,12 +42,12 @@ type Options struct {
 	Token      string
 	TLSCert    string
 	TLSKey     string
-	// Persist enables the durable project registry in the daemon state dir
-	// (spec §3.1). The one-shot in-process path leaves this false: cwd is the
+	// Persist enables the durable project registry in the daemon state dir.
+	// The one-shot in-process path leaves this false: cwd is the
 	// single implicit project and nothing is written to the state dir.
 	Persist bool
 	// Web serves the embedded web client (internal/web) at "/" alongside the
-	// Connect handler (design docs/design/web-client.md §3). The static assets
+	// Connect handler. The static assets
 	// are unauthenticated; the RPC surface stays behind the bearer
 	// AuthInterceptor unchanged. Off by default and forced off for the one-shot
 	// in-process path (that daemon is a private loopback backing the local TUI,
@@ -76,13 +76,13 @@ func buildHandler(o Options) (http.Handler, *session.Manager, error) {
 	reg := config.NewRegistry(cfg)
 	reg.SetPath(persistPath(o))
 	mgr := session.NewManager(reg, o.Workspace)
-	// Daemon-side push notifier (task 0142): best-effort webhook that reaches out
+	// Daemon-side push notifier: best-effort webhook that reaches out
 	// when an agent needs the user. notify.New returns nil when unconfigured
 	// (empty url), so this is a no-op by default; applies to both the persistent
 	// and one-shot in-process paths.
 	mgr.SetNotifier(notify.New(reg.Notify()))
 	// A persistent daemon backs its project registry with durable state so the
-	// project list survives restarts (spec §3.1). The one-shot path keeps the
+	// project list survives restarts. The one-shot path keeps the
 	// manager's in-memory registry, already containing cwd as its sole project.
 	if o.Persist {
 		preg, err := project.Open(project.StateFile())
@@ -98,7 +98,7 @@ func buildHandler(o Options) (http.Handler, *session.Manager, error) {
 				return nil, nil, fmt.Errorf("register startup project: %w", err)
 			}
 		}
-		// The workstream registry (parallel worktrees, design §5/§7) is likewise
+		// The workstream registry (parallel worktrees) is likewise
 		// durable and reconciled on startup: prune stale worktrees left by a
 		// crashed daemon and mark orphaned workstreams stale. A reconcile error is
 		// non-fatal (log and continue).
@@ -111,7 +111,7 @@ func buildHandler(o Options) (http.Handler, *session.Manager, error) {
 			log.Printf("workstream reconcile: %v", err)
 		}
 		// A persistent daemon outlives any single session, so it runs the
-		// background GC reaper (task 0054) when enabled in config: idle-session
+		// background GC reaper when enabled in config: idle-session
 		// reaping and/or on-disk log retention. Both default to 0 (disabled), so
 		// this is a no-op unless explicitly opted in. The one-shot in-process path
 		// is short-lived and carries no GC config, so it leaves GC off.
@@ -131,7 +131,7 @@ func buildHandler(o Options) (http.Handler, *session.Manager, error) {
 	// Optionally serve the embedded web client at "/". http.ServeMux
 	// longest-prefix routing keeps RPC traffic on the Connect handler's
 	// "/ycc.v1.SessionService/" prefix; everything else falls to the asset
-	// handler. The assets are unauthenticated by design (web-client.md §4).
+	// handler. The assets are unauthenticated by design.
 	if o.Web {
 		mux.Handle("/", web.Handler())
 	}
@@ -244,7 +244,7 @@ func (p *InProcess) Close() error {
 }
 
 // persistPath returns the config file path a runtime config mutation should be
-// written back to when persist=true (spec §18.2, §19.1). It prefers the
+// written back to when persist=true. It prefers the
 // explicitly loaded config path; otherwise it falls back to the default
 // discovered location ($XDG_CONFIG_HOME/ycc/ycc.toml) so that even the
 // no-config DefaultAnthropic startup can persist edits. An empty return value

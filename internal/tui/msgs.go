@@ -64,25 +64,25 @@ type historyMsg struct {
 }
 
 // waitingSessionsMsg carries the live sessions that need the user (pending
-// question or paused) for the home-menu awareness line (task 0107). It is an
+// question or paused) for the home-menu awareness line. It is an
 // awareness signal, not a screen: errors are ignored silently so a transient
 // RPC hiccup never flashes on the menu.
 type waitingSessionsMsg struct {
 	sessions []*v1.SessionSummary
 	// recent is the most-recent session overall (ListSessionHistory returns
 	// most-recent first), used for the "ctrl+l continue last session" affordance
-	// (task 0139). nil when there is no session to continue.
+	// nil when there is no session to continue.
 	recent *v1.SessionSummary
 	err    error
 }
 
 // menuRefreshMsg is the modest tick that re-polls waiting sessions while the
-// home menu is showing (task 0107), so a question raised in a background
+// home menu is showing, so a question raised in a background
 // session surfaces without the user pressing a key. seq disarms stale ticks.
 type menuRefreshMsg struct{ seq int }
 
 // menuGitMsg carries the current git branch + dirtiness for the home-menu
-// context header (task 0139). An error (non-git workspace, remote daemon, git
+// context header. An error (non-git workspace, remote daemon, git
 // missing) is delivered as an empty branch so the segment simply drops out.
 type menuGitMsg struct {
 	branch string
@@ -91,7 +91,7 @@ type menuGitMsg struct {
 }
 
 // menuSpendMsg carries today's aggregated spend for the home-menu context
-// header (task 0139). Errors are ignored silently — the segment drops out.
+// header. Errors are ignored silently — the segment drops out.
 type menuSpendMsg struct {
 	cost   float64
 	status string
@@ -99,7 +99,7 @@ type menuSpendMsg struct {
 }
 
 // transcriptMsg carries a session's replayed event log for the read-only
-// transcript drill-in (spec §18.6), or an error if the fetch failed.
+// transcript drill-in, or an error if the fetch failed.
 type transcriptMsg struct {
 	id     string
 	events []*v1.Event
@@ -114,12 +114,12 @@ type errMsg struct{ err error }
 
 // flashClearMsg fires ~5s after a transient error was shown; the handler clears
 // flashErr only when seq still matches the current flash so a stale timer never
-// wipes a newer error (task 0104).
+// wipes a newer error.
 type flashClearMsg struct{ seq int }
 
 // quitDisarmMsg fires quitGuardWindow after the first ctrl+c armed the quit
 // guard; the handler clears quitArmed only when seq still matches so a stale
-// timer never disarms a freshly re-armed guard (task 0109).
+// timer never disarms a freshly re-armed guard.
 type quitDisarmMsg struct{ seq int }
 
 type backlogMsg struct{ tasks []*v1.BacklogTaskSummary }
@@ -127,7 +127,7 @@ type backlogMsg struct{ tasks []*v1.BacklogTaskSummary }
 type taskDetailMsg struct{ task *v1.TaskDetail }
 
 // commitDiffMsg carries the result of a GetCommitDiff RPC for the commit-diff
-// drill-in overlay (task 0140). sha guards a late reply arriving after the
+// drill-in overlay. sha guards a late reply arriving after the
 // overlay was closed or a different commit was opened.
 type commitDiffMsg struct {
 	sha       string
@@ -136,15 +136,15 @@ type commitDiffMsg struct {
 	err       error
 }
 
-// taskUpdatedMsg carries the result of an UpdateTask grooming RPC (task 0099):
+// taskUpdatedMsg carries the result of an UpdateTask grooming RPC:
 // a refreshed TaskDetail on success, or an error to surface in the browser footer.
 type taskUpdatedMsg struct {
 	task *v1.TaskDetail
 	err  error
 }
 
-// editorClosedMsg fires when the external $EDITOR spawned for a task exits (task
-// 0099). The browser then reloads the task so hand-edits are reflected.
+// editorClosedMsg fires when the external $EDITOR spawned for a task exits.
+// The browser then reloads the task so hand-edits are reflected.
 type editorClosedMsg struct {
 	id  string
 	err error
@@ -154,7 +154,7 @@ type plansMsg struct{ plans []*v1.PlanSummary }
 
 type planDetailMsg struct{ plan *v1.GetPlanResponse }
 
-// usageMsg carries the GetUsage breakdown for the cost view (spec §20.5, task 0039).
+// usageMsg carries the GetUsage breakdown for the cost view.
 type usageMsg struct {
 	gen       int // request generation; stale task/group responses are ignored
 	rows      []*v1.UsageRow
@@ -163,28 +163,28 @@ type usageMsg struct {
 	accounts  []*v1.SubscriptionUsageAccount
 }
 
-// workstreamsMsg carries the ListWorkstreams result for the panel (task 0085),
+// workstreamsMsg carries the ListWorkstreams result for the panel,
 // or an error to surface in the panel footer.
 type workstreamsMsg struct {
 	list []*v1.WorkstreamInfo
 	err  error
 }
 
-// wsSpawnedMsg reports the result of a multi-select "run in parallel" spawn (task
-// 0085): count is how many workstreams were created before err (if any).
+// wsSpawnedMsg reports the result of a multi-select "run in parallel" spawn.
+// count is how many workstreams were created before err, if any.
 type wsSpawnedMsg struct {
 	count int
 	err   error
 }
 
-// wsPreviewMsg carries a PreviewMerge result for the merge overlay (task 0085).
+// wsPreviewMsg carries a PreviewMerge result for the merge overlay.
 type wsPreviewMsg struct {
 	id      string
 	preview *v1.PreviewMergeResponse
 	err     error
 }
 
-// wsMergedMsg carries a MergeWorkstream result (task 0085): merged (with commit),
+// wsMergedMsg carries a MergeWorkstream result: merged (with commit),
 // still-conflicted (paths), or a review-gated needs_accept.
 type wsMergedMsg struct {
 	id  string
@@ -192,7 +192,7 @@ type wsMergedMsg struct {
 	err error
 }
 
-// wsDiscardedMsg reports the result of a DiscardWorkstream (task 0085).
+// wsDiscardedMsg reports the result of a DiscardWorkstream.
 type wsDiscardedMsg struct {
 	id  string
 	err error
@@ -212,13 +212,13 @@ type wsMergeAllMsg struct {
 	err   error
 }
 
-// wsTickMsg is the panel's live-refresh tick (task 0085); seq guards against
+// wsTickMsg is the panel's live-refresh tick; seq guards against
 // compounding timers across panel visits.
 type wsTickMsg struct{ seq int }
 
 // captureEvMsg carries one streamed capture-agent action-log event. A terminal
 // event of type "capture_result" carries the outcome of a CaptureBacklogItem RPC
-// (task 0016): a created task (task_id/title), a single clarifying question, or
+// a created task (task_id/title), a single clarifying question, or
 // an error — in its data_json.
 type captureEvMsg struct{ ev *v1.Event }
 
@@ -231,19 +231,19 @@ type captureStreamClosedMsg struct{}
 type captureErrMsg struct{ err error }
 
 // mbPrefillMsg carries a model backend's full record loaded via GetModelConfig
-// for the edit/duplicate form (task 0044). On error the form is not opened.
+// for the edit/duplicate form. On error the form is not opened.
 type mbPrefillMsg struct {
 	cfg  *v1.ModelConfig
 	mode int
 	err  error
 }
 
-// mbWriteMsg is the result of an UpsertModel/RemoveModel RPC (task 0044). On
+// mbWriteMsg is the result of an UpsertModel/RemoveModel RPC. On
 // success the modal returns to the list and refreshes ListModels; on error the
 // message is surfaced inline via mbErr.
 type mbWriteMsg struct{ err error }
 
-// mbDiscoverMsg carries the result of a DiscoverModels RPC (spec §13). On success
+// mbDiscoverMsg carries the result of a DiscoverModels RPC. On success
 // the ids populate the connection form's model-id field; note is a human-readable
 // status line (e.g. why a curated fallback was used).
 type mbDiscoverMsg struct {

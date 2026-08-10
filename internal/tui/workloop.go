@@ -227,7 +227,7 @@ func (m model) digestRows() (rows []browserRow, nav []string) {
 }
 
 // digestView renders the batch digest as a bordered modal card via the shared
-// list component (task 0098).
+// list component.
 func (m model) digestView() string {
 	rows, _ := m.digestRows()
 	b := browser{
@@ -242,7 +242,7 @@ func (m model) digestView() string {
 
 // updateDigest handles the batch digest modal: list navigation, and Enter on a
 // task row jumps into the backlog browser's detail for that task — the fast path
-// to answer a blocked task + re-queue, or just inspect what happened (task 0098).
+// to answer a blocked task + re-queue, or just inspect what happened.
 func (m model) updateDigest(msg tea.Msg) (tea.Model, tea.Cmd) {
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {

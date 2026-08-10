@@ -22,7 +22,7 @@ final class AppModel {
     private(set) var client: YccClient?
 
     /// A deep link awaiting consumption once the app is connected and the
-    /// landing view is on screen (task 0186). Set by ``handleDeepLink(_:)`` on
+    /// landing view is on screen. Set by ``handleDeepLink(_:)`` on
     /// `.onOpenURL` — including a cold-start launch URL — and cleared by the
     /// landing view after it routes to the target.
     var pendingDeepLink: DeepLink?
@@ -77,7 +77,7 @@ final class AppModel {
         store.clearActive()
     }
 
-    // MARK: - Deep links (task 0186)
+    // MARK: - Deep links
 
     /// Handle a `ycc://` deep link from `.onOpenURL` (warm start) or a cold-start
     /// launch URL. A `ycc://session/<id>?server=<name>` link first best-effort

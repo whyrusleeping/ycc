@@ -2,8 +2,8 @@ import SwiftUI
 import YccKit
 import YccProto
 
-/// A sheet answering "what has *this* session spent so far" (task 0309) — the
-/// iOS counterpart of the TUI's Σ status-bar readout (spec §20.5). Presented
+/// A sheet answering "what has *this* session spent so far" — the
+/// iOS counterpart of the TUI's Σ status-bar readout. Presented
 /// from the session screen's action menu, it shows the current session's token
 /// usage broken down by model (with cost, priced by the daemon) plus a total
 /// row, reusing the Usage screen's row rendering.

@@ -1,4 +1,4 @@
-// Package clientconfig persists client-only UI preferences (spec §18.2): the
+// Package clientconfig persists client-only UI preferences: the
 // theme and the follow/auto-scroll toggle. These never touch the daemon — they
 // live in a small local file under the user config dir.
 package clientconfig

@@ -1,5 +1,5 @@
 // Package export renders a session's event log into shareable markdown. It
-// reuses the transcript-folding semantics the TUI applies (spec §18.3, §18.6):
+// reuses the transcript-folding semantics the TUI applies:
 // tool_result folds into its tool_call as one collapsed line, an ask_user
 // round-trip collapses to a single Q/A block, empty (tool-calls-only)
 // model_turns and echoed session_idle rows are dropped, and the final report is
@@ -251,7 +251,7 @@ func (b *builder) renderOrphanResult(res *v1.Event) string {
 
 // renderQuestion renders a question_asked event as the single canonical block
 // for the whole ask_user exchange: the question(s) with the folded answer(s)
-// beneath (§18.3's one-block rule).
+// beneath it as a single block.
 func (b *builder) renderQuestion(ev *v1.Event) string {
 	ans := b.answerEventFor(ev)
 	auto := ans != nil && dataField(ans, "auto") == "true"

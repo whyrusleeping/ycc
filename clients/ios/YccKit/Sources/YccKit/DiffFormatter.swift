@@ -6,8 +6,8 @@ import Foundation
 /// the input so it stays testable headlessly and never hangs the UI on a large
 /// diff — the view renders the resulting rows lazily.
 ///
-/// Used by the commit-diff viewer (task 0189/0140) and the workstream merge
-/// preview (design §6). Unknown / malformed lines degrade to ``LineKind/context``
+/// Used by the commit-diff viewer and the workstream merge
+/// preview. Unknown / malformed lines degrade to ``LineKind/context``
 /// rather than being dropped, so nothing is silently lost.
 public enum DiffFormatter {
     /// The semantic kind of a single diff line, driving its tint.

@@ -17,7 +17,7 @@ type PlanInfo struct {
 
 // PlansDir returns the in-repo plan-library directory (<workspace>/plans). Plans
 // are committed, version-controlled markdown runbooks — reusable procedures that
-// are distinct from the backlog (tasks are one-off work items). See task 0020.
+// are distinct from the backlog, whose tasks are one-off work items.
 func (s *Store) PlansDir() string {
 	return filepath.Join(filepath.Dir(s.dir), "plans")
 }

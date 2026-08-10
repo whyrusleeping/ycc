@@ -45,7 +45,7 @@ const (
 	numFields
 )
 
-// authList mirrors config.Model.Auth (spec §13): "" is the api-key default,
+// authList mirrors config.Model.Auth: "" is the api-key default,
 // "oauth" authenticates the anthropic backend with a Claude subscription.
 var authList = []string{"", "oauth"}
 
@@ -74,7 +74,7 @@ type model struct {
 	cycleIdx    int      // cursor into the id cycle source (ctrl+n/p)
 	discovering bool     // a ctrl+f discovery is in flight
 
-	// stepLogin (subscription OAuth, spec §13): entered from the provider
+	// stepLogin (subscription OAuth): entered from the provider
 	// editor when auth=oauth and no credentials are stored yet. Two modes:
 	// anthropic uses a paste-code flow (loginInput), openai a browser flow
 	// with a local callback server (waiting screen; openaiLoginMsg resolves).
@@ -451,7 +451,7 @@ func (m model) updateProvider(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.editErr = ""
 		m.candidate = p
 		// Subscription auth without stored credentials: run the OAuth login
-		// first (spec §13); verification then uses the fresh credentials.
+		// first; verification then uses the fresh credentials.
 		if p.auth == "oauth" && p.backend == "anthropic" && !m.hasCreds() {
 			pkce, err := anthropicauth.NewPKCE()
 			if err != nil {
@@ -522,7 +522,7 @@ type openaiLoginMsg struct {
 	err   error
 }
 
-// startOpenAILogin kicks off the ChatGPT browser OAuth flow (spec §13): a
+// startOpenAILogin kicks off the ChatGPT browser OAuth flow: a
 // local callback server waits for the browser redirect while the wizard shows
 // a waiting screen. Two commands run: one relays the authorize URL to the UI,
 // one resolves with the exchanged credentials (or error). Esc cancels via

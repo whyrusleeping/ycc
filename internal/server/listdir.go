@@ -14,7 +14,7 @@ import (
 )
 
 // ListDir lists the subdirectories of a daemon-host path so a remote client
-// can browse to a workspace and register it with AddProject (task 0193). It
+// can browse to a workspace and register it with AddProject. It
 // returns DIRECTORIES ONLY — never files or file contents. An empty path
 // resolves to the daemon user's home directory. Hidden directories are
 // omitted. Note the bearer token already permits StartSession in an arbitrary

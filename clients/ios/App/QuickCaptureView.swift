@@ -1,8 +1,8 @@
 import SwiftUI
 import YccKit
 
-/// The quick-capture composer (docs/design/ios-client.md §6 phase 2 step 6): a
-/// minimal `CreateTask` form — title, priority, and an optional multiline
+/// The quick-capture composer is a minimal `CreateTask` form — title, priority,
+/// and an optional multiline
 /// description — for phone-friendly idea capture. On **Save** it creates the task,
 /// refreshes the backlog list, then dismisses.
 struct QuickCaptureView: View {
