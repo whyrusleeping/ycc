@@ -14,10 +14,8 @@ import (
 	"github.com/whyrusleeping/ycc/internal/tools"
 )
 
-// CaptureDeps configures a one-shot, lightweight "quick-add backlog item"
-// capture agent (task 0016, spec §18.2). It runs server-side off the main
-// session's event stream, scoped to a single project's workspace, so a long
-// `work` run is never disturbed by capturing a new backlog item mid-session.
+// CaptureDeps configures the project-scoped quick-add agent. It runs outside the
+// main session stream so capturing a task does not disturb ongoing work.
 type CaptureDeps struct {
 	Workspace string
 	Docs      *docs.Store
@@ -27,8 +25,7 @@ type CaptureDeps struct {
 	Backend   string
 	Thinking  engine.Thinking
 	MaxTok    int
-	// Retry is the loop-level transient-failure retry policy applied to the
-	// capture loop. Zero value => engine default (task 0133).
+	// Retry is the capture loop's transient-failure policy; zero uses the engine default.
 	Retry engine.RetryPolicy
 }
 

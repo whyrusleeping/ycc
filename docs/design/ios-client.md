@@ -1,485 +1,70 @@
-# Design: SwiftUI iOS client (`clients/ios/`)
+# Design: native iOS client
 
-> Status: **implemented and actively developed** (the native client ships in
-> `clients/ios/`; remaining enhancements continue through the backlog).
-> Grounded in spec §12 (RPC protocol), §14 (remote access — the Connect surface
-> *is* the phone API, no separate facade), and §18 (client UI / event
-> rendering). The authoritative wire contract is
-> [`docs/remote-api.md`](../remote-api.md); the sibling design for the embedded
-> web client is [`web-client.md`](web-client.md).
+> Status: accepted and implemented in `clients/ios/`.
 
-## 1. Context / problem
+## Context
 
-The daemon speaks a complete remote API: plain HTTP/JSON Connect handlers, the
-same ones the TUI uses. `docs/remote-api.md` documents the wire contract and
-names [connect-swift](https://github.com/connectrpc/connect-swift) as the
-intended iOS client library. The embedded web client (tasks 0151–0153) covers
-"observe + answer from a phone browser" with a deliberately minimal scope.
+The daemon already owns sessions and exposes a remote Connect API. A phone client should observe,
+answer, steer, and start work without duplicating the agent loop or relying on a continuously
+foregrounded app. Native iOS behavior matters for credential storage, notifications, deep links,
+and long-lived navigation state.
 
-This design is implemented as a **native SwiftUI iPhone app**, actively developed
-toward **feature parity with the TUI**. It connects to a persistent daemon on a
-server (over Tailscale/VPN + bearer token), picks a project, browses live and
-persisted sessions, watches a live event stream, replies to questions,
-steers/interrupts/stops, starts sessions in any mode, and provides backlog,
-settings, usage/cost, and workstream surfaces.
+## Decisions
 
-## 2. Goals & non-goals
+### Repository and transport
 
-**Goals**
+The app lives in this repository so its generated protocol bindings change atomically with the Go
+server. XcodeGen defines the app project and a Swift package contains headless networking, event
+projection, and model logic. Generated Swift protobuf and Connect sources are committed; building
+the app does not require code generation or a JavaScript toolchain.
 
-- A native iPhone client of the existing Connect RPC surface, **unchanged** —
-  same auth, same endpoints, same event model as the TUI and web client.
-- Phased delivery: observe/answer/control first, then start/resume + backlog,
-  then settings/usage/workstreams. End state ≈ TUI parity.
-- An agent-friendly project layout: logic in a headless-testable Swift package,
-  text-based project generation, no hand-edited `.xcodeproj`.
+The app calls the daemon's existing Connect service directly. It does not introduce a mobile REST
+facade, proxy daemon, or replicated session store. Unary calls use Connect JSON and subscription
+uses server streaming with replay from the last durable sequence. Transient events never move the
+cursor. Reconnection clears stale live-tail state and reduces replayed events idempotently.
 
-**Non-goals**
+### State and credentials
 
-- iPad / macOS layouts (iPhone-only, **iOS 17+**; revisit later).
-- App Store distribution (personal tool; sideload / TestFlight / dev build).
-- Native APNs push (deferred — see §8; ntfy + deep links instead).
-- Changes to the RPC/proto surface *for the client's own sake*. The daemon-side
-  work loop (§9) shipped as a client-independent improvement shared by every
-  client, rather than as an iOS-only API.
-- Multi-user auth / RBAC. Single-user tool, private network.
-- Offline mode beyond cached connection settings.
+A saved profile contains the daemon base URL and non-secret presentation metadata. Bearer tokens
+live in Keychain, never preferences or logs. Authentication is established by a real RPC rather
+than trusting local profile state. A 401 clears the active authenticated session while retaining
+the profile so the user can re-enter or replace the token.
 
-## 3. Location & toolchain (decision)
+The app treats daemon data as authoritative and keeps only client-local navigation, drafts,
+preferences, and read watermarks. Session, backlog, usage, and workstream state are projections of
+RPC responses/events and refresh when the app returns to the foreground.
 
-**Decision: the app lives in this repo at `clients/ios/`.** The ycc backlog and
-work pipeline manage it like any other part of the project, and the generated
-Swift protos stay next to their proto source.
+### Navigation and interaction
 
-- The Go module is unaffected: nothing under `clients/` is imported by Go code
-  and `go build ./...` never touches it.
-- Project generation via **XcodeGen** (`clients/ios/project.yml`) so the
-  `.xcodeproj` is derived, never hand-edited or committed. `xcodegen generate`
-  is the only extra step; building is `xcodebuild` (or opening the generated
-  project in Xcode).
-- Layout:
+One workspace drawer anchors project selection and cross-project recents. Project/session routes
+flow through a single router so list taps, notifications, and `ycc://` links share authentication,
+project selection, and duplicate-push handling. A deep link identifies a project/session but never
+carries credentials.
 
-  ```
-  clients/ios/
-    project.yml            # XcodeGen manifest (app target, iOS 17 deployment)
-    YccKit/                # SPM package: ALL non-UI logic (see §5)
-      Package.swift
-      Sources/YccKit/      #   client, models, event projection
-      Sources/YccProto/    #   buf-generated Swift (committed)
-      Tests/YccKitTests/   #   headless unit tests (`swift test` on macOS)
-    App/                   # thin SwiftUI shell (views only)
-  ```
+Transcript behavior follows the shared client contract in spec §18: durable rows, one transient
+live tail, no scroll jumps while reading history, structured question sheets, graceful
+interrupt/steer/resume, and confirmed hard stop. Daemon work loops remain daemon-owned because iOS
+background execution cannot reliably host long-running work.
 
-**Agent-friendliness is a design constraint.** Everything that can be
-unit-tested headlessly lives in `YccKit` and runs under plain `swift test` on
-the macOS workspace machine — the work pipeline can build and verify without
-booting a simulator. The app target is a thin view layer over `YccKit`
-observables; simulator/device verification remains a manual smoke, documented in
-the shipped `plans/ios-client-smoke.md` runbook.
+### Notifications
 
-## 4. Generated Swift client (decision)
+Push notifications are daemon-side ntfy-compatible webhooks with a `ycc://` click-through URL.
+This avoids APNs infrastructure and works even when no app process is running. Notification
+payloads carry routing identifiers and short event, question, report, or error text, but no bearer
+token.
 
-**Decision: use connect-swift with buf-generated code, committed to the repo.**
+## Alternatives rejected
 
-- A `buf.gen.swift.yaml` at the repo root generates from `proto/ycc/v1/ycc.proto`
-  with the `connect-swift` and `swift-protobuf` remote plugins into
-  `clients/ios/YccKit/Sources/YccProto/`.
-- Generated code is **committed** (same posture as the Go generated code) so
-  `swift test` / `xcodebuild` need no buf step; regeneration happens whenever
-  the proto changes (`buf generate --template buf.gen.swift.yaml`).
-- Unlike the web client (which hand-parses the 5-byte Connect envelope to avoid
-  a JS toolchain), Swift gets the official library: connect-swift handles the
-  streaming envelope, protojson quirks (int64-as-string, camelCase), and typed
-  request/response models natively over `URLSession`. The daemon's HTTP/1.1
-  streaming support means no h2c negotiation issues.
-- Auth: a connect-swift **interceptor** attaches `Authorization: Bearer <token>`
-  to every request, unary and streaming — mirroring the TUI/web clients.
+- A web wrapper would reduce initial UI work but would not provide the desired Keychain,
+  notification, deep-link, and native navigation behavior.
+- A client-owned work loop would stop when iOS suspends the app and could race another client.
+- Copying generated code by hand or generating during every build makes protocol drift easy and
+  builds dependent on network tooling.
+- Separate per-feature networking models create competing session projections; shared headless
+  models keep event reduction and auth failure handling consistent.
 
-## 5. App architecture
+## Verification boundary
 
-SwiftUI + Observation (`@Observable`, iOS 17). `YccKit` owns:
-
-- **`YccClient`** — thin wrapper over the generated connect-swift service
-  client: base URL + token, the auth interceptor, typed async methods, and a
-  `subscribe(sessionId:fromSeq:)` `AsyncStream<Event>`.
-- **`SessionProjection`** — the event-fold engine, the heart of the app and the
-  part most worth unit-testing. It is a pure reducer implementing spec §5.2 /
-  §18 and the remote-api event model:
-  - fold persisted events into an ordered transcript of render rows
-    (`user_input`/`model_turn` → bubbles; `thinking`, `tool_call`/`tool_result`
-    → collapsed expandable rows; `question_asked` → pending-question state;
-    lifecycle events → system rows; etc.);
-  - track the highest **persisted** seq for replay-from-seq reconnect;
-  - handle **transient** events (`seq:0`, never persisted, never advance the
-    cursor): `turn_delta` snapshots render as a single replaceable live-tail
-    row, cleared by the terminating `{"text":"","done":true}` delta or the
-    durable `model_turn`. The SwiftUI feed renders this tail separately from
-    immutable history, drives scroll-following from a scalar revision, and uses
-    persistent TextKit storage to append prefix-extending snapshots (using the
-    optional `append` / verified `append_base_utf8` hint when present); this avoids
-    re-diffing/re-shaping the entire transcript and growing response every 100ms,
-    while a missing/lossy hint or non-prefix retry snapshot still falls back to
-    replacing from the authoritative `text` snapshot;
-  - be identical for live (Subscribe) and persisted (GetSessionTranscript)
-    sources — persisted is just "fold with no tail".
-- **`ConnectionStore`** — server profiles (name, base URL) in `UserDefaults`;
-  the bearer token in the **Keychain** (never `UserDefaults`). Multiple saved
-  servers are supported but one is active at a time.
-
-**Reconnect discipline** (remote-api "Replay-from-seq reconnection"): on stream
-drop or app foregrounding (`scenePhase` → `.active`), re-`Subscribe` with
-`fromSeq = <last persisted seq>`; the server replays only newer events — no
-gap, no duplication. iOS suspends sockets in the background; the app simply
-reconnects on return rather than fighting the OS.
-
-**Transport security**: the intended deployment is a tailnet, where `http://`
-is acceptable (spec §14). The app's ATS config allows insecure loads
-(`NSAllowsArbitraryLoads`) with this documented rationale; `https://` daemons
-work unchanged and are recommended off-tailnet.
-
-## 6. Screens & feature phases
-
-### Navigation shell — workspace drawer + recent-session feed
-
-The authenticated app uses a **left-edge workspace drawer**, following the Slack /
-Discord interaction model rather than making project selection a small toolbar
-filter. A hamburger button opens it for discoverability; a swipe from the left
-edge reveals it interactively over the current screen, and tapping the scrim or
-swiping it closed returns to the current screen.
-
-The drawer has two levels of navigation:
-
-1. **Recent sessions** — a daemon-wide feed at the top. It merges live and
-   persisted sessions from every registered project and sorts the complete feed
-   by latest activity (with started-at fallback), most recent first. Every row is
-   visibly annotated with its project name. This is the default landing
-   destination on a multi-project daemon, so recent work and questions in another
-   workspace cannot be hidden by the currently selected project. It carries no
-   project-scoped destinations, because it has no project.
-2. **Projects** — the registered workspace list, each with active /
-   needs-answer / unread badges. Selecting a project closes the drawer and scopes the
-   session list and project destinations (backlog, usage, workstreams, and new
-   session) to it. “Add project…” and a confirmed “Remove project…” action remain at
-   the bottom of this list. Removing a registration never deletes workspace files.
-
-Below those two levels the drawer carries only the account footer (**Settings**,
-**Disconnect**). The project-scoped destinations (**Backlog**, **Workstreams**,
-**Usage**, **Memory**) deliberately do *not* live in the drawer: it is opened most often from
-the unscoped Recent sessions feed, from which those entries could only open
-unscoped — landing on a "choose a project" filter instead of the backlog the user
-asked for. They belong to a project, so they hang off the toolbar of that
-project's own session list: **Backlog** as a one-tap glyph, the rest
-in an overflow menu, exactly as in the session view. On the Recent sessions feed
-those toolbar items are absent rather than unscoped (the overflow menu itself
-stays, carrying "Mark all read"). The menu button keeps mirroring the drawer's
-loudest badge — a needs-answer question, else unread agent output — so work
-demanding attention in another project is visible while the drawer is shut. The drawer overlays the
-whole navigation stack, so the current destination survives underneath it; the
-left-edge reveal gesture is disabled while a screen is pushed, leaving that edge
-to the system's interactive back gesture.
-
-**One router, screen dedupe.** Every push goes through a single path-driven
-router (`HomeRouter`, injected via the environment): the whole stack is a
-`[HomeDestination]` value, including task detail and the sessions opened from
-task detail / work loop / workstreams — no screen keeps a private
-`navigationDestination(item:)` push of its own. This exists because the screens
-cross-link in circles (session → backlog → task → that task's active session →
-backlog…), and when every link pushes, laps around that cycle grow the stack
-without bound and Back has to walk every copy. The router's `open` therefore
-navigates by *screen identity* (session id; project-scoped screen kind): if the
-destination is already on the stack it pops back to it — merging parameters, so
-a live-flag flip rebuilds the screen but an empty incoming title never clobbers
-a good one — and only otherwise pushes. Stack depth is bounded by the number of
-distinct screens visited, not the number of hops. A value-driven, titled stack
-also makes the system's long-press-on-Back menu work for multi-level pops for
-free.
-
-**New chat always asks when the answer is ambiguous.** From a project-scoped list
-the project is the current scope and the composer opens straight away. From the
-unscoped Recent sessions feed there is no scope, so the user is asked with a
-cancellable chooser listing every registered project — the last project they
-*viewed* (persisted across launches) first, so the common case stays one tap away.
-Defaulting silently from that feed — to the last project started in, or to the
-last one viewed — is what put chats in the wrong workspace: the composer is a
-full-screen sheet whose project chip is easy to miss, so an implicit choice reads
-as no choice at all. Only a daemon with a single project skips the chooser, having
-nothing to choose between. The chosen project is carried as the composer sheet's
-presentation *item*, never as a flag plus a separately-stored project: the latter
-can present with a value captured before the assignment lands, silently falling
-back to the remembered project. The composer's project chip can still redirect the
-session.
-
-**Unread agent activity.** A phone user's core question is "did anything happen
-while I was away" — above all, *did the agent finish*. The daemon keeps no
-per-device read state, so the client tracks it (`SessionReadStore`, persisted in
-`UserDefaults`): for each session id it remembers the timestamp of the newest
-event this device has been shown, and a row is **unread** when the daemon reports
-later activity than that mark. Two rules keep it honest:
-
-- **Daemon clocks only.** Marks are recorded from event / summary timestamps
-  produced by the daemon (`SessionProjection.lastEventTimestamp`, which advances
-  on every durable event — including those that render no row — and never on a
-  transient `turn_delta`), never from the phone's clock. Comparing daemon stamps
-  to daemon stamps keeps device clock skew out of the decision.
-- **First sighting is read.** A session the store has never seen is baselined at
-  its current activity, so installing the app — or registering a project with
-  months of history — does not present a wall of false unread rows. Everything
-  after that first sighting is unread until read.
-- **A running session is never unread.** Its row already announces itself as
-  live, and its log grows every few seconds, so badging it would keep the
-  indicator permanently lit and therefore meaningless. It goes unread the moment
-  it stops producing (idle / paused / error / stopped) — which is exactly the
-  "the agent finished while you were away" case the badge exists for.
-
-A session is marked read through its newest folded event when the user leaves the
-transcript (or backgrounds the app while inside it), not on a timer while they
-watch: leaving is the moment they have actually seen it, and it is one write
-instead of one per streamed event. Unread rows are marked the way a mail inbox
-marks them — a leading accent dot, a bolder title, and a "new" pill — and are
-counted into `ProjectActivity.unread` so the drawer's project rows, the Recent
-sessions row and the closed menu button carry a badge too (a waiting question
-still outranks it: that one needs the user *now*). Acknowledging without reading
-is a legitimate answer to a badge, so a row has a trailing "Mark read" swipe and
-context-menu action, with "Mark all read" in the session list's overflow menu for
-the current scope.
-
-Because the drawer is *not* reachable from a pushed screen either, screens that
-users live inside repeat those shortcuts: the session view keeps **Backlog** as a
-one-tap toolbar link (with Workstreams, Usage, and Memory in its overflow menu), all
-scoped to that session's project. The overflow menu also carries **Session
-usage**: a sheet showing what *this* session has spent so far — a per-model
-token/cost breakdown plus a total, the app's counterpart of the TUI's Σ
-status-bar readout. The daemon's `GetUsage` has no session filter, so the sheet
-requests `group_by: ["session", "model"]` and filters client-side to the
-session id (`SessionUsageModel` in YccKit). The overflow menu shows on
-persisted (finished) transcripts too — only the live controls (session
-settings, interrupt / resume / stop) are gated on a live stream. The session
-view also folds its stream state (live / reconnecting / offline) into the
-navigation subtitle beside the project name rather than spending a toolbar slot
-on it.
-
-**Visual identity.** The app ships an asset catalog (`App/Assets.xcassets`) with the
-app icon — a shell-prompt mark, regenerated by `clients/ios/Tools/make_appicon.py` —
-and an `AccentColor` (violet) that tints selection, the send button, and user
-message bubbles. XcodeGen does not infer these the way a template-generated Xcode
-project does, so `project.yml` sets `ASSETCATALOG_COMPILER_APPICON_NAME` and
-`ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME` explicitly.
-
-The first implementation aggregates client-side: call `ListProjects`, fan out
-`ListSessionHistory(project:)`, wrap every returned summary with its project
-identity, merge/deduplicate, and globally sort all rows by latest activity. This
-preserves titles and `waitingInput`, which the lighter `ListSessions` rows do not
-carry, and requires no client-specific RPC. Registered project paths are used to
-avoid querying the same workspace twice. The fan-out is **unconditional** — it runs
-even when a project is selected, because the drawer's badges describe every project
-— so selecting a project is a client-side filter over the aggregate: instant, with
-no refetch. A daemon always exposes its startup workspace as a normal named project
-(including one-shot), so there is no synthetic “Default” fallback to query; a daemon
-that reports no registered project at all still gets a single unscoped history query.
-Fan-out tolerates a failed project by showing the successful rows plus an inline
-partial-results warning.
-If project counts make fan-out material, the same model can move behind a future
-daemon-side aggregate query without changing the UI.
-
-On a one-shot/single-project daemon the drawer remains available but compact: the
-sole project is selected by default and the all-active/project views are
-functionally equivalent. Deep links select the matching project or session but
-do not permanently remove access to the daemon-wide inbox.
-
-### Phase 1 — observe, answer, control (parity with the web client)
-
-1. **Connect screen** — base URL + token; validate with `ListProjects`
-   (401 → "invalid token"); persist (Keychain for the token).
-2. **Session list** — the navigation shell above provides both the daemon-wide
-   **Recent sessions** feed and project-scoped `ListSessionHistory` views. The
-   aggregate feed is strictly most-recent-first by last activity; each row shows
-   its project, plus status badge (`running`/`idle`/`error`), live marker, and
-   turns. `waitingInput:true` rows remain styled loudly, and rows with unread
-   agent activity (see "Unread agent activity" above) carry a dot, a bolder
-   title and a "new" pill. Pull-to-refresh + refresh on foreground.
-3. **Session view** — the transcript feed from `SessionProjection`: live
-   sessions via `Subscribe`, persisted via `GetSessionTranscript`. Auto-follow
-   scroll with a "jump to latest" pill when the user scrolls up. Follow mode is
-   opt-out on an explicit user drag and live updates preserve scrollback exactly;
-   a default bottom scroll anchor is not used because SwiftUI reapplies it on
-   content-size changes. The
-   `session_idle.report` is projected as a dedicated, always-expanded success
-   card with native Markdown rendering; an immediately preceding model message
-   repeated by the report is coalesced into the card rather than shown twice.
-   The chrome names **which model is doing the work**: `SessionProjection` folds
-   a `coordinatorModel` from the log (`session_started.coordinator`,
-   `role_config_changed.coordinator`, and each coordinator `model_turn`'s
-   `model_name`, which is authoritative because it is the model that actually
-   produced the turn; subagent turns never move it). It appears in the toolbar
-   subtitle beside the project, on the streaming tail (`<model> · streaming`),
-   in the "<model> is working…" progress row, and on the `session_started`
-   system row. The log is the source of truth here rather than `ListModels`,
-   which reports only the daemon's GLOBAL role defaults and would misreport a
-   session started with a `coordinator_model` override; the settings sheet
-   (step 8) seeds its coordinator picker from this folded value for the same
-   reason.
-4. **Interactions** — sticky input bar → `SendInput`, including a Photos picker
-   for up to four previewable/removable picture attachments (normalized to bounded
-   JPEG data and sent as native multimodal user content; the picker, thumbnail
-   strip and JPEG normalization live in `PictureComposer.swift`, shared with the
-   new-session composer). A compact **Agent is
-   working…** progress row (naming the model once the log has identified it)
-   appears immediately after starting a session or sending
-   input and remains until the stream delivers the first meaningful agent activity;
-   a `user_input` receipt echo alone does not clear it. On a persisted session,
-   sending first calls `ResumeSession` on the existing log, promotes the view to
-   a live `Subscribe` tail, then delivers the message. Question sheet (options as
-   buttons + free text) → `AnswerQuestion` / `AnswerQuestions` (positional batch;
-   `optionIndex >= 0` picks an option, `-1` sends text), dismissed by
-   `question_answered`; toolbar/overflow → `Interrupt` / `Resume` /
-   `StopSession` (with confirmation on stop). The phase banner surfaces a **Retry**
-   button when the session has errored on a *retryable* LLM API failure (the
-   `session_error` `retryable` flag); it calls `Resume`, which re-runs the failed
-   turn on the existing history with no throwaway user message.
-
-### Phase 2 — start work, backlog
-
-5. **Start session** — styled as a blank chat: a message-style composer with
-   a send arrow, compact mode / project chips above it
-   (`ListModes` / `ListProjects`), and presets as tappable suggestion cards
-   in the empty space → `StartSession`, then navigate straight into the live
-   session view. Plain `work` mode may start with an empty prompt (the agent
-   picks the next ready backlog task), like the TUI. A third, **optional model
-   chip** (`ListModels`, shown only when more than one model is configured)
-   picks the coordinator model for the session being started —
-   `StartSession.coordinator_model`, a per-session override that leaves the
-   persisted role defaults (Settings, step 8) alone. It defaults to "Default"
-   (labelled with the daemon's configured coordinator) and is deliberately NOT
-   remembered across sessions, unlike the sticky mode/project chips; a
-   `ListModels` failure just hides the chip rather than blocking the composer.
-   The composer carries the SAME Photos picker as the live input bar
-   (`PictureComposer.swift` holds the shared picker/thumbnail affordances):
-   opening-prompt pictures ride along on `StartSession.images`, so a session
-   about a screenshot does not burn its first turn asking for it, and a
-   picture-only draft is enough to start (the send button unlocks without text).
-   **Resume** — `ResumeSession` action on persisted rows.
-6. **Backlog browser** — two presentations over `ListBacklog`. The default is a
-   **board**: horizontally snapping kanban lanes in *workflow* order (proposed →
-   todo → in progress → in review → blocked → done), each lane a column of task
-   cards with id, priority, and a ready/blocked annotation. Empty lanes are kept
-   — a board whose columns disappear when empty stops reading as a board, and an
-   empty lane is precisely the column you want to move a card into. Lane order is
-   deliberately *not* the list's "most interesting first" ordering
-   (`TaskStatus.boardOrder` vs `sortOrder`), so a card advances left to right as
-   the work progresses. Each card carries a move menu offering its workflow
-   neighbours first, then any status, driving `UpdateTask`; long-press gives the
-   same menu. A toolbar toggle switches to the compact **list** (sectioned by
-   status), and the choice is remembered. Cards within each lane and rows within
-   each section are newest-first by default (backlog id descending); a toolbar
-   sort control can select oldest-first or priority order, and remembers that
-   choice too. Task detail (`GetTask`) renders the markdown body; status changes
-   go through `UpdateTask`; "start work on this
-   task" → `StartSession` (mode `work`, task-focused prompt). For an
-   `in_progress` task, task detail cross-references `ListSessionHistory` task
-   focus and offers **Open active session** for each live `running`/`paused`
-   match, navigating to the existing transcript instead of starting duplicate
-   work. Quick capture (`CreateTask`) is on the toolbar.
-7. **Deep links** — a `ycc://` URL scheme (`ycc://session/<id>`,
-   `ycc://project/<name>`) so an ntfy notification tap can land directly on
-   the session that needs an answer (§8).
-
-### Phase 3 — TUI parity
-
-8. **Settings** — two related surfaces mirror the TUI overlay (§18.2):
-   - a **session settings sheet** uses `SetThinking` and
-     `SetRoleConfig` (+ `ListModels`) against a live session;
-   - a home-screen **global Settings destination** edits persisted default role
-     assignments and the assigned models' thinking without requiring a live session, and manages
-     logical model backends (add/edit/duplicate/remove, provider discovery, auth,
-     endpoint, reasoning, and pricing) through `GetModelConfig`, `UpsertModel`,
-     `RemoveModel`, and `DiscoverModels`. Secret values never cross the wire; the
-     form configures only the daemon-side credential mechanism / `key_env` reference.
-     The global screen also manages **review tiers** (spec §13.1, task 0297): a
-     "Review tiers" destination lists the effective tiers (built-in badges,
-     override state), sets `reviews.default`, and offers a full tier editor —
-     strategy (agents vs coordinator self-review), description, tier-wide prompt,
-     and reviewer slots each carrying model, label, focus prompt, and a
-     per-reviewer thinking override — via `ListReviewTiers`, `UpsertReviewTier`,
-     `RemoveReviewTier`, and `SetReviewDefault`. Drafts round-trip the `models`
-     shorthand: a tier whose slots are all generic saves back in the compact
-     form; removal of a built-in override reverts it to built-in behaviour.
-9. **Usage & budget** — `GetUsage` (group by task/model/day) and `GetBudget`
-   views (§20.5); the session screen adds a per-session usage sheet
-   (`group_by: ["session", "model"]`, filtered to the session id).
-10. **Workstreams & diffs** — `ListWorkstreams`, `PreviewMerge`,
-    `MergeWorkstream`/`DiscardWorkstream`; `GetCommitDiff` viewer for
-    `commit_made` events (§14.1, §18).
-11. **Work loop** — shipped start/observe/graceful-stop control for the
-    daemon-side unattended backlog drain (§9), including 5-second `GetWorkLoop`
-    polling while active, foreground refresh after phone suspension, current and
-    completed session links, the end-of-batch digest, and a `⟳ loop` marker on
-    loop-owned session rows. The daemon continues independently while the phone
-    is locked; its existing ntfy integration delivers the completed digest.
-12. **Project memory viewer** — read-only render of memory.md (the agents'
-    advisory operational notes, spec §6.5) via `GetMemory`, reached from the
-    project overflow menu on the session list and session views. The file is
-    prompt-budget-small by design, so a single markdown render suffices.
-
-## 7. RPC coverage map
-
-Phase 1: `ListProjects`, `ListSessionHistory` (fanned out by the client for the
-cross-project recent-session feed), `GetSessionTranscript`, `Subscribe`,
-`SendInput`, `AnswerQuestion(s)`, `Interrupt`, `Resume`,
-`StopSession`. Phase 2 adds: `ListModes`, `StartSession`, `ResumeSession`,
-`ListBacklog`, `GetTask`, `UpdateTask` (optionally `CreateTask`). Phase 3 adds:
-`SetThinking`, `SetRoleConfig`, `ListModels`,
-`GetModelConfig`, `UpsertModel`, `RemoveModel`, `DiscoverModels`,
-`ListReviewTiers`, `UpsertReviewTier`, `RemoveReviewTier`, `SetReviewDefault`,
-`GetUsage`,
-`GetBudget`, `GetCommitDiff`, workstream RPCs, and the loop control surface
-from §9. `Notify` remains unnecessary because daemon-side pushes already fire
-without a client call. `AddProject` and its `ListDir`-backed likely-project
-suggestions and directory browser (tasks 0192–0194) are in client scope, so a
-new workspace can be found and registered from the phone while retaining manual
-path entry as a fallback. `RemoveProject` is also exposed behind destructive
-confirmation; it only deregisters the workspace and never deletes files.
-
-## 8. Notifications (decision)
-
-**Decision: reuse the existing ntfy-compatible webhook notifier; no APNs.**
-The daemon already pushes `question` / `idle` / `error` / `blocked` / `digest`
-events to a configured webhook (spec §14). The user runs the ntfy app for
-delivery. The ycc app's contribution is the `ycc://` **deep-link scheme** plus
-a documented ntfy `click` URL convention so a notification tap opens the app on
-the right session. Concretely (task 0186): the daemon sets an ntfy `Click`
-header of `ycc://session/<id>` on every notification sent with a session id
-(`question`/`idle`/`error`/`blocked`, and a `digest` routed with the
-loop-driver session's id), and the iOS
-app registers the `ycc://` scheme (`ycc://session/<id>[?server=<name>]`,
-`ycc://project/<name>`) to route the tap — see docs/remote-api.md "Notify".
-Native APNs (needing a push relay + signing identity) is deferred indefinitely;
-revisit only if ntfy proves inadequate.
-
-## 9. Daemon-side work loop (shipped)
-
-The `work (loop)` backlog drain is daemon-owned (task 0179, spec §9): the daemon
-starts each successive `work` session, enforces the per-loop budget caps (§20.6),
-and accumulates the final digest even when every client disconnects. The shipped
-`StartWorkLoop`, `GetWorkLoop`, and `StopWorkLoop` RPCs let the TUI and iOS app
-start, observe, and gracefully halt that same loop; stopping lets the current
-session finish but prevents the next task from starting.
-
-Work-loop snapshots and finished digests persist per workspace (task 0280). A
-daemon restart deliberately does **not** resume unattended spend: a loop that was
-running or stopping is restored as finished with an explicit interrupted outcome,
-and the user may start a new loop. The iOS `WorkLoopView` and `WorkLoopModel`
-implement start/status/digest/stop control, while task 0190 remains `in_review`
-pending on-device validation.
-
-## 10. Verification strategy
-
-- **Headless:** `swift test` on `YccKit` (macOS) — projection-engine fixtures
-  built from real `events.jsonl` transcripts (including transient `turn_delta`
-  interleaving and replay-from-seq), client request shaping, keychain-free
-  connection-store logic.
-- **Build:** `xcodegen generate && xcodebuild -project ... -scheme Ycc
-  -destination 'generic/platform=iOS Simulator' build` must pass.
-- **Manual smoke:** a `plans/ios-client-smoke.md` runbook (added with the first
-  cut) mirroring `plans/remote-access-smoke.md`: daemon on a tailnet address
-  with a token, connect from the app, answer a live `ask_user`, kill the
-  network mid-stream and verify replay-from-seq reconnect.
+Headless models and frame/reducer logic are automated in the Swift package; project generation and
+compilation are build checks. `plans/ios-client-smoke.md` contains only the release checks that
+need a simulator/device, Keychain, app lifecycle, real networking, and native navigation.

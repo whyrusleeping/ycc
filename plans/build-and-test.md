@@ -1,43 +1,22 @@
-# Build and test (verification runbook)
+# Protocol regeneration
 
-A repeatable verification procedure for the ycc repo. Run it to confirm the tree
-builds cleanly and all tests pass — e.g. after implementing a task, before committing.
+The ordinary repository test command is documented in `README.md`. This runbook covers the less
+frequent protocol regeneration step whose two committed client outputs must stay in sync.
 
 ## Steps
 
-1. Build every package:
-
-   ```
-   go build ./...
-   ```
-
-2. Run the vet checks:
-
-   ```
-   go vet ./...
-   ```
-
-3. Run the full test suite:
-
-   ```
-   go test ./...
-   ```
-
-## Expected outcome
-
-All three commands exit 0: the build succeeds, `go vet` reports nothing, and every
-package's tests pass (`ok` / no `FAIL`). Report any command that fails with its output.
-
-## Proto regeneration
-
-After editing `proto/ycc/v1/ycc.proto`, regenerate both clients (generated output
-is committed, so no build step needs `buf`):
+After changing `proto/ycc/v1/ycc.proto`, regenerate both targets:
 
 ```
-buf generate                                    # Go (protoc-gen-go + connect-go) -> proto/ycc/v1/
-buf generate --template buf.gen.swift.yaml      # Swift (swift-protobuf + connect-swift) -> clients/ios/YccKit/Sources/YccProto/
+buf generate
+buf generate --template buf.gen.swift.yaml
 ```
 
-The Go template uses local plugins (`protoc-gen-go`, `protoc-gen-connect-go` on PATH);
-the Swift template uses remote plugins from the Buf Schema Registry (network required).
-Commit the regenerated files alongside the proto change.
+The Go plugins are resolved from `PATH`. Swift generation uses remote Buf Schema Registry plugins
+and requires network access. Review and commit both the Go output under `proto/ycc/v1/` and Swift
+output under `clients/ios/YccKit/Sources/YccProto/`, then run the normal Go and iOS build/tests.
+
+## Pass condition
+
+Both generation commands succeed, neither client has an unexplained generated diff, and a second
+regeneration is clean.

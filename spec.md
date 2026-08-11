@@ -1,2249 +1,560 @@
 # ycc — a docs-driven coding harness
 
-> Status: **implemented and actively developed**. This document is the living spec.
-> It is edited continuously as shipped behavior evolves and future design firms up.
-> The harness maintains specs exactly like this one — so this file is also the first
-> dogfood of the workflow.
+> Status: implemented and actively developed. This document records the current design.
 
-## 1. Vision & philosophy
+## 1. Vision and principles
 
-`ycc` is a personal coding harness built around one idea:
+`ycc` is a personal coding harness whose durable project state lives in committed design
+documents and a structured backlog. A coordinator agent transforms that state by delegating
+implementation and review work, while an append-only session log makes the process observable
+and resumable.
 
-> **The durable state of a project lives in documents (`spec.md` and a structured
-> backlog). Everything the harness does is a structured, reviewable transformation
-> of those documents, carried out by a coordinator agent that delegates real work
-> to specialized subagents.**
+The design follows these principles:
 
-Consequences of taking that seriously:
-
-- **Specs are first-class and continuously maintained.** The agent is repeatedly
-  prompted to keep the spec true. A drifted spec is a bug.
-- **Work is planned before it is done, and reviewed before it is accepted.** No code
-  is committed without a plan and at least one review pass.
-- **Reviews are multi-perspective.** Different LLM backends (Claude, GPT, GLM, local)
-  review the same change so we get genuinely independent takes, not one model
-  grading its own homework.
-- **The human chooses their level of involvement** per session, from "ask me about
-  everything" to "don't stop, I'll review at the end."
-- **The session is portable.** Work happens on a workspace machine, but the session
-  can be observed and prodded remotely (e.g. from a phone), because session state is
-  an append-only event log that any client can subscribe to.
-
-Non-goals (for now): being a general-purpose IDE, supporting arbitrary non-Go projects
-specially, or replacing git. We lean on git for history and diffs.
+- The spec is maintained with the code. A contradiction between them is a defect.
+- Planning, testing, documentation, and review effort are proportional to the risk they address.
+  The repository policy is in `CONTRIBUTING.md`.
+- Human involvement is available at any point, but unattended work does not wait forever for a
+  client.
+- Sessions are portable projections of an event log. Local, CLI, web, and iOS clients consume
+  the same daemon API rather than owning agent state.
+- Git remains the source of code history and diffs; ycc does not replace it.
 
 ## 2. Core concepts
 
-- **Workspace** — a git repository on the workspace machine that `ycc` operates on.
-  Holds `spec.md`, the `backlog/`, and the code.
-- **Project** — a named workspace a daemon manages. Every workspace is a normal,
-  named project in the daemon's registry (name → path), including a one-shot daemon's
-  sole current-directory project; there is no separate or synthetic “Default” project.
-- **Session** — one continuous unit of interaction, identified by an id, backed by an
-  **append-only event log**. A session has a *mode*.
-- **Event log** — the source of truth for a session. Every model turn, tool call,
-  tool result, user input, subagent spawn, and decision is an event. UI state is a
-  *projection* (reduction) of the log. "Resume" = replay; "sync"/"remote" = ship the
-  log + accept input over the wire.
-- **Mode** — what the session is currently doing. Each mode is a *coordinator agent*
-  configured with a specific system prompt and a specific subset of tools.
-- **Coordinator** — the top-level agent for a session. It orchestrates; it does not
-  edit code directly. Its "hands" are subagents.
-- **Subagent** — a child agent spawned by the coordinator with its own model, system
-  prompt, tool set, and (nested) event stream. Two kinds matter most: the
-  **implementer** (writes code) and the **reviewer** (critiques a change).
+- **Workspace** — a git repository operated on by ycc. It contains the design docs, backlog,
+  plans, memory, and code.
+- **Project** — a daemon registry entry mapping a stable name to a workspace path.
+- **Session** — a continuous interaction with an id, a mode, and an append-only event log.
+- **Mode** — a coordinator prompt, tool set, and state machine.
+- **Coordinator** — the top-level agent. In delegated work it assigns mutations to an
+  implementer; in direct work it edits through the worker tools itself.
+- **Subagent** — an agent with its own model, prompt, tools, history, and actor-tagged event
+  stream. Implementers mutate; reviewers inspect.
+- **Workstream** — an isolated git worktree, branch, and work session belonging to a project.
 
-## 3. System architecture
-
-Daemon + clients, from day one.
+## 3. Architecture
 
 ```
- ┌────────────────────────── workspace machine ──────────────────────────┐
- │                                                                        │
- │   ┌──────────────────────  ycc daemon (service)  ───────────────────┐  │
- │   │                                                                  │  │
- │   │   session mgr ── event log store ── reducer/projection          │  │
- │   │        │                                                         │  │
- │   │   coordinator agent (mode-specific)                             │  │
- │   │        │  spawns                                                 │  │
- │   │        ├── implementer subagent ── worker tools ──► workspace FS │  │
- │   │        └── reviewer subagents (Claude / GPT / GLM / local)       │  │
- │   │                                                                  │  │
- │   │   backend registry (gollama clients) ── docs store (spec/backlog)│  │
- │   └───────────────── Connect-RPC over HTTP/2 (TLS + token) ──────────┘  │
- │                                  ▲                                      │
- └──────────────────────────────────┼──────────────────────────────────────┘
-                                    │
-              ┌─────────────────────┼─────────────────────┐
-              │                     │                     │
-        ycc TUI (local)      ycc CLI (scripted)     iOS app (shipped)
-        subscribe + prod     subscribe + prod        subscribe + prod
+ ┌──────────────────────── workspace machine ──────────────────────────┐
+ │  ycc daemon                                                         │
+ │    project/session managers ─ event logs ─ projections              │
+ │    mode coordinator ─ implementer/reviewer loops ─ workspace + git  │
+ │    model registry ─ docs store ─ workstream integration queue       │
+ │                  Connect RPC over HTTP                              │
+ └──────────────────────────────▲───────────────────────────────────────┘
+                                │
+             ┌──────────────────┼──────────────────┐
+             │                  │                  │
+          TUI / CLI        embedded web       native iOS
 ```
 
-**Why daemon-first.** Remote prodding, phone access, and "sessions that keep running
-while I close my laptop" all require the agent loop to live in a long-running process
-that owns the filesystem and is reachable over a network boundary. Clients are thin:
-they render an event stream and send commands. The TUI is just the first client.
+The daemon owns model execution, filesystem mutation, event persistence, project state, and
+workstream integration. Clients are replaceable projections: they subscribe to events and issue
+commands. This boundary lets sessions continue when a client disconnects and prevents client
+suspension from becoming session suspension. Client-specific rationale is retained in
+`docs/design/web-client.md` and `docs/design/ios-client.md`.
 
-**Why Connect-RPC** (connectrpc.com/connect):
-- Native Go, generates from `.proto`, and speaks gRPC, gRPC-Web, **and** plain
-  HTTP/JSON from the *same* server — the shipped iOS app (and `curl`) use that remote
-  surface without a separate API facade.
-- Supports server-streaming, which is exactly what an event subscription needs.
-- Commands are simple unary RPCs.
+Connect RPC is used because one protobuf service supports Go, Swift, browser-compatible HTTP,
+unary commands, and server streaming. `proto/ycc/v1/ycc.proto` is the authoritative wire schema;
+`docs/remote-api.md` documents the HTTP surface for client authors.
 
-### 3.1 Daemon lifecycle & projects
+### 3.1 Daemon lifecycle and projects
 
-Persistence is **opt-in**. The daemon runs in one of two lifecycles:
+Persistence is opt-in:
 
-- **One-shot (the default `ycc`).** When no daemon is requested and none is already
-  running locally, `ycc` starts the daemon **in-process** on an ephemeral loopback
-  address and ties it to the client's lifetime — closing `ycc` tears it down. The
-  current directory is registered by basename as the sole project, so the client can
-  skip the picker without inventing a “Default” project. Closing the client therefore
-  ends any in-flight agent work; that is the trade.
-- **Persistent (`ycc daemon`).** An explicitly-started, long-lived, **multi-project**
-  daemon at a well-known local address. It survives client exits, so unattended
-  sessions keep running. `ycc --background` is a convenience that spawns one (detached)
-  and attaches the TUI to it.
+- Plain `ycc` attaches to a reachable persistent local daemon when one exists; otherwise it runs
+  an in-process daemon tied to that client's lifetime. The current directory is its sole ordinary
+  named project.
+- `ycc --background` starts a detached persistent daemon and attaches to it.
+- `ycc daemon` runs a persistent multi-project service explicitly.
+- `ycc --addr <URL>` attaches to the specified daemon.
 
-Resolution for plain `ycc` (no `-addr`, no `daemon` subcommand):
-1. If a persistent local daemon answers at the well-known address, **attach** to it and
-   show the project picker. The probe presents the client token (`--token` /
-   `YCC_TOKEN`) so a token-protected daemon (e.g. one bound non-loopback for phone
-   clients) is joined rather than silently shadowed by a one-shot daemon; a tokenless
-   loopback daemon ignores the header.
-2. Otherwise run **one-shot** in-process on the current directory.
+A persistent daemon stores its project name-to-path registry in its state directory. Projects may
+be added, renamed, and removed without changing workspace contents. Starting a session in an
+unknown workspace registers it. A request may omit the project only when exactly one project is
+registered; ambiguity is an error. The exception is `GetUsage`: an omitted project requests the
+all-project rollup even when several projects are registered.
 
-`ycc -addr <url>` always attaches to the given (persistent/remote) daemon and shows the
-picker.
+Project status is computed from local git refs without blocking on the network. A daemon-owned
+poller caches fetch-dependent metadata; no upstream, offline operation, authentication failure,
+and non-git directories remain non-fatal and appear as unavailable or stale status.
 
-A persistent daemon manages **multiple projects**. The registry (name → path) is durable
-state in the daemon's state dir (e.g. `~/.local/state/ycc/projects.json`). Projects are
-registered explicitly (`ycc project add <path>` / `AddProject`) **and** auto-registered
-when a session starts in a not-yet-known workspace; `ycc project rename` /
-`RenameProject` renames an entry in place (same path, workstreams relabeled). The
-daemon's startup `--workspace`
-is also registered by basename as an ordinary project, not retained as privileged
-fallback state. Clients `ListProjects`, pick one, then drive the existing mode/session
-flow scoped to that project. An omitted project is accepted only when the registry has
-exactly one entry; otherwise it is an explicit selection error. Sessions and their event
-logs still live under each project's own `<workspace>/.ycc/` (§5.1, §14).
+## 4. Session flow
 
-Each `ProjectInfo` also carries an optional `GitStatus` snapshot (`branch`, upstream
-presence, ahead/behind counts, dirty flag, last successful fetch time, and last fetch
-error). A daemon-owned background poller periodically runs `git fetch` per registered git
-workspace and caches only the network-dependent fetch metadata. `ListProjects` never
-contacts a remote: it computes dirty/ahead/behind from local refs at request time and
-merges that fresh local status with the cache. A workspace with no git checkout has no
-status; no upstream, offline operation, and authentication failures remain non-fatal and
-appear as unknown/stale status (zero `last_fetch_unix` and/or `fetch_error`).
+1. A client starts a session with a project, mode, optional preset/model override, prompt, and
+   optional images.
+2. The daemon creates the event log and coordinator, then returns the session id.
+3. Clients subscribe from a persisted sequence number. Replay is followed by live events.
+4. The coordinator runs model turns and tools. Tool use, user input, subagent activity, decisions,
+   document updates, and commits are events.
+5. A structured question suspends attended work until an answer RPC records the response.
+6. Completion records an idle report. The log remains browsable and may be reopened on the same
+   history.
 
-This supersedes the earlier "always auto-start a detached daemon that persists after
-exit" decision: that default orphaned daemons serving a stale binary and capturing a
-stale environment. Persistence now happens only when explicitly requested.
+No session depends on an attached subscriber. A disconnected client can resume from its last
+persisted sequence without asking the daemon to replicate or transfer ownership of the log.
 
-## 4. Process & data-flow model
+## 5. Event log
 
-1. Client calls `StartSession(workspace, mode)` → daemon creates a
-   session + event log, instantiates the coordinator for that mode.
-2. Client opens `Subscribe(sessionID)` (server-stream) and begins rendering events.
-3. Coordinator runs its agent loop. Each turn emits events. Tool calls emit events and
-   mutate the workspace / docs. Subagent spawns create nested event streams.
-4. When the coordinator needs the user, it calls the `ask_user`
-   tool → emits a `QuestionAsked` event and *suspends*. Client renders it; user answers
-   via `AnswerQuestion(sessionID, ...)` → `QuestionAnswered` event → loop resumes.
-5. On completion the coordinator commits, updates the backlog/spec, emits `SessionIdle`,
-   and returns control. The session persists and can be resumed or re-entered.
+### 5.1 Storage and durability
 
-The daemon never blocks on a client. A session with no subscribers keeps running (e.g.
-in an unattended work loop); a client reconnecting just replays the log from an offset.
+Each session's source of truth is append-only JSONL at:
 
-## 5. Session & event log
-
-### 5.1 Storage
-
-- Source of truth: **append-only JSONL** per session at
-  `<workspace>/.ycc/sessions/<session-id>/events.jsonl`.
-- Session state can contain prompts, source excerpts, tool output, and credentials echoed
-  by external programs. On Unix, newly created `.ycc/` session-state directories are
-  owner-only (`0700`) and event logs are owner-only (`0600`). Opening a legacy log repairs
-  the log and its session directory to those modes best-effort when ycc owns them; a chmod
-  failure does not make an otherwise usable transcript unavailable.
-- Optional periodic **snapshot** (`state.json`) of the reduced projection for fast
-  resume on large logs.
-- The JSONL remains the whole durable session state for local replay and reopen. Remote
-  access does **not** replicate it: clients dial the owning daemon and consume
-  `Subscribe(from_seq)` plus the input RPCs directly (§14).
-
-### 5.2 Event shape
-
-```jsonc
-{
-  "seq": 128,                       // monotonic per session
-  "ts": "2026-06-25T21:30:00Z",
-  "session": "s_8f3a…",
-  "actor": "coordinator",           // coordinator | implementer | reviewer:gpt | user | system
-  "type": "tool_call",              // see types below
-  "data": { /* type-specific */ }
-}
+```
+<workspace>/.ycc/sessions/<session-id>/events.jsonl
 ```
 
-Event `type`s (initial set):
+A reduced snapshot may accelerate startup, but it never replaces the log. On Unix, session-state
+directories are owner-only and event logs are owner-readable/writable only because transcripts
+may contain prompts, source excerpts, tool output, and credentials echoed by external programs.
+Opening legacy state repairs these modes best-effort.
 
-| type | meaning |
-|------|---------|
-| `session_started` | mode, workspace, preset (if any), coordinator model (so a resume replays/re-resolves the model the session was started with) |
-| `mode_changed` | transitioned modes within a session |
-| `model_turn` | a model produced a message (text + any tool calls) |
-| `tool_call` / `tool_result` | a tool was invoked / returned |
-| `subagent_spawned` / `subagent_finished` | with role + model + child session ref |
-| `question_asked` / `question_answered` | the `ask_user` flow |
-| `interrupted` / `resumed` | agent paused to steer / continued (§18.7) |
-| `user_input` / `user_input_delivered` | user message accepted (queued mid-run carries `queued:true`) / delivered at a safe checkpoint (§18.7) |
-| `plan_proposed` / `plan_accepted` | coordinator plan checkpoints |
-| `review_tier_selected` | which review tier the coordinator chose for a change (§13.1) |
-| `review_submitted` | one reviewer's findings |
-| `decision_made` | accept / revise, with rationale |
-| `doc_updated` | spec or task file changed (with diff) |
-| `commit_made` | git sha + message |
-| `session_idle` / `session_error` | terminal-ish states |
-| `session_notice` | visible non-fatal lifecycle notice (for example a stale preset-model fallback) |
-| `log` | free-text narration for the UI |
+Durable emission is fail-stop: once appending the event log fails, the session must not continue
+mutating state that can no longer be represented. Reopening replays model turns, tool calls and
+results, user input, reasoning/provider state, focus, and lifecycle markers into a valid model
+history, then appends to the same log. Multimodal bytes are intentionally not persisted; events
+retain attachment metadata, so reopened history preserves the textual indication but not the
+original pixels.
 
-Subagents get their own session-scoped event substreams (`subagent_spawned` carries a
-child stream id); the client can drill into an implementer/reviewer's transcript.
+A persisted session reported as running without a matching in-memory session is treated as
+stopped after daemon restart. Optional GC settings can reclaim idle in-memory sessions and old
+on-disk logs; retention is disabled unless configured.
 
-#### Transient (broadcast-only) events
+### 5.2 Event contract
 
-Some events are **ephemeral UI hints** rather than durable facts. A transient event is
-marked `transient: true`, carries **`seq: 0`** (it is *not* assigned a sequence number),
-and is **broadcast to live subscribers only**: it is never written to `events.jsonl`,
-never appended to the in-memory replay slice, and is invisible to `Snapshot` / `ReadLog`
-/ transcripts / late subscribers. Because it never gets a seq, it never advances a
-subscriber's `from_seq` resume cursor — a reconnect resumes strictly from persisted seqs,
-so transient delivery cannot corrupt or reorder the append-only log/replay. Delivery is
-**best-effort and lossy under backpressure** (a slow subscriber may drop transients),
-whereas persisted events stay lossless and ordered. The `Subscribe` RPC forwards
-transient events unchanged; every subscriber (including the TUI) must tolerate seq-less
-events safely.
+A durable event has a monotonically increasing per-session `seq`, timestamp, session id, actor,
+type, and type-specific data. Important event families are:
 
-The motivating use is streaming a model's partial output: `turn_delta` events tail the
-in-progress turn text to live clients while the durable `model_turn` event (written on
-turn completion) remains the source of truth for the turn (see §18.4, task 0114).
+- lifecycle: `session_started`, `session_idle`, `session_error`, interruption/resume, reopen;
+- conversation: user input, model turns, reasoning summaries, questions and answers;
+- execution: tool calls/results, jobs, subagent lifecycle, decisions, reviews, commits;
+- durable project effects: document updates, task focus, workstream lifecycle, budget state.
 
-**`turn_delta` payload contract (snapshot semantics).** Each `turn_delta` carries
-`{"text": <full-accumulated-turn-text-so-far>}` — a **snapshot**, not an increment. A
-client replaces its live tail row with the latest snapshot, so lossy transient delivery
-and mid-turn retries are harmless (a retried attempt simply restarts from a short
-snapshot). A delta may additionally carry `append` and `append_base_utf8` optimization
-hints: a client may append that suffix only when its currently rendered text has the
-stated UTF-8 byte length; otherwise it must fall back to the authoritative `text`
-snapshot. This keeps lossy delivery and retry semantics unchanged while allowing long
-turns to avoid repeated whole-string layout. The engine throttles snapshots to ~10/s. A turn's tail is cleared by a
-terminating delta `{"text": "", "done": true}` broadcast on turn end (success **or**
-error, so no stale tail survives a failed turn) and, redundantly, by the arrival of the
-turn's persisted `model_turn`. The engine emits deltas only when the backend client
-implements a streaming capability *and* the recorder supports broadcast; otherwise the
-turn runs non-streaming with identical semantics and no deltas.
+Events from subagents use distinct actors and may interleave, but replay reconstructs each agent's
+history independently. A final `session_idle` report is the canonical completion message; clients
+coalesce an immediately repeated final model turn rather than displaying it twice.
 
-**`retry` (transient).** When an LLM API call fails transiently and the engine loop is
-backing off before another attempt (§7.2), it broadcasts a transient `retry` event with
-`{attempt, max_attempts, delay_ms, kind, status, msg}` so live clients can show the wait
-(the TUI renders a per-actor "retrying…" note under the live tails). Like `turn_delta`
-it is never persisted — the durable log stays quiet unless the turn ultimately fails,
-which records a `session_error`.
+### 5.3 Transient events
 
-## 6. Document model
+Transient events are live hints, not durable facts. They have `seq: 0`, are never written or
+replayed, and may be dropped under backpressure. They therefore never advance a reconnect cursor.
 
-### 6.1 Design docs — entry point + docs set
+`turn_delta` carries the full accumulated text snapshot for an in-progress model turn. Optional
+append hints are valid only when the client's current UTF-8 length matches the supplied base;
+otherwise the full snapshot wins. A terminal delta or durable model turn clears the live tail.
+`retry` reports a live backoff. Durable completion or failure remains authoritative in both cases.
 
-The project keeps a committed, agent-maintained set of design documents reached through a
-single well-known **entry point** — the one file an agent reads first to orient. By default
-the entry point is `spec.md` at the workspace root (alongside `backlog/`). The entry point may
-be, or grow into, an **index** into other docs: a large spec is better split across several
-logically decomposed files, with the entry point linking them together.
+## 6. Project documents
 
-Projects that already keep a reasonable documentation convention (a `docs/` tree,
-`ARCHITECTURE.md`, ADRs) keep it: agents **adopt and maintain the existing docs** — treating
-their natural root as the entry point, or writing a thin index that links into them — rather
-than imposing a parallel `spec.md`. The durable invariants are only these two: a committed,
-agent-maintained design doc set, and a single well-known entry point for orientation.
+### 6.1 Design document set
 
-An optional per-workspace `.ycc/config.toml` names the surface:
+A project has one well-known design entry point, `spec.md` by default, and may include an
+existing documentation tree. Agents adopt the repository's established convention rather than
+creating a parallel one. `.ycc/config.toml` may set a workspace-relative `spec_path` and
+`doc_globs`; escaping paths are ignored. Design files are plain committed Markdown edited with
+the ordinary file tools.
 
-```toml
-spec_path = "docs/index.md"          # entry point, relative to the workspace root (default "spec.md")
-doc_globs = ["docs/**", "adr/*.md"]  # the rest of the docs set (slash globs, relative to root)
-```
+The spec states durable behavior, architecture, interfaces, and invariants. Design notes retain
+rationale and rejected alternatives that would be noisy in the spec. `docs/design/doc-style.md`
+defines their register. Operational instructions belong in the README or a reusable runbook, not
+in the design set.
 
-Missing or malformed config falls back to the default (`spec.md`, no extra globs); a
-`spec_path` that escapes the workspace is ignored. A `doc_updated` event fires for an edit
-anywhere in the docs set (the entry point or any file matching a `doc_globs` pattern), not
-just the entry point. Canonical spec sections (others allowed): Vision, Goals, Architecture,
-Components, Constraints, Open Questions. Docs are plain markdown edited with the ordinary
-Read/Edit/Write tools — there is no dedicated spec tool. The spec docs are committed with code.
+### 6.2 Backlog
 
-### 6.2 Backlog — structured items, markdown-rendered
+The backlog stores one Markdown file per task under `backlog/`, with YAML frontmatter for id,
+title, status, priority, dates, dependencies, and spec references. The body carries description,
+acceptance criteria, an optional plan, and a work log.
 
-Canonical store: **one markdown file per task** with YAML frontmatter, under
-`backlog/`. Per-file storage means git diffs are per-task, the agent edits one task
-without rewriting the whole backlog, and a UI can manipulate items reliably.
+Statuses are `proposed`, `todo`, `in_progress`, `in_review`, `done`, and `blocked`. A proposed task
+is captured but not accepted scope and is never ready; promotion to todo is the acceptance act.
+Ready tasks are accepted active work whose dependencies are done.
 
-Task file: `backlog/0007-add-token-auth.md`
+Ids are daemon-allocated per project. Because independent branches can still create duplicate
+ids, every store scan deterministically preserves the oldest claimant and moves later claimants
+to fresh ids, renaming their files and recording the repair. Dependency references to the shared
+old id remain attached to its oldest claimant because any other interpretation would be a guess.
+`ycc doctor` reports repairs so they can be committed.
 
-```markdown
----
-id: "0007"
-title: Add token auth to the daemon
-status: todo            # proposed | todo | in_progress | in_review | done | blocked
-priority: 2             # 1 highest
-created: 2026-06-25
-updated: 2026-06-25
-depends_on: ["0003"]
-spec_refs: ["Architecture", "docs/rpc.md#Protocol"]
----
+A bare spec reference names a section in the entry point; `path#Section` names another design
+document. Work sessions record their active task focus in the event log, making usage and session
+history attributable without out-of-band metadata.
 
-## Description
-Why this exists and what "done" means in prose.
+### 6.3 Plans and memory
 
-## Acceptance criteria
-- [ ] daemon rejects unauthenticated RPCs
-- [ ] token configurable via env + config file
+A plan under `plans/` is a repeatable procedure that automation cannot adequately replace. It has
+concrete prerequisites, steps, and an observable outcome. One-off implementation plans live with
+their backlog task when complexity warrants a durable plan.
 
-## Work log
-<!-- appended by the harness as work happens -->
-- 2026-06-25 plan: …
-- 2026-06-25 implementer report: …
-- 2026-06-25 review (gpt-5.5): …
-- 2026-06-25 decision: accept; commit abc1234
-```
+`memory.md` stores bounded, categorized empirical observations about working on the project. It is
+committed and available to agents, but is explicitly advisory, may be stale, and is excluded from
+spec checking. Confirmed design constraints move into the spec; reusable procedures move into
+plans; implied work becomes backlog tasks. `docs/design/project-memory.md` retains the rationale
+for this normative/empirical split.
 
-`docs` package responsibilities: parse/write task files, validate frontmatter,
-append to a task's work log, and provide `list/get/create/update` used by
-the coordinator tools.
+### 6.4 Spec drift checking
 
-**Ids are unique, and the store enforces it.** Ids are assigned as `max+1` under a
-per-directory lock, which is enough within one machine but not across checkouts: two
-branches that each add tasks and are later merged can land two files claiming the same id.
-A duplicate id is corrupting rather than cosmetic — every by-id path (`get_task`,
-`update_task`, the `GetTask` RPC, the TUI backlog browser) resolves to the *first* match, so
-the other holder becomes unreachable ("unclickable") and status updates hit the wrong task.
-Therefore **any scan of the backlog self-heals**: when a scan sees a duplicate id, the
-*oldest* claimant (by `created`, then `updated`, then filename — a deterministic total order,
-so independent checkouts heal identically) keeps the id, and each other claimant is renumbered
-onto a fresh id after the current maximum, its file renamed to match and a work-log line
-recording the move. `depends_on` references are left untouched: a dependency on the shared id
-is ambiguous and the surviving oldest task is the better guess, with the work-log breadcrumb
-making a wrong guess recoverable by hand. Healing inside `List` is silent and best-effort (a
-read-only backlog still lists fine); `ycc doctor` runs the same pass explicitly and *reports*
-the renumberings so the renames can be committed.
+`ycc spec-check` is a daemon-free deterministic pre-pass. It checks concrete paths, package
+directories, and code symbols mentioned in inline code spans across the configured design set,
+while skipping fenced examples and ambiguous tokens. It excludes design files and backlog items
+from the source search so a reference cannot validate itself. Confirmed stale references produce
+a non-zero exit.
 
-`proposed` sits before `todo` in the lifecycle: it marks an idea captured during
-ideation (typically by the agent) that the user has not accepted as real scope. Proposed
-tasks are durable backlog entries but are never *ready* — `list_backlog` doesn't mark them
-`[READY]` and the work pipeline never picks them up. Promotion to `todo` (via
-`update_task` or the backlog browser) is the explicit acceptance act. `create_task`
-takes an optional initial status: `todo` (the default), `in_progress` for accepted work the
-agent is starting immediately, or `proposed`; agent prompts direct un-endorsed ideas to
-`proposed`. Direct `in_progress` creation lets an agent record a newly started active
-workstream atomically instead of spending a second tool call on `update_task`.
-
-`spec_refs` are free-form strings: a bare section title (e.g. `"Architecture"`) refers to the
-spec entry point, while `path#Section` (e.g. `"docs/rpc.md#Protocol"`) references a section of
-another doc in the docs set. Bare titles keep their meaning, so existing refs stay valid.
-
-### 6.3 Reusable plans (runbooks)
-
-Distinct from the backlog: a **task** is one-off work to do; a **plan** is *how* to do
-something, repeatably. Reusable plans live in-repo at `plans/*.md` — committed,
-version-controlled markdown procedures (matches the docs-driven philosophy). The
-motivating case is a **testing/verification plan**: a repeatable procedure you replay
-instead of re-describing. A plan is free markdown with a `#` title, concrete steps, and an
-expected outcome.
-
-There are no dedicated plan tools: plans are plain committed files, so agents browse the
-library with `Bash`/`Read`, execute a plan by reading it and following its steps, and save
-one with `Write` — the format convention (kebab-case name, `#` title, steps, expected
-outcome) lives in the coordinator/pm prompts. The `docs` package provides
-`ListPlans/ReadPlan/SavePlan/PlansDir`, used by the TUI/RPC plan-browsing surface (§16).
-
-Separately, `propose_plan` now persists the FULL coordinator plan to the task's `## Plan`
-section (a durable, human-browsable artifact) in addition to the dated one-line work-log
-breadcrumb — the complete plan lives next to its task, not just buried in a session event.
-
-### 6.4 Spec doctor — drift & coverage checking
-
-The founding principle is that the durable state of a project lives in documents and **a
-drifted spec is a bug** (§1). The **spec doctor** actively detects that drift instead of
-merely trusting agents to keep the docs true. It is an **on-demand `pm` preset** (`spec-doctor`,
-§9) — there is no scheduling or auto-trigger — and it runs in two phases:
-
-1. **Deterministic pre-pass** (`internal/specdoctor`, surfaced as the `ycc spec-check` subcommand). It
-   extracts the concrete file paths, package directories, and code symbols the docs set
-   mentions in *inline code spans* (fenced code blocks are skipped — they hold illustrative
-   examples) and verifies each still exists: paths via `os.Stat` (a file or a directory both
-   resolve, covering package dirs like `internal/docs`); symbols via a word-boundary search
-   across the workspace source, excluding the docs set itself and `backlog/` so a reference
-   never resolves against its own mention. It holds a strict **zero-false-positive**
-   discipline — any span that is ambiguous (a glob pattern, a multi-word command, a bare
-   lowercase or ALL-CAPS word) is *skipped, never flagged*. Its markdown report of stale
-   references is confirmed drift and seeds/grounds phase 2. Because it is fully deterministic
-   and daemon-free, it is a plain CLI subcommand rather than an agent tool: the spec-doctor
-   preset drives phase 1 by running `ycc spec-check` via `Bash` (it exits non-zero when it finds
-   stale references), and the same command is directly usable by humans and as a pre-commit / CI
-   gate.
-2. **LLM comparison pass.** Grounded by the pre-pass, the agent walks the spec section by
-   section, reads the relevant code, and flags only two things: **drift** (the spec states
-   behavior, an interface, a name, or a flow the code now *contradicts*) and **coverage gaps**
-   (a significant `internal/*` package, RPC, or user-facing tool with no spec section). The
-   spec is *intentionally* higher-level than the code, so the pass flags genuine
-   contradictions and undocumented significant surface only — never mere missing implementation
-   detail. Alongside factual findings, phase 2 may surface framing/register drift under the
-   document-style contract (`docs/design/doc-style.md`) — self-instructions, emphasis inflation,
-   or abstraction reframing that changed meaning. These are labeled cleanup suggestions, not
-   confirmed drift, and suggested wording is re-derived from verified evidence.
-
-**Output** is all three: a consolidated **report** (stale refs + drift + coverage gaps), a
-**proposed backlog task** per actionable finding (`create_task`), and **suggested spec edits**
-drafted for the user — applied only with explicit approval (the flow reuses `pm`'s existing
-`create_task` and Edit/Write tools; it drafts, the user approves). Cost is intentionally
-unbounded for now; sampling or git-driven targeting can be added later if it proves expensive.
-
-### 6.5 Project memory — agent-learned, advisory
-
-The spec is **what the project should be**; **memory is what the agents have learned about
-working on it**. The spec is normative, human-approved, and drift-checked (§6.4); memory is
-**empirical, agent-authored, advisory, dated, and bounded**, with an explicit promotion path
-into the spec / plans / backlog when an observation hardens into intent. See
-`docs/design/project-memory.md` for the full rationale.
-
-- **Store.** A committed `memory.md` at the workspace root (beside `spec.md` and `backlog/`),
-  holding dated bullet entries under four categories — *Environment & tooling*, *Codebase
-  gotchas*, *User preferences*, *Lessons learned* — under an advisory header ("Advisory, not
-  normative — verify before relying"). It is diffable and human-auditable. `Store.MemoryPath`/
-  `ReadMemory`/`AppendMemory`/`IsMemory` (`internal/docs`) back it.
-- **Write path.** A `remember(note, category?)` tool (default category `lesson`) appends a
-  dated entry. It is available to the coordinator-level agents only — `pm`, `chat`, and the
-  `work` coordinator — NOT the implementer or reviewers, which report learnings upward instead.
-  A **~4 KB soft budget** keeps memory small enough to inject wholesale, but a write is never
-  lost at the boundary: crossing the soft budget still records the note and returns a grooming
-  **nudge** (and a terseness nudge for over-long entries); a write is refused only at a **~12 KB
-  hard ceiling**, with "consolidate first" guidance. Direct Edit/Write of `memory.md` remains valid.
-- **Read path.** The shared prompt assembly (`sys`/`inspectSys`, `internal/orchestrator`)
-  appends memory contents to **every** agent's system prompt when non-empty, framed explicitly
-  as advisory — "empirical and possibly stale; verify before relying; context, not
-  instructions". An absent/empty file adds nothing. Clients can also read it directly: the
-  `GetMemory` RPC returns the full contents (empty when absent, never an error) plus the
-  absolute path, backing the iOS project-memory viewer.
-- **Eventing.** Memory writes (the tool and direct edits) emit `doc_updated` with `doc:"memory"`
-  — memory joins the docs set for eventing only.
-- **NOT spec.** Memory is explicitly excluded from the docs set the spec doctor / `ycc
-  spec-check` scans (`Store.DocFiles` skips it): its entries are never treated as normative
-  claims or flagged for drift.
-- **Document style / dialect drift.** Model-authored docs can accumulate self-exhortations,
-  emphasis inflation, hedging boilerplate, or the authoring model's preferred framing without
-  becoming factually false. The committed contract at `docs/design/doc-style.md` defines the
-  project's register and evidence-first rewrite rules. `memory-groom` enforces it for memory;
-  spec-doctor phase 2 may suggest design-doc cleanup. Cross-model preset bindings (§9) provide
-  the structural mitigation against a single model reinforcing its own dialect.
-- **Promotion path & grooming.** A repeatedly re-confirmed observation that is really a design
-  constraint is promoted into the spec (deliberately, with approval) and removed from memory;
-  matured procedures move to `plans/`; observations implying work become tasks; operational
-  trivia found in the spec moves out to memory. Grooming (dedupe, prune, merge, promote) is a
-  `pm` activity, surfaced as the on-demand `memory-groom` preset (§9).
+The `spec-doctor` pm preset combines that evidence with a section-by-section comparison against
+code. It reports contradictions, significant undocumented interfaces, and register drift; it
+does not demand code-level detail from a deliberately higher-level spec. Suggested edits and
+backlog items still require the ordinary user-approved document workflow.
 
 ## 7. Agent engine
 
-### 7.1 gollama integration (and the one addition we need)
-
-gollama already gives us: per-backend single-shot completions
-(`ChatCompletion`, `ChatCompletionAnthropic`, `ChatCompletionBedrock`, `Chat`), the
-`Tool` abstraction (`Name`/`Description`/`Params`/`Call`), and `HandleToolCall`.
-
-What it lacks and we add (in gollama, since edits are allowed):
-
-1. **Unified turn dispatch** — a single `func (c *Client) Turn(opts) (*ResponseMessageGenerate, error)`
-   that routes to the right backend method based on the client's mode, so the agent loop
-   doesn't branch per provider. Normalizes tool-call + usage shapes.
-2. Optionally, a `Backend` enum on the client so the registry can introspect.
-3. **Streaming turns** — `func (c *Client) TurnStream(opts, onDelta func(text string)) (*ResponseMessageGenerate, error)`:
-   the streaming counterpart to `Turn` that delivers the assistant text incrementally via
-   `onDelta` (snapshot semantics — each call gets the full accumulated text so far), then
-   returns the same normalized final message. Anthropic streams natively over the Messages
-   SSE API; OpenAI-compatible and Ollama backends stream natively over the
-   `/chat/completions` chunk stream (Ollama via its OpenAI-compatible `/v1` endpoint, the same
-   path `Turn` uses). Bedrock has no native streaming path and falls back to a blocking turn
-   delivered as one whole-text snapshot delta, so callers never branch. This feeds ycc's
-   transient `turn_delta` path (§5.2).
-4. **Context-aware turns** — additive `TurnCtx(ctx, opts)` and
-   `TurnStreamCtx(ctx, opts, onDelta)` variants thread caller cancellation through retries,
-   token refresh, HTTP requests, and streaming body reads. The compatibility `Turn` and
-   `TurnStream` methods delegate with a background context for existing gollama consumers;
-   ycc's engine exclusively uses the context-aware variants so hard session stop and daemon
-   shutdown promptly cancel in-flight inference.
-
-The **agent loop itself lives in `ycc`**, not gollama — gollama stays a transport.
-
-### 7.2 The loop
-
-```
-Loop{ client, model, system, tools, history, events, policy }
-
-run():
-  loop:
-    resp = client.Turn(model, system, history, tools)
-    emit model_turn
-    if resp has tool calls:
-       for each call:
-          emit tool_call
-          result = registry.dispatch(call)   // may be a control tool
-          emit tool_result
-          append result to history
-       continue
-    else:
-       return final message            // model yielded with no tool call
-```
-
-Some tools are **control tools** that don't just return data — they change
-orchestration state (`ask_user` suspends; `finish` ends the loop; `spawn_*` runs a
-child loop). The registry marks these so the loop can react.
-
-#### Malformed tool arguments (leaked invoke markup)
-
-Models occasionally leak the XML-ish tool-invoke syntax **into a JSON string argument**:
-they close the parameter they are writing with a tag and then spell the remaining
-parameters as markup inside that same string —
-`{"question":"… What next?</question>\n<parameter name="options">[…]"}`, or
-`{"description":"…</description>\n<parameter name="priority">3"}`. The call is valid JSON,
-so nothing downstream notices: the sibling arguments are silently lost and the leaked
-markup reaches the user (an `ask_user` rendered as a wall of raw XML with no option
-picker). `tools.RepairLeakedArgs` (applied by `Registry.Repair` in the engine loop before
-the `tool_call` event is emitted, and again inside `Dispatch` for any other caller) moves
-those blocks back into real arguments: it truncates the host string at the closing tag and
-JSON-decodes each recovered value. It is deliberately conservative — it fires only when a
-closing tag is immediately followed by a `<parameter name="X">` block **and** `X` is a
-parameter that tool declares and the call left unset — so prose that merely mentions the
-syntax is untouched. A repair is recorded on the `tool_call` event (`repaired: [names]`)
-and appended as a short correction note to the tool result, so the model stops repeating
-the mistake for the rest of the session.
-
-#### API failure handling (classification, retry, session_error)
-
-All LLM API failures flow through one classifier (`engine.ClassifyAPIError`), which maps
-an error to a **kind** — `rate_limit` (429), `overloaded` (503/529), `server` (other
-5xx), `timeout` (408 / transport timeout), `network` (transport failure), `auth`
-(401/403), `invalid_request` (other 4xx), `context_length` (a 400 whose body matches the
-providers' context-window phrasings), or `unknown` — plus the parsed HTTP status and a
-**retryable** verdict. A provider may also report a server-side failure **inside an
-otherwise-healthy HTTP 200 stream** (the codex backend sends an `error` frame with
-`code: "server_error"`, whose message tells the client to retry); with no status to
-parse, such provider-reported server codes classify as `server`/retryable rather than
-falling into non-retryable `unknown`, so the loop retries them instead of stranding the
-turn. Retry decisions, context-window detection
-(`IsContextLengthError`), and error events all use this one taxonomy.
-
-**Retry lives in the loop** (`Loop.runTurn`, policy `Loop.Retry`; zero value = up to 8
-total attempts, exponential backoff 500ms→30s with equal jitter). Under the default policy,
-HTTP 429 rate limits stop after 3 total attempts: account allowance windows can last hours,
-so eight rapid attempts are usually noise rather than recovery. An explicit `[retry]`
-`max_attempts` remains authoritative. The loop is where the run ctx (a stopped session
-cancels a pending backoff instead of sleeping it out), the
-emitter (each backoff broadcasts a transient `retry` event, §5), and the classification
-meet. Non-retryable failures surface immediately; retries exhausted surface the
-original error. (Layering note: gollama's transport can also retry 429/503/529
-internally, but ycc disables that ring — `SetMaxRetries(0)` in `config.Registry.Build` —
-because it uses uncancellable `time.Sleep` and is invisible to subscribers, so the
-loop's is the single, ctx-aware, event-visible retry ring.) The policy is **configurable** via an
-optional `[retry]` block (`max_attempts` / `base_delay_ms` / `max_delay_ms`); an absent
-block keeps today's default, each unset field falls back to the default, and
-`max_attempts = 1` disables loop-level retry entirely. It is plumbed through
-`config.Registry.RetryPolicy` onto both the coordinator loop and its subagent
-(implementer/reviewer) loops.
-
-**A failed turn records exactly one `session_error`**, emitted by the loop with
-structured data: `{msg, kind, status, retryable, attempts, duration_ms, turn}`. The
-returned error is an `engine.TurnError` marking the failure as already recorded — outer
-layers (`Session.run`) check for it with `errors.As` and must not emit a duplicate. A
-cancelled run (session stopped) records nothing. `context_length` failures replace the
-opaque provider 400 with an actionable message (start fresh / narrow scope) since
-retrying can never succeed.
-
-**Recovering from a parked error.** After a failed turn the session parks in the error
-state, idle, waiting for input — the failed turn is not lost: the history still ends on
-the user/tool turn that owes a response. Sending any new message re-runs it, but so does
-a bare **`Resume`** (§18.7), which re-runs the parked turn on the existing history with
-no injected user message. This is what lets a remote client (TUI/iOS) offer a plain
-"Retry" affordance, gated on the `session_error` `retryable` flag, rather than making the
-user send a throwaway message.
-
-**Provider safety refusals (`stop_reason: "refusal"`).** Anthropic's streaming
-classifier can end a turn with `stop_reason "refusal"` inside a healthy HTTP 200 —
-no usable content, no tool call — and refusals are **sticky** by documented provider
-semantics: continuing the conversation without resetting context keeps being refused,
-and retrying the same model usually refuses again (the recommended recovery is a
-different model). ycc therefore treats a no-tool-call refusal turn specially: the
-engine keeps it **out of the loop's history** (it is still recorded as a `model_turn`
-event, with its `stop_reason`, for the transcript) and returns `Result.Refused`;
-`ReplayHistory` skips such turns the same way, so a reopened session re-runs the
-pending turn instead of replaying a poisoned placeholder. The session layer parks in
-the error state with a `session_error` of `kind: "refusal"` and **gates `SendInput`**
-(rejected with guidance; the RPC maps it to failed-precondition) until a retry: a
-bare `Resume` re-runs the pending turn as-is, and a coordinator model change via
-`SetRoleConfig` clears the gate and retries automatically. A refusal that arrives with
-partial visible text (the classifier cut a turn off mid-output) is handled the same
-way — the partial text becomes the report but never enters history.
-
-### 7.3 Subagents
-
-A subagent is just another `Loop` with its own client/model/system/tools and an event
-substream. The coordinator spawns one via a control tool; the spawn is synchronous from
-the coordinator's perspective (it awaits a structured report) but reviewers fan out
-**concurrently** (goroutines + a barrier). Reviewer contexts are *retained* so a revise
-round can reuse them (`re-review` sends the new diff into the existing reviewer history).
-
-**Async jobs.** Spawns and shell commands can run in the background under a unified
-**job** abstraction (`background: true` on spawn tools / `run_in_background` on Bash → a
-job id; `wait`/`job_output`/`kill_job`; completed-job reports pushed into the conversation
-at loop checkpoints so the model never polls). Background execution is for overlapping
-meaningful independent work or leaving a watcher running—not for bypassing the foreground
-timeout and immediately calling `wait`. Foreground Bash therefore accepts `timeout_s`
-(default 120, maximum 3600 seconds) for long commands whose result gates the next step.
-Design: `docs/design/async-jobs.md`; backlog 0131/0132/0222.
-
-### 7.4 Reasoning (extended/adaptive thinking + effort)
-
-Every agent's request carries reasoning settings (Anthropic extended/adaptive
-thinking). The engine `Loop` holds `Thinking` / `Effort` / `ThinkingDisplay` fields beside
-`MaxTok` and sets them on the `gollama.RequestOptions` for every turn; these reach the
-coordinator loop, the implementer, and each reviewer, resolved **per role** (not just per
-model) so the coordinator, implementer, and reviewers can each reason at a different depth
-even when they share a backend (§13). `Thinking=""` disables reasoning; `"adaptive"` enables it;
-`Effort` (`low`..`max`) tunes depth/spend; `ThinkingDisplay="summarized"` opts into reasoning
-summaries. The provider's reasoning blocks round-trip automatically because the engine
-appends the returned assistant `Message` (which carries `ThinkingBlocks`) to history. When a
-turn returns a reasoning summary, the loop emits a dedicated `thinking` event (before the
-`model_turn`) for the UI (§18). For the ChatGPT Codex Responses backend, ycc requests a
-`detailed` provider-authored summary with sequential-cutoff delivery, assembles every completed
-summary section in provider order (authoritative `reasoning_summary_text.done` text replaces its
-partial deltas), and records the reported hidden reasoning-token count on the thinking event and
-model-turn usage. Codex requests also include `reasoning.encrypted_content`; each turn's reasoning
-response items are preserved verbatim as a marked opaque provider-state block on
-`model_turn.thinking_blocks`, then replayed in provider order before their message/function-call
-items. This makes stateless live continuation and event-log reopen equivalent without ever
-rendering the opaque state as transcript text. Delta-only streams remain supported for
-compatibility. The count is a subset of output tokens—not an extra billable class—and makes
-explicit that even a short displayed summary is not the full private reasoning trace.
-
-**Per-backend mapping.** These backend-agnostic fields are translated to each provider's
-request shape by gollama (`Turn`/`ChatCompletion`):
-
-| backend | translation | levels |
-| --- | --- | --- |
-| **anthropic** | `thinking{type:"adaptive"}` + `output_config.effort` (+ `thinking_display`) | full: `low`..`max` |
-| **openai** (and OpenAI-compatible, e.g. GLM) | `reasoning_effort` request field | `low`/`medium`/`high`/`xhigh`; `max` clamps to `xhigh` (model-dependent) |
-| **ollama** | `think` bool (on iff `Thinking` set or `Think`) | on/off only — **effort levels are ignored** |
-| **bedrock / other** | not translated | ignored entirely |
-
-Returned reasoning is normalized into a single `Message.Thinking` field regardless of
-backend (Anthropic thinking blocks; Ollama's `message.reasoning`), so the `thinking` event
-lights up uniformly.
-
-**Graceful degrade.** A requested level a backend cannot express is **ignored, not an
-error**, so a per-role effort setting works across mixed backends. When a role's
-`Thinking`/`Effort` setting hits a backend that cannot fully express it, the loop emits a
-**one-time** session-log warning (a `log`/narration event) — once per session/role, not per
-request (the flag resets on a backend or level change). Ollama warns only that its effort
-level is dropped (thinking stays on); an untranslated backend (e.g. bedrock) warns that
-thinking/effort is ignored. Anthropic and OpenAI never warn (fully / levels expressible).
-
-## 8. Tools
-
-**Worker tools** (implementer; read/write the workspace):
-`Read`, `Write`, `Edit`, `Bash`, `web_search`/`fetch_page` (Exa-backed; no-op without a
-key), `finish(report)` — the control tool that ends the run and returns the report to
-the coordinator — and `report_blocked(reason)` — a structured escalation control tool the
-implementer calls INSTEAD of `finish` when it cannot responsibly proceed without a decision
-that isn't its to make; it ends the run with a distinct BLOCKED outcome (the reason lands in
-the task work log) rather than a normal report. There are no separate `list_dir`/`grep`/`glob`
-tools: `Read` on a directory lists it, and searching goes through `Bash` + ripgrep.
-
-**File-access policy.** `Read` is **unrestricted**: it accepts any absolute path (relative
-paths resolve against the workspace root), so agents can read sibling projects, dependency
-source (Go module cache, GOROOT), or anything else on disk. This deliberately matches
-reality — worker/coordinator `Bash` is unrestricted, so a path-confined `Read` only degraded
-UX (the model fell back to `cat` for out-of-tree files) without adding protection. (This
-subsumes the former `read_roots` allowlist, which is gone; the config key is ignored.)
-`Write`/`Edit` stay **confined to the workspace root** as a guardrail against accidental
-out-of-tree writes (hallucinated absolute paths; worktree implementers straying into the
-main tree) — not a security boundary. The optional `write_roots` config (ycc.toml, list of
-absolute paths) names extra trusted writable roots — e.g. a sibling project the agent should
-be able to modify; containment against the workspace and each write root is symlink-aware.
-
-**Multimodal `Read`.** The `Read` tool is multimodal, mirroring Claude Code: there is **no
-separate "view image" tool**. When `Read` is given an image (PNG, JPEG, GIF, WebP) or a PDF
-it returns the bytes as a **native content block** (an image block / an Anthropic document
-block) in the tool result rather than `cat -n` text, so the model perceives the file through
-the provider's native vision/PDF support. gollama already carries this end-to-end —
-`ToolResult.Images`/`Documents` round-trip into a `tool_result`'s content blocks (Anthropic
-native path). The engine loop attaches that media to the tool message for Anthropic; for
-OpenAI-compatible backends (which don't allow media in a tool-role message) it instead sends
-images as a follow-up user message, and PDFs degrade to a text note. A size cap keeps oversize
-files from being inlined (the model is told to use `Bash` for those instead).
-
-**Coordinator tools** (orchestrate; delegate real coding to the implementer):
-the editing set (`Read`/`Write`/`Edit`/`Bash` — for verifying state and reviewing diffs
-first-hand; the prompt confines its own edits to tiny touch-ups),
-`list_backlog`, `get_task`, `create_task`, `update_task`,
-`propose_plan(task_id, plan, context_hints?)`,
-`spawn_implementer(task_id, plan, context_hints?)`,
-`spawn_reviewers(task_id, review_tier?)` (§13.1),
-`send_to_implementer(task_id, instructions)` (revise; reuses implementer ctx),
-`re_review(task_id)` (reuses reviewer ctx), `commit(task_id, message)`,
-`ask_user(question, options?)`, `finish()`. There is no `update_spec` tool: `spec.md` is a
-plain file edited with `Edit`/`Write` (a write to it is surfaced as a `doc_updated` event).
-
-**Shared prompt assembly.** Every agent's system prompt is assembled through one path
-(`sys`/`inspectSys` in `internal/orchestrator`): the role's base prompt + the shared tooling
-guidance (Read-over-cat, ripgrep, fresh-shell/no-`cd` rules; read-only roles get it without
-the editing sentence) + a workspace note. Daemon-driven work loops additionally receive a
-private unattended-execution note so they never wait for a user who is not present.
-
-`ask_user(question, options?)` is the structured-question control tool. The optional
-`options` parameter is a list of suggested answers; when present, the client renders a
-selectable picker (Claude-Code style) with an "other…" escape to free text. When
-absent, the user answers with free (multiline) text. See §18.3 for the UI side. The
-shipped tool schema exposes `options`, and `Asker.Ask(ctx, question, options)` carries
-the selected option or free-text answer end-to-end.
-Questions must be **self-contained**: the user is not following the agent's transcript,
-so the tool description directs the agent to lead each
-question with the context needed to answer it (what it was doing, what it found, why
-it's asking) rather than assuming shared context.
-
-`ask_user` can also pose **several questions in one call**: pass `questions`, a list
-where each item has its own `question` text and its own optional `options` set. The
-client presents a short questionnaire (the user answers each question — picker or free
-text — before a single final submit) and the answers are returned mapped to their
-questions (`Q1/A1`, `Q2/A2`, …). This is wired end-to-end via `Asker.AskMany` and the
-`AnswerQuestions` RPC; the single-question form (above) is unchanged.
-
-Tools are gollama `Tool` values (`Params` is JSON schema, `Call` does the work + emits
-events). Worker and orchestration tools are the same kind of object.
-
-**Reviewer bash sandbox.** Reviewers get `Read`, `Bash`, and `submit_review` and are
-told not to mutate the change under review. Their `Bash` is hard-enforced read-only via
-`internal/sandbox` where the host supports it. Mechanism order (probed once, cached):
-**Landlock** (preferred — Linux ≥ 5.13, no external dependency, symlink-proof because the
-kernel evaluates the real inode), then **bubblewrap** (`bwrap`, re-binding the workspace
-read-only), else **none**. The Landlock path re-execs the `ycc` binary as a hidden helper
-(`__ycc-sandbox-exec`, dispatched at the very top of `main` before CLI parsing) that
-installs a ruleset denying all filesystem writes by default and re-allowing writes only
-under a small allowlist (temp dirs, `/dev`, `/run`, the Go build/module caches) that
-**excludes** the workspace; reads and execs are permitted everywhere, so `git diff`, `cat`,
-`grep`, `ls`, and builds still work. It **fails closed**: if the policy cannot be applied
-the helper exits non-zero rather than running unsandboxed. When no mechanism is available
-(non-Linux, or kernel/tool support missing) it degrades to prompt-only enforcement and the
-orchestrator emits a one-off `log` (Narration) warning per `spawn_reviewers`. Relatedly,
-`Workspace.resolve` (the Write/Edit path confinement — workspace root plus configured
-`write_roots`; see the file-access policy above) is **symlink-aware**: after the
-textual `../` check it resolves symlinks and rejects a path that lands outside the allowed
-roots through an in-tree symlink.
-
-## 9. Modes (the home menu)
-
-Each mode = a coordinator system prompt + a tool subset + a state machine. There are three:
-
-- **`pm` (project manager)** — the single planning / intake / docs mode. Talk to it about
-  the project: iterate `spec.md`, groom the backlog (`create_task` / `update_task`),
-  investigate a feature or bug, and record plans (`propose_plan`). It does **no
-  implementation** — it edits the *docs* (spec is a plain file; backlog tasks) but not the
-  code. That boundary is *soft* (prompt-enforced): `pm` holds `Read`/`Write`/`Edit`/`Bash`
-  so it can maintain `spec.md`, and is told not to touch code; a hard boundary (path
-  scoping / isolation) is future work. Tools: `Read`/`Write`/`Edit`/`Bash`,
-  `list_backlog`/`get_task`/`create_task`/`update_task`, `propose_plan`, `switch_to_work`,
-  `ask_user`, `finish`. The `remember` tool (§6.5) is also available so `pm` can capture
-  durable operational learnings. The spec-doctor drift check is no longer a pm tool: it is the
-  daemon-free `ycc spec-check` subcommand (§6.4) the preset runs via `Bash`. This **replaces** the former `spec`, `backlog`, `feature`, and `bug` modes —
-  they were one capability set under four prompt framings, and are now simply ordinary
-  `pm` work rather than distinct menu entries. The home menu no longer lists those framings
-  as separate presets (they added redundant clutter for what is all planning/intake work);
-  `pm`'s own description signals it covers spec authoring, backlog grooming, new features,
-  and bug intake. The remaining opening-prompt presets are **`onboard`** (§19.2), the
-  distinct first-run flow, **`spec-doctor`** (§6.4), the on-demand spec/code drift &
-  coverage check, and **`memory-groom`** (§6.5), the on-demand tending of `memory.md`
-  (dedupe/prune + promotion path). A prompt typed alongside a selected preset **composes** with it —
-  the preset supplies the framing and the typed text is appended as the user's upfront
-  context — rather than replacing it.
-
-  Presets may optionally select a different coordinator model through
-  `[roles.presets]` (§13). The client sends the selected preset name with `StartSession`; the
-  daemon applies its binding only to that session's initial coordinator and never rewrites
-  the persisted role defaults. This is especially useful for `memory-groom` and
-  `spec-doctor`: having (for example) Gemini groom docs primarily authored by Claude breaks
-  the single-model dialect/self-instruction reinforcement loop and extends ycc's
-  multi-perspective principle to its own future context. Unbound presets keep the normal
-  coordinator. A binding whose logical model is missing or was removed falls back to the
-  configured coordinator and emits a visible warning rather than preventing cleanup.
-- **`chat`** — open-ended assistant that *can* edit code directly, with no fixed workflow.
-  Kept as the freeform "just do it" counterpart to `pm`'s "just plan it."
-- **`work`** — the orchestrated implementation pipeline (§10): pick/accept a task, plan,
-  spawn implementer, multi-model review, revise, commit, update backlog.
-
-**`work (loop)` — unattended backlog drain.** On the home menu, pressing **tab** with the
-`work` entry selected toggles it to `work (loop)`. Starting it runs `work` repeatedly: each
-session drives one task to a committed (or blocked/in_review) state, and when it ends a fresh
-`work` session (new context, no carried prompt) is started for the next ready task. It keeps
-going until nothing is actionable — every remaining task is `done`, `blocked`, `in_review`,
-or not yet `ready` (dependencies unmet). A guard stops the loop if a finished session left the
-backlog unchanged (so it would re-pick the same task forever), and **shift+tab** in the
-running session toggles the loop — halting is *graceful* (the current task finishes and
-commits; the loop just doesn't pick up the next one), and it can likewise roll a single `work`
-session into a loop. This pairs with the coordinator's ability to mark a task `blocked` when it
-needs user feedback (§10): the loop simply skips such tasks rather than stalling.
-
-The loop driver runs **daemon-side** (task 0179): `StartWorkLoop`/`StopWorkLoop`/`GetWorkLoop`
-start it, gracefully stop it, and observe its status + end-of-batch digest. Because it lives in
-the daemon, a loop **survives client disconnects** and any client (including a phone that
-suspends in the background) can start it, poll `GetWorkLoop` for state, `Subscribe` to the
-current session, and stop it later. The no-progress guard, the per-loop budget caps (§20.6),
-and the completion digest all run daemon-side; the digest is pushed via the notifier (`digest`
-kind, §21) with no client `Notify` call. A session that dies on a retryable provider failure
-(rate/usage limit exhaustion, overload, server, timeout, or network failure) puts the loop into
-a live `waiting` state with escalating retries (1m, 2m, 5m, 10m, 20m, then 30m), up to eight
-hours of consecutive-outage patience, and automatically resumes when the provider recovers.
-A non-retryable failure instead stops truthfully with `session failed (<kind>)`; `waiting`
-counts as live for Start/Stop and is restored as interrupted, never auto-resumed, after a daemon
-restart. The **tab/shift+tab** toggle and the running session view's `⟳ loop` indicator remain
-client affordances over these RPCs. (Real-time
-loop-lifecycle streaming is deferred; `GetWorkLoop` polling plus `Subscribe` on the current
-session covers observation.)
-
-**Hand-off `pm` → `work`.** `pm` may offer `switch_to_work`, but it is *deliberate*, never
-automatic: (1) it requires explicit **user approval** before transitioning, and
-(2) it carries the planning **context plus the specific target task** into the `work`
-session, so the coordinator implements *that* task rather than re-picking "the next ready
-task." (The old `feature`/`bug` `switch_to_work` spun up a fresh coordinator that was free
-to wander to an unrelated task — that is the behaviour this fixes.) Authoring plans in `pm`
-pays off only if those plans are durably retained and tracked (see task 0020).
-
-Transitions are explicit: `StartSession` picks the initial mode; `pm` can `mode_changed →
-work` via the approved, context-carrying `switch_to_work`. The home menu is a client
-concern: it lists the modes (plus the `pm` presets) and calls `StartSession`.
-
-## 10. The `work` orchestration (in detail)
-
-```
-coordinator (FRESH context, mode=work)
-  1. read backlog  → list_backlog / get_task
-  2. pick a task   (or accept the user-suggested one)
-  3. plan          → propose_plan ; ask_user when confirmation or clarification is useful
-  4. implement     → spawn_implementer(task, plan)
-                     implementer runs worker tools, returns a structured report + diff
-  5. review        → spawn_reviewer × N  (different models, concurrent)
-                     each returns findings {severity, summary, items[]}
-  6. judge:
-        if acceptable → update_task(status=done) + commit (captures final backlog state) + finish
-        else          → send_to_implementer(consolidated instructions)
-                        → re_review()   (reuse reviewer contexts)
-                        → back to 6
-  7. on finish: emit session_idle, return to user
-```
-
-Fresh context in step 0 is important: each `work` session starts clean so the
-coordinator reasons from the durable docs, not from stale conversation.
-
-**Implementation strategy — delegate vs. direct (`work.implementation`).** Steps 4/6 above
-describe the default **`delegate`** strategy: the coordinator plans and hands real code changes
-to a dedicated **implementer** subagent (`spawn_implementer` / `send_to_implementer`), then
-reviews the returned diff. This keeps the coordinator's context lean but costs an extra agent
-hop, and that hop mainly pays off when the goal is to save tokens on the coordinator's context.
-The optional `[work]` config block lets a project opt into **`direct`** instead, where the
-**coordinator implements the change itself** with the `Read`/`Write`/`Edit`/`Bash` tools and no
-implementer subagent is involved — fewer moving parts, and often better on quality/latency:
-
-```toml
-[work]
-implementation = "direct"   # "delegate" (default) | "direct"
-```
-
-In `direct` mode the `spawn_implementer` / `send_to_implementer` tools are removed from the
-coordinator's tool set and it is given a coder-framed system prompt (do the work, verify it,
-then review); everything else (planning, review tiers, revise loop via `re_review`, blocked
-tasks, commit) is unchanged. The setting resolves at session start
-(`config.Registry.WorkImplementation()`, default `delegate`) and is threaded to the work-mode
-coordinator via `orchestrator.Deps.WorkImplementation`. The settings overlay (§18.2) seeds its
-**work implementation** row from `ListModelsResponse.work_implementation`; changing the row
-issues `SetWorkImplementation`, which validates `delegate | direct` and persists the choice to
-`work.implementation` in `ycc.toml`. Because the coordinator's toolset and system prompt are
-fixed when its loop is built, the change applies to the **next session**, not an already-running
-session. The "Blocked implementer" note below applies only to `delegate` (there is no
-implementer subagent to block in `direct`).
-
-**Blocked implementer (step 4).** Instead of a normal report, the implementer can end its
-run BLOCKED (via `report_blocked`) with a reason — a decision that isn't its to make. The
-coordinator then resolves the decision itself (an ordinary judgement call), asks the user
-when their intent is needed, or marks the task `blocked`; the reason is recorded in the task's
-work log, and a subsequent `send_to_implementer` resumes the same context with the answer.
-
-A `work` session drives **one** task to a committed state, but the coordinator may
-**grow the backlog** while doing so via `create_task` (the same tool `pm` uses):
-- **Split** — if the task is too big, break out the scope that doesn't belong in this
-  commit into new tasks (optionally `depends_on` the current one) rather than cramming
-  everything into one change.
-- **Follow-on** — capture worthwhile follow-up it discovers (refactors, hardening,
-  tests, latent bugs) as new tasks instead of dropping it or expanding the active task's
-  scope.
-This keeps the active task focused; new tasks get clear titles, acceptance criteria, and
-appropriate dependencies. It is the mechanism, not an invitation to scope-creep.
-
-## 11. Questions, unattended work, and confirmation gates
-
-There is no session setting controlling when the assistant asks questions. In ordinary sessions it uses its
-own judgement, calls `ask_user` when human input is genuinely useful or required, and waits
-for the answer.
-
-Daemon-driven work loops are internally marked **unattended**. This is execution context,
-not a user-selectable session policy: `ask_user` is auto-answered with guidance to make a
-reversible assumption or mark the task blocked, so a background loop cannot wait forever
-with no client attached. Significant assumptions are included in the final report.
-
-A high-impact, hard-to-reverse action exposes a `Confirm` gate (yes/no) rather than
-`ask_user`. Starting the `pm` → `work` implementation pipeline is one: its
-`switch_to_work` confirmation seeks a real human answer, and if none is available the
-action is declined rather than silently launching work. Workstream merges similarly always
-return a preview and require explicit acceptance; unattended execution never bypasses these
-operation-specific safety gates.
-
-## 12. RPC protocol (Connect)
-
-Service sketch (`proto/ycc/v1/ycc.proto`):
-
-```proto
-service SessionService {
-  rpc ListModes(ListModesRequest) returns (ListModesResponse);          // home menu
-  rpc StartSession(StartSessionRequest) returns (StartSessionResponse);
-  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
-  rpc Subscribe(SubscribeRequest) returns (stream Event);               // server-stream
-  rpc SendInput(SendInputRequest) returns (SendInputResponse);          // prod the agent
-  rpc AnswerQuestion(AnswerQuestionRequest) returns (AnswerQuestionResponse);
-  rpc Interrupt(InterruptRequest) returns (InterruptResponse);          // pause a running agent to steer (§18.7, task 0040)
-  rpc Resume(ResumeRequest) returns (ResumeResponse);                   // continue after a pause, unchanged (§18.7, task 0040)
-  rpc Stop(StopRequest) returns (StopResponse);                         // terminate a session (task 0009)
-
-  // Projects — persistent multi-project daemon (§3.1).
-  rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
-  rpc AddProject(AddProjectRequest) returns (AddProjectResponse);
-  rpc RemoveProject(RemoveProjectRequest) returns (RemoveProjectResponse);
-  rpc RenameProject(RenameProjectRequest) returns (RenameProjectResponse);
-
-  // Parallel workstreams — git worktrees, child of a project (§14.1).
-  rpc SpawnWorkstream(SpawnWorkstreamRequest) returns (SpawnWorkstreamResponse);
-  rpc ListWorkstreams(ListWorkstreamsRequest) returns (ListWorkstreamsResponse);
-  rpc PreviewMerge(PreviewMergeRequest) returns (PreviewMergeResponse);   // non-mutating trial merge
-  rpc MergeWorkstream(MergeWorkstreamRequest) returns (MergeWorkstreamResponse);
-  rpc DiscardWorkstream(DiscardWorkstreamRequest) returns (DiscardWorkstreamResponse);
-
-  // Settings overlay (§18.2) — change session config mid-flight.
-  rpc ListModels(ListModelsRequest) returns (ListModelsResponse);       // available logical models
-  rpc UpsertModel(UpsertModelRequest) returns (UpsertModelResponse);    // add/edit a model backend (§18.2, task 0041)
-  rpc RemoveModel(RemoveModelRequest) returns (RemoveModelResponse);    // delete a model backend (§18.2, task 0041)
-  rpc DiscoverModels(DiscoverModelsRequest) returns (DiscoverModelsResponse); // list a connection's model ids (§13, §18.2)
-  rpc SetRoleConfig(SetRoleConfigRequest) returns (SetRoleConfigResponse);
-  rpc SetThinking(SetThinkingRequest) returns (SetThinkingResponse);    // reasoning level for a role's model(s)
-  rpc SetWorkImplementation(SetWorkImplementationRequest) returns (SetWorkImplementationResponse); // next session
-
-  // Review tiers (§13.1) — list the effective tiers, edit the configured ones,
-  // and set the default; always persisted to ycc.toml (task 0297).
-  rpc ListReviewTiers(ListReviewTiersRequest) returns (ListReviewTiersResponse);
-  rpc UpsertReviewTier(UpsertReviewTierRequest) returns (UpsertReviewTierResponse);
-  rpc RemoveReviewTier(RemoveReviewTierRequest) returns (RemoveReviewTierResponse);
-  rpc SetReviewDefault(SetReviewDefaultRequest) returns (SetReviewDefaultResponse);
-
-  rpc GetSessionTranscript(GetSessionTranscriptRequest) returns (GetSessionTranscriptResponse); // read-only transcript (§18.6)
-  rpc GetCommitDiff(GetCommitDiffRequest) returns (GetCommitDiffResponse); // git show for a commit_made row (§18.6, task 0140)
-}
-```
-
-Notable message shapes for the settings + structured-question work:
-
-- `ProjectInfo { string name; string path; GitStatus git }`, where `git` is absent for a
-  non-repository workspace and otherwise contains `{ branch; has_upstream; ahead; behind;
-  dirty; last_fetch_unix; fetch_error }`; `ListProjectsResponse { repeated ProjectInfo
-  projects }`; `AddProjectRequest { string path; string name }` →
-  `AddProjectResponse { ProjectInfo project }`; `RemoveProjectRequest { string name }`;
-  `RenameProjectRequest { string name; string new_name }` → `RenameProjectResponse
-  { ProjectInfo project }` (§3.1). A rename keeps the workspace path: live sessions and
-  work loops are keyed by path and follow it; workstream registry entries are relabeled to
-  the new name. An unknown name is `not_found`; a name collision is `already_exists`.
-  `StartSessionRequest` gains an optional `project` (name) that resolves to a workspace — an
-  unknown workspace is auto-registered. `ListSessionsRequest` may carry a `project` filter.
-- `StartSessionRequest` also takes an optional `coordinator_model` (a logical model name from
-  `ListModels`): a **per-session** coordinator override for the session being started. It never
-  touches the persisted role defaults (that is `SetRoleConfig`'s job) and leaves
-  implementer/reviewers on the configured models; an unconfigured name is `invalid_argument`.
-  The chosen model is recorded in `session_started`, so `ResumeSession` replays the session on
-  it (falling back to the default if it was removed since). Clients surface it as an optional
-  model picker on the new-session composer (docs/design/ios-client.md §6; the TUI keeps using
-  the settings overlay, §18.2).
-- `AnswerQuestionRequest { session_id; oneof answer { string text; int32 option_index } }`
-  — answer a structured question by chosen option or free text. `question_asked` events
-  gain a `repeated string options` field so the client can render the picker.
-- `SetRoleConfigRequest { session_id; string coordinator; string implementer;
-  repeated string reviewers }` — per-role model assignment by logical model name (§13).
-  Empty fields leave that role unchanged.
-- `SetThinkingRequest { session_id; string role; string level }` — set a reasoning level
-  (`off | low | medium | high | xhigh | max`) on the logical model(s) currently assigned to
-  `role` (`coordinator | implementer | reviewers`). `reviewers` means every reviewer model;
-  an empty `role` means all three roles' models, deduplicated. The role is therefore a model
-  selector, not a place where reasoning state is stored. The daemon persists the level in
-  each affected `[models.X]` entry. A live session also keeps a per-model override so the
-  next turn/spawn changes immediately. `off` disables reasoning; any effort level maps to
-  adaptive thinking at that effort with summarized display (§13).
-- `ListModelsResponse { repeated ModelInfo models; string work_implementation }` reports the
-  effective `work.implementation` (`delegate` when unset) alongside the settings seed data.
-  `SetWorkImplementationRequest { string implementation }` accepts `delegate | direct`, always
-  persists to `ycc.toml`, and applies to the next session (§10). `ModelInfo` carries the logical
-  name + backend + model id, so the client can populate the role pickers. For *editing* backends
-  the client needs the full record: a `ModelConfig` message mirrors a `[models.X]` block (name,
-  backend, base_url, model, key_env, thinking/effort/display, pricing) and is returned by an
-  extended `ListModels` (or a `GetModelConfig`).
-  `UpsertModelRequest { ModelConfig model; bool persist }` adds or replaces a logical model
-  by name; `RemoveModelRequest { string name; bool persist }` deletes one. The daemon
-  **always** writes the change back to `ycc.toml` via `config.Save` (§19.1) so it survives
-  restart; the `persist` field is retained for wire compatibility but ignored (a settings
-  edit is never runtime-only). The daemon rebuilds backends on the next `Build`, so changes
-  take effect without a restart (§13, §18.2, task 0041).
-- Review-tier editing (§13.1, task 0297): `ReviewTierInfo` mirrors a `[reviews.tiers.X]`
-  block (name, strategy, description, tier prompt, `models` shorthand or `reviewers` slots —
-  each slot `{ name; model; prompt; thinking }`) plus derived flags `builtin` (one of
-  simple/single-opus/high-powered) and `configured` (an explicit config entry exists).
-  `ListReviewTiersResponse { repeated ReviewTierInfo tiers; string default_tier }` reports
-  the **effective** tiers, exactly what `spawn_reviewers` resolves against.
-  `UpsertReviewTier` validates like config load (shared validation, so an RPC can never
-  write a tier the loader would reject) and persists; `RemoveReviewTier` deletes the
-  configured entry (a built-in name reverts to built-in behaviour; removing the default
-  custom tier is rejected until the default moves); `SetReviewDefault` sets
-  `reviews.default` (empty clears it back to `single-opus`). All three always persist to
-  `ycc.toml`; tiers resolve per `spawn_reviewers` call, so edits take effect on the next
-  review with no restart.
-- `SendInputRequest { session_id; text; repeated ImageAttachment images }` accepts text
-  with up to four validated JPEG/PNG/GIF/WebP pictures (5 MiB each). Image bytes enter the
-  live model history as native multimodal user blocks but never the append-only event log;
-  `user_input` records only media type/filename metadata, so text-only clients and transcript
-  replay remain compatible (reopened history retains the text + attachment indication, not
-  the original pixels).
-- `StartSessionRequest` carries the same `repeated ImageAttachment images`, attaching
-  pictures to the **opening prompt** under identical limits and validation (rejected as
-  `InvalidArgument` before any session/log is created). A session whose subject *is* a
-  screenshot therefore does not have to waste its first turn: the seed message is
-  multimodal, and its `user_input` event again records metadata only. Attachments seed the
-  first coordinator loop once — an in-session mode transition re-seeds text only.
-- `InterruptRequest { session_id }` / `ResumeRequest { session_id }` — pause a running
-  agent at the next safe checkpoint, then continue (§18.7). A correction is steered in by
-  `SendInput` while paused; `Resume` continues with no change. `Interrupt` is a *graceful
-  pause to steer*, distinct from `Stop` (terminate, task 0009).
-
-`Subscribe` takes a `from_seq` so a reconnecting client replays from an offset. Auth: a
-bearer token (config/env) — **required** for any non-loopback bind (the daemon refuses to
-start without one). The TUI talks to the loopback daemon; remote clients dial in over a
-private network (Tailscale/VPN), with TLS optional (`TLSCert`/`TLSKey`) for direct
-exposure (§14).
-
-(Mode switching is currently **agent-driven** via the `switch_to_work` control tool +
-`StartSession` from the home menu rather than a client `ChooseMode` RPC; revisit if
-client-driven mode switching is wanted.)
-
-## 13. Backends & model registry
-
-A config file maps logical names → gollama clients:
-
-```toml
-[models.claude]
-backend = "anthropic"  base_url = "…"  model = "claude-opus-4-8"  key_env = "ANTHROPIC_API_KEY"
-thinking = "adaptive"  effort = "high"  thinking_display = "summarized"   # reasoning (see §7.4)
-# auth = "oauth"       # Claude subscription (Pro/Max) instead of an API key; see below
-[models.gpt]      backend="openai"    base_url="…" model="gpt-5.5"          key_env="OPENAI_API_KEY"
-[models.glm]      backend="openai"    base_url="https://…/glm" model="glm-4.6" key_env="GLM_API_KEY"
-[models.local]    backend="ollama"    base_url="http://localhost:11434" model="…"
-
-[roles]
-coordinator = "claude"
-implementer = "claude"
-reviewers   = ["claude", "gpt", "glm"]   # multi-model review
-
-[roles.presets]                # optional preset → logical-model session binding
-memory-groom = "gemini"        # run doc cleanup from a different perspective
-spec-doctor  = "gpt"
-
-max_tokens  = 32000  # per-turn output token cap (0 => backend default)
-max_turns   = 1000   # per-Run tool-call turn cap; runaway/cost backstop (0 => engine default, 1000)
-
-# write_roots = ["/abs/path/to/sibling"]  # extra writable roots outside the workspace for Write/Edit (§8; reads are unrestricted)
-
-# [work]                        # optional work-mode implementation strategy (§10); absent => "delegate"
-# implementation = "direct"     # "delegate" (coordinator → implementer subagent) | "direct" (coordinator edits itself)
-
-# [retry]                 # optional transient-LLM-failure retry policy (§7.2); absent => engine default (8 attempts, 500ms→30s)
-# max_attempts  = 3       # total attempts incl. first; 1 disables retry (0/unset => default)
-# base_delay_ms = 500     # first backoff step, doubles each attempt (0/unset => default)
-# max_delay_ms  = 30000   # backoff cap (0/unset => default; must be >= base_delay_ms)
-```
-
-The registry hands the engine a configured gollama `Client` + model string for any
-logical name. Reviewer fan-out iterates `roles.reviewers`. `[roles.presets]` is an optional
-map from an opening-prompt preset name to a logical model. It changes only the initial
-coordinator of a session started from that preset: it does not call the persistent role
-configuration path, and implementer/reviewer assignments remain unchanged. Reopen records
-and re-resolves the preset binding so the cross-model choice survives resume, unless a later
-`role_config_changed` coordinator selection superseded it; that explicit mid-session choice
-is replayed instead. Unknown bound models are intentionally not a config-load error; at
-session use time they degrade to
-`roles.coordinator` with a visible warning. This permits config/model-set evolution without
-making the documentation-repair entry points unavailable, while using a second model for
-`memory-groom` / `spec-doctor` to counter author-model dialect drift (§9).
-
-**Logical model = credentials/endpoint + model id.** A `[models.X]` block bundles a
-backend's *credentials/endpoint* (`backend`, `base_url`, `key_env`) with a specific
-*model id* (`model`). These are conceptually separable: several logical models may share
-one backend's credentials/endpoint while pointing at **different model ids** — e.g.
-`claude-opus`, `claude-sonnet`, and `claude-haiku` all using the same `anthropic` backend,
-`base_url`, and `ANTHROPIC_API_KEY`, differing only in `model` (and possibly pricing). This
-is how "the same backing token, a different model" is expressed: define sibling logical
-models that reuse the credential. The TUI's backend manager (§18.2) makes this ergonomic in
-two ways: **adding a connection** captures the credential/endpoint once plus a *set* of
-model ids (one space/comma-separated field), creating one sibling logical model per id
-(named after the id); and **duplicate** clones an existing model, changing only the name +
-model id. The set of ids can be **discovered** from the live backend via `DiscoverModels`
-(the OpenAI-compatible `/models`, Anthropic `/v1/models`, or Ollama `/api/tags` endpoint)
-or seeded from curated per-backend defaults. The underlying config stays the flat
-per-logical-model map (a dedicated `[providers.X]` credential table that models reference is
-a possible future normalization, not required for this).
-
-**Credential mechanisms** (`auth`). By default a model authenticates with an API key
-resolved from `key_env` (environment first, then the machine-local secrets store —
-`~/.config/ycc/secrets.json`, mode 0600, managed by `ycc token set/list/rm`). Migrate loose
-plaintext key files (for example an ignored root `ant-key`) by running
-`ycc token set <KEY_ENV>`, entering the value through stdin, verifying the named key with
-`ycc token list`, and then deleting the loose file yourself. ycc deliberately never searches
-for, opens, migrates, or prints arbitrary local key files; migration is user-directed so a
-filename is never treated as consent to inspect its contents. Two backends additionally
-support **subscription auth** with `auth = "oauth"` on the
-`[models.X]` block (`key_env` is then ignored; both default to **unpriced**, §20.4):
-
-- **anthropic — Claude Pro/Max.** `ycc login anthropic` runs the current Claude Code
-  authorization-code + PKCE flow (browser login through `claude.com/cai/oauth/authorize`,
-  paste back the `code#state` the page shows) with the subscription-inference/session
-  scopes, and persists the versioned access/refresh pair in the secrets store under
-  `ANTHROPIC_OAUTH`. Credentials from a retired flow fail locally with a one-time re-login
-  instruction rather than reaching inference and looking like an exhausted allowance. Every
-  OAuth turn sends a live access token — re-read from the secrets store per turn, refreshing
-  and re-persisting an expired one — as `Authorization: Bearer`, with
-  `anthropic-beta: claude-code-20250219,oauth-2025-04-20` and `x-app: cli` (never
-  `x-api-key`), on the same `/v1/messages` transport as API-key auth. Resolving the token
-  per turn rather than once per client is load-bearing: Anthropic invalidates the previous
-  access token whenever the refresh token is redeemed, so a session that outlives a refresh
-  by any other holder of the credential — another ycc process, the subscription-usage
-  poller — would otherwise die on a non-retryable 401. A turn the provider still rejects as
-  revoked or expired is retried exactly once against a forcibly refreshed token, and that
-  forced refresh prefers a credential another process has already stored over redeeming the
-  refresh token again. Each OAuth turn also
-  prepends Anthropic's reserved subscription system blocks, in order:
-  `x-anthropic-billing-header: cc_version=0.0.0; cc_entrypoint=ycc;` (a truthful ycc
-  entrypoint, not a spoofed Claude Code version) and
-  `You are a Claude agent, built on Anthropic's Claude Agent SDK.`; ycc's complete behavioral
-  system prompt remains a separate following block, equivalent to Claude Code's
-  `--system-prompt` behavior. API-key turns are unchanged. A long-lived OAuth
-  token minted elsewhere (e.g. `claude setup-token`) can instead be stored under a normal
-  `key_env`: the registry auto-detects the `sk-ant-oat` prefix and applies the same request
-  headers without imposing ycc's stored-credential flow-version check.
-- **openai — ChatGPT Plus/Pro.** `ycc login openai` runs the Codex CLI's OAuth flow
-  (PKCE against auth.openai.com with a local callback server on `localhost:1455`, the
-  redirect the public client id is registered with; when the browser runs on another
-  machine — e.g. ycc over ssh — pasting the failed redirect URL from the address bar
-  into the terminal completes the flow instead, racing the callback server) and
-  persists credentials —
-  including the ChatGPT account id parsed from the id_token — under `OPENAI_OAUTH`.
-  Subscription tokens are **not valid on the platform API**: inference goes through a
-  dedicated transport (`internal/codex`) speaking the **Responses API** to the Codex
-  backend (`chatgpt.com/backend-api/codex/responses`; an empty or platform base_url is
-  swapped automatically, an explicit proxy URL honored). The transport is
-  streaming-only with `store:false`, sends the required `chatgpt-account-id` /
-  `originator` / `OpenAI-Beta: responses=experimental` headers, **never sends
-  `max_output_tokens`** (the backend rejects it as an unsupported parameter; the
-  server-enforced cap still surfaces as stop reason `length`), and formats errors in
-  gollama's "status code NNN" shape so engine retry/classification work unchanged —
-  including in-stream `error`/`response.failed` frames, whose provider error **code** is
-  kept in the message (`server_error: …`) so a transient backend failure over a 200
-  stream is classified retryable (§7.2) instead of `unknown`. Stateless requests include
-  `reasoning.encrypted_content`; opaque reasoning output items and provider ids are durably
-  retained on `model_turn.thinking_blocks` and replayed in original order with their canonical
-  message/function-call items after either a live tool result or session reopen, but are never
-  exposed as ordinary transcript text.
-  Model ids differ from the platform catalog (curated set in `internal/codex.Models`,
-  e.g. `gpt-5.6-sol`; no listing endpoint).
-
-`auth = "oauth"` on any other backend is a config error, and logout is
-`ycc token rm ANTHROPIC_OAUTH|OPENAI_OAUTH`. A successful `ycc login <backend>` also
-**auto-configures the config**: it ensures an `auth = "oauth"` model for that backend
-exists in the discovered ycc.toml (added under a free default name — `claude`/`chatgpt`,
-`-oauth`-suffixed on collision — with the backend's curated default model id), creating
-the config in the user config dir with all roles pointed at the new model when none
-exists yet. Existing models and role assignments are never mutated; if a subscription
-model for the backend is already configured the login just reports it. This is
-best-effort — a config that fails to load/write degrades to printing the manual
-`auth = "oauth"` instruction, never failing the login. The TUI backend form has an **auth
-picker** (`api key` | `oauth (subscription)`) on its connection form: it is pinned to
-api-key for other backends (switching the backend to one resets it), the credential
-itself still comes from `ycc login <backend>`, and editing a model preserves its
-`auth` value.
-
-**Per-model reasoning** (`thinking` / `effort` / `thinking_display`) is configured on each
-`[models.X]` block and resolved by the registry (`ThinkingFor(name)`), paralleling
-`max_tokens` / `MaxTokens()`. These are translated per backend (see the §7.4 mapping table:
-anthropic thinking+effort; openai `reasoning_effort` with `max`→`xhigh`; ollama `think`
-on/off with effort levels dropped; bedrock/other ignored). A level a backend cannot express
-is **ignored, not an error** (graceful degrade for mixed-backend sessions), with a one-time
-per-session/role warning in the session log (see §7.4).
-**Defaults are reasoning-on** (`thinking="adaptive"`, `effort="high"`,
-`thinking_display="summarized"`) — this is an agentic coding harness, so reasoning is
-desired by default, including on the no-config single-backend path. Set `thinking="off"`
-on a model to disable reasoning.
-
-Thinking levels attach to **logical models, not roles**. Roles that share a model necessarily
-share its reasoning depth; swapping a role to another model picks up the newly assigned
-model's own level. `SetThinking(role, level)` keeps its role-oriented wire shape for client
-compatibility, but the daemon resolves that role to its current model(s), deduplicates them,
-and updates each model. `reviewers` selects every reviewer model and an empty role selects
-all coordinator, implementer, and reviewer models. Reasoning for an agent is resolved with
-this precedence (highest wins):
-
-1. **per-model session override** (a live-session `SetThinking`),
-2. **per-model config** (`[models.X]` thinking/effort/display),
-3. **package defaults** (adaptive / high / summarized).
-
-A level maps to adaptive thinking at that effort with summarized display; `off` disables
-reasoning. Settings changes persist into each affected `[models.X]` entry, so they survive a
-restart and follow that model through later role reassignment. Legacy `[roles.thinking]`
-tables are silently ignored when loading existing `ycc.toml` files.
-
-`max_turns` bounds how many tool-call turns a single engine `Run` may take. It is a
-**runaway backstop**, not a normal stopping condition: the high default (1000) keeps the
-implementer's read → edit → build → test → fix cycles from being cut off mid-task while
-still stopping a degenerate infinite tool-call loop. The cap is **per `Run`**, so each
-`send_to_implementer` revise round gets a fresh budget rather than accumulating across
-rounds. Interaction with context-window management (§ task 0010): a higher turn cap lets a
-run accumulate more conversation history, so until context budgeting lands a very high
-`max_turns` can trade a turn-limit abort for a context-window-limit abort on long runs.
+### 7.1 Provider boundary and history
+
+Provider clients expose context-aware blocking and streaming turns with normalized messages,
+tool calls, reasoning blocks, usage, stop reasons, and errors. The engine owns orchestration and
+provider-neutral history; provider libraries remain transports. Provider request builders forward
+engine limits only when the target accepts them; the Codex output-cap exception is in §13.
+Cancellation reaches retry backoff, token refresh, HTTP requests, and streaming reads so hard stop
+and daemon shutdown do not strand inference.
+
+Opaque provider state needed for stateless continuation is recorded with the model turn and
+replayed only to the same compatible backend. Non-compatible backends do not receive it.
+Reasoning summaries may be rendered, but private or encrypted reasoning state is never presented
+as transcript text.
+
+### 7.2 Loop, repair, and failure handling
+
+For each turn the loop calls the selected model, records the final message, dispatches tool calls,
+records each result, and continues until the model yields or a control tool ends/suspends the run.
+A per-run turn cap is a runaway backstop, not a normal stopping condition.
+
+Some providers leak XML-like parameter markup inside otherwise valid JSON tool arguments. The
+engine repairs only a declared parameter that was left unset and only when the closing/parameter
+pattern is unambiguous. Repair is recorded with the tool call and reported to the model.
+
+LLM failures share one taxonomy: rate limit, overload, server, timeout, network, auth, invalid
+request, context length, refusal, and unknown. Transient classes retry with bounded exponential
+backoff and live retry events; explicit retry configuration overrides defaults. A failed turn
+records exactly one durable `session_error` and parks with the unanswered turn intact. `Resume`
+can retry a parked retryable failure without injecting dummy input.
+
+Provider refusals are not replayed into model history because they can poison continuation. They
+remain visible as model/error events, reject additional input while parked, and may be retried by
+Resume or after changing the coordinator model.
+
+### 7.3 Subagents and asynchronous jobs
+
+A subagent is another engine loop with isolated history and an actor-tagged event stream.
+Implementer and reviewer contexts may be retained for revision. Reviewer fan-out runs
+concurrently.
+
+Background shell commands and subagents share session-owned job ids and the `job_output`, `wait`,
+and `kill_job` controls. Final reports are delivered exactly once, either by a covering wait or
+checkpoint injection. Progress reads never consume them. Jobs do not survive daemon restart;
+replay closes an unfinished job with a lost-on-restart report so conversation history stays valid.
+
+Only one mutating agent/job may operate in a worktree. Read-only work can fan out; parallel
+mutation requires separate workstreams. `docs/design/async-jobs.md` explains the single-delivery
+and single-writer rationale.
+
+### 7.4 Reasoning settings
+
+Thinking and effort resolve per logical model, with a live per-model override taking precedence
+over persisted model config and then defaults. Roles that share a model share its default depth;
+a reviewer slot may override depth for that review only. Unsupported settings degrade without
+failing the turn and produce at most one visible warning per session/role.
+
+Provider mappings preserve a common user contract: Anthropic supports adaptive thinking and the
+full effort range; OpenAI-compatible backends map supported reasoning-effort levels; Ollama
+supports only on/off; other backends may ignore the setting. Reported reasoning tokens are a
+subset of output tokens, not a separate billable class.
+
+## 8. Tools and access policy
+
+Worker tools provide file read/write/edit, shell execution, optional Exa web search/fetch,
+multimodal reads, and structured finish/block outcomes. Coordinator tools add backlog management,
+planning, implementation/review delegation, revision, commit, questions, memory, and session
+control. Tools are model-callable JSON-schema interfaces; control tools can suspend, resume, spawn,
+or end loops.
+
+Read access is unrestricted because shell access already is. Write and Edit are confined by
+resolved filesystem paths to the workspace plus configured trusted write roots. This is an
+accident guardrail, not a security boundary. Images and PDFs read through the file tool become
+native model content when supported; size limits and backend degradation prevent accidental
+unbounded embedding.
+
+Reviewers receive read and shell inspection but no mutation tools. On supported Linux hosts their
+shell is filesystem-write-restricted with Landlock or bubblewrap; inability to establish an
+available sandbox fails closed. Hosts without either mechanism visibly degrade to prompt-only
+read-only enforcement.
+
+Questions support one or several prompts, each with optional choices and a free-text alternative.
+They must contain enough context to answer without reading the transcript. Positional batch
+answers and single answers are distinct wire forms but reduce to the same durable question
+exchange.
+
+Forge access through operator-installed official CLIs is intentionally outside the public tool
+surface; `docs/design/forge-integration.md` records that trust-boundary decision.
+
+## 9. Modes
+
+- **pm** manages design docs, backlog, investigation, onboarding, and grooming. It may inspect the
+  workspace but is prompt-constrained not to implement code. Presets provide opening context for
+  onboarding, spec checking, and memory grooming; an optional preset-to-model binding supplies an
+  independent editorial perspective without changing role defaults.
+- **chat** is free-form assistance with direct worker tools and no fixed workflow.
+- **work** drives one accepted task through implementation, proportional review, backlog update,
+  and commit.
+
+A prompt entered with a preset composes with the preset rather than replacing it. A pm-to-work
+handoff requires explicit approval and carries the selected task and planning context. Mode
+transitions are recorded; clients start sessions and otherwise project the daemon-owned state.
+
+### 9.1 Unattended work loop
+
+The daemon can repeatedly start fresh work sessions for ready tasks. It skips proposed, blocked,
+in-review, dependency-blocked, and done tasks; no backlog progress halts the loop rather than
+reselecting forever. Stop is graceful: the current task finishes, then no next task starts.
+
+The loop survives client disconnects. Retryable provider outages enter a bounded waiting state
+with escalating delays; non-retryable failures stop. Daemon restart restores an active/waiting
+loop as interrupted and never silently resumes it. The daemon owns budget enforcement and the
+end-of-batch digest.
+
+## 10. Work orchestration
+
+A work session starts with fresh coordinator context, reads the task and relevant design, chooses
+an approach, and persists a plan only when complexity warrants one. Depending on
+`work.implementation`, either a retained implementer subagent performs mutations (`delegate`) or
+the coordinator uses worker tools itself (`direct`). The setting is fixed for a session.
+
+Review intensity is proportional to risk. The coordinator may self-review a tiny low-risk change,
+use one focused reviewer for ordinary work, or fan out independent reviewers for high-risk work.
+Findings are judged against the task rather than accepted mechanically. Revisions reuse the
+implementer and reviewer contexts when available. Acceptance updates the task and creates one
+coherent task commit.
+
+An implementer can return a structured blocked outcome when progress requires a decision outside
+its authority. The coordinator resolves ordinary implementation judgement, asks the user when
+intent is needed, or marks the task blocked. Discovered adjacent work is captured as a follow-up
+rather than silently expanding the active task.
+
+## 11. Questions, unattended work, and confirmation
+
+Attended agents ask only when input is useful and wait for the answer. Unattended sessions receive
+an explicit execution context: ordinary questions are auto-answered with guidance to choose a
+reversible assumption or block the task, so background work cannot wait forever.
+
+High-impact operations use dedicated confirmation gates rather than ordinary questions. Starting
+a pm-to-work handoff requires explicit acceptance. Gate/manual workstream integration requires
+per-workstream acceptance; configured auto integration is pre-authorized to use only its
+rebase/verify/fast-forward path. Unattended status never bypasses a required gate.
+
+## 12. RPC protocol
+
+`SessionService` is the sole public daemon API. Its protobuf schema groups RPCs around:
+
+- session discovery, start/reopen, transcript/diff reads, event subscription, input, questions,
+  interrupt/resume, and hard stop;
+- project registration and directory discovery;
+- model, role, reasoning, work-strategy, and review-tier settings;
+- backlog, plans, memory, usage, allowance, budgets, notifications, and work loops;
+- workstream spawn/list/preview/integrate/discard/retry.
+
+`Subscribe` accepts `from_seq`; only durable sequences advance this cursor. The same service is
+available through generated Connect clients and Connect HTTP/JSON. Bearer authentication applies
+to RPCs. A non-loopback daemon bind is refused without a token; TLS is optional because private
+network transport may provide encryption, but the daemon warns when its own transport is clear.
+Static embedded-web assets may be public while their RPC calls remain authenticated.
+
+Opening and in-session user input accept bounded JPEG, PNG, GIF, or WebP attachments. Bytes enter
+the current model history but events contain metadata only. Invalid opening attachments are
+rejected before the session/log is created.
+
+## 13. Models, credentials, and review tiers
+
+A TOML config maps logical model names to backend, endpoint, model id, auth, reasoning, and
+optional pricing. Roles select a coordinator, implementer, and reviewer models. Several logical
+models may share one endpoint/credential while selecting different model ids. Config is discovered
+workspace-first and otherwise from the user config directory; the active files are not merged.
+
+API-key values resolve from the environment first and then the machine-local secrets store
+managed by `ycc token`; committed config stores only the key name. Anthropic and OpenAI also
+support subscription OAuth through `ycc login`. Tokens are stored machine-locally, refreshed as
+needed, never included in RPC responses, and re-resolved per turn where provider refresh semantics
+can invalidate an earlier access token. OpenAI subscription inference uses its compatible Codex
+Responses transport rather than the platform API. The engine may enforce its configured output
+cap, but this transport must not send `max_output_tokens`: the ChatGPT Codex backend rejects that
+parameter. Subscription models are unpriced unless the user supplies rates.
+
+Runtime settings changes persist to the active `ycc.toml` and affect the next model construction;
+role and thinking changes may also update a live session's next turn. Removing a model still
+referenced by a role is rejected. A first-run client wizard creates a usable config when no model
+configuration or fallback credential exists.
 
 ### 13.1 Review tiers
 
-Review intensity is **tiered** and the work coordinator picks a tier per change based on its
-size/risk, rather than every change getting the same fixed review. Tiers are named,
-fully user-defined, and configurable under an optional `[reviews]` table. A tier names its
-own reviewer line-up: **which logical model fills each reviewer slot, and what that reviewer
-is told to focus on**, so one review round can pair a readability critic with a performance
-critic instead of running the same generic review N times:
+Named review tiers choose either coordinator self-review or a set of reviewer slots. A slot binds
+a logical model, optional label, focus prompt, and reasoning override. A focus is a lens rather
+than a prohibition: every reviewer still checks the acceptance criteria and reports major defects
+outside its assigned specialty.
 
-```toml
-[reviews]
-default = "standard"              # tier used when the coordinator doesn't pick one
+Built-in tiers provide self-review, a single ordinary reviewer, and a high-powered tier. Projects
+may override them or add named tiers. An invalid configured tier is rejected; a stale tier name at
+runtime falls back visibly to the configured default, then to available session reviewers, then
+to coordinator self-review. Selection and resolved reviewer/model identities are recorded in the
+event log and task work log. Tier edits persist and apply to the next review spawn.
 
-[reviews.tiers.standard]
-models = ["claude"]               # shorthand: one generic reviewer per logical model
+## 14. Persistence, remote access, and workstreams
 
-[reviews.tiers.deep]
-description = "large, risky, or performance-sensitive changes"   # shown to the coordinator
-prompt = "Cite file:line for every finding."                     # applies to EVERY reviewer of the tier
+Workspace state and session logs remain on the daemon host. Remote clients dial that daemon
+directly over Connect; there is no daemon-to-daemon log replication. This preserves one writer for
+each event log and makes reconnect equivalent to subscribe-from-sequence. The embedded web client
+and native iOS app use the same boundary as the TUI and CLI.
 
-  [[reviews.tiers.deep.reviewers]]
-  name   = "readability"          # label (defaults to model); labels the actor + work log
-  model  = "claude"               # any configured [models.X]
-  prompt = "Focus on conciseness, naming, dead code, and code readability."
-  thinking = "high"               # optional per-reviewer reasoning level
+Best-effort daemon notifications can report questions, idle completion, errors, blocked work, and
+work-loop digests through an ntfy-compatible webhook. Delivery never blocks or fails a session.
+Committed config references notification credentials through an environment variable; inline
+credentials are only appropriate in a private user-global active config.
 
-  [[reviews.tiers.deep.reviewers]]
-  name   = "performance"
-  model  = "gpt"
-  prompt = "Focus on performance characteristics: allocations, N+1 work, hot paths, complexity."
+Sensitive ycc-owned state uses restrictive Unix permissions: session logs, generated user config,
+secrets, and daemon logs are owner-only. Committed documents, registries that contain only
+path/id/preference metadata, and normal tool output retain ordinary project modes. `ycc doctor`
+reports broad modes and inline workspace notification credentials without printing secrets or
+inspecting arbitrary key files.
 
-[reviews.tiers.simple]
-strategy = "coordinator"          # coordinator self-reviews; no reviewer agent
-```
+### 14.1 Parallel workstreams
 
-Three **built-in tiers** always exist (and may be overridden by a same-named `[reviews.tiers.X]`):
+Parallel mutation uses linked git worktrees rather than branch switching in a shared tree or full
+clones. Each workstream has a ycc branch, out-of-tree worktree, work session, base commit, and
+daemon registry record. It is a child of its project, not a project-picker entry. The per-tree
+single-writer invariant remains unchanged.
 
-- **simple** — `strategy = "coordinator"`: the coordinator reviews the change itself; **no
-  reviewer agent is spawned**. Intended only for tiny, low-risk changes.
-- **single-opus** — one reviewer; reproduces the current default reviewer behaviour (the
-  configured `roles.reviewers`).
-- **high-powered** — multiple reviewers running **in parallel**, results aggregated; for
-  large, risky, security-sensitive, or hard-to-reverse changes. Out of the box the built-in
-  `high-powered` tier resolves to the **same reviewer set as `single-opus`** (the configured
-  `roles.reviewers`); it only runs a genuinely parallel multi-model review once
-  `[reviews.tiers.high-powered]` is configured with more than one reviewer.
+Integration is serialized per project. Gate/manual integration uses a non-mutating preview to
+detect conflicts and show the integrated diff before per-workstream acceptance. Configured auto
+integration is pre-authorized and does not add that acceptance step; it can only follow the
+rebase/verify/fast-forward path below. The base tree is never left conflicted. Discard and
+successful integration clean up the linked worktree and branch.
 
-Each tier maps to a **strategy** plus a reviewer set. `strategy = "coordinator"` (aliases
-`self` / `self-review`) means the coordinator self-reviews with no separate reviewer agent.
-`strategy = "agents"` (the default when empty) spawns one reviewer subagent per reviewer
-slot, described either way:
+Automatic integration rebases inside the workstream, verifies there, and advances the base only
+by fast-forward. A conflict or failed verification may start a bounded unattended
+integration agent in that worktree; the daemon independently rebases and verifies again before it
+moves base. Exhaustion leaves base untouched and the worktree available with a needs-attention
+state. Unsupported automatic strategy/configuration degrades to the review gate rather than
+performing a different history operation. Rationale is retained in
+`docs/design/parallel-workstreams.md` and `docs/design/workstream-integration.md`.
 
-- **`models = [...]`** — the shorthand: one generic reviewer per logical model, labelled by
-  the model name.
-- **`[[reviews.tiers.X.reviewers]]`** — the long form, one table per reviewer slot with
-  `model` (required), optional `name` (the label; defaults to the model), optional `prompt`
-  (the reviewer's **focus**), and optional `thinking` (a per-reviewer reasoning level that
-  overrides the slot model's resolved per-model thinking, for that slot only). Slots are independent, so the **same
-  model may appear several times** under different focuses; duplicate labels are
-  disambiguated (`claude`, `claude#2`).
+## 18. Client interaction model
 
-The two forms are mutually exclusive per tier (setting both is a config error). A tier-level
-`prompt` is extra guidance prepended to **every** reviewer's focus in that tier.
+All clients project the same session/backlog/workstream state and may differ in layout. The TUI is
+the primary local surface; the web client is a small embedded remote surface; the iOS client adds
+native persistence, notifications, and phone navigation. Detailed command usage belongs in
+`docs/cli.md`, and the TUI ownership map is in `docs/tui-components.md`.
 
-A focus is a **lens, not a blinker**: the reviewer system prompt tells a focused reviewer to
-lead with its assignment while still judging the change against the task's acceptance
-criteria and reporting any blocker/major defect it notices outside its focus — so a focused
-fan-out cannot collectively miss a serious defect nobody was assigned to look for.
+Durable events render as a transcript with model/user turns prominent and tool, reasoning,
+review, and system detail foldable. Question plumbing is coalesced into one exchange. Scrolling
+away from the live edge disables follow and exposes a jump-to-latest action; new events must not
+move the reader's viewport.
 
-The coordinator selects a tier per change via the `spawn_reviewers` tool's optional
-`review_tier` parameter; omitting it uses `reviews.default` (which itself defaults to
-`single-opus`). Because tiers are user-defined, the **tool description is generated from the
-project's effective tiers** — each tier's name, its `description`, and its reviewer line-up
-(`readability (claude), performance (gpt)`) — so a custom tier is discoverable by the model
-rather than hard-coded in a prompt; the coordinator system prompt just points at that list.
+### 18.1 Session input
 
-Selection is **auditable**: every `spawn_reviewers` call emits a `review_tier_selected` event
-(`{ task, tier, requested, self_review, fallback, reviewers, models }` — reviewer *labels*
-plus the logical model behind each) and writes a `review tier: …` line to the task's work log
-naming each reviewer as `label (model)`. Each reviewer's verdict is logged as
-`review (label/model): …`, and its events carry the actor `reviewer:<label>` while usage is
-still attributed to the underlying logical model. An **unknown or missing tier degrades
-gracefully** — an unknown `review_tier` falls back to the default (recorded with
-`fallback=true`), an `agents` tier whose models don't resolve falls back to the session's
-current reviewer assignment, and a tier that resolves to no reviewer at all degrades to
-coordinator self-review. The explicitly configured tiers are validated at load (unknown
-strategy, a reviewer slot with no or an unknown model, an invalid per-reviewer thinking
-level, `models` and `reviewers` both set, or a `reviews.default` naming no tier are
-rejected); the built-ins are always valid. Tiers are editable at runtime over the API —
-`ListReviewTiers` / `UpsertReviewTier` / `RemoveReviewTier` / `SetReviewDefault` (§12) —
-which the iOS global settings screen uses for phone-side tier management
-(docs/design/ios-client.md); edits persist to `ycc.toml` and take effect on the next
-`spawn_reviewers`.
+Live sessions provide multiline input and controls. Input sent during a run is queued and inserted
+at the next safe checkpoint, with separate accepted and delivered events so the log does not claim
+premature delivery. Image attachments are shown by metadata even though their bytes are not
+replayable.
 
-## 14. Persistence & remote sync
+### 18.2 Settings
 
-- Per-session JSONL event log is the unit of persistence and of sync.
-- `.ycc/` holds sessions, snapshots, and config; the `spec.md` + `backlog/` live in the
-  repo proper (committed with code).
-- A persistent daemon's **project registry** (name → path) is durable state in the
-  daemon's state dir (`~/.local/state/ycc/projects.json`), separate from each project's
-  per-workspace `.ycc/`. A one-shot daemon uses the same model with an in-memory registry
-  containing one ordinary named project (cwd); there is no implicit “Default” workspace.
-- **Remote access (M5) — direct dial, no log replication.** *Decided:* the earlier
-  daemon-to-daemon push/pull replication idea is **dropped**. Remote observation and
-  prodding happen by dialing the workspace daemon's Connect endpoint directly — another
-  machine runs `ycc -addr <url>`, and a phone app speaks the same Connect HTTP/JSON
-  protocol (via connect-swift / connect-kotlin / connect-es; it is also curl-able). No
-  separate REST/SSE facade. `Subscribe(from_seq)` already *is* "ship events after seq N",
-  and the single-writer invariant holds trivially: remote clients only issue RPCs
-  (input/commands), which the workspace daemon serializes; nothing else ever writes the
-  log. Deployment model: a private network (Tailscale/VPN) with the **bearer token
-  required on any non-loopback bind** (the daemon refuses to bind otherwise); TLS is
-  optional (`TLSCert`/`TLSKey` flags exist) since the tailnet provides transport
-  encryption — the daemon logs a cleartext warning when bound non-loopback without TLS.
-  The phone-facing surface is the **documented** HTTP/JSON endpoint set — see
-  [`docs/remote-api.md`](docs/remote-api.md) (connection & auth, protocol primer,
-  endpoint catalog, and the event model for client authors). Two clients of that
-  surface exist beyond the TUI: the daemon-served embedded web client (**shipped**;
-  `docs/design/web-client.md`, tasks 0151–0153) and the native SwiftUI iOS app
-  (**shipped and actively developed** in `clients/ios/`; `docs/design/ios-client.md` —
-  connect-swift generated client, tasks 0178–0190 and ongoing follow-ons).
-- **Daemon-side push notifications (task 0142).** Terminal notifications (§18, task
-  0108) only help when the terminal is visible. For the "kick off unattended work,
-  walk away, answer from your phone" flow the daemon can also *reach out* via a
-  best-effort, async webhook (ntfy.sh-compatible: title/priority/tags headers + a
-  short body, plus the remote API as the click-through target). It fires when an
-  agent needs you: `question_asked` (including Confirm gates; auto-answered
-  unattended asks are auto-answered — nobody is waiting), `session_idle` (with the final
-  report's first line), `session_error`, a work-loop completion **digest** (pushed
-  client-side through the daemon via the `Notify` RPC), and a **blocked** implementer
-  subagent. Configured in `ycc.toml` under `[notify]` — an absent block (empty `url`)
-  disables it entirely. Delivery never blocks or fails a session; a failed POST is
-  only logged. Per-kind enable/disable (`events`) lets unattended-loop users pick,
-  e.g., "questions + digest only" (valid kinds: `question`, `idle`, `error`,
-  `digest`, `blocked`; an empty/absent list enables all):
+Settings expose logical models, role assignment, reasoning, work implementation, review tiers,
+and client-local presentation preferences. Daemon settings persist; local preferences do not.
+Changes whose prompt/tool shape is fixed at construction are clearly marked as applying to the
+next session.
 
-  ```toml
-  [notify]
-  url = "https://ntfy.sh/my-secret-topic"
-  auth_env = "NTFY_AUTH"          # required for committed config; header from env
-  # auth = "Bearer tk_xxx"        # inline fallback only in a private active config
-  events = ["question", "digest"] # optional; omit for all kinds
-  ```
+Native clients keep bearer tokens in platform credential storage rather than preferences. A 401
+clears authenticated state without deleting the saved endpoint/profile. Deep links identify a
+project/session and route through the same authenticated navigation path as in-app selection.
 
-### File permissions & credential hygiene
+### 18.3 Structured questions
 
-On Unix, ycc-owned files use permissions according to their contents rather than applying a
-misleading blanket policy:
+Clients render single and batched questions with option and free-text answers. A question answered
+by another client resolves everywhere from the durable answer event. Stale answers surface as
+ordinary non-fatal action errors.
 
-| State | Creation / repair policy | Rationale |
-|---|---|---|
-| Workspace session state under `<workspace>/.ycc/` | directories `0700`, logs `0600`; the opened session directory and `events.jsonl` are repaired best-effort | transcripts contain prompts, source, and tool output |
-| User config `~/.config/ycc/ycc.toml` written by ycc | new directory `0700`, file `0600`; an existing file is repaired best-effort | `[notify].auth` may contain an Authorization credential |
-| `~/.config/ycc/secrets.json` | directory `0700`, file `0600` (existing secrets-store policy) | dedicated machine-local credentials |
-| `~/.cache/ycc/daemon.log` | directory `0700`, file `0600`; legacy paths are repaired best-effort | stderr and diagnostics may echo sensitive errors or context |
-| Committed docs (`backlog/`, `plans/`, `memory.md`, spec and `ycc export` output), daemon state registries (`projects.json`, `workstreams.json`, `backlog-ids.json`), client UI preferences, worktree bootstrap copies, and tool Write/Edit output | intentional normal working-tree/state modes (`0755` directories, `0644` files, subject to umask) | these are ordinary project content or path/id/preference metadata, not secret stores |
+### 18.4 Reasoning and streaming
 
-Private filesystem modes protect only the local copy. They **do not** make an inline bearer
-credential safe once a project-local `ycc.toml` is committed, copied, or shared. Committed
-workspace config must use `notify.auth_env`; that is the fix whenever a workspace config is
-present. Config discovery is workspace-first and selects exactly one file—it does not merge
-`[notify]` from the user-global config. Inline `auth` is acceptable in a private user-global
-file only when that file is the **complete active config** and no workspace `ycc.toml` shadows
-it. Inline `auth` takes precedence over `auth_env` only for backward compatibility. `ycc
-doctor` warns about inline workspace notification credentials and broad modes on known
-credential-bearing ycc files, but never prints credential values or inspects arbitrary loose
-key files.
-
-### 14.1 Parallel workstreams (git worktrees)
-
-To run multiple agent tasks at once without them clobbering each other's working tree,
-ycc adopts **git worktrees** (design spike task 0078; full rationale/alternatives in
-`docs/design/parallel-workstreams.md`).
-
-- **Concept.** A **workstream** = a linked git worktree + a branch
-  `ycc/ws/<workstream-id>[-<task>]` + a `work` session scoped to the worktree's absolute
-  path. A workstream is a **child of a project**, never a top-level project entry — this
-  keeps the project picker free of ephemeral worktrees.
-- **Worktree location.** Out of the primary tree, under the daemon state dir:
-  `<state>/ycc/worktrees/<project>/<workstream-id>`. Each worktree keeps its own
-  `.ycc/sessions/<id>/events.jsonl` (git-ignored, so it never travels into a merge).
-- **Single-writer, per tree.** The single-writer invariant (§14) holds verbatim: exactly
-  one daemon/coordinator writes each worktree. Parallelism is *across* trees, each
-  internally single-writer — the invariant itself is unchanged.
-- **Workstream registry.** The daemon owns a serialized `workstreams.json` in the state
-  dir (beside `projects.json`), mapping id → `{ project, base commit, branch, worktree
-  path, session id, status }`. This is metadata, not workspace mutation, so it doesn't
-  violate single-writer. Startup recovery reconciles stale worktrees via `git worktree
-  list`/`prune`.
-- **Merge flow — conflict-aware, sequential, review-gated.** A **non-mutating trial
-  merge** detects conflicts first. **Clean** → always gated behind explicit acceptance with the integrated
-  diff shown. **Conflicted** → emit `workstream_conflict` listing the conflicted paths and
-  stop; the base branch is **never** left conflicted, and the worktree is kept for
-  resolution. On merge or discard, cleanup runs `git worktree remove`, deletes the branch,
-  and `git worktree prune`.
-- **Lifecycle events** on the workstream's own session stream: `workstream_created`,
-  `workstream_ready`, `workstream_integrating`, `workstream_needs_attention`,
-  `workstream_merged`, `workstream_conflict`, `workstream_discarded` — clients render them
-  like any other session event.
-- **RPC surface** (§12): `SpawnWorkstream`, `ListWorkstreams`, `PreviewMerge`,
-  `MergeWorkstream`, `DiscardWorkstream`; `Subscribe` is reused verbatim for the
-  workstream's session stream.
-- **Automatic integration** (`docs/design/workstream-integration.md`). A completed
-  workstream with commits emits `workstream_ready`; the daemon's serialized per-project
-  queue rebases it onto the current configured **base branch** *inside the workstream's own
-  worktree*, runs `integration.verify` there, and only then advances base by
-  **fast-forward**. The clean/green fast path makes no model calls. On a conflicted rebase or
-  red verify, the daemon starts a bounded number of unattended `integrate`-mode sessions
-  scoped to that worktree (`agent_attempts`, default 1; zero disables recovery). The agent
-  resolves or fixes, commits, verifies, and requests integration; the daemon independently
-  re-rebases and re-runs verify, and it alone advances base. A blocked/failed agent or exhausted
-  attempts sets `needs_attention` and notifies with base untouched and the worktree intact.
-  `[integration]` supports `mode = "auto" | "gate" | "manual"` (default auto), `verify`,
-  `strategy = "rebase-ff" | "squash" | "merge-no-ff"` (default rebase-ff), `max_parallel`
-  (zero = unlimited), and `agent_attempts` (default 1; zero disables). Auto without
-  `verify`, or auto with a strategy not yet executable by the queue, safely degrades to the
-  review gate. Gate keeps explicit accept-diff; manual preserves the original merge flow.
-
-## 15. Package layout
-
-**Single binary.** There is one `ycc` binary that is client, TUI, and daemon.
-`ycc` (no subcommand) attaches to a persistent local daemon if one is already running,
-otherwise launches the TUI over an **in-process, ephemeral** daemon whose sole named
-project is the current directory and which is torn down when `ycc` exits (§3.1). `ycc daemon` runs an explicit,
-persistent, **multi-project** service (for the workspace machine / remote); `ycc -addr
-<url>` attaches to a remote one; `ycc --background` spawns a detached persistent daemon
-and attaches. Persistence is opt-in — the default no longer leaves a daemon running
-after exit.
-
-```
-ycc/
-  cmd/
-    ycc/             # the single binary: client + TUI + `ycc daemon`
-  proto/ycc/v1/      # .proto + generated (connect)
-  internal/
-    engine/          # agent loop, control-tool handling
-    orchestrator/    # mode coordinators + the work() flow + subagent spawning
-    tools/           # worker + coordinator tool implementations
-    config/          # model/role config + registry (gollama client wiring)
-    docs/            # spec + backlog (structured) read/write/render
-    specdoctor/      # deterministic spec/code reference checker (drift pre-pass, §6.4)
-    event/           # event types, JSONL store, reducer/projection
-    session/         # session lifecycle + state
-    server/          # connect handlers, auth
-    daemon/          # serve + lifecycle (one-shot in-process vs persistent) + project registry + client dialing
-    tui/             # Bubble Tea home menu + session view
-    git/             # diff/commit helpers
-```
-
-## 16. Build plan / milestones
-
-- **M0 — Engine spike.** gollama `Turn` dispatch + the agent loop + worker tools
-  (read/write/edit/bash/grep/glob). One agent does a real task end-to-end. Events to
-  stdout. *Proves the atom.* — **done**
-- **M1 — Daemon + event log + one client.** `yccd` with session mgr, JSONL event store,
-  Connect `StartSession`/`Subscribe`/`SendInput`, and a minimal `ycc` client that
-  subscribes and prods. *Proves the client/server seam.* — **done**
-- **M2 — `work` happy path.** Coordinator + `spawn_implementer` + a single reviewer +
-  commit + structured backlog read/write. N=1, no revise loop. — **done**
-- **M3 — Multi-model review + revise loop.** Reviewer fan-out
-  across Claude/GPT/GLM/local, `send_to_implementer`/`re_review`, the three autonomy
-  gates. — **done**
-- **M4 — Home menu + `spec`/`backlog`/`feature`/`bug` modes + TUI.** — **done**
-- **M5 — Remote access.** Direct-dial remote clients over a private network
-  (Tailscale/VPN): bearer token required on non-loopback binds, TLS optional; verified
-  end-to-end remote Subscribe/prod path + a documented Connect HTTP/JSON surface for
-  phone clients. Daemon-to-daemon log sync/replication is **dropped** (§14). — **done**
-- **M6 — Interactive UX polish.** Multiline `textarea` input (Enter sends, Shift+Enter
-  newline), the **settings overlay** (esc; per-role
-  model configuration + UI prefs + intentional "back to home menu"), and
-  **structured `ask_user` questions** (option pickers). New RPCs: `ListModels`,
-  `SetRoleConfig`; `AnswerQuestion`/`question_asked` extended for
-  options. See §18. — **done**
-
-## 17. Open questions
-
-- **Diff capture for reviewers:** *Decided.* Reviewers get the full read/inspect tool
-  set (read_file, list_dir, grep, glob, bash) and explore as they see fit — run
-  `git diff`, read touched files, etc. They are **prompted** not to modify the
-  workspace, and their `Bash` is now **sandboxed read-only on Linux** (Landlock,
-  falling back to bubblewrap; see §8), which hard-enforces non-mutation while keeping
-  read-only inspection working. Where no sandbox mechanism is available (non-Linux, or
-  missing kernel/tool support) it degrades gracefully to prompt-only enforcement with a
-  logged warning. Implemented in task 0008.
-- **Implementer isolation:** *Decided.* A single-task implementer works **directly on the
-  primary codebase**. For **parallel** work, git worktrees are **adopted**: each parallel
-  workstream gets its own linked worktree so the single-writer invariant holds *per tree*
-  (design spike task 0078; `docs/design/parallel-workstreams.md`). The previously deferred
-  revisit is now resolved — see §14.1 for the workstream concept, registry, and merge flow.
-- **Commit granularity:** one commit per accepted task vs. checkpoints during work.
-- **TUI framework:** Bubble Tea is the obvious Go choice for the client.
-- **Session GC / retention** of `.ycc/sessions`.
-- **Secrets:** keep API keys in env only, or a daemon-side keyring?
-
-## 18. Client UI (TUI)
-
-The Bubble Tea client (`internal/tui`, spec §15) is the primary local surface. Its
-developer-facing file and ownership map is [`docs/tui-components.md`](docs/tui-components.md).
-It has
-two top-level states today — **home menu** and **session view** — plus a modal
-**settings overlay**. This section captures the interaction model. The session view's
-single-row top status bar identifies the active coordinator model immediately before
-its reasoning level; session behavior remains assistant-driven rather than
-occupying a `lvl …` status-bar segment.
-
-### 18.1 Session input — multiline
-
-The session input is a **`textarea`** (not single-line `textinput`). It grows
-vertically as the user types and wraps long lines.
-
-- **Enter** sends the buffer (prod / answer) and clears it.
-- **Shift+Enter** inserts a newline.
-- The textarea height is bounded (a few rows); beyond that it scrolls internally so it
-  never crowds out the event stream.
-
-The home-menu prompt can stay single-line (one-shot kickoff prompt) but the same
-multiline rules are fine there too.
-
-### 18.2 Settings overlay (esc — "video-game style")
-
-**Esc** opens a modal settings overlay over whatever state the client is in. The
-overlay is a small navigable menu; it does **not** immediately leave the session.
-Leaving a session is now an explicit, intentional menu choice ("Back to home menu") so
-the user can't fat-finger their way out of a running session.
-
-Overlay contents:
-
-- **Thinking level** — `off | low | medium | high | xhigh | max`, changeable
-  **mid-session** from role-oriented rows (coordinator / implementer / reviewers). Selecting
-  a value issues `SetThinking(sessionID, role, level)`; the role selects the currently assigned
-  model(s), rather than owning an independent setting. The reviewer row updates every reviewer
-  model; an empty role updates all assigned models, deduplicated. The daemon refreshes every
-  live role backed by an affected model, emits a `thinking_level_changed` event carrying the
-  requested role and affected model names, and **persists** the level in each `[models.X]`
-  entry so it survives a restart and follows the model through role changes. With no live
-  session (changed from the home menu), an empty `session_id` resolves the default role
-  assignments and persists those model entries. `ListModels` seeds each role row from its
-  current model's resolved level (the first reviewer model for the reviewer row). `off`
-  disables reasoning; any effort level maps to adaptive thinking at that effort with
-  summarized display.
-- **Model / role configuration** — the headline feature. Per-role model selection:
-  - **coordinator** — pick one model
-  - **implementer** — pick one model
-  - **reviewers** — pick *one or more* models (multi-select; reviewer fan-out, §13)
-  - Choices are drawn from the configured logical models (§13). Cycling a role
-    picker (←/→ for coordinator/implementer, space to toggle reviewers) **applies
-    immediately** — there is no separate "apply" step. The change updates the
-    current session **and is persisted** as the default role assignment (`roles` in
-    `ycc.toml`) so the selection survives a restart and applies to future sessions.
-    Issued via `SetRoleConfig(sessionID, roles)`; with a live session the daemon
-    rebuilds the relevant gollama clients so the next coordinator turn / next spawned
-    subagent uses the new assignment, then writes `ycc.toml` via `config.Save`. Opened
-    from the home menu with **no** session, an empty `session_id` just persists the new
-    default (which the next session picks up). The overlay seeds its pickers from the
-    daemon's current default assignment (returned by `ListModels`) so it always shows
-    the real current selection rather than a guess.
-- **Work implementation** — a two-choice `delegate | direct` row seeded from
-  `ListModelsResponse.work_implementation`. Changing it issues `SetWorkImplementation` and
-  immediately persists `work.implementation` to `ycc.toml`. The row is explicitly marked
-  **applies to next session**: the strategy changes the work coordinator's toolset and system
-  prompt, which are fixed when the session loop is built, so a live session is not rebuilt.
-- **Model backends (add / edit / remove)** — beyond *choosing* among configured models,
-  the overlay can **manage the model backends themselves**, so the user can configure
-  everything about a provider from the TUI without hand-editing `ycc.toml` or re-running
-  first-run setup (§19.1). A backend manager screen lists the configured logical models and
-  lets the user **add** a new one, **edit** an existing one, **duplicate** one, and
-  **remove** one. Adding is **connection-centric** (§13): the form captures one connection
-  (backend `anthropic|openai|openai-compatible|glm|ollama`, base URL, `key_env`, auth
-  mechanism — api-key vs subscription oauth, anthropic/openai-only (§13) —, shared
-  reasoning/pricing) plus a **set of model ids** in a single space/comma-separated field.
-  Submitting creates **one sibling logical model per id**, each named after its model id, so
-  a single anthropic connection yields selectable `claude-opus-4-8` / `claude-sonnet-4-5` /
-  `claude-fable-5` models the role pickers can assign independently. The model-id field is
-  seeded with the backend's curated defaults (opus/sonnet/fable for anthropic) and can be
-  populated from the live backend with **`ctrl+f`** (`DiscoverModels`, §13) — the
-  OpenAI-compatible `/models`, Anthropic `/v1/models`, or Ollama `/api/tags` endpoint —
-  falling back to curated defaults when discovery is unavailable. A blank Anthropic base
-  URL means the provider default, `https://api.anthropic.com`, including during discovery;
-  an explicit URL continues to select a proxy or staging endpoint. **Edit** operates on a
-  single model id; **duplicate** clones a connection and changes only the name + model id.
-  This reuses the first-run wizard's provider form (task 0023). Edits issue
-  `UpsertModel` / `RemoveModel` (§12); the daemon updates the live config (so the next
-  `Build` uses it) and **always** writes `ycc.toml` via `config.Save` so a settings
-  change survives a restart — persistence is unconditional, not an opt-in toggle. (The
-  RPCs keep a `persist` field for wire compatibility but the daemon ignores it and
-  always persists; when no config path can be resolved the edit still applies in-memory.)
-  A removed or renamed model still referenced by a role is rejected (validation) so the
-  session never points at a missing backend.
-- **UI preferences** — theme/style, follow/auto-scroll toggle, and similar client-only
-  prefs. These never touch the daemon; they live in client state (and a small local
-  client config).
-- **Interrupt agent** — gracefully pause the running agent at its next safe checkpoint
-  (§18.7); while paused the same row reads **Resume agent**. This is the overlay route to
-  interrupt, and the reliable fallback on terminals where `ctrl+i` cannot be
-  distinguished from tab (no kitty keyboard protocol).
-- **Back to home menu** — leaves the session view (replaces the old "esc = back to
-  menu" reflex).
-- **Quit** — exit the client.
-
-Esc closes the overlay (back to wherever you were) when no destructive choice is made.
-
-### 18.3 Structured interactive questions (Claude-Code style)
-
-When the coordinator calls `ask_user`, it may supply **options** in addition to the
-free-text question (the `Asker.Ask(ctx, question, options)` interface and `ask_user`'s
-`options?` param already anticipate this — see §8). The client renders these as a
-**selectable list** (arrow-key/number navigable) rather than only a free-text box:
-
-- If `options` are present: a highlighted picker with the listed choices, plus an
-  "other…" affordance that drops into the multiline textarea for a free-text answer.
-- If `options` are absent: the plain multiline textarea.
-
-Wire path: `question_asked` events carry the options; `AnswerQuestion` carries either a
-chosen option (index/value) or free text. This gives the agent the same crisp,
-low-friction Q&A loop a good interactive coding assistant has, instead of forcing every
-clarification into prose.
-
-`ask_user` may also pose **multiple questions at once** (via the `questions` list — see
-§8): each question has its own optional options set. The client then drives a short
-**questionnaire wizard** — it shows an overview of every question and answers them one at
-a time (picker or free text per question), then submits all answers together. Wire path:
-one `question_asked` event carries the `questions` list; the `AnswerQuestions` RPC carries
-the positional answers (per-question option index or free text); one `question_answered`
-event carries the `answers` list, returned to the model mapped to each question. The
-single-question wire path above is unchanged.
-
-**Transcript rendering (one block per exchange).** One ask_user round-trip produces four
-events on the wire — the engine's `tool_call`, the gate's `question_asked` +
-`question_answered`, and the engine's `tool_result` (whose payload repeats the answer) —
-but the TUI renders the exchange **once**: the `question_asked` row is the canonical
-block, the answer folds into it (`→ answer`, per-question for batches, options dropped
-once answered), and the tool plumbing rows plus the `question_answered` row are hidden.
-An ask_user call that errored without asking (or whose result is an error, e.g. cancelled
-mid-question) keeps its error row visible. While the footer picker/wizard is collecting
-the answer, the question row's body collapses to an "answer below ↓" pointer so the
-prompt never shows twice on screen at once. Unattended auto-answers render as a single
-dim "auto-answered (unattended execution)" line instead of the canned no-human paragraph the
-model receives.
-
-**Plan proposal presentation.** A `plan_proposed` row is a human review artifact rather
-than a raw event dump. Its collapsed summary identifies the task and previews the first
-non-empty line; expanding it renders the event's `plan` field as Markdown (headings,
-lists, code, and emphasis), without exposing the surrounding JSON payload. The successful
-`propose_plan` tool call/result plumbing folds into that canonical proposal row; an errored
-result remains visible.
-
-### 18.4 Reasoning (thinking) in the event stream
-
-When a model turn returns a reasoning summary, the engine emits a `thinking` event (§7.4)
-carrying the summary text. The TUI renders it like any other stream event — **collapsed by
-default** with a one-line `(reasoning) …` preview, click/Enter to expand — so the agent's
-"inner voice" is available without cluttering the stream. The expanded body is shown
-**dimmed + italic** to read distinctly from the model's actual response. Empty summaries
-produce no event. (The provider reasoning blocks themselves round-trip in conversation
-history automatically and are not re-displayed.)
-
-**Final report presentation.** `session_idle.report` is the canonical, human-facing
-finish message. Every client renders it prominently, fully expanded, and as Markdown —
-never subject to an "auto-expand agent logs" preference or a manual collapse. When the
-report repeats the immediately preceding final coordinator `model_turn` (exactly or as a
-prefix before appended assumptions/details), clients coalesce the duplicate narration
-into the finish presentation so the content appears once, under the final report rather
-than as an ordinary agent-log row. A genuinely different final turn and report both
-remain visible. The iOS client uses a dedicated success-styled final-report card; the TUI
-uses its expanded Glamour-rendered finish block.
-
-Partial model output is streamed incrementally to live clients as **transient
-`turn_delta` events** (broadcast-only, seq-less, never persisted — see §5.2) and the
-durable `model_turn` event written on completion remains the turn's source of truth
-(task 0114). Each delta's `text` is the **full accumulated turn text so far** (a
-snapshot), so the TUI renders a single dim, in-progress "streaming…" tail row per
-streaming actor that is *replaced* by every fresh snapshot and *removed* by a
-terminating `{"text":"","done":true}` delta or the actor's persisted `model_turn`
-(whichever comes first) — leaving no stale tail even if a turn errors. Backends without
-a streaming capability run the turn non-streaming with identical semantics and no
-deltas.
+Reasoning summaries are foldable transcript content; opaque provider reasoning state is not.
+Streaming snapshots appear as one replaceable live tail and disappear on durable completion or
+error. A reconnect discards stale transient presentation before replay.
 
 ### 18.5 Backlog browser
 
-The backlog is durable project state (§6). The shipped **backlog browser** lets the
-human open and inspect it directly from the TUI — independent of any session.
+Clients can list, inspect, capture, and update backlog tasks through the daemon. Readiness and
+status use the same store semantics as coordinator tools. Mutation remains explicit and validated;
+clients do not maintain a second backlog representation.
 
-- **Open.** A key/menu entry opens a modal backlog view (over the home menu or a session,
-  like the settings overlay). It lists tasks with id, status, priority, title, and a
-  readiness/blocked annotation (the same data `list_backlog` projects).
-- **Inspect.** Selecting a task drills into its full detail — description, acceptance
-  criteria, dependencies, and work log — rendered read-only.
-- **Filtering/sorting** (status, priority, ready-only) is a nice-to-have, not required for
-  a first cut.
-- **Read-only first.** The browser only *views*; mutation (quick-add, status changes) is
-  separate work — see the capture overlay (task 0016).
+### 18.6 Session history and reopen
 
-The daemon exposes the backlog through read RPCs — `ListBacklog` (summary rows) and
-`GetTask` (full task) — backed by `docs.Store` (`List`/`Get`); the TUI renders the list +
-detail views by calling them. Because clients are thin event/RPC consumers (§5), the
-shipped iOS client reuses the same surface.
+Projects expose session history, transcripts, commit diffs, plans, memory, usage, allowance, work
+loops, and workstreams through read RPCs. Reopening a session reconstructs model history and
+continues its existing event log. A persisted-only transcript is finite and read-only until the
+session is explicitly resumed.
 
-### 18.6 Session history browser & reopen
+### 18.7 Interrupt and steer
 
-Every session is durable: its event log is the source of truth on disk at
-`<workspace>/.ycc/sessions/<id>/events.jsonl` (§5.1). The shipped history and reopen
-surface complements live-only `ListSessions`: `ListSessionHistory` enumerates persisted
-logs, `GetSessionTranscript` reads them, and `ResumeSession` re-enters one on its existing
-log. Finished sessions therefore remain browsable after live-session GC or a daemon
-restart (task 0009).
+Interrupt requests a graceful pause at a safe checkpoint; it does not cancel a tool mid-write.
+While paused, input queues as steering and Resume drains it before the next model turn. Hard Stop
+terminates instead and requires destructive confirmation in interactive clients. Resume also
+retries a parked retryable model failure.
 
-**Durable session index.** The daemon can enumerate *all* sessions for a project —
-live and persisted — by scanning `.ycc/sessions/*/events.jsonl` and reducing each log to
-a summary (`event.Reduce`, §5/§20.3): id, mode, status
-(running/idle/error/paused/stopped), started-at and last-activity timestamps, focused task(s),
-a short title (derived from the first user prompt / kickoff), and token/cost totals (§20).
-Live sessions in the manager's map take precedence over their on-disk snapshot so a running
-session shows live status. A persisted-only log whose projection is still `running` is an
-orphan left by an abrupt daemon exit and is reported as `stopped`; only a matching in-memory
-session may appear `running`. The project-scoped `ListSessionHistory` read RPC returns these
-summary rows; the existing `ListSessions` continues to mean "live only".
+## 19. Onboarding
 
-**Browser UI.** A **session browser** is a modal list+detail view, opened from the home
-menu or settings overlay exactly like the backlog browser (§18.5). The list shows the
-summary rows (most-recent first); selecting one drills into a **read-only transcript** —
-the reduced/replayed event stream rendered with the same components the live session view
-uses, so reasoning, tool calls, and results display identically. The transcript is served
-by a read RPC (`GetSessionTranscript`, project + session-id scoped) that returns a session's
-full event log — the live in-memory snapshot for a running session, otherwise the persisted
-`events.jsonl` read from disk. From a selected session (in the list or the transcript) the
-human can **Reopen** it.
+### 19.1 Machine setup
 
-**Commit-diff drill-in (task 0140).** A transcript renders `commit_made` as sha + message,
-and `< / >` jump between commits; pressing **Enter** on a selected `commit_made` row opens
-the commit's diff in a full-screen, syntax-highlighted overlay (`git show`, stat + patch)
-served by `GetCommitDiff` (project + sha scoped). The overlay is scrollable and foldable
-per file (tab/shift+tab move the file cursor, enter/space fold a file, `a` folds all), and
-works identically over the live session and both read-only transcripts (the session
-browser and the histModal-over-session view). Large commits open fully folded and the diff
-is capped (~1 MiB, truncated at a line boundary) so it can never blow up the render caches
-(§18.9); the overlay owns its own viewport so those caches are untouched.
+Machine onboarding is a client-side form because it must work before a model does. When no usable
+configuration or fallback credential exists, it collects one or more providers and role
+assignments, performs subscription login when selected, and writes user config. Existing usable
+configuration skips the wizard.
 
-**Reopen / re-enter (resume = replay).** Reopening a persisted session re-instantiates its
-coordinator on the *existing* log rather than starting a fresh one: the daemon loads the
-log, reconstructs the agent loop's conversation `history` from the events (model turns
-with their thinking/tool-call content, tool results, and user inputs — the same data the
-live loop appends, §7), restores mode and focus from the projection, and registers it in
-the manager so `Subscribe`/`SendInput`/`AnswerQuestion` work again. New activity appends to
-the same `events.jsonl` — one continuous log. This depends on the event log capturing
-enough to rebuild model history losslessly; where it does not yet, that is a bug to fix
-(the log is meant to be the whole state, §5.1). To that end `model_turn` events now carry
-`thinking_blocks` — the signed/redacted reasoning blocks — so the model history rebuilds
-losslessly (Anthropic verifies these signatures, §7), and reopen emits a `session_reopened`
-marker into the continuous log. Two replay-fidelity details matter at a mid-Run truncation
-boundary: when a turn is cut off at the output-token cap the live loop appends a sanitized
-assistant stub plus an internal user "nudge" message, but that nudge is posted via
-`Loop.Post` and is **not** recorded in the event log; so replay *synthesizes* the nudge
-(a user message) whenever it detects a truncated coordinator turn immediately followed by
-another coordinator assistant turn, keeping strict user/assistant alternation (some
-backends reject two consecutive assistant turns). One known limitation remains explicit and
-unsupported: multimodal tool-result content (images/PDFs) is **not** round-tripped on replay
-— only the counts are recorded on `tool_result` events, so the reconstructed history carries
-the text result only. Reopen is exposed as a `ResumeSession`
-(a.k.a. reopen) RPC and interacts with session lifecycle/GC (§ task 0009) and
-context-window management (§ task 0010), since a resumed long session may need budgeting
-before its first new turn.
+### 19.2 Project onboarding
 
-**Shared modal "browser" surface.** The settings overlay (§18.2), backlog browser
-(§18.5), this session browser, and the cost view (§20.5, task 0029) are all the same
-shape: a modal, navigable list with a drill-in detail pane, opened over the home menu or a
-session and dismissed with Esc. These share one reusable TUI component (a generic
-list+detail modal, `browser`/`browserRow`/`browserCard` in `internal/tui`) reused by the
-backlog and session browsers, plus a small "browse" selector (ctrl+o) that routes to
-backlog / sessions today and is ready to add cost (§20.5, task 0029) as a third row. The
-same read RPCs back the shipped iOS client (§5).
+Project onboarding is a pm preset. For a greenfield workspace it establishes purpose,
+constraints, an initial design, and starter backlog. For an existing codebase it asks what the
+user intends to change, inspects only that slice, records only the design needed for that work,
+and creates actionable tasks. The invariant is to spec the work rather than inventory the entire
+repository before ycc becomes useful.
 
-### 18.7 Interrupt & steer (pause / correct / resume)
+## 20. Usage, pricing, and budgets
 
-A running agent should be **interruptible** so the human can grab its attention and either
-*let it carry on* or *correct it before it acts further* — the same affordance a good pair
-of hands gives you when you say "wait, hold on." This is distinct from a hard **Stop**
-(terminate the session, task 0009): interrupt is a *graceful pause to steer*, after which
-the agent keeps going on the **same** loop and conversation.
+### 20.1 Capture
 
-**Why it's needed.** A user watching the agent head down the wrong path needs to redirect it
-*mid-flight*, not only after the wrong work is already done. There are two shapes of this:
+Every durable model turn records logical model identity, backend model id, actor, and normalized
+disjoint token classes. Cached tokens are removed from fresh input before recording; reasoning
+tokens remain a diagnostic subset of output.
 
-- **Steer-by-default (deliver at the next checkpoint).** Typing a message and pressing Enter
-  while a run is in flight does **not** wait for `Run` to complete. The session queues the text
-  as a correction and the engine `Loop` appends it to the conversation at the **next safe
-  checkpoint** (between turns / after a tool result) — so the model sees "no, wrong file"
-  before its next turn without any pause/resume ceremony. The echo is honest: a mid-run
-  `user_input` carries `queued: true` (rendered distinctly, e.g. "(queued)") and a
-  `user_input_delivered` event marks the checkpoint where it actually entered the conversation,
-  so the transcript never claims delivery before it happens.
-- **Interrupt (stop and hold to steer).** When the human wants the agent to *stop and wait*
-  rather than finish the current stretch of work, `Interrupt` pauses it at the next checkpoint;
-  corrections then buffer and are drained only on an explicit `Resume`. Behavior while paused
-  is unchanged by steer-by-default.
+### 20.2 Task attribution
 
-An idle session's input is unchanged: it is enqueued and picked up as the next prod.
+Task-focus events attribute subsequent usage to the active backlog task. A session may change
+focus; turns before a focus remain unattributed rather than guessed.
 
-**Model (graceful pause at a safe checkpoint).**
-1. **Interrupt.** The client calls `Interrupt(session_id)`. The session marks a pause request
-   and the engine `Loop` honors it at the next **safe checkpoint** — between turns and after
-   each tool result (it does not abort a tool mid-write). The loop emits an `interrupted`
-   event and the session status becomes `paused`; the loop blocks, holding its place.
-2. **Choose.** While paused the human either:
-   - **Resume** (`Resume(session_id)`) — continue exactly as before, *as if nothing happened*;
-     or
-   - **Correct** (`SendInput(session_id, text)`) — the text is appended to the loop's
-     conversation as a user message and the loop resumes, so the agent's *next* turn sees the
-     correction "before it moves on." Multiple messages before resuming all land in order.
-3. **Resume.** The loop drains any steered-in messages, emits a `resumed` event, returns the
-   status to `running`, and continues the same `Run` from where it paused.
+### 20.3 Aggregation
 
-**Engine seam.** The `Loop` gains a `Steer` hook checked at each checkpoint
-(`Checkpoint(ctx) ([]string, error)`): if a pause is pending it blocks until resume (or
-`ctx` cancellation, which propagates as a normal stop); otherwise, when mid-run corrections
-have queued up, it drains and returns them immediately (steer-by-default) — no pause. Either
-way it returns any correction messages to `Post` into history before the next turn and emits a
-`user_input_delivered` event per delivered message. The session implements `Steer`,
-coordinating the pause flag, a resume signal, a `running` flag, and the buffered corrections;
-`SendInput`/`Resume` feed it. When not paused and nothing is queued, `Checkpoint` is a cheap
-no-op, so the hot loop is unaffected.
+Cross-session/project summaries are recomputed from logs rather than kept in a separate ledger.
+They can group by project, session, task, model, actor, and time.
 
-*Optional immediacy (enhancement).* For responsiveness during a long in-flight **model turn**,
-the turn may run under a child context that `Interrupt` cancels, discarding that turn's output
-(wasted tokens, no history append) and dropping straight to the checkpoint. The baseline
-(pause at the next checkpoint without aborting in-flight work) is acceptable for a first cut;
-checkpoints between tool calls already make the common "agent is grinding through tool calls"
-case feel responsive.
+### 20.4 Pricing
 
-**TUI.** A key in the session view (e.g. `ctrl+i`, or `esc` → "Interrupt agent" in the
-settings overlay) issues `Interrupt`. The paused state is shown distinctly ("⏸ paused — type a
-correction and Enter to steer, or Resume to continue"); Enter on a non-empty buffer steers,
-an explicit Resume action (empty buffer / a key) continues. Because state lives in the event
-log (`interrupted` / `resumed` events), any subscribed client — including the iOS client —
-sees and can drive the pause.
+Optional per-million-token rates produce estimated cost. Explicit model rates win over built-in
+rates for known API models; unknown and subscription models remain token-only unless explicitly
+priced.
 
-**Relation to `ask_user` and Stop.** When the agent is *blocked on a question* it is already
-suspended at a clean point (§4, interaction layer); steer-interrupt targets the *running*
-case. Hard termination is the separate `Stop` RPC (task 0009); naming is split so `Interrupt`
-= pause-to-steer and `Stop` = terminate.
+### 20.5 Surfaces
 
-**Resume also retries a parked error.** `Resume` is overloaded to cover the one other idle
-state that owes a re-run: a session parked in the error state after an LLM API failure
-(§7.2). There the run loop is idle waiting for input with the failed turn still outstanding,
-so `Resume` re-runs it on the existing history with no injected user message. The existing
-paused-steer path is unchanged; the two cases are disjoint (`paused` vs `error`). This is a
-strict superset of the old behavior — nothing that worked before Resumes differently — and
-gives remote clients a first-class "Retry" affordance (gated on the `session_error`
-`retryable` flag) instead of the old workaround of sending a throwaway message.
+CLI and RPC views expose local usage/cost summaries. Provider allowance is separate best-effort
+telemetry, cached and sanitized, and never blocks inference.
 
-### 18.8 Snapshot rendering for debugging (dev/test aid)
+### 20.6 Spend guard
 
-Debugging TUI layout/styling is hard from text alone: tests can assert on
-`stripANSI(model.View())` substrings, but neither a human nor the agent can *see* what the
-screen looks like — colors, alignment, borders, wrapping. The `internal/tui/snapshot` package
-rasterizes a TUI ANSI frame (the output of `model.render()` / `View()`) plus a `(cols, rows)`
-size into a PNG: `snapshot.RenderANSI(ansi, cols, rows) (image.Image, error)` and
-`snapshot.WritePNG(path, ansi, cols, rows) error`. It parses the frame into a cell grid with
-`github.com/charmbracelet/ultraviolet` and draws a fixed monospace grid (embedded Go Mono /
-Go Mono Bold via `golang.org/x/image`), honoring per-cell foreground/background colors plus
-the bold, faint and reverse SGR attributes; cell alignment follows each cell's terminal width.
-It is self-contained — no external terminal emulator, no network.
-
-This is purely additive dev/test tooling; it does not change runtime behaviour. Tests
-construct a `model`, size it via `tea.WindowSizeMsg`, and render it to an in-memory image for
-assertions (valid dimensions, color survived to pixels). PNG files are written to disk only
-when the `YCC_TUI_SNAPSHOT_DIR` env var is set, so ordinary `go test ./...` never litters the
-tree; with the var set, a maintainer or the agent (via the multimodal `Read` tool, §8) can
-open the PNG to visually inspect the rendered screen.
-
-**End-to-end harness (`internal/e2e`).** The in-process `model.View()` path above mocks the
-Bubble Tea runtime and the terminal. `internal/e2e` closes that gap by driving the **real**
-`ycc` binary: `TestMain` builds it once; each test creates a temp workspace (git repo,
-`spec.md`, `backlog/`, and a generated `ycc.toml` pointing the daemon at a scripted
-OpenAI-compatible LLM stub — the *only* mocked seam), spawns the binary under a PTY
-(`creack/pty`) with an isolated `HOME`/`XDG` and `TERM=xterm-256color`, and pipes the child's
-terminal output into an in-process VT emulator (`github.com/charmbracelet/x/vt`). Tests
-synchronize on **screen-content predicates** over the emulator's text grid (no bare sleeps),
-send real keystroke byte sequences, and never assert on pixels. The same rasterizer serves
-screenshots of the live emulator screen via `snapshot.RenderScreen(grid, cols, rows)` /
-`snapshot.WriteScreenPNG(path, grid, cols, rows)` (`RenderANSI` is now a thin wrapper over
-`RenderScreen`), again gated on `YCC_TUI_SNAPSHOT_DIR`. This exercises the real daemon, engine
-loop, tool execution, and Bubble Tea render headlessly — no external terminal, ttyd, or
-ffmpeg. See `docs/e2e-tui.md` for the layered design and how to add scenarios.
-
-### 18.9 Transcript rendering is incremental (render caches)
-
-The session view redraws by `rebuild()`, which concatenates every event's rendered block
-into the viewport. Rendering a block is expensive (JSON re-parsing of event payloads, diff
-generation, syntax highlighting, glamour markdown, lipgloss framing) and the fold logic
-(`hiddenRow`: merged tool results, ask_user plumbing, finish-turn echoes) does backward/forward
-scans — so naively re-rendering every row on every keypress/event is O(N²)-ish and made
-long sessions visibly slow. The invariant: **rebuild must be O(changed rows), not O(all
-rows)**. Three caches enforce it, all owned by the model:
-
-- `bodyCache` (seq → rendered body) — expanded prose/markdown bodies.
-- `blockCache` (index → fully rendered block) — the whole row as concatenated by
-  `rebuild()`. Rows rendered in their *selected* state are never stored, so the cursor can
-  move without invalidation.
-- `hiddenCache` (index → bool) — memoized `hiddenRow` fold decisions.
-
-Invalidation is surgical: appending an event invalidates only the rows whose rendering can
-depend on it (the previous visible row's └─/├─ connector and in-flight tool glyph; the
-ask_user `tool_call` that folds away when its `question_asked` arrives, plus that row's
-rendered neighbors; the queued `user_input` echo when its `user_input_delivered` marker
-lands). Toggling a row's expansion invalidates that row. Anything that changes a global
-rendering input — width, theme, auto-expand pref, picker/wizard state, swapping the event
-log — clears all three via `invalidateRender()`. New code that makes an *earlier* row's
-rendering depend on a *later* event must add a matching invalidation in `appendEvent`.
-`BenchmarkRebuildWarm`/`Cold` (internal/tui) track the win (~ms vs ~seconds at 1500 events).
-
-### 18.10 Mouse: click, wheel, drag-select-to-copy
-
-The TUI enables cell-motion mouse reporting, which necessarily disables the terminal's
-*native* drag-selection inside it. The transcript viewport (live session view and the
-read-only history transcript) therefore re-implements the affordance in-app
-(`internal/tui/select.go`):
-
-- **Wheel** scrolls the viewport (scrolling to the bottom re-arms follow mode).
-- **Click** (left press + release without motion) selects and expands/collapses the row
-  under the pointer — the toggle applies on *release*, so it can be disambiguated from a
-  drag.
-- **Drag** (left press + motion) highlights a linear, stream-order region of the rendered
-  transcript in reverse video; **release copies its plain text** (ANSI stripped, per-line
-  trailing padding trimmed) to the system clipboard via **OSC 52** (`tea.SetClipboard` —
-  the same mechanism as the `y` row-yank, so it works over SSH), confirmed by the
-  transient "copied ✓" flash. Dragging past the viewport's top/bottom edge auto-scrolls.
-
-Selection coordinates are **content-relative** (content line index / cell column), so the
-highlight stays glued to the text when the viewport scrolls mid-drag; starting a drag
-disables follow so streaming appends can't yank the view. The highlight only exists while
-the button is held — nothing lingers after release.
-
-## 19. Onboarding flows
-
-ycc has two onboarding moments. They are independent and triggered by different signals:
-the **first-run** flow runs once per machine/user and configures *which models ycc talks
-to*; the **per-project** flow runs the first time work begins in a given workspace and
-configures *what ycc should know about that project* (its `spec.md` + backlog).
-
-### 19.1 First-run setup (global — model providers & roles)
-
-**Trigger.** The very first time a user runs `ycc` with **no usable model configuration**:
-no `ycc.toml` is discoverable (`DiscoverConfig` returns "" — §`internal/daemon`) *and* no
-fallback env key is set, so the daemon would otherwise fall back to a keyless Anthropic
-config that 401s on the first turn (§13). Rather than failing the first session, the client
-runs a guided setup.
-
-**Where it runs.** This is a **client/TUI wizard, not an agent flow** — it must work before
-any working model exists, and it is a structured form, not a conversation. It writes a
-`ycc.toml` to the user config dir (`~/.config/ycc/ycc.toml`, via `os.UserConfigDir()`), the
-second `DiscoverConfig` candidate, so every later run finds it.
-
-**What it collects.**
-1. **One or more model providers.** For each: a logical name (e.g. `claude`, `gpt`,
-   `local`), a backend (`anthropic` | `openai` | `ollama` — the backends `config.Build`
-   already supports), a base URL (sensible default per backend), a model id, an **auth
-   mechanism** (api-key, or subscription `oauth` for the anthropic/openai backends — §13),
-   and an API key. Keys are stored as a `key_env` reference (the var name) following the
-   spec's "keys in env only" lean (§17 open question), *not* inlined into the TOML; the
-   wizard can also offer to note which env vars must be exported. Choosing oauth with no
-   stored subscription credentials routes through a **login step** before verification —
-   anthropic shows (and best-effort opens) the authorize URL and exchanges the pasted
-   `code#state`; openai runs the browser flow with the local callback server, showing a
-   waiting screen until the redirect lands — persisting the credentials to the secrets
-   store exactly like `ycc login <backend>`. Selecting oauth on an openai provider also
-   re-seeds a still-default model id with the codex default (the platform catalog does
-   not apply), and `ctrl+f` offers the curated codex set. At least one provider is
-   required.
-2. **Role assignments** (§13): pick the `coordinator`, `implementer`, and one-or-more
-   `reviewers` from the configured logical models. With a single provider, all three default
-   to it (mirroring `DefaultAnthropic`) and the user can accept without choosing.
-
-**Output.** The wizard writes a valid `config.Config` as TOML through
-`config.Save(path, *Config)`, then hands that path to daemon resolution (§3.1) exactly as a
-discovered config would be, so the first real session uses it. Re-running setup later is
-available from the settings overlay (§18.2, "Model / role configuration") — that overlay
-edits role assignments live; first-run setup is the bootstrap that creates the file those
-edits then mutate.
-
-**Skipping.** If a usable config or env key already exists, first-run setup does not trigger;
-plain `ycc` proceeds straight to the home menu. The wizard is also skippable on purpose (the
-user may prefer to hand-author `ycc.toml`), in which case ycc proceeds with whatever fallback
-exists and surfaces the existing keyless-401 warning.
-
-### 19.2 Per-project onboarding (agent — scope spec & backlog)
-
-**Trigger.** The first time a session begins in a workspace that has **not been onboarded**.
-The signal is the absence of project docs: no `spec.md` at the workspace root (or a trivially
-empty one) and no `backlog/`. The client detects this when a project is opened/selected and
-offers the appropriate onboarding entry prominently in the home menu (it remains available as
-a preset thereafter, since "onboard later" is valid).
-
-The shipped flow is **agent-driven**, and it is a `pm`-mode flow
-(planning/intake/docs — §9), exposed as a single **pm preset** (opening-prompt + first
-message): `onboard`, the dedicated onboarding preset (the former `feature` / `bug` /
-`spec` / `backlog` presets have been dropped — they were just ordinary `pm` work; see
-§9). The agent itself distinguishes
-new vs. existing:
-
-**New project (empty / greenfield).** Signal: the workspace is essentially empty of code
-(e.g. no source files / no meaningful git history) in addition to lacking docs. The agent
-runs a **full scoping** conversation: elicit the project's purpose, scope, constraints, and
-shape; author an initial `spec.md` (the canonical sections — Vision, Goals, Architecture,
-Components, Constraints, Open Questions — §6.1); and seed a starter backlog of well-scoped
-tasks. This is the "spec the whole thing" path.
-
-**Existing project (brownfield).** Signal: the workspace already has substantial code but no
-ycc docs. Specing the *entire* existing codebase up front is wasteful and rarely what the
-user wants. Instead the agent runs a **scoped intake**:
-1. Ask the user **what they want to work on** (a feature, an area to refactor, a class of
-   bugs, etc.) — the entry point, not a whole-project audit.
-2. Explore **only the parts of the codebase relevant to that work** (Read + ripgrep),
-   reading enough to understand the slice in question.
-3. Write **only the spec slices that the work touches** — author/extend just the relevant
-   `spec.md` section(s) (e.g. one Component + the Goals it serves), explicitly *not* a
-   from-scratch full spec. Note in the spec that it is partial/seeded-as-needed.
-4. Create the backlog tasks for the requested work, with a concrete plan (`propose_plan`),
-   so the user can hand one to `work` (`switch_to_work`) immediately.
-
-The guiding principle for brownfield: **spec the work, not the repo.** Coverage grows
-incrementally as more work is done, rather than requiring a big-bang documentation effort
-before ycc is useful. The agent should make the new-vs-existing determination itself from the
-workspace contents (and may confirm with the user when ambiguous), so a single "Onboard this
-project" entry can route to the right behaviour; the prompt encodes both branches.
-
-**Onboarding vs. ordinary pm work.** The brownfield path resembles ordinary `pm`
-feature/bug intake (explore → propose) but differs in intent: it is the *first* time ycc
-sees the project and it also establishes the initial spec slice + backlog conventions,
-whereas ordinary `pm` work assumes those already exist. Keeping `onboard` a distinct,
-prominently-surfaced preset — alongside `spec-doctor` (§6.4) and `memory-groom` (§6.5) —
-is what makes onboarding discoverable.
-
-## 20. Token usage & cost accounting
-
-ycc tracks token usage on every model turn and rolls it up into **cost breakdowns by
-backlog task over time**. The design follows the spec's core principle (§5): the event
-log is the source of truth, and usage/cost are **projections** over it — no separate
-ledger to keep in sync.
-
-### 20.1 Capture (per turn)
-
-gollama's `Turn` already returns a `Usage` struct (prompt, completion, total, plus
-`CacheCreationInputTokens` / `CacheReadInputTokens` and `PromptTokensDetails.CachedTokens`).
-The engine currently discards it. Instead, every `model_turn` event carries a `usage`
-object **and the model identity** that produced it:
-
-```jsonc
-{ "type": "model_turn",
-  "actor": "reviewer:gpt",          // role is already the actor (§5.2)
-  "data": {
-    "text": "…", "tool_calls": 1,
-    "model_name": "gpt",            // logical name (§13)
-    "backend": "openai", "model_id": "gpt-5.5",
-    "usage": { "input": 1820, "output": 412, "cache_read": 1536,
-               "cache_write": 0, "total": 2232 }
-  } }
-```
-
-So the engine `Loop` must know its **logical model name** (not only the resolved model
-id) — added beside `Model`, set from the role's `AgentSpec.Name` for subagents and the
-coordinator's role name. The actor already distinguishes coordinator / implementer /
-reviewer:<name>, so usage is attributable per **role and per model** with no extra
-plumbing. Empty/zero usage (e.g. backends that don't report it) records zeros and is
-harmless.
-
-### 20.2 Attribution to a backlog task (session → task focus)
-
-A `work` session is essentially "do one task," but today nothing **durably** records
-*which* task a session worked on (the task lives only in the kickoff prompt). To attribute
-cost by task we record the linkage as an event: a new `task_focus` event
-(`data: { task: "0007", title?: "…" }` — the title is looked up best-effort at emit
-time so UIs can label the focus without a backlog lookup) is emitted when the focus
-is established —
-
-- carried in by the `pm → work` hand-off (`switch_to_work` already knows the target task),
-  and/or
-- emitted by the `work` coordinator when it picks/accepts a task (it already calls
-  `update_task`→`in_progress` and `spawn_implementer(task_id=…)`).
-
-A session may touch more than one task; attribution uses the **active focus** at the time
-of each `model_turn` (turns before any focus are attributed to "unattributed"). The
-projection (§20.3) folds usage into the currently-focused task. This keeps task linkage
-in the log (replayable, syncable) rather than as out-of-band session metadata.
-
-The focus is also surfaced in the UI: the TUI status bar shows the currently-focused
-task (id + truncated title) as a header segment, and the session browser (§18.6)
-prefixes each row's title with the task ids the session focused (`[0007,0009] <prompt>`).
-
-### 20.3 Aggregation & projection
-
-The usage projection (an extension of `event.Reduce`, §5) folds a session's `model_turn`
-usage into totals **by model and by focused task**. A cross-session aggregator
-(`internal/usage`) scans a workspace's `.ycc/sessions/*/events.jsonl`, reduces each, and
-produces a breakdown grouped by **task × model × agent × time** (e.g. per-day buckets), plus
-per-session and project totals. The **agent** dimension is the event actor that spent the
-tokens, collapsed to its role — `coordinator`, `implementer`, or `reviewer` (the per-model
-reviewer actors `reviewer:<model>` collapse to one `reviewer` group; pair `agent` with
-`model` to split them back out). This separates the cost of the coordinator's orchestration
-from the implementer's work and the reviewers' passes. Because raw events are the source,
-the breakdown is always recomputable and never drifts.
-
-### 20.4 Pricing & cost
-
-Each `[models.X]` config block (§13) gains optional **pricing** in US dollars per
-million tokens, since rates differ by model and by token class:
-
-```toml
-[models.claude]
-# … existing fields …
-price_input        = 3.00   # $/Mtok for fresh input
-price_output       = 15.00  # $/Mtok for output
-price_cache_read   = 0.30   # $/Mtok for cache-read (cheaper) input
-price_cache_write  = 3.75   # $/Mtok for cache-creation input
-```
-
-Cost for a turn = Σ(tokens_class × rate_class). The registry exposes pricing per logical
-model; the aggregator joins usage with pricing to produce dollar costs. Resolution order:
-explicit `price_*` config wins; otherwise well-known Anthropic/OpenAI model ids fall back to
-a **built-in default rate table** (hard-coded from the vendors' published price lists,
-longest-prefix matched on the model id) so estimates work out of the box. Models with
-**neither report token counts only** (cost shown as "—"), so the feature degrades
-gracefully and never invents numbers. Built-in rates are estimates and may drift when
-vendors change prices — setting any `price_*` field overrides them without a code change.
-Subscription-authenticated models (`auth = "oauth"`, §13) are prepaid, so they **skip the
-built-in default table** (pricing them at API-key rates would invent spend that never
-happened) and are unpriced unless explicit `price_*` rates are configured.
-
-Usage token classes are recorded **disjoint**: OpenAI reports cached tokens as a subset of
-`prompt_tokens`, so the engine subtracts them from `input` at emit time (Anthropic already
-reports cache reads/writes separately), ensuring Σ(class × rate) never double-counts. When a
-provider reports `reasoning_tokens`, ycc also preserves that diagnostic count on the turn; it
-is explicitly a subset of `output`, not another disjoint or separately priced class.
-
-### 20.5 Surfacing
-
-- **Per-session, live.** The usage projection feeds the session view / `SessionIdle` so a
-  running session shows accumulated tokens (and cost when priced).
-- **By task, durable.** On `work` completion, a one-line **usage/cost summary** is appended
-  to the task's work log (§6.2), so the cost of a task accrues in the backlog itself across
-  the multiple sessions that may touch it.
-- **Project rollup.** A `GetUsage` RPC + a `ycc cost` CLI view render the cross-session
-  breakdown by task / model / agent / time from the aggregator (§20.3); omitting the project
-  yields the overall rollup across all registered projects. This is the "detailed cost
-  breakdown by backlog task over time" surface. In the TUI this cost view is a modal that
-  shares the generic list+detail "browser" surface with the session history browser
-  (§18.6) and the backlog browser (§18.5).
-- **Subscription allowance.** `GetSubscriptionUsage` reports provider-side allowance for
-  configured OAuth accounts separately from ycc's local token/cost accounting. Its neutral
-  shape is account/provider → named windows, each carrying percent used, reset time, and
-  optional window duration. Anthropic is read from its OAuth usage endpoint; ChatGPT/Codex
-  is read from the Codex account usage endpoint. Both endpoints are provider-internal and may
-  change, so this telemetry is explicitly best-effort: the daemon caches successful results
-  for at least one minute, bounds network calls with a short timeout, serves an older snapshot
-  as `stale` when refresh fails, and otherwise returns `unavailable` with a sanitized reason.
-  Fetching never participates in or blocks a model turn, and no credential appears in RPCs,
-  logs, or UI. Multiple logical models sharing an OAuth account share one report. The TUI usage
-  view and iOS Usage screen show compact progress bars plus reset times and freshness state;
-  pull-to-refresh/reopening may request a cached refresh. This surface is informational only:
-  it does not alter retry, failover, or exhaustion behavior (§7.2).
-
-Relation to §10 task 0010 (context-window management): that task surfaces *context size*
-to avoid window overflow; this section tracks *spend*. They share the per-turn usage signal
-but answer different questions.
-
-### 20.6 Spend guard (budget caps)
-
-Usage/cost tracking (§20.1–§20.5) is telemetry; the **spend guard** turns it into an
-enforced ceiling so an unattended `work (loop)` never overruns silently. It is entirely
-optional — an absent `[budget]` block means unlimited, exactly the pre-guard behaviour.
-
-Config (`ycc.toml`):
-
-```toml
-[budget]
-session_cost   = 5.0     # $ cap per session       (0/unset = unlimited)
-session_tokens = 2000000 # total-token cap per session
-loop_cost      = 20.0    # $ cap per work-loop run
-loop_tokens    = 8000000 # total-token cap per work-loop run
-```
-
-All values are non-negative; 0/unset means unlimited.
-
-- **Session caps** are enforced daemon-side at the engine's safe checkpoint
-  (`Session.Checkpoint` — top of turn / after tool results), so a breach never kills a tool
-  mid-write. Spend is reduced from the session's own event log (`usage.ReduceEvents` +
-  `Aggregate`), so it tracks the same authoritative numbers as `ycc cost`.
-- **~80% warning.** When a session crosses ~80% of a configured cap it emits a
-  `budget_warning` event once; the status bar shows a visually distinct warn segment
-  ("⚠ budget NN%") and the transcript records the crossing.
-- **Attended breach → Confirm gate.** In an normal attended session, crossing a
-  cap raises a Confirm gate ("Session budget reached … — continue past the budget?").
-  Declining halts gracefully; confirming records `budget_exceeded{action:"continue"}` and
-  continues without asking again.
-- **Unattended loop breach → graceful halt.** In an unattended loop session (or when
-  an attended user declines), the guard records `budget_exceeded{action:"halt"}` and injects
-  a user-role wrap-up instruction: stop taking on new work, bring the current task to the
-  nearest safe stopping point (finish+commit if essentially complete, otherwise mark it
-  in_review/blocked with a work-log note), then finish. The halt event is emitted as actor
-  `user` carrying the instruction text so reopen replay reconstructs it as a user message
-  (like `job_notified`) — never a silent overrun, never a mid-write kill. The breach is
-  recorded in the event log and, for loops, in the batch digest outcome.
-- **Unpriced models.** A model with no configured pricing (§20.4) contributes tokens but no
-  dollars, so a cost-only cap never breaches on it (no invented dollars); a token cap still
-  applies.
-- **Loop cap (daemon-side).** The per-loop-run cap is enforced by the **daemon** work-loop
-  driver (task 0179): it captures the caps at loop start (`Manager.Budget()`), accumulates
-  tokens + priced cost as each session closes, and stops the loop before starting the next
-  session once a cap is reached — the just-finished session having completed cleanly. An
-  observed session-level breach inside a loop session likewise halts the loop at the next
-  decision point. (The cap enforcement moved daemon-side with the loop driver; it used to be
-  client-driven, fetching caps via `GetBudget`.)
+Optional session and work-loop token/cost caps turn telemetry into a guardrail. Enforcement occurs
+at safe checkpoints, never during a filesystem mutation. A warning is emitted near a cap.
+Attended sessions may explicitly continue; unattended sessions receive a wrap-up instruction and
+halt at the nearest safe task state. Loop caps are checked between sessions. Unpriced models count
+toward token caps but never invent dollars for cost caps.

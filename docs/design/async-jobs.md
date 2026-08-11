@@ -1,156 +1,44 @@
-# Async jobs: background subagents & background bash
+# Design: asynchronous jobs
 
-> Status: **implemented** for the jobs core, background bash, and background
-> implementer/reviewer subagents (tasks 0131–0132); the later investigate role remains
-> future work. Companion to spec §7.3 (subagents), §8 (tools), and §14.1 (parallel
-> workstreams).
+> Status: accepted and implemented.
 
-## 1. Problem
+## Context
 
-Before the async-jobs implementation, every delegation was synchronous:
-`spawn_implementer` blocked its tool call until the child loop finished; reviewers fanned
-out concurrently only *inside* one `spawn_reviewers` call (a wait-all barrier the
-coordinator could not see into). The missing capabilities were:
+Shell commands and subagents sometimes have useful work to overlap. Making each kind of
+background activity a separate mechanism would give the coordinator several incompatible ways to
+wait, inspect, cancel, and receive completion. It would also make replay ordering difficult.
 
-- kick off several subagents and keep working while they run;
-- choose *when* to wait (and on *which* one);
-- run a long shell command (test suite, build, watcher) without stalling its own turn.
+## Decision
 
-## 2. Prior art: Claude Code (~2.1.x)
+A session owns one job registry for background shell commands and child agents. Jobs share an id
+namespace, lifecycle, progress read, bounded wait, cancellation, and final report contract.
+Foreground execution remains the right choice when the result gates the next step; background
+execution exists to overlap meaningful independent work or leave a watcher running.
 
-Three mechanisms, in order of introduction:
+Final reports have one consumed flag and are delivered exactly once by either:
 
-1. **Parallel foreground fan-out** — multiple `Task` tool_use blocks in one assistant
-   message run concurrently; all tool_results return together before the next turn.
-   Wait-ALL only; no ids; no choice of when to wait.
-2. **Background jobs with ids + push notification** —
-   `Bash(run_in_background: true)` → shell id; `BashOutput(id)` returns output *since
-   last read* + status; `KillShell(id)`. `Task(run_in_background: true)` → task id;
-   `TaskOutput(id, block?)` retrieves/waits. Completion is **pushed**: the harness
-   injects a notification into the conversation between turns, and the prompt forbids
-   polling ("do NOT sleep, poll, or proactively check").
-3. **Continue-an-agent** — `SendMessage` to an agent id resumes it with retained
-   context (ycc's `send_to_implementer` / `re_review` already are this pattern).
+- a `wait` covering the completed job; or
+- an injected user-role notification at an engine checkpoint.
 
-Lesson from their issue tracker (anthropics/claude-code #20236, #20679): two competing
-delivery paths — a blocking retrieval tool AND a notification queue — deadlock when the
-notification piles up behind the block. **One delivery path must be authoritative.**
+`job_output` is a non-consuming progress view. This avoids the deadlock-prone design where a
+blocking retrieval path competes with a separate completion queue. A completion found between
+results from one model tool-call batch is deferred until the complete batch has entered history,
+preserving provider requirements that tool results immediately follow their calls.
 
-## 3. Design: one job abstraction for shell commands and subagents
+Job start, finish, and injected completion are durable events. Jobs themselves do not survive a
+daemon restart; replay turns an unmatched start into a lost-on-restart completion so the resumed
+conversation remains valid.
 
-A **job** is a unit of background work owned by the session: either a shell process or a
-child agent loop. Both are addressed by the same id namespace and the same tools; only
-the guts differ.
+## Mutation safety
 
-### 3.1 Job registry
+Background execution does not weaken the per-worktree single-writer invariant. Read-only agents
+may fan out. A mutating background agent is refused while another mutating job is live in the same
+tree. Parallel mutation uses workstreams, where each agent owns a separate linked worktree.
 
-The shipped `internal/jobs` package is session-scoped and held by
-`orchestrator.Deps`:
+## Rejected alternatives
 
-```go
-type Job struct {
-    ID     string   // "job_<n>" (monotonic per session)
-    Kind   string   // "bash" | "agent"
-    Label  string   // command line, or role+task ("implementer 0042")
-    Status Status   // running | done | failed | killed
-    // bash: incremental output ring buffer + per-reader cursor
-    // agent: the child *engine.Loop (retained for revise/re_review addressing)
-    Result string   // final report: exit code + output tail, or the agent's report
-    done   chan struct{}
-}
-```
-
-The registry hands out ids, tracks liveness, and kills everything on session end
-(coordinator loop exit ⇒ cancel all job contexts).
-
-### 3.2 Tool surface (coordinator; background bash also for the implementer)
-
-- Foreground `Bash(..., timeout_s?)` blocks for the result and has a configurable timeout:
-  120 seconds by default, up to 3600 seconds. This is the correct mode when the result gates
-  the next step, including long builds and test suites.
-- `Bash(..., run_in_background: true)` → returns `job_id` immediately. This mode is reserved
-  for overlapping the command with meaningful independent work or intentionally leaving a
-  watcher running; starting one background job and immediately calling `wait` is an API-use
-  smell and prompt guidance explicitly discourages it. `timeout_s` is foreground-only.
-- `spawn_implementer` / `spawn_reviewers` (and any future `spawn_investigator`) gain
-  `background: true` → return `job_id` immediately; the child loop runs in a goroutine
-  with its own actor-tagged emitter (existing `Emitter.With` machinery).
-- `job_output(job_id)` — non-blocking: output since last read (bash) or progress note
-  (agent) + current status. Never consumes the final report.
-- `wait(job_ids?, for: "any"|"all", timeout_s?)` — blocks; returns the final report(s)
-  of the completed job(s). Empty `job_ids` ⇒ all live jobs. The wait is always bounded:
-  `timeout_s` defaults to 600 (a hung job must not block the agent forever); on timeout
-  the tool returns partial reports plus the still-running ids, and the agent can wait
-  again, inspect `job_output`, or `kill_job`.
-- `kill_job(job_id)`.
-
-### 3.3 Delivery of final reports: exactly once
-
-A job's **final report** is delivered exactly once, by whichever fires first:
-
-- a `wait(...)` call that covers it, or
-- **checkpoint injection**: the loop already consults `Steer.Checkpoint` between turns
-  and after every tool result and appends returned messages; a sibling hook (or the
-  same hook, session-owned) drains finished-job notifications there —
-  `"[job job_3 done] go test ./... — exit 0 (last 20 lines: …)"` — as a user-role
-  message before the next turn. A notification drained at a **mid-batch** checkpoint
-  (after one tool result of a multi-tool-call turn) is deferred until the whole
-  batch's results are appended — a user message wedged between two tool results
-  splits the `tool_result` blocks Anthropic requires immediately after their
-  `tool_use` message (400: "tool_use ids were found without tool_result blocks
-  immediately after"). Replay applies the same deferral to the recorded
-  `job_notified` event position.
-
-So the model *never polls*: fire, do meaningful independent work, and either the report
-arrives at a checkpoint or the model calls `wait` after that work when the result gates its
-next step. If no independent work exists, the model uses foreground Bash with an appropriate
-`timeout_s` instead of backgrounding and immediately waiting. `job_output` can be re-read any
-time and is not part of the exactly-once rule.
-
-### 3.4 Safety: the single-writer invariant
-
-Two agents mutating one worktree race (spec §14.1 exists precisely for this).
-
-- **Read-only background agents** (reviewers; an explore/investigate role) run freely
-  in-tree, in parallel.
-- **Background implementers in the same tree are refused** by the spawn tool while
-  another mutating job (implementer or mutating bash) is live there. Parallel mutating
-  work routes through workstreams (linked worktrees, §14.1).
-- Background bash is intended for commands that genuinely overlap other work and for
-  watchers; ordinary builds/tests stay foreground, using `timeout_s` when they need longer
-  than the default.
-
-### 3.5 What we deliberately do NOT build
-
-- **Concurrent dispatch of multiple tool calls in one turn** (Claude Code mechanism
-  #1): racy for mutating worker tools, and `background: true` + `wait` subsumes it.
-- **A second retrieval path for final reports** (the Claude Code deadlock): `wait` and
-  checkpoint injection share one consumed-flag; `job_output` never consumes.
-
-## 4. Events, replay, UI
-
-- New events `job_started` / `job_finished` (data: id, kind, label, status, tail);
-  agent jobs additionally keep emitting `subagent_spawned`/`subagent_finished` with a
-  `job_id` field so existing projections keep working.
-- Child-loop events are already actor-tagged and `engine.ReplayHistory` filters by
-  actor and matches tool_results by call id, so interleaved concurrent subagent events
-  replay safely today. Checkpoint-injected notifications must be *recorded* (as a
-  user-actor event) so reopen reconstructs the identical history — same rule as steer
-  corrections.
-- Reopen with jobs mid-flight: jobs do not survive a daemon restart. Replay synthesizes
-  a "(job lost: daemon restarted)" report for any job whose start was recorded but
-  whose finish was not, keeping histories valid. Noted v1 limitation.
-- TUI: jobs get a small live-status line (id, label, spinner/exit); reviewer
-  concurrency already renders interleaved actors.
-
-## 5. Phasing
-
-1. **Shipped — jobs core + background bash** (task 0131): registry,
-   `run_in_background` on Bash, `job_output`, `kill_job`, `wait`, checkpoint injection,
-   events + replay, and kill-on-exit.
-2. **Shipped — background subagents** (task 0132): `background: true` on spawn tools,
-   agent jobs in the registry, the single-writer guard, revise-flow addressing by job id,
-   and prompt guidance (foreground when the result gates the next step; background only
-   with genuinely independent work; never poll).
-3. **Future:** an explore/investigate read-only role (where parallel background agents pay
-   off most), and workstream-scoped background implementers for true parallel coding.
+- Concurrently dispatching every tool call from one model turn is unsafe for mutation and is not
+  needed for explicit background work.
+- Separate shell and agent job APIs duplicate lifecycle and delivery behavior.
+- Polling completion wastes turns and can race notification delivery; progress reads are for
+  diagnostics, not scheduling.

@@ -1,11 +1,5 @@
-// Package orchestrator implements the work-mode coordinator (spec §9, §10): an
-// agent that reads the structured backlog, plans, and delegates real work to
-// subagents (an implementer and one or more reviewers), then commits accepted
-// work and updates the backlog. The coordinator never edits code itself.
-//
-// M3 adds: multi-model reviewer fan-out (concurrent, with a barrier), a revise
-// loop that REUSES subagent contexts (send_to_implementer / re_review), and the
-// coordinator tools, including ask_user.
+// Package orchestrator builds coordinator, implementer, and reviewer agents and
+// their tools. It manages task focus, delegation, review, revision, and commit.
 package orchestrator
 
 import (
@@ -39,18 +33,11 @@ type AgentSpec struct {
 	NewClient func() engine.Turner
 	Model     string
 	Backend   string // logical backend family (e.g. "anthropic"); labels usage events
-	// Label is the display/actor label for this agent ("reviewer:<label>"). It
-	// defaults to Name; a review tier that tasks several reviewers with distinct
-	// focuses (possibly on the same model) gives each its own label so the
-	// transcript, work log, and usage rows stay distinguishable (spec §13.1).
+	// Label distinguishes reviewer roles that may use the same model.
 	Label string
-	// Focus is extra role guidance appended to the agent's system prompt — the
-	// per-reviewer review focus configured on a tier ("concentrate on
-	// performance characteristics", …). Empty means the stock role prompt.
+	// Focus is optional role guidance appended to the reviewer's system prompt.
 	Focus string
-	// Thinking carries the per-model reasoning settings (Anthropic extended
-	// thinking / effort) so spawned subagents reason like the coordinator does
-	// (spec §7, §13). Zero value means reasoning is off for this model.
+	// Thinking fields carry the model's reasoning settings; zero disables them.
 	Thinking        string
 	Effort          string
 	ThinkingDisplay string
@@ -96,9 +83,7 @@ type ReviewPlan struct {
 	Fallback   bool        // requested tier was unknown; degraded to default
 }
 
-// ReviewTierInfo describes one available review tier so the spawn_reviewers tool
-// description can enumerate the tiers this project actually has — including
-// custom ones with their own reviewer line-up and focuses (spec §13.1).
+// ReviewTierInfo describes a review tier exposed by spawn_reviewers.
 type ReviewTierInfo struct {
 	Name        string
 	Description string   // "when to pick me" guidance
@@ -123,13 +108,10 @@ type Deps struct {
 	Asker       Asker
 	MaxTok      int
 	MaxTurns    int // per-Run tool-call turn cap; 0 => engine default backstop
-	// Retry is the loop-level transient-failure retry policy applied to subagent
-	// loops (implementer/reviewers). Zero value => engine default (task 0133).
+	// Retry is the subagent retry policy; zero uses the engine default.
 	Retry engine.RetryPolicy
-	// ReviewTier resolves a requested review tier name (possibly empty) into a
-	// concrete ReviewPlan — which reviewer agents to spawn, or that the
-	// coordinator self-reviews (spec §13). Nil-safe: when unset, spawn_reviewers
-	// falls back to the configured reviewer fan-out (current default behaviour).
+	// ReviewTier resolves a tier name to reviewer agents or coordinator self-review.
+	// When nil, spawn_reviewers uses the configured reviewer fan-out.
 	ReviewTier func(name string) ReviewPlan
 	// ReviewTiers lists the review tiers available in this project so the
 	// spawn_reviewers tool description can name them (custom tiers included).
@@ -142,10 +124,8 @@ type Deps struct {
 	// workspace plus these roots.
 	WriteRoots []string
 
-	// WorkImplementation selects the work coordinator's implementation strategy
-	// (spec §10): "" or "delegate" delegates code changes to the implementer
-	// subagent (default); "direct" makes the coordinator implement changes
-	// itself and drops the implementer spawn tools. Only the work mode reads it.
+	// WorkImplementation is "delegate" (the default) or "direct". Direct mode
+	// removes the implementer tools and lets the coordinator edit.
 	WorkImplementation string
 
 	// Jobs is the session-scoped background-job registry (docs/design/async-jobs.md).
@@ -158,13 +138,11 @@ type Deps struct {
 	implJob   *jobs.Job // live/last background implementer job (nil if last spawn was foreground)
 	reviewers []*reviewerHandle
 	reviewJob *jobs.Job // live/last background reviewers job
-	focus     string    // backlog task currently in focus (spec §20.2); guarded by mu
+	focus     string    // backlog task currently in focus; guarded by mu
 }
 
-// emitFocus records a task_focus event when the session's active focus moves to a
-// new task (spec §20.2), durably linking the session to the task so usage can be
-// attributed by backlog task. It dedupes: re-focusing the already-focused task is
-// a no-op, so the log isn't littered with duplicate focus events for one task.
+// emitFocus records a task_focus event when the active task changes. Re-focusing
+// the same task is a no-op.
 func (d *Deps) emitFocus(taskID string) {
 	id := strings.TrimSpace(taskID)
 	if id == "" {
@@ -208,9 +186,7 @@ func reviewerLabels(specs []AgentSpec) []string {
 	return out
 }
 
-// SetImplementer swaps the implementer spec used by future spawn_implementer
-// calls (mid-session role-config change, spec §18.2). The currently-running
-// implementer keeps its context until the next fresh spawn.
+// SetImplementer changes future spawns; a running implementer keeps its context.
 func (d *Deps) SetImplementer(spec AgentSpec) {
 	d.mu.Lock()
 	d.Implementer = spec
@@ -239,13 +215,8 @@ func (d *Deps) reviewerSpecs() []AgentSpec {
 // (The coordinator's system prompt is assembled by BuildMode via sys() in
 // modes.go, the single assembly path shared by every agent role.)
 
-// CoordinatorTools returns the coordinator's tool registry. The coordinator gets
-// the Editing set (Read/Write/Edit/Bash) so it can inspect the workspace and review
-// diffs first-hand — and could make a tiny touch-up — but in the default "delegate"
-// strategy the prompt steers it to delegate real implementation to the implementer
-// subagent. When direct is true (work.implementation = "direct", spec §10) the
-// implementer spawn/revise tools are omitted and the coordinator implements changes
-// itself with the Editing set.
+// CoordinatorTools builds the work toolset. Direct mode omits worker-agent tools;
+// delegated mode keeps them while still allowing coordinator inspection and touch-ups.
 func CoordinatorTools(d *Deps, ws *tools.Workspace, direct bool) *tools.Registry {
 	reg := tools.New()
 	reg.Add(tools.Editing(ws)...)
@@ -359,7 +330,7 @@ func getTask(d *Deps) *gollama.Tool {
 func proposePlan(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "propose_plan",
-		Description: "Record your implementation plan for a task before delegating. Call once after choosing a task. " +
+		Description: "Persist an implementation plan when a task is complex, ambiguous, or multi-step; routine changes do not need one. " +
 			"Optionally attach concise, advisory context_hints (relevant file paths, function/symbol refs, or small " +
 			"snippets) recorded alongside the plan as non-prescriptive starting points for the implementer.",
 		Params: tools.Obj(map[string]any{
@@ -372,10 +343,7 @@ func proposePlan(d *Deps) *gollama.Tool {
 			plan, _ := tools.GetString(params, "plan")
 			hints := boundHints(tools.GetStringSlice(params, "context_hints"))
 			d.Emitter.Emit(event.PlanProposed, map[string]any{"task": id, "plan": plan})
-			// Persist the FULL plan to the task's "## Plan" section (durable,
-			// human-browsable), and keep a dated one-line work-log breadcrumb (task 0020).
-			// When the coordinator supplied context hints, append them as a "### Starting
-			// points" subsection so the durable plan artifact records them too (task 0079).
+			// Keep the plan beside the task and include any bounded starting points.
 			planDoc := plan
 			if len(hints) > 0 {
 				planDoc += "\n\n### Starting points\n"
@@ -397,16 +365,13 @@ func proposePlan(d *Deps) *gollama.Tool {
 	}
 }
 
-// (The former list_plans/run_plan/save_plan tools were removed: plans are plain
-// committed markdown in plans/*.md, so agents browse them with Read/Bash and save
-// them with Write — the plan-format convention lives in the prompts and spec §6.3.
-// The docs package keeps ListPlans/ReadPlan/SavePlan for the TUI/RPC browsing surface.)
+// Plans remain plain Markdown; the docs package exposes them to TUI/RPC clients.
 
 func spawnImplementer(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "spawn_implementer",
 		Description: "Delegate implementation of a task to a coding subagent. It edits the workspace and returns a " +
-			"report plus the staged diff. Provide the task id and your plan. Optionally attach concise, advisory " +
+			"report plus the staged diff. Provide the task id and a concise approach. Optionally attach advisory " +
 			"context_hints (relevant file paths, function/symbol refs, or small snippets) surfaced to the worker as " +
 			"non-prescriptive 'starting points'. For files the worker will certainly need, preload_files accepts " +
 			"structured path/offset/limit tuples and pre-reads them into its initial context. Call once per task; use send_to_implementer for follow-up revisions. " +
@@ -415,7 +380,7 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 			"job per tree.",
 		Params: tools.Obj(map[string]any{
 			"task_id":       tools.StrProp("task id"),
-			"plan":          tools.StrProp("the plan the implementer should follow"),
+			"plan":          tools.StrProp("the concise approach the implementer should follow"),
 			"context_hints": tools.StrArrProp("optional, concise advisory starting points — relevant file paths, function/symbol refs, or small snippets — surfaced to the worker as non-prescriptive hints to cut redundant exploration; keep them short, no full-file dumps"),
 			"preload_files": map[string]any{
 				"type": "array",
@@ -443,12 +408,8 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 			if err != nil {
 				return tools.ErrResult("spawn_implementer: %v", err), nil
 			}
-			// Single-writer guard (design §3.4). A BACKGROUND spawn is refused while
-			// ANY mutating job (implementer or mutating background bash) is live in
-			// this tree. A FOREGROUND spawn is refused only while another mutating
-			// AGENT job (a background implementer) is live — two implementers can
-			// never share a tree — but runs fine alongside a background bash job, as
-			// it does today.
+			// Background workers require an entirely idle tree. A foreground worker
+			// may overlap shell work, but never another mutating agent.
 			if background {
 				if d.Jobs == nil {
 					return tools.ErrResult("spawn_implementer: background subagents are not available in this session"), nil
@@ -459,10 +420,9 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 			} else if live := d.liveImplJob(); live != nil {
 				return tools.ErrResult("spawn_implementer: a background implementer (%s: %s) is still running in this tree; wait for it or kill_job it before spawning another implementer, or route parallel mutating work through a separate workstream (spec §14.1)", live.ID(), live.Label()), nil
 			}
-			// Delegating a task is an unambiguous focus signal (spec §20.2).
+			// Delegating a task makes it the session's active focus.
 			d.emitFocus(id)
-			// Record a best-effort work-log breadcrumb noting the advisory hints
-			// surfaced to the worker (task 0079); don't fail the spawn on a write error.
+			// Hint logging is best-effort and must not prevent delegation.
 			if len(hints) > 0 {
 				d.Docs.AppendWorkLog(id, "context hints: "+oneLine(strings.Join(hints, "; ")))
 			}
@@ -932,8 +892,7 @@ func updateTask(d *Deps) *gollama.Tool {
 			if _, err := d.Docs.Update(id, func(t *docs.Task) { t.Status = docs.Status(status) }); err != nil {
 				return tools.ErrResult("update_task: %v", err), nil
 			}
-			// Moving a task in_progress is the coordinator accepting it: record the
-			// session→task focus for cost attribution (spec §20.2).
+			// Starting a task also makes it the session's accounting focus.
 			if status == "in_progress" {
 				d.emitFocus(id)
 			}

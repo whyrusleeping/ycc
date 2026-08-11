@@ -9,8 +9,9 @@ one.
   command line and stream their event logs.
 - `ycc daemon` runs the explicit, persistent, foreground service.
 
-See [`spec.md`](spec.md) for the full design and [`docs/cli.md`](docs/cli.md) for
-the complete command reference.
+See [`spec.md`](spec.md) for the full design, [`docs/cli.md`](docs/cli.md) for
+the complete command reference, and [`CONTRIBUTING.md`](CONTRIBUTING.md) for the
+project's lean engineering standards.
 
 ![ycc TUI — session view](docs/tui.png)
 

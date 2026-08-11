@@ -589,7 +589,7 @@ Unknown id → `{"code":"not_found","message":"no task with id \"9999\""}`.
 
 ### GetMemory
 
-The project's agent memory — memory.md at the workspace root (spec §6.5), the
+The project's agent memory — memory.md at the workspace root (spec §6.3), the
 advisory operational notes agents record across sessions via the `remember`
 tool. Read-only; a missing file returns empty `content` (not an error).
 

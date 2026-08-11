@@ -20,24 +20,16 @@ type ModeInfo struct {
 	Description string
 }
 
-// Modes returns the selectable session modes (spec §9). There are three: chat
-// (freeform, can edit code — the default first option), work (the orchestrated
-// implementation pipeline), and pm (the catch-all planning / intake / docs mode,
-// no implementation). The home menu additionally offers the onboard opening-prompt
-// preset that drops into pm (see Presets).
+// Modes returns the selectable chat, work, and project-management modes.
 func Modes() []ModeInfo {
 	return []ModeInfo{
 		{"chat", "Chat", "Open-ended conversation and coding — no fixed workflow."},
-		{"work", "Work on backlog", "Pick a backlog task, implement it, review it across models, and commit."},
+		{"work", "Work on backlog", "Pick a backlog task, implement it, review it proportionately, and commit."},
 		{"pm", "Project manager", "Plan and intake — spec authoring, backlog grooming, new features, and bug reports. No implementation."},
 	}
 }
 
-// Preset is a home-menu entry that opens a pm session with a tailored opening
-// prompt (spec §9). Presets today: onboard, the distinct first-run flow;
-// spec-doctor, the on-demand spec/code drift & coverage check; and memory-groom,
-// the on-demand tending of memory.md (dedupe/prune + promotion path). The former
-// spec/backlog/feature/bug framings are just ordinary pm work.
+// Preset is a home-menu entry that opens a mode with a tailored prompt.
 type Preset struct {
 	Name        string // menu key (distinct from the mode)
 	Title       string
@@ -46,11 +38,7 @@ type Preset struct {
 	Prompt      string // verbatim opening prompt seeded into the pm session
 }
 
-// Presets returns the opening-prompt presets the home menu offers under pm. The
-// former spec/feature/bug/backlog framings have been dropped as separate presets
-// (they are all ordinary pm work); onboard (the first-run flow), spec-doctor
-// (on-demand drift & coverage checking), and memory-groom (on-demand memory
-// tending) remain.
+// Presets returns the specialized project-management entry points.
 func Presets() []Preset {
 	return []Preset{
 		{"onboard", "Onboard this project", "Orient from existing project docs (spec entry point, any docs/ tree) and backlog, then establish or refresh them — greenfield (full spec) or brownfield (adopt existing docs, scoped to your work).", "pm", onboardPresetPrompt},
@@ -59,16 +47,8 @@ func Presets() []Preset {
 	}
 }
 
-// BuildMode returns the tool registry and system prompt for a session mode. The
-// "work" mode is the full coordinator (CoordinatorTools); "pm" is the planning /
-// intake / docs coordinator (no implementation); "chat" is the freeform assistant.
-// The work coordinator's implementation strategy comes from d.WorkImplementation
-// (spec §10): "direct" drops the implementer spawn tools and uses a coder prompt,
-// while the default "delegate" keeps them.
-// The spec docs and code are plain files: pm/chat read them with Read and edit
-// them with Edit/Write — there is no dedicated spec tool. An OnWrite hook surfaces
-// an edit anywhere in the docs set (the spec entry point plus any configured
-// doc_globs — spec §6.1) as a doc_updated event.
+// BuildMode returns a mode's tools and system prompt. Direct work mode omits
+// worker-agent tools; edits to configured design docs emit doc_updated events.
 func BuildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) {
 	ws := &tools.Workspace{
 		Root:       d.Workspace,
@@ -193,11 +173,8 @@ func assemble(base string, unattended bool, root string, editing bool) string {
 // from bloating every prompt.
 const maxInjectedMemory = 16 * 1024
 
-// memorySection reads memory.md at the workspace root and returns the advisory
-// "PROJECT MEMORY" block appended to every agent's system prompt (spec §6.5).
-// When the file is absent or empty it returns "" so the assembled prompt is
-// byte-identical to before. The framing is explicit: these are empirical,
-// possibly-stale notes — context, not instructions.
+// memorySection returns advisory project memory for agent prompts. Missing or
+// empty memory adds nothing.
 func memorySection(root string) string {
 	data, err := os.ReadFile(filepath.Join(root, "memory.md"))
 	if err != nil {
@@ -263,21 +240,13 @@ func initialStatus(params any) (docs.Status, error) {
 	}
 }
 
-// switchToWork is pm's DELIBERATE hand-off to the work pipeline (spec §9). It is
-// never automatic: it requires explicit interactive user approval, and it carries
-// the specific target task id + planning context into the work session so the
-// coordinator implements THAT task rather than re-picking "the next ready task".
-//
-// Starting an implementation pipeline is high-impact and hard to reverse, so the
-// approval gate is a REAL confirmation even in unattended execution (where ask_user
-// normally auto-answers) — if no human is available, the hand-off is declined and
-// pm stays put rather than silently launching work.
+// switchToWork requires explicit approval and carries a specific task into work
+// mode. Unattended runs decline rather than auto-answering the confirmation.
 func switchToWork(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "switch_to_work",
-		Description: "Hand this session off to the work pipeline to IMPLEMENT one specific task. Call only after " +
-			"the plan is agreed and recorded (propose_plan) and the task exists in the backlog. Requires explicit " +
-			"user approval; you must pass the exact target task_id and a plan summary, which are carried into the " +
+		Description: "Hand this session off to the work pipeline to IMPLEMENT one specific backlog task. Requires explicit " +
+			"user approval; pass the exact target task_id and a concise approach, which are carried into the " +
 			"work session so it implements THAT task (it will not re-pick a different one). If the user declines, " +
 			"stay in pm mode.",
 		Params: tools.Obj(map[string]any{
@@ -300,9 +269,7 @@ func switchToWork(d *Deps) *gollama.Tool {
 			if !ok {
 				return tools.OkResult("User declined to start work; staying in pm mode."), nil
 			}
-			// The hand-off carries the explicit target task; record focus now so the
-			// work session is durably linked to it for cost attribution (spec §20.2).
-			// The work coordinator dedupes when it later accepts the same task.
+			// Record the explicit target now; the work coordinator dedupes it later.
 			d.emitFocus(id)
 			return &gollama.ToolResult{
 				Content:    "transitioning to work mode for task " + id,
@@ -324,12 +291,8 @@ func workHandoffPrompt(taskID, plan string) string {
 	return p
 }
 
-// remember lets coordinator-level agents durably capture an operational learning
-// (spec §6.5): it appends a dated, categorized bullet to memory.md and emits
-// doc_updated. It is deliberately NOT given to the implementer or reviewers — the
-// coordinator decides what learning is durable (design doc §5.2). A write is only
-// refused when memory.md hits a hard ceiling; crossing the soft budget still
-// records the note and returns a grooming nudge that reaches the model verbatim.
+// remember appends categorized advisory memory and emits doc_updated. Only
+// coordinators receive it; writes fail at the hard ceiling and nudge at the soft one.
 func remember(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "remember",
