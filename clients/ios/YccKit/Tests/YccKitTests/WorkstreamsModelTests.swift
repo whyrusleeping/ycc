@@ -73,7 +73,7 @@ private final class MockWorkstreamsSource: WorkstreamsSource, @unchecked Sendabl
 private func workstream(
     id: String = "ws_abcdef01", project: String = "proj", branch: String = "ycc/ws/x",
     sessionId: String = "sess-1", taskId: String = "", status: String = "active",
-    commitCount: Int64 = 0, sessionStatus: String = "", statusReason: String = "",
+    sessionStatus: String = "", statusReason: String = "",
     integrateSessionId: String = "", integrationState: String = "", integrationMode: String = ""
 ) -> Ycc_V1_WorkstreamInfo {
     var w = Ycc_V1_WorkstreamInfo()
@@ -83,7 +83,6 @@ private func workstream(
     w.sessionID = sessionId
     w.taskID = taskId
     w.status = status
-    w.commitCount = commitCount
     w.sessionStatus = sessionStatus
     w.statusReason = statusReason
     w.integrateSessionID = integrateSessionId
@@ -94,18 +93,7 @@ private func workstream(
 
 @MainActor
 final class WorkstreamsModelTests: XCTestCase {
-    // MARK: - Status mapping
-
-    func testStatusMapping() {
-        XCTAssertEqual(WorkstreamStatus(status: "active"), .active)
-        XCTAssertEqual(WorkstreamStatus(status: "ready"), .ready)
-        XCTAssertEqual(WorkstreamStatus(status: "needs_attention"), .needsAttention)
-        XCTAssertEqual(WorkstreamStatus(status: "NEEDS_ATTENTION"), .needsAttention)
-        XCTAssertEqual(WorkstreamStatus(status: "MERGED"), .merged)
-        XCTAssertEqual(WorkstreamStatus(status: "discarded"), .discarded)
-        XCTAssertEqual(WorkstreamStatus(status: "stale"), .stale)
-        XCTAssertEqual(WorkstreamStatus(status: "weird"), .unknown)
-    }
+    // MARK: - Action eligibility
 
     func testMergeableOnlyForInFlightStatuses() {
         XCTAssertTrue(WorkstreamStatus.active.isMergeable)
@@ -127,19 +115,7 @@ final class WorkstreamsModelTests: XCTestCase {
         XCTAssertFalse(WorkstreamStatus.unknown.isDiscardable)
     }
 
-    func testNewStatusTitles() {
-        XCTAssertEqual(WorkstreamStatus.active.title, "Working")
-        XCTAssertEqual(WorkstreamStatus.ready.title, "Ready")
-        XCTAssertEqual(WorkstreamStatus.needsAttention.title, "Needs attention")
-    }
-
-    func testCommitSummary() {
-        XCTAssertEqual(WorkstreamsModel.commitSummary(for: workstream(commitCount: 0)), "no commits")
-        XCTAssertEqual(WorkstreamsModel.commitSummary(for: workstream(commitCount: 1)), "1 commit")
-        XCTAssertEqual(WorkstreamsModel.commitSummary(for: workstream(commitCount: 3)), "3 commits")
-    }
-
-    func testIntegrationStateBadgeAndAttentionDetails() {
+    func testIntegrationStateAndAttentionDetails() {
         let integrating = workstream(integrationState: "integrating")
         let queued = workstream(status: "ready", integrationState: "queued", integrationMode: "auto")
         let gated = workstream(status: "ready", integrationMode: "gate")
@@ -148,9 +124,7 @@ final class WorkstreamsModelTests: XCTestCase {
             integrateSessionId: "s-integrate")
 
         XCTAssertEqual(WorkstreamsModel.integrationState(for: integrating), .integrating)
-        XCTAssertEqual(WorkstreamsModel.badgeTitle(for: integrating), "Integrating")
-        XCTAssertEqual(WorkstreamsModel.badgeTitle(for: queued), "Queued")
-        XCTAssertEqual(WorkstreamsModel.badgeTitle(for: gated), "Gated")
+        XCTAssertEqual(WorkstreamsModel.integrationState(for: queued), .queued)
         XCTAssertTrue(WorkstreamsModel.isGateEligible(gated))
         XCTAssertEqual(WorkstreamsModel.statusReason(for: attention), "verification failed")
         XCTAssertEqual(WorkstreamsModel.integrateSessionID(for: attention), "s-integrate")

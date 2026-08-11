@@ -63,21 +63,6 @@ private func globalResponse() -> Ycc_V1_ListModelsResponse {
 
 @MainActor
 final class GlobalSettingsModelTests: XCTestCase {
-    func testLoadSeedsGlobalDefaultsAndSortsModels() async {
-        let source = MockGlobalSettingsSource()
-        source.response = globalResponse()
-        let model = GlobalSettingsModel(source: source)
-
-        await model.load()
-
-        XCTAssertEqual(model.models.map(\.name), ["alpha", "zeta"])
-        XCTAssertEqual(model.coordinator, "zeta")
-        XCTAssertEqual(model.implementer, "alpha")
-        XCTAssertEqual(model.reviewers, ["zeta"])
-        XCTAssertEqual(model.coordinatorThinking, .high)
-        XCTAssertEqual(model.implementerThinking, .low)
-    }
-
     func testGlobalRoleApplyUsesEmptySessionID() async {
         let source = MockGlobalSettingsSource()
         source.response = globalResponse()

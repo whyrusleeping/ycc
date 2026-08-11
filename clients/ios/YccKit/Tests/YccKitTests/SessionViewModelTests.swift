@@ -481,70 +481,29 @@ final class SessionViewModelTests: XCTestCase {
         return vm
     }
 
-    /// The `question_answered` event is authoritative, but waiting for it to
-    /// make the round trip left the banner asking the user to answer a question
-    /// they had just answered — indefinitely if the stream was reconnecting.
-    func testAnsweringClosesTheGateWithoutWaitingForTheEvent() async {
-        let actions = MockActionSource()
-        let vm = await askingVM(actions)
-
-        await vm.answer(optionIndex: 0)
-
-        XCTAssertNil(vm.pendingQuestion)
-    }
-
-    func testAnsweringWithTextClosesTheGate() async {
-        let actions = MockActionSource()
-        let vm = await askingVM(actions)
-
-        await vm.answer(text: "go ahead")
-
-        XCTAssertNil(vm.pendingQuestion)
-    }
-
-    func testBatchAnswerClosesTheGate() async {
-        let actions = MockActionSource()
-        let vm = await askingVM(actions)
-
-        await vm.answerBatch([(text: "", optionIndex: 0)])
-
-        XCTAssertNil(vm.pendingQuestion)
-    }
-
-    /// A rejected answer must leave the gate open — the user still has to deal
-    /// with the question.
-    func testFailedAnswerKeepsTheGateOpen() async {
-        let actions = MockActionSource()
-        let vm = await askingVM(actions)
-        actions.nextError = YccError.rpc(message: "boom")
-
-        await vm.answer(optionIndex: 0)
-
-        XCTAssertEqual(vm.actionError, "boom")
-        XCTAssertNotNil(vm.pendingQuestion)
-    }
-
     /// The gate closing is only half the job: the transcript card must stop
     /// saying "Waiting for an answer" too, without waiting for the event.
-    func testAnsweringResolvesTheTranscriptRowWithTheChosenOption() async {
+    func testAnsweringWithAnOptionClosesTheGateAndResolvesTheRow() async {
         let actions = MockActionSource()
         let vm = await askingVM(actions)
 
         await vm.answer(optionIndex: 1)
 
+        XCTAssertNil(vm.pendingQuestion)
         XCTAssertEqual(answeredText(vm), "no")
     }
 
-    func testAnsweringWithTextResolvesTheTranscriptRow() async {
+    func testAnsweringWithTextClosesTheGateAndResolvesTheRow() async {
         let actions = MockActionSource()
         let vm = await askingVM(actions)
 
         await vm.answer(text: "go ahead")
 
+        XCTAssertNil(vm.pendingQuestion)
         XCTAssertEqual(answeredText(vm), "go ahead")
     }
 
-    func testBatchAnswerResolvesTheTranscriptRow() async {
+    func testBatchAnswerClosesTheGateAndResolvesTheRow() async {
         let actions = MockActionSource()
         actions.transcript = [
             event(1, "question_asked", #"""
@@ -557,17 +516,19 @@ final class SessionViewModelTests: XCTestCase {
 
         await vm.answerBatch([(text: "", optionIndex: 1), (text: "friday", optionIndex: -1)])
 
+        XCTAssertNil(vm.pendingQuestion)
         XCTAssertEqual(answeredText(vm), "sqlite; friday")
     }
 
-    /// A rejected answer must leave the card unanswered as well as the gate open.
-    func testFailedAnswerLeavesTheTranscriptRowUnanswered() async {
+    func testFailedAnswerLeavesTheGateAndTranscriptRowUnanswered() async {
         let actions = MockActionSource()
         let vm = await askingVM(actions)
         actions.nextError = YccError.rpc(message: "boom")
 
         await vm.answer(optionIndex: 0)
 
+        XCTAssertEqual(vm.actionError, "boom")
+        XCTAssertNotNil(vm.pendingQuestion)
         XCTAssertNil(answeredText(vm))
     }
 

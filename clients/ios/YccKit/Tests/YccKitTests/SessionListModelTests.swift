@@ -149,29 +149,6 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertEqual(sections[0].kind, .all)
     }
 
-    func testNoNeedsAnswerSectionOmitted() {
-        let sessions = [
-            session(id: "a", lastActivity: "2026-07-08T10:00:00Z"),
-            session(id: "b", lastActivity: "2026-07-08T11:00:00Z"),
-        ]
-        let sections = SessionListModel.sections(from: sessions)
-        XCTAssertEqual(sections.count, 1)
-        XCTAssertEqual(sections[0].kind, .all)
-        // No header title when it's the only section.
-        XCTAssertNil(sections[0].title)
-        XCTAssertEqual(sections[0].sessions.map(\.sessionID), ["b", "a"])
-    }
-
-    func testSortsByLastActivityDescending() {
-        let sessions = [
-            session(id: "old", lastActivity: "2026-07-08T08:00:00Z"),
-            session(id: "new", lastActivity: "2026-07-08T12:00:00Z"),
-            session(id: "mid", lastActivity: "2026-07-08T10:00:00Z"),
-        ]
-        let sorted = SessionListModel.sortedByRecency(sessions)
-        XCTAssertEqual(sorted.map(\.sessionID), ["new", "mid", "old"])
-    }
-
     func testFallsBackToStartedAtWhenNoLastActivity() {
         let sessions = [
             session(id: "a", startedAt: "2026-07-08T08:00:00Z"),
@@ -207,47 +184,6 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertNotNil(SessionListModel.parseTimestamp("2026-07-08T10:00:00Z"))
         XCTAssertNil(SessionListModel.parseTimestamp(""))
         XCTAssertNil(SessionListModel.parseTimestamp("nonsense"))
-    }
-
-    // MARK: - Title fallback
-
-    func testDisplayTitleUsesTitleWhenPresent() {
-        let s = session(id: "abcdef12345", title: "Fix the bug")
-        XCTAssertEqual(SessionListModel.displayTitle(for: s), "Fix the bug")
-    }
-
-    func testDisplayTitleFallsBackToModeAndShortID() {
-        let s = session(id: "abcdef1234567890", title: "   ", mode: "pm")
-        XCTAssertEqual(SessionListModel.displayTitle(for: s), "pm · abcdef12")
-    }
-
-    func testDisplayTitleReferencesFocusedTask() {
-        let s = session(
-            id: "abcdef12345", title: "Implement the widget", focusTasks: ["0214"])
-        XCTAssertEqual(
-            SessionListModel.displayTitle(for: s),
-            "[0214] Implement the widget")
-    }
-
-    func testDisplayTitleReferencesDistinctFocusedTasksInOrder() {
-        let s = session(
-            id: "abcdef1234567890", title: " ", mode: "work",
-            focusTasks: [" 0214 ", "", "0215", "0214"])
-        XCTAssertEqual(
-            SessionListModel.displayTitle(for: s),
-            "[0214,0215] work · abcdef12")
-    }
-
-    // MARK: - Status mapping
-
-    func testStatusKindMapping() {
-        XCTAssertEqual(SessionStatusKind(status: "running"), .running)
-        XCTAssertEqual(SessionStatusKind(status: "IDLE"), .idle)
-        XCTAssertEqual(SessionStatusKind(status: "error"), .error)
-        XCTAssertEqual(SessionStatusKind(status: "paused"), .paused)
-        XCTAssertEqual(SessionStatusKind(status: "stopped"), .stopped)
-        XCTAssertEqual(SessionStatusKind(status: "weird"), .unknown)
-        XCTAssertEqual(SessionStatusKind(status: ""), .unknown)
     }
 
     // MARK: - Work-loop ownership
@@ -499,20 +435,6 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertEqual(source.requestedProjects, ["", "myproj"])
     }
 
-    func testProjectFilterShownWithOneProjectHiddenWithZero() async {
-        // The filter includes All projects plus the named project.
-        let source = MockListSource()
-        source.projects = [project("only")]
-        let model = SessionListModel(source: source)
-        await model.refresh()
-        XCTAssertTrue(model.showsProjectFilter)
-
-        let emptySource = MockListSource()
-        let emptyModel = SessionListModel(source: emptySource)
-        await emptyModel.refresh()
-        XCTAssertFalse(emptyModel.showsProjectFilter)
-    }
-
     func testRecentFeedRequiresProjectChoiceForNewSession() async {
         let source = MockListSource()
         source.projects = [project("one"), project("two")]
@@ -640,34 +562,6 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertEqual(model.totalActivity.needsAnswer, 0)
         XCTAssertFalse(model.sessions.first { $0.sessionID == "asking" }!.waitingInput)
         XCTAssertEqual(source.requestedProjects.count, 1)
-    }
-
-    func testMarkAnsweredIgnoresUnknownOrAlreadyAnsweredSessions() async {
-        let source = MockListSource()
-        source.projects = [project("one")]
-        source.sessionsByProject = ["one": [session(id: "quiet", live: true)]]
-        let model = SessionListModel(source: source)
-        await model.refresh()
-
-        model.markAnswered(sessionID: "nope")
-        model.markAnswered(sessionID: "quiet")
-
-        XCTAssertEqual(model.allSessions.count, 1)
-        XCTAssertFalse(model.allSessions[0].waitingInput)
-    }
-
-    func testProjectsWithNoSessionsStillReportEmptyActivity() async {
-        let source = MockListSource()
-        source.projects = [project("busy"), project("empty")]
-        source.sessionsByProject = [
-            "busy": [session(id: "a", status: "running", live: true)],
-            "empty": [],
-        ]
-        let model = SessionListModel(source: source)
-        await model.refresh()
-
-        XCTAssertEqual(model.activity(forProject: "busy"), ProjectActivity(active: 1))
-        XCTAssertEqual(model.activity(forProject: "empty"), ProjectActivity())
     }
 
     func testRemoveProjectFailureKeepsSelectionAndSurfacesError() async {

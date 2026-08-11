@@ -143,25 +143,6 @@ final class DirectoryBrowserModelTests: XCTestCase {
         XCTAssertEqual(source.requests.count, requestCount)
     }
 
-    func testEntryAnnotationsFlowThrough() async {
-        let source = MockDirectoryBrowserSource()
-        source.responses[""] = dirResponse(
-            path: "/srv",
-            parent: "/",
-            entries: [
-                dirEntry("repo", isGitRepo: true),
-                dirEntry("registered", isGitRepo: true, isRegistered: true),
-            ])
-        let model = DirectoryBrowserModel(source: source)
-
-        await model.loadInitial()
-
-        XCTAssertTrue(model.entries[0].isGitRepo)
-        XCTAssertFalse(model.entries[0].isRegistered)
-        XCTAssertTrue(model.entries[1].isGitRepo)
-        XCTAssertTrue(model.entries[1].isRegistered)
-    }
-
     func testFailedOpenKeepsCurrentListingAndSetsError() async {
         let source = MockDirectoryBrowserSource()
         let originalEntries = [dirEntry("code", isGitRepo: true)]

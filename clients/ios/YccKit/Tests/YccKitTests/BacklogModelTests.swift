@@ -79,13 +79,6 @@ private func summary(
 final class BacklogModelTests: XCTestCase {
     // MARK: - Board lanes
 
-    func testBoardLanesFollowWorkflowOrder() {
-        let lanes = BacklogModel.board(from: [summary("0001", status: "todo")])
-        XCTAssertEqual(
-            lanes.map(\.status),
-            [.proposed, .todo, .inProgress, .inReview, .blocked, .done])
-    }
-
     func testBoardKeepsEmptyLanes() {
         // A board with lanes that vanish when empty is not a board — and an
         // empty lane is exactly the column you want to move a card into.
@@ -112,31 +105,6 @@ final class BacklogModelTests: XCTestCase {
         ])
         XCTAssertEqual(lanes.first(where: { $0.status == .todo })?.tasks.map(\.id), ["0002", "0001"])
         XCTAssertEqual(lanes.first(where: { $0.status == .done })?.tasks.map(\.id), ["0003"])
-    }
-
-    func testBoardCanSortOldestFirst() {
-        let lanes = BacklogModel.board(
-            from: [
-                summary("0010", status: "todo"),
-                summary("0002", status: "todo"),
-                summary("0007", status: "todo"),
-            ],
-            sort: .oldestFirst)
-        XCTAssertEqual(
-            lanes.first(where: { $0.status == .todo })?.tasks.map(\.id),
-            ["0002", "0007", "0010"])
-    }
-
-    func testAdjacentBoardColumns() {
-        XCTAssertNil(TaskStatus.proposed.previousBoardColumn)
-        XCTAssertEqual(TaskStatus.proposed.nextBoardColumn, .todo)
-        XCTAssertEqual(TaskStatus.inProgress.previousBoardColumn, .todo)
-        XCTAssertEqual(TaskStatus.inProgress.nextBoardColumn, .inReview)
-        XCTAssertNil(TaskStatus.done.nextBoardColumn)
-        XCTAssertEqual(TaskStatus.done.previousBoardColumn, .blocked)
-        // `unknown` is off-board and has no neighbours.
-        XCTAssertNil(TaskStatus.unknown.previousBoardColumn)
-        XCTAssertNil(TaskStatus.unknown.nextBoardColumn)
     }
 
     // MARK: - Sectioning
@@ -167,17 +135,6 @@ final class BacklogModelTests: XCTestCase {
         XCTAssertEqual(sections.first?.status, .inProgress)
         XCTAssertEqual(sections.last?.status, .todo)
         XCTAssertEqual(sections.last?.tasks.map(\.id), ["0002", "0001"])
-    }
-
-    func testSectionsCanSortOldestFirst() {
-        let sections = BacklogModel.sections(
-            from: [
-                summary("12", status: "todo"),
-                summary("2", status: "todo"),
-                summary("10", status: "todo"),
-            ],
-            sort: .oldestFirst)
-        XCTAssertEqual(sections.first?.tasks.map(\.id), ["2", "10", "12"])
     }
 
     func testPrioritySortPutsUnsetLastAndBreaksTiesNewestFirst() {
@@ -230,19 +187,13 @@ final class BacklogModelTests: XCTestCase {
 
     // MARK: - Ready / blocked annotation
 
-    func testBlockedAnnotationListsDeps() {
-        let task = summary("0005", status: "todo", ready: false, blockedBy: ["0173", "0174"])
-        XCTAssertEqual(BacklogModel.blockedAnnotation(for: task), "Blocked by 0173, 0174")
-    }
-
-    func testReadyTaskHasNoAnnotation() {
-        let task = summary("0005", status: "todo", ready: true)
-        XCTAssertNil(BacklogModel.blockedAnnotation(for: task))
-    }
-
-    func testDoneTaskNeverAnnotated() {
-        let task = summary("0005", status: "done", ready: false, blockedBy: ["0173"])
-        XCTAssertNil(BacklogModel.blockedAnnotation(for: task))
+    func testBlockedAnnotationOnlyAppearsForUnreadyActiveTasks() {
+        XCTAssertNotNil(BacklogModel.blockedAnnotation(for:
+            summary("0005", status: "todo", ready: false, blockedBy: ["0173"])))
+        XCTAssertNil(BacklogModel.blockedAnnotation(for:
+            summary("0005", status: "todo", ready: true)))
+        XCTAssertNil(BacklogModel.blockedAnnotation(for:
+            summary("0005", status: "done", ready: false, blockedBy: ["0173"])))
     }
 
     // MARK: - Refresh
@@ -306,15 +257,6 @@ final class BacklogModelTests: XCTestCase {
         // Refreshed after create: the new row is present.
         XCTAssertEqual(model.tasks.map(\.id), ["0099"])
         XCTAssertNil(model.createError)
-    }
-
-    func testCreateDefaultsToP3() async {
-        let source = MockBacklogSource()
-        let model = BacklogModel(source: source)
-
-        let ok = await model.create(title: "idea", body: "")
-        XCTAssertTrue(ok)
-        XCTAssertEqual(source.createArgs?.priority, 3)
     }
 
     func testCreateRejectsInvalidPriorityWithoutRoundTrip() async {

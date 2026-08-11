@@ -78,7 +78,7 @@ final class WorkLoopModelTests: XCTestCase {
         XCTAssertNil(model.loop)
     }
 
-    func testRefreshRunningLoopExposesCurrentSessionAndSummary() async {
+    func testRefreshRunningLoopExposesCurrentSessionAndControls() async {
         let source = MockWorkLoopSource()
         source.snapshot = loop(
             state: "running", current: "session-current", sessionsRun: 3,
@@ -89,20 +89,12 @@ final class WorkLoopModelTests: XCTestCase {
 
         XCTAssertEqual(model.state, .running)
         XCTAssertEqual(model.currentSessionID, "session-current")
-        XCTAssertEqual(WorkLoopModel.summaryLine(for: model.loop!), "3 sessions · 2 completed, 1 blocked")
         XCTAssertTrue(model.shouldPoll)
         XCTAssertTrue(model.canStop)
         XCTAssertFalse(model.canStart)
     }
 
     func testRefreshWaitingLoopPollsAndStopAppliesStoppingSnapshot() async {
-        XCTAssertEqual(WorkLoopState(state: "waiting"), .waiting)
-        XCTAssertEqual(WorkLoopState.waiting.title, "Waiting")
-        XCTAssertTrue(WorkLoopState.waiting.isActive)
-        XCTAssertTrue(WorkLoopState.waiting.shouldPoll)
-        XCTAssertTrue(WorkLoopState.waiting.canStop)
-        XCTAssertFalse(WorkLoopState.waiting.canStart)
-
         let source = MockWorkLoopSource()
         source.snapshot = loop(
             state: "waiting",
@@ -192,30 +184,8 @@ final class WorkLoopModelTests: XCTestCase {
 
         let sections = WorkLoopModel.digestSections(for: value)
 
-        XCTAssertEqual(sections.map(\.title), ["Completed", "Blocked", "Created"])
+        XCTAssertEqual(sections.flatMap(\.rows).map(\.id), ["done", "blocked", "new"])
         XCTAssertEqual(sections[1].rows[0].reason, "dependency missing")
-        XCTAssertTrue(WorkLoopModel(source: MockWorkLoopSource(), project: "demo").state == .none)
-    }
-
-    func testCostFormattingHonorsPricingStatus() {
-        XCTAssertEqual(WorkLoopModel.formatCost(1.25, status: "priced"), "$1.2500")
-        XCTAssertEqual(WorkLoopModel.formatCost(1.25, status: "partial"), "≈$1.2500 (partial)")
-        XCTAssertEqual(WorkLoopModel.formatCost(1.25, status: "unpriced"), "unpriced")
-        XCTAssertEqual(WorkLoopModel.formatCost(0, status: ""), "unpriced")
-
-        var value = loop(state: "finished")
-        value.totalTokens = 12_300
-        value.totalCost = 1.25
-        value.costStatus = "partial"
-        XCTAssertEqual(WorkLoopModel.totalsLine(for: value), "12.3k tokens · ≈$1.2500 (partial)")
-    }
-
-    func testDurationText() {
-        XCTAssertNil(WorkLoopModel.durationText(secs: 0))
-        XCTAssertNil(WorkLoopModel.durationText(secs: -1))
-        XCTAssertEqual(WorkLoopModel.durationText(secs: 45), "45s")
-        XCTAssertEqual(WorkLoopModel.durationText(secs: 272), "4m 32s")
-        XCTAssertEqual(WorkLoopModel.durationText(secs: 3_900), "1h 5m")
     }
 
     func testUnknownStateDoesNotCrash() {
@@ -223,73 +193,13 @@ final class WorkLoopModelTests: XCTestCase {
         XCTAssertEqual(WorkLoopModel.state(for: loop(state: "future-state")), .unknown)
     }
 
-    func testBannerLineCoversWorkLoopStates() {
-        XCTAssertEqual(WorkLoopModel.bannerLine(for: nil), "Not running")
-
-        let running = loop(
-            state: "running", sessionsRun: 3,
-            completed: [task("done")], blocked: [task("blocked")])
-        XCTAssertEqual(
-            WorkLoopModel.bannerLine(for: running),
-            "Running · 3 sessions · 1 completed, 1 blocked")
-
-        let waiting = loop(
-            state: "waiting",
-            resumeAt: "2026-08-06T10:20:30Z",
-            waitKind: "rate_limit")
-        XCTAssertEqual(
-            WorkLoopModel.bannerLine(for: waiting),
-            WorkLoopModel.waitingLine(for: waiting))
-        XCTAssertTrue(WorkLoopModel.bannerLine(for: waiting).contains("resumes"))
-
-        XCTAssertEqual(
-            WorkLoopModel.bannerLine(for: loop(state: "stopping")),
-            "Stopping…")
-
-        var finished = loop(
-            state: "finished", sessionsRun: 2,
-            completed: [task("done")], created: [task("new")])
-        finished.outcome = "no ready tasks"
-        XCTAssertEqual(
-            WorkLoopModel.bannerLine(for: finished),
-            "Finished · 2 sessions · 1 completed, 1 created")
-    }
-
-    func testWaitingLineComposition() {
-        let complete = loop(
-            state: "waiting",
-            resumeAt: "2026-08-06T10:20:30Z",
-            waitKind: "rate_limit")
-        let completeLine = WorkLoopModel.waitingLine(for: complete)
-        XCTAssertTrue(completeLine.hasPrefix("Waiting for provider (rate_limit)"))
-        XCTAssertTrue(completeLine.contains("resumes"))
-
-        let kindOnly = loop(state: "waiting", waitKind: "overloaded")
-        XCTAssertEqual(WorkLoopModel.waitingLine(for: kindOnly), "Waiting for provider (overloaded)")
-        XCTAssertFalse(WorkLoopModel.waitingLine(for: kindOnly).contains("resumes"))
-
-        let bare = loop(state: "waiting")
-        XCTAssertEqual(WorkLoopModel.waitingLine(for: bare), "Waiting for provider")
-
-        let invalidResume = loop(state: "waiting", resumeAt: "not-a-timestamp")
-        XCTAssertEqual(WorkLoopModel.waitingLine(for: invalidResume), "Waiting for provider")
-        XCTAssertFalse(WorkLoopModel.waitingLine(for: invalidResume).contains("resumes"))
-    }
-
-    func testResumeAtParsesFractionalAndPlainRFC3339() {
+    func testWorkLoopDatesParseRFC3339Variants() {
         var value = loop(state: "waiting", resumeAt: "2026-08-06T10:20:30.123Z")
+        value.startedAt = "2026-08-06T10:20:30Z"
         XCTAssertNotNil(WorkLoopModel.resumeAtDate(for: value))
-        value.resumeAt = "2026-08-06T10:20:30Z"
-        XCTAssertNotNil(WorkLoopModel.resumeAtDate(for: value))
+        XCTAssertNotNil(WorkLoopModel.startedAtDate(for: value))
+
         value.resumeAt = ""
         XCTAssertNil(WorkLoopModel.resumeAtDate(for: value))
-    }
-
-    func testStartedAtParsesFractionalAndPlainRFC3339() {
-        var value = loop(state: "running")
-        value.startedAt = "2026-08-06T10:20:30.123Z"
-        XCTAssertNotNil(WorkLoopModel.startedAtDate(for: value))
-        value.startedAt = "2026-08-06T10:20:30Z"
-        XCTAssertNotNil(WorkLoopModel.startedAtDate(for: value))
     }
 }

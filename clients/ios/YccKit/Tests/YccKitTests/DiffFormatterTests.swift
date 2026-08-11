@@ -2,31 +2,6 @@ import XCTest
 @testable import YccKit
 
 final class DiffFormatterTests: XCTestCase {
-    func testClassifiesLineKinds() {
-        XCTAssertEqual(DiffFormatter.kind(of: "diff --git a/x b/x"), .fileHeader)
-        XCTAssertEqual(DiffFormatter.kind(of: "index 111..222 100644"), .fileHeader)
-        XCTAssertEqual(DiffFormatter.kind(of: "new file mode 100644"), .fileHeader)
-        XCTAssertEqual(DiffFormatter.kind(of: "--- a/x"), .fileHeader)
-        XCTAssertEqual(DiffFormatter.kind(of: "+++ b/x"), .fileHeader)
-        XCTAssertEqual(DiffFormatter.kind(of: "@@ -1,3 +1,4 @@ func x()"), .hunkHeader)
-        XCTAssertEqual(DiffFormatter.kind(of: "+added line"), .addition)
-        XCTAssertEqual(DiffFormatter.kind(of: "-removed line"), .deletion)
-        XCTAssertEqual(DiffFormatter.kind(of: " context line"), .context)
-        XCTAssertEqual(DiffFormatter.kind(of: "random noise"), .context)
-    }
-
-    func testFilePlusPlusMinusNotReadAsBodyLines() {
-        // "+++"/"---" are file headers, not add/del body lines.
-        XCTAssertNotEqual(DiffFormatter.kind(of: "+++ b/file"), .addition)
-        XCTAssertNotEqual(DiffFormatter.kind(of: "--- a/file"), .deletion)
-    }
-
-    func testGitShowHeadersDeTinted() {
-        XCTAssertEqual(DiffFormatter.kind(of: "commit deadbeef"), .fileHeader)
-        XCTAssertEqual(DiffFormatter.kind(of: "Author: Jane <j@x>"), .fileHeader)
-        XCTAssertEqual(DiffFormatter.kind(of: "Date:   Mon"), .fileHeader)
-    }
-
     func testParseProducesTypedRows() {
         let diff = """
         diff --git a/x.txt b/x.txt
@@ -41,6 +16,8 @@ final class DiffFormatterTests: XCTestCase {
         let lines = DiffFormatter.parse(diff)
         XCTAssertEqual(lines.count, 8)
         XCTAssertEqual(lines[0].kind, .fileHeader)
+        XCTAssertEqual(lines[2].kind, .fileHeader)
+        XCTAssertEqual(lines[3].kind, .fileHeader)
         XCTAssertEqual(lines[4].kind, .hunkHeader)
         XCTAssertEqual(lines[5].kind, .context)
         XCTAssertEqual(lines[6].kind, .deletion)

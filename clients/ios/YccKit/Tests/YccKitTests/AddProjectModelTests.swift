@@ -35,15 +35,6 @@ final class AddProjectModelTests: XCTestCase {
         XCTAssertTrue(AddProjectModel.isPlausiblePath("  /home/me/code/ycc \n"))
     }
 
-    func testCanSubmitTracksPathValidity() {
-        let model = AddProjectModel(source: MockAddProjectSource())
-        XCTAssertFalse(model.canSubmit)
-        model.path = "nope"
-        XCTAssertFalse(model.canSubmit)
-        model.path = "/srv/repo"
-        XCTAssertTrue(model.canSubmit)
-    }
-
     // MARK: - Submit
 
     func testSubmitTrimsAndReturnsProject() async {

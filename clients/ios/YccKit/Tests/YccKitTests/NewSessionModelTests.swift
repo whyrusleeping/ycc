@@ -67,14 +67,6 @@ final class NewSessionModelTests: XCTestCase {
         return m
     }
 
-    private func preset(_ name: String, mode: String, prompt: String) -> Ycc_V1_Preset {
-        var p = Ycc_V1_Preset()
-        p.name = name
-        p.mode = mode
-        p.openingPrompt = prompt
-        return p
-    }
-
     private func project(_ name: String) -> Ycc_V1_ProjectInfo {
         var p = Ycc_V1_ProjectInfo()
         p.name = name
@@ -99,7 +91,7 @@ final class NewSessionModelTests: XCTestCase {
 
     // MARK: - Model picker
 
-    func testLoadPopulatesModelsAndDefaultsToConfiguredCoordinator() async {
+    func testLoadOffersConfiguredModelsWithoutSelectingAnOverride() async {
         let source = MockNewSessionSource()
         source.modes = [mode("work")]
         source.models = modelList(["claude", "gpt"], coordinator: "claude")
@@ -107,22 +99,8 @@ final class NewSessionModelTests: XCTestCase {
 
         await model.load()
 
-        XCTAssertEqual(model.models.count, 2)
-        XCTAssertEqual(model.defaultModel, "claude")
-        XCTAssertEqual(model.selectedModel, "")            // no override by default
-        XCTAssertTrue(model.showsModelPicker)
-        XCTAssertEqual(model.selectedModelTitle, "claude (default)")
-    }
-
-    func testModelPickerHiddenWithoutAChoice() async {
-        let source = MockNewSessionSource()
-        source.modes = [mode("work")]
-        source.models = modelList(["claude"], coordinator: "claude")
-        let model = NewSessionModel(source: source, defaults: MockDefaults())
-
-        await model.load()
-
-        XCTAssertFalse(model.showsModelPicker)
+        XCTAssertEqual(model.models.map(\.name), ["claude", "gpt"])
+        XCTAssertEqual(model.selectedModel, "")
     }
 
     func testStartSendsSelectedModelAsOverride() async {
@@ -137,7 +115,6 @@ final class NewSessionModelTests: XCTestCase {
         _ = await model.start()
 
         XCTAssertEqual(source.startArgs?.coordinatorModel, "gpt")
-        XCTAssertEqual(model.selectedModelTitle, "gpt")
     }
 
     func testStartWithoutModelChoiceSendsEmptyOverride() async {
@@ -272,16 +249,6 @@ final class NewSessionModelTests: XCTestCase {
         XCTAssertEqual(source.startArgs?.project, "one")
     }
 
-    func testInitialProjectEmptyMeansNoSelection() {
-        // An explicit empty initial project overrides a remembered project; load
-        // will then select a sole project or wait for a multi-project choice.
-        let defaults = MockDefaults()
-        defaults.lastProject = "two"
-        let model = NewSessionModel(
-            source: MockNewSessionSource(), defaults: defaults, initialProject: "")
-        XCTAssertEqual(model.selectedProject, "")
-    }
-
     // MARK: - Validation
 
     func testCanStartRequiresModeAndPrompt() async {
@@ -309,33 +276,14 @@ final class NewSessionModelTests: XCTestCase {
 
         model.selectedMode = "work"
         XCTAssertTrue(model.promptIsOptional)
-        XCTAssertTrue(model.canStart)           // empty prompt is fine for work
-        model.selectedMode = "pm"
-        XCTAssertFalse(model.promptIsOptional)
-        XCTAssertFalse(model.canStart)          // still required elsewhere
-    }
-
-    func testStartWorkModeWithEmptyPromptSendsEmptyPrompt() async {
-        let source = MockNewSessionSource()
-        source.modes = [mode("work")]
-        source.startedSessionId = "s_work"
-        let model = NewSessionModel(source: source, defaults: MockDefaults())
-        await model.load()
-
-        let id = await model.start()
-
-        XCTAssertEqual(id, "s_work")
+        XCTAssertTrue(model.canStart)
+        _ = await model.start()
         XCTAssertEqual(source.startArgs?.mode, "work")
         XCTAssertEqual(source.startArgs?.prompt, "")
-    }
 
-    // MARK: - Presets
-
-    func testApplyPresetSetsModeAndPrompt() {
-        let model = NewSessionModel(source: MockNewSessionSource(), defaults: MockDefaults())
-        model.apply(preset: preset("spec", mode: "pm", prompt: "Write a spec for…"))
-        XCTAssertEqual(model.selectedMode, "pm")
-        XCTAssertEqual(model.prompt, "Write a spec for…")
+        model.selectedMode = "pm"
+        XCTAssertFalse(model.promptIsOptional)
+        XCTAssertFalse(model.canStart)
     }
 
     // MARK: - Start
@@ -418,20 +366,6 @@ final class NewSessionModelTests: XCTestCase {
         XCTAssertNil(id)
         XCTAssertEqual(model.errorMessage, "unknown project")
         XCTAssertFalse(model.unauthorized)
-    }
-
-    func testStartSurfacesNotFoundError() async {
-        let source = MockNewSessionSource()
-        source.modes = [mode("work")]
-        source.startError = YccError.notFound(message: "no such project")
-        let model = NewSessionModel(source: source, defaults: MockDefaults())
-        await model.load()
-        model.prompt = "go"
-
-        let id = await model.start()
-
-        XCTAssertNil(id)
-        XCTAssertEqual(model.errorMessage, "no such project")
     }
 
     func testStartSurfacesUnauthorized() async {

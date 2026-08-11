@@ -29,22 +29,17 @@ final class DeepLinkTests: XCTestCase {
         XCTAssertEqual(parse("YCC://session/x"), .session(id: "x", server: nil))
     }
 
-    func testWrongSchemeIsNil() {
-        XCTAssertNil(parse("https://session/abc"))
-        XCTAssertNil(parse("myapp://session/abc"))
-    }
-
-    func testUnknownKindIsNil() {
-        XCTAssertNil(parse("ycc://frobnicate/abc"))
-    }
-
-    func testMissingSessionIdIsNil() {
-        XCTAssertNil(parse("ycc://session"))
-        XCTAssertNil(parse("ycc://session/"))
-    }
-
-    func testMissingProjectNameIsNil() {
-        XCTAssertNil(parse("ycc://project"))
+    func testInvalidLinksAreRejected() {
+        for link in [
+            "https://session/abc",
+            "myapp://session/abc",
+            "ycc://frobnicate/abc",
+            "ycc://session",
+            "ycc://session/",
+            "ycc://project",
+        ] {
+            XCTAssertNil(parse(link), link)
+        }
     }
 
     func testExtraPathSegmentsIgnored() {

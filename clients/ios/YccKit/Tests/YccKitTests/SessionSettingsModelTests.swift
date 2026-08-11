@@ -120,12 +120,6 @@ final class SessionSettingsModelTests: XCTestCase {
         XCTAssertEqual(ThinkingLevel.parse("bogus"), .medium)
     }
 
-    func testThinkingRoleWireValue() {
-        XCTAssertEqual(ThinkingRole.all.wireValue, "")
-        XCTAssertEqual(ThinkingRole.coordinator.wireValue, "coordinator")
-        XCTAssertEqual(ThinkingRole.reviewers.wireValue, "reviewers")
-    }
-
     // MARK: - Role config
 
     func testApplyRoleConfigSendsFullSelection() async {

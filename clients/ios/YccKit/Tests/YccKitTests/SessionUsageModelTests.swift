@@ -113,41 +113,21 @@ final class SessionUsageModelTests: XCTestCase {
         XCTAssertNil(total)
     }
 
-    func testTotalPriceStatusAllPriced() {
-        let (_, total) = SessionUsageModel.sessionBreakdown(
-            rows: [
-                usageRow(model: "a", session: "s", priceStatus: "priced"),
-                usageRow(model: "b", session: "s", priceStatus: ""),  // blank ⇒ priced
-            ],
-            sessionID: "s")
-        XCTAssertEqual(total?.priceStatus, "priced")
-    }
+    func testSessionBreakdownCombinesPriceStatuses() {
+        let cases: [([String], String)] = [
+            (["priced", ""], "priced"),
+            (["unpriced", "unpriced"], "unpriced"),
+            (["priced", "unpriced"], "partial"),
+            (["partial"], "partial"),
+        ]
 
-    func testTotalPriceStatusAllUnpriced() {
-        let (_, total) = SessionUsageModel.sessionBreakdown(
-            rows: [
-                usageRow(model: "a", session: "s", priceStatus: "unpriced"),
-                usageRow(model: "b", session: "s", priceStatus: "unpriced"),
-            ],
-            sessionID: "s")
-        XCTAssertEqual(total?.priceStatus, "unpriced")
-    }
-
-    func testTotalPriceStatusMixedIsPartial() {
-        let (_, total) = SessionUsageModel.sessionBreakdown(
-            rows: [
-                usageRow(model: "a", session: "s", priceStatus: "priced"),
-                usageRow(model: "b", session: "s", priceStatus: "unpriced"),
-            ],
-            sessionID: "s")
-        XCTAssertEqual(total?.priceStatus, "partial")
-    }
-
-    func testTotalPriceStatusPartialRowStaysPartial() {
-        let (_, total) = SessionUsageModel.sessionBreakdown(
-            rows: [usageRow(model: "a", session: "s", priceStatus: "partial")],
-            sessionID: "s")
-        XCTAssertEqual(total?.priceStatus, "partial")
+        for (statuses, expected) in cases {
+            let rows = statuses.enumerated().map {
+                usageRow(model: "model-\($0.offset)", session: "s", priceStatus: $0.element)
+            }
+            let (_, total) = SessionUsageModel.sessionBreakdown(rows: rows, sessionID: "s")
+            XCTAssertEqual(total?.priceStatus, expected, "statuses: \(statuses)")
+        }
     }
 
     // MARK: - Errors

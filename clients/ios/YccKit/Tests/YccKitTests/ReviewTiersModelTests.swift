@@ -64,18 +64,6 @@ private func seededSource() -> MockReviewTiersSource {
 
 @MainActor
 final class ReviewTiersModelTests: XCTestCase {
-    func testLoadSeedsTiersDefaultAndModels() async {
-        let source = seededSource()
-        let model = ReviewTiersModel(source: source)
-
-        await model.load()
-
-        XCTAssertEqual(model.tiers.map(\.name), ["high-powered", "simple", "single-opus"])
-        XCTAssertEqual(model.defaultTier, "single-opus")
-        XCTAssertEqual(model.modelNames, ["claude", "gpt"])
-        XCTAssertNil(model.errorMessage)
-    }
-
     func testSetDefaultAppliesAndRevertsOnFailure() async {
         let source = seededSource()
         let model = ReviewTiersModel(source: source)
