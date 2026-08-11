@@ -660,7 +660,7 @@ func (s *Server) RemoveReviewTier(_ context.Context, req *connect.Request[v1.Rem
 	return connect.NewResponse(&v1.RemoveReviewTierResponse{}), nil
 }
 
-// SetReviewDefault sets reviews.default (empty clears it back to single-opus);
+// SetReviewDefault sets reviews.default (empty clears it back to standard);
 // always persisted.
 func (s *Server) SetReviewDefault(_ context.Context, req *connect.Request[v1.SetReviewDefaultRequest]) (*connect.Response[v1.SetReviewDefaultResponse], error) {
 	if err := s.mgr.SetReviewDefault(req.Msg.Name); err != nil {

@@ -77,7 +77,7 @@ public struct ReviewerSlotDraft: Identifiable, Equatable, Sendable {
 
 /// An editable review tier. Seeded from a wire tier (expanding the `models`
 /// shorthand into slots) and serialized back, restoring the shorthand when every
-/// slot is generic so simple tiers keep their compact ycc.toml shape.
+/// slot is generic so straightforward tiers keep their compact ycc.toml shape.
 public struct ReviewTierDraft: Equatable, Sendable {
     public var name: String
     public var strategy: ReviewStrategy

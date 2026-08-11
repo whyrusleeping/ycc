@@ -284,7 +284,21 @@ func workLogContains(t *testing.T, store *docs.Store, id, want string) bool {
 	return strings.Contains(task.Body, want)
 }
 
-// With a SelfReview ReviewPlan (the 'simple' tier), spawn_reviewers spawns no
+func TestReviewTierBlurbUsesCanonicalBuiltins(t *testing.T) {
+	blurb := reviewTierBlurb(&Deps{})
+	for _, name := range []string{"self-review", "standard", "comprehensive"} {
+		if !strings.Contains(blurb, "'"+name+"'") {
+			t.Errorf("fallback blurb does not name %q: %s", name, blurb)
+		}
+	}
+	for _, legacy := range []string{"'simple'", "'single-opus'", "'high-powered'"} {
+		if strings.Contains(blurb, legacy) {
+			t.Errorf("fallback blurb exposes legacy alias %q: %s", legacy, blurb)
+		}
+	}
+}
+
+// With a SelfReview ReviewPlan (the 'self-review' tier), spawn_reviewers spawns no
 // reviewer loop: it returns self-review guidance, records the tier in the work
 // log, and emits a review_tier_selected event.
 func TestSpawnReviewersSelfReviewTier(t *testing.T) {
@@ -305,17 +319,17 @@ func TestSpawnReviewersSelfReviewTier(t *testing.T) {
 		Emitter:   event.NewEmitter(rec, "coordinator"),
 		Asker:     noopAsker{},
 		ReviewTier: func(name string) ReviewPlan {
-			return ReviewPlan{Tier: "simple", Requested: name, SelfReview: true}
+			return ReviewPlan{Tier: "self-review", Requested: name, SelfReview: true}
 		},
 	}
-	res, err := spawnReviewers(d).Call(context.Background(), map[string]any{"task_id": "0001", "review_tier": "simple"})
+	res, err := spawnReviewers(d).Call(context.Background(), map[string]any{"task_id": "0001", "review_tier": "self-review"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(res.Content, "review this change yourself") {
 		t.Fatalf("self-review guidance missing:\n%s", res.Content)
 	}
-	if !workLogContains(t, store, "0001", "review tier: simple (coordinator self-review)") {
+	if !workLogContains(t, store, "0001", "review tier: self-review (coordinator self-review)") {
 		t.Fatalf("work log missing self-review tier line")
 	}
 	// review_tier_selected emitted with self_review=true.
@@ -356,7 +370,7 @@ func TestSpawnReviewersTierWithSpecs(t *testing.T) {
 		Emitter:   event.NewEmitter(rec, "coordinator"),
 		Asker:     noopAsker{},
 		ReviewTier: func(name string) ReviewPlan {
-			return ReviewPlan{Tier: "single-opus", Requested: name, Specs: []AgentSpec{
+			return ReviewPlan{Tier: "standard", Requested: name, Specs: []AgentSpec{
 				{Name: "rev", Model: "m", NewClient: func() engine.Turner { return revTurner }},
 			}}
 		},
@@ -375,7 +389,7 @@ func TestSpawnReviewersTierWithSpecs(t *testing.T) {
 	if len(msgs[1].ToolCalls) != 1 || msgs[1].ToolCalls[0].Function.Name != "Bash" || msgs[1].ToolCalls[0].ID != reviewDiffCallID {
 		t.Fatalf("synthetic diff call = %+v", msgs[1])
 	}
-	if !strings.Contains(msgs[2].Content, "review tier: single-opus") {
+	if !strings.Contains(msgs[2].Content, "review tier: standard") {
 		t.Fatalf("preloaded result does not contain current staged diff: %q", msgs[2].Content)
 	}
 	var syntheticTurns, syntheticCalls, syntheticResults int
@@ -401,7 +415,7 @@ func TestSpawnReviewersTierWithSpecs(t *testing.T) {
 	if syntheticTurns != 1 || syntheticCalls != 1 || syntheticResults != 1 {
 		t.Fatalf("synthetic reviewer events = turn %d call %d result %d", syntheticTurns, syntheticCalls, syntheticResults)
 	}
-	if !workLogContains(t, store, "0001", "review tier: single-opus — reviewers: rev") {
+	if !workLogContains(t, store, "0001", "review tier: standard — reviewers: rev") {
 		t.Fatalf("work log missing tier-with-reviewers line")
 	}
 }

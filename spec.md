@@ -398,11 +398,15 @@ a logical model, optional label, focus prompt, and reasoning override. A focus i
 than a prohibition: every reviewer still checks the acceptance criteria and reports major defects
 outside its assigned specialty.
 
-Built-in tiers provide self-review, a single ordinary reviewer, and a high-powered tier. Projects
-may override them or add named tiers. An invalid configured tier is rejected; a stale tier name at
-runtime falls back visibly to the configured default, then to available session reviewers, then
-to coordinator self-review. Selection and resolved reviewer/model identities are recorded in the
-event log and task work log. Tier edits persist and apply to the next review spawn.
+The built-in tiers are `self-review`, `standard`, and `comprehensive`. Self-review spawns no
+reviewer agent, standard uses the first configured reviewer and is the default, and comprehensive
+fans out to all configured reviewers. Projects may override them or add named tiers. The legacy
+names `simple`, `single-opus`, and `high-powered` remain accepted as aliases for those respective
+built-ins, but effective listings and new persisted edits use canonical names. An invalid configured
+tier is rejected; a stale tier name at runtime falls back visibly to the configured default, then to
+available session reviewers, then to coordinator self-review. Selection and resolved reviewer/model
+identities are recorded in the event log and task work log. Tier edits persist and apply to the next
+review spawn.
 
 ## 14. Persistence, remote access, and workstreams
 

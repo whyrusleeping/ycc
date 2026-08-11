@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -279,9 +280,48 @@ func validReviewStrategy(s string) bool {
 	}
 }
 
-// builtinReviewTiers names the tiers that always exist regardless of config.
+const defaultReviewTier = "standard"
+
+// builtinReviewTiers names the canonical tiers that always exist regardless of
+// config. Legacy names remain accepted as aliases, but are never listed.
 var builtinReviewTiers = map[string]bool{
-	"simple": true, "single-opus": true, "high-powered": true,
+	"self-review": true, "standard": true, "comprehensive": true,
+}
+
+var legacyReviewTierAliases = map[string]string{
+	"simple":       "self-review",
+	"single-opus":  "standard",
+	"high-powered": "comprehensive",
+}
+
+// canonicalReviewTierName maps names used by older installations onto the
+// canonical built-in names. Custom tier names pass through unchanged.
+func canonicalReviewTierName(name string) string {
+	if canonical, ok := legacyReviewTierAliases[name]; ok {
+		return canonical
+	}
+	return name
+}
+
+// legacyReviewTierName returns the old alias for a canonical built-in name.
+func legacyReviewTierName(name string) string {
+	for legacy, canonical := range legacyReviewTierAliases {
+		if canonical == name {
+			return legacy
+		}
+	}
+	return ""
+}
+
+// configuredReviewTier reports whether a canonical effective tier has an
+// explicit entry, either under its canonical name or a legacy alias.
+func configuredReviewTier(tiers map[string]ReviewTier, name string) bool {
+	if _, ok := tiers[name]; ok {
+		return true
+	}
+	legacy := legacyReviewTierName(name)
+	_, ok := tiers[legacy]
+	return legacy != "" && ok
 }
 
 // builtinTierDescriptions is the "when to pick me" guidance shown to the
@@ -289,37 +329,50 @@ var builtinReviewTiers = map[string]bool{
 // description; one that overrides a built-in name inherits this text when it
 // leaves description empty.
 var builtinTierDescriptions = map[string]string{
-	"simple":       "you, the coordinator, review the change yourself — NO reviewer agent is spawned; only for tiny, low-risk changes",
-	"single-opus":  "one reviewer; the sensible default for ordinary changes",
-	"high-powered": "parallel multi-model review (when configured with multiple reviewers) — for large, risky, security-sensitive, or hard-to-reverse changes",
+	"self-review":   "you, the coordinator, review the change yourself — NO reviewer agent is spawned; only for tiny, low-risk changes",
+	"standard":      "one reviewer; the sensible default for ordinary changes",
+	"comprehensive": "all configured reviewers run in parallel — for large, risky, security-sensitive, or hard-to-reverse changes",
 }
 
-// effectiveReviewTiers returns the built-in tiers overlaid with any configured
-// tiers, plus the effective default tier name. The built-ins guarantee the
-// simple/single-opus/high-powered tiers always exist; a configured tier with the
-// same name overrides the built-in. Caller must hold the registry lock when
-// invoked via the Registry.
+// effectiveReviewTiers returns the canonical built-in tiers overlaid with any
+// configured tiers, plus the canonical effective default tier name. Legacy
+// built-in names act as aliases and remain hidden from listings. If both a
+// canonical override and its legacy alias exist, the canonical entry wins.
+// Caller must hold the registry lock when invoked via the Registry.
 func (c *Config) effectiveReviewTiers() (map[string]ReviewTier, string) {
 	revs := append([]string(nil), c.Roles.Reviewers...)
+	standard := append([]string(nil), revs...)
+	if len(standard) > 1 {
+		standard = standard[:1]
+	}
 	tiers := map[string]ReviewTier{
-		"simple":       {Strategy: "coordinator"},
-		"single-opus":  {Strategy: "agents", Models: revs},
-		"high-powered": {Strategy: "agents", Models: append([]string(nil), revs...)},
+		"self-review":   {Strategy: "coordinator"},
+		"standard":      {Strategy: "agents", Models: standard},
+		"comprehensive": {Strategy: "agents", Models: append([]string(nil), revs...)},
+	}
+	// Apply legacy overrides first so an explicitly canonical entry wins below.
+	for name, t := range c.Reviews.Tiers {
+		canonical := canonicalReviewTierName(name)
+		if canonical != name {
+			tiers[canonical] = t
+		}
 	}
 	for name, t := range c.Reviews.Tiers {
-		tiers[name] = t
+		if canonicalReviewTierName(name) == name {
+			tiers[name] = t
+		}
 	}
 	// A tier with no description of its own inherits the built-in blurb for its
-	// name (custom tiers simply have none unless configured).
+	// canonical name (custom tiers simply have none unless configured).
 	for name, t := range tiers {
 		if t.Description == "" {
 			t.Description = builtinTierDescriptions[name]
 			tiers[name] = t
 		}
 	}
-	def := "single-opus"
+	def := defaultReviewTier
 	if c.Reviews.Default != "" {
-		def = c.Reviews.Default
+		def = canonicalReviewTierName(c.Reviews.Default)
 	}
 	return tiers, def
 }
@@ -348,7 +401,7 @@ type ResolvedReviewer struct {
 // ("conciseness and readability", "performance characteristics", …) instead of
 // running the same generic review N times:
 //
-//	[[reviews.tiers.high-powered.reviewers]]
+//	[[reviews.tiers.comprehensive.reviewers]]
 //	name = "readability"
 //	model = "claude"
 //	prompt = "Focus on conciseness, naming, and code readability."
@@ -434,8 +487,9 @@ func joinPrompts(tier, reviewer string) string {
 }
 
 // Reviews configures the named review tiers and the default tier. The
-// built-in tiers (simple, single-opus, high-powered) always exist; entries here
-// add new tiers or override the built-ins.
+// built-in tiers (self-review, standard, comprehensive) always exist; entries
+// here add new tiers or override the built-ins. The legacy names simple,
+// single-opus, and high-powered are accepted as aliases.
 type Reviews struct {
 	Default string                `toml:"default"`
 	Tiers   map[string]ReviewTier `toml:"tiers,omitempty"`
@@ -773,8 +827,8 @@ func (c *Config) validate() error {
 		}
 	}
 	if c.Reviews.Default != "" {
-		_, configured := c.Reviews.Tiers[c.Reviews.Default]
-		if !configured && !builtinReviewTiers[c.Reviews.Default] {
+		name := canonicalReviewTierName(c.Reviews.Default)
+		if !configuredReviewTier(c.Reviews.Tiers, name) && !builtinReviewTiers[name] {
 			return fmt.Errorf("reviews.default: unknown tier %q", c.Reviews.Default)
 		}
 	}
@@ -1065,14 +1119,14 @@ func (r *Registry) SetRoles(coordinator, implementer string, reviewers []string)
 }
 
 // ReviewTier resolves a requested tier name (possibly empty) into the effective
-// tier. An empty request selects the configured default (not a
-// fallback). An unknown non-empty request degrades gracefully to the default
-// with Fallback=true.
+// canonical tier. An empty request selects the configured default (not a
+// fallback). Legacy built-in aliases resolve without fallback; an unknown
+// non-empty request degrades gracefully to the default with Fallback=true.
 func (r *Registry) ReviewTier(requested string) ReviewTierResolved {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	tiers, def := r.cfg.effectiveReviewTiers()
-	name := requested
+	name := canonicalReviewTierName(requested)
 	fallback := false
 	if name == "" {
 		name = def
@@ -1290,8 +1344,8 @@ func (r *Registry) RemoveModel(name string, persist bool) error {
 type ReviewTierListing struct {
 	Name       string
 	Tier       ReviewTier
-	Builtin    bool // simple / single-opus / high-powered
-	Configured bool // has an explicit [reviews.tiers.X] entry
+	Builtin    bool // self-review / standard / comprehensive
+	Configured bool // has an explicit canonical or legacy [reviews.tiers.X] entry
 }
 
 // ReviewTierConfigs returns the effective tiers (built-ins overlaid with
@@ -1309,12 +1363,11 @@ func (r *Registry) ReviewTierConfigs() ([]ReviewTierListing, string) {
 	sort.Strings(names)
 	out := make([]ReviewTierListing, 0, len(names))
 	for _, name := range names {
-		_, configured := r.cfg.Reviews.Tiers[name]
 		out = append(out, ReviewTierListing{
 			Name:       name,
 			Tier:       tiers[name],
 			Builtin:    builtinReviewTiers[name],
-			Configured: configured,
+			Configured: configuredReviewTier(r.cfg.Reviews.Tiers, name),
 		})
 	}
 	return out, def
@@ -1326,7 +1379,7 @@ func (r *Registry) ReviewTierConfigs() ([]ReviewTierListing, string) {
 // the live config and the file never diverge. Takes effect on the next
 // spawn_reviewers — tiers resolve per call via Registry.ReviewTier.
 func (r *Registry) UpsertReviewTier(name string, t ReviewTier) error {
-	name = strings.TrimSpace(name)
+	name = canonicalReviewTierName(strings.TrimSpace(name))
 	if name == "" {
 		return fmt.Errorf("review tier needs a name")
 	}
@@ -1335,17 +1388,18 @@ func (r *Registry) UpsertReviewTier(name string, t ReviewTier) error {
 	if err := validateReviewTier(name, t, r.cfg.Models); err != nil {
 		return err
 	}
-	prev, prevOK := r.cfg.Reviews.Tiers[name]
+	prev := maps.Clone(r.cfg.Reviews.Tiers)
 	if r.cfg.Reviews.Tiers == nil {
 		r.cfg.Reviews.Tiers = make(map[string]ReviewTier)
 	}
+	// A runtime edit always persists the canonical built-in name and supersedes
+	// an old alias entry, avoiding duplicate overrides on the next load.
+	if legacy := legacyReviewTierName(name); legacy != "" {
+		delete(r.cfg.Reviews.Tiers, legacy)
+	}
 	r.cfg.Reviews.Tiers[name] = t
 	if err := r.persistLocked(); err != nil {
-		if prevOK {
-			r.cfg.Reviews.Tiers[name] = prev
-		} else {
-			delete(r.cfg.Reviews.Tiers, name)
-		}
+		r.cfg.Reviews.Tiers = prev
 		return err
 	}
 	return nil
@@ -1357,38 +1411,39 @@ func (r *Registry) UpsertReviewTier(name string, t ReviewTier) error {
 // reviews.default names the removed CUSTOM tier (the default would dangle —
 // change it first; a built-in default stays valid without an entry).
 func (r *Registry) RemoveReviewTier(name string) error {
+	name = canonicalReviewTierName(strings.TrimSpace(name))
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	prev, ok := r.cfg.Reviews.Tiers[name]
-	if !ok {
+	if !configuredReviewTier(r.cfg.Reviews.Tiers, name) {
 		if builtinReviewTiers[name] {
 			return fmt.Errorf("tier %q is built-in with no configured override to remove", name)
 		}
 		return fmt.Errorf("unknown review tier %q", name)
 	}
-	if r.cfg.Reviews.Default == name && !builtinReviewTiers[name] {
+	if canonicalReviewTierName(r.cfg.Reviews.Default) == name && !builtinReviewTiers[name] {
 		return fmt.Errorf("cannot remove tier %q: it is the default review tier (change reviews.default first)", name)
 	}
+	prev := maps.Clone(r.cfg.Reviews.Tiers)
 	delete(r.cfg.Reviews.Tiers, name)
+	if legacy := legacyReviewTierName(name); legacy != "" {
+		delete(r.cfg.Reviews.Tiers, legacy)
+	}
 	if err := r.persistLocked(); err != nil {
-		r.cfg.Reviews.Tiers[name] = prev
+		r.cfg.Reviews.Tiers = prev
 		return err
 	}
 	return nil
 }
 
 // SetReviewDefault sets reviews.default to an existing effective tier name and
-// persists it; an empty name clears the setting (falling back to the built-in
-// default, single-opus). Reverts on a persist failure.
+// persists its canonical name; an empty name clears the setting (falling back to
+// the built-in default, standard). Reverts on a persist failure.
 func (r *Registry) SetReviewDefault(name string) error {
-	name = strings.TrimSpace(name)
+	name = canonicalReviewTierName(strings.TrimSpace(name))
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if name != "" {
-		_, configured := r.cfg.Reviews.Tiers[name]
-		if !configured && !builtinReviewTiers[name] {
-			return fmt.Errorf("unknown review tier %q", name)
-		}
+	if name != "" && !configuredReviewTier(r.cfg.Reviews.Tiers, name) && !builtinReviewTiers[name] {
+		return fmt.Errorf("unknown review tier %q", name)
 	}
 	prev := r.cfg.Reviews.Default
 	r.cfg.Reviews.Default = name

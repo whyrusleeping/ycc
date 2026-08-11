@@ -3754,7 +3754,7 @@ type ReviewTierInfo struct {
 	Prompt        string                 `protobuf:"bytes,4,opt,name=prompt,proto3" json:"prompt,omitempty"`           // extra guidance prepended to EVERY reviewer of the tier
 	Models        []string               `protobuf:"bytes,5,rep,name=models,proto3" json:"models,omitempty"`           // shorthand: one generic reviewer per logical model
 	Reviewers     []*ReviewerSlot        `protobuf:"bytes,6,rep,name=reviewers,proto3" json:"reviewers,omitempty"`     // long form: one slot per reviewer
-	Builtin       bool                   `protobuf:"varint,7,opt,name=builtin,proto3" json:"builtin,omitempty"`        // one of the always-present tiers (simple/single-opus/high-powered)
+	Builtin       bool                   `protobuf:"varint,7,opt,name=builtin,proto3" json:"builtin,omitempty"`        // one of the always-present tiers (self-review/standard/comprehensive)
 	Configured    bool                   `protobuf:"varint,8,opt,name=configured,proto3" json:"configured,omitempty"`  // has an explicit [reviews.tiers.X] entry (custom tier or built-in override)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -3848,7 +3848,8 @@ func (x *ReviewTierInfo) GetConfigured() bool {
 
 // ListReviewTiers returns the EFFECTIVE tiers (built-ins overlaid with the
 // configured entries) plus the effective default tier name, so a client can
-// render exactly what spawn_reviewers would resolve.
+// render exactly what spawn_reviewers would resolve. Built-in names and the
+// default are canonical; legacy aliases are never listed.
 type ListReviewTiersRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -3888,7 +3889,7 @@ func (*ListReviewTiersRequest) Descriptor() ([]byte, []int) {
 type ListReviewTiersResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Tiers         []*ReviewTierInfo      `protobuf:"bytes,1,rep,name=tiers,proto3" json:"tiers,omitempty"`                                // sorted by name
-	DefaultTier   string                 `protobuf:"bytes,2,opt,name=default_tier,json=defaultTier,proto3" json:"default_tier,omitempty"` // effective default (reviews.default, or "single-opus")
+	DefaultTier   string                 `protobuf:"bytes,2,opt,name=default_tier,json=defaultTier,proto3" json:"default_tier,omitempty"` // effective canonical default (reviews.default, or "standard")
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3938,9 +3939,10 @@ func (x *ListReviewTiersResponse) GetDefaultTier() string {
 }
 
 // UpsertReviewTier adds or replaces the configured tier named tier.name and
-// persists it to ycc.toml. Validated like config load (unknown strategy/model/
-// thinking level, or models+reviewers both set, are invalid_argument). Takes
-// effect on the next spawn_reviewers (tiers resolve per call).
+// persists it to ycc.toml. A legacy built-in alias is stored under its canonical
+// name. Validated like config load (unknown strategy/model/thinking level, or
+// models+reviewers both set, are invalid_argument). Takes effect on the next
+// spawn_reviewers (tiers resolve per call).
 type UpsertReviewTierRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Tier          *ReviewTierInfo        `protobuf:"bytes,1,opt,name=tier,proto3" json:"tier,omitempty"`
@@ -4023,8 +4025,9 @@ func (*UpsertReviewTierResponse) Descriptor() ([]byte, []int) {
 
 // RemoveReviewTier deletes the CONFIGURED entry for a tier and persists. A
 // built-in name reverts to its built-in behaviour; a custom tier disappears.
-// Rejected when reviews.default names the removed custom tier (change the
-// default first) or when the tier has no configured entry.
+// Legacy built-in aliases are accepted as input. Rejected when reviews.default
+// names the removed custom tier (change the default first) or when the tier has
+// no configured entry.
 type RemoveReviewTierRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -4105,9 +4108,9 @@ func (*RemoveReviewTierResponse) Descriptor() ([]byte, []int) {
 	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{72}
 }
 
-// SetReviewDefault sets reviews.default (persisted). The tier must exist among
-// the effective tiers; an empty name clears the setting (falling back to
-// single-opus).
+// SetReviewDefault sets reviews.default (persisted canonically). The tier must
+// exist among the effective tiers; an empty name clears the setting (falling
+// back to standard). Legacy built-in aliases are accepted as input.
 type SetReviewDefaultRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`

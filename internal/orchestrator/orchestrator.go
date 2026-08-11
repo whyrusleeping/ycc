@@ -74,10 +74,10 @@ type Asker interface {
 
 // ReviewPlan is the resolved review approach for one spawn_reviewers call: which
 // reviewer agents to spawn, or (SelfReview) that the coordinator reviews the
-// change itself (the 'simple' tier). It is produced by Deps.ReviewTier.
+// change itself (the 'self-review' tier). It is produced by Deps.ReviewTier.
 type ReviewPlan struct {
 	Tier       string      // effective tier name used
-	SelfReview bool        // simple tier: coordinator self-reviews; no agents spawned
+	SelfReview bool        // self-review tier: coordinator self-reviews; no agents spawned
 	Specs      []AgentSpec // reviewer agents to spawn (empty when SelfReview)
 	Requested  string      // tier the coordinator requested (for auditing)
 	Fallback   bool        // requested tier was unknown; degraded to default
@@ -589,11 +589,11 @@ func reviewTierBlurb(d *Deps) string {
 		tiers = d.ReviewTiers()
 	}
 	if len(tiers) == 0 {
-		return "Match review intensity to the change via the optional review_tier: 'simple' (you, the " +
+		return "Match review intensity to the change via the optional review_tier: 'self-review' (you, the " +
 			"coordinator, review the change yourself — NO reviewer agent is spawned; only for tiny, low-risk " +
-			"changes), 'single-opus' (one reviewer; the sensible default for ordinary changes), or " +
-			"'high-powered' (parallel multi-model review when configured with multiple models — for large, " +
-			"risky, security-sensitive, or hard-to-reverse changes). Omit review_tier to use the configured default."
+			"changes), 'standard' (one reviewer; the sensible default for ordinary changes), or " +
+			"'comprehensive' (all configured reviewers run in parallel — for large, risky, security-sensitive, " +
+			"or hard-to-reverse changes). Omit review_tier to use the configured default."
 	}
 	var b strings.Builder
 	b.WriteString("Match review intensity to the change via the optional review_tier. Available tiers:")
@@ -617,7 +617,7 @@ func reviewTierBlurb(d *Deps) string {
 }
 
 func spawnReviewers(d *Deps) *gollama.Tool {
-	tierNames := "e.g. simple, single-opus, high-powered"
+	tierNames := "e.g. self-review, standard, comprehensive"
 	if d.ReviewTiers != nil {
 		var names []string
 		for _, t := range d.ReviewTiers() {

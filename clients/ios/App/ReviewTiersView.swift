@@ -110,7 +110,7 @@ struct ReviewTiersView: View {
         } header: {
             Text("Tiers")
         } footer: {
-            Text("The coordinator picks a tier per change based on size and risk. Built-in tiers (simple, single-opus, high-powered) always exist; editing one overrides it.")
+            Text("The coordinator picks a tier per change based on size and risk. Built-in tiers (self-review, standard, comprehensive) always exist; editing one overrides it.")
         }
     }
 

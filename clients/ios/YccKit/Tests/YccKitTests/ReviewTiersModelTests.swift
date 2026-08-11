@@ -36,7 +36,7 @@ private final class MockReviewTiersSource: ReviewTiersSource, @unchecked Sendabl
     func setReviewDefault(name: String) async throws {
         if let error { throw error }
         defaultSet = name
-        tiersResponse.defaultTier = name.isEmpty ? "single-opus" : name
+        tiersResponse.defaultTier = name.isEmpty ? "standard" : name
     }
 }
 
@@ -51,11 +51,11 @@ private func builtinTier(_ name: String, strategy: String = "") -> Ycc_V1_Review
 private func seededSource() -> MockReviewTiersSource {
     let source = MockReviewTiersSource()
     source.tiersResponse.tiers = [
-        builtinTier("high-powered"),
-        builtinTier("simple", strategy: "coordinator"),
-        builtinTier("single-opus"),
+        builtinTier("comprehensive"),
+        builtinTier("self-review", strategy: "coordinator"),
+        builtinTier("standard"),
     ]
-    source.tiersResponse.defaultTier = "single-opus"
+    source.tiersResponse.defaultTier = "standard"
     var claude = Ycc_V1_ModelInfo(); claude.name = "claude"
     var gpt = Ycc_V1_ModelInfo(); gpt.name = "gpt"
     source.modelsResponse.models = [gpt, claude]
@@ -69,13 +69,13 @@ final class ReviewTiersModelTests: XCTestCase {
         let model = ReviewTiersModel(source: source)
         await model.load()
 
-        await model.setDefault("simple")
-        XCTAssertEqual(source.defaultSet, "simple")
-        XCTAssertEqual(model.defaultTier, "simple")
+        await model.setDefault("self-review")
+        XCTAssertEqual(source.defaultSet, "self-review")
+        XCTAssertEqual(model.defaultTier, "self-review")
 
         source.error = YccError.rpc("unknown review tier \"nope\"")
         await model.setDefault("nope")
-        XCTAssertEqual(model.defaultTier, "simple", "failed default change must revert")
+        XCTAssertEqual(model.defaultTier, "self-review", "failed default change must revert")
         XCTAssertEqual(model.errorMessage, "unknown review tier \"nope\"")
     }
 
@@ -115,7 +115,7 @@ final class ReviewTiersModelTests: XCTestCase {
         var custom = Ycc_V1_ReviewTierInfo()
         custom.name = "deep"
         custom.configured = true
-        var overridden = builtinTier("simple", strategy: "coordinator")
+        var overridden = builtinTier("self-review", strategy: "coordinator")
         overridden.configured = true
         source.tiersResponse.tiers.append(custom)
         source.tiersResponse.tiers[1] = overridden
@@ -124,11 +124,11 @@ final class ReviewTiersModelTests: XCTestCase {
         await model.load()
 
         // Unconfigured builtins have nothing to remove; configured overrides do.
-        XCTAssertFalse(model.isRemovable(model.tiers.first { $0.name == "high-powered" }!))
-        XCTAssertTrue(model.isRemovable(model.tiers.first { $0.name == "simple" }!))
+        XCTAssertFalse(model.isRemovable(model.tiers.first { $0.name == "comprehensive" }!))
+        XCTAssertTrue(model.isRemovable(model.tiers.first { $0.name == "self-review" }!))
         // The default CUSTOM tier is not removable until the default moves.
         XCTAssertFalse(model.isRemovable(model.tiers.first { $0.name == "deep" }!))
-        await model.setDefault("single-opus")
+        await model.setDefault("standard")
         XCTAssertTrue(model.isRemovable(model.tiers.first { $0.name == "deep" }!))
 
         let ok = await model.remove(name: "deep")
@@ -184,7 +184,7 @@ final class ReviewTierDraftTests: XCTestCase {
 
     func testSelfReviewDropsSlots() {
         let draft = ReviewTierDraft(
-            name: "simple", strategy: .selfReview,
+            name: "self-review", strategy: .selfReview,
             slots: [ReviewerSlotDraft(model: "claude")])
         let proto = draft.toProto()
         XCTAssertEqual(proto.strategy, "coordinator")

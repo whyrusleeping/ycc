@@ -376,8 +376,8 @@ message SetWorkImplementationResponse {}
 
 // Review tiers: list/edit the named review-intensity tiers and the
 // default tier. Tiers are stored under [reviews] in ycc.toml; the built-in
-// simple/single-opus/high-powered tiers always exist and may be overridden by a
-// same-named configured tier.
+// self-review/standard/comprehensive tiers always exist and may be overridden
+// by a same-named configured tier. Legacy built-in names are accepted as aliases.
 
 // ReviewerSlot is one reviewer slot of a tier's long form
 // ([[reviews.tiers.X.reviewers]]): which logical model reviews, under which
@@ -399,36 +399,39 @@ message ReviewTierInfo {
   string prompt = 4;                  // extra guidance prepended to EVERY reviewer of the tier
   repeated string models = 5;         // shorthand: one generic reviewer per logical model
   repeated ReviewerSlot reviewers = 6;// long form: one slot per reviewer
-  bool builtin = 7;                   // one of the always-present tiers (simple/single-opus/high-powered)
+  bool builtin = 7;                   // one of the always-present tiers (self-review/standard/comprehensive)
   bool configured = 8;                // has an explicit [reviews.tiers.X] entry (custom tier or built-in override)
 }
 
 // ListReviewTiers returns the EFFECTIVE tiers (built-ins overlaid with the
 // configured entries) plus the effective default tier name, so a client can
-// render exactly what spawn_reviewers would resolve.
+// render exactly what spawn_reviewers would resolve. Built-in names and the
+// default are canonical; legacy aliases are never listed.
 message ListReviewTiersRequest {}
 message ListReviewTiersResponse {
   repeated ReviewTierInfo tiers = 1; // sorted by name
-  string default_tier = 2;           // effective default (reviews.default, or "single-opus")
+  string default_tier = 2;           // effective canonical default (reviews.default, or "standard")
 }
 
 // UpsertReviewTier adds or replaces the configured tier named tier.name and
-// persists it to ycc.toml. Validated like config load (unknown strategy/model/
-// thinking level, or models+reviewers both set, are invalid_argument). Takes
-// effect on the next spawn_reviewers (tiers resolve per call).
+// persists it to ycc.toml. A legacy built-in alias is stored under its canonical
+// name. Validated like config load (unknown strategy/model/thinking level, or
+// models+reviewers both set, are invalid_argument). Takes effect on the next
+// spawn_reviewers (tiers resolve per call).
 message UpsertReviewTierRequest { ReviewTierInfo tier = 1; }
 message UpsertReviewTierResponse {}
 
 // RemoveReviewTier deletes the CONFIGURED entry for a tier and persists. A
 // built-in name reverts to its built-in behaviour; a custom tier disappears.
-// Rejected when reviews.default names the removed custom tier (change the
-// default first) or when the tier has no configured entry.
+// Legacy built-in aliases are accepted as input. Rejected when reviews.default
+// names the removed custom tier (change the default first) or when the tier has
+// no configured entry.
 message RemoveReviewTierRequest { string name = 1; }
 message RemoveReviewTierResponse {}
 
-// SetReviewDefault sets reviews.default (persisted). The tier must exist among
-// the effective tiers; an empty name clears the setting (falling back to
-// single-opus).
+// SetReviewDefault sets reviews.default (persisted canonically). The tier must
+// exist among the effective tiers; an empty name clears the setting (falling
+// back to standard). Legacy built-in aliases are accepted as input.
 message SetReviewDefaultRequest { string name = 1; }
 message SetReviewDefaultResponse {}
 

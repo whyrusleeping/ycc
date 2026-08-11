@@ -820,13 +820,44 @@ func TestReviewTierRPCs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListReviewTiers: %v", err)
 	}
-	if list.Msg.DefaultTier != "single-opus" || len(list.Msg.Tiers) != 3 {
+	if list.Msg.DefaultTier != "standard" || len(list.Msg.Tiers) != 3 {
 		t.Fatalf("initial tiers = %v default=%q", list.Msg.Tiers, list.Msg.DefaultTier)
 	}
 	for _, tier := range list.Msg.Tiers {
 		if !tier.Builtin || tier.Configured {
 			t.Fatalf("builtin tier flags wrong: %+v", tier)
 		}
+		switch tier.Name {
+		case "self-review", "standard", "comprehensive":
+		default:
+			t.Fatalf("non-canonical builtin returned by RPC: %+v", tier)
+		}
+	}
+
+	// Legacy mutation input is accepted but listed and persisted canonically.
+	if _, err := srv.UpsertReviewTier(ctx, connect.NewRequest(&v1.UpsertReviewTierRequest{
+		Tier: &v1.ReviewTierInfo{Name: "simple", Strategy: "coordinator"},
+	})); err != nil {
+		t.Fatalf("legacy UpsertReviewTier: %v", err)
+	}
+	list, err = srv.ListReviewTiers(ctx, connect.NewRequest(&v1.ListReviewTiersRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var selfReview *v1.ReviewTierInfo
+	for _, tier := range list.Msg.Tiers {
+		if tier.Name == "self-review" {
+			selfReview = tier
+		}
+		if tier.Name == "simple" {
+			t.Fatalf("legacy alias leaked into RPC listing: %+v", tier)
+		}
+	}
+	if selfReview == nil || !selfReview.Configured {
+		t.Fatalf("canonical self-review override missing: %+v", selfReview)
+	}
+	if _, err := srv.RemoveReviewTier(ctx, connect.NewRequest(&v1.RemoveReviewTierRequest{Name: "simple"})); err != nil {
+		t.Fatalf("legacy RemoveReviewTier: %v", err)
 	}
 
 	// Upsert a custom tier with per-reviewer focus + thinking, set it default.
@@ -896,7 +927,7 @@ func TestReviewTierRPCs(t *testing.T) {
 		t.Fatalf("RemoveReviewTier: %v", err)
 	}
 	list, _ = srv.ListReviewTiers(ctx, connect.NewRequest(&v1.ListReviewTiersRequest{}))
-	if len(list.Msg.Tiers) != 3 || list.Msg.DefaultTier != "single-opus" {
+	if len(list.Msg.Tiers) != 3 || list.Msg.DefaultTier != "standard" {
 		t.Fatalf("after removal tiers=%d default=%q", len(list.Msg.Tiers), list.Msg.DefaultTier)
 	}
 }

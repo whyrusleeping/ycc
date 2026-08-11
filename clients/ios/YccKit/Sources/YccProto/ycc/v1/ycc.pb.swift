@@ -1295,7 +1295,7 @@ public nonisolated struct Ycc_V1_ReviewTierInfo: Sendable {
   /// long form: one slot per reviewer
   public var reviewers: [Ycc_V1_ReviewerSlot] = []
 
-  /// one of the always-present tiers (simple/single-opus/high-powered)
+  /// one of the always-present tiers (self-review/standard/comprehensive)
   public var builtin: Bool = false
 
   /// has an explicit [reviews.tiers.X] entry (custom tier or built-in override)
@@ -1308,7 +1308,8 @@ public nonisolated struct Ycc_V1_ReviewTierInfo: Sendable {
 
 /// ListReviewTiers returns the EFFECTIVE tiers (built-ins overlaid with the
 /// configured entries) plus the effective default tier name, so a client can
-/// render exactly what spawn_reviewers would resolve.
+/// render exactly what spawn_reviewers would resolve. Built-in names and the
+/// default are canonical; legacy aliases are never listed.
 public nonisolated struct Ycc_V1_ListReviewTiersRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -1327,7 +1328,7 @@ public nonisolated struct Ycc_V1_ListReviewTiersResponse: Sendable {
   /// sorted by name
   public var tiers: [Ycc_V1_ReviewTierInfo] = []
 
-  /// effective default (reviews.default, or "single-opus")
+  /// effective canonical default (reviews.default, or "standard")
   public var defaultTier: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -1336,9 +1337,10 @@ public nonisolated struct Ycc_V1_ListReviewTiersResponse: Sendable {
 }
 
 /// UpsertReviewTier adds or replaces the configured tier named tier.name and
-/// persists it to ycc.toml. Validated like config load (unknown strategy/model/
-/// thinking level, or models+reviewers both set, are invalid_argument). Takes
-/// effect on the next spawn_reviewers (tiers resolve per call).
+/// persists it to ycc.toml. A legacy built-in alias is stored under its canonical
+/// name. Validated like config load (unknown strategy/model/thinking level, or
+/// models+reviewers both set, are invalid_argument). Takes effect on the next
+/// spawn_reviewers (tiers resolve per call).
 public nonisolated struct Ycc_V1_UpsertReviewTierRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -1372,8 +1374,9 @@ public nonisolated struct Ycc_V1_UpsertReviewTierResponse: Sendable {
 
 /// RemoveReviewTier deletes the CONFIGURED entry for a tier and persists. A
 /// built-in name reverts to its built-in behaviour; a custom tier disappears.
-/// Rejected when reviews.default names the removed custom tier (change the
-/// default first) or when the tier has no configured entry.
+/// Legacy built-in aliases are accepted as input. Rejected when reviews.default
+/// names the removed custom tier (change the default first) or when the tier has
+/// no configured entry.
 public nonisolated struct Ycc_V1_RemoveReviewTierRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -1396,9 +1399,9 @@ public nonisolated struct Ycc_V1_RemoveReviewTierResponse: Sendable {
   public init() {}
 }
 
-/// SetReviewDefault sets reviews.default (persisted). The tier must exist among
-/// the effective tiers; an empty name clears the setting (falling back to
-/// single-opus).
+/// SetReviewDefault sets reviews.default (persisted canonically). The tier must
+/// exist among the effective tiers; an empty name clears the setting (falling
+/// back to standard). Legacy built-in aliases are accepted as input.
 public nonisolated struct Ycc_V1_SetReviewDefaultRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for

@@ -687,29 +687,44 @@ func TestPersistFalseDoesNotWriteFile(t *testing.T) {
 // --- review tiers (spec §13.1) ---
 
 func TestReviewTierBuiltins(t *testing.T) {
-	reg := baseRegistry()
-	// "" selects the default (single-opus), not a fallback.
+	reg := NewRegistry(&Config{
+		Models: map[string]Model{
+			"claude": {Backend: "anthropic", Model: "claude-x"},
+			"gpt":    {Backend: "openai", Model: "gpt-x"},
+		},
+		Roles: Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude", "gpt"}},
+	})
+	// "" selects standard, the default, without being a fallback. Standard uses
+	// only the first configured reviewer.
 	def := reg.ReviewTier("")
-	if def.Name != "single-opus" || def.Fallback {
-		t.Fatalf("empty request = %+v, want single-opus no fallback", def)
+	if def.Name != "standard" || def.Fallback {
+		t.Fatalf("empty request = %+v, want standard no fallback", def)
 	}
 	if def.SelfReview || len(def.Reviewers) != 1 || def.Reviewers[0].Model != "claude" {
-		t.Fatalf("single-opus reviewers = %+v, want [claude] agents", def)
+		t.Fatalf("standard reviewers = %+v, want [claude] agents", def)
 	}
-	// simple built-in is coordinator self-review.
-	simple := reg.ReviewTier("simple")
-	if simple.Name != "simple" || !simple.SelfReview {
-		t.Fatalf("simple = %+v, want self-review", simple)
+	self := reg.ReviewTier("self-review")
+	if self.Name != "self-review" || !self.SelfReview || len(self.Reviewers) != 0 {
+		t.Fatalf("self-review = %+v, want coordinator self-review", self)
 	}
-	// high-powered built-in exists.
-	hp := reg.ReviewTier("high-powered")
-	if hp.Name != "high-powered" || hp.SelfReview {
-		t.Fatalf("high-powered = %+v, want agents tier", hp)
+	comprehensive := reg.ReviewTier("comprehensive")
+	if comprehensive.Name != "comprehensive" || comprehensive.SelfReview || len(comprehensive.Reviewers) != 2 {
+		t.Fatalf("comprehensive = %+v, want both reviewer roles", comprehensive)
+	}
+	// Legacy names are aliases, return canonical names, and do not count as a
+	// fallback.
+	for legacy, canonical := range map[string]string{
+		"simple": "self-review", "single-opus": "standard", "high-powered": "comprehensive",
+	} {
+		got := reg.ReviewTier(legacy)
+		if got.Name != canonical || got.Fallback {
+			t.Errorf("legacy tier %q = %+v, want canonical %q without fallback", legacy, got, canonical)
+		}
 	}
 	// Unknown tier degrades to the default with Fallback=true.
 	unk := reg.ReviewTier("nope")
-	if unk.Name != "single-opus" || !unk.Fallback {
-		t.Fatalf("unknown request = %+v, want single-opus fallback", unk)
+	if unk.Name != "standard" || !unk.Fallback {
+		t.Fatalf("unknown request = %+v, want standard fallback", unk)
 	}
 }
 
@@ -722,18 +737,19 @@ func TestReviewTierConfiguredOverrides(t *testing.T) {
 		Roles: Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"}},
 		Reviews: Reviews{
 			Tiers: map[string]ReviewTier{
-				"simple":       {Strategy: "coordinator"},
+				// Legacy override keys continue to override their canonical tiers.
+				"simple":       {Strategy: "agents", Models: []string{"gpt"}},
 				"high-powered": {Strategy: "agents", Models: []string{"claude", "gpt"}},
 			},
 		},
 	})
-	simple := reg.ReviewTier("simple")
-	if !simple.SelfReview {
-		t.Fatalf("configured simple should be self-review: %+v", simple)
+	self := reg.ReviewTier("self-review")
+	if self.Name != "self-review" || self.SelfReview || len(self.Reviewers) != 1 || self.Reviewers[0].Model != "gpt" {
+		t.Fatalf("legacy simple override = %+v, want canonical self-review using gpt", self)
 	}
-	hp := reg.ReviewTier("high-powered")
-	if hp.SelfReview || len(hp.Reviewers) != 2 || hp.Reviewers[0].Model != "claude" || hp.Reviewers[1].Model != "gpt" {
-		t.Fatalf("overridden high-powered = %+v, want [claude gpt] agents", hp)
+	comprehensive := reg.ReviewTier("high-powered")
+	if comprehensive.Name != "comprehensive" || comprehensive.SelfReview || len(comprehensive.Reviewers) != 2 {
+		t.Fatalf("legacy high-powered override = %+v, want canonical comprehensive with two reviewers", comprehensive)
 	}
 }
 
@@ -747,8 +763,8 @@ func TestReviewTierDefaultOverride(t *testing.T) {
 		},
 	})
 	def := reg.ReviewTier("")
-	if def.Name != "simple" || !def.SelfReview || def.Fallback {
-		t.Fatalf("default override = %+v, want simple self-review", def)
+	if def.Name != "self-review" || !def.SelfReview || def.Fallback {
+		t.Fatalf("legacy default override = %+v, want canonical self-review", def)
 	}
 }
 
@@ -799,8 +815,11 @@ func TestReviewTierFocusedReviewers(t *testing.T) {
 	for _, ti := range tiers {
 		byName[ti.Name] = ti
 	}
-	if s, ok := byName["simple"]; !ok || !s.SelfReview || s.Description == "" {
-		t.Fatalf("built-in simple tier missing/incomplete: %+v", byName)
+	if s, ok := byName["self-review"]; !ok || !s.SelfReview || s.Description == "" {
+		t.Fatalf("built-in self-review tier missing/incomplete: %+v", byName)
+	}
+	if _, ok := byName["simple"]; ok {
+		t.Fatalf("legacy aliases must be hidden from effective listings: %+v", byName)
 	}
 }
 
@@ -1085,7 +1104,7 @@ prompt = "Cite file:line for every finding."
   model  = "gpt"
   prompt = "Focus on performance."
 
-[reviews.tiers.simple]
+[reviews.tiers.self-review]
 strategy = "coordinator"
 `
 	c, err := loadSpecTOML(t, toml)
@@ -1228,8 +1247,8 @@ func twoModelRegistry() *Registry {
 func TestReviewTierConfigsListing(t *testing.T) {
 	reg := twoModelRegistry()
 	listings, def := reg.ReviewTierConfigs()
-	if def != "single-opus" {
-		t.Fatalf("default = %q, want single-opus", def)
+	if def != "standard" {
+		t.Fatalf("default = %q, want standard", def)
 	}
 	names := make([]string, 0, len(listings))
 	for _, l := range listings {
@@ -1244,7 +1263,7 @@ func TestReviewTierConfigsListing(t *testing.T) {
 			t.Fatalf("builtin tier %q missing inherited description", l.Name)
 		}
 	}
-	want := []string{"high-powered", "simple", "single-opus"} // sorted
+	want := []string{"comprehensive", "self-review", "standard"} // sorted
 	if !reflect.DeepEqual(names, want) {
 		t.Fatalf("tier names = %v, want %v", names, want)
 	}
@@ -1255,8 +1274,8 @@ func TestReviewTierConfigsListing(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpsertReviewTier(deep): %v", err)
 	}
-	if err := reg.UpsertReviewTier("simple", ReviewTier{Strategy: "coordinator"}); err != nil {
-		t.Fatalf("UpsertReviewTier(simple override): %v", err)
+	if err := reg.UpsertReviewTier("self-review", ReviewTier{Strategy: "coordinator"}); err != nil {
+		t.Fatalf("UpsertReviewTier(self-review override): %v", err)
 	}
 	listings, _ = reg.ReviewTierConfigs()
 	byName := map[string]ReviewTierListing{}
@@ -1266,8 +1285,8 @@ func TestReviewTierConfigsListing(t *testing.T) {
 	if l := byName["deep"]; l.Builtin || !l.Configured || len(l.Tier.Reviewers) != 1 || l.Tier.Reviewers[0].Thinking != "max" {
 		t.Fatalf("deep listing = %+v", l)
 	}
-	if l := byName["simple"]; !l.Builtin || !l.Configured {
-		t.Fatalf("simple override listing = %+v", l)
+	if l := byName["self-review"]; !l.Builtin || !l.Configured {
+		t.Fatalf("self-review override listing = %+v", l)
 	}
 }
 
@@ -1316,7 +1335,7 @@ func TestUpsertReviewTierResolvesLive(t *testing.T) {
 func TestRemoveReviewTier(t *testing.T) {
 	reg := twoModelRegistry()
 	// No configured entry: both a builtin and an unknown name are rejected.
-	if err := reg.RemoveReviewTier("simple"); err == nil {
+	if err := reg.RemoveReviewTier("self-review"); err == nil {
 		t.Fatal("removing unconfigured builtin should fail")
 	}
 	if err := reg.RemoveReviewTier("nope"); err == nil {
@@ -1324,14 +1343,14 @@ func TestRemoveReviewTier(t *testing.T) {
 	}
 
 	// A builtin override is removable (reverts to builtin behaviour).
-	if err := reg.UpsertReviewTier("high-powered", ReviewTier{Models: []string{"claude", "gpt"}}); err != nil {
+	if err := reg.UpsertReviewTier("comprehensive", ReviewTier{Models: []string{"claude", "gpt"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := reg.RemoveReviewTier("high-powered"); err != nil {
-		t.Fatalf("RemoveReviewTier(high-powered override): %v", err)
+	if err := reg.RemoveReviewTier("comprehensive"); err != nil {
+		t.Fatalf("RemoveReviewTier(comprehensive override): %v", err)
 	}
-	if hp := reg.ReviewTier("high-powered"); len(hp.Reviewers) != 1 || hp.Reviewers[0].Model != "claude" {
-		t.Fatalf("high-powered after override removal = %+v, want builtin (roles.reviewers)", hp)
+	if got := reg.ReviewTier("comprehensive"); len(got.Reviewers) != 1 || got.Reviewers[0].Model != "claude" {
+		t.Fatalf("comprehensive after override removal = %+v, want builtin roles.reviewers", got)
 	}
 
 	// A custom tier that is the current default cannot be removed...
@@ -1361,17 +1380,74 @@ func TestSetReviewDefault(t *testing.T) {
 	if err := reg.SetReviewDefault("nope"); err == nil {
 		t.Fatal("unknown default should be rejected")
 	}
-	if err := reg.SetReviewDefault("simple"); err != nil {
-		t.Fatalf("SetReviewDefault(simple): %v", err)
+	if err := reg.SetReviewDefault("self-review"); err != nil {
+		t.Fatalf("SetReviewDefault(self-review): %v", err)
 	}
-	if def := reg.ReviewTier(""); def.Name != "simple" || !def.SelfReview {
-		t.Fatalf("default after SetReviewDefault = %+v, want simple", def)
+	if def := reg.ReviewTier(""); def.Name != "self-review" || !def.SelfReview {
+		t.Fatalf("default after SetReviewDefault = %+v, want self-review", def)
 	}
 	if err := reg.SetReviewDefault(""); err != nil {
 		t.Fatalf("clearing default: %v", err)
 	}
-	if def := reg.ReviewTier(""); def.Name != "single-opus" {
-		t.Fatalf("cleared default = %+v, want single-opus", def)
+	if def := reg.ReviewTier(""); def.Name != "standard" {
+		t.Fatalf("cleared default = %+v, want standard", def)
+	}
+}
+
+func TestReviewTierLegacyConfigAndMutationsCanonicalize(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ycc.toml")
+	cfg := &Config{
+		Models: map[string]Model{
+			"claude": {Backend: "anthropic", Model: "claude-x"},
+			"gpt":    {Backend: "openai", Model: "gpt-x"},
+		},
+		Roles: Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude", "gpt"}},
+		Reviews: Reviews{
+			Default: "single-opus",
+			Tiers: map[string]ReviewTier{
+				"simple":      {Strategy: "agents", Models: []string{"gpt"}},
+				"single-opus": {Models: []string{"gpt"}},
+			},
+		},
+	}
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	reg := NewRegistry(cfg)
+	reg.SetPath(path)
+
+	listings, def := reg.ReviewTierConfigs()
+	if def != "standard" || len(listings) != 3 {
+		t.Fatalf("legacy listing default=%q tiers=%+v, want three canonical builtins", def, listings)
+	}
+	for _, l := range listings {
+		if canonicalReviewTierName(l.Name) != l.Name {
+			t.Fatalf("legacy alias leaked into listing: %+v", l)
+		}
+	}
+	if got := reg.ReviewTier(""); got.Name != "standard" || len(got.Reviewers) != 1 || got.Reviewers[0].Model != "gpt" {
+		t.Fatalf("legacy default/override resolved as %+v", got)
+	}
+
+	// Legacy mutation inputs write only canonical names.
+	if err := reg.UpsertReviewTier("simple", ReviewTier{Strategy: "coordinator"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.SetReviewDefault("single-opus"); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Reviews.Default != "standard" {
+		t.Fatalf("persisted default = %q, want standard", loaded.Reviews.Default)
+	}
+	if _, ok := loaded.Reviews.Tiers["simple"]; ok {
+		t.Fatal("legacy simple override remained after runtime upsert")
+	}
+	if _, ok := loaded.Reviews.Tiers["self-review"]; !ok {
+		t.Fatal("canonical self-review override was not persisted")
 	}
 }
 
@@ -1427,7 +1503,7 @@ func TestReviewTierMutationsPersistAndRevert(t *testing.T) {
 	if _, ok := reg.cfg.Reviews.Tiers["another"]; ok {
 		t.Fatal("failed persist should revert the in-memory upsert")
 	}
-	if err := reg.SetReviewDefault("simple"); err == nil {
+	if err := reg.SetReviewDefault("self-review"); err == nil {
 		t.Fatal("set default with unwritable path should fail")
 	}
 	if reg.cfg.Reviews.Default != "deep" {

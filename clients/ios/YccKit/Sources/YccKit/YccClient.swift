@@ -632,7 +632,7 @@ public final class YccClient: Sendable {
         try unary(await generated.removeReviewTier(request: request))
     }
 
-    /// Set `reviews.default` (empty clears back to single-opus); persisted.
+    /// Set `reviews.default` (empty clears back to standard); persisted.
     public func setReviewDefault(name: String) async throws {
         var request = Ycc_V1_SetReviewDefaultRequest()
         request.name = name
