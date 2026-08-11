@@ -4,6 +4,7 @@
 package docs
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -104,11 +105,42 @@ func (s *Store) Dir() string { return s.dir }
 // Configure it before using the Store.
 func (s *Store) SetIDSource(fn func() (string, error)) { s.idSource = fn }
 
-// List returns all tasks sorted by id. Files without YAML frontmatter are skipped.
+// List returns all tasks, including their bodies, sorted by id. Files without
+// YAML frontmatter are skipped. Summary and dependency callers should prefer
+// ListMetadata so completed-task history is not read unnecessarily.
 func (s *Store) List() ([]*Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.listLocked()
+}
+
+// ListMetadata returns all tasks without reading their Markdown bodies. It is
+// the listing path for backlog summaries, readiness checks, and task selection.
+// Get remains the full-fidelity lookup for callers that need one task's body.
+func (s *Store) ListMetadata() ([]*Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.listMetadataLocked()
+}
+
+func (s *Store) listMetadataLocked() ([]*Task, error) {
+	tasks, err := s.scanMetadataLocked()
+	if err != nil {
+		return nil, err
+	}
+	if !hasDuplicateIDs(tasks) {
+		return tasks, nil
+	}
+	// Duplicate repair rewrites a claimant and records a breadcrumb, so load
+	// bodies only on this exceptional mutation path.
+	full, err := s.scanLocked()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.dedupeLocked(full); err != nil {
+		return tasks, nil
+	}
+	return s.scanMetadataLocked()
 }
 
 // listLocked scans the backlog and self-heals duplicate ids before returning
@@ -135,6 +167,17 @@ func (s *Store) listLocked() ([]*Task, error) {
 // NOT heal duplicate ids (listLocked does) so it can be used from the dedupe
 // pass itself without recursing.
 func (s *Store) scanLocked() ([]*Task, error) {
+	return s.scanFilesLocked(parseFile)
+}
+
+// scanMetadataLocked parses only YAML frontmatter. In particular, it does not
+// read completed-task outcomes (or legacy work logs) merely to render a list or
+// resolve dependencies.
+func (s *Store) scanMetadataLocked() ([]*Task, error) {
+	return s.scanFilesLocked(parseMetadataFile)
+}
+
+func (s *Store) scanFilesLocked(parse func(string) (*Task, error)) ([]*Task, error) {
 	entries, err := os.ReadDir(s.dir)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -147,7 +190,7 @@ func (s *Store) scanLocked() ([]*Task, error) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 			continue
 		}
-		t, err := parseFile(filepath.Join(s.dir, e.Name()))
+		t, err := parse(filepath.Join(s.dir, e.Name()))
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", e.Name(), err)
 		}
@@ -194,13 +237,13 @@ func (s *Store) Get(id string) (*Task, error) {
 
 func (s *Store) getLocked(id string) (*Task, error) {
 	id = normalizeID(id)
-	tasks, err := s.listLocked()
+	tasks, err := s.listMetadataLocked()
 	if err != nil {
 		return nil, err
 	}
 	for _, t := range tasks {
 		if t.ID == id {
-			return t, nil
+			return parseFile(t.Path)
 		}
 	}
 	return nil, fmt.Errorf("no task with id %q", id)
@@ -292,6 +335,208 @@ func (s *Store) SetPlan(id, plan string) (*Task, error) {
 	})
 }
 
+// Complete marks a task done and replaces its operational body with the compact
+// durable record: original intent, acceptance criteria, concise outcome, and the
+// accepted commit subject. Session events and git retain the detailed execution
+// history. It is intended to run immediately before the accepting commit.
+func (s *Store) Complete(id, outcome, commitSubject string) (*Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	outcome, err := completedText("outcome", outcome, maxOutcomeRunes)
+	if err != nil {
+		return nil, err
+	}
+	commitSubject, err = completedText("commit subject", commitSubject, maxCommitRunes)
+	if err != nil {
+		return nil, err
+	}
+	return s.updateLocked(id, func(t *Task) {
+		t.Status = StatusDone
+		t.Body = compactCompletedBody(t.Body, outcome, commitSubject)
+	})
+}
+
+// CompactCompletedHistory conservatively migrates legacy done tasks. A task is
+// eligible only when canonical non-empty intent and acceptance criteria plus a
+// complete final implementer/revision outcome and concise commit subject can all
+// be extracted. Dry-run mode reports ids without writing; repeated write runs are
+// no-ops. Git retains
+// every removed body as the rollback path.
+func (s *Store) CompactCompletedHistory(write bool, exclude ...string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	excluded := make(map[string]bool, len(exclude))
+	for _, id := range exclude {
+		excluded[normalizeID(id)] = true
+	}
+	tasks, err := s.listLocked()
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, task := range tasks {
+		if excluded[task.ID] {
+			continue
+		}
+		outcome, subject, ok := legacyCompletion(task)
+		if !ok {
+			continue
+		}
+		ids = append(ids, task.ID)
+		if write {
+			task.Body = compactCompletedBody(task.Body, outcome, subject)
+			// Preserve the historical completion date; migration is a storage-shape
+			// change, not new task activity.
+			if err := s.write(task); err != nil {
+				return ids[:len(ids)-1], err
+			}
+		}
+	}
+	return ids, nil
+}
+
+func legacyCompletion(task *Task) (outcome, subject string, ok bool) {
+	if task.Status != StatusDone || hasHeaderLine(task.Body, "outcome") {
+		return "", "", false
+	}
+	if collectSectionContent(task.Body, "description") == "" || collectSectionContent(task.Body, "acceptance criteria") == "" {
+		return "", "", false
+	}
+
+	lines := strings.Split(task.Body, "\n")
+	outcomeAt, commitAt := -1, -1
+	outcomeOK, commitOK := false, false
+	for i, line := range lines {
+		// Keep replacing the candidate: a later revision supersedes the initial
+		// implementer report even when that later revision is itself incomplete.
+		for _, marker := range []string{"implementer report:", "revision:"} {
+			if at := strings.Index(line, marker); at >= 0 {
+				outcome = strings.TrimSpace(line[at+len(marker):])
+				outcomeAt = i
+				normalized, err := completedText("outcome", outcome, maxOutcomeRunes)
+				outcomeOK = err == nil && legacyLineComplete(lines, i)
+				if outcomeOK {
+					outcome = normalized
+				}
+				break
+			}
+		}
+		if !strings.Contains(line, "decision: accept") {
+			continue
+		}
+		candidate := ""
+		if at := strings.Index(line, "commit:"); at >= 0 {
+			candidate = strings.TrimSpace(line[at+len("commit:"):])
+		} else if at := strings.Index(line, "commit "); at >= 0 {
+			rest := line[at+len("commit "):]
+			if colon := strings.Index(rest, ":"); colon >= 0 {
+				candidate = strings.TrimSpace(rest[colon+1:])
+			}
+		}
+		subject = candidate
+		commitAt = i
+		normalized, err := completedText("commit subject", subject, maxCommitRunes)
+		commitOK = err == nil && legacyLineComplete(lines, i)
+		if commitOK {
+			subject = normalized
+		}
+	}
+	return outcome, subject, outcomeOK && commitOK && outcomeAt < commitAt
+}
+
+func legacyLineComplete(lines []string, i int) bool {
+	if strings.Contains(lines[i], "…[truncated]") {
+		return false
+	}
+	if i+1 >= len(lines) {
+		return true
+	}
+	next := strings.TrimSpace(lines[i+1])
+	return next == "" || strings.HasPrefix(next, "- ") || strings.HasPrefix(next, "## ")
+}
+
+const (
+	maxOutcomeRunes = 1000
+	maxCommitRunes  = 240
+)
+
+func compactCompletedBody(body, outcome, commitSubject string) string {
+	description := collectSectionContent(body, "description")
+	criteria := collectSectionContent(body, "acceptance criteria")
+	if description == "" {
+		// Hand-written legacy tasks are not always canonical. Preserve all content
+		// before operational Plan/Outcome/Work log sections rather than dropping it.
+		description = strings.TrimSpace(stripOperationalSections(body))
+	}
+	var compact strings.Builder
+	compact.WriteString("## Description\n\n")
+	compact.WriteString(description)
+	if criteria != "" {
+		compact.WriteString("\n\n## Acceptance criteria\n\n")
+		compact.WriteString(criteria)
+	}
+	compact.WriteString("\n\n## Outcome\n\n")
+	compact.WriteString(outcome)
+	compact.WriteString("\n\nCommit: ")
+	compact.WriteString(commitSubject)
+	compact.WriteByte('\n')
+	return compact.String()
+}
+
+func collectSectionContent(body, wanted string) string {
+	lines := strings.Split(body, "\n")
+	var sections []string
+	for i := 0; i < len(lines); {
+		if !strings.HasPrefix(strings.TrimSpace(lines[i]), "## ") {
+			i++
+			continue
+		}
+		title := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[i]), "##"))
+		start := i + 1
+		i = start
+		for i < len(lines) && !strings.HasPrefix(strings.TrimSpace(lines[i]), "## ") {
+			i++
+		}
+		if strings.EqualFold(title, wanted) {
+			if content := strings.TrimSpace(strings.Join(lines[start:i], "\n")); content != "" {
+				sections = append(sections, content)
+			}
+		}
+	}
+	return strings.Join(sections, "\n\n")
+}
+
+func stripOperationalSections(body string) string {
+	lines := strings.Split(body, "\n")
+	var kept []string
+	skip := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "## ") {
+			title := strings.TrimSpace(strings.TrimPrefix(trimmed, "##"))
+			skip = strings.EqualFold(title, "plan") || strings.EqualFold(title, "work log") || strings.EqualFold(title, "outcome")
+		}
+		if !skip {
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\n")
+}
+
+func completedText(name, s string, limit int) (string, error) {
+	s = strings.Join(strings.Fields(s), " ")
+	if s == "" {
+		return "", fmt.Errorf("%s is required", name)
+	}
+	if strings.Contains(s, "…[truncated]") {
+		return "", fmt.Errorf("%s is truncated", name)
+	}
+	if len([]rune(s)) > limit {
+		return "", fmt.Errorf("%s exceeds %d characters", name, limit)
+	}
+	return s, nil
+}
+
 // upsertSection inserts or replaces a markdown section (identified by its header
 // line, e.g. "## Plan") in body with the given content. When the section already
 // exists its content is replaced in place; otherwise the section is inserted just
@@ -363,9 +608,9 @@ func (s *Store) nextID() (string, error) {
 	if s.idSource != nil {
 		return s.idSource()
 	}
-	// A Store outside a daemon-owned project has no parallel worktrees, so retain
-	// the original current-tree scan behavior for that path.
-	tasks, err := s.listLocked()
+	// A Store outside a daemon-owned project has no parallel worktrees. Reserve
+	// from frontmatter only; duplicate repair still loads full bodies exceptionally.
+	tasks, err := s.listMetadataLocked()
 	if err != nil {
 		return "", err
 	}
@@ -405,11 +650,45 @@ func parseFile(path string) (*Task, error) {
 	if m == nil {
 		return nil, nil // not a task file
 	}
-	var t Task
-	if err := yaml.Unmarshal(m[1], &t); err != nil {
-		return nil, fmt.Errorf("invalid frontmatter: %w", err)
+	t, err := parseFrontmatter(path, m[1])
+	if err != nil {
+		return nil, err
 	}
 	t.Body = strings.TrimLeft(string(m[2]), "\n")
+	return t, nil
+}
+
+func parseMetadataFile(path string) (*Task, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	scan := bufio.NewScanner(f)
+	scan.Buffer(make([]byte, 4096), 1024*1024)
+	if !scan.Scan() || scan.Text() != "---" {
+		return nil, scan.Err()
+	}
+	var front strings.Builder
+	for scan.Scan() {
+		if scan.Text() == "---" {
+			return parseFrontmatter(path, []byte(front.String()))
+		}
+		front.WriteString(scan.Text())
+		front.WriteByte('\n')
+	}
+	if err := scan.Err(); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
+func parseFrontmatter(path string, front []byte) (*Task, error) {
+	var t Task
+	if err := yaml.Unmarshal(front, &t); err != nil {
+		return nil, fmt.Errorf("invalid frontmatter: %w", err)
+	}
 	t.Path = path
 	t.Slug = strings.TrimSuffix(filepath.Base(path), ".md")
 	if i := strings.IndexByte(t.Slug, '-'); i >= 0 {

@@ -163,8 +163,12 @@ in the design set.
 ### 6.2 Backlog
 
 The backlog stores one Markdown file per task under `backlog/`, with YAML frontmatter for id,
-title, status, priority, dates, dependencies, and spec references. The body carries description,
-acceptance criteria, an optional plan, and a work log.
+title, status, priority, dates, dependencies, and spec references. Active-task bodies carry a
+description, acceptance criteria, an optional plan, and a work log. On accepted completion the body
+is compacted in place to the original intent, acceptance criteria when present, a bounded outcome,
+and commit subject. Session event logs are the source of detailed execution and usage history; git
+retains the prior task body and is the reversible migration/rollback path. Backlog summaries and
+dependency checks read frontmatter only, while lookup by id loads the selected body in full.
 
 Statuses are `proposed`, `todo`, `in_progress`, `in_review`, `done`, and `blocked`. A proposed task
 is captured but not accepted scope and is never ready; promotion to todo is the acceptance act.
@@ -405,8 +409,8 @@ names `simple`, `single-opus`, and `high-powered` remain accepted as aliases for
 built-ins, but effective listings and new persisted edits use canonical names. An invalid configured
 tier is rejected; a stale tier name at runtime falls back visibly to the configured default, then to
 available session reviewers, then to coordinator self-review. Selection and resolved reviewer/model
-identities are recorded in the event log and task work log. Tier edits persist and apply to the next
-review spawn.
+identities are recorded in session events rather than copied into task work logs. Tier edits persist
+and apply to the next review spawn.
 
 ## 14. Persistence, remote access, and workstreams
 

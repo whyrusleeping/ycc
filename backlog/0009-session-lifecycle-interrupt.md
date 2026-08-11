@@ -26,15 +26,8 @@ MAJOR #2.)
 - [~] consider GC/retention of idle sessions and on-disk logs — deferred to a follow-on backlog task (automatic idle GC + log retention)
 - [x] TUI/CLI affordance to stop a session (TUI ctrl+x; `ycc stop <id>`)
 
-## Work log
-- 2026-06-28 plan: Note: the `Interrupt` RPC name is already taken by the graceful pause/steer feature (spec §18.7). So this task adds a *distinct hard terminate*: `StopSession`, which calls `Session.Stop()`, cancels t
-…[truncated]
-- 2026-06-28 done: Added a distinct `StopSession` RPC (proto + regenerated code) that hard-terminates a session. `Session.Stop()` is now idempotent (sync.Once), records a terminal `session_stopped` event (new event type → `StatusStopped`), cancels the ctx (unblocking any ask_user / checkpoint), and closes the log. New `Manager.Stop(id)` deletes the session from the map (no leak) and returns `ErrUnknownSession` for unknown/already-stopped ids. Server handler maps that to NotFound. CLI: `ycc stop <id>`. TUI: ctrl+x stops the session and returns to the menu (footer hint updated). Tests: reduce → StatusStopped; ask_user unblocks on Stop + idempotent session_stopped; Manager.Stop removes + ErrUnknownSession. Automatic idle GC + on-disk log retention deferred to a follow-on task. `go build ./...` and `go test ./...` pass.
-- 2026-06-28 implementer report: Implemented task 0009 — a distinct hard "stop/terminate a session" capability (kept the existing `Interrupt` graceful pause/steer RPC untouched).  Changes: - **proto/ycc/v1/ycc.proto**: added `StopS
-…[truncated]
-- 2026-06-28 review tier: single-opus — reviewers: Claude
-- 2026-06-28 review (Claude): accept — The change adds a distinct StopSession RPC (proto + regenerated connect/pb code) that hard-terminates a session, correctly kept separate from the existing graceful Interrupt. Session.Stop() is now ide
-…[truncated]
-- 2026-06-28 decision: accept — commit c043d0c: Add StopSession RPC to hard-terminate sessions  Adds a distinct StopSession RPC (separate from the graceful Interrupt/steer) that cancels the agent loop, records a terminal session_stopped event (new 
-…[truncated]
-- 2026-06-28 usage: 23,826 tok (in 122, out 23,704, cache_r 3,298,197, cache_w 100,309) · cost n/a (unpriced)
+## Outcome
+
+Added the distinct hard-terminate `StopSession` RPC while preserving graceful Interrupt behavior. Session stopping became idempotent and records terminal state, cancels blocked work, and closes the log; manager/server removal and errors, CLI `ycc stop`, TUI ctrl+x, projection, cancellation, and lifecycle behavior were covered. Automatic idle GC and on-disk retention remained deferred.
+
+Commit: c043d0c — Add StopSession RPC to hard-terminate sessions

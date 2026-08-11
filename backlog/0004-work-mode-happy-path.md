@@ -23,28 +23,8 @@ reviewer, and on acceptance commits + marks the task done + appends the work log
 - [ ] one reviewer returns structured findings; coordinator accepts and commits
 - [ ] task file work log records plan / report / review / decision / commit sha
 
-## Work log
-- 2026-06-26 implemented:
-  - `internal/docs`: structured backlog — Task (YAML frontmatter round-trip), Store with
-    List/Get/Create/Update/AppendWorkLog/RenderIndex, next-id + slug. Tests pass.
-  - `internal/git`: thin git wrapper — Open (init + .gitignore .ycc/ + initial commit),
-    Diff (staged), Commit (short sha).
-  - `internal/tools`: `Reviewer` set (read/inspect + bash) + `submit_review` control tool;
-    exported tool-building helpers (Obj/StrProp/GetString/ErrResult/OkResult, Finish).
-  - `internal/orchestrator`: coordinator system prompt + tools list_backlog/get_task/
-    propose_plan/spawn_implementer/spawn_reviewer/commit/update_task/finish. Spawn tools
-    build child engine.Loops (implementer = Worker tools; reviewer = Reviewer tools) that
-    emit into the same session log under distinct actors; review JSON parsed with a
-    plain-text fallback.
-  - `internal/event`: REFACTOR — seq authority moved from Emitter to the Recorder (Log),
-    so coordinator + subagents share one monotonic sequence. Added event types
-    subagent_spawned/finished, plan_proposed, review_submitted, decision_made,
-    doc_updated, commit_made. `Emitter.With(actor)` for subagents.
-  - `internal/session`: Manager builds the coordinator (mode "work") vs a worker agent.
-- 2026-06-26 verified LIVE (claude-opus-4-8): seeded a 1-task backlog; one `ycc start`
-  drove the full loop — coordinator picked 0001, planned, implementer wrote a go module +
-  test and ran `go test`, reviewer ran git diff/test/vet and accepted, coordinator
-  committed (sha 30fcb25) and marked the task done. Work log captured plan/report/review/
-  decision+sha; backlog.md regenerated; .ycc/ kept out of git. All criteria pass.
-- Notes: M2 is the happy path (N=1, no revise loop). Subagents run sequentially and reuse
-  the same Anthropic backend; multi-model + revise loop + interaction levels are 0005.
+## Outcome
+
+Implemented the structured backlog store, git wrapper, coordinator tools, implementer/reviewer subagents, shared event sequencing, and work-mode session assembly. A live Claude run completed the full pick-plan-implement-test-review-commit flow and marked the seeded task done.
+
+Commit: 7365ee4 — ycc: initialize workspace

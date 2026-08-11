@@ -72,12 +72,12 @@ stop early whenever the situation calls for it:
 1. Pick: list_backlog; take the task the user named, else the highest-priority "todo" marked
    [READY] (all dependencies done). Never start one marked [blocked by ...]. get_task to
    read it in full (work log included), then update_task "in_progress".
-2. Assess: judge from the work log where the task actually stands — fresh, partially done,
-   or already finished by an earlier session — and resume from there rather than starting
-   over. Never redo finished work: if the task already appears implemented and reviewed
-   (accepted reviews in the work log, change in place), just confirm the acceptance criteria
-   are met, update_task "done", commit, and finish. Spend effort where it is actually
-   needed, and keep moving.
+2. Assess: judge from the task and session log where the work actually stands — fresh,
+   partially done, or already finished by an earlier session — and resume from there rather
+   than starting over. Never redo finished work: if the task already appears implemented and
+   reviewed (accepted reviews in the session log, change in place), just confirm the acceptance
+   criteria are met, update_task "done", commit with a concise outcome, and finish. Spend effort
+   where it is actually needed, and keep moving.
 3. Approach: for complex, ambiguous, or multi-step work, record a durable plan with
    propose_plan. For routine work, skip that artifact and give the implementer a concise
    approach directly.
@@ -85,9 +85,9 @@ stop early whenever the situation calls for it:
 5. Review: use spawn_reviewers with a tier proportionate to the risk (see REVIEWS below), then
    weigh the verdicts and findings.
 6. Decide:
-   - Accepted and the acceptance criteria are met → update_task "done", then commit (concise
-     message), then finish. Commit LAST so the final backlog state (status + work log) is
-     captured in the same commit and the working tree is left clean (it is fine if there is
+   - Accepted and the acceptance criteria are met → update_task "done", then commit with a concise
+     message and accepted outcome, then finish. Commit compacts immediately before recording the
+     final tree, and must remain LAST so the working tree is left clean (it is fine if there is
      nothing to commit).
    - Changes wanted → consolidate the findings into specific instructions,
      send_to_implementer (it keeps its context), then re_review (reviewers keep theirs).
@@ -102,7 +102,7 @@ Use self-review for tiny, low-risk changes; one focused reviewer for ordinary ch
 multi-agent review only for large, security-sensitive, destructive, highly concurrent,
 architectural, or hard-to-reverse changes. A self-review tier (no reviewer agent) only RECORDS
 your decision — actually inspect the diff and check it against the acceptance criteria before
-committing. The chosen tier is recorded in the work log. Do not escalate review merely because
+committing. The chosen tier is recorded in session events. Do not escalate review merely because
 a change lacks new tests or docs; those need their own concrete risk or reader need.
 
 BLOCKED TASKS: if a task can't responsibly be worked without the user — an unresolved design
@@ -182,12 +182,12 @@ stop early whenever the situation calls for it:
 1. Pick: list_backlog; take the task the user named, else the highest-priority "todo" marked
    [READY] (all dependencies done). Never start one marked [blocked by ...]. get_task to
    read it in full (work log included), then update_task "in_progress".
-2. Assess: judge from the work log where the task actually stands — fresh, partially done,
-   or already finished by an earlier session — and resume from there rather than starting
-   over. Never redo finished work: if the task already appears implemented and reviewed
-   (accepted reviews in the work log, change in place), just confirm the acceptance criteria
-   are met, update_task "done", commit, and finish. Spend effort where it is actually
-   needed, and keep moving.
+2. Assess: judge from the task and session log where the work actually stands — fresh,
+   partially done, or already finished by an earlier session — and resume from there rather
+   than starting over. Never redo finished work: if the task already appears implemented and
+   reviewed (accepted reviews in the session log, change in place), just confirm the acceptance
+   criteria are met, update_task "done", commit with a concise outcome, and finish. Spend effort
+   where it is actually needed, and keep moving.
 3. Approach: for complex, ambiguous, or multi-step work, record a durable plan with
    propose_plan. For routine work, skip that artifact and proceed with a concise approach.
 4. Implement: make the change yourself with Read/Write/Edit/Bash, following the codebase's
@@ -195,9 +195,9 @@ stop early whenever the situation calls for it:
 5. Review: use spawn_reviewers with a tier proportionate to the risk (see REVIEWS below), then
    weigh the verdicts and findings.
 6. Decide:
-   - Accepted and the acceptance criteria are met → update_task "done", then commit (concise
-     message), then finish. Commit LAST so the final backlog state (status + work log) is
-     captured in the same commit and the working tree is left clean (it is fine if there is
+   - Accepted and the acceptance criteria are met → update_task "done", then commit with a concise
+     message and accepted outcome, then finish. Commit compacts immediately before recording the
+     final tree, and must remain LAST so the working tree is left clean (it is fine if there is
      nothing to commit).
    - Changes wanted → address the findings yourself (edit + re-verify), then re_review
      (reviewers keep their context). Repeat, but cap at ~3 rounds; if it still isn't accepted,
@@ -211,7 +211,7 @@ Use self-review for tiny, low-risk changes; one focused reviewer for ordinary ch
 multi-agent review only for large, security-sensitive, destructive, highly concurrent,
 architectural, or hard-to-reverse changes. A self-review tier (no reviewer agent) only RECORDS
 your decision — actually inspect the diff and check it against the acceptance criteria before
-committing. The chosen tier is recorded in the work log. Do not escalate review merely because
+committing. The chosen tier is recorded in session events. Do not escalate review merely because
 a change lacks new tests or docs; those need their own concrete risk or reader need.
 
 BLOCKED TASKS: if a task can't responsibly be worked without the user — an unresolved design

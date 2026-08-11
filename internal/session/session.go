@@ -118,10 +118,6 @@ type Session struct {
 	// any of off/low/medium/high/xhigh/max forces that level for the model until
 	// changed.
 	thinkLevels map[string]string
-	// usageSummarized tracks tasks whose usage/cost summary has already been
-	// appended to the work log this session, so each accrues at most one summary
-	// line even across repeated idle cycles.
-	usageSummarized map[string]bool
 	// Spend guard, guarded by s.mu. budgetWarned is set
 	// once the session crosses ~80% of a configured cap (so the warning fires at
 	// most once); budgetBreached is set once a cap is crossed and handled (the
@@ -1234,7 +1230,7 @@ func (s *Session) run() {
 			if s.logFailure() != nil || s.ctx.Err() != nil {
 				return
 			}
-			s.summarizeUsage()
+			// Usage attribution remains authoritative in the session event log.
 		}
 		if s.logFailure() != nil || s.ctx.Err() != nil {
 			return
@@ -1317,57 +1313,6 @@ func (s *Session) withAssumptions(report string) string {
 		b = append(b, "- "+a+"\n"...)
 	}
 	return string(b)
-}
-
-// summarizeUsage appends a one-line usage/cost summary to the work log of EVERY
-// task that accrued usage in the session — not just the currently-focused task —
-// when a work-mode session goes idle, so per-task cost accrues
-// in the backlog across sessions. It is idempotent per task within a session: at
-// most one line per task.
-//
-// Cumulative-vs-snapshot: the work-log line is a one-shot snapshot captured the
-// first idle a task has nonzero usage and is NOT refreshed as more usage accrues
-// for that task in later idle cycles. The recomputed `ycc cost` view aggregates
-// from the event log and stays authoritative for cumulative totals.
-func (s *Session) summarizeUsage() {
-	if s.Mode != "work" {
-		return
-	}
-	events := s.log.Snapshot()
-
-	entries := usage.ReduceEvents(s.ID, events)
-	res := usage.Aggregate(entries, s.reg, usage.Options{GroupBy: []usage.Dim{usage.DimTask}})
-	for _, row := range res.Rows {
-		if row.Task == "" || row.Tokens.Total == 0 {
-			continue
-		}
-		s.mu.Lock()
-		if s.usageSummarized == nil {
-			s.usageSummarized = map[string]bool{}
-		}
-		already := s.usageSummarized[row.Task]
-		s.mu.Unlock()
-		if already {
-			continue
-		}
-
-		if s.deps != nil && s.deps.Docs != nil {
-			var filtered []usage.Entry
-			for _, e := range entries {
-				if e.Task == row.Task {
-					filtered = append(filtered, e)
-				}
-			}
-			agentRows := usage.AgentRows(filtered, s.reg)
-			if _, err := s.deps.Docs.AppendWorkLog(row.Task, usage.FormatWorkLogSummary(row, agentRows)); err != nil {
-				s.emitter.Emit(event.Narration, map[string]any{"msg": "usage summary work-log append failed: " + err.Error()})
-				continue
-			}
-		}
-		s.mu.Lock()
-		s.usageSummarized[row.Task] = true
-		s.mu.Unlock()
-	}
 }
 
 // Manager owns the set of live sessions and the backend registry used to build
@@ -2105,27 +2050,26 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{
-		ID:              id,
-		Workspace:       absWS,
-		Mode:            mode,
-		log:             log,
-		emitter:         emitter,
-		inter:           inter,
-		deps:            deps,
-		reg:             m.reg,
-		prompt:          prompt,
-		resumed:         resumed,
-		inputCh:         make(chan string, 64),
-		messageCh:       make(chan engine.UserMessage, 64),
-		retryCh:         make(chan struct{}),
-		ctx:             ctx,
-		cancel:          cancel,
-		status:          event.StatusRunning,
-		coordinator:     coordName,
-		implementer:     implName,
-		reviewers:       reviewerNames,
-		thinkLevels:     map[string]string{},
-		usageSummarized: map[string]bool{},
+		ID:          id,
+		Workspace:   absWS,
+		Mode:        mode,
+		log:         log,
+		emitter:     emitter,
+		inter:       inter,
+		deps:        deps,
+		reg:         m.reg,
+		prompt:      prompt,
+		resumed:     resumed,
+		inputCh:     make(chan string, 64),
+		messageCh:   make(chan engine.UserMessage, 64),
+		retryCh:     make(chan struct{}),
+		ctx:         ctx,
+		cancel:      cancel,
+		status:      event.StatusRunning,
+		coordinator: coordName,
+		implementer: implName,
+		reviewers:   reviewerNames,
+		thinkLevels: map[string]string{},
 	}
 	// Durability loss is terminal for a live session: continuing would mutate
 	// model/tool state from history that cannot be replayed after restart. Log

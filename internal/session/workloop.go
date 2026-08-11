@@ -353,7 +353,7 @@ func (wl *workLoop) run() {
 		wl.finish("loop stopped: "+err.Error(), nil)
 		return
 	}
-	tasks, err := store.List()
+	tasks, err := store.ListMetadata()
 	if err != nil {
 		wl.finish("loop stopped: "+err.Error(), nil)
 		return
@@ -371,7 +371,7 @@ func (wl *workLoop) run() {
 			wl.finish("loop stopped: requested", tasks)
 			return
 		}
-		tasks, err = store.List()
+		tasks, err = store.ListMetadata()
 		if err != nil {
 			wl.finish("loop stopped: "+err.Error(), tasks)
 			return
@@ -403,7 +403,7 @@ func (wl *workLoop) run() {
 		if err != nil {
 			// Re-read the backlog so the digest reflects any progress the session
 			// made before failing.
-			if final, lerr := store.List(); lerr == nil {
+			if final, lerr := store.ListMetadata(); lerr == nil {
 				tasks = final
 			}
 			wl.finish("loop stopped: "+err.Error(), tasks)
@@ -413,8 +413,8 @@ func (wl *workLoop) run() {
 		// Publish an incremental digest after every completed session. Accumulation
 		// must happen first because the digest rolls up session focus, usage, commits,
 		// and verdicts as well as the latest backlog state.
-		if latest, lerr := store.List(); lerr == nil {
-			tasks = latest
+		if latest, lerr := store.ListMetadata(); lerr == nil {
+			tasks = hydrateBlockedBodies(store, latest)
 			wl.mu.Lock()
 			wl.buildDigestLocked(tasks)
 			wl.mu.Unlock()
@@ -434,7 +434,7 @@ func (wl *workLoop) run() {
 		}
 		// A session may have changed the backlog before its final provider call
 		// failed. Keep every terminal digest below fresh enough to include that work.
-		if final, lerr := store.List(); lerr == nil {
+		if final, lerr := store.ListMetadata(); lerr == nil {
 			tasks = final
 		}
 		if !rec.errRetryable {
@@ -563,6 +563,7 @@ func (wl *workLoop) accumulate(rec loopSessRec, breach bool) {
 // and the final backlog, marks the loop finished, and — when at least one session
 // ran — pushes the completion digest via the daemon notifier (`digest` kind).
 func (wl *workLoop) finish(outcome string, final []*docs.Task) {
+	final = hydrateBlockedBodies(docs.NewStore(wl.workspace), final)
 	// Serialize the final write and keep state locked until its persistence attempt
 	// completes. Otherwise
 	// StartWorkLoop could observe "finished", install a new loop, and have that new
@@ -591,6 +592,19 @@ func (wl *workLoop) finish(outcome string, final []*docs.Task) {
 // buildDigestLocked rolls the run's session records up against the baseline and
 // latest backlog into the digest fields. It is rebuilt after every session for
 // incremental observers and once more at finish. Caller holds wl.mu.
+func hydrateBlockedBodies(store *docs.Store, tasks []*docs.Task) []*docs.Task {
+	out := append([]*docs.Task(nil), tasks...)
+	for i, task := range out {
+		if task.Status != docs.StatusBlocked || task.Body != "" {
+			continue
+		}
+		if full, err := store.Get(task.ID); err == nil {
+			out[i] = full
+		}
+	}
+	return out
+}
+
 func (wl *workLoop) buildDigestLocked(final []*docs.Task) {
 	wl.completed, wl.blocked, wl.inReview, wl.created = nil, nil, nil, nil
 

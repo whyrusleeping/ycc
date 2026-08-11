@@ -249,13 +249,13 @@ func TestReviseLoop(t *testing.T) {
 		t.Fatalf("re-review should accept:\n%s", r4.Content)
 	}
 
-	r5, err := commitTool(d).Call(ctx, args("task_id", "0001", "message", "add Add"))
+	r5, err := commitTool(d).Call(ctx, args("task_id", "0001", "message", "add Add", "outcome", "Added and verified Add."))
 	if err != nil || r5.IsError {
 		t.Fatalf("commit failed: %v %s", err, r5.Content)
 	}
 
-	// Commit must leave the working tree clean: the work-log line is appended
-	// before committing, so no backlog files are left uncommitted afterward.
+	// Commit must leave the working tree clean: compaction happens before the
+	// commit, so no backlog files are left uncommitted afterward.
 	out, gerr := exec.Command("git", "-C", ws, "status", "--porcelain").Output()
 	if gerr != nil {
 		t.Fatalf("git status: %v", gerr)
@@ -264,12 +264,13 @@ func TestReviseLoop(t *testing.T) {
 		t.Fatalf("working tree not clean after commit:\n%s", out)
 	}
 
-	// Work log should record plan?(no, we skipped) but at least implementer report,
-	// a revision, two reviews, and the commit decision.
 	task, _ := store.Get("0001")
-	for _, want := range []string{"implementer report:", "revision:", "review (rev): revise", "review (rev): accept", "decision: accept — commit"} {
-		if !strings.Contains(task.Body, want) {
-			t.Fatalf("work log missing %q:\n%s", want, task.Body)
+	if task.Status != docs.StatusDone || !strings.Contains(task.Body, "Added and verified Add.") || !strings.Contains(task.Body, "Commit: add Add") {
+		t.Fatalf("completed task is not compact: %+v\n%s", task, task.Body)
+	}
+	for _, removed := range []string{"implementer report:", "revision:", "review (rev):"} {
+		if strings.Contains(task.Body, removed) {
+			t.Fatalf("completed task retained operational detail %q:\n%s", removed, task.Body)
 		}
 	}
 }
@@ -329,9 +330,6 @@ func TestSpawnReviewersSelfReviewTier(t *testing.T) {
 	if !strings.Contains(res.Content, "review this change yourself") {
 		t.Fatalf("self-review guidance missing:\n%s", res.Content)
 	}
-	if !workLogContains(t, store, "0001", "review tier: self-review (coordinator self-review)") {
-		t.Fatalf("work log missing self-review tier line")
-	}
 	// review_tier_selected emitted with self_review=true.
 	found := false
 	for _, ev := range rec.events {
@@ -348,7 +346,7 @@ func TestSpawnReviewersSelfReviewTier(t *testing.T) {
 }
 
 // With a ReviewPlan carrying Specs, spawn_reviewers runs those reviewers and
-// records the tier line in the work log.
+// records the tier in session events.
 func TestSpawnReviewersTierWithSpecs(t *testing.T) {
 	ws := t.TempDir()
 	repo, err := git.Open(ws)
@@ -389,7 +387,7 @@ func TestSpawnReviewersTierWithSpecs(t *testing.T) {
 	if len(msgs[1].ToolCalls) != 1 || msgs[1].ToolCalls[0].Function.Name != "Bash" || msgs[1].ToolCalls[0].ID != reviewDiffCallID {
 		t.Fatalf("synthetic diff call = %+v", msgs[1])
 	}
-	if !strings.Contains(msgs[2].Content, "review tier: standard") {
+	if !strings.Contains(msgs[2].Content, "0001-a-task.md") {
 		t.Fatalf("preloaded result does not contain current staged diff: %q", msgs[2].Content)
 	}
 	var syntheticTurns, syntheticCalls, syntheticResults int
@@ -415,15 +413,11 @@ func TestSpawnReviewersTierWithSpecs(t *testing.T) {
 	if syntheticTurns != 1 || syntheticCalls != 1 || syntheticResults != 1 {
 		t.Fatalf("synthetic reviewer events = turn %d call %d result %d", syntheticTurns, syntheticCalls, syntheticResults)
 	}
-	if !workLogContains(t, store, "0001", "review tier: standard — reviewers: rev") {
-		t.Fatalf("work log missing tier-with-reviewers line")
-	}
 }
 
 // A review tier may task several reviewers with distinct focuses — including two
 // slots on the SAME logical model under different labels (spec §13.1). Each
-// reviewer's system prompt carries its own focus, the actor labels stay distinct,
-// and the work log names both the label and the model behind it.
+// reviewer's system prompt carries its own focus and actor labels stay distinct.
 func TestSpawnReviewersFocusedTier(t *testing.T) {
 	ws := t.TempDir()
 	repo, err := git.Open(ws)
@@ -479,12 +473,5 @@ func TestSpawnReviewersFocusedTier(t *testing.T) {
 		if !actors[want] {
 			t.Fatalf("missing actor %q; got %v", want, actors)
 		}
-	}
-	if !workLogContains(t, store, "0001", "review tier: deep — reviewers: readability (claude), performance (claude)") {
-		task, _ := store.Get("0001")
-		t.Fatalf("work log missing focused reviewer line:\n%s", task.Body)
-	}
-	if !workLogContains(t, store, "0001", "review (readability/claude): accept") {
-		t.Fatalf("work log missing per-reviewer verdict line")
 	}
 }

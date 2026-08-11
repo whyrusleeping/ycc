@@ -16,7 +16,7 @@ import (
 	"github.com/whyrusleeping/ycc/proto/ycc/v1/yccv1connect"
 )
 
-// taskCommand implements `ycc task <add|list|show>`: backlog capture and
+// taskCommand implements `ycc task <add|list|show|compact>`: backlog capture and
 // browsing from the shell. It lets you jot a task from anywhere — a
 // git hook, another tool, or just the CLI — without opening the TUI.
 //
@@ -112,6 +112,33 @@ func (a *app) taskCommand() *cli.Command {
 					return runTaskShow(ctx, be, os.Stdout, id)
 				},
 			},
+			{
+				Name:  "compact",
+				Usage: "conservatively compact eligible legacy completed tasks",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{Name: "write", Usage: "apply the migration (default is a dry run)"},
+					&cli.StringSliceFlag{Name: "exclude", Usage: "task id to leave unchanged (repeatable)"},
+				},
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					if cmd.Args().Present() {
+						return fmt.Errorf("usage: ycc task compact [--write]")
+					}
+					ids, err := docs.NewStore(a.workspace).CompactCompletedHistory(cmd.Bool("write"), cmd.StringSlice("exclude")...)
+					if err != nil {
+						return err
+					}
+					mode := "would compact"
+					if cmd.Bool("write") {
+						mode = "compacted"
+					}
+					fmt.Fprintf(os.Stdout, "%s %d completed task(s)", mode, len(ids))
+					if len(ids) > 0 {
+						fmt.Fprintf(os.Stdout, ": %s", strings.Join(ids, ", "))
+					}
+					fmt.Fprintln(os.Stdout)
+					return nil
+				},
+			},
 		},
 	}
 }
@@ -173,7 +200,7 @@ func (d directBackend) create(_ context.Context, title, body string, priority in
 	if err != nil {
 		return taskDetailRow{}, err
 	}
-	tasks, err := d.store.List()
+	tasks, err := d.store.ListMetadata()
 	if err != nil {
 		return taskDetailRow{}, err
 	}
@@ -181,7 +208,7 @@ func (d directBackend) create(_ context.Context, title, body string, priority in
 }
 
 func (d directBackend) list(_ context.Context) ([]taskRow, error) {
-	tasks, err := d.store.List()
+	tasks, err := d.store.ListMetadata()
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +228,7 @@ func (d directBackend) get(_ context.Context, id string) (taskDetailRow, error) 
 	if err != nil {
 		return taskDetailRow{}, err
 	}
-	tasks, err := d.store.List()
+	tasks, err := d.store.ListMetadata()
 	if err != nil {
 		return taskDetailRow{}, err
 	}

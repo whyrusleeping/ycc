@@ -42,9 +42,8 @@ func TestBoundHints(t *testing.T) {
 	}
 }
 
-// spawn_implementer with context_hints records a work-log breadcrumb noting the
-// hints (consistent with task 0020's plan persistence).
-func TestSpawnImplementerHintsBreadcrumb(t *testing.T) {
+// Context hints are session execution detail and are not copied into the task body.
+func TestSpawnImplementerHintsNotPersisted(t *testing.T) {
 	ws := t.TempDir()
 	repo, err := git.Open(ws)
 	if err != nil {
@@ -71,14 +70,14 @@ func TestSpawnImplementerHintsBreadcrumb(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !workLogContains(t, store, "0001", "context hints: internal/foo.go; func Bar") {
-		task, _ := store.Get("0001")
-		t.Fatalf("work log missing context-hints breadcrumb:\n%s", task.Body)
+	task, _ := store.Get("0001")
+	if strings.Contains(task.Body, "context hints:") {
+		t.Fatalf("task body copied context-hints execution detail:\n%s", task.Body)
 	}
 }
 
 // propose_plan with context_hints persists a "### Starting points" subsection in
-// the durable plan artifact and records a work-log breadcrumb.
+// the durable plan artifact without duplicating it in the work log.
 func TestProposePlanHintsArtifact(t *testing.T) {
 	ws := t.TempDir()
 	repo, err := git.Open(ws)
@@ -106,7 +105,7 @@ func TestProposePlanHintsArtifact(t *testing.T) {
 	if !strings.Contains(task.Body, "### Starting points") || !strings.Contains(task.Body, "- internal/foo.go") {
 		t.Fatalf("plan artifact missing starting-points subsection:\n%s", task.Body)
 	}
-	if !strings.Contains(task.Body, "context hints: 1 recorded with plan") {
-		t.Fatalf("work log missing context-hints breadcrumb:\n%s", task.Body)
+	if strings.Contains(task.Body, "context hints: 1 recorded with plan") {
+		t.Fatalf("task body duplicated context-hints breadcrumb:\n%s", task.Body)
 	}
 }

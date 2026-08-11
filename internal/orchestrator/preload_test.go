@@ -165,7 +165,11 @@ func TestSpawnImplementerPreloadHistoryEventsAndBreadcrumb(t *testing.T) {
 	if syntheticTurns != 1 || syntheticCalls != 1 || syntheticResults != 1 {
 		t.Fatalf("synthetic events = turn %d call %d result %d", syntheticTurns, syntheticCalls, syntheticResults)
 	}
-	if !workLogContains(t, store, "0001", "preload: 1 file(s)") {
-		t.Fatal("work log lacks preload breadcrumb")
+	task, err := store.Get("0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(task.Body, "preload:") {
+		t.Fatalf("task body copied preload event detail:\n%s", task.Body)
 	}
 }

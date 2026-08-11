@@ -172,20 +172,6 @@ type reviewerHandle struct {
 	loop  *engine.Loop
 }
 
-// reviewerLabels renders a reviewer line-up for the work log / tool description,
-// naming the backing model when the label differs from it.
-func reviewerLabels(specs []AgentSpec) []string {
-	out := make([]string, 0, len(specs))
-	for _, s := range specs {
-		if s.label() != s.Name {
-			out = append(out, s.label()+" ("+s.Name+")")
-			continue
-		}
-		out = append(out, s.Name)
-	}
-	return out
-}
-
 // SetImplementer changes future spawns; a running implementer keeps its context.
 func (d *Deps) SetImplementer(spec AgentSpec) {
 	d.mu.Lock()
@@ -255,7 +241,7 @@ func listBacklog(d *Deps) *gollama.Tool {
 			"acceptance — never ready to start. Completed (done) tasks are hidden unless include_done is true.",
 		Params: tools.Obj(map[string]any{"include_done": tools.BoolProp("include completed (done) tasks in the output (default false)")}),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
-			ts, err := d.Docs.List()
+			ts, err := d.Docs.ListMetadata()
 			if err != nil {
 				return tools.ErrResult("list_backlog: %v", err), nil
 			}
@@ -354,12 +340,6 @@ func proposePlan(d *Deps) *gollama.Tool {
 			if _, err := d.Docs.SetPlan(id, planDoc); err != nil {
 				return tools.ErrResult("propose_plan: %v", err), nil
 			}
-			if _, err := d.Docs.AppendWorkLog(id, "plan: "+oneLine(plan)); err != nil {
-				return tools.ErrResult("propose_plan: %v", err), nil
-			}
-			if len(hints) > 0 {
-				d.Docs.AppendWorkLog(id, fmt.Sprintf("context hints: %d recorded with plan", len(hints)))
-			}
 			return tools.OkResult("plan recorded"), nil
 		},
 	}
@@ -422,10 +402,6 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 			}
 			// Delegating a task makes it the session's active focus.
 			d.emitFocus(id)
-			// Hint logging is best-effort and must not prevent delegation.
-			if len(hints) > 0 {
-				d.Docs.AppendWorkLog(id, "context hints: "+oneLine(strings.Join(hints, "; ")))
-			}
 			reg := tools.New()
 			reg.Add(tools.Worker(&tools.Workspace{
 				Root:       d.Workspace,
@@ -448,7 +424,6 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 			if len(preloaded.History) > 0 {
 				loop.SetHistory(preloaded.History)
 				emitSyntheticPreload(d.Emitter, impl, preloaded)
-				d.Docs.AppendWorkLog(id, fmt.Sprintf("preload: %d file(s), ~%d KiB seeded into implementer context", preloaded.Files, (preloaded.Bytes+1023)/1024))
 			}
 			loop.Seed(implementerPrompt(t, plan, hints))
 			d.mu.Lock()
@@ -631,7 +606,7 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 		Name: "spawn_reviewers",
 		Description: "Get independent reviews of the implementer's changes, running concurrently. " +
 			reviewTierBlurb(d) + " " +
-			"Returns each verdict (accept/revise) and findings; the chosen tier is recorded in the work log. " +
+			"Returns each verdict (accept/revise) and findings; the chosen tier is recorded in session events. " +
 			"Pass background:true to run the review set as a background job (returns a job_id immediately; verdicts " +
 			"arrive via wait or automatically). Reviewers are read-only and run freely in parallel with other work.",
 		Params: tools.Obj(map[string]any{
@@ -653,9 +628,9 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 				plan = ReviewPlan{Tier: "default", Requested: tier, Specs: d.reviewerSpecs()}
 			}
 
-			// Surface the tier selection in events and the work log (always). A
-			// reviewer's label may differ from its model (a tier can task two
-			// focuses at the same model), so both are recorded.
+			// Surface the tier selection in events. A reviewer's label may differ
+			// from its model (a tier can task two focuses at the same model), so
+			// both are recorded.
 			revNames := make([]string, 0, len(plan.Specs))
 			revModels := make([]string, 0, len(plan.Specs))
 			for _, s := range plan.Specs {
@@ -667,17 +642,6 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 				"self_review": plan.SelfReview, "fallback": plan.Fallback,
 				"reviewers": revNames, "models": revModels,
 			})
-			logLine := fmt.Sprintf("review tier: %s", plan.Tier)
-			if plan.SelfReview {
-				logLine += " (coordinator self-review)"
-			} else if len(revNames) > 0 {
-				logLine += " — reviewers: " + strings.Join(reviewerLabels(plan.Specs), ", ")
-			}
-			if plan.Fallback && plan.Requested != "" {
-				logLine += fmt.Sprintf(" [requested %q unknown; used default]", plan.Requested)
-			}
-			d.Docs.AppendWorkLog(id, logLine)
-
 			if plan.SelfReview {
 				d.mu.Lock()
 				d.reviewers = nil
@@ -853,20 +817,22 @@ func askUser(d *Deps) *gollama.Tool {
 func commitTool(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name:        "commit",
-		Description: "Commit the accepted changes for a task to git. Records the decision in the task's work log.",
+		Description: "Compact the completed task, mark it done, and commit the accepted changes to git. Detailed execution remains in session events and git history.",
 		Params: tools.Obj(map[string]any{
 			"task_id": tools.StrProp("task id being committed"),
 			"message": tools.StrProp("concise commit message"),
-		}, "task_id", "message"),
+			"outcome": tools.StrProp("concise accepted outcome retained with the completed task"),
+		}, "task_id", "message", "outcome"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			id, _ := tools.GetString(params, "task_id")
 			msg, _ := tools.GetString(params, "message")
-			// Record the acceptance decision in the work log BEFORE committing so the
-			// final backlog state (status, work log) is captured in the same commit
-			// (Commit does `git add -A`), leaving no leftover uncommitted backlog files.
-			// The sha is not known until after the commit and embedding it would change
-			// the tree, so the work-log line omits it.
-			d.Docs.AppendWorkLog(id, "decision: accept — commit: "+oneLine(msg))
+			outcome, _ := tools.GetString(params, "outcome")
+			// Compact and mark done immediately before committing so the accepted tree
+			// contains intent, criteria, outcome, and commit subject without duplicating
+			// the detailed session history.
+			if _, err := d.Docs.Complete(id, outcome, msg); err != nil {
+				return tools.ErrResult("commit: %v", err), nil
+			}
 			sha, err := d.Repo.Commit(msg)
 			if err != nil {
 				return tools.ErrResult("commit: %v", err), nil
@@ -903,7 +869,7 @@ func updateTask(d *Deps) *gollama.Tool {
 }
 
 // runReviewers runs each reviewer's loop concurrently and waits for all (barrier),
-// emitting events and recording each verdict in the work log.
+// emitting each verdict into the session log.
 func runReviewers(ctx context.Context, d *Deps, handles []*reviewerHandle, taskID string) []reviewResult {
 	results := make([]reviewResult, len(handles))
 	var wg sync.WaitGroup
@@ -920,7 +886,7 @@ func runReviewers(ctx context.Context, d *Deps, handles []*reviewerHandle, taskI
 				rv = parseReview(res.Report)
 			}
 			d.Emitter.Emit(event.ReviewSubmitted, map[string]any{
-				"model": h.name, "logical_model": h.model,
+				"task": taskID, "model": h.name, "logical_model": h.model,
 				"verdict": rv.Verdict, "summary": rv.Summary, "findings": len(rv.Findings),
 			})
 			d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "reviewer", "model": h.name, "logical_model": h.model})
@@ -928,9 +894,6 @@ func runReviewers(ctx context.Context, d *Deps, handles []*reviewerHandle, taskI
 		}(i, h)
 	}
 	wg.Wait()
-	for _, r := range results {
-		d.Docs.AppendWorkLog(taskID, fmt.Sprintf("review (%s): %s — %s", r.label(), r.rv.Verdict, oneLine(r.rv.Summary)))
-	}
 	return results
 }
 

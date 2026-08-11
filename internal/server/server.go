@@ -722,7 +722,7 @@ func (s *Server) ListBacklog(_ context.Context, req *connect.Request[v1.ListBack
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	tasks, err := store.List()
+	tasks, err := store.ListMetadata()
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
@@ -748,7 +748,7 @@ func (s *Server) GetTask(_ context.Context, req *connect.Request[v1.GetTaskReque
 	if err != nil {
 		return nil, connect.NewError(connect.CodeNotFound, err)
 	}
-	tasks, err := store.List()
+	tasks, err := store.ListMetadata()
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
@@ -805,7 +805,7 @@ func (s *Server) UpdateTask(_ context.Context, req *connect.Request[v1.UpdateTas
 	if err != nil {
 		return nil, connect.NewError(connect.CodeNotFound, err)
 	}
-	tasks, err := store.List()
+	tasks, err := store.ListMetadata()
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
@@ -840,7 +840,7 @@ func (s *Server) CreateTask(_ context.Context, req *connect.Request[v1.CreateTas
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	tasks, err := store.List()
+	tasks, err := store.ListMetadata()
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}

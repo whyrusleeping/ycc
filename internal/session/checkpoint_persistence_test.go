@@ -106,21 +106,16 @@ func TestSessionIdleFailureStopsBeforeUsageAndCorrections(t *testing.T) {
 			seq:     3,
 			message: engine.UserMessage{Text: "late correction"},
 		}},
-		usageSummarized: map[string]bool{},
 	}
 
-	// With Mode=work and no real Log, reaching summarizeUsage would panic. A
-	// SessionIdle durability failure must return first and must not consume the
-	// buffered correction.
+	// A SessionIdle durability failure must return before consuming the buffered
+	// correction.
 	s.run()
 	if turner.calls != 1 {
 		t.Fatalf("model requests = %d, want 1", turner.calls)
 	}
 	if recorder.Err() == nil {
 		t.Fatal("SessionIdle did not trigger recorder failure")
-	}
-	if len(s.usageSummarized) != 0 {
-		t.Fatalf("usage summary state mutated after SessionIdle failure: %+v", s.usageSummarized)
 	}
 	if len(s.corrections) != 1 {
 		t.Fatalf("buffered corrections consumed after SessionIdle failure: %+v", s.corrections)

@@ -38,6 +38,8 @@ default deliverables.
 - Do not put task IDs, review history, implementation chronology, or routine spec-section
   citations in code comments. Git and the backlog already retain that history.
 - Delete or shorten obsolete documentation. Git preserves removed material.
+- Keep completed backlog entries compact: intent, acceptance criteria, outcome, and commit subject.
+  Session logs and git—not copied preload, review, or usage transcripts—retain execution detail.
 - Save runbooks only for procedures that are genuinely repeatable and likely to be reused.
 
 ## Review

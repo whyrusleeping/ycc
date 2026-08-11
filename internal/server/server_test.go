@@ -293,6 +293,9 @@ func TestBacklogRPCs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create second: %v", err)
 	}
+	if _, err := store.Complete(a.ID, "Finished first task.", "feat: first task"); err != nil {
+		t.Fatalf("Complete first: %v", err)
+	}
 
 	srv := New(session.NewManager(reg, ws))
 	ctx := context.Background()
@@ -309,11 +312,8 @@ func TestBacklogRPCs(t *testing.T) {
 		t.Fatalf("first task = %+v, want ready with no blockers", first)
 	}
 	second := list.Msg.Tasks[1]
-	if second.GetId() != b.ID || second.GetReady() {
-		t.Fatalf("second task = %+v, want not ready", second)
-	}
-	if len(second.GetBlockedBy()) != 1 || second.GetBlockedBy()[0] != a.ID {
-		t.Fatalf("second blocked_by = %v, want [%s]", second.GetBlockedBy(), a.ID)
+	if second.GetId() != b.ID || !second.GetReady() || len(second.GetBlockedBy()) != 0 {
+		t.Fatalf("second task = %+v, want ready after completed dependency", second)
 	}
 
 	det, err := srv.GetTask(ctx, connect.NewRequest(&v1.GetTaskRequest{Id: b.ID}))
@@ -327,11 +327,18 @@ func TestBacklogRPCs(t *testing.T) {
 	if len(td.GetDependsOn()) != 1 || td.GetDependsOn()[0] != a.ID {
 		t.Fatalf("GetTask depends_on = %v, want [%s]", td.GetDependsOn(), a.ID)
 	}
-	if len(td.GetBlockedBy()) != 1 || td.GetBlockedBy()[0] != a.ID {
-		t.Fatalf("GetTask blocked_by = %v, want [%s]", td.GetBlockedBy(), a.ID)
+	if len(td.GetBlockedBy()) != 0 || !td.GetReady() {
+		t.Fatalf("GetTask blocked_by = %v, want ready", td.GetBlockedBy())
 	}
 	if td.GetPath() == "" {
 		t.Fatal("GetTask path empty, want the task file path for local editor gating")
+	}
+	completed, err := srv.GetTask(ctx, connect.NewRequest(&v1.GetTaskRequest{Id: a.ID}))
+	if err != nil {
+		t.Fatalf("GetTask completed: %v", err)
+	}
+	if body := completed.Msg.Task.GetBody(); !strings.Contains(body, "Finished first task.") || !strings.Contains(body, "Commit: feat: first task") {
+		t.Fatalf("completed task lookup lost compact detail:\n%s", body)
 	}
 
 	if _, err := srv.GetTask(ctx, connect.NewRequest(&v1.GetTaskRequest{Id: "9999"})); err == nil {

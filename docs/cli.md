@@ -157,7 +157,7 @@ Columns: the group-by dimension(s), then `Input`, `Output`, `Cache`, `Total`
 (tokens) and `Cost`. A `*` marks partial pricing (some models unpriced); `—`
 marks fully unpriced rows.
 
-### `ycc task <add|list|show>` — capture & browse the backlog from the shell
+### `ycc task <add|list|show|compact>` — capture & browse the backlog from the shell
 
 Jot, list, and read backlog tasks without opening the TUI — from a terminal, a
 git hook, or another tool. Like `spec-check`, it **works with no daemon**: it
@@ -190,12 +190,27 @@ ready-to-start summary. Completed (done) tasks are hidden unless `--all`/`-a`.
 `ycc task show <id>` — print the task's fields (id, title, status, priority,
 deps, spec refs, created/updated, readiness) followed by its markdown body.
 
+`ycc task compact` is the conservative, daemon-free migration for legacy completed
+tasks. It reports only done tasks from which non-empty intent, acceptance criteria,
+a complete final implementer/revision outcome, and a complete concise commit subject
+can all be extracted; truncated, superseded, or ambiguous files are left unchanged.
+The default is a dry run. Pass `--write` to apply and repeat
+`--exclude ID` to protect selected files. The migration is idempotent, and git is
+the rollback/source for removed execution detail.
+
+The initial in-repo curation compacted only tasks 0002–0006 and 0009. Their complete
+`implemented:`/`DONE:`/`done:` records were checked against commits `7365ee4`,
+`ad1ee9e`, and `c043d0c`; each compact entry retains the verified short SHA and
+subject. Ambiguous or generated-truncated histories—including 0042—were left intact.
+
 ```sh
 ycc task add "Fix the flaky test" -p 2 --depends 0007
 git log -1 --format=%B | ycc task add "Follow-up from last commit" --desc -
 ycc task list
 ycc task list --all
 ycc task show 0007
+ycc task compact                 # dry run
+ycc task compact --write         # migrate eligible legacy done tasks
 ```
 
 ### `ycc spec-check` — deterministic spec/code drift check
