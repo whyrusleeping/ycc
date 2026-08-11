@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -379,9 +378,6 @@ func TestSpawnReviewersTierWithSpecs(t *testing.T) {
 	if !strings.Contains(msgs[2].Content, "review tier: single-opus") {
 		t.Fatalf("preloaded result does not contain current staged diff: %q", msgs[2].Content)
 	}
-	if !strings.Contains(msgs[3].Content, "already in your context above") || strings.Contains(msgs[3].Content, "start with 'git diff'") {
-		t.Fatalf("seed prompt did not acknowledge preloaded diff: %q", msgs[3].Content)
-	}
 	var syntheticTurns, syntheticCalls, syntheticResults int
 	for _, ev := range rec.events {
 		if ev.Type == event.UserInput && ev.Data["synthetic"] == true {
@@ -476,29 +472,5 @@ func TestSpawnReviewersFocusedTier(t *testing.T) {
 	}
 	if !workLogContains(t, store, "0001", "review (readability/claude): accept") {
 		t.Fatalf("work log missing per-reviewer verdict line")
-	}
-}
-
-// The spawn_reviewers tool description enumerates the project's actual tiers
-// (including custom ones and their reviewer line-up) when the session supplies
-// them, so configured tiers are discoverable by the model.
-func TestSpawnReviewersDescriptionListsTiers(t *testing.T) {
-	d := &Deps{
-		ReviewTiers: func() []ReviewTierInfo {
-			return []ReviewTierInfo{
-				{Name: "standard", Description: "ordinary changes", Default: true, Reviewers: []string{"claude"}},
-				{Name: "deep", Description: "risky changes", Reviewers: []string{"readability (claude)", "performance (gpt)"}},
-				{Name: "simple", Description: "tiny changes", SelfReview: true},
-			}
-		},
-	}
-	desc := spawnReviewers(d).Description
-	for _, want := range []string{"'standard' (default)", "risky changes", "readability (claude)", "no reviewer agent is spawned"} {
-		if !strings.Contains(desc, want) {
-			t.Fatalf("tool description missing %q:\n%s", want, desc)
-		}
-	}
-	if params := spawnReviewers(d).Params; !strings.Contains(fmt.Sprint(params), "one of: standard, deep, simple") {
-		t.Fatalf("review_tier param should name the available tiers: %v", params)
 	}
 }

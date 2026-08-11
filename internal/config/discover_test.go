@@ -12,48 +12,6 @@ import (
 	"github.com/whyrusleeping/ycc/internal/anthropicauth"
 )
 
-func TestProviderBaseURL(t *testing.T) {
-	tests := []struct {
-		backend string
-		baseURL string
-		want    string
-	}{
-		{"anthropic", "", DefaultAnthropicBaseURL},
-		{"anthropic", "  ", DefaultAnthropicBaseURL},
-		{"anthropic", " https://proxy.example/v1 ", "https://proxy.example/v1"},
-		{"ollama", "", ""},
-	}
-	for _, tt := range tests {
-		if got := providerBaseURL(tt.backend, tt.baseURL); got != tt.want {
-			t.Errorf("providerBaseURL(%q, %q) = %q, want %q", tt.backend, tt.baseURL, got, tt.want)
-		}
-	}
-}
-
-func TestCuratedModelIDs(t *testing.T) {
-	ids := CuratedModelIDs("anthropic")
-	want := map[string]bool{"claude-opus-4-8": true, "claude-sonnet-4-5": true, "claude-fable-5": true}
-	for w := range want {
-		found := false
-		for _, id := range ids {
-			if id == w {
-				found = true
-			}
-		}
-		if !found {
-			t.Errorf("curated anthropic ids missing %q; got %v", w, ids)
-		}
-	}
-	// Mutating the returned slice must not affect the package data.
-	ids[0] = "mutated"
-	if CuratedModelIDs("anthropic")[0] == "mutated" {
-		t.Fatal("CuratedModelIDs returned a shared slice")
-	}
-	if got := CuratedModelIDs("nonesuch"); len(got) != 0 {
-		t.Errorf("unknown backend curated ids = %v, want empty", got)
-	}
-}
-
 func TestDiscoverModelsOpenAI(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/models" {

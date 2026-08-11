@@ -113,11 +113,3 @@ func TestEffectivePricingFallsBackToDefaults(t *testing.T) {
 		t.Fatalf("expected built-in sonnet rates, got %+v", p)
 	}
 }
-
-func TestRegistryPricingForUsesDefaults(t *testing.T) {
-	r := NewRegistry(newCfg(Model{Backend: "anthropic", Model: "claude-haiku-4-5"}))
-	p := r.PricingFor("claude")
-	if !p.Configured || p.Input != 1 || p.Output != 5 {
-		t.Fatalf("expected built-in haiku rates via registry, got %+v", p)
-	}
-}

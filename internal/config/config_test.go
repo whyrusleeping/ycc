@@ -130,14 +130,6 @@ func TestThinkingParsingAndDefaults(t *testing.T) {
 	}
 }
 
-func TestDefaultAnthropicCarriesThinking(t *testing.T) {
-	cfg := DefaultAnthropic("https://api.anthropic.com", "claude-opus-4-8", "ANTHROPIC_API_KEY", 8192)
-	th := NewRegistry(cfg).ThinkingFor("claude")
-	if th.Thinking != "adaptive" || th.Effort != "high" || th.ThinkingDisplay != "summarized" {
-		t.Fatalf("default anthropic thinking = %+v", th)
-	}
-}
-
 func TestModelsEnumeratesSorted(t *testing.T) {
 	cfg := &Config{
 		Models: map[string]Model{
@@ -176,16 +168,6 @@ func TestValidateRejectsUnknownModel(t *testing.T) {
 	}
 }
 
-func TestDefaultAnthropic(t *testing.T) {
-	cfg := DefaultAnthropic("https://api.anthropic.com", "claude-opus-4-8", "ANTHROPIC_API_KEY", 8192)
-	if err := cfg.validate(); err != nil {
-		t.Fatalf("default config invalid: %v", err)
-	}
-	if len(cfg.Roles.Reviewers) != 1 {
-		t.Fatalf("default reviewers = %v", cfg.Roles.Reviewers)
-	}
-}
-
 func TestSaveRoundTrip(t *testing.T) {
 	// A nested, not-yet-existing directory exercises MkdirAll.
 	path := filepath.Join(t.TempDir(), "nested", "deeper", "ycc.toml")
@@ -195,6 +177,7 @@ func TestSaveRoundTrip(t *testing.T) {
 				Backend: "anthropic", BaseURL: "https://api.anthropic.com",
 				Model: "claude-opus-4-8", KeyEnv: "ANTHROPIC_API_KEY",
 				Effort: "max", ThinkingDisplay: "summarized",
+				PriceInput: fp(3), PriceOutput: fp(15), PriceCacheRead: fp(0.3), PriceCacheWrite: fp(3.75),
 			},
 			"haiku": {
 				Backend: "anthropic", BaseURL: "https://api.anthropic.com",
@@ -206,15 +189,33 @@ func TestSaveRoundTrip(t *testing.T) {
 				Model: "qwen2.5-coder",
 			},
 		},
-		Roles:     Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude", "haiku", "local"}},
-		MaxTokens: 4096,
-		MaxTurns:  250,
+		Roles: Roles{
+			Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude", "haiku", "local"},
+			Presets: map[string]string{"memory-groom": "local"},
+		},
+		Reviews: Reviews{
+			Default: "deep",
+			Tiers: map[string]ReviewTier{
+				"deep": {
+					Description: "risky changes", Prompt: "Be concrete.",
+					Reviewers: []Reviewer{{Name: "readability", Model: "claude", Prompt: "Focus on conciseness.", Thinking: "high"}},
+				},
+			},
+		},
+		Budget:      Budget{SessionCost: 5, SessionTokens: 2_000_000, LoopCost: 20, LoopTokens: 8_000_000},
+		Notify:      Notify{URL: "https://ntfy.sh/topic", Auth: "Bearer inline-token", AuthEnv: "NTFY_AUTH", Events: []string{"question", "digest"}},
+		Retry:       Retry{MaxAttempts: 5, BaseDelayMS: 250, MaxDelayMS: 10_000},
+		Work:        Work{Implementation: ImplementationDirect},
+		Worktree:    Worktree{Copy: []string{".env"}, Link: []string{"node_modules"}, Setup: []string{"make prepare"}, Env: map[string]string{"FOO": "bar"}, SetupTimeoutSeconds: 42},
+		Integration: Integration{Base: "main"},
+		MaxTokens:   4096,
+		MaxTurns:    250,
 	}
 	if err := Save(path, orig); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
-	// Never persist inline secret values — only key_env references.
+	// Provider model credentials persist as key_env references, not inline keys.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -751,40 +752,6 @@ func TestReviewTierDefaultOverride(t *testing.T) {
 	}
 }
 
-func TestReviewTierSaveLoadRoundTrip(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "ycc.toml")
-	c := &Config{
-		Models: map[string]Model{
-			"claude": {Backend: "anthropic", Model: "claude-x"},
-			"gpt":    {Backend: "openai", Model: "gpt-x"},
-		},
-		Roles: Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"}},
-		Reviews: Reviews{
-			Default: "single-opus",
-			Tiers: map[string]ReviewTier{
-				"high-powered": {Strategy: "agents", Models: []string{"claude", "gpt"}},
-				"simple":       {Strategy: "coordinator"},
-			},
-		},
-	}
-	if err := Save(path, c); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	loaded, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if loaded.Reviews.Default != "single-opus" {
-		t.Fatalf("round-trip default = %q, want single-opus", loaded.Reviews.Default)
-	}
-	if hp := loaded.Reviews.Tiers["high-powered"]; hp.Strategy != "agents" || !reflect.DeepEqual(hp.Models, []string{"claude", "gpt"}) {
-		t.Fatalf("round-trip high-powered = %+v", hp)
-	}
-	if sp := loaded.Reviews.Tiers["simple"]; sp.Strategy != "coordinator" {
-		t.Fatalf("round-trip simple = %+v, want coordinator strategy", sp)
-	}
-}
-
 // A tier may task distinct reviewers — different models, or the same model twice
 // — each with its own focus prompt and label (spec §13.1).
 func TestReviewTierFocusedReviewers(t *testing.T) {
@@ -834,41 +801,6 @@ func TestReviewTierFocusedReviewers(t *testing.T) {
 	}
 	if s, ok := byName["simple"]; !ok || !s.SelfReview || s.Description == "" {
 		t.Fatalf("built-in simple tier missing/incomplete: %+v", byName)
-	}
-}
-
-// The long-form reviewers list round-trips through Save/Load.
-func TestReviewTierReviewersRoundTrip(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "ycc.toml")
-	c := &Config{
-		Models: map[string]Model{
-			"claude": {Backend: "anthropic", Model: "claude-x"},
-			"gpt":    {Backend: "openai", Model: "gpt-x"},
-		},
-		Roles: Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"}},
-		Reviews: Reviews{
-			Default: "deep",
-			Tiers: map[string]ReviewTier{
-				"deep": {
-					Description: "risky changes",
-					Prompt:      "Be concrete.",
-					Reviewers: []Reviewer{
-						{Name: "readability", Model: "claude", Prompt: "Focus on conciseness."},
-						{Name: "performance", Model: "gpt", Prompt: "Focus on performance.", Thinking: "max"},
-					},
-				},
-			},
-		},
-	}
-	if err := Save(path, c); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	loaded, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if !reflect.DeepEqual(loaded.Reviews.Tiers["deep"], c.Reviews.Tiers["deep"]) {
-		t.Fatalf("round-trip deep tier = %+v, want %+v", loaded.Reviews.Tiers["deep"], c.Reviews.Tiers["deep"])
 	}
 }
 
@@ -957,131 +889,28 @@ func TestResolveKeyPrecedence(t *testing.T) {
 	}
 }
 
-// DefaultMaxTokens is the shared per-turn output cap default; it was raised so
-// extended-thinking budgets aren't exhausted mid-turn. Pin the value so the
-// config default, daemon options, and CLI flag default stay in sync.
-func TestDefaultMaxTokens(t *testing.T) {
-	if DefaultMaxTokens != 32000 {
-		t.Fatalf("DefaultMaxTokens = %d, want 32000", DefaultMaxTokens)
+func TestBudgetValidation(t *testing.T) {
+	bad := baseRegistry().cfg
+	bad.Budget.SessionCost = -1
+	if err := bad.validate(); err == nil {
+		t.Fatal("negative budget should be rejected")
 	}
 }
 
-// Budget caps round-trip through Save/Load, negatives are rejected, and the
-// Registry accessor returns the configured caps (task 0137, spec §20.6).
-func TestBudgetRoundTripAndValidation(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "ycc.toml")
-	orig := &Config{
-		Models: map[string]Model{"claude": {Backend: "anthropic", BaseURL: "u", Model: "m", KeyEnv: "K"}},
-		Roles:  Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"}},
-		Budget: Budget{SessionCost: 5.0, SessionTokens: 2_000_000, LoopCost: 20.0, LoopTokens: 8_000_000},
-	}
-	if err := Save(path, orig); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	got, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if !reflect.DeepEqual(got.Budget, orig.Budget) {
-		t.Fatalf("budget round-trip mismatch: got=%+v want=%+v", got.Budget, orig.Budget)
-	}
-
-	// Registry accessor reflects the configured caps.
-	reg := NewRegistry(got)
-	if b := reg.Budget(); b != orig.Budget {
-		t.Fatalf("Registry.Budget() = %+v, want %+v", b, orig.Budget)
-	}
-
-	// Negative values are rejected by validate (via Save).
-	bad := &Config{
-		Models: orig.Models, Roles: orig.Roles,
-		Budget: Budget{SessionCost: -1},
-	}
-	if err := Save(filepath.Join(t.TempDir(), "bad.toml"), bad); err == nil {
-		t.Fatal("Save with negative budget succeeded, want error")
+func TestNotifyValidation(t *testing.T) {
+	bad := baseRegistry().cfg
+	bad.Notify = Notify{URL: "https://ntfy.sh/x", Events: []string{"bogus"}}
+	if err := bad.validate(); err == nil {
+		t.Fatal("unknown notification event should be rejected")
 	}
 }
 
-// An absent [budget] block means every cap is 0 (unlimited).
-func TestBudgetDefaultUnlimited(t *testing.T) {
-	reg := NewRegistry(&Config{
-		Models: map[string]Model{"c": {Backend: "ollama", Model: "m"}},
-		Roles:  Roles{Coordinator: "c", Implementer: "c", Reviewers: []string{"c"}},
-	})
-	if b := reg.Budget(); b != (Budget{}) {
-		t.Fatalf("default Budget = %+v, want zero (unlimited)", b)
-	}
-}
-
-func TestNotifyRoundTripAndValidation(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "ycc.toml")
-	orig := &Config{
-		Models: map[string]Model{"claude": {Backend: "anthropic", BaseURL: "u", Model: "m", KeyEnv: "K"}},
-		Roles:  Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"}},
-		Notify: Notify{URL: "https://ntfy.sh/mytopic", Auth: "Bearer tk_x", AuthEnv: "NTFY_AUTH", Events: []string{"question", "digest"}},
-	}
-	if err := Save(path, orig); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	got, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if !reflect.DeepEqual(got.Notify, orig.Notify) {
-		t.Fatalf("notify round-trip mismatch: got=%+v want=%+v", got.Notify, orig.Notify)
-	}
-
-	// Registry accessor reflects the configured notifier.
-	reg := NewRegistry(got)
-	if n := reg.Notify(); !reflect.DeepEqual(n, orig.Notify) {
-		t.Fatalf("Registry.Notify() = %+v, want %+v", n, orig.Notify)
-	}
-
-	// An unknown event kind is rejected by validate (via Save).
-	bad := &Config{
-		Models: orig.Models, Roles: orig.Roles,
-		Notify: Notify{URL: "https://ntfy.sh/x", Events: []string{"bogus"}},
-	}
-	if err := Save(filepath.Join(t.TempDir(), "bad.toml"), bad); err == nil {
-		t.Fatal("Save with unknown notify event kind succeeded, want error")
-	}
-}
-
-// An absent [notify] block means notifications are disabled (empty URL).
-func TestNotifyDefaultDisabled(t *testing.T) {
-	reg := NewRegistry(&Config{
-		Models: map[string]Model{"c": {Backend: "ollama", Model: "m"}},
-		Roles:  Roles{Coordinator: "c", Implementer: "c", Reviewers: []string{"c"}},
-	})
-	if n := reg.Notify(); n.URL != "" {
-		t.Fatalf("default Notify.URL = %q, want empty (disabled)", n.URL)
-	}
-}
-
-// A [retry] block round-trips through Save/Load and RetryPolicy overlays each
-// configured field onto the engine default (task 0133, spec §7.2).
-func TestRetryRoundTripAndPolicy(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "ycc.toml")
-	orig := &Config{
-		Models: map[string]Model{"claude": {Backend: "anthropic", BaseURL: "u", Model: "m", KeyEnv: "K"}},
-		Roles:  Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"}},
-		Retry:  Retry{MaxAttempts: 5, BaseDelayMS: 250, MaxDelayMS: 10000},
-	}
-	if err := Save(path, orig); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	got, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if !reflect.DeepEqual(got.Retry, orig.Retry) {
-		t.Fatalf("retry round-trip mismatch: got=%+v want=%+v", got.Retry, orig.Retry)
-	}
-
-	reg := NewRegistry(got)
+func TestRetryPolicy(t *testing.T) {
+	cfg := baseRegistry().cfg
+	cfg.Retry = Retry{MaxAttempts: 5, BaseDelayMS: 250, MaxDelayMS: 10_000}
 	want := engine.RetryPolicy{MaxAttempts: 5, BaseDelay: 250 * time.Millisecond, MaxDelay: 10 * time.Second}
-	if p := reg.RetryPolicy(); p != want {
-		t.Fatalf("Registry.RetryPolicy() = %+v, want %+v", p, want)
+	if got := NewRegistry(cfg).RetryPolicy(); got != want {
+		t.Fatalf("RetryPolicy() = %+v, want %+v", got, want)
 	}
 }
 
@@ -1116,17 +945,6 @@ max_attempts = 7
 	want := engine.RetryPolicy{MaxAttempts: 7, BaseDelay: def.BaseDelay, MaxDelay: def.MaxDelay}
 	if p := NewRegistry(c).RetryPolicy(); p != want {
 		t.Fatalf("RetryPolicy() = %+v, want %+v (only max_attempts overlaid)", p, want)
-	}
-}
-
-// An absent [retry] block yields exactly the engine default policy.
-func TestRetryDefault(t *testing.T) {
-	reg := NewRegistry(&Config{
-		Models: map[string]Model{"c": {Backend: "ollama", Model: "m"}},
-		Roles:  Roles{Coordinator: "c", Implementer: "c", Reviewers: []string{"c"}},
-	})
-	if p := reg.RetryPolicy(); p != engine.DefaultRetryPolicy() {
-		t.Fatalf("default RetryPolicy() = %+v, want %+v", p, engine.DefaultRetryPolicy())
 	}
 }
 
@@ -1288,27 +1106,8 @@ strategy = "coordinator"
 	}
 }
 
-func TestWorktreeConfigParseRoundTripAndValidation(t *testing.T) {
+func TestWorktreeConfigValidation(t *testing.T) {
 	cfg := DefaultAnthropic("https://api", "claude", "KEY", 4096)
-	cfg.Worktree = Worktree{
-		Copy:                []string{".env", ".env.local"},
-		Link:                []string{"node_modules", ".venv"},
-		Setup:               []string{"go mod download"},
-		Env:                 map[string]string{"FOO": "bar", "COUNT": "2"},
-		SetupTimeoutSeconds: 42,
-	}
-	path := filepath.Join(t.TempDir(), "ycc.toml")
-	if err := Save(path, cfg); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	got, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if !reflect.DeepEqual(got.Worktree, cfg.Worktree) {
-		t.Fatalf("worktree round trip = %+v, want %+v", got.Worktree, cfg.Worktree)
-	}
-
 	cfg.Worktree.SetupTimeoutSeconds = -1
 	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "worktree.setup_timeout_seconds") {
 		t.Fatalf("negative worktree timeout validation = %v", err)

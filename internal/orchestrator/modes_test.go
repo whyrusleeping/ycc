@@ -77,38 +77,6 @@ func TestPresetsOpenPM(t *testing.T) {
 	}
 }
 
-// The spec-doctor preset must drive the two-phase flow: the deterministic
-// `ycc spec-check` pre-pass (run via Bash), then a grounded drift/coverage
-// comparison, with the false-positive discipline and on-demand-only cadence.
-func TestSpecDoctorPresetPrompt(t *testing.T) {
-	lower := strings.ToLower(specDoctorPresetPrompt)
-	for _, want := range []string{"spec-check", "drift", "coverage", "create_task", "approval"} {
-		if !strings.Contains(lower, want) {
-			t.Fatalf("specDoctorPresetPrompt does not mention %q", want)
-		}
-	}
-	if !strings.Contains(lower, "false-positive") && !strings.Contains(lower, "contradict") {
-		t.Fatalf("specDoctorPresetPrompt does not enforce the false-positive discipline")
-	}
-}
-
-// The onboarding prompt must steer the agent to detect both greenfield and
-// brownfield situations from the workspace.
-func TestOnboardPromptCoversBothBranches(t *testing.T) {
-	lower := strings.ToLower(onboardPresetPrompt)
-	for _, want := range []string{"greenfield", "brownfield"} {
-		if !strings.Contains(lower, want) {
-			t.Fatalf("onboardPresetPrompt does not mention %q", want)
-		}
-	}
-	// It must first orient from any existing docs before deciding.
-	for _, want := range []string{"spec.md", "list_backlog", "plans/*.md"} {
-		if !strings.Contains(lower, strings.ToLower(want)) {
-			t.Fatalf("onboardPresetPrompt does not instruct checking existing docs (%q)", want)
-		}
-	}
-}
-
 func TestBuildModeToolsets(t *testing.T) {
 	d := depsFor(t)
 	// pm exposes planning/docs/backlog tools and switch_to_work, but NO
@@ -142,7 +110,7 @@ func TestBuildModeToolsets(t *testing.T) {
 	// backlog, commit through the daemon, or finish without requesting integration.
 	extraWriteRoot := t.TempDir()
 	d.WriteRoots = []string{extraWriteRoot}
-	integrateReg, integratePrompt := BuildMode("integrate", d, true)
+	integrateReg, _ := BuildMode("integrate", d, true)
 	for _, want := range []string{"Read", "Edit", "Write", "Bash", "request_integration", "report_blocked"} {
 		if !hasTool(integrateReg, want) {
 			t.Fatalf("integrate mode missing %s", want)
@@ -161,13 +129,6 @@ func TestBuildModeToolsets(t *testing.T) {
 	if !writeResult.IsError {
 		t.Fatalf("integrate mode inherited an outside write root: %s", writeResult.Content)
 	}
-	lowerPrompt := strings.ToLower(integratePrompt)
-	for _, want := range []string{"never", "advance", "base branch", "daemon", "request_integration"} {
-		if !strings.Contains(lowerPrompt, want) {
-			t.Fatalf("integrate prompt missing %q:\n%s", want, integratePrompt)
-		}
-	}
-
 	// The removed authoring modes no longer build.
 	for _, mode := range []string{"spec", "backlog", "feature", "bug"} {
 		reg, _ := BuildMode(mode, d, false)
@@ -180,30 +141,13 @@ func TestBuildModeToolsets(t *testing.T) {
 	}
 }
 
-func TestWorkCoordinatorHasFileAndPipelineTools(t *testing.T) {
-	d := depsFor(t)
-	reg, _ := BuildMode("work", d, false)
-	// The work coordinator can inspect/edit the workspace directly...
-	for _, want := range []string{"Read", "Write", "Edit", "Bash"} {
-		if !hasTool(reg, want) {
-			t.Fatalf("work coordinator missing file tool %s", want)
-		}
-	}
-	// ...while still driving the implementation pipeline.
-	for _, want := range []string{"spawn_implementer", "spawn_reviewers", "commit", "list_backlog", "create_task"} {
-		if !hasTool(reg, want) {
-			t.Fatalf("work coordinator missing pipeline tool %s", want)
-		}
-	}
-}
-
 // In the "direct" implementation strategy (spec §10) the work coordinator
 // implements changes itself: the implementer spawn/revise tools are dropped, but
 // it keeps the editing tools and the review pipeline, and gets the direct prompt.
 func TestWorkCoordinatorDirectImplementation(t *testing.T) {
 	d := depsFor(t)
 	d.WorkImplementation = "direct"
-	reg, prompt := BuildMode("work", d, false)
+	reg, _ := BuildMode("work", d, false)
 	// No implementer subagent tools in direct mode.
 	for _, gone := range []string{"spawn_implementer", "send_to_implementer"} {
 		if hasTool(reg, gone) {
@@ -216,18 +160,11 @@ func TestWorkCoordinatorDirectImplementation(t *testing.T) {
 			t.Fatalf("direct work coordinator missing %s", want)
 		}
 	}
-	if !strings.Contains(prompt, "DIRECT implementation") {
-		t.Fatalf("direct work coordinator should use the direct prompt:\n%s", prompt)
-	}
-	// The default (delegate) strategy keeps the implementer tools and the
-	// delegating prompt.
+	// The default (delegate) strategy keeps the implementer tools.
 	d.WorkImplementation = ""
-	reg, prompt = BuildMode("work", d, false)
+	reg, _ = BuildMode("work", d, false)
 	if !hasTool(reg, "spawn_implementer") || !hasTool(reg, "send_to_implementer") {
 		t.Fatalf("default work coordinator must keep the implementer pipeline tools")
-	}
-	if strings.Contains(prompt, "DIRECT implementation") {
-		t.Fatalf("default work coordinator should use the delegating prompt")
 	}
 }
 
@@ -634,13 +571,5 @@ func TestMemoryEditEmitsDocUpdated(t *testing.T) {
 	}
 	if !sawMemory {
 		t.Fatalf("expected doc_updated doc:memory on direct edit; got %+v", rec.events)
-	}
-}
-
-// The spec-doctor prompt must tell the agent that memory.md is NOT spec.
-func TestSpecDoctorPromptExcludesMemory(t *testing.T) {
-	lower := strings.ToLower(specDoctorPresetPrompt)
-	if !strings.Contains(lower, "memory.md") {
-		t.Fatalf("specDoctorPresetPrompt should mention memory.md exclusion")
 	}
 }

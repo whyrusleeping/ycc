@@ -1,7 +1,6 @@
 package config
 
 import (
-	"path/filepath"
 	"testing"
 
 	"github.com/whyrusleeping/ycc/internal/event"
@@ -78,43 +77,5 @@ func TestPricingPartial(t *testing.T) {
 	cost, priced := p.Cost(u)
 	if !priced || cost != 18 {
 		t.Fatalf("cost = %v priced=%v, want 18 true", cost, priced)
-	}
-}
-
-func TestPricingRoundTrip(t *testing.T) {
-	m := Model{
-		Backend:         "anthropic",
-		Model:           "claude-x",
-		PriceInput:      fp(3),
-		PriceOutput:     fp(15),
-		PriceCacheRead:  fp(0.30),
-		PriceCacheWrite: fp(3.75),
-	}
-	c := newCfg(m)
-	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := Save(path, c); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	got, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	gm := got.Models["claude"]
-	for _, tc := range []struct {
-		name string
-		got  *float64
-		want float64
-	}{
-		{"price_input", gm.PriceInput, 3},
-		{"price_output", gm.PriceOutput, 15},
-		{"price_cache_read", gm.PriceCacheRead, 0.30},
-		{"price_cache_write", gm.PriceCacheWrite, 3.75},
-	} {
-		if tc.got == nil {
-			t.Fatalf("%s did not round-trip (nil)", tc.name)
-		}
-		if *tc.got != tc.want {
-			t.Fatalf("%s = %v, want %v", tc.name, *tc.got, tc.want)
-		}
 	}
 }

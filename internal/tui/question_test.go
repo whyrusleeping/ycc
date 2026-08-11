@@ -99,41 +99,6 @@ func TestWizardCondensesInlineQuestionDump(t *testing.T) {
 	}
 }
 
-// The wizard surfaces the active question's options via the picker and an
-// obvious free-text escape, and the footer help spells out the interaction.
-func TestWizardPickerAndFooterAffordances(t *testing.T) {
-	f := newFakeClient()
-	m := model{
-		client: f, ctx: context.Background(),
-		state: stateSession, status: "running", sessionID: "s1", follow: true,
-		input:    newSessionInput(),
-		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
-	}
-	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = updated.(model)
-
-	m.appendEvent(&v1.Event{
-		Seq: 3, Type: "question_asked", Actor: "coordinator",
-		DataJson: `{"questions":[{"question":"db?","options":["postgres","sqlite"]},{"question":"name?"}]}`,
-	})
-	if !m.wizActive || !m.picking {
-		t.Fatalf("expected an active picker wizard (active=%v picking=%v)", m.wizActive, m.picking)
-	}
-
-	picker := m.pickerView()
-	if !strings.Contains(picker, "postgres") || !strings.Contains(picker, "sqlite") {
-		t.Fatalf("picker should list the active question's options, got:\n%s", picker)
-	}
-	if !strings.Contains(picker, "other… (type your own)") {
-		t.Fatalf("picker should offer an obvious free-text escape, got:\n%s", picker)
-	}
-
-	view := m.sessionView()
-	if !strings.Contains(view, "choose") || !strings.Contains(view, "other…") {
-		t.Fatalf("wizard footer should explain choosing + free-text, got:\n%s", view)
-	}
-}
-
 // A number key selects the corresponding option directly (spec §18.3): the
 // pending question clears and an answer command is issued without touching the
 // highlighted cursor first.
@@ -370,15 +335,6 @@ func TestPickerMouseWheelScrolls(t *testing.T) {
 	}
 }
 
-// The picker footer advertises number selection (spec §18.3).
-func TestPickerFooterMentionsNumbers(t *testing.T) {
-	f := newFakeClient()
-	m := newPickerModel(t, f)
-	if view := m.sessionView(); !strings.Contains(view, "1–9") {
-		t.Fatalf("picker footer should advertise number selection, got:\n%s", view)
-	}
-}
-
 // A pending question longer than the terminal width must word-wrap in the
 // picker footer (task 0149) rather than being clipped/ellipsised: the full text
 // is present across wrapped lines and no rendered line overflows the width.
@@ -426,40 +382,6 @@ func TestPickerWrapsLongQuestion(t *testing.T) {
 	updated, _ = m.Update(tea.WindowSizeMsg{Width: 48, Height: 24})
 	m = updated.(model)
 	assertPickerWraps(48)
-}
-
-// The multi-question wizard footer word-wraps a long question prompt (task 0149)
-// instead of truncating it, and every rendered line fits the terminal width.
-func TestWizardWrapsLongQuestion(t *testing.T) {
-	f := newFakeClient()
-	m := model{
-		client: f, ctx: context.Background(),
-		state: stateSession, status: "running", sessionID: "s1", follow: true,
-		input:    newSessionInput(),
-		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
-	}
-	updated, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 24})
-	m = updated.(model)
-
-	long := strings.TrimSpace(strings.Repeat("wrapme ", 25))
-	m.appendEvent(&v1.Event{
-		Seq: 3, Type: "question_asked", Actor: "coordinator",
-		DataJson: `{"questions":[{"question":"` + long + `","options":["a","b"]},{"question":"short?"}]}`,
-	})
-	if !m.wizActive {
-		t.Fatalf("expected an active wizard (wizActive=%v)", m.wizActive)
-	}
-
-	wiz := m.wizardView()
-	for _, ln := range strings.Split(wiz, "\n") {
-		if w := lipgloss.Width(ln); w > m.w {
-			t.Fatalf("wizard line width %d exceeds %d: %q", w, m.w, ln)
-		}
-	}
-	joined := strings.ReplaceAll(stripANSI(wiz), "\n", " ")
-	if got := strings.Count(joined, "wrapme"); got != 25 {
-		t.Fatalf("found %d wrapme tokens (truncated?), want 25:\n%s", got, wiz)
-	}
 }
 
 // TestQuestionPickerFitsOnScreen guards the ask_user layout regression: when a

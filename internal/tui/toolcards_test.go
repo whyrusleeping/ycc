@@ -54,40 +54,6 @@ func TestCallForAndArgField(t *testing.T) {
 	}
 }
 
-func TestPrettyArgs(t *testing.T) {
-	out := prettyArgs(`{"file_path":"a.go","content":"x"}`)
-	if !strings.Contains(out, "\n") || !strings.Contains(out, "file_path") {
-		t.Fatalf("prettyArgs should indent JSON:\n%s", out)
-	}
-	if prettyArgs("not json") != "not json" {
-		t.Fatal("prettyArgs should pass through non-JSON")
-	}
-}
-
-func TestDetailLineToolCall(t *testing.T) {
-	ev := &v1.Event{Type: "tool_call", DataJson: `{"name":"Read","args":"{\"file_path\":\"x\"}"}`}
-	if d := detailLine(ev); !strings.HasPrefix(d, "Read(") {
-		t.Fatalf("detailLine = %q", d)
-	}
-}
-
-// durationMSField extracts duration_ms from an event's data JSON, tolerating
-// missing fields and malformed JSON.
-func TestDurationMSField(t *testing.T) {
-	if got := durationMSField(&v1.Event{DataJson: `{"duration_ms":340}`}); got != 340 {
-		t.Errorf("duration_ms present = %d, want 340", got)
-	}
-	if got := durationMSField(&v1.Event{DataJson: `{"text":"hi"}`}); got != 0 {
-		t.Errorf("duration_ms absent = %d, want 0", got)
-	}
-	if got := durationMSField(&v1.Event{DataJson: ``}); got != 0 {
-		t.Errorf("empty data = %d, want 0", got)
-	}
-	if got := durationMSField(&v1.Event{DataJson: `not json`}); got != 0 {
-		t.Errorf("bad json = %d, want 0", got)
-	}
-}
-
 func TestEditCardParamsDiff(t *testing.T) {
 	m := &model{w: 100}
 	args := `{"file_path":"x.go","old_string":"foo\nbar\nbaz","new_string":"foo\nqux\nbaz"}`

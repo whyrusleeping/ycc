@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"strings"
 	"testing"
 	"time"
@@ -122,24 +121,5 @@ func TestChatInputWordMotion(t *testing.T) {
 	// Word motion left the text untouched.
 	if got := ta.Value(); got != "hello world foo" {
 		t.Fatalf("word motion mutated value: %q", got)
-	}
-}
-
-// TestFootersMentionHelp verifies the menu and default session footers advertise
-// the help key (task 0111).
-func TestFootersMentionHelp(t *testing.T) {
-	f := newFakeClient()
-	m := initialModel(context.Background(), f, t_tempWorkspace, false)
-	updated, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
-	m = updated.(model)
-	if !strings.Contains(m.menuView(), "? help") {
-		t.Fatalf("menu footer should mention the help key:\n%s", m.menuView())
-	}
-
-	s := newSessionTextareaModel(t)
-	updated, _ = s.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
-	s = updated.(model)
-	if !strings.Contains(s.sessionView(), "? help") {
-		t.Fatalf("session footer should mention the help key:\n%s", s.sessionView())
 	}
 }

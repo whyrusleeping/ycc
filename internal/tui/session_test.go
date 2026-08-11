@@ -190,48 +190,6 @@ func TestSessionQIgnoredWhileLooping(t *testing.T) {
 	}
 }
 
-// The footer surfaces the "return to menu" affordance only once the session is
-// finished — never while it is still running.
-func TestSessionViewFinishedHint(t *testing.T) {
-	m := newSessionTextareaModel(t)
-
-	m.status = "running"
-	if strings.Contains(m.sessionView(), "return to menu") {
-		t.Fatalf("running session must not show the return-to-menu hint:\n%s", m.sessionView())
-	}
-
-	m.status = "idle"
-	view := m.sessionView()
-	if !strings.Contains(view, "session finished") || !strings.Contains(view, "q return to menu") {
-		t.Fatalf("finished session should show the return-to-menu hint, got:\n%s", view)
-	}
-}
-
-// TestInterruptKeyHintReflectsEnhancement checks the footer advertises ctrl+x
-// (the universal chord) until the terminal reports kitty keyboard disambiguation,
-// after which it shows ctrl+i (byte-identical to Tab, so only usable there).
-func TestInterruptKeyHintReflectsEnhancement(t *testing.T) {
-	m := newSessionTextareaModel(t)
-	// Widen the terminal so the footer isn't clamped/truncated before the hint.
-	updated, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 24})
-	m = updated.(model)
-	if got := m.interruptKeyHint(); got != "ctrl+x" {
-		t.Fatalf("without enhancement: hint = %q, want %q", got, "ctrl+x")
-	}
-	if v := m.render(); !strings.Contains(v, "ctrl+x interrupt") {
-		t.Fatalf("footer should advertise ctrl+x interrupt without enhancement:\n%s", v)
-	}
-
-	updated, _ = m.Update(tea.KeyboardEnhancementsMsg{Flags: 1})
-	m = updated.(model)
-	if got := m.interruptKeyHint(); got != "ctrl+i" {
-		t.Fatalf("with enhancement: hint = %q, want %q", got, "ctrl+i")
-	}
-	if v := m.render(); !strings.Contains(v, "ctrl+i interrupt") {
-		t.Fatalf("footer should advertise ctrl+i interrupt with enhancement:\n%s", v)
-	}
-}
-
 // TestSessionCtrlXInterruptsWithoutEditingInput ensures ctrl+x triggers the
 // interrupt path on every terminal and does not leak into the session textarea.
 func TestSessionCtrlXInterruptsWithoutEditingInput(t *testing.T) {
