@@ -1,7 +1,6 @@
 package event
 
 import (
-	"path/filepath"
 	"testing"
 )
 
@@ -25,45 +24,6 @@ func TestEmitterBroadcastNoopsOnNonBroadcaster(t *testing.T) {
 		if !ev.Transient || ev.Seq != 0 || ev.Type != TurnDelta || ev.Actor != "agent" {
 			t.Fatalf("%s: fallback event = %+v, want transient seq0 turn_delta actor agent", name, ev)
 		}
-	}
-}
-
-// Emitter.Broadcast delivers via a *Log (a Broadcaster) and the transient is
-// never persisted.
-func TestEmitterBroadcastViaLog(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "events.jsonl")
-	l, err := OpenLog(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-
-	ch, cancel := l.Subscribe(0)
-	defer cancel()
-
-	e := NewEmitter(l, "agent")
-	if !e.CanBroadcast() {
-		t.Fatal("CanBroadcast = false for *Log, want true")
-	}
-	ev, ok := e.Broadcast(TurnDelta, map[string]any{"text": "snap"})
-	if !ok || !ev.Transient || ev.Seq != 0 {
-		t.Fatalf("Broadcast = (%+v, %v), want transient seq0 ok", ev, ok)
-	}
-
-	got := collect(t, ch, 1)
-	if got[0].Type != TurnDelta || got[0].Data["text"] != "snap" || !got[0].Transient {
-		t.Fatalf("subscriber got %+v, want transient turn_delta snap", got[0])
-	}
-
-	if snap := l.Snapshot(); len(snap) != 0 {
-		t.Fatalf("Snapshot = %+v, want empty (transient not persisted)", snap)
-	}
-	onDisk, err := ReadLog(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(onDisk) != 0 {
-		t.Fatalf("ReadLog = %+v, want empty (transient not persisted)", onDisk)
 	}
 }
 

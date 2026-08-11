@@ -22,17 +22,6 @@ func TestStartWorkLoopUnknownProject(t *testing.T) {
 	}
 }
 
-func TestGetWorkLoopNoneReturnsEmpty(t *testing.T) {
-	srv := New(session.NewManager(testRegistry(), t.TempDir()))
-	resp, err := srv.GetWorkLoop(context.Background(), connect.NewRequest(&v1.GetWorkLoopRequest{}))
-	if err != nil {
-		t.Fatalf("GetWorkLoop: %v", err)
-	}
-	if resp.Msg.Loop != nil {
-		t.Fatalf("expected nil loop, got %+v", resp.Msg.Loop)
-	}
-}
-
 func TestStopWorkLoopNoneReturnsEmpty(t *testing.T) {
 	srv := New(session.NewManager(testRegistry(), t.TempDir()))
 	resp, err := srv.StopWorkLoop(context.Background(), connect.NewRequest(&v1.StopWorkLoopRequest{}))

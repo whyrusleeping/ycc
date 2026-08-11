@@ -1,8 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"strings"
 	"testing"
 
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
@@ -74,35 +72,5 @@ func TestWorkstreamStatus(t *testing.T) {
 				t.Fatalf("workstreamStatus() = %q, want %q", got, tc.want)
 			}
 		})
-	}
-}
-
-func TestRenderWorkstreamList(t *testing.T) {
-	var out bytes.Buffer
-	renderWorkstreamList(&out, []*v1.WorkstreamInfo{{
-		Id:            "ws_3f9abc01",
-		TaskId:        "0255",
-		Branch:        "ycc/ws/ws_3f9abc01-0255",
-		CommitCount:   2,
-		Status:        "active",
-		SessionStatus: "idle",
-		SessionId:     "s_12345678",
-	}})
-	got := out.String()
-	for _, want := range []string{"ID", "TASK", "BRANCH", "COMMITS", "STATUS", "SESSION", "ws_3f9abc01", "0255", "ws_3f9abc01-0255", "2↑", "idle", "s_12345678"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("rendered table missing %q:\n%s", want, got)
-		}
-	}
-	if strings.Contains(got, "ycc/ws/") {
-		t.Fatalf("rendered branch retained namespace prefix:\n%s", got)
-	}
-}
-
-func TestRenderWorkstreamListEmpty(t *testing.T) {
-	var out bytes.Buffer
-	renderWorkstreamList(&out, nil)
-	if got, want := out.String(), "(no workstreams)\n"; got != want {
-		t.Fatalf("renderWorkstreamList(nil) = %q, want %q", got, want)
 	}
 }

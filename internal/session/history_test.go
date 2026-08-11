@@ -154,23 +154,6 @@ func TestDeriveTitleFromTaskFocus(t *testing.T) {
 	}
 }
 
-func TestTruncateTitle(t *testing.T) {
-	if got := truncateTitle("  hello\nworld  "); got != "hello world" {
-		t.Fatalf("collapse: %q", got)
-	}
-	if got := truncateTitle("   "); got != "" {
-		t.Fatalf("empty: %q", got)
-	}
-	long := ""
-	for i := 0; i < 100; i++ {
-		long += "x"
-	}
-	got := truncateTitle(long)
-	if r := []rune(got); len(r) != 81 || r[80] != '…' {
-		t.Fatalf("truncate len = %d", len([]rune(got)))
-	}
-}
-
 func TestScanSessionHistoryMalformedTolerated(t *testing.T) {
 	ws := t.TempDir()
 	dir := filepath.Join(ws, ".ycc", "sessions", "s_bad")

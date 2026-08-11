@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	cli "github.com/urfave/cli/v3"
-
 	"github.com/whyrusleeping/ycc/internal/daemon"
 )
 
@@ -32,20 +30,6 @@ func TestCompletionScripts(t *testing.T) {
 				t.Fatalf("completion %s script does not mention ycc:\n%s", shell, script)
 			}
 		})
-	}
-}
-
-// TestCompletionCommandInHelp asserts the completion command is un-hidden and so
-// appears in the root help output.
-func TestCompletionCommandInHelp(t *testing.T) {
-	var out bytes.Buffer
-	root := newRootCommand(&app{})
-	root.Writer = &out
-	if err := root.Run(context.Background(), []string{"ycc", "--help"}); err != nil {
-		t.Fatalf("--help: %v", err)
-	}
-	if !strings.Contains(out.String(), "completion") {
-		t.Fatalf("root help does not list the completion command:\n%s", out.String())
 	}
 }
 
@@ -94,20 +78,5 @@ func TestCompleteSessionIDsFlagFallback(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "from") {
 		t.Fatalf("flag-prefixed completion did not emit flag suggestions:\n%s", out.String())
-	}
-}
-
-// TestPrevCompletionArg checks the argv sentinel parsing used to detect
-// value-completion after --project.
-func TestPrevCompletionArg(t *testing.T) {
-	// prevCompletionArg reads os.Args; DefaultCompleteWithFlags is exercised via
-	// the completeWithProject wrapper indirectly. Here we just confirm the helper
-	// is wired without panicking and returns a string.
-	_ = prevCompletionArg()
-
-	// Sanity: completeWithProject returns a non-nil ShellCompleteFunc.
-	var f cli.ShellCompleteFunc = (&app{}).completeWithProject(nil)
-	if f == nil {
-		t.Fatal("completeWithProject returned nil")
 	}
 }

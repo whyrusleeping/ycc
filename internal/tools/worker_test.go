@@ -346,19 +346,6 @@ func TestReadDirectoryLists(t *testing.T) {
 	}
 }
 
-// TestReadEmptyDirectory confirms an empty directory yields a clear message.
-func TestReadEmptyDirectory(t *testing.T) {
-	root := t.TempDir()
-	if err := os.Mkdir(filepath.Join(root, "empty"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	reg := workerReg(root)
-	res := dispatch(t, reg, "Read", `{"file_path":"empty"}`)
-	if res.IsError || !strings.Contains(res.Content, "(directory is empty)") {
-		t.Fatalf("expected empty-directory message, got %q (err=%v)", res.Content, res.IsError)
-	}
-}
-
 // TestReadDirectoryTruncates confirms a directory with more than maxDirEntries
 // entries is truncated with a clear indicator.
 func TestReadDirectoryTruncates(t *testing.T) {

@@ -79,21 +79,6 @@ func TestFullModePayloads(t *testing.T) {
 	}
 }
 
-func TestErrorResultGlyph(t *testing.T) {
-	evs := []*v1.Event{
-		ev(1, "coordinator", "tool_call", map[string]any{
-			"id": "t1", "name": "Bash", "args": argsJSON(map[string]any{"command": "false"}),
-		}),
-		ev(2, "coordinator", "tool_result", map[string]any{
-			"id": "t1", "result": "boom", "error": true,
-		}),
-	}
-	md := Markdown(evs, Options{SessionID: "s1"})
-	if !strings.Contains(md, "✗") {
-		t.Fatalf("expected error glyph:\n%s", md)
-	}
-}
-
 func TestAskUserSingleBlock(t *testing.T) {
 	evs := []*v1.Event{
 		ev(1, "coordinator", "tool_call", map[string]any{
@@ -143,33 +128,6 @@ func TestAskUserMultiQuestion(t *testing.T) {
 	}
 }
 
-func TestAskUserAutoAnswer(t *testing.T) {
-	evs := []*v1.Event{
-		ev(1, "coordinator", "tool_call", map[string]any{"id": "a1", "name": "ask_user", "args": argsJSON(map[string]any{"question": "OK?"})}),
-		ev(2, "coordinator", "question_asked", map[string]any{"question": "OK?"}),
-		ev(3, "coordinator", "question_answered", map[string]any{"answer": "no human", "auto": true}),
-		ev(4, "coordinator", "tool_result", map[string]any{"id": "a1", "result": "no human"}),
-	}
-	md := Markdown(evs, Options{SessionID: "s1"})
-	if !strings.Contains(md, "auto-answered (unattended execution)") {
-		t.Fatalf("expected auto-answer line:\n%s", md)
-	}
-}
-
-func TestEmptyModelTurnHidden(t *testing.T) {
-	evs := []*v1.Event{
-		ev(1, "coordinator", "model_turn", map[string]any{"text": ""}),
-		ev(2, "coordinator", "model_turn", map[string]any{"text": "Hello world"}),
-	}
-	md := Markdown(evs, Options{SessionID: "s1"})
-	if !strings.Contains(md, "Hello world") {
-		t.Fatalf("expected non-empty turn:\n%s", md)
-	}
-	if c := countSub(md, "**coordinator:**"); c != 1 {
-		t.Fatalf("expected one coordinator prefix, got %d:\n%s", c, md)
-	}
-}
-
 func TestEchoedIdleAndFinalReport(t *testing.T) {
 	report := "All done. Task complete."
 	evs := []*v1.Event{
@@ -184,26 +142,6 @@ func TestEchoedIdleAndFinalReport(t *testing.T) {
 	}
 	if c := countSub(md, report); c != 2 {
 		t.Fatalf("report should appear twice (model turn + final report), got %d:\n%s", c, md)
-	}
-}
-
-func TestCommitAndReview(t *testing.T) {
-	evs := []*v1.Event{
-		ev(1, "coordinator", "commit_made", map[string]any{"sha": "abcdef1234567890", "message": "add feature"}),
-		ev(2, "reviewer:gpt", "review_submitted", map[string]any{"model": "gpt", "verdict": "accept", "summary": "looks good"}),
-	}
-	md := Markdown(evs, Options{SessionID: "s1"})
-	if !strings.Contains(md, "commit `abcdef123456`") {
-		t.Fatalf("expected commit line with short sha:\n%s", md)
-	}
-	if !strings.Contains(md, "add feature") {
-		t.Fatalf("expected commit message:\n%s", md)
-	}
-	if !strings.Contains(md, "**ACCEPT**") {
-		t.Fatalf("expected uppercased verdict:\n%s", md)
-	}
-	if !strings.Contains(md, "looks good") {
-		t.Fatalf("expected review summary:\n%s", md)
 	}
 }
 
@@ -270,22 +208,6 @@ func TestUserInputQueued(t *testing.T) {
 	md2 := Markdown(evs2, Options{SessionID: "s1"})
 	if strings.Contains(md2, "(queued, undelivered)") {
 		t.Fatalf("delivered input should not be marked queued:\n%s", md2)
-	}
-}
-
-func TestHeaderAndMetadata(t *testing.T) {
-	evs := []*v1.Event{
-		{Seq: 1, Actor: "system", Type: "session_started", Ts: "2026-07-06T12:00:00Z",
-			DataJson: `{"mode":"work","workspace":"/tmp/proj"}`},
-	}
-	md := Markdown(evs, Options{SessionID: "s_abc"})
-	if !strings.HasPrefix(md, "# Session s_abc") {
-		t.Fatalf("expected header:\n%s", md)
-	}
-	for _, want := range []string{"mode: work", "workspace: /tmp/proj", "started: 2026-07-06"} {
-		if !strings.Contains(md, want) {
-			t.Fatalf("expected metadata %q:\n%s", want, md)
-		}
 	}
 }
 

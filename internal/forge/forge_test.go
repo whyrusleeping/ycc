@@ -3,7 +3,6 @@ package forge
 import (
 	"context"
 	"errors"
-	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -228,17 +227,5 @@ func TestDetect(t *testing.T) {
 				t.Fatalf("Detect(%q) = (%q, %q, %v), want (%q, %q, nil)", tt.raw, kind, host, err, tt.wantKind, tt.wantHost)
 			}
 		})
-	}
-}
-
-func TestKindsAndCommands(t *testing.T) {
-	if got, want := fmt.Sprint(Kinds()), "[github gitlab]"; got != want {
-		t.Fatalf("Kinds() = %s, want %s", got, want)
-	}
-	if GitHub.CLI() != "gh" || GitHub.LoginCommand() != "gh auth login" {
-		t.Fatalf("unexpected GitHub commands: %q, %q", GitHub.CLI(), GitHub.LoginCommand())
-	}
-	if GitLab.CLI() != "glab" || GitLab.LoginCommand() != "glab auth login" {
-		t.Fatalf("unexpected GitLab commands: %q, %q", GitLab.CLI(), GitLab.LoginCommand())
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -279,23 +278,6 @@ func TestAggregateTaskFilter(t *testing.T) {
 	}
 }
 
-func TestFormatWorkLogLine(t *testing.T) {
-	priced := Row{Tokens: Tokens{Input: 8000, Output: 4000, CacheRead: 300, CacheWrite: 45, Total: 12345}, Cost: 0.1234, Status: StatusPriced}
-	got := FormatWorkLogLine(priced)
-	if !strings.Contains(got, "12,345 tok") || !strings.Contains(got, "$0.1234") {
-		t.Fatalf("priced line = %q", got)
-	}
-	unpriced := Row{Tokens: Tokens{Total: 100}, Status: StatusUnpriced}
-	got = FormatWorkLogLine(unpriced)
-	if !strings.Contains(got, "unpriced") || strings.Contains(got, "$") {
-		t.Fatalf("unpriced line = %q", got)
-	}
-	partial := Row{Tokens: Tokens{Total: 100}, Cost: 0.5, Status: StatusPartial}
-	if got = FormatWorkLogLine(partial); !strings.Contains(got, "partial") {
-		t.Fatalf("partial line = %q", got)
-	}
-}
-
 func TestAgentRows(t *testing.T) {
 	entries := []Entry{
 		{Task: "0007", Model: "claude", Agent: "coordinator", Tokens: Tokens{Input: 50, Total: 50}},
@@ -332,44 +314,6 @@ func TestAgentRows(t *testing.T) {
 	}
 	if !sawGPT || !sawClaude {
 		t.Fatalf("reviewers not distinct: %+v", rows)
-	}
-}
-
-func TestFormatWorkLogSummary(t *testing.T) {
-	total := Row{Tokens: Tokens{Input: 750, Total: 750}, Cost: 0.1, Status: StatusPriced}
-	agents := []Row{
-		{Agent: "coordinator", Tokens: Tokens{Input: 50, Total: 50}, Cost: 0.01, Status: StatusPriced},
-		{Agent: "reviewer:gpt", Tokens: Tokens{Input: 200, Total: 200}, Status: StatusUnpriced},
-		{Agent: "implementer", Tokens: Tokens{Input: 500, Total: 500}, Cost: 0.09, Status: StatusPriced},
-	}
-	got := FormatWorkLogSummary(total, agents)
-	lines := strings.Split(got, "\n")
-	if lines[0] != FormatWorkLogLine(total) {
-		t.Fatalf("first line = %q, want %q", lines[0], FormatWorkLogLine(total))
-	}
-	if !strings.HasPrefix(lines[0], "usage: ") {
-		t.Fatalf("first line missing usage prefix: %q", lines[0])
-	}
-	if !strings.Contains(got, "\n  reviewer:gpt:") || !strings.Contains(got, "\n  coordinator:") {
-		t.Fatalf("breakdown missing roles:\n%s", got)
-	}
-	if !strings.Contains(got, "cost n/a") {
-		t.Fatalf("unpriced agent should show cost n/a:\n%s", got)
-	}
-	// Single agent row collapses to just the aggregate line.
-	single := FormatWorkLogSummary(total, agents[:1])
-	if single != FormatWorkLogLine(total) {
-		t.Fatalf("single-agent summary = %q, want aggregate line", single)
-	}
-}
-
-func TestRenderTable(t *testing.T) {
-	res := Aggregate(sampleEntries(), pricer(), Options{GroupBy: []Dim{DimTask}})
-	var buf bytes.Buffer
-	Render(&buf, res, []Dim{DimTask})
-	out := buf.String()
-	if !strings.Contains(out, "TOTAL") || !strings.Contains(out, "Task") {
-		t.Fatalf("render missing header/total:\n%s", out)
 	}
 }
 

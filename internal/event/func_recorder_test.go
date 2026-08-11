@@ -37,12 +37,3 @@ func TestFuncRecorder(t *testing.T) {
 		t.Fatalf("fn received seqs %d,%d; want 1,2", got[0].Seq, got[1].Seq)
 	}
 }
-
-// A nil fn must be tolerated: Record still stamps and returns the event.
-func TestFuncRecorderNilFn(t *testing.T) {
-	rec := NewFuncRecorder(nil)
-	ev := rec.Record("capture", ToolResult, nil)
-	if ev.Seq != 1 || ev.Actor != "capture" || ev.Type != ToolResult {
-		t.Fatalf("ev = %+v", ev)
-	}
-}

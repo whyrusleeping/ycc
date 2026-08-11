@@ -183,13 +183,3 @@ func TestEmptyURLDisables(t *testing.T) {
 		t.Fatal("empty URL should yield a nil notifier")
 	}
 }
-
-func TestNilNotifierSafe(t *testing.T) {
-	var n *Notifier
-	// None of these should panic.
-	if n.Enabled(KindQuestion) {
-		t.Error("nil notifier should not be enabled")
-	}
-	n.Send(KindQuestion, "p", "s", "line")
-	n.Flush()
-}

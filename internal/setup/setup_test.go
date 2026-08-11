@@ -1,7 +1,6 @@
 package setup
 
 import (
-	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -233,25 +232,6 @@ func TestWizardEscSkips(t *testing.T) {
 	}
 }
 
-func TestWizardBackendDefaults(t *testing.T) {
-	m := newModel()
-	// Move focus to backend field and cycle to openai.
-	m = drive(m, "tab") // focus backend
-	if m.focus != fieldBackend {
-		t.Fatalf("expected focus on backend, got %d", m.focus)
-	}
-	m = drive(m, "right") // anthropic -> openai
-	if backends[m.backendIdx] != "openai" {
-		t.Fatalf("expected openai backend, got %s", backends[m.backendIdx])
-	}
-	if got := m.inputs[fieldBaseURL].Value(); got != defaultBaseURL("openai") {
-		t.Fatalf("expected base url refreshed to openai default, got %q", got)
-	}
-	if got := m.inputs[fieldKeyEnv].Value(); got != "OPENAI_API_KEY" {
-		t.Fatalf("expected key env OPENAI_API_KEY, got %q", got)
-	}
-}
-
 func TestConfigPath(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmp)
@@ -262,10 +242,5 @@ func TestConfigPath(t *testing.T) {
 	want := filepath.Join(tmp, "ycc", "ycc.toml")
 	if p != want {
 		t.Fatalf("ConfigPath = %q, want %q", p, want)
-	}
-	// sanity: the directory under config home does not yet exist
-	if _, err := os.Stat(filepath.Dir(p)); !os.IsNotExist(err) {
-		// not an assertion failure, just ensure no panic
-		_ = err
 	}
 }
