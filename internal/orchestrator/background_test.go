@@ -237,9 +237,9 @@ func TestSpawnImplementerSingleWriterGuard(t *testing.T) {
 		t.Fatalf("foreground spawn should be refused while a background implementer is live, got: %q", res.Content)
 	}
 	// send_to_implementer — still running.
-	res, _ = sendToImplementer(d).Call(context.Background(), map[string]any{"task_id": "0001", "instructions": "tweak"})
+	res, _ = sendToImplementer(d).Call(context.Background(), map[string]any{"task_id": "0001", "instructions": "tweak", "context_mode": "fresh"})
 	if !res.IsError || !strings.Contains(res.Content, "still running") {
-		t.Fatalf("send_to_implementer should report the job still running, got: %q", res.Content)
+		t.Fatalf("fresh send_to_implementer should report the job still running, got: %q", res.Content)
 	}
 }
 
@@ -321,9 +321,9 @@ func TestReReviewRefusedWhileReviewJobLive(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-blocker.started // reviewer loop is actually running
-	res, _ := reReview(d).Call(context.Background(), map[string]any{"task_id": "0001"})
+	res, _ := reReview(d).Call(context.Background(), map[string]any{"task_id": "0001", "context_mode": "fresh", "handoff": "verify the revision"})
 	if !res.IsError || !strings.Contains(res.Content, "still running") {
-		t.Fatalf("re_review should be refused while the reviewer job is live, got: %q", res.Content)
+		t.Fatalf("fresh re_review should be refused while the reviewer job is live, got: %q", res.Content)
 	}
 	// Let the reviewer job finish before returning so its work-log write doesn't
 	// race the t.TempDir cleanup.

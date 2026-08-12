@@ -89,10 +89,22 @@ stop early whenever the situation calls for it:
      message and accepted outcome, then finish. Commit compacts immediately before recording the
      final tree, and must remain LAST so the working tree is left clean (it is fine if there is
      nothing to commit).
-   - Changes wanted → consolidate the findings into specific instructions,
-     send_to_implementer (it keeps its context), then re_review (reviewers keep theirs).
+   - Changes wanted → consolidate the findings into specific instructions, choose context_mode for
+     send_to_implementer and re_review using CONTEXT RETENTION below, then run the revision and review.
      Repeat, but cap at ~3 rounds; if it still isn't accepted, update_task "in_review",
      summarize what remains, and finish.
+
+CONTEXT RETENTION: retained subagent context is cheaper and more effective for a small, localized
+changeset when the approach remains valid and prior exploration is useful. Use context_mode='fresh'
+when the revision/review is broad, architectural, or changes approach; when accumulated history is
+mostly obsolete diffs, logs, failed experiments, or repeated review rounds; when the agent shows
+confusion/repetition; or when a compact self-contained handoff is clearly smaller and clearer. A
+context-length failure is a strong signal: do NOT retry that retained loop; use fresh context (or
+narrow/split the task). Fresh implementation handoffs must state the findings, current intended
+approach, and required verification. Fresh review handoffs should state what materially changed and
+which prior blockers require independent verification. Tool results expose round and approximate
+context size as advisory pressure signals; do not reset on a token threshold alone. Prefer retain
+when continuity is cheaper than reconstruction, fresh when reconstruction is cheaper and clearer.
 
 REVIEWS — match intensity to the change via spawn_reviewers' optional review_tier. Tiers are
 PROJECT-CONFIGURABLE: the spawn_reviewers tool description lists the tiers this project has,
@@ -199,9 +211,12 @@ stop early whenever the situation calls for it:
      message and accepted outcome, then finish. Commit compacts immediately before recording the
      final tree, and must remain LAST so the working tree is left clean (it is fine if there is
      nothing to commit).
-   - Changes wanted → address the findings yourself (edit + re-verify), then re_review
-     (reviewers keep their context). Repeat, but cap at ~3 rounds; if it still isn't accepted,
-     update_task "in_review", summarize what remains, and finish.
+   - Changes wanted → address the findings yourself (edit + re-verify), then re_review. Retain
+     reviewer context for a small localized changeset; use context_mode='fresh' for a broad or
+     approach-changing revision, obsolete/log-heavy accumulated history, repetition/confusion, or
+     after a context-length failure. Give a fresh reviewer a compact handoff naming what changed and
+     prior blockers to verify. Repeat, but cap at ~3 rounds; if it still isn't accepted, update_task
+     "in_review", summarize what remains, and finish.
 
 REVIEWS — match intensity to the change via spawn_reviewers' optional review_tier. Tiers are
 PROJECT-CONFIGURABLE: the spawn_reviewers tool description lists the tiers this project has,
@@ -573,6 +588,48 @@ func revisePrompt(instructions string) string {
 with a report of what you changed:
 
 %s`, instructions)
+}
+
+func freshRevisePrompt(t *docs.Task, instructions string) string {
+	return fmt.Sprintf(`Continue implementation of this task from the CURRENT WORKSPACE. You are a replacement
+implementer with fresh conversation context: inspect and preserve sound existing work, but do not assume it is
+correct or complete. The coordinator's handoff below is the authoritative compact account of what remains.
+
+Task %s: %s
+
+%s
+
+Revision handoff (findings, intended current approach, and required verification):
+%s
+
+Inspect the current diff and relevant files, make the requested revision, run the named/proportionate checks,
+and call finish with a report of what you changed.`, t.ID, t.Title, t.Body, instructions)
+}
+
+func freshReReviewPrompt(t *docs.Task, focus, handoff string, hasDiff bool) string {
+	inspection := "Inspect the current working tree, starting with 'git diff HEAD'"
+	if hasDiff {
+		inspection = "The current bounded diff is preloaded above; inspect further with Read/Bash as needed"
+	}
+	if strings.TrimSpace(handoff) == "" {
+		handoff = "No additional handoff was supplied. Independently verify the current change against the full task and acceptance criteria."
+	}
+	p := fmt.Sprintf(`Re-review the current changes as a FRESH replacement reviewer. Do not assume prior findings
+were fixed merely because a revision occurred; independently inspect the current state. The compact handoff may
+name prior blockers or an approach change, but the task remains authoritative.
+
+Task %s: %s
+
+%s
+
+Revision handoff:
+%s
+
+%s and call submit_review when done.`, t.ID, t.Title, t.Body, handoff, inspection)
+	if f := strings.TrimSpace(focus); f != "" {
+		p += "\n\nYour assigned focus for this review:\n" + f
+	}
+	return p
 }
 
 func reviewerPrompt(t *docs.Task, focus string, hasDiff bool) string {

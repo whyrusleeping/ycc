@@ -27,6 +27,8 @@ const maxDiffChars = 16000
 // before a tool call lands. It only raises the configured cap, never lowers it.
 const implementerMinTok = 16384
 
+const maxRevisionHandoffBytes = 32 * 1024
+
 // AgentSpec describes how to build a subagent's backend.
 type AgentSpec struct {
 	Name      string // logical model name (used for usage attribution / pricing)
@@ -93,8 +95,8 @@ type ReviewTierInfo struct {
 }
 
 // Deps is everything the coordinator tools need to orchestrate a work session.
-// It also holds the live subagent handles so the revise loop can reuse their
-// conversation contexts across rounds.
+// It also holds the live subagent handles and their resolved slots so revision
+// rounds can either retain conversation context or replace it deliberately.
 type Deps struct {
 	Workspace string
 	// Env contains extra KEY=VALUE entries inherited by every agent shell in
@@ -135,6 +137,8 @@ type Deps struct {
 
 	mu        sync.Mutex
 	impl      *engine.Loop
+	implSpec  AgentSpec // resolved slot used by impl; retained across fresh revisions
+	implRound int       // completed/attempted implementer runs, including the initial run
 	implJob   *jobs.Job // live/last background implementer job (nil if last spawn was foreground)
 	reviewers []*reviewerHandle
 	reviewJob *jobs.Job // live/last background reviewers job
@@ -167,9 +171,13 @@ func (d *Deps) emitFocus(taskID string) {
 }
 
 type reviewerHandle struct {
-	name  string // display label (tier reviewer name, or the model name)
-	model string // logical model backing this reviewer
-	loop  *engine.Loop
+	name               string // display label (tier reviewer name, or the model name)
+	model              string // logical model backing this reviewer
+	spec               AgentSpec
+	loop               *engine.Loop
+	round              int // current review round, including the initial review
+	contextMode        string
+	priorContextTokens int
 }
 
 // SetImplementer changes future spawns; a running implementer keeps its context.
@@ -428,6 +436,8 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 			loop.Seed(implementerPrompt(t, plan, hints))
 			d.mu.Lock()
 			d.impl = loop
+			d.implSpec = impl
+			d.implRound = 1
 			d.implJob = nil // cleared for a foreground spawn; set below for background
 			d.mu.Unlock()
 
@@ -483,20 +493,23 @@ func (d *Deps) liveImplJob() *jobs.Job {
 // a background goroutine, so both delivery paths carry the same report text.
 func runImplementer(ctx context.Context, d *Deps, loop *engine.Loop, id, label, before, jobID string) *gollama.ToolResult {
 	res, err := loop.Run(ctx)
-	fin := map[string]any{"role": "implementer"}
+	contextTokens := loop.ContextTokensEstimate()
+	fin := map[string]any{"role": "implementer", "context_mode": "fresh", "round": 1, "context_tokens_est": contextTokens}
 	if jobID != "" {
 		fin["job_id"] = jobID
 	}
 	if err != nil {
 		fin["error"] = err.Error()
 		d.Emitter.Emit(event.SubagentFinished, fin)
-		return tools.ErrResult("implementer failed: %v", err)
+		return tools.ErrResult("implementer failed: %v\n\nSUBAGENT CONTEXT: mode=fresh round=1 approx_tokens=%d. If this was a context-length failure, retry with send_to_implementer context_mode='fresh'.", err, contextTokens)
 	}
 	if res.Blocked {
 		fin["blocked"] = true
 	}
 	d.Emitter.Emit(event.SubagentFinished, fin)
-	return implementerOutcome(d, id, label, before, res)
+	out := implementerOutcome(d, id, label, before, res)
+	out.Content += subagentContextNote("fresh", 1, contextTokens, 0)
+	return out
 }
 
 // emitAgentJobFinished records a job_finished event for an agent job, tagged with
@@ -513,44 +526,118 @@ func emitAgentJobFinished(em *event.Emitter, job *jobs.Job) {
 func sendToImplementer(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "send_to_implementer",
-		Description: "Send revision instructions to the EXISTING implementer (it keeps its context from before). " +
-			"Use this to address review findings. Returns its report and the updated staged diff.",
+		Description: "Send consolidated revision instructions to the implementer. context_mode defaults to 'retain', " +
+			"which reuses its history and is cheapest for a small, local correction. Use 'fresh' for a broad rewrite, a " +
+			"material approach change, accumulated obsolete/log-heavy history, repeated confusion, or after any context-length " +
+			"failure; fresh creates a replacement loop seeded only with the full task, current workspace, and your compact " +
+			"self-contained handoff. Returns its report, context-pressure metadata, and the updated staged diff.",
 		Params: tools.Obj(map[string]any{
 			"task_id":      tools.StrProp("task id"),
-			"instructions": tools.StrProp("clear, consolidated instructions for what to change"),
+			"instructions": tools.StrProp("clear, consolidated, self-contained instructions: findings, current intended approach, and required verification; bounded to 32 KiB"),
+			"context_mode": tools.StrProp("optional revision context strategy: 'retain' (default) or 'fresh'"),
 		}, "task_id", "instructions"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			id, _ := tools.GetString(params, "task_id")
 			instr, _ := tools.GetString(params, "instructions")
+			instr = boundedRevisionHandoff(instr)
+			mode, err := revisionContextMode(params)
+			if err != nil {
+				return tools.ErrResult("send_to_implementer: %v", err), nil
+			}
 			d.mu.Lock()
 			loop := d.impl
+			spec := d.implSpec
 			job := d.implJob
+			priorRound := d.implRound
 			d.mu.Unlock()
 			if loop == nil {
 				return tools.ErrResult("send_to_implementer: no implementer yet; call spawn_implementer first"), nil
 			}
 			// A background implementer's loop is only addressable once it has
-			// finished — resuming a still-running loop would run two turns of the
-			// same conversation concurrently.
+			// finished — replacing or resuming a still-running loop would permit two
+			// mutating agents in the same tree.
 			if job != nil && job.Status() == jobs.Running {
 				return tools.ErrResult("send_to_implementer: implementer job %s is still running; wait for its report first", job.ID()), nil
 			}
-			loop.Post(revisePrompt(instr))
-			before, _ := d.Repo.Diff()
-			d.Emitter.Emit(event.SubagentSpawned, map[string]any{"role": "implementer", "model": d.implementer().Model, "revise": true})
-			res, err := loop.Run(ctx)
-			if err != nil {
-				d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "implementer", "error": err.Error()})
-				return tools.ErrResult("implementer failed: %v", err), nil
-			}
-			if res.Blocked {
-				d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "implementer", "blocked": true})
+			priorTokens := loop.ContextTokensEstimate()
+			if mode == "fresh" {
+				t, getErr := d.Docs.Get(id)
+				if getErr != nil {
+					return tools.ErrResult("send_to_implementer: %v", getErr), nil
+				}
+				loop = newImplementerLoop(d, spec)
+				loop.Seed(freshRevisePrompt(t, instr))
+				d.mu.Lock()
+				d.impl = loop
+				d.mu.Unlock()
 			} else {
-				d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "implementer"})
+				loop.Post(revisePrompt(instr))
 			}
-			return implementerOutcome(d, id, "revision", before, res), nil
+			round := priorRound + 1
+			d.mu.Lock()
+			d.implRound = round
+			d.mu.Unlock()
+			before, _ := d.Repo.Diff()
+			spawnData := map[string]any{"role": "implementer", "model": spec.Model, "revise": true,
+				"context_mode": mode, "round": round, "prior_context_tokens_est": priorTokens}
+			d.Emitter.Emit(event.SubagentSpawned, spawnData)
+			res, runErr := loop.Run(ctx)
+			if runErr != nil {
+				d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "implementer", "error": runErr.Error(),
+					"context_mode": mode, "round": round, "context_tokens_est": loop.ContextTokensEstimate()})
+				return tools.ErrResult("implementer failed: %v\n\nSUBAGENT CONTEXT: mode=%s round=%d approx_tokens=%d. If this was a context-length failure, retry with context_mode='fresh'.",
+					runErr, mode, round, loop.ContextTokensEstimate()), nil
+			}
+			finishData := map[string]any{"role": "implementer", "context_mode": mode, "round": round,
+				"context_tokens_est": loop.ContextTokensEstimate()}
+			if res.Blocked {
+				finishData["blocked"] = true
+			}
+			d.Emitter.Emit(event.SubagentFinished, finishData)
+			out := implementerOutcome(d, id, "revision", before, res)
+			out.Content += subagentContextNote(mode, round, loop.ContextTokensEstimate(), priorTokens)
+			return out, nil
 		},
 	}
+}
+
+func boundedRevisionHandoff(s string) string {
+	const marker = "\n…[revision handoff truncated]"
+	s = strings.TrimSpace(s)
+	if len(s) <= maxRevisionHandoffBytes {
+		return s
+	}
+	return validUTF8Prefix(s, maxRevisionHandoffBytes-len(marker)) + marker
+}
+
+func revisionContextMode(params any) (string, error) {
+	mode, _ := tools.GetString(params, "context_mode")
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		return "retain", nil
+	}
+	if mode != "retain" && mode != "fresh" {
+		return "", fmt.Errorf("context_mode must be 'retain' or 'fresh', got %q", mode)
+	}
+	return mode, nil
+}
+
+func newImplementerLoop(d *Deps, spec AgentSpec) *engine.Loop {
+	reg := tools.New()
+	reg.Add(tools.Worker(&tools.Workspace{
+		Root: d.Workspace, Env: append([]string(nil), d.Env...),
+		WriteRoots: tools.NormalizeRoots(d.WriteRoots), Jobs: d.Jobs,
+		Emitter: d.Emitter.With("implementer"),
+	})...)
+	loop := d.newLoop(spec, sys(implementerSystem, false, d.Workspace), reg, "implementer")
+	if loop.MaxTok < implementerMinTok {
+		loop.MaxTok = implementerMinTok
+	}
+	return loop
+}
+
+func subagentContextNote(mode string, round, current, prior int) string {
+	return fmt.Sprintf("\n\nSUBAGENT CONTEXT: mode=%s round=%d approx_tokens=%d prior_tokens=%d", mode, round, current, prior)
 }
 
 // reviewTierBlurb describes the review tiers available to the coordinator. When
@@ -680,7 +767,7 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 					emitSyntheticReviewDiff(d.Emitter, spec, actor, preloadedDiff)
 				}
 				loop.Seed(reviewerPrompt(t, spec.Focus, hasDiff))
-				d.reviewers = append(d.reviewers, &reviewerHandle{name: spec.label(), model: spec.Name, loop: loop})
+				d.reviewers = append(d.reviewers, &reviewerHandle{name: spec.label(), model: spec.Name, spec: spec, loop: loop, round: 1, contextMode: "fresh"})
 			}
 			handles := d.reviewers
 			d.reviewJob = nil // cleared for a foreground run; set below for background
@@ -716,13 +803,26 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 func reReview(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "re_review",
-		Description: "Ask the SAME reviewers (keeping their context) to re-review after a revision. Run this after " +
-			"send_to_implementer. Returns updated verdicts.",
-		Params: tools.Obj(map[string]any{"task_id": tools.StrProp("task id")}, "task_id"),
+		Description: "Re-review after a revision. context_mode defaults to 'retain', reusing the same reviewers' " +
+			"history for a small changeset. Use 'fresh' when the revision or prior review is broad, the approach changed, " +
+			"history is log-heavy/obsolete, or a reviewer hit context length. Fresh recreates the exact same resolved " +
+			"reviewer slots, models, focuses, and reasoning settings (it does not re-resolve the tier), preloads the current " +
+			"bounded diff, and seeds a compact self-contained handoff.",
+		Params: tools.Obj(map[string]any{
+			"task_id":      tools.StrProp("task id"),
+			"context_mode": tools.StrProp("optional review context strategy: 'retain' (default) or 'fresh'"),
+			"handoff":      tools.StrProp("for fresh mode, concise self-contained context: what changed, prior blockers to verify, and any changed approach; bounded to 32 KiB"),
+		}, "task_id"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			id, _ := tools.GetString(params, "task_id")
+			mode, err := revisionContextMode(params)
+			if err != nil {
+				return tools.ErrResult("re_review: %v", err), nil
+			}
+			handoff, _ := tools.GetString(params, "handoff")
+			handoff = boundedRevisionHandoff(handoff)
 			d.mu.Lock()
-			handles := d.reviewers
+			handles := append([]*reviewerHandle(nil), d.reviewers...)
 			job := d.reviewJob
 			d.mu.Unlock()
 			if len(handles) == 0 {
@@ -731,8 +831,35 @@ func reReview(d *Deps) *gollama.Tool {
 			if job != nil && job.Status() == jobs.Running {
 				return tools.ErrResult("re_review: reviewers job %s is still running; wait for its verdicts first", job.ID()), nil
 			}
-			for _, h := range handles {
-				h.loop.Post(reReviewPrompt)
+			if mode == "fresh" {
+				t, getErr := d.Docs.Get(id)
+				if getErr != nil {
+					return tools.ErrResult("re_review: %v", getErr), nil
+				}
+				preloadedDiff := buildReviewDiffHistory(d.Repo)
+				hasDiff := len(preloadedDiff.History) > 0
+				for _, h := range handles {
+					h.priorContextTokens = h.loop.ContextTokensEstimate()
+					reg := tools.New()
+					reg.Add(tools.Reviewer(&tools.Workspace{Root: d.Workspace, Env: append([]string(nil), d.Env...)})...)
+					actor := "reviewer:" + h.spec.label()
+					loop := d.newLoop(h.spec, inspectSys(reviewerSystemFocused(h.spec.Focus), d.Workspace), reg, actor)
+					if hasDiff {
+						loop.SetHistory(append([]gollama.Message(nil), preloadedDiff.History...))
+						emitSyntheticReviewDiff(d.Emitter, h.spec, actor, preloadedDiff)
+					}
+					loop.Seed(freshReReviewPrompt(t, h.spec.Focus, handoff, hasDiff))
+					h.loop = loop
+					h.round++
+					h.contextMode = "fresh"
+				}
+			} else {
+				for _, h := range handles {
+					h.priorContextTokens = h.loop.ContextTokensEstimate()
+					h.loop.Post(reReviewPrompt)
+					h.round++
+					h.contextMode = "retain"
+				}
 			}
 			results := runReviewers(ctx, d, handles, id)
 			return tools.OkResultView(aggregateReviews(results), aggregateReviewsView(results)), nil
@@ -877,7 +1004,12 @@ func runReviewers(ctx context.Context, d *Deps, handles []*reviewerHandle, taskI
 		wg.Add(1)
 		go func(i int, h *reviewerHandle) {
 			defer wg.Done()
-			d.Emitter.Emit(event.SubagentSpawned, map[string]any{"role": "reviewer", "model": h.name, "logical_model": h.model})
+			mode := h.contextMode
+			if mode == "" {
+				mode = "fresh"
+			}
+			d.Emitter.Emit(event.SubagentSpawned, map[string]any{"role": "reviewer", "model": h.name, "logical_model": h.model,
+				"context_mode": mode, "round": h.round, "prior_context_tokens_est": h.priorContextTokens})
 			res, err := h.loop.Run(ctx)
 			rv := review{Verdict: "unknown"}
 			if err != nil {
@@ -885,12 +1017,20 @@ func runReviewers(ctx context.Context, d *Deps, handles []*reviewerHandle, taskI
 			} else {
 				rv = parseReview(res.Report)
 			}
+			contextTokens := h.loop.ContextTokensEstimate()
 			d.Emitter.Emit(event.ReviewSubmitted, map[string]any{
 				"task": taskID, "model": h.name, "logical_model": h.model,
 				"verdict": rv.Verdict, "summary": rv.Summary, "findings": len(rv.Findings),
+				"context_mode": mode, "round": h.round, "context_tokens_est": contextTokens,
 			})
-			d.Emitter.Emit(event.SubagentFinished, map[string]any{"role": "reviewer", "model": h.name, "logical_model": h.model})
-			results[i] = reviewResult{name: h.name, model: h.model, rv: rv}
+			finishData := map[string]any{"role": "reviewer", "model": h.name, "logical_model": h.model,
+				"context_mode": mode, "round": h.round, "context_tokens_est": contextTokens}
+			if err != nil {
+				finishData["error"] = err.Error()
+			}
+			d.Emitter.Emit(event.SubagentFinished, finishData)
+			results[i] = reviewResult{name: h.name, model: h.model, rv: rv, contextMode: mode,
+				round: h.round, contextTokens: contextTokens, priorContextTokens: h.priorContextTokens}
 		}(i, h)
 	}
 	wg.Wait()
@@ -970,9 +1110,13 @@ type review struct {
 }
 
 type reviewResult struct {
-	name  string // display label (tier reviewer name, or the model name)
-	model string // logical model that produced the review
-	rv    review
+	name               string // display label (tier reviewer name, or the model name)
+	model              string // logical model that produced the review
+	rv                 review
+	contextMode        string
+	round              int
+	contextTokens      int
+	priorContextTokens int
 }
 
 // label names the reviewer for humans, disambiguating a focus label from the
@@ -1008,6 +1152,7 @@ func aggregateReviews(results []reviewResult) string {
 		for _, f := range r.rv.Findings {
 			fmt.Fprintf(&b, "  - [%s] %s\n", f.Severity, f.Message)
 		}
+		fmt.Fprintf(&b, "  context: mode=%s round=%d approx_tokens=%d prior_tokens=%d\n", r.contextMode, r.round, r.contextTokens, r.priorContextTokens)
 	}
 	if accepts == len(results) {
 		b.WriteString("\nAll reviewers accept — you may commit.")

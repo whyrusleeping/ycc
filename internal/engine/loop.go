@@ -457,6 +457,15 @@ func (l *Loop) History() []gollama.Message {
 	return out
 }
 
+// ContextTokensEstimate returns a coarse, backend-neutral estimate of the
+// retained system prompt and conversation history. It is advisory orchestration
+// metadata, not a provider limit calculation.
+func (l *Loop) ContextTokensEstimate() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return approxContextTokens(l.System, l.history)
+}
+
 // Post appends a text-only user message to the conversation.
 func (l *Loop) Post(content string) { l.PostMessage(UserMessage{Text: content}) }
 

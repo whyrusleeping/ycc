@@ -56,3 +56,7 @@ Apply the evidence-based test standard to Go packages outside the orchestrator/c
 - 2026-08-11 review (claude): unknown — reviewer error: turn 1: API returned non-200 status code 429: {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account's rate limit. Please try again later.
 …[truncated]
 - 2026-08-11 decision: accept — commit: Prune low-value Go tests
+- 2026-08-11 usage: 5,117,746 tok (in 1,099,831, out 20,219, cache_r 3,997,696, cache_w 0) · cost n/a (unpriced)
+  implementer: 3,947,695 tok (in 632,849, out 11,934, cache_r 3,302,912, cache_w 0) · cost n/a (unpriced)
+  coordinator: 624,617 tok (in 240,098, out 4,103, cache_r 380,416, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 545,434 tok (in 226,884, out 4,182, cache_r 314,368, cache_w 0) · cost n/a (unpriced)

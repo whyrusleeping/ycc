@@ -248,8 +248,14 @@ Resume or after changing the coordinator model.
 ### 7.3 Subagents and asynchronous jobs
 
 A subagent is another engine loop with isolated history and an actor-tagged event stream.
-Implementer and reviewer contexts may be retained for revision. Reviewer fan-out runs
-concurrently.
+Implementer and reviewer contexts may be retained for a small, localized revision, or explicitly
+replaced with fresh loops when a revision is broad, the approach changed, accumulated history is
+obsolete or log-heavy, or a context-length failure made continuation impossible. A fresh
+implementer receives the task and a compact self-contained revision handoff against the current
+working tree. Fresh reviewers preserve the previously resolved slots, models, focuses, and
+reasoning settings, receive the current bounded diff and a compact handoff, and do not re-resolve a
+possibly changed review tier. Subagent lifecycle events expose the chosen context mode, round, and
+an advisory context-size estimate. Reviewer fan-out runs concurrently.
 
 Background shell commands and subagents share session-owned job ids and the `job_output`, `wait`,
 and `kill_job` controls. Final reports are delivered exactly once, either by a covering wait or
@@ -333,9 +339,13 @@ the coordinator uses worker tools itself (`direct`). The setting is fixed for a 
 
 Review intensity is proportional to risk. The coordinator may self-review a tiny low-risk change,
 use one focused reviewer for ordinary work, or fan out independent reviewers for high-risk work.
-Findings are judged against the task rather than accepted mechanically. Revisions reuse the
-implementer and reviewer contexts when available. Acceptance updates the task and creates one
-coherent task commit.
+Findings are judged against the task rather than accepted mechanically. On revision, the
+coordinator chooses context retention or replacement: retained context avoids rediscovery for a
+small changeset, while fresh context avoids obsolete-history cost and anchoring for broad or
+approach-changing work. Context length, revision count, and approximate retained size are advisory
+signals rather than an automatic token threshold; after a context-length failure the coordinator
+uses a fresh subagent or narrows the task instead of retrying the same history. Acceptance updates
+the task and creates one coherent task commit.
 
 An implementer can return a structured blocked outcome when progress requires a decision outside
 its authority. The coordinator resolves ordinary implementation judgement, asks the user when

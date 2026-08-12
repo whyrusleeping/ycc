@@ -2,12 +2,14 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/docs"
@@ -24,6 +26,12 @@ type scripted struct {
 	i        int
 	system   string
 	messages []gollama.Message
+}
+
+type failingTurner struct{ err error }
+
+func (f failingTurner) TurnCtx(context.Context, gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+	return nil, f.err
 }
 
 func (s *scripted) TurnCtx(_ context.Context, opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
@@ -272,6 +280,135 @@ func TestReviseLoop(t *testing.T) {
 		if strings.Contains(task.Body, removed) {
 			t.Fatalf("completed task retained operational detail %q:\n%s", removed, task.Body)
 		}
+	}
+}
+
+func TestRevisionContextModeValidationAndHandoffBound(t *testing.T) {
+	if _, err := revisionContextMode(map[string]any{"context_mode": "discard"}); err == nil {
+		t.Fatal("invalid context mode accepted")
+	}
+	long := strings.Repeat("é", maxRevisionHandoffBytes)
+	got := boundedRevisionHandoff(long)
+	if len(got) > maxRevisionHandoffBytes || !strings.Contains(got, "truncated") || !utf8.ValidString(got) {
+		t.Fatalf("handoff bound invalid: bytes=%d valid=%v", len(got), utf8.ValidString(got))
+	}
+}
+
+func TestFreshImplementerRevisionReplacesHistory(t *testing.T) {
+	ws := t.TempDir()
+	repo, err := git.Open(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := docs.NewStore(ws)
+	if _, err := store.Create("fresh revision", "## Acceptance\n- fixed\n\n## Work log\n", 1, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	first := &scripted{resp: []*gollama.ResponseMessageGenerate{
+		call("Write", `{"file_path":"x.txt","content":"old\n"}`),
+		call("finish", `{"report":"initial"}`),
+	}}
+	fresh := &scripted{resp: []*gollama.ResponseMessageGenerate{
+		call("Edit", `{"file_path":"x.txt","old_string":"old","new_string":"fixed"}`),
+		call("finish", `{"report":"fresh fix"}`),
+	}}
+	calls := 0
+	d := &Deps{Workspace: ws, Docs: store, Repo: repo, Emitter: event.NewEmitter(&captureRec{}, "coordinator"),
+		Implementer: AgentSpec{Name: "impl", Model: "m", NewClient: func() engine.Turner {
+			calls++
+			if calls == 1 {
+				return first
+			}
+			return fresh
+		}}, Asker: noopAsker{}}
+	ctx := context.Background()
+	if res, _ := spawnImplementer(d).Call(ctx, map[string]any{"task_id": "0001", "plan": "initial"}); res.IsError {
+		t.Fatal(res.Content)
+	}
+	res, _ := sendToImplementer(d).Call(ctx, map[string]any{"task_id": "0001", "instructions": "replace old with fixed and verify it", "context_mode": "fresh"})
+	if res.IsError {
+		t.Fatal(res.Content)
+	}
+	if calls != 2 {
+		t.Fatalf("NewClient calls = %d, want replacement client", calls)
+	}
+	if len(fresh.messages) == 0 || !strings.Contains(fresh.messages[0].Content, "fresh conversation context") || !strings.Contains(fresh.messages[0].Content, "replace old with fixed") {
+		t.Fatalf("fresh seed is not self-contained: %+v", fresh.messages)
+	}
+	for _, m := range fresh.messages {
+		if strings.Contains(m.Content, "Coordinator's plan:\ninitial") {
+			t.Fatalf("fresh revision retained old implementer history: %+v", fresh.messages)
+		}
+	}
+	if !strings.Contains(res.Content, "mode=fresh round=2") {
+		t.Fatalf("missing fresh context metadata: %s", res.Content)
+	}
+}
+
+func TestFreshImplementerRecoversAfterContextLengthFailure(t *testing.T) {
+	ws := t.TempDir()
+	repo, _ := git.Open(ws)
+	store := docs.NewStore(ws)
+	_, _ = store.Create("recover", "## Work log\n", 1, nil, nil)
+	fresh := &scripted{resp: []*gollama.ResponseMessageGenerate{
+		call("Write", `{"file_path":"ok.txt","content":"ok\n"}`),
+		call("finish", `{"report":"recovered"}`),
+	}}
+	calls := 0
+	d := &Deps{Workspace: ws, Docs: store, Repo: repo, Emitter: event.NewEmitter(&captureRec{}, "coordinator"),
+		Implementer: AgentSpec{Name: "impl", Model: "m", NewClient: func() engine.Turner {
+			calls++
+			if calls == 1 {
+				return failingTurner{err: errors.New("context_length_exceeded")}
+			}
+			return fresh
+		}}, Asker: noopAsker{}}
+	first, _ := spawnImplementer(d).Call(context.Background(), map[string]any{"task_id": "0001", "plan": "go"})
+	if !first.IsError || !strings.Contains(first.Content, "context window exceeded") {
+		t.Fatalf("expected context failure, got: %s", first.Content)
+	}
+	res, _ := sendToImplementer(d).Call(context.Background(), map[string]any{"task_id": "0001", "instructions": "implement from current state", "context_mode": "fresh"})
+	if res.IsError || !strings.Contains(res.Content, "mode=fresh") {
+		t.Fatalf("fresh recovery failed: %s", res.Content)
+	}
+}
+
+func TestFreshReReviewPreservesResolvedSlotsAndSeedsCurrentDiff(t *testing.T) {
+	ws := t.TempDir()
+	repo, _ := git.Open(ws)
+	store := docs.NewStore(ws)
+	_, _ = store.Create("review fresh", "## Acceptance\n- correct\n\n## Work log\n", 1, nil, nil)
+	if err := os.WriteFile(filepath.Join(ws, "change.go"), []byte("package demo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	first := &scripted{resp: []*gollama.ResponseMessageGenerate{call("submit_review", `{"verdict":"revise","summary":"fix"}`)}}
+	fresh := &scripted{resp: []*gollama.ResponseMessageGenerate{call("submit_review", `{"verdict":"accept","summary":"fixed"}`)}}
+	clients := 0
+	resolved := 0
+	spec := AgentSpec{Name: "sol", Label: "correctness", Focus: "Focus on runtime correctness.", Model: "m", NewClient: func() engine.Turner {
+		clients++
+		if clients == 1 {
+			return first
+		}
+		return fresh
+	}}
+	d := &Deps{Workspace: ws, Docs: store, Repo: repo, Emitter: event.NewEmitter(&captureRec{}, "coordinator"), Asker: noopAsker{},
+		ReviewTier: func(string) ReviewPlan { resolved++; return ReviewPlan{Tier: "deep", Specs: []AgentSpec{spec}} }}
+	if res, _ := spawnReviewers(d).Call(context.Background(), map[string]any{"task_id": "0001"}); !strings.Contains(res.Content, "0/1") {
+		t.Fatal(res.Content)
+	}
+	res, _ := reReview(d).Call(context.Background(), map[string]any{"task_id": "0001", "context_mode": "fresh", "handoff": "runtime was revised; verify prior deadlock"})
+	if !strings.Contains(res.Content, "1/1") || !strings.Contains(res.Content, "mode=fresh round=2") {
+		t.Fatalf("fresh re-review failed: %s", res.Content)
+	}
+	if resolved != 1 {
+		t.Fatalf("review tier re-resolved %d times, want once", resolved)
+	}
+	if clients != 2 || !strings.Contains(fresh.system, "runtime correctness") {
+		t.Fatalf("resolved slot/focus not preserved: clients=%d system=%q", clients, fresh.system)
+	}
+	if len(fresh.messages) < 4 || fresh.messages[2].Role != "tool" || !strings.Contains(fresh.messages[2].Content, "change.go") || !strings.Contains(fresh.messages[len(fresh.messages)-1].Content, "prior deadlock") {
+		t.Fatalf("fresh reviewer missing bounded diff/handoff: %+v", fresh.messages)
 	}
 }
 
