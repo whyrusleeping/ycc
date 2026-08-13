@@ -323,10 +323,14 @@ func bash(ws *Workspace) *gollama.Tool {
 		"the command directly (write `rg 'pattern'`, not `cd <workspace> && rg 'pattern'`). Use this to explore " +
 		"and inspect: search with ripgrep (`rg 'pattern'`, `rg --files -g '*.go'`), list with `ls`, and run " +
 		"builds/tests. Prefer the Read tool over `cat` for viewing files. Foreground commands time out after 2 minutes " +
-		"by default; set timeout_s when a command needs longer (maximum 3600 seconds)."
+		"by default; set timeout_s to change the runtime limit (maximum 3600 seconds). Background commands have no " +
+		"runtime limit by default; for them, timeout_s sets a total job-runtime limit."
 	params := map[string]any{
-		"command":   strProp("shell command to execute via 'sh -c'"),
-		"timeout_s": map[string]any{"type": "integer", "minimum": 1, "maximum": maxBashTimeoutSeconds, "description": "foreground timeout in seconds (default 120, maximum 3600)"},
+		"command": strProp("shell command to execute via 'sh -c'"),
+		"timeout_s": map[string]any{
+			"type": "integer", "minimum": 1, "maximum": maxBashTimeoutSeconds,
+			"description": "maximum command runtime in seconds (foreground default 120; background commands have no runtime limit when omitted; maximum 3600)",
+		},
 	}
 	if ws.Jobs != nil {
 		desc += " Use run_in_background only to overlap the command with meaningful independent work or to leave a " +
@@ -398,10 +402,15 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 			if ws.Jobs == nil || ws.Emitter == nil {
 				return errResult("bash: run_in_background is not available in this session"), nil
 			}
+			var timeout time.Duration
 			if hasParam(params, "timeout_s") {
-				return errResult("bash: timeout_s applies only to foreground commands; omit it when run_in_background is true"), nil
+				timeoutSeconds := getInt(params, "timeout_s", 0)
+				if timeoutSeconds < 1 || timeoutSeconds > maxBashTimeoutSeconds {
+					return errResult("bash: timeout_s must be between 1 and %d seconds", maxBashTimeoutSeconds), nil
+				}
+				timeout = time.Duration(timeoutSeconds) * time.Second
 			}
-			job := startBackgroundBash(ws, cmdStr)
+			job := startBackgroundBash(ws, cmdStr, timeout)
 			if bgAutoDelivered(ws) {
 				return okResult(fmt.Sprintf("started background job %s: %s\nIt runs in the background — do NOT poll it. "+
 					"Its report arrives automatically when it finishes, or call wait([%q]) when you need the result; "+
@@ -474,9 +483,11 @@ func bgAutoDelivered(ws *Workspace) bool {
 // startBackgroundBash registers a background job for cmdStr, launches the process
 // under the job's context (so kill_job / session end kill the whole process
 // tree), streams its combined output into the job buffer, and emits job_started.
-// A goroutine waits for exit and, if it is the one that finalized the job (i.e.
-// the job was not killed first), emits job_finished exactly once.
-func startBackgroundBash(ws *Workspace, cmdStr string) *jobs.Job {
+// A positive timeout bounds the command's total runtime; zero leaves it unbounded
+// until kill_job or session end. A goroutine waits for exit and, if it is the one
+// that finalized the job (i.e. the job was not killed first), emits job_finished
+// exactly once.
+func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration) *jobs.Job {
 	owner := ws.Emitter.Actor()
 	// Unsandboxed background bash may write to the worktree, so it counts as a
 	// mutating job for the single-writer guard: a background
@@ -487,22 +498,28 @@ func startBackgroundBash(ws *Workspace, cmdStr string) *jobs.Job {
 		"id": job.ID(), "kind": job.Kind(), "label": cmdStr,
 	})
 
-	cmd := exec.CommandContext(job.Context(), "sh", "-c", cmdStr)
+	cmdCtx := job.Context()
+	cancelTimeout := func() {}
+	if timeout > 0 {
+		cmdCtx, cancelTimeout = context.WithTimeout(cmdCtx, timeout)
+	}
+	cmd := exec.CommandContext(cmdCtx, "sh", "-c", cmdStr)
 	cmd.Dir = ws.Root
 	if len(ws.Env) > 0 {
 		cmd.Env = append(os.Environ(), ws.Env...)
 	}
 	cmd.Stdout = job.Writer()
 	cmd.Stderr = job.Writer()
-	// Own process group so a kill signals the whole tree (shell + pipeline
-	// children), mirroring the foreground bashCall discipline. No 2-minute
-	// timeout: background jobs are for long runs and are bounded instead by
-	// kill_job or session-end KillAll (which cancels job.Context()).
+	// Own process group so a kill or runtime timeout signals the whole tree
+	// (shell + pipeline children), mirroring the foreground bashCall discipline.
+	// There is no implicit 2-minute limit for background work: it is bounded only
+	// when timeout_s was supplied, or by kill_job/session-end cancellation.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = 10 * time.Second
 
 	if err := cmd.Start(); err != nil {
+		cancelTimeout()
 		result := "exit: failed to start: " + err.Error()
 		if job.Finish(jobs.Failed, result) {
 			emitJobFinished(ws.Emitter, owner, job)
@@ -510,10 +527,14 @@ func startBackgroundBash(ws *Workspace, cmdStr string) *jobs.Job {
 		return job
 	}
 	go func() {
+		defer cancelTimeout()
 		err := cmd.Wait()
 		status := jobs.Done
 		exitInfo := "exit 0"
-		if err != nil {
+		if err != nil && timeout > 0 && cmdCtx.Err() == context.DeadlineExceeded {
+			status = jobs.Failed
+			exitInfo = fmt.Sprintf("command timed out after %s", timeout)
+		} else if err != nil {
 			status = jobs.Failed
 			if ee, ok := err.(*exec.ExitError); ok {
 				exitInfo = fmt.Sprintf("exit %d", ee.ExitCode())

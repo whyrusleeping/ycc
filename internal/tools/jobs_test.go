@@ -161,10 +161,77 @@ func TestBackgroundRejectedWithoutRegistry(t *testing.T) {
 	}
 }
 
-func TestBackgroundBashTimeoutConflict(t *testing.T) {
+func TestBackgroundBashTimeoutIsJobRuntimeLimit(t *testing.T) {
+	reg, jr, rec := jobsReg(t)
+	res := dispatch(t, reg, "Bash", `{"command":"echo started; sleep 30","timeout_s":1,"run_in_background":true}`)
+	if res.IsError || !strings.Contains(res.Content, "job_1") {
+		t.Fatalf("Bash bg with timeout = %q (err=%v)", res.Content, res.IsError)
+	}
+	if live := jr.LiveMutating(); live == nil || live.ID() != "job_1" || !live.Mutates() {
+		t.Fatalf("timed background Bash is not live/mutating: %#v", live)
+	}
+
+	res = dispatch(t, reg, "wait", `{"job_ids":["job_1"],"timeout_s":3}`)
+	if res.IsError || !strings.Contains(res.Content, "[job job_1 failed]") ||
+		!strings.Contains(res.Content, "command timed out after 1s") ||
+		!strings.Contains(res.Content, "started") {
+		t.Fatalf("timed background wait result = %q (err=%v)", res.Content, res.IsError)
+	}
+	job, ok := jr.Get("job_1")
+	if !ok || job.Status() != jobs.Failed {
+		t.Fatalf("timed job status = %v ok=%v, want failed", job.Status(), ok)
+	}
+	if live := jr.LiveMutating(); live != nil {
+		t.Fatalf("timed-out job remains live: %s", live.ID())
+	}
+	if fin := rec.find(event.JobFinished); fin == nil || fin.Data["status"] != "failed" ||
+		!strings.Contains(fin.Data["tail"].(string), "command timed out after 1s") {
+		t.Fatalf("job_finished does not report timeout failure: %+v", fin)
+	}
+
+	out := dispatch(t, reg, "job_output", `{"job_id":"job_1"}`)
+	if out.IsError || !strings.Contains(out.Content, "failed") || !strings.Contains(out.Content, "started") {
+		t.Fatalf("job_output after timeout = %q (err=%v)", out.Content, out.IsError)
+	}
+	killed := dispatch(t, reg, "kill_job", `{"job_id":"job_1"}`)
+	if killed.IsError || !strings.Contains(killed.Content, "already failed") {
+		t.Fatalf("kill_job after timeout = %q (err=%v)", killed.Content, killed.IsError)
+	}
+}
+
+func TestBackgroundBashTimeoutSchemaAndValidation(t *testing.T) {
 	reg, _, _ := jobsReg(t)
-	res := dispatch(t, reg, "Bash", `{"command":"echo hi","timeout_s":10,"run_in_background":true}`)
-	if !res.IsError {
-		t.Fatalf("timeout/background conflict = %q (err=%v)", res.Content, res.IsError)
+	var bashDef *gollama.Tool
+	for _, td := range reg.tools {
+		if td.Name == "Bash" {
+			bashDef = td
+			break
+		}
+	}
+	if bashDef == nil {
+		t.Fatal("no Bash tool")
+	}
+	params, ok := bashDef.Params.(gollama.ToolFunctionParams)
+	if !ok {
+		t.Fatalf("Bash params type = %T", bashDef.Params)
+	}
+	timeout, ok := params.Properties["timeout_s"].(map[string]any)
+	if !ok || timeout["minimum"] != 1 || timeout["maximum"] != maxBashTimeoutSeconds ||
+		!strings.Contains(timeout["description"].(string), "background") {
+		t.Fatalf("background timeout schema = %#v", params.Properties["timeout_s"])
+	}
+	background, ok := params.Properties["run_in_background"].(map[string]any)
+	if !ok || background["type"] != "boolean" {
+		t.Fatalf("background schema = %#v", params.Properties["run_in_background"])
+	}
+
+	for _, args := range []string{
+		`{"command":"echo hi","timeout_s":0,"run_in_background":true}`,
+		`{"command":"echo hi","timeout_s":3601,"run_in_background":true}`,
+	} {
+		res := dispatch(t, reg, "Bash", args)
+		if !res.IsError || !strings.Contains(res.Content, "between 1 and 3600") {
+			t.Fatalf("invalid background timeout result = %q (err=%v)", res.Content, res.IsError)
+		}
 	}
 }
