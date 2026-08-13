@@ -222,6 +222,12 @@ message SessionSummary {
   // ask_user question (single or batch) and needs the user to reply. Only ever
   // set on live rows — a persisted-only session holds no in-memory question.
   bool waiting_input = 12;
+  // Per-logical-model token totals, ordered by tokens descending then model name.
+  // Missing/zero-usage turns are omitted.
+  repeated SessionModelUsage model_usage = 13;
+  // Total recorded tokens across all actors and models in the session. Zero means
+  // the log has no usable token metadata.
+  int64 total_tokens = 14;
 }
 message ListSessionHistoryResponse { repeated SessionSummary sessions = 1; }
 
@@ -770,6 +776,14 @@ message DiscardWorkstreamResponse {}
 // already queued are idempotent.
 message RetryIntegrationRequest { string workstream_id = 1; }
 message RetryIntegrationResponse { WorkstreamInfo workstream = 1; }
+
+// Per-model session-history usage. Kept at the end of the message declarations
+// so adding it does not renumber the generated descriptor indexes of existing
+// message types.
+message SessionModelUsage {
+  string model = 1;
+  int64 tokens = 2;
+}
 
 service SessionService {
   rpc ListModes(ListModesRequest) returns (ListModesResponse);

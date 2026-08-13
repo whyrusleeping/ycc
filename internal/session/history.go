@@ -27,6 +27,8 @@ type SessionSummary struct {
 	StartedAt    time.Time
 	LastActivity time.Time
 	FocusTasks   []string
+	ModelUsage   []ModelUsage
+	TotalTokens  int64
 	Turns        int
 	ToolCalls    int
 	Live         bool
@@ -34,6 +36,14 @@ type SessionSummary struct {
 	// question. Only ever set on live rows — a persisted-only session holds no
 	// in-memory pending question.
 	Waiting bool
+}
+
+// ModelUsage is the total recorded token usage for one logical model name in a
+// session. Rows are ordered by token count descending, then model name ascending,
+// so every client can present the same compact summary without re-sorting.
+type ModelUsage struct {
+	Model  string
+	Tokens int64
 }
 
 // scanSessionHistory scans a workspace's persisted session logs at
@@ -59,6 +69,7 @@ func scanSessionHistory(workspace string) ([]SessionSummary, error) {
 		}
 		id := filepath.Base(filepath.Dir(path))
 		proj := event.Reduce(evs)
+		models, totalTokens := sessionModelUsage(evs)
 		ws := proj.Workspace
 		if ws == "" {
 			ws = workspace
@@ -72,6 +83,8 @@ func scanSessionHistory(workspace string) ([]SessionSummary, error) {
 			StartedAt:    evs[0].TS,
 			LastActivity: evs[len(evs)-1].TS,
 			FocusTasks:   focusTasks(evs),
+			ModelUsage:   models,
+			TotalTokens:  totalTokens,
 			Turns:        proj.Turns,
 			ToolCalls:    proj.ToolCalls,
 		})
@@ -176,6 +189,64 @@ func focusTasks(evs []event.Event) []string {
 		tasks = append(tasks, task)
 	}
 	return tasks
+}
+
+// sessionModelUsage totals every recorded model_turn, regardless of actor, while
+// grouping named turns by logical model_name. Unnamed usage contributes to the
+// session total but cannot produce a useful model row. Missing, zero, negative,
+// or malformed usage is omitted so old and partial logs do not fabricate data.
+func sessionModelUsage(evs []event.Event) ([]ModelUsage, int64) {
+	byModel := make(map[string]int64)
+	var total int64
+	for _, ev := range evs {
+		if ev.Type != event.ModelTurn {
+			continue
+		}
+		tokens := modelTurnTokens(ev.Data["usage"])
+		if tokens <= 0 {
+			continue
+		}
+		total += tokens
+		model, _ := ev.Data["model_name"].(string)
+		if model = strings.TrimSpace(model); model != "" {
+			byModel[model] += tokens
+		}
+	}
+	models := make([]ModelUsage, 0, len(byModel))
+	for model, tokens := range byModel {
+		models = append(models, ModelUsage{Model: model, Tokens: tokens})
+	}
+	sort.Slice(models, func(i, j int) bool {
+		if models[i].Tokens != models[j].Tokens {
+			return models[i].Tokens > models[j].Tokens
+		}
+		return models[i].Model < models[j].Model
+	})
+	return models, total
+}
+
+func modelTurnTokens(v any) int64 {
+	switch usage := v.(type) {
+	case event.Usage:
+		return int64(usage.Total)
+	case *event.Usage:
+		if usage != nil {
+			return int64(usage.Total)
+		}
+	case map[string]any:
+		switch total := usage["total"].(type) {
+		case float64:
+			return int64(total)
+		case int:
+			return int64(total)
+		case int64:
+			return total
+		case json.Number:
+			value, _ := total.Int64()
+			return value
+		}
+	}
+	return 0
 }
 
 // truncateTitle collapses whitespace/newlines to a single line and truncates to

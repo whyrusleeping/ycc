@@ -746,10 +746,10 @@ private struct NewSessionRequest: Identifiable {
     var id: String { project ?? "" }
 }
 
-/// A single session row: title, status badge, live marker, needs-answer marker,
-/// turns, and a relative last-activity time. An unread row (agent activity this
-/// device has not been shown) is marked the way a mail inbox marks one: a
-/// leading dot and a heavier title.
+/// A single session row: title, task chips, attention-worthy lifecycle state,
+/// mode/model/token metadata, and relative activity time. An unread row (agent
+/// activity this device has not been shown) is marked the way a mail inbox marks
+/// one: a leading dot and a heavier title.
 private struct SessionRow: View {
     let session: Ycc_V1_SessionSummary
     var project = ""
@@ -758,12 +758,13 @@ private struct SessionRow: View {
     var isUnread = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 if session.live && session.waitingInput {
                     Image(systemName: "bell.badge.fill")
                         .foregroundStyle(.orange)
                         .font(.subheadline)
+                        .accessibilityLabel("needs answer")
                 } else if isUnread {
                     Circle()
                         .fill(Color.accentColor)
@@ -781,18 +782,31 @@ private struct SessionRow: View {
                         .labelStyle(.iconOnly)
                         .foregroundStyle(.green)
                         .font(.caption)
+                        .accessibilityLabel("live session")
                 }
             }
-            HStack(spacing: 8) {
-                StatusBadge(status: session.status)
+
+            let taskLabels = SessionListModel.taskChipLabels(for: session)
+            if !taskLabels.isEmpty {
+                HistoryFlowLayout(spacing: 5) {
+                    ForEach(Array(taskLabels.enumerated()), id: \.offset) { _, label in
+                        Text(label)
+                            .font(.caption2.monospacedDigit().weight(.semibold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(.secondary.opacity(0.12), in: Capsule())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .accessibilityLabel(taskAccessibilityLabel(label))
+                    }
+                }
+            }
+
+            HistoryFlowLayout(spacing: 8) {
+                if let lifecycle = SessionListModel.lifecycleLabel(for: session) {
+                    StatusBadge(label: lifecycle)
+                }
                 if isUnread {
-                    // Says *what* is unread. A finished session that wrapped up
-                    // while the phone was away is exactly the case this exists
-                    // for, so name the agent, not the row. Kept to one word so
-                    // it can sit alongside the project/turns metadata.
-                    // `fixedSize` keeps the pill from being squeezed by a tight
-                    // row: without it SwiftUI compresses the label and wraps or
-                    // truncates the text inside the capsule, which looks broken.
                     Label("new", systemImage: "text.bubble.fill")
                         .font(.caption2.weight(.semibold))
                         .padding(.horizontal, 7)
@@ -803,39 +817,36 @@ private struct SessionRow: View {
                         .fixedSize()
                         .accessibilityLabel("unread agent messages")
                 }
-                if isLoopOwned {
-                    Label("loop", systemImage: "arrow.triangle.2.circlepath")
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 2)
-                        .background(Color.accentColor.opacity(0.14), in: Capsule())
-                        .foregroundStyle(Color.accentColor)
-                        .lineLimit(1)
-                        .fixedSize()
-                        .accessibilityLabel("work loop session")
-                }
-                if showsProject {
+                if showsProject && !project.isEmpty {
                     Label(project, systemImage: "folder")
                         .lineLimit(1)
+                        .accessibilityLabel("project \(project)")
                 }
-                if session.turns > 0 {
-                    // No `fixedSize` here: if the row is still too tight after
-                    // the pills claim their space, the turn count is the least
-                    // important field, so it truncates rather than overflowing.
-                    Text("\(session.turns) turns")
+                ForEach(
+                    Array(SessionListModel.metadataItems(
+                        for: session, isLoopOwned: isLoopOwned
+                    ).enumerated()), id: \.offset
+                ) { _, item in
+                    Text(item)
                         .lineLimit(1)
+                        .accessibilityLabel(item == "via loop" ? "via work loop" : item)
                 }
-                Spacer(minLength: 4)
                 if let text = relativeLastActivity {
                     Text(text)
                         .lineLimit(1)
-                        .fixedSize()
                 }
             }
             .font(.caption)
             .foregroundStyle(.secondary)
         }
         .padding(.vertical, 2)
+    }
+
+    private func taskAccessibilityLabel(_ label: String) -> String {
+        if label.hasPrefix("+"), let count = Int(label.dropFirst()) {
+            return "\(count) more tasks"
+        }
+        return "task \(label)"
     }
 
     private var relativeLastActivity: String? {
@@ -847,10 +858,10 @@ private struct SessionRow: View {
     }
 }
 
-/// A coloured status pill for a session's `running`/`idle`/`error`/`paused`/
-/// `stopped` state.
+/// A compact lifecycle pill. Routine `idle` and unknown legacy values are
+/// filtered by SessionListModel before this view is created.
 private struct StatusBadge: View {
-    let status: String
+    let label: String
 
     var body: some View {
         Text(label)
@@ -861,22 +872,82 @@ private struct StatusBadge: View {
             .foregroundStyle(color)
             .lineLimit(1)
             .fixedSize()
-    }
-
-    private var kind: SessionStatusKind { SessionStatusKind(status: status) }
-
-    private var label: String {
-        kind == .unknown ? (status.isEmpty ? "unknown" : status) : kind.rawValue
+            .accessibilityLabel("session status \(label)")
     }
 
     private var color: Color {
-        switch kind {
-        case .running: return .green
-        case .error: return .red
-        case .paused: return .orange
-        // `idle` is the overwhelmingly common state of a session list, so a
-        // loud colour there is pure noise — reserve colour for what needs you.
-        case .idle, .stopped, .unknown: return .gray
+        switch label {
+        case "running": return .green
+        case "waiting", "paused": return .orange
+        case "error": return .red
+        case "stopped": return .gray
+        default: return .secondary
         }
+    }
+}
+
+/// A lightweight wrapping layout for task chips and routine metadata. Unlike a
+/// fixed HStack it remains legible at narrow iPhone widths and larger Dynamic
+/// Type sizes, moving whole labels to the next line rather than truncating them.
+private struct HistoryFlowLayout: Layout {
+    var spacing: CGFloat
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        arrange(proposal: proposal, subviews: subviews).size
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        let arrangement = arrange(
+            proposal: ProposedViewSize(width: bounds.width, height: proposal.height),
+            subviews: subviews
+        )
+        for (index, point) in arrangement.points.enumerated() {
+            let size = arrangement.itemSizes[index]
+            subviews[index].place(
+                at: CGPoint(x: bounds.minX + point.x, y: bounds.minY + point.y),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: size.width, height: size.height)
+            )
+        }
+    }
+
+    private func arrange(
+        proposal: ProposedViewSize, subviews: Subviews
+    ) -> (size: CGSize, points: [CGPoint], itemSizes: [CGSize]) {
+        let availableWidth = proposal.width ?? .infinity
+        var points: [CGPoint] = []
+        var itemSizes: [CGSize] = []
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var lineHeight: CGFloat = 0
+        var usedWidth: CGFloat = 0
+
+        for subview in subviews {
+            var size = subview.sizeThatFits(.unspecified)
+            if availableWidth.isFinite && size.width > availableWidth {
+                size = subview.sizeThatFits(ProposedViewSize(width: availableWidth, height: nil))
+            }
+            if x > 0, x + size.width > availableWidth {
+                x = 0
+                y += lineHeight + spacing
+                lineHeight = 0
+            }
+            points.append(CGPoint(x: x, y: y))
+            itemSizes.append(size)
+            x += size.width + spacing
+            lineHeight = max(lineHeight, size.height)
+            usedWidth = max(usedWidth, min(x - spacing, availableWidth))
+        }
+        let height = subviews.isEmpty ? 0 : y + lineHeight
+        return (CGSize(width: usedWidth, height: height), points, itemSizes)
     }
 }

@@ -171,6 +171,10 @@ func (s *Server) ListSessionHistory(_ context.Context, req *connect.Request[v1.L
 	}
 	var out []*v1.SessionSummary
 	for _, su := range sums {
+		models := make([]*v1.SessionModelUsage, 0, len(su.ModelUsage))
+		for _, usage := range su.ModelUsage {
+			models = append(models, &v1.SessionModelUsage{Model: usage.Model, Tokens: usage.Tokens})
+		}
 		out = append(out, &v1.SessionSummary{
 			SessionId:    su.ID,
 			Mode:         su.Mode,
@@ -184,6 +188,8 @@ func (s *Server) ListSessionHistory(_ context.Context, req *connect.Request[v1.L
 			ToolCalls:    int64(su.ToolCalls),
 			Live:         su.Live,
 			WaitingInput: su.Waiting,
+			ModelUsage:   models,
+			TotalTokens:  su.TotalTokens,
 		})
 	}
 	return connect.NewResponse(&v1.ListSessionHistoryResponse{Sessions: out}), nil

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -154,6 +155,56 @@ func TestDeriveTitleFromTaskFocus(t *testing.T) {
 	}
 }
 
+func TestScanSessionHistoryModelUsage(t *testing.T) {
+	ws := t.TempDir()
+	writeSession(t, ws, "s_usage", []event.Event{
+		{Seq: 1, TS: ts(1), Type: event.SessionStarted, Data: map[string]any{"mode": "work"}},
+		{Seq: 2, TS: ts(2), Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{
+			"model_name": "claude", "usage": event.Usage{Total: 100},
+		}},
+		{Seq: 3, TS: ts(3), Actor: "implementer", Type: event.ModelTurn, Data: map[string]any{
+			"model_name": "gpt", "usage": event.Usage{Total: 250},
+		}},
+		{Seq: 4, TS: ts(4), Actor: "reviewer:claude", Type: event.ModelTurn, Data: map[string]any{
+			"model_name": "claude", "usage": event.Usage{Total: 150},
+		}},
+		// Same-token models use their names as the deterministic tie break.
+		{Seq: 5, TS: ts(5), Actor: "reviewer:beta", Type: event.ModelTurn, Data: map[string]any{
+			"model_name": "beta", "usage": event.Usage{Total: 250},
+		}},
+		// Unnamed usage is still part of the all-actor/model session total.
+		{Seq: 6, TS: ts(6), Actor: "reviewer:legacy", Type: event.ModelTurn, Data: map[string]any{
+			"usage": event.Usage{Total: 50},
+		}},
+	})
+
+	sums, err := scanSessionHistory(ws)
+	if err != nil || len(sums) != 1 {
+		t.Fatalf("scan = %+v, %v", sums, err)
+	}
+	want := []ModelUsage{{Model: "beta", Tokens: 250}, {Model: "claude", Tokens: 250}, {Model: "gpt", Tokens: 250}}
+	if !reflect.DeepEqual(sums[0].ModelUsage, want) {
+		t.Fatalf("model usage = %+v, want %+v", sums[0].ModelUsage, want)
+	}
+	if sums[0].TotalTokens != 800 {
+		t.Fatalf("total tokens = %d, want 800", sums[0].TotalTokens)
+	}
+}
+
+func TestSessionModelUsageMissingAndMalformed(t *testing.T) {
+	evs := []event.Event{
+		{Type: event.ModelTurn, Data: map[string]any{"model_name": "missing"}},
+		{Type: event.ModelTurn, Data: map[string]any{"model_name": "bad", "usage": "bad"}},
+		{Type: event.ModelTurn, Data: map[string]any{"model_name": "zero", "usage": map[string]any{"total": float64(0)}}},
+		{Type: event.ModelTurn, Data: map[string]any{"model_name": "negative", "usage": map[string]any{"total": float64(-5)}}},
+		{Type: event.ToolCall, Data: map[string]any{"model_name": "not-a-turn", "usage": event.Usage{Total: 99}}},
+	}
+	models, total := sessionModelUsage(evs)
+	if len(models) != 0 || total != 0 {
+		t.Fatalf("missing/malformed usage = %+v total %d, want omitted", models, total)
+	}
+}
+
 func TestScanSessionHistoryMalformedTolerated(t *testing.T) {
 	ws := t.TempDir()
 	dir := filepath.Join(ws, ".ycc", "sessions", "s_bad")
@@ -256,6 +307,33 @@ func TestListSessionHistoryLiveOverridesDisk(t *testing.T) {
 	}
 	if s.Mode != "chat" {
 		t.Fatalf("live mode should win, got %q", s.Mode)
+	}
+	// Live status/mode overlay the same persisted reduction; model/token metadata
+	// must not diverge or disappear merely because the session is in memory.
+	if s.TotalTokens != 0 || len(s.ModelUsage) != 0 {
+		t.Fatalf("unexpected usage for no-usage live row: %+v", s)
+	}
+}
+
+func TestListSessionHistoryLivePreservesPersistedUsage(t *testing.T) {
+	ws := t.TempDir()
+	absWS, _ := filepath.Abs(ws)
+	writeSession(t, ws, "s_live_usage", []event.Event{
+		{Seq: 1, TS: ts(1), Type: event.SessionStarted, Data: map[string]any{"mode": "work"}},
+		{Seq: 2, TS: ts(2), Type: event.ModelTurn, Data: map[string]any{
+			"model_name": "claude", "usage": event.Usage{Total: 123},
+		}},
+	})
+	m := NewManager(config.NewRegistry(nil), ws)
+	m.sessions["s_live_usage"] = &Session{
+		ID: "s_live_usage", Workspace: absWS, Mode: "work", status: event.StatusRunning,
+	}
+	got, err := m.ListSessionHistory("")
+	if err != nil || len(got) != 1 {
+		t.Fatalf("ListSessionHistory = %+v, %v", got, err)
+	}
+	if !got[0].Live || got[0].TotalTokens != 123 || !reflect.DeepEqual(got[0].ModelUsage, []ModelUsage{{Model: "claude", Tokens: 123}}) {
+		t.Fatalf("live summary lost persisted usage: %+v", got[0])
 	}
 }
 

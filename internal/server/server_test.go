@@ -726,6 +726,40 @@ func TestGetSessionTranscript(t *testing.T) {
 	}
 }
 
+func TestListSessionHistoryMapsModelUsage(t *testing.T) {
+	reg := config.NewRegistry(&config.Config{
+		Models: map[string]config.Model{"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"}},
+		Roles:  config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
+	})
+	ws := t.TempDir()
+	logPath := filepath.Join(ws, ".ycc", "sessions", "sess_summary", "events.jsonl")
+	lg, err := event.OpenLog(logPath)
+	if err != nil {
+		t.Fatalf("OpenLog: %v", err)
+	}
+	lg.Record("coordinator", event.ModelTurn, map[string]any{
+		"model_name": "claude", "usage": event.Usage{Total: 300},
+	})
+	lg.Record("reviewer:gpt", event.ModelTurn, map[string]any{
+		"model_name": "gpt", "usage": event.Usage{Total: 200},
+	})
+	if err := lg.Close(); err != nil {
+		t.Fatalf("Close log: %v", err)
+	}
+
+	srv := New(session.NewManager(reg, ws))
+	resp, err := srv.ListSessionHistory(context.Background(), connect.NewRequest(&v1.ListSessionHistoryRequest{}))
+	if err != nil || len(resp.Msg.Sessions) != 1 {
+		t.Fatalf("ListSessionHistory = %+v, %v", resp, err)
+	}
+	summary := resp.Msg.Sessions[0]
+	if summary.TotalTokens != 500 || len(summary.ModelUsage) != 2 ||
+		summary.ModelUsage[0].Model != "claude" || summary.ModelUsage[0].Tokens != 300 ||
+		summary.ModelUsage[1].Model != "gpt" || summary.ModelUsage[1].Tokens != 200 {
+		t.Fatalf("wire summary usage = %+v, total %d", summary.ModelUsage, summary.TotalTokens)
+	}
+}
+
 func TestGetUsageFiltersByTask(t *testing.T) {
 	reg := config.NewRegistry(&config.Config{
 		Models: map[string]config.Model{"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"}},

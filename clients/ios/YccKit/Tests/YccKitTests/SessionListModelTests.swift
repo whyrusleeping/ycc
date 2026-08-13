@@ -101,7 +101,9 @@ final class SessionListModelTests: XCTestCase {
         turns: Int64 = 0,
         live: Bool = false,
         waitingInput: Bool = false,
-        focusTasks: [String] = []
+        focusTasks: [String] = [],
+        modelUsage: [(String, Int64)] = [],
+        totalTokens: Int64 = 0
     ) -> Ycc_V1_SessionSummary {
         var s = Ycc_V1_SessionSummary()
         s.sessionID = id
@@ -114,6 +116,13 @@ final class SessionListModelTests: XCTestCase {
         s.live = live
         s.waitingInput = waitingInput
         s.focusTasks = focusTasks
+        s.modelUsage = modelUsage.map { model, tokens in
+            var usage = Ycc_V1_SessionModelUsage()
+            usage.model = model
+            usage.tokens = tokens
+            return usage
+        }
+        s.totalTokens = totalTokens
         return s
     }
 
@@ -122,6 +131,86 @@ final class SessionListModelTests: XCTestCase {
         p.name = name
         p.path = path ?? "/tmp/\(name)"
         return p
+    }
+
+    // MARK: - Row presentation
+
+    func testDisplayTitleSeparatesTasksAndConservativelyRemovesBoilerplate() {
+        let bracketed = session(id: "a", title: "[0198] Repair event durability", focusTasks: ["0198"])
+        XCTAssertEqual(SessionListModel.displayTitle(for: bracketed), "Repair event durability")
+        XCTAssertEqual(SessionListModel.taskChipLabels(for: bracketed), ["0198"])
+        let multiBracket = session(id: "ab", title: "[0198,0200] Repair event durability", focusTasks: ["0198", "0200"])
+        XCTAssertEqual(SessionListModel.displayTitle(for: multiBracket), "Repair event durability")
+
+        let workPrompt = session(id: "b", title: "Work on task 0198: Repair event durability", focusTasks: ["0198"])
+        XCTAssertEqual(SessionListModel.displayTitle(for: workPrompt), "Repair event durability")
+
+        let dashed = session(id: "c", title: "0198 — Repair event durability", focusTasks: ["0198"])
+        XCTAssertEqual(SessionListModel.displayTitle(for: dashed), "Repair event durability")
+
+        let unrelated = session(id: "d", title: "Compare 0198 with the new event flow", focusTasks: ["0198"])
+        XCTAssertEqual(SessionListModel.displayTitle(for: unrelated), "Compare 0198 with the new event flow")
+    }
+
+    func testTaskIDsDeduplicateAndCompact() {
+        let value = session(id: "a", focusTasks: [" 0198 ", "0198", "", "0200", "0201", "0202"])
+        XCTAssertEqual(SessionListModel.taskIDs(for: value), ["0198", "0200", "0201", "0202"])
+        XCTAssertEqual(SessionListModel.taskChipLabels(for: value), ["0198", "0200", "+2"])
+    }
+
+    func testModelAndTokenSummaries() {
+        let multi = session(
+            id: "a",
+            modelUsage: [("gpt", 100), ("claude", 800), ("glm", 100)],
+            totalTokens: 1_250_000
+        )
+        XCTAssertEqual(SessionListModel.modelSummary(for: multi), "claude +2")
+        XCTAssertEqual(SessionListModel.tokenSummary(for: multi), "1.2M tok")
+        XCTAssertEqual(
+            SessionListModel.metadataItems(for: multi, isLoopOwned: true),
+            ["pm", "claude +2", "1.2M tok", "via loop"]
+        )
+
+        XCTAssertEqual(
+            SessionListModel.modelSummary(for: session(id: "sole", modelUsage: [("claude", 42)])),
+            "claude"
+        )
+        XCTAssertEqual(SessionListModel.tokenSummary(for: session(id: "b", totalTokens: 999)), "999 tok")
+        XCTAssertEqual(SessionListModel.tokenSummary(for: session(id: "c", totalTokens: 12_000)), "12K tok")
+    }
+
+    func testTokenSummaryPromotesRoundedUnitBoundaries() {
+        XCTAssertEqual(SessionListModel.tokenSummary(for: session(id: "k-low", totalTokens: 999_499)), "999K tok")
+        XCTAssertEqual(SessionListModel.tokenSummary(for: session(id: "k-carry", totalTokens: 999_500)), "1M tok")
+        XCTAssertEqual(SessionListModel.tokenSummary(for: session(id: "k-max", totalTokens: 999_999)), "1M tok")
+        XCTAssertEqual(SessionListModel.tokenSummary(for: session(id: "m-low", totalTokens: 999_499_999)), "999M tok")
+        XCTAssertEqual(SessionListModel.tokenSummary(for: session(id: "m-carry", totalTokens: 999_500_000)), "1B tok")
+        XCTAssertEqual(SessionListModel.tokenSummary(for: session(id: "m-max", totalTokens: 999_999_999)), "1B tok")
+    }
+
+    func testModelSummaryTieBreakAndMissingMetadata() {
+        let tie = session(id: "a", mode: "", modelUsage: [("zeta", 50), ("alpha", 50)], totalTokens: 100)
+        XCTAssertEqual(SessionListModel.modelSummary(for: tie), "alpha +1")
+
+        let missing = session(id: "b", mode: "", modelUsage: [("", 100), ("ignored", 0)])
+        XCTAssertNil(SessionListModel.modelSummary(for: missing))
+        XCTAssertNil(SessionListModel.tokenSummary(for: missing))
+        XCTAssertEqual(SessionListModel.metadataItems(for: missing, isLoopOwned: false), [])
+    }
+
+    func testLifecycleSuppressesIdleAndPreservesExceptionalStates() {
+        XCTAssertNil(SessionListModel.lifecycleLabel(for: session(id: "idle", status: "idle")))
+        XCTAssertNil(SessionListModel.lifecycleLabel(for: session(id: "unknown", status: "legacy")))
+        XCTAssertEqual(SessionListModel.lifecycleLabel(for: session(id: "run", status: "running")), "running")
+        XCTAssertEqual(SessionListModel.lifecycleLabel(for: session(id: "pause", status: "paused")), "paused")
+        XCTAssertEqual(SessionListModel.lifecycleLabel(for: session(id: "error", status: "error")), "error")
+        XCTAssertEqual(SessionListModel.lifecycleLabel(for: session(id: "stop", status: "stopped")), "stopped")
+        XCTAssertEqual(
+            SessionListModel.lifecycleLabel(for: session(
+                id: "wait", status: "running", live: true, waitingInput: true
+            )),
+            "waiting"
+        )
     }
 
     // MARK: - Sectioning / sorting

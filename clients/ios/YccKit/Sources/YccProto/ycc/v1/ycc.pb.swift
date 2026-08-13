@@ -741,6 +741,14 @@ public nonisolated struct Ycc_V1_SessionSummary: Sendable {
   /// set on live rows — a persisted-only session holds no in-memory question.
   public var waitingInput: Bool = false
 
+  /// Per-logical-model token totals, ordered by tokens descending then model name.
+  /// Missing/zero-usage turns are omitted.
+  public var modelUsage: [Ycc_V1_SessionModelUsage] = []
+
+  /// Total recorded tokens across all actors and models in the session. Zero means
+  /// the log has no usable token metadata.
+  public var totalTokens: Int64 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -2599,6 +2607,23 @@ public nonisolated struct Ycc_V1_RetryIntegrationResponse: Sendable {
   fileprivate var _workstream: Ycc_V1_WorkstreamInfo? = nil
 }
 
+/// Per-model session-history usage. Kept at the end of the message declarations
+/// so adding it does not renumber the generated descriptor indexes of existing
+/// message types.
+public nonisolated struct Ycc_V1_SessionModelUsage: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var model: String = String()
+
+  public var tokens: Int64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate nonisolated let _protobuf_package = "ycc.v1"
@@ -3998,7 +4023,7 @@ nonisolated extension Ycc_V1_ListSessionHistoryRequest: SwiftProtobuf.Message, S
 
 nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SessionSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}mode\0\u{1}status\0\u{1}workspace\0\u{1}title\0\u{3}started_at\0\u{3}last_activity\0\u{3}focus_tasks\0\u{1}turns\0\u{3}tool_calls\0\u{1}live\0\u{3}waiting_input\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}mode\0\u{1}status\0\u{1}workspace\0\u{1}title\0\u{3}started_at\0\u{3}last_activity\0\u{3}focus_tasks\0\u{1}turns\0\u{3}tool_calls\0\u{1}live\0\u{3}waiting_input\0\u{3}model_usage\0\u{3}total_tokens\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -4018,6 +4043,8 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
       case 10: try { try decoder.decodeSingularInt64Field(value: &self.toolCalls) }()
       case 11: try { try decoder.decodeSingularBoolField(value: &self.live) }()
       case 12: try { try decoder.decodeSingularBoolField(value: &self.waitingInput) }()
+      case 13: try { try decoder.decodeRepeatedMessageField(value: &self.modelUsage) }()
+      case 14: try { try decoder.decodeSingularInt64Field(value: &self.totalTokens) }()
       default: break
       }
     }
@@ -4060,6 +4087,12 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
     if self.waitingInput != false {
       try visitor.visitSingularBoolField(value: self.waitingInput, fieldNumber: 12)
     }
+    if !self.modelUsage.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.modelUsage, fieldNumber: 13)
+    }
+    if self.totalTokens != 0 {
+      try visitor.visitSingularInt64Field(value: self.totalTokens, fieldNumber: 14)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -4076,6 +4109,8 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
     if lhs.toolCalls != rhs.toolCalls {return false}
     if lhs.live != rhs.live {return false}
     if lhs.waitingInput != rhs.waitingInput {return false}
+    if lhs.modelUsage != rhs.modelUsage {return false}
+    if lhs.totalTokens != rhs.totalTokens {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -7462,6 +7497,41 @@ nonisolated extension Ycc_V1_RetryIntegrationResponse: SwiftProtobuf.Message, Sw
 
   public static func ==(lhs: Ycc_V1_RetryIntegrationResponse, rhs: Ycc_V1_RetryIntegrationResponse) -> Bool {
     if lhs._workstream != rhs._workstream {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_SessionModelUsage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SessionModelUsage"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}model\0\u{1}tokens\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.model) }()
+      case 2: try { try decoder.decodeSingularInt64Field(value: &self.tokens) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.model.isEmpty {
+      try visitor.visitSingularStringField(value: self.model, fieldNumber: 1)
+    }
+    if self.tokens != 0 {
+      try visitor.visitSingularInt64Field(value: self.tokens, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_SessionModelUsage, rhs: Ycc_V1_SessionModelUsage) -> Bool {
+    if lhs.model != rhs.model {return false}
+    if lhs.tokens != rhs.tokens {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

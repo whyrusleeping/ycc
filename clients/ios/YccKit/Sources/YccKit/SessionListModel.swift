@@ -628,29 +628,140 @@ public final class SessionListModel {
         return f
     }()
 
-    /// A row's display title: the derived title, falling back to
-    /// `mode + short session id` when empty so no row is blank. Once the agent
-    /// focuses backlog work, prefix the name with the focused task ids so the
-    /// session remains identifiable from the phone without opening it.
-    public static func displayTitle(for session: Ycc_V1_SessionSummary) -> String {
-        let title = session.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let base: String
-        if !title.isEmpty {
-            base = title
-        } else {
-            let shortID = String(session.sessionID.prefix(8))
-            let mode = session.mode.isEmpty ? "session" : session.mode
-            base = shortID.isEmpty ? mode : "\(mode) · \(shortID)"
-        }
-
+    /// Normalized focused task IDs in first-seen order. Empty and duplicate IDs
+    /// are omitted so legacy/corrupt events cannot create blank chips.
+    public static func taskIDs(for session: Ycc_V1_SessionSummary) -> [String] {
         var seen = Set<String>()
-        let taskIDs = session.focusTasks.compactMap { task -> String? in
-            let id = task.trimmingCharacters(in: .whitespacesAndNewlines)
+        return session.focusTasks.compactMap { raw -> String? in
+            let id = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !id.isEmpty, seen.insert(id).inserted else { return nil }
             return id
         }
-        guard !taskIDs.isEmpty else { return base }
-        return "[\(taskIDs.joined(separator: ","))] \(base)"
+    }
+
+    /// Compact labels for task chips. Two IDs remain directly visible; further
+    /// IDs collapse into a final count so narrow rows and Dynamic Type can wrap
+    /// without an unbounded run of chips.
+    public static func taskChipLabels(for session: Ycc_V1_SessionSummary) -> [String] {
+        let ids = taskIDs(for: session)
+        guard ids.count > 2 else { return ids }
+        return Array(ids.prefix(2)) + ["+\(ids.count - 2)"]
+    }
+
+    /// A row's primary title, falling back to `mode + short session id` when
+    /// empty. Matching task boilerplate is removed only at the beginning: old
+    /// clients injected `[0198]`, and work prompts commonly begin `Work on task
+    /// 0198:` or `0198 —`. Unrelated prompt text is deliberately untouched.
+    public static func displayTitle(for session: Ycc_V1_SessionSummary) -> String {
+        var title = session.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let taskIDs = taskIDs(for: session)
+        let taskSet = Set(taskIDs)
+        // The former row helper injected all focused IDs as `[0198,0200]`.
+        // Remove only a leading bracket whose complete comma-separated contents
+        // are known focused tasks; arbitrary bracketed prompt text survives.
+        if title.hasPrefix("["), let close = title.firstIndex(of: "]") {
+            let inside = title[title.index(after: title.startIndex)..<close]
+            let bracketIDs = inside.split(separator: ",", omittingEmptySubsequences: false)
+                .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            if !bracketIDs.isEmpty && bracketIDs.allSatisfy({ !$0.isEmpty && taskSet.contains($0) }) {
+                title = String(title[title.index(after: close)...])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        for id in taskIDs {
+            let escaped = NSRegularExpression.escapedPattern(for: id)
+            let patterns = [
+                #"(?i)^work\s+on\s+task\s+"# + escaped + #"\s*[:\-–—]\s*"#,
+                #"^"# + escaped + #"\s*[:\-–—]\s*"#,
+            ]
+            for pattern in patterns {
+                guard let expression = try? NSRegularExpression(pattern: pattern) else { continue }
+                let range = NSRange(title.startIndex..<title.endIndex, in: title)
+                if expression.firstMatch(in: title, range: range) != nil {
+                    title = expression.stringByReplacingMatches(
+                        in: title, range: range, withTemplate: ""
+                    ).trimmingCharacters(in: .whitespacesAndNewlines)
+                    break
+                }
+            }
+        }
+        if !title.isEmpty { return title }
+        let shortID = String(session.sessionID.prefix(8))
+        let mode = session.mode.trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = mode.isEmpty ? "session" : mode
+        return shortID.isEmpty ? base : "\(base) · \(shortID)"
+    }
+
+    /// Compact, deterministic logical-model signal. Although the daemon sends
+    /// usage in this order, sort here too so cached/older servers cannot produce
+    /// a flickering label. Models without a name or positive usage are omitted.
+    public static func modelSummary(for session: Ycc_V1_SessionSummary) -> String? {
+        let models = session.modelUsage
+            .filter { !$0.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.tokens > 0 }
+            .sorted {
+                if $0.tokens != $1.tokens { return $0.tokens > $1.tokens }
+                return $0.model < $1.model
+            }
+        guard let first = models.first else { return nil }
+        let name = first.model.trimmingCharacters(in: .whitespacesAndNewlines)
+        return models.count == 1 ? name : "\(name) +\(models.count - 1)"
+    }
+
+    /// Human-sized token total for the metadata line. Zero/missing usage is
+    /// omitted rather than presented as a misleading `0 tok`.
+    public static func tokenSummary(for session: Ycc_V1_SessionSummary) -> String? {
+        let tokens = session.totalTokens
+        guard tokens > 0 else { return nil }
+        let value: String
+        if tokens < 1_000 {
+            value = String(tokens)
+        } else if tokens < 999_500 {
+            value = compactDecimal(Double(tokens) / 1_000) + "K"
+        } else if tokens < 999_500_000 {
+            // Promote values whose compact rounding would otherwise say 1000K.
+            value = compactDecimal(Double(tokens) / 1_000_000) + "M"
+        } else {
+            // Likewise, never display 1000M at the next unit boundary.
+            value = compactDecimal(Double(tokens) / 1_000_000_000) + "B"
+        }
+        return "\(value) tok"
+    }
+
+    private static func compactDecimal(_ value: Double) -> String {
+        let locale = Locale(identifier: "en_US_POSIX")
+        if value >= 100 || value.rounded() == value {
+            return String(format: "%.0f", locale: locale, value)
+        }
+        let rounded = String(format: "%.1f", locale: locale, value)
+        return rounded.hasSuffix(".0") ? String(rounded.dropLast(2)) : rounded
+    }
+
+    /// Lifecycle label worth showing in a history ledger. Idle is routine and
+    /// unknown/empty legacy states have no trustworthy signal. Waiting overrides
+    /// running because it is the action the user needs to take.
+    public static func lifecycleLabel(for session: Ycc_V1_SessionSummary) -> String? {
+        if session.live && session.waitingInput { return "waiting" }
+        switch SessionStatusKind(status: session.status) {
+        case .running: return "running"
+        case .paused: return "paused"
+        case .error: return "error"
+        case .stopped: return "stopped"
+        case .idle, .unknown: return nil
+        }
+    }
+
+    /// Routine non-project metadata, kept testable outside SwiftUI. Missing
+    /// values vanish cleanly and loop provenance is deliberately plain text.
+    public static func metadataItems(
+        for session: Ycc_V1_SessionSummary, isLoopOwned: Bool
+    ) -> [String] {
+        var items: [String] = []
+        let mode = session.mode.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !mode.isEmpty { items.append(mode) }
+        if let model = modelSummary(for: session) { items.append(model) }
+        if let tokens = tokenSummary(for: session) { items.append(tokens) }
+        if isLoopOwned { items.append("via loop") }
+        return items
     }
 
     /// A stable sort: Swift's `sort(by:)` is not guaranteed stable, so decorate
