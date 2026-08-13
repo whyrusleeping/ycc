@@ -1,7 +1,7 @@
 ---
 id: "0329"
 title: 'iOS: redesign session-history rows around task, mode, model, and token signal'
-status: done
+status: in_review
 priority: 3
 created: "2026-08-13"
 updated: "2026-08-13"
@@ -73,4 +73,4 @@ Extend `SessionSummary`/`ListSessionHistory` as needed so model and token metada
 …[truncated]
 - 2026-08-13 review (sol#2/sol): accept — The revision cleanly addresses all prior findings. Compact token formatting now promotes rounded unit boundaries with focused regression tests, the SessionRow documentation matches the redesigned meta
 …[truncated]
-- 2026-08-13 decision: accept — daemon/API aggregation, generated clients, and the redesigned iOS row satisfy the acceptance criteria; Swift simulator/device verification remains pending on Apple hardware.
+- 2026-08-13 decision: implementation accepted and committed as 54fba48; status remains in_review pending the acceptance criterion’s required iPhone simulator/device verification, which is unavailable in this Linux environment.
