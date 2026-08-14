@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/whyrusleeping/gollama"
+	"github.com/whyrusleeping/ycc/internal/docs"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/tools"
 )
@@ -36,6 +37,127 @@ type preloadBuild struct {
 	Results  []*gollama.ToolResult
 	Calls    []gollama.ToolCall
 	Duration []int64
+}
+
+// ExplicitTaskPreload is a synthetic list_backlog/get_task exchange prepared for
+// the first turn of a work session whose opening prompt unambiguously references
+// one existing backlog task. History starts with the assistant tool-call turn;
+// the caller appends it after the real opening user message.
+type ExplicitTaskPreload struct {
+	TaskID   string
+	History  []gollama.Message
+	Results  []*gollama.ToolResult
+	Calls    []gollama.ToolCall
+	Duration []int64
+}
+
+// BuildExplicitTaskPreload recognizes an exact existing task id in the opening
+// prompt and executes the same backlog tools the coordinator would otherwise
+// spend its first turns invoking. Multiple referenced ids are ambiguous and an
+// invalid/failed lookup falls back to the ordinary model-driven workflow.
+func BuildExplicitTaskPreload(ctx context.Context, prompt string, d *Deps, reg *tools.Registry) ExplicitTaskPreload {
+	var out ExplicitTaskPreload
+	if d == nil || d.Docs == nil || reg == nil {
+		return out
+	}
+	tasks, err := d.Docs.ListMetadata()
+	if err != nil {
+		return out
+	}
+	id := explicitTaskID(prompt, tasks)
+	if id == "" {
+		return out
+	}
+
+	args := []string{"{}", fmt.Sprintf(`{"task_id":%q}`, id)}
+	names := []string{"list_backlog", "get_task"}
+	for i, name := range names {
+		call := gollama.ToolCall{
+			ID:   fmt.Sprintf("startup_backlog_%d", i+1),
+			Type: "function",
+			Function: gollama.ToolCallFunction{
+				Name:      name,
+				Arguments: args[i],
+			},
+		}
+		start := time.Now()
+		res := reg.Dispatch(ctx, call)
+		out.Calls = append(out.Calls, call)
+		out.Results = append(out.Results, res)
+		out.Duration = append(out.Duration, time.Since(start).Milliseconds())
+		if res == nil || res.IsError {
+			return ExplicitTaskPreload{}
+		}
+	}
+	out.TaskID = id
+	out.History = append(out.History, gollama.Message{Role: "assistant", ToolCalls: out.Calls})
+	for i, call := range out.Calls {
+		out.History = append(out.History, gollama.Message{
+			Role: "tool", ToolCallID: call.ID, Content: out.Results[i].Content,
+		})
+	}
+	return out
+}
+
+// explicitTaskID returns the sole existing backlog id mentioned as a complete
+// token in prompt. It deliberately matches against the store rather than
+// interpreting arbitrary numbers as ids.
+func explicitTaskID(prompt string, tasks []*docs.Task) string {
+	var found string
+	for _, task := range tasks {
+		if task == nil || task.ID == "" || !containsToken(prompt, task.ID) {
+			continue
+		}
+		if found != "" && found != task.ID {
+			return ""
+		}
+		found = task.ID
+	}
+	return found
+}
+
+func containsToken(s, token string) bool {
+	for start := 0; ; {
+		i := strings.Index(s[start:], token)
+		if i < 0 {
+			return false
+		}
+		i += start
+		leftOK := i == 0 || !isIDChar(s[i-1])
+		end := i + len(token)
+		rightOK := end == len(s) || !isIDChar(s[end])
+		if leftOK && rightOK {
+			return true
+		}
+		start = i + 1
+	}
+}
+
+func isIDChar(b byte) bool {
+	return b >= '0' && b <= '9' || b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z' || b == '_'
+}
+
+// Emit records exactly the synthetic exchange installed in coordinator history.
+// The real opening user_input event is emitted separately immediately before it.
+func (p ExplicitTaskPreload) Emit(em *event.Emitter, modelName, backend, modelID string) {
+	if p.TaskID == "" || len(p.Calls) == 0 || len(p.Results) != len(p.Calls) || len(p.Duration) != len(p.Calls) || em == nil {
+		return
+	}
+	em.Emit(event.ModelTurn, map[string]any{
+		"text": "", "tool_calls": len(p.Calls), "model_name": modelName,
+		"backend": backend, "model_id": modelID, "synthetic": true,
+	})
+	for i, call := range p.Calls {
+		em.Emit(event.ToolCall, map[string]any{
+			"name": call.Function.Name, "args": call.Function.Arguments,
+			"id": call.ID, "synthetic": true,
+		})
+		res := p.Results[i]
+		em.Emit(event.ToolResult, map[string]any{
+			"name": call.Function.Name, "result": res.Content, "error": res.IsError,
+			"id": call.ID, "duration_ms": p.Duration[i], "synthetic": true,
+		})
+	}
 }
 
 // parsePreloadFiles converts the coordinator-facing {path,offset?,limit?}

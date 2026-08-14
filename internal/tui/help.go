@@ -65,6 +65,7 @@ func (m model) helpSections() []helpSection {
 			{"ctrl+w", "jump to blocked tasks (when any are blocked; prompt empty)"},
 			{"ctrl+s", "open a session waiting for you (when any are waiting; prompt empty)"},
 			{"ctrl+l", "continue the last session (when one exists; prompt empty)"},
+			{"ctrl+p", "open the project hub (persistent/remote daemon; prompt empty)"},
 			{"type…", "compose an opening prompt"},
 		}},
 		{"session", []helpBind{

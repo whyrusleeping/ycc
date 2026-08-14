@@ -48,6 +48,9 @@ const (
 	// SessionServiceGetSessionTranscriptProcedure is the fully-qualified name of the SessionService's
 	// GetSessionTranscript RPC.
 	SessionServiceGetSessionTranscriptProcedure = "/ycc.v1.SessionService/GetSessionTranscript"
+	// SessionServiceGetSessionAttachmentProcedure is the fully-qualified name of the SessionService's
+	// GetSessionAttachment RPC.
+	SessionServiceGetSessionAttachmentProcedure = "/ycc.v1.SessionService/GetSessionAttachment"
 	// SessionServiceGetCommitDiffProcedure is the fully-qualified name of the SessionService's
 	// GetCommitDiff RPC.
 	SessionServiceGetCommitDiffProcedure = "/ycc.v1.SessionService/GetCommitDiff"
@@ -196,6 +199,9 @@ type SessionServiceClient interface {
 	// GetSessionTranscript returns a session's full event log (live or persisted)
 	// for the read-only transcript drill-in.
 	GetSessionTranscript(context.Context, *connect.Request[v1.GetSessionTranscriptRequest]) (*connect.Response[v1.GetSessionTranscriptResponse], error)
+	// GetSessionAttachment returns a retained picture referenced by a user_input
+	// event, without putting binary payloads in the event log.
+	GetSessionAttachment(context.Context, *connect.Request[v1.GetSessionAttachmentRequest]) (*connect.Response[v1.GetSessionAttachmentResponse], error)
 	// GetCommitDiff returns a commit's `git show` diff so the transcript can drill
 	// into what an agent committed from a commit_made row.
 	GetCommitDiff(context.Context, *connect.Request[v1.GetCommitDiffRequest]) (*connect.Response[v1.GetCommitDiffResponse], error)
@@ -340,6 +346,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			httpClient,
 			baseURL+SessionServiceGetSessionTranscriptProcedure,
 			connect.WithSchema(sessionServiceMethods.ByName("GetSessionTranscript")),
+			connect.WithClientOptions(opts...),
+		),
+		getSessionAttachment: connect.NewClient[v1.GetSessionAttachmentRequest, v1.GetSessionAttachmentResponse](
+			httpClient,
+			baseURL+SessionServiceGetSessionAttachmentProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("GetSessionAttachment")),
 			connect.WithClientOptions(opts...),
 		),
 		getCommitDiff: connect.NewClient[v1.GetCommitDiffRequest, v1.GetCommitDiffResponse](
@@ -634,6 +646,7 @@ type sessionServiceClient struct {
 	listSessions          *connect.Client[v1.ListSessionsRequest, v1.ListSessionsResponse]
 	listSessionHistory    *connect.Client[v1.ListSessionHistoryRequest, v1.ListSessionHistoryResponse]
 	getSessionTranscript  *connect.Client[v1.GetSessionTranscriptRequest, v1.GetSessionTranscriptResponse]
+	getSessionAttachment  *connect.Client[v1.GetSessionAttachmentRequest, v1.GetSessionAttachmentResponse]
 	getCommitDiff         *connect.Client[v1.GetCommitDiffRequest, v1.GetCommitDiffResponse]
 	subscribe             *connect.Client[v1.SubscribeRequest, v1.Event]
 	sendInput             *connect.Client[v1.SendInputRequest, v1.SendInputResponse]
@@ -706,6 +719,11 @@ func (c *sessionServiceClient) ListSessionHistory(ctx context.Context, req *conn
 // GetSessionTranscript calls ycc.v1.SessionService.GetSessionTranscript.
 func (c *sessionServiceClient) GetSessionTranscript(ctx context.Context, req *connect.Request[v1.GetSessionTranscriptRequest]) (*connect.Response[v1.GetSessionTranscriptResponse], error) {
 	return c.getSessionTranscript.CallUnary(ctx, req)
+}
+
+// GetSessionAttachment calls ycc.v1.SessionService.GetSessionAttachment.
+func (c *sessionServiceClient) GetSessionAttachment(ctx context.Context, req *connect.Request[v1.GetSessionAttachmentRequest]) (*connect.Response[v1.GetSessionAttachmentResponse], error) {
+	return c.getSessionAttachment.CallUnary(ctx, req)
 }
 
 // GetCommitDiff calls ycc.v1.SessionService.GetCommitDiff.
@@ -954,6 +972,9 @@ type SessionServiceHandler interface {
 	// GetSessionTranscript returns a session's full event log (live or persisted)
 	// for the read-only transcript drill-in.
 	GetSessionTranscript(context.Context, *connect.Request[v1.GetSessionTranscriptRequest]) (*connect.Response[v1.GetSessionTranscriptResponse], error)
+	// GetSessionAttachment returns a retained picture referenced by a user_input
+	// event, without putting binary payloads in the event log.
+	GetSessionAttachment(context.Context, *connect.Request[v1.GetSessionAttachmentRequest]) (*connect.Response[v1.GetSessionAttachmentResponse], error)
 	// GetCommitDiff returns a commit's `git show` diff so the transcript can drill
 	// into what an agent committed from a commit_made row.
 	GetCommitDiff(context.Context, *connect.Request[v1.GetCommitDiffRequest]) (*connect.Response[v1.GetCommitDiffResponse], error)
@@ -1094,6 +1115,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		SessionServiceGetSessionTranscriptProcedure,
 		svc.GetSessionTranscript,
 		connect.WithSchema(sessionServiceMethods.ByName("GetSessionTranscript")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceGetSessionAttachmentHandler := connect.NewUnaryHandler(
+		SessionServiceGetSessionAttachmentProcedure,
+		svc.GetSessionAttachment,
+		connect.WithSchema(sessionServiceMethods.ByName("GetSessionAttachment")),
 		connect.WithHandlerOptions(opts...),
 	)
 	sessionServiceGetCommitDiffHandler := connect.NewUnaryHandler(
@@ -1390,6 +1417,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceListSessionHistoryHandler.ServeHTTP(w, r)
 		case SessionServiceGetSessionTranscriptProcedure:
 			sessionServiceGetSessionTranscriptHandler.ServeHTTP(w, r)
+		case SessionServiceGetSessionAttachmentProcedure:
+			sessionServiceGetSessionAttachmentHandler.ServeHTTP(w, r)
 		case SessionServiceGetCommitDiffProcedure:
 			sessionServiceGetCommitDiffHandler.ServeHTTP(w, r)
 		case SessionServiceSubscribeProcedure:
@@ -1511,6 +1540,10 @@ func (UnimplementedSessionServiceHandler) ListSessionHistory(context.Context, *c
 
 func (UnimplementedSessionServiceHandler) GetSessionTranscript(context.Context, *connect.Request[v1.GetSessionTranscriptRequest]) (*connect.Response[v1.GetSessionTranscriptResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetSessionTranscript is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) GetSessionAttachment(context.Context, *connect.Request[v1.GetSessionAttachmentRequest]) (*connect.Response[v1.GetSessionAttachmentResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetSessionAttachment is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) GetCommitDiff(context.Context, *connect.Request[v1.GetCommitDiffRequest]) (*connect.Response[v1.GetCommitDiffResponse], error) {

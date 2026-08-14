@@ -240,6 +240,19 @@ message GetSessionTranscriptRequest {
 }
 message GetSessionTranscriptResponse { repeated Event events = 1; }
 
+// GetSessionAttachment returns one picture referenced by attachment_id in a
+// user_input event. The payload is stored beside (not inside) events.jsonl and
+// follows the session log's retention lifecycle.
+message GetSessionAttachmentRequest {
+  string project = 1;       // registered project; empty allowed only when exactly one exists
+  string session_id = 2;
+  string attachment_id = 3; // opaque id from user_input.images[].attachment_id
+}
+message GetSessionAttachmentResponse {
+  bytes data = 1;
+  string media_type = 2;
+}
+
 // GetCommitDiff returns the `git show` output (stat + patch) for a commit, so the
 // transcript can drill into what an agent actually committed. The
 // daemon caps the returned diff to bound the wire payload; truncated reports when
@@ -441,9 +454,8 @@ message RemoveReviewTierResponse {}
 message SetReviewDefaultRequest { string name = 1; }
 message SetReviewDefaultResponse {}
 
-// Backlog browser: read-only RPCs that expose the durable backlog
-// (internal/docs Store) so clients can list and inspect tasks independent of any
-// agent session.
+// Backlog browser RPCs expose the durable backlog (internal/docs Store) so
+// clients can list, inspect, and groom tasks independent of any agent session.
 message ListBacklogRequest {
   string project = 1; // registered project; empty allowed only when exactly one exists
 }
@@ -484,9 +496,14 @@ message GetTaskResponse { TaskDetail task = 1; }
 message UpdateTaskRequest {
   string project = 1;       // registered project; empty allowed only when exactly one exists
   string id = 2;
-  optional string status = 3;   // todo | in_progress | in_review | done | blocked
+  optional string status = 3;   // proposed | todo | in_progress | in_review | done | blocked
   optional int32 priority = 4;  // 1..5
   optional string title = 5;
+  optional string body = 6;     // full markdown body after the frontmatter
+  repeated string depends_on = 7;
+  optional bool replace_depends_on = 8; // distinguishes clearing the list from leaving it untouched
+  repeated string spec_refs = 9;
+  optional bool replace_spec_refs = 10; // distinguishes clearing the list from leaving it untouched
 }
 message UpdateTaskResponse { TaskDetail task = 1; }
 
@@ -795,6 +812,9 @@ service SessionService {
   // GetSessionTranscript returns a session's full event log (live or persisted)
   // for the read-only transcript drill-in.
   rpc GetSessionTranscript(GetSessionTranscriptRequest) returns (GetSessionTranscriptResponse);
+  // GetSessionAttachment returns a retained picture referenced by a user_input
+  // event, without putting binary payloads in the event log.
+  rpc GetSessionAttachment(GetSessionAttachmentRequest) returns (GetSessionAttachmentResponse);
   // GetCommitDiff returns a commit's `git show` diff so the transcript can drill
   // into what an agent committed from a commit_made row.
   rpc GetCommitDiff(GetCommitDiffRequest) returns (GetCommitDiffResponse);

@@ -217,6 +217,26 @@ func (s *Server) GetSessionTranscript(_ context.Context, req *connect.Request[v1
 	return connect.NewResponse(&v1.GetSessionTranscriptResponse{Events: out}), nil
 }
 
+// GetSessionAttachment returns one retained picture referenced by a user_input
+// event. Authentication is applied by the common SessionService handler.
+func (s *Server) GetSessionAttachment(_ context.Context, req *connect.Request[v1.GetSessionAttachmentRequest]) (*connect.Response[v1.GetSessionAttachmentResponse], error) {
+	if strings.TrimSpace(req.Msg.SessionId) == "" || strings.TrimSpace(req.Msg.AttachmentId) == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("session_id and attachment_id are required"))
+	}
+	data, mediaType, err := s.mgr.SessionAttachment(req.Msg.Project, req.Msg.SessionId, req.Msg.AttachmentId)
+	if err != nil {
+		switch {
+		case errors.Is(err, session.ErrUnknownProject):
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		case errors.Is(err, session.ErrUnknownSession):
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		default:
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+	}
+	return connect.NewResponse(&v1.GetSessionAttachmentResponse{Data: data, MediaType: mediaType}), nil
+}
+
 // GetCommitDiff returns a commit's `git show` diff (stat + patch) so the
 // transcript can drill into what an agent committed from a commit_made row.
 // The diff is capped at maxCommitDiffBytes (truncated at a
@@ -766,8 +786,8 @@ func (s *Server) GetTask(_ context.Context, req *connect.Request[v1.GetTaskReque
 	}}), nil
 }
 
-// UpdateTask changes a backlog task's status, priority, or title. Unset fields
-// are left untouched;
+// UpdateTask changes a backlog task's editable frontmatter or Markdown body.
+// Unset fields are left untouched;
 // a request with NO mutation fields set is a valid "refresh" that re-reads the
 // task file (used after hand-edits in $EDITOR). The
 // docs Store serializes writes per backlog dir, so this shares the same locking
@@ -797,6 +817,19 @@ func (s *Server) UpdateTask(_ context.Context, req *connect.Request[v1.UpdateTas
 	if m.Title != nil && strings.TrimSpace(m.GetTitle()) == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("title must not be blank"))
 	}
+	if !m.GetReplaceDependsOn() && len(m.DependsOn) != 0 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("depends_on requires replace_depends_on"))
+	}
+	if !m.GetReplaceSpecRefs() && len(m.SpecRefs) != 0 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("spec_refs requires replace_spec_refs"))
+	}
+	dependsOn := cleanTaskStrings(m.DependsOn)
+	for _, dep := range dependsOn {
+		if dep == m.Id {
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("task must not depend on itself"))
+		}
+	}
+	specRefs := cleanTaskStrings(m.SpecRefs)
 	t, err := store.Update(m.Id, func(t *docs.Task) {
 		if m.Status != nil {
 			t.Status = docs.Status(m.GetStatus())
@@ -806,6 +839,15 @@ func (s *Server) UpdateTask(_ context.Context, req *connect.Request[v1.UpdateTas
 		}
 		if m.Title != nil {
 			t.Title = strings.TrimSpace(m.GetTitle())
+		}
+		if m.Body != nil {
+			t.Body = m.GetBody()
+		}
+		if m.GetReplaceDependsOn() {
+			t.DependsOn = dependsOn
+		}
+		if m.GetReplaceSpecRefs() {
+			t.SpecRefs = specRefs
 		}
 	})
 	if err != nil {
@@ -821,6 +863,25 @@ func (s *Server) UpdateTask(_ context.Context, req *connect.Request[v1.UpdateTas
 		DependsOn: t.DependsOn, SpecRefs: t.SpecRefs, Created: t.Created, Updated: t.Updated,
 		Body: t.Body, Ready: len(blocking) == 0, BlockedBy: blocking, Path: t.Path,
 	}}), nil
+}
+
+// cleanTaskStrings normalizes editable string-list fields while preserving the
+// order entered by the user. Empty and duplicate values are omitted.
+func cleanTaskStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 // CreateTask adds a new task to the backlog. It composes the same

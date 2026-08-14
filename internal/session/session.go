@@ -9,6 +9,7 @@ package session
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -51,8 +52,8 @@ type Config struct {
 	// changing the persisted role defaults. An unbound preset behaves normally.
 	Preset string
 	// Images optionally attaches validated pictures to the opening prompt. The
-	// bytes live only in model history; the initial user_input event
-	// records metadata, exactly like SendInputMessage.
+	// initial user_input event records only metadata plus opaque references;
+	// payloads are retained separately for transcript display.
 	Images []engine.Image
 }
 
@@ -75,12 +76,13 @@ type Session struct {
 	coordinatorExplicit bool // StartSession coordinator_model won over any preset binding
 	// startupNotice is emitted as a visible, non-fatal event after the session
 	// lifecycle marker (used when a stale preset binding falls back safely).
-	startupNotice string
-	buildLoop     func(mode, prompt string) (*engine.Loop, error)
+	startupNotice  string
+	startupPreload orchestrator.ExplicitTaskPreload
+	buildLoop      func(mode, prompt string) (*engine.Loop, error)
 
-	// promptImages are pictures attached to the OPENING prompt. The
-	// bytes seed the first loop's history exactly once — a later mode transition
-	// re-seeds text only — while the initial user_input event records metadata.
+	// promptImages are pictures attached to the OPENING prompt. The bytes seed the
+	// first loop's history exactly once and are retained separately for transcript
+	// display; a later mode transition re-seeds text only.
 	promptImages []engine.Image
 	// promptImagesUsed marks those bytes as already seeded into a loop.
 	promptImagesUsed bool
@@ -246,17 +248,59 @@ func (s *Session) SendInput(text string) error {
 }
 
 // imageMetadata renders picture attachments as the safe, byte-free shape
-// recorded on user_input events (media type + display name only). It returns nil
-// for no images so callers can omit the field entirely.
+// recorded on user_input events. attachment_id is an opaque reference to a
+// separately retained payload; event JSON never contains the image bytes.
 func imageMetadata(images []engine.Image) []map[string]any {
 	if len(images) == 0 {
 		return nil
 	}
 	meta := make([]map[string]any, len(images))
 	for i, img := range images {
-		meta[i] = map[string]any{"media_type": img.MediaType, "filename": img.Filename}
+		item := map[string]any{"media_type": img.MediaType, "filename": img.Filename}
+		if img.AttachmentID != "" {
+			item["attachment_id"] = img.AttachmentID
+		}
+		meta[i] = item
 	}
 	return meta
+}
+
+// retainImages writes validated image payloads beside the event log, then adds
+// opaque ids to the in-memory model images. Files inherit the session's retention
+// lifecycle while remaining outside append-only events.jsonl.
+func (s *Session) retainImages(images []engine.Image) error {
+	if len(images) == 0 {
+		return nil
+	}
+	dir := filepath.Join(s.Workspace, ".ycc", "sessions", s.ID, "attachments")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create session attachment directory: %w", err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return fmt.Errorf("secure session attachment directory: %w", err)
+	}
+	for i := range images {
+		if images[i].AttachmentID != "" {
+			continue
+		}
+		id, err := newAttachmentID()
+		if err != nil {
+			return fmt.Errorf("create attachment id: %w", err)
+		}
+		data, err := base64.StdEncoding.DecodeString(images[i].Base64)
+		if err != nil {
+			return fmt.Errorf("decode picture attachment: %w", err)
+		}
+		path := filepath.Join(dir, id)
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			return fmt.Errorf("retain picture attachment: %w", err)
+		}
+		if err := os.Chmod(path, 0o600); err != nil {
+			return fmt.Errorf("secure picture attachment: %w", err)
+		}
+		images[i].AttachmentID = id
+	}
+	return nil
 }
 
 // takeSeedImages returns the opening-prompt attachments exactly once. A later
@@ -273,8 +317,8 @@ func (s *Session) takeSeedImages() []engine.Image {
 }
 
 // SendInputMessage delivers user text plus optional native image attachments.
-// Image bytes remain in live model history only; user_input events contain safe
-// metadata so events.jsonl never becomes a binary payload store.
+// Image bytes enter live model history and a separate session attachment store;
+// user_input events remain byte-free so events.jsonl is not a binary payload store.
 func (s *Session) SendInputMessage(input engine.UserMessage) error {
 	if err := s.logFailure(); err != nil {
 		return fmt.Errorf("session event log failed: %w", err)
@@ -309,6 +353,10 @@ func (s *Session) SendInputMessage(input engine.UserMessage) error {
 	// together under steerMu. It does NOT auto-resume a paused loop.
 	s.steerMu.Lock()
 	if s.paused || s.pauseReq || s.running {
+		if err := s.retainImages(input.Images); err != nil {
+			s.steerMu.Unlock()
+			return err
+		}
 		ev := s.emitter.EmitAs("user", event.UserInput, eventData(true))
 		if err := s.logFailure(); err != nil {
 			s.steerMu.Unlock()
@@ -343,8 +391,11 @@ func (s *Session) SendInputMessage(input engine.UserMessage) error {
 	if len(s.messageCh) >= cap(s.messageCh) {
 		return fmt.Errorf("session %s input buffer full", s.ID)
 	}
-	// Emit metadata before delivery; image bytes stay only in messageCh and model
-	// history, never in events.jsonl.
+	if err := s.retainImages(input.Images); err != nil {
+		return err
+	}
+	// Emit metadata before delivery; image bytes stay in messageCh/model history
+	// and the separate retained attachment file, never in events.jsonl.
 	s.emitter.EmitAs("user", event.UserInput, eventData(false))
 	if err := s.logFailure(); err != nil {
 		return fmt.Errorf("session event log failed: %w", err)
@@ -1143,14 +1194,22 @@ func (s *Session) run() {
 		if s.ctx.Err() != nil {
 			return
 		}
-		// The opening prompt echoes like any other user input; pictures are
-		// recorded as metadata only (bytes live in model history alone, and a
-		// replayed session gets the "unavailable after replay" note).
+		// The opening prompt echoes like any other user input; pictures are recorded
+		// as metadata plus retained-payload references. Model replay still gets the
+		// explicit unavailable-in-history note rather than reinjected pixels.
 		initial := map[string]any{"text": s.prompt}
 		if meta := imageMetadata(s.promptImages); meta != nil {
 			initial["images"] = meta
 		}
 		s.emitter.EmitAs("user", event.UserInput, initial)
+		// When the opening prompt named one existing task, Start already executed
+		// the routine backlog reads and appended their synthetic exchange to model
+		// history. Record that exact exchange immediately after the real user input
+		// so event replay reconstructs the same ordering.
+		s.startupPreload.Emit(s.emitter, s.loop.ModelName, s.loop.Backend, s.loop.Model)
+		if s.logFailure() != nil || s.ctx.Err() != nil {
+			return
+		}
 	}
 
 	for {
@@ -1668,12 +1727,28 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 	s.preset = cfg.Preset
 	s.coordinatorExplicit = cfg.CoordinatorModel != ""
 	s.startupNotice = startupNotice
-	// Opening-prompt pictures must be attached BEFORE the first loop is built:
-	// buildLoop consumes them so the seed message is multimodal.
+	// Opening-prompt pictures must be retained and attached BEFORE the first loop
+	// is built: buildLoop consumes them so the seed message is multimodal.
 	s.promptImages = cfg.Images
+	if err := s.retainImages(s.promptImages); err != nil {
+		log.Close()
+		return nil, err
+	}
 	loop, err := s.buildLoop(mode, prompt)
 	if err != nil {
 		return nil, err
+	}
+	// A specific task id in a work-session prompt makes the coordinator's first
+	// list_backlog/get_task calls deterministic. Execute and seed them now, after
+	// the real opening user message, to save model round trips without guessing
+	// when the prompt is absent, ambiguous, or stale.
+	if mode == "work" {
+		s.startupPreload = orchestrator.BuildExplicitTaskPreload(s.ctx, prompt, s.deps, loop.Tools)
+		if s.startupPreload.TaskID != "" {
+			history := loop.History()
+			history = append(history, s.startupPreload.History...)
+			loop.SetHistory(history)
+		}
 	}
 	s.loop = loop
 
@@ -2079,6 +2154,18 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 		s.setStatus(event.StatusError)
 		s.cancel()
 	})
+	// Generic chat subagents may select any configured logical model. Resolve at
+	// spawn time so live per-model thinking overrides and refreshed credentials are
+	// honored, and expose the current sorted names in the tool schema.
+	deps.ResolveAgent = s.agentSpec
+	deps.AgentModels = func() []string {
+		infos := m.reg.Models()
+		names := make([]string, 0, len(infos))
+		for _, info := range infos {
+			names = append(names, info.Name)
+		}
+		return names
+	}
 
 	// buildLoop assembles the agent loop for a mode; reused on mode transitions.
 	// It reads the session's current coordinator assignment so a mid-session
@@ -2346,6 +2433,78 @@ func (m *Manager) SessionTranscript(project, id string) ([]event.Event, error) {
 		return nil, fmt.Errorf("%w %q", ErrUnknownSession, id)
 	}
 	return events, nil
+}
+
+// SessionAttachment returns a retained picture referenced by a user_input event.
+// The event-log reference check makes the opaque id session-scoped, while strict
+// id validation prevents the request from becoming an arbitrary file read.
+func (m *Manager) SessionAttachment(project, id, attachmentID string) ([]byte, string, error) {
+	if !validAttachmentID(attachmentID) {
+		return nil, "", fmt.Errorf("%w attachment %q", ErrUnknownSession, attachmentID)
+	}
+	events, err := m.SessionTranscript(project, id)
+	if err != nil {
+		return nil, "", err
+	}
+	mediaType := attachmentMediaType(events, attachmentID)
+	if mediaType == "" {
+		return nil, "", fmt.Errorf("%w attachment %q", ErrUnknownSession, attachmentID)
+	}
+	var workspace string
+	if s, ok := m.Get(id); ok {
+		workspace = s.Workspace
+	} else {
+		workspace, err = m.resolveProjectWorkspace(project)
+		if err != nil {
+			return nil, "", err
+		}
+	}
+	path := filepath.Join(workspace, ".ycc", "sessions", id, "attachments", attachmentID)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, "", fmt.Errorf("%w attachment %q", ErrUnknownSession, attachmentID)
+		}
+		return nil, "", fmt.Errorf("read session attachment: %w", err)
+	}
+	if len(data) == 0 || len(data) > 5<<20 {
+		return nil, "", fmt.Errorf("invalid retained attachment size")
+	}
+	return data, mediaType, nil
+}
+
+func validAttachmentID(id string) bool {
+	if len(id) != len("a_")+32 || !strings.HasPrefix(id, "a_") {
+		return false
+	}
+	_, err := hex.DecodeString(strings.TrimPrefix(id, "a_"))
+	return err == nil
+}
+
+func attachmentMediaType(events []event.Event, id string) string {
+	for _, ev := range events {
+		if ev.Type != event.UserInput {
+			continue
+		}
+		switch images := ev.Data["images"].(type) {
+		case []map[string]any:
+			for _, image := range images {
+				if image["attachment_id"] == id {
+					mediaType, _ := image["media_type"].(string)
+					return mediaType
+				}
+			}
+		case []any:
+			for _, raw := range images {
+				image, _ := raw.(map[string]any)
+				if image["attachment_id"] == id {
+					mediaType, _ := image["media_type"].(string)
+					return mediaType
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // CommitDiff returns the `git show` output (stat + patch) for a commit in a
@@ -2804,6 +2963,14 @@ func newID() (string, error) {
 		return "", err
 	}
 	return "s_" + hex.EncodeToString(b), nil
+}
+
+func newAttachmentID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return "a_" + hex.EncodeToString(b), nil
 }
 
 // newWorkstreamID mints a stable short workstream id (ws_<8-hex>), mirroring

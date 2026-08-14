@@ -400,9 +400,21 @@ struct SessionView: View {
                 // Building `durableRows + [liveTail]` every 100ms made SwiftUI diff
                 // the entire transcript for every snapshot.
                 ForEach(model.durableRows) { row in
-                    TranscriptRowView(row: row) { sha in
-                        commitTarget = CommitDiffTarget(sha: sha)
-                    }
+                    TranscriptRowView(
+                        row: row,
+                        onOpenCommit: { sha in
+                            commitTarget = CommitDiffTarget(sha: sha)
+                        },
+                        loadPicture: { attachmentID in
+                            guard !attachmentID.isEmpty,
+                                  let image = try? await client.getSessionAttachment(
+                                    project: project,
+                                    sessionId: sessionID,
+                                    attachmentId: attachmentID
+                                  ) else { return nil }
+                            return image.data
+                        }
+                    )
                     .equatable()
                     .id(row.id)
                 }
@@ -823,16 +835,19 @@ private struct TranscriptRowView: View, Equatable {
     var model: String = ""
     /// Called with the commit sha when a `commit_made` row is tapped.
     var onOpenCommit: (String) -> Void = { _ in }
+    /// Lazily retrieves a retained user picture. Returning nil renders the
+    /// metadata fallback instead of a broken thumbnail.
+    var loadPicture: @Sendable (String) async -> Data? = { _ in nil }
 
-    /// The callback is stable for a transcript row's lifetime; row payload is the
+    /// The callbacks are stable for a transcript row's lifetime; row payload is the
     /// only input that should invalidate its subtree. This keeps old MarkdownText
     /// rows from being reparsed whenever the live tail changes.
     static func == (lhs: Self, rhs: Self) -> Bool { lhs.row == rhs.row }
 
     var body: some View {
         switch row.kind {
-        case .userMessage(let text):
-            bubble(text: text, isUser: true)
+        case .userMessage(let text, let pictures):
+            userBubble(text: text, pictures: pictures)
         case .modelMessage(let text):
             bubble(text: text, isUser: false, actor: row.actor)
         case .finalReport(let text):
@@ -860,6 +875,35 @@ private struct TranscriptRowView: View, Equatable {
                 append: row.liveAppend,
                 appendBaseUTF8: row.liveAppendBaseUTF8
             )
+        }
+    }
+
+    private func userBubble(text: String, pictures: [TranscriptRow.Picture]) -> some View {
+        HStack {
+            Spacer(minLength: 40)
+            VStack(alignment: .trailing, spacing: 8) {
+                if !pictures.isEmpty {
+                    LazyVGrid(
+                        columns: pictures.count == 1
+                            ? [GridItem(.flexible())]
+                            : [GridItem(.flexible()), GridItem(.flexible())],
+                        spacing: 6
+                    ) {
+                        ForEach(Array(pictures.enumerated()), id: \.offset) { _, picture in
+                            TranscriptPicture(picture: picture, loadPicture: loadPicture)
+                        }
+                    }
+                    .frame(maxWidth: pictures.count == 1 ? 260 : 300)
+                }
+                if !text.isEmpty {
+                    Text(text)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color.accentColor.opacity(0.85), in: RoundedRectangle(cornerRadius: 14))
+                        .foregroundStyle(.white)
+                }
+            }
         }
     }
 
@@ -982,6 +1026,57 @@ private struct TranscriptRowView: View, Equatable {
             }
             Spacer(minLength: 40)
         }
+    }
+}
+
+/// One lazily-loaded picture inside a user transcript row. The placeholder is
+/// intentionally durable: old logs and reclaimed payloads still communicate
+/// that the original message contained a picture.
+private struct TranscriptPicture: View {
+    let picture: TranscriptRow.Picture
+    let loadPicture: @Sendable (String) async -> Data?
+    @State private var data: Data?
+    @State private var finishedLoading = false
+
+    var body: some View {
+        Group {
+            if let data, let image = UIImage(data: data) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxHeight: 280)
+            } else {
+                VStack(spacing: 6) {
+                    if !finishedLoading && !picture.attachmentID.isEmpty {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "photo")
+                            .font(.title2)
+                    }
+                    Text("Picture attached")
+                        .font(.caption)
+                    if !picture.filename.isEmpty {
+                        Text(picture.filename)
+                            .font(.caption2)
+                            .lineLimit(1)
+                    }
+                }
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, minHeight: 100)
+            }
+        }
+        .padding(4)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .task(id: picture.attachmentID) {
+            guard !picture.attachmentID.isEmpty else {
+                finishedLoading = true
+                return
+            }
+            data = await loadPicture(picture.attachmentID)
+            finishedLoading = true
+        }
+        .accessibilityLabel(picture.filename.isEmpty ? "Picture attached" : "Picture attached, \(picture.filename)")
     }
 }
 

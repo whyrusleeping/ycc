@@ -383,6 +383,13 @@ instead — it stays out of the ready-to-work pool until the user promotes it.
 The conversation continues across turns, so you don't need to do everything at once:
 respond, then wait for the user's next message.
 
+For independent research, analysis, verification, or delegated coding, spawn_agent starts a
+subagent as a session background job. Pick the configured logical model that fits the task and
+give it a self-contained prompt. Agents are read-only by default; request mutating access only for
+coding work, with at most one mutating job per worktree. Use job_output/wait/kill_job exactly as
+for background Bash; do not poll. After a subagent's turn completes, send_to_agent can ask it a
+follow-up while retaining its history and access level.
+
 Use remember(note, category) to durably capture an operational learning worth keeping across
 sessions — an environment quirk, codebase gotcha, user preference, or lesson. Memory (memory.md)
 is advisory context, not the spec: design truth belongs in the docs, not memory.`

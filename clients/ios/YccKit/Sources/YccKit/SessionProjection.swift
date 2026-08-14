@@ -5,6 +5,20 @@ import YccProto
 /// SwiftUI `List`/`ForEach` can diff cheaply as the log grows and the live tail
 /// is replaced in place.
 public struct TranscriptRow: Identifiable, Equatable, Sendable {
+    /// One picture attached to a user message. `attachmentID` is empty for
+    /// legacy/missing payloads, which the view renders as a metadata fallback.
+    public struct Picture: Equatable, Sendable {
+        public var attachmentID: String
+        public var mediaType: String
+        public var filename: String
+
+        public init(attachmentID: String = "", mediaType: String = "", filename: String = "") {
+            self.attachmentID = attachmentID
+            self.mediaType = mediaType
+            self.filename = filename
+        }
+    }
+
     /// Status of a `tool_call` / `tool_result` pair.
     public enum ToolStatus: Equatable, Sendable {
         case running
@@ -14,8 +28,8 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
 
     /// The kind of row and its rendered payload.
     public enum Kind: Equatable, Sendable {
-        /// A `user_input` message.
-        case userMessage(text: String)
+        /// A `user_input` message with byte-free picture references.
+        case userMessage(text: String, pictures: [Picture])
         /// A completed `model_turn` bubble (`actor` names the speaking agent).
         case modelMessage(text: String)
         /// The canonical `session_idle.report`: an always-expanded, polished
@@ -210,12 +224,15 @@ public struct SessionProjection: Sendable, Equatable {
 
         switch event.type {
         case "user_input":
-            var text = Self.text(data)
-            if let images = data["images"] as? [[String: Any]], !images.isEmpty {
-                let label = images.count == 1 ? "📷 Picture attached" : "📷 \(images.count) pictures attached"
-                text = text.isEmpty ? label : "\(text)\n\n\(label)"
+            let text = Self.text(data)
+            let pictures = (data["images"] as? [[String: Any]] ?? []).map {
+                TranscriptRow.Picture(
+                    attachmentID: ($0["attachment_id"] as? String) ?? "",
+                    mediaType: ($0["media_type"] as? String) ?? "",
+                    filename: ($0["filename"] as? String) ?? ""
+                )
             }
-            appendDurable(event, .userMessage(text: text))
+            appendDurable(event, .userMessage(text: text, pictures: pictures))
 
         case "model_turn":
             // The durable turn is the source of truth: it clears any live tail.

@@ -22,6 +22,73 @@ func preloadRegistry(t *testing.T, root string) *tools.Registry {
 	return reg
 }
 
+func TestBuildExplicitTaskPreload(t *testing.T) {
+	d := depsFor(t)
+	first, err := d.Docs.Create("first task", "## Description\n\nfirst body\n", 2, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := d.Docs.Create("second task", "## Description\n\nsecond body\n", 3, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, _ := BuildMode("work", d, false)
+
+	got := BuildExplicitTaskPreload(context.Background(), "Work on task "+first.ID+": first task.", d, reg)
+	if got.TaskID != first.ID {
+		t.Fatalf("task id = %q, want %q", got.TaskID, first.ID)
+	}
+	if len(got.History) != 3 || got.History[0].Role != "assistant" || len(got.History[0].ToolCalls) != 2 {
+		t.Fatalf("history = %+v, want assistant batch + two tool results", got.History)
+	}
+	calls := got.History[0].ToolCalls
+	if calls[0].Function.Name != "list_backlog" || calls[0].Function.Arguments != "{}" {
+		t.Fatalf("list call = %+v", calls[0])
+	}
+	if calls[1].Function.Name != "get_task" || calls[1].Function.Arguments != `{"task_id":"`+first.ID+`"}` {
+		t.Fatalf("get call = %+v", calls[1])
+	}
+	if !strings.Contains(got.History[1].Content, first.ID+" [todo]") || !strings.Contains(got.History[2].Content, "first body") {
+		t.Fatalf("real backlog results absent: %+v", got.History)
+	}
+
+	rec := &captureRec{}
+	got.Emit(event.NewEmitter(rec, "coordinator"), "coord", "anthropic", "model-id")
+	var turns, toolCalls, results int
+	for _, ev := range rec.events {
+		if ev.Data["synthetic"] != true {
+			t.Fatalf("event is not synthetic: %+v", ev)
+		}
+		switch ev.Type {
+		case event.ModelTurn:
+			turns++
+			if ev.Data["model_name"] != "coord" || ev.Data["backend"] != "anthropic" || ev.Data["model_id"] != "model-id" {
+				t.Fatalf("model identity = %+v", ev.Data)
+			}
+		case event.ToolCall:
+			toolCalls++
+		case event.ToolResult:
+			results++
+		}
+	}
+	if turns != 1 || toolCalls != 2 || results != 2 {
+		t.Fatalf("synthetic events = turn %d calls %d results %d", turns, toolCalls, results)
+	}
+
+	for name, prompt := range map[string]string{
+		"absent":    "pick the next task",
+		"invalid":   "work on task 9999",
+		"ambiguous": "compare tasks " + first.ID + " and " + second.ID,
+		"substring": "the value x" + first.ID + "y is not a task id",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if fallback := BuildExplicitTaskPreload(context.Background(), prompt, d, reg); fallback.TaskID != "" || len(fallback.History) != 0 {
+				t.Fatalf("unexpected preload: %+v", fallback)
+			}
+		})
+	}
+}
+
 func TestBuildPreloadHistoryUsesRealRead(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "sample.txt"), []byte("alpha\nbeta\ngamma\n"), 0o644); err != nil {

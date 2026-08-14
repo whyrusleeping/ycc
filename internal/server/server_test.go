@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -16,6 +17,8 @@ import (
 	"github.com/whyrusleeping/ycc/internal/session"
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 )
+
+func boolPtr(value bool) *bool { return &value }
 
 // SetThinking with no live session resolves the requested role to its current
 // model and persists the level in that model's config — a home-menu change must
@@ -410,9 +413,9 @@ func TestCreateTask(t *testing.T) {
 	}
 }
 
-// TestUpdateTask exercises the backlog grooming RPC (task 0099): status/priority
-// mutations persist to the task file; invalid inputs are rejected; an unknown id
-// is NotFound; and a no-field "refresh" re-reads the task without altering it.
+// TestUpdateTask exercises the backlog grooming RPC: all editable task fields
+// persist to the task file; invalid inputs are rejected; an unknown id is
+// NotFound; and a no-field "refresh" re-reads the task without altering it.
 func TestUpdateTask(t *testing.T) {
 	reg := config.NewRegistry(&config.Config{
 		Models: map[string]config.Model{"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"}},
@@ -446,7 +449,39 @@ func TestUpdateTask(t *testing.T) {
 		t.Fatalf("persisted task = status:%s p%d, want in_review p1", got.Status, got.Priority)
 	}
 
-	// Invalid status and out-of-range priority are rejected.
+	// Title, body, dependencies, and spec references can be replaced in one edit.
+	title := "Edited task"
+	body := "## Description\n\nEdited from iOS.\n"
+	resp, err = srv.UpdateTask(ctx, connect.NewRequest(&v1.UpdateTaskRequest{
+		Id: a.ID, Title: &title, Body: &body,
+		DependsOn: []string{" 0099 ", "0099", ""}, ReplaceDependsOn: boolPtr(true),
+		SpecRefs: []string{" §6.2 Backlog ", "§6.2 Backlog"}, ReplaceSpecRefs: boolPtr(true),
+	}))
+	if err != nil {
+		t.Fatalf("UpdateTask full edit: %v", err)
+	}
+	if task := resp.Msg.Task; task.GetTitle() != title || task.GetBody() != body ||
+		!reflect.DeepEqual(task.GetDependsOn(), []string{"0099"}) ||
+		!reflect.DeepEqual(task.GetSpecRefs(), []string{"§6.2 Backlog"}) {
+		t.Fatalf("UpdateTask full edit = %+v", task)
+	}
+	got, err = store.Get(a.ID)
+	if err != nil {
+		t.Fatalf("Get after full edit: %v", err)
+	}
+	if got.Title != title || got.Body != body || !reflect.DeepEqual(got.DependsOn, []string{"0099"}) || !reflect.DeepEqual(got.SpecRefs, []string{"§6.2 Backlog"}) {
+		t.Fatalf("persisted full edit = %+v", got)
+	}
+
+	// Replacement flags permit explicitly clearing both lists.
+	resp, err = srv.UpdateTask(ctx, connect.NewRequest(&v1.UpdateTaskRequest{
+		Id: a.ID, ReplaceDependsOn: boolPtr(true), ReplaceSpecRefs: boolPtr(true),
+	}))
+	if err != nil || len(resp.Msg.Task.GetDependsOn()) != 0 || len(resp.Msg.Task.GetSpecRefs()) != 0 {
+		t.Fatalf("UpdateTask clear lists = task:%+v err:%v", resp.Msg.Task, err)
+	}
+
+	// Invalid status, priority, list intent, and self-dependency are rejected.
 	bad := "nonsense"
 	if _, err := srv.UpdateTask(ctx, connect.NewRequest(&v1.UpdateTaskRequest{Id: a.ID, Status: &bad})); connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("invalid status code = %v, want InvalidArgument", connect.CodeOf(err))
@@ -458,6 +493,12 @@ func TestUpdateTask(t *testing.T) {
 	blank := "   "
 	if _, err := srv.UpdateTask(ctx, connect.NewRequest(&v1.UpdateTaskRequest{Id: a.ID, Title: &blank})); connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("blank title code = %v, want InvalidArgument", connect.CodeOf(err))
+	}
+	if _, err := srv.UpdateTask(ctx, connect.NewRequest(&v1.UpdateTaskRequest{Id: a.ID, DependsOn: []string{"0001"}})); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("depends_on without replace flag code = %v, want InvalidArgument", connect.CodeOf(err))
+	}
+	if _, err := srv.UpdateTask(ctx, connect.NewRequest(&v1.UpdateTaskRequest{Id: a.ID, DependsOn: []string{a.ID}, ReplaceDependsOn: boolPtr(true)})); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("self dependency code = %v, want InvalidArgument", connect.CodeOf(err))
 	}
 
 	// Unknown id is NotFound.

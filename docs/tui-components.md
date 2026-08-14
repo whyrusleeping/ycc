@@ -16,7 +16,7 @@ The Bubble Tea client remains one `internal/tui` package because its screens coo
 
 | File | Ownership and model state |
 | --- | --- |
-| `picker.go` | Project discovery/addition and workspace picker update/view; owns picker cursor and project list behavior. |
+| `picker.go` | Persistent-daemon project hub: switching, daemon-host directory browsing/addition, rename/remove, project-scope reset, and daemon git projection; owns picker/browser cursors and management state. |
 | `menu.go` | Mode/model loading, session launch/stop, home-menu refreshes, git/spend/waiting-session summaries, onboarding probes, and menu rendering; touches menu, role, history, spend, and loop summary state. |
 | `browse.go` | Reusable browser rows/navigation/card plus the browse target screen; touches browser cursor/rows and routes to history, backlog, plans, cost, and workstreams. |
 | `history.go` | Session-history RPCs/list, read-only transcript modal, modal search/jumps, transcript rendering, and history timestamps; owns history browser and modal viewport/search state. |

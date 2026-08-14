@@ -30,6 +30,11 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `getSessionTranscript`(request: Ycc_V1_GetSessionTranscriptRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetSessionTranscriptResponse>
 
+    /// GetSessionAttachment returns a retained picture referenced by a user_input
+    /// event, without putting binary payloads in the event log.
+    @available(iOS 13, *)
+    func `getSessionAttachment`(request: Ycc_V1_GetSessionAttachmentRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetSessionAttachmentResponse>
+
     /// GetCommitDiff returns a commit's `git show` diff so the transcript can drill
     /// into what an agent committed from a commit_made row.
     @available(iOS 13, *)
@@ -259,6 +264,11 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     @available(iOS 13, *)
     public func `getSessionTranscript`(request: Ycc_V1_GetSessionTranscriptRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_GetSessionTranscriptResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/GetSessionTranscript", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `getSessionAttachment`(request: Ycc_V1_GetSessionAttachmentRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_GetSessionAttachmentResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/GetSessionAttachment", idempotencyLevel: .unknown, request: request, headers: headers)
     }
 
     @available(iOS 13, *)
@@ -503,6 +513,7 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let listSessions = Connect.MethodSpec(name: "ListSessions", service: "ycc.v1.SessionService", type: .unary)
             public static let listSessionHistory = Connect.MethodSpec(name: "ListSessionHistory", service: "ycc.v1.SessionService", type: .unary)
             public static let getSessionTranscript = Connect.MethodSpec(name: "GetSessionTranscript", service: "ycc.v1.SessionService", type: .unary)
+            public static let getSessionAttachment = Connect.MethodSpec(name: "GetSessionAttachment", service: "ycc.v1.SessionService", type: .unary)
             public static let getCommitDiff = Connect.MethodSpec(name: "GetCommitDiff", service: "ycc.v1.SessionService", type: .unary)
             public static let subscribe = Connect.MethodSpec(name: "Subscribe", service: "ycc.v1.SessionService", type: .serverStream)
             public static let sendInput = Connect.MethodSpec(name: "SendInput", service: "ycc.v1.SessionService", type: .unary)

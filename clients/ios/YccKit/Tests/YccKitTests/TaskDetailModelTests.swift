@@ -12,8 +12,20 @@ private final class MockTaskDetailSource: TaskDetailSource, @unchecked Sendable 
     var updateError: Error?
     var sessions: [Ycc_V1_SessionSummary] = []
 
+    struct FullUpdate: Equatable {
+        let project: String
+        let id: String
+        let title: String
+        let status: String
+        let priority: Int
+        let body: String
+        let dependsOn: [String]
+        let specRefs: [String]
+    }
+
     private(set) var historyProjects: [String] = []
     private(set) var updateArgs: (project: String, id: String, status: String)?
+    private(set) var fullUpdate: FullUpdate?
 
     init(detail: Ycc_V1_TaskDetail) {
         self.detail = detail
@@ -34,6 +46,23 @@ private final class MockTaskDetailSource: TaskDetailSource, @unchecked Sendable 
         updateArgs = (project, id, status)
         if let updateError { throw updateError }
         detail.status = status
+        return detail
+    }
+
+    func updateTask(
+        project: String, id: String, title: String, status: String,
+        priority: Int, body: String, dependsOn: [String], specRefs: [String]
+    ) async throws -> Ycc_V1_TaskDetail {
+        fullUpdate = FullUpdate(
+            project: project, id: id, title: title, status: status,
+            priority: priority, body: body, dependsOn: dependsOn, specRefs: specRefs)
+        if let updateError { throw updateError }
+        detail.title = title
+        detail.status = status
+        detail.priority = Int32(priority)
+        detail.body = body
+        detail.dependsOn = dependsOn
+        detail.specRefs = specRefs
         return detail
     }
 }
@@ -117,6 +146,77 @@ final class TaskDetailModelTests: XCTestCase {
         let model = TaskDetailModel(source: source, taskID: "0010")
         await model.load()
         XCTAssertTrue(model.unauthorized)
+    }
+
+    func testEditSeedsDraftAndCancelKeepsCanonicalTask() async {
+        var task = detail("0010", status: "todo", title: "Original")
+        task.body = "Old body"
+        task.dependsOn = ["0001"]
+        task.specRefs = ["§6.2 Backlog"]
+        let source = MockTaskDetailSource(detail: task)
+        let model = TaskDetailModel(source: source, taskID: "0010")
+        await model.load()
+
+        model.beginEditing()
+        XCTAssertTrue(model.isEditing)
+        XCTAssertEqual(model.draftTitle, "Original")
+        XCTAssertEqual(model.draftBody, "Old body")
+        XCTAssertEqual(model.draftDependsOn, "0001")
+        model.draftTitle = "Discard me"
+        model.cancelEditing()
+
+        XCTAssertFalse(model.isEditing)
+        XCTAssertEqual(model.task?.title, "Original")
+        XCTAssertNil(source.fullUpdate)
+    }
+
+    func testSaveEditingSendsAllFieldsAndReflectsCanonicalResponse() async {
+        let source = MockTaskDetailSource(detail: detail("0010", status: "todo"))
+        let model = TaskDetailModel(source: source, project: "proj", taskID: "0010")
+        await model.load()
+        model.beginEditing()
+        model.draftTitle = "  Edited task  "
+        model.draftStatus = .inReview
+        model.draftPriority = 1
+        model.draftBody = "## Description\n\nEdited"
+        model.draftDependsOn = "0001, 0002\n0001"
+        model.draftSpecRefs = "§6.2 Backlog\ndocs/design/ios-client.md"
+
+        let ok = await model.saveEditing()
+
+        XCTAssertTrue(ok)
+        XCTAssertFalse(model.isEditing)
+        XCTAssertEqual(source.fullUpdate, MockTaskDetailSource.FullUpdate(
+            project: "proj", id: "0010", title: "Edited task", status: "in_review",
+            priority: 1, body: "## Description\n\nEdited",
+            dependsOn: ["0001", "0002"],
+            specRefs: ["§6.2 Backlog", "docs/design/ios-client.md"]))
+        XCTAssertEqual(model.task?.title, "Edited task")
+        XCTAssertEqual(model.status, .inReview)
+    }
+
+    func testSaveEditingValidatesAndPreservesDraftAfterFailure() async {
+        let source = MockTaskDetailSource(detail: detail("0010", status: "todo"))
+        let model = TaskDetailModel(source: source, taskID: "0010")
+        await model.load()
+        model.beginEditing()
+        model.draftTitle = " "
+        XCTAssertEqual(model.draftValidationMessage, "Title is required.")
+        let invalidSaved = await model.saveEditing()
+        XCTAssertFalse(invalidSaved)
+        XCTAssertNil(source.fullUpdate)
+
+        model.draftTitle = "Still here"
+        model.draftDependsOn = "0010"
+        XCTAssertEqual(model.draftValidationMessage, "A task cannot depend on itself.")
+        model.draftDependsOn = ""
+        source.updateError = YccError.rpc(message: "save failed")
+        let failedSaved = await model.saveEditing()
+        XCTAssertFalse(failedSaved)
+        XCTAssertTrue(model.isEditing)
+        XCTAssertEqual(model.draftTitle, "Still here")
+        XCTAssertEqual(model.errorMessage, "save failed")
+        XCTAssertEqual(model.task?.title, "A task")
     }
 
     func testSetStatusSendsRequestAndReflectsResponse() async {

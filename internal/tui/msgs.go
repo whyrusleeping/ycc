@@ -35,6 +35,30 @@ type modelsMsg struct {
 
 type projectsMsg struct{ projects []*v1.ProjectInfo }
 
+type dirMsg struct {
+	path        string
+	parent      string
+	entries     []*v1.DirEntry
+	suggestions []string
+	err         error
+}
+
+type projectAddedMsg struct {
+	project *v1.ProjectInfo
+	err     error
+}
+
+type projectRenamedMsg struct {
+	oldName string
+	project *v1.ProjectInfo
+	err     error
+}
+
+type projectRemovedMsg struct {
+	name string
+	err  error
+}
+
 // projectsTickMsg refreshes the project picker's cheap cached git snapshots
 // while that screen is visible. Unlike the daemon poller, this never performs
 // network I/O; ListProjects reads local refs plus cached fetch metadata.
@@ -68,7 +92,8 @@ type historyMsg struct {
 // awareness signal, not a screen: errors are ignored silently so a transient
 // RPC hiccup never flashes on the menu.
 type waitingSessionsMsg struct {
-	sessions []*v1.SessionSummary
+	sessions   []*v1.SessionSummary
+	projectSeq int
 	// recent is the most-recent session overall (ListSessionHistory returns
 	// most-recent first), used for the "ctrl+l continue last session" affordance
 	// nil when there is no session to continue.
@@ -93,9 +118,10 @@ type menuGitMsg struct {
 // menuSpendMsg carries today's aggregated spend for the home-menu context
 // header. Errors are ignored silently — the segment drops out.
 type menuSpendMsg struct {
-	cost   float64
-	status string
-	err    error
+	cost       float64
+	status     string
+	projectSeq int
+	err        error
 }
 
 // transcriptMsg carries a session's replayed event log for the read-only
@@ -108,7 +134,20 @@ type transcriptMsg struct {
 
 type evMsg struct{ ev *v1.Event }
 
-type streamClosedMsg struct{}
+// sessionEvMsg tags events read by a subscription command. Tests and internal
+// reducers may still inject evMsg directly; live streams use the tag so a late
+// event from a detached project cannot re-arm the new session's wait chain.
+type sessionEvMsg struct {
+	ev        *v1.Event
+	sessionID string
+}
+
+type streamClosedMsg struct{ sessionID string }
+
+type subscriptionErrMsg struct {
+	sessionID string
+	err       error
+}
 
 type errMsg struct{ err error }
 
@@ -122,7 +161,11 @@ type flashClearMsg struct{ seq int }
 // timer never disarms a freshly re-armed guard.
 type quitDisarmMsg struct{ seq int }
 
-type backlogMsg struct{ tasks []*v1.BacklogTaskSummary }
+type backlogMsg struct {
+	tasks      []*v1.BacklogTaskSummary
+	projectSeq int
+	err        error
+}
 
 type taskDetailMsg struct{ task *v1.TaskDetail }
 

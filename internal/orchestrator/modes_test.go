@@ -79,6 +79,8 @@ func TestPresetsOpenPM(t *testing.T) {
 
 func TestBuildModeToolsets(t *testing.T) {
 	d := depsFor(t)
+	d.AgentModels = func() []string { return []string{"fast", "smart"} }
+	d.ResolveAgent = func(string) (AgentSpec, error) { return AgentSpec{}, nil }
 	// pm exposes planning/docs/backlog tools and switch_to_work, but NO
 	// implementation tools (no spawn_implementer / commit).
 	pmReg, _ := BuildMode("pm", d, false)
@@ -95,7 +97,7 @@ func TestBuildModeToolsets(t *testing.T) {
 	// chat is the freeform assistant: file tools + read AND write backlog tools
 	// (create_task/update_task), but no implementation pipeline or switch_to_work.
 	chatReg, _ := BuildMode("chat", d, false)
-	for _, want := range []string{"Read", "Edit", "Write", "Bash", "list_backlog", "get_task", "create_task", "update_task", "ask_user"} {
+	for _, want := range []string{"Read", "Edit", "Write", "Bash", "list_backlog", "get_task", "create_task", "update_task", "ask_user", "spawn_agent", "send_to_agent"} {
 		if !hasTool(chatReg, want) {
 			t.Fatalf("chat mode missing %s", want)
 		}

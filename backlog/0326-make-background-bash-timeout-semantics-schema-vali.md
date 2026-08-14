@@ -48,3 +48,7 @@ Acceptance criteria:
 - 2026-08-13 review (sol): accept — Task 0326 is correctly implemented. `timeout_s` now has an explicit, provider-visible runtime-limit meaning for both foreground and background Bash; omitted background timeouts remain unbounded, while
 …[truncated]
 - 2026-08-13 decision: accept — commit: Define background Bash timeout runtime semantics
+- 2026-08-13 usage: 1,228,639 tok (in 514,026, out 17,781, cache_r 696,832, cache_w 0) · cost n/a (unpriced)
+  implementer: 590,920 tok (in 175,197, out 10,219, cache_r 405,504, cache_w 0) · cost n/a (unpriced)
+  coordinator: 353,672 tok (in 142,573, out 5,019, cache_r 206,080, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 284,047 tok (in 196,256, out 2,543, cache_r 85,248, cache_w 0) · cost n/a (unpriced)

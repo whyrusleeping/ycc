@@ -207,6 +207,7 @@ JSON="Content-Type: application/json"
 | [`ListSessions`](#listsessions) | live sessions (optionally filtered by project) |
 | [`ListSessionHistory`](#listsessionhistory) | live + persisted sessions, most-recent first |
 | [`GetSessionTranscript`](#getsessiontranscript) | full event log for one session |
+| [`GetSessionAttachment`](#getsessionattachment) | fetch a retained user-picture payload |
 | [`StartSession`](#startsession) | start a new session |
 | [`Subscribe`](#subscribe) | stream a session's events (replay + live) |
 | [`SendInput`](#sendinput) | prod a session with a user message |
@@ -353,6 +354,19 @@ curl -sS -H "$AUTH" -H "$JSON" -d '{"project":"work","sessionId":"s_doc"}' \
 
 See [Event model](#event-model) for the `Event` shape and `dataJson` parsing.
 
+### GetSessionAttachment
+
+Fetch one user picture referenced by `user_input.dataJson.images[].attachment_id`.
+The authenticated response contains base64 JSON `data` and `mediaType`. Payloads are
+bounded, session-scoped, retained beside `events.jsonl`, and removed with that session's
+retention directory; legacy events without an id have no retrievable payload.
+
+```
+curl -sS -H "$AUTH" -H "$JSON" \
+  -d '{"project":"work","sessionId":"s_doc","attachmentId":"a_…"}' \
+  $B/ycc.v1.SessionService/GetSessionAttachment
+```
+
 ### StartSession
 
 Start a new session with a registered `project` name, `mode`, and an initial
@@ -390,9 +404,10 @@ same rules and validation as [`SendInput`](#sendinput) (`data` is standard base6
 in JSON, ≤5 MiB each, JPEG/PNG/GIF/WebP with the bytes verified against
 `mediaType`). They are validated *before* anything is created, so a bad picture is
 `invalid_argument` with no stray session or log. The seed message the agent sees on
-its very first turn is multimodal; the `user_input` event again records only
-filename/media-type metadata, so a replayed session keeps the text plus an
-attachment note rather than the pixels.
+its very first turn is multimodal; the `user_input` event records filename/media-type
+metadata plus an opaque attachment id. Clients can use that id to fetch a retained
+transcript thumbnail, while model-history replay keeps a textual attachment note rather
+than reinjecting the pixels.
 
 ```
 curl -sS -H "$AUTH" -H "$JSON" \
@@ -452,7 +467,8 @@ safe checkpoint under steer-by-default). `images` may carry up to four inline pi
 (`data` is standard base64 in JSON), each at most 5 MiB before base64 expansion. Supported
 media types are JPEG, PNG, GIF, and WebP; the daemon verifies the bytes match `mediaType`.
 Picture bytes are passed to the model but are not written to the event log — `user_input`
-retains only filename/media-type metadata. Pictures cannot answer an open `ask_user` gate.
+retains filename/media-type metadata and an opaque id for authenticated retrieval from the
+session's separate attachment store. Pictures cannot answer an open `ask_user` gate.
 
 ```
 curl -sS -H "$AUTH" -H "$JSON" \

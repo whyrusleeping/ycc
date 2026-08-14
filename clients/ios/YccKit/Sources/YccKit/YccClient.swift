@@ -187,6 +187,24 @@ public final class YccClient: Sendable {
         }
     }
 
+    /// Fetch one retained picture referenced by a user_input event. Payloads live
+    /// beside the session log and are fetched lazily by transcript thumbnails.
+    public func getSessionAttachment(
+        project: String = "", sessionId: String, attachmentId: String
+    ) async throws -> MessageImage {
+        var request = Ycc_V1_GetSessionAttachmentRequest()
+        request.project = project
+        request.sessionID = sessionId
+        request.attachmentID = attachmentId
+        let response = await generated.getSessionAttachment(request: request)
+        switch response.result {
+        case .success(let message):
+            return MessageImage(data: message.data, mediaType: message.mediaType)
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
     /// Subscribe to a session's live event stream. The server replays persisted
     /// events with `seq > fromSeq` then tails live events (docs/remote-api.md
     /// "Subscribe"). A fresh subscriber passes `fromSeq: 0`; a reconnecting one
@@ -419,6 +437,31 @@ public final class YccClient: Sendable {
         request.project = project
         request.id = id
         request.status = status
+        return try await updateTask(request)
+    }
+
+    /// Replace all user-editable task fields from the task-detail editor. List
+    /// replacement flags are set even for empty lists so clearing dependencies or
+    /// spec references is distinct from leaving those fields untouched.
+    public func updateTask(
+        project: String = "", id: String, title: String, status: String,
+        priority: Int, body: String, dependsOn: [String], specRefs: [String]
+    ) async throws -> Ycc_V1_TaskDetail {
+        var request = Ycc_V1_UpdateTaskRequest()
+        request.project = project
+        request.id = id
+        request.title = title
+        request.status = status
+        request.priority = Int32(priority)
+        request.body = body
+        request.dependsOn = dependsOn
+        request.replaceDependsOn = true
+        request.specRefs = specRefs
+        request.replaceSpecRefs = true
+        return try await updateTask(request)
+    }
+
+    private func updateTask(_ request: Ycc_V1_UpdateTaskRequest) async throws -> Ycc_V1_TaskDetail {
         let response = await generated.updateTask(request: request)
         switch response.result {
         case .success(let message):

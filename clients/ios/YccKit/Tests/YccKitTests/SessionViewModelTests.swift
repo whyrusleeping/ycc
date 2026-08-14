@@ -17,6 +17,10 @@ private final class MockSource: SessionTranscriptSource, @unchecked Sendable {
         return transcript
     }
 
+    func getSessionAttachment(project: String, sessionId: String, attachmentId: String) async throws -> MessageImage {
+        throw YccError.notFound("attachment not found")
+    }
+
     func subscribe(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_Event, Error> {
         lock.lock()
         defer { lock.unlock() }
@@ -78,6 +82,9 @@ private final class MockActionSource: SessionActionSource, SessionTranscriptSour
     // SessionTranscriptSource — no stream held open.
     func getSessionTranscript(project: String, sessionId: String) async throws -> [Ycc_V1_Event] {
         transcript
+    }
+    func getSessionAttachment(project: String, sessionId: String, attachmentId: String) async throws -> MessageImage {
+        throw YccError.notFound("attachment not found")
     }
     func subscribe(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_Event, Error> {
         AsyncThrowingStream { $0.finish() }

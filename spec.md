@@ -113,9 +113,11 @@ Opening legacy state repairs these modes best-effort.
 Durable emission is fail-stop: once appending the event log fails, the session must not continue
 mutating state that can no longer be represented. Reopening replays model turns, tool calls and
 results, user input, reasoning/provider state, focus, and lifecycle markers into a valid model
-history, then appends to the same log. Multimodal bytes are intentionally not persisted; events
-retain attachment metadata, so reopened history preserves the textual indication but not the
-original pixels.
+history, then appends to the same log. Multimodal bytes are never embedded in events. User-sent
+pictures are retained as bounded, owner-only files beside the session log for authenticated client
+display; events carry opaque
+attachment references plus metadata. Model replay remains text-only because the retained payloads
+are presentation data rather than reconstructed provider history.
 
 A persisted session reported as running without a matching in-memory session is treated as
 stopped after daemon restart. Optional GC settings can reclaim idle in-memory sessions and old
@@ -231,6 +233,12 @@ For each turn the loop calls the selected model, records the final message, disp
 records each result, and continues until the model yields or a control tool ends/suspends the run.
 A per-run turn cap is a runaway backstop, not a normal stopping condition.
 
+When a new work-session prompt contains exactly one existing backlog task id, the daemon executes
+and seeds the routine `list_backlog` and `get_task` exchange before the first model turn. The calls
+and their real results are recorded as synthetic coordinator events after the opening user input so
+replay reconstructs the same history. Missing, stale, or ambiguous ids use the ordinary model-driven
+selection flow.
+
 Some providers leak XML-like parameter markup inside otherwise valid JSON tool arguments. The
 engine repairs only a declared parameter that was left unset and only when the closing/parameter
 pattern is unambiguous. Repair is recorded with the tool call and reported to the model.
@@ -261,6 +269,17 @@ Background shell commands and subagents share session-owned job ids and the `job
 and `kill_job` controls. Final reports are delivered exactly once, either by a covering wait or
 checkpoint injection. Progress reads never consume them. Jobs do not survive daemon restart;
 replay closes an unfinished job with a lost-on-restart report so conversation history stays valid.
+
+Normal chat can spawn general-purpose subagents with an explicit prompt, any configured logical
+model, and an access level that defaults to read-only inspection but may explicitly allow workspace
+mutation for delegated coding. Each spawn returns a stable agent id and a background job id. Once
+a turn finishes, chat may send another prompt to that agent id; the same model loop, access level,
+tools, and isolated history are retained, while the follow-up receives a new job id. Read-only
+generic agents expose file reads and a read-only shell: supported hosts enforce workspace
+non-mutation with the reviewer sandbox, and unsupported hosts visibly degrade to prompt-only
+enforcement and conservatively count the agent as a mutating job. Explicitly mutating generic
+agents use worker tools and always participate in single-writer scheduling. Generic agent handles
+are live session state and are not reconstructed after daemon restart.
 
 Only one mutating agent/job may operate in a worktree. Read-only work can fan out; parallel
 mutation requires separate workstreams. `docs/design/async-jobs.md` explains the single-delivery
@@ -381,8 +400,9 @@ network transport may provide encryption, but the daemon warns when its own tran
 Static embedded-web assets may be public while their RPC calls remain authenticated.
 
 Opening and in-session user input accept bounded JPEG, PNG, GIF, or WebP attachments. Bytes enter
-the current model history but events contain metadata only. Invalid opening attachments are
-rejected before the session/log is created.
+the current model history and are retained in owner-only files beside the session log so clients
+can fetch transcript thumbnails; events contain only opaque references and metadata. Invalid
+opening attachments are rejected before the session/log is created.
 
 ## 13. Models, credentials, and review tiers
 
@@ -465,7 +485,9 @@ performing a different history operation. Rationale is retained in
 
 All clients project the same session/backlog/workstream state and may differ in layout. The TUI is
 the primary local surface; the web client is a small embedded remote surface; the iOS client adds
-native persistence, notifications, and phone navigation. Detailed command usage belongs in
+native persistence, notifications, and phone navigation. Its backlog task detail can edit the task's
+user-maintained frontmatter and Markdown body through the daemon, retaining failed drafts and
+replacing its projection with the canonical saved response. Detailed command usage belongs in
 `docs/cli.md`, and the TUI ownership map is in `docs/tui-components.md`.
 
 Durable events render as a transcript with model/user turns prominent and tool, reasoning,
@@ -477,8 +499,9 @@ move the reader's viewport.
 
 Live sessions provide multiline input and controls. Input sent during a run is queued and inserted
 at the next safe checkpoint, with separate accepted and delivered events so the log does not claim
-premature delivery. Image attachments are shown by metadata even though their bytes are not
-replayable.
+premature delivery. User image attachments are shown as fetched thumbnails when retained bytes are
+available, with a metadata fallback for legacy or missing payloads; model-history replay does not
+reinject the pixels.
 
 ### 18.2 Settings
 

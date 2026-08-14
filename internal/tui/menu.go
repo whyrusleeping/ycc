@@ -103,9 +103,10 @@ func (m model) blockedTaskCount() int {
 // status + waiting_input for both one-shot and persistent daemons) but delivers
 // to its own message so the session-browser list state is never clobbered.
 func (m model) fetchWaitingSessions() tea.Msg {
+	seq := m.projectSeq
 	resp, err := m.client.ListSessionHistory(m.ctx, connect.NewRequest(&v1.ListSessionHistoryRequest{Project: m.project}))
 	if err != nil {
-		return waitingSessionsMsg{err: err}
+		return waitingSessionsMsg{projectSeq: seq, err: err}
 	}
 	var waiting []*v1.SessionSummary
 	for _, s := range resp.Msg.Sessions {
@@ -119,7 +120,7 @@ func (m model) fetchWaitingSessions() tea.Msg {
 	if len(resp.Msg.Sessions) > 0 {
 		recent = resp.Msg.Sessions[0]
 	}
-	return waitingSessionsMsg{sessions: waiting, recent: recent}
+	return waitingSessionsMsg{sessions: waiting, recent: recent, projectSeq: seq}
 }
 
 // sessionNeedsUser reports whether a live session is waiting on the user: it is
@@ -142,7 +143,13 @@ func (m model) menuRefreshTick() tea.Cmd {
 // tick can't multiply the in-flight timers.
 func (m *model) refreshMenu() tea.Cmd {
 	m.waitingSeq++
-	cmds := []tea.Cmd{m.fetchBacklog, m.fetchWaitingSessions, m.fetchGitInfo, m.fetchWorkLoop(), m.menuRefreshTick()}
+	cmds := []tea.Cmd{m.fetchBacklog, m.fetchWaitingSessions, m.fetchWorkLoop(), m.menuRefreshTick()}
+	// Persistent/remote mode projects daemon-host paths that may not exist on the
+	// client machine. ListProjects is authoritative there; shell out only for the
+	// one-shot local workspace.
+	if !m.showPicker {
+		cmds = append(cmds, m.fetchGitInfo)
+	}
 	// Today's spend is throttled: the aggregator scans usage logs, so re-issuing
 	// it on every 5s tick would be wasteful. Refetch at most ~once a minute.
 	if cmd := m.maybeFetchSpend(); cmd != nil {
@@ -191,17 +198,18 @@ func (m model) fetchGitInfo() tea.Msg {
 // header via GetUsage scoped to today (Since=Until=today), grouped
 // by day. Any error is delivered so the segment drops out silently.
 func (m model) fetchTodaySpend() tea.Msg {
+	seq := m.projectSeq
 	today := time.Now().Format("2006-01-02")
 	resp, err := m.client.GetUsage(m.ctx, connect.NewRequest(&v1.GetUsageRequest{
 		Project: m.project, GroupBy: []string{"day"}, Since: today, Until: today,
 	}))
 	if err != nil {
-		return menuSpendMsg{err: err}
+		return menuSpendMsg{projectSeq: seq, err: err}
 	}
 	if resp.Msg.Total == nil {
-		return menuSpendMsg{cost: 0, status: ""}
+		return menuSpendMsg{projectSeq: seq, cost: 0, status: ""}
 	}
-	return menuSpendMsg{cost: resp.Msg.Total.Cost, status: resp.Msg.Total.PriceStatus}
+	return menuSpendMsg{projectSeq: seq, cost: resp.Msg.Total.Cost, status: resp.Msg.Total.PriceStatus}
 }
 
 func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -276,6 +284,13 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Open the browse selector (backlog / sessions / cost).
 			m.openBrowse()
 			return m, nil
+		case "ctrl+p":
+			// Persistent daemons keep running independently of this projection. Return
+			// to the project hub without abandoning a drafted prompt; selecting another
+			// project detaches this client's old subscription, not the daemon session.
+			if m.showPicker && strings.TrimSpace(m.prompt.Value()) == "" {
+				return m, m.openProjectHub()
+			}
 		case "?", "ctrl+h":
 			// Open the keybinding help modal. Gated on an empty prompt so
 			// a bare "?" still types into a composition and ctrl+h (== the legacy BS
@@ -399,6 +414,9 @@ func (m model) menuView() string {
 	// ctrl+s waiting session, ctrl+l continue last) are advertised by their own
 	// body lines above, so they aren't repeated here.
 	footer := "  ? help · ↑/↓ choose mode · enter start · esc settings"
+	if m.showPicker {
+		footer = "  ? help · ↑/↓ choose mode · enter start · ctrl+p projects · esc settings"
+	}
 	b.WriteString("\n" + m.footerBar(footer))
 	return b.String()
 }

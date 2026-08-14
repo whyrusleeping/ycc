@@ -51,7 +51,17 @@ struct TaskDetailView: View {
         .navigationTitle(model.task.map { $0.id } ?? "Task")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) { statusMenu }
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button("Edit") { model.beginEditing() }
+                    .disabled(model.task == nil || model.isUpdating)
+                statusMenu
+            }
+        }
+        .sheet(isPresented: Binding(
+            get: { model.isEditing },
+            set: { if !$0 { model.cancelEditing() } }
+        )) {
+            TaskEditorView(model: model)
         }
         .alert(
             "Couldn’t start work",
@@ -125,12 +135,27 @@ struct TaskDetailView: View {
             }
         }
         if !task.blockedBy.isEmpty, model.status != .done {
-            Label("Blocked by " + task.blockedBy.joined(separator: ", "), systemImage: "lock.fill")
-                .font(.caption)
-                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(task.blockedBy, id: \.self) { blockerID in
+                    Button {
+                        openTask(blockerID)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Label("Blocked by \(blockerID)", systemImage: "lock.fill")
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption2)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.orange)
+                    .accessibilityHint("Opens task \(blockerID)")
+                }
+            }
+            .font(.caption)
         }
         if !task.dependsOn.isEmpty {
-            metaRow("Depends on", task.dependsOn.joined(separator: ", "))
+            taskLinks("Depends on", taskIDs: task.dependsOn)
         }
         if !task.specRefs.isEmpty {
             metaRow("Spec refs", task.specRefs.joined(separator: ", "))
@@ -149,6 +174,36 @@ struct TaskDetailView: View {
                 .font(.caption)
                 .multilineTextAlignment(.trailing)
         }
+    }
+
+    /// Render task relationships as explicit links. Routing instead of nesting a
+    /// `NavigationLink` lets task-to-task cycles reuse an existing detail screen.
+    private func taskLinks(_ label: String, taskIDs: [String]) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: 8) {
+                ForEach(taskIDs, id: \.self) { dependencyID in
+                    Button {
+                        openTask(dependencyID)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(dependencyID)
+                            Image(systemName: "chevron.right")
+                                .font(.caption2)
+                        }
+                    }
+                    .font(.caption)
+                    .accessibilityLabel("Open task \(dependencyID)")
+                }
+            }
+        }
+    }
+
+    private func openTask(_ id: String) {
+        router.open(.taskDetail(project: project, taskID: id, title: ""))
     }
 
     /// The selectable statuses, with a checkmark on the current one (shared by
@@ -240,6 +295,77 @@ struct TaskDetailView: View {
                 startError = message
             } catch {
                 startError = error.localizedDescription
+            }
+        }
+    }
+}
+
+/// Full-screen task editor presented from detail. Draft state lives in the
+/// model, so failed saves keep every field intact and cancellation is explicit.
+private struct TaskEditorView: View {
+    @Bindable var model: TaskDetailModel
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Task") {
+                    TextField("Title", text: $model.draftTitle, axis: .vertical)
+                    Picker("Status", selection: $model.draftStatus) {
+                        ForEach(TaskStatus.selectable) { status in
+                            Text(status.title).tag(status)
+                        }
+                    }
+                    Picker("Priority", selection: $model.draftPriority) {
+                        ForEach(1...5, id: \.self) { priority in
+                            Text("P\(priority)").tag(priority)
+                        }
+                    }
+                }
+                Section("Relationships") {
+                    TextField(
+                        "Dependencies (comma or line separated)",
+                        text: $model.draftDependsOn,
+                        axis: .vertical)
+                        .lineLimit(2...5)
+                    TextField(
+                        "Spec references (comma or line separated)",
+                        text: $model.draftSpecRefs,
+                        axis: .vertical)
+                        .lineLimit(2...5)
+                }
+                Section("Details (Markdown)") {
+                    TextEditor(text: $model.draftBody)
+                        .font(.body.monospaced())
+                        .frame(minHeight: 260)
+                }
+                if let message = model.draftValidationMessage ?? model.errorMessage {
+                    Section {
+                        Label(message, systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
+            .navigationTitle("Edit task \(model.taskID)")
+            .navigationBarTitleDisplayMode(.inline)
+            .interactiveDismissDisabled(model.isUpdating)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { model.cancelEditing() }
+                        .disabled(model.isUpdating)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        Task { await model.saveEditing() }
+                    }
+                    .disabled(model.isUpdating || model.draftValidationMessage != nil)
+                }
+            }
+            .overlay {
+                if model.isUpdating {
+                    ProgressView("Saving…")
+                        .padding()
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                }
             }
         }
     }

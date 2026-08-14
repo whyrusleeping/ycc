@@ -8,6 +8,8 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -74,8 +76,8 @@ func TestImagePayloadIsNotEventMetadata(t *testing.T) {
 }
 
 // StartSession accepts opening-prompt pictures (spec §12): the session starts,
-// its first user_input event carries picture METADATA (never the bytes), and the
-// bytes themselves only reach model history.
+// its first user_input event carries picture metadata plus an opaque id (never
+// the bytes), and the authenticated attachment RPC returns the retained payload.
 func TestStartSessionWithPromptImages(t *testing.T) {
 	srv, ws := newImageTestServer(t)
 	ctx := context.Background()
@@ -90,7 +92,6 @@ func TestStartSessionWithPromptImages(t *testing.T) {
 		t.Fatalf("StartSession: %v", err)
 	}
 	id := resp.Msg.SessionId
-	defer srv.StopSession(ctx, connect.NewRequest(&v1.StopSessionRequest{SessionId: id}))
 
 	// The initial echo is emitted by the session's run goroutine.
 	var input *v1.Event
@@ -121,11 +122,45 @@ func TestStartSessionWithPromptImages(t *testing.T) {
 		t.Fatalf("event data = %v, want one picture", data)
 	}
 	meta, _ := images[0].(map[string]any)
-	if meta["media_type"] != "image/png" || meta["filename"] != "shot.png" {
+	attachmentID, _ := meta["attachment_id"].(string)
+	if meta["media_type"] != "image/png" || meta["filename"] != "shot.png" || attachmentID == "" {
 		t.Fatalf("picture metadata = %v", meta)
 	}
-	if strings.Contains(input.DataJson, base64.StdEncoding.EncodeToString(tinyPNG(t))) {
+	payload := tinyPNG(t)
+	if strings.Contains(input.DataJson, base64.StdEncoding.EncodeToString(payload)) {
 		t.Fatal("image bytes leaked into the event log")
+	}
+	got, err := srv.GetSessionAttachment(ctx, connect.NewRequest(&v1.GetSessionAttachmentRequest{
+		SessionId: id, AttachmentId: attachmentID,
+	}))
+	if err != nil {
+		t.Fatalf("GetSessionAttachment: %v", err)
+	}
+	if got.Msg.MediaType != "image/png" || !bytes.Equal(got.Msg.Data, payload) {
+		t.Fatalf("attachment = type %q, %d bytes", got.Msg.MediaType, len(got.Msg.Data))
+	}
+	info, err := os.Stat(filepath.Join(ws, ".ycc", "sessions", id, "attachments", attachmentID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("attachment mode = %o, want 600", info.Mode().Perm())
+	}
+	// Persisted transcripts can retrieve the same payload after live session state
+	// is gone, as long as the session retention directory remains.
+	if _, err := srv.StopSession(ctx, connect.NewRequest(&v1.StopSessionRequest{SessionId: id})); err != nil {
+		t.Fatalf("StopSession: %v", err)
+	}
+	got, err = srv.GetSessionAttachment(ctx, connect.NewRequest(&v1.GetSessionAttachmentRequest{
+		SessionId: id, AttachmentId: attachmentID,
+	}))
+	if err != nil || !bytes.Equal(got.Msg.Data, payload) {
+		t.Fatalf("persisted GetSessionAttachment = %v, err %v", got, err)
+	}
+	if _, err := srv.GetSessionAttachment(ctx, connect.NewRequest(&v1.GetSessionAttachmentRequest{
+		SessionId: id, AttachmentId: "../../events.jsonl",
+	})); connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("path traversal err = %v, want NotFound", err)
 	}
 }
 
@@ -167,5 +202,6 @@ func newImageTestServer(t *testing.T) (*Server, string) {
 		},
 		Roles: config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
 	}
-	return New(session.NewManager(config.NewRegistry(cfg), t.TempDir())), t.TempDir()
+	workspace := t.TempDir()
+	return New(session.NewManager(config.NewRegistry(cfg), workspace)), workspace
 }

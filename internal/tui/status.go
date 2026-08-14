@@ -3,7 +3,6 @@ package tui
 
 import (
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -244,12 +243,9 @@ func (m model) menuReadyCount() int {
 // row like the session status bar so it never corrupts the frame.
 func (m model) menuHeader() string {
 	var segs []fitSeg
-	// project name — highest priority, always present.
-	name := filepath.Base(m.workspace)
-	if name == "" || name == "." || name == string(filepath.Separator) {
-		name = m.workspace
-	}
-	segs = append(segs, fitSeg{typeStyle.Render(name), 0})
+	// Project registry name — highest priority, always present. In remote mode the
+	// daemon path is orientation metadata, not a meaningful client-local basename.
+	segs = append(segs, fitSeg{typeStyle.Render(m.locationLabel()), 0})
 	// git branch + dirty marker (dropped when the workspace isn't a git repo).
 	if m.gitBranch != "" {
 		git := dimStyle.Render("⎇ ") + typeStyle.Render(m.gitBranch)

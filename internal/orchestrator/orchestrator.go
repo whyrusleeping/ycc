@@ -115,6 +115,11 @@ type Deps struct {
 	// ReviewTier resolves a tier name to reviewer agents or coordinator self-review.
 	// When nil, spawn_reviewers uses the configured reviewer fan-out.
 	ReviewTier func(name string) ReviewPlan
+	// ResolveAgent resolves any configured logical model for a generic chat
+	// subagent. It is session-owned so live thinking overrides are honored.
+	ResolveAgent func(name string) (AgentSpec, error)
+	// AgentModels lists configured logical model names for the generic spawn tool.
+	AgentModels func() []string
 	// ReviewTiers lists the review tiers available in this project so the
 	// spawn_reviewers tool description can name them (custom tiers included).
 	// Nil-safe: when unset the description falls back to the built-in blurb.
@@ -135,14 +140,26 @@ type Deps struct {
 	// job_output/wait/kill_job tools; the session kills all jobs on end.
 	Jobs *jobs.Registry
 
-	mu        sync.Mutex
-	impl      *engine.Loop
-	implSpec  AgentSpec // resolved slot used by impl; retained across fresh revisions
-	implRound int       // completed/attempted implementer runs, including the initial run
-	implJob   *jobs.Job // live/last background implementer job (nil if last spawn was foreground)
-	reviewers []*reviewerHandle
-	reviewJob *jobs.Job // live/last background reviewers job
-	focus     string    // backlog task currently in focus; guarded by mu
+	mu           sync.Mutex
+	impl         *engine.Loop
+	implSpec     AgentSpec // resolved slot used by impl; retained across fresh revisions
+	implRound    int       // completed/attempted implementer runs, including the initial run
+	implJob      *jobs.Job // live/last background implementer job (nil if last spawn was foreground)
+	reviewers    []*reviewerHandle
+	reviewJob    *jobs.Job // live/last background reviewers job
+	genericSeq   int
+	genericAgent map[string]*genericAgentHandle // stable agent id -> retained loop
+	focus        string                         // backlog task currently in focus; guarded by mu
+}
+
+type genericAgentHandle struct {
+	id      string
+	spec    AgentSpec
+	loop    *engine.Loop
+	job     *jobs.Job
+	round   int
+	mutates bool
+	running bool // Run may still be unwinding after kill_job marks job killed
 }
 
 // emitFocus records a task_focus event when the active task changes. Re-focusing

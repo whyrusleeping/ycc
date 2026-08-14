@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/git"
 	"github.com/whyrusleeping/ycc/internal/jobs"
+	"github.com/whyrusleeping/ycc/internal/sandbox"
 )
 
 // syncRec is a thread-safe event recorder: background agent jobs emit from a
@@ -122,6 +124,131 @@ func bgDeps(t *testing.T, rec event.Recorder, impl *scripted, reviewers []AgentS
 // diff), and both the job_* and subagent_* event pairs are emitted (the latter
 // tagged with job_id). When no wait covers it, DrainFinished delivers it exactly
 // once (the checkpoint-injection path).
+func TestGenericAgentBackgroundModelAndFollowup(t *testing.T) {
+	rec := &syncRec{}
+	d, _ := bgDeps(t, rec, nil, nil)
+	turner := &scripted{resp: []*gollama.ResponseMessageGenerate{text("first answer"), text("follow-up answer")}}
+	var resolved string
+	d.ResolveAgent = func(name string) (AgentSpec, error) {
+		resolved = name
+		if name != "chosen" {
+			return AgentSpec{}, fmt.Errorf("unknown model %q", name)
+		}
+		return AgentSpec{Name: name, Model: "provider-model", Backend: "test", NewClient: func() engine.Turner { return turner }}, nil
+	}
+	d.AgentModels = func() []string { return []string{"chosen", "other"} }
+
+	res, err := spawnAgent(d).Call(context.Background(), map[string]any{"model": "chosen", "prompt": "inspect alpha"})
+	if err != nil || res.IsError || !strings.Contains(res.Content, "agent_1") || !strings.Contains(res.Content, "job_1") {
+		t.Fatalf("spawn_agent = %+v, %v", res, err)
+	}
+	if resolved != "chosen" {
+		t.Fatalf("resolved model = %q, want chosen", resolved)
+	}
+	job1, _ := d.Jobs.Get("job_1")
+	if job1.Mutates() != !genericReadOnlyEnforced() {
+		t.Fatalf("generic job mutates = %v, sandbox = %s", job1.Mutates(), sandbox.Available())
+	}
+	waitJobDone(t, job1)
+	if rep := job1.Report(); rep.Status != jobs.Done || rep.Result != "first answer" {
+		t.Fatalf("first report = %+v", rep)
+	}
+
+	res, err = sendToAgent(d).Call(context.Background(), map[string]any{"agent_id": "agent_1", "prompt": "now inspect beta"})
+	if err != nil || res.IsError || !strings.Contains(res.Content, "job_2") {
+		t.Fatalf("send_to_agent = %+v, %v", res, err)
+	}
+	job2, _ := d.Jobs.Get("job_2")
+	waitJobDone(t, job2)
+	if rep := job2.Report(); rep.Status != jobs.Done || rep.Result != "follow-up answer" {
+		t.Fatalf("follow-up report = %+v", rep)
+	}
+	if turner.i != 2 {
+		t.Fatalf("model turns = %d, want 2", turner.i)
+	}
+	var sawFirst, sawFollowup bool
+	for _, msg := range turner.messages {
+		if msg.Role == "assistant" && msg.Content == "first answer" {
+			sawFirst = true
+		}
+		if msg.Role == "user" && msg.Content == "now inspect beta" {
+			sawFollowup = true
+		}
+	}
+	if !sawFirst || !sawFollowup {
+		t.Fatalf("follow-up did not retain history: %+v", turner.messages)
+	}
+
+	var spawns int
+	for _, ev := range rec.snapshot() {
+		if ev.Type == event.SubagentSpawned && ev.Data["role"] == "generic" {
+			spawns++
+			if ev.Data["agent_id"] != "agent_1" || ev.Data["logical_model"] != "chosen" {
+				t.Fatalf("generic spawn metadata = %+v", ev.Data)
+			}
+		}
+	}
+	if spawns != 2 {
+		t.Fatalf("generic spawn events = %d, want 2", spawns)
+	}
+}
+
+func TestGenericMutatingAgentUsesSingleWriterGuard(t *testing.T) {
+	d, _ := bgDeps(t, &syncRec{}, nil, nil)
+	turner := &scripted{resp: []*gollama.ResponseMessageGenerate{text("coded")}}
+	d.ResolveAgent = func(name string) (AgentSpec, error) {
+		return AgentSpec{Name: name, Model: "m", NewClient: func() engine.Turner { return turner }}, nil
+	}
+
+	blocker := d.Jobs.StartMutating("bash", "existing writer", d.Emitter.Actor())
+	res, _ := spawnAgent(d).Call(context.Background(), map[string]any{"model": "coder", "prompt": "edit it", "mutating": true})
+	if !res.IsError || !strings.Contains(res.Content, "another mutating job") {
+		t.Fatalf("mutating spawn beside writer = %+v", res)
+	}
+	blocker.Finish(jobs.Done, "done")
+
+	res, _ = spawnAgent(d).Call(context.Background(), map[string]any{"model": "coder", "prompt": "edit it", "mutating": true})
+	if res.IsError || !strings.Contains(res.Content, "mutating subagent") {
+		t.Fatalf("mutating spawn = %+v", res)
+	}
+	job, _ := d.Jobs.Get("job_2")
+	if !job.Mutates() {
+		t.Fatal("explicitly mutating generic agent was not registered as mutating")
+	}
+	waitJobDone(t, job)
+}
+
+func TestGenericAgentErrorsAndRunningFollowup(t *testing.T) {
+	d, _ := bgDeps(t, &syncRec{}, nil, nil)
+	if res, _ := spawnAgent(d).Call(context.Background(), map[string]any{"model": "x", "prompt": "p"}); !res.IsError || !strings.Contains(res.Content, "model resolution") {
+		t.Fatalf("spawn without resolver = %+v", res)
+	}
+
+	blocker := newBlockingTurner(text("done"))
+	d.ResolveAgent = func(name string) (AgentSpec, error) {
+		if name != "known" {
+			return AgentSpec{}, fmt.Errorf("unknown model %q", name)
+		}
+		return AgentSpec{Name: name, Model: "m", NewClient: func() engine.Turner { return blocker }}, nil
+	}
+	if res, _ := spawnAgent(d).Call(context.Background(), map[string]any{"model": "missing", "prompt": "p"}); !res.IsError || !strings.Contains(res.Content, "unknown model") {
+		t.Fatalf("unknown model = %+v", res)
+	}
+	if res, _ := spawnAgent(d).Call(context.Background(), map[string]any{"model": "known", "prompt": "p"}); res.IsError {
+		t.Fatalf("spawn known = %+v", res)
+	}
+	<-blocker.started
+	if res, _ := sendToAgent(d).Call(context.Background(), map[string]any{"agent_id": "agent_1", "prompt": "too soon"}); !res.IsError || !strings.Contains(res.Content, "still running") {
+		t.Fatalf("running follow-up = %+v", res)
+	}
+	if res, _ := sendToAgent(d).Call(context.Background(), map[string]any{"agent_id": "agent_999", "prompt": "p"}); !res.IsError || !strings.Contains(res.Content, "no such agent") {
+		t.Fatalf("unknown agent = %+v", res)
+	}
+	close(blocker.release)
+	job, _ := d.Jobs.Get("job_1")
+	waitJobDone(t, job)
+}
+
 func TestSpawnImplementerBackground(t *testing.T) {
 	rec := &syncRec{}
 	impl := &scripted{resp: []*gollama.ResponseMessageGenerate{call("finish", `{"report":"did the work"}`)}}

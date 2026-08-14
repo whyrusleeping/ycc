@@ -23,6 +23,14 @@ func ReadOnly(ws *Workspace) []*gollama.Tool {
 	return []*gollama.Tool{readFile(ws)}
 }
 
+// ReadOnlyInspect returns Read plus a sandboxed shell for general-purpose
+// inspection agents. Unlike Inspect, shell commands cannot mutate the workspace
+// on hosts with a supported sandbox; unsupported hosts visibly degrade to
+// prompt-only read-only enforcement at the orchestrator boundary.
+func ReadOnlyInspect(ws *Workspace) []*gollama.Tool {
+	return []*gollama.Tool{readFile(ws), sandboxedBash(ws)}
+}
+
 // Reviewer returns the tool set for a review subagent: the file Read tool, a
 // sandboxed Bash (see internal/sandbox), and submit_review, a control tool that
 // ends the review with a structured verdict. Reviewers must not modify the change

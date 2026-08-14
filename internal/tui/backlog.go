@@ -17,11 +17,12 @@ import (
 
 // fetchBacklog loads the backlog summary rows for the backlog browser.
 func (m model) fetchBacklog() tea.Msg {
+	seq := m.projectSeq
 	resp, err := m.client.ListBacklog(m.ctx, connect.NewRequest(&v1.ListBacklogRequest{Project: m.project}))
 	if err != nil {
-		return errMsg{err}
+		return backlogMsg{projectSeq: seq, err: err}
 	}
-	return backlogMsg{resp.Msg.Tasks}
+	return backlogMsg{tasks: resp.Msg.Tasks, projectSeq: seq}
 }
 
 // fetchTask loads one task's full detail for the backlog browser.

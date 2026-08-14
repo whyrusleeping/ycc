@@ -80,7 +80,7 @@ func BuildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 	switch mode {
 	case "chat":
 		reg.Add(tools.Editing(ws)...)
-		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d), askUser(d), remember(d))
+		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d), askUser(d), remember(d), spawnAgent(d), sendToAgent(d))
 		return reg, sys(chatModeSystem, unattended, d.Workspace)
 	case "pm":
 		// pm maintains the project's design docs (plain files) so it keeps

@@ -44,28 +44,33 @@ func (m model) reopenSession(id string) tea.Cmd {
 }
 
 func (m model) subscribe() tea.Cmd {
+	ctx := m.sessionCtx
+	if ctx == nil {
+		ctx = m.ctx
+	}
+	id, events := m.sessionID, m.events
 	return func() tea.Msg {
-		stream, err := m.client.Subscribe(m.ctx, connect.NewRequest(&v1.SubscribeRequest{SessionId: m.sessionID}))
+		stream, err := m.client.Subscribe(ctx, connect.NewRequest(&v1.SubscribeRequest{SessionId: id}))
 		if err != nil {
-			return errMsg{err}
+			return subscriptionErrMsg{sessionID: id, err: err}
 		}
 		go func() {
 			for stream.Receive() {
-				m.events <- stream.Msg()
+				events <- stream.Msg()
 			}
-			close(m.events)
+			close(events)
 		}()
-		return waitEvent(m.events)()
+		return waitEvent(events, id)()
 	}
 }
 
-func waitEvent(ch chan *v1.Event) tea.Cmd {
+func waitEvent(ch chan *v1.Event, sessionID string) tea.Cmd {
 	return func() tea.Msg {
 		ev, ok := <-ch
 		if !ok {
-			return streamClosedMsg{}
+			return streamClosedMsg{sessionID: sessionID}
 		}
-		return evMsg{ev}
+		return sessionEvMsg{ev: ev, sessionID: sessionID}
 	}
 }
 

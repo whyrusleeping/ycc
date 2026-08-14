@@ -55,8 +55,8 @@ type ReasoningTokenReporter interface {
 }
 
 // UserMessage is user-authored input ready to append to model history. Images
-// contain base64 payloads only in memory; the event log records metadata rather
-// than bytes.
+// contain base64 payloads in memory; the event log records metadata and optional
+// references to separately retained transcript payloads rather than bytes.
 type UserMessage struct {
 	Text   string
 	Images []Image
@@ -64,9 +64,10 @@ type UserMessage struct {
 
 // Image is one validated native image content block.
 type Image struct {
-	Base64    string
-	MediaType string
-	Filename  string
+	Base64       string
+	MediaType    string
+	Filename     string
+	AttachmentID string // optional durable transcript payload reference
 }
 
 // Steer lets a session pause and steer a running loop at safe checkpoints.

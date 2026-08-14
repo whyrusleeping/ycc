@@ -50,13 +50,27 @@ type model struct {
 	ctx       context.Context
 	workspace string
 
-	// project scoping. When attached to a persistent/remote daemon
-	// the picker selects a project; one-shot leaves these empty (cwd is the
-	// single implicit project) and skips the picker.
-	showPicker bool
-	project    string            // selected project name ("" => use workspace)
-	projects   []*v1.ProjectInfo // registered projects for the picker
-	projectCur int               // cursor in the project picker
+	// Project scoping. A persistent/remote daemon uses the project hub both for
+	// initial selection and later switching/management. Its add flow browses the
+	// daemon host through ListDir; it must never treat this process's cwd as a path
+	// on the remote host.
+	showPicker   bool
+	project      string            // selected registered project name
+	projects     []*v1.ProjectInfo // daemon registry snapshot
+	projectCur   int               // cursor in the project list
+	projectMode  projectPickerMode
+	projectInput textinput.Model // rename input
+	projectBusy  bool
+	projectNote  string
+	projectSeq   int // invalidates project-scoped RPC responses after a switch
+
+	// Server-side directory browser used by AddProject.
+	dirPath        string
+	dirParent      string
+	dirEntries     []*v1.DirEntry
+	dirSuggestions []string
+	dirCur         int
+	dirLoading     bool
 
 	state   state
 	entries []menuEntry // modes + presets, in menu order
@@ -150,9 +164,11 @@ type model struct {
 	helpOpen   bool
 	helpScroll int
 
-	sessionID string
-	mode      string
-	events    chan *v1.Event
+	sessionID     string
+	mode          string
+	events        chan *v1.Event
+	sessionCtx    context.Context
+	sessionCancel context.CancelFunc // cancels only this client's subscription; daemon work continues
 
 	evs       []*v1.Event
 	expanded  map[int]bool   // seq -> manually expanded
@@ -478,6 +494,11 @@ func initialModel(ctx context.Context, client yccv1connect.SessionServiceClient,
 
 	captureInput := newChatInput("describe a new backlog item…")
 
+	projectInput := textinput.New()
+	projectInput.CharLimit = 100
+	projectInput.SetWidth(40)
+	projectInput.Placeholder = "project name"
+
 	// Activity spinner: a small dot animation tinted with the palette's
 	// success role; it ticks via the Bubble Tea command loop while the session is
 	// running or a quick-capture RPC is in flight.
@@ -490,8 +511,8 @@ func initialModel(ctx context.Context, client yccv1connect.SessionServiceClient,
 	}
 	return model{
 		client: client, ctx: ctx, workspace: workspace,
-		showPicker: showPicker,
-		state:      initState, prompt: prompt, input: input,
+		showPicker: showPicker, projectSeq: 1,
+		state: initState, prompt: prompt, input: input, projectInput: projectInput,
 		captureInput: captureInput,
 		events:       make(chan *v1.Event, 256), status: "starting",
 		expanded: map[int]bool{}, bodyCache: map[int]string{},
@@ -716,6 +737,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.prompt.SetWidth(inputW)
 		m.input.SetWidth(inputW)
 		m.captureInput.SetWidth(inputW)
+		projectInputW := inputW
+		if projectInputW > 60 {
+			projectInputW = 60
+		}
+		m.projectInput.SetWidth(projectInputW)
 		m.makeRenderer()
 		m.invalidateRender() // re-render bodies at the new width
 		m.rebuild()
@@ -760,7 +786,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// When the workspace looks un-onboarded, surface the onboarding entry
 		// prominently at the top of the menu. It stays a normal
 		// preset otherwise ("onboard later" is valid).
-		if needsOnboarding(m.workspace) {
+		if !m.showPicker && needsOnboarding(m.workspace) {
 			for i := range m.entries {
 				if m.entries[i].label == "onboard" {
 					e := m.entries[i]
@@ -833,14 +859,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case projectsTickMsg:
-		if m.state != statePicker {
+		if m.state != statePicker || m.projectMode != projectPickerList {
 			return m, nil
 		}
 		return m, tea.Batch(m.fetchProjects, m.projectsRefreshTick())
 	case projectsMsg:
 		m.rpcOK()
 		m.projects = msg.projects
-		if m.projectCur >= len(m.projects) {
+		found := false
+		for i, p := range m.projects {
+			if p.Name == m.project {
+				m.projectCur, found = i, true
+				if m.showPicker {
+					m.workspace = p.Path
+					m.applyDaemonGit(p.Git)
+				}
+				break
+			}
+		}
+		if !found && m.projectCur >= len(m.projects) {
 			m.projectCur = 0
 		}
 		// A one-shot daemon has one ordinary named project. Select it
@@ -851,6 +888,59 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.refreshMenu()
 		}
 		return m, nil
+	case dirMsg:
+		m.dirLoading = false
+		if msg.err != nil {
+			m.projectNote = "error: " + msg.err.Error()
+			return m, nil
+		}
+		m.rpcOK()
+		m.dirPath, m.dirParent = msg.path, msg.parent
+		m.dirEntries, m.dirSuggestions = msg.entries, msg.suggestions
+		m.dirCur, m.projectNote = 0, ""
+		return m, nil
+	case projectAddedMsg:
+		m.projectBusy = false
+		if msg.err != nil {
+			m.projectNote = "error: " + msg.err.Error()
+			return m, nil
+		}
+		m.rpcOK()
+		m.projectNote = "added " + msg.project.Name
+		cmd := m.selectProject(msg.project)
+		return m, tea.Batch(cmd, m.fetchProjects)
+	case projectRenamedMsg:
+		m.projectBusy = false
+		if msg.err != nil {
+			m.projectNote = "error: " + msg.err.Error()
+			return m, nil
+		}
+		m.rpcOK()
+		if m.project == msg.oldName {
+			m.project, m.workspace = msg.project.Name, msg.project.Path
+		}
+		m.projectMode = projectPickerList
+		m.projectNote = "renamed " + msg.oldName + " to " + msg.project.Name
+		m.projectInput.Blur()
+		return m, m.fetchProjects
+	case projectRemovedMsg:
+		m.projectBusy = false
+		if msg.err != nil {
+			m.projectNote = "error: " + msg.err.Error()
+			return m, nil
+		}
+		m.rpcOK()
+		if m.project == msg.name {
+			if m.sessionCancel != nil {
+				m.sessionCancel()
+			}
+			m.sessionCancel, m.sessionCtx = nil, nil
+			m.sessionID, m.project, m.workspace = "", "", ""
+			m.resetProjectProjection()
+		}
+		m.projectMode = projectPickerList
+		m.projectNote = "removed " + msg.name
+		return m, m.fetchProjects
 	case historyMsg:
 		if msg.err != nil {
 			m.history = nil
@@ -880,6 +970,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case waitingSessionsMsg:
+		if msg.projectSeq != 0 && msg.projectSeq != m.projectSeq {
+			return m, nil
+		}
 		// Awareness signal only: on error keep the last-known set and stay quiet
 		// (never flash) — a transient RPC hiccup must not blank the menu line.
 		if msg.err != nil {
@@ -898,6 +991,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.gitBranch, m.gitDirty = msg.branch, msg.dirty
 		return m, nil
 	case menuSpendMsg:
+		if msg.projectSeq != 0 && msg.projectSeq != m.projectSeq {
+			return m, nil
+		}
 		// Awareness signal only: on error keep the last-known spend and
 		// stay quiet — a transient RPC hiccup must not blank the header.
 		if msg.err != nil {
@@ -958,6 +1054,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.vp.GotoTop()
 		}
 		return m, nil
+	case subscriptionErrMsg:
+		if msg.sessionID != m.sessionID {
+			return m, nil
+		}
+		return m, m.flash(msg.err)
 	case errMsg:
 		return m, m.flash(msg.err)
 	case flashClearMsg:
@@ -987,10 +1088,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pickerOpts, m.pickerCursor = nil, 0
 		m.clearWizard()
 		m.clearSearch()
+		// Cancel only the prior client subscription. ResumeSession/StartSession state
+		// is daemon-owned, so detaching never stops work that should survive this TUI.
+		if m.sessionCancel != nil {
+			m.sessionCancel()
+		}
+		m.sessionCtx, m.sessionCancel = context.WithCancel(m.ctx)
 		// Allocate a fresh event channel for this session. The subscribe goroutine
-		// closes its channel when the stream ends; in a loop run the next session
-		// must not reuse (and send on) that already-closed channel — doing so panics
-		// with "send on closed channel" and crashes the TUI back to the shell.
+		// closes its channel when the stream ends; a new session must not reuse it.
 		m.events = make(chan *v1.Event, 256)
 		m.sessionID, m.mode, m.state, m.status = msg.id, msg.mode, stateSession, "running"
 		// Reset the running usage tally and start the elapsed clock for the new (or
@@ -1014,6 +1119,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		spin := m.spinnerCmd() // arm the activity spinner (mutates m.spinning) before returning m
 		return m, tea.Batch(m.subscribe(), fc, spin)
 	case streamClosedMsg:
+		// A canceled subscription from a session we detached while switching
+		// projects must not overwrite the new project's status.
+		if msg.sessionID != "" && msg.sessionID != m.sessionID {
+			return m, nil
+		}
 		m.loopArmStop = false
 		if m.loopArmed {
 			// An attended work session must be completely gone before asking the daemon
@@ -1118,6 +1228,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.fetchWorkLoop()
+	case sessionEvMsg:
+		// Events from a subscription canceled during a project switch may already be
+		// queued in Bubble Tea. Ignore them rather than mixing projects or spawning a
+		// second wait chain on the new session's channel.
+		if msg.sessionID != m.sessionID {
+			return m, nil
+		}
+		return m.Update(evMsg{ev: msg.ev})
 	case evMsg:
 		m.markConnected()
 		// Transient events (Seq=0, broadcast-only, e.g. turn_delta) are ephemeral
@@ -1163,15 +1281,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.rebuild()
 		spin := m.spinnerCmd() // mutates m.spinning; evaluate before returning m
 		if closed {
-			return m, func() tea.Msg { return streamClosedMsg{} }
+			id := m.sessionID
+			return m, func() tea.Msg { return streamClosedMsg{sessionID: id} }
 		}
 		if m.loopArmed && !m.loopArmStop && m.status == "idle" {
 			m.loopArmStop = true
 			m.status = "loop armed: ending current session…"
-			return m, tea.Batch(m.stopSession(), waitEvent(m.events), spin)
+			return m, tea.Batch(m.stopSession(), waitEvent(m.events, m.sessionID), spin)
 		}
-		return m, tea.Batch(waitEvent(m.events), spin)
+		return m, tea.Batch(waitEvent(m.events, m.sessionID), spin)
 	case backlogMsg:
+		if msg.projectSeq != 0 && msg.projectSeq != m.projectSeq {
+			return m, nil
+		}
+		if msg.err != nil {
+			return m, m.flash(msg.err)
+		}
 		m.rpcOK()
 		m.backlogTasks = msg.tasks
 		if m.backlogCursor >= len(m.backlogTasks) {

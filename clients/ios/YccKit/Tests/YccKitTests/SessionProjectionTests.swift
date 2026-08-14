@@ -72,17 +72,17 @@ final class SessionProjectionTests: XCTestCase {
         XCTAssertTrue(proj.rows.contains { if case .finalReport = $0.kind { return true }; return false })
     }
 
-    func testUserPictureMetadataRendersWithoutPayload() {
+    func testUserPictureMetadataProjectsRetainedReference() {
         var projection = SessionProjection()
         projection.apply(makeEvent(
             seq: 1, type: "user_input", actor: "user",
-            dataJson: #"{"text":"look at this","images":[{"media_type":"image/jpeg","filename":"photo.jpg"}]}"#))
+            dataJson: #"{"text":"look at this","images":[{"attachment_id":"a_123","media_type":"image/jpeg","filename":"photo.jpg"}]}"#))
         guard let first = projection.rows.first,
-              case .userMessage(let text) = first.kind else {
+              case .userMessage(let text, let pictures) = first.kind else {
             return XCTFail("expected user message")
         }
-        XCTAssertTrue(text.contains("look at this"))
-        XCTAssertTrue(text.contains("Picture attached"))
+        XCTAssertEqual(text, "look at this")
+        XCTAssertEqual(pictures, [.init(attachmentID: "a_123", mediaType: "image/jpeg", filename: "photo.jpg")])
         XCTAssertFalse(text.contains("base64"))
     }
 
@@ -275,10 +275,11 @@ final class SessionProjectionTests: XCTestCase {
         proj.apply(makeEvent(seq: 2, type: "model_turn", dataJson: ""))
         // Degrades to empty text; user_input bubble still appears (empty text).
         XCTAssertEqual(proj.lastPersistedSeq, 2)
-        guard case .userMessage(let text)? = proj.durableRows.first?.kind else {
+        guard case .userMessage(let text, let pictures)? = proj.durableRows.first?.kind else {
             return XCTFail("expected a user bubble")
         }
         XCTAssertEqual(text, "")
+        XCTAssertTrue(pictures.isEmpty)
     }
 
     func testToolCallResultPairing() {

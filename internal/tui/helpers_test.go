@@ -60,6 +60,11 @@ type fakeClient struct {
 
 	projects          []*v1.ProjectInfo
 	listProjectsCalls int
+	listDirResponses  map[string]*v1.ListDirResponse
+	lastListDir       *v1.ListDirRequest
+	lastAddProject    *v1.AddProjectRequest
+	lastRenameProject *v1.RenameProjectRequest
+	lastRemoveProject *v1.RemoveProjectRequest
 
 	// previous-sessions screen (spec §18.6)
 	history      []*v1.SessionSummary
@@ -120,6 +125,45 @@ func newFakeClient(cfgs ...*v1.ModelConfig) *fakeClient {
 func (f *fakeClient) ListProjects(_ context.Context, _ *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error) {
 	f.listProjectsCalls++
 	return connect.NewResponse(&v1.ListProjectsResponse{Projects: f.projects}), nil
+}
+
+func (f *fakeClient) ListDir(_ context.Context, req *connect.Request[v1.ListDirRequest]) (*connect.Response[v1.ListDirResponse], error) {
+	f.lastListDir = req.Msg
+	if resp := f.listDirResponses[req.Msg.Path]; resp != nil {
+		return connect.NewResponse(resp), nil
+	}
+	return connect.NewResponse(&v1.ListDirResponse{Path: req.Msg.Path}), nil
+}
+
+func (f *fakeClient) AddProject(_ context.Context, req *connect.Request[v1.AddProjectRequest]) (*connect.Response[v1.AddProjectResponse], error) {
+	f.lastAddProject = req.Msg
+	name := filepath.Base(req.Msg.Path)
+	p := &v1.ProjectInfo{Name: name, Path: req.Msg.Path}
+	f.projects = append(f.projects, p)
+	return connect.NewResponse(&v1.AddProjectResponse{Project: p}), nil
+}
+
+func (f *fakeClient) RenameProject(_ context.Context, req *connect.Request[v1.RenameProjectRequest]) (*connect.Response[v1.RenameProjectResponse], error) {
+	f.lastRenameProject = req.Msg
+	for _, p := range f.projects {
+		if p.Name == req.Msg.Name {
+			p.Name = req.Msg.NewName
+			return connect.NewResponse(&v1.RenameProjectResponse{Project: p}), nil
+		}
+	}
+	return nil, fmt.Errorf("no such project %q", req.Msg.Name)
+}
+
+func (f *fakeClient) RemoveProject(_ context.Context, req *connect.Request[v1.RemoveProjectRequest]) (*connect.Response[v1.RemoveProjectResponse], error) {
+	f.lastRemoveProject = req.Msg
+	out := f.projects[:0]
+	for _, p := range f.projects {
+		if p.Name != req.Msg.Name {
+			out = append(out, p)
+		}
+	}
+	f.projects = out
+	return connect.NewResponse(&v1.RemoveProjectResponse{}), nil
 }
 
 func (f *fakeClient) ListModels(_ context.Context, _ *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error) {
@@ -417,6 +461,12 @@ func keyMsg(key string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: tea.KeyLeft}
 	case "right":
 		return tea.KeyPressMsg{Code: tea.KeyRight}
+	case "ctrl+a":
+		return tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl}
+	case "ctrl+d":
+		return tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl}
+	case "ctrl+e":
+		return tea.KeyPressMsg{Code: 'e', Mod: tea.ModCtrl}
 	case "ctrl+n":
 		return tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl}
 	case "ctrl+c":

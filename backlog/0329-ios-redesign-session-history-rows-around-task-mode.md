@@ -74,3 +74,8 @@ Extend `SessionSummary`/`ListSessionHistory` as needed so model and token metada
 - 2026-08-13 review (sol#2/sol): accept — The revision cleanly addresses all prior findings. Compact token formatting now promotes rounded unit boundaries with focused regression tests, the SessionRow documentation matches the redesigned meta
 …[truncated]
 - 2026-08-13 decision: implementation accepted and committed as 54fba48; status remains in_review pending the acceptance criterion’s required iPhone simulator/device verification, which is unavailable in this Linux environment.
+- 2026-08-13 usage: 10,154,554 tok (in 2,143,943, out 72,563, cache_r 7,938,048, cache_w 0) · cost n/a (unpriced)
+  implementer: 5,224,673 tok (in 748,326, out 31,163, cache_r 4,445,184, cache_w 0) · cost n/a (unpriced)
+  coordinator: 2,410,313 tok (in 523,111, out 16,866, cache_r 1,870,336, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol: 1,275,677 tok (in 444,460, out 12,017, cache_r 819,200, cache_w 0) · cost n/a (unpriced)
+  reviewer:sol#2: 1,243,891 tok (in 428,046, out 12,517, cache_r 803,328, cache_w 0) · cost n/a (unpriced)

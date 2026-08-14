@@ -796,6 +796,41 @@ public nonisolated struct Ycc_V1_GetSessionTranscriptResponse: Sendable {
   public init() {}
 }
 
+/// GetSessionAttachment returns one picture referenced by attachment_id in a
+/// user_input event. The payload is stored beside (not inside) events.jsonl and
+/// follows the session log's retention lifecycle.
+public nonisolated struct Ycc_V1_GetSessionAttachmentRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// registered project; empty allowed only when exactly one exists
+  public var project: String = String()
+
+  public var sessionID: String = String()
+
+  /// opaque id from user_input.images[].attachment_id
+  public var attachmentID: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_GetSessionAttachmentResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var data: Data = Data()
+
+  public var mediaType: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 /// GetCommitDiff returns the `git show` output (stat + patch) for a commit, so the
 /// transcript can drill into what an agent actually committed. The
 /// daemon caps the returned diff to bound the wire payload; truncated reports when
@@ -1432,9 +1467,8 @@ public nonisolated struct Ycc_V1_SetReviewDefaultResponse: Sendable {
   public init() {}
 }
 
-/// Backlog browser: read-only RPCs that expose the durable backlog
-/// (internal/docs Store) so clients can list and inspect tasks independent of any
-/// agent session.
+/// Backlog browser RPCs expose the durable backlog (internal/docs Store) so
+/// clients can list, inspect, and groom tasks independent of any agent session.
 public nonisolated struct Ycc_V1_ListBacklogRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -1572,7 +1606,7 @@ public nonisolated struct Ycc_V1_UpdateTaskRequest: Sendable {
 
   public var id: String = String()
 
-  /// todo | in_progress | in_review | done | blocked
+  /// proposed | todo | in_progress | in_review | done | blocked
   public var status: String {
     get {_status ?? String()}
     set {_status = newValue}
@@ -1601,6 +1635,40 @@ public nonisolated struct Ycc_V1_UpdateTaskRequest: Sendable {
   /// Clears the value of `title`. Subsequent reads from it will return its default value.
   public mutating func clearTitle() {self._title = nil}
 
+  /// full markdown body after the frontmatter
+  public var body: String {
+    get {_body ?? String()}
+    set {_body = newValue}
+  }
+  /// Returns true if `body` has been explicitly set.
+  public var hasBody: Bool {self._body != nil}
+  /// Clears the value of `body`. Subsequent reads from it will return its default value.
+  public mutating func clearBody() {self._body = nil}
+
+  public var dependsOn: [String] = []
+
+  /// distinguishes clearing the list from leaving it untouched
+  public var replaceDependsOn: Bool {
+    get {_replaceDependsOn ?? false}
+    set {_replaceDependsOn = newValue}
+  }
+  /// Returns true if `replaceDependsOn` has been explicitly set.
+  public var hasReplaceDependsOn: Bool {self._replaceDependsOn != nil}
+  /// Clears the value of `replaceDependsOn`. Subsequent reads from it will return its default value.
+  public mutating func clearReplaceDependsOn() {self._replaceDependsOn = nil}
+
+  public var specRefs: [String] = []
+
+  /// distinguishes clearing the list from leaving it untouched
+  public var replaceSpecRefs: Bool {
+    get {_replaceSpecRefs ?? false}
+    set {_replaceSpecRefs = newValue}
+  }
+  /// Returns true if `replaceSpecRefs` has been explicitly set.
+  public var hasReplaceSpecRefs: Bool {self._replaceSpecRefs != nil}
+  /// Clears the value of `replaceSpecRefs`. Subsequent reads from it will return its default value.
+  public mutating func clearReplaceSpecRefs() {self._replaceSpecRefs = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1608,6 +1676,9 @@ public nonisolated struct Ycc_V1_UpdateTaskRequest: Sendable {
   fileprivate var _status: String? = nil
   fileprivate var _priority: Int32? = nil
   fileprivate var _title: String? = nil
+  fileprivate var _body: String? = nil
+  fileprivate var _replaceDependsOn: Bool? = nil
+  fileprivate var _replaceSpecRefs: Bool? = nil
 }
 
 public nonisolated struct Ycc_V1_UpdateTaskResponse: Sendable {
@@ -4211,6 +4282,81 @@ nonisolated extension Ycc_V1_GetSessionTranscriptResponse: SwiftProtobuf.Message
   }
 }
 
+nonisolated extension Ycc_V1_GetSessionAttachmentRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetSessionAttachmentRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{3}session_id\0\u{3}attachment_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.attachmentID) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.project.isEmpty {
+      try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
+    }
+    if !self.sessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 2)
+    }
+    if !self.attachmentID.isEmpty {
+      try visitor.visitSingularStringField(value: self.attachmentID, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_GetSessionAttachmentRequest, rhs: Ycc_V1_GetSessionAttachmentRequest) -> Bool {
+    if lhs.project != rhs.project {return false}
+    if lhs.sessionID != rhs.sessionID {return false}
+    if lhs.attachmentID != rhs.attachmentID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_GetSessionAttachmentResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetSessionAttachmentResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}data\0\u{3}media_type\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBytesField(value: &self.data) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.mediaType) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.data.isEmpty {
+      try visitor.visitSingularBytesField(value: self.data, fieldNumber: 1)
+    }
+    if !self.mediaType.isEmpty {
+      try visitor.visitSingularStringField(value: self.mediaType, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_GetSessionAttachmentResponse, rhs: Ycc_V1_GetSessionAttachmentResponse) -> Bool {
+    if lhs.data != rhs.data {return false}
+    if lhs.mediaType != rhs.mediaType {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 nonisolated extension Ycc_V1_GetCommitDiffRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GetCommitDiffRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{1}sha\0")
@@ -5547,7 +5693,7 @@ nonisolated extension Ycc_V1_GetTaskResponse: SwiftProtobuf.Message, SwiftProtob
 
 nonisolated extension Ycc_V1_UpdateTaskRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".UpdateTaskRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{1}id\0\u{1}status\0\u{1}priority\0\u{1}title\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{1}id\0\u{1}status\0\u{1}priority\0\u{1}title\0\u{1}body\0\u{3}depends_on\0\u{3}replace_depends_on\0\u{3}spec_refs\0\u{3}replace_spec_refs\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -5560,6 +5706,11 @@ nonisolated extension Ycc_V1_UpdateTaskRequest: SwiftProtobuf.Message, SwiftProt
       case 3: try { try decoder.decodeSingularStringField(value: &self._status) }()
       case 4: try { try decoder.decodeSingularInt32Field(value: &self._priority) }()
       case 5: try { try decoder.decodeSingularStringField(value: &self._title) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self._body) }()
+      case 7: try { try decoder.decodeRepeatedStringField(value: &self.dependsOn) }()
+      case 8: try { try decoder.decodeSingularBoolField(value: &self._replaceDependsOn) }()
+      case 9: try { try decoder.decodeRepeatedStringField(value: &self.specRefs) }()
+      case 10: try { try decoder.decodeSingularBoolField(value: &self._replaceSpecRefs) }()
       default: break
       }
     }
@@ -5585,6 +5736,21 @@ nonisolated extension Ycc_V1_UpdateTaskRequest: SwiftProtobuf.Message, SwiftProt
     try { if let v = self._title {
       try visitor.visitSingularStringField(value: v, fieldNumber: 5)
     } }()
+    try { if let v = self._body {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 6)
+    } }()
+    if !self.dependsOn.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.dependsOn, fieldNumber: 7)
+    }
+    try { if let v = self._replaceDependsOn {
+      try visitor.visitSingularBoolField(value: v, fieldNumber: 8)
+    } }()
+    if !self.specRefs.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.specRefs, fieldNumber: 9)
+    }
+    try { if let v = self._replaceSpecRefs {
+      try visitor.visitSingularBoolField(value: v, fieldNumber: 10)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -5594,6 +5760,11 @@ nonisolated extension Ycc_V1_UpdateTaskRequest: SwiftProtobuf.Message, SwiftProt
     if lhs._status != rhs._status {return false}
     if lhs._priority != rhs._priority {return false}
     if lhs._title != rhs._title {return false}
+    if lhs._body != rhs._body {return false}
+    if lhs.dependsOn != rhs.dependsOn {return false}
+    if lhs._replaceDependsOn != rhs._replaceDependsOn {return false}
+    if lhs.specRefs != rhs.specRefs {return false}
+    if lhs._replaceSpecRefs != rhs._replaceSpecRefs {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

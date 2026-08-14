@@ -22,6 +22,9 @@ public protocol SessionTranscriptSource: Sendable {
     /// Fetch a session's full event log for a read-only replayed transcript.
     func getSessionTranscript(project: String, sessionId: String) async throws -> [Ycc_V1_Event]
 
+    /// Fetch one retained picture referenced by a user_input event.
+    func getSessionAttachment(project: String, sessionId: String, attachmentId: String) async throws -> MessageImage
+
     /// Subscribe to a session's live event stream, replaying `seq > fromSeq`.
     func subscribe(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_Event, Error>
 }

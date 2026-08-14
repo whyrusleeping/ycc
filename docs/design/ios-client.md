@@ -32,19 +32,27 @@ the profile so the user can re-enter or replace the token.
 
 The app treats daemon data as authoritative and keeps only client-local navigation, drafts,
 preferences, and read watermarks. Session, backlog, usage, and workstream state are projections of
-RPC responses/events and refresh when the app returns to the foreground.
+RPC responses/events and refresh when the app returns to the foreground. Backlog task detail has an
+explicit editor for title, status, priority, dependencies, spec references, and Markdown body;
+`UpdateTask` saves the whole draft and the returned canonical detail replaces the projection.
+Cancellation leaves the loaded task untouched, while a failed save retains the draft for retry.
 
 ### Navigation and interaction
 
 One workspace drawer anchors project selection and cross-project recents. Project/session routes
 flow through a single router so list taps, notifications, and `ycc://` links share authentication,
-project selection, and duplicate-push handling. A deep link identifies a project/session but never
+project selection, and duplicate-push handling. Task dependency references are links to task detail
+through that router, allowing a blocked task to lead directly to each blocker without growing the
+navigation stack when dependencies cross-link. A deep link identifies a project/session but never
 carries credentials.
 
 Transcript behavior follows the shared client contract in spec §18: durable rows, one transient
 live tail, no scroll jumps while reading history, structured question sheets, graceful
-interrupt/steer/resume, and confirmed hard stop. Daemon work loops remain daemon-owned because iOS
-background execution cannot reliably host long-running work.
+interrupt/steer/resume, and confirmed hard stop. User-message picture metadata carries opaque
+session attachment ids; the app lazily fetches retained bytes through the authenticated daemon API
+and renders thumbnails, degrading to a labelled placeholder for legacy or reclaimed payloads.
+Daemon work loops remain daemon-owned because iOS background execution cannot reliably host
+long-running work.
 
 ### Notifications
 

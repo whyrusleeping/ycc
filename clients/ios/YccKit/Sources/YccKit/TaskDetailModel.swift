@@ -13,6 +13,11 @@ public protocol TaskDetailSource: Sendable {
     func listSessionHistory(project: String) async throws -> [Ycc_V1_SessionSummary]
     /// Change a task's status; returns the refreshed detail.
     func updateTaskStatus(project: String, id: String, status: String) async throws -> Ycc_V1_TaskDetail
+    /// Replace the task fields exposed by the detail editor.
+    func updateTask(
+        project: String, id: String, title: String, status: String,
+        priority: Int, body: String, dependsOn: [String], specRefs: [String]
+    ) async throws -> Ycc_V1_TaskDetail
 }
 
 extension YccClient: TaskDetailSource {}
@@ -44,6 +49,16 @@ public final class TaskDetailModel {
     /// Set when a load/update failed with ``YccError/unauthorized``; the view
     /// routes back to the connect screen via `AppModel.handleUnauthorized`.
     public private(set) var unauthorized = false
+
+    /// Editable draft fields. They are seeded only when editing begins, so a
+    /// cancelled edit cannot mutate the displayed canonical task.
+    public private(set) var isEditing = false
+    public var draftTitle = ""
+    public var draftStatus: TaskStatus = .todo
+    public var draftPriority = 3
+    public var draftBody = ""
+    public var draftDependsOn = ""
+    public var draftSpecRefs = ""
 
     private let source: TaskDetailSource
 
@@ -118,6 +133,85 @@ public final class TaskDetailModel {
                 case (nil, nil): return lhs.sessionID < rhs.sessionID
                 }
             }
+    }
+
+    /// Seed an editable draft from the last canonical daemon response.
+    public func beginEditing() {
+        guard let task, !isUpdating else { return }
+        draftTitle = task.title
+        draftStatus = TaskStatus(status: task.status)
+        if draftStatus == .unknown { draftStatus = .todo }
+        draftPriority = Int(task.priority)
+        draftBody = task.body
+        draftDependsOn = task.dependsOn.joined(separator: ", ")
+        draftSpecRefs = task.specRefs.joined(separator: "\n")
+        errorMessage = nil
+        isEditing = true
+    }
+
+    /// Discard the draft without changing the displayed task.
+    public func cancelEditing() {
+        guard !isUpdating else { return }
+        isEditing = false
+    }
+
+    /// A local validation message for the current edit draft.
+    public var draftValidationMessage: String? {
+        if draftTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Title is required."
+        }
+        if !(1...5).contains(draftPriority) {
+            return "Priority must be between 1 and 5."
+        }
+        if parseList(draftDependsOn).contains(taskID) {
+            return "A task cannot depend on itself."
+        }
+        return nil
+    }
+
+    /// Save the full draft through `UpdateTask`. The editor remains open after a
+    /// failure so the user's text is not lost; success replaces the canonical
+    /// detail with the server response and closes the editor.
+    @discardableResult
+    public func saveEditing() async -> Bool {
+        guard isEditing, !isUpdating, draftValidationMessage == nil else { return false }
+        isUpdating = true
+        defer { isUpdating = false }
+        do {
+            task = try await source.updateTask(
+                project: project,
+                id: taskID,
+                title: draftTitle.trimmingCharacters(in: .whitespacesAndNewlines),
+                status: draftStatus.rawValue,
+                priority: draftPriority,
+                body: draftBody,
+                dependsOn: parseList(draftDependsOn),
+                specRefs: parseList(draftSpecRefs))
+            errorMessage = nil
+            isEditing = false
+            return true
+        } catch YccError.unauthorized {
+            unauthorized = true
+        } catch let YccError.rpc(message) {
+            errorMessage = message
+        } catch let YccError.notFound(message) {
+            errorMessage = message
+        } catch let YccError.failedPrecondition(message) {
+            errorMessage = message
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        return false
+    }
+
+    /// Parse comma- or newline-separated task metadata, trimming whitespace,
+    /// dropping empties, and retaining first occurrence order.
+    private func parseList(_ value: String) -> [String] {
+        var seen: Set<String> = []
+        return value
+            .components(separatedBy: CharacterSet(charactersIn: ",\n"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 
     /// Apply a status change (`UpdateTask`), reflecting the refreshed detail from

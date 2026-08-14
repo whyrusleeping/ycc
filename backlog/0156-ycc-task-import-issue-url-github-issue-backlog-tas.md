@@ -1,10 +1,10 @@
 ---
 id: "0156"
 title: 'ycc task import <issue-url>: GitHub issue → backlog task (origin field, dedupe)'
-status: proposed
+status: todo
 priority: 4
 created: "2026-07-06"
-updated: "2026-07-06"
+updated: "2026-08-13"
 depends_on:
     - "0155"
 spec_refs:
