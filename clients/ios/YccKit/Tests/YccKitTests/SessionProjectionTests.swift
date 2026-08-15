@@ -513,6 +513,45 @@ final class SessionProjectionTests: XCTestCase {
         XCTAssertEqual(proj.coordinatorModel, "claude")
     }
 
+    // MARK: - Current context folding
+
+    func testCurrentContextFoldsLatestCoordinatorEstimate() {
+        var proj = SessionProjection()
+        XCTAssertNil(proj.currentContextTokensEstimate)
+
+        proj.apply(makeEvent(
+            seq: 1, type: "model_turn", actor: "coordinator",
+            dataJson: #"{"text":"first","context_tokens_est":12345}"#))
+        XCTAssertEqual(proj.currentContextTokensEstimate, 12_345)
+
+        // A newer completed coordinator turn replaces the prior prompt estimate.
+        proj.apply(makeEvent(
+            seq: 2, type: "model_turn", actor: "coordinator",
+            dataJson: #"{"text":"second","context_tokens_est":23456}"#))
+        XCTAssertEqual(proj.currentContextTokensEstimate, 23_456)
+    }
+
+    func testCurrentContextIgnoresSubagentsAndMissingTelemetry() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(
+            seq: 1, type: "model_turn", actor: "",
+            dataJson: #"{"text":"coordinator","context_tokens_est":12000}"#))
+
+        proj.apply(makeEvent(
+            seq: 2, type: "model_turn", actor: "implementer",
+            dataJson: #"{"text":"subagent","context_tokens_est":99000}"#))
+        XCTAssertEqual(proj.currentContextTokensEstimate, 12_000)
+
+        // Old logs, malformed values, and unrelated events do not erase the last
+        // useful estimate.
+        proj.apply(makeEvent(seq: 3, type: "model_turn", dataJson: #"{"text":"old"}"#))
+        proj.apply(makeEvent(
+            seq: 4, type: "model_turn", dataJson: #"{"context_tokens_est":-1}"#))
+        proj.apply(makeEvent(
+            seq: 5, type: "tool_result", dataJson: #"{"context_tokens_est":45000}"#))
+        XCTAssertEqual(proj.currentContextTokensEstimate, 12_000)
+    }
+
     // MARK: - Phase folding
 
     func testPhaseTransitions() {

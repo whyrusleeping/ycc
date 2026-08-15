@@ -589,8 +589,11 @@ priced.
 
 ### 20.5 Surfaces
 
-CLI and RPC views expose local usage/cost summaries. Provider allowance is separate best-effort
-telemetry, cached and sanitized, and never blocks inference.
+CLI and RPC views expose local usage/cost summaries. Session usage surfaces distinguish cumulative
+spend from active context size and prominently show the latest completed coordinator turn's coarse
+prompt-token estimate when the event log provides it; subagent contexts do not replace the
+coordinator readout. Provider allowance is separate best-effort telemetry, cached and sanitized,
+and never blocks inference.
 
 ### 20.6 Spend guard
 

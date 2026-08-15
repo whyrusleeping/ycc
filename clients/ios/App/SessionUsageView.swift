@@ -4,13 +4,14 @@ import YccProto
 
 /// A sheet answering "what has *this* session spent so far" — the
 /// iOS counterpart of the TUI's Σ status-bar readout. Presented
-/// from the session screen's action menu, it shows the current session's token
-/// usage broken down by model (with cost, priced by the daemon) plus a total
-/// row, reusing the Usage screen's row rendering.
+/// from the session screen's action menu, it leads with the coordinator's
+/// current context estimate, then shows the session's cumulative token usage
+/// broken down by model (with cost, priced by the daemon) plus a total row,
+/// reusing the Usage screen's row rendering.
 ///
-/// Usage is folded from persisted `model_turn` events, so a pull-to-refresh
-/// mid-session is current up to the last *completed* turn — an in-flight turn
-/// reports its tokens when it lands.
+/// Usage and context are folded from persisted `model_turn` events. The session
+/// subscription keeps context live; usage refreshes through the last *completed*
+/// turn — an in-flight turn reports its tokens when it lands.
 struct SessionUsageSheet: View {
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
@@ -18,13 +19,22 @@ struct SessionUsageSheet: View {
     private let client: YccClient
     private let project: String
     private let sessionID: String
+    /// Live projection telemetry supplied by the presenting session screen. It
+    /// updates as completed coordinator turns arrive while this sheet is open.
+    private let currentContextTokensEstimate: Int?
 
     @State private var model: SessionUsageModel?
 
-    init(client: YccClient, project: String, sessionID: String) {
+    init(
+        client: YccClient,
+        project: String,
+        sessionID: String,
+        currentContextTokensEstimate: Int?
+    ) {
         self.client = client
         self.project = project
         self.sessionID = sessionID
+        self.currentContextTokensEstimate = currentContextTokensEstimate
     }
 
     var body: some View {
@@ -56,6 +66,22 @@ struct SessionUsageSheet: View {
     @ViewBuilder
     private func content(_ model: SessionUsageModel) -> some View {
         List {
+            Section {
+                LabeledContent("Current context") {
+                    if let tokens = currentContextTokensEstimate {
+                        Text("≈ \(tokens.formatted()) tokens")
+                            .font(.headline.monospacedDigit())
+                    } else {
+                        Text("Not recorded yet")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } header: {
+                Text("Context")
+            } footer: {
+                Text("Estimated prompt size at the latest completed coordinator turn. This is not cumulative session usage.")
+            }
+
             if model.isLoading && !model.hasUsage {
                 Section { HStack { Spacer(); ProgressView(); Spacer() } }
             } else if let errorMessage = model.errorMessage, !model.hasUsage {

@@ -155,7 +155,11 @@ struct SessionView: View {
                 client: client, sessionID: sessionID, coordinator: model.coordinatorModel)
         }
         .sheet(isPresented: $showSessionUsage) {
-            SessionUsageSheet(client: client, project: project, sessionID: sessionID)
+            SessionUsageSheet(
+                client: client,
+                project: project,
+                sessionID: sessionID,
+                currentContextTokensEstimate: model.currentContextTokensEstimate)
         }
         .sheet(isPresented: $showQuestionSheet) {
             if let pending = model.pendingQuestion {

@@ -128,6 +128,12 @@ public struct SessionProjection: Sendable, Equatable {
     /// coordinator `model_turn` (`model_name` — the model that actually produced
     /// the turn). Empty for logs written before the field existed.
     public private(set) var coordinatorModel: String = ""
+    /// Coarse prompt-size estimate from the newest completed coordinator
+    /// `model_turn`. This is deliberately distinct from cumulative input/output
+    /// usage: it answers how large the coordinator's active conversation context
+    /// was at its latest model call. Nil for older logs that predate
+    /// `context_tokens_est` and before the first completed turn.
+    public private(set) var currentContextTokensEstimate: Int?
     public init() {}
 
     /// A derived, coarse lifecycle phase for chrome (banners, toolbar). Folded
@@ -221,6 +227,7 @@ public struct SessionProjection: Sendable, Equatable {
         let data = Self.parse(event.dataJson)
         foldPhase(type: event.type, data: data)
         foldCoordinatorModel(type: event.type, actor: event.actor, data: data)
+        foldCurrentContext(type: event.type, actor: event.actor, data: data)
 
         switch event.type {
         case "user_input":
@@ -420,6 +427,19 @@ public struct SessionProjection: Sendable, Equatable {
         default:
             break
         }
+    }
+
+    /// Keep context telemetry scoped to the coordinator. Implementer/reviewer
+    /// turns have independent histories, so allowing their newer events to win
+    /// would make the session screen report a subagent's context as the current
+    /// session context. Missing telemetry never clears a previously known value.
+    private mutating func foldCurrentContext(
+        type: String, actor: String, data: [String: Any]
+    ) {
+        guard type == "model_turn", actor.isEmpty || actor == "coordinator",
+              let estimate = Self.integerField(data, "context_tokens_est"),
+              estimate >= 0 else { return }
+        currentContextTokensEstimate = estimate
     }
 
     // MARK: - Questions

@@ -89,6 +89,11 @@ public final class SessionViewModel {
     /// doing the work" — `ListModels` cannot, since it reports only the daemon's
     /// global role defaults.
     public var coordinatorModel: String { projection.coordinatorModel }
+    /// Approximate prompt size at the coordinator's latest completed model turn,
+    /// kept separate from cumulative session usage.
+    public var currentContextTokensEstimate: Int? {
+        projection.currentContextTokensEstimate
+    }
     private let source: SessionTranscriptSource
     private let actions: SessionActionSource?
     private let backoff: BackoffPolicy
