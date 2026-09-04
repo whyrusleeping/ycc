@@ -170,7 +170,7 @@ func (f *fakeClient) ListModels(_ context.Context, _ *connect.Request[v1.ListMod
 	var out []*v1.ModelInfo
 	for _, name := range f.order {
 		c := f.models[name]
-		out = append(out, &v1.ModelInfo{Name: c.Name, Backend: c.Backend, Model: c.Model})
+		out = append(out, &v1.ModelInfo{Name: c.Name, Backend: c.Backend, Model: c.Model, Disabled: c.GetDisabled()})
 	}
 	return connect.NewResponse(&v1.ListModelsResponse{Models: out, WorkImplementation: "delegate"}), nil
 }

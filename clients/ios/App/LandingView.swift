@@ -17,10 +17,10 @@ struct LandingView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var model: SessionListModel?
-    /// The navigation router. Path-driven so the drawer can push a destination
+    /// The navigation router. Path-driven so the drawer can open a destination
     /// over whatever is currently on screen, and shared through the environment
-    /// so pushed screens navigate with screen dedupe instead of piling copies
-    /// onto the stack (see ``HomeRouter``).
+    /// so cross-links between screens replace the stack instead of piling onto
+    /// it — one Back always returns here (see ``HomeRouter``).
     @State private var router = HomeRouter()
     /// Whether the workspace drawer is revealed.
     @State private var drawerOpen = false
@@ -575,7 +575,7 @@ struct LandingView: View {
                         ) {
                             SessionRow(
                                 session: session,
-                                project: model.project(for: session),
+                                project: model.displayProject(for: session),
                                 showsProject: model.selectedProject == nil,
                                 isLoopOwned: model.isLoopSession(session),
                                 isUnread: model.isUnread(session))
@@ -777,13 +777,6 @@ private struct SessionRow: View {
                     // truncates almost every row into uselessness.
                     .lineLimit(2)
                 Spacer(minLength: 4)
-                if session.live {
-                    Label("Live", systemImage: "dot.radiowaves.left.and.right")
-                        .labelStyle(.iconOnly)
-                        .foregroundStyle(.green)
-                        .font(.caption)
-                        .accessibilityLabel("live session")
-                }
             }
 
             let taskLabels = SessionListModel.taskChipLabels(for: session)

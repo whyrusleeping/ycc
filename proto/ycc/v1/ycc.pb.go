@@ -260,12 +260,16 @@ func (x *StartSessionResponse) GetSessionId() string {
 // Projects — persistent multi-project daemon. A project is a named
 // workspace; the daemon's registry maps name -> path in its state dir.
 type ProjectInfo struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
-	Git           *GitStatus             `protobuf:"bytes,3,opt,name=git,proto3" json:"git,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Path  string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
+	Git   *GitStatus             `protobuf:"bytes,3,opt,name=git,proto3" json:"git,omitempty"`
+	// Whether the workspace has neither a substantive spec entry point nor any
+	// backlog tasks. Optional so older daemons remain distinguishable from an
+	// explicit "already onboarded" result.
+	NeedsOnboarding *bool `protobuf:"varint,4,opt,name=needs_onboarding,json=needsOnboarding,proto3,oneof" json:"needs_onboarding,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ProjectInfo) Reset() {
@@ -317,6 +321,13 @@ func (x *ProjectInfo) GetGit() *GitStatus {
 		return x.Git
 	}
 	return nil
+}
+
+func (x *ProjectInfo) GetNeedsOnboarding() bool {
+	if x != nil && x.NeedsOnboarding != nil {
+		return *x.NeedsOnboarding
+	}
+	return false
 }
 
 type GitStatus struct {
@@ -2226,7 +2237,12 @@ type SessionSummary struct {
 	ModelUsage []*SessionModelUsage `protobuf:"bytes,13,rep,name=model_usage,json=modelUsage,proto3" json:"model_usage,omitempty"`
 	// Total recorded tokens across all actors and models in the session. Zero means
 	// the log has no usable token metadata.
-	TotalTokens   int64 `protobuf:"varint,14,opt,name=total_tokens,json=totalTokens,proto3" json:"total_tokens,omitempty"`
+	TotalTokens int64 `protobuf:"varint,14,opt,name=total_tokens,json=totalTokens,proto3" json:"total_tokens,omitempty"`
+	// Coarse prompt-size estimate (context_tokens_est) from the newest completed
+	// coordinator model turn — how full the session's active context is, as
+	// opposed to cumulative spend. Subagent turns are ignored. Zero means the log
+	// predates the telemetry (or no turn completed yet).
+	ContextTokens int64 `protobuf:"varint,15,opt,name=context_tokens,json=contextTokens,proto3" json:"context_tokens,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2355,6 +2371,13 @@ func (x *SessionSummary) GetModelUsage() []*SessionModelUsage {
 func (x *SessionSummary) GetTotalTokens() int64 {
 	if x != nil {
 		return x.TotalTokens
+	}
+	return 0
+}
+
+func (x *SessionSummary) GetContextTokens() int64 {
+	if x != nil {
+		return x.ContextTokens
 	}
 	return 0
 }
@@ -2725,8 +2748,8 @@ func (x *GetCommitDiffResponse) GetTruncated() bool {
 	return false
 }
 
-// ListModels enumerates the configured logical models so the settings
-// overlay can populate the per-role pickers.
+// ListModels enumerates every configured logical model for global editing.
+// Selection clients omit disabled entries except to display an existing assignment.
 type ListModelsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -2778,8 +2801,11 @@ type ModelInfo struct {
 	PriceCacheRead  *float64 `protobuf:"fixed64,6,opt,name=price_cache_read,json=priceCacheRead,proto3,oneof" json:"price_cache_read,omitempty"`
 	PriceCacheWrite *float64 `protobuf:"fixed64,7,opt,name=price_cache_write,json=priceCacheWrite,proto3,oneof" json:"price_cache_write,omitempty"`
 	Priced          bool     `protobuf:"varint,8,opt,name=priced,proto3" json:"priced,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// A disabled model remains configured and editable but is unavailable for new
+	// inference or role/model selection until re-enabled.
+	Disabled      bool `protobuf:"varint,9,opt,name=disabled,proto3" json:"disabled,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ModelInfo) Reset() {
@@ -2864,6 +2890,13 @@ func (x *ModelInfo) GetPriceCacheWrite() float64 {
 func (x *ModelInfo) GetPriced() bool {
 	if x != nil {
 		return x.Priced
+	}
+	return false
+}
+
+func (x *ModelInfo) GetDisabled() bool {
+	if x != nil {
+		return x.Disabled
 	}
 	return false
 }
@@ -2993,7 +3026,8 @@ type ModelConfig struct {
 	PriceOutput     *float64               `protobuf:"fixed64,10,opt,name=price_output,json=priceOutput,proto3,oneof" json:"price_output,omitempty"`
 	PriceCacheRead  *float64               `protobuf:"fixed64,11,opt,name=price_cache_read,json=priceCacheRead,proto3,oneof" json:"price_cache_read,omitempty"`
 	PriceCacheWrite *float64               `protobuf:"fixed64,12,opt,name=price_cache_write,json=priceCacheWrite,proto3,oneof" json:"price_cache_write,omitempty"`
-	Auth            string                 `protobuf:"bytes,13,opt,name=auth,proto3" json:"auth,omitempty"` // credential mechanism: "" | "api-key" | "oauth"
+	Auth            string                 `protobuf:"bytes,13,opt,name=auth,proto3" json:"auth,omitempty"`                // credential mechanism: "" | "api-key" | "oauth"
+	Disabled        *bool                  `protobuf:"varint,14,opt,name=disabled,proto3,oneof" json:"disabled,omitempty"` // temporarily unavailable; omission preserves existing state
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -3117,6 +3151,13 @@ func (x *ModelConfig) GetAuth() string {
 		return x.Auth
 	}
 	return ""
+}
+
+func (x *ModelConfig) GetDisabled() bool {
+	if x != nil && x.Disabled != nil {
+		return *x.Disabled
+	}
+	return false
 }
 
 // UpsertModel adds or replaces a logical model backend. The change
@@ -7652,9 +7693,8 @@ func (x *RetryIntegrationResponse) GetWorkstream() *WorkstreamInfo {
 	return nil
 }
 
-// Per-model session-history usage. Kept at the end of the message declarations
-// so adding it does not renumber the generated descriptor indexes of existing
-// message types.
+// Per-model session-history usage. New message types append in this tail before
+// the service so generated descriptor indexes of existing messages stay stable.
 type SessionModelUsage struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Model         string                 `protobuf:"bytes,1,opt,name=model,proto3" json:"model,omitempty"`
@@ -7707,6 +7747,130 @@ func (x *SessionModelUsage) GetTokens() int64 {
 	return 0
 }
 
+// TestModel performs one small billed inference request against an unsaved model
+// draft. The daemon resolves key_env locally and does not persist or install the
+// draft. Provider failures are diagnostic results rather than RPC transport
+// failures, so a bad provider credential cannot be confused with daemon auth.
+type TestModelRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Model         *ModelConfig           `protobuf:"bytes,1,opt,name=model,proto3" json:"model,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TestModelRequest) Reset() {
+	*x = TestModelRequest{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[129]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TestModelRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TestModelRequest) ProtoMessage() {}
+
+func (x *TestModelRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[129]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TestModelRequest.ProtoReflect.Descriptor instead.
+func (*TestModelRequest) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{129}
+}
+
+func (x *TestModelRequest) GetModel() *ModelConfig {
+	if x != nil {
+		return x.Model
+	}
+	return nil
+}
+
+type TestModelResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	DurationMs    int64                  `protobuf:"varint,3,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	ErrorKind     string                 `protobuf:"bytes,4,opt,name=error_kind,json=errorKind,proto3" json:"error_kind,omitempty"` // normalized provider failure kind; empty on success
+	Status        int32                  `protobuf:"varint,5,opt,name=status,proto3" json:"status,omitempty"`                       // provider HTTP status when available
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TestModelResponse) Reset() {
+	*x = TestModelResponse{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[130]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TestModelResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TestModelResponse) ProtoMessage() {}
+
+func (x *TestModelResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[130]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TestModelResponse.ProtoReflect.Descriptor instead.
+func (*TestModelResponse) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{130}
+}
+
+func (x *TestModelResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *TestModelResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *TestModelResponse) GetDurationMs() int64 {
+	if x != nil {
+		return x.DurationMs
+	}
+	return 0
+}
+
+func (x *TestModelResponse) GetErrorKind() string {
+	if x != nil {
+		return x.ErrorKind
+	}
+	return ""
+}
+
+func (x *TestModelResponse) GetStatus() int32 {
+	if x != nil {
+		return x.Status
+	}
+	return 0
+}
+
 var File_ycc_v1_ycc_proto protoreflect.FileDescriptor
 
 const file_ycc_v1_ycc_proto_rawDesc = "" +
@@ -7729,11 +7893,13 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x06preset\x18\b \x01(\tR\x06presetJ\x04\b\x03\x10\x04\"5\n" +
 	"\x14StartSessionResponse\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x01 \x01(\tR\tsessionId\"Z\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\"\x9f\x01\n" +
 	"\vProjectInfo\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\x12#\n" +
-	"\x03git\x18\x03 \x01(\v2\x11.ycc.v1.GitStatusR\x03git\"\xd3\x01\n" +
+	"\x03git\x18\x03 \x01(\v2\x11.ycc.v1.GitStatusR\x03git\x12.\n" +
+	"\x10needs_onboarding\x18\x04 \x01(\bH\x00R\x0fneedsOnboarding\x88\x01\x01B\x13\n" +
+	"\x11_needs_onboarding\"\xd3\x01\n" +
 	"\tGitStatus\x12\x16\n" +
 	"\x06branch\x18\x01 \x01(\tR\x06branch\x12!\n" +
 	"\fhas_upstream\x18\x02 \x01(\bR\vhasUpstream\x12\x14\n" +
@@ -7847,7 +8013,7 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x14ListSessionsResponse\x12/\n" +
 	"\bsessions\x18\x01 \x03(\v2\x13.ycc.v1.SessionInfoR\bsessions\"5\n" +
 	"\x19ListSessionHistoryRequest\x12\x18\n" +
-	"\aproject\x18\x01 \x01(\tR\aproject\"\xc1\x03\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\"\xe8\x03\n" +
 	"\x0eSessionSummary\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
@@ -7868,7 +8034,8 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\rwaiting_input\x18\f \x01(\bR\fwaitingInput\x12:\n" +
 	"\vmodel_usage\x18\r \x03(\v2\x19.ycc.v1.SessionModelUsageR\n" +
 	"modelUsage\x12!\n" +
-	"\ftotal_tokens\x18\x0e \x01(\x03R\vtotalTokens\"P\n" +
+	"\ftotal_tokens\x18\x0e \x01(\x03R\vtotalTokens\x12%\n" +
+	"\x0econtext_tokens\x18\x0f \x01(\x03R\rcontextTokens\"P\n" +
 	"\x1aListSessionHistoryResponse\x122\n" +
 	"\bsessions\x18\x01 \x03(\v2\x16.ycc.v1.SessionSummaryR\bsessions\"V\n" +
 	"\x1bGetSessionTranscriptRequest\x12\x18\n" +
@@ -7892,7 +8059,7 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x15GetCommitDiffResponse\x12\x12\n" +
 	"\x04diff\x18\x01 \x01(\tR\x04diff\x12\x1c\n" +
 	"\ttruncated\x18\x02 \x01(\bR\ttruncated\"\x13\n" +
-	"\x11ListModelsRequest\"\xe1\x02\n" +
+	"\x11ListModelsRequest\"\xfd\x02\n" +
 	"\tModelInfo\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\abackend\x18\x02 \x01(\tR\abackend\x12\x14\n" +
@@ -7902,7 +8069,8 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\fprice_output\x18\x05 \x01(\x01H\x01R\vpriceOutput\x88\x01\x01\x12-\n" +
 	"\x10price_cache_read\x18\x06 \x01(\x01H\x02R\x0epriceCacheRead\x88\x01\x01\x12/\n" +
 	"\x11price_cache_write\x18\a \x01(\x01H\x03R\x0fpriceCacheWrite\x88\x01\x01\x12\x16\n" +
-	"\x06priced\x18\b \x01(\bR\x06pricedB\x0e\n" +
+	"\x06priced\x18\b \x01(\bR\x06priced\x12\x1a\n" +
+	"\bdisabled\x18\t \x01(\bR\bdisabledB\x0e\n" +
 	"\f_price_inputB\x0f\n" +
 	"\r_price_outputB\x13\n" +
 	"\x11_price_cache_readB\x14\n" +
@@ -7915,7 +8083,7 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x14coordinator_thinking\x18\x05 \x01(\tR\x13coordinatorThinking\x121\n" +
 	"\x14implementer_thinking\x18\x06 \x01(\tR\x13implementerThinking\x12-\n" +
 	"\x12reviewers_thinking\x18\a \x01(\tR\x11reviewersThinking\x12/\n" +
-	"\x13work_implementation\x18\b \x01(\tR\x12workImplementation\"\xf2\x03\n" +
+	"\x13work_implementation\x18\b \x01(\tR\x12workImplementation\"\xa0\x04\n" +
 	"\vModelConfig\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\abackend\x18\x02 \x01(\tR\abackend\x12\x19\n" +
@@ -7931,11 +8099,13 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	" \x01(\x01H\x01R\vpriceOutput\x88\x01\x01\x12-\n" +
 	"\x10price_cache_read\x18\v \x01(\x01H\x02R\x0epriceCacheRead\x88\x01\x01\x12/\n" +
 	"\x11price_cache_write\x18\f \x01(\x01H\x03R\x0fpriceCacheWrite\x88\x01\x01\x12\x12\n" +
-	"\x04auth\x18\r \x01(\tR\x04authB\x0e\n" +
+	"\x04auth\x18\r \x01(\tR\x04auth\x12\x1f\n" +
+	"\bdisabled\x18\x0e \x01(\bH\x04R\bdisabled\x88\x01\x01B\x0e\n" +
 	"\f_price_inputB\x0f\n" +
 	"\r_price_outputB\x13\n" +
 	"\x11_price_cache_readB\x14\n" +
-	"\x12_price_cache_write\"Y\n" +
+	"\x12_price_cache_writeB\v\n" +
+	"\t_disabled\"Y\n" +
 	"\x12UpsertModelRequest\x12)\n" +
 	"\x05model\x18\x01 \x01(\v2\x13.ycc.v1.ModelConfigR\x05model\x12\x18\n" +
 	"\apersist\x18\x02 \x01(\bR\apersist\"\x15\n" +
@@ -8265,7 +8435,17 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"workstream\"A\n" +
 	"\x11SessionModelUsage\x12\x14\n" +
 	"\x05model\x18\x01 \x01(\tR\x05model\x12\x16\n" +
-	"\x06tokens\x18\x02 \x01(\x03R\x06tokens2\xcb\x1f\n" +
+	"\x06tokens\x18\x02 \x01(\x03R\x06tokens\"=\n" +
+	"\x10TestModelRequest\x12)\n" +
+	"\x05model\x18\x01 \x01(\v2\x13.ycc.v1.ModelConfigR\x05model\"\x9f\x01\n" +
+	"\x11TestModelResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12\x1f\n" +
+	"\vduration_ms\x18\x03 \x01(\x03R\n" +
+	"durationMs\x12\x1d\n" +
+	"\n" +
+	"error_kind\x18\x04 \x01(\tR\terrorKind\x12\x16\n" +
+	"\x06status\x18\x05 \x01(\x05R\x06status2\x8d \n" +
 	"\x0eSessionService\x12@\n" +
 	"\tListModes\x12\x18.ycc.v1.ListModesRequest\x1a\x19.ycc.v1.ListModesResponse\x12I\n" +
 	"\fStartSession\x12\x1b.ycc.v1.StartSessionRequest\x1a\x1c.ycc.v1.StartSessionResponse\x12I\n" +
@@ -8296,7 +8476,8 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\vUpsertModel\x12\x1a.ycc.v1.UpsertModelRequest\x1a\x1b.ycc.v1.UpsertModelResponse\x12F\n" +
 	"\vRemoveModel\x12\x1a.ycc.v1.RemoveModelRequest\x1a\x1b.ycc.v1.RemoveModelResponse\x12O\n" +
 	"\x0eGetModelConfig\x12\x1d.ycc.v1.GetModelConfigRequest\x1a\x1e.ycc.v1.GetModelConfigResponse\x12O\n" +
-	"\x0eDiscoverModels\x12\x1d.ycc.v1.DiscoverModelsRequest\x1a\x1e.ycc.v1.DiscoverModelsResponse\x12R\n" +
+	"\x0eDiscoverModels\x12\x1d.ycc.v1.DiscoverModelsRequest\x1a\x1e.ycc.v1.DiscoverModelsResponse\x12@\n" +
+	"\tTestModel\x12\x18.ycc.v1.TestModelRequest\x1a\x19.ycc.v1.TestModelResponse\x12R\n" +
 	"\x0fListReviewTiers\x12\x1e.ycc.v1.ListReviewTiersRequest\x1a\x1f.ycc.v1.ListReviewTiersResponse\x12U\n" +
 	"\x10UpsertReviewTier\x12\x1f.ycc.v1.UpsertReviewTierRequest\x1a .ycc.v1.UpsertReviewTierResponse\x12U\n" +
 	"\x10RemoveReviewTier\x12\x1f.ycc.v1.RemoveReviewTierRequest\x1a .ycc.v1.RemoveReviewTierResponse\x12U\n" +
@@ -8337,7 +8518,7 @@ func file_ycc_v1_ycc_proto_rawDescGZIP() []byte {
 	return file_ycc_v1_ycc_proto_rawDescData
 }
 
-var file_ycc_v1_ycc_proto_msgTypes = make([]protoimpl.MessageInfo, 129)
+var file_ycc_v1_ycc_proto_msgTypes = make([]protoimpl.MessageInfo, 131)
 var file_ycc_v1_ycc_proto_goTypes = []any{
 	(*Event)(nil),                         // 0: ycc.v1.Event
 	(*StartSessionRequest)(nil),           // 1: ycc.v1.StartSessionRequest
@@ -8468,6 +8649,8 @@ var file_ycc_v1_ycc_proto_goTypes = []any{
 	(*RetryIntegrationRequest)(nil),       // 126: ycc.v1.RetryIntegrationRequest
 	(*RetryIntegrationResponse)(nil),      // 127: ycc.v1.RetryIntegrationResponse
 	(*SessionModelUsage)(nil),             // 128: ycc.v1.SessionModelUsage
+	(*TestModelRequest)(nil),              // 129: ycc.v1.TestModelRequest
+	(*TestModelResponse)(nil),             // 130: ycc.v1.TestModelResponse
 }
 var file_ycc_v1_ycc_proto_depIdxs = []int32{
 	17,  // 0: ycc.v1.StartSessionRequest.images:type_name -> ycc.v1.ImageAttachment
@@ -8510,117 +8693,120 @@ var file_ycc_v1_ycc_proto_depIdxs = []int32{
 	115, // 37: ycc.v1.SpawnWorkstreamResponse.workstream:type_name -> ycc.v1.WorkstreamInfo
 	115, // 38: ycc.v1.ListWorkstreamsResponse.workstreams:type_name -> ycc.v1.WorkstreamInfo
 	115, // 39: ycc.v1.RetryIntegrationResponse.workstream:type_name -> ycc.v1.WorkstreamInfo
-	33,  // 40: ycc.v1.SessionService.ListModes:input_type -> ycc.v1.ListModesRequest
-	1,   // 41: ycc.v1.SessionService.StartSession:input_type -> ycc.v1.StartSessionRequest
-	37,  // 42: ycc.v1.SessionService.ListSessions:input_type -> ycc.v1.ListSessionsRequest
-	40,  // 43: ycc.v1.SessionService.ListSessionHistory:input_type -> ycc.v1.ListSessionHistoryRequest
-	43,  // 44: ycc.v1.SessionService.GetSessionTranscript:input_type -> ycc.v1.GetSessionTranscriptRequest
-	45,  // 45: ycc.v1.SessionService.GetSessionAttachment:input_type -> ycc.v1.GetSessionAttachmentRequest
-	47,  // 46: ycc.v1.SessionService.GetCommitDiff:input_type -> ycc.v1.GetCommitDiffRequest
-	16,  // 47: ycc.v1.SessionService.Subscribe:input_type -> ycc.v1.SubscribeRequest
-	18,  // 48: ycc.v1.SessionService.SendInput:input_type -> ycc.v1.SendInputRequest
-	20,  // 49: ycc.v1.SessionService.AnswerQuestion:input_type -> ycc.v1.AnswerQuestionRequest
-	23,  // 50: ycc.v1.SessionService.AnswerQuestions:input_type -> ycc.v1.AnswerQuestionsRequest
-	25,  // 51: ycc.v1.SessionService.Interrupt:input_type -> ycc.v1.InterruptRequest
-	27,  // 52: ycc.v1.SessionService.Resume:input_type -> ycc.v1.ResumeRequest
-	29,  // 53: ycc.v1.SessionService.StopSession:input_type -> ycc.v1.StopSessionRequest
-	31,  // 54: ycc.v1.SessionService.ResumeSession:input_type -> ycc.v1.ResumeSessionRequest
-	5,   // 55: ycc.v1.SessionService.ListProjects:input_type -> ycc.v1.ListProjectsRequest
-	7,   // 56: ycc.v1.SessionService.AddProject:input_type -> ycc.v1.AddProjectRequest
-	9,   // 57: ycc.v1.SessionService.RemoveProject:input_type -> ycc.v1.RemoveProjectRequest
-	11,  // 58: ycc.v1.SessionService.RenameProject:input_type -> ycc.v1.RenameProjectRequest
-	14,  // 59: ycc.v1.SessionService.ListDir:input_type -> ycc.v1.ListDirRequest
-	49,  // 60: ycc.v1.SessionService.ListModels:input_type -> ycc.v1.ListModelsRequest
-	61,  // 61: ycc.v1.SessionService.SetRoleConfig:input_type -> ycc.v1.SetRoleConfigRequest
-	63,  // 62: ycc.v1.SessionService.SetThinking:input_type -> ycc.v1.SetThinkingRequest
-	65,  // 63: ycc.v1.SessionService.SetWorkImplementation:input_type -> ycc.v1.SetWorkImplementationRequest
-	53,  // 64: ycc.v1.SessionService.UpsertModel:input_type -> ycc.v1.UpsertModelRequest
-	55,  // 65: ycc.v1.SessionService.RemoveModel:input_type -> ycc.v1.RemoveModelRequest
-	57,  // 66: ycc.v1.SessionService.GetModelConfig:input_type -> ycc.v1.GetModelConfigRequest
-	59,  // 67: ycc.v1.SessionService.DiscoverModels:input_type -> ycc.v1.DiscoverModelsRequest
-	69,  // 68: ycc.v1.SessionService.ListReviewTiers:input_type -> ycc.v1.ListReviewTiersRequest
-	71,  // 69: ycc.v1.SessionService.UpsertReviewTier:input_type -> ycc.v1.UpsertReviewTierRequest
-	73,  // 70: ycc.v1.SessionService.RemoveReviewTier:input_type -> ycc.v1.RemoveReviewTierRequest
-	75,  // 71: ycc.v1.SessionService.SetReviewDefault:input_type -> ycc.v1.SetReviewDefaultRequest
-	77,  // 72: ycc.v1.SessionService.ListBacklog:input_type -> ycc.v1.ListBacklogRequest
-	80,  // 73: ycc.v1.SessionService.GetTask:input_type -> ycc.v1.GetTaskRequest
-	83,  // 74: ycc.v1.SessionService.UpdateTask:input_type -> ycc.v1.UpdateTaskRequest
-	85,  // 75: ycc.v1.SessionService.CreateTask:input_type -> ycc.v1.CreateTaskRequest
-	87,  // 76: ycc.v1.SessionService.ListPlans:input_type -> ycc.v1.ListPlansRequest
-	90,  // 77: ycc.v1.SessionService.GetPlan:input_type -> ycc.v1.GetPlanRequest
-	92,  // 78: ycc.v1.SessionService.GetMemory:input_type -> ycc.v1.GetMemoryRequest
-	94,  // 79: ycc.v1.SessionService.CaptureBacklogItem:input_type -> ycc.v1.CaptureBacklogItemRequest
-	95,  // 80: ycc.v1.SessionService.GetUsage:input_type -> ycc.v1.GetUsageRequest
-	98,  // 81: ycc.v1.SessionService.GetSubscriptionUsage:input_type -> ycc.v1.GetSubscriptionUsageRequest
-	102, // 82: ycc.v1.SessionService.GetBudget:input_type -> ycc.v1.GetBudgetRequest
-	104, // 83: ycc.v1.SessionService.Notify:input_type -> ycc.v1.NotifyRequest
-	109, // 84: ycc.v1.SessionService.StartWorkLoop:input_type -> ycc.v1.StartWorkLoopRequest
-	111, // 85: ycc.v1.SessionService.StopWorkLoop:input_type -> ycc.v1.StopWorkLoopRequest
-	113, // 86: ycc.v1.SessionService.GetWorkLoop:input_type -> ycc.v1.GetWorkLoopRequest
-	116, // 87: ycc.v1.SessionService.SpawnWorkstream:input_type -> ycc.v1.SpawnWorkstreamRequest
-	118, // 88: ycc.v1.SessionService.ListWorkstreams:input_type -> ycc.v1.ListWorkstreamsRequest
-	120, // 89: ycc.v1.SessionService.PreviewMerge:input_type -> ycc.v1.PreviewMergeRequest
-	122, // 90: ycc.v1.SessionService.MergeWorkstream:input_type -> ycc.v1.MergeWorkstreamRequest
-	124, // 91: ycc.v1.SessionService.DiscardWorkstream:input_type -> ycc.v1.DiscardWorkstreamRequest
-	126, // 92: ycc.v1.SessionService.RetryIntegration:input_type -> ycc.v1.RetryIntegrationRequest
-	36,  // 93: ycc.v1.SessionService.ListModes:output_type -> ycc.v1.ListModesResponse
-	2,   // 94: ycc.v1.SessionService.StartSession:output_type -> ycc.v1.StartSessionResponse
-	39,  // 95: ycc.v1.SessionService.ListSessions:output_type -> ycc.v1.ListSessionsResponse
-	42,  // 96: ycc.v1.SessionService.ListSessionHistory:output_type -> ycc.v1.ListSessionHistoryResponse
-	44,  // 97: ycc.v1.SessionService.GetSessionTranscript:output_type -> ycc.v1.GetSessionTranscriptResponse
-	46,  // 98: ycc.v1.SessionService.GetSessionAttachment:output_type -> ycc.v1.GetSessionAttachmentResponse
-	48,  // 99: ycc.v1.SessionService.GetCommitDiff:output_type -> ycc.v1.GetCommitDiffResponse
-	0,   // 100: ycc.v1.SessionService.Subscribe:output_type -> ycc.v1.Event
-	19,  // 101: ycc.v1.SessionService.SendInput:output_type -> ycc.v1.SendInputResponse
-	21,  // 102: ycc.v1.SessionService.AnswerQuestion:output_type -> ycc.v1.AnswerQuestionResponse
-	24,  // 103: ycc.v1.SessionService.AnswerQuestions:output_type -> ycc.v1.AnswerQuestionsResponse
-	26,  // 104: ycc.v1.SessionService.Interrupt:output_type -> ycc.v1.InterruptResponse
-	28,  // 105: ycc.v1.SessionService.Resume:output_type -> ycc.v1.ResumeResponse
-	30,  // 106: ycc.v1.SessionService.StopSession:output_type -> ycc.v1.StopSessionResponse
-	32,  // 107: ycc.v1.SessionService.ResumeSession:output_type -> ycc.v1.ResumeSessionResponse
-	6,   // 108: ycc.v1.SessionService.ListProjects:output_type -> ycc.v1.ListProjectsResponse
-	8,   // 109: ycc.v1.SessionService.AddProject:output_type -> ycc.v1.AddProjectResponse
-	10,  // 110: ycc.v1.SessionService.RemoveProject:output_type -> ycc.v1.RemoveProjectResponse
-	12,  // 111: ycc.v1.SessionService.RenameProject:output_type -> ycc.v1.RenameProjectResponse
-	15,  // 112: ycc.v1.SessionService.ListDir:output_type -> ycc.v1.ListDirResponse
-	51,  // 113: ycc.v1.SessionService.ListModels:output_type -> ycc.v1.ListModelsResponse
-	62,  // 114: ycc.v1.SessionService.SetRoleConfig:output_type -> ycc.v1.SetRoleConfigResponse
-	64,  // 115: ycc.v1.SessionService.SetThinking:output_type -> ycc.v1.SetThinkingResponse
-	66,  // 116: ycc.v1.SessionService.SetWorkImplementation:output_type -> ycc.v1.SetWorkImplementationResponse
-	54,  // 117: ycc.v1.SessionService.UpsertModel:output_type -> ycc.v1.UpsertModelResponse
-	56,  // 118: ycc.v1.SessionService.RemoveModel:output_type -> ycc.v1.RemoveModelResponse
-	58,  // 119: ycc.v1.SessionService.GetModelConfig:output_type -> ycc.v1.GetModelConfigResponse
-	60,  // 120: ycc.v1.SessionService.DiscoverModels:output_type -> ycc.v1.DiscoverModelsResponse
-	70,  // 121: ycc.v1.SessionService.ListReviewTiers:output_type -> ycc.v1.ListReviewTiersResponse
-	72,  // 122: ycc.v1.SessionService.UpsertReviewTier:output_type -> ycc.v1.UpsertReviewTierResponse
-	74,  // 123: ycc.v1.SessionService.RemoveReviewTier:output_type -> ycc.v1.RemoveReviewTierResponse
-	76,  // 124: ycc.v1.SessionService.SetReviewDefault:output_type -> ycc.v1.SetReviewDefaultResponse
-	79,  // 125: ycc.v1.SessionService.ListBacklog:output_type -> ycc.v1.ListBacklogResponse
-	82,  // 126: ycc.v1.SessionService.GetTask:output_type -> ycc.v1.GetTaskResponse
-	84,  // 127: ycc.v1.SessionService.UpdateTask:output_type -> ycc.v1.UpdateTaskResponse
-	86,  // 128: ycc.v1.SessionService.CreateTask:output_type -> ycc.v1.CreateTaskResponse
-	89,  // 129: ycc.v1.SessionService.ListPlans:output_type -> ycc.v1.ListPlansResponse
-	91,  // 130: ycc.v1.SessionService.GetPlan:output_type -> ycc.v1.GetPlanResponse
-	93,  // 131: ycc.v1.SessionService.GetMemory:output_type -> ycc.v1.GetMemoryResponse
-	0,   // 132: ycc.v1.SessionService.CaptureBacklogItem:output_type -> ycc.v1.Event
-	97,  // 133: ycc.v1.SessionService.GetUsage:output_type -> ycc.v1.GetUsageResponse
-	101, // 134: ycc.v1.SessionService.GetSubscriptionUsage:output_type -> ycc.v1.GetSubscriptionUsageResponse
-	103, // 135: ycc.v1.SessionService.GetBudget:output_type -> ycc.v1.GetBudgetResponse
-	105, // 136: ycc.v1.SessionService.Notify:output_type -> ycc.v1.NotifyResponse
-	110, // 137: ycc.v1.SessionService.StartWorkLoop:output_type -> ycc.v1.StartWorkLoopResponse
-	112, // 138: ycc.v1.SessionService.StopWorkLoop:output_type -> ycc.v1.StopWorkLoopResponse
-	114, // 139: ycc.v1.SessionService.GetWorkLoop:output_type -> ycc.v1.GetWorkLoopResponse
-	117, // 140: ycc.v1.SessionService.SpawnWorkstream:output_type -> ycc.v1.SpawnWorkstreamResponse
-	119, // 141: ycc.v1.SessionService.ListWorkstreams:output_type -> ycc.v1.ListWorkstreamsResponse
-	121, // 142: ycc.v1.SessionService.PreviewMerge:output_type -> ycc.v1.PreviewMergeResponse
-	123, // 143: ycc.v1.SessionService.MergeWorkstream:output_type -> ycc.v1.MergeWorkstreamResponse
-	125, // 144: ycc.v1.SessionService.DiscardWorkstream:output_type -> ycc.v1.DiscardWorkstreamResponse
-	127, // 145: ycc.v1.SessionService.RetryIntegration:output_type -> ycc.v1.RetryIntegrationResponse
-	93,  // [93:146] is the sub-list for method output_type
-	40,  // [40:93] is the sub-list for method input_type
-	40,  // [40:40] is the sub-list for extension type_name
-	40,  // [40:40] is the sub-list for extension extendee
-	0,   // [0:40] is the sub-list for field type_name
+	52,  // 40: ycc.v1.TestModelRequest.model:type_name -> ycc.v1.ModelConfig
+	33,  // 41: ycc.v1.SessionService.ListModes:input_type -> ycc.v1.ListModesRequest
+	1,   // 42: ycc.v1.SessionService.StartSession:input_type -> ycc.v1.StartSessionRequest
+	37,  // 43: ycc.v1.SessionService.ListSessions:input_type -> ycc.v1.ListSessionsRequest
+	40,  // 44: ycc.v1.SessionService.ListSessionHistory:input_type -> ycc.v1.ListSessionHistoryRequest
+	43,  // 45: ycc.v1.SessionService.GetSessionTranscript:input_type -> ycc.v1.GetSessionTranscriptRequest
+	45,  // 46: ycc.v1.SessionService.GetSessionAttachment:input_type -> ycc.v1.GetSessionAttachmentRequest
+	47,  // 47: ycc.v1.SessionService.GetCommitDiff:input_type -> ycc.v1.GetCommitDiffRequest
+	16,  // 48: ycc.v1.SessionService.Subscribe:input_type -> ycc.v1.SubscribeRequest
+	18,  // 49: ycc.v1.SessionService.SendInput:input_type -> ycc.v1.SendInputRequest
+	20,  // 50: ycc.v1.SessionService.AnswerQuestion:input_type -> ycc.v1.AnswerQuestionRequest
+	23,  // 51: ycc.v1.SessionService.AnswerQuestions:input_type -> ycc.v1.AnswerQuestionsRequest
+	25,  // 52: ycc.v1.SessionService.Interrupt:input_type -> ycc.v1.InterruptRequest
+	27,  // 53: ycc.v1.SessionService.Resume:input_type -> ycc.v1.ResumeRequest
+	29,  // 54: ycc.v1.SessionService.StopSession:input_type -> ycc.v1.StopSessionRequest
+	31,  // 55: ycc.v1.SessionService.ResumeSession:input_type -> ycc.v1.ResumeSessionRequest
+	5,   // 56: ycc.v1.SessionService.ListProjects:input_type -> ycc.v1.ListProjectsRequest
+	7,   // 57: ycc.v1.SessionService.AddProject:input_type -> ycc.v1.AddProjectRequest
+	9,   // 58: ycc.v1.SessionService.RemoveProject:input_type -> ycc.v1.RemoveProjectRequest
+	11,  // 59: ycc.v1.SessionService.RenameProject:input_type -> ycc.v1.RenameProjectRequest
+	14,  // 60: ycc.v1.SessionService.ListDir:input_type -> ycc.v1.ListDirRequest
+	49,  // 61: ycc.v1.SessionService.ListModels:input_type -> ycc.v1.ListModelsRequest
+	61,  // 62: ycc.v1.SessionService.SetRoleConfig:input_type -> ycc.v1.SetRoleConfigRequest
+	63,  // 63: ycc.v1.SessionService.SetThinking:input_type -> ycc.v1.SetThinkingRequest
+	65,  // 64: ycc.v1.SessionService.SetWorkImplementation:input_type -> ycc.v1.SetWorkImplementationRequest
+	53,  // 65: ycc.v1.SessionService.UpsertModel:input_type -> ycc.v1.UpsertModelRequest
+	55,  // 66: ycc.v1.SessionService.RemoveModel:input_type -> ycc.v1.RemoveModelRequest
+	57,  // 67: ycc.v1.SessionService.GetModelConfig:input_type -> ycc.v1.GetModelConfigRequest
+	59,  // 68: ycc.v1.SessionService.DiscoverModels:input_type -> ycc.v1.DiscoverModelsRequest
+	129, // 69: ycc.v1.SessionService.TestModel:input_type -> ycc.v1.TestModelRequest
+	69,  // 70: ycc.v1.SessionService.ListReviewTiers:input_type -> ycc.v1.ListReviewTiersRequest
+	71,  // 71: ycc.v1.SessionService.UpsertReviewTier:input_type -> ycc.v1.UpsertReviewTierRequest
+	73,  // 72: ycc.v1.SessionService.RemoveReviewTier:input_type -> ycc.v1.RemoveReviewTierRequest
+	75,  // 73: ycc.v1.SessionService.SetReviewDefault:input_type -> ycc.v1.SetReviewDefaultRequest
+	77,  // 74: ycc.v1.SessionService.ListBacklog:input_type -> ycc.v1.ListBacklogRequest
+	80,  // 75: ycc.v1.SessionService.GetTask:input_type -> ycc.v1.GetTaskRequest
+	83,  // 76: ycc.v1.SessionService.UpdateTask:input_type -> ycc.v1.UpdateTaskRequest
+	85,  // 77: ycc.v1.SessionService.CreateTask:input_type -> ycc.v1.CreateTaskRequest
+	87,  // 78: ycc.v1.SessionService.ListPlans:input_type -> ycc.v1.ListPlansRequest
+	90,  // 79: ycc.v1.SessionService.GetPlan:input_type -> ycc.v1.GetPlanRequest
+	92,  // 80: ycc.v1.SessionService.GetMemory:input_type -> ycc.v1.GetMemoryRequest
+	94,  // 81: ycc.v1.SessionService.CaptureBacklogItem:input_type -> ycc.v1.CaptureBacklogItemRequest
+	95,  // 82: ycc.v1.SessionService.GetUsage:input_type -> ycc.v1.GetUsageRequest
+	98,  // 83: ycc.v1.SessionService.GetSubscriptionUsage:input_type -> ycc.v1.GetSubscriptionUsageRequest
+	102, // 84: ycc.v1.SessionService.GetBudget:input_type -> ycc.v1.GetBudgetRequest
+	104, // 85: ycc.v1.SessionService.Notify:input_type -> ycc.v1.NotifyRequest
+	109, // 86: ycc.v1.SessionService.StartWorkLoop:input_type -> ycc.v1.StartWorkLoopRequest
+	111, // 87: ycc.v1.SessionService.StopWorkLoop:input_type -> ycc.v1.StopWorkLoopRequest
+	113, // 88: ycc.v1.SessionService.GetWorkLoop:input_type -> ycc.v1.GetWorkLoopRequest
+	116, // 89: ycc.v1.SessionService.SpawnWorkstream:input_type -> ycc.v1.SpawnWorkstreamRequest
+	118, // 90: ycc.v1.SessionService.ListWorkstreams:input_type -> ycc.v1.ListWorkstreamsRequest
+	120, // 91: ycc.v1.SessionService.PreviewMerge:input_type -> ycc.v1.PreviewMergeRequest
+	122, // 92: ycc.v1.SessionService.MergeWorkstream:input_type -> ycc.v1.MergeWorkstreamRequest
+	124, // 93: ycc.v1.SessionService.DiscardWorkstream:input_type -> ycc.v1.DiscardWorkstreamRequest
+	126, // 94: ycc.v1.SessionService.RetryIntegration:input_type -> ycc.v1.RetryIntegrationRequest
+	36,  // 95: ycc.v1.SessionService.ListModes:output_type -> ycc.v1.ListModesResponse
+	2,   // 96: ycc.v1.SessionService.StartSession:output_type -> ycc.v1.StartSessionResponse
+	39,  // 97: ycc.v1.SessionService.ListSessions:output_type -> ycc.v1.ListSessionsResponse
+	42,  // 98: ycc.v1.SessionService.ListSessionHistory:output_type -> ycc.v1.ListSessionHistoryResponse
+	44,  // 99: ycc.v1.SessionService.GetSessionTranscript:output_type -> ycc.v1.GetSessionTranscriptResponse
+	46,  // 100: ycc.v1.SessionService.GetSessionAttachment:output_type -> ycc.v1.GetSessionAttachmentResponse
+	48,  // 101: ycc.v1.SessionService.GetCommitDiff:output_type -> ycc.v1.GetCommitDiffResponse
+	0,   // 102: ycc.v1.SessionService.Subscribe:output_type -> ycc.v1.Event
+	19,  // 103: ycc.v1.SessionService.SendInput:output_type -> ycc.v1.SendInputResponse
+	21,  // 104: ycc.v1.SessionService.AnswerQuestion:output_type -> ycc.v1.AnswerQuestionResponse
+	24,  // 105: ycc.v1.SessionService.AnswerQuestions:output_type -> ycc.v1.AnswerQuestionsResponse
+	26,  // 106: ycc.v1.SessionService.Interrupt:output_type -> ycc.v1.InterruptResponse
+	28,  // 107: ycc.v1.SessionService.Resume:output_type -> ycc.v1.ResumeResponse
+	30,  // 108: ycc.v1.SessionService.StopSession:output_type -> ycc.v1.StopSessionResponse
+	32,  // 109: ycc.v1.SessionService.ResumeSession:output_type -> ycc.v1.ResumeSessionResponse
+	6,   // 110: ycc.v1.SessionService.ListProjects:output_type -> ycc.v1.ListProjectsResponse
+	8,   // 111: ycc.v1.SessionService.AddProject:output_type -> ycc.v1.AddProjectResponse
+	10,  // 112: ycc.v1.SessionService.RemoveProject:output_type -> ycc.v1.RemoveProjectResponse
+	12,  // 113: ycc.v1.SessionService.RenameProject:output_type -> ycc.v1.RenameProjectResponse
+	15,  // 114: ycc.v1.SessionService.ListDir:output_type -> ycc.v1.ListDirResponse
+	51,  // 115: ycc.v1.SessionService.ListModels:output_type -> ycc.v1.ListModelsResponse
+	62,  // 116: ycc.v1.SessionService.SetRoleConfig:output_type -> ycc.v1.SetRoleConfigResponse
+	64,  // 117: ycc.v1.SessionService.SetThinking:output_type -> ycc.v1.SetThinkingResponse
+	66,  // 118: ycc.v1.SessionService.SetWorkImplementation:output_type -> ycc.v1.SetWorkImplementationResponse
+	54,  // 119: ycc.v1.SessionService.UpsertModel:output_type -> ycc.v1.UpsertModelResponse
+	56,  // 120: ycc.v1.SessionService.RemoveModel:output_type -> ycc.v1.RemoveModelResponse
+	58,  // 121: ycc.v1.SessionService.GetModelConfig:output_type -> ycc.v1.GetModelConfigResponse
+	60,  // 122: ycc.v1.SessionService.DiscoverModels:output_type -> ycc.v1.DiscoverModelsResponse
+	130, // 123: ycc.v1.SessionService.TestModel:output_type -> ycc.v1.TestModelResponse
+	70,  // 124: ycc.v1.SessionService.ListReviewTiers:output_type -> ycc.v1.ListReviewTiersResponse
+	72,  // 125: ycc.v1.SessionService.UpsertReviewTier:output_type -> ycc.v1.UpsertReviewTierResponse
+	74,  // 126: ycc.v1.SessionService.RemoveReviewTier:output_type -> ycc.v1.RemoveReviewTierResponse
+	76,  // 127: ycc.v1.SessionService.SetReviewDefault:output_type -> ycc.v1.SetReviewDefaultResponse
+	79,  // 128: ycc.v1.SessionService.ListBacklog:output_type -> ycc.v1.ListBacklogResponse
+	82,  // 129: ycc.v1.SessionService.GetTask:output_type -> ycc.v1.GetTaskResponse
+	84,  // 130: ycc.v1.SessionService.UpdateTask:output_type -> ycc.v1.UpdateTaskResponse
+	86,  // 131: ycc.v1.SessionService.CreateTask:output_type -> ycc.v1.CreateTaskResponse
+	89,  // 132: ycc.v1.SessionService.ListPlans:output_type -> ycc.v1.ListPlansResponse
+	91,  // 133: ycc.v1.SessionService.GetPlan:output_type -> ycc.v1.GetPlanResponse
+	93,  // 134: ycc.v1.SessionService.GetMemory:output_type -> ycc.v1.GetMemoryResponse
+	0,   // 135: ycc.v1.SessionService.CaptureBacklogItem:output_type -> ycc.v1.Event
+	97,  // 136: ycc.v1.SessionService.GetUsage:output_type -> ycc.v1.GetUsageResponse
+	101, // 137: ycc.v1.SessionService.GetSubscriptionUsage:output_type -> ycc.v1.GetSubscriptionUsageResponse
+	103, // 138: ycc.v1.SessionService.GetBudget:output_type -> ycc.v1.GetBudgetResponse
+	105, // 139: ycc.v1.SessionService.Notify:output_type -> ycc.v1.NotifyResponse
+	110, // 140: ycc.v1.SessionService.StartWorkLoop:output_type -> ycc.v1.StartWorkLoopResponse
+	112, // 141: ycc.v1.SessionService.StopWorkLoop:output_type -> ycc.v1.StopWorkLoopResponse
+	114, // 142: ycc.v1.SessionService.GetWorkLoop:output_type -> ycc.v1.GetWorkLoopResponse
+	117, // 143: ycc.v1.SessionService.SpawnWorkstream:output_type -> ycc.v1.SpawnWorkstreamResponse
+	119, // 144: ycc.v1.SessionService.ListWorkstreams:output_type -> ycc.v1.ListWorkstreamsResponse
+	121, // 145: ycc.v1.SessionService.PreviewMerge:output_type -> ycc.v1.PreviewMergeResponse
+	123, // 146: ycc.v1.SessionService.MergeWorkstream:output_type -> ycc.v1.MergeWorkstreamResponse
+	125, // 147: ycc.v1.SessionService.DiscardWorkstream:output_type -> ycc.v1.DiscardWorkstreamResponse
+	127, // 148: ycc.v1.SessionService.RetryIntegration:output_type -> ycc.v1.RetryIntegrationResponse
+	95,  // [95:149] is the sub-list for method output_type
+	41,  // [41:95] is the sub-list for method input_type
+	41,  // [41:41] is the sub-list for extension type_name
+	41,  // [41:41] is the sub-list for extension extendee
+	0,   // [0:41] is the sub-list for field type_name
 }
 
 func init() { file_ycc_v1_ycc_proto_init() }
@@ -8628,6 +8814,7 @@ func file_ycc_v1_ycc_proto_init() {
 	if File_ycc_v1_ycc_proto != nil {
 		return
 	}
+	file_ycc_v1_ycc_proto_msgTypes[3].OneofWrappers = []any{}
 	file_ycc_v1_ycc_proto_msgTypes[50].OneofWrappers = []any{}
 	file_ycc_v1_ycc_proto_msgTypes[52].OneofWrappers = []any{}
 	file_ycc_v1_ycc_proto_msgTypes[83].OneofWrappers = []any{}
@@ -8637,7 +8824,7 @@ func file_ycc_v1_ycc_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ycc_v1_ycc_proto_rawDesc), len(file_ycc_v1_ycc_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   129,
+			NumMessages:   131,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

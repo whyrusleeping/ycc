@@ -103,7 +103,9 @@ final class SessionListModelTests: XCTestCase {
         waitingInput: Bool = false,
         focusTasks: [String] = [],
         modelUsage: [(String, Int64)] = [],
-        totalTokens: Int64 = 0
+        totalTokens: Int64 = 0,
+        contextTokens: Int64 = 0,
+        workspace: String = ""
     ) -> Ycc_V1_SessionSummary {
         var s = Ycc_V1_SessionSummary()
         s.sessionID = id
@@ -123,6 +125,8 @@ final class SessionListModelTests: XCTestCase {
             return usage
         }
         s.totalTokens = totalTokens
+        s.contextTokens = contextTokens
+        s.workspace = workspace
         return s
     }
 
@@ -158,34 +162,37 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertEqual(SessionListModel.taskChipLabels(for: value), ["0198", "0200", "+2"])
     }
 
-    func testModelAndTokenSummaries() {
+    func testModelAndContextSummaries() {
         let multi = session(
             id: "a",
             modelUsage: [("gpt", 100), ("claude", 800), ("glm", 100)],
-            totalTokens: 1_250_000
+            totalTokens: 9_999_999,
+            contextTokens: 1_250_000
         )
         XCTAssertEqual(SessionListModel.modelSummary(for: multi), "claude +2")
-        XCTAssertEqual(SessionListModel.tokenSummary(for: multi), "1.2M tok")
+        // The metadata line reports how full the active context is, not the
+        // session's cumulative token spend.
+        XCTAssertEqual(SessionListModel.contextSummary(for: multi), "1.2M ctx")
         XCTAssertEqual(
             SessionListModel.metadataItems(for: multi, isLoopOwned: true),
-            ["pm", "claude +2", "1.2M tok", "via loop"]
+            ["pm", "claude +2", "1.2M ctx", "via loop"]
         )
 
         XCTAssertEqual(
             SessionListModel.modelSummary(for: session(id: "sole", modelUsage: [("claude", 42)])),
             "claude"
         )
-        XCTAssertEqual(SessionListModel.tokenSummary(for: session(id: "b", totalTokens: 999)), "999 tok")
-        XCTAssertEqual(SessionListModel.tokenSummary(for: session(id: "c", totalTokens: 12_000)), "12K tok")
+        XCTAssertEqual(SessionListModel.contextSummary(for: session(id: "b", contextTokens: 999)), "999 ctx")
+        XCTAssertEqual(SessionListModel.contextSummary(for: session(id: "c", contextTokens: 12_000)), "12K ctx")
     }
 
-    func testTokenSummaryPromotesRoundedUnitBoundaries() {
-        XCTAssertEqual(SessionListModel.tokenSummary(for: session(id: "k-low", totalTokens: 999_499)), "999K tok")
-        XCTAssertEqual(SessionListModel.tokenSummary(for: session(id: "k-carry", totalTokens: 999_500)), "1M tok")
-        XCTAssertEqual(SessionListModel.tokenSummary(for: session(id: "k-max", totalTokens: 999_999)), "1M tok")
-        XCTAssertEqual(SessionListModel.tokenSummary(for: session(id: "m-low", totalTokens: 999_499_999)), "999M tok")
-        XCTAssertEqual(SessionListModel.tokenSummary(for: session(id: "m-carry", totalTokens: 999_500_000)), "1B tok")
-        XCTAssertEqual(SessionListModel.tokenSummary(for: session(id: "m-max", totalTokens: 999_999_999)), "1B tok")
+    func testContextSummaryPromotesRoundedUnitBoundaries() {
+        XCTAssertEqual(SessionListModel.contextSummary(for: session(id: "k-low", contextTokens: 999_499)), "999K ctx")
+        XCTAssertEqual(SessionListModel.contextSummary(for: session(id: "k-carry", contextTokens: 999_500)), "1M ctx")
+        XCTAssertEqual(SessionListModel.contextSummary(for: session(id: "k-max", contextTokens: 999_999)), "1M ctx")
+        XCTAssertEqual(SessionListModel.contextSummary(for: session(id: "m-low", contextTokens: 999_499_999)), "999M ctx")
+        XCTAssertEqual(SessionListModel.contextSummary(for: session(id: "m-carry", contextTokens: 999_500_000)), "1B ctx")
+        XCTAssertEqual(SessionListModel.contextSummary(for: session(id: "m-max", contextTokens: 999_999_999)), "1B ctx")
     }
 
     func testModelSummaryTieBreakAndMissingMetadata() {
@@ -194,7 +201,9 @@ final class SessionListModelTests: XCTestCase {
 
         let missing = session(id: "b", mode: "", modelUsage: [("", 100), ("ignored", 0)])
         XCTAssertNil(SessionListModel.modelSummary(for: missing))
-        XCTAssertNil(SessionListModel.tokenSummary(for: missing))
+        // Cumulative spend without context telemetry (older daemon) shows no
+        // context item rather than a misleading zero.
+        XCTAssertNil(SessionListModel.contextSummary(for: session(id: "c", totalTokens: 5_000)))
         XCTAssertEqual(SessionListModel.metadataItems(for: missing, isLoopOwned: false), [])
     }
 
@@ -511,6 +520,38 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertEqual(source.requestedProjects, ["", ""])
         XCTAssertEqual(model.sessions.map(\.sessionID), ["fallback"])
         XCTAssertNil(model.errorMessage)
+    }
+
+    func testDisplayProjectFallsBackToWorkspaceFolderName() async {
+        let source = MockListSource()
+        // A daemon with no registered projects: rows route under "" (resolve
+        // server-side), so the display name must come from the workspace path.
+        source.sessionsByProject[""] = [
+            session(id: "routed-empty", workspace: "/home/me/code/oldgrowth"),
+            session(id: "no-workspace"),
+        ]
+        let model = SessionListModel(source: source, retryDelays: [0, 0])
+
+        await model.refresh()
+
+        let routed = model.sessions.first { $0.sessionID == "routed-empty" }!
+        XCTAssertEqual(model.project(for: routed), "", "routing name must stay empty for server-side resolution")
+        XCTAssertEqual(model.displayProject(for: routed), "oldgrowth")
+        let bare = model.sessions.first { $0.sessionID == "no-workspace" }!
+        XCTAssertEqual(model.displayProject(for: bare), "")
+    }
+
+    func testDisplayProjectPrefersRegisteredName() async {
+        let source = MockListSource()
+        source.projects = [project("pretty")]
+        source.sessionsByProject["pretty"] = [
+            session(id: "named", workspace: "/srv/ugly-dir-name")
+        ]
+        let model = SessionListModel(source: source)
+
+        await model.refresh()
+
+        XCTAssertEqual(model.displayProject(for: model.sessions[0]), "pretty")
     }
 
     func testProjectFilterRoundTrips() async {

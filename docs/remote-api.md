@@ -165,8 +165,9 @@ The official client libs decode this framing for you — you just receive a stre
   (`session_id`), so either works when you build a request by hand.
 - **`int64` fields are JSON strings**, not numbers: `"seq":"128"`, `"turns":"1"`.
 - **Zero-valued and empty fields are omitted.** An empty list RPC returns `{}` (e.g.
-  `ListProjects` with no projects), and a `false` bool / `0` int simply isn't
-  present.
+  `ListProjects` with no projects), and an ordinary `false` bool / `0` int simply
+  isn't present. An explicitly present `optional` scalar may still be emitted at
+  its zero value (for example, `"needsOnboarding":false`).
 - **`Event.dataJson` is an embedded JSON *string***, not a nested object — the
   per-type payload is carried as a string so the heterogeneous data needs no proto
   schema. Clients parse it a *second* time:
@@ -204,6 +205,7 @@ JSON="Content-Type: application/json"
 | [`ListProjects`](#listprojects) | list registered projects (multi-project daemon) |
 | [`AddProject`](#addproject--listdir) / [`ListDir`](#addproject--listdir) | register a workspace / browse daemon-host directories |
 | [`RemoveProject` / `RenameProject`](#addproject--listdir) | deregister / rename a registered project |
+| [`DiscoverModels` / `TestModel`](#discovermodels--testmodel) | list provider models / run a small inference probe against an unsaved draft |
 | [`ListSessions`](#listsessions) | live sessions (optionally filtered by project) |
 | [`ListSessionHistory`](#listsessionhistory) | live + persisted sessions, most-recent first |
 | [`GetSessionTranscript`](#getsessiontranscript) | full event log for one session |
@@ -224,7 +226,10 @@ JSON="Content-Type: application/json"
 
 ### ListProjects
 
-List the daemon's registered projects (name → workspace path). Empty request.
+List the daemon's registered projects (name → workspace path). Empty request. Each project also
+reports `needsOnboarding`: `true` when its configured spec entry point has no substantive content
+and its backlog has no tasks, otherwise an explicitly present `false`. Clients can use this to show
+the onboarding preset only where it is relevant.
 
 ```
 curl -sS -H "$AUTH" -H "$JSON" -d '{}' \
@@ -239,7 +244,7 @@ curl -sS -H "$AUTH" -H "$JSON" -d '{}' \
 list.) With projects registered:
 
 ```json
-{"projects":[{"name":"ycc","path":"/home/me/code/ycc"}]}
+{"projects":[{"name":"ycc","path":"/home/me/code/ycc","needsOnboarding":false}]}
 ```
 
 ### AddProject / ListDir
@@ -292,6 +297,49 @@ curl -sS -H "$AUTH" -H "$JSON" -d '{"name":"otherrepo","newName":"webapp"}' \
   $B/ycc.v1.SessionService/RenameProject
 ```
 
+### DiscoverModels / TestModel
+
+`DiscoverModels` probes a provider's model-list endpoint using a daemon-resolved `keyEnv`. It may
+return curated fallbacks, so `fromNetwork: true` means listing worked but still does **not** prove
+that the selected model can generate with ycc's request shape.
+
+`TestModel` accepts a complete, potentially unsaved `ModelConfig` and sends one small real inference
+request using its backend, base URL, model id, auth, credential reference, and reasoning controls.
+The daemon never installs or persists the draft, and no secret value crosses the wire. This request
+may be billed by the provider and is bounded to 30 seconds and a small output allowance.
+
+```
+curl -sS -H "$AUTH" -H "$JSON" -d '{
+  "model": {
+    "name": "fireworks-glm",
+    "backend": "openai",
+    "baseUrl": "https://api.fireworks.ai/inference/v1",
+    "model": "accounts/fireworks/models/glm-5p3",
+    "keyEnv": "FIREWORKS_API_KEY",
+    "auth": "api-key",
+    "thinking": "adaptive",
+    "effort": "high"
+  }
+}' $B/ycc.v1.SessionService/TestModel
+```
+
+A successful probe returns:
+
+```json
+{"success":true,"message":"Model responded successfully.","durationMs":"842"}
+```
+
+Provider failures are successful RPC responses with `success` false (therefore usually omitted by
+protojson), a sanitized message, normalized `errorKind`, and the provider HTTP `status` when known:
+
+```json
+{"message":"The provider rejected the model request. Check the backend, base URL, model id, and reasoning settings.","durationMs":"127","errorKind":"invalid_request","status":404}
+```
+
+Keeping provider failures in response data prevents a provider 401 from being mistaken for failed
+daemon bearer authentication. Invalid drafts remain `invalid_argument`; caller cancellation remains
+a Connect cancellation/deadline error.
+
 ### ListSessions
 
 Live sessions only. Optional `project` filters to one project's workspace.
@@ -330,6 +378,10 @@ curl -sS -H "$AUTH" -H "$JSON" -d '{"project":"work"}' \
 Notes: `title` is derived from the first user prompt; `turns`/`toolCalls` are int64
 (JSON strings); `live` is true for in-memory sessions; `waitingInput` is present
 (`true`) only when a live session is blocked on an unanswered `ask_user` question.
+`modelUsage`/`totalTokens` summarize cumulative token spend across all actors, while
+`contextTokens` is the coarse prompt-size estimate from the newest completed
+coordinator model turn (how full the session's active context is; subagent turns are
+ignored, and it is omitted/zero for logs without the telemetry).
 Omitted fields (`toolCalls`, `focusTasks`, `waitingInput` here) are zero/empty.
 
 ### GetSessionTranscript
@@ -824,10 +876,11 @@ Clients **must** tolerate seq-less events safely.
 The motivating case is **`turn_delta`**: it streams a model's in-progress turn text
 to live clients while the durable `model_turn` (written on turn completion) remains
 the source of truth. Its payload is a **snapshot**, not an increment:
-`{"text": <full-accumulated-text-so-far>}`. Replace your live tail row with the
-latest snapshot each time. A turn's tail is cleared by a terminating delta
+`{"text": <full-accumulated-text-so-far>}`. Keep a live tail row keyed by event
+`actor` and replace that actor's latest snapshot each time; multiple subagents may
+stream concurrently. A turn's tail is cleared by a same-actor terminating delta
 `{"text":"","done":true}` (on success **or** error) and, redundantly, by the arrival
-of the persisted `model_turn`.
+of that actor's persisted `model_turn`.
 
 ### The rule
 

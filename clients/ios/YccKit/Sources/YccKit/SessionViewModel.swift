@@ -64,12 +64,15 @@ public final class SessionViewModel {
     /// — never a crash.
     public var actionError: String?
 
-    /// Ordered rows to render (durable rows + the transient live tail).
+    /// Ordered rows to render (durable rows + transient per-actor live tails).
     public var rows: [TranscriptRow] { projection.rows }
-    /// Durable rows exposed separately so a live-tail update does not have to
-    /// allocate and diff a fresh `durableRows + [liveTail]` array in SwiftUI.
+    /// Durable rows exposed separately so live-tail updates do not have to
+    /// allocate and diff a fresh combined array in SwiftUI.
     public var durableRows: [TranscriptRow] { projection.durableRows }
-    /// The single transient row, rendered separately from durable history.
+    /// Stable transient rows for every actor currently streaming, rendered
+    /// separately so one subagent's snapshots do not invalidate another's text.
+    public var liveTails: [TranscriptRow] { projection.liveTails }
+    /// Compatibility accessor for single-stream consumers.
     public var liveTail: TranscriptRow? { projection.liveTail }
     /// A cheap monotonic change token for transcript layout/scroll following.
     /// Observing `rows` directly makes SwiftUI equality-compare every row and the
@@ -204,10 +207,10 @@ public final class SessionViewModel {
             }
             while !Task.isCancelled {
                 let fromSeq = self.projection.lastPersistedSeq
-                // Drop any stale streamed tail from before a disconnect so it
-                // doesn't linger until the next delta/model_turn replaces it.
-                if self.projection.liveTail != nil {
-                    self.projection.clearLiveTail()
+                // Drop stale streamed tails from before a disconnect so none
+                // linger until each actor's next delta/model_turn replaces them.
+                if !self.projection.liveTails.isEmpty {
+                    self.projection.clearLiveTails()
                     self.transcriptRevision &+= 1
                 }
                 self.state = .streaming

@@ -177,7 +177,9 @@ struct TaskDetailView: View {
     }
 
     /// Render task relationships as explicit links. Routing instead of nesting a
-    /// `NavigationLink` lets task-to-task cycles reuse an existing detail screen.
+    /// `NavigationLink` makes task-to-task hops *lateral*: the detail screen is
+    /// swapped in place, so cycles never grow the stack and Back still returns
+    /// to the backlog (or wherever this detail was opened from).
     private func taskLinks(_ label: String, taskIDs: [String]) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Text(label)

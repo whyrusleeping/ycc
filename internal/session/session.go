@@ -15,11 +15,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/docs"
 	"github.com/whyrusleeping/ycc/internal/engine"
@@ -770,54 +772,87 @@ func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []str
 		return fmt.Errorf("session event log failed: %w", err)
 	}
 	s.mu.Lock()
-	newCoord, newImpl, newRevs := s.coordinator, s.implementer, s.reviewers
+	oldCoord, oldImpl := s.coordinator, s.implementer
+	oldRevs := append([]string(nil), s.reviewers...)
 	s.mu.Unlock()
+	newCoord, newImpl := oldCoord, oldImpl
+	newRevs := append([]string(nil), oldRevs...)
 
+	validateAssignable := func(name string, alreadyAssigned bool) error {
+		if !s.reg.Has(name) {
+			return fmt.Errorf("unknown model %q", name)
+		}
+		if !s.reg.Enabled(name) && !alreadyAssigned {
+			return fmt.Errorf("%w %q", ErrDisabledModel, name)
+		}
+		return nil
+	}
 	if coordinator != "" {
-		if !s.reg.Has(coordinator) {
-			return fmt.Errorf("unknown model %q", coordinator)
+		if err := validateAssignable(coordinator, coordinator == oldCoord); err != nil {
+			return err
 		}
 		newCoord = coordinator
 	}
 	if implementer != "" {
-		if !s.reg.Has(implementer) {
-			return fmt.Errorf("unknown model %q", implementer)
+		if err := validateAssignable(implementer, implementer == oldImpl); err != nil {
+			return err
 		}
 		newImpl = implementer
 	}
 	if len(reviewers) > 0 {
+		oldCounts := make(map[string]int, len(oldRevs))
+		newCounts := make(map[string]int, len(reviewers))
+		for _, name := range oldRevs {
+			oldCounts[name]++
+		}
 		for _, name := range reviewers {
-			if !s.reg.Has(name) {
-				return fmt.Errorf("unknown model %q", name)
+			newCounts[name]++
+		}
+		for _, name := range reviewers {
+			if err := validateAssignable(name, newCounts[name] <= oldCounts[name]); err != nil {
+				return err
 			}
 		}
 		newRevs = append([]string(nil), reviewers...)
 	}
+	coordChanged := newCoord != oldCoord
+	implChanged := newImpl != oldImpl
+	reviewersChanged := !slices.Equal(newRevs, oldRevs)
 
-	// Rebuild the implementer / reviewer specs so the next spawn uses the new
-	// backends (the running subagents keep their context until then).
-	implSpec, err := s.agentSpec(newImpl)
-	if err != nil {
-		return err
-	}
-	var revSpecs []orchestrator.AgentSpec
-	for _, name := range newRevs {
-		rs, err := s.agentSpec(name)
+	// Rebuild only changed role backends. Unchanged disabled assignments remain
+	// represented while the user migrates roles one at a time; disabled reviewers
+	// are retained in config but omitted from the next executable fan-out.
+	if implChanged {
+		implSpec, err := s.agentSpec(newImpl)
 		if err != nil {
 			return err
 		}
-		revSpecs = append(revSpecs, rs)
+		s.deps.SetImplementer(implSpec)
 	}
-	s.deps.SetImplementer(implSpec)
-	s.deps.SetReviewers(revSpecs)
+	if reviewersChanged {
+		var revSpecs []orchestrator.AgentSpec
+		for _, name := range newRevs {
+			if !s.reg.Enabled(name) {
+				continue
+			}
+			rs, err := s.agentSpec(name)
+			if err != nil {
+				return err
+			}
+			revSpecs = append(revSpecs, rs)
+		}
+		s.deps.SetReviewers(revSpecs)
+	}
 
-	// Swap the live coordinator loop's backend so its next turn uses the new
-	// model while preserving its conversation history.
-	client, model, err := s.reg.Build(newCoord)
-	if err != nil {
-		return fmt.Errorf("build coordinator backend: %w", err)
+	// Swap the live coordinator loop only when that assignment changed, preserving
+	// an already-constructed client until the disabled role is explicitly replaced.
+	if coordChanged {
+		client, model, err := s.reg.Build(newCoord)
+		if err != nil {
+			return fmt.Errorf("build coordinator backend: %w", err)
+		}
+		s.currentLoop().SetBackend(client, model, newCoord, s.reg.BackendFor(newCoord), s.thinkingFor(newCoord))
 	}
-	s.currentLoop().SetBackend(client, model, newCoord, s.reg.BackendFor(newCoord), s.thinkingFor(newCoord))
 
 	s.mu.Lock()
 	s.coordinator, s.implementer, s.reviewers = newCoord, newImpl, newRevs
@@ -825,7 +860,7 @@ func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []str
 	// refusal: retrying the refused turn on a DIFFERENT model is
 	// the provider-recommended recovery, so clear the input gate and nudge the
 	// parked run loop to re-run the pending turn on the new backend.
-	wasRefused := s.refused && coordinator != ""
+	wasRefused := s.refused && coordChanged
 	if wasRefused {
 		s.refused = false
 	}
@@ -839,9 +874,21 @@ func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []str
 	if err := s.logFailure(); err != nil {
 		return fmt.Errorf("session event log failed: %w", err)
 	}
-	// Persist defaults only after the session mutation is replayable. A failed
-	// event append must never leak an unrecorded role selection into ycc.toml.
-	if err := s.reg.SetRoles(newCoord, newImpl, newRevs); err != nil {
+	// Persist defaults only after the session mutation is replayable. Full-state
+	// clients submit unchanged roles too, but a per-session override must not become
+	// the global default merely because another role changed; persist deltas only.
+	persistCoord, persistImpl := "", ""
+	var persistReviewers []string
+	if coordChanged {
+		persistCoord = newCoord
+	}
+	if implChanged {
+		persistImpl = newImpl
+	}
+	if reviewersChanged {
+		persistReviewers = newRevs
+	}
+	if err := s.reg.SetRoles(persistCoord, persistImpl, persistReviewers); err != nil {
 		return fmt.Errorf("persist role config: %w", err)
 	}
 	if wasRefused {
@@ -1016,6 +1063,16 @@ func (s *Session) thinkingFor(name string) engine.Thinking {
 	return engine.Thinking{Thinking: th.Thinking, Effort: th.Effort, ThinkingDisplay: th.ThinkingDisplay}
 }
 
+// failedTurner lets a model that became unavailable after an AgentSpec was
+// assembled fail its next turn cleanly instead of returning a nil backend from
+// the factory. AgentSpec's factory predates error returns, so the error is
+// surfaced through the TurnCtx capability it already requires.
+type failedTurner struct{ err error }
+
+func (t failedTurner) TurnCtx(context.Context, gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+	return nil, t.err
+}
+
 // agentSpec builds an orchestrator.AgentSpec for a logical model name.
 func (s *Session) agentSpec(name string) (orchestrator.AgentSpec, error) {
 	_, model, err := s.reg.Build(name)
@@ -1028,7 +1085,10 @@ func (s *Session) agentSpec(name string) (orchestrator.AgentSpec, error) {
 		Model:   model,
 		Backend: s.reg.BackendFor(name),
 		NewClient: func() engine.Turner {
-			c, _, _ := s.reg.Build(name)
+			c, _, err := s.reg.Build(name)
+			if err != nil {
+				return failedTurner{err: fmt.Errorf("build backend %q: %w", name, err)}
+			}
 			return c
 		},
 		Thinking:        th.Thinking,
@@ -1651,17 +1711,33 @@ func (m *Manager) initialCoordinator(preset, explicit string) (coordinator, warn
 		if !m.reg.Has(explicit) {
 			return "", "", fmt.Errorf("%w %q", ErrUnknownModel, explicit)
 		}
+		if !m.reg.Enabled(explicit) {
+			return "", "", fmt.Errorf("%w %q", ErrDisabledModel, explicit)
+		}
 		return explicit, "", nil
 	}
 	model, bound := m.reg.PresetModel(preset)
 	if !bound {
-		return "", "", nil // newSession resolves the configured default
+		// newSession resolves the configured default, but classify a disabled
+		// default here so StartSession reports a useful failed-precondition error.
+		model = m.reg.CoordinatorName()
+		if m.reg.Has(model) && !m.reg.Enabled(model) {
+			return "", "", fmt.Errorf("%w %q", ErrDisabledModel, model)
+		}
+		return "", "", nil
 	}
-	if m.reg.Has(model) {
+	if m.reg.Enabled(model) {
 		return model, "", nil
 	}
 	fallback := m.reg.CoordinatorName()
-	return "", fmt.Sprintf("preset %q is bound to unknown model %q; using default coordinator %q", preset, model, fallback), nil
+	reason := "unknown"
+	if m.reg.Has(model) {
+		reason = "disabled"
+	}
+	if m.reg.Has(fallback) && !m.reg.Enabled(fallback) {
+		return "", "", fmt.Errorf("%w %q (fallback for preset %q)", ErrDisabledModel, fallback, preset)
+	}
+	return "", fmt.Sprintf("preset %q is bound to %s model %q; using default coordinator %q", preset, reason, model, fallback), nil
 }
 
 // start is the shared session-launch body. When autoRegisterProject is true a
@@ -2086,6 +2162,9 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 		if !m.reg.Has(coordOverride) {
 			return nil, fmt.Errorf("%w %q", ErrUnknownModel, coordOverride)
 		}
+		if !m.reg.Enabled(coordOverride) {
+			return nil, fmt.Errorf("%w %q", ErrDisabledModel, coordOverride)
+		}
 		coordName = coordOverride
 	}
 	implName := m.reg.ImplementerName()
@@ -2162,7 +2241,9 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 		infos := m.reg.Models()
 		names := make([]string, 0, len(infos))
 		for _, info := range infos {
-			names = append(names, info.Name)
+			if !info.Disabled {
+				names = append(names, info.Name)
+			}
 		}
 		return names
 	}
@@ -2908,6 +2989,10 @@ var ErrUnknownSession = errors.New("unknown session")
 // (e.g. a per-session coordinator override at StartSession), so RPC handlers can
 // map it to an invalid-argument code.
 var ErrUnknownModel = errors.New("unknown model")
+
+// ErrDisabledModel indicates a configured logical model was explicitly selected
+// for new work while temporarily disabled.
+var ErrDisabledModel = config.ErrModelDisabled
 
 // ErrLoopRunning indicates a work loop is already running/waiting/stopping for a
 // workspace, so StartWorkLoop handlers can map it to a failed-precondition code.

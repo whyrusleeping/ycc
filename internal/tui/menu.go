@@ -3,7 +3,6 @@ package tui
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -450,76 +449,11 @@ func waitingSessionsLine(ws []*v1.SessionSummary) string {
 	return fmt.Sprintf("⚠ %d sessions waiting for you", n)
 }
 
-// needsOnboarding reports whether a workspace looks un-onboarded: it
-// has no real spec.md AND no backlog tasks. It is conservative — on any unexpected
-// read error it returns false so onboarding is not surfaced spuriously.
-func needsOnboarding(workspace string) bool {
-	if strings.TrimSpace(workspace) == "" {
-		return false
-	}
-	return specIsEmpty(workspace) && !hasBacklogTasks(workspace)
-}
-
-// specIsEmpty reports whether the configured spec entry point is missing or
-// trivially empty (only blank lines and markdown headings, no real content).
-// The entry point is resolved via the workspace's .ycc/config.toml (spec_path),
-// falling back to <workspace>/spec.md when unconfigured.
-func specIsEmpty(workspace string) bool {
-	data, err := os.ReadFile(docs.NewStore(workspace).SpecPath())
-	if err != nil {
-		if os.IsNotExist(err) {
-			return true
-		}
-		return false // unexpected error: treat as not-empty (don't surface onboarding)
-	}
-	for _, ln := range strings.Split(string(data), "\n") {
-		ln = strings.TrimSpace(ln)
-		if ln == "" || strings.HasPrefix(ln, "#") {
-			continue
-		}
-		return false // real content
-	}
-	return true
-}
-
-// hasBacklogTasks reports whether backlog/ exists and contains at least one task
-// file matching the NNNN-*.md pattern (stray non-task .md files don't count).
-func hasBacklogTasks(workspace string) bool {
-	entries, err := os.ReadDir(filepath.Join(workspace, "backlog"))
-	if err != nil {
-		return false // missing dir (or unreadable): no tasks
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		if !strings.HasSuffix(name, ".md") {
-			continue
-		}
-		stem := strings.TrimSuffix(name, ".md")
-		dash := strings.IndexByte(stem, '-')
-		if dash <= 0 {
-			continue
-		}
-		if isAllDigits(stem[:dash]) {
-			return true
-		}
-	}
-	return false
-}
-
-func isAllDigits(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
-}
+// Keep the TUI-local names used by its menu tests while sharing the onboarding
+// definition with remote clients through the server's project metadata.
+func needsOnboarding(workspace string) bool { return docs.NeedsOnboarding(workspace) }
+func specIsEmpty(workspace string) bool     { return docs.SpecIsEmpty(workspace) }
+func hasBacklogTasks(workspace string) bool { return docs.HasBacklogTasks(workspace) }
 
 // locationLabel is the project name when attached to a daemon registry, else the
 // basename of the workspace path — the bar's "where am I" segment.

@@ -115,6 +115,9 @@ const (
 	// SessionServiceDiscoverModelsProcedure is the fully-qualified name of the SessionService's
 	// DiscoverModels RPC.
 	SessionServiceDiscoverModelsProcedure = "/ycc.v1.SessionService/DiscoverModels"
+	// SessionServiceTestModelProcedure is the fully-qualified name of the SessionService's TestModel
+	// RPC.
+	SessionServiceTestModelProcedure = "/ycc.v1.SessionService/TestModel"
 	// SessionServiceListReviewTiersProcedure is the fully-qualified name of the SessionService's
 	// ListReviewTiers RPC.
 	SessionServiceListReviewTiersProcedure = "/ycc.v1.SessionService/ListReviewTiers"
@@ -243,6 +246,7 @@ type SessionServiceClient interface {
 	RemoveModel(context.Context, *connect.Request[v1.RemoveModelRequest]) (*connect.Response[v1.RemoveModelResponse], error)
 	GetModelConfig(context.Context, *connect.Request[v1.GetModelConfigRequest]) (*connect.Response[v1.GetModelConfigResponse], error)
 	DiscoverModels(context.Context, *connect.Request[v1.DiscoverModelsRequest]) (*connect.Response[v1.DiscoverModelsResponse], error)
+	TestModel(context.Context, *connect.Request[v1.TestModelRequest]) (*connect.Response[v1.TestModelResponse], error)
 	// Review tiers: list the effective tiers and edit the configured
 	// ones (plus the default tier) at runtime; always persisted to ycc.toml.
 	ListReviewTiers(context.Context, *connect.Request[v1.ListReviewTiersRequest]) (*connect.Response[v1.ListReviewTiersResponse], error)
@@ -486,6 +490,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("DiscoverModels")),
 			connect.WithClientOptions(opts...),
 		),
+		testModel: connect.NewClient[v1.TestModelRequest, v1.TestModelResponse](
+			httpClient,
+			baseURL+SessionServiceTestModelProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("TestModel")),
+			connect.WithClientOptions(opts...),
+		),
 		listReviewTiers: connect.NewClient[v1.ListReviewTiersRequest, v1.ListReviewTiersResponse](
 			httpClient,
 			baseURL+SessionServiceListReviewTiersProcedure,
@@ -669,6 +679,7 @@ type sessionServiceClient struct {
 	removeModel           *connect.Client[v1.RemoveModelRequest, v1.RemoveModelResponse]
 	getModelConfig        *connect.Client[v1.GetModelConfigRequest, v1.GetModelConfigResponse]
 	discoverModels        *connect.Client[v1.DiscoverModelsRequest, v1.DiscoverModelsResponse]
+	testModel             *connect.Client[v1.TestModelRequest, v1.TestModelResponse]
 	listReviewTiers       *connect.Client[v1.ListReviewTiersRequest, v1.ListReviewTiersResponse]
 	upsertReviewTier      *connect.Client[v1.UpsertReviewTierRequest, v1.UpsertReviewTierResponse]
 	removeReviewTier      *connect.Client[v1.RemoveReviewTierRequest, v1.RemoveReviewTierResponse]
@@ -834,6 +845,11 @@ func (c *sessionServiceClient) GetModelConfig(ctx context.Context, req *connect.
 // DiscoverModels calls ycc.v1.SessionService.DiscoverModels.
 func (c *sessionServiceClient) DiscoverModels(ctx context.Context, req *connect.Request[v1.DiscoverModelsRequest]) (*connect.Response[v1.DiscoverModelsResponse], error) {
 	return c.discoverModels.CallUnary(ctx, req)
+}
+
+// TestModel calls ycc.v1.SessionService.TestModel.
+func (c *sessionServiceClient) TestModel(ctx context.Context, req *connect.Request[v1.TestModelRequest]) (*connect.Response[v1.TestModelResponse], error) {
+	return c.testModel.CallUnary(ctx, req)
 }
 
 // ListReviewTiers calls ycc.v1.SessionService.ListReviewTiers.
@@ -1016,6 +1032,7 @@ type SessionServiceHandler interface {
 	RemoveModel(context.Context, *connect.Request[v1.RemoveModelRequest]) (*connect.Response[v1.RemoveModelResponse], error)
 	GetModelConfig(context.Context, *connect.Request[v1.GetModelConfigRequest]) (*connect.Response[v1.GetModelConfigResponse], error)
 	DiscoverModels(context.Context, *connect.Request[v1.DiscoverModelsRequest]) (*connect.Response[v1.DiscoverModelsResponse], error)
+	TestModel(context.Context, *connect.Request[v1.TestModelRequest]) (*connect.Response[v1.TestModelResponse], error)
 	// Review tiers: list the effective tiers and edit the configured
 	// ones (plus the default tier) at runtime; always persisted to ycc.toml.
 	ListReviewTiers(context.Context, *connect.Request[v1.ListReviewTiersRequest]) (*connect.Response[v1.ListReviewTiersResponse], error)
@@ -1255,6 +1272,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("DiscoverModels")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceTestModelHandler := connect.NewUnaryHandler(
+		SessionServiceTestModelProcedure,
+		svc.TestModel,
+		connect.WithSchema(sessionServiceMethods.ByName("TestModel")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sessionServiceListReviewTiersHandler := connect.NewUnaryHandler(
 		SessionServiceListReviewTiersProcedure,
 		svc.ListReviewTiers,
@@ -1463,6 +1486,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceGetModelConfigHandler.ServeHTTP(w, r)
 		case SessionServiceDiscoverModelsProcedure:
 			sessionServiceDiscoverModelsHandler.ServeHTTP(w, r)
+		case SessionServiceTestModelProcedure:
+			sessionServiceTestModelHandler.ServeHTTP(w, r)
 		case SessionServiceListReviewTiersProcedure:
 			sessionServiceListReviewTiersHandler.ServeHTTP(w, r)
 		case SessionServiceUpsertReviewTierProcedure:
@@ -1632,6 +1657,10 @@ func (UnimplementedSessionServiceHandler) GetModelConfig(context.Context, *conne
 
 func (UnimplementedSessionServiceHandler) DiscoverModels(context.Context, *connect.Request[v1.DiscoverModelsRequest]) (*connect.Response[v1.DiscoverModelsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.DiscoverModels is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) TestModel(context.Context, *connect.Request[v1.TestModelRequest]) (*connect.Response[v1.TestModelResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.TestModel is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) ListReviewTiers(context.Context, *connect.Request[v1.ListReviewTiersRequest]) (*connect.Response[v1.ListReviewTiersResponse], error) {

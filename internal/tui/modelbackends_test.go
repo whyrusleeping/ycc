@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"google.golang.org/protobuf/proto"
+
 	"github.com/whyrusleeping/ycc/internal/codex"
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 )
@@ -61,7 +63,7 @@ func TestModelBackendsAdd(t *testing.T) {
 }
 
 func TestModelBackendsEdit(t *testing.T) {
-	f := newFakeClient(&v1.ModelConfig{Name: "claude", Backend: "anthropic", Model: "claude-3", KeyEnv: "ANTHROPIC_API_KEY"})
+	f := newFakeClient(&v1.ModelConfig{Name: "claude", Backend: "anthropic", Model: "claude-3", KeyEnv: "ANTHROPIC_API_KEY", Disabled: proto.Bool(true)})
 	m := newBackendsModel(f)
 	m = runCmds(t, m, m.fetchModels)
 	// Edit the selected (only) model: GetModelConfig prefill, then change model id.
@@ -85,6 +87,9 @@ func TestModelBackendsEdit(t *testing.T) {
 	}
 	if f.lastUpsert.Model != "claude-3-opus" {
 		t.Fatalf("edit UpsertModel model=%q, want claude-3-opus", f.lastUpsert.Model)
+	}
+	if !f.lastUpsert.GetDisabled() {
+		t.Fatal("editing a disabled model unexpectedly re-enabled it")
 	}
 }
 

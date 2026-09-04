@@ -260,8 +260,12 @@ final class SessionViewModelTests: XCTestCase {
             var delta = Ycc_V1_Event()
             delta.seq = 0
             delta.type = "turn_delta"
+            delta.actor = "implementer-1"
             delta.transient = true
-            delta.dataJson = #"{"text":"partial answer so"}"#
+            delta.dataJson = #"{"text":"partial implementation"}"#
+            continuation.yield(delta)
+            delta.actor = "reviewer-1"
+            delta.dataJson = #"{"text":"partial review"}"#
             continuation.yield(delta)
             continuation.finish(throwing: YccError.rpc(message: "dropped"))
         }
@@ -281,9 +285,9 @@ final class SessionViewModelTests: XCTestCase {
         // Wait until the reconnect has subscribed a second time.
         await waitUntil { source.recordedFromSeqs.count == 2 }
 
-        // The stale tail from before the drop must be gone even though no new
-        // delta/model_turn has arrived on the reconnected stream.
-        XCTAssertNil(vm.projection.liveTail)
+        // Every stale actor tail from before the drop must be gone even though no
+        // new delta/model_turn has arrived on the reconnected stream.
+        XCTAssertTrue(vm.projection.liveTails.isEmpty)
         XCTAssertEqual(vm.projection.durableRows.count, 1, "the durable user bubble survives")
         // Reconnect resumes from the last persisted seq (the user_input at 1).
         XCTAssertEqual(source.recordedFromSeqs, [0, 1])

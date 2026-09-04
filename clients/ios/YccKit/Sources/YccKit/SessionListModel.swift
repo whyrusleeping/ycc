@@ -345,6 +345,21 @@ public final class SessionListModel {
         sessionProjects[session.sessionID] ?? selectedProject ?? ""
     }
 
+    /// The project name to SHOW on a row in the unscoped feed. Falls back to the
+    /// session's workspace folder name when routing yielded no registered name
+    /// (e.g. a daemon serving its startup workspace without a registration), so
+    /// the Recent feed always says where a row lives. Display-only: routing RPCs
+    /// keep using `project(for:)`, where an empty name means "resolve
+    /// server-side".
+    public func displayProject(for session: Ycc_V1_SessionSummary) -> String {
+        let routed = project(for: session)
+        if !routed.isEmpty { return routed }
+        let workspace = session.workspace.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !workspace.isEmpty else { return "" }
+        let base = (workspace as NSString).lastPathComponent
+        return base == "/" ? "" : base
+    }
+
     private func refreshAcrossProjects(_ loadedProjects: [Ycc_V1_ProjectInfo]) async {
         // Project aliases that point at the same workspace would return the same
         // event logs. Keep the first registration for a stable display/routing name.
@@ -707,24 +722,30 @@ public final class SessionListModel {
         return models.count == 1 ? name : "\(name) +\(models.count - 1)"
     }
 
-    /// Human-sized token total for the metadata line. Zero/missing usage is
-    /// omitted rather than presented as a misleading `0 tok`.
-    public static func tokenSummary(for session: Ycc_V1_SessionSummary) -> String? {
-        let tokens = session.totalTokens
+    /// Human-sized context length for the metadata line — how full the
+    /// session's active conversation is (the daemon's estimate from the newest
+    /// coordinator model turn), not cumulative spend. Zero/missing telemetry
+    /// (older daemons or logs, or no completed turn yet) is omitted rather than
+    /// presented as a misleading `0 ctx`.
+    public static func contextSummary(for session: Ycc_V1_SessionSummary) -> String? {
+        guard let value = compactTokenCount(session.contextTokens) else { return nil }
+        return "\(value) ctx"
+    }
+
+    /// Human-sized token count ("999", "12K", "9.6M", "1B"), or nil for
+    /// zero/negative input.
+    static func compactTokenCount(_ tokens: Int64) -> String? {
         guard tokens > 0 else { return nil }
-        let value: String
         if tokens < 1_000 {
-            value = String(tokens)
+            return String(tokens)
         } else if tokens < 999_500 {
-            value = compactDecimal(Double(tokens) / 1_000) + "K"
+            return compactDecimal(Double(tokens) / 1_000) + "K"
         } else if tokens < 999_500_000 {
             // Promote values whose compact rounding would otherwise say 1000K.
-            value = compactDecimal(Double(tokens) / 1_000_000) + "M"
-        } else {
-            // Likewise, never display 1000M at the next unit boundary.
-            value = compactDecimal(Double(tokens) / 1_000_000_000) + "B"
+            return compactDecimal(Double(tokens) / 1_000_000) + "M"
         }
-        return "\(value) tok"
+        // Likewise, never display 1000M at the next unit boundary.
+        return compactDecimal(Double(tokens) / 1_000_000_000) + "B"
     }
 
     private static func compactDecimal(_ value: Double) -> String {
@@ -759,7 +780,7 @@ public final class SessionListModel {
         let mode = session.mode.trimmingCharacters(in: .whitespacesAndNewlines)
         if !mode.isEmpty { items.append(mode) }
         if let model = modelSummary(for: session) { items.append(model) }
-        if let tokens = tokenSummary(for: session) { items.append(tokens) }
+        if let context = contextSummary(for: session) { items.append(context) }
         if isLoopOwned { items.append("via loop") }
         return items
     }

@@ -194,6 +194,9 @@ func TestProjectRPCs(t *testing.T) {
 	if add.Msg.Project.GetName() != "demo" || add.Msg.Project.GetPath() != dir {
 		t.Fatalf("AddProject = %+v, want name=demo path=%s", add.Msg.Project, dir)
 	}
+	if add.Msg.Project.NeedsOnboarding == nil || !add.Msg.Project.GetNeedsOnboarding() {
+		t.Fatalf("new empty project's needs_onboarding = %v, want explicit true", add.Msg.Project.NeedsOnboarding)
+	}
 
 	list, err := srv.ListProjects(ctx, connect.NewRequest(&v1.ListProjectsRequest{}))
 	if err != nil {
@@ -201,6 +204,20 @@ func TestProjectRPCs(t *testing.T) {
 	}
 	if len(list.Msg.Projects) != 2 || list.Msg.Projects[1].GetName() != "demo" {
 		t.Fatalf("ListProjects = %+v, want startup project + demo", list.Msg.Projects)
+	}
+	if list.Msg.Projects[1].NeedsOnboarding == nil || !list.Msg.Projects[1].GetNeedsOnboarding() {
+		t.Fatalf("listed empty project's needs_onboarding = %v, want explicit true", list.Msg.Projects[1].NeedsOnboarding)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "spec.md"), []byte("# Spec\n\nSubstantive design.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	onboarded, err := srv.ListProjects(ctx, connect.NewRequest(&v1.ListProjectsRequest{}))
+	if err != nil {
+		t.Fatalf("ListProjects after onboarding: %v", err)
+	}
+	if p := onboarded.Msg.Projects[1]; p.NeedsOnboarding == nil || p.GetNeedsOnboarding() {
+		t.Fatalf("onboarded project's needs_onboarding = %v, want explicit false", p.NeedsOnboarding)
 	}
 
 	if _, err := srv.RemoveProject(ctx, connect.NewRequest(&v1.RemoveProjectRequest{Name: "demo"})); err != nil {
@@ -614,7 +631,7 @@ func TestModelBackendRPCs(t *testing.T) {
 	// Add a new backend (live only).
 	_, err := srv.UpsertModel(ctx, connect.NewRequest(&v1.UpsertModelRequest{
 		Model: &v1.ModelConfig{
-			Name: "gpt", Backend: "openai", BaseUrl: "https://oai", Model: "gpt-4o", KeyEnv: "OPENAI_API_KEY",
+			Name: "gpt", Backend: "openai", BaseUrl: "https://oai", Model: "gpt-4o", KeyEnv: "OPENAI_API_KEY", Disabled: boolPtr(true),
 		},
 	}))
 	if err != nil {
@@ -630,6 +647,9 @@ func TestModelBackendRPCs(t *testing.T) {
 	for _, m := range list.Msg.Models {
 		if m.Name == "gpt" {
 			found = true
+			if !m.Disabled {
+				t.Fatal("disabled model was listed as enabled")
+			}
 		}
 	}
 	if !found {
@@ -643,8 +663,20 @@ func TestModelBackendRPCs(t *testing.T) {
 		t.Fatalf("GetModelConfig: %v", err)
 	}
 	mc := got.Msg.Model
-	if mc.Backend != "openai" || mc.Model != "gpt-4o" || mc.KeyEnv != "OPENAI_API_KEY" {
+	if mc.Backend != "openai" || mc.Model != "gpt-4o" || mc.KeyEnv != "OPENAI_API_KEY" || !mc.GetDisabled() {
 		t.Fatalf("GetModelConfig = %+v", mc)
+	}
+
+	// A version-skewed client that omits the optional availability field while
+	// editing another property must not accidentally re-enable the model.
+	if _, err := srv.UpsertModel(ctx, connect.NewRequest(&v1.UpsertModelRequest{Model: &v1.ModelConfig{
+		Name: "gpt", Backend: "openai", BaseUrl: "https://oai", Model: "gpt-4.1", KeyEnv: "OPENAI_API_KEY",
+	}})); err != nil {
+		t.Fatalf("legacy UpsertModel: %v", err)
+	}
+	got, err = srv.GetModelConfig(ctx, connect.NewRequest(&v1.GetModelConfigRequest{Name: "gpt"}))
+	if err != nil || !got.Msg.Model.GetDisabled() || got.Msg.Model.Model != "gpt-4.1" {
+		t.Fatalf("legacy upsert did not preserve disabled state: model=%+v err=%v", got.Msg.GetModel(), err)
 	}
 
 	// Removing a role-referenced model is rejected.
@@ -779,10 +811,10 @@ func TestListSessionHistoryMapsModelUsage(t *testing.T) {
 		t.Fatalf("OpenLog: %v", err)
 	}
 	lg.Record("coordinator", event.ModelTurn, map[string]any{
-		"model_name": "claude", "usage": event.Usage{Total: 300},
+		"model_name": "claude", "context_tokens_est": 12_345, "usage": event.Usage{Total: 300},
 	})
 	lg.Record("reviewer:gpt", event.ModelTurn, map[string]any{
-		"model_name": "gpt", "usage": event.Usage{Total: 200},
+		"model_name": "gpt", "context_tokens_est": 777, "usage": event.Usage{Total: 200},
 	})
 	if err := lg.Close(); err != nil {
 		t.Fatalf("Close log: %v", err)
@@ -798,6 +830,11 @@ func TestListSessionHistoryMapsModelUsage(t *testing.T) {
 		summary.ModelUsage[0].Model != "claude" || summary.ModelUsage[0].Tokens != 300 ||
 		summary.ModelUsage[1].Model != "gpt" || summary.ModelUsage[1].Tokens != 200 {
 		t.Fatalf("wire summary usage = %+v, total %d", summary.ModelUsage, summary.TotalTokens)
+	}
+	// The subagent turn is newer but must not replace the coordinator's
+	// context readout on the wire.
+	if summary.ContextTokens != 12_345 {
+		t.Fatalf("wire context tokens = %d, want 12345", summary.ContextTokens)
 	}
 }
 

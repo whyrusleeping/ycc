@@ -43,7 +43,9 @@ final class SessionProjectionTests: XCTestCase {
         return e
     }
 
-    private func delta(_ text: String, done: Bool = false) -> Ycc_V1_Event {
+    private func delta(
+        _ text: String, actor: String = "coordinator", done: Bool = false
+    ) -> Ycc_V1_Event {
         let payload: String
         if done {
             payload = #"{"text":"","done":true}"#
@@ -51,7 +53,9 @@ final class SessionProjectionTests: XCTestCase {
             let escaped = text.replacingOccurrences(of: "\"", with: "\\\"")
             payload = "{\"text\":\"\(escaped)\"}"
         }
-        return makeEvent(seq: 0, type: "turn_delta", dataJson: payload, transient: true)
+        return makeEvent(
+            seq: 0, type: "turn_delta", actor: actor,
+            dataJson: payload, transient: true)
     }
 
     // MARK: - Fixture sanity
@@ -180,6 +184,240 @@ final class SessionProjectionTests: XCTestCase {
         XCTAssertTrue(proj.rows.isEmpty)
         XCTAssertNil(proj.liveTail)
         XCTAssertEqual(proj.lastPersistedSeq, 0, "transient events never advance the cursor")
+    }
+
+    func testConcurrentActorTailsUpdateIndependentlyInStableOrder() {
+        var proj = SessionProjection()
+        proj.apply(delta("implementing", actor: "implementer-1"))
+        proj.apply(delta("reviewing", actor: "reviewer-1"))
+
+        XCTAssertEqual(proj.liveTails.map(\.actor), ["implementer-1", "reviewer-1"])
+        XCTAssertEqual(Set(proj.liveTails.map(\.id)).count, 2)
+        let reviewerBefore = proj.liveTails[1]
+
+        // Interleaving a newer implementer snapshot updates that stable row in
+        // place rather than replacing or moving the reviewer's live output.
+        proj.apply(delta("implementing more", actor: "implementer-1"))
+        XCTAssertEqual(proj.liveTails.map(\.actor), ["implementer-1", "reviewer-1"])
+        XCTAssertEqual(proj.liveTails[1], reviewerBefore)
+        guard case .liveTail(let text) = proj.liveTails[0].kind else {
+            return XCTFail("expected implementer live tail")
+        }
+        XCTAssertEqual(text, "implementing more")
+        XCTAssertEqual(proj.lastPersistedSeq, 0)
+    }
+
+    func testActorCompletionClearsOnlyMatchingLiveTail() {
+        var proj = SessionProjection()
+        proj.apply(delta("implementing", actor: "implementer-1"))
+        proj.apply(delta("reviewing", actor: "reviewer-1"))
+
+        proj.apply(delta("", actor: "implementer-1", done: true))
+        XCTAssertEqual(proj.liveTails.map(\.actor), ["reviewer-1"])
+
+        // Durable completion is also actor-scoped in case its redundant terminal
+        // transient delta was dropped under backpressure.
+        proj.apply(makeEvent(
+            seq: 1, type: "model_turn", actor: "reviewer-1",
+            dataJson: #"{"text":"review complete"}"#))
+        XCTAssertTrue(proj.liveTails.isEmpty)
+        XCTAssertEqual(proj.durableRows.last?.actor, "reviewer-1")
+    }
+
+    func testDurableErrorClearsOnlyMatchingLiveTail() {
+        var proj = SessionProjection()
+        proj.apply(delta("implementing", actor: "implementer-1"))
+        proj.apply(delta("reviewing", actor: "reviewer-1"))
+
+        proj.apply(makeEvent(
+            seq: 1, type: "session_error", actor: "reviewer-1",
+            dataJson: #"{"error":"review failed"}"#))
+
+        XCTAssertEqual(proj.liveTails.map(\.actor), ["implementer-1"])
+    }
+
+    func testSessionCompletionClearsEveryLiveTail() {
+        var proj = SessionProjection()
+        proj.apply(delta("implementing", actor: "implementer-1"))
+        proj.apply(delta("reviewing", actor: "reviewer-1"))
+
+        proj.apply(makeEvent(
+            seq: 1, type: "session_idle", actor: "coordinator",
+            dataJson: #"{"report":"finished"}"#))
+
+        XCTAssertTrue(proj.liveTails.isEmpty)
+        XCTAssertEqual(proj.lastPersistedSeq, 1)
+        guard case .finalReport(let text)? = proj.durableRows.last?.kind else {
+            return XCTFail("expected final report")
+        }
+        XCTAssertEqual(text, "finished")
+    }
+
+    func testLegacyEmptyActorPairsWithCoordinatorCompletion() {
+        var proj = SessionProjection()
+        proj.apply(delta("legacy coordinator output", actor: ""))
+        XCTAssertEqual(proj.liveTails.first?.actor, "coordinator")
+        XCTAssertEqual(proj.liveTails.first?.id, SessionProjection.liveTailID)
+
+        proj.apply(makeEvent(
+            seq: 1, type: "model_turn", actor: "coordinator",
+            dataJson: #"{"text":"done"}"#))
+        XCTAssertTrue(proj.liveTails.isEmpty)
+    }
+
+    func testClearLiveTailsPreservesDurableCursor() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(seq: 3, type: "user_input", dataJson: #"{"text":"hi"}"#))
+        proj.apply(delta("implementing", actor: "implementer-1"))
+        proj.apply(delta("reviewing", actor: "reviewer-1"))
+
+        proj.clearLiveTails()
+
+        XCTAssertTrue(proj.liveTails.isEmpty)
+        XCTAssertEqual(proj.lastPersistedSeq, 3)
+        XCTAssertEqual(proj.durableRows.count, 1)
+    }
+
+    func testDurableTurnDoesNotClearOtherActorsTail() {
+        var proj = SessionProjection()
+        proj.apply(delta("implementing", actor: "implementer-1"))
+        proj.apply(delta("reviewing", actor: "reviewer-1"))
+
+        proj.apply(makeEvent(
+            seq: 1, type: "model_turn", actor: "implementer-1",
+            dataJson: #"{"text":"implementation complete"}"#))
+
+        XCTAssertEqual(proj.liveTails.map(\.actor), ["reviewer-1"])
+        XCTAssertEqual(proj.liveTails.first?.id, "live-tail:reviewer-1")
+    }
+
+    // MARK: - Subagent plant identities
+
+    func testSubagentPlantIdentityPrefixesEveryActorOwnedRowKind() throws {
+        var proj = SessionProjection()
+        let actor = "agent:agent_1"
+        proj.apply(makeEvent(
+            seq: 1, type: "subagent_spawned", actor: "coordinator",
+            dataJson: #"{"role":"generic","agent_id":"agent_1","model":"claude"}"#))
+        proj.apply(makeEvent(
+            seq: 2, type: "model_turn", actor: actor,
+            dataJson: #"{"text":"I found it"}"#))
+        proj.apply(makeEvent(
+            seq: 3, type: "thinking", actor: actor,
+            dataJson: #"{"text":"checking"}"#))
+        proj.apply(makeEvent(
+            seq: 4, type: "tool_call", actor: actor,
+            dataJson: #"{"id":"call-1","name":"Read","args":"{}"}"#))
+        proj.apply(delta("still working", actor: actor))
+
+        let emoji = try XCTUnwrap(proj.durableRows.first?.actorEmoji)
+        XCTAssertFalse(emoji.isEmpty)
+        XCTAssertEqual(proj.durableRows.map(\.actor), Array(repeating: actor, count: 4))
+        XCTAssertEqual(proj.durableRows.map(\.actorEmoji), Array(repeating: emoji, count: 4))
+        XCTAssertEqual(proj.liveTails.first?.actorEmoji, emoji)
+    }
+
+    func testReviewerLifecycleRowsReusePlantWithoutRepeatingActor() throws {
+        var proj = SessionProjection()
+        let actor = "reviewer:opus"
+        proj.apply(makeEvent(
+            seq: 1, type: "subagent_spawned", actor: "coordinator",
+            dataJson: #"{"role":"reviewer","model":"opus"}"#))
+        proj.apply(makeEvent(
+            seq: 2, type: "model_turn", actor: actor,
+            dataJson: #"{"text":"reviewing"}"#))
+        proj.apply(makeEvent(
+            seq: 3, type: "review_submitted", actor: "coordinator",
+            dataJson: #"{"model":"opus","summary":"Looks good"}"#))
+        proj.apply(makeEvent(
+            seq: 4, type: "subagent_finished", actor: "coordinator",
+            dataJson: #"{"role":"reviewer","model":"opus"}"#))
+
+        let emoji = try XCTUnwrap(proj.durableRows.first?.actorEmoji)
+        XCTAssertEqual(proj.durableRows.map(\.actor), Array(repeating: actor, count: 4))
+        XCTAssertEqual(proj.durableRows.map(\.actorEmoji), Array(repeating: emoji, count: 4))
+        guard case .system(let spawned) = proj.durableRows[0].kind,
+              case .system(let review) = proj.durableRows[2].kind,
+              case .system(let finished) = proj.durableRows[3].kind else {
+            return XCTFail("expected lifecycle rows")
+        }
+        XCTAssertEqual(spawned, "Spawned")
+        XCTAssertEqual(review, "Review submitted: Looks good")
+        XCTAssertEqual(finished, "Finished")
+        let lifecycleText = [spawned, review, finished].joined(separator: " ").lowercased()
+        XCTAssertFalse(lifecycleText.contains("reviewer"))
+        XCTAssertFalse(lifecycleText.contains("opus"))
+    }
+
+    func testCoordinatorUserAndSystemActorsDoNotReceivePlants() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(
+            seq: 1, type: "user_input", actor: "user",
+            dataJson: #"{"text":"hello"}"#))
+        proj.apply(makeEvent(
+            seq: 2, type: "model_turn", actor: "coordinator",
+            dataJson: #"{"text":"working"}"#))
+        proj.apply(makeEvent(
+            seq: 3, type: "future_widget", actor: "daemon",
+            dataJson: #"{"text":"maintenance"}"#))
+        proj.apply(makeEvent(
+            seq: 4, type: "future_widget", actor: "system",
+            dataJson: #"{"text":"notice"}"#))
+
+        XCTAssertEqual(proj.durableRows.map(\.actorEmoji), ["", "", "", ""])
+    }
+
+    func testPlantAssignmentSurvivesTransientReset() throws {
+        var proj = SessionProjection()
+        proj.apply(delta("working", actor: "implementer"))
+        let assigned = try XCTUnwrap(proj.liveTails.first?.actorEmoji)
+
+        proj.clearLiveTails()
+        proj.apply(delta("working again", actor: "implementer"))
+
+        XCTAssertEqual(proj.liveTails.first?.actorEmoji, assigned)
+    }
+
+    func testPlantAssignmentsReconstructDeterministicallyFromReplay() {
+        let events = [
+            makeEvent(
+                seq: 1, type: "subagent_spawned", actor: "coordinator",
+                dataJson: #"{"role":"implementer","model":"sol"}"#),
+            makeEvent(
+                seq: 2, type: "subagent_spawned", actor: "coordinator",
+                dataJson: #"{"role":"reviewer","model":"opus"}"#),
+            makeEvent(
+                seq: 3, type: "model_turn", actor: "implementer",
+                dataJson: #"{"text":"implemented"}"#),
+            makeEvent(
+                seq: 4, type: "model_turn", actor: "reviewer:opus",
+                dataJson: #"{"text":"reviewed"}"#),
+        ]
+        var first = SessionProjection()
+        var replayed = SessionProjection()
+        first.apply(events)
+        replayed.apply(events)
+
+        XCTAssertEqual(first, replayed)
+        XCTAssertEqual(first.durableRows.map(\.actorEmoji), replayed.durableRows.map(\.actorEmoji))
+        XCTAssertNotEqual(first.durableRows[0].actorEmoji, first.durableRows[1].actorEmoji)
+    }
+
+    func testPlantPaletteOverflowCyclesWithoutLosingActorIdentity() {
+        var proj = SessionProjection()
+        let count = SessionProjection.subagentEmojiPalette.count + 2
+        for index in 0..<count {
+            proj.apply(makeEvent(
+                seq: Int64(index + 1), type: "model_turn", actor: "agent:\(index)",
+                dataJson: #"{"text":"done"}"#))
+        }
+
+        XCTAssertEqual(proj.durableRows.count, count)
+        XCTAssertEqual(
+            proj.durableRows[0].actorEmoji,
+            proj.durableRows[SessionProjection.subagentEmojiPalette.count].actorEmoji)
+        XCTAssertEqual(proj.durableRows.last?.actor, "agent:\(count - 1)")
+        XCTAssertFalse(proj.durableRows.last?.actorEmoji.isEmpty ?? true)
     }
 
     /// The unread tracker records "seen up to here" from the daemon's own event

@@ -153,11 +153,13 @@ public final class SessionSettingsModel {
         defer { isLoading = false }
         do {
             let response = try await source.listModels()
+            // Keep the complete list: the view creates role-specific enabled
+            // choices while retaining each role's disabled current value for migration.
             models = response.models
             // The session's own coordinator wins over the global default when the
             // caller knows it AND it is a configured model (an unknown name would
             // leave the picker with no matching tag).
-            let known = response.models.contains { $0.name == sessionCoordinator }
+            let known = models.contains { $0.name == sessionCoordinator }
             let coord = known ? sessionCoordinator : response.coordinator
             coordinator = coord
             implementer = response.implementer

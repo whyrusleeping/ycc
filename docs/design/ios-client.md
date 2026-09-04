@@ -37,20 +37,38 @@ explicit editor for title, status, priority, dependencies, spec references, and 
 `UpdateTask` saves the whole draft and the returned canonical detail replaces the projection.
 Cancellation leaves the loaded task untouched, while a failed save retains the draft for retry.
 
+### Settings
+
+The global model editor can discover model ids and test a model draft, but these are intentionally
+separate operations. Discovery queries the provider's listing endpoint and may fall back to curated
+ids; it does not prove that generation works. **Test model** sends one small, potentially billed
+inference request through the daemon using the exact unsaved backend, endpoint, model id, auth,
+credential reference, and reasoning controls. The key remains daemon-side, the draft is neither
+saved nor installed, and progress plus success/provider failure appear inline in the editor.
+
 ### Navigation and interaction
 
 One workspace drawer anchors project selection and cross-project recents. Project/session routes
-flow through a single router so list taps, notifications, and `ycc://` links share authentication,
-project selection, and duplicate-push handling. Task dependency references are links to task detail
-through that router, allowing a blocked task to lead directly to each blocker without growing the
-navigation stack when dependencies cross-link. A deep link identifies a project/session but never
-carries credentials.
+flow through a single router so list taps, notifications, and `ycc://` links share authentication
+and project selection. Navigation is hub-and-spoke: the recents list is the hub, and a cross-link
+jump between screens (session → backlog, task → session, drawer → anywhere) replaces the stack
+rather than pushing, so a single Back always returns to recents. Only genuine drill-ins (recents →
+session, backlog → task) push; task dependency references are lateral hops that swap the detail
+screen in place, so a blocked task leads directly to each blocker without growing the stack when
+dependencies cross-link. A deep link identifies a project/session but never carries credentials.
 
-Transcript behavior follows the shared client contract in spec §18: durable rows, one transient
-live tail, no scroll jumps while reading history, structured question sheets, graceful
-interrupt/steer/resume, and confirmed hard stop. User-message picture metadata carries opaque
+Transcript behavior follows the shared client contract in spec §18: durable rows, stable per-actor
+transient live tails for concurrent agents, no scroll jumps while reading history, structured
+question sheets, graceful interrupt/steer/resume, and confirmed hard stop. Within a session, each
+subagent receives a stable plant emoji from a fixed palette; every actor-owned durable or live row
+keeps the emoji alongside the textual actor identity, while coordinator/user/system rows remain
+unadorned. User-message picture metadata carries opaque
 session attachment ids; the app lazily fetches retained bytes through the authenticated daemon API
 and renders thumbnails, degrading to a labelled placeholder for legacy or reclaimed payloads.
+Outgoing pictures reach the composer draft two ways — the Photos picker and pasting an image
+directly into the message field (a UIKit-backed text view, since SwiftUI text fields refuse image
+pastes) — both funneled through one normalize/merge pipeline that caps count and per-image bytes to
+the daemon's limits.
 Daemon work loops remain daemon-owned because iOS background execution cannot reliably host
 long-running work.
 

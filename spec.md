@@ -76,9 +76,12 @@ unknown workspace registers it. A request may omit the project only when exactly
 registered; ambiguity is an error. The exception is `GetUsage`: an omitted project requests the
 all-project rollup even when several projects are registered.
 
-Project status is computed from local git refs without blocking on the network. A daemon-owned
-poller caches fetch-dependent metadata; no upstream, offline operation, authentication failure,
-and non-git directories remain non-fatal and appear as unavailable or stale status.
+Project status is computed from local workspace state without blocking on the network. Project
+metadata reports whether onboarding is still needed (no substantive configured spec entry point and
+no backlog tasks), allowing clients to omit the onboarding suggestion for established projects. Git
+status comes from local refs; a daemon-owned poller caches fetch-dependent metadata. No upstream,
+offline operation, authentication failure, and non-git directories remain non-fatal and appear as
+unavailable or stale status.
 
 ## 4. Session flow
 
@@ -144,8 +147,10 @@ replayed, and may be dropped under backpressure. They therefore never advance a 
 
 `turn_delta` carries the full accumulated text snapshot for an in-progress model turn. Optional
 append hints are valid only when the client's current UTF-8 length matches the supplied base;
-otherwise the full snapshot wins. A terminal delta or durable model turn clears the live tail.
-`retry` reports a live backoff. Durable completion or failure remains authoritative in both cases.
+otherwise the full snapshot wins. Clients keep an independent transient tail per actor so concurrent
+subagent turns do not replace one another; a terminal delta or durable model turn clears only its
+actor's tail. `retry` reports a live backoff. Durable completion or failure remains authoritative in
+both cases.
 
 ## 6. Project documents
 
@@ -406,10 +411,11 @@ opening attachments are rejected before the session/log is created.
 
 ## 13. Models, credentials, and review tiers
 
-A TOML config maps logical model names to backend, endpoint, model id, auth, reasoning, and
-optional pricing. Roles select a coordinator, implementer, and reviewer models. Several logical
-models may share one endpoint/credential while selecting different model ids. Config is discovered
-workspace-first and otherwise from the user config directory; the active files are not merged.
+A TOML config maps logical model names to backend, endpoint, model id, auth, reasoning, optional
+pricing, and an enabled/disabled availability flag. Roles select a coordinator, implementer, and
+reviewer models. Several logical models may share one endpoint/credential while selecting different
+model ids. Config is discovered workspace-first and otherwise from the user config directory; the
+active files are not merged.
 
 API-key values resolve from the environment first and then the machine-local secrets store
 managed by `ycc token`; committed config stores only the key name. Anthropic and OpenAI also
@@ -421,8 +427,16 @@ cap, but this transport must not send `max_output_tokens`: the ChatGPT Codex bac
 parameter. Subscription models are unpriced unless the user supplies rates.
 
 Runtime settings changes persist to the active `ycc.toml` and affect the next model construction;
-role and thinking changes may also update a live session's next turn. Removing a model still
-referenced by a role is rejected. A first-run client wizard creates a usable config when no model
+role and thinking changes may also update a live session's next turn. A model may be temporarily
+disabled without deleting its connection, credential reference, pricing, reasoning, or role/tier
+references. Disabled models remain visible in backend settings but are omitted from new model and
+role choices, and explicit attempts to construct or select one for new inference fail clearly;
+already-constructed live clients are not torn down by the toggle. Removing a model still referenced
+by a role is rejected. Provider model discovery is only a listing probe; settings clients separately
+offer a real model test that sends one small, bounded, potentially billed inference request using the
+current unsaved model draft. Draft tests resolve credentials daemon-side, do not install or persist
+the draft, and report provider authentication/request failures as diagnostics rather than confusing
+them with daemon authentication. A first-run client wizard creates a usable config when no model
 configuration or fallback credential exists.
 
 ### 13.1 Review tiers
@@ -507,8 +521,10 @@ reinject the pixels.
 
 Settings expose logical models, role assignment, reasoning, work implementation, review tiers,
 and client-local presentation preferences. Daemon settings persist; local preferences do not.
-Changes whose prompt/tool shape is fixed at construction are clearly marked as applying to the
-next session.
+The model editor distinguishes model-list discovery from testing the exact unsaved configuration
+with a small real inference request, showing progress and an inline success/provider error while
+warning that the probe may be billed. Changes whose prompt/tool shape is fixed at construction are
+clearly marked as applying to the next session.
 
 Native clients keep bearer tokens in platform credential storage rather than preferences. A 401
 clears authenticated state without deleting the saved endpoint/profile. Deep links identify a
@@ -523,8 +539,9 @@ ordinary non-fatal action errors.
 ### 18.4 Reasoning and streaming
 
 Reasoning summaries are foldable transcript content; opaque provider reasoning state is not.
-Streaming snapshots appear as one replaceable live tail and disappear on durable completion or
-error. A reconnect discards stale transient presentation before replay.
+Streaming snapshots appear as stable, replaceable live tails keyed by actor; concurrent subagents
+remain independently visible, and each tail disappears on that actor's durable completion or error.
+A reconnect discards all stale transient presentation before replay.
 
 ### 18.5 Backlog browser
 
@@ -592,8 +609,9 @@ priced.
 CLI and RPC views expose local usage/cost summaries. Session usage surfaces distinguish cumulative
 spend from active context size and prominently show the latest completed coordinator turn's coarse
 prompt-token estimate when the event log provides it; subagent contexts do not replace the
-coordinator readout. Provider allowance is separate best-effort telemetry, cached and sanitized,
-and never blocks inference.
+coordinator readout. Session history rows carry the same per-session context readout (rather than
+cumulative spend) so list surfaces can show how full each session's conversation is. Provider
+allowance is separate best-effort telemetry, cached and sanitized, and never blocks inference.
 
 ### 20.6 Spend guard
 

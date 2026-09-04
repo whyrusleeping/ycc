@@ -47,6 +47,10 @@ message ProjectInfo {
   string name = 1;
   string path = 2;
   GitStatus git = 3;
+  // Whether the workspace has neither a substantive spec entry point nor any
+  // backlog tasks. Optional so older daemons remain distinguishable from an
+  // explicit "already onboarded" result.
+  optional bool needs_onboarding = 4;
 }
 message GitStatus {
   string branch = 1;         // "" when detached
@@ -228,6 +232,11 @@ message SessionSummary {
   // Total recorded tokens across all actors and models in the session. Zero means
   // the log has no usable token metadata.
   int64 total_tokens = 14;
+  // Coarse prompt-size estimate (context_tokens_est) from the newest completed
+  // coordinator model turn — how full the session's active context is, as
+  // opposed to cumulative spend. Subagent turns are ignored. Zero means the log
+  // predates the telemetry (or no turn completed yet).
+  int64 context_tokens = 15;
 }
 message ListSessionHistoryResponse { repeated SessionSummary sessions = 1; }
 
@@ -266,8 +275,8 @@ message GetCommitDiffResponse {
   bool truncated = 2;
 }
 
-// ListModels enumerates the configured logical models so the settings
-// overlay can populate the per-role pickers.
+// ListModels enumerates every configured logical model for global editing.
+// Selection clients omit disabled entries except to display an existing assignment.
 message ListModelsRequest {}
 message ModelInfo {
   string name = 1;    // logical name (e.g. "claude", "gpt")
@@ -283,6 +292,9 @@ message ModelInfo {
   optional double price_cache_read = 6;
   optional double price_cache_write = 7;
   bool priced = 8;
+  // A disabled model remains configured and editable but is unavailable for new
+  // inference or role/model selection until re-enabled.
+  bool disabled = 9;
 }
 message ListModelsResponse {
   repeated ModelInfo models = 1;
@@ -320,6 +332,7 @@ message ModelConfig {
   optional double price_cache_read = 11;
   optional double price_cache_write = 12;
   string auth = 13;            // credential mechanism: "" | "api-key" | "oauth"
+  optional bool disabled = 14; // temporarily unavailable; omission preserves existing state
 }
 
 // UpsertModel adds or replaces a logical model backend. The change
@@ -357,7 +370,6 @@ message DiscoverModelsResponse {
   bool from_network = 2; // true => queried the backend; false => curated fallback
   string note = 3;       // human-readable status/error (e.g. why fallback happened)
 }
-
 
 // SetRoleConfig reassigns per-role logical models. Empty
 // coordinator/implementer leaves that role unchanged; an empty reviewers list
@@ -794,12 +806,24 @@ message DiscardWorkstreamResponse {}
 message RetryIntegrationRequest { string workstream_id = 1; }
 message RetryIntegrationResponse { WorkstreamInfo workstream = 1; }
 
-// Per-model session-history usage. Kept at the end of the message declarations
-// so adding it does not renumber the generated descriptor indexes of existing
-// message types.
+// Per-model session-history usage. New message types append in this tail before
+// the service so generated descriptor indexes of existing messages stay stable.
 message SessionModelUsage {
   string model = 1;
   int64 tokens = 2;
+}
+
+// TestModel performs one small billed inference request against an unsaved model
+// draft. The daemon resolves key_env locally and does not persist or install the
+// draft. Provider failures are diagnostic results rather than RPC transport
+// failures, so a bad provider credential cannot be confused with daemon auth.
+message TestModelRequest { ModelConfig model = 1; }
+message TestModelResponse {
+  bool success = 1;
+  string message = 2;
+  int64 duration_ms = 3;
+  string error_kind = 4; // normalized provider failure kind; empty on success
+  int32 status = 5;      // provider HTTP status when available
 }
 
 service SessionService {
@@ -862,6 +886,7 @@ service SessionService {
   rpc RemoveModel(RemoveModelRequest) returns (RemoveModelResponse);
   rpc GetModelConfig(GetModelConfigRequest) returns (GetModelConfigResponse);
   rpc DiscoverModels(DiscoverModelsRequest) returns (DiscoverModelsResponse);
+  rpc TestModel(TestModelRequest) returns (TestModelResponse);
 
   // Review tiers: list the effective tiers and edit the configured
   // ones (plus the default tier) at runtime; always persisted to ycc.toml.

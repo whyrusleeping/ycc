@@ -65,6 +65,32 @@ func TestStartRejectsUnknownCoordinatorModel(t *testing.T) {
 	}
 }
 
+func TestStartRejectsDisabledCoordinatorModel(t *testing.T) {
+	reg := testRegistry()
+	model, ok := reg.GetModel("b")
+	if !ok {
+		t.Fatal("test model b missing")
+	}
+	model.Disabled = true
+	if err := reg.UpsertModel("b", model, false); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(reg, t.TempDir())
+	m.SetProjects(project.NewMemory())
+	ws := t.TempDir()
+	if _, err := m.AddProject(ws, "demo"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := m.Start(Config{Project: "demo", Prompt: "hi", CoordinatorModel: "b"})
+	if !errors.Is(err, ErrDisabledModel) {
+		t.Fatalf("Start with disabled model err = %v, want ErrDisabledModel", err)
+	}
+	if got := m.List(); len(got) != 0 {
+		t.Fatalf("sessions after rejected start = %+v, want none", got)
+	}
+}
+
 // newSession also guards the override (defence in depth for the Reopen path).
 func TestNewSessionRejectsUnknownCoordinatorModel(t *testing.T) {
 	m := NewManager(testRegistry(), t.TempDir())

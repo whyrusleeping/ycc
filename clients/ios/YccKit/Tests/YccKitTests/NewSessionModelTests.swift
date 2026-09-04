@@ -67,10 +67,21 @@ final class NewSessionModelTests: XCTestCase {
         return m
     }
 
-    private func project(_ name: String) -> Ycc_V1_ProjectInfo {
+    private func project(_ name: String, needsOnboarding: Bool? = nil) -> Ycc_V1_ProjectInfo {
         var p = Ycc_V1_ProjectInfo()
         p.name = name
         p.path = "/tmp/\(name)"
+        if let needsOnboarding {
+            p.needsOnboarding = needsOnboarding
+        }
+        return p
+    }
+
+    private func preset(_ name: String) -> Ycc_V1_Preset {
+        var p = Ycc_V1_Preset()
+        p.name = name
+        p.title = name.capitalized
+        p.mode = "pm"
         return p
     }
 
@@ -101,6 +112,25 @@ final class NewSessionModelTests: XCTestCase {
 
         XCTAssertEqual(model.models.map(\.name), ["claude", "gpt"])
         XCTAssertEqual(model.selectedModel, "")
+    }
+
+    func testDisabledDefaultRequiresEnabledOverride() async {
+        let source = MockNewSessionSource()
+        source.modes = [mode("work")]
+        var listed = modelList(["claude", "gpt"], coordinator: "claude")
+        listed.models[0].disabled = true
+        source.models = listed
+        let model = NewSessionModel(source: source, defaults: MockDefaults())
+
+        await model.load()
+
+        XCTAssertEqual(model.models.map(\.name), ["gpt"])
+        XCTAssertTrue(model.defaultModelDisabled)
+        XCTAssertTrue(model.showsModelPicker)
+        XCTAssertEqual(model.selectedModelTitle, "Choose model")
+        XCTAssertFalse(model.canStart)
+        model.selectedModel = "gpt"
+        XCTAssertTrue(model.canStart)
     }
 
     func testStartSendsSelectedModelAsOverride() async {
@@ -193,6 +223,52 @@ final class NewSessionModelTests: XCTestCase {
         XCTAssertEqual(model.selectedModeDescription, "Do work")
         XCTAssertTrue(model.showsProjectPicker)
         XCTAssertNil(model.errorMessage)
+    }
+
+    func testOnboardingSuggestionTracksSelectedProjectStatus() async {
+        let source = MockNewSessionSource()
+        source.modes = [mode("pm")]
+        source.presets = [preset("onboard"), preset("spec-doctor")]
+        source.projects = [
+            project("new", needsOnboarding: true),
+            project("established", needsOnboarding: false),
+        ]
+        let model = NewSessionModel(
+            source: source, defaults: MockDefaults(), initialProject: "established")
+
+        await model.load()
+
+        XCTAssertEqual(model.suggestedPresets.map(\.name), ["spec-doctor"])
+        model.selectedProject = "new"
+        XCTAssertEqual(model.suggestedPresets.map(\.name), ["onboard", "spec-doctor"])
+    }
+
+    func testOnboardingSuggestionIsHiddenWithoutASelectedProject() async {
+        let source = MockNewSessionSource()
+        source.modes = [mode("pm")]
+        source.presets = [preset("onboard"), preset("spec-doctor")]
+        source.projects = [
+            project("one", needsOnboarding: true),
+            project("two", needsOnboarding: true),
+        ]
+        let model = NewSessionModel(source: source, defaults: MockDefaults())
+
+        await model.load()
+
+        XCTAssertEqual(model.selectedProject, "")
+        XCTAssertEqual(model.suggestedPresets.map(\.name), ["spec-doctor"])
+    }
+
+    func testOnboardingSuggestionRemainsWhenOlderDaemonOmitsStatus() async {
+        let source = MockNewSessionSource()
+        source.modes = [mode("pm")]
+        source.presets = [preset("onboard")]
+        source.projects = [project("legacy")]
+        let model = NewSessionModel(source: source, defaults: MockDefaults())
+
+        await model.load()
+
+        XCTAssertEqual(model.suggestedPresets.map(\.name), ["onboard"])
     }
 
     func testLoadRecallsRememberedSelections() async {

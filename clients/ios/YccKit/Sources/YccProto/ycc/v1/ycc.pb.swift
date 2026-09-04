@@ -124,11 +124,24 @@ public nonisolated struct Ycc_V1_ProjectInfo: Sendable {
   /// Clears the value of `git`. Subsequent reads from it will return its default value.
   public mutating func clearGit() {self._git = nil}
 
+  /// Whether the workspace has neither a substantive spec entry point nor any
+  /// backlog tasks. Optional so older daemons remain distinguishable from an
+  /// explicit "already onboarded" result.
+  public var needsOnboarding: Bool {
+    get {_needsOnboarding ?? false}
+    set {_needsOnboarding = newValue}
+  }
+  /// Returns true if `needsOnboarding` has been explicitly set.
+  public var hasNeedsOnboarding: Bool {self._needsOnboarding != nil}
+  /// Clears the value of `needsOnboarding`. Subsequent reads from it will return its default value.
+  public mutating func clearNeedsOnboarding() {self._needsOnboarding = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
   fileprivate var _git: Ycc_V1_GitStatus? = nil
+  fileprivate var _needsOnboarding: Bool? = nil
 }
 
 public nonisolated struct Ycc_V1_GitStatus: Sendable {
@@ -749,6 +762,12 @@ public nonisolated struct Ycc_V1_SessionSummary: Sendable {
   /// the log has no usable token metadata.
   public var totalTokens: Int64 = 0
 
+  /// Coarse prompt-size estimate (context_tokens_est) from the newest completed
+  /// coordinator model turn — how full the session's active context is, as
+  /// opposed to cumulative spend. Subagent turns are ignored. Zero means the log
+  /// predates the telemetry (or no turn completed yet).
+  public var contextTokens: Int64 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -865,8 +884,8 @@ public nonisolated struct Ycc_V1_GetCommitDiffResponse: Sendable {
   public init() {}
 }
 
-/// ListModels enumerates the configured logical models so the settings
-/// overlay can populate the per-role pickers.
+/// ListModels enumerates every configured logical model for global editing.
+/// Selection clients omit disabled entries except to display an existing assignment.
 public nonisolated struct Ycc_V1_ListModelsRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -933,6 +952,10 @@ public nonisolated struct Ycc_V1_ModelInfo: Sendable {
   public mutating func clearPriceCacheWrite() {self._priceCacheWrite = nil}
 
   public var priced: Bool = false
+
+  /// A disabled model remains configured and editable but is unavailable for new
+  /// inference or role/model selection until re-enabled.
+  public var disabled: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -1048,6 +1071,16 @@ public nonisolated struct Ycc_V1_ModelConfig: Sendable {
   /// credential mechanism: "" | "api-key" | "oauth"
   public var auth: String = String()
 
+  /// temporarily unavailable; omission preserves existing state
+  public var disabled: Bool {
+    get {_disabled ?? false}
+    set {_disabled = newValue}
+  }
+  /// Returns true if `disabled` has been explicitly set.
+  public var hasDisabled: Bool {self._disabled != nil}
+  /// Clears the value of `disabled`. Subsequent reads from it will return its default value.
+  public mutating func clearDisabled() {self._disabled = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1056,6 +1089,7 @@ public nonisolated struct Ycc_V1_ModelConfig: Sendable {
   fileprivate var _priceOutput: Double? = nil
   fileprivate var _priceCacheRead: Double? = nil
   fileprivate var _priceCacheWrite: Double? = nil
+  fileprivate var _disabled: Bool? = nil
 }
 
 /// UpsertModel adds or replaces a logical model backend. The change
@@ -2678,9 +2712,8 @@ public nonisolated struct Ycc_V1_RetryIntegrationResponse: Sendable {
   fileprivate var _workstream: Ycc_V1_WorkstreamInfo? = nil
 }
 
-/// Per-model session-history usage. Kept at the end of the message declarations
-/// so adding it does not renumber the generated descriptor indexes of existing
-/// message types.
+/// Per-model session-history usage. New message types append in this tail before
+/// the service so generated descriptor indexes of existing messages stay stable.
 public nonisolated struct Ycc_V1_SessionModelUsage: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -2689,6 +2722,53 @@ public nonisolated struct Ycc_V1_SessionModelUsage: Sendable {
   public var model: String = String()
 
   public var tokens: Int64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// TestModel performs one small billed inference request against an unsaved model
+/// draft. The daemon resolves key_env locally and does not persist or install the
+/// draft. Provider failures are diagnostic results rather than RPC transport
+/// failures, so a bad provider credential cannot be confused with daemon auth.
+public nonisolated struct Ycc_V1_TestModelRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var model: Ycc_V1_ModelConfig {
+    get {_model ?? Ycc_V1_ModelConfig()}
+    set {_model = newValue}
+  }
+  /// Returns true if `model` has been explicitly set.
+  public var hasModel: Bool {self._model != nil}
+  /// Clears the value of `model`. Subsequent reads from it will return its default value.
+  public mutating func clearModel() {self._model = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _model: Ycc_V1_ModelConfig? = nil
+}
+
+public nonisolated struct Ycc_V1_TestModelResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var success: Bool = false
+
+  public var message: String = String()
+
+  public var durationMs: Int64 = 0
+
+  /// normalized provider failure kind; empty on success
+  public var errorKind: String = String()
+
+  /// provider HTTP status when available
+  public var status: Int32 = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -2846,7 +2926,7 @@ nonisolated extension Ycc_V1_StartSessionResponse: SwiftProtobuf.Message, SwiftP
 
 nonisolated extension Ycc_V1_ProjectInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ProjectInfo"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}path\0\u{1}git\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}path\0\u{1}git\0\u{3}needs_onboarding\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2857,6 +2937,7 @@ nonisolated extension Ycc_V1_ProjectInfo: SwiftProtobuf.Message, SwiftProtobuf._
       case 1: try { try decoder.decodeSingularStringField(value: &self.name) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.path) }()
       case 3: try { try decoder.decodeSingularMessageField(value: &self._git) }()
+      case 4: try { try decoder.decodeSingularBoolField(value: &self._needsOnboarding) }()
       default: break
       }
     }
@@ -2876,6 +2957,9 @@ nonisolated extension Ycc_V1_ProjectInfo: SwiftProtobuf.Message, SwiftProtobuf._
     try { if let v = self._git {
       try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
     } }()
+    try { if let v = self._needsOnboarding {
+      try visitor.visitSingularBoolField(value: v, fieldNumber: 4)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -2883,6 +2967,7 @@ nonisolated extension Ycc_V1_ProjectInfo: SwiftProtobuf.Message, SwiftProtobuf._
     if lhs.name != rhs.name {return false}
     if lhs.path != rhs.path {return false}
     if lhs._git != rhs._git {return false}
+    if lhs._needsOnboarding != rhs._needsOnboarding {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -4094,7 +4179,7 @@ nonisolated extension Ycc_V1_ListSessionHistoryRequest: SwiftProtobuf.Message, S
 
 nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SessionSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}mode\0\u{1}status\0\u{1}workspace\0\u{1}title\0\u{3}started_at\0\u{3}last_activity\0\u{3}focus_tasks\0\u{1}turns\0\u{3}tool_calls\0\u{1}live\0\u{3}waiting_input\0\u{3}model_usage\0\u{3}total_tokens\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}mode\0\u{1}status\0\u{1}workspace\0\u{1}title\0\u{3}started_at\0\u{3}last_activity\0\u{3}focus_tasks\0\u{1}turns\0\u{3}tool_calls\0\u{1}live\0\u{3}waiting_input\0\u{3}model_usage\0\u{3}total_tokens\0\u{3}context_tokens\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -4116,6 +4201,7 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
       case 12: try { try decoder.decodeSingularBoolField(value: &self.waitingInput) }()
       case 13: try { try decoder.decodeRepeatedMessageField(value: &self.modelUsage) }()
       case 14: try { try decoder.decodeSingularInt64Field(value: &self.totalTokens) }()
+      case 15: try { try decoder.decodeSingularInt64Field(value: &self.contextTokens) }()
       default: break
       }
     }
@@ -4164,6 +4250,9 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
     if self.totalTokens != 0 {
       try visitor.visitSingularInt64Field(value: self.totalTokens, fieldNumber: 14)
     }
+    if self.contextTokens != 0 {
+      try visitor.visitSingularInt64Field(value: self.contextTokens, fieldNumber: 15)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -4182,6 +4271,7 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
     if lhs.waitingInput != rhs.waitingInput {return false}
     if lhs.modelUsage != rhs.modelUsage {return false}
     if lhs.totalTokens != rhs.totalTokens {return false}
+    if lhs.contextTokens != rhs.contextTokens {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -4448,7 +4538,7 @@ nonisolated extension Ycc_V1_ListModelsRequest: SwiftProtobuf.Message, SwiftProt
 
 nonisolated extension Ycc_V1_ModelInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelInfo"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}backend\0\u{1}model\0\u{3}price_input\0\u{3}price_output\0\u{3}price_cache_read\0\u{3}price_cache_write\0\u{1}priced\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}backend\0\u{1}model\0\u{3}price_input\0\u{3}price_output\0\u{3}price_cache_read\0\u{3}price_cache_write\0\u{1}priced\0\u{1}disabled\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -4464,6 +4554,7 @@ nonisolated extension Ycc_V1_ModelInfo: SwiftProtobuf.Message, SwiftProtobuf._Me
       case 6: try { try decoder.decodeSingularDoubleField(value: &self._priceCacheRead) }()
       case 7: try { try decoder.decodeSingularDoubleField(value: &self._priceCacheWrite) }()
       case 8: try { try decoder.decodeSingularBoolField(value: &self.priced) }()
+      case 9: try { try decoder.decodeSingularBoolField(value: &self.disabled) }()
       default: break
       }
     }
@@ -4498,6 +4589,9 @@ nonisolated extension Ycc_V1_ModelInfo: SwiftProtobuf.Message, SwiftProtobuf._Me
     if self.priced != false {
       try visitor.visitSingularBoolField(value: self.priced, fieldNumber: 8)
     }
+    if self.disabled != false {
+      try visitor.visitSingularBoolField(value: self.disabled, fieldNumber: 9)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -4510,6 +4604,7 @@ nonisolated extension Ycc_V1_ModelInfo: SwiftProtobuf.Message, SwiftProtobuf._Me
     if lhs._priceCacheRead != rhs._priceCacheRead {return false}
     if lhs._priceCacheWrite != rhs._priceCacheWrite {return false}
     if lhs.priced != rhs.priced {return false}
+    if lhs.disabled != rhs.disabled {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -4582,7 +4677,7 @@ nonisolated extension Ycc_V1_ListModelsResponse: SwiftProtobuf.Message, SwiftPro
 
 nonisolated extension Ycc_V1_ModelConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelConfig"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}backend\0\u{3}base_url\0\u{1}model\0\u{3}key_env\0\u{1}thinking\0\u{1}effort\0\u{3}thinking_display\0\u{3}price_input\0\u{3}price_output\0\u{3}price_cache_read\0\u{3}price_cache_write\0\u{1}auth\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}backend\0\u{3}base_url\0\u{1}model\0\u{3}key_env\0\u{1}thinking\0\u{1}effort\0\u{3}thinking_display\0\u{3}price_input\0\u{3}price_output\0\u{3}price_cache_read\0\u{3}price_cache_write\0\u{1}auth\0\u{1}disabled\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -4603,6 +4698,7 @@ nonisolated extension Ycc_V1_ModelConfig: SwiftProtobuf.Message, SwiftProtobuf._
       case 11: try { try decoder.decodeSingularDoubleField(value: &self._priceCacheRead) }()
       case 12: try { try decoder.decodeSingularDoubleField(value: &self._priceCacheWrite) }()
       case 13: try { try decoder.decodeSingularStringField(value: &self.auth) }()
+      case 14: try { try decoder.decodeSingularBoolField(value: &self._disabled) }()
       default: break
       }
     }
@@ -4652,6 +4748,9 @@ nonisolated extension Ycc_V1_ModelConfig: SwiftProtobuf.Message, SwiftProtobuf._
     if !self.auth.isEmpty {
       try visitor.visitSingularStringField(value: self.auth, fieldNumber: 13)
     }
+    try { if let v = self._disabled {
+      try visitor.visitSingularBoolField(value: v, fieldNumber: 14)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -4669,6 +4768,7 @@ nonisolated extension Ycc_V1_ModelConfig: SwiftProtobuf.Message, SwiftProtobuf._
     if lhs._priceCacheRead != rhs._priceCacheRead {return false}
     if lhs._priceCacheWrite != rhs._priceCacheWrite {return false}
     if lhs.auth != rhs.auth {return false}
+    if lhs._disabled != rhs._disabled {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -7703,6 +7803,90 @@ nonisolated extension Ycc_V1_SessionModelUsage: SwiftProtobuf.Message, SwiftProt
   public static func ==(lhs: Ycc_V1_SessionModelUsage, rhs: Ycc_V1_SessionModelUsage) -> Bool {
     if lhs.model != rhs.model {return false}
     if lhs.tokens != rhs.tokens {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_TestModelRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".TestModelRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}model\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._model) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._model {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_TestModelRequest, rhs: Ycc_V1_TestModelRequest) -> Bool {
+    if lhs._model != rhs._model {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_TestModelResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".TestModelResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}success\0\u{1}message\0\u{3}duration_ms\0\u{3}error_kind\0\u{1}status\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBoolField(value: &self.success) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.message) }()
+      case 3: try { try decoder.decodeSingularInt64Field(value: &self.durationMs) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.errorKind) }()
+      case 5: try { try decoder.decodeSingularInt32Field(value: &self.status) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.success != false {
+      try visitor.visitSingularBoolField(value: self.success, fieldNumber: 1)
+    }
+    if !self.message.isEmpty {
+      try visitor.visitSingularStringField(value: self.message, fieldNumber: 2)
+    }
+    if self.durationMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.durationMs, fieldNumber: 3)
+    }
+    if !self.errorKind.isEmpty {
+      try visitor.visitSingularStringField(value: self.errorKind, fieldNumber: 4)
+    }
+    if self.status != 0 {
+      try visitor.visitSingularInt32Field(value: self.status, fieldNumber: 5)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_TestModelResponse, rhs: Ycc_V1_TestModelResponse) -> Bool {
+    if lhs.success != rhs.success {return false}
+    if lhs.message != rhs.message {return false}
+    if lhs.durationMs != rhs.durationMs {return false}
+    if lhs.errorKind != rhs.errorKind {return false}
+    if lhs.status != rhs.status {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

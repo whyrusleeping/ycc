@@ -78,6 +78,9 @@ public final class NewSessionModel {
     /// The daemon's configured default coordinator model, shown as the "Default"
     /// option's subtitle so the user can see what they'd get without choosing.
     public private(set) var defaultModel: String = ""
+    /// True when the daemon's coordinator role still references a temporarily
+    /// disabled model, requiring an enabled per-session override.
+    public private(set) var defaultModelDisabled = false
 
     /// The selected mode name (e.g. `work`/`pm`/`chat`).
     public var selectedMode: String = ""
@@ -122,14 +125,32 @@ public final class NewSessionModel {
     /// The picker is useful only when there is a real choice.
     public var showsProjectPicker: Bool { projects.count > 1 }
 
+    /// Presets appropriate for the selected project's current state. The
+    /// onboarding card appears only when a project is selected and either needs
+    /// onboarding or came from an older daemon that omitted the status. It is
+    /// irrelevant without a project and disappears for established projects.
+    public var suggestedPresets: [Ycc_V1_Preset] {
+        let withoutOnboarding = presets.filter { $0.name != "onboard" }
+        guard let project = projects.first(where: { $0.name == selectedProject }) else {
+            return withoutOnboarding
+        }
+        guard project.hasNeedsOnboarding else {
+            return presets
+        }
+        return project.needsOnboarding ? presets : withoutOnboarding
+    }
+
     /// The model chip is worth showing only when there is something to pick
     /// between (a single configured model leaves nothing to choose).
-    public var showsModelPicker: Bool { models.count > 1 }
+    public var showsModelPicker: Bool {
+        !models.isEmpty && (models.count > 1 || defaultModelDisabled)
+    }
 
     /// The label for the current model choice: the picked model, or the daemon's
     /// default coordinator marked as such, or a bare prompt when unknown.
     public var selectedModelTitle: String {
         if !selectedModel.isEmpty { return selectedModel }
+        if defaultModelDisabled { return "Choose model" }
         return defaultModel.isEmpty ? "Model" : "\(defaultModel) (default)"
     }
 
@@ -144,6 +165,7 @@ public final class NewSessionModel {
     public var canStart: Bool {
         !isStarting
             && !selectedMode.isEmpty
+            && (!defaultModelDisabled || !selectedModel.isEmpty)
             && (promptIsOptional
                 || !images.isEmpty
                 || !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -173,8 +195,12 @@ public final class NewSessionModel {
             modes = loadedModes
             presets = loadedPresets
             projects = loadedProjects
-            models = loadedModels?.models ?? []
+            let listedModels = loadedModels?.models ?? []
+            models = listedModels.filter { !$0.disabled }
             defaultModel = loadedModels?.coordinator ?? ""
+            defaultModelDisabled = listedModels.contains {
+                $0.name == defaultModel && $0.disabled
+            }
             // Never keep an override pointing at a model that is no longer
             // configured — fall back to the daemon's default.
             if !selectedModel.isEmpty, !models.contains(where: { $0.name == selectedModel }) {

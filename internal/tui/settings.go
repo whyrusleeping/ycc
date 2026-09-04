@@ -63,10 +63,12 @@ func (m model) setWorkImplementation(impl string) tea.Cmd {
 func (m *model) openOverlay() {
 	m.overlay = true
 	m.ovCursor = 0
-	if m.roleCoord == "" && len(m.models) > 0 {
-		m.roleCoord = m.models[0].Name
-		m.roleImpl = m.models[0].Name
-		m.roleReviewrs = []string{m.models[0].Name}
+	if m.roleCoord == "" {
+		if models := enabledModels(m.models); len(models) > 0 {
+			m.roleCoord = models[0].Name
+			m.roleImpl = models[0].Name
+			m.roleReviewrs = []string{models[0].Name}
+		}
 	}
 }
 
@@ -151,9 +153,9 @@ func (m model) overlayAdjust(d int) (tea.Model, tea.Cmd) {
 		m.roleImpl = cycleModel(m.models, m.roleImpl, d)
 		return m, m.setRoleConfig("", m.roleImpl, nil)
 	case ovReviewers:
-		// Move the visible sub-cursor across the reviewer chips (no toggle, no
-		// persist) so the user can see which model the next space/enter affects.
-		if n := len(m.models); n > 0 {
+		// Move the visible sub-cursor across enabled models plus any disabled
+		// models already assigned (which remain present so they can be removed).
+		if n := len(m.reviewerModels()); n > 0 {
 			m.reviewerSub = (m.reviewerSub + d + n) % n
 		}
 		return m, nil
@@ -293,13 +295,14 @@ func (m *model) eventExpanded(seq int, typ string) bool {
 // (m.reviewerSub). The sub-cursor stays put so the next toggle's target remains
 // exactly what the user sees highlighted; it is moved explicitly with ←/→.
 func (m *model) toggleReviewer() {
-	if len(m.models) == 0 {
+	models := m.reviewerModels()
+	if len(models) == 0 {
 		return
 	}
-	if m.reviewerSub >= len(m.models) {
+	if m.reviewerSub >= len(models) {
 		m.reviewerSub = 0
 	}
-	name := m.models[m.reviewerSub].Name
+	name := models[m.reviewerSub].Name
 	if m.contains(name) {
 		m.roleReviewrs = remove(m.roleReviewrs, name)
 	} else {
@@ -314,9 +317,11 @@ func (m *model) toggleReviewer() {
 func (m model) toggleReviewerAndPersist() (tea.Model, tea.Cmd) {
 	m.toggleReviewer()
 	revs := m.roleReviewrs
-	if len(revs) == 0 && len(m.models) > 0 {
-		revs = []string{m.models[0].Name}
-		m.roleReviewrs = revs
+	if len(revs) == 0 {
+		if models := enabledModels(m.models); len(models) > 0 {
+			revs = []string{models[0].Name}
+			m.roleReviewrs = revs
+		}
 	}
 	if len(revs) > 0 {
 		return m, m.setRoleConfig("", "", revs)
@@ -355,16 +360,45 @@ func cycle(vals []string, cur string, d int) string {
 	return vals[idx]
 }
 
+func enabledModels(models []*v1.ModelInfo) []*v1.ModelInfo {
+	out := make([]*v1.ModelInfo, 0, len(models))
+	for _, model := range models {
+		if !model.Disabled {
+			out = append(out, model)
+		}
+	}
+	return out
+}
+
+// reviewerModels offers enabled models for new selection while retaining any
+// assigned disabled reviewer so the user can see and remove it.
+func (m model) reviewerModels() []*v1.ModelInfo {
+	out := make([]*v1.ModelInfo, 0, len(m.models))
+	for _, model := range m.models {
+		if !model.Disabled || m.contains(model.Name) {
+			out = append(out, model)
+		}
+	}
+	return out
+}
+
 func cycleModel(models []*v1.ModelInfo, cur string, d int) string {
+	models = enabledModels(models)
 	if len(models) == 0 {
 		return cur
 	}
-	idx := 0
+	idx := -1
 	for i, mm := range models {
 		if mm.Name == cur {
 			idx = i
 			break
 		}
+	}
+	if idx < 0 {
+		if d < 0 {
+			return models[len(models)-1].Name
+		}
+		return models[0].Name
 	}
 	idx = (idx + d + len(models)) % len(models)
 	return models[idx].Name
@@ -422,7 +456,7 @@ func (m model) overlayView() string {
 			label = selStyle.Render(label)
 		}
 		val := r.val
-		if start+i == ovReviewers && len(m.models) > 0 {
+		if start+i == ovReviewers && len(m.reviewerModels()) > 0 {
 			// Highlight the chip the next toggle affects only while the cursor is
 			// on this row, so the target is always visible before pressing space.
 			val = "(" + m.thinkLevels["reviewers"] + ")  " + m.reviewerSummary(start+i == m.ovCursor)
@@ -441,12 +475,15 @@ func (m model) overlayView() string {
 
 func (m model) reviewerSummary(highlight bool) string {
 	var parts []string
-	for i, mm := range m.models {
+	for i, mm := range m.reviewerModels() {
 		mark := "[ ]"
 		if m.contains(mm.Name) {
 			mark = "[x]"
 		}
 		chip := mark + " " + mm.Name
+		if mm.Disabled {
+			chip += " (disabled)"
+		}
 		if highlight && i == m.reviewerSub {
 			chip = selStyle.Render(chip)
 		}

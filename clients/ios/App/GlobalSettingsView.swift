@@ -65,25 +65,42 @@ struct GlobalSettingsView: View {
         }
     }
 
+    private func roleModels(including assigned: [String]) -> [Ycc_V1_ModelInfo] {
+        model.models.filter { !$0.disabled || assigned.contains($0.name) }
+    }
+
+    @ViewBuilder
+    private func modelChoice(_ info: Ycc_V1_ModelInfo) -> some View {
+        if info.disabled {
+            Text("\(info.name) (disabled)").foregroundStyle(.secondary)
+        } else {
+            Text(info.name)
+        }
+    }
+
     private var rolesSection: some View {
         @Bindable var model = model
         return Section {
-            if model.models.isEmpty {
-                Text("Configure a model below before assigning roles.")
+            if model.enabledModels.isEmpty {
+                Text("Enable a model below before assigning roles.")
                     .foregroundStyle(.secondary)
             } else {
                 Picker("Coordinator", selection: $model.coordinator) {
-                    ForEach(model.models, id: \.name) { Text($0.name).tag($0.name) }
+                    ForEach(roleModels(including: [model.coordinator]), id: \.name) { info in
+                        modelChoice(info).tag(info.name)
+                    }
                 }
                 .onChange(of: model.coordinator) { _, _ in Task { await model.applyRoles() } }
 
                 Picker("Implementer", selection: $model.implementer) {
-                    ForEach(model.models, id: \.name) { Text($0.name).tag($0.name) }
+                    ForEach(roleModels(including: [model.implementer]), id: \.name) { info in
+                        modelChoice(info).tag(info.name)
+                    }
                 }
                 .onChange(of: model.implementer) { _, _ in Task { await model.applyRoles() } }
 
                 DisclosureGroup("Reviewers (\(model.reviewers.count))") {
-                    ForEach(model.models, id: \.name) { info in
+                    ForEach(roleModels(including: model.reviewers), id: \.name) { info in
                         Button {
                             if model.toggleReviewer(info.name) {
                                 Task { await model.applyRoles() }
@@ -147,7 +164,14 @@ struct GlobalSettingsView: View {
                     ModelEditorView(settings: model, sourceName: info.name)
                 } label: {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(info.name)
+                        HStack {
+                            Text(info.name)
+                            if info.disabled {
+                                Text("Disabled")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                         Text("\(info.backend) · \(info.model)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -185,7 +209,7 @@ struct GlobalSettingsView: View {
         } header: {
             Text("Model backends")
         } footer: {
-            Text("Each logical model combines a provider connection, credentials reference, and model id.")
+            Text("Each logical model combines a provider connection, credentials reference, and model id. Disable one temporarily without losing its configuration.")
         }
     }
 }
@@ -218,6 +242,7 @@ private struct ModelEditorView: View {
 
     @State private var isLoading = false
     @State private var name = ""
+    @State private var isEnabled = true
     @State private var backend = "anthropic"
     @State private var auth = "api-key"
     @State private var baseURL = ""
@@ -231,6 +256,7 @@ private struct ModelEditorView: View {
     @State private var priceCacheRead = ""
     @State private var priceCacheWrite = ""
     @State private var discovery: Ycc_V1_DiscoverModelsResponse?
+    @State private var modelTestTask: Task<Void, Never>?
 
     init(settings: GlobalSettingsModel, sourceName: String? = nil, duplicatesSource: Bool = false) {
         self.settings = settings
@@ -246,6 +272,10 @@ private struct ModelEditorView: View {
                         .foregroundStyle(.red)
                 }
             }
+            Section("Availability") {
+                Toggle("Enabled", isOn: $isEnabled)
+            }
+
             Section("Identity") {
                 TextField("Logical name", text: $name)
                     .textInputAutocapitalization(.never)
@@ -285,6 +315,7 @@ private struct ModelEditorView: View {
                 } label: {
                     Label("Discover models", systemImage: "arrow.triangle.2.circlepath")
                 }
+                .disabled(settings.isApplying || settings.isTestingModel || isLoading)
                 if let discovery {
                     if !discovery.note.isEmpty {
                         Text(discovery.note).font(.caption).foregroundStyle(.secondary)
@@ -319,6 +350,42 @@ private struct ModelEditorView: View {
             }
 
             Section {
+                Button {
+                    modelTestTask = Task { await settings.testModel(draftConfig()) }
+                } label: {
+                    if settings.isTestingModel {
+                        HStack {
+                            ProgressView()
+                            Text("Testing model…")
+                        }
+                    } else {
+                        Label("Test model", systemImage: "bolt.horizontal.circle")
+                    }
+                }
+                .disabled(!canSubmit || settings.isApplying || settings.isTestingModel || isLoading)
+
+                if let result = settings.modelTestResult {
+                    Label {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(result.message)
+                            if result.durationMS > 0 {
+                                Text("Completed in \(result.durationMS) ms")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    } icon: {
+                        Image(systemName: result.success ? "checkmark.circle.fill" : "xmark.octagon.fill")
+                    }
+                    .foregroundStyle(result.success ? Color.green : Color.red)
+                }
+            } header: {
+                Text("Connection test")
+            } footer: {
+                Text("Tests these unsaved settings without saving them. Sends one small inference request that your provider may bill for.")
+            }
+
+            Section {
                 priceField("Input", text: $priceInput)
                 priceField("Output", text: $priceOutput)
                 priceField("Cache read", text: $priceCacheRead)
@@ -335,14 +402,37 @@ private struct ModelEditorView: View {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
                 Button("Save") { Task { await save() } }
-                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty
-                        || modelID.trimmingCharacters(in: .whitespaces).isEmpty
-                        || settings.isApplying || isLoading)
+                    .disabled(!canSubmit || settings.isApplying || settings.isTestingModel || isLoading)
             }
         }
         .overlay { if isLoading { ProgressView() } }
-        .task { await loadSource() }
+        .task {
+            settings.clearModelTestResult()
+            await loadSource()
+        }
+        .onChange(of: probeFingerprint) { _, _ in
+            modelTestTask?.cancel()
+            modelTestTask = nil
+            settings.clearModelTestResult()
+        }
+        .onDisappear {
+            modelTestTask?.cancel()
+            modelTestTask = nil
+            settings.clearModelTestResult()
+        }
     }
+
+    private var draft: ModelEditorDraft {
+        ModelEditorDraft(
+            name: name, isEnabled: isEnabled, backend: backend, auth: auth,
+            baseURL: baseURL, modelID: modelID, keyEnv: keyEnv,
+            thinking: thinking, effort: effort, thinkingDisplay: thinkingDisplay,
+            priceInput: priceInput, priceOutput: priceOutput,
+            priceCacheRead: priceCacheRead, priceCacheWrite: priceCacheWrite)
+    }
+
+    private var canSubmit: Bool { draft.canSubmit }
+    private var probeFingerprint: String { draft.probeFingerprint }
 
     private var editorTitle: String {
         if duplicatesSource { return "Duplicate model" }
@@ -361,6 +451,7 @@ private struct ModelEditorView: View {
         defer { isLoading = false }
         guard let config = await settings.getModelConfig(name: sourceName) else { return }
         name = duplicatesSource ? "\(config.name)-copy" : config.name
+        isEnabled = !config.disabled
         backend = config.backend
         auth = config.auth
         baseURL = config.baseURL
@@ -375,21 +466,11 @@ private struct ModelEditorView: View {
         if config.hasPriceCacheWrite { priceCacheWrite = String(config.priceCacheWrite) }
     }
 
+    private func draftConfig() -> Ycc_V1_ModelConfig {
+        draft.modelConfig()
+    }
+
     private func save() async {
-        var config = Ycc_V1_ModelConfig()
-        config.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        config.backend = backend
-        config.auth = auth
-        config.baseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        config.model = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        config.keyEnv = keyEnv.trimmingCharacters(in: .whitespacesAndNewlines)
-        config.thinking = thinking
-        config.effort = effort
-        config.thinkingDisplay = thinkingDisplay
-        if let value = Double(priceInput) { config.priceInput = value }
-        if let value = Double(priceOutput) { config.priceOutput = value }
-        if let value = Double(priceCacheRead) { config.priceCacheRead = value }
-        if let value = Double(priceCacheWrite) { config.priceCacheWrite = value }
-        if await settings.saveModel(config) { dismiss() }
+        if await settings.saveModel(draftConfig()) { dismiss() }
     }
 }

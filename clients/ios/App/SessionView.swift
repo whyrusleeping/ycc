@@ -17,7 +17,10 @@ struct SessionView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var model: SessionViewModel
-    @FocusState private var composerFocused: Bool
+    /// Focus mirror for the composer field (a plain Bool rather than
+    /// `@FocusState` because the field is the UIKit-backed `ComposerTextField`,
+    /// which exists so an image on the clipboard can be pasted in-field).
+    @State private var composerFocused = false
     /// Keyboard overlap for manual avoidance of the bottom chrome — see
     /// KeyboardObserver for why the automatic keyboard safe area is not used.
     @StateObject private var keyboard = KeyboardObserver()
@@ -337,12 +340,21 @@ struct SessionView: View {
                 PicturePickerButton(pictures: $pictures, isLoading: $loadingPictures) { message in
                     model.actionError = message
                 }
-                TextField("Message…", text: $draft, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
-                    .lineLimit(1...5)
-                    .autocorrectionDisabled(suppressAutocorrect)
-                    .focused($composerFocused)
-                    .onSubmit(send)
+                ComposerTextField(
+                    placeholder: "Message…",
+                    text: $draft,
+                    focused: $composerFocused,
+                    maxLines: 5,
+                    autocorrectionDisabled: suppressAutocorrect,
+                    onSubmit: send,
+                    onPasteImages: { images in
+                        pictures = PictureComposer.load(
+                            pasted: images, current: pictures
+                        ) { message in
+                            model.actionError = message
+                        }
+                    }
+                )
                 Button(action: send) {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.title2)
@@ -397,12 +409,12 @@ struct SessionView: View {
             // Session rows already collapse heavy tool/thinking details, so the
             // predictable geometry is worth the modest eager-layout cost here.
             VStack(alignment: .leading, spacing: 10) {
-                if model.durableRows.isEmpty, model.liveTail == nil, model.state == .loading {
+                if model.durableRows.isEmpty, model.liveTails.isEmpty, model.state == .loading {
                     ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
                 }
-                // Keep immutable history separate from the rapidly-changing tail.
-                // Building `durableRows + [liveTail]` every 100ms made SwiftUI diff
-                // the entire transcript for every snapshot.
+                // Keep immutable history separate from rapidly-changing tails.
+                // Building one combined array every 100ms made SwiftUI diff the
+                // entire transcript for every snapshot.
                 ForEach(model.durableRows) { row in
                     TranscriptRowView(
                         row: row,
@@ -422,12 +434,15 @@ struct SessionView: View {
                     .equatable()
                     .id(row.id)
                 }
-                if let liveTail = model.liveTail {
-                    // Intentionally not `.equatable()`: this stable-id subtree
-                    // must receive each snapshot so TextKit can append its suffix.
+                ForEach(model.liveTails) { liveTail in
+                    // Each actor owns a stable subtree. Equatable rendering lets
+                    // one subagent append without re-running the unchanged tails;
+                    // the changed row still receives every snapshot for TextKit.
                     TranscriptRowView(row: liveTail, model: model.coordinatorModel)
+                        .equatable()
                         .id(liveTail.id)
-                } else if model.isAwaitingAgentActivity {
+                }
+                if model.liveTails.isEmpty, model.isAwaitingAgentActivity {
                     workingRow
                         .id("agent-working")
                 }
@@ -729,8 +744,8 @@ struct SessionView: View {
     /// The backlog is the other half of "what is this agent doing", so it stays
     /// one tap away from a session rather than only reachable from the home
     /// screen's drawer. Routed through ``HomeRouter`` (not a bare
-    /// `NavigationLink`) so revisiting a screen already on the stack pops back
-    /// to it instead of stacking another copy.
+    /// `NavigationLink`) so the jump replaces the stack — one Back from the
+    /// backlog returns to Recent, not back through this session.
     @ToolbarContentBuilder
     private var backlogShortcut: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
@@ -833,9 +848,9 @@ private struct TranscriptTopPreferenceKey: PreferenceKey {
 /// tappable disclosure rows for thinking and tool calls; compact system rows.
 private struct TranscriptRowView: View, Equatable {
     let row: TranscriptRow
-    /// The logical model currently producing turns, shown beside the streaming
-    /// indicator on the live tail. Only ever supplied for the live tail — durable
-    /// rows leave it empty, which is why it stays out of ``==`` below.
+    /// The logical model currently producing turns, shown beside the coordinator's
+    /// streaming indicator. Only supplied for live tails; durable rows leave it
+    /// empty. It participates in ``==`` so a role change refreshes the label.
     var model: String = ""
     /// Called with the commit sha when a `commit_made` row is tapped.
     var onOpenCommit: (String) -> Void = { _ in }
@@ -843,17 +858,38 @@ private struct TranscriptRowView: View, Equatable {
     /// metadata fallback instead of a broken thumbnail.
     var loadPicture: @Sendable (String) async -> Data? = { _ in nil }
 
-    /// The callbacks are stable for a transcript row's lifetime; row payload is the
-    /// only input that should invalidate its subtree. This keeps old MarkdownText
-    /// rows from being reparsed whenever the live tail changes.
-    static func == (lhs: Self, rhs: Self) -> Bool { lhs.row == rhs.row }
+    /// The callbacks are stable for a transcript row's lifetime; row payload and
+    /// the optional live model label are the only inputs that should invalidate
+    /// its subtree. This keeps old MarkdownText rows from being reparsed whenever
+    /// a live tail changes.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.row == rhs.row && lhs.model == rhs.model
+    }
 
     var body: some View {
+        if row.actorEmoji.isEmpty {
+            rowContent
+        } else {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("\(row.actorEmoji) \(row.actor)")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Subagent \(row.actor)")
+                rowContent
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private var rowContent: some View {
         switch row.kind {
         case .userMessage(let text, let pictures):
             userBubble(text: text, pictures: pictures)
         case .modelMessage(let text):
-            bubble(text: text, isUser: false, actor: row.actor)
+            // The plant prefix already carries the subagent label; coordinator
+            // rows retain the existing textual actor heading inside the bubble.
+            bubble(text: text, isUser: false, actor: row.actorEmoji.isEmpty ? row.actor : "")
         case .finalReport(let text):
             finalReport(text)
         case .thinking(let text):
@@ -1002,6 +1038,15 @@ private struct TranscriptRowView: View, Equatable {
         }
     }
 
+    private var streamingLabel: String {
+        if !row.actorEmoji.isEmpty { return "streaming" }
+        let actor = row.actor.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !actor.isEmpty, actor != "coordinator" {
+            return "\(actor) · streaming"
+        }
+        return model.isEmpty ? "streaming" : "\(model) · streaming"
+    }
+
     private func liveTail(
         _ text: String,
         append: String?,
@@ -1011,7 +1056,7 @@ private struct TranscriptRowView: View, Equatable {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                     ProgressView().scaleEffect(0.6)
-                    Text(model.isEmpty ? "streaming" : "\(model) · streaming")
+                    Text(streamingLabel)
                         .font(.caption2).foregroundStyle(.secondary)
                 }
                 // Unlike SwiftUI.Text, this keeps one TextKit storage/layout tree

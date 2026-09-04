@@ -3,6 +3,7 @@ package session
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -117,6 +118,55 @@ func TestSetRoleConfigRebuildsClients(t *testing.T) {
 		t.Fatal("reviewer NewClient returned nil")
 	}
 	_ = fakeTurner{}
+}
+
+func TestSetRoleConfigDoesNotPersistDisabledSessionOverrideWhenAnotherRoleChanges(t *testing.T) {
+	s, _ := newTestSession(t)
+	// Simulate a session-only coordinator override without changing global roles.
+	s.coordinator = "b"
+	override, _ := s.reg.GetModel("b")
+	override.Disabled = true
+	if err := s.reg.UpsertModel("b", override, false); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.SetRoleConfig("b", "c", []string{"a"}); err != nil {
+		t.Fatalf("change implementer with disabled session override: %v", err)
+	}
+	if got := s.reg.CoordinatorName(); got != "a" {
+		t.Fatalf("session override leaked into global coordinator: %q", got)
+	}
+	if got := s.reg.ImplementerName(); got != "c" {
+		t.Fatalf("global implementer = %q, want c", got)
+	}
+}
+
+func TestSetRoleConfigMigratesAwayFromDisabledAssignments(t *testing.T) {
+	s, _ := newTestSession(t)
+	current, ok := s.reg.GetModel("a")
+	if !ok {
+		t.Fatal("model a missing")
+	}
+	current.Disabled = true
+	if err := s.reg.UpsertModel("a", current, false); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.SetRoleConfig("a", "", []string{"a", "a"}); !errors.Is(err, ErrDisabledModel) {
+		t.Fatalf("duplicating disabled reviewer err = %v, want ErrDisabledModel", err)
+	}
+	// Full-state clients preserve disabled coordinator/reviewer references while
+	// moving another role. The disabled reviewer remains configured but is omitted
+	// from the next executable fan-out.
+	if err := s.SetRoleConfig("a", "b", []string{"a", "b"}); err != nil {
+		t.Fatalf("SetRoleConfig migration: %v", err)
+	}
+	if s.implementer != "b" || len(s.deps.Reviewers) != 1 || s.deps.Reviewers[0].Name != "b" {
+		t.Fatalf("migration state: impl=%q reviewers=%+v", s.implementer, s.deps.Reviewers)
+	}
+	if s.loop.Model != "model-a" {
+		t.Fatalf("unchanged coordinator loop was rebuilt: model=%q", s.loop.Model)
+	}
 }
 
 // thinkingForLevel maps levels to engine.Thinking; "off" disables reasoning and

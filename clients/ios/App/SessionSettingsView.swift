@@ -91,6 +91,19 @@ struct SessionSettingsView: View {
 
     // MARK: - Roles
 
+    private func roleModels(including assigned: [String]) -> [Ycc_V1_ModelInfo] {
+        model.models.filter { !$0.disabled || assigned.contains($0.name) }
+    }
+
+    @ViewBuilder
+    private func modelChoice(_ info: Ycc_V1_ModelInfo) -> some View {
+        if info.disabled {
+            Text("\(info.name) (disabled)").foregroundStyle(.secondary)
+        } else {
+            Text(info.name)
+        }
+    }
+
     private var rolesSection: some View {
         @Bindable var model = model
         return Section {
@@ -99,16 +112,16 @@ struct SessionSettingsView: View {
                     .foregroundStyle(.secondary)
             } else {
                 Picker("Coordinator", selection: $model.coordinator) {
-                    ForEach(model.models, id: \.name) { info in
-                        Text(info.name).tag(info.name)
+                    ForEach(roleModels(including: [model.coordinator]), id: \.name) { info in
+                        modelChoice(info).tag(info.name)
                     }
                 }
                 .onChange(of: model.coordinator) { _, _ in
                     Task { await model.applyRoleConfig() }
                 }
                 Picker("Implementer", selection: $model.implementer) {
-                    ForEach(model.models, id: \.name) { info in
-                        Text(info.name).tag(info.name)
+                    ForEach(roleModels(including: [model.implementer]), id: \.name) { info in
+                        modelChoice(info).tag(info.name)
                     }
                 }
                 .onChange(of: model.implementer) { _, _ in
@@ -125,7 +138,7 @@ struct SessionSettingsView: View {
 
     private var reviewersPicker: some View {
         DisclosureGroup("Reviewers (\(model.reviewers.count))") {
-            ForEach(model.models, id: \.name) { info in
+            ForEach(roleModels(including: model.reviewers), id: \.name) { info in
                 Button {
                     // An empty reviewer list means “leave unchanged” on the wire,
                     // so don't let this UI pretend the final reviewer was removed.

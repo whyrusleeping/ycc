@@ -69,6 +69,39 @@ enum PictureComposer {
         return PictureAttachments.merged(existing: current, adding: loaded)
     }
 
+    /// Stage images pasted into the composer text field (`ComposerTextField`)
+    /// as draft attachments, merged into `current`, through the same
+    /// normalize/cap pipeline as the Photos picker. Synchronous: the images are
+    /// already decoded, only the bounded JPEG re-encode remains.
+    @MainActor
+    static func load(
+        pasted images: [UIImage],
+        current: [DraftPicture],
+        onError: (String) -> Void
+    ) -> [DraftPicture] {
+        let room = PictureAttachments.room(current: current.count)
+        guard room > 0 else {
+            onError("You can attach up to \(maxPictures) pictures.")
+            return current
+        }
+        var loaded: [DraftPicture] = []
+        let base = current.count
+        for (index, image) in images.prefix(room).enumerated() {
+            guard let data = normalizedJPEG(image) else {
+                // Keep whatever was already attached; only this paste is dropped.
+                onError(PictureError.tooLarge.localizedDescription)
+                return current
+            }
+            loaded.append(DraftPicture(
+                image: MessageImage(
+                    data: data,
+                    mediaType: "image/jpeg",
+                    filename: "pasted-\(base + index + 1).jpg"),
+                preview: image))
+        }
+        return PictureAttachments.merged(existing: current, adding: loaded)
+    }
+
     /// Downscale to a sane long edge, then step the JPEG quality down until the
     /// encoding fits the per-image cap. Drawing through a renderer also bakes in
     /// the EXIF orientation, so a portrait photo doesn't reach the model sideways.

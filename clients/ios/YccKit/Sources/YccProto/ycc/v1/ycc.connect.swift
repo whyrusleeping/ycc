@@ -120,6 +120,9 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `discoverModels`(request: Ycc_V1_DiscoverModelsRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_DiscoverModelsResponse>
 
+    @available(iOS 13, *)
+    func `testModel`(request: Ycc_V1_TestModelRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_TestModelResponse>
+
     /// Review tiers: list the effective tiers and edit the configured
     /// ones (plus the default tier) at runtime; always persisted to ycc.toml.
     @available(iOS 13, *)
@@ -382,6 +385,11 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     }
 
     @available(iOS 13, *)
+    public func `testModel`(request: Ycc_V1_TestModelRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_TestModelResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/TestModel", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
     public func `listReviewTiers`(request: Ycc_V1_ListReviewTiersRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_ListReviewTiersResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/ListReviewTiers", idempotencyLevel: .unknown, request: request, headers: headers)
     }
@@ -536,6 +544,7 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let removeModel = Connect.MethodSpec(name: "RemoveModel", service: "ycc.v1.SessionService", type: .unary)
             public static let getModelConfig = Connect.MethodSpec(name: "GetModelConfig", service: "ycc.v1.SessionService", type: .unary)
             public static let discoverModels = Connect.MethodSpec(name: "DiscoverModels", service: "ycc.v1.SessionService", type: .unary)
+            public static let testModel = Connect.MethodSpec(name: "TestModel", service: "ycc.v1.SessionService", type: .unary)
             public static let listReviewTiers = Connect.MethodSpec(name: "ListReviewTiers", service: "ycc.v1.SessionService", type: .unary)
             public static let upsertReviewTier = Connect.MethodSpec(name: "UpsertReviewTier", service: "ycc.v1.SessionService", type: .unary)
             public static let removeReviewTier = Connect.MethodSpec(name: "RemoveReviewTier", service: "ycc.v1.SessionService", type: .unary)

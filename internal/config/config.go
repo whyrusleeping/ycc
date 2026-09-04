@@ -38,6 +38,11 @@ type Model struct {
 	Model   string `toml:"model"`
 	KeyEnv  string `toml:"key_env"`
 
+	// Disabled keeps a backend configured while making it unavailable for new
+	// inference. The negative flag preserves the enabled-by-default behaviour of
+	// existing config files and lets a temporary pause round-trip as one TOML key.
+	Disabled bool `toml:"disabled,omitempty"`
+
 	// Auth selects the credential mechanism. Empty or "api-key"
 	// (the default) resolves key_env as usual. "oauth" — anthropic backend
 	// only — authenticates with a Claude subscription (Pro/Max) via the OAuth
@@ -143,6 +148,10 @@ func (p Pricing) Cost(u event.Usage) (cost float64, priced bool) {
 		float64(u.CacheWrite)*p.CacheWrite) / 1e6
 	return cost, true
 }
+
+// ErrModelDisabled identifies attempts to select or construct a configured model
+// that is temporarily unavailable.
+var ErrModelDisabled = errors.New("model is disabled")
 
 // Validate checks a single model record for the minimum fields Build needs. It
 // is used by the runtime CRUD path (Registry.UpsertModel) before a model is
@@ -799,6 +808,20 @@ func validateReviewTier(name string, t ReviewTier, models map[string]Model) erro
 	return nil
 }
 
+func reviewTierModelCounts(t ReviewTier) map[string]int {
+	counts := make(map[string]int)
+	if isSelfReviewStrategy(t.Strategy) {
+		return counts
+	}
+	for _, name := range t.Models {
+		counts[name]++
+	}
+	for _, reviewer := range t.Reviewers {
+		counts[reviewer.Model]++
+	}
+	return counts
+}
+
 func (c *Config) validate() error {
 	if c.Roles.Coordinator == "" || c.Roles.Implementer == "" {
 		return fmt.Errorf("roles.coordinator and roles.implementer are required")
@@ -1085,30 +1108,60 @@ func (r *Registry) PresetModel(name string) (model string, bound bool) {
 // implementer / reviewers) and writes the change back to ycc.toml so a role
 // selection made in the settings overlay survives a restart. Empty
 // coordinator/implementer or an empty reviewers slice leaves that role unchanged.
-// Every named model must exist. On a persist failure the change is reverted so
-// the live config and the file never diverge.
+// Every named model must exist; disabled models may only preserve an assignment
+// they already held. On a persist failure the change is reverted so the live
+// config and the file never diverge.
 func (r *Registry) SetRoles(coordinator, implementer string, reviewers []string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	prev := r.cfg.Roles
-	if coordinator != "" {
-		if _, ok := r.cfg.Models[coordinator]; !ok {
-			return fmt.Errorf("unknown model %q", coordinator)
+	validateAssignable := func(name string, alreadyAssigned bool) error {
+		m, ok := r.cfg.Models[name]
+		if !ok {
+			return fmt.Errorf("unknown model %q", name)
 		}
+		// Existing references survive a temporary disable so callers that submit
+		// full role state can migrate one role at a time. A disabled model still
+		// cannot be introduced into a role that did not already reference it.
+		if m.Disabled && !alreadyAssigned {
+			return fmt.Errorf("%w %q", ErrModelDisabled, name)
+		}
+		return nil
+	}
+	// Validate the whole request before mutating any role so a bad later field
+	// cannot leave an earlier assignment changed in memory.
+	if coordinator != "" {
+		if err := validateAssignable(coordinator, coordinator == r.cfg.Roles.Coordinator); err != nil {
+			return err
+		}
+	}
+	if implementer != "" {
+		if err := validateAssignable(implementer, implementer == r.cfg.Roles.Implementer); err != nil {
+			return err
+		}
+	}
+	if len(reviewers) > 0 {
+		oldCounts := make(map[string]int, len(r.cfg.Roles.Reviewers))
+		newCounts := make(map[string]int, len(reviewers))
+		for _, name := range r.cfg.Roles.Reviewers {
+			oldCounts[name]++
+		}
+		for _, name := range reviewers {
+			newCounts[name]++
+		}
+		for _, name := range reviewers {
+			if err := validateAssignable(name, newCounts[name] <= oldCounts[name]); err != nil {
+				return err
+			}
+		}
+	}
+	if coordinator != "" {
 		r.cfg.Roles.Coordinator = coordinator
 	}
 	if implementer != "" {
-		if _, ok := r.cfg.Models[implementer]; !ok {
-			return fmt.Errorf("unknown model %q", implementer)
-		}
 		r.cfg.Roles.Implementer = implementer
 	}
 	if len(reviewers) > 0 {
-		for _, name := range reviewers {
-			if _, ok := r.cfg.Models[name]; !ok {
-				return fmt.Errorf("unknown model %q", name)
-			}
-		}
 		r.cfg.Roles.Reviewers = append([]string(nil), reviewers...)
 	}
 	if err := r.persistLocked(); err != nil {
@@ -1233,11 +1286,12 @@ func (r *Registry) ModelThinkingLevel(name string) string {
 }
 
 type ModelInfo struct {
-	Name    string
-	Backend string
-	Model   string
-	Auth    string
-	Pricing Pricing // resolved per-model pricing; Configured=false ⇒ unpriced
+	Name     string
+	Backend  string
+	Model    string
+	Auth     string
+	Disabled bool
+	Pricing  Pricing // resolved per-model pricing; Configured=false ⇒ unpriced
 }
 
 // GetModel returns a copy of the model record stored under name (for editing in
@@ -1388,6 +1442,16 @@ func (r *Registry) UpsertReviewTier(name string, t ReviewTier) error {
 	if err := validateReviewTier(name, t, r.cfg.Models); err != nil {
 		return err
 	}
+	// Loading remains permissive so a model can be disabled while referenced.
+	// Runtime edits may preserve those slots but cannot add a disabled model to a
+	// tier as a new executable reviewer.
+	effective, _ := r.cfg.effectiveReviewTiers()
+	previousCounts := reviewTierModelCounts(effective[name])
+	for model, count := range reviewTierModelCounts(t) {
+		if r.cfg.Models[model].Disabled && count > previousCounts[model] {
+			return fmt.Errorf("%w %q", ErrModelDisabled, model)
+		}
+	}
 	prev := maps.Clone(r.cfg.Reviews.Tiers)
 	if r.cfg.Reviews.Tiers == nil {
 		r.cfg.Reviews.Tiers = make(map[string]ReviewTier)
@@ -1506,12 +1570,23 @@ func (r *Registry) PricingFor(name string) Pricing {
 	return m.EffectivePricing()
 }
 
-// Has reports whether a logical model name is configured.
+// Has reports whether a logical model name is configured, including models that
+// are temporarily disabled. Use Enabled when choosing a backend for new work.
 func (r *Registry) Has(name string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	_, ok := r.cfg.Models[name]
 	return ok
+}
+
+// Enabled reports whether a logical model is configured and available for new
+// inference. Disabled models remain addressable through GetModel and Models so
+// settings clients can display and re-enable them.
+func (r *Registry) Enabled(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	m, ok := r.cfg.Models[name]
+	return ok && !m.Disabled
 }
 
 // BackendFor returns the logical backend family ("anthropic", "openai", ...) for
@@ -1526,8 +1601,9 @@ func (r *Registry) BackendFor(name string) string {
 	return ""
 }
 
-// Models returns the configured logical models sorted by name so the settings
-// overlay can populate the per-role pickers.
+// Models returns every configured logical model sorted by name. Disabled models
+// remain present so settings clients can display and re-enable them; callers
+// offering models for new work must filter ModelInfo.Disabled.
 func (r *Registry) Models() []ModelInfo {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -1539,7 +1615,7 @@ func (r *Registry) Models() []ModelInfo {
 	out := make([]ModelInfo, 0, len(names))
 	for _, name := range names {
 		m := r.cfg.Models[name]
-		out = append(out, ModelInfo{Name: name, Backend: m.Backend, Model: m.Model, Auth: m.Auth, Pricing: m.EffectivePricing()})
+		out = append(out, ModelInfo{Name: name, Backend: m.Backend, Model: m.Model, Auth: m.Auth, Disabled: m.Disabled, Pricing: m.EffectivePricing()})
 	}
 	return out
 }
@@ -1577,11 +1653,22 @@ func codexBase(base string) string {
 // Build constructs a fresh backend client and returns it with its model id. A new
 // client per call avoids shared-state races across concurrent subagents.
 func (r *Registry) Build(name string) (engine.Turner, string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return r.BuildContext(ctx, name)
+}
+
+// BuildContext is Build with caller-controlled cancellation for credential
+// resolution performed while constructing subscription-authenticated clients.
+func (r *Registry) BuildContext(ctx context.Context, name string) (engine.Turner, string, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	m, ok := r.cfg.Models[name]
 	if !ok {
 		return nil, "", fmt.Errorf("unknown model %q", name)
+	}
+	if m.Disabled {
+		return nil, "", fmt.Errorf("%w %q", ErrModelDisabled, name)
 	}
 	c := gollama.NewClient(providerBaseURL(m.Backend, m.BaseURL))
 	// Disable gollama's internal HTTP transport retry ring (429/503/529). Although
@@ -1614,9 +1701,7 @@ func (r *Registry) Build(name string) (engine.Turner, string, error) {
 			// never x-api-key. Resolving it here as well as per turn keeps a
 			// missing or superseded login a Build-time error instead of a
 			// first-turn failure.
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			tok, err := anthropicauth.AccessToken(ctx)
-			cancel()
 			if err != nil {
 				return nil, "", fmt.Errorf("model %q: %w", name, err)
 			}

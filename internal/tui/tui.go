@@ -461,6 +461,7 @@ type model struct {
 	mbFormMode   int    // mbAdd | mbEdit | mbDuplicate
 	mbOrigName   string // name of the model loaded for edit/duplicate
 	mbOrigModel  string // model id of the model loaded for edit (to keep its name)
+	mbDisabled   bool   // preserve the availability flag when edited in the TUI
 	mbAuthIdx    int    // index into mbAuthList: api-key (default) vs oauth subscription auth
 	mbInputs     [mbNumFields]textinput.Model
 	mbBackends   []string // per-form backend cycle list (preserves an unknown loaded backend)
@@ -801,11 +802,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case modelsMsg:
 		m.rpcOK()
 		m.models = msg.models
-		// The reviewer sub-cursor indexes m.models; the backend set can shrink,
-		// so clamp it back into range defensively.
-		if m.reviewerSub >= len(m.models) {
-			m.reviewerSub = 0
-		}
 		// Seed the per-role pickers with the daemon's CURRENT default assignment
 		// (config.Roles) so the settings overlay shows the real selection — even
 		// when opened from the home menu with no live session. A live session keeps
@@ -818,6 +814,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if len(msg.reviewers) > 0 {
 			m.roleReviewrs = msg.reviewers
+		}
+		// The reviewer sub-cursor indexes the enabled models plus assigned disabled
+		// models; clamp after applying the latest assignments.
+		if m.reviewerSub >= len(m.reviewerModels()) {
+			m.reviewerSub = 0
 		}
 		// Seed the thinking pickers with the daemon's current default levels too.
 		if msg.coordThink != "" {

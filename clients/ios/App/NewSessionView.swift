@@ -13,7 +13,10 @@ struct NewSessionView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var model: NewSessionModel
-    @FocusState private var composerFocused: Bool
+    /// Focus mirror for the composer field (a plain Bool rather than
+    /// `@FocusState` because the field is the UIKit-backed `ComposerTextField`,
+    /// which exists so an image on the clipboard can be pasted in-field).
+    @State private var composerFocused = false
     /// Keyboard overlap for manual avoidance of the bottom chrome — see
     /// KeyboardObserver for why the automatic keyboard safe area is not used.
     @StateObject private var keyboard = KeyboardObserver()
@@ -101,11 +104,11 @@ struct NewSessionView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 Spacer(minLength: 24)
-                if !model.presets.isEmpty {
+                if !model.suggestedPresets.isEmpty {
                     Text("Suggestions")
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(.secondary)
-                    ForEach(model.presets, id: \.name) { preset in
+                    ForEach(model.suggestedPresets, id: \.name) { preset in
                         presetCard(preset)
                     }
                 }
@@ -244,15 +247,19 @@ struct NewSessionView: View {
         @Bindable var model = model
         return Menu {
             Picker("Model", selection: $model.selectedModel) {
-                Label {
-                    Text("Default")
-                    if !model.defaultModel.isEmpty {
-                        Text(model.defaultModel)
+                if model.defaultModelDisabled {
+                    Text("Choose model…").tag("")
+                } else {
+                    Label {
+                        Text("Default")
+                        if !model.defaultModel.isEmpty {
+                            Text(model.defaultModel)
+                        }
+                    } icon: {
+                        EmptyView()
                     }
-                } icon: {
-                    EmptyView()
+                    .tag("")
                 }
-                .tag("")
                 ForEach(model.models, id: \.name) { info in
                     Label {
                         Text(info.name)
@@ -306,15 +313,22 @@ struct NewSessionView: View {
                     pictureError = message
                 }
                 .disabled(model.isStarting)
-                TextField(
-                    model.promptIsOptional
+                ComposerTextField(
+                    placeholder: model.promptIsOptional
                         ? "What should the agent do? (optional)"
                         : "What should the agent do?",
-                    text: $model.prompt, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
-                    .lineLimit(1...6)
-                    .focused($composerFocused)
-                    .disabled(model.isStarting)
+                    text: $model.prompt,
+                    focused: $composerFocused,
+                    maxLines: 6,
+                    onPasteImages: { images in
+                        pictures = PictureComposer.load(
+                            pasted: images, current: pictures
+                        ) { message in
+                            pictureError = message
+                        }
+                    }
+                )
+                .disabled(model.isStarting)
                 if model.isStarting {
                     ProgressView()
                         .frame(width: 28, height: 28)

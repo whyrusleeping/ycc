@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -135,7 +136,7 @@ func TestModelsEnumeratesSorted(t *testing.T) {
 		Models: map[string]Model{
 			"claude": {Backend: "anthropic", Model: "claude-opus-4-8"},
 			"local":  {Backend: "ollama", Model: "qwen2.5-coder"},
-			"gpt":    {Backend: "openai", Model: "gpt-5.5"},
+			"gpt":    {Backend: "openai", Model: "gpt-5.5", Disabled: true},
 		},
 		Roles: Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"}},
 	}
@@ -155,6 +156,48 @@ func TestModelsEnumeratesSorted(t *testing.T) {
 	}
 	if !reg.Has("gpt") || reg.Has("nope") {
 		t.Fatal("Has() wrong")
+	}
+	if !got[1].Disabled || reg.Enabled("gpt") || !reg.Enabled("claude") {
+		t.Fatalf("disabled availability not preserved: info=%+v", got[1])
+	}
+}
+
+func TestDisabledModelRejectsBuildAndRoleSelectionAtomically(t *testing.T) {
+	cfg := &Config{
+		Models: map[string]Model{
+			"active":    {Backend: "ollama", Model: "active"},
+			"alternate": {Backend: "ollama", Model: "alternate"},
+			"disabled":  {Backend: "ollama", Model: "paused", Disabled: true},
+		},
+		Roles: Roles{Coordinator: "active", Implementer: "active", Reviewers: []string{"active"}},
+	}
+	reg := NewRegistry(cfg)
+	if _, _, err := reg.Build("disabled"); !errors.Is(err, ErrModelDisabled) {
+		t.Fatalf("Build(disabled) err = %v, want ErrModelDisabled", err)
+	}
+	// The later disabled implementer must not leak the earlier coordinator update.
+	if err := reg.SetRoles("alternate", "disabled", []string{"active"}); !errors.Is(err, ErrModelDisabled) {
+		t.Fatalf("SetRoles(disabled) err = %v, want ErrModelDisabled", err)
+	}
+	if got := reg.CoordinatorName(); got != "active" {
+		t.Fatalf("failed SetRoles changed coordinator to %q", got)
+	}
+
+	// Once an assigned model is disabled, full-state settings clients may preserve
+	// that reference while moving another role to an enabled alternative.
+	active, _ := reg.GetModel("active")
+	active.Disabled = true
+	if err := reg.UpsertModel("active", active, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.SetRoles("active", "alternate", []string{"active"}); err != nil {
+		t.Fatalf("SetRoles preserving disabled assignments: %v", err)
+	}
+	if got := reg.ImplementerName(); got != "alternate" {
+		t.Fatalf("implementer = %q, want alternate", got)
+	}
+	if err := reg.SetRoles("", "", []string{"active", "active"}); !errors.Is(err, ErrModelDisabled) {
+		t.Fatalf("duplicating disabled reviewer err = %v, want ErrModelDisabled", err)
 	}
 }
 
@@ -182,7 +225,7 @@ func TestSaveRoundTrip(t *testing.T) {
 			"haiku": {
 				Backend: "anthropic", BaseURL: "https://api.anthropic.com",
 				Model: "claude-haiku-4-5", KeyEnv: "ANTHROPIC_API_KEY",
-				Thinking: "off",
+				Thinking: "off", Disabled: true,
 			},
 			"local": {
 				Backend: "ollama", BaseURL: "http://localhost:11434/v1",
@@ -1311,6 +1354,24 @@ func TestUpsertReviewTierValidatesLikeLoad(t *testing.T) {
 	// Nothing was written.
 	if listings, _ := reg.ReviewTierConfigs(); len(listings) != 3 {
 		t.Fatalf("expected only the 3 builtins after rejected upserts, got %d", len(listings))
+	}
+}
+
+func TestUpsertReviewTierPreservesButDoesNotAddDisabledModels(t *testing.T) {
+	reg := twoModelRegistry()
+	if err := reg.UpsertReviewTier("deep", ReviewTier{Models: []string{"gpt"}}); err != nil {
+		t.Fatal(err)
+	}
+	gpt, _ := reg.GetModel("gpt")
+	gpt.Disabled = true
+	if err := reg.UpsertModel("gpt", gpt, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.UpsertReviewTier("new", ReviewTier{Models: []string{"gpt"}}); !errors.Is(err, ErrModelDisabled) {
+		t.Fatalf("new tier with disabled model err = %v, want ErrModelDisabled", err)
+	}
+	if err := reg.UpsertReviewTier("deep", ReviewTier{Description: "edited", Models: []string{"gpt"}}); err != nil {
+		t.Fatalf("editing tier while preserving disabled slot: %v", err)
 	}
 }
 

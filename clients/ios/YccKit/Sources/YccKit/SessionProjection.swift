@@ -2,8 +2,8 @@ import Foundation
 import YccProto
 
 /// A single render row in a session transcript. Rows have a stable ``id`` so a
-/// SwiftUI `List`/`ForEach` can diff cheaply as the log grows and the live tail
-/// is replaced in place.
+/// SwiftUI `List`/`ForEach` can diff cheaply as the log grows and each actor's
+/// live tail is replaced in place.
 public struct TranscriptRow: Identifiable, Equatable, Sendable {
     /// One picture attached to a user message. `attachmentID` is empty for
     /// legacy/missing payloads, which the view renders as a metadata fallback.
@@ -60,6 +60,9 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
     public var seq: Int64
     /// The actor that produced the row.
     public var actor: String
+    /// Stable plant identity assigned to non-coordinator agents by the session
+    /// projection. Empty for the coordinator, user, and daemon/system rows.
+    public var actorEmoji: String
     /// RFC3339 timestamp of the source event (empty for the live tail).
     public var ts: String
     /// Optional turn_delta optimization hint. When `liveAppendBaseUTF8` matches
@@ -70,12 +73,14 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
 
     public init(
         id: String, kind: Kind, seq: Int64, actor: String, ts: String,
-        liveAppend: String? = nil, liveAppendBaseUTF8: Int? = nil
+        actorEmoji: String = "", liveAppend: String? = nil,
+        liveAppendBaseUTF8: Int? = nil
     ) {
         self.id = id
         self.kind = kind
         self.seq = seq
         self.actor = actor
+        self.actorEmoji = actorEmoji
         self.ts = ts
         self.liveAppend = liveAppend
         self.liveAppendBaseUTF8 = liveAppendBaseUTF8
@@ -92,13 +97,32 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
 /// unit-tested headlessly, and it never throws — malformed or unknown payloads
 /// degrade gracefully rather than crash (forward-compat).
 public struct SessionProjection: Sendable, Equatable {
-    /// Stable synthetic id for the single live-tail row.
+    /// Stable synthetic id for the coordinator's live-tail row. Subagent tails
+    /// add their actor name so interleaved streams update independent SwiftUI
+    /// subtrees instead of repeatedly replacing one another.
     public static let liveTailID = "live-tail"
 
-    /// Durable rows in log order (excludes the transient live tail).
+    /// Durable rows in log order (excludes transient live tails).
     public private(set) var durableRows: [TranscriptRow] = []
-    /// The transient live-tail row, if a turn is currently streaming.
-    public private(set) var liveTail: TranscriptRow?
+    /// One transient live-tail row per actor, in first-seen order. Keeping this
+    /// order stable prevents concurrent subagent streams from jumping around as
+    /// their snapshots interleave.
+    public private(set) var liveTails: [TranscriptRow] = []
+    /// Compatibility accessor for callers interested in the most recently added
+    /// tail. Rendering should use ``liveTails`` so concurrent actors stay visible.
+    public var liveTail: TranscriptRow? { liveTails.last }
+
+    /// Fixed, deliberately non-semantic identity palette. Assignment follows the
+    /// first durable subagent lifecycle/output event (or live output for legacy
+    /// logs) and cycles deterministically if an unusually large session exhausts
+    /// the distinct plants; the textual actor label always remains visible.
+    public static let subagentEmojiPalette = [
+        "🌵", "🌿", "🍄", "🌻", "🌱", "🌴", "🌲", "🌳",
+        "🪴", "🍀", "🎋", "🪻", "🌷", "🪷", "🌺", "🌾",
+    ]
+    private var subagentEmojiByActor: [String: String] = [:]
+    private var nextSubagentEmojiIndex = 0
+
     /// Highest **persisted** seq folded so far — the reconnect resume cursor.
     /// Transient events (seq 0) never advance it.
     public private(set) var lastPersistedSeq: Int64 = 0
@@ -190,19 +214,19 @@ public struct SessionProjection: Sendable, Equatable {
         }
     }
 
-    /// The full ordered rows to render: durable rows followed by the live tail.
-    public var rows: [TranscriptRow] {
-        if let liveTail {
-            return durableRows + [liveTail]
-        }
-        return durableRows
+    /// The full ordered rows to render: durable rows followed by all live tails.
+    public var rows: [TranscriptRow] { durableRows + liveTails }
+
+    /// Drop all transient live tails. Call before re-subscribing so stale streamed
+    /// output from before a disconnect doesn't linger until each actor emits its
+    /// next delta or durable `model_turn`.
+    public mutating func clearLiveTails() {
+        liveTails.removeAll(keepingCapacity: true)
     }
 
-    /// Drop the transient live tail, if any. Call before re-subscribing so a
-    /// stale streamed tail from before a disconnect doesn't linger until the
-    /// next delta or durable `model_turn` arrives.
+    /// Compatibility alias retained for single-stream callers.
     public mutating func clearLiveTail() {
-        liveTail = nil
+        clearLiveTails()
     }
 
     /// Fold a single event into the projection. Idempotent on already-seen
@@ -242,8 +266,9 @@ public struct SessionProjection: Sendable, Equatable {
             appendDurable(event, .userMessage(text: text, pictures: pictures))
 
         case "model_turn":
-            // The durable turn is the source of truth: it clears any live tail.
-            liveTail = nil
+            // The durable turn is the source of truth for this actor only. Other
+            // subagents may still be streaming concurrently and keep their tails.
+            removeLiveTail(actor: event.actor)
             let text = Self.text(data)
             // Tool-use turns carry empty text — no empty bubble.
             if !text.isEmpty {
@@ -268,7 +293,34 @@ public struct SessionProjection: Sendable, Equatable {
         case "question_answered":
             applyQuestionAnswered(data)
 
+        case "subagent_spawned", "subagent_finished", "review_submitted":
+            // These lifecycle events are emitted by the coordinator, but their
+            // payload identifies the subagent they describe. Project that actor
+            // onto the row so it shares the agent's plant identity. Once the actor
+            // is known, use a compact summary that does not repeat the prefix.
+            let relatedActor = Self.relatedSubagentActor(type: event.type, data: data)
+            let text: String?
+            if relatedActor == nil {
+                text = Self.systemSummary(type: event.type, data: data)
+            } else {
+                text = Self.subagentSystemSummary(type: event.type, data: data)
+            }
+            if let text {
+                appendDurable(event, .system(text: text), actor: relatedActor)
+            }
+
+        case "session_error":
+            // Terminal deltas are lossy transient hints. The durable failure is
+            // authoritative and retires only the failed actor's streamed tail.
+            removeLiveTail(actor: event.actor)
+            if let text = Self.systemSummary(type: event.type, data: data) {
+                appendDurable(event, .system(text: text))
+            }
+
         case "session_idle":
+            // Session-level completion means no actor remains live, even if one
+            // or more terminal transient deltas were dropped under backpressure.
+            clearLiveTails()
             // The report is the session's canonical human-facing result. If the
             // immediately preceding model bubble is repeated as the report's
             // exact text/prefix, replace it so the same answer is not shown twice.
@@ -281,6 +333,12 @@ public struct SessionProjection: Sendable, Equatable {
                 appendDurable(event, .finalReport(text: report))
             } else {
                 appendDurable(event, .system(text: "Session finished"))
+            }
+
+        case "session_stopped", "session_ended":
+            clearLiveTails()
+            if let text = Self.systemSummary(type: event.type, data: data) {
+                appendDurable(event, .system(text: text))
             }
 
         case "commit_made":
@@ -317,21 +375,98 @@ public struct SessionProjection: Sendable, Equatable {
         let data = Self.parse(event.dataJson)
         let done = (data["done"] as? Bool) ?? false
         let text = Self.text(data)
-        // A terminating delta ({"text":"","done":true}) clears the tail; so does
-        // an empty snapshot. Otherwise replace the tail with the latest snapshot.
+        // A terminating delta ({"text":"","done":true}) clears only its actor's
+        // tail; other agents may still be producing turns in parallel.
         if done || text.isEmpty {
-            liveTail = nil
+            removeLiveTail(actor: event.actor)
             return
         }
-        liveTail = TranscriptRow(
-            id: Self.liveTailID,
+        let actor = Self.normalizedActor(event.actor)
+        let row = TranscriptRow(
+            id: Self.liveTailRowID(for: actor),
             kind: .liveTail(text: text),
             seq: 0,
-            actor: event.actor,
+            actor: actor,
             ts: event.ts,
+            actorEmoji: subagentEmoji(for: actor),
             liveAppend: data["append"] as? String,
             liveAppendBaseUTF8: Self.integerField(data, "append_base_utf8")
         )
+        if let index = liveTails.firstIndex(where: { $0.actor == actor }) {
+            liveTails[index] = row
+        } else {
+            liveTails.append(row)
+        }
+    }
+
+    /// Empty actors occur in a few legacy/test events; they represent the
+    /// coordinator and must pair with a later explicitly-tagged coordinator turn.
+    private static func normalizedActor(_ actor: String) -> String {
+        actor.isEmpty ? "coordinator" : actor
+    }
+
+    private static func isSubagentActor(_ actor: String) -> Bool {
+        switch normalizedActor(actor).lowercased() {
+        case "coordinator", "user", "system", "daemon": return false
+        default: return true
+        }
+    }
+
+    private mutating func subagentEmoji(for actor: String) -> String {
+        let actor = Self.normalizedActor(actor)
+        guard Self.isSubagentActor(actor) else { return "" }
+        if let assigned = subagentEmojiByActor[actor] { return assigned }
+        let emoji = Self.subagentEmojiPalette[
+            nextSubagentEmojiIndex % Self.subagentEmojiPalette.count]
+        subagentEmojiByActor[actor] = emoji
+        nextSubagentEmojiIndex += 1
+        return emoji
+    }
+
+    /// Coordinator-authored lifecycle rows still describe one concrete subagent.
+    /// Return its engine actor label so those rows share the same visual identity.
+    private static func relatedSubagentActor(
+        type: String, data: [String: Any]
+    ) -> String? {
+        let role = (data["role"] as? String) ?? (type == "review_submitted" ? "reviewer" : "")
+        switch role {
+        case "generic":
+            guard let id = data["agent_id"] as? String, !id.isEmpty else { return nil }
+            return "agent:\(id)"
+        case "implementer":
+            return "implementer"
+        case "reviewer":
+            guard let model = data["model"] as? String, !model.isEmpty else { return nil }
+            return "reviewer:\(model)"
+        default:
+            return nil
+        }
+    }
+
+    private static func subagentSystemSummary(
+        type: String, data: [String: Any]
+    ) -> String? {
+        switch type {
+        case "subagent_spawned":
+            return "Spawned"
+        case "subagent_finished":
+            let error = (data["error"] as? String) ?? ""
+            return error.isEmpty ? "Finished" : "Failed: \(firstLine(error))"
+        case "review_submitted":
+            let summary = firstLine((data["summary"] as? String) ?? "")
+            return summary.isEmpty ? "Review submitted" : "Review submitted: \(summary)"
+        default:
+            return nil
+        }
+    }
+
+    private static func liveTailRowID(for actor: String) -> String {
+        actor == "coordinator" ? Self.liveTailID : "\(Self.liveTailID):\(actor)"
+    }
+
+    private mutating func removeLiveTail(actor: String) {
+        let actor = Self.normalizedActor(actor)
+        liveTails.removeAll { $0.actor == actor }
     }
 
     // MARK: - Tool pairing
@@ -496,15 +631,18 @@ public struct SessionProjection: Sendable, Equatable {
     private mutating func appendDurable(
         _ event: Ycc_V1_Event,
         _ kind: TranscriptRow.Kind,
-        id: String? = nil
+        id: String? = nil,
+        actor actorOverride: String? = nil
     ) {
+        let actor = actorOverride ?? event.actor
         durableRows.append(
             TranscriptRow(
                 id: id ?? "seq-\(event.seq)",
                 kind: kind,
                 seq: event.seq,
-                actor: event.actor,
-                ts: event.ts
+                actor: actor,
+                ts: event.ts,
+                actorEmoji: subagentEmoji(for: actor)
             )
         )
     }

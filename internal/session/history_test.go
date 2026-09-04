@@ -191,6 +191,48 @@ func TestScanSessionHistoryModelUsage(t *testing.T) {
 	}
 }
 
+func TestScanSessionHistoryContextTokens(t *testing.T) {
+	ws := t.TempDir()
+	writeSession(t, ws, "s_ctx", []event.Event{
+		{Seq: 1, TS: ts(1), Type: event.SessionStarted, Data: map[string]any{"mode": "work"}},
+		// Older coordinator turn: superseded by the newer one below.
+		{Seq: 2, TS: ts(2), Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{
+			"model_name": "claude", "context_tokens_est": 1000, "usage": event.Usage{Total: 100},
+		}},
+		{Seq: 3, TS: ts(3), Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{
+			"model_name": "claude", "context_tokens_est": 42_000, "usage": event.Usage{Total: 100},
+		}},
+		// A newer SUBAGENT turn must not replace the coordinator readout.
+		{Seq: 4, TS: ts(4), Actor: "implementer", Type: event.ModelTurn, Data: map[string]any{
+			"model_name": "gpt", "context_tokens_est": 999_999, "usage": event.Usage{Total: 100},
+		}},
+		// A newer coordinator turn WITHOUT the field (older engine) must not
+		// clear the known value either.
+		{Seq: 5, TS: ts(5), Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{
+			"model_name": "claude", "usage": event.Usage{Total: 100},
+		}},
+	})
+
+	sums, err := scanSessionHistory(ws)
+	if err != nil || len(sums) != 1 {
+		t.Fatalf("scan = %+v, %v", sums, err)
+	}
+	if sums[0].ContextTokens != 42_000 {
+		t.Fatalf("context tokens = %d, want 42000", sums[0].ContextTokens)
+	}
+}
+
+func TestSessionContextTokensAbsent(t *testing.T) {
+	evs := []event.Event{
+		{Type: event.SessionStarted, Data: map[string]any{"mode": "work"}},
+		{Type: event.ModelTurn, Actor: "implementer", Data: map[string]any{"context_tokens_est": 500}},
+		{Type: event.ModelTurn, Actor: "coordinator", Data: map[string]any{"context_tokens_est": "bad"}},
+	}
+	if got := sessionContextTokens(evs); got != 0 {
+		t.Fatalf("context tokens = %d, want 0 for absent/malformed telemetry", got)
+	}
+}
+
 func TestSessionModelUsageMissingAndMalformed(t *testing.T) {
 	evs := []event.Event{
 		{Type: event.ModelTurn, Data: map[string]any{"model_name": "missing"}},

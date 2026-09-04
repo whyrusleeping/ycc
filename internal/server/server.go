@@ -78,6 +78,9 @@ func (s *Server) StartSession(_ context.Context, req *connect.Request[v1.StartSe
 		if errors.Is(err, session.ErrUnknownProject) || errors.Is(err, session.ErrUnknownModel) {
 			return nil, connect.NewError(connect.CodeInvalidArgument, err)
 		}
+		if errors.Is(err, session.ErrDisabledModel) {
+			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+		}
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	return connect.NewResponse(&v1.StartSessionResponse{SessionId: sess.ID}), nil
@@ -87,7 +90,10 @@ func (s *Server) StartSession(_ context.Context, req *connect.Request[v1.StartSe
 func (s *Server) ListProjects(_ context.Context, _ *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error) {
 	var projs []*v1.ProjectInfo
 	for _, p := range s.mgr.Projects() {
-		info := &v1.ProjectInfo{Name: p.Name, Path: p.Path}
+		info := &v1.ProjectInfo{
+			Name: p.Name, Path: p.Path,
+			NeedsOnboarding: proto.Bool(docs.NeedsOnboarding(p.Path)),
+		}
 		if status := s.mgr.ProjectGitStatus(p.Path); status != nil {
 			info.Git = &v1.GitStatus{
 				Branch: status.Branch, HasUpstream: status.HasUpstream,
@@ -112,7 +118,10 @@ func (s *Server) AddProject(_ context.Context, req *connect.Request[v1.AddProjec
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	return connect.NewResponse(&v1.AddProjectResponse{Project: &v1.ProjectInfo{Name: p.Name, Path: p.Path}}), nil
+	return connect.NewResponse(&v1.AddProjectResponse{Project: &v1.ProjectInfo{
+		Name: p.Name, Path: p.Path,
+		NeedsOnboarding: proto.Bool(docs.NeedsOnboarding(p.Path)),
+	}}), nil
 }
 
 // RemoveProject deregisters a project by name.
@@ -140,7 +149,10 @@ func (s *Server) RenameProject(_ context.Context, req *connect.Request[v1.Rename
 		}
 		return nil, connect.NewError(code, err)
 	}
-	return connect.NewResponse(&v1.RenameProjectResponse{Project: &v1.ProjectInfo{Name: p.Name, Path: p.Path}}), nil
+	return connect.NewResponse(&v1.RenameProjectResponse{Project: &v1.ProjectInfo{
+		Name: p.Name, Path: p.Path,
+		NeedsOnboarding: proto.Bool(docs.NeedsOnboarding(p.Path)),
+	}}), nil
 }
 
 // ListSessions returns all live sessions and their current status, optionally
@@ -176,20 +188,21 @@ func (s *Server) ListSessionHistory(_ context.Context, req *connect.Request[v1.L
 			models = append(models, &v1.SessionModelUsage{Model: usage.Model, Tokens: usage.Tokens})
 		}
 		out = append(out, &v1.SessionSummary{
-			SessionId:    su.ID,
-			Mode:         su.Mode,
-			Status:       string(su.Status),
-			Workspace:    su.Workspace,
-			Title:        su.Title,
-			StartedAt:    rfc3339(su.StartedAt),
-			LastActivity: rfc3339(su.LastActivity),
-			FocusTasks:   su.FocusTasks,
-			Turns:        int64(su.Turns),
-			ToolCalls:    int64(su.ToolCalls),
-			Live:         su.Live,
-			WaitingInput: su.Waiting,
-			ModelUsage:   models,
-			TotalTokens:  su.TotalTokens,
+			SessionId:     su.ID,
+			Mode:          su.Mode,
+			Status:        string(su.Status),
+			Workspace:     su.Workspace,
+			Title:         su.Title,
+			StartedAt:     rfc3339(su.StartedAt),
+			LastActivity:  rfc3339(su.LastActivity),
+			FocusTasks:    su.FocusTasks,
+			Turns:         int64(su.Turns),
+			ToolCalls:     int64(su.ToolCalls),
+			Live:          su.Live,
+			WaitingInput:  su.Waiting,
+			ModelUsage:    models,
+			TotalTokens:   su.TotalTokens,
+			ContextTokens: su.ContextTokens,
 		})
 	}
 	return connect.NewResponse(&v1.ListSessionHistoryResponse{Sessions: out}), nil
@@ -437,6 +450,8 @@ func (s *Server) ResumeSession(_ context.Context, req *connect.Request[v1.Resume
 			return nil, connect.NewError(connect.CodeInvalidArgument, err)
 		case errors.Is(err, session.ErrUnknownSession):
 			return nil, connect.NewError(connect.CodeNotFound, err)
+		case errors.Is(err, session.ErrDisabledModel):
+			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
 		default:
 			return nil, connect.NewError(connect.CodeInternal, err)
 		}
@@ -487,7 +502,7 @@ func (s *Server) AnswerQuestions(_ context.Context, req *connect.Request[v1.Answ
 func (s *Server) ListModels(_ context.Context, _ *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error) {
 	var models []*v1.ModelInfo
 	for _, m := range s.mgr.Models() {
-		mi := &v1.ModelInfo{Name: m.Name, Backend: m.Backend, Model: m.Model, Priced: m.Pricing.Configured}
+		mi := &v1.ModelInfo{Name: m.Name, Backend: m.Backend, Model: m.Model, Priced: m.Pricing.Configured, Disabled: m.Disabled}
 		// Only attach the optional price_* fields when pricing is configured so an
 		// unset rate stays nil on the wire: the TUI must never invent a
 		// cost for an unpriced model.
@@ -517,6 +532,7 @@ func modelConfigToConfig(mc *v1.ModelConfig) config.Model {
 		Model:           mc.Model,
 		KeyEnv:          mc.KeyEnv,
 		Auth:            mc.Auth,
+		Disabled:        mc.GetDisabled(),
 		Thinking:        mc.Thinking,
 		Effort:          mc.Effort,
 		ThinkingDisplay: mc.ThinkingDisplay,
@@ -537,6 +553,7 @@ func configToModelConfig(name string, m config.Model) *v1.ModelConfig {
 		Model:           m.Model,
 		KeyEnv:          m.KeyEnv,
 		Auth:            m.Auth,
+		Disabled:        proto.Bool(m.Disabled),
 		Thinking:        m.Thinking,
 		Effort:          m.Effort,
 		ThinkingDisplay: m.ThinkingDisplay,
@@ -556,7 +573,15 @@ func (s *Server) UpsertModel(_ context.Context, req *connect.Request[v1.UpsertMo
 	if mc == nil || mc.Name == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("model name is required"))
 	}
-	if err := s.mgr.UpsertModel(mc.Name, modelConfigToConfig(mc), true); err != nil {
+	model := modelConfigToConfig(mc)
+	if mc.Disabled == nil {
+		// Older clients do not know the availability field. Preserve an existing
+		// disabled state when they edit another part of the full model record.
+		if current, ok := s.mgr.GetModel(mc.Name); ok {
+			model.Disabled = current.Disabled
+		}
+	}
+	if err := s.mgr.UpsertModel(mc.Name, model, true); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	return connect.NewResponse(&v1.UpsertModelResponse{}), nil
@@ -611,6 +636,75 @@ func (s *Server) DiscoverModels(ctx context.Context, req *connect.Request[v1.Dis
 	}
 	return connect.NewResponse(&v1.DiscoverModelsResponse{
 		ModelIds: ids, FromNetwork: true, Note: fmt.Sprintf("%d models from %s", len(ids), backend),
+	}), nil
+}
+
+const modelProbeTimeout = 30 * time.Second
+
+func modelProbeFailureMessage(kind engine.APIErrorKind) string {
+	switch kind {
+	case engine.KindAuth:
+		return "Provider authentication failed. Check the authentication mode and provider login or API key reference."
+	case engine.KindInvalidRequest, engine.KindContextLength:
+		return "The provider rejected the model request. Check the backend, base URL, model id, and reasoning settings."
+	case engine.KindRateLimit:
+		return "The provider rate-limited the model test. Try again later."
+	case engine.KindOverloaded, engine.KindServer:
+		return "The provider is temporarily unavailable. Try again later."
+	case engine.KindNetwork:
+		return "The daemon could not reach the configured provider endpoint."
+	case engine.KindTimeout:
+		return "The model test timed out."
+	default:
+		return "The model test failed before a usable response was received. Check the provider login or API key, endpoint, and model id."
+	}
+}
+
+// TestModel runs one small inference request against the unsaved model draft.
+// Provider failures are returned as diagnostic data rather than Connect errors:
+// in particular, a provider 401 must not look like failed daemon authentication
+// to a remote client. The isolated probe registry never mutates or persists the
+// manager's live configuration.
+func (s *Server) TestModel(ctx context.Context, req *connect.Request[v1.TestModelRequest]) (*connect.Response[v1.TestModelResponse], error) {
+	return s.testModel(ctx, req, modelProbeTimeout)
+}
+
+func (s *Server) testModel(ctx context.Context, req *connect.Request[v1.TestModelRequest], timeout time.Duration) (*connect.Response[v1.TestModelResponse], error) {
+	mc := req.Msg.Model
+	if mc == nil || strings.TrimSpace(mc.Name) == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("model name is required"))
+	}
+	model := modelConfigToConfig(mc)
+	if err := model.Validate(mc.Name); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	duration, err := config.ProbeModel(probeCtx, mc.Name, model)
+	durationMS := duration.Milliseconds()
+	if err == nil {
+		return connect.NewResponse(&v1.TestModelResponse{
+			Success: true, Message: "Model responded successfully.", DurationMs: durationMS,
+		}), nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		code := connect.CodeCanceled
+		if errors.Is(ctxErr, context.DeadlineExceeded) {
+			code = connect.CodeDeadlineExceeded
+		}
+		return nil, connect.NewError(code, ctxErr)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return connect.NewResponse(&v1.TestModelResponse{
+			Message: "Model test timed out.", DurationMs: durationMS,
+			ErrorKind: string(engine.KindTimeout),
+		}), nil
+	}
+	info := engine.ClassifyAPIError(err)
+	return connect.NewResponse(&v1.TestModelResponse{
+		Message: modelProbeFailureMessage(info.Kind), DurationMs: durationMS,
+		ErrorKind: string(info.Kind), Status: int32(info.Status),
 	}), nil
 }
 
@@ -702,6 +796,9 @@ func (s *Server) SetReviewDefault(_ context.Context, req *connect.Request[v1.Set
 func (s *Server) SetRoleConfig(_ context.Context, req *connect.Request[v1.SetRoleConfigRequest]) (*connect.Response[v1.SetRoleConfigResponse], error) {
 	if sess, ok := s.mgr.Get(req.Msg.SessionId); ok {
 		if err := sess.SetRoleConfig(req.Msg.Coordinator, req.Msg.Implementer, req.Msg.Reviewers); err != nil {
+			if errors.Is(err, config.ErrModelDisabled) {
+				return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+			}
 			return nil, connect.NewError(connect.CodeInvalidArgument, err)
 		}
 		return connect.NewResponse(&v1.SetRoleConfigResponse{}), nil
@@ -709,6 +806,9 @@ func (s *Server) SetRoleConfig(_ context.Context, req *connect.Request[v1.SetRol
 	// No live session to apply to — persist the default assignment so it takes
 	// effect for the next session (and survives a restart).
 	if err := s.mgr.SetRoles(req.Msg.Coordinator, req.Msg.Implementer, req.Msg.Reviewers); err != nil {
+		if errors.Is(err, config.ErrModelDisabled) {
+			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+		}
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	return connect.NewResponse(&v1.SetRoleConfigResponse{}), nil

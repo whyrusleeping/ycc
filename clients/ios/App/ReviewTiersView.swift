@@ -271,6 +271,9 @@ private struct ReviewerSlotEditor: View {
                 if slot.model.isEmpty {
                     Text("Choose model…").tag("")
                 }
+                if !slot.model.isEmpty && !modelNames.contains(slot.model) {
+                    Text("\(slot.model) (disabled)").tag(slot.model)
+                }
                 ForEach(modelNames, id: \.self) { name in
                     Text(name).tag(name)
                 }

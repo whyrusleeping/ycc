@@ -33,6 +33,23 @@ func TestCycleThinkLevels(t *testing.T) {
 	}
 }
 
+func TestCycleModelSkipsDisabled(t *testing.T) {
+	models := []*v1.ModelInfo{
+		{Name: "a"},
+		{Name: "paused", Disabled: true},
+		{Name: "c"},
+	}
+	if got := cycleModel(models, "a", 1); got != "c" {
+		t.Fatalf("cycle forward = %q, want c", got)
+	}
+	if got := cycleModel(models, "c", -1); got != "a" {
+		t.Fatalf("cycle backward = %q, want a", got)
+	}
+	if got := cycleModel(models, "paused", 1); got != "a" {
+		t.Fatalf("cycle away from disabled current = %q, want a", got)
+	}
+}
+
 // TestOverlayCoordinatorAppliesImmediately covers the fix for the "role change
 // didn't stick" bug: cycling the coordinator with →  in the settings overlay must
 // issue SetRoleConfig right away (no separate "apply" step), so the daemon

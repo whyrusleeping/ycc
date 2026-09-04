@@ -4,38 +4,53 @@ import SwiftUI
 /// Owns the home navigation stack's path and gives every screen a single way to
 /// navigate: ``open(_:)``.
 ///
-/// The important behaviour is *screen dedupe*. The app's screens cross-link
-/// freely (a session links to the backlog, the backlog to a task, the task back
-/// into a session…), and when every link pushes, going in circles grows the
-/// stack without bound — the user then has to tap Back once per lap. `open`
-/// instead pops back to a screen that is already on the stack, so the stack
-/// depth is bounded by the number of *distinct* screens visited, not the number
-/// of hops.
+/// The paradigm is *hub-and-spoke*: the root Recent list is the hub, and a
+/// cross-link jump (a session opening the backlog, a task opening a session,
+/// the drawer opening anything) **replaces** the stack instead of pushing onto
+/// it. The app's screens cross-link freely, and any push-based scheme — even
+/// one that dedupes revisited screens — leaves the user tapping Back through a
+/// pile of stale intermediates, each refreshing as it reappears. With replace
+/// semantics a single Back always returns straight to Recent.
+///
+/// The one carve-out is the genuine drill-in: `NavigationLink` pushes
+/// (Recent → session, backlog → task) append to `path` directly without going
+/// through ``open(_:)``, so Back still returns to the list being browsed. And
+/// a *lateral* move to the same kind of screen (task → dependency task) swaps
+/// the top in place, keeping that parent underneath.
 @MainActor
 @Observable
 final class HomeRouter {
     var path: [HomeDestination] = []
 
-    /// Navigate to a destination: pop back to it if a screen with the same
-    /// identity is already on the stack, otherwise push it.
+    /// Jump to a destination: it becomes the top of the stack, with nothing
+    /// under it except — for a lateral same-kind move — the current screen's
+    /// parent. A single Back from any jumped-to screen lands on the root.
     ///
-    /// When popping to an existing entry the parameters are merged (see
-    /// ``HomeDestination/merging(into:)``): a session reopened live must
+    /// Parameters are merged with any existing copy of the screen on the stack
+    /// (see ``HomeDestination/merging(into:)``): a session reopened live must
     /// rebuild the screen, but an empty incoming title must not clobber a good
     /// one the stack already has.
     func open(_ destination: HomeDestination) {
-        guard let index = path.lastIndex(where: { $0.screenID == destination.screenID }) else {
-            path.append(destination)
+        var merged = destination
+        if let index = path.lastIndex(where: { $0.screenID == destination.screenID }) {
+            merged = destination.merging(into: path[index])
+        }
+        if let top = path.last, top.screenKind == merged.screenKind {
+            // Lateral move (task → task) or a re-open of the current screen:
+            // swap the top so Back still returns to whatever sits beneath.
+            // Only write when the value actually changed: replacing a path
+            // element rebuilds that destination's view, which is wanted for a
+            // live-flag flip and pure waste otherwise.
+            if top != merged {
+                path[path.count - 1] = merged
+            }
             return
         }
-        let merged = destination.merging(into: path[index])
-        // Only write when the value actually changed: replacing a path element
-        // rebuilds that destination's view, which is wanted for a live-flag
-        // flip and pure waste otherwise.
-        if path[index] != merged {
-            path[index] = merged
-        }
-        path.removeSubrange(path.index(after: index)...)
+        // Jump: the destination becomes the only screen above the root. When
+        // the destination equals a prefix of the current path (e.g. backlog →
+        // task, then "open backlog"), value equality makes this a plain pop —
+        // the retained screen is revealed, not rebuilt.
+        path = [merged]
     }
 
     func popToRoot() {
@@ -58,6 +73,13 @@ extension HomeDestination {
         case .memory(let project): return "memory:\(project)"
         case .settings: return "settings"
         }
+    }
+
+    /// The kind of screen, ignoring which project/task/session it shows. Two
+    /// destinations of the same kind are *lateral* to each other: navigating
+    /// between them replaces the screen rather than resetting the stack.
+    var screenKind: Substring {
+        screenID.prefix(while: { $0 != ":" })
     }
 
     /// The value to keep when this destination lands on `existing` (same

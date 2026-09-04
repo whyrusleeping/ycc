@@ -647,6 +647,19 @@ public final class YccClient: Sendable {
         }
     }
 
+    /// Run one small inference request against an unsaved model draft. The
+    /// daemon resolves the credential and returns provider failures as diagnostic
+    /// response data, keeping provider auth distinct from daemon authentication.
+    public func testModel(_ model: Ycc_V1_ModelConfig) async throws -> Ycc_V1_TestModelResponse {
+        var request = Ycc_V1_TestModelRequest()
+        request.model = model
+        let response = await generated.testModel(request: request)
+        switch response.result {
+        case .success(let message): return message
+        case .failure(let error): throw Self.map(error)
+        }
+    }
+
     // MARK: - Review tiers
 
     /// List the effective review tiers (built-ins overlaid with configured

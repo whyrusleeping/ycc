@@ -29,9 +29,15 @@ type SessionSummary struct {
 	FocusTasks   []string
 	ModelUsage   []ModelUsage
 	TotalTokens  int64
-	Turns        int
-	ToolCalls    int
-	Live         bool
+	// ContextTokens is the coarse prompt-size estimate (context_tokens_est)
+	// from the newest coordinator model_turn — how full the session's active
+	// context is, as opposed to cumulative spend. Subagent turns are ignored
+	// because they run isolated histories. Zero means the log predates the
+	// telemetry (or no coordinator turn completed yet).
+	ContextTokens int64
+	Turns         int
+	ToolCalls     int
+	Live          bool
 	// Waiting is true when a live session is blocked on an unanswered ask_user
 	// question. Only ever set on live rows — a persisted-only session holds no
 	// in-memory pending question.
@@ -75,18 +81,19 @@ func scanSessionHistory(workspace string) ([]SessionSummary, error) {
 			ws = workspace
 		}
 		out = append(out, SessionSummary{
-			ID:           id,
-			Mode:         proj.Mode,
-			Status:       proj.Status,
-			Workspace:    ws,
-			Title:        deriveTitle(evs),
-			StartedAt:    evs[0].TS,
-			LastActivity: evs[len(evs)-1].TS,
-			FocusTasks:   focusTasks(evs),
-			ModelUsage:   models,
-			TotalTokens:  totalTokens,
-			Turns:        proj.Turns,
-			ToolCalls:    proj.ToolCalls,
+			ID:            id,
+			Mode:          proj.Mode,
+			Status:        proj.Status,
+			Workspace:     ws,
+			Title:         deriveTitle(evs),
+			StartedAt:     evs[0].TS,
+			LastActivity:  evs[len(evs)-1].TS,
+			FocusTasks:    focusTasks(evs),
+			ModelUsage:    models,
+			TotalTokens:   totalTokens,
+			ContextTokens: sessionContextTokens(evs),
+			Turns:         proj.Turns,
+			ToolCalls:     proj.ToolCalls,
 		})
 	}
 	return out, nil
@@ -223,6 +230,45 @@ func sessionModelUsage(evs []event.Event) ([]ModelUsage, int64) {
 		return models[i].Model < models[j].Model
 	})
 	return models, total
+}
+
+// sessionContextTokens returns the context_tokens_est recorded on the newest
+// coordinator model_turn (actor empty or "coordinator"), or 0 when no such
+// telemetry exists. Subagent (implementer/reviewer/agent) turns are skipped:
+// they run isolated histories, so their context size says nothing about the
+// session's own conversation. Turns without the field (older logs) are also
+// skipped rather than clearing a previously known value.
+func sessionContextTokens(evs []event.Event) int64 {
+	for i := len(evs) - 1; i >= 0; i-- {
+		ev := evs[i]
+		if ev.Type != event.ModelTurn {
+			continue
+		}
+		if ev.Actor != "" && ev.Actor != "coordinator" {
+			continue
+		}
+		if tokens, ok := integerField(ev.Data["context_tokens_est"]); ok && tokens >= 0 {
+			return tokens
+		}
+	}
+	return 0
+}
+
+// integerField coerces the numeric encodings a reduced event field can arrive
+// in (in-memory int, JSON float64/Number) into an int64.
+func integerField(v any) (int64, bool) {
+	switch n := v.(type) {
+	case int:
+		return int64(n), true
+	case int64:
+		return n, true
+	case float64:
+		return int64(n), true
+	case json.Number:
+		value, err := n.Int64()
+		return value, err == nil
+	}
+	return 0, false
 }
 
 func modelTurnTokens(v any) int64 {

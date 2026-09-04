@@ -10,6 +10,7 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"google.golang.org/protobuf/proto"
 
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 
@@ -140,6 +141,7 @@ func (m *model) mbStartAdd() {
 	m.mbPresetIdx = -1
 	m.mbFormMode = mbAdd
 	m.mbOrigName = ""
+	m.mbDisabled = false
 	m.mbAuthIdx = 0
 	m.mbErr, m.mbInfo = "", ""
 	m.mbApplyCuratedIDs()
@@ -173,6 +175,7 @@ func (m *model) mbPrefill(cfg *v1.ModelConfig, mode int) {
 	m.mbFormMode = mode
 	m.mbOrigName = cfg.Name
 	m.mbOrigModel = cfg.Model
+	m.mbDisabled = cfg.GetDisabled()
 	m.mbAuthIdx = mbIndexOf(mbAuthList, cfg.Auth)
 	name := cfg.Name
 	if mode == mbDuplicate {
@@ -512,6 +515,7 @@ func (m model) mbSubmitForm() (tea.Model, tea.Cmd) {
 			Model:           id,
 			KeyEnv:          keyEnv,
 			Auth:            auth,
+			Disabled:        proto.Bool(m.mbDisabled),
 			Thinking:        thinking,
 			Effort:          effort,
 			ThinkingDisplay: display,
@@ -678,7 +682,11 @@ func (m model) mbListView() string {
 	}
 	for i, mm := range m.models[start:end] {
 		cursor := "  "
-		row := fmt.Sprintf("%-16s %-12s %s", mm.Name, mm.Backend, mm.Model)
+		availability := ""
+		if mm.Disabled {
+			availability = "  (disabled)"
+		}
+		row := fmt.Sprintf("%-16s %-12s %s%s", mm.Name, mm.Backend, mm.Model, availability)
 		if start+i == m.mbCursor {
 			cursor = selStyle.Render("▸ ")
 			row = selStyle.Render(row)

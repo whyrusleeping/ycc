@@ -195,7 +195,7 @@ public final class ReviewTiersModel {
             let models = try await source.listModels()
             tiers = response.tiers
             defaultTier = response.defaultTier
-            modelNames = models.models.map(\.name)
+            modelNames = models.models.filter { !$0.disabled }.map(\.name)
                 .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
             errorMessage = nil
         } catch { handle(error) }
