@@ -667,6 +667,14 @@ func TestModelBackendRPCs(t *testing.T) {
 		t.Fatalf("GetModelConfig = %+v", mc)
 	}
 
+	// Model context budgets are configured in TOML rather than this connection
+	// form; editing through the RPC must preserve them too.
+	configured, _ := reg.GetModel("gpt")
+	configured.ContextWindow, configured.ContextSafeFraction = 123456, .7
+	if err := reg.UpsertModel("gpt", configured, false); err != nil {
+		t.Fatal(err)
+	}
+
 	// A version-skewed client that omits the optional availability field while
 	// editing another property must not accidentally re-enable the model.
 	if _, err := srv.UpsertModel(ctx, connect.NewRequest(&v1.UpsertModelRequest{Model: &v1.ModelConfig{
@@ -677,6 +685,9 @@ func TestModelBackendRPCs(t *testing.T) {
 	got, err = srv.GetModelConfig(ctx, connect.NewRequest(&v1.GetModelConfigRequest{Name: "gpt"}))
 	if err != nil || !got.Msg.Model.GetDisabled() || got.Msg.Model.Model != "gpt-4.1" {
 		t.Fatalf("legacy upsert did not preserve disabled state: model=%+v err=%v", got.Msg.GetModel(), err)
+	}
+	if current, _ := reg.GetModel("gpt"); current.ContextWindow != 123456 || current.ContextSafeFraction != .7 {
+		t.Fatalf("model edit discarded context budget: %+v", current)
 	}
 
 	// Removing a role-referenced model is rejected.

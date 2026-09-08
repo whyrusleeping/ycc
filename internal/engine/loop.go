@@ -101,6 +101,12 @@ type Loop struct {
 	MaxTurns  int // 0 => default
 	MaxTok    int // per-turn max tokens; 0 => backend default
 
+	// ContextLengthHandled tells Run that its owner handles context-length
+	// failures at a higher-level safe boundary. Such failures are returned without
+	// a terminal session_error; implementer/reviewer orchestration uses this to
+	// replace the loop once and emit rollover lifecycle metadata.
+	ContextLengthHandled bool
+
 	// Anthropic extended/adaptive reasoning. Thinking == ""
 	// disables reasoning; "adaptive" enables it. Effort tunes depth/spend
 	// ("low".."max"); ThinkingDisplay ("summarized") opts into reasoning
@@ -467,6 +473,15 @@ func (l *Loop) ContextTokensEstimate() int {
 	return approxContextTokens(l.System, l.history)
 }
 
+// ContextTokensEstimateWith returns the estimated context after appending one
+// text-only user message, without mutating the loop. Orchestration uses it at
+// continuation boundaries to roll retained subagents over before the next call.
+func (l *Loop) ContextTokensEstimateWith(content string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return approxContextTokens(l.System, l.history) + len(content)/4
+}
+
 // Post appends a text-only user message to the conversation.
 func (l *Loop) Post(content string) { l.PostMessage(UserMessage{Text: content}) }
 
@@ -799,13 +814,15 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 				data["status"] = info.Status
 			}
 			if info.Kind == KindContextLength {
-				// A context-window-exceeded failure (history too large for the
-				// model) is terminal and opaque from the provider. Surface a
-				// clear, actionable message instead of the raw 400 so the user
-				// knows to start fresh or narrow scope rather than retry.
-				msg := fmt.Sprintf("context window exceeded for model %s: the conversation history (~%d tokens) is too large to continue. This session cannot proceed automatically — start a fresh session or narrow the task scope.", modelID, approxContextTokens(l.System, l.history))
+				// Surface a clear message instead of the raw provider 400. A
+				// subagent owner may defer terminal recording because it can replace
+				// the isolated loop at a safe boundary; ordinary sessions retain the
+				// existing terminal session_error behavior.
+				msg := fmt.Sprintf("context window exceeded for model %s: the conversation history (~%d tokens) is too large to continue. Fresh context or a narrower task is required.", modelID, approxContextTokens(l.System, l.history))
 				data["msg"] = msg
-				l.Emitter.Emit(event.SessionError, data)
+				if !l.ContextLengthHandled {
+					l.Emitter.Emit(event.SessionError, data)
+				}
 				return nil, &TurnError{Err: errors.New(msg)}
 			}
 			l.Emitter.Emit(event.SessionError, data)

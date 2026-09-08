@@ -61,6 +61,13 @@ type Model struct {
 	Effort          string `toml:"effort"`           // "low" | "medium" | "high" | "xhigh" | "max"
 	ThinkingDisplay string `toml:"thinking_display"` // "summarized" | "omitted"
 
+	// ContextWindow is the model's input context capacity, independently of the
+	// per-turn output cap. Zero uses a built-in value when the model is known.
+	// ContextSafeFraction controls how full retained subagent context may get before
+	// replacement; zero uses DefaultContextSafeFraction.
+	ContextWindow       int     `toml:"context_window,omitempty"`
+	ContextSafeFraction float64 `toml:"context_safe_fraction,omitempty"`
+
 	// Optional per-model pricing in US dollars per million tokens,
 	// split by token class so cache reads/writes can be priced separately from
 	// fresh input/output. Each is a pointer so an unset price is distinguishable
@@ -170,7 +177,20 @@ func (m Model) Validate(name string) error {
 	default:
 		return fmt.Errorf("model %q: unsupported backend %q", name, m.Backend)
 	}
+	if err := m.validateContext(name); err != nil {
+		return err
+	}
 	return m.validateAuth(name)
+}
+
+func (m Model) validateContext(name string) error {
+	if m.ContextWindow < 0 {
+		return fmt.Errorf("model %q: context_window must be non-negative", name)
+	}
+	if m.ContextSafeFraction < 0 || m.ContextSafeFraction > 1 {
+		return fmt.Errorf("model %q: context_safe_fraction must be between 0 and 1", name)
+	}
+	return nil
 }
 
 // validateAuth checks the credential-mechanism field. Shared by load-time
@@ -214,6 +234,49 @@ const (
 // cap this size. Used as the shared default across the config default, the
 // daemon options, and the CLI flag default so they stay consistent.
 const DefaultMaxTokens = 32000
+
+// DefaultContextSafeFraction leaves headroom for the next model output and for
+// the estimator's tokenizer-independent approximation.
+const DefaultContextSafeFraction = 0.80
+
+// ContextBudget returns the effective input context window and safe fraction.
+// Explicit configuration wins; conservative built-ins cover model families whose
+// providers publish a stable window. An unknown model with no configured window
+// returns window=0, disabling pressure-based rollover while retaining error recovery.
+func (m Model) ContextBudget() (window int, safeFraction float64) {
+	window = m.ContextWindow
+	if window == 0 {
+		window = knownContextWindow(m.Backend, m.Model)
+	}
+	safeFraction = m.ContextSafeFraction
+	if safeFraction == 0 {
+		safeFraction = DefaultContextSafeFraction
+	}
+	return window, safeFraction
+}
+
+func knownContextWindow(backend, model string) int {
+	backend = strings.ToLower(strings.TrimSpace(backend))
+	model = strings.ToLower(strings.TrimSpace(model))
+	switch backend {
+	case "anthropic":
+		if strings.HasPrefix(model, "claude-") {
+			return 200000
+		}
+	case "openai":
+		switch {
+		case knownModelPrefix(model, "gpt-5"):
+			return 400000
+		case knownModelPrefix(model, "o1"), knownModelPrefix(model, "o3"), knownModelPrefix(model, "o4"):
+			return 200000
+		}
+	}
+	return 0
+}
+
+func knownModelPrefix(model, prefix string) bool {
+	return model == prefix || strings.HasPrefix(model, prefix+"-") || strings.HasPrefix(model, prefix+".")
+}
 
 // ResolveThinking fills in defaults for unset fields and normalizes the
 // "off"/disabled cases. A model that does not opt out gets adaptive thinking at
@@ -840,6 +903,9 @@ func (c *Config) validate() error {
 		if err := m.validateAuth(name); err != nil {
 			return err
 		}
+		if err := m.validateContext(name); err != nil {
+			return err
+		}
 	}
 	// Validate only the explicitly configured review tiers; the built-ins are
 	// always valid. An unknown strategy, an agents-tier referencing an unknown
@@ -922,6 +988,18 @@ func (r *Registry) MaxTokens() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.cfg.MaxTokens
+}
+
+// ContextBudget returns a logical model's effective input-context capacity and
+// rollover fraction. Unknown names return the safe default with no known window.
+func (r *Registry) ContextBudget(name string) (window int, safeFraction float64) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	m, ok := r.cfg.Models[name]
+	if !ok {
+		return 0, DefaultContextSafeFraction
+	}
+	return m.ContextBudget()
 }
 
 // MaxTurns returns the configured per-Run tool-call turn cap (0 if unset, in

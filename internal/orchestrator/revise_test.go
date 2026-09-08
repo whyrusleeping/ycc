@@ -34,6 +34,34 @@ func (f failingTurner) TurnCtx(context.Context, gollama.RequestOptions) (*gollam
 	return nil, f.err
 }
 
+// contextAfterFirst succeeds once (the initial subagent run), then rejects the
+// next retained continuation before it can execute a tool.
+type contextAfterFirst struct{ calls int }
+
+func (t *contextAfterFirst) TurnCtx(context.Context, gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+	t.calls++
+	if t.calls == 1 {
+		return call("finish", `{"report":"initial verification passed"}`), nil
+	}
+	return nil, errors.New("context_length_exceeded")
+}
+
+// contextAfterMutation fails only after the revision has dispatched one write;
+// orchestrator recovery must not replay that mutating Run.
+type contextAfterMutation struct{ calls int }
+
+func (t *contextAfterMutation) TurnCtx(context.Context, gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+	t.calls++
+	switch t.calls {
+	case 1:
+		return call("finish", `{"report":"initial"}`), nil
+	case 2:
+		return call("Write", `{"file_path":"once.txt","content":"once\n"}`), nil
+	default:
+		return nil, errors.New("context_length_exceeded")
+	}
+}
+
 func (s *scripted) TurnCtx(_ context.Context, opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
 	s.system = opts.System
 	s.messages = append([]gollama.Message(nil), opts.Messages...)
@@ -313,7 +341,8 @@ func TestFreshImplementerRevisionReplacesHistory(t *testing.T) {
 		call("finish", `{"report":"fresh fix"}`),
 	}}
 	calls := 0
-	d := &Deps{Workspace: ws, Docs: store, Repo: repo, Emitter: event.NewEmitter(&captureRec{}, "coordinator"),
+	rec := &captureRec{}
+	d := &Deps{Workspace: ws, Docs: store, Repo: repo, Emitter: event.NewEmitter(rec, "coordinator"),
 		Implementer: AgentSpec{Name: "impl", Model: "m", NewClient: func() engine.Turner {
 			calls++
 			if calls == 1 {
@@ -343,6 +372,16 @@ func TestFreshImplementerRevisionReplacesHistory(t *testing.T) {
 	if !strings.Contains(res.Content, "mode=fresh round=2") {
 		t.Fatalf("missing fresh context metadata: %s", res.Content)
 	}
+	manualFresh := false
+	for _, ev := range rec.events {
+		if ev.Type == event.SubagentSpawned && ev.Data["rollover_reason"] == "coordinator_fresh" &&
+			ev.Data["old_context_tokens_est"] != nil && ev.Data["new_context_tokens_est"] != nil {
+			manualFresh = true
+		}
+	}
+	if !manualFresh {
+		t.Fatal("coordinator-selected fresh lifecycle metadata missing")
+	}
 }
 
 func TestFreshImplementerRecoversAfterContextLengthFailure(t *testing.T) {
@@ -371,6 +410,324 @@ func TestFreshImplementerRecoversAfterContextLengthFailure(t *testing.T) {
 	if res.IsError || !strings.Contains(res.Content, "mode=fresh") {
 		t.Fatalf("fresh recovery failed: %s", res.Content)
 	}
+}
+
+func TestImplementerRevisionRollsOverAtContextBudget(t *testing.T) {
+	ws := t.TempDir()
+	repo, _ := git.Open(ws)
+	store := docs.NewStore(ws)
+	_, _ = store.Create("pressure", "## Acceptance\n- fixed\n\n## Work log\n", 1, nil, nil)
+	first := &scripted{resp: []*gollama.ResponseMessageGenerate{
+		call("Write", `{"file_path":"x.txt","content":"old\n"}`),
+		call("finish", `{"report":"wrote old; not yet verified"}`),
+	}}
+	fresh := &scripted{resp: []*gollama.ResponseMessageGenerate{
+		call("Edit", `{"file_path":"x.txt","old_string":"old","new_string":"fixed"}`),
+		call("finish", `{"report":"fixed and verified"}`),
+	}}
+	clients := 0
+	rec := &captureRec{}
+	d := &Deps{Workspace: ws, Docs: store, Repo: repo, Emitter: event.NewEmitter(rec, "coordinator"),
+		Implementer: AgentSpec{Name: "impl", Model: "m", ContextWindow: 100, ContextSafeFraction: .5, NewClient: func() engine.Turner {
+			clients++
+			if clients == 1 {
+				return first
+			}
+			return fresh
+		}}, Asker: noopAsker{}}
+	ctx := context.Background()
+	if res, _ := spawnImplementer(d).Call(ctx, map[string]any{"task_id": "0001", "plan": "write it"}); res.IsError {
+		t.Fatal(res.Content)
+	}
+	res, _ := sendToImplementer(d).Call(ctx, map[string]any{"task_id": "0001", "instructions": "fix x and verify"})
+	if res.IsError || !strings.Contains(res.Content, "mode=fresh round=2") {
+		t.Fatalf("automatic rollover failed: %s", res.Content)
+	}
+	if clients != 2 {
+		t.Fatalf("NewClient calls = %d, want pressure replacement", clients)
+	}
+	if len(fresh.messages) == 0 || !strings.Contains(fresh.messages[0].Content, "Current bounded workspace diff") ||
+		!strings.Contains(fresh.messages[0].Content, "not yet verified") || !strings.Contains(fresh.messages[0].Content, "fix x and verify") {
+		t.Fatalf("fresh pressure handoff lacks current state: %+v", fresh.messages)
+	}
+	for _, m := range fresh.messages {
+		if len(m.ToolCalls) > 0 && m.ToolCalls[0].Function.Name == "Write" {
+			t.Fatalf("fresh loop replayed old tool history: %+v", fresh.messages)
+		}
+	}
+	found := false
+	for _, ev := range rec.events {
+		if ev.Type == event.SubagentSpawned && ev.Data["rollover_reason"] == "automatic_pressure" {
+			found = ev.Data["old_context_tokens_est"] != nil && ev.Data["new_context_tokens_est"] != nil
+		}
+	}
+	if !found {
+		t.Fatal("pressure rollover event missing reason or old/new estimates")
+	}
+}
+
+func TestImplementerContextErrorRecoversOnceWithoutDuplicateMutation(t *testing.T) {
+	ws := t.TempDir()
+	repo, _ := git.Open(ws)
+	store := docs.NewStore(ws)
+	_, _ = store.Create("recover automatically", "## Work log\n", 1, nil, nil)
+	retained := &contextAfterFirst{}
+	fresh := &scripted{resp: []*gollama.ResponseMessageGenerate{
+		call("Write", `{"file_path":"ok.txt","content":"ok\n"}`),
+		call("finish", `{"report":"recovered and verified"}`),
+	}}
+	clients := 0
+	rec := &captureRec{}
+	d := &Deps{Workspace: ws, Docs: store, Repo: repo, Emitter: event.NewEmitter(rec, "coordinator"),
+		Implementer: AgentSpec{Name: "impl", Model: "m", NewClient: func() engine.Turner {
+			clients++
+			if clients == 1 {
+				return retained
+			}
+			return fresh
+		}}, Asker: noopAsker{}}
+	ctx := context.Background()
+	if res, _ := spawnImplementer(d).Call(ctx, map[string]any{"task_id": "0001", "plan": "go"}); res.IsError {
+		t.Fatal(res.Content)
+	}
+	res, _ := sendToImplementer(d).Call(ctx, map[string]any{"task_id": "0001", "instructions": "continue safely"})
+	if res.IsError || !strings.Contains(res.Content, "recovered and verified") {
+		t.Fatalf("context recovery failed: %s", res.Content)
+	}
+	var recoverySpawns, writes, sessionErrors int
+	for _, ev := range rec.events {
+		if ev.Type == event.SubagentSpawned && ev.Data["rollover_reason"] == "context_error_recovery" {
+			recoverySpawns++
+		}
+		if ev.Type == event.ToolCall && ev.Data["name"] == "Write" {
+			writes++
+		}
+		if ev.Type == event.SessionError {
+			sessionErrors++
+		}
+	}
+	if clients != 2 || recoverySpawns != 1 || writes != 1 || sessionErrors != 0 {
+		t.Fatalf("clients=%d recovery spawns=%d Write calls=%d session errors=%d; want 2,1,1,0", clients, recoverySpawns, writes, sessionErrors)
+	}
+}
+
+func TestImplementerContextErrorAfterMutationIsNotReplayed(t *testing.T) {
+	ws := t.TempDir()
+	repo, _ := git.Open(ws)
+	store := docs.NewStore(ws)
+	_, _ = store.Create("do not replay", "## Work log\n", 1, nil, nil)
+	retained := &contextAfterMutation{}
+	clients := 0
+	rec := &captureRec{}
+	d := &Deps{Workspace: ws, Docs: store, Repo: repo, Emitter: event.NewEmitter(rec, "coordinator"),
+		Implementer: AgentSpec{Name: "impl", Model: "m", NewClient: func() engine.Turner {
+			clients++
+			return retained
+		}}, Asker: noopAsker{}}
+	ctx := context.Background()
+	if res, _ := spawnImplementer(d).Call(ctx, map[string]any{"task_id": "0001", "plan": "go"}); res.IsError {
+		t.Fatal(res.Content)
+	}
+	res, _ := sendToImplementer(d).Call(ctx, map[string]any{"task_id": "0001", "instructions": "write once"})
+	if !res.IsError || !strings.Contains(res.Content, "context window exceeded") {
+		t.Fatalf("unsafe context error should be returned without replay: %s", res.Content)
+	}
+	var writes, recoveries int
+	for _, ev := range rec.events {
+		if ev.Type == event.ToolCall && ev.Data["name"] == "Write" {
+			writes++
+		}
+		if ev.Type == event.SubagentSpawned && ev.Data["rollover_reason"] == "context_error_recovery" {
+			recoveries++
+		}
+	}
+	if clients != 1 || writes != 1 || recoveries != 0 {
+		t.Fatalf("clients=%d Write calls=%d recoveries=%d; mutating Run was replayed", clients, writes, recoveries)
+	}
+	if body, err := os.ReadFile(filepath.Join(ws, "once.txt")); err != nil || string(body) != "once\n" {
+		t.Fatalf("single mutation result = %q, %v", body, err)
+	}
+}
+
+func TestReviewerContextErrorRecreatesSameSlotAndSubmitsOnce(t *testing.T) {
+	ws := t.TempDir()
+	repo, _ := git.Open(ws)
+	store := docs.NewStore(ws)
+	_, _ = store.Create("review recover", "## Acceptance\n- safe\n\n## Work log\n", 1, nil, nil)
+	retained := &scripted{resp: []*gollama.ResponseMessageGenerate{
+		call("submit_review", `{"verdict":"revise","summary":"verification failed","findings":[{"severity":"blocker","message":"race remains"}]}`),
+	}}
+	fresh := &scripted{resp: []*gollama.ResponseMessageGenerate{
+		call("submit_review", `{"verdict":"accept","summary":"race fixed"}`),
+	}}
+	clients, resolved := 0, 0
+	spec := AgentSpec{Name: "review-model", Label: "concurrency", Focus: "Focus on races.", Model: "m", NewClient: func() engine.Turner {
+		clients++
+		switch clients {
+		case 1:
+			return &reviewContextAfterFirst{first: retained}
+		default:
+			return fresh
+		}
+	}}
+	rec := &captureRec{}
+	d := &Deps{Workspace: ws, Docs: store, Repo: repo, Emitter: event.NewEmitter(rec, "coordinator"), Asker: noopAsker{},
+		ReviewTier: func(string) ReviewPlan {
+			resolved++
+			return ReviewPlan{Tier: "deep", Specs: []AgentSpec{spec}}
+		}}
+	ctx := context.Background()
+	if res, _ := spawnReviewers(d).Call(ctx, map[string]any{"task_id": "0001"}); !strings.Contains(res.Content, "0/1") {
+		t.Fatal(res.Content)
+	}
+	res, _ := reReview(d).Call(ctx, map[string]any{"task_id": "0001", "handoff": "reran race test"})
+	if !strings.Contains(res.Content, "1/1") {
+		t.Fatalf("review recovery failed: %s", res.Content)
+	}
+	var submissions, recoveries int
+	for _, ev := range rec.events {
+		if ev.Type == event.ReviewSubmitted {
+			submissions++
+		}
+		if ev.Type == event.SubagentSpawned && ev.Data["rollover_reason"] == "context_error_recovery" {
+			recoveries++
+		}
+	}
+	if resolved != 1 || clients != 2 || submissions != 2 || recoveries != 1 {
+		t.Fatalf("resolved=%d clients=%d submissions=%d recoveries=%d; want 1,2,2,1", resolved, clients, submissions, recoveries)
+	}
+	if !strings.Contains(fresh.system, "Focus on races") || len(fresh.messages) == 0 ||
+		!strings.Contains(fresh.messages[len(fresh.messages)-1].Content, "race remains") ||
+		!strings.Contains(fresh.messages[len(fresh.messages)-1].Content, "reran race test") {
+		t.Fatalf("same-slot recovery lost focus/findings/verification: system=%q messages=%+v", fresh.system, fresh.messages)
+	}
+}
+
+func TestReviewerPressureRolloverIncludesImplementationEvidenceWithoutHandoff(t *testing.T) {
+	ws := t.TempDir()
+	repo, _ := git.Open(ws)
+	store := docs.NewStore(ws)
+	_, _ = store.Create("review pressure", "## Acceptance\n- verified\n\n## Work log\n", 1, nil, nil)
+	impl := &scripted{resp: []*gollama.ResponseMessageGenerate{
+		call("finish", `{"report":"go test ./... passed; implementation complete"}`),
+	}}
+	first := &scripted{resp: []*gollama.ResponseMessageGenerate{
+		call("submit_review", `{"verdict":"revise","summary":"needs correction","findings":[{"severity":"major","message":"edge case remains"}]}`),
+	}}
+	fresh := &scripted{resp: []*gollama.ResponseMessageGenerate{
+		call("submit_review", `{"verdict":"accept","summary":"verified"}`),
+	}}
+	reviewerClients := 0
+	rec := &captureRec{}
+	d := &Deps{
+		Workspace: ws, Docs: store, Repo: repo, Emitter: event.NewEmitter(rec, "coordinator"), Asker: noopAsker{},
+		Implementer: AgentSpec{Name: "impl", Model: "impl-model", NewClient: func() engine.Turner { return impl }},
+		ReviewTier: func(string) ReviewPlan {
+			return ReviewPlan{Tier: "standard", Specs: []AgentSpec{{
+				Name: "review", Model: "review-model", ContextWindow: 100, ContextSafeFraction: .5,
+				NewClient: func() engine.Turner {
+					reviewerClients++
+					if reviewerClients == 1 {
+						return first
+					}
+					return fresh
+				},
+			}}}
+		},
+	}
+	ctx := context.Background()
+	if res, _ := spawnImplementer(d).Call(ctx, map[string]any{"task_id": "0001", "plan": "verify"}); res.IsError {
+		t.Fatal(res.Content)
+	}
+	if res, _ := spawnReviewers(d).Call(ctx, map[string]any{"task_id": "0001"}); !strings.Contains(res.Content, "0/1") {
+		t.Fatal(res.Content)
+	}
+	res, _ := reReview(d).Call(ctx, map[string]any{"task_id": "0001"})
+	if !strings.Contains(res.Content, "1/1") || reviewerClients != 2 {
+		t.Fatalf("automatic reviewer rollover failed: clients=%d result=%s", reviewerClients, res.Content)
+	}
+	seed := fresh.messages[len(fresh.messages)-1].Content
+	for _, want := range []string{"Latest implementation/verification evidence", "go test ./... passed", "edge case remains"} {
+		if !strings.Contains(seed, want) {
+			t.Fatalf("fresh reviewer seed missing %q:\n%s", want, seed)
+		}
+	}
+	foundPressure := false
+	for _, ev := range rec.events {
+		if ev.Type == event.SubagentSpawned && ev.Data["role"] == "reviewer" && ev.Data["rollover_reason"] == "automatic_pressure" {
+			foundPressure = true
+		}
+	}
+	if !foundPressure {
+		t.Fatal("automatic reviewer pressure rollover was not recorded")
+	}
+}
+
+func TestFailedReReviewPreservesLastSuccessfulMajorFindings(t *testing.T) {
+	ws := t.TempDir()
+	repo, _ := git.Open(ws)
+	store := docs.NewStore(ws)
+	_, _ = store.Create("retry review", "## Acceptance\n- correct\n\n## Work log\n", 1, nil, nil)
+	first := &scripted{resp: []*gollama.ResponseMessageGenerate{
+		call("submit_review", `{"verdict":"revise","summary":"found issue","findings":[{"severity":"blocker","message":"preserve this finding"}]}`),
+	}}
+	fresh := &scripted{resp: []*gollama.ResponseMessageGenerate{
+		call("submit_review", `{"verdict":"accept","summary":"fixed"}`),
+	}}
+	clients := 0
+	spec := AgentSpec{Name: "review", Model: "m", NewClient: func() engine.Turner {
+		clients++
+		if clients == 1 {
+			return &reviewFailureAfterFirst{first: first}
+		}
+		return fresh
+	}}
+	d := &Deps{Workspace: ws, Docs: store, Repo: repo, Emitter: event.NewEmitter(&captureRec{}, "coordinator"), Asker: noopAsker{},
+		ReviewTier: func(string) ReviewPlan { return ReviewPlan{Tier: "standard", Specs: []AgentSpec{spec}} }}
+	ctx := context.Background()
+	if res, _ := spawnReviewers(d).Call(ctx, map[string]any{"task_id": "0001"}); !strings.Contains(res.Content, "0/1") {
+		t.Fatal(res.Content)
+	}
+	failed, _ := reReview(d).Call(ctx, map[string]any{"task_id": "0001"})
+	if !strings.Contains(failed.Content, "reviewer error") {
+		t.Fatalf("expected failed review result: %s", failed.Content)
+	}
+	retried, _ := reReview(d).Call(ctx, map[string]any{"task_id": "0001", "context_mode": "fresh"})
+	if !strings.Contains(retried.Content, "1/1") {
+		t.Fatalf("fresh retry failed: %s", retried.Content)
+	}
+	seed := fresh.messages[len(fresh.messages)-1].Content
+	if !strings.Contains(seed, "preserve this finding") {
+		t.Fatalf("failed re-review erased the last successful blocker:\n%s", seed)
+	}
+}
+
+// reviewContextAfterFirst lets the initial review submit, then fails the retained
+// re-review before submission. It records both requests through scripted.
+type reviewContextAfterFirst struct {
+	first *scripted
+	calls int
+}
+
+func (t *reviewContextAfterFirst) TurnCtx(ctx context.Context, opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+	t.calls++
+	if t.calls == 1 {
+		return t.first.TurnCtx(ctx, opts)
+	}
+	return nil, errors.New("maximum context length exceeded")
+}
+
+type reviewFailureAfterFirst struct {
+	first *scripted
+	calls int
+}
+
+func (t *reviewFailureAfterFirst) TurnCtx(ctx context.Context, opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+	t.calls++
+	if t.calls == 1 {
+		return t.first.TurnCtx(ctx, opts)
+	}
+	return nil, errors.New("review backend unavailable")
 }
 
 func TestFreshReReviewPreservesResolvedSlotsAndSeedsCurrentDiff(t *testing.T) {

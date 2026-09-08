@@ -1080,10 +1080,13 @@ func (s *Session) agentSpec(name string) (orchestrator.AgentSpec, error) {
 		return orchestrator.AgentSpec{}, fmt.Errorf("build backend %q: %w", name, err)
 	}
 	th := s.thinkingFor(name)
+	contextWindow, contextSafeFraction := s.reg.ContextBudget(name)
 	return orchestrator.AgentSpec{
-		Name:    name,
-		Model:   model,
-		Backend: s.reg.BackendFor(name),
+		Name:                name,
+		Model:               model,
+		Backend:             s.reg.BackendFor(name),
+		ContextWindow:       contextWindow,
+		ContextSafeFraction: contextSafeFraction,
 		NewClient: func() engine.Turner {
 			c, _, err := s.reg.Build(name)
 			if err != nil {
@@ -2619,10 +2622,13 @@ func (m *Manager) agentSpec(name string) (orchestrator.AgentSpec, error) {
 		return orchestrator.AgentSpec{}, fmt.Errorf("build backend %q: %w", name, err)
 	}
 	th := m.reg.ThinkingFor(name)
+	contextWindow, contextSafeFraction := m.reg.ContextBudget(name)
 	return orchestrator.AgentSpec{
-		Name:    name,
-		Model:   model,
-		Backend: m.reg.BackendFor(name),
+		Name:                name,
+		Model:               model,
+		Backend:             m.reg.BackendFor(name),
+		ContextWindow:       contextWindow,
+		ContextSafeFraction: contextSafeFraction,
 		NewClient: func() engine.Turner {
 			c, _, _ := m.reg.Build(name)
 			return c

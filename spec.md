@@ -262,13 +262,17 @@ Resume or after changing the coordinator model.
 
 A subagent is another engine loop with isolated history and an actor-tagged event stream.
 Implementer and reviewer contexts may be retained for a small, localized revision, or explicitly
-replaced with fresh loops when a revision is broad, the approach changed, accumulated history is
-obsolete or log-heavy, or a context-length failure made continuation impossible. A fresh
-implementer receives the task and a compact self-contained revision handoff against the current
-working tree. Fresh reviewers preserve the previously resolved slots, models, focuses, and
-reasoning settings, receive the current bounded diff and a compact handoff, and do not re-resolve a
-possibly changed review tier. Subagent lifecycle events expose the chosen context mode, round, and
-an advisory context-size estimate. Reviewer fan-out runs concurrently.
+replaced with fresh loops when a revision is broad, the approach changed, or accumulated history is
+obsolete or log-heavy. Before a retained revision or re-review, the orchestrator compares its coarse
+input-context estimate with the resolved logical model's context window and safe fraction and
+replaces a near-limit loop automatically. A context-length failure gets one fresh recovery only at a
+safe boundary: before any implementer tool executed, or before a reviewer submission. A fresh
+implementer receives the full task, current bounded diff, unresolved instructions, and latest
+implementation/verification report. Fresh reviewers preserve the previously resolved slots, models,
+focuses, reasoning settings, and read-only policy; they receive the current bounded diff, current
+verification handoff, and unresolved blocker/major findings without old tool logs or tier
+re-resolution. Subagent lifecycle events expose context mode, round, rollover reason, and old/new
+advisory context estimates. Reviewer fan-out runs concurrently.
 
 Background shell commands and subagents share session-owned job ids and the `job_output`, `wait`,
 and `kill_job` controls. Final reports are delivered exactly once, either by a covering wait or
@@ -366,10 +370,10 @@ use one focused reviewer for ordinary work, or fan out independent reviewers for
 Findings are judged against the task rather than accepted mechanically. On revision, the
 coordinator chooses context retention or replacement: retained context avoids rediscovery for a
 small changeset, while fresh context avoids obsolete-history cost and anchoring for broad or
-approach-changing work. Context length, revision count, and approximate retained size are advisory
-signals rather than an automatic token threshold; after a context-length failure the coordinator
-uses a fresh subagent or narrows the task instead of retrying the same history. Acceptance updates
-the task and creates one coherent task commit.
+approach-changing work. The model context budget additionally makes a near-limit retained subagent
+roll over automatically, and a safe context-length failure gets one fresh recovery without replaying
+mutation or submitting a duplicate review. Acceptance updates the task and creates one coherent task
+commit.
 
 An implementer can return a structured blocked outcome when progress requires a decision outside
 its authority. The coordinator resolves ordinary implementation judgement, asks the user when
@@ -412,9 +416,11 @@ opening attachments are rejected before the session/log is created.
 ## 13. Models, credentials, and review tiers
 
 A TOML config maps logical model names to backend, endpoint, model id, auth, reasoning, optional
-pricing, and an enabled/disabled availability flag. Roles select a coordinator, implementer, and
-reviewer models. Several logical models may share one endpoint/credential while selecting different
-model ids. Config is discovered workspace-first and otherwise from the user config directory; the
+pricing, optional `context_window` and `context_safe_fraction`, and an enabled/disabled availability
+flag. The context window is an input-history budget distinct from the global per-turn output cap;
+the safe fraction defaults to 0.8, and known Claude/OpenAI model families have built-in windows when
+none is configured. Roles select a coordinator, implementer, and reviewer models. Several logical
+models may share one endpoint/credential while selecting different model ids. Config is discovered workspace-first and otherwise from the user config directory; the
 active files are not merged.
 
 API-key values resolve from the environment first and then the machine-local secrets store

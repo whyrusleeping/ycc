@@ -54,6 +54,32 @@ reviewers = ["claude", "haiku", "local"]
 base = "main"
 `
 
+func TestModelContextBudget(t *testing.T) {
+	configured := Model{Backend: "ollama", Model: "custom", ContextWindow: 12345, ContextSafeFraction: .65}
+	if window, fraction := configured.ContextBudget(); window != 12345 || fraction != .65 {
+		t.Fatalf("configured context budget = (%d, %v), want (12345, .65)", window, fraction)
+	}
+	known := Model{Backend: "anthropic", Model: "claude-opus-4-6"}
+	if window, fraction := known.ContextBudget(); window != 200000 || fraction != DefaultContextSafeFraction {
+		t.Fatalf("known context budget = (%d, %v)", window, fraction)
+	}
+	for _, unknown := range []Model{
+		{Backend: "anthropic", Model: "proxy/claude-opus-4-6"},
+		{Backend: "openai", Model: "vendor-gpt-5-clone"},
+		{Backend: "openai-compatible", Model: "gpt-5"},
+	} {
+		if window, _ := unknown.ContextBudget(); window != 0 {
+			t.Fatalf("unknown compatible model %+v got built-in context window %d", unknown, window)
+		}
+	}
+	if err := (Model{Backend: "ollama", Model: "m", ContextWindow: -1}).Validate("bad"); err == nil {
+		t.Fatal("negative context_window accepted")
+	}
+	if err := (Model{Backend: "ollama", Model: "m", ContextSafeFraction: 1.1}).Validate("bad"); err == nil {
+		t.Fatal("context_safe_fraction > 1 accepted")
+	}
+}
+
 func TestLoadAndRegistry(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ycc.toml")
 	if err := os.WriteFile(path, []byte(sample), 0o644); err != nil {
@@ -220,6 +246,7 @@ func TestSaveRoundTrip(t *testing.T) {
 				Backend: "anthropic", BaseURL: "https://api.anthropic.com",
 				Model: "claude-opus-4-8", KeyEnv: "ANTHROPIC_API_KEY",
 				Effort: "max", ThinkingDisplay: "summarized",
+				ContextWindow: 1_000_000, ContextSafeFraction: .75,
 				PriceInput: fp(3), PriceOutput: fp(15), PriceCacheRead: fp(0.3), PriceCacheWrite: fp(3.75),
 			},
 			"haiku": {

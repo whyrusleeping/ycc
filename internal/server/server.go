@@ -574,10 +574,15 @@ func (s *Server) UpsertModel(_ context.Context, req *connect.Request[v1.UpsertMo
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("model name is required"))
 	}
 	model := modelConfigToConfig(mc)
-	if mc.Disabled == nil {
-		// Older clients do not know the availability field. Preserve an existing
-		// disabled state when they edit another part of the full model record.
-		if current, ok := s.mgr.GetModel(mc.Name); ok {
+	if current, ok := s.mgr.GetModel(mc.Name); ok {
+		// Context budgets are currently a TOML-level model capability rather than
+		// an interactive connection-form field. Preserve them when that form edits
+		// another part of the model record.
+		model.ContextWindow = current.ContextWindow
+		model.ContextSafeFraction = current.ContextSafeFraction
+		if mc.Disabled == nil {
+			// Older clients do not know the availability field. Preserve an existing
+			// disabled state when they edit another part of the full model record.
 			model.Disabled = current.Disabled
 		}
 	}
