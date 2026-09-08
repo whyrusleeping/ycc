@@ -88,28 +88,48 @@ func (r *Registry) APIDefs() []gollama.ToolParam {
 // Dispatch executes a tool call by name. A missing tool returns an error result
 // (not a Go error) so the model can see and recover from it.
 func (r *Registry) Dispatch(ctx context.Context, call gollama.ToolCall) *gollama.ToolResult {
-	t, ok := r.byName[call.Function.Name]
-	if !ok {
-		return errResult("no such tool %q", call.Function.Name)
-	}
 	// Defensive: recover arguments the model leaked as raw `<parameter …>` markup
 	// inside another string argument (see argrepair.go). The engine loop repairs
 	// before emitting the tool_call event; doing it here too keeps every other
 	// dispatch path (and any future caller) safe, and is a no-op on clean calls.
 	call, recovered := r.Repair(call)
+	return r.dispatchRepaired(ctx, call, recovered)
+}
+
+// DispatchRepaired executes a call already canonicalized by Repair. recovered
+// keeps the repair diagnostic attached when the engine repairs before recording
+// the call in history and the event log.
+func (r *Registry) DispatchRepaired(ctx context.Context, call gollama.ToolCall, recovered []string) *gollama.ToolResult {
+	return r.dispatchRepaired(ctx, call, recovered)
+}
+
+func (r *Registry) dispatchRepaired(ctx context.Context, call gollama.ToolCall, recovered []string) *gollama.ToolResult {
+	t, ok := r.byName[call.Function.Name]
+	if !ok {
+		return errResult("no such tool %q", call.Function.Name)
+	}
+	if err := validateToolArguments(call.Function.Arguments, t.Params); err != nil {
+		return appendRepairNote(errResult("tool %q has invalid arguments: %v", call.Function.Name, err), recovered)
+	}
 	res, err := gollama.HandleToolCall(ctx, []*gollama.Tool{t}, call)
 	if err != nil {
-		return errResult("tool %q failed: %v", call.Function.Name, err)
+		return appendRepairNote(errResult("tool %q failed: %v", call.Function.Name, err), recovered)
 	}
-	if len(recovered) > 0 && res != nil {
-		// Tell the model it malformed the call, or it repeats the same mistake
-		// for the rest of the session.
-		res.Content = strings.TrimRight(res.Content, "\n") + fmt.Sprintf(
-			"\n\n(ycc note: this call's arguments contained raw <parameter name=\"…\"> markup inside a "+
-				"string argument; %s was recovered from it. Emit tool arguments as JSON only — never "+
-				"write invoke/parameter tags inside an argument value.)",
-			strings.Join(recovered, ", "))
+	return appendRepairNote(res, recovered)
+}
+
+func appendRepairNote(res *gollama.ToolResult, recovered []string) *gollama.ToolResult {
+	if len(recovered) == 0 || res == nil {
+		return res
 	}
+	// Tell the model it malformed the call, or it repeats the same mistake
+	// for the rest of the session. Keep the note even when repaired arguments
+	// subsequently fail validation so the model can correct both problems.
+	res.Content = strings.TrimRight(res.Content, "\n") + fmt.Sprintf(
+		"\n\n(ycc note: this call's arguments contained raw <parameter name=\"…\"> markup inside a "+
+			"string argument; %s was recovered from it. Emit tool arguments as JSON only — never "+
+			"write invoke/parameter tags inside an argument value.)",
+		strings.Join(recovered, ", "))
 	return res
 }
 

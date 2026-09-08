@@ -119,6 +119,8 @@ func webSearch() *gollama.Tool {
 			"query": strProp("the search query"),
 			"num_results": map[string]any{
 				"type":        "integer",
+				"minimum":     1,
+				"maximum":     exaMaxResults,
 				"description": fmt.Sprintf("number of results to return (default %d, max %d)", exaDefaultResults, exaMaxResults),
 			},
 		}, "query"),

@@ -287,6 +287,21 @@ func TestCreateTask(t *testing.T) {
 	}
 }
 
+func TestCreateTaskDispatchRejectsInvalidPriorityWithoutMutation(t *testing.T) {
+	d := depsFor(t)
+	reg := tools.New()
+	reg.Add(createTask(d))
+	res := reg.Dispatch(context.Background(), gollama.ToolCall{Function: gollama.ToolCallFunction{
+		Name: "create_task", Arguments: `{"title":"bad priority","priority":0}`,
+	}})
+	if !res.IsError || !strings.Contains(res.Content, "priority") {
+		t.Fatalf("result = %q (error=%v), want priority validation error", res.Content, res.IsError)
+	}
+	if tasks, err := d.Docs.List(); err != nil || len(tasks) != 0 {
+		t.Fatalf("invalid create_task mutated backlog: tasks=%v err=%v", tasks, err)
+	}
+}
+
 // Writing spec.md through an authoring mode's Write tool persists the file and
 // emits a doc_updated event via the Workspace OnWrite hook.
 func TestSpecEditEmitsDocUpdated(t *testing.T) {

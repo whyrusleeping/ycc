@@ -404,8 +404,8 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 					"type": "object",
 					"properties": map[string]any{
 						"path":   tools.StrProp("file path accepted by Read"),
-						"offset": map[string]any{"type": "integer", "description": "optional 1-based start line"},
-						"limit":  map[string]any{"type": "integer", "description": "optional line limit; capped at 2000"},
+						"offset": map[string]any{"type": "integer", "minimum": 1, "description": "optional 1-based start line"},
+						"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": maxPreloadLines, "description": "optional line limit; capped at 2000"},
 					},
 					"required": []string{"path"},
 				},
@@ -564,7 +564,7 @@ func sendToImplementer(d *Deps) *gollama.Tool {
 		Params: tools.Obj(map[string]any{
 			"task_id":      tools.StrProp("task id"),
 			"instructions": tools.StrProp("clear, consolidated, self-contained instructions: unresolved findings, current intended approach, and required verification; bounded to 32 KiB"),
-			"context_mode": tools.StrProp("optional revision context strategy: 'retain' (default) or 'fresh'"),
+			"context_mode": map[string]any{"type": "string", "enum": []string{"retain", "fresh"}, "description": "optional revision context strategy: 'retain' (default) or 'fresh'"},
 		}, "task_id", "instructions"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			id, _ := tools.GetString(params, "task_id")
@@ -930,7 +930,7 @@ func reReview(d *Deps) *gollama.Tool {
 			"policy, preloads the current bounded diff, and seeds prior blocker/major findings plus the compact handoff.",
 		Params: tools.Obj(map[string]any{
 			"task_id":      tools.StrProp("task id"),
-			"context_mode": tools.StrProp("optional review context strategy: 'retain' (default) or 'fresh'"),
+			"context_mode": map[string]any{"type": "string", "enum": []string{"retain", "fresh"}, "description": "optional review context strategy: 'retain' (default) or 'fresh'"},
 			"handoff":      tools.StrProp("for fresh mode, concise self-contained context: what changed, prior blockers to verify, and any changed approach; bounded to 32 KiB"),
 		}, "task_id"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {

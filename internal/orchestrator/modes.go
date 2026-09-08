@@ -200,7 +200,7 @@ func createTask(d *Deps) *gollama.Tool {
 		Params: tools.Obj(map[string]any{
 			"title":       tools.StrProp("short task title"),
 			"description": tools.StrProp("description and acceptance criteria (markdown)"),
-			"priority":    map[string]any{"type": "integer", "description": "1 (highest) .. 5; default 3"},
+			"priority":    map[string]any{"type": "integer", "minimum": 1, "maximum": 5, "description": "1 (highest) .. 5; default 3"},
 			"status":      map[string]any{"type": "string", "enum": []string{"todo", "in_progress", "proposed"}, "description": "initial status: 'todo' (default) for accepted work; 'in_progress' for accepted work starting now; 'proposed' for an idea awaiting the user's acceptance"},
 			"depends_on":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "task ids this depends on"},
 			"spec_refs":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "spec references this relates to: a bare section title refers to the spec entry point; `path#Section` references a section of another doc in the docs set"},

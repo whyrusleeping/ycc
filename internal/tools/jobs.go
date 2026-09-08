@@ -71,7 +71,7 @@ func waitTool(ws *Workspace) *gollama.Tool {
 		Params: obj(map[string]any{
 			"job_ids":   StrArrProp("the job ids to wait on; omit to wait on all live jobs"),
 			"for":       map[string]any{"type": "string", "enum": []string{"any", "all"}, "description": "return after any one finishes, or after all (default all)"},
-			"timeout_s": map[string]any{"type": "integer", "description": "timeout in seconds (default 600); on timeout you get partial reports plus the still-running ids, and can wait again"},
+			"timeout_s": map[string]any{"type": "integer", "minimum": 1, "description": "timeout in seconds (default 600); on timeout you get partial reports plus the still-running ids, and can wait again"},
 		}),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			ids := getStringSlice(params, "job_ids")

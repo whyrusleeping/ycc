@@ -1028,7 +1028,7 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 				return nil, err
 			}
 			toolStart := time.Now()
-			res := l.Tools.Dispatch(ctx, call)
+			res := l.Tools.DispatchRepaired(ctx, call, recovered)
 			toolMS := time.Since(toolStart).Milliseconds()
 			resultData := map[string]any{
 				"name":        call.Function.Name,

@@ -551,8 +551,12 @@ func TestLoopCanonicalizesRepairedToolCallsBeforeHistory(t *testing.T) {
 	if !ok || len(repaired) != 1 || repaired[0] != "options" {
 		t.Fatalf("tool_call repaired payload = %#v", toolCall.Data["repaired"])
 	}
-	if toolResult == nil || toolResult.Data["result"] != "ok" {
-		t.Fatalf("tool_result changed: %+v", toolResult)
+	if toolResult == nil {
+		t.Fatal("no tool_result event")
+	}
+	result, _ := toolResult.Data["result"].(string)
+	if !strings.HasPrefix(result, "ok") || !strings.Contains(result, "options was recovered") {
+		t.Fatalf("tool_result does not explain the repair: %+v", toolResult)
 	}
 }
 

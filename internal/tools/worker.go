@@ -78,8 +78,8 @@ func readFile(ws *Workspace) *gollama.Tool {
 			"Passing a directory path lists its immediate entries (subdirectories are shown with a trailing '/').",
 		Params: obj(map[string]any{
 			"file_path": strProp("absolute path to the file (or relative to the workspace root)"),
-			"offset":    map[string]any{"type": "integer", "description": "1-based line number to start reading from (optional; text files only)"},
-			"limit":     map[string]any{"type": "integer", "description": "maximum number of lines to read (optional; text files only)"},
+			"offset":    map[string]any{"type": "integer", "minimum": 1, "description": "1-based line number to start reading from (optional; text files only)"},
+			"limit":     map[string]any{"type": "integer", "minimum": 1, "description": "maximum number of lines to read (optional; text files only)"},
 		}, "file_path"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			fp, ok := getString(params, "file_path")
