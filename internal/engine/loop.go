@@ -102,13 +102,14 @@ type Loop struct {
 	// recorded on model_turn events so per-turn usage is attributable per model
 	// independent of the resolved id. Backend is the logical backend family
 	// (e.g. "anthropic", "openai"). Both are display/accounting metadata only.
-	ModelName string
-	Backend   string
-	System    string
-	Tools     *tools.Registry
-	Emitter   *event.Emitter
-	MaxTurns  int // 0 => default
-	MaxTok    int // per-turn max tokens; 0 => backend default
+	ModelName     string
+	Backend       string
+	System        string
+	Tools         *tools.Registry
+	Emitter       *event.Emitter
+	MaxTurns      int // 0 => default
+	MaxTok        int // per-turn output cap; 0 => backend default
+	ContextWindow int // known/configured input capacity; 0 => unknown
 
 	// Activity receives safe progress metadata for background agent jobs. Nil for
 	// ordinary foreground loops.
@@ -147,6 +148,9 @@ type Loop struct {
 
 	mu      sync.Mutex // guards Client/Model swaps mid-loop (settings overlay)
 	history []gollama.Message
+	// lastInput anchors a next-request estimate to the provider's measured input
+	// for the preceding request. It is invalidated on backend/model switches.
+	lastInput inputMeasurement
 	// thinkingWarned records that we have already emitted the one-time
 	// session-log warning that the current backend cannot express the requested
 	// thinking/effort setting. It resets on SetBackend and
@@ -193,14 +197,23 @@ func (l *Loop) steerCheckpoint(ctx context.Context) error {
 // a mid-session role-config change takes effect on the next turn.
 // Safe to call concurrently with Run.
 func (l *Loop) SetBackend(client Turner, model, modelName, backend string, think Thinking) {
+	l.SetBackendWithContextWindow(client, model, modelName, backend, 0, think)
+}
+
+// SetBackendWithContextWindow is SetBackend plus the independently configured
+// input capacity used for telemetry and context-pressure decisions. Zero means
+// the selected model's capacity is unknown; it is never inferred from MaxTok.
+func (l *Loop) SetBackendWithContextWindow(client Turner, model, modelName, backend string, contextWindow int, think Thinking) {
 	l.mu.Lock()
 	l.Client = client
 	l.Model = model
 	l.ModelName = modelName
 	l.Backend = backend
+	l.ContextWindow = contextWindow
 	l.Thinking = think.Thinking
 	l.Effort = think.Effort
 	l.ThinkingDisplay = think.ThinkingDisplay
+	l.lastInput = inputMeasurement{}
 	l.thinkingWarned = false
 	l.mu.Unlock()
 }
@@ -264,15 +277,22 @@ type Thinking struct {
 
 // modelIdentity is the loop's current model labelling for usage attribution.
 type modelIdentity struct {
-	ID      string // resolved backend model id
-	Name    string // logical model name
-	Backend string // logical backend family
+	ID            string // resolved backend model id
+	Name          string // logical model name
+	Backend       string // logical backend family
+	ContextWindow int    // input capacity; zero means unknown
+}
+
+type inputMeasurement struct {
+	Model, Shape string
+	RawEstimate  int
+	Measured     int
 }
 
 func (l *Loop) backend() (Turner, string, modelIdentity, Thinking) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	id := modelIdentity{ID: l.Model, Name: l.ModelName, Backend: l.Backend}
+	id := modelIdentity{ID: l.Model, Name: l.ModelName, Backend: l.Backend, ContextWindow: l.ContextWindow}
 	return l.Client, l.Model, id, Thinking{Thinking: l.Thinking, Effort: l.Effort, ThinkingDisplay: l.ThinkingDisplay}
 }
 
@@ -468,6 +488,10 @@ func toEventThinking(blocks []gollama.ThinkingBlock) []event.ThinkingBlock {
 func (l *Loop) SetHistory(h []gollama.Message) {
 	l.mu.Lock()
 	l.history = h
+	// A provider measurement is tied to the request built from the old history;
+	// using it as a subtractive baseline for replacement history can collapse the
+	// next estimate to zero.
+	l.lastInput = inputMeasurement{}
 	l.mu.Unlock()
 }
 
@@ -480,22 +504,69 @@ func (l *Loop) History() []gollama.Message {
 	return out
 }
 
-// ContextTokensEstimate returns a coarse, backend-neutral estimate of the
-// retained system prompt and conversation history. It is advisory orchestration
-// metadata, not a provider limit calculation.
+// ContextTokensEstimate returns the visibly approximate input size of the next
+// request for the currently selected backend. It includes schemas, tool payloads,
+// replay state, and uncertain media estimates. When the provider measured the
+// preceding request, that measurement anchors growth since that request.
 func (l *Loop) ContextTokensEstimate() int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return approxContextTokens(l.System, l.history)
+	return l.contextEstimateLocked("").Tokens
 }
 
-// ContextTokensEstimateWith returns the estimated context after appending one
-// text-only user message, without mutating the loop. Orchestration uses it at
-// continuation boundaries to roll retained subagents over before the next call.
+// ContextTokensEstimateWith returns the same next-request estimate after
+// appending one text-only user message, without mutating the loop. Orchestration
+// uses this shared accounting at continuation rollover boundaries.
 func (l *Loop) ContextTokensEstimateWith(content string) int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return approxContextTokens(l.System, l.history) + len(content)/4
+	return l.contextEstimateLocked(content).Tokens
+}
+
+func (l *Loop) contextEstimateLocked(extra string) contextEstimate {
+	messages := l.history
+	if extra != "" {
+		messages = append(append([]gollama.Message(nil), messages...), gollama.Message{Role: "user", Content: extra})
+	}
+	var defs []gollama.ToolParam
+	if l.Tools != nil {
+		defs = l.Tools.APIDefs()
+	}
+	shape := requestShape(l.Client, l.Backend)
+	est := estimateRequestContext(gollama.RequestOptions{
+		Model: l.Model, System: l.System,
+		Messages: messagesForBackend(messages, l.Backend), Tools: defs,
+	}, shape)
+	if prior := l.lastInput; prior.Measured > 0 && prior.Model == l.Model && prior.Shape == shape {
+		est.Tokens = max(0, prior.Measured+est.RawTokens-prior.RawEstimate)
+	}
+	return est
+}
+
+func (l *Loop) contextEstimateForOptions(opts gollama.RequestOptions, client Turner, ident modelIdentity) contextEstimate {
+	shape := requestShape(client, ident.Backend)
+	est := estimateRequestContext(opts, shape)
+	l.mu.Lock()
+	prior := l.lastInput
+	l.mu.Unlock()
+	if prior.Measured > 0 && prior.Model == ident.ID && prior.Shape == shape {
+		est.Tokens = max(0, prior.Measured+est.RawTokens-prior.RawEstimate)
+	}
+	return est
+}
+
+func (l *Loop) recordInputMeasurement(ident modelIdentity, client Turner, rawEstimate, measured int) {
+	if measured <= 0 {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	// Do not attach an in-flight response to a model selected concurrently for the
+	// next turn.
+	shape := requestShape(client, ident.Backend)
+	if l.Model == ident.ID && requestShape(l.Client, l.Backend) == shape {
+		l.lastInput = inputMeasurement{Model: ident.ID, Shape: shape, RawEstimate: rawEstimate, Measured: measured}
+	}
 }
 
 // Post appends a text-only user message to the conversation.
@@ -786,11 +857,15 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		if msg := l.thinkingWarning(); msg != "" {
 			l.Emitter.Emit(event.Narration, map[string]any{"msg": msg})
 		}
+		var defs []gollama.ToolParam
+		if l.Tools != nil {
+			defs = l.Tools.APIDefs()
+		}
 		opts := gollama.RequestOptions{
 			Model:           modelID,
 			System:          l.System,
 			Messages:        messagesForBackend(l.history, ident.Backend),
-			Tools:           l.Tools.APIDefs(),
+			Tools:           defs,
 			Thinking:        think.Thinking,
 			Effort:          think.Effort,
 			ThinkingDisplay: think.ThinkingDisplay,
@@ -798,6 +873,7 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		if l.MaxTok > 0 {
 			opts.Options = &gollama.Options{MaxTokens: l.MaxTok}
 		}
+		requestEstimate := l.contextEstimateForOptions(opts, client, ident)
 
 		// This is the final continuation barrier before entering a backend API. The
 		// turn receives ctx, so cancellation after this point tears down in-flight
@@ -837,7 +913,7 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 				// subagent owner may defer terminal recording because it can replace
 				// the isolated loop at a safe boundary; ordinary sessions retain the
 				// existing terminal session_error behavior.
-				msg := fmt.Sprintf("context window exceeded for model %s: the conversation history (~%d tokens) is too large to continue. Fresh context or a narrower task is required.", modelID, approxContextTokens(l.System, l.history))
+				msg := fmt.Sprintf("context window exceeded for model %s: the next request estimate (~%d input tokens) is too large to continue. Fresh context or a narrower task is required.", modelID, requestEstimate.Tokens)
 				data["msg"] = msg
 				if !l.ContextLengthHandled {
 					l.Emitter.Emit(event.SessionError, data)
@@ -926,25 +1002,27 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			msg.Content = noContentYieldReport(resp.StopReason)
 			noContentYield = true
 		}
-		// contextEst is a coarse estimate of the prompt size (system + history)
-		// that produced this turn, surfaced so long-session growth toward the
-		// context window is visible in telemetry.
-		contextEst := approxContextTokens(l.System, l.history)
+		// Keep the provider-measured input for this completed request separate
+		// from both the approximate request shape and cumulative billing totals.
+		measuredInput := measuredProviderInput(u)
 		turnUsage := event.Usage{
 			Input: inputTokens, Output: u.CompletionTokens,
 			CacheRead: u.GetCachedTokens(), CacheWrite: u.CacheCreationInputTokens,
 			Total: u.TotalTokens, ReasoningTokens: reasoningTokens,
 		}
-		l.Emitter.Emit(event.ModelTurn, map[string]any{
-			"text":               msg.Content,
-			"tool_calls":         len(msg.ToolCalls),
-			"model_name":         ident.Name,
-			"backend":            ident.Backend,
-			"model_id":           ident.ID,
-			"stop_reason":        resp.StopReason,
-			"truncated":          truncated,
-			"duration_ms":        elapsedMS,
-			"context_tokens_est": contextEst,
+		turnData := map[string]any{
+			"text":                    msg.Content,
+			"tool_calls":              len(msg.ToolCalls),
+			"model_name":              ident.Name,
+			"backend":                 ident.Backend,
+			"model_id":                ident.ID,
+			"stop_reason":             resp.StopReason,
+			"truncated":               truncated,
+			"duration_ms":             elapsedMS,
+			"context_tokens_est":      requestEstimate.Tokens,
+			"context_estimate_approx": true,
+			"context_media_uncertain": requestEstimate.MediaUncertain,
+			"context_window":          ident.ContextWindow,
 			// thinking_blocks carries the signed/redacted reasoning blocks on the
 			// ALWAYS-emitted model_turn (not the optional Thinking display event,
 			// which is skipped when display is "omitted" yet still produces signed
@@ -952,10 +1030,15 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			// reconstruct the conversation losslessly.
 			"thinking_blocks": toEventThinking(msg.ThinkingBlocks),
 			"usage":           turnUsage,
-		})
+		}
+		if measuredInput > 0 {
+			turnData["input_tokens_measured"] = measuredInput
+		}
+		l.Emitter.Emit(event.ModelTurn, turnData)
 		if err := l.durableEmitError(ctx); err != nil {
 			return nil, err
 		}
+		l.recordInputMeasurement(ident, client, requestEstimate.RawTokens, measuredInput)
 		if l.Activity != nil {
 			l.Activity(ActivityUpdate{TurnComplete: true, Usage: turnUsage})
 		}

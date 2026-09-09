@@ -486,9 +486,17 @@ opening attachments are rejected before the session/log is created.
 
 A TOML config maps logical model names to backend, endpoint, model id, auth, reasoning, optional
 pricing, optional `context_window` and `context_safe_fraction`, and an enabled/disabled availability
-flag. The context window is an input-history budget distinct from the global per-turn output cap;
+flag. The context window is an input-request capacity distinct from the global per-turn output cap;
 the safe fraction defaults to 0.8, and known Claude/OpenAI model families have built-in windows when
-none is configured. Roles select a coordinator, implementer, and reviewer models. Several logical
+none is configured. Unknown models report unknown capacity rather than deriving it from the output
+cap. Context telemetry and subagent pressure hints share one visibly approximate next-request
+estimate: it includes repeated tool schemas, tool arguments/results, and replayable provider state;
+text/JSON use a four-bytes-per-token heuristic. Provider-reported prior-request input remains a
+separate measured value and anchors subsequent growth estimates when available, while billing usage
+remains cumulative per token class. Media estimates are explicitly uncertain: dimensions use rough
+provider-shaped pixel/tile formulas, while undecodable or remote media use byte-size/placeholders;
+model tokenizers, image detail/resizing, and document page processing can differ substantially.
+Roles select a coordinator, implementer, and reviewer models. Several logical
 models may share one endpoint/credential while selecting different model ids. Config is discovered workspace-first and otherwise from the user config directory; the
 active files are not merged.
 

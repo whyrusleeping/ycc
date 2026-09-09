@@ -80,6 +80,10 @@ func New(baseURL string, tokens TokenSource) *Client {
 	}
 }
 
+// ContextRequestShape identifies the Responses serializer to engine's optional
+// request-context estimator without introducing a package dependency.
+func (*Client) ContextRequestShape() string { return "codex-responses" }
+
 // --- request shape ---
 
 // inputItem is one Responses-API input list entry. Exactly one "shape" is

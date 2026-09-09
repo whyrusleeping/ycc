@@ -857,7 +857,8 @@ func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []str
 		if err != nil {
 			return fmt.Errorf("build coordinator backend: %w", err)
 		}
-		s.currentLoop().SetBackend(client, model, newCoord, s.reg.BackendFor(newCoord), s.thinkingFor(newCoord))
+		contextWindow, _ := s.reg.ContextBudget(newCoord)
+		s.currentLoop().SetBackendWithContextWindow(client, model, newCoord, s.reg.BackendFor(newCoord), contextWindow, s.thinkingFor(newCoord))
 	}
 
 	s.mu.Lock()
@@ -2340,9 +2341,10 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 			return nil, fmt.Errorf("build coordinator backend: %w", err)
 		}
 		th := s.thinkingFor(coord)
+		contextWindow, _ := m.reg.ContextBudget(coord)
 		loop := &engine.Loop{
 			Client: client, Model: model, ModelName: coord, Backend: m.reg.BackendFor(coord),
-			System: sys, Tools: reg, Emitter: emitter,
+			System: sys, Tools: reg, Emitter: emitter, ContextWindow: contextWindow,
 			MaxTok: m.reg.MaxTokens(), MaxTurns: m.reg.MaxTurns(), Retry: m.reg.RetryPolicy(),
 			Thinking: th.Thinking, Effort: th.Effort, ThinkingDisplay: th.ThinkingDisplay,
 		}
@@ -3069,6 +3071,7 @@ func (m *Manager) CaptureBacklogItem(ctx context.Context, project, description, 
 	if err != nil {
 		return orchestrator.CaptureResult{}, fmt.Errorf("build capture backend: %w", err)
 	}
+	contextWindow, _ := m.reg.ContextBudget(coord)
 	cd := orchestrator.CaptureDeps{
 		Workspace:        absWS,
 		Docs:             store,
@@ -3078,6 +3081,7 @@ func (m *Manager) CaptureBacklogItem(ctx context.Context, project, description, 
 		Backend:          m.reg.BackendFor(coord),
 		Thinking:         engine.Thinking{}, // reasoning OFF for a fast capture
 		MaxTok:           m.reg.MaxTokens(),
+		ContextWindow:    contextWindow,
 		Retry:            m.reg.RetryPolicy(),
 		Ownership:        m.ownership,
 		CoordinatorToken: m.ownership.NewToken("backlog capture for " + absWS),

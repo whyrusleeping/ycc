@@ -331,6 +331,7 @@ func (d *Deps) newLoop(spec AgentSpec, system string, reg *tools.Registry, actor
 		Thinking:        spec.Thinking,
 		Effort:          spec.Effort,
 		ThinkingDisplay: spec.ThinkingDisplay,
+		ContextWindow:   spec.ContextWindow,
 	}
 }
 

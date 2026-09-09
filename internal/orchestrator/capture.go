@@ -18,14 +18,15 @@ import (
 // CaptureDeps configures the project-scoped quick-add agent. It runs outside the
 // main session stream so capturing a task does not disturb ongoing work.
 type CaptureDeps struct {
-	Workspace string
-	Docs      *docs.Store
-	Client    engine.Turner
-	Model     string
-	ModelName string
-	Backend   string
-	Thinking  engine.Thinking
-	MaxTok    int
+	Workspace     string
+	Docs          *docs.Store
+	Client        engine.Turner
+	Model         string
+	ModelName     string
+	Backend       string
+	Thinking      engine.Thinking
+	MaxTok        int
+	ContextWindow int
 	// Retry is the capture loop's transient-failure policy; zero uses the engine default.
 	Retry            engine.RetryPolicy
 	Ownership        *workspacelease.Service
@@ -151,6 +152,7 @@ func RunCapture(ctx context.Context, cd CaptureDeps, rec event.Recorder, descrip
 		Tools:           reg,
 		Emitter:         emitter,
 		MaxTok:          cd.MaxTok,
+		ContextWindow:   cd.ContextWindow,
 		MaxTurns:        captureMaxTurns,
 		Retry:           cd.Retry,
 		Thinking:        cd.Thinking.Thinking,
