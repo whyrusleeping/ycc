@@ -25,6 +25,7 @@ import (
 
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/event"
+	"github.com/whyrusleeping/ycc/internal/jobs"
 )
 
 // toolIDInvalid matches any character Anthropic rejects in a tool_use id. The
@@ -331,10 +332,11 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 				lostOrder = append(lostOrder, id)
 			}
 			lostJobs[id] = str(ev.Data, "label")
-		case event.JobFinished:
+		case event.JobFinished, event.JobClaimed:
 			// The job reached a terminal state before the log ended, so it is not
-			// lost. (Its report was delivered either via a wait tool_result or a
-			// job_notified event, both already reflected in the history.)
+			// lost. A durable claim carries the same terminal evidence as finish: it
+			// may win the race with the worker's job_finished emission after wait has
+			// already returned the report in its tool result.
 			delete(lostJobs, str(ev.Data, "id"))
 		case event.JobNotified:
 			// A finished-job final report injected at a Steer checkpoint as a
@@ -417,6 +419,120 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 	}
 
 	return history
+}
+
+// RestoreJobs reconstructs discoverable, repeatable job evidence from durable
+// lifecycle events. In-flight jobs cannot survive reopen and become terminal
+// lost jobs; restored ids remain reserved so newly started work cannot collide.
+func RestoreJobs(events []event.Event) *jobs.Registry {
+	var restored []jobs.Restored
+	byID := make(map[string]int)
+	finished := make(map[string]bool)
+	for _, ev := range events {
+		switch ev.Type {
+		case event.JobStarted:
+			id := str(ev.Data, "id")
+			if id == "" {
+				continue
+			}
+			if _, exists := byID[id]; exists {
+				continue
+			}
+			byID[id] = len(restored)
+			restored = append(restored, jobs.Restored{ID: id, Kind: str(ev.Data, "kind"),
+				Label: str(ev.Data, "label"), Owner: ev.Actor, Status: jobs.Running,
+				Mutates: boolv(ev.Data, "mutates"), Started: ev.TS})
+		case event.SubagentSpawned:
+			if idx, ok := byID[str(ev.Data, "job_id")]; ok && boolv(ev.Data, "mutating") {
+				restored[idx].Mutates = true
+			}
+		case event.JobFinished:
+			id := str(ev.Data, "id")
+			idx, ok := byID[id]
+			if !ok || id == "" {
+				continue
+			}
+			status, ok := terminalJobStatus(ev.Data)
+			if !ok {
+				status = jobs.Failed
+			}
+			restoreTerminalReport(&restored[idx], ev, status, str(ev.Data, "tail"))
+			finished[id] = true
+		case event.JobClaimed, event.JobNotified:
+			id := str(ev.Data, "id")
+			idx, ok := byID[id]
+			if !ok || id == "" {
+				continue
+			}
+			restored[idx].Notified = true
+			// Finish normally wins this projection. If the daemon stopped after a
+			// wait/checkpoint durably claimed the terminal report but before the
+			// worker emitted job_finished, the claim/notification is itself enough
+			// to restore repeatable terminal evidence.
+			if finished[id] {
+				continue
+			}
+			status, terminal := terminalJobStatus(ev.Data)
+			if !terminal { // legacy job_claimed events carried only id + reason
+				continue
+			}
+			result, present := ev.Data["result"].(string)
+			if !present && ev.Type == event.JobNotified {
+				result = legacyNotificationResult(ev.Data)
+			}
+			restoreTerminalReport(&restored[idx], ev, status, result)
+		}
+	}
+	for i := range restored {
+		if restored[i].Status == jobs.Running {
+			restored[i].Status = jobs.Lost
+			restored[i].Result = "job lost: daemon restarted"
+			// ReplayHistory has already synthesized the one lost-on-restart note.
+			// Suppress a second automatic notification from the restored registry.
+			restored[i].Notified = true
+			if restored[i].Finished.IsZero() && len(events) > 0 {
+				restored[i].Finished = events[len(events)-1].TS
+			}
+		}
+	}
+	return jobs.NewRestored(restored)
+}
+
+func terminalJobStatus(data map[string]any) (jobs.Status, bool) {
+	status := jobs.Status(str(data, "status"))
+	switch status {
+	case jobs.Done, jobs.Failed, jobs.Killed, jobs.Lost:
+		return status, true
+	default:
+		return "", false
+	}
+}
+
+func restoreTerminalReport(dst *jobs.Restored, ev event.Event, status jobs.Status, result string) {
+	if kind := str(ev.Data, "kind"); kind != "" {
+		dst.Kind = kind
+	}
+	if label := str(ev.Data, "label"); label != "" {
+		dst.Label = label
+	}
+	dst.Status = status
+	dst.Result = result
+	dst.Finished = ev.TS
+}
+
+// Before job_notified carried an explicit raw result, its text held the formatted
+// report. Recover the body when its header fields are present; otherwise retain
+// the whole notification as the best available terminal evidence.
+func legacyNotificationResult(data map[string]any) string {
+	text := str(data, "text")
+	head := fmt.Sprintf("[job %s %s] %s", str(data, "id"), str(data, "status"), str(data, "label"))
+	if text == head {
+		return ""
+	}
+	if strings.HasPrefix(text, head+"\n") {
+		return strings.TrimPrefix(text, head+"\n")
+	}
+	return text
 }
 
 func replayUserText(data map[string]any) string {

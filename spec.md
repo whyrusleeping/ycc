@@ -287,12 +287,17 @@ from its prior scoped snapshot plus exact current/delta retrieval commands, not 
 full patch. Subagent lifecycle events expose context mode, round, rollover reason, and old/new
 advisory context estimates. Reviewer fan-out runs concurrently.
 
-Background shell commands and subagents share session-owned job ids and the `job_output`, `wait`,
-and `kill_job` controls. Final reports are delivered exactly once, either by a covering wait or
-checkpoint injection. Progress reads never consume them; eviction from their bounded incremental
-buffer is visible, and completed shell jobs advertise the retained output artifact (or explicit
-storage loss) in their final report. Jobs and output artifacts do not survive daemon restart; replay
-closes an unfinished job with a lost-on-restart report so conversation history stays valid.
+Background shell commands and subagents share stable session-owned job ids and the `list_jobs`,
+`job_output`, `job_result`, `wait`, and `kill_job` controls. Automatic final notifications are claimed
+exactly once at a checkpoint; an explicit wait suppresses a later notification but, like
+`job_result`, can retrieve the retained final report repeatedly. Output reads are non-consuming and
+use explicit absolute byte cursors/ranges or retained-tail requests, with retained intervals and
+eviction gaps reported. Job discovery is owner-scoped by default and includes lifecycle timing;
+agent progress exposes only bounded last-activity, current-tool, turn, and token-usage metadata, not
+model text or reasoning. Completed shell jobs continue to advertise their fuller retained output
+artifact (or explicit storage loss) in the final report. Processes and output artifacts do not survive
+daemon restart, but replay restores durable job ids, owners, states, and final results; an unmatched
+start becomes terminal `lost`, and id allocation continues without collisions.
 
 Normal chat can spawn general-purpose subagents with an explicit prompt, any configured logical
 model, and an access level that defaults to read-only inspection but may explicitly allow workspace

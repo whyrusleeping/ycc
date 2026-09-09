@@ -116,6 +116,7 @@ func spawnAgent(d *Deps) *gollama.Tool {
 			} else {
 				job = d.Jobs.StartMutating("agent", agentID+" turn 1 ("+model+")", d.Emitter.Actor())
 			}
+			trackAgentJob(loop, job)
 			h := &genericAgentHandle{id: agentID, spec: spec, loop: loop, job: job, round: 1, mutates: mutates, token: token, running: true}
 			d.mu.Lock()
 			if d.genericAgent == nil {
@@ -197,6 +198,7 @@ func sendToAgent(d *Deps) *gollama.Tool {
 			} else {
 				job = d.Jobs.Start("agent", label, d.Emitter.Actor())
 			}
+			trackAgentJob(h.loop, job)
 			h.job = job
 			h.running = true
 			round := h.round
@@ -212,7 +214,7 @@ func sendToAgent(d *Deps) *gollama.Tool {
 
 func startGenericAgentJob(d *Deps, h *genericAgentHandle, job *jobs.Job, lease *workspacelease.Lease) {
 	round := h.round
-	d.Emitter.Emit(event.JobStarted, map[string]any{"id": job.ID(), "kind": job.Kind(), "label": job.Label()})
+	d.Emitter.Emit(event.JobStarted, map[string]any{"id": job.ID(), "kind": job.Kind(), "label": job.Label(), "mutates": job.Mutates()})
 	d.Emitter.Emit(event.SubagentSpawned, map[string]any{
 		"role": "generic", "agent_id": h.id, "model": h.spec.Model, "logical_model": h.spec.Name,
 		"job_id": job.ID(), "mutating": h.mutates,

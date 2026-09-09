@@ -63,8 +63,8 @@ var imageMediaTypes = map[string]string{
 // Editing returns the file, Search, and shell tools (Read, Search, Write, Edit,
 // Bash) without a control/finish tool — for open-ended modes (chat) where the
 // agent yields naturally rather than declaring the task complete. When ws.Jobs
-// is set, the background-job tools (job_output, wait, kill_job) are included too and Bash
-// gains run_in_background.
+// is set, job discovery/progress/result/wait/cancellation tools are included too
+// and Bash gains run_in_background.
 func Editing(ws *Workspace) []*gollama.Tool {
 	ts := append([]*gollama.Tool{readFile(ws), search(ws), writeFile(ws), editFile(ws), bash(ws), toolOutput(ws)}, Web()...)
 	if ws.Jobs != nil {
@@ -1183,7 +1183,7 @@ func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration, le
 	artifactID := ws.artifactStore().reserve()
 	job.SetTerminationHint(fmt.Sprintf("[output artifact %s: capture finalizes after the process exits; retrieve ranges with tool_output; a not-ready response is temporary]", artifactID))
 	ws.Emitter.EmitAs(owner, event.JobStarted, map[string]any{
-		"id": job.ID(), "kind": job.Kind(), "label": cmdStr,
+		"id": job.ID(), "kind": job.Kind(), "label": cmdStr, "mutates": job.Mutates(),
 	})
 
 	cmdCtx := job.Context()

@@ -1,14 +1,13 @@
 // Package jobs implements the session-scoped registry of background jobs
 // (docs/design/async-jobs.md). A job is session-owned background work, such as a
-// shell command started via Bash(run_in_background: true). Jobs are addressed by a monotonic "job_<n>" id
-// and expose incremental output (job_output), a blocking retrieval (wait), and a
-// kill.
+// shell command started via Bash(run_in_background: true). Jobs are addressed by
+// a monotonic "job_<n>" id and expose discovery, cursor-based output, repeatable
+// final results, bounded wait, and cancellation.
 //
-// Delivery of a job's FINAL report is exactly-once: it is consumed
-// either by a wait() that covers it OR by checkpoint injection (DrainFinished),
-// whichever fires first, guarded by one per-job consumed flag. job_output (Read)
-// never consumes the final report. This is the Claude Code deadlock lesson:
-// one authoritative delivery path, not two competing queues.
+// Automatic delivery of a job's final report is exactly-once: a wait suppresses
+// later checkpoint injection, while DrainFinished claims the one automatic
+// notification. The retained report and absolute-cursor output remain repeatable
+// evidence independent of notification state.
 package jobs
 
 import (
@@ -29,25 +28,67 @@ const (
 	Done    Status = "done"   // process exited 0
 	Failed  Status = "failed" // process exited non-zero or failed to run
 	Killed  Status = "killed" // terminated by kill_job or session end
+	Lost    Status = "lost"   // was running when the daemon restarted
 )
 
 // maxJobBuf caps the retained output buffer of a single job. When exceeded the
-// oldest bytes are dropped (the read cursor is adjusted) so a chatty watcher
-// cannot grow memory without bound; the tail — what the final report needs — is
-// always preserved.
+// oldest bytes are dropped and their absolute offset retained, so a chatty
+// watcher cannot grow memory without bound; the tail remains available.
 const (
 	maxJobBuf         = 256 * 1024
 	maxJobReportBytes = 64 * 1024
 )
 
-// Report is the final (or current) summary of a job, returned by wait /
-// DrainFinished and used to build the notification/tool-result text.
+// Report is the retained final (or current) summary of a job, returned by wait,
+// job_result, and DrainFinished without being destroyed by retrieval.
 type Report struct {
-	ID     string
-	Kind   string
-	Label  string
-	Status Status
-	Result string // exit code + output tail (bash), or the agent report
+	ID                  string
+	Kind                string
+	Label               string
+	Status              Status
+	Result              string // exit code + output tail (bash), or the agent report
+	ClaimedNotification bool   // this wait newly suppressed automatic delivery
+}
+
+// Usage is the bounded, non-reasoning token summary retained for an agent job.
+type Usage struct {
+	Input, Output, CacheRead, CacheWrite, Total int
+}
+
+// Activity is the safe progress summary retained for an agent job. It contains
+// lifecycle/tool/accounting metadata only, never model text or reasoning.
+type Activity struct {
+	Last        time.Time
+	CurrentTool string
+	Turns       int
+	Usage       Usage
+}
+
+// Info is a deterministic list_jobs snapshot.
+type Info struct {
+	ID, Kind, Label, Owner string
+	Status                 Status
+	Mutates                bool
+	Started, Finished      time.Time
+	Activity               Activity
+}
+
+// Output is a repeatable absolute-byte view over a job's retained output.
+type Output struct {
+	Data                       []byte
+	Start, End                 int64
+	RetainedStart, RetainedEnd int64
+	GapStart, GapEnd           int64
+	TailTruncated              bool
+}
+
+// Restored describes durable job state reconstructed from the event log.
+type Restored struct {
+	ID, Kind, Label, Owner string
+	Status                 Status
+	Result                 string
+	Mutates, Notified      bool
+	Started, Finished      time.Time
 }
 
 // Job is one unit of background work.
@@ -66,11 +107,13 @@ type Job struct {
 	mu              sync.Mutex
 	status          Status
 	buf             []byte
-	cursor          int    // read cursor for incremental job_output
-	result          string // final report
+	result          string // retained final report
 	terminationHint string // retrieval/readiness detail included if killed
-	consumed        bool   // exactly-once final-report delivery flag
-	dropped         int64  // bytes evicted from the incremental tail buffer
+	notified        bool   // exactly-once automatic notification claim
+	dropped         int64  // absolute offset of the retained output's first byte
+	started         time.Time
+	finished        time.Time
+	activity        Activity
 }
 
 // ID returns the job's id ("job_<n>").
@@ -109,10 +152,6 @@ func (j *Job) Append(p []byte) {
 		drop := len(j.buf) - maxJobBuf
 		j.dropped += int64(drop)
 		j.buf = append([]byte(nil), j.buf[drop:]...)
-		j.cursor -= drop
-		if j.cursor < 0 {
-			j.cursor = 0
-		}
 	}
 	j.mu.Unlock()
 }
@@ -128,15 +167,74 @@ func (w jobWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// Read returns the output produced since the last Read, current status, and the
-// cumulative bytes evicted from the bounded incremental buffer. It NEVER
-// consumes the final report: job_output is not part of the exactly-once rule.
-func (j *Job) Read() (string, Status, int64) {
+// Output returns a repeatable absolute-byte range from retained output. offset
+// is relative to the complete stream, not the current buffer. A request before
+// RetainedStart reports the missing interval in GapStart/GapEnd and resumes at
+// the first retained byte. tailLines > 0 selects the retained tail instead.
+func (j *Job) Output(offset int64, limit, tailLines int) Output {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	out := string(j.buf[j.cursor:])
-	j.cursor = len(j.buf)
-	return out, j.status, j.dropped
+	retainedStart := j.dropped
+	retainedEnd := retainedStart + int64(len(j.buf))
+	start := offset
+	var gapStart, gapEnd int64
+	if tailLines > 0 {
+		idx := tailLineStart(j.buf, tailLines)
+		start = retainedStart + int64(idx)
+	} else if start < retainedStart {
+		gapStart, gapEnd = start, retainedStart
+		start = retainedStart
+	}
+	if start < retainedStart {
+		start = retainedStart
+	}
+	if start > retainedEnd {
+		start = retainedEnd
+	}
+	selectedStart := start
+	if limit <= 0 {
+		limit = maxJobReportBytes
+	}
+	end := start + int64(limit)
+	if end > retainedEnd {
+		end = retainedEnd
+	}
+	// A tail request returns the newest bytes when its selected lines exceed the
+	// byte budget; forward cursor/range requests retain their natural direction.
+	if tailLines > 0 && end-start == int64(limit) && end < retainedEnd {
+		end = retainedEnd
+		start = end - int64(limit)
+	}
+	data := append([]byte(nil), j.buf[start-retainedStart:end-retainedStart]...)
+	return Output{Data: data, Start: start, End: end, RetainedStart: retainedStart,
+		RetainedEnd: retainedEnd, GapStart: gapStart, GapEnd: gapEnd,
+		TailTruncated: tailLines > 0 && start > selectedStart}
+}
+
+// UpdateActivity records safe agent progress. A non-nil usage marks one model
+// turn complete and is accumulated across all loops represented by the job.
+func (j *Job) UpdateActivity(currentTool string, usage *Usage) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.activity.Last = time.Now()
+	j.activity.CurrentTool = currentTool
+	if usage != nil {
+		j.activity.Turns++
+		j.activity.Usage.Input += usage.Input
+		j.activity.Usage.Output += usage.Output
+		j.activity.Usage.CacheRead += usage.CacheRead
+		j.activity.Usage.CacheWrite += usage.CacheWrite
+		j.activity.Usage.Total += usage.Total
+	}
+}
+
+// Info returns a lifecycle/activity snapshot for discovery.
+func (j *Job) Info() Info {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return Info{ID: j.id, Kind: j.kind, Label: j.label, Owner: j.owner,
+		Status: j.status, Mutates: j.mutates, Started: j.started,
+		Finished: j.finished, Activity: j.activity}
 }
 
 // Tail returns the last n lines of the buffered output.
@@ -198,6 +296,8 @@ func (j *Job) finalize(status Status, result string) bool {
 		j.mu.Lock()
 		j.status = status
 		j.result = result
+		j.finished = time.Now()
+		j.activity.CurrentTool = ""
 		j.mu.Unlock()
 		close(j.done)
 		fired = true
@@ -215,17 +315,16 @@ func (j *Job) isDone() bool {
 	}
 }
 
-// consume returns the job's report and marks it consumed, exactly once, if the
-// job is terminal and not already consumed. Shared by wait and DrainFinished so
-// the final report is delivered exactly once.
-func (j *Job) consume() (Report, bool) {
+// claimNotification claims the exactly-once automatic notification. Evidence
+// access through Report/Output remains repeatable and independent of this flag.
+func (j *Job) claimNotification() bool {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	if j.consumed || j.status == Running {
-		return Report{}, false
+	if j.notified || j.status == Running {
+		return false
 	}
-	j.consumed = true
-	return j.reportLocked(), true
+	j.notified = true
+	return true
 }
 
 // Report returns a snapshot report without consuming.
@@ -257,6 +356,49 @@ func NewRegistry() *Registry {
 	return &Registry{jobs: map[string]*Job{}, ctx: ctx, cancel: cancel}
 }
 
+// NewRestored rebuilds durable job metadata, notification state, and terminal
+// results. Evidence remains available through list_jobs/job_result. Any later
+// Start continues after the greatest restored job_<n> id.
+func NewRestored(entries []Restored) *Registry {
+	r := NewRegistry()
+	for _, e := range entries {
+		if e.ID == "" {
+			continue
+		}
+		started := e.Started
+		if started.IsZero() {
+			started = time.Now()
+		}
+		finished := e.Finished
+		if finished.IsZero() {
+			finished = started
+		}
+		ctx, cancel := context.WithCancel(r.ctx)
+		j := &Job{id: e.ID, kind: e.Kind, label: e.Label, owner: e.Owner,
+			mutates: e.Mutates, ctx: ctx, cancel: cancel, done: make(chan struct{}),
+			status: e.Status, result: e.Result, notified: e.Notified,
+			started: started, finished: finished}
+		if e.Kind == "agent" {
+			j.activity.Last = finished
+		}
+		if j.status == "" || j.status == Running {
+			j.status = Lost
+			j.notified = true // ReplayHistory injects the lost-on-restart note.
+			if j.result == "" {
+				j.result = "job lost: daemon restarted"
+			}
+		}
+		j.once.Do(func() { close(j.done) })
+		r.jobs[j.id] = j
+		r.order = append(r.order, j.id)
+		var n int
+		if _, err := fmt.Sscanf(j.id, "job_%d", &n); err == nil && n > r.seq {
+			r.seq = n
+		}
+	}
+	return r
+}
+
 // Start allocates a new job id, registers a running job whose context derives
 // from the registry root, and returns it.
 func (r *Registry) Start(kind, label, owner string) *Job {
@@ -277,10 +419,14 @@ func (r *Registry) start(kind, label, owner string, mutates bool) *Job {
 	r.seq++
 	id := fmt.Sprintf("job_%d", r.seq)
 	ctx, cancel := context.WithCancel(r.ctx)
+	started := time.Now()
 	j := &Job{
 		id: id, kind: kind, label: label, owner: owner, mutates: mutates,
 		ctx: ctx, cancel: cancel, done: make(chan struct{}),
-		status: Running,
+		status: Running, started: started,
+	}
+	if kind == "agent" {
+		j.activity.Last = started
 	}
 	r.jobs[id] = j
 	r.order = append(r.order, id)
@@ -310,6 +456,37 @@ func (r *Registry) Get(id string) (*Job, bool) {
 	return j, ok
 }
 
+// List returns jobs in stable start order. By default only jobs owned by owner
+// are visible; allOwners is an explicit session-wide diagnostic view.
+func (r *Registry) List(owner string, allOwners bool) []Info {
+	r.mu.Lock()
+	js := make([]*Job, 0, len(r.order))
+	for _, id := range r.order {
+		j := r.jobs[id]
+		if allOwners || j.owner == owner {
+			js = append(js, j)
+		}
+	}
+	r.mu.Unlock()
+	out := make([]Info, 0, len(js))
+	for _, j := range js {
+		out = append(out, j.Info())
+	}
+	return out
+}
+
+// LiveIDs returns the owner's running job ids in stable start order.
+func (r *Registry) LiveIDs(owner string) []string {
+	infos := r.List(owner, false)
+	var ids []string
+	for _, info := range infos {
+		if info.Status == Running {
+			ids = append(ids, info.ID)
+		}
+	}
+	return ids
+}
+
 // targets resolves the wait target set: the named ids (missing ones skipped), or
 // — when ids is empty — all jobs in start order.
 func (r *Registry) targets(ids []string) []*Job {
@@ -332,11 +509,13 @@ func (r *Registry) targets(ids []string) []*Job {
 }
 
 // Wait blocks until the completion condition over the target jobs is met, then
-// returns the final reports of the finished-and-unconsumed jobs it covers and
-// the ids of any that are still running (on timeout / ctx cancellation).
+// returns repeatable final reports of finished jobs and the ids of any still
+// running (on timeout / ctx cancellation). Returning a report suppresses its
+// later automatic notification, but does not consume retained evidence.
 //
 // mode "any" returns as soon as one target finishes; anything else ("all",
-// default) waits for all. Empty ids ⇒ all live jobs. timeout <= 0 ⇒ no timeout.
+// default) waits for all. Empty ids ⇒ all registered jobs. Tool callers scope
+// omitted ids to the current actor's live jobs. timeout <= 0 ⇒ no timeout.
 // It never holds the registry mutex while blocking (lock-ordering discipline
 // from the design's deadlock lesson).
 func (r *Registry) Wait(ctx context.Context, ids []string, mode string, timeout time.Duration) (reports []Report, running []string) {
@@ -389,17 +568,20 @@ func (r *Registry) Wait(ctx context.Context, ids []string, mode string, timeout 
 
 func (r *Registry) collect(targets []*Job) (reports []Report, running []string) {
 	for _, j := range targets {
-		if rep, ok := j.consume(); ok {
-			reports = append(reports, rep)
-		} else if j.Status() == Running {
+		if j.Status() == Running {
 			running = append(running, j.id)
+			continue
 		}
+		claimed := j.claimNotification()
+		rep := j.Report()
+		rep.ClaimedNotification = claimed
+		reports = append(reports, rep)
 	}
 	return reports, running
 }
 
-// DrainFinished returns the final reports of all finished, unconsumed jobs owned
-// by owner and marks them consumed. Non-blocking; used for checkpoint injection.
+// DrainFinished claims and returns final reports not yet delivered or suppressed,
+// scoped to owner. Non-blocking; used only for automatic checkpoint injection.
 func (r *Registry) DrainFinished(owner string) []Report {
 	r.mu.Lock()
 	js := make([]*Job, 0, len(r.order))
@@ -412,8 +594,8 @@ func (r *Registry) DrainFinished(owner string) []Report {
 		if j.owner != owner {
 			continue
 		}
-		if rep, ok := j.consume(); ok {
-			out = append(out, rep)
+		if j.claimNotification() {
+			out = append(out, j.Report())
 		}
 	}
 	return out
@@ -446,4 +628,23 @@ func lastLines(s string, n int) string {
 		return s
 	}
 	return strings.Join(lines[len(lines)-n:], "\n")
+}
+
+func tailLineStart(buf []byte, n int) int {
+	if n <= 0 || len(buf) == 0 {
+		return len(buf)
+	}
+	end := len(buf)
+	for end > 0 && buf[end-1] == '\n' {
+		end--
+	}
+	for i, lines := end-1, 1; i >= 0; i-- {
+		if buf[i] == '\n' {
+			if lines == n {
+				return i + 1
+			}
+			lines++
+		}
+	}
+	return 0
 }

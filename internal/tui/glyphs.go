@@ -116,7 +116,7 @@ func typeGlyph(t string) string {
 		return "↻"
 	case "subagent_spawned", "subagent_finished":
 		return "◇"
-	case "job_started", "job_finished", "job_notified":
+	case "job_started", "job_finished", "job_claimed", "job_notified":
 		return "◈"
 	case "question_asked":
 		return "?"

@@ -309,9 +309,9 @@ type Workspace struct {
 	// successful Write or Edit. Callers use it to surface document updates
 	// (e.g. an edit to spec.md) as events; it must not block.
 	OnWrite func(path string)
-	// Jobs, when set, enables background jobs: the
-	// Bash tool accepts run_in_background, and the job_output/wait/kill_job tools
-	// are added to the Editing set. Nil ⇒ background jobs are unavailable and
+	// Jobs, when set, enables background jobs: Bash accepts run_in_background,
+	// and discovery/progress/result/wait/cancellation tools are added to Editing.
+	// Nil ⇒ background jobs are unavailable and
 	// run_in_background is rejected with a clear error.
 	Jobs *jobs.Registry
 	// Emitter is the owning agent's emitter, used to emit job_started/job_finished

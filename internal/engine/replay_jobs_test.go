@@ -3,9 +3,11 @@ package engine
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/event"
+	"github.com/whyrusleeping/ycc/internal/jobs"
 )
 
 // A checkpoint-injected job notification (job_notified, recorded as a user-actor
@@ -118,6 +120,148 @@ func TestReplayLostJobSynthesized(t *testing.T) {
 
 // A finished job (job_finished recorded, e.g. consumed by wait) is NOT treated
 // as lost — no synthesized note.
+func TestRestoreJobsRetainsResultsOwnersAndReservesIDs(t *testing.T) {
+	start := time.Now().Add(-2 * time.Second)
+	events := []event.Event{
+		{Seq: 1, TS: start, Actor: "coordinator", Type: event.JobStarted, Data: map[string]any{"id": "job_4", "kind": "agent", "label": "unfinished", "mutates": true}},
+		{Seq: 2, TS: start.Add(time.Second), Actor: "implementer", Type: event.JobStarted, Data: map[string]any{"id": "job_7", "kind": "bash", "label": "cancelled"}},
+		{Seq: 3, TS: start.Add(1500 * time.Millisecond), Actor: "implementer", Type: event.JobFinished, Data: map[string]any{"id": "job_7", "status": "killed", "tail": "killed by user"}},
+		{Seq: 4, TS: start.Add(1600 * time.Millisecond), Actor: "implementer", Type: event.JobClaimed, Data: map[string]any{"id": "job_7", "reason": "wait"}},
+	}
+	r := RestoreJobs(events)
+	defer r.KillAll()
+	all := r.List("coordinator", true)
+	if len(all) != 2 || all[0].ID != "job_4" || all[0].Status != jobs.Lost || all[0].Owner != "coordinator" || !all[0].Mutates {
+		t.Fatalf("restored jobs = %+v", all)
+	}
+	if duplicate := r.DrainFinished("coordinator"); len(duplicate) != 0 {
+		t.Fatalf("restored lost job duplicated ReplayHistory's restart note: %+v", duplicate)
+	}
+	cancelled, ok := r.Get("job_7")
+	if !ok || cancelled.Status() != jobs.Killed || cancelled.Report().Result != "killed by user" {
+		t.Fatalf("restored cancelled job = %+v ok=%v", cancelled, ok)
+	}
+	if duplicate := r.DrainFinished("implementer"); len(duplicate) != 0 {
+		t.Fatalf("restored wait claim duplicated notification: %+v", duplicate)
+	}
+	if next := r.Start("bash", "new", "coordinator"); next.ID() != "job_8" {
+		t.Fatalf("next restored id = %s, want job_8", next.ID())
+	}
+}
+
+func TestRestoreTerminalClaimOrNotificationWithoutJobFinished(t *testing.T) {
+	start := time.Now().Add(-time.Second)
+	for _, tc := range []struct {
+		name       string
+		eventType  event.Type
+		actor      string
+		status     jobs.Status
+		result     string
+		notifyText string
+	}{
+		{name: "checkpoint notification", eventType: event.JobNotified, actor: "user", status: jobs.Done,
+			result: "exit 0\nok", notifyText: "[job job_1 done] build\nexit 0\nok"},
+		{name: "wait claim", eventType: event.JobClaimed, actor: "coordinator", status: jobs.Failed,
+			result: "exit 1\nfailed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := map[string]any{"id": "job_1", "kind": "bash", "label": "build",
+				"status": string(tc.status), "result": tc.result}
+			if tc.notifyText != "" {
+				data["text"] = tc.notifyText
+			}
+			events := []event.Event{
+				{Seq: 1, TS: start, Actor: "coordinator", Type: event.JobStarted,
+					Data: map[string]any{"id": "job_1", "kind": "bash", "label": "build"}},
+				{Seq: 2, TS: start.Add(500 * time.Millisecond), Actor: tc.actor, Type: tc.eventType, Data: data},
+			}
+
+			for _, msg := range ReplayHistory(events) {
+				if strings.Contains(msg.Content, "lost: daemon restarted") {
+					t.Fatalf("durably claimed terminal job replayed as lost: %+v", msg)
+				}
+			}
+			r := RestoreJobs(events)
+			defer r.KillAll()
+			job, ok := r.Get("job_1")
+			if !ok || job.Status() != tc.status {
+				t.Fatalf("restored terminal job = %#v ok=%v", job, ok)
+			}
+			first, second := job.Report(), job.Report()
+			if first.Result != tc.result || second != first {
+				t.Fatalf("repeatable result = %+v then %+v, want %q", first, second, tc.result)
+			}
+			if duplicate := r.DrainFinished("coordinator"); len(duplicate) != 0 {
+				t.Fatalf("restored claim duplicated notification: %+v", duplicate)
+			}
+		})
+	}
+}
+
+func TestRestoreTerminalFinishAndClaimEitherOrder(t *testing.T) {
+	start := time.Now().Add(-time.Second)
+	claim := event.Event{TS: start.Add(500 * time.Millisecond), Actor: "coordinator", Type: event.JobClaimed,
+		Data: map[string]any{"id": "job_1", "kind": "bash", "label": "build", "status": "killed", "result": "killed", "reason": "wait"}}
+	finish := event.Event{TS: start.Add(600 * time.Millisecond), Actor: "coordinator", Type: event.JobFinished,
+		Data: map[string]any{"id": "job_1", "kind": "bash", "label": "build", "status": "killed", "tail": "killed"}}
+	for _, tc := range []struct {
+		name string
+		tail []event.Event
+	}{
+		{name: "claim then finish", tail: []event.Event{claim, finish}},
+		{name: "finish then claim", tail: []event.Event{finish, claim}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			events := []event.Event{{TS: start, Actor: "coordinator", Type: event.JobStarted,
+				Data: map[string]any{"id": "job_1", "kind": "bash", "label": "build"}}}
+			events = append(events, tc.tail...)
+			r := RestoreJobs(events)
+			defer r.KillAll()
+			job, ok := r.Get("job_1")
+			if !ok || job.Status() != jobs.Killed || job.Report().Result != "killed" {
+				t.Fatalf("restored terminal job = %#v ok=%v", job, ok)
+			}
+			info := r.List("coordinator", false)[0]
+			if !info.Finished.Equal(finish.TS) {
+				t.Fatalf("finished time = %s, want durable job_finished time %s", info.Finished, finish.TS)
+			}
+			if duplicate := r.DrainFinished("coordinator"); len(duplicate) != 0 {
+				t.Fatalf("restored claim duplicated notification: %+v", duplicate)
+			}
+		})
+	}
+}
+
+func TestRestoreLegacyNotificationTextAsResult(t *testing.T) {
+	events := []event.Event{
+		{Actor: "coordinator", Type: event.JobStarted, Data: map[string]any{"id": "job_1", "kind": "bash", "label": "build"}},
+		{Actor: "user", Type: event.JobNotified, Data: map[string]any{"id": "job_1", "kind": "bash", "label": "build", "status": "done",
+			"text": "[job job_1 done] build\nexit 0\nlegacy output"}},
+	}
+	r := RestoreJobs(events)
+	defer r.KillAll()
+	job, _ := r.Get("job_1")
+	if got := job.Report().Result; got != "exit 0\nlegacy output" {
+		t.Fatalf("legacy notification result = %q", got)
+	}
+}
+
+func TestRestoreFinishedUnnotifiedJobKeepsPendingNotification(t *testing.T) {
+	events := []event.Event{
+		{Seq: 1, TS: time.Now().Add(-time.Second), Actor: "coordinator", Type: event.JobStarted, Data: map[string]any{"id": "job_1", "kind": "bash", "label": "done"}},
+		{Seq: 2, TS: time.Now(), Actor: "coordinator", Type: event.JobFinished, Data: map[string]any{"id": "job_1", "status": "done", "tail": "exit 0"}},
+	}
+	r := RestoreJobs(events)
+	defer r.KillAll()
+	notes := r.DrainFinished("coordinator")
+	if len(notes) != 1 || notes[0].Result != "exit 0" {
+		t.Fatalf("pending restored notification = %+v", notes)
+	}
+	if job, _ := r.Get("job_1"); job.Report().Result != "exit 0" {
+		t.Fatalf("notification destroyed restored evidence: %+v", job.Report())
+	}
+}
+
 func TestReplayFinishedJobNotLost(t *testing.T) {
 	events := []event.Event{
 		{Seq: 1, Actor: "user", Type: event.UserInput, Data: map[string]any{"text": "run tests"}},

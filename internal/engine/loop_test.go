@@ -620,6 +620,32 @@ func TestMessagesForBackendStripsOnlyCodexItemsBlocks(t *testing.T) {
 	}
 }
 
+func TestLoopActivityReportsOnlyToolAndUsageMetadata(t *testing.T) {
+	resp := assistantToolCall("finish", `{"report":"private report text"}`)
+	resp.Usage = gollama.Usage{PromptTokens: 8, CompletionTokens: 3, TotalTokens: 11}
+	loop := newLoop(t, &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{resp}})
+	var updates []ActivityUpdate
+	loop.Activity = func(update ActivityUpdate) { updates = append(updates, update) }
+	if _, err := loop.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	var sawUsage, sawTool, sawClear bool
+	for _, update := range updates {
+		if update.TurnComplete && update.Usage.Total == 11 {
+			sawUsage = true
+		}
+		if update.CurrentTool == "finish" {
+			sawTool = true
+		}
+		if sawTool && update.CurrentTool == "" {
+			sawClear = true
+		}
+	}
+	if !sawUsage || !sawTool || !sawClear {
+		t.Fatalf("activity updates = %+v", updates)
+	}
+}
+
 // model_turn events carry per-turn token usage and model identity sourced from
 // resp.Usage and the loop's model labelling (spec §20.1).
 func TestLoopModelTurnCarriesUsage(t *testing.T) {

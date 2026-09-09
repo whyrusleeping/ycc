@@ -147,8 +147,8 @@ type Deps struct {
 	WorkImplementation string
 
 	// Jobs is the session-scoped background-job registry (docs/design/async-jobs.md).
-	// When set it enables background bash (Bash run_in_background) and the
-	// job_output/wait/kill_job tools; the session kills all jobs on end.
+	// When set it enables background bash plus job discovery, progress, retained
+	// result, wait, and cancellation tools; the session kills all jobs on end.
 	Jobs *jobs.Registry
 
 	// Ownership is shared by every session in the daemon. CoordinatorToken is
@@ -566,10 +566,11 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 				// report is the SAME text the synchronous path returns, delivered
 				// exactly once via wait or checkpoint injection.
 				job := d.Jobs.StartMutating("agent", "implementer "+id, d.Emitter.Actor())
+				trackAgentJob(loop, job)
 				d.mu.Lock()
 				d.implJob = job
 				d.mu.Unlock()
-				d.Emitter.Emit(event.JobStarted, map[string]any{"id": job.ID(), "kind": job.Kind(), "label": job.Label()})
+				d.Emitter.Emit(event.JobStarted, map[string]any{"id": job.ID(), "kind": job.Kind(), "label": job.Label(), "mutates": job.Mutates()})
 				d.Emitter.Emit(event.SubagentSpawned, map[string]any{"role": "implementer", "model": impl.Model, "job_id": job.ID()})
 				releaseOnReturn = false
 				go func() {
@@ -651,6 +652,17 @@ func runImplementer(ctx context.Context, d *Deps, loop *engine.Loop, token *work
 	out := implementerOutcome(d, id, label, before, res)
 	out.Content += subagentContextNote("fresh", 1, contextTokens, 0)
 	return out
+}
+
+func trackAgentJob(loop *engine.Loop, job *jobs.Job) {
+	loop.Activity = func(update engine.ActivityUpdate) {
+		var usage *jobs.Usage
+		if update.TurnComplete {
+			usage = &jobs.Usage{Input: update.Usage.Input, Output: update.Usage.Output,
+				CacheRead: update.Usage.CacheRead, CacheWrite: update.Usage.CacheWrite, Total: update.Usage.Total}
+		}
+		job.UpdateActivity(update.CurrentTool, usage)
+	}
 }
 
 // emitAgentJobFinished records a job_finished event for an agent job, tagged with
@@ -1047,10 +1059,13 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 				// Reviewers are read-only, so a reviewer job is non-mutating and runs
 				// freely in parallel with anything (no single-writer guard).
 				job := d.Jobs.Start("agent", "reviewers "+id, d.Emitter.Actor())
+				for _, h := range handles {
+					trackAgentJob(h.loop, job)
+				}
 				d.mu.Lock()
 				d.reviewJob = job
 				d.mu.Unlock()
-				d.Emitter.Emit(event.JobStarted, map[string]any{"id": job.ID(), "kind": job.Kind(), "label": job.Label()})
+				d.Emitter.Emit(event.JobStarted, map[string]any{"id": job.ID(), "kind": job.Kind(), "label": job.Label(), "mutates": job.Mutates()})
 				go func() {
 					results := runReviewers(job.Context(), d, handles, id)
 					if job.Finish(jobs.Done, aggregateReviews(results)) {

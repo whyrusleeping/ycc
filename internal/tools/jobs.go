@@ -7,27 +7,89 @@ import (
 	"time"
 
 	"github.com/whyrusleeping/gollama"
+	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/jobs"
 )
 
-// JobTools returns the background-job control tools: job_output (non-blocking
-// incremental read + status), wait (blocking
-// final-report retrieval), and kill_job. They require ws.Jobs to be set; callers
-// add them only when background jobs are enabled (see Editing).
+// JobTools returns discovery, progress, repeatable evidence, synchronization,
+// and cancellation tools for the session job registry.
 func JobTools(ws *Workspace) []*gollama.Tool {
-	return []*gollama.Tool{jobOutputTool(ws), waitTool(ws), killJobTool(ws)}
+	return []*gollama.Tool{listJobsTool(ws), jobOutputTool(ws), jobResultTool(ws), waitTool(ws), killJobTool(ws)}
+}
+
+func jobToolOwner(ws *Workspace) string {
+	if ws.Emitter == nil {
+		return ""
+	}
+	return ws.Emitter.Actor()
+}
+
+func listJobsTool(ws *Workspace) *gollama.Tool {
+	return &gollama.Tool{
+		Name: "list_jobs",
+		Description: "List background jobs in stable start order with id, owner, state, elapsed time, and safe activity metadata. " +
+			"By default lists this actor's live and completed jobs; include_all_owners explicitly selects the session-wide view. " +
+			"Listing is non-consuming and never changes automatic notification delivery.",
+		Params: obj(map[string]any{
+			"include_all_owners": BoolProp("include jobs owned by other actors in this session (default false)"),
+		}),
+		Call: func(_ context.Context, params any) (*gollama.ToolResult, error) {
+			infos := ws.Jobs.List(jobToolOwner(ws), getBool(params, "include_all_owners", false))
+			if len(infos) == 0 {
+				return okResult("list_jobs: no matching jobs."), nil
+			}
+			now := time.Now()
+			var b strings.Builder
+			for i, info := range infos {
+				if i > 0 {
+					b.WriteByte('\n')
+				}
+				end := info.Finished
+				if end.IsZero() {
+					end = now
+				}
+				elapsed := end.Sub(info.Started)
+				if elapsed < 0 {
+					elapsed = 0
+				}
+				fmt.Fprintf(&b, "%s [%s] kind=%s owner=%s elapsed=%s mutates=%t label=%q",
+					info.ID, info.Status, info.Kind, info.Owner, elapsed.Round(time.Millisecond), info.Mutates, truncate(info.Label, 512))
+				if info.Kind == "agent" {
+					activity := info.Activity
+					fmt.Fprintf(&b, "\n  activity: turns=%d usage={input:%d output:%d cache_read:%d cache_write:%d total:%d}",
+						activity.Turns, activity.Usage.Input, activity.Usage.Output, activity.Usage.CacheRead,
+						activity.Usage.CacheWrite, activity.Usage.Total)
+					if activity.CurrentTool != "" {
+						fmt.Fprintf(&b, " current_tool=%q", truncate(activity.CurrentTool, 128))
+					}
+					if !activity.Last.IsZero() {
+						ago := now.Sub(activity.Last)
+						if ago < 0 {
+							ago = 0
+						}
+						fmt.Fprintf(&b, " last_activity_ago=%s", ago.Round(time.Millisecond))
+					}
+				}
+			}
+			return okResult(b.String()), nil
+		},
+	}
 }
 
 func jobOutputTool(ws *Workspace) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "job_output",
-		Description: "Peek at a background job's output SINCE YOU LAST READ IT, plus its current status " +
-			"(running/done/failed/killed). Each UTF-8-safe preview is bounded to 64 KiB/2000 lines with head/tail; " +
-			"buffer eviction and completed-artifact retrieval are explicit. Non-blocking; repeated calls return only NEW output. This does not " +
-			"consume the job's final report — you still get that automatically or via wait. Use it to check on a " +
-			"long-running job's progress, not to poll for completion.",
-		Params: obj(map[string]any{"job_id": strProp("the job id, e.g. job_1")}, "job_id"),
-		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
+		Description: "Read retained background-job output without advancing hidden state. cursor is an absolute source-byte offset and " +
+			"limit defines a repeatable forward range; tail_lines instead selects the retained tail. Every response identifies the retained " +
+			"absolute range, next cursor, and any eviction gap. Reads are non-consuming: they neither retrieve/claim the final result nor " +
+			"change automatic notification delivery. Agent jobs report bounded turn/current-tool/usage activity without reasoning text.",
+		Params: obj(map[string]any{
+			"job_id":     strProp("the job id, e.g. job_1"),
+			"cursor":     map[string]any{"type": "integer", "minimum": 0, "description": "absolute source-byte offset (default 0); repeat the same cursor to revisit retained data"},
+			"limit":      map[string]any{"type": "integer", "minimum": 1, "maximum": maxBashContentBytes, "description": "maximum source bytes to return (default and maximum about 63 KiB; responses also cap at 2000 lines)"},
+			"tail_lines": map[string]any{"type": "integer", "minimum": 1, "maximum": maxBashLines, "description": "return the last N retained lines instead of a cursor range"},
+		}, "job_id"),
+		Call: func(_ context.Context, params any) (*gollama.ToolResult, error) {
 			id, ok := getString(params, "job_id")
 			if !ok {
 				return errResult("job_output: missing 'job_id'"), nil
@@ -36,34 +98,95 @@ func jobOutputTool(ws *Workspace) *gollama.Tool {
 			if !ok {
 				return errResult("job_output: no such job %q", id), nil
 			}
-			out, status, dropped := job.Read()
-			body := strings.ToValidUTF8(out, "�")
-			outBytes, outLines := int64(len(out)), lineCount([]byte(out))
-			if len(out) > maxBashContentBytes || len(body) > maxBashContentBytes || outLines > maxBashLines {
-				capture := newCommandCapture()
-				_, _ = capture.Write([]byte(out))
-				_, head, tail, _, _, digest, _ := capture.snapshot()
-				body = commandPreview(head, tail, outBytes, outLines) + fmt.Sprintf(
-					"\n[incremental projection: %d bytes/%d lines; budget %d bytes/%d lines; sha256 %s; wait for the completed output artifact to retrieve omitted ranges]",
-					outBytes, outLines, maxBashBytes, maxBashLines, digest)
+			if hasParam(params, "tail_lines") && hasParam(params, "cursor") {
+				return errResult("job_output: use either cursor/limit or tail_lines, not both"), nil
 			}
+			cursor := getInt(params, "cursor", 0)
+			if cursor < 0 {
+				cursor = 0
+			}
+			limit := getInt(params, "limit", maxBashContentBytes)
+			if limit < 1 || limit > maxBashContentBytes {
+				limit = maxBashContentBytes
+			}
+			tailLines := getInt(params, "tail_lines", 0)
+			view := job.Output(int64(cursor), limit, tailLines)
+			sourceEnd := len(view.Data)
+			lineTruncated := false
+			if tailLines == 0 {
+				sourceEnd = jobOutputLineEnd(view.Data, maxBashLines)
+				lineTruncated = sourceEnd < len(view.Data)
+			}
+			body, consumed := renderUTF8Range(view.Data, 0, sourceEnd, maxBashContentBytes)
+			view.End = view.Start + int64(consumed)
 			if strings.TrimSpace(body) == "" {
-				// An agent job has no incremental output stream (its child-loop
-				// events go to the log, not the job buffer); its report is delivered
-				// exactly once via wait or checkpoint injection. Say so rather than
-				// the bash-flavored "no new output" note.
 				if job.Kind() == "agent" {
-					body = "(agent job — no incremental output; its report arrives via wait or automatically)"
+					a := job.Info().Activity
+					last := "never"
+					if !a.Last.IsZero() {
+						ago := time.Since(a.Last)
+						if ago < 0 {
+							ago = 0
+						}
+						last = ago.Round(time.Millisecond).String() + " ago"
+					}
+					body = fmt.Sprintf("(agent activity: turns=%d current_tool=%q last_activity=%s usage={input:%d output:%d cache_read:%d cache_write:%d total:%d})",
+						a.Turns, a.CurrentTool, last, a.Usage.Input, a.Usage.Output, a.Usage.CacheRead, a.Usage.CacheWrite, a.Usage.Total)
 				} else {
-					body = "(no new output since last read)"
+					body = "(no output in requested retained range)"
 				}
 			}
-			if dropped > 0 {
-				body = fmt.Sprintf("[incremental buffer evicted %d earlier bytes; after completion, use the output artifact id from wait/job_finished when retained]\n%s", dropped, body)
+			var meta strings.Builder
+			if view.GapEnd > view.GapStart {
+				fmt.Fprintf(&meta, "\n[retention gap: bytes %d-%d were evicted]", view.GapStart, view.GapEnd)
 			}
-			return okResult(fmt.Sprintf("job %s [%s]\n%s", id, status, body)), nil
+			if view.TailTruncated {
+				meta.WriteString("\n[tail selection exceeded the response byte budget; showing its newest retained bytes]")
+			}
+			if lineTruncated {
+				meta.WriteString("\n[range stopped at the 2000-line response budget; continue from next_cursor]")
+			}
+			fmt.Fprintf(&meta, "\n[output bytes %d-%d; retained %d-%d; next_cursor=%d; more=%t]",
+				view.Start, view.End, view.RetainedStart, view.RetainedEnd, view.End, view.End < view.RetainedEnd)
+			return okResult(fmt.Sprintf("job %s [%s]\n%s%s", id, job.Status(), body, meta.String())), nil
 		},
 	}
+}
+
+func jobResultTool(ws *Workspace) *gollama.Tool {
+	return &gollama.Tool{
+		Name: "job_result",
+		Description: "Retrieve a completed job's retained final result repeatably by stable id. This is evidence access, not a completion " +
+			"notification: it does not consume or create automatic notifications. Use wait when you need to block for completion.",
+		Params: obj(map[string]any{"job_id": strProp("the completed job id, e.g. job_1")}, "job_id"),
+		Call: func(_ context.Context, params any) (*gollama.ToolResult, error) {
+			id, ok := getString(params, "job_id")
+			if !ok {
+				return errResult("job_result: missing 'job_id'"), nil
+			}
+			job, ok := ws.Jobs.Get(id)
+			if !ok {
+				return errResult("job_result: no such job %q", id), nil
+			}
+			if job.Status() == jobs.Running {
+				return errResult("job_result: job %s is still running; use wait to block or job_output for progress", id), nil
+			}
+			return okResult(FormatJobReport(job.Report())), nil
+		},
+	}
+}
+
+func jobOutputLineEnd(data []byte, maxLines int) int {
+	lines := 0
+	for i, b := range data {
+		if b == '\n' {
+			lines++
+			if lines == maxLines {
+				return i + 1
+			}
+		}
+	}
+	return len(data)
 }
 
 // defaultWaitTimeout bounds a wait call that doesn't pass timeout_s: a hung
@@ -75,12 +198,10 @@ const defaultWaitTimeout = 10 * time.Minute
 func waitTool(ws *Workspace) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "wait",
-		Description: "Block until background job(s) finish, then return their final report(s) (exit code + output " +
-			"tail). Pass job_ids to wait on specific jobs, or omit it to wait on all live jobs. 'for' selects any " +
-			"(return as soon as one finishes) or all (default; wait for every target). timeout_s bounds the wait " +
-			"(default 600) — on timeout you get the reports of whatever finished plus which jobs are still running " +
-			"(no error), and you can simply wait again. Call this only when a job's result gates your next step; " +
-			"otherwise keep working and the report arrives automatically.",
+		Description: "Block until background job(s) finish, then return their retained final report(s). Results are repeatable: waiting again " +
+			"can return the same finished evidence, while the first explicit wait suppresses a later automatic notification. Pass job_ids to " +
+			"select jobs (including another actor's known id), or omit them to wait on this actor's currently live jobs. 'for' selects any " +
+			"or all (default). timeout_s defaults to 600; timeout returns finished reports plus still-running ids without error.",
 		Params: obj(map[string]any{
 			"job_ids":   StrArrProp("the job ids to wait on; omit to wait on all live jobs"),
 			"for":       map[string]any{"type": "string", "enum": []string{"any", "all"}, "description": "return after any one finishes, or after all (default all)"},
@@ -88,6 +209,20 @@ func waitTool(ws *Workspace) *gollama.Tool {
 		}),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			ids := getStringSlice(params, "job_ids")
+			for _, id := range ids {
+				if _, ok := ws.Jobs.Get(id); !ok {
+					return errResult("wait: no such job %q", id), nil
+				}
+			}
+			if len(ids) == 0 {
+				ids = ws.Jobs.LiveIDs(jobToolOwner(ws))
+				// Registry.Wait historically interprets an empty target slice as all
+				// registered jobs. The tool's omitted-id scope is narrower: only this
+				// actor's live jobs. Do not accidentally expand an empty owner scope.
+				if len(ids) == 0 {
+					return okResult("wait: no matching jobs."), nil
+				}
+			}
 			mode := "all"
 			if m, ok := getString(params, "for"); ok {
 				mode = m
@@ -97,6 +232,16 @@ func waitTool(ws *Workspace) *gollama.Tool {
 				timeout = defaultWaitTimeout
 			}
 			reports, running := ws.Jobs.Wait(ctx, ids, mode, timeout)
+			if ws.Emitter != nil {
+				for _, report := range reports {
+					if report.ClaimedNotification {
+						ws.Emitter.Emit(event.JobClaimed, map[string]any{
+							"id": report.ID, "kind": report.Kind, "label": report.Label,
+							"status": string(report.Status), "result": report.Result, "reason": "wait",
+						})
+					}
+				}
+			}
 			if len(reports) == 0 && len(running) == 0 {
 				return okResult("wait: no matching jobs."), nil
 			}

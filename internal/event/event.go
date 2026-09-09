@@ -49,14 +49,20 @@ const (
 	SubagentSpawned  Type = "subagent_spawned"
 	SubagentFinished Type = "subagent_finished"
 	// Background jobs. JobStarted marks a job
-	// entering the registry (data: { id, kind, label }); JobFinished marks it
+	// entering the registry (data: { id, kind, label, mutates }); JobFinished marks it
 	// reaching a terminal state (data: { id, kind, label, status, tail }). Both
-	// are tagged with the owning actor. JobNotified records a finished-job final
-	// report injected into the conversation at a Steer checkpoint as a user-role
-	// message (data: { id, kind, label, status, text }); recording it — like a
+	// are tagged with the owning actor. JobClaimed records explicit-wait suppression
+	// of automatic delivery and carries the terminal evidence
+	// (data: { id, kind, label, status, result, reason }). JobNotified records the
+	// same terminal evidence plus its formatted report injected into the conversation
+	// at a Steer checkpoint as a user-role message
+	// (data: { id, kind, label, status, result, text }); recording it — like a
 	// steer correction — lets reopen replay the identical history.
-	JobStarted   Type = "job_started"
-	JobFinished  Type = "job_finished"
+	JobStarted  Type = "job_started"
+	JobFinished Type = "job_finished"
+	// JobClaimed records that an explicit wait suppressed future automatic
+	// notification without adding another user-role message to replay history.
+	JobClaimed   Type = "job_claimed"
 	JobNotified  Type = "job_notified"
 	PlanProposed Type = "plan_proposed"
 	// ReviewTierSelected records which review tier the coordinator chose for a

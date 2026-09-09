@@ -645,8 +645,8 @@ func textMessages(texts []string) []engine.UserMessage {
 	return out
 }
 
-// drainJobNotes delivers the final reports of finished, unconsumed coordinator
-// jobs as user-role notification messages. Each
+// drainJobNotes claims and delivers pending automatic final notifications for
+// finished coordinator jobs as user-role messages. Each
 // is recorded as a user-actor job_notified event — the same rule as a steer
 // correction — so reopen replays the identical history. Returns the texts for
 // the engine to Post before the next turn. Nil-safe: no registry ⇒ no notes.
@@ -663,7 +663,7 @@ func (s *Session) drainJobNotes() ([]string, error) {
 		text := tools.FormatJobReport(r)
 		s.emitter.EmitAs("user", event.JobNotified, map[string]any{
 			"id": r.ID, "kind": r.Kind, "label": r.Label,
-			"status": string(r.Status), "text": text,
+			"status": string(r.Status), "result": r.Result, "text": text,
 		})
 		if err := s.logFailure(); err != nil {
 			return nil, fmt.Errorf("session event log failed: %w", err)
@@ -2528,6 +2528,7 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 	}
 	s.preset = proj.Preset
 	s.startupNotice = startupNotice
+	s.deps.Jobs = engine.RestoreJobs(events)
 	loop, err := s.buildLoop(mode, "")
 	if err != nil {
 		log.Close()

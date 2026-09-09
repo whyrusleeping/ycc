@@ -85,6 +85,14 @@ type MessageSteer interface {
 	CheckpointMessages(ctx context.Context) ([]UserMessage, error)
 }
 
+// ActivityUpdate is a bounded progress signal for an owning background agent
+// job. It intentionally contains only tool/lifecycle/accounting metadata.
+type ActivityUpdate struct {
+	CurrentTool  string
+	TurnComplete bool
+	Usage        event.Usage
+}
+
 // Loop drives one agent (coordinator or subagent) over a backend.
 type Loop struct {
 	Client Turner
@@ -100,6 +108,10 @@ type Loop struct {
 	Emitter   *event.Emitter
 	MaxTurns  int // 0 => default
 	MaxTok    int // per-turn max tokens; 0 => backend default
+
+	// Activity receives safe progress metadata for background agent jobs. Nil for
+	// ordinary foreground loops.
+	Activity func(ActivityUpdate)
 
 	// ContextLengthHandled tells Run that its owner handles context-length
 	// failures at a higher-level safe boundary. Such failures are returned without
@@ -752,6 +764,9 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		if l.Activity != nil {
+			l.Activity(ActivityUpdate{})
+		}
 
 		// Safe checkpoint between turns: pause-to-steer if requested.
 		if err := l.steerCheckpoint(ctx); err != nil {
@@ -911,6 +926,11 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		// that produced this turn, surfaced so long-session growth toward the
 		// context window is visible in telemetry.
 		contextEst := approxContextTokens(l.System, l.history)
+		turnUsage := event.Usage{
+			Input: inputTokens, Output: u.CompletionTokens,
+			CacheRead: u.GetCachedTokens(), CacheWrite: u.CacheCreationInputTokens,
+			Total: u.TotalTokens, ReasoningTokens: reasoningTokens,
+		}
 		l.Emitter.Emit(event.ModelTurn, map[string]any{
 			"text":               msg.Content,
 			"tool_calls":         len(msg.ToolCalls),
@@ -927,17 +947,13 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			// blocks needed to replay the turn on Anthropic). This lets reopen
 			// reconstruct the conversation losslessly.
 			"thinking_blocks": toEventThinking(msg.ThinkingBlocks),
-			"usage": event.Usage{
-				Input:           inputTokens,
-				Output:          u.CompletionTokens,
-				CacheRead:       u.GetCachedTokens(),
-				CacheWrite:      u.CacheCreationInputTokens,
-				Total:           u.TotalTokens,
-				ReasoningTokens: reasoningTokens,
-			},
+			"usage":           turnUsage,
 		})
 		if err := l.durableEmitError(ctx); err != nil {
 			return nil, err
+		}
+		if l.Activity != nil {
+			l.Activity(ActivityUpdate{TurnComplete: true, Usage: turnUsage})
 		}
 
 		if len(msg.ToolCalls) == 0 {
@@ -1027,6 +1043,9 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			if err := l.durableEmitError(ctx); err != nil {
 				return nil, err
 			}
+			if l.Activity != nil {
+				l.Activity(ActivityUpdate{CurrentTool: call.Function.Name})
+			}
 			toolStart := time.Now()
 			res := l.Tools.DispatchRepaired(ctx, call, recovered)
 			toolMS := time.Since(toolStart).Milliseconds()
@@ -1053,6 +1072,9 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			l.Emitter.Emit(event.ToolResult, resultData)
 			if err := l.durableEmitError(ctx); err != nil {
 				return nil, err
+			}
+			if l.Activity != nil {
+				l.Activity(ActivityUpdate{})
 			}
 			l.appendToolResult(call.ID, res)
 			if ctrl := tools.ControlOf(res); ctrl != nil && ctrl.Stop {

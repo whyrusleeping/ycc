@@ -405,6 +405,8 @@ func detailLine(ev *v1.Event) string {
 		return strings.TrimSpace(dataField(ev, "id") + " " + oneLine(dataField(ev, "label"), 100) + " · running")
 	case "job_finished":
 		return strings.TrimSpace(dataField(ev, "id") + " " + oneLine(dataField(ev, "label"), 80) + " · " + dataField(ev, "status"))
+	case "job_claimed":
+		return strings.TrimSpace(dataField(ev, "id") + " · result retrieved; automatic notification suppressed")
 	case "job_notified":
 		return oneLine(dataField(ev, "text"), 120)
 	case "review_submitted":

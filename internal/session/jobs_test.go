@@ -38,7 +38,9 @@ func TestCheckpointInjectsFinishedJob(t *testing.T) {
 	if notif.Actor != "user" {
 		t.Fatalf("job_notified actor = %q, want user", notif.Actor)
 	}
-	if notif.Data["id"] != "job_1" || notif.Data["status"] != "done" {
+	if notif.Data["id"] != "job_1" || notif.Data["kind"] != "bash" ||
+		notif.Data["label"] != "go test ./..." || notif.Data["status"] != "done" ||
+		notif.Data["result"] != "exit 0\nok" {
 		t.Fatalf("job_notified data = %+v", notif.Data)
 	}
 

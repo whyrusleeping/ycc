@@ -8,9 +8,9 @@ import (
 	"time"
 )
 
-// A job finished before a wait returns its report to the waiter exactly once;
-// a later DrainFinished sees nothing (exactly-once consumption, design §3.3).
-func TestWaitConsumesExactlyOnce(t *testing.T) {
+// An explicit wait returns retained evidence repeatably while suppressing a
+// later automatic checkpoint notification.
+func TestWaitIsRepeatableAndSuppressesNotification(t *testing.T) {
 	r := NewRegistry()
 	defer r.KillAll()
 	j := r.Start("bash", "echo hi", "coordinator")
@@ -23,15 +23,17 @@ func TestWaitConsumesExactlyOnce(t *testing.T) {
 	if len(reports) != 1 || reports[0].Status != Done || reports[0].Result != "exit 0\nhi" {
 		t.Fatalf("reports = %+v", reports)
 	}
-	// Already consumed by wait: the checkpoint drain must get nothing.
+	if again, _ := r.Wait(context.Background(), []string{j.ID()}, "all", time.Second); len(again) != 1 || again[0].Result != reports[0].Result {
+		t.Fatalf("repeat wait = %+v, want same retained report", again)
+	}
 	if got := r.DrainFinished("coordinator"); len(got) != 0 {
 		t.Fatalf("DrainFinished after wait = %+v, want none", got)
 	}
 }
 
-// The reverse: a DrainFinished consumes the report, and a later wait covering
-// the same job returns no report for it (exactly once, other direction).
-func TestDrainThenWaitExactlyOnce(t *testing.T) {
+// A checkpoint notification does not destroy retained evidence: explicit waits
+// after delivery can still retrieve it, without creating another notification.
+func TestDrainThenWaitRetainsEvidence(t *testing.T) {
 	r := NewRegistry()
 	defer r.KillAll()
 	j := r.Start("bash", "echo hi", "coordinator")
@@ -41,11 +43,14 @@ func TestDrainThenWaitExactlyOnce(t *testing.T) {
 		t.Fatalf("DrainFinished = %+v, want 1", got)
 	}
 	reports, running := r.Wait(context.Background(), []string{j.ID()}, "all", time.Second)
-	if len(reports) != 0 {
-		t.Fatalf("wait after drain returned reports %+v, want none", reports)
+	if len(reports) != 1 || reports[0].Result != "exit 0" {
+		t.Fatalf("wait after drain returned reports %+v, want retained evidence", reports)
 	}
 	if len(running) != 0 {
-		t.Fatalf("running = %v, want none (job is done, just already consumed)", running)
+		t.Fatalf("running = %v, want none", running)
+	}
+	if got := r.DrainFinished("coordinator"); len(got) != 0 {
+		t.Fatalf("second DrainFinished = %+v, want no duplicate notification", got)
 	}
 }
 
@@ -68,62 +73,64 @@ func TestDrainFiltersByOwner(t *testing.T) {
 	}
 }
 
-// Concurrent Finish and Wait: exactly one of them delivers the report, and Wait
-// unblocks once the job finishes.
-func TestConcurrentFinishVsWait(t *testing.T) {
+// Concurrent checkpoint claiming and wait preserve repeatable explicit evidence
+// while allowing at most one automatic notification.
+func TestConcurrentCheckpointVsWait(t *testing.T) {
 	for iter := 0; iter < 200; iter++ {
 		r := NewRegistry()
 		j := r.Start("bash", "race", "coordinator")
+		j.Finish(Done, "exit 0")
 
+		start := make(chan struct{})
 		var wg sync.WaitGroup
-		wg.Add(1)
-		var reports []Report
+		wg.Add(2)
+		var reports, notified []Report
 		go func() {
 			defer wg.Done()
+			<-start
 			reports, _ = r.Wait(context.Background(), []string{j.ID()}, "all", 2*time.Second)
 		}()
-		// Finish concurrently with the waiter blocking.
-		j.Finish(Done, "exit 0")
+		go func() {
+			defer wg.Done()
+			<-start
+			notified = r.DrainFinished("coordinator")
+		}()
+		close(start)
 		wg.Wait()
 
-		gotWait := len(reports) == 1
-		drained := r.DrainFinished("coordinator")
-		gotDrain := len(drained) == 1
-		// Exactly one path consumed the final report.
-		if gotWait == gotDrain {
-			t.Fatalf("iter %d: exactly-once violated: wait=%v drain=%v", iter, gotWait, gotDrain)
+		if len(reports) != 1 || reports[0].Result != "exit 0" {
+			t.Fatalf("iter %d: wait lost retained evidence: %+v", iter, reports)
+		}
+		if len(notified) > 1 {
+			t.Fatalf("iter %d: duplicate notifications: %+v", iter, notified)
+		}
+		if duplicate := r.DrainFinished("coordinator"); len(duplicate) != 0 {
+			t.Fatalf("iter %d: duplicate automatic notification: %+v", iter, duplicate)
 		}
 		r.KillAll()
 	}
 }
 
-// job_output (Read) returns only NEW output on each call and never consumes the
-// final report.
-func TestReadIncrementalCursor(t *testing.T) {
+// Output uses explicit absolute cursors and can revisit retained bytes without
+// changing notification delivery.
+func TestOutputExplicitCursorIsRepeatable(t *testing.T) {
 	r := NewRegistry()
 	defer r.KillAll()
 	j := r.Start("bash", "watch", "coordinator")
 
-	j.Append([]byte("hello "))
-	out, st, _ := j.Read()
-	if out != "hello " || st != Running {
-		t.Fatalf("first Read = %q/%s", out, st)
+	j.Append([]byte("hello world"))
+	first := j.Output(0, 6, 0)
+	again := j.Output(0, 6, 0)
+	if string(first.Data) != "hello " || string(again.Data) != "hello " || first.End != 6 {
+		t.Fatalf("repeat output = %+v / %+v", first, again)
 	}
-	// No new output: empty.
-	if out, _, _ := j.Read(); out != "" {
-		t.Fatalf("second Read = %q, want empty", out)
-	}
-	j.Append([]byte("world"))
-	if out, _, _ := j.Read(); out != "world" {
-		t.Fatalf("third Read = %q, want \"world\"", out)
+	second := j.Output(first.End, 64, 0)
+	if string(second.Data) != "world" || second.Start != 6 || second.End != 11 {
+		t.Fatalf("continued output = %+v", second)
 	}
 	j.Finish(Done, "exit 0")
-	// Reading after finish reflects status but does not consume the report.
-	if _, st, _ := j.Read(); st != Done {
-		t.Fatalf("post-finish Read status = %s, want done", st)
-	}
 	if got := r.DrainFinished("coordinator"); len(got) != 1 {
-		t.Fatalf("report was consumed by Read: DrainFinished = %+v", got)
+		t.Fatalf("output read changed notification: %+v", got)
 	}
 }
 
@@ -132,9 +139,9 @@ func TestReadReportsIncrementalBufferEviction(t *testing.T) {
 	defer r.KillAll()
 	j := r.Start("bash", "chatty", "coordinator")
 	j.Append([]byte(strings.Repeat("x", maxJobBuf+123)))
-	out, _, dropped := j.Read()
-	if dropped != 123 || len(out) != maxJobBuf {
-		t.Fatalf("eviction = dropped %d, retained %d; want 123/%d", dropped, len(out), maxJobBuf)
+	out := j.Output(0, maxJobBuf, 0)
+	if out.GapStart != 0 || out.GapEnd != 123 || out.RetainedStart != 123 || len(out.Data) != maxJobBuf {
+		t.Fatalf("eviction view = %+v, retained %d; want gap 0-123 and %d bytes", out, len(out.Data), maxJobBuf)
 	}
 }
 
@@ -206,6 +213,48 @@ func TestKillAll(t *testing.T) {
 
 // wait for="any" returns as soon as one target finishes and reports the still
 // running ones on timeout.
+func TestListIncludesOwnersTimingAndSafeAgentActivity(t *testing.T) {
+	r := NewRegistry()
+	defer r.KillAll()
+	a := r.Start("agent", "review", "coordinator")
+	r.Start("bash", "echo child", "implementer")
+	a.UpdateActivity("Read", &Usage{Input: 10, Output: 4, Total: 14})
+
+	own := r.List("coordinator", false)
+	if len(own) != 1 || own[0].ID != a.ID() || own[0].Owner != "coordinator" || own[0].Started.IsZero() {
+		t.Fatalf("owner-scoped list = %+v", own)
+	}
+	if own[0].Activity.CurrentTool != "Read" || own[0].Activity.Turns != 1 || own[0].Activity.Usage.Total != 14 {
+		t.Fatalf("agent activity = %+v", own[0].Activity)
+	}
+	if all := r.List("coordinator", true); len(all) != 2 || all[1].Owner != "implementer" {
+		t.Fatalf("session-wide list = %+v", all)
+	}
+}
+
+func TestRestoredLostAndKilledJobsReserveIDs(t *testing.T) {
+	start := time.Now().Add(-time.Minute)
+	r := NewRestored([]Restored{
+		{ID: "job_7", Kind: "agent", Label: "lost", Owner: "coordinator", Status: Running, Started: start},
+		{ID: "job_8", Kind: "bash", Label: "cancelled", Owner: "implementer", Status: Killed, Result: "killed", Started: start, Finished: start.Add(time.Second)},
+	})
+	defer r.KillAll()
+	lost, _ := r.Get("job_7")
+	if lost.Status() != Lost || !strings.Contains(lost.Report().Result, "daemon restarted") {
+		t.Fatalf("restored unmatched job = %+v", lost.Report())
+	}
+	killed, _ := r.Get("job_8")
+	if killed.Status() != Killed || killed.Report().Result != "killed" {
+		t.Fatalf("restored killed job = %+v", killed.Report())
+	}
+	if got := r.DrainFinished("coordinator"); len(got) != 0 {
+		t.Fatalf("restore duplicated replay notification: %+v", got)
+	}
+	if next := r.Start("bash", "next", "coordinator"); next.ID() != "job_9" {
+		t.Fatalf("next id = %s, want job_9", next.ID())
+	}
+}
+
 func TestWaitAnyAndTimeout(t *testing.T) {
 	r := NewRegistry()
 	defer r.KillAll()

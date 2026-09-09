@@ -83,11 +83,19 @@ func TestBackgroundBashWaitReturnsExitAndOutput(t *testing.T) {
 	} else if fin.Data["status"] != "done" {
 		t.Fatalf("job_finished status = %v, want done", fin.Data["status"])
 	}
+	claim := rec.find(event.JobClaimed)
+	if claim == nil {
+		t.Fatal("wait did not durably claim terminal evidence")
+	}
+	claimResult, _ := claim.Data["result"].(string)
+	if claim.Data["id"] != "job_1" || claim.Data["kind"] != "bash" || claim.Data["status"] != "done" ||
+		claim.Data["label"] != "sleep 0.4 && echo done" || !strings.Contains(claimResult, "exit 0") {
+		t.Fatalf("wait claim lacks terminal evidence: %+v", claim)
+	}
 }
 
-// job_output mid-run returns partial output + running status, and a second call
-// returns only new output.
-func TestJobOutputIncremental(t *testing.T) {
+// job_output exposes explicit repeatable cursors rather than hidden read state.
+func TestJobOutputExplicitCursor(t *testing.T) {
 	reg, _, _ := jobsReg(t)
 	res := dispatch(t, reg, "Bash", `{"command":"echo first; sleep 0.5; echo second","run_in_background":true}`)
 	if res.IsError {
@@ -95,21 +103,19 @@ func TestJobOutputIncremental(t *testing.T) {
 	}
 	// Give the first echo time to land while the job is still running.
 	time.Sleep(150 * time.Millisecond)
-	out := dispatch(t, reg, "job_output", `{"job_id":"job_1"}`)
-	if !strings.Contains(out.Content, "first") || !strings.Contains(out.Content, "running") {
-		t.Fatalf("first job_output = %q, want 'first' + running", out.Content)
+	out := dispatch(t, reg, "job_output", `{"job_id":"job_1","cursor":0}`)
+	if !strings.Contains(out.Content, "first") || !strings.Contains(out.Content, "running") || !strings.Contains(out.Content, "next_cursor=6") {
+		t.Fatalf("first job_output = %q", out.Content)
 	}
-	if strings.Contains(out.Content, "second") {
-		t.Fatalf("first job_output already has 'second': %q", out.Content)
+	again := dispatch(t, reg, "job_output", `{"job_id":"job_1","cursor":0}`)
+	if !strings.Contains(again.Content, "first") {
+		t.Fatalf("repeat job_output did not revisit data: %q", again.Content)
 	}
-	// Wait for completion, then a second job_output returns only the new tail.
+	// Wait for completion, then continue from the explicit cursor.
 	dispatch(t, reg, "wait", `{"job_ids":["job_1"]}`)
-	out = dispatch(t, reg, "job_output", `{"job_id":"job_1"}`)
-	if strings.Contains(out.Content, "first") {
-		t.Fatalf("second job_output repeated old output: %q", out.Content)
-	}
-	if !strings.Contains(out.Content, "second") {
-		t.Fatalf("second job_output missing new output: %q", out.Content)
+	out = dispatch(t, reg, "job_output", `{"job_id":"job_1","cursor":6}`)
+	if strings.Contains(out.Content, "first") || !strings.Contains(out.Content, "second") {
+		t.Fatalf("continued job_output = %q", out.Content)
 	}
 }
 
@@ -255,6 +261,116 @@ func TestBackgroundShellLeaseSurvivesKillUntilProcessExit(t *testing.T) {
 			t.Fatalf("lease not released after actual process exit: %s", got.Content)
 		}
 		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+func TestJobResultRepeatableAfterCheckpointNotification(t *testing.T) {
+	reg, jr, _ := jobsReg(t)
+	j := jr.Start("agent", "completed agent", "coordinator")
+	j.Finish(jobs.Done, "stable report")
+	if notified := jr.DrainFinished("coordinator"); len(notified) != 1 {
+		t.Fatalf("checkpoint notification = %+v", notified)
+	}
+	for i := 0; i < 2; i++ {
+		got := dispatch(t, reg, "job_result", `{"job_id":"job_1"}`)
+		if got.IsError || !strings.Contains(got.Content, "stable report") {
+			t.Fatalf("job_result #%d = %+v", i+1, got)
+		}
+	}
+	if duplicate := jr.DrainFinished("coordinator"); len(duplicate) != 0 {
+		t.Fatalf("retrieval created duplicate notification: %+v", duplicate)
+	}
+}
+
+func TestListJobsScopesOwnersAndShowsAgentActivity(t *testing.T) {
+	reg, jr, _ := jobsReg(t)
+	a := jr.Start("agent", "inspect safely", "coordinator")
+	a.UpdateActivity("Search", &jobs.Usage{Input: 12, Output: 3, Total: 15})
+	jr.Start("bash", "other actor", "implementer")
+
+	own := dispatch(t, reg, "list_jobs", `{}`)
+	if own.IsError || !strings.Contains(own.Content, "job_1 [running]") || !strings.Contains(own.Content, "owner=coordinator") ||
+		!strings.Contains(own.Content, `current_tool="Search"`) || !strings.Contains(own.Content, "total:15") || strings.Contains(own.Content, "job_2") {
+		t.Fatalf("owner list = %q", own.Content)
+	}
+	all := dispatch(t, reg, "list_jobs", `{"include_all_owners":true}`)
+	if all.IsError || !strings.Contains(all.Content, "job_2") || !strings.Contains(all.Content, "owner=implementer") {
+		t.Fatalf("all-owner list = %q", all.Content)
+	}
+}
+
+func TestWaitOmittedIDsDoesNotExpandEmptyOwnerScope(t *testing.T) {
+	for _, actor := range []string{"coordinator", "implementer"} {
+		t.Run(actor, func(t *testing.T) {
+			jr := jobs.NewRegistry()
+			defer jr.KillAll()
+			rec := &captureRec{}
+			reg := New()
+			reg.Add(JobTools(&Workspace{Jobs: jr, Emitter: event.NewEmitter(rec, actor)})...)
+
+			completedOwner := "coordinator"
+			if actor == "coordinator" {
+				completedOwner = actor
+			}
+			completed := jr.Start("bash", "already done", completedOwner)
+			completed.Finish(jobs.Done, "retained result")
+			otherOwner := "coordinator"
+			if actor == "coordinator" {
+				otherOwner = "implementer"
+			}
+			otherLive := jr.Start("bash", "someone else's live job", otherOwner)
+
+			start := time.Now()
+			got := dispatch(t, reg, "wait", `{"timeout_s":1}`)
+			if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+				t.Fatalf("omitted-id wait blocked for %s with no owned live jobs", elapsed)
+			}
+			if got.IsError || got.Content != "wait: no matching jobs." {
+				t.Fatalf("omitted-id wait = %+v", got)
+			}
+			if otherLive.Status() != jobs.Running {
+				t.Fatalf("wait affected another actor's live job: %s", otherLive.Status())
+			}
+			// The completed job remains unclaimed, whether it belongs to this actor
+			// or another one; omitted wait considers owned LIVE jobs only.
+			if pending := jr.DrainFinished(completedOwner); len(pending) != 1 || pending[0].ID != completed.ID() {
+				t.Fatalf("wait claimed another target set: %+v", pending)
+			}
+			if claim := rec.find(event.JobClaimed); claim != nil {
+				t.Fatalf("empty owner scope emitted a claim: %+v", claim)
+			}
+		})
+	}
+}
+
+func TestJobOutputReportsEvictionGapAndCanRevisitTail(t *testing.T) {
+	reg, jr, _ := jobsReg(t)
+	j := jr.Start("bash", "chatty", "coordinator")
+	j.Append([]byte(strings.Repeat("x", 300*1024)))
+
+	got := dispatch(t, reg, "job_output", `{"job_id":"job_1","cursor":0,"limit":32}`)
+	if got.IsError || !strings.Contains(got.Content, "retention gap: bytes 0-") || !strings.Contains(got.Content, "next_cursor=") {
+		t.Fatalf("evicted output = %q", got.Content)
+	}
+	tail := dispatch(t, reg, "job_output", `{"job_id":"job_1","tail_lines":1}`)
+	again := dispatch(t, reg, "job_output", `{"job_id":"job_1","tail_lines":1}`)
+	if tail.IsError || again.IsError || tail.Content != again.Content || !strings.Contains(tail.Content, "retained") {
+		t.Fatalf("repeat tails differ: %q / %q", tail.Content, again.Content)
+	}
+}
+
+func TestJobToolsRejectUnknownIDs(t *testing.T) {
+	reg, _, _ := jobsReg(t)
+	for _, tc := range []struct{ name, args string }{
+		{"job_output", `{"job_id":"job_404"}`},
+		{"job_result", `{"job_id":"job_404"}`},
+		{"wait", `{"job_ids":["job_404"]}`},
+		{"kill_job", `{"job_id":"job_404"}`},
+	} {
+		got := dispatch(t, reg, tc.name, tc.args)
+		if !got.IsError || !strings.Contains(got.Content, "no such job") {
+			t.Fatalf("%s unknown id = %+v", tc.name, got)
+		}
 	}
 }
 
