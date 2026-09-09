@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"regexp"
 	"strings"
@@ -322,6 +323,49 @@ func TestReplayHistoryCanonicalizesToolIDs(t *testing.T) {
 	for _, id := range toolUseIDs {
 		if !resultByID[id] {
 			t.Fatalf("tool_use id %q has no matching tool_result", id)
+		}
+	}
+}
+
+func TestReplayHistoryCanonicalToolIDCollisions(t *testing.T) {
+	events := []event.Event{
+		{Seq: 1, Actor: "user", Type: event.UserInput, Data: map[string]any{"text": "go"}},
+		{Seq: 2, Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{"text": "working", "tool_calls": 6}},
+	}
+	rawIDs := []string{"call_2", "call_4", "bad.id", "", "bad:id", "normal-id"}
+	for i, rawID := range rawIDs {
+		events = append(events,
+			event.Event{Seq: 3 + i*2, Actor: "coordinator", Type: event.ToolCall, Data: map[string]any{
+				"name": "read_file", "args": `{}`, "id": rawID,
+			}},
+			event.Event{Seq: 4 + i*2, Actor: "coordinator", Type: event.ToolResult, Data: map[string]any{
+				"name": "read_file", "result": fmt.Sprintf("result-%d", i), "id": rawID,
+			}},
+		)
+	}
+
+	got := ReplayHistory(events)
+	if len(got) != 8 || got[0].Role != "user" || got[1].Role != "assistant" {
+		t.Fatalf("unexpected replay ordering: %+v", got)
+	}
+	wantIDs := []string{"call_2", "call_4", "call_3", "call_5", "call_6", "normal-id"}
+	calls := got[1].ToolCalls
+	if len(calls) != len(wantIDs) {
+		t.Fatalf("got %d tool calls, want %d: %+v", len(calls), len(wantIDs), got)
+	}
+	valid := regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+	seen := map[string]bool{}
+	for i, wantID := range wantIDs {
+		if calls[i].ID != wantID {
+			t.Fatalf("tool call %d id = %q, want %q", i, calls[i].ID, wantID)
+		}
+		if !valid.MatchString(calls[i].ID) || seen[calls[i].ID] {
+			t.Fatalf("tool call id is invalid or duplicated: %q", calls[i].ID)
+		}
+		seen[calls[i].ID] = true
+		result := got[i+2]
+		if result.Role != "tool" || result.ToolCallID != calls[i].ID || result.Content != fmt.Sprintf("result-%d", i) {
+			t.Fatalf("tool result %d does not match its call: %+v", i, result)
 		}
 	}
 }

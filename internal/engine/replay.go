@@ -72,9 +72,11 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 		}
 		c := raw
 		if c == "" || toolIDInvalid.MatchString(c) || usedIDs[c] {
-			c = fmt.Sprintf("call_%d", len(idMap))
-			for usedIDs[c] {
-				c = fmt.Sprintf("call_%d", len(idMap)+len(usedIDs))
+			for n := len(idMap); ; n++ {
+				c = fmt.Sprintf("call_%d", n)
+				if !usedIDs[c] {
+					break
+				}
 			}
 		}
 		idMap[raw] = c
