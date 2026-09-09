@@ -193,6 +193,9 @@ struct SessionView: View {
         .onChange(of: model.pendingQuestion?.rowID) { _, rowID in
             showQuestionSheet = (rowID != nil)
         }
+        .onChange(of: model.unauthorized) { _, isUnauthorized in
+            if isUnauthorized { app.handleUnauthorized() }
+        }
         .alert(
             "Action failed",
             isPresented: Binding(

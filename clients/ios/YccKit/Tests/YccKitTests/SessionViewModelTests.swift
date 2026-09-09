@@ -1,3 +1,4 @@
+import Connect
 import Foundation
 import XCTest
 import YccProto
@@ -7,14 +8,26 @@ import YccProto
 private final class MockSource: SessionTranscriptSource, @unchecked Sendable {
     var transcript: [Ycc_V1_Event] = []
     var transcriptError: Error?
+    var transcriptResults: [Result<[Ycc_V1_Event], Error>] = []
     var streams: [AsyncThrowingStream<Ycc_V1_Event, Error>] = []
     private(set) var recordedFromSeqs: [Int64] = []
+    private(set) var transcriptRequestCount = 0
     private var callIndex = 0
     private let lock = NSLock()
 
     func getSessionTranscript(project: String, sessionId: String) async throws -> [Ycc_V1_Event] {
-        if let transcriptError { throw transcriptError }
-        return transcript
+        let (scripted, error, events) = nextTranscriptResult()
+        if let scripted { return try scripted.get() }
+        if let error { throw error }
+        return events
+    }
+
+    private func nextTranscriptResult() -> (Result<[Ycc_V1_Event], Error>?, Error?, [Ycc_V1_Event]) {
+        lock.lock()
+        defer { lock.unlock() }
+        transcriptRequestCount += 1
+        let scripted = transcriptResults.isEmpty ? nil : transcriptResults.removeFirst()
+        return (scripted, transcriptError, transcript)
     }
 
     func getSessionAttachment(project: String, sessionId: String, attachmentId: String) async throws -> MessageImage {
@@ -28,6 +41,60 @@ private final class MockSource: SessionTranscriptSource, @unchecked Sendable {
         let idx = min(callIndex, streams.count - 1)
         callIndex += 1
         return streams.isEmpty ? AsyncThrowingStream { $0.finish() } : streams[idx]
+    }
+}
+
+/// Holds its first transcript request even after task cancellation, allowing a
+/// stale completion to race a replacement live subscription deterministically.
+private final class SuspendedTranscriptSource: SessionTranscriptSource, @unchecked Sendable {
+    private let lock = NSLock()
+    private var firstContinuation: CheckedContinuation<[Ycc_V1_Event], Error>?
+    private var _transcriptCalls = 0
+    private var _subscribeCalls = 0
+    private var _terminations = 0
+
+    var transcriptCalls: Int { locked { _transcriptCalls } }
+    var subscribeCalls: Int { locked { _subscribeCalls } }
+    var terminations: Int { locked { _terminations } }
+
+    func getSessionTranscript(project: String, sessionId: String) async throws -> [Ycc_V1_Event] {
+        let call = locked { () -> Int in
+            _transcriptCalls += 1
+            return _transcriptCalls
+        }
+        guard call == 1 else { return [] }
+        return try await withCheckedThrowingContinuation { continuation in
+            locked { firstContinuation = continuation }
+        }
+    }
+
+    func finishFirst(with events: [Ycc_V1_Event]) {
+        let continuation = locked { () -> CheckedContinuation<[Ycc_V1_Event], Error>? in
+            defer { firstContinuation = nil }
+            return firstContinuation
+        }
+        continuation?.resume(returning: events)
+    }
+
+    func getSessionAttachment(project: String, sessionId: String, attachmentId: String) async throws -> MessageImage {
+        throw YccError.notFound("attachment not found")
+    }
+
+    func subscribe(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_Event, Error> {
+        locked { _subscribeCalls += 1 }
+        return AsyncThrowingStream { continuation in
+            continuation.onTermination = { [weak self] _ in
+                guard let self else { return }
+                self.locked { self._terminations += 1 }
+            }
+        }
+    }
+
+    @discardableResult
+    private func locked<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
     }
 }
 
@@ -89,6 +156,12 @@ private final class MockActionSource: SessionActionSource, SessionTranscriptSour
     func subscribe(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_Event, Error> {
         AsyncThrowingStream { $0.finish() }
     }
+}
+
+private actor DelayRecorder {
+    private var values: [UInt64] = []
+    func record(_ value: UInt64) { values.append(value) }
+    func snapshot() -> [UInt64] { values }
 }
 
 @MainActor
@@ -230,6 +303,169 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertEqual(vm.projection.rows, onePass.rows)
     }
 
+    func testUnauthorizedStreamStopsAndRequestsSharedAuthenticationReset() async {
+        let source = MockSource()
+        source.streams = [stream([], thenThrow: YccError.unauthorized)]
+        let vm = SessionViewModel(
+            source: source,
+            sessionID: "s1",
+            mode: .live,
+            backoff: .init(initial: 1_000_000, maximum: 2_000_000)
+        )
+
+        vm.start()
+        await waitUntil { vm.unauthorized }
+
+        XCTAssertTrue(vm.unauthorized)
+        XCTAssertEqual(vm.state, .failed("unauthorized"))
+        XCTAssertFalse(vm.isAwaitingAgentActivity)
+        XCTAssertEqual(source.recordedFromSeqs, [0])
+        vm.reconnect()
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        XCTAssertEqual(source.recordedFromSeqs, [0], "rotated credentials must not reconnect forever")
+    }
+
+    func testNotFoundLiveSessionBecomesPersistedWhenHistoryExists() async {
+        let source = MockSource()
+        let history = sampleEvents
+        source.transcriptResults = [.success(history), .success(history)]
+        source.streams = [stream([], thenThrow: YccError.notFound(message: "live session not found"))]
+        let vm = SessionViewModel(source: source, sessionID: "s1", mode: .live)
+
+        vm.start()
+        await waitUntil { vm.mode == .persisted && vm.state == .finished }
+
+        XCTAssertEqual(vm.mode, .persisted)
+        XCTAssertEqual(vm.state, .finished)
+        XCTAssertEqual(vm.projection.lastPersistedSeq, 5)
+        XCTAssertEqual(vm.rows.count, 4)
+        XCTAssertEqual(source.transcriptRequestCount, 2)
+        XCTAssertEqual(source.recordedFromSeqs, [5])
+    }
+
+    func testNotFoundLiveSessionWithoutPersistedHistoryFailsWithoutRetry() async {
+        let source = MockSource()
+        source.transcriptResults = [.success([]), .success([])]
+        source.streams = [stream([], thenThrow: YccError.notFound(message: "live session not found"))]
+        let vm = SessionViewModel(source: source, sessionID: "s1", mode: .live)
+
+        vm.start()
+        await waitUntil { vm.state == .failed("session history not found") }
+
+        XCTAssertEqual(vm.mode, .live)
+        XCTAssertEqual(source.transcriptRequestCount, 2)
+        XCTAssertEqual(source.recordedFromSeqs, [0])
+    }
+
+    func testRepeatedTransientFlapsResumeWithoutDuplicateRows() async {
+        let source = MockSource()
+        let all = sampleEvents
+        source.streams = [
+            stream([all[0]], thenThrow: YccError.rpc(message: "drop one")),
+            stream([all[0], all[1]], thenThrow: YccError.rpc(message: "drop two")),
+            stream(Array(all[1...])),
+        ]
+        let vm = SessionViewModel(
+            source: source,
+            sessionID: "s1",
+            mode: .live,
+            backoff: .init(initial: 1, maximum: 2),
+            sleep: { _ in }
+        )
+
+        vm.start()
+        await waitUntil { vm.state == .finished }
+
+        XCTAssertEqual(source.recordedFromSeqs, [0, 1, 2])
+        XCTAssertEqual(vm.projection.lastPersistedSeq, 5)
+        var expected = SessionProjection()
+        expected.apply(all)
+        XCTAssertEqual(vm.rows, expected.rows)
+    }
+
+    func testHealthyEventResetsReconnectBackoff() async {
+        let source = MockSource()
+        source.streams = [
+            stream([], thenThrow: YccError.rpc(message: "drop one")),
+            stream([], thenThrow: YccError.rpc(message: "drop two")),
+            stream([event(1, "model_turn", #"{"text":"healthy"}"#)],
+                   thenThrow: YccError.rpc(message: "drop three")),
+            stream([]),
+        ]
+        let delays = DelayRecorder()
+        let vm = SessionViewModel(
+            source: source,
+            sessionID: "s1",
+            mode: .live,
+            backoff: .init(initial: 10, maximum: 40),
+            sleep: { await delays.record($0) }
+        )
+
+        vm.start()
+        await waitUntil { vm.state == .finished }
+
+        let recordedDelays = await delays.snapshot()
+        XCTAssertEqual(recordedDelays, [10, 20, 10])
+        XCTAssertEqual(source.recordedFromSeqs, [0, 0, 0, 1])
+    }
+
+    func testCancellationStopsWithoutRetryingOrLeavingTransientPresentation() async {
+        let source = MockSource()
+        let cancellation = YccClient.mapSessionTransport(
+            ConnectError(code: .canceled, message: "cancelled"))
+        source.streams = [stream([], thenThrow: cancellation)]
+        let vm = SessionViewModel(source: source, sessionID: "s1", mode: .live)
+
+        vm.start()
+        await waitUntil { vm.state == .idle }
+
+        XCTAssertEqual(vm.state, .idle)
+        XCTAssertFalse(vm.isAwaitingAgentActivity)
+        XCTAssertTrue(vm.liveTails.isEmpty)
+        XCTAssertEqual(source.recordedFromSeqs, [0])
+    }
+
+    func testStaleTranscriptCannotClearReplacementStreamTask() async {
+        let source = SuspendedTranscriptSource()
+        let actions = MockActionSource()
+        let vm = SessionViewModel(
+            source: source, actions: actions, sessionID: "s1", mode: .persisted)
+
+        vm.start()
+        await waitUntil { source.transcriptCalls == 1 }
+        let reopened = await vm.reopenForInteraction()
+        XCTAssertTrue(reopened)
+        await waitUntil { source.subscribeCalls == 1 }
+
+        source.finishFirst(with: [event(99, "model_turn", #"{"text":"stale"}"#)])
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        XCTAssertEqual(vm.projection.lastPersistedSeq, 0, "cancelled fetch must not overwrite the live replacement")
+
+        vm.start()
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        XCTAssertEqual(source.subscribeCalls, 1, "stale cleanup must not clear the replacement task handle")
+
+        vm.stop()
+        await waitUntil { source.terminations == 1 }
+        XCTAssertEqual(source.terminations, 1, "stop must cancel the active replacement subscription")
+    }
+
+    func testTerminalTransportFailureDoesNotReconnectOrLeaveTransientPresentation() async {
+        let source = MockSource()
+        let delta = event(0, "turn_delta", #"{"text":"partial"}"#)
+        let terminal = YccClient.mapSessionTransport(
+            ConnectError(code: .invalidArgument, message: "cannot subscribe"))
+        source.streams = [stream([delta], thenThrow: terminal)]
+        let vm = SessionViewModel(source: source, sessionID: "s1", mode: .live)
+
+        vm.start()
+        await waitUntil { vm.state == .failed("cannot subscribe") }
+
+        XCTAssertFalse(vm.isAwaitingAgentActivity)
+        XCTAssertTrue(vm.liveTails.isEmpty)
+        XCTAssertEqual(source.recordedFromSeqs, [0])
+    }
+
     func testTranscriptRevisionTracksStreamEventsWithoutComparingRows() async {
         let source = MockSource()
         var first = Ycc_V1_Event()
@@ -238,11 +474,14 @@ final class SessionViewModelTests: XCTestCase {
         first.dataJson = #"{"text":"a"}"#
         var second = first
         second.dataJson = #"{"text":"a much longer snapshot"}"#
-        source.streams = [stream([first, second])]
+        source.streams = [AsyncThrowingStream { continuation in
+            continuation.yield(first)
+            continuation.yield(second)
+        }]
         let vm = SessionViewModel(source: source, sessionID: "s1", mode: .live)
 
         vm.start()
-        await waitUntil { vm.state == .finished }
+        await waitUntil { vm.transcriptRevision == 2 }
 
         XCTAssertEqual(vm.transcriptRevision, 2)
         XCTAssertEqual(vm.durableRows, [])
@@ -250,6 +489,7 @@ final class SessionViewModelTests: XCTestCase {
             return XCTFail("expected the last live-tail snapshot")
         }
         XCTAssertEqual(text, "a much longer snapshot")
+        vm.stop()
     }
 
     func testReconnectClearsStaleLiveTailBeforeNewEvents() async {

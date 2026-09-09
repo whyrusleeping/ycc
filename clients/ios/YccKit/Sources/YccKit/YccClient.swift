@@ -183,7 +183,7 @@ public final class YccClient: Sendable {
         case .success(let message):
             return message.events
         case .failure(let error):
-            throw Self.map(error)
+            throw Self.mapSessionTransport(error)
         }
     }
 
@@ -212,8 +212,8 @@ public final class YccClient: Sendable {
     /// no duplication.
     ///
     /// The returned stream finishes when the RPC completes cleanly and throws a
-    /// mapped ``YccError`` on stream error. Cancelling the consuming task (or
-    /// deiniting its `for await`) cancels the underlying Connect stream.
+    /// classified transport error on stream failure. Cancelling the consuming
+    /// task (or deiniting its `for await`) cancels the underlying Connect stream.
     public func subscribe(
         sessionId: String, fromSeq: Int64
     ) -> AsyncThrowingStream<Ycc_V1_Event, Error> {
@@ -226,7 +226,7 @@ public final class YccClient: Sendable {
                 do {
                     try stream.send(request)
                 } catch {
-                    continuation.finish(throwing: error)
+                    continuation.finish(throwing: Self.mapSessionTransport(error))
                     return
                 }
                 for await result in stream.results() {
@@ -237,7 +237,7 @@ public final class YccClient: Sendable {
                         continuation.yield(event)
                     case .complete(_, let error, _):
                         if let error {
-                            continuation.finish(throwing: Self.mapAny(error))
+                            continuation.finish(throwing: Self.mapSessionTransport(error))
                         } else {
                             continuation.finish()
                         }
@@ -813,11 +813,40 @@ public final class YccClient: Sendable {
         }
     }
 
-    /// Maps an arbitrary stream error (usually a `ConnectError`) to ``YccError``.
-    static func mapAny(_ error: Error) -> YccError {
-        if let connect = error as? ConnectError {
-            return map(connect)
+    /// Preserve the retry semantics needed by transcript loading/subscription.
+    /// The rest of the client intentionally keeps the coarser UI-facing `map`.
+    static func mapSessionTransport(_ error: ConnectError) -> Error {
+        switch error.code {
+        case .canceled:
+            return CancellationError()
+        case .unavailable, .deadlineExceeded, .resourceExhausted, .aborted,
+             .internalError, .unknown:
+            return YccError.rpc(message: sessionTransportMessage(error))
+        case .unauthenticated, .permissionDenied, .notFound, .failedPrecondition:
+            return map(error)
+        case .ok, .invalidArgument, .alreadyExists, .outOfRange, .unimplemented,
+             .dataLoss:
+            return TerminalSessionTransportError.terminal(
+                message: sessionTransportMessage(error))
         }
-        return .rpc(message: error.localizedDescription)
+    }
+
+    /// Preserve cancellation when a transport surfaces it without a Connect code;
+    /// other untyped stream errors remain transient network failures.
+    static func mapSessionTransport(_ error: Error) -> Error {
+        if error is CancellationError {
+            return error
+        }
+        if let urlError = error as? URLError, urlError.code == .cancelled {
+            return CancellationError()
+        }
+        if let connect = error as? ConnectError {
+            return mapSessionTransport(connect)
+        }
+        return YccError.rpc(message: error.localizedDescription)
+    }
+
+    private static func sessionTransportMessage(_ error: ConnectError) -> String {
+        error.message ?? "request failed (\(error.code))"
     }
 }

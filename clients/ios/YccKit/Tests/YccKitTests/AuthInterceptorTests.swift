@@ -65,4 +65,26 @@ final class AuthInterceptorTests: XCTestCase {
             YccClient.map(ConnectError(code: .unavailable, message: "down")),
             .rpc(message: "down"))
     }
+
+    func testSessionTransportMappingPreservesTransientCancellationAndTerminalCodes() {
+        XCTAssertEqual(
+            YccClient.mapSessionTransport(
+                ConnectError(code: .unavailable, message: "down")) as? YccError,
+            YccError.rpc(message: "down"))
+
+        XCTAssertTrue(
+            YccClient.mapSessionTransport(
+                ConnectError(code: .canceled, message: "cancelled")) is CancellationError)
+
+        XCTAssertEqual(
+            YccClient.mapSessionTransport(
+                ConnectError(code: .invalidArgument, message: "bad cursor"))
+                as? TerminalSessionTransportError,
+            TerminalSessionTransportError.terminal(message: "bad cursor"))
+        XCTAssertEqual(
+            YccClient.mapSessionTransport(
+                ConnectError(code: .unimplemented, message: "unsupported"))
+                as? TerminalSessionTransportError,
+            TerminalSessionTransportError.terminal(message: "unsupported"))
+    }
 }

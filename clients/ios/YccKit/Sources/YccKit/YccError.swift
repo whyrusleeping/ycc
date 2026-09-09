@@ -1,5 +1,18 @@
 import Foundation
 
+/// A terminal Connect status retained only for transcript/subscription calls,
+/// whose reconnect loop must distinguish it from a transient ``YccError/rpc``.
+/// Other RPC surfaces keep their existing UI-facing `YccError` mapping.
+enum TerminalSessionTransportError: Error, Equatable, Sendable, LocalizedError {
+    case terminal(message: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .terminal(let message): return message
+        }
+    }
+}
+
 /// Errors surfaced by ``YccClient`` in a UI-friendly, transport-agnostic shape.
 ///
 /// The connect-swift layer reports failures as `ConnectError` with a gRPC

@@ -49,6 +49,10 @@ public final class SessionViewModel {
     /// The folded projection. Views render ``rows``.
     public private(set) var projection = SessionProjection()
     public private(set) var state: ConnectionState = .idle
+    /// Set when transcript loading or subscription discovers that the saved
+    /// credentials are no longer accepted. The app observes this and routes the
+    /// failure through its shared authentication-reset path.
+    public private(set) var unauthorized = false
 
     /// True from the moment an interaction starts until the first visible agent
     /// activity (streamed text, a model/tool/thinking row, question, idle, or
@@ -100,7 +104,9 @@ public final class SessionViewModel {
     private let source: SessionTranscriptSource
     private let actions: SessionActionSource?
     private let backoff: BackoffPolicy
+    private let sleep: @Sendable (UInt64) async throws -> Void
     private var streamTask: Task<Void, Never>?
+    private var streamGeneration: UInt64 = 0
 
     /// Reconnect backoff bounds (nanoseconds). Small by default; overridable in
     /// tests to keep them fast.
@@ -119,7 +125,10 @@ public final class SessionViewModel {
         project: String = "",
         sessionID: String,
         mode: Mode,
-        backoff: BackoffPolicy = BackoffPolicy()
+        backoff: BackoffPolicy = BackoffPolicy(),
+        sleep: @escaping @Sendable (UInt64) async throws -> Void = {
+            try await Task.sleep(nanoseconds: $0)
+        }
     ) {
         self.source = source
         // Auto-wire the action surface from the same object when it conforms to
@@ -129,12 +138,13 @@ public final class SessionViewModel {
         self.sessionID = sessionID
         self.mode = mode
         self.backoff = backoff
+        self.sleep = sleep
         self.isAwaitingAgentActivity = false
     }
 
     /// Begin loading. Idempotent: a second call while already running is ignored.
     public func start() {
-        guard streamTask == nil else { return }
+        guard streamTask == nil, !unauthorized else { return }
         switch mode {
         case .persisted:
             loadTranscript()
@@ -150,16 +160,17 @@ public final class SessionViewModel {
 
     /// Stop any open stream. Safe to call repeatedly.
     public func stop() {
-        streamTask?.cancel()
+        streamGeneration &+= 1
+        let activeTask = streamTask
         streamTask = nil
+        activeTask?.cancel()
     }
 
     /// Re-establish the live stream from the last persisted seq — call on app
     /// foregrounding (`scenePhase` → `.active`). No-op for persisted sessions.
     public func reconnect() {
-        guard mode == .live else { return }
-        streamTask?.cancel()
-        streamTask = nil
+        guard mode == .live, !unauthorized else { return }
+        stop()
         startLiveLoop()
     }
 
@@ -167,45 +178,73 @@ public final class SessionViewModel {
 
     private func loadTranscript() {
         state = .loading
+        streamGeneration &+= 1
+        let generation = streamGeneration
         streamTask = Task { [weak self] in
             guard let self else { return }
+            defer { self.clearStreamTask(generation: generation) }
             do {
                 let events = try await self.source.getSessionTranscript(
                     project: self.project, sessionId: self.sessionID)
-                if Task.isCancelled { return }
+                guard self.isCurrent(generation), !Task.isCancelled else { return }
                 self.applyToProjection(events)
                 self.state = .finished
-            } catch is CancellationError {
-                // Cancelled during load — leave state as-is.
             } catch {
-                self.state = .failed(Self.message(error))
+                guard self.isCurrent(generation), !Task.isCancelled else { return }
+                switch Self.classify(error) {
+                case .cancelled:
+                    self.state = .idle
+                case .unauthorized:
+                    self.failUnauthorized()
+                case .missing, .terminal, .transient:
+                    self.state = .failed(Self.message(error))
+                }
             }
-            self.streamTask = nil
         }
     }
 
     // MARK: - Live
 
     private func startLiveLoop() {
+        streamGeneration &+= 1
+        let generation = streamGeneration
         streamTask = Task { [weak self] in
             guard let self else { return }
+            defer { self.clearStreamTask(generation: generation) }
             var delay = self.backoff.initial
+
             // First connect: catch up via the one-shot transcript, folded in a
-            // SINGLE observable mutation, then subscribe from the caught-up seq.
-            // Folding the replay event-by-event off the stream would let the UI
-            // observe intermediate states — e.g. an already-answered ask_user
-            // briefly presenting its answer sheet before the question_answered
-            // event folds in. A failed catch-up falls back to subscribing from
-            // seq 0 (per-event replay — cosmetic only, never a gap).
+            // SINGLE observable mutation. A transient catch-up failure can still
+            // replay safely through Subscribe from the durable cursor; auth,
+            // missing-history, and terminal failures must not become retry loops.
             if self.projection.lastPersistedSeq == 0 {
                 self.state = .loading
-                if let events = try? await self.source.getSessionTranscript(
-                    project: self.project, sessionId: self.sessionID) {
-                    if Task.isCancelled { return }
+                do {
+                    let events = try await self.source.getSessionTranscript(
+                        project: self.project, sessionId: self.sessionID)
+                    guard self.isCurrent(generation), !Task.isCancelled else { return }
                     self.applyToProjection(events)
+                } catch {
+                    guard self.isCurrent(generation), !Task.isCancelled else { return }
+                    switch Self.classify(error) {
+                    case .transient:
+                        break
+                    case .cancelled:
+                        self.clearTransientPresentation()
+                        self.state = .idle
+                        return
+                    case .unauthorized:
+                        self.failUnauthorized()
+                        return
+                    case .missing, .terminal:
+                        self.clearTransientPresentation()
+                        self.state = .failed(Self.message(error))
+                        return
+                    }
                 }
             }
-            while !Task.isCancelled {
+
+            while self.isCurrent(generation), !Task.isCancelled {
                 let fromSeq = self.projection.lastPersistedSeq
                 // Drop stale streamed tails from before a disconnect so none
                 // linger until each actor's next delta/model_turn replaces them.
@@ -218,32 +257,111 @@ public final class SessionViewModel {
                     let stream = self.source.subscribe(
                         sessionId: self.sessionID, fromSeq: fromSeq)
                     for try await event in stream {
-                        if Task.isCancelled { break }
+                        guard self.isCurrent(generation), !Task.isCancelled else { return }
                         self.applyToProjection(event)
+                        // Once the connection proves healthy, a later flap starts
+                        // again at the shortest delay rather than retaining an old
+                        // outage's penalty.
+                        delay = self.backoff.initial
                     }
-                    // Clean close: the server ended the stream (session gone /
-                    // stopped). Don't reconnect.
-                    if !Task.isCancelled {
-                        self.state = .finished
-                        // Release the task so a later start() isn't a no-op.
-                        self.streamTask = nil
-                    }
-                    break
-                } catch is CancellationError {
-                    break
+                    guard self.isCurrent(generation), !Task.isCancelled else { return }
+                    // A clean server close is terminal for this subscription. A
+                    // later explicit start/reconnect may subscribe again.
+                    self.clearTransientPresentation()
+                    self.state = .finished
+                    return
                 } catch {
-                    if Task.isCancelled { break }
-                    // Stream dropped — reconnect from the last persisted seq.
-                    self.state = .reconnecting
+                    guard self.isCurrent(generation), !Task.isCancelled else { return }
+                    switch Self.classify(error) {
+                    case .transient:
+                        self.state = .reconnecting
+                    case .cancelled:
+                        self.clearTransientPresentation()
+                        self.state = .idle
+                        return
+                    case .unauthorized:
+                        self.failUnauthorized()
+                        return
+                    case .missing:
+                        await self.recoverPersistedSession(generation: generation)
+                        return
+                    case .terminal:
+                        self.clearTransientPresentation()
+                        self.state = .failed(Self.message(error))
+                        return
+                    }
                 }
+
                 do {
-                    try await Task.sleep(nanoseconds: delay)
+                    try await self.sleep(delay)
                 } catch {
-                    break
+                    return
                 }
+                guard self.isCurrent(generation), !Task.isCancelled else { return }
                 delay = min(delay * 2, self.backoff.maximum)
             }
         }
+    }
+
+    /// A daemon restart drops in-memory live sessions while leaving their event
+    /// logs on disk. Verify that history explicitly, then expose the normal
+    /// persisted-session reopen affordance; never resume execution implicitly.
+    private func recoverPersistedSession(generation: UInt64) async {
+        state = .loading
+        clearTransientPresentation()
+        do {
+            let events = try await source.getSessionTranscript(
+                project: project, sessionId: sessionID)
+            guard isCurrent(generation), !Task.isCancelled else { return }
+            let hadHistory = projection.lastPersistedSeq > 0 || !events.isEmpty
+            guard hadHistory else {
+                state = .failed("session history not found")
+                return
+            }
+            applyToProjection(events)
+            isAwaitingAgentActivity = false
+            mode = .persisted
+            state = .finished
+        } catch {
+            guard isCurrent(generation), !Task.isCancelled else { return }
+            switch Self.classify(error) {
+            case .cancelled:
+                state = .idle
+            case .unauthorized:
+                failUnauthorized()
+            case .missing, .terminal, .transient:
+                state = .failed(Self.message(error))
+            }
+        }
+    }
+
+    private func isCurrent(_ generation: UInt64) -> Bool {
+        streamGeneration == generation
+    }
+
+    private func clearStreamTask(generation: UInt64) {
+        guard isCurrent(generation) else { return }
+        streamTask = nil
+    }
+
+    private func clearTransientPresentation() {
+        var changed = false
+        if !projection.liveTails.isEmpty {
+            projection.clearLiveTails()
+            changed = true
+        }
+        if isAwaitingAgentActivity {
+            isAwaitingAgentActivity = false
+            changed = true
+        }
+        if changed { transcriptRevision &+= 1 }
+    }
+
+    private func failUnauthorized() {
+        clearTransientPresentation()
+        unauthorized = true
+        state = .failed("unauthorized")
+        stop()
     }
 
     // MARK: - Interactive actions
@@ -291,7 +409,11 @@ public final class SessionViewModel {
             reconnect()
             return true
         } catch {
-            actionError = Self.actionMessage("resume", error)
+            if Self.classify(error) == .unauthorized {
+                failUnauthorized()
+            } else {
+                actionError = Self.actionMessage("resume", error)
+            }
             return false
         }
     }
@@ -412,7 +534,11 @@ public final class SessionViewModel {
             try await body(actions)
             return true
         } catch {
-            actionError = Self.actionMessage(label, error)
+            if Self.classify(error) == .unauthorized {
+                failUnauthorized()
+            } else {
+                actionError = Self.actionMessage(label, error)
+            }
             return false
         }
     }
@@ -445,6 +571,39 @@ public final class SessionViewModel {
             return true
         default:
             return false
+        }
+    }
+
+    private enum FailureDisposition: Equatable {
+        case transient
+        case unauthorized
+        case missing
+        case cancelled
+        case terminal
+    }
+
+    private static func classify(_ error: Error) -> FailureDisposition {
+        if error is CancellationError {
+            return .cancelled
+        }
+        if let urlError = error as? URLError, urlError.code == .cancelled {
+            return .cancelled
+        }
+        if error is TerminalSessionTransportError {
+            return .terminal
+        }
+        guard let ycc = error as? YccError else {
+            return .terminal
+        }
+        switch ycc {
+        case .rpc:
+            return .transient
+        case .unauthorized:
+            return .unauthorized
+        case .notFound:
+            return .missing
+        case .failedPrecondition:
+            return .terminal
         }
     }
 
