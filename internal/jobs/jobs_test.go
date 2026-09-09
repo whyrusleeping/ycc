@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -104,25 +105,58 @@ func TestReadIncrementalCursor(t *testing.T) {
 	j := r.Start("bash", "watch", "coordinator")
 
 	j.Append([]byte("hello "))
-	out, st := j.Read()
+	out, st, _ := j.Read()
 	if out != "hello " || st != Running {
 		t.Fatalf("first Read = %q/%s", out, st)
 	}
 	// No new output: empty.
-	if out, _ := j.Read(); out != "" {
+	if out, _, _ := j.Read(); out != "" {
 		t.Fatalf("second Read = %q, want empty", out)
 	}
 	j.Append([]byte("world"))
-	if out, _ := j.Read(); out != "world" {
+	if out, _, _ := j.Read(); out != "world" {
 		t.Fatalf("third Read = %q, want \"world\"", out)
 	}
 	j.Finish(Done, "exit 0")
 	// Reading after finish reflects status but does not consume the report.
-	if _, st := j.Read(); st != Done {
+	if _, st, _ := j.Read(); st != Done {
 		t.Fatalf("post-finish Read status = %s, want done", st)
 	}
 	if got := r.DrainFinished("coordinator"); len(got) != 1 {
 		t.Fatalf("report was consumed by Read: DrainFinished = %+v", got)
+	}
+}
+
+func TestReadReportsIncrementalBufferEviction(t *testing.T) {
+	r := NewRegistry()
+	defer r.KillAll()
+	j := r.Start("bash", "chatty", "coordinator")
+	j.Append([]byte(strings.Repeat("x", maxJobBuf+123)))
+	out, _, dropped := j.Read()
+	if dropped != 123 || len(out) != maxJobBuf {
+		t.Fatalf("eviction = dropped %d, retained %d; want 123/%d", dropped, len(out), maxJobBuf)
+	}
+}
+
+func TestTailRemainsBoundedAfterInvalidUTF8Normalization(t *testing.T) {
+	r := NewRegistry()
+	defer r.KillAll()
+	j := r.Start("bash", "invalid", "coordinator")
+	data := make([]byte, maxJobReportBytes)
+	for i := range data {
+		if i%2 == 0 {
+			data[i] = 0xff
+		} else {
+			data[i] = 'x'
+		}
+	}
+	j.Append(data)
+	tail := j.Tail(20)
+	if len(tail) > maxJobReportBytes {
+		t.Fatalf("normalized tail = %d bytes, cap %d", len(tail), maxJobReportBytes)
+	}
+	if !strings.Contains(tail, "job report tail truncated") {
+		t.Fatalf("normalization expansion was not reported as truncation: %q", tail[:100])
 	}
 }
 

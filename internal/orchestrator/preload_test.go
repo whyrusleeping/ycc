@@ -112,7 +112,7 @@ func TestBuildPreloadHistoryUsesRealRead(t *testing.T) {
 	if call := assistant.ToolCalls[0]; call.ID != "preload_1" || call.Type != "function" || call.Function.Name != "Read" || call.Function.Arguments != `{"file_path":"sample.txt","offset":2,"limit":1}` {
 		t.Fatalf("first call = %+v", call)
 	}
-	if got.History[2].Role != "tool" || got.History[2].ToolCallID != "preload_1" || got.History[2].Content != "     2\tbeta\n" {
+	if got.History[2].Role != "tool" || got.History[2].ToolCallID != "preload_1" || !strings.HasPrefix(got.History[2].Content, "     2\tbeta\n") || !strings.Contains(got.History[2].Content, "shown lines 2-2") {
 		t.Fatalf("real Read formatting not preserved: %+v", got.History[2])
 	}
 	if !got.Results[1].IsError || got.History[3].ToolCallID != "preload_2" || !strings.Contains(got.History[3].Content, "no such file") {

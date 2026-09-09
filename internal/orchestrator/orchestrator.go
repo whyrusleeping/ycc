@@ -249,6 +249,7 @@ type reviewerHandle struct {
 	rolloverReason     string
 	handoff            string
 	lastReview         review
+	evidence           reviewDiffBuild // most recent scoped snapshot shown to this reviewer
 }
 
 // SetImplementer changes future spawns; a running implementer keeps its context.
@@ -1033,7 +1034,7 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 					emitSyntheticReviewDiff(d.Emitter, spec, actor, preloadedDiff)
 				}
 				loop.Seed(reviewerPrompt(t, spec.Focus, hasDiff) + "\n\n" + compactReviewDiffEvidence(preloadedDiff) + "\n\n" + implementationEvidence)
-				d.reviewers = append(d.reviewers, &reviewerHandle{name: spec.label(), model: spec.Name, spec: spec, loop: loop, round: 1, contextMode: "fresh"})
+				d.reviewers = append(d.reviewers, &reviewerHandle{name: spec.label(), model: spec.Name, spec: spec, loop: loop, round: 1, contextMode: "fresh", evidence: preloadedDiff})
 			}
 			handles := d.reviewers
 			d.reviewJob = nil // cleared for a foreground run; set below for background
@@ -1126,9 +1127,11 @@ func reReview(d *Deps) *gollama.Tool {
 					h.newContextTokens = h.loop.ContextTokensEstimate()
 					h.contextMode = "fresh"
 				} else {
-					h.loop.Post(reReviewPrompt + "\n\n" + currentEvidence)
+					deltaEvidence := changedSinceReviewEvidence(d.Repo, h.evidence, currentDiff)
+					h.loop.Post(reReviewPrompt + "\n\n" + deltaEvidence + "\n\n" + currentEvidence)
 					h.contextMode = "retain"
 				}
+				h.evidence = currentDiff
 				h.round++
 			}
 			results := runReviewers(ctx, d, handles, id)
@@ -1456,10 +1459,7 @@ func implementerOutcome(d *Deps, id, label, before string, res *engine.Result) *
 			return tools.ErrResult("implementer blocked, but its changeset is unsafe to inspect: %v", err)
 		}
 		out := "IMPLEMENTER BLOCKED (not finished): it cannot proceed without a decision.\n\nREASON: " + reason +
-			"\n\n=== SCOPED CHANGESET " + changes.ID + " (baseline " + changes.BaselineID + ") ===\n" + truncate(changes.Diff, maxDiffChars)
-		if strings.TrimSpace(changes.Diff) == "" {
-			out += "(no changes in the workspace)"
-		}
+			"\n\n" + changesetHandoff(changes)
 		out += "\n\nDo not push it to guess. If this is an ordinary judgement call, decide it yourself and " +
 			"send_to_implementer with the answer (it keeps its context). If the user is genuinely needed, ask_user as " +
 			"and relay the answer via send_to_implementer. If no answer is available, " +
@@ -1489,15 +1489,50 @@ func implementerOutcome(d *Deps, id, label, before string, res *engine.Result) *
 }
 
 func reportWithDiff(changes *git.Changeset, report string) string {
-	out := "IMPLEMENTER REPORT:\n" + report + "\n\n=== SCOPED CHANGESET " + changes.ID + " (baseline " + changes.BaselineID + ") ===\n"
-	if len(changes.Paths) > 0 {
-		out += "Paths: " + strings.Join(changes.Paths, ", ") + "\n\n"
+	const maxImplementerReportBytes = 8 * 1024
+	const reportMarker = "\n…[implementer report truncated]"
+	if len(report) > maxImplementerReportBytes {
+		report = validUTF8Prefix(report, maxImplementerReportBytes-len(reportMarker)) + reportMarker
 	}
-	out += truncate(changes.Diff, maxDiffChars)
-	if strings.TrimSpace(changes.Diff) == "" {
-		out += "(no task-owned changes in the workspace)"
+	return "IMPLEMENTER REPORT:\n" + report + "\n\n" + changesetHandoff(changes)
+}
+
+func changesetHandoff(changes *git.Changeset) string {
+	additions, deletions := unifiedDiffStats(changes.Diff)
+	// Changeset.Tree is already task-scoped relative to BaseCommit; omitting a
+	// path list keeps the exact retrieval command compact even for many files.
+	command := "git diff --binary --no-color --no-ext-diff " + changes.BaseCommit + " " + changes.Tree + " --"
+	return fmt.Sprintf("=== CHANGE MANIFEST %s (baseline %s) ===\nPaths (%d): %s\nStat: %d files, +%d/-%d; diff %d bytes; sha256 %s\nExact retrieval: %s\n\nBOUNDED DIFF EXCERPT (4096 bytes max):\n%s",
+		changes.ID, changes.BaselineID, len(changes.Paths), boundedPathList(changes.Paths, 4096), len(changes.Paths), additions, deletions,
+		len(changes.Diff), sha256Text(changes.Diff), command, boundedDiffExcerpt(changes.Diff, 4096))
+}
+
+func unifiedDiffStats(diff string) (additions, deletions int) {
+	inHunk := false
+	for _, line := range strings.Split(diff, "\n") {
+		if strings.HasPrefix(line, "@@ -") {
+			inHunk = true
+			continue
+		}
+		if !inHunk {
+			continue
+		}
+		if line == "" {
+			inHunk = false
+			continue
+		}
+		switch line[0] {
+		case '+':
+			additions++
+		case '-':
+			deletions++
+		case ' ', '\\':
+			// Context and the no-newline marker remain inside the hunk.
+		default:
+			inHunk = false
+		}
 	}
-	return out
+	return additions, deletions
 }
 
 // --- review parsing & aggregation ---

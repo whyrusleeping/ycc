@@ -12,7 +12,7 @@ import (
 // modes (spec/backlog/feature/bug) can understand a workspace without an explicit
 // write/edit tool.
 func Inspect(ws *Workspace) []*gollama.Tool {
-	return []*gollama.Tool{readFile(ws), bash(ws)}
+	return []*gollama.Tool{readFile(ws), bash(ws), toolOutput(ws)}
 }
 
 // ReadOnly returns a minimal read-only tool set: just the file Read tool (no
@@ -28,7 +28,7 @@ func ReadOnly(ws *Workspace) []*gollama.Tool {
 // on hosts with a supported sandbox; unsupported hosts visibly degrade to
 // prompt-only read-only enforcement at the orchestrator boundary.
 func ReadOnlyInspect(ws *Workspace) []*gollama.Tool {
-	return []*gollama.Tool{readFile(ws), sandboxedBash(ws)}
+	return []*gollama.Tool{readFile(ws), sandboxedBash(ws), toolOutput(ws)}
 }
 
 // Reviewer returns the tool set for a review subagent: the file Read tool, a
@@ -38,7 +38,7 @@ func ReadOnlyInspect(ws *Workspace) []*gollama.Tool {
 // read-only so mutation is hard-enforced; where no sandbox mechanism is available
 // it degrades to prompt-only enforcement (the orchestrator warns once per spawn).
 func Reviewer(ws *Workspace) []*gollama.Tool {
-	return []*gollama.Tool{readFile(ws), sandboxedBash(ws), submitReview()}
+	return []*gollama.Tool{readFile(ws), sandboxedBash(ws), toolOutput(ws), submitReview()}
 }
 
 // submitReview is a control tool. It serializes the reviewer's structured verdict

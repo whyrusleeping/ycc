@@ -290,8 +290,12 @@ func TestReviseLoop(t *testing.T) {
 			retainedEvidence = msg.Content
 		}
 	}
-	if !strings.Contains(retainedEvidence, "Exact retrieval: git diff") || !strings.Contains(retainedEvidence, "add.go") {
-		t.Fatalf("retained re-review missing current identified evidence: %q", retainedEvidence)
+	if !strings.Contains(retainedEvidence, "Exact retrieval: git diff") || !strings.Contains(retainedEvidence, "add.go") ||
+		!strings.Contains(retainedEvidence, "CHANGED SINCE PRIOR REVIEW") || !strings.Contains(retainedEvidence, "Delta manifest") {
+		t.Fatalf("retained re-review missing current/delta evidence: %q", retainedEvidence)
+	}
+	if strings.Contains(retainedEvidence, "diff --git a/") {
+		t.Fatalf("retained re-review accumulated a complete patch instead of a delta manifest: %q", retainedEvidence)
 	}
 
 	r5, err := commitTool(d).Call(ctx, args("task_id", "0001", "message", "add Add", "outcome", "Added and verified Add."))
@@ -779,6 +783,41 @@ func TestFreshReReviewPreservesResolvedSlotsAndSeedsCurrentDiff(t *testing.T) {
 	seed := fresh.messages[len(fresh.messages)-1].Content
 	if !strings.Contains(seed, "CURRENT SCOPED CHANGESET") || !strings.Contains(seed, "Exact retrieval: git diff") {
 		t.Fatalf("fresh re-review missing current identified evidence: %q", seed)
+	}
+}
+
+func TestImplementerHandoffStatsCountHunkContentNotBinaryPayload(t *testing.T) {
+	diff := "diff --git a/code.go b/code.go\n" +
+		"--- a/code.go\n+++ b/code.go\n" +
+		"@@ -1 +1 @@\n---removed source\n+++added source\n" +
+		"diff --git a/blob.bin b/blob.bin\nGIT binary patch\nliteral 1\n+binary payload\n-binary payload\n"
+	additions, deletions := unifiedDiffStats(diff)
+	if additions != 1 || deletions != 1 {
+		t.Fatalf("hunk-aware stats = +%d/-%d, want +1/-1", additions, deletions)
+	}
+	changes := &git.Changeset{
+		ID: "snapshot", BaselineID: "baseline", BaseCommit: strings.Repeat("a", 40), Tree: strings.Repeat("b", 40),
+		Paths: []string{"code.go", "blob.bin"}, Diff: diff,
+	}
+	if got := changesetHandoff(changes); !strings.Contains(got, "Stat: 2 files, +1/-1") {
+		t.Fatalf("handoff stat did not use hunk-aware counts: %q", got)
+	}
+}
+
+func TestLargeImplementerHandoffUsesBoundedHeadTailManifest(t *testing.T) {
+	diff := "diff --git a/large.txt b/large.txt\n" + "HEAD界\n" + strings.Repeat("+middle界\n", 20000) + "+TAIL診断\n"
+	changes := &git.Changeset{
+		ID: "snapshot", BaselineID: "baseline", BaseCommit: strings.Repeat("a", 40), Tree: strings.Repeat("b", 40),
+		Paths: []string{"large.txt"}, Diff: diff,
+	}
+	out := reportWithDiff(changes, "verified")
+	if !utf8.ValidString(out) || !strings.Contains(out, "CHANGE MANIFEST") || !strings.Contains(out, "large.txt") ||
+		!strings.Contains(out, "HEAD界") || !strings.Contains(out, "TAIL診断") || !strings.Contains(out, "omitted") ||
+		!strings.Contains(out, "Exact retrieval: git diff") {
+		t.Fatalf("large handoff missing bounded manifest/head-tail evidence: %q", out)
+	}
+	if len(out) > 12*1024 {
+		t.Fatalf("large diff amplified handoff to %d bytes", len(out))
 	}
 }
 

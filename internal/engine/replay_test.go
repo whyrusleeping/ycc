@@ -44,6 +44,22 @@ func coordinatorSession() []event.Event {
 	}
 }
 
+func TestReplayHistoryUsesExactOriginallyDeliveredToolProjection(t *testing.T) {
+	events := []event.Event{
+		{Seq: 1, Actor: "user", Type: event.UserInput, Data: map[string]any{"text": "run it"}},
+		{Seq: 2, Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{"text": "", "tool_calls": 1}},
+		{Seq: 3, Actor: "coordinator", Type: event.ToolCall, Data: map[string]any{"name": "Bash", "args": `{}`, "id": "c1"}},
+		{Seq: 4, Actor: "coordinator", Type: event.ToolResult, Data: map[string]any{
+			"id": "c1", "result": "later/full capture must not replay", "delivered_result": "HEAD\n…omitted…\nTAIL",
+			"capture": map[string]any{"artifact_id": "output_secret", "captured_bytes": 999999, "sha256": "abc"},
+		}},
+	}
+	history := ReplayHistory(events)
+	if len(history) != 3 || history[2].Content != "HEAD\n…omitted…\nTAIL" {
+		t.Fatalf("replay did not preserve delivered projection: %+v", history)
+	}
+}
+
 func TestReplayHistoryIgnoresSyntheticImplementerPreload(t *testing.T) {
 	base := []event.Event{{Seq: 1, Actor: "user", Type: event.UserInput, Data: map[string]any{"text": "coordinate"}}}
 	want := ReplayHistory(base)

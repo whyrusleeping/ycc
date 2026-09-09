@@ -298,12 +298,12 @@ func TestSpawnImplementerBackground(t *testing.T) {
 		t.Fatalf("subagent_finished missing job_id: %+v", ev)
 	}
 
-	// The final report matches the synchronous path (report + staged diff).
+	// The final report matches the synchronous path (report + bounded manifest/excerpt).
 	reports := d.Jobs.DrainFinished("coordinator")
 	if len(reports) != 1 {
 		t.Fatalf("DrainFinished delivered %d reports, want 1", len(reports))
 	}
-	if !strings.Contains(reports[0].Result, "IMPLEMENTER REPORT") || !strings.Contains(reports[0].Result, "SCOPED CHANGESET") {
+	if !strings.Contains(reports[0].Result, "IMPLEMENTER REPORT") || !strings.Contains(reports[0].Result, "CHANGE MANIFEST") {
 		t.Fatalf("job report not the synchronous outcome text:\n%s", reports[0].Result)
 	}
 	if !strings.Contains(reports[0].Result, "did the work") {

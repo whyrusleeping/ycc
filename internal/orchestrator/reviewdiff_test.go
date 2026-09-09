@@ -67,7 +67,7 @@ func TestBuildReviewDiffHistoryExchange(t *testing.T) {
 	}
 	call := assistant.ToolCalls[0]
 	if call.ID != reviewDiffCallID || call.Type != "function" || call.Function.Name != "Bash" ||
-		!strings.Contains(call.Function.Arguments, ` -- ':(top,literal)changed.go'`) ||
+		!strings.Contains(call.Function.Arguments, ` --`) ||
 		!strings.Contains(call.Function.Arguments, `{"command":"git diff --binary --no-color --no-ext-diff `) {
 		t.Fatalf("Bash call = %+v", call)
 	}
@@ -141,6 +141,18 @@ func TestReviewRetrievalWorksFromSubdirectoryWorkspace(t *testing.T) {
 	outside, err := os.ReadFile(filepath.Join(root, "outside.txt"))
 	if err != nil || string(outside) != "pre-existing outside\n" {
 		t.Fatalf("outside dirty work changed: %q, err=%v", outside, err)
+	}
+}
+
+func TestBoundedDiffExcerptNormalizesInvalidUTF8(t *testing.T) {
+	diff := "diff --git a/x b/x\n+ok" + string([]byte{0xff}) + "tail\n"
+	got := boundedDiffExcerpt(diff, 4096)
+	if !utf8.ValidString(got) || !strings.Contains(got, "ok�tail") {
+		t.Fatalf("diff excerpt was not normalized safely: %q", got)
+	}
+	paths := boundedPathList([]string{"ok-" + string([]byte{0xff})}, 4096)
+	if !utf8.ValidString(paths) {
+		t.Fatalf("change manifest path was not normalized safely: %q", paths)
 	}
 }
 

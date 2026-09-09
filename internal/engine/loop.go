@@ -1039,6 +1039,12 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 				"id":          call.ID,
 				"duration_ms": toolMS,
 			}
+			if output := tools.OutputMetadataOf(res); output != nil {
+				resultData["result_kind"] = "bounded_projection"
+				resultData["capture"] = output
+				resultData["projection_bytes"] = len(res.Content)
+				resultData["projection_lines"] = strings.Count(res.Content, "\n") + 1
+			}
 			// A display tool may attach a structured view for rich UI rendering
 			// (LSP-style trees); it serializes into the event data under "view".
 			if v := tools.ViewOf(res); v != nil {

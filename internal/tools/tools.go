@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/event"
@@ -321,6 +322,19 @@ type Workspace struct {
 	// A delegated worker receives its own token and reuses it for its commands.
 	Ownership     *workspacelease.Service
 	MutationToken *workspacelease.Token
+	// Artifacts retains bounded Bash captures for range retrieval. A nil store is
+	// initialized lazily and remains scoped to this Workspace/agent.
+	Artifacts  *ArtifactStore
+	artifactMu sync.Mutex
+}
+
+func (w *Workspace) artifactStore() *ArtifactStore {
+	w.artifactMu.Lock()
+	defer w.artifactMu.Unlock()
+	if w.Artifacts == nil {
+		w.Artifacts = NewArtifactStore()
+	}
+	return w.Artifacts
 }
 
 func (w *Workspace) acquireMutation() (*workspacelease.Lease, error) {

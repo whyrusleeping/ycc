@@ -22,7 +22,8 @@ func jobOutputTool(ws *Workspace) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "job_output",
 		Description: "Peek at a background job's output SINCE YOU LAST READ IT, plus its current status " +
-			"(running/done/failed/killed). Non-blocking; repeated calls return only NEW output. This does not " +
+			"(running/done/failed/killed). Each UTF-8-safe preview is bounded to 64 KiB/2000 lines with head/tail; " +
+			"buffer eviction and completed-artifact retrieval are explicit. Non-blocking; repeated calls return only NEW output. This does not " +
 			"consume the job's final report — you still get that automatically or via wait. Use it to check on a " +
 			"long-running job's progress, not to poll for completion.",
 		Params: obj(map[string]any{"job_id": strProp("the job id, e.g. job_1")}, "job_id"),
@@ -35,8 +36,17 @@ func jobOutputTool(ws *Workspace) *gollama.Tool {
 			if !ok {
 				return errResult("job_output: no such job %q", id), nil
 			}
-			out, status := job.Read()
-			body := out
+			out, status, dropped := job.Read()
+			body := strings.ToValidUTF8(out, "�")
+			outBytes, outLines := int64(len(out)), lineCount([]byte(out))
+			if len(out) > maxBashContentBytes || len(body) > maxBashContentBytes || outLines > maxBashLines {
+				capture := newCommandCapture()
+				_, _ = capture.Write([]byte(out))
+				_, head, tail, _, _, digest, _ := capture.snapshot()
+				body = commandPreview(head, tail, outBytes, outLines) + fmt.Sprintf(
+					"\n[incremental projection: %d bytes/%d lines; budget %d bytes/%d lines; sha256 %s; wait for the completed output artifact to retrieve omitted ranges]",
+					outBytes, outLines, maxBashBytes, maxBashLines, digest)
+			}
 			if strings.TrimSpace(body) == "" {
 				// An agent job has no incremental output stream (its child-loop
 				// events go to the log, not the job buffer); its report is delivered
@@ -47,6 +57,9 @@ func jobOutputTool(ws *Workspace) *gollama.Tool {
 				} else {
 					body = "(no new output since last read)"
 				}
+			}
+			if dropped > 0 {
+				body = fmt.Sprintf("[incremental buffer evicted %d earlier bytes; after completion, use the output artifact id from wait/job_finished when retained]\n%s", dropped, body)
 			}
 			return okResult(fmt.Sprintf("job %s [%s]\n%s", id, status, body)), nil
 		},
@@ -124,7 +137,7 @@ func killJobTool(ws *Workspace) *gollama.Tool {
 				// This call terminated it: emit job_finished (killed) exactly once,
 				// tagged with the owning actor so drain/replay stay consistent.
 				emitJobFinished(ws.Emitter, job.Owner(), job)
-				return okResult(fmt.Sprintf("killed %s", id)), nil
+				return okResult(fmt.Sprintf("killed %s\n%s", id, job.Report().Result)), nil
 			}
 			return okResult(fmt.Sprintf("job %s was already %s", id, job.Status())), nil
 		},

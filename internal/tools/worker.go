@@ -30,7 +30,7 @@ const (
 	maxReadLineBytes      = 64 * 1024
 	maxReadLines          = 2000
 	maxReadLineChars      = 2000
-	maxReadNoticeBytes    = 256
+	maxReadNoticeBytes    = 8 * 1024 // reserve truthful range/digest/continuation metadata
 	binarySampleBytes     = 8 * 1024
 	maxBashBytes          = 64 * 1024
 	defaultBashTimeout    = 2 * time.Minute
@@ -62,7 +62,7 @@ var imageMediaTypes = map[string]string{
 // background-job tools (job_output, wait, kill_job) are included too and Bash
 // gains run_in_background.
 func Editing(ws *Workspace) []*gollama.Tool {
-	ts := append([]*gollama.Tool{readFile(ws), writeFile(ws), editFile(ws), bash(ws)}, Web()...)
+	ts := append([]*gollama.Tool{readFile(ws), writeFile(ws), editFile(ws), bash(ws), toolOutput(ws)}, Web()...)
 	if ws.Jobs != nil {
 		ts = append(ts, JobTools(ws)...)
 	}
@@ -288,6 +288,7 @@ func readTextWindow(ctx context.Context, source io.Reader, size int64, fp string
 		lineTruncated bool
 		reachedEOF    bool
 		sourceLimited bool
+		outputLimited bool
 		detector      binaryDetector
 	)
 	for shown < limit {
@@ -325,6 +326,7 @@ func readTextWindow(ctx context.Context, source io.Reader, size int64, fp string
 		if complete && (lineHasBytes || terminated) {
 			if lineNumber >= start {
 				if !appendReadLine(&out, lineNumber, line, lineTruncated) {
+					outputLimited = true
 					break
 				}
 				shown++
@@ -349,19 +351,80 @@ func readTextWindow(ctx context.Context, source io.Reader, size int64, fp string
 	if err := ctx.Err(); err != nil {
 		return errResult("Read: %v", err)
 	}
+	// When the requested line budget was exactly filled, peek one byte so the
+	// result can truthfully distinguish "more" from an exact end-of-file.
+	if !reachedEOF && !sourceLimited && !outputLimited && shown >= limit {
+		if _, err := reader.Peek(1); errors.Is(err, io.EOF) {
+			reachedEOF = lr.N > 0
+		} else if err != nil && !errors.Is(err, bufio.ErrBufferFull) {
+			return errResult("Read: %v", err)
+		}
+	}
 	if shown == 0 && reachedEOF {
 		if lineNumber == 1 {
-			return okResult("(file is empty)")
+			return readWindowResult("(file is empty)\n", fp, size, start, 0, limit, true, false, 0, "")
 		}
-		return okResult(fmt.Sprintf("(offset %d is past end of file; %d lines total)", start, lineNumber-1))
+		return readWindowResult(fmt.Sprintf("(offset %d is past end of file; %d lines total)\n", start, lineNumber-1), fp, size, start, 0, limit, true, false, lineNumber-1, "")
 	}
+	continuation := ""
 	if sourceLimited {
-		note := fmt.Sprintf("… [source scan stopped at %d bytes; use Bash or a smaller offset/window to inspect this file]\n", maxReadSourceBytes)
+		note := fmt.Sprintf("… [source scan stopped at %d bytes; total line count is unknown; continue by source byte range]\n", maxReadSourceBytes)
 		if out.Len()+len(note) <= maxReadBytes {
 			out.WriteString(note)
 		}
+		cmd := fmt.Sprintf("dd if=%s bs=1 skip=%d count=%d status=none", shellQuoteArg(fp), maxReadSourceBytes, maxReadBytes)
+		continuation = fmt.Sprintf("Next byte range (does not rescan the bounded prefix): Bash({command:%q})", cmd)
 	}
-	return okResult(out.String())
+	more := outputLimited || sourceLimited || !reachedEOF
+	totalLines := -1
+	if reachedEOF {
+		totalLines = lineNumber - 1
+	}
+	return readWindowResult(out.String(), fp, size, start, shown, limit, reachedEOF, more, totalLines, continuation)
+}
+
+func readWindowResult(body, fp string, size int64, start, shown, limit int, complete, more bool, totalLines int, continuation string) *gollama.ToolResult {
+	rangeText := "none"
+	if shown > 0 {
+		rangeText = fmt.Sprintf("%d-%d", start, start+shown-1)
+	}
+	totalText := "unknown (bounded source scan did not reach EOF)"
+	if totalLines >= 0 {
+		totalText = fmt.Sprintf("%d", totalLines)
+	}
+	next := start + shown
+	if shown == 0 {
+		next = start
+	}
+	makeFooter := func(digest string, projectionBytes int) string {
+		footer := fmt.Sprintf("[Read %s: shown lines %s; total lines %s; source %d bytes; projection %d bytes; budgets %d lines/%d bytes; more: %t; sha256(shown) %s]",
+			fp, rangeText, totalText, size, projectionBytes, limit, maxReadBytes, more, digest)
+		if continuation != "" {
+			footer += "\n" + continuation
+		} else if more {
+			footer += fmt.Sprintf("\nNext: Read({file_path:%q, offset:%d, limit:%d})", fp, next, limit)
+		}
+		return footer
+	}
+	footer := makeFooter(strings.Repeat("0", 64), len(body))
+	// Keep metadata inside the advertised projection byte budget even when the
+	// final source line itself exhausted the content allowance.
+	budget := maxReadBytes - len(footer) - 1
+	if budget < 0 {
+		budget = 0
+	}
+	if len(body) > budget {
+		body = body[:utf8PrefixLen([]byte(body), budget)]
+	}
+	digest := digestHex([]byte(body))
+	footer = makeFooter(digest, len(body))
+	res := okResult(body + footer)
+	res.Structured = &OutputMetadata{CapturedBytes: size, CapturedLines: int64(totalLines), SHA256: digest, Truncated: more || !complete}
+	return res
+}
+
+func shellQuoteArg(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
 func appendReadLine(out *strings.Builder, number int, line []byte, truncated bool) bool {
@@ -560,7 +623,7 @@ func editFile(ws *Workspace) *gollama.Tool {
 }
 
 func bash(ws *Workspace) *gollama.Tool {
-	desc := "Run a shell command and return its combined stdout+stderr (truncated if large). Each call runs " +
+	desc := "Run a shell command and return a UTF-8-safe combined stdout+stderr preview, bounded to 64 KiB/2000 lines with useful head and tail when truncated. Captures up to 4 MiB are retained under an authorized artifact id for tool_output range retrieval; larger capture loss is explicit. Each call runs " +
 		"in a fresh shell already rooted at the workspace, and shell state (including the working directory) does " +
 		"NOT persist between calls — so there is never a need to `cd` into the workspace root; just run " +
 		"the command directly (write `rg 'pattern'`, not `cd <workspace> && rg 'pattern'`). Use this to explore " +
@@ -608,7 +671,7 @@ func bash(ws *Workspace) *gollama.Tool {
 // available on the host, it degrades to the same unconfined behavior as bash()
 // (reviewer non-mutation is then prompt-enforced only).
 func sandboxedBash(ws *Workspace) *gollama.Tool {
-	desc := "Run a shell command and return its combined stdout+stderr (truncated if large). Each call runs " +
+	desc := "Run a shell command and return a UTF-8-safe combined stdout+stderr preview, bounded to 64 KiB/2000 lines with head and tail. Captures up to 4 MiB are retained for tool_output range retrieval. Each call runs " +
 		"in a fresh shell already rooted at the workspace, and shell state (including the working directory) does " +
 		"NOT persist between calls — so there is never a need to `cd` into the workspace root; just run " +
 		"the command directly (write `rg 'pattern'`, not `cd <workspace> && rg 'pattern'`). Use this to inspect " +
@@ -657,15 +720,16 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 			if err != nil {
 				return errResult("bash: %v", err), nil
 			}
-			job := startBackgroundBash(ws, cmdStr, timeout, lease)
+			job, artifactID := startBackgroundBash(ws, cmdStr, timeout, lease)
+			artifactNote := fmt.Sprintf(" Output capture %s is stable but not ready until the process exits; then retrieve ranges with tool_output.", artifactID)
 			if bgAutoDelivered(ws) {
 				return okResult(fmt.Sprintf("started background job %s: %s\nIt runs in the background — do NOT poll it. "+
 					"Its report arrives automatically when it finishes, or call wait([%q]) when you need the result; "+
-					"use job_output(%q) to peek at partial output.", job.ID(), cmdStr, job.ID(), job.ID())), nil
+					"use job_output(%q) to peek at partial output.%s", job.ID(), cmdStr, job.ID(), job.ID(), artifactNote)), nil
 			}
 			return okResult(fmt.Sprintf("started background job %s: %s\nIt runs in the background — do NOT poll it. "+
 				"Call wait([%q]) to retrieve its report when you need the result; "+
-				"use job_output(%q) to peek at partial output.", job.ID(), cmdStr, job.ID(), job.ID())), nil
+				"use job_output(%q) to peek at partial output.%s", job.ID(), cmdStr, job.ID(), job.ID(), artifactNote)), nil
 		}
 		timeout := defaultBashTimeout
 		if hasParam(params, "timeout_s") {
@@ -712,20 +776,17 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 		// (golang/go#23019). WaitDelay bounds that wait: once the process has
 		// exited, Wait force-closes the pipe after this delay and returns.
 		cmd.WaitDelay = 10 * time.Second
-		out, err := cmd.CombinedOutput()
-		if len(out) > maxBashBytes {
-			out = append(out[:maxBashBytes], []byte("\n…[truncated]")...)
-		}
-		result := string(out)
+		capture := newCommandCapture()
+		cmd.Stdout = capture
+		cmd.Stderr = capture
+		err := cmd.Run()
+		result, _ := commandResult(ws.artifactStore(), capture)
 		if cctx.Err() == context.DeadlineExceeded {
-			result += fmt.Sprintf("\n[command timed out after %s]", timeout)
+			result.Content += fmt.Sprintf("\n[command timed out after %s]", timeout)
 		} else if err != nil {
-			result += fmt.Sprintf("\n[exit: %v]", err)
+			result.Content += fmt.Sprintf("\n[exit: %v]", err)
 		}
-		if strings.TrimSpace(result) == "" {
-			result = "(no output)"
-		}
-		return okResult(result), nil
+		return result, nil
 	}
 }
 
@@ -744,13 +805,15 @@ func bgAutoDelivered(ws *Workspace) bool {
 // until kill_job or session end. A goroutine waits for exit and, if it is the one
 // that finalized the job (i.e. the job was not killed first), emits job_finished
 // exactly once.
-func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration, lease *workspacelease.Lease) *jobs.Job {
+func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration, lease *workspacelease.Lease) (*jobs.Job, string) {
 	owner := ws.Emitter.Actor()
 	// Unsandboxed background bash may write to the worktree, so it counts as a
 	// mutating job for the single-writer guard: a background
 	// implementer is refused while one is live. Conservative — a read-only
 	// command is still marked mutating — but safe.
 	job := ws.Jobs.StartMutating("bash", cmdStr, owner)
+	artifactID := ws.artifactStore().reserve()
+	job.SetTerminationHint(fmt.Sprintf("[output artifact %s: capture finalizes after the process exits; retrieve ranges with tool_output; a not-ready response is temporary]", artifactID))
 	ws.Emitter.EmitAs(owner, event.JobStarted, map[string]any{
 		"id": job.ID(), "kind": job.Kind(), "label": cmdStr,
 	})
@@ -765,8 +828,10 @@ func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration, le
 	if len(ws.Env) > 0 {
 		cmd.Env = append(os.Environ(), ws.Env...)
 	}
-	cmd.Stdout = job.Writer()
-	cmd.Stderr = job.Writer()
+	capture := newCommandCapture()
+	combined := io.MultiWriter(job.Writer(), capture)
+	cmd.Stdout = combined
+	cmd.Stderr = combined
 	// Own process group so a kill or runtime timeout signals the whole tree
 	// (shell + pipeline children), mirroring the foreground bashCall discipline.
 	// There is no implicit 2-minute limit for background work: it is bounded only
@@ -779,10 +844,12 @@ func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration, le
 		cancelTimeout()
 		lease.Release()
 		result := "exit: failed to start: " + err.Error()
+		_, artifact := commandResultForArtifact(ws.artifactStore(), capture, artifactID)
+		result += fmt.Sprintf("\n[output artifact %s: %d bytes/%d lines, sha256 %s]", artifact.id, artifact.bytes, artifact.lines, artifact.digest)
 		if job.Finish(jobs.Failed, result) {
 			emitJobFinished(ws.Emitter, owner, job)
 		}
-		return job
+		return job, artifactID
 	}
 	go func() {
 		defer cancelTimeout()
@@ -806,13 +873,21 @@ func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration, le
 		if strings.TrimSpace(tail) != "" {
 			result += "\n" + tail
 		}
+		_, artifact := commandResultForArtifact(ws.artifactStore(), capture, artifactID)
+		if artifact.lost != "" {
+			result += fmt.Sprintf("\n[output artifact %s unavailable: %s; captured %d bytes/%d lines, sha256 %s]",
+				artifact.id, artifact.lost, artifact.bytes, artifact.lines, artifact.digest)
+		} else {
+			result += fmt.Sprintf("\n[full output artifact %s: %d bytes/%d lines, sha256 %s; retrieve ranges with tool_output]",
+				artifact.id, artifact.bytes, artifact.lines, artifact.digest)
+		}
 		// Finish returns false if the job was already killed (kill_job / session
 		// end), in which case that path owns the job_finished emission.
 		if job.Finish(status, result) {
 			emitJobFinished(ws.Emitter, owner, job)
 		}
 	}()
-	return job
+	return job, artifactID
 }
 
 // emitJobFinished records a job_finished event for job tagged with the owner

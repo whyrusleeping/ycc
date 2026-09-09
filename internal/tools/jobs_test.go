@@ -139,6 +139,52 @@ func TestKillJobTool(t *testing.T) {
 	}
 }
 
+func TestKilledBackgroundBashRetainsStableOutputArtifact(t *testing.T) {
+	reg, _, _ := jobsReg(t)
+	started := dispatch(t, reg, "Bash", `{"command":"printf 'before-kill'; sleep 30","run_in_background":true}`)
+	at := strings.Index(started.Content, "output_")
+	if started.IsError || at < 0 {
+		t.Fatalf("background Bash did not advertise its pending artifact: %+v", started)
+	}
+	end := at
+	for end < len(started.Content) && started.Content[end] != ' ' && started.Content[end] != '\n' {
+		end++
+	}
+	artifactID := started.Content[at:end]
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		out := dispatch(t, reg, "job_output", `{"job_id":"job_1"}`)
+		if strings.Contains(out.Content, "before-kill") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("background output was not produced before kill: %q", out.Content)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	killed := dispatch(t, reg, "kill_job", `{"job_id":"job_1"}`)
+	if killed.IsError || !strings.Contains(killed.Content, artifactID) || !strings.Contains(killed.Content, "not-ready response is temporary") {
+		t.Fatalf("killed report lost artifact readiness path: %q", killed.Content)
+	}
+	args := `{"artifact_id":"` + artifactID + `"}`
+	for {
+		got := dispatch(t, reg, "tool_output", args)
+		if !got.IsError {
+			if !strings.Contains(got.Content, "before-kill") {
+				t.Fatalf("completed killed capture = %q", got.Content)
+			}
+			break
+		}
+		if !strings.Contains(got.Content, "not ready") {
+			t.Fatalf("killed artifact failed permanently: %q", got.Content)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("killed artifact did not become ready: %q", got.Content)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestBackgroundShellLeaseSurvivesKillUntilProcessExit(t *testing.T) {
 	root := t.TempDir()
 	ownership := workspacelease.NewService()

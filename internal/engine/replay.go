@@ -311,7 +311,11 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			}
 			popPending(id)
 			answered[id] = true
-			history = append(history, gollama.Message{Role: "tool", ToolCallID: id, Content: str(ev.Data, "result")})
+			delivered := str(ev.Data, "result")
+			if _, recorded := ev.Data["delivered_result"]; recorded {
+				delivered = str(ev.Data, "delivered_result")
+			}
+			history = append(history, gollama.Message{Role: "tool", ToolCallID: id, Content: delivered})
 			// Batch complete: every tool call on the current assistant turn is
 			// answered, so any deferred mid-batch user injections land here —
 			// exactly where the live loop Posts them.

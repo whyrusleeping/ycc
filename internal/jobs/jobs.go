@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // Status is a job's lifecycle state.
@@ -34,7 +35,10 @@ const (
 // oldest bytes are dropped (the read cursor is adjusted) so a chatty watcher
 // cannot grow memory without bound; the tail — what the final report needs — is
 // always preserved.
-const maxJobBuf = 256 * 1024
+const (
+	maxJobBuf         = 256 * 1024
+	maxJobReportBytes = 64 * 1024
+)
 
 // Report is the final (or current) summary of a job, returned by wait /
 // DrainFinished and used to build the notification/tool-result text.
@@ -59,12 +63,14 @@ type Job struct {
 	done   chan struct{}
 	once   sync.Once
 
-	mu       sync.Mutex
-	status   Status
-	buf      []byte
-	cursor   int    // read cursor for incremental job_output
-	result   string // final report
-	consumed bool   // exactly-once final-report delivery flag
+	mu              sync.Mutex
+	status          Status
+	buf             []byte
+	cursor          int    // read cursor for incremental job_output
+	result          string // final report
+	terminationHint string // retrieval/readiness detail included if killed
+	consumed        bool   // exactly-once final-report delivery flag
+	dropped         int64  // bytes evicted from the incremental tail buffer
 }
 
 // ID returns the job's id ("job_<n>").
@@ -101,6 +107,7 @@ func (j *Job) Append(p []byte) {
 	j.buf = append(j.buf, p...)
 	if len(j.buf) > maxJobBuf {
 		drop := len(j.buf) - maxJobBuf
+		j.dropped += int64(drop)
 		j.buf = append([]byte(nil), j.buf[drop:]...)
 		j.cursor -= drop
 		if j.cursor < 0 {
@@ -121,22 +128,31 @@ func (w jobWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// Read returns the output produced since the last Read and the current status,
-// advancing the read cursor. It NEVER consumes the final report:
-// job_output is not part of the exactly-once rule and can be re-read any time.
-func (j *Job) Read() (string, Status) {
+// Read returns the output produced since the last Read, current status, and the
+// cumulative bytes evicted from the bounded incremental buffer. It NEVER
+// consumes the final report: job_output is not part of the exactly-once rule.
+func (j *Job) Read() (string, Status, int64) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	out := string(j.buf[j.cursor:])
 	j.cursor = len(j.buf)
-	return out, j.status
+	return out, j.status, j.dropped
 }
 
 // Tail returns the last n lines of the buffered output.
 func (j *Job) Tail(n int) string {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	return lastLines(string(j.buf), n)
+	tail := strings.ToValidUTF8(lastLines(string(j.buf), n), "�")
+	if len(tail) <= maxJobReportBytes {
+		return tail
+	}
+	const notice = "…[job report tail truncated to 64 KiB; use the retained output artifact for ranges]\n"
+	start := len(tail) - (maxJobReportBytes - len(notice))
+	for start < len(tail) && !utf8.RuneStart(tail[start]) {
+		start++
+	}
+	return notice + tail[start:]
 }
 
 // Finish transitions a running job to a terminal state exactly once, recording
@@ -147,14 +163,29 @@ func (j *Job) Finish(status Status, result string) bool {
 	return j.finalize(status, result)
 }
 
+// SetTerminationHint records bounded completion/retrieval guidance that should
+// remain discoverable if a running job is killed before its worker can publish
+// the final capture.
+func (j *Job) SetTerminationHint(hint string) {
+	j.mu.Lock()
+	j.terminationHint = hint
+	j.mu.Unlock()
+}
+
 // Kill terminates the job: it finalizes the job as Killed (recording a killed
 // report with the current tail) and cancels its context so the process tree is
 // signalled. It returns true if THIS call effected the transition.
 func (j *Job) Kill() bool {
 	tail := j.Tail(20)
+	j.mu.Lock()
+	hint := j.terminationHint
+	j.mu.Unlock()
 	result := "killed"
 	if strings.TrimSpace(tail) != "" {
 		result += "\n" + tail
+	}
+	if hint != "" {
+		result += "\n" + hint
 	}
 	fired := j.finalize(Killed, result)
 	j.cancel()

@@ -258,6 +258,15 @@ Provider refusals are not replayed into model history because they can poison co
 remain visible as model/error events, reject additional input while parked, and may be retried by
 Resume or after changing the coordinator model.
 
+Model-facing text reads are bounded by both lines and bytes and identify the shown line range,
+whether more exists, and the next offset. A bounded source scan reports an unknown total rather than
+claiming EOF. Foreground shell output uses a UTF-8-safe bounded head/tail projection with captured
+byte/line counts and a digest. Command captures up to 4 MiB receive an agent-session-scoped random
+artifact reference supporting bounded byte-range retrieval without rerunning; the in-memory store is
+bounded to 16 MiB and reports per-capture loss, eviction, and expiration explicitly. Durable tool
+result events retain the exact delivered projection separately from capture metadata, and replay uses
+that projection rather than a capture or subsequently retrieved range.
+
 ### 7.3 Subagents and asynchronous jobs
 
 A subagent is another engine loop with isolated history and an actor-tagged event stream.
@@ -268,16 +277,22 @@ input-context estimate with the resolved logical model's context window and safe
 replaces a near-limit loop automatically. A context-length failure gets one fresh recovery only at a
 safe boundary: before any implementer tool executed, or before a reviewer submission. A fresh
 implementer receives the full task, current bounded diff, unresolved instructions, and latest
-implementation/verification report. Fresh reviewers preserve the previously resolved slots, models,
-focuses, reasoning settings, and read-only policy; they receive the current bounded diff, current
-verification handoff, and unresolved blocker/major findings without old tool logs or tier
-re-resolution. Subagent lifecycle events expose context mode, round, rollover reason, and old/new
+implementation/verification report. Implementer completion returns its bounded report plus a compact
+path/stat/digest manifest, a small head/tail diff excerpt, and an exact Git retrieval command rather
+than replaying the complete patch into coordinator history. Fresh reviewers preserve the previously
+resolved slots, models, focuses, reasoning settings, and read-only policy; they receive the current
+bounded diff once, current verification handoff, and unresolved blocker/major findings without old
+tool logs or tier re-resolution. A retained re-review receives a bounded name-status delta manifest
+from its prior scoped snapshot plus exact current/delta retrieval commands, not another historical
+full patch. Subagent lifecycle events expose context mode, round, rollover reason, and old/new
 advisory context estimates. Reviewer fan-out runs concurrently.
 
 Background shell commands and subagents share session-owned job ids and the `job_output`, `wait`,
 and `kill_job` controls. Final reports are delivered exactly once, either by a covering wait or
-checkpoint injection. Progress reads never consume them. Jobs do not survive daemon restart;
-replay closes an unfinished job with a lost-on-restart report so conversation history stays valid.
+checkpoint injection. Progress reads never consume them; eviction from their bounded incremental
+buffer is visible, and completed shell jobs advertise the retained output artifact (or explicit
+storage loss) in their final report. Jobs and output artifacts do not survive daemon restart; replay
+closes an unfinished job with a lost-on-restart report so conversation history stays valid.
 
 Normal chat can spawn general-purpose subagents with an explicit prompt, any configured logical
 model, and an access level that defaults to read-only inspection but may explicitly allow workspace

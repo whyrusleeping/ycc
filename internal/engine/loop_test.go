@@ -340,6 +340,12 @@ func TestLoopRecordsTiming(t *testing.T) {
 			}
 		case event.ToolResult:
 			sawTool = true
+			if _, duplicated := ev.Data["delivered_result"]; duplicated {
+				t.Fatalf("tool_result duplicated the delivered projection: %+v", ev.Data)
+			}
+			if _, ok := ev.Data["result"].(string); !ok {
+				t.Fatalf("tool_result did not preserve its delivered result: %+v", ev.Data)
+			}
 			if _, ok := ev.Data["duration_ms"].(int64); !ok {
 				t.Fatalf("tool_result duration_ms = %v (%T), want int64", ev.Data["duration_ms"], ev.Data["duration_ms"])
 			}
@@ -354,6 +360,42 @@ func TestLoopRecordsTiming(t *testing.T) {
 	if !sawTool {
 		t.Fatal("no tool_result event emitted")
 	}
+}
+
+func TestLoopRecordsCaptureMetadataSeparatelyFromDeliveredProjection(t *testing.T) {
+	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{
+		assistantToolCall("capture", `{}`),
+		assistantToolCall("finish", `{"report":"done"}`),
+	}}
+	reg := tools.New()
+	reg.Add(&gollama.Tool{Name: "capture", Params: tools.Obj(map[string]any{}), Call: func(context.Context, any) (*gollama.ToolResult, error) {
+		return &gollama.ToolResult{Content: "HEAD\n…omitted…\nTAIL", Structured: &tools.OutputMetadata{
+			ArtifactID: "output_ref", CapturedBytes: 100000, CapturedLines: 4000, SHA256: "digest", Truncated: true,
+		}}, nil
+	}})
+	reg.Add(tools.Finish())
+	rec := &captureRecorder{}
+	loop := &Loop{Client: turner, Model: "test", Tools: reg, Emitter: event.NewEmitter(rec, "coordinator")}
+	if _, err := loop.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, ev := range rec.evs {
+		if ev.Type != event.ToolResult || ev.Data["name"] != "capture" {
+			continue
+		}
+		if ev.Data["result"] != "HEAD\n…omitted…\nTAIL" || ev.Data["result_kind"] != "bounded_projection" {
+			t.Fatalf("bounded projection fields = %+v", ev.Data)
+		}
+		if _, duplicated := ev.Data["delivered_result"]; duplicated {
+			t.Fatalf("bounded projection was duplicated in durable event: %+v", ev.Data)
+		}
+		meta, ok := ev.Data["capture"].(*tools.OutputMetadata)
+		if !ok || meta.ArtifactID != "output_ref" || meta.CapturedBytes != 100000 {
+			t.Fatalf("capture metadata = %#v", ev.Data["capture"])
+		}
+		return
+	}
+	t.Fatal("capture tool_result event not found")
 }
 
 // captureRecorder records emitted events in memory for assertions.

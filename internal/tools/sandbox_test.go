@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/sandbox"
 )
 
@@ -21,6 +22,26 @@ func reviewerReg(root string) *Registry {
 	reg := New()
 	reg.Add(Reviewer(&Workspace{Root: root})...)
 	return reg
+}
+
+func TestInspectToolsetsIncludeAdvertisedOutputRetrieval(t *testing.T) {
+	ws := &Workspace{Root: t.TempDir()}
+	for name, toolset := range map[string][]*gollama.Tool{
+		"inspect":           Inspect(ws),
+		"read-only inspect": ReadOnlyInspect(ws),
+		"reviewer":          Reviewer(ws),
+	} {
+		found := false
+		for _, tool := range toolset {
+			if tool.Name == "tool_output" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%s toolset advertises retained Bash captures but lacks tool_output", name)
+		}
+	}
 }
 
 // TestReviewerBashCannotWriteWorkspace verifies the reviewer Bash tool cannot

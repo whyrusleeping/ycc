@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -156,9 +157,10 @@ func TestReadUTF8CRLFWindow(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("Read UTF-8/CRLF: %s", res.Content)
 	}
-	want := "     2\tβeta\r\n     3\t世界\r\n"
-	if res.Content != want {
-		t.Fatalf("Read UTF-8/CRLF = %q, want %q", res.Content, want)
+	if !strings.HasPrefix(res.Content, "     2\tβeta\r\n     3\t世界\r\n") ||
+		!strings.Contains(res.Content, "shown lines 2-3") || !strings.Contains(res.Content, "more: true") ||
+		!strings.Contains(res.Content, "offset:4") {
+		t.Fatalf("Read UTF-8/CRLF metadata = %q", res.Content)
 	}
 }
 
@@ -174,7 +176,8 @@ func TestReadUnterminatedLineAtExactBufferBoundary(t *testing.T) {
 		t.Fatalf("Read exact-buffer final line = %q (err=%v)", res.Content, res.IsError)
 	}
 	res = dispatch(t, reg, "Read", `{"file_path":"exact.txt","offset":2,"limit":1}`)
-	if res.IsError || res.Content != "(offset 2 is past end of file; 1 lines total)" {
+	if res.IsError || !strings.Contains(res.Content, "offset 2 is past end of file; 1 lines total") ||
+		!strings.Contains(res.Content, "shown lines none") || !strings.Contains(res.Content, "more: false") {
 		t.Fatalf("Read past exact-buffer final line = %q (err=%v)", res.Content, res.IsError)
 	}
 }
@@ -200,7 +203,8 @@ func TestReadHugeFileOnlyReadsWindow(t *testing.T) {
 	}
 
 	res := dispatch(t, workerReg(root), "Read", `{"file_path":"huge.txt","limit":1}`)
-	if res.IsError || res.Content != "     1\tfirst\n" {
+	if res.IsError || !strings.HasPrefix(res.Content, "     1\tfirst\n") ||
+		!strings.Contains(res.Content, "shown lines 1-1") || !strings.Contains(res.Content, "more: true") {
 		t.Fatalf("Read huge window = %q (err=%v)", res.Content, res.IsError)
 	}
 }
@@ -234,9 +238,16 @@ func TestReadLongLineAndSourceLimit(t *testing.T) {
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
-	res = dispatch(t, workerReg(root), "Read", `{"file_path":"scan.txt","offset":2,"limit":1}`)
-	if res.IsError || !strings.Contains(res.Content, "source scan stopped at 8388608 bytes") {
-		t.Fatalf("Read source limit = %q (err=%v)", res.Content, res.IsError)
+	reg := workerReg(root)
+	res = dispatch(t, reg, "Read", `{"file_path":"scan.txt","offset":1,"limit":1}`)
+	if res.IsError || !strings.Contains(res.Content, "shown lines 1-1") || !strings.Contains(res.Content, "total lines unknown") ||
+		!strings.Contains(res.Content, "Next byte range") || !strings.Contains(res.Content, "skip=8388608") || strings.Contains(res.Content, "Next: Read") {
+		t.Fatalf("Read giant first line source limit = %q (err=%v)", res.Content, res.IsError)
+	}
+	res = dispatch(t, reg, "Read", `{"file_path":"scan.txt","offset":2,"limit":1}`)
+	if res.IsError || !strings.Contains(res.Content, "shown lines none") || !strings.Contains(res.Content, "total lines unknown") ||
+		!strings.Contains(res.Content, "Next byte range") || strings.Contains(res.Content, "Next: Read") {
+		t.Fatalf("Read offset beyond source limit = %q (err=%v)", res.Content, res.IsError)
 	}
 }
 
@@ -380,8 +391,112 @@ func TestBashWorkspaceEnv(t *testing.T) {
 	reg := New()
 	reg.Add(Worker(&Workspace{Root: t.TempDir(), Env: []string{"YCC_WORKTREE_ENV=visible"}})...)
 	res := dispatch(t, reg, "Bash", `{"command":"printf '%s' \"$YCC_WORKTREE_ENV\""}`)
-	if res.IsError || res.Content != "visible" {
+	if res.IsError || !strings.HasPrefix(res.Content, "visible\n[output capture: 7 bytes/1 lines") {
 		t.Fatalf("bash workspace env = %q (err=%v)", res.Content, res.IsError)
+	}
+}
+
+func TestBashLargeOutputKeepsUTF8HeadTailAndRetrievesArtifact(t *testing.T) {
+	root := t.TempDir()
+	reg := workerReg(root)
+	res := dispatch(t, reg, "Bash", `{"command":"python3 -c \"print('HEAD界'); print('x'*70000); print('TAIL診断')\"; printf 'terminal diagnostic\\n' >&2; exit 7"}`)
+	if res.IsError {
+		t.Fatalf("Bash: %s", res.Content)
+	}
+	if !utf8.ValidString(res.Content) || !strings.Contains(res.Content, "HEAD界") || !strings.Contains(res.Content, "TAIL診断") ||
+		!strings.Contains(res.Content, "terminal diagnostic") || !strings.Contains(res.Content, "exit status 7") {
+		t.Fatalf("bounded Bash did not preserve UTF-8 head/tail: %q", res.Content)
+	}
+	if !strings.Contains(res.Content, "omitted") || !strings.Contains(res.Content, "budget 65536 bytes/2000 lines") ||
+		!strings.Contains(res.Content, "Retrieve without rerunning") {
+		t.Fatalf("bounded Bash did not advertise counts/retrieval: %q", res.Content)
+	}
+	meta := OutputMetadataOf(res)
+	if meta == nil || !meta.Truncated || meta.ArtifactID == "" || meta.CapturedBytes <= maxBashBytes {
+		t.Fatalf("capture metadata = %+v", meta)
+	}
+	rangeRes := dispatch(t, reg, "tool_output", fmt.Sprintf(`{"artifact_id":%q,"offset":65000,"limit":8192}`, meta.ArtifactID))
+	if rangeRes.IsError || !utf8.ValidString(rangeRes.Content) || !strings.Contains(rangeRes.Content, "TAIL診断") ||
+		!strings.Contains(rangeRes.Content, "bytes 65000-") {
+		t.Fatalf("artifact range = %q (err=%v)", rangeRes.Content, rangeRes.IsError)
+	}
+	other := workerReg(t.TempDir())
+	unauthorized := dispatch(t, other, "tool_output", fmt.Sprintf(`{"artifact_id":%q}`, meta.ArtifactID))
+	if !unauthorized.IsError || !strings.Contains(unauthorized.Content, "not available in this agent session") {
+		t.Fatalf("cross-session artifact access = %+v", unauthorized)
+	}
+}
+
+func TestCommandPreviewTrimsSplitUTF8Boundaries(t *testing.T) {
+	capture := newCommandCapture()
+	_, _ = capture.Write([]byte(strings.Repeat("ab界", maxBashContentBytes/2)))
+	res, _ := commandResult(NewArtifactStore(), capture)
+	if !utf8.ValidString(res.Content) || !strings.Contains(res.Content, "showing command head and tail") {
+		t.Fatalf("command projection split UTF-8: %q", res.Content)
+	}
+}
+
+func TestCommandPreviewManyShortLinesPreservesTerminalDiagnostic(t *testing.T) {
+	capture := newCommandCapture()
+	var output strings.Builder
+	output.WriteString("HEAD\n")
+	output.WriteString(strings.Repeat("x\n", 2998))
+	output.WriteString("FINAL DIAGNOSTIC\n")
+	_, _ = capture.Write([]byte(output.String()))
+	res, _ := commandResult(NewArtifactStore(), capture)
+	if !strings.Contains(res.Content, "HEAD") || !strings.Contains(res.Content, "FINAL DIAGNOSTIC") {
+		t.Fatalf("line-bounded preview lost useful head/tail output: %q", res.Content)
+	}
+	if !strings.Contains(res.Content, "omitted 2000 source bytes/1000 lines") {
+		t.Fatalf("line-bounded preview source omission counts = %q", res.Content)
+	}
+}
+
+func TestCommandPreviewInvalidHeadExpansionPreservesFinalDiagnostic(t *testing.T) {
+	capture := newCommandCapture()
+	data := append(bytes.Repeat([]byte{0xff}, 35*1024), []byte("FINAL DIAGNOSTIC\n")...)
+	_, _ = capture.Write(data)
+	_, head, tail, totalBytes, totalLines, _, _ := capture.snapshot()
+	preview := commandPreview(head, tail, totalBytes, totalLines)
+	if !utf8.ValidString(preview) || !strings.Contains(preview, "FINAL DIAGNOSTIC") {
+		t.Fatalf("replacement-expanded head incorrectly removed diagnostic tail: %q", preview)
+	}
+	if !strings.Contains(preview, "omitted 14427 source bytes/0 lines") {
+		t.Fatalf("replacement-expanded preview source accounting = %q", preview)
+	}
+}
+
+func TestCommandResultNormalizesShortInvalidUTF8WithoutDuplicatingIt(t *testing.T) {
+	capture := newCommandCapture()
+	_, _ = capture.Write([]byte{'o', 'k', 0xff, '!'})
+	res, _ := commandResult(NewArtifactStore(), capture)
+	if !utf8.ValidString(res.Content) || !strings.HasPrefix(res.Content, "ok�!") || strings.Contains(res.Content, "omitted") {
+		t.Fatalf("short invalid UTF-8 was not normalized directly: %q", res.Content)
+	}
+}
+
+func TestCommandPreviewBoundsInvalidUTF8AndCountsSourceBytes(t *testing.T) {
+	capture := newCommandCapture()
+	data := bytes.Repeat([]byte{0xff, 'x'}, maxBashContentBytes/2)
+	_, _ = capture.Write(data)
+	res, _ := commandResult(NewArtifactStore(), capture)
+	if !utf8.ValidString(res.Content) || len(res.Content) > maxBashBytes || !strings.Contains(res.Content, "source bytes") {
+		t.Fatalf("invalid UTF-8 projection was not safely bounded: bytes=%d valid=%t result=%q", len(res.Content), utf8.ValidString(res.Content), res.Content)
+	}
+	if strings.Contains(res.Content, "omitted 0 source bytes") {
+		t.Fatalf("replacement-expanded text was incorrectly counted as all source bytes shown: %q", res.Content)
+	}
+}
+
+func TestCommandCaptureStorageLimitIsExplicit(t *testing.T) {
+	capture := newCommandCapture()
+	chunk := []byte(strings.Repeat("界", 1024))
+	for written := 0; written <= maxCapturedCommandBytes; written += len(chunk) {
+		_, _ = capture.Write(chunk)
+	}
+	res, artifact := commandResult(NewArtifactStore(), capture)
+	if artifact.lost == "" || !strings.Contains(res.Content, "artifact storage loss") || !utf8.ValidString(res.Content) {
+		t.Fatalf("oversize capture did not report loss safely: artifact=%+v result=%q", artifact, res.Content)
 	}
 }
 
