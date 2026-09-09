@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/whyrusleeping/gollama"
 )
@@ -33,6 +35,10 @@ func dispatch(t *testing.T, reg *Registry, name, args string) *gollama.ToolResul
 		Function: gollama.ToolCallFunction{Name: name, Arguments: args},
 	})
 }
+
+type readerFunc func([]byte) (int, error)
+
+func (f readerFunc) Read(p []byte) (int, error) { return f(p) }
 
 func workerReg(root string) *Registry {
 	reg := New()
@@ -78,6 +84,179 @@ func TestReadOffsetLimit(t *testing.T) {
 	}
 	if strings.Contains(res.Content, "l1") || strings.Contains(res.Content, "l4") {
 		t.Fatalf("offset/limit returned out-of-window lines: %q", res.Content)
+	}
+}
+
+func TestReadUTF8CRLFWindow(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "utf8.txt"), []byte("alpha\r\nβeta\r\n世界\r\nomega\r\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res := dispatch(t, workerReg(root), "Read", `{"file_path":"utf8.txt","offset":2,"limit":2}`)
+	if res.IsError {
+		t.Fatalf("Read UTF-8/CRLF: %s", res.Content)
+	}
+	want := "     2\tβeta\r\n     3\t世界\r\n"
+	if res.Content != want {
+		t.Fatalf("Read UTF-8/CRLF = %q, want %q", res.Content, want)
+	}
+}
+
+func TestReadUnterminatedLineAtExactBufferBoundary(t *testing.T) {
+	root := t.TempDir()
+	content := strings.Repeat("x", binarySampleBytes)
+	if err := os.WriteFile(filepath.Join(root, "exact.txt"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg := workerReg(root)
+	res := dispatch(t, reg, "Read", `{"file_path":"exact.txt","limit":1}`)
+	if res.IsError || !strings.HasPrefix(res.Content, "     1\t") || !strings.Contains(res.Content, "[line truncated]") {
+		t.Fatalf("Read exact-buffer final line = %q (err=%v)", res.Content, res.IsError)
+	}
+	res = dispatch(t, reg, "Read", `{"file_path":"exact.txt","offset":2,"limit":1}`)
+	if res.IsError || res.Content != "(offset 2 is past end of file; 1 lines total)" {
+		t.Fatalf("Read past exact-buffer final line = %q (err=%v)", res.Content, res.IsError)
+	}
+}
+
+func TestReadHugeFileOnlyReadsWindow(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "huge.txt")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix := "first\n" + strings.Repeat("x", binarySampleBytes)
+	if _, err := f.WriteString(prefix); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Truncate(512 * 1024 * 1024); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	res := dispatch(t, workerReg(root), "Read", `{"file_path":"huge.txt","limit":1}`)
+	if res.IsError || res.Content != "     1\tfirst\n" {
+		t.Fatalf("Read huge window = %q (err=%v)", res.Content, res.IsError)
+	}
+}
+
+func TestReadLongLineAndSourceLimit(t *testing.T) {
+	root := t.TempDir()
+	long := strings.Repeat("界", maxReadLineBytes) + "\nnext\n"
+	if err := os.WriteFile(filepath.Join(root, "long.txt"), []byte(long), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res := dispatch(t, workerReg(root), "Read", `{"file_path":"long.txt","limit":2}`)
+	if res.IsError || !strings.Contains(res.Content, "[line truncated]") || !strings.Contains(res.Content, "     2\tnext") {
+		t.Fatalf("Read long line = %q (err=%v)", res.Content, res.IsError)
+	}
+	if !utf8.ValidString(res.Content) {
+		t.Fatalf("Read split UTF-8 in long line: %q", res.Content)
+	}
+
+	path := filepath.Join(root, "scan.txt")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunk := strings.Repeat("a", 64*1024)
+	for written := 0; written <= maxReadSourceBytes; written += len(chunk) {
+		if _, err := f.WriteString(chunk); err != nil {
+			f.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	res = dispatch(t, workerReg(root), "Read", `{"file_path":"scan.txt","offset":2,"limit":1}`)
+	if res.IsError || !strings.Contains(res.Content, "source scan stopped at 8388608 bytes") {
+		t.Fatalf("Read source limit = %q (err=%v)", res.Content, res.IsError)
+	}
+}
+
+func TestReadBinaryReturnsMetadata(t *testing.T) {
+	root := t.TempDir()
+	data := []byte{0x7f, 'E', 'L', 'F', 0, 1, 2, 0xff}
+	if err := os.WriteFile(filepath.Join(root, "program.bin"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res := dispatch(t, workerReg(root), "Read", `{"file_path":"program.bin"}`)
+	if res.IsError || !strings.Contains(res.Content, "contains binary data") ||
+		!strings.Contains(res.Content, "size 8 bytes") || !strings.Contains(res.Content, "detected type") ||
+		!strings.Contains(res.Content, "xxd -l 256") {
+		t.Fatalf("Read binary = %q (err=%v)", res.Content, res.IsError)
+	}
+	if strings.Contains(res.Content, string(data)) {
+		t.Fatalf("Read returned binary payload: %q", res.Content)
+	}
+}
+
+func TestReadRejectsSpecialFilesPromptly(t *testing.T) {
+	root := t.TempDir()
+	fifo := filepath.Join(root, "pipe")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("FIFO not supported: %v", err)
+	}
+	reg := workerReg(root)
+	done := make(chan *gollama.ToolResult, 1)
+	go func() {
+		done <- reg.Dispatch(context.Background(), gollama.ToolCall{
+			ID: "fifo", Type: "function",
+			Function: gollama.ToolCallFunction{Name: "Read", Arguments: `{"file_path":"pipe"}`},
+		})
+	}()
+	select {
+	case res := <-done:
+		if !res.IsError || !strings.Contains(res.Content, "not a regular file") || !strings.Contains(res.Content, "Use Bash") {
+			t.Fatalf("Read FIFO = %q (err=%v)", res.Content, res.IsError)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Read blocked opening a FIFO")
+	}
+
+	res := dispatch(t, reg, "Read", `{"file_path":"`+os.DevNull+`"}`)
+	if !res.IsError || !strings.Contains(res.Content, "not a regular file") {
+		t.Fatalf("Read device = %q (err=%v)", res.Content, res.IsError)
+	}
+}
+
+func TestReadHonorsCancellation(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "file.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	res := workerReg(root).Dispatch(ctx, gollama.ToolCall{
+		ID: "cancel", Type: "function",
+		Function: gollama.ToolCallFunction{Name: "Read", Arguments: `{"file_path":"file.txt"}`},
+	})
+	if !res.IsError || !strings.Contains(res.Content, context.Canceled.Error()) {
+		t.Fatalf("canceled Read = %q (err=%v)", res.Content, res.IsError)
+	}
+}
+
+func TestReadCancellationDuringRead(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	calls := 0
+	source := readerFunc(func(p []byte) (int, error) {
+		calls++
+		n := copy(p, "hello\n")
+		cancel()
+		return n, nil
+	})
+	res := readTextWindow(ctx, source, int64(len("hello\n")), "cancel.txt", 1, 1)
+	if !res.IsError || !strings.Contains(res.Content, context.Canceled.Error()) {
+		t.Fatalf("Read canceled during source read = %q (err=%v)", res.Content, res.IsError)
+	}
+	if calls != 1 {
+		t.Fatalf("source Read calls = %d, want 1", calls)
 	}
 }
 
@@ -364,10 +543,7 @@ func TestReadDirectoryTruncates(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("Read big dir: %s", res.Content)
 	}
-	if !strings.Contains(res.Content, "more entries truncated") {
-		t.Fatalf("expected truncation indicator, got %q", res.Content)
-	}
-	if !strings.Contains(res.Content, "[5 more entries truncated]") {
-		t.Fatalf("expected exact truncated count, got %q", res.Content)
+	if !strings.Contains(res.Content, "[listing truncated after at most 1000 entries]") {
+		t.Fatalf("expected bounded truncation indicator, got %q", res.Content)
 	}
 }

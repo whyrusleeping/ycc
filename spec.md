@@ -316,9 +316,17 @@ or end loops.
 
 Read access is unrestricted because shell access already is. Write and Edit are confined by
 resolved filesystem paths to the workspace plus configured trusted write roots. This is an
-accident guardrail, not a security boundary. Images and PDFs read through the file tool become
-native model content when supported; size limits and backend degradation prevent accidental
-unbounded embedding.
+accident guardrail, not a security boundary. Text Read accepts regular files, scans at most 8 MiB,
+retains at most 64 KiB per source line, renders at most 2,000 Unicode code points per line, and
+returns at most 2,000 lines or 128 KiB. Ordinary binary
+files return size and detected-type metadata instead of text. Pipes, devices, sockets, and other
+non-regular files are rejected; the opened descriptor is nonblocking and validated so a path
+replacement cannot turn a prior regular-file check into a blocking FIFO read. Cancellation is
+checked before opening and between bounded reads. Path lookup, open/stat, directory operations,
+and an already-running regular-file/filesystem read are OS calls that Go cannot portably interrupt,
+so cancellation of a stalled filesystem call remains OS/filesystem-dependent. Images and PDFs
+read through the file tool become native model content when supported; their explicit size limits
+and backend degradation prevent accidental unbounded embedding.
 
 Reviewers receive read and shell inspection but no mutation tools. On supported Linux hosts their
 shell is filesystem-write-restricted with Landlock or bubblewrap; inability to establish an

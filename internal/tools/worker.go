@@ -1,15 +1,21 @@
 package tools
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/event"
@@ -19,11 +25,15 @@ import (
 
 const (
 	maxReadBytes          = 128 * 1024
+	maxReadSourceBytes    = 8 * 1024 * 1024
+	maxReadLineBytes      = 64 * 1024
+	maxReadLines          = 2000
+	maxReadLineChars      = 2000
+	maxReadNoticeBytes    = 256
+	binarySampleBytes     = 8 * 1024
 	maxBashBytes          = 64 * 1024
 	defaultBashTimeout    = 2 * time.Minute
 	maxBashTimeoutSeconds = 3600
-	defaultReadLines      = 2000
-	maxLineChars          = 2000
 	// maxDirEntries caps how many entries the Read tool lists when given a
 	// directory path, mirroring the line-limit approach for files.
 	maxDirEntries = 1000
@@ -72,103 +82,93 @@ func readFile(ws *Workspace) *gollama.Tool {
 		Description: "Read a file. Text files are returned with line numbers in cat -n format " +
 			"(line number, a tab, then the line). file_path may be any absolute path — including files outside " +
 			"the workspace such as sibling projects or dependency source (e.g. the Go module cache) — or a path " +
-			"relative to the workspace root. By default up to 2000 lines are returned; use " +
-			"offset (1-based start line) and limit to read a specific window of a large file. Images (PNG, JPEG, " +
-			"GIF, WebP) and PDFs are returned to you natively as visual content — just Read them like any other file. " +
-			"Passing a directory path lists its immediate entries (subdirectories are shown with a trailing '/').",
+			"relative to the workspace root. Text reads scan at most 8 MiB, retain at most 64 KiB per source line, " +
+			"render at most 2000 Unicode code points per line, and return at most 2000 lines or 128 KiB; use " +
+			"offset (1-based start line) and limit (maximum 2000) to " +
+			"read a specific window. Images (PNG, JPEG, GIF, WebP) and PDFs are returned natively as visual content. " +
+			"Passing a directory path lists up to 1000 immediate entries (subdirectories have a trailing '/').",
 		Params: obj(map[string]any{
 			"file_path": strProp("absolute path to the file (or relative to the workspace root)"),
 			"offset":    map[string]any{"type": "integer", "minimum": 1, "description": "1-based line number to start reading from (optional; text files only)"},
-			"limit":     map[string]any{"type": "integer", "minimum": 1, "description": "maximum number of lines to read (optional; text files only)"},
+			"limit":     map[string]any{"type": "integer", "minimum": 1, "maximum": maxReadLines, "description": "maximum number of lines to read (optional; text files only; maximum 2000)"},
 		}, "file_path"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			fp, ok := getString(params, "file_path")
 			if !ok {
 				return errResult("Read: missing 'file_path'"), nil
 			}
+			if err := ctx.Err(); err != nil {
+				return errResult("Read: %v", err), nil
+			}
 			abs, err := ws.resolveRead(fp)
 			if err != nil {
 				return errResult("Read: %v", err), nil
 			}
-			// A directory path lists its immediate entries rather than erroring,
-			// mirroring Claude Code's Read tool. os.Stat follows symlinks so a
-			// symlink to a directory is listed too.
-			if info, err := os.Stat(abs); err == nil && info.IsDir() {
-				return readDir(abs, fp), nil
-			}
-			// Images and PDFs are handed to the model as native content blocks
-			// (the same affordance Claude Code's Read tool gives) rather than as
-			// cat -n text, which would be meaningless binary.
-			if res, handled := readMedia(abs, fp); handled {
-				return res, nil
-			}
-			data, err := os.ReadFile(abs)
+
+			// Reject known special files before opening them. This is only an
+			// optimization: the descriptor is opened nonblocking and validated
+			// again because the path can be replaced between Stat and OpenFile.
+			preInfo, err := os.Stat(abs)
 			if err != nil {
 				return errResult("Read: %v", err), nil
 			}
-			if len(data) == 0 {
-				return okResult("(file is empty)"), nil
+			if !preInfo.Mode().IsRegular() && !preInfo.IsDir() {
+				return unsupportedReadFile(fp, preInfo), nil
 			}
-			lines := strings.Split(string(data), "\n")
-			if n := len(lines); n > 0 && lines[n-1] == "" {
-				lines = lines[:n-1] // drop phantom final line from trailing newline
+			f, err := os.OpenFile(abs, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+			if err != nil {
+				return errResult("Read: %v", err), nil
+			}
+			defer f.Close()
+			info, err := f.Stat()
+			if err != nil {
+				return errResult("Read: %v", err), nil
+			}
+			if info.IsDir() {
+				return readDir(ctx, f, fp), nil
+			}
+			if !info.Mode().IsRegular() {
+				return unsupportedReadFile(fp, info), nil
+			}
+
+			// Images and PDFs are handed to the model as native content blocks
+			// rather than as numbered text, which would be meaningless binary.
+			if res, handled := readMedia(ctx, f, info, fp); handled {
+				return res, nil
 			}
 			start := getInt(params, "offset", 1)
-			if start < 1 {
-				start = 1
-			}
-			if start-1 >= len(lines) {
-				return okResult(fmt.Sprintf("(offset %d is past end of file; %d lines total)", start, len(lines))), nil
-			}
-			limit := getInt(params, "limit", defaultReadLines)
-			var b strings.Builder
-			shown := 0
-			for i := start - 1; i < len(lines) && shown < limit; i++ {
-				line := lines[i]
-				if len(line) > maxLineChars {
-					line = line[:maxLineChars] + "… [line truncated]"
-				}
-				fmt.Fprintf(&b, "%6d\t%s\n", i+1, line)
-				shown++
-				if b.Len() > maxReadBytes {
-					b.WriteString("… [output truncated; use offset/limit to read more]\n")
-					break
-				}
-			}
-			return okResult(b.String()), nil
+			limit := getInt(params, "limit", maxReadLines)
+			return readTextWindow(ctx, f, info.Size(), fp, start, limit), nil
 		},
 	}
 }
 
-// readMedia classifies abs by extension and, if it is an image or PDF, reads it,
-// base64-encodes it, and returns a ToolResult carrying it as a native content
+// readMedia classifies the opened file by extension and, if it is an image or PDF,
+// reads and base64-encodes it within maxMediaBytes, returning a native content
 // block (Images for images, Documents for PDFs). The boolean reports whether the
 // file was handled as media; false means the caller should read it as text.
 //
 // fp is the caller-supplied display path used in the text note. Errors (too big,
 // unreadable) are returned as media-handled error results so the model gets a
 // clear message rather than a binary text dump.
-func readMedia(abs, fp string) (*gollama.ToolResult, bool) {
-	ext := strings.ToLower(filepath.Ext(abs))
+func readMedia(ctx context.Context, f *os.File, info os.FileInfo, fp string) (*gollama.ToolResult, bool) {
+	ext := strings.ToLower(filepath.Ext(f.Name()))
 	mediaType, isImage := imageMediaTypes[ext]
 	isPDF := ext == ".pdf"
 	if !isImage && !isPDF {
-		return nil, false
-	}
-	info, err := os.Stat(abs)
-	if err != nil {
-		return errResult("Read: %v", err), true
-	}
-	if info.IsDir() {
 		return nil, false
 	}
 	if info.Size() > maxMediaBytes {
 		return errResult("Read: %s is %d bytes, too large to inline (limit %d). Use Bash for metadata, or extract/convert it first.",
 			fp, info.Size(), maxMediaBytes), true
 	}
-	data, err := os.ReadFile(abs)
+	data, err := io.ReadAll(io.LimitReader(&contextReader{ctx: ctx, r: f}, maxMediaBytes+1))
 	if err != nil {
 		return errResult("Read: %v", err), true
+	}
+	if len(data) > maxMediaBytes {
+		return errResult("Read: %s grew beyond the %d-byte inline limit. Use Bash for metadata, or extract/convert it first.",
+			fp, maxMediaBytes), true
 	}
 	if len(data) == 0 {
 		return okResult("(file is empty)"), true
@@ -180,7 +180,7 @@ func readMedia(abs, fp string) (*gollama.ToolResult, bool) {
 			Documents: []gollama.Document{{
 				Base64:    b64,
 				MediaType: "application/pdf",
-				Title:     filepath.Base(abs),
+				Title:     filepath.Base(f.Name()),
 			}},
 		}, true
 	}
@@ -190,43 +190,275 @@ func readMedia(abs, fp string) (*gollama.ToolResult, bool) {
 	}, true
 }
 
-// readDir lists the immediate entries of the directory at abs. Subdirectories
-// are shown with a trailing '/' so the model can navigate. The listing is
-// prefixed with the display path (fp) for context and capped at maxDirEntries,
-// with a clear indication when more entries exist. Entries from os.ReadDir are
-// already sorted by name.
-func readDir(abs, fp string) *gollama.ToolResult {
-	entries, err := os.ReadDir(abs)
-	if err != nil {
+type contextReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (r *contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	n, err := r.r.Read(p)
+	if ctxErr := r.ctx.Err(); ctxErr != nil {
+		return n, ctxErr
+	}
+	return n, err
+}
+
+type binaryDetector struct {
+	pending []byte
+	binary  bool
+}
+
+func (d *binaryDetector) add(p []byte) {
+	if d.binary || len(p) == 0 {
+		return
+	}
+	data := make([]byte, 0, len(d.pending)+len(p))
+	data = append(data, d.pending...)
+	data = append(data, p...)
+	d.pending = d.pending[:0]
+	for len(data) > 0 {
+		if data[0] == 0 {
+			d.binary = true
+			return
+		}
+		if data[0] < utf8.RuneSelf {
+			// Tabs, newlines, carriage returns, form feeds, escape codes,
+			// and ordinary printable ASCII are all useful in text/log files.
+			if data[0] < 0x20 && data[0] != '\t' && data[0] != '\n' &&
+				data[0] != '\r' && data[0] != '\f' && data[0] != 0x1b {
+				d.binary = true
+				return
+			}
+			data = data[1:]
+			continue
+		}
+		if !utf8.FullRune(data) {
+			d.pending = append(d.pending, data...)
+			return
+		}
+		_, size := utf8.DecodeRune(data)
+		if size == 1 {
+			d.binary = true
+			return
+		}
+		data = data[size:]
+	}
+}
+
+func (d *binaryDetector) finish() bool {
+	return d.binary || len(d.pending) != 0
+}
+
+func readTextWindow(ctx context.Context, source io.Reader, size int64, fp string, start, limit int) *gollama.ToolResult {
+	if start < 1 {
+		start = 1
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > maxReadLines {
+		limit = maxReadLines
+	}
+	lr := &io.LimitedReader{R: &contextReader{ctx: ctx, r: source}, N: maxReadSourceBytes}
+	reader := bufio.NewReaderSize(lr, binarySampleBytes)
+	sample, peekErr := reader.Peek(binarySampleBytes)
+	if peekErr != nil && !errors.Is(peekErr, io.EOF) && !errors.Is(peekErr, bufio.ErrBufferFull) {
+		return errResult("Read: %v", peekErr)
+	}
+	sample = append([]byte(nil), sample...) // Peek's buffer is reused while scanning lines.
+	var sampleDetector binaryDetector
+	sampleDetector.add(sample)
+	if sampleDetector.binary {
+		return binaryReadResult(fp, size, sample)
+	}
+	if err := ctx.Err(); err != nil {
 		return errResult("Read: %v", err)
 	}
+
+	var (
+		out           strings.Builder
+		line          []byte
+		lineNumber    = 1
+		shown         int
+		lineHasBytes  bool
+		lineTruncated bool
+		reachedEOF    bool
+		sourceLimited bool
+		detector      binaryDetector
+	)
+	for shown < limit {
+		fragment, err := reader.ReadSlice('\n')
+		detector.add(fragment)
+		if detector.binary {
+			return binaryReadResult(fp, size, sample)
+		}
+
+		payload := fragment
+		complete := !errors.Is(err, bufio.ErrBufferFull)
+		terminated := complete && len(payload) > 0 && payload[len(payload)-1] == '\n'
+		if terminated {
+			payload = payload[:len(payload)-1]
+		}
+		if len(payload) > 0 {
+			lineHasBytes = true
+		}
+		if lineNumber >= start && len(line) < maxReadLineBytes {
+			remaining := maxReadLineBytes - len(line)
+			if len(payload) > remaining {
+				line = append(line, payload[:remaining]...)
+				lineTruncated = true
+			} else {
+				line = append(line, payload...)
+			}
+		} else if lineNumber >= start && len(payload) > 0 {
+			lineTruncated = true
+		}
+
+		if errors.Is(err, io.EOF) && lr.N == 0 {
+			sourceLimited = true
+			lineTruncated = true
+		}
+		if complete && (lineHasBytes || terminated) {
+			if lineNumber >= start {
+				if !appendReadLine(&out, lineNumber, line, lineTruncated) {
+					break
+				}
+				shown++
+			}
+			line = line[:0]
+			lineHasBytes = false
+			lineTruncated = false
+			lineNumber++
+		}
+
+		if err != nil && !errors.Is(err, bufio.ErrBufferFull) {
+			if !errors.Is(err, io.EOF) {
+				return errResult("Read: %v", err)
+			}
+			reachedEOF = lr.N > 0
+			break
+		}
+	}
+	if reachedEOF && detector.finish() {
+		return binaryReadResult(fp, size, sample)
+	}
+	if err := ctx.Err(); err != nil {
+		return errResult("Read: %v", err)
+	}
+	if shown == 0 && reachedEOF {
+		if lineNumber == 1 {
+			return okResult("(file is empty)")
+		}
+		return okResult(fmt.Sprintf("(offset %d is past end of file; %d lines total)", start, lineNumber-1))
+	}
+	if sourceLimited {
+		note := fmt.Sprintf("… [source scan stopped at %d bytes; use Bash or a smaller offset/window to inspect this file]\n", maxReadSourceBytes)
+		if out.Len()+len(note) <= maxReadBytes {
+			out.WriteString(note)
+		}
+	}
+	return okResult(out.String())
+}
+
+func appendReadLine(out *strings.Builder, number int, line []byte, truncated bool) bool {
+	// A byte retention boundary can split a final UTF-8 rune. The complete source
+	// line was validated above, so trim only that incomplete retained suffix.
+	for len(line) > 0 && !utf8.Valid(line) {
+		line = line[:len(line)-1]
+		truncated = true
+	}
+	text := string(line)
+	if utf8.RuneCountInString(text) > maxReadLineChars {
+		runes := []rune(text)
+		text = string(runes[:maxReadLineChars])
+		truncated = true
+	}
+	if truncated {
+		text += "… [line truncated]"
+	}
+	formatted := fmt.Sprintf("%6d\t%s\n", number, text)
+	if out.Len()+len(formatted)+maxReadNoticeBytes > maxReadBytes {
+		note := "… [output truncated at 128 KiB; use offset/limit to read a narrower window]\n"
+		out.WriteString(note)
+		return false
+	}
+	out.WriteString(formatted)
+	return true
+}
+
+func binaryReadResult(fp string, size int64, sample []byte) *gollama.ToolResult {
+	mediaType := http.DetectContentType(sample)
+	if strings.HasPrefix(mediaType, "text/") {
+		mediaType = "application/octet-stream"
+	}
+	return okResult(fmt.Sprintf(
+		"Read: %s contains binary data (size %d bytes, detected type %s); text was not returned. Use Bash with file(1) for metadata or xxd -l 256 for a bounded hex preview.",
+		fp, size, mediaType))
+}
+
+func unsupportedReadFile(fp string, info os.FileInfo) *gollama.ToolResult {
+	return errResult(
+		"Read: %s is not a regular file or directory (mode %s); refusing to read from a pipe, device, or socket. Use Bash with stat or file(1) to inspect metadata.",
+		fp, info.Mode())
+}
+
+// readDir lists a bounded number of immediate entries from an already-opened
+// directory. Subdirectories are shown with a trailing '/' so the model can
+// navigate. Reading maxDirEntries+1 avoids allocating an unbounded entry slice.
+func readDir(ctx context.Context, dir *os.File, fp string) *gollama.ToolResult {
+	if err := ctx.Err(); err != nil {
+		return errResult("Read: %v", err)
+	}
+	entries, err := dir.ReadDir(maxDirEntries + 1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return errResult("Read: %v", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return errResult("Read: %v", err)
+	}
+	truncated := len(entries) > maxDirEntries
+	if truncated {
+		entries = entries[:maxDirEntries]
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s/\n", strings.TrimRight(fp, "/"))
 	if len(entries) == 0 {
 		b.WriteString("(directory is empty)\n")
 		return okResult(b.String())
 	}
-	shown := len(entries)
-	if shown > maxDirEntries {
-		shown = maxDirEntries
-	}
-	for _, e := range entries[:shown] {
+	truncationNote := fmt.Sprintf("… [listing truncated after at most %d entries]\n", maxDirEntries)
+	for _, e := range entries {
+		if err := ctx.Err(); err != nil {
+			return errResult("Read: %v", err)
+		}
 		name := e.Name()
 		isDir := e.IsDir()
 		if !isDir && e.Type()&os.ModeSymlink != 0 {
-			// Best-effort: resolve symlinks so links to directories are
-			// marked too. Ignore stat errors (dangling link) and list bare.
-			if info, err := os.Stat(filepath.Join(abs, name)); err == nil && info.IsDir() {
-				isDir = true
+			// Preserve the directory marker for symlinks without following any
+			// target for content. This metadata lookup is bounded by the entry cap.
+			if info, err := os.Stat(filepath.Join(dir.Name(), name)); err == nil {
+				isDir = info.IsDir()
 			}
 		}
 		if isDir {
 			name += "/"
 		}
+		if b.Len()+len(name)+1+len(truncationNote) > maxReadBytes {
+			truncated = true
+			break
+		}
 		fmt.Fprintf(&b, "%s\n", name)
 	}
-	if len(entries) > shown {
-		fmt.Fprintf(&b, "… [%d more entries truncated]\n", len(entries)-shown)
+	if err := ctx.Err(); err != nil {
+		return errResult("Read: %v", err)
+	}
+	if truncated {
+		b.WriteString(truncationNote)
 	}
 	return okResult(b.String())
 }

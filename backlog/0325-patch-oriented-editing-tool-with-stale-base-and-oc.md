@@ -15,6 +15,8 @@ Add a revision-bound, single-file `Patch` tool alongside the existing exact `Edi
 
 This is optimistic transactional editing: `Read` supplies an ETag-like revision and `Patch` applies only when that revision still matches. Line numbers remain navigational output and diagnostics, not mutation authority. The first version does not use fuzzy matching or require a unified-diff parser. Existing exact unique `Edit` remains the simple, safe default.
 
+Coordination with bounded `Read`: partial text windows have an 8 MiB source-scan budget and must remain streaming and memory-bounded. Producing a whole-file revision therefore requires an explicit, cancellable streaming scan separate from the window read; it must not restore whole-file allocation or silently hide an additional full-file scan.
+
 On a stale revision, missing or ambiguous target, invalid occurrence, overlap, or malformed request, no changes are made. Diagnostics return the current revision and bounded current-file context sufficient for one corrective retry. Atomicity is guaranteed relative to ycc's single-writer scheduling; it does not claim filesystem compare-and-swap against non-cooperating external writers.
 
 ## Acceptance criteria
