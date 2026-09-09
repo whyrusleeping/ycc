@@ -13,6 +13,7 @@ import (
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/jobs"
+	"github.com/whyrusleeping/ycc/internal/workspacelease"
 )
 
 // Control is an out-of-band signal a control tool returns to the agent loop via
@@ -316,6 +317,40 @@ type Workspace struct {
 	// events tagged with that actor (which also owns the job for checkpoint drain).
 	// Required alongside Jobs for background bash.
 	Emitter *event.Emitter
+	// Ownership and MutationToken enforce daemon-wide single-writer ownership.
+	// A delegated worker receives its own token and reuses it for its commands.
+	Ownership     *workspacelease.Service
+	MutationToken *workspacelease.Token
+}
+
+func (w *Workspace) acquireMutation() (*workspacelease.Lease, error) {
+	if w.Ownership == nil {
+		return nil, nil
+	}
+	return w.Ownership.Acquire(w.Root, w.MutationToken)
+}
+
+func (w *Workspace) acquirePathMutation(path string) (*workspacelease.Lease, error) {
+	if w.Ownership == nil {
+		return nil, nil
+	}
+	fallback := w.Root
+	if !withinRoot(path, fallback) {
+		for _, root := range w.WriteRoots {
+			if root != "" && withinRoot(path, root) {
+				fallback = root
+				break
+			}
+		}
+	}
+	return w.Ownership.AcquirePath(path, fallback, w.MutationToken)
+}
+
+func (w *Workspace) acquireChildMutation(owner string) (*workspacelease.Lease, error) {
+	if w.Ownership == nil {
+		return nil, nil
+	}
+	return w.Ownership.AcquireChild(w.Root, w.MutationToken, owner)
 }
 
 // resolve cleans a user-supplied path and confines it to the writable roots, for

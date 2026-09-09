@@ -290,9 +290,17 @@ enforcement and conservatively count the agent as a mutating job. Explicitly mut
 agents use worker tools and always participate in single-writer scheduling. Generic agent handles
 are live session state and are not reconstructed after daemon restart.
 
-Only one mutating agent/job may operate in a worktree. Read-only work can fan out; parallel
-mutation requires separate workstreams. `docs/design/async-jobs.md` explains the single-delivery
-and single-writer rationale.
+A daemon-wide lease keyed by the canonical, symlink-resolved worktree permits only one mutating
+execution scope across sessions. Direct coordinator operations, delegated agents, file tools, shell
+commands, backlog/document writes, and Git commits participate. A delegated worker reuses only its
+own scoped token for synchronous commands. A background child takes an exclusive child claim that
+blocks the worker's sibling mutations and later turns until actual exit, including after cancellation
+or a kill request. Refusals identify the owner and direct callers to
+wait, stop it, or use a separate workstream. Read-only work can fan out, and distinct worktrees can
+mutate independently. Backlog reads remain available while another scope owns the tree: the exceptional
+duplicate-ID self-repair acquires a lease only after detecting duplicates and defers repair when owned.
+`docs/design/async-jobs.md` explains the single-delivery and single-writer
+rationale.
 
 ### 7.4 Reasoning settings
 
@@ -331,7 +339,9 @@ and backend degradation prevent accidental unbounded embedding.
 Reviewers receive read and shell inspection but no mutation tools. On supported Linux hosts their
 shell is filesystem-write-restricted with Landlock or bubblewrap; inability to establish an
 available sandbox fails closed. Hosts without either mechanism visibly degrade to prompt-only
-read-only enforcement.
+read-only enforcement and their shell calls participate in mutation leasing. The lease is an
+execution-coordination mechanism, not a security sandbox: unrestricted shell commands can access
+paths outside the leased worktree, spawn detached processes, or otherwise bypass filesystem policy.
 
 Questions support one or several prompts, each with optional choices and a free-text alternative.
 They must contain enough context to answer without reading the transcript. Positional batch

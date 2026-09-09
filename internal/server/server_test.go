@@ -430,6 +430,59 @@ func TestCreateTask(t *testing.T) {
 	}
 }
 
+func TestTaskMutationRPCsHonorWorkspaceOwner(t *testing.T) {
+	reg := config.NewRegistry(&config.Config{
+		Models: map[string]config.Model{"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"}},
+		Roles:  config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
+	})
+	ws := t.TempDir()
+	store := docs.NewStore(ws)
+	task, err := store.Create("Existing", "", 3, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr := session.NewManager(reg, ws)
+	srv := New(mgr)
+	held := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- mgr.WithBacklogMutation("", "session active implementer", func(*docs.Store) error {
+			close(held)
+			<-release
+			return nil
+		})
+	}()
+	<-held
+
+	status := "done"
+	calls := []func() error{
+		func() error {
+			_, err := srv.CreateTask(context.Background(), connect.NewRequest(&v1.CreateTaskRequest{Title: "Blocked"}))
+			return err
+		},
+		func() error {
+			_, err := srv.UpdateTask(context.Background(), connect.NewRequest(&v1.UpdateTaskRequest{Id: task.ID, Status: &status}))
+			return err
+		},
+	}
+	for _, call := range calls {
+		err := call()
+		if connect.CodeOf(err) != connect.CodeFailedPrecondition {
+			t.Fatalf("mutation conflict code = %v, want FailedPrecondition (err=%v)", connect.CodeOf(err), err)
+		}
+		for _, want := range []string{"session active implementer", "wait", "stop", "workstream"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("mutation conflict %q missing %q", err, want)
+			}
+		}
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("lease holder: %v", err)
+	}
+}
+
 // TestUpdateTask exercises the backlog grooming RPC: all editable task fields
 // persist to the task file; invalid inputs are rejected; an unknown id is
 // NotFound; and a no-field "refresh" re-reads the task without altering it.

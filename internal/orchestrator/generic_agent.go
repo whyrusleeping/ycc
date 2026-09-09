@@ -10,6 +10,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/jobs"
 	"github.com/whyrusleeping/ycc/internal/sandbox"
 	"github.com/whyrusleeping/ycc/internal/tools"
+	"github.com/whyrusleeping/ycc/internal/workspacelease"
 )
 
 const genericAgentSystem = `You are a general-purpose read-only subagent helping another coding agent. Carry out the
@@ -83,18 +84,28 @@ func spawnAgent(d *Deps) *gollama.Tool {
 			d.mu.Lock()
 			d.genericSeq++
 			agentID := fmt.Sprintf("agent_%d", d.genericSeq)
+			d.mu.Unlock()
 			actor := "agent:" + agentID
+			var token *workspacelease.Token
+			var lease *workspacelease.Lease
+			if mutates {
+				token = d.mutationToken("generic agent " + agentID)
+				lease, err = d.acquireMutation(token)
+				if err != nil {
+					return tools.ErrResult("spawn_agent: %v", err), nil
+				}
+			}
 			reg := tools.New()
 			var system string
+			agentWS := &tools.Workspace{Root: d.Workspace, Env: append([]string(nil), d.Env...),
+				Ownership: d.Ownership, MutationToken: token}
 			if requestedMutating {
-				reg.Add(tools.Worker(&tools.Workspace{
-					Root: d.Workspace, Env: append([]string(nil), d.Env...),
-					WriteRoots: tools.NormalizeRoots(d.WriteRoots),
-					Emitter:    d.Emitter.With(actor),
-				})...)
+				agentWS.WriteRoots = tools.NormalizeRoots(d.WriteRoots)
+				agentWS.Emitter = d.Emitter.With(actor)
+				reg.Add(tools.Worker(agentWS)...)
 				system = sys(genericCodingAgentSystem, false, d.Workspace)
 			} else {
-				reg.Add(tools.ReadOnlyInspect(&tools.Workspace{Root: d.Workspace, Env: append([]string(nil), d.Env...)})...)
+				reg.Add(tools.ReadOnlyInspect(agentWS)...)
 				system = inspectSys(genericAgentSystem, d.Workspace)
 			}
 			loop := d.newLoop(spec, system, reg, actor)
@@ -105,14 +116,15 @@ func spawnAgent(d *Deps) *gollama.Tool {
 			} else {
 				job = d.Jobs.StartMutating("agent", agentID+" turn 1 ("+model+")", d.Emitter.Actor())
 			}
-			h := &genericAgentHandle{id: agentID, spec: spec, loop: loop, job: job, round: 1, mutates: mutates, running: true}
+			h := &genericAgentHandle{id: agentID, spec: spec, loop: loop, job: job, round: 1, mutates: mutates, token: token, running: true}
+			d.mu.Lock()
 			if d.genericAgent == nil {
 				d.genericAgent = make(map[string]*genericAgentHandle)
 			}
 			d.genericAgent[agentID] = h
 			d.mu.Unlock()
 
-			startGenericAgentJob(d, h, job)
+			startGenericAgentJob(d, h, job, lease)
 			kind := "read-only"
 			if requestedMutating {
 				kind = "mutating"
@@ -156,13 +168,24 @@ func sendToAgent(d *Deps) *gollama.Tool {
 			}
 			if h.running {
 				jobID := h.job.ID()
+				mutates := h.mutates
 				d.mu.Unlock()
+				if mutates {
+					return tools.ErrResult("send_to_agent: mutating agent %s is still running or unwinding as %s; wait for actual completion, stop it with kill_job, or use a separate workstream", agentID, jobID), nil
+				}
 				return tools.ErrResult("send_to_agent: agent %s is still running as %s; wait for it to finish before sending a follow-up", agentID, jobID), nil
 			}
+			var lease *workspacelease.Lease
 			if h.mutates {
 				if live := d.Jobs.LiveMutating(); live != nil {
 					d.mu.Unlock()
 					return tools.ErrResult("send_to_agent: another mutating job (%s: %s) is live in this tree; wait for it or kill_job it first", live.ID(), live.Label()), nil
+				}
+				var acquireErr error
+				lease, acquireErr = d.acquireMutation(h.token)
+				if acquireErr != nil {
+					d.mu.Unlock()
+					return tools.ErrResult("send_to_agent: %v", acquireErr), nil
 				}
 			}
 			h.round++
@@ -179,7 +202,7 @@ func sendToAgent(d *Deps) *gollama.Tool {
 			round := h.round
 			d.mu.Unlock()
 
-			startGenericAgentJob(d, h, job)
+			startGenericAgentJob(d, h, job, lease)
 			return tools.OkResult(fmt.Sprintf("started follow-up turn %d for subagent %s as background job %s. "+
 				"Do not poll it; its report arrives automatically, or call wait([%q]) when needed.",
 				round, agentID, job.ID(), job.ID())), nil
@@ -187,7 +210,7 @@ func sendToAgent(d *Deps) *gollama.Tool {
 	}
 }
 
-func startGenericAgentJob(d *Deps, h *genericAgentHandle, job *jobs.Job) {
+func startGenericAgentJob(d *Deps, h *genericAgentHandle, job *jobs.Job, lease *workspacelease.Lease) {
 	round := h.round
 	d.Emitter.Emit(event.JobStarted, map[string]any{"id": job.ID(), "kind": job.Kind(), "label": job.Label()})
 	d.Emitter.Emit(event.SubagentSpawned, map[string]any{
@@ -196,6 +219,7 @@ func startGenericAgentJob(d *Deps, h *genericAgentHandle, job *jobs.Job) {
 		"context_mode": map[bool]string{true: "fresh", false: "retain"}[round == 1], "round": round,
 	})
 	go func() {
+		defer lease.Release()
 		res, err := h.loop.Run(job.Context())
 		finish := map[string]any{
 			"role": "generic", "agent_id": h.id, "model": h.spec.Model, "logical_model": h.spec.Name,

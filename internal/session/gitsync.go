@@ -89,7 +89,12 @@ func (m *Manager) refreshProjectGitRefs() {
 		if !isGitWorkspace(p.Path) {
 			continue
 		}
+		lease, acquireErr := m.ownership.Acquire(p.Path, m.ownership.NewToken("daemon git fetch"))
+		if acquireErr != nil {
+			continue
+		}
 		err := (&git.Repo{Dir: p.Path}).Fetch()
+		lease.Release()
 		m.gitSyncMu.Lock()
 		state := m.gitSyncCache[p.Path]
 		if err != nil {

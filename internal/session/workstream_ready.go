@@ -48,7 +48,7 @@ func (m *Manager) evaluateWorkstreamReadiness(wsID string, sessStatus event.Stat
 	var taskErr error
 	if ws.TaskID != "" {
 		var task *docs.Task
-		task, taskErr = docs.NewStore(ws.WorktreePath).Get(ws.TaskID)
+		task, taskErr = m.backlogStore(ws.WorktreePath).Get(ws.TaskID)
 		if taskErr == nil {
 			taskStatus = task.Status
 		}

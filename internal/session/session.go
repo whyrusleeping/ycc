@@ -33,6 +33,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/project"
 	"github.com/whyrusleeping/ycc/internal/tools"
 	"github.com/whyrusleeping/ycc/internal/usage"
+	"github.com/whyrusleeping/ycc/internal/workspacelease"
 	"github.com/whyrusleeping/ycc/internal/workstream"
 )
 
@@ -1446,6 +1447,7 @@ type Manager struct {
 	projects          *project.Registry
 	workstreams       *workstream.Registry
 	worktreesRoot     string
+	ownership         *workspacelease.Service
 	idAlloc           *docs.IDAllocator
 	workstreamWatches map[string]chan struct{}
 	integrators       map[string]*workstreamIntegrator
@@ -1510,6 +1512,7 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 		projects:          projects,
 		workstreams:       workstream.NewMemory(),
 		worktreesRoot:     workstream.DefaultWorktreesRoot(),
+		ownership:         workspacelease.NewService(),
 		idAlloc:           docs.AllocatorFor(""),
 		workstreamWatches: map[string]chan struct{}{},
 		integrators:       map[string]*workstreamIntegrator{},
@@ -1586,6 +1589,14 @@ func (m *Manager) backlogStore(absWS string) *docs.Store {
 	store := docs.NewStore(absWS)
 	store.SetIDSource(func() (string, error) {
 		return m.idAlloc.NextID(filepath.Join(primary, "backlog"))
+	})
+	store.SetRepairLease(func() (func(), error) {
+		token := m.ownership.NewToken("backlog duplicate repair for " + absWS)
+		lease, err := m.ownership.Acquire(absWS, token)
+		if err != nil {
+			return nil, err
+		}
+		return lease.Release, nil
 	})
 	return store
 }
@@ -1872,6 +1883,12 @@ func (m *Manager) SpawnWorkstream(cfg SpawnWorkstreamConfig) (workstream.Workstr
 	if !ok {
 		return workstream.Workstream{}, nil, fmt.Errorf("unknown project %q", cfg.Project)
 	}
+	spawnToken := m.ownership.NewToken(fmt.Sprintf("workstream spawn for project %s", cfg.Project))
+	spawnLease, err := m.ownership.Acquire(primary, spawnToken)
+	if err != nil {
+		return workstream.Workstream{}, nil, fmt.Errorf("spawn workstream: %w", err)
+	}
+	defer spawnLease.Release()
 	if limit := m.reg.IntegrationConfig().MaxParallel; limit > 0 {
 		active := 0
 		for _, ws := range m.workstreams.ListByProject(cfg.Project) {
@@ -2075,13 +2092,19 @@ func (m *Manager) ReconcileWorkstreams() error {
 			}
 			continue
 		}
+		reconcileLease, err := m.ownership.Acquire(primary, m.ownership.NewToken("workstream startup reconciliation"))
+		if err != nil {
+			continue
+		}
 		repo, err := git.Open(primary)
 		if err != nil {
+			reconcileLease.Release()
 			// Cannot inspect the repo; leave entries as-is for the next attempt.
 			continue
 		}
 		repo.PruneWorktrees()
 		trees, err := repo.ListWorktrees()
+		reconcileLease.Release()
 		if err != nil {
 			continue
 		}
@@ -2156,6 +2179,15 @@ func (m *Manager) ReconcileWorkstreams() error {
 func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt string, log *event.Log, resumed bool, coordOverride string) (*Session, error) {
 	emitter := event.NewEmitter(log, "coordinator")
 	inter := newInteraction(unattended, emitter)
+	var startupLease *workspacelease.Lease
+	if !resumed {
+		var acquireErr error
+		startupLease, acquireErr = m.ownership.Acquire(absWS, m.ownership.NewToken(fmt.Sprintf("session %s startup", id)))
+		if acquireErr != nil {
+			return nil, fmt.Errorf("prepare workspace: %w", acquireErr)
+		}
+		defer startupLease.Release()
+	}
 	var repo *git.Repo
 	var err error
 	if resumed {
@@ -2230,7 +2262,9 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 		WriteRoots:         m.reg.WriteRoots(),
 		WorkImplementation: m.reg.WorkImplementation(),
 		Jobs:               jobs.NewRegistry(),
+		Ownership:          m.ownership,
 	}
+	deps.CoordinatorToken = m.ownership.NewToken(fmt.Sprintf("session %s coordinator", id))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{
@@ -2632,7 +2666,7 @@ func (m *Manager) CommitDiff(project, sha string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve workspace: %w", err)
 	}
-	repo, err := git.Open(absWS)
+	repo, err := git.OpenExisting(absWS)
 	if err != nil {
 		return "", fmt.Errorf("open repo: %w", err)
 	}
@@ -2959,6 +2993,26 @@ func (m *Manager) Backlog(project string) (*docs.Store, error) {
 	return m.backlogStore(absWS), nil
 }
 
+// WithBacklogMutation runs fn while holding this daemon's mutation lease for the
+// project's canonical worktree. RPC mutation entry points use it instead of
+// relying only on docs.Store's process-local file lock.
+func (m *Manager) WithBacklogMutation(project, owner string, fn func(*docs.Store) error) error {
+	ws, err := m.resolveProjectWorkspace(project)
+	if err != nil {
+		return err
+	}
+	absWS, err := filepath.Abs(ws)
+	if err != nil {
+		return fmt.Errorf("resolve workspace: %w", err)
+	}
+	lease, err := m.ownership.Acquire(absWS, m.ownership.NewToken(owner))
+	if err != nil {
+		return err
+	}
+	defer lease.Release()
+	return fn(m.backlogStore(absWS))
+}
+
 // CaptureBacklogItem runs the lightweight, off-stream "quick-add backlog item"
 // capture agent for a project: it turns a natural-language
 // description into a structured backlog task without disturbing any running
@@ -2986,15 +3040,17 @@ func (m *Manager) CaptureBacklogItem(ctx context.Context, project, description, 
 		return orchestrator.CaptureResult{}, fmt.Errorf("build capture backend: %w", err)
 	}
 	cd := orchestrator.CaptureDeps{
-		Workspace: absWS,
-		Docs:      store,
-		Client:    client,
-		Model:     model,
-		ModelName: coord,
-		Backend:   m.reg.BackendFor(coord),
-		Thinking:  engine.Thinking{}, // reasoning OFF for a fast capture
-		MaxTok:    m.reg.MaxTokens(),
-		Retry:     m.reg.RetryPolicy(),
+		Workspace:        absWS,
+		Docs:             store,
+		Client:           client,
+		Model:            model,
+		ModelName:        coord,
+		Backend:          m.reg.BackendFor(coord),
+		Thinking:         engine.Thinking{}, // reasoning OFF for a fast capture
+		MaxTok:           m.reg.MaxTokens(),
+		Retry:            m.reg.RetryPolicy(),
+		Ownership:        m.ownership,
+		CoordinatorToken: m.ownership.NewToken("backlog capture for " + absWS),
 	}
 	var rec event.Recorder
 	if emit != nil {

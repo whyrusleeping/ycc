@@ -17,6 +17,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/jobs"
 	"github.com/whyrusleeping/ycc/internal/sandbox"
 	"github.com/whyrusleeping/ycc/internal/tools"
+	"github.com/whyrusleeping/ycc/internal/workspacelease"
 )
 
 const maxDiffChars = 16000
@@ -150,12 +151,19 @@ type Deps struct {
 	// job_output/wait/kill_job tools; the session kills all jobs on end.
 	Jobs *jobs.Registry
 
+	// Ownership is shared by every session in the daemon. CoordinatorToken is
+	// scoped to this session's direct mutations; delegated mutators use child tokens.
+	Ownership        *workspacelease.Service
+	CoordinatorToken *workspacelease.Token
+
 	mu           sync.Mutex
 	impl         *engine.Loop
 	implSpec     AgentSpec // resolved slot used by impl; retained across fresh revisions
 	implRound    int       // completed/attempted implementer runs, including the initial run
 	implJob      *jobs.Job // live/last background implementer job (nil if last spawn was foreground)
-	implReport   string    // latest compact implementation/verification report for fresh continuation
+	implToken    *workspacelease.Token
+	implRunning  bool   // Loop.Run has not returned, even if kill_job made implJob terminal
+	implReport   string // latest compact implementation/verification report for fresh continuation
 	reviewers    []*reviewerHandle
 	reviewJob    *jobs.Job // live/last background reviewers job
 	genericSeq   int
@@ -170,6 +178,7 @@ type genericAgentHandle struct {
 	job     *jobs.Job
 	round   int
 	mutates bool
+	token   *workspacelease.Token
 	running bool // Run may still be unwinding after kill_job marks job killed
 }
 
@@ -196,6 +205,36 @@ func (d *Deps) emitFocus(taskID string) {
 		}
 	}
 	d.Emitter.Emit(event.TaskFocus, data)
+}
+
+func (d *Deps) mutationToken(owner string) *workspacelease.Token {
+	if d.Ownership == nil {
+		return nil
+	}
+	if d.CoordinatorToken != nil {
+		owner = d.CoordinatorToken.Owner() + " / " + owner
+	}
+	return d.Ownership.NewToken(owner)
+}
+
+func (d *Deps) acquireMutation(token *workspacelease.Token) (*workspacelease.Lease, error) {
+	if d.Ownership == nil {
+		return nil, nil
+	}
+	return d.Ownership.Acquire(d.Workspace, token)
+}
+
+func coordinatorMutation(d *Deps, tool *gollama.Tool) *gollama.Tool {
+	call := tool.Call
+	tool.Call = func(ctx context.Context, params any) (*gollama.ToolResult, error) {
+		lease, err := d.acquireMutation(d.CoordinatorToken)
+		if err != nil {
+			return tools.ErrResult("%s: %v", tool.Name, err), nil
+		}
+		defer lease.Release()
+		return call(ctx, params)
+	}
+	return tool
 }
 
 type reviewerHandle struct {
@@ -267,11 +306,12 @@ func (d *Deps) reviewerSpecs() []AgentSpec {
 func CoordinatorTools(d *Deps, ws *tools.Workspace, direct bool) *tools.Registry {
 	reg := tools.New()
 	reg.Add(tools.Editing(ws)...)
-	reg.Add(listBacklog(d), getTask(d), proposePlan(d), spawnReviewers(d), reReview(d))
+	reg.Add(listBacklog(d), getTask(d), coordinatorMutation(d, proposePlan(d)), spawnReviewers(d), reReview(d))
 	if !direct {
 		reg.Add(spawnImplementer(d), sendToImplementer(d))
 	}
-	reg.Add(askUser(d), commitTool(d), updateTask(d), createTask(d), remember(d), tools.Finish())
+	reg.Add(askUser(d), coordinatorMutation(d, commitTool(d)), coordinatorMutation(d, updateTask(d)),
+		coordinatorMutation(d, createTask(d)), coordinatorMutation(d, remember(d)), tools.Finish())
 	return reg
 }
 
@@ -461,18 +501,34 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 			} else if live := d.liveImplJob(); live != nil {
 				return tools.ErrResult("spawn_implementer: a background implementer (%s: %s) is still running in this tree; wait for it or kill_job it before spawning another implementer, or route parallel mutating work through a separate workstream (spec §14.1)", live.ID(), live.Label()), nil
 			}
+			token := d.mutationToken(fmt.Sprintf("implementer for task %s", id))
+			lease, err := d.acquireMutation(token)
+			if err != nil {
+				return tools.ErrResult("spawn_implementer: %v", err), nil
+			}
+			releaseOnReturn := true
+			var activeLoop *engine.Loop
+			defer func() {
+				if releaseOnReturn {
+					lease.Release()
+					d.finishImplementerExecution(token, activeLoop)
+				}
+			}()
 			// Delegating a task makes it the session's active focus.
 			d.emitFocus(id)
 			reg := tools.New()
 			reg.Add(tools.Worker(&tools.Workspace{
-				Root:       d.Workspace,
-				Env:        append([]string(nil), d.Env...),
-				WriteRoots: tools.NormalizeRoots(d.WriteRoots),
-				Jobs:       d.Jobs,
-				Emitter:    d.Emitter.With("implementer"),
+				Root:          d.Workspace,
+				Env:           append([]string(nil), d.Env...),
+				WriteRoots:    tools.NormalizeRoots(d.WriteRoots),
+				Jobs:          d.Jobs,
+				Emitter:       d.Emitter.With("implementer"),
+				Ownership:     d.Ownership,
+				MutationToken: token,
 			})...)
 			impl := d.implementer()
 			loop := d.newLoop(impl, sys(implementerSystem, false, d.Workspace), reg, "implementer")
+			activeLoop = loop
 			// The implementer needs more output headroom than the shared cap: a
 			// single turn may interleave an extended-thinking block with a large
 			// multi-file edit, and the thinking counts against the same budget. Too
@@ -493,6 +549,8 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 			d.implRound = 1
 			d.implReport = ""
 			d.implJob = nil // cleared for a foreground spawn; set below for background
+			d.implToken = token
+			d.implRunning = true
 			d.mu.Unlock()
 
 			changes, changeErr := d.changeset()
@@ -512,8 +570,9 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 				d.mu.Unlock()
 				d.Emitter.Emit(event.JobStarted, map[string]any{"id": job.ID(), "kind": job.Kind(), "label": job.Label()})
 				d.Emitter.Emit(event.SubagentSpawned, map[string]any{"role": "implementer", "model": impl.Model, "job_id": job.ID()})
+				releaseOnReturn = false
 				go func() {
-					out := runImplementer(job.Context(), d, loop, id, "implementer report", before, job.ID())
+					out := runImplementer(job.Context(), d, loop, token, id, "implementer report", before, job.ID())
 					status := jobs.Done
 					if out.IsError {
 						status = jobs.Failed
@@ -521,6 +580,8 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 					if job.Finish(status, out.Content) {
 						emitAgentJobFinished(d.Emitter, job)
 					}
+					lease.Release()
+					d.finishImplementerExecution(token, loop)
 				}()
 				return tools.OkResult(fmt.Sprintf("started background job %s: implementer on task %s. "+
 					"It runs in the background — do NOT poll it. Its report arrives automatically when it "+
@@ -528,28 +589,39 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 			}
 
 			d.Emitter.Emit(event.SubagentSpawned, map[string]any{"role": "implementer", "model": impl.Model})
-			return runImplementer(ctx, d, loop, id, "implementer report", before, ""), nil
+			return runImplementer(ctx, d, loop, token, id, "implementer report", before, ""), nil
 		},
 	}
 }
 
-// liveImplJob returns the background implementer job if one is still running,
-// else nil. The single-writer guard uses it to refuse a second implementer in the
-// same tree (foreground or background).
+// liveImplJob returns the background implementer while its Loop.Run is still
+// active. kill_job marks the job terminal before Run necessarily unwinds, so job
+// status alone is not an execution-ownership signal.
 func (d *Deps) liveImplJob() *jobs.Job {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.implJob != nil && d.implJob.Status() == jobs.Running {
+	if d.implJob != nil && d.implRunning {
 		return d.implJob
 	}
 	return nil
+}
+
+// finishImplementerExecution clears the active-run guard only after its lifetime
+// lease has been released. A concurrently started replacement has a new token
+// and must not be cleared by the old goroutine finishing late.
+func (d *Deps) finishImplementerExecution(token *workspacelease.Token, loop *engine.Loop) {
+	d.mu.Lock()
+	if d.implToken == token && d.impl == loop {
+		d.implRunning = false
+	}
+	d.mu.Unlock()
 }
 
 // runImplementer runs an implementer loop to completion, emits subagent_finished
 // (tagged with jobID when the run is a background job), and returns the
 // coordinator-facing outcome — identical whether the loop runs synchronously or in
 // a background goroutine, so both delivery paths carry the same report text.
-func runImplementer(ctx context.Context, d *Deps, loop *engine.Loop, id, label, before, jobID string) *gollama.ToolResult {
+func runImplementer(ctx context.Context, d *Deps, loop *engine.Loop, token *workspacelease.Token, id, label, before, jobID string) *gollama.ToolResult {
 	res, err := loop.Run(ctx)
 	contextTokens := loop.ContextTokensEstimate()
 	fin := map[string]any{"role": "implementer", "context_mode": "fresh", "round": 1, "context_tokens_est": contextTokens}
@@ -561,6 +633,13 @@ func runImplementer(ctx context.Context, d *Deps, loop *engine.Loop, id, label, 
 		d.Emitter.Emit(event.SubagentFinished, fin)
 		return tools.ErrResult("implementer failed: %v\n\nSUBAGENT CONTEXT: mode=fresh round=1 approx_tokens=%d. If this was a context-length failure, retry with send_to_implementer context_mode='fresh'.", err, contextTokens)
 	}
+	finalizeLease, err := d.acquireMutation(token)
+	if err != nil {
+		fin["error"] = err.Error()
+		d.Emitter.Emit(event.SubagentFinished, fin)
+		return tools.ErrResult("implementer cannot finalize while asynchronous mutation is still active: %v", err)
+	}
+	defer finalizeLease.Release()
 	if res.Blocked {
 		fin["blocked"] = true
 	}
@@ -607,20 +686,35 @@ func sendToImplementer(d *Deps) *gollama.Tool {
 			}
 			d.mu.Lock()
 			loop := d.impl
-			spec := d.implSpec
-			job := d.implJob
-			priorRound := d.implRound
-			priorReport := d.implReport
-			d.mu.Unlock()
 			if loop == nil {
+				d.mu.Unlock()
 				return tools.ErrResult("send_to_implementer: no implementer yet; call spawn_implementer first"), nil
 			}
-			// A background implementer's loop is only addressable once it has
-			// finished — replacing or resuming a still-running loop would permit two
-			// mutating agents in the same tree.
-			if job != nil && job.Status() == jobs.Running {
-				return tools.ErrResult("send_to_implementer: implementer job %s is still running; wait for its report first", job.ID()), nil
+			if d.implRunning {
+				job := d.implJob
+				d.mu.Unlock()
+				if job != nil {
+					return tools.ErrResult("send_to_implementer: implementer job %s is still running or unwinding; wait for its report and actual completion, stop it with kill_job, or use a separate workstream", job.ID()), nil
+				}
+				return tools.ErrResult("send_to_implementer: the direct implementer is still running; wait for it to finish or use a separate workstream"), nil
 			}
+			spec := d.implSpec
+			token := d.implToken
+			priorRound := d.implRound
+			priorReport := d.implReport
+			lease, err := d.acquireMutation(token)
+			if err != nil {
+				d.mu.Unlock()
+				return tools.ErrResult("send_to_implementer: %v", err), nil
+			}
+			// Mark the new top-level turn active while holding d.mu so two concurrent
+			// sends cannot both reenter the implementer's lifetime token.
+			d.implRunning = true
+			d.mu.Unlock()
+			defer func() {
+				lease.Release()
+				d.finishImplementerExecution(token, loop)
+			}()
 
 			priorTokens := loop.ContextTokensEstimate()
 			rolloverOldTokens := priorTokens
@@ -638,7 +732,7 @@ func sendToImplementer(d *Deps) *gollama.Tool {
 				if getErr != nil {
 					return tools.ErrResult("send_to_implementer: %v", getErr), nil
 				}
-				loop = freshImplementerLoop(d, spec, t, instr, priorReport)
+				loop = freshImplementerLoop(d, spec, token, t, instr, priorReport)
 				newTokens = loop.ContextTokensEstimate()
 				d.mu.Lock()
 				d.impl = loop
@@ -669,7 +763,7 @@ func sendToImplementer(d *Deps) *gollama.Tool {
 				t, getErr := d.Docs.Get(id)
 				if getErr == nil {
 					oldTokens := loop.ContextTokensEstimate()
-					loop = freshImplementerLoop(d, spec, t, instr, priorReport)
+					loop = freshImplementerLoop(d, spec, token, t, instr, priorReport)
 					mode, rolloverReason = "fresh", "context_error_recovery"
 					rolloverOldTokens = oldTokens
 					newTokens = loop.ContextTokensEstimate()
@@ -690,6 +784,15 @@ func sendToImplementer(d *Deps) *gollama.Tool {
 				d.Emitter.Emit(event.SubagentFinished, finishData)
 				return tools.ErrResult("implementer failed: %v\n\nSUBAGENT CONTEXT: mode=%s round=%d approx_tokens=%d", runErr, mode, round, contextTokens), nil
 			}
+			finalizeLease, finalizeErr := d.acquireMutation(token)
+			if finalizeErr != nil {
+				finishData := map[string]any{"role": "implementer", "error": finalizeErr.Error(),
+					"context_mode": mode, "round": round, "context_tokens_est": contextTokens}
+				addRolloverFields(finishData, rolloverReason, rolloverOldTokens, newTokens)
+				d.Emitter.Emit(event.SubagentFinished, finishData)
+				return tools.ErrResult("implementer cannot finalize while asynchronous mutation is still active: %v", finalizeErr), nil
+			}
+			defer finalizeLease.Release()
 			finishData := map[string]any{"role": "implementer", "context_mode": mode, "round": round,
 				"context_tokens_est": contextTokens}
 			addRolloverFields(finishData, rolloverReason, rolloverOldTokens, newTokens)
@@ -729,8 +832,8 @@ func exceedsContextBudget(spec AgentSpec, projectedTokens int) bool {
 	return projectedTokens >= int(float64(spec.ContextWindow)*fraction)
 }
 
-func freshImplementerLoop(d *Deps, spec AgentSpec, t *docs.Task, instructions, priorReport string) *engine.Loop {
-	loop := newImplementerLoop(d, spec)
+func freshImplementerLoop(d *Deps, spec AgentSpec, token *workspacelease.Token, t *docs.Task, instructions, priorReport string) *engine.Loop {
+	loop := newImplementerLoop(d, spec, token)
 	var handoff strings.Builder
 	handoff.WriteString("Coordinator revision instructions (authoritative unresolved findings, approach, and required verification):\n")
 	handoff.WriteString(instructions)
@@ -774,12 +877,13 @@ func revisionContextMode(params any) (string, error) {
 	return mode, nil
 }
 
-func newImplementerLoop(d *Deps, spec AgentSpec) *engine.Loop {
+func newImplementerLoop(d *Deps, spec AgentSpec, token *workspacelease.Token) *engine.Loop {
 	reg := tools.New()
 	reg.Add(tools.Worker(&tools.Workspace{
 		Root: d.Workspace, Env: append([]string(nil), d.Env...),
 		WriteRoots: tools.NormalizeRoots(d.WriteRoots), Jobs: d.Jobs,
-		Emitter: d.Emitter.With("implementer"),
+		Emitter: d.Emitter.With("implementer"), Ownership: d.Ownership,
+		MutationToken: token,
 	})...)
 	loop := d.newLoop(spec, sys(implementerSystem, false, d.Workspace), reg, "implementer")
 	loop.ContextLengthHandled = true
@@ -917,8 +1021,9 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 			d.reviewers = nil
 			for _, spec := range specs {
 				reg := tools.New()
-				reg.Add(tools.Reviewer(&tools.Workspace{Root: d.Workspace, Env: append([]string(nil), d.Env...)})...)
 				actor := "reviewer:" + spec.label()
+				reg.Add(tools.Reviewer(&tools.Workspace{Root: d.Workspace, Env: append([]string(nil), d.Env...),
+					Ownership: d.Ownership, MutationToken: d.mutationToken(actor)})...)
 				loop := d.newLoop(spec, inspectSys(reviewerSystemFocused(spec.Focus), d.Workspace), reg, actor)
 				loop.ContextLengthHandled = true
 				if hasDiff {
@@ -1099,8 +1204,9 @@ func freshReviewerHandoff(d *Deps, handoff string) string {
 func freshReviewerLoop(d *Deps, spec AgentSpec, t *docs.Task, handoff string, preloadedDiff reviewDiffBuild) *engine.Loop {
 	hasDiff := len(preloadedDiff.History) > 0
 	reg := tools.New()
-	reg.Add(tools.Reviewer(&tools.Workspace{Root: d.Workspace, Env: append([]string(nil), d.Env...)})...)
 	actor := "reviewer:" + spec.label()
+	reg.Add(tools.Reviewer(&tools.Workspace{Root: d.Workspace, Env: append([]string(nil), d.Env...),
+		Ownership: d.Ownership, MutationToken: d.mutationToken(actor)})...)
 	loop := d.newLoop(spec, inspectSys(reviewerSystemFocused(spec.Focus), d.Workspace), reg, actor)
 	loop.ContextLengthHandled = true
 	if hasDiff {

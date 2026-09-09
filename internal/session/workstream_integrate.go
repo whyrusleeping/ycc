@@ -337,6 +337,24 @@ func (m *Manager) integrationFastPath(id string) integrationOutcome {
 	if !ok || ws.Status != workstream.StatusReady {
 		return integrationOutcome{kind: integrationHandled}
 	}
+	token := m.ownership.NewToken("workstream " + id + " automatic integration")
+	worktreeLease, err := m.ownership.Acquire(ws.WorktreePath, token)
+	if err != nil {
+		m.deferWorkstreamIntegration(ws, fmt.Sprintf("integration deferred: %v", err))
+		return integrationOutcome{kind: integrationHandled}
+	}
+	defer worktreeLease.Release()
+	primary, projectOK := m.projects.Resolve(ws.Project)
+	if !projectOK {
+		m.integrationNeedsAttention(ws, fmt.Sprintf("integration failed: unknown project %q", ws.Project), nil)
+		return integrationOutcome{kind: integrationHandled}
+	}
+	primaryLease, err := m.ownership.Acquire(primary, token)
+	if err != nil {
+		m.deferWorkstreamIntegration(ws, fmt.Sprintf("integration deferred: %v", err))
+		return integrationOutcome{kind: integrationHandled}
+	}
+	defer primaryLease.Release()
 	cfg := m.reg.IntegrationConfig()
 
 	repo, err := m.primaryRepo(ws)

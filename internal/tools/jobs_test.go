@@ -9,6 +9,7 @@ import (
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/jobs"
+	"github.com/whyrusleeping/ycc/internal/workspacelease"
 )
 
 // captureRec collects emitted events for assertions.
@@ -135,6 +136,79 @@ func TestKillJobTool(t *testing.T) {
 	case <-j.Context().Done():
 	default:
 		t.Fatal("job context not cancelled after kill")
+	}
+}
+
+func TestBackgroundShellLeaseSurvivesKillUntilProcessExit(t *testing.T) {
+	root := t.TempDir()
+	ownership := workspacelease.NewService()
+	firstJobs := jobs.NewRegistry()
+	defer firstJobs.KillAll()
+	firstToken := ownership.NewToken("session one implementer")
+	lifetime, err := ownership.Acquire(root, firstToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lifetime.Release()
+	firstWS := &Workspace{
+		Root: root, Jobs: firstJobs, Emitter: event.NewEmitter(&captureRec{}, "coordinator"),
+		Ownership: ownership, MutationToken: firstToken,
+	}
+	first := New()
+	first.Add(Editing(firstWS)...)
+	secondWS := &Workspace{Root: root, Ownership: ownership, MutationToken: ownership.NewToken("session two coordinator")}
+	second := New()
+	second.Add(Editing(secondWS)...)
+
+	// The detached child retains the output pipe after kill_job has killed the
+	// command's process group, keeping cmd.Wait (and therefore the lease) alive.
+	res := dispatch(t, first, "Bash", `{"command":"setsid sh -c 'echo detached; sleep 1' & sleep 30","run_in_background":true}`)
+	if res.IsError {
+		t.Fatalf("start background Bash: %s", res.Content)
+	}
+	readyDeadline := time.Now().Add(time.Second)
+	for {
+		if got := dispatch(t, first, "job_output", `{"job_id":"job_1"}`); strings.Contains(got.Content, "detached") {
+			break
+		}
+		if time.Now().After(readyDeadline) {
+			t.Fatal("detached child did not start")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := dispatch(t, second, "Read", `{"file_path":"."}`); got.IsError {
+		t.Fatalf("read-only tool was blocked: %s", got.Content)
+	}
+	if got := dispatch(t, second, "Write", `{"file_path":"blocked","content":"x"}`); !got.IsError || !strings.Contains(got.Content, "session one") {
+		t.Fatalf("cross-session Write was not refused with owner: %+v", got)
+	}
+	if got := dispatch(t, first, "Write", `{"file_path":"sibling","content":"x"}`); !got.IsError || !strings.Contains(got.Content, "background Bash") {
+		t.Fatalf("worker write overlapped its asynchronous child: %+v", got)
+	}
+	if got := dispatch(t, first, "Bash", `{"command":"touch sibling-bg","run_in_background":true}`); !got.IsError {
+		t.Fatalf("second asynchronous child overlapped first: %+v", got)
+	}
+	dispatch(t, first, "kill_job", `{"job_id":"job_1"}`)
+	// The worker turn may unwind before its asynchronous process; releasing its
+	// lifetime claim must not release the child's retained ownership.
+	lifetime.Release()
+	if got := dispatch(t, second, "Bash", `{"command":"touch too-early"}`); !got.IsError {
+		t.Fatalf("killed-but-not-exited shell released lease early: %+v", got)
+	}
+	if got := dispatch(t, first, "Write", `{"file_path":"same-token-too-early","content":"x"}`); !got.IsError {
+		t.Fatalf("kill status admitted parent before process exit: %+v", got)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		got := dispatch(t, second, "Write", `{"file_path":"after-exit","content":"ok"}`)
+		if !got.IsError {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("lease not released after actual process exit: %s", got.Content)
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
 }
 

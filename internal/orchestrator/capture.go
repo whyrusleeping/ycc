@@ -12,6 +12,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/tools"
+	"github.com/whyrusleeping/ycc/internal/workspacelease"
 )
 
 // CaptureDeps configures the project-scoped quick-add agent. It runs outside the
@@ -26,7 +27,9 @@ type CaptureDeps struct {
 	Thinking  engine.Thinking
 	MaxTok    int
 	// Retry is the capture loop's transient-failure policy; zero uses the engine default.
-	Retry engine.RetryPolicy
+	Retry            engine.RetryPolicy
+	Ownership        *workspacelease.Service
+	CoordinatorToken *workspacelease.Token
 }
 
 // CaptureResult is the outcome of a capture run: either a created task
@@ -127,11 +130,12 @@ func captureCreateTask(d *Deps) *gollama.Tool {
 func RunCapture(ctx context.Context, cd CaptureDeps, rec event.Recorder, description, priorQuestion, priorAnswer string) (CaptureResult, error) {
 	emitter := event.NewEmitter(rec, "capture")
 	ws := &tools.Workspace{Root: cd.Workspace}
-	d := &Deps{Workspace: cd.Workspace, Docs: cd.Docs, Emitter: emitter}
+	d := &Deps{Workspace: cd.Workspace, Docs: cd.Docs, Emitter: emitter,
+		Ownership: cd.Ownership, CoordinatorToken: cd.CoordinatorToken}
 
 	reg := tools.New()
 	reg.Add(tools.ReadOnly(ws)...)
-	reg.Add(listBacklog(d), getTask(d), captureCreateTask(d), captureClarify())
+	reg.Add(listBacklog(d), getTask(d), coordinatorMutation(d, captureCreateTask(d)), captureClarify())
 
 	loop := &engine.Loop{
 		Client:    cd.Client,

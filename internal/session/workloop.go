@@ -563,7 +563,7 @@ func (wl *workLoop) accumulate(rec loopSessRec, breach bool) {
 // and the final backlog, marks the loop finished, and — when at least one session
 // ran — pushes the completion digest via the daemon notifier (`digest` kind).
 func (wl *workLoop) finish(outcome string, final []*docs.Task) {
-	final = hydrateBlockedBodies(docs.NewStore(wl.workspace), final)
+	final = hydrateBlockedBodies(wl.m.backlogStore(wl.workspace), final)
 	// Serialize the final write and keep state locked until its persistence attempt
 	// completes. Otherwise
 	// StartWorkLoop could observe "finished", install a new loop, and have that new

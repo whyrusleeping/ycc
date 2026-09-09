@@ -1,6 +1,7 @@
 package docs
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +29,32 @@ func writeRawTask(t *testing.T, ws, name, id, title, created string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func TestOrdinaryReadsDoNotAcquireRepairLease(t *testing.T) {
+	ws := t.TempDir()
+	store := NewStore(ws)
+	task, err := store.Create("one task", "", 3, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	store.SetRepairLease(func() (func(), error) {
+		calls++
+		return nil, errors.New("owned")
+	})
+	if _, err := store.ListMetadata(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.List(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Get(task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 {
+		t.Fatalf("ordinary reads attempted %d repair leases", calls)
+	}
 }
 
 func TestListHealsDuplicateIDs(t *testing.T) {

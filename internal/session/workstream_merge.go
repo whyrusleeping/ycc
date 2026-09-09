@@ -77,7 +77,7 @@ func (m *Manager) primaryRepo(ws workstream.Workstream) (*git.Repo, error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown project %q", ws.Project)
 	}
-	return git.Open(primary)
+	return git.OpenExisting(primary)
 }
 
 // workstreamBaseBranch resolves and validates the local branch integration must
@@ -170,7 +170,7 @@ func (m *Manager) WorkstreamCommitCounts(wss []workstream.Workstream) map[string
 		repo, cached := repos[ws.Project]
 		if !cached {
 			if primary, ok := m.projects.Resolve(ws.Project); ok {
-				repo, _ = git.Open(primary)
+				repo, _ = git.OpenExisting(primary)
 			}
 			repos[ws.Project] = repo
 		}
@@ -238,6 +238,21 @@ func (m *Manager) MergeWorkstream(id string, accept bool) (MergeOutcome, error) 
 	if !ws.Status.InFlight() {
 		return MergeOutcome{}, fmt.Errorf("workstream %q is not in flight (status %s)", id, ws.Status)
 	}
+	token := m.ownership.NewToken("workstream " + id + " merge")
+	worktreeLease, err := m.ownership.Acquire(ws.WorktreePath, token)
+	if err != nil {
+		return MergeOutcome{}, fmt.Errorf("merge workstream: %w", err)
+	}
+	defer worktreeLease.Release()
+	primary, ok := m.projects.Resolve(ws.Project)
+	if !ok {
+		return MergeOutcome{}, fmt.Errorf("unknown project %q", ws.Project)
+	}
+	primaryLease, err := m.ownership.Acquire(primary, token)
+	if err != nil {
+		return MergeOutcome{}, fmt.Errorf("merge workstream: %w", err)
+	}
+	defer primaryLease.Release()
 	repo, err := m.primaryRepo(ws)
 	if err != nil {
 		return MergeOutcome{}, err
@@ -449,6 +464,21 @@ func (m *Manager) DiscardWorkstream(id string) error {
 	}
 	if !ws.Status.InFlight() && ws.Status != workstream.StatusStale {
 		return fmt.Errorf("workstream %q cannot be discarded (status %s)", id, ws.Status)
+	}
+	token := m.ownership.NewToken("workstream " + id + " discard")
+	if primary, projectOK := m.projects.Resolve(ws.Project); projectOK {
+		primaryLease, err := m.ownership.Acquire(primary, token)
+		if err != nil {
+			return fmt.Errorf("discard workstream: %w", err)
+		}
+		defer primaryLease.Release()
+	}
+	if _, statErr := os.Stat(ws.WorktreePath); statErr == nil {
+		worktreeLease, acquireErr := m.ownership.Acquire(ws.WorktreePath, token)
+		if acquireErr != nil {
+			return fmt.Errorf("discard workstream: %w", acquireErr)
+		}
+		defer worktreeLease.Release()
 	}
 	m.emitWorkstreamEvent(ws, event.WorkstreamDiscarded, map[string]any{
 		"workstream": ws.ID,

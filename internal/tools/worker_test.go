@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -13,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/whyrusleeping/gollama"
+	"github.com/whyrusleeping/ycc/internal/workspacelease"
 )
 
 func TestGetIntExported(t *testing.T) {
@@ -44,6 +46,64 @@ func workerReg(root string) *Registry {
 	reg := New()
 	reg.Add(Worker(&Workspace{Root: root})...)
 	return reg
+}
+
+func TestFileToolsHonorDelegatedMutationScope(t *testing.T) {
+	root := t.TempDir()
+	ownership := workspacelease.NewService()
+	workerToken := ownership.NewToken("session one implementer")
+	lifetime, err := ownership.Acquire(root, workerToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := New()
+	worker.Add(Worker(&Workspace{Root: root, Ownership: ownership, MutationToken: workerToken})...)
+	coordinator := New()
+	coordinator.Add(Worker(&Workspace{Root: root, Ownership: ownership, MutationToken: ownership.NewToken("session two coordinator")})...)
+
+	if got := dispatch(t, worker, "Write", `{"file_path":"owned","content":"worker"}`); got.IsError {
+		t.Fatalf("worker could not reenter its own lease: %s", got.Content)
+	}
+	if got := dispatch(t, coordinator, "Edit", `{"file_path":"owned","old_string":"worker","new_string":"other"}`); !got.IsError || !strings.Contains(got.Content, "session one implementer") {
+		t.Fatalf("file tool did not identify delegated owner: %+v", got)
+	}
+	lifetime.Release()
+	if got := dispatch(t, coordinator, "Edit", `{"file_path":"owned","old_string":"worker","new_string":"other"}`); got.IsError {
+		t.Fatalf("file tool remained blocked after worker termination: %s", got.Content)
+	}
+}
+
+func TestFileToolsLeaseDestinationInExtraWriteRoot(t *testing.T) {
+	primary := t.TempDir()
+	extra := t.TempDir()
+	if out, err := exec.Command("git", "-C", extra, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	ownership := workspacelease.NewService()
+	owner := ownership.NewToken("session two coordinator")
+	lifetime, err := ownership.Acquire(extra, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lifetime.Release()
+
+	alias := filepath.Join(primary, "external")
+	if err := os.Symlink(extra, alias); err != nil {
+		t.Fatal(err)
+	}
+	first := New()
+	first.Add(Worker(&Workspace{
+		Root: primary, WriteRoots: []string{extra}, Ownership: ownership,
+		MutationToken: ownership.NewToken("session one coordinator"),
+	})...)
+	destination := filepath.Join(alias, "new", "file.txt")
+	got := dispatch(t, first, "Write", fmt.Sprintf(`{"file_path":%q,"content":"wrong"}`, destination))
+	if !got.IsError || !strings.Contains(got.Content, owner.Owner()) {
+		t.Fatalf("extra-root Write did not honor destination owner: %+v", got)
+	}
+	if _, err := os.Stat(destination); !os.IsNotExist(err) {
+		t.Fatalf("refused destination was written: %v", err)
+	}
 }
 
 func TestWriteReadEdit(t *testing.T) {

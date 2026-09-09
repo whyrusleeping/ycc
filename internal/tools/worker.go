@@ -21,6 +21,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/jobs"
 	"github.com/whyrusleeping/ycc/internal/sandbox"
+	"github.com/whyrusleeping/ycc/internal/workspacelease"
 )
 
 const (
@@ -483,6 +484,11 @@ func writeFile(ws *Workspace) *gollama.Tool {
 			if err != nil {
 				return errResult("Write: %v", err), nil
 			}
+			lease, err := ws.acquirePathMutation(abs)
+			if err != nil {
+				return errResult("Write: %v", err), nil
+			}
+			defer lease.Release()
 			if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 				return errResult("Write: %v", err), nil
 			}
@@ -525,6 +531,11 @@ func editFile(ws *Workspace) *gollama.Tool {
 			if err != nil {
 				return errResult("Edit: %v", err), nil
 			}
+			lease, err := ws.acquirePathMutation(abs)
+			if err != nil {
+				return errResult("Edit: %v", err), nil
+			}
+			defer lease.Release()
 			data, err := os.ReadFile(abs)
 			if err != nil {
 				return errResult("Edit: %v", err), nil
@@ -642,7 +653,11 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 				}
 				timeout = time.Duration(timeoutSeconds) * time.Second
 			}
-			job := startBackgroundBash(ws, cmdStr, timeout)
+			lease, err := ws.acquireChildMutation(fmt.Sprintf("%s background Bash %q", ws.MutationToken.Owner(), cmdStr))
+			if err != nil {
+				return errResult("bash: %v", err), nil
+			}
+			job := startBackgroundBash(ws, cmdStr, timeout, lease)
 			if bgAutoDelivered(ws) {
 				return okResult(fmt.Sprintf("started background job %s: %s\nIt runs in the background — do NOT poll it. "+
 					"Its report arrives automatically when it finishes, or call wait([%q]) when you need the result; "+
@@ -659,6 +674,16 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 				return errResult("bash: timeout_s must be between 1 and %d seconds", maxBashTimeoutSeconds), nil
 			}
 			timeout = time.Duration(timeoutSeconds) * time.Second
+		}
+		var lease *workspacelease.Lease
+		// Reviewer Bash is genuinely read-only only when the OS sandbox is available.
+		if !sandboxed || sandbox.Available() == sandbox.None {
+			var err error
+			lease, err = ws.acquireMutation()
+			if err != nil {
+				return errResult("bash: %v", err), nil
+			}
+			defer lease.Release()
 		}
 		cctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
@@ -719,7 +744,7 @@ func bgAutoDelivered(ws *Workspace) bool {
 // until kill_job or session end. A goroutine waits for exit and, if it is the one
 // that finalized the job (i.e. the job was not killed first), emits job_finished
 // exactly once.
-func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration) *jobs.Job {
+func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration, lease *workspacelease.Lease) *jobs.Job {
 	owner := ws.Emitter.Actor()
 	// Unsandboxed background bash may write to the worktree, so it counts as a
 	// mutating job for the single-writer guard: a background
@@ -752,6 +777,7 @@ func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration) *j
 
 	if err := cmd.Start(); err != nil {
 		cancelTimeout()
+		lease.Release()
 		result := "exit: failed to start: " + err.Error()
 		if job.Finish(jobs.Failed, result) {
 			emitJobFinished(ws.Emitter, owner, job)
@@ -760,6 +786,7 @@ func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration) *j
 	}
 	go func() {
 		defer cancelTimeout()
+		defer lease.Release()
 		err := cmd.Wait()
 		status := jobs.Done
 		exitInfo := "exit 0"

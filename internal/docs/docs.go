@@ -89,6 +89,10 @@ type Store struct {
 	// idSource, when set by a daemon-owned session manager, reserves ids from a
 	// per-project allocator rather than scanning this Store's current tree.
 	idSource func() (string, error)
+	// repairLease is a non-blocking daemon ownership hook used only after a scan
+	// discovers duplicate IDs. Ordinary reads never call it. When acquisition is
+	// refused, the read returns the raw tasks and leaves repair for a later read.
+	repairLease func() (release func(), err error)
 }
 
 // NewStore returns a Store for the backlog under workspaceRoot.
@@ -104,6 +108,28 @@ func (s *Store) Dir() string { return s.dir }
 // Create. Stores without an id source retain the daemon-less scan fallback.
 // Configure it before using the Store.
 func (s *Store) SetIDSource(fn func() (string, error)) { s.idSource = fn }
+
+// SetRepairLease configures the daemon ownership hook for exceptional duplicate
+// repair. Stores without a hook retain daemon-less automatic self-healing.
+// Configure it before using the Store.
+func (s *Store) SetRepairLease(fn func() (release func(), err error)) { s.repairLease = fn }
+
+// beginRepair returns a release function when duplicate repair may proceed.
+// Acquisition failure is deliberately best-effort: apparent read methods remain
+// successful and non-mutating while another execution owns the worktree.
+func (s *Store) beginRepair() (func(), bool) {
+	if s.repairLease == nil {
+		return func() {}, true
+	}
+	release, err := s.repairLease()
+	if err != nil {
+		return nil, false
+	}
+	if release == nil {
+		release = func() {}
+	}
+	return release, true
+}
 
 // List returns all tasks, including their bodies, sorted by id. Files without
 // YAML frontmatter are skipped. Summary and dependency callers should prefer
@@ -131,8 +157,15 @@ func (s *Store) listMetadataLocked() ([]*Task, error) {
 	if !hasDuplicateIDs(tasks) {
 		return tasks, nil
 	}
-	// Duplicate repair rewrites a claimant and records a breadcrumb, so load
-	// bodies only on this exceptional mutation path.
+	// Duplicate repair rewrites a claimant and records a breadcrumb, so acquire
+	// daemon ownership and load bodies only on this exceptional path. Re-scan
+	// after acquisition because an unrestricted writer may have changed files
+	// between the detecting scan and the lease claim.
+	release, ok := s.beginRepair()
+	if !ok {
+		return tasks, nil
+	}
+	defer release()
 	full, err := s.scanLocked()
 	if err != nil {
 		return nil, err
@@ -156,6 +189,16 @@ func (s *Store) listLocked() ([]*Task, error) {
 	}
 	if !hasDuplicateIDs(tasks) {
 		return tasks, nil
+	}
+	release, ok := s.beginRepair()
+	if !ok {
+		return tasks, nil
+	}
+	defer release()
+	// Re-scan after ownership acquisition before choosing which claimant moves.
+	tasks, err = s.scanLocked()
+	if err != nil {
+		return nil, err
 	}
 	if _, err := s.dedupeLocked(tasks); err != nil {
 		return tasks, nil
