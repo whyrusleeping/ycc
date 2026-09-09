@@ -67,6 +67,7 @@ type Activity struct {
 // Info is a deterministic list_jobs snapshot.
 type Info struct {
 	ID, Kind, Label, Owner string
+	Purpose, Delivery      string // set when a child explicitly hands the job to its parent
 	Status                 Status
 	Mutates                bool
 	Started, Finished      time.Time
@@ -85,24 +86,42 @@ type Output struct {
 // Restored describes durable job state reconstructed from the event log.
 type Restored struct {
 	ID, Kind, Label, Owner string
+	Purpose, Delivery      string
 	Status                 Status
 	Result                 string
 	Mutates, Notified      bool
 	Started, Finished      time.Time
 }
 
+// Handoff describes a running child job explicitly transferred to its parent.
+// Delivery names the completion-notification contract; retained result and output
+// evidence remain repeatable independently of that notification.
+type Handoff struct {
+	ID, Purpose, Owner, Delivery string
+	Mutates                      bool
+}
+
+// RetainRequest is an explicit child request to leave a running watcher under
+// parent ownership instead of applying default cleanup.
+type RetainRequest struct{ ID, Purpose string }
+
 // Job is one unit of background work.
 type Job struct {
-	id      string
-	kind    string
-	label   string
-	owner   string // actor that started it (checkpoint drain filters on this)
-	mutates bool   // writes to the worktree (single-writer guard)
+	id       string
+	kind     string
+	label    string
+	owner    string // actor responsible for completion delivery
+	purpose  string // explicit parent handoff purpose
+	delivery string // explicit parent handoff delivery contract
+	mutates  bool   // writes to the worktree (single-writer guard)
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	done   chan struct{}
-	once   sync.Once
+	ctx           context.Context
+	cancel        context.CancelFunc
+	done          chan struct{} // terminal report is available
+	once          sync.Once
+	executionDone chan struct{} // tracked process/agent has actually stopped
+	executionOnce sync.Once
+	tracked       bool
 
 	mu              sync.Mutex
 	status          Status
@@ -125,8 +144,12 @@ func (j *Job) Kind() string { return j.kind }
 // Label returns the job label (e.g. the command line).
 func (j *Job) Label() string { return j.label }
 
-// Owner returns the actor that started the job.
-func (j *Job) Owner() string { return j.owner }
+// Owner returns the actor responsible for the job's completion delivery.
+func (j *Job) Owner() string {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.owner
+}
 
 // Mutates reports whether the job may write to the worktree. The single-writer
 // guard refuses a background implementer while any mutating job is
@@ -233,8 +256,8 @@ func (j *Job) Info() Info {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	return Info{ID: j.id, Kind: j.kind, Label: j.label, Owner: j.owner,
-		Status: j.status, Mutates: j.mutates, Started: j.started,
-		Finished: j.finished, Activity: j.activity}
+		Purpose: j.purpose, Delivery: j.delivery, Status: j.status, Mutates: j.mutates,
+		Started: j.started, Finished: j.finished, Activity: j.activity}
 }
 
 // Tail returns the last n lines of the buffered output.
@@ -259,6 +282,53 @@ func (j *Job) Tail(n int) string {
 // (e.g. it was killed first) — this is what makes job_finished fire once.
 func (j *Job) Finish(status Status, result string) bool {
 	return j.finalize(status, result)
+}
+
+// ExecutionComplete marks a tracked process/agent as actually stopped. A kill
+// makes its report terminal immediately, but lifecycle cleanup and shutdown wait
+// for this separate boundary before releasing execution ownership.
+func (j *Job) ExecutionComplete() {
+	if j.tracked {
+		j.executionOnce.Do(func() { close(j.executionDone) })
+	}
+}
+
+// WaitExecution waits until a tracked process/agent has actually stopped. Jobs
+// created through Start/StartMutating have no separately tracked execution and
+// return immediately.
+func (j *Job) WaitExecution() {
+	if j.tracked {
+		<-j.executionDone
+	}
+}
+
+func (j *Job) executionRunning() bool {
+	if !j.tracked {
+		return j.Status() == Running
+	}
+	select {
+	case <-j.executionDone:
+		return false
+	default:
+		return true
+	}
+}
+
+const ParentCheckpointDelivery = "parent checkpoint exactly once unless wait claims it first; retained result remains repeatable"
+
+// Handoff transfers a still-running job's delivery ownership to parent. It is
+// atomic with respect to completion: false means the terminal report must be
+// accounted by the child instead.
+func (j *Job) Handoff(parent, purpose string) (Handoff, bool) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.status != Running {
+		return Handoff{}, false
+	}
+	j.owner = parent
+	j.purpose = purpose
+	j.delivery = ParentCheckpointDelivery
+	return Handoff{ID: j.id, Purpose: purpose, Owner: parent, Delivery: j.delivery, Mutates: j.mutates}, true
 }
 
 // SetTerminationHint records bounded completion/retrieval guidance that should
@@ -342,12 +412,13 @@ func (j *Job) reportLocked() Report {
 // the registry's root context, which KillAll cancels so session end leaves no
 // orphan processes.
 type Registry struct {
-	mu     sync.Mutex
-	seq    int
-	jobs   map[string]*Job
-	order  []string
-	ctx    context.Context
-	cancel context.CancelFunc
+	mu      sync.Mutex
+	seq     int
+	jobs    map[string]*Job
+	order   []string
+	ctx     context.Context
+	cancel  context.CancelFunc
+	closing bool // registration barrier: KillAll has begun snapshotting runners
 }
 
 // NewRegistry returns an empty registry with a fresh root context.
@@ -375,7 +446,8 @@ func NewRestored(entries []Restored) *Registry {
 		}
 		ctx, cancel := context.WithCancel(r.ctx)
 		j := &Job{id: e.ID, kind: e.Kind, label: e.Label, owner: e.Owner,
-			mutates: e.Mutates, ctx: ctx, cancel: cancel, done: make(chan struct{}),
+			purpose: e.Purpose, delivery: e.Delivery, mutates: e.Mutates,
+			ctx: ctx, cancel: cancel, done: make(chan struct{}),
 			status: e.Status, result: e.Result, notified: e.Notified,
 			started: started, finished: finished}
 		if e.Kind == "agent" {
@@ -399,23 +471,40 @@ func NewRestored(entries []Restored) *Registry {
 	return r
 }
 
-// Start allocates a new job id, registers a running job whose context derives
-// from the registry root, and returns it.
+// Start allocates a new job id and registers a running untracked job whose
+// context derives from the registry root. It returns nil once shutdown begins.
 func (r *Registry) Start(kind, label, owner string) *Job {
-	return r.start(kind, label, owner, false)
+	return r.start(kind, label, owner, false, false)
+}
+
+// TryStartTracked registers joined execution unless shutdown has begun. Its
+// runner must call ExecutionComplete after all lifetime leases have been
+// released. A successful concurrent registration is guaranteed to be included
+// in the shutdown snapshot, cancelled, and joined.
+func (r *Registry) TryStartTracked(kind, label, owner string) (*Job, bool) {
+	job := r.start(kind, label, owner, false, true)
+	return job, job != nil
 }
 
 // StartMutating is like Start but marks the job as writing to the worktree, so
 // the single-writer guard can refuse a second mutating job in the
-// same tree. Used for background implementers and (conservatively) unsandboxed
-// background bash.
+// same tree. Used by synthetic/restored work without a separately joined runner.
 func (r *Registry) StartMutating(kind, label, owner string) *Job {
-	return r.start(kind, label, owner, true)
+	return r.start(kind, label, owner, true, false)
 }
 
-func (r *Registry) start(kind, label, owner string, mutates bool) *Job {
+// TryStartMutatingTracked is the joined mutating variant of TryStartTracked.
+func (r *Registry) TryStartMutatingTracked(kind, label, owner string) (*Job, bool) {
+	job := r.start(kind, label, owner, true, true)
+	return job, job != nil
+}
+
+func (r *Registry) start(kind, label, owner string, mutates, tracked bool) *Job {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.closing {
+		return nil
+	}
 	r.seq++
 	id := fmt.Sprintf("job_%d", r.seq)
 	ctx, cancel := context.WithCancel(r.ctx)
@@ -423,6 +512,7 @@ func (r *Registry) start(kind, label, owner string, mutates bool) *Job {
 	j := &Job{
 		id: id, kind: kind, label: label, owner: owner, mutates: mutates,
 		ctx: ctx, cancel: cancel, done: make(chan struct{}),
+		executionDone: make(chan struct{}), tracked: tracked,
 		status: Running, started: started,
 	}
 	if kind == "agent" {
@@ -441,7 +531,7 @@ func (r *Registry) LiveMutating() *Job {
 	defer r.mu.Unlock()
 	for _, id := range r.order {
 		j := r.jobs[id]
-		if j.mutates && j.Status() == Running {
+		if j.mutates && j.executionRunning() {
 			return j
 		}
 	}
@@ -463,7 +553,7 @@ func (r *Registry) List(owner string, allOwners bool) []Info {
 	js := make([]*Job, 0, len(r.order))
 	for _, id := range r.order {
 		j := r.jobs[id]
-		if allOwners || j.owner == owner {
+		if allOwners || j.Owner() == owner {
 			js = append(js, j)
 		}
 	}
@@ -591,7 +681,7 @@ func (r *Registry) DrainFinished(owner string) []Report {
 	r.mu.Unlock()
 	var out []Report
 	for _, j := range js {
-		if j.owner != owner {
+		if j.Owner() != owner {
 			continue
 		}
 		if j.claimNotification() {
@@ -601,11 +691,58 @@ func (r *Registry) DrainFinished(owner string) []Report {
 	return out
 }
 
-// KillAll cancels the root context (killing every running job's process tree)
-// and finalizes any still-running jobs as Killed. Called on session end so no
-// orphan processes survive.
+// ResolveOwner is the lifecycle boundary for a completing child actor. Running
+// jobs named in retain are transferred atomically to parent with their explicit
+// purpose and delivery contract. Every other running owned job is killed and its
+// tracked execution joined. Newly claimed terminal reports are returned for
+// inclusion in the child's result; retained evidence remains repeatable.
+func (r *Registry) ResolveOwner(owner, parent string, retain []RetainRequest) (reports []Report, handoffs []Handoff, rejected []string) {
+	r.mu.Lock()
+	js := make([]*Job, 0, len(r.order))
+	byID := make(map[string]*Job, len(r.order))
+	for _, id := range r.order {
+		j := r.jobs[id]
+		js = append(js, j)
+		byID[id] = j
+	}
+	r.mu.Unlock()
+
+	transferred := make(map[string]bool)
+	for _, request := range retain {
+		j, ok := byID[request.ID]
+		if !ok || j.Owner() != owner {
+			rejected = append(rejected, request.ID+": not owned by completing agent")
+			continue
+		}
+		if handoff, ok := j.Handoff(parent, request.Purpose); ok {
+			handoffs = append(handoffs, handoff)
+			transferred[request.ID] = true
+		}
+	}
+	for _, j := range js {
+		if transferred[j.ID()] || j.Owner() != owner {
+			continue
+		}
+		if j.Status() == Running {
+			j.Kill()
+		}
+		j.WaitExecution()
+		if j.claimNotification() {
+			reports = append(reports, j.Report())
+		}
+	}
+	return reports, handoffs, rejected
+}
+
+// KillAll cancels the root context, finalizes every running report as Killed,
+// and joins tracked processes/agents. It does not return while mutation lifetime
+// ownership can still be held by a terminating job.
 func (r *Registry) KillAll() {
 	r.mu.Lock()
+	// Linearize shutdown before taking the snapshot. A tracked start either
+	// registered before this point and is included below, or observes closing and
+	// declines without launching a runner.
+	r.closing = true
 	r.cancel()
 	js := make([]*Job, 0, len(r.jobs))
 	for _, id := range r.order {
@@ -614,6 +751,9 @@ func (r *Registry) KillAll() {
 	r.mu.Unlock()
 	for _, j := range js {
 		j.finalize(Killed, "killed: session ended")
+	}
+	for _, j := range js {
+		j.WaitExecution()
 	}
 }
 

@@ -565,7 +565,10 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 				// context (so kill_job / session-end KillAll cancel it). The final
 				// report is the SAME text the synchronous path returns, delivered
 				// exactly once via wait or checkpoint injection.
-				job := d.Jobs.StartMutating("agent", "implementer "+id, d.Emitter.Actor())
+				job, ok := d.Jobs.TryStartMutatingTracked("agent", "implementer "+id, d.Emitter.Actor())
+				if !ok {
+					return tools.ErrResult("spawn_implementer: session is shutting down; background agent was not started"), nil
+				}
 				trackAgentJob(loop, job)
 				d.mu.Lock()
 				d.implJob = job
@@ -584,6 +587,7 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 					}
 					lease.Release()
 					d.finishImplementerExecution(token, loop)
+					job.ExecutionComplete()
 				}()
 				return tools.OkResult(fmt.Sprintf("started background job %s: implementer on task %s. "+
 					"It runs in the background — do NOT poll it. Its report arrives automatically when it "+
@@ -625,6 +629,7 @@ func (d *Deps) finishImplementerExecution(token *workspacelease.Token, loop *eng
 // a background goroutine, so both delivery paths carry the same report text.
 func runImplementer(ctx context.Context, d *Deps, loop *engine.Loop, token *workspacelease.Token, id, label, before, jobID string) *gollama.ToolResult {
 	res, err := loop.Run(ctx)
+	lifecycle := resolveSubagentJobs(d, "implementer", res)
 	contextTokens := loop.ContextTokensEstimate()
 	fin := map[string]any{"role": "implementer", "context_mode": "fresh", "round": 1, "context_tokens_est": contextTokens}
 	if jobID != "" {
@@ -633,25 +638,88 @@ func runImplementer(ctx context.Context, d *Deps, loop *engine.Loop, token *work
 	if err != nil {
 		fin["error"] = err.Error()
 		d.Emitter.Emit(event.SubagentFinished, fin)
-		return tools.ErrResult("implementer failed: %v\n\nSUBAGENT CONTEXT: mode=fresh round=1 approx_tokens=%d. If this was a context-length failure, retry with send_to_implementer context_mode='fresh'.", err, contextTokens)
+		return tools.ErrResult("implementer failed: %v%s\n\nSUBAGENT CONTEXT: mode=fresh round=1 approx_tokens=%d. If this was a context-length failure, retry with send_to_implementer context_mode='fresh'.", err, lifecycle.note, contextTokens)
+	}
+	fullReport := res.Report + lifecycle.note
+	if lifecycle.mutatingHandoff {
+		fin["background_handoffs"] = len(lifecycle.handoffs)
+		if res.Blocked {
+			fin["blocked"] = true
+		}
+		d.mu.Lock()
+		d.implReport = truncate(fullReport, 4096)
+		d.mu.Unlock()
+		d.Emitter.Emit(event.SubagentFinished, fin)
+		return tools.OkResult("IMPLEMENTER REPORT (changeset deferred while handed-off mutation remains active)\n\n" + fullReport +
+			"\n\nWait for or stop the handed-off job before reviewing, revising, or starting subsequent mutating work.")
 	}
 	finalizeLease, err := d.acquireMutation(token)
 	if err != nil {
 		fin["error"] = err.Error()
 		d.Emitter.Emit(event.SubagentFinished, fin)
-		return tools.ErrResult("implementer cannot finalize while asynchronous mutation is still active: %v", err)
+		return tools.ErrResult("implementer cannot finalize while asynchronous mutation is still active: %v%s", err, lifecycle.note)
 	}
 	defer finalizeLease.Release()
 	if res.Blocked {
 		fin["blocked"] = true
 	}
 	d.mu.Lock()
-	d.implReport = truncate(res.Report, 4096)
+	d.implReport = truncate(fullReport, 4096)
 	d.mu.Unlock()
 	d.Emitter.Emit(event.SubagentFinished, fin)
-	out := implementerOutcome(d, id, label, before, res)
+	out := implementerOutcome(d, id, label, before, res, lifecycle.note)
 	out.Content += subagentContextNote("fresh", 1, contextTokens, 0)
 	return out
+}
+
+type subagentJobLifecycle struct {
+	note            string
+	handoffs        []jobs.Handoff
+	mutatingHandoff bool
+}
+
+// resolveSubagentJobs is the completion boundary for an agent that can launch
+// child background work. Default cleanup kills and joins running children before
+// the agent's mutation lifetime can be released. A finish control may explicitly
+// transfer named watchers to the parent; their completion then follows the
+// parent's checkpoint/wait contract.
+func resolveSubagentJobs(d *Deps, owner string, res *engine.Result) subagentJobLifecycle {
+	if d.Jobs == nil {
+		return subagentJobLifecycle{}
+	}
+	var retain []jobs.RetainRequest
+	if res != nil {
+		retain = res.HandoffJobs
+	}
+	reports, handoffs, rejected := d.Jobs.ResolveOwner(owner, d.Emitter.Actor(), retain)
+	var b strings.Builder
+	if len(reports) > 0 {
+		b.WriteString("\n\nBACKGROUND JOBS RESOLVED BEFORE SUBAGENT EXIT:")
+		for _, report := range reports {
+			d.Emitter.EmitAs(owner, event.JobClaimed, map[string]any{
+				"id": report.ID, "kind": report.Kind, "label": report.Label,
+				"status": string(report.Status), "result": report.Result, "reason": "subagent_exit",
+			})
+			b.WriteString("\n\n")
+			b.WriteString(tools.FormatJobReport(report))
+		}
+	}
+	for _, handoff := range handoffs {
+		d.Emitter.Emit(event.JobHandedOff, map[string]any{
+			"id": handoff.ID, "owner": handoff.Owner, "purpose": handoff.Purpose,
+			"delivery": handoff.Delivery, "mutates": handoff.Mutates,
+		})
+		fmt.Fprintf(&b, "\n\nBACKGROUND JOB HANDOFF: id=%s purpose=%q owner=%q delivery=%q mutates=%t",
+			handoff.ID, handoff.Purpose, handoff.Owner, handoff.Delivery, handoff.Mutates)
+	}
+	if len(rejected) > 0 {
+		b.WriteString("\n\nREJECTED BACKGROUND JOB HANDOFFS (jobs received default cleanup): " + strings.Join(rejected, "; "))
+	}
+	lifecycle := subagentJobLifecycle{note: b.String(), handoffs: handoffs}
+	for _, handoff := range handoffs {
+		lifecycle.mutatingHandoff = lifecycle.mutatingHandoff || handoff.Mutates
+	}
+	return lifecycle
 }
 
 func trackAgentJob(loop *engine.Loop, job *jobs.Job) {
@@ -789,13 +857,29 @@ func sendToImplementer(d *Deps) *gollama.Tool {
 					res, runErr = loop.Run(ctx)
 				}
 			}
+			lifecycle := resolveSubagentJobs(d, "implementer", res)
 			contextTokens := loop.ContextTokensEstimate()
 			if runErr != nil {
 				finishData := map[string]any{"role": "implementer", "error": runErr.Error(),
 					"context_mode": mode, "round": round, "context_tokens_est": contextTokens}
 				addRolloverFields(finishData, rolloverReason, rolloverOldTokens, newTokens)
 				d.Emitter.Emit(event.SubagentFinished, finishData)
-				return tools.ErrResult("implementer failed: %v\n\nSUBAGENT CONTEXT: mode=%s round=%d approx_tokens=%d", runErr, mode, round, contextTokens), nil
+				return tools.ErrResult("implementer failed: %v%s\n\nSUBAGENT CONTEXT: mode=%s round=%d approx_tokens=%d", runErr, lifecycle.note, mode, round, contextTokens), nil
+			}
+			fullReport := res.Report + lifecycle.note
+			if lifecycle.mutatingHandoff {
+				finishData := map[string]any{"role": "implementer", "context_mode": mode, "round": round,
+					"context_tokens_est": contextTokens, "background_handoffs": len(lifecycle.handoffs)}
+				addRolloverFields(finishData, rolloverReason, rolloverOldTokens, newTokens)
+				if res.Blocked {
+					finishData["blocked"] = true
+				}
+				d.mu.Lock()
+				d.implReport = truncate(fullReport, 4096)
+				d.mu.Unlock()
+				d.Emitter.Emit(event.SubagentFinished, finishData)
+				return tools.OkResult("IMPLEMENTER REPORT (changeset deferred while handed-off mutation remains active)\n\n" + fullReport +
+					"\n\nWait for or stop the handed-off job before reviewing, revising, or starting subsequent mutating work."), nil
 			}
 			finalizeLease, finalizeErr := d.acquireMutation(token)
 			if finalizeErr != nil {
@@ -803,7 +887,7 @@ func sendToImplementer(d *Deps) *gollama.Tool {
 					"context_mode": mode, "round": round, "context_tokens_est": contextTokens}
 				addRolloverFields(finishData, rolloverReason, rolloverOldTokens, newTokens)
 				d.Emitter.Emit(event.SubagentFinished, finishData)
-				return tools.ErrResult("implementer cannot finalize while asynchronous mutation is still active: %v", finalizeErr), nil
+				return tools.ErrResult("implementer cannot finalize while asynchronous mutation is still active: %v%s", finalizeErr, lifecycle.note), nil
 			}
 			defer finalizeLease.Release()
 			finishData := map[string]any{"role": "implementer", "context_mode": mode, "round": round,
@@ -813,10 +897,10 @@ func sendToImplementer(d *Deps) *gollama.Tool {
 				finishData["blocked"] = true
 			}
 			d.mu.Lock()
-			d.implReport = truncate(res.Report, 4096)
+			d.implReport = truncate(fullReport, 4096)
 			d.mu.Unlock()
 			d.Emitter.Emit(event.SubagentFinished, finishData)
-			out := implementerOutcome(d, id, "revision", before, res)
+			out := implementerOutcome(d, id, "revision", before, res, lifecycle.note)
 			out.Content += subagentContextNote(mode, round, contextTokens, priorTokens)
 			return out, nil
 		},
@@ -1058,7 +1142,10 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 				}
 				// Reviewers are read-only, so a reviewer job is non-mutating and runs
 				// freely in parallel with anything (no single-writer guard).
-				job := d.Jobs.Start("agent", "reviewers "+id, d.Emitter.Actor())
+				job, ok := d.Jobs.TryStartTracked("agent", "reviewers "+id, d.Emitter.Actor())
+				if !ok {
+					return tools.ErrResult("spawn_reviewers: session is shutting down; background reviewers were not started"), nil
+				}
 				for _, h := range handles {
 					trackAgentJob(h.loop, job)
 				}
@@ -1071,6 +1158,7 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 					if job.Finish(jobs.Done, aggregateReviews(results)) {
 						emitAgentJobFinished(d.Emitter, job)
 					}
+					job.ExecutionComplete()
 				}()
 				return tools.OkResult(fmt.Sprintf("started background job %s: reviewers on task %s. "+
 					"Their verdicts arrive automatically when the review finishes, or call wait([%q]).", job.ID(), id, job.ID())), nil
@@ -1457,7 +1545,8 @@ func runReviewers(ctx context.Context, d *Deps, handles []*reviewerHandle, taskI
 // cut off at the token cap before any tool call (res.Truncated); the engine
 // already turns that into a Run error, and this is the backstop for any other
 // way the implementer yields without doing work.
-func implementerOutcome(d *Deps, id, label, before string, res *engine.Result) *gollama.ToolResult {
+func implementerOutcome(d *Deps, id, label, before string, res *engine.Result, lifecycleNote string) *gollama.ToolResult {
+	fullReport := res.Report + lifecycleNote
 	// A structured blocked escalation is handled FIRST — before the no-progress
 	// guard, which must not fire for a legitimate blocked report even when there
 	// are no workspace changes. The reason lands in the work log; the coordinator
@@ -1475,6 +1564,7 @@ func implementerOutcome(d *Deps, id, label, before string, res *engine.Result) *
 		}
 		out := "IMPLEMENTER BLOCKED (not finished): it cannot proceed without a decision.\n\nREASON: " + reason +
 			"\n\n" + changesetHandoff(changes)
+		out += lifecycleNote
 		out += "\n\nDo not push it to guess. If this is an ordinary judgement call, decide it yourself and " +
 			"send_to_implementer with the answer (it keeps its context). If the user is genuinely needed, ask_user as " +
 			"and relay the answer via send_to_implementer. If no answer is available, " +
@@ -1493,14 +1583,15 @@ func implementerOutcome(d *Deps, id, label, before string, res *engine.Result) *
 			msg += " Its turn was cut off at the output token limit before it could act."
 		}
 		msg += " Re-spawn it with a tighter, concrete plan (name the exact files and edits) or split the task into smaller steps."
+		msg += lifecycleNote
 		return tools.ErrResult("%s", msg)
 	}
-	d.Docs.AppendWorkLog(id, label+": "+oneLine(res.Report))
+	d.Docs.AppendWorkLog(id, label+": "+oneLine(fullReport))
 	changes, err = d.changeset() // include the work-log update in the evidence snapshot
 	if err != nil {
 		return tools.ErrResult("implementer report recorded, but changeset inspection failed: %v", err)
 	}
-	return tools.OkResult(reportWithDiff(changes, res.Report))
+	return tools.OkResult(reportWithDiff(changes, fullReport))
 }
 
 func reportWithDiff(changes *git.Changeset, report string) string {

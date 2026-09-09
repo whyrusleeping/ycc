@@ -149,6 +149,28 @@ func TestRestoreJobsRetainsResultsOwnersAndReservesIDs(t *testing.T) {
 	}
 }
 
+func TestRestoreJobsPreservesExplicitHandoffOwnerAndPolicy(t *testing.T) {
+	start := time.Now().Add(-time.Second)
+	events := []event.Event{
+		{Seq: 1, TS: start, Actor: "implementer", Type: event.JobStarted,
+			Data: map[string]any{"id": "job_1", "kind": "bash", "label": "watch", "mutates": true}},
+		{Seq: 2, TS: start.Add(time.Millisecond), Actor: "coordinator", Type: event.JobHandedOff,
+			Data: map[string]any{"id": "job_1", "owner": "coordinator", "purpose": "watch deploy", "delivery": jobs.ParentCheckpointDelivery}},
+		{Seq: 3, TS: start.Add(2 * time.Millisecond), Actor: "implementer", Type: event.JobFinished,
+			Data: map[string]any{"id": "job_1", "kind": "bash", "status": "done", "tail": "exit 0"}},
+	}
+	r := RestoreJobs(events)
+	defer r.KillAll()
+	info := r.List("coordinator", false)
+	if len(info) != 1 || info[0].Owner != "coordinator" || info[0].Purpose != "watch deploy" ||
+		info[0].Delivery != jobs.ParentCheckpointDelivery {
+		t.Fatalf("restored handoff = %+v", info)
+	}
+	if reports := r.DrainFinished("coordinator"); len(reports) != 1 || reports[0].ID != "job_1" {
+		t.Fatalf("restored handoff was not delivered to parent: %+v", reports)
+	}
+}
+
 func TestRestoreTerminalClaimOrNotificationWithoutJobFinished(t *testing.T) {
 	start := time.Now().Add(-time.Second)
 	for _, tc := range []struct {

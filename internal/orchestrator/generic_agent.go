@@ -111,10 +111,15 @@ func spawnAgent(d *Deps) *gollama.Tool {
 			loop := d.newLoop(spec, system, reg, actor)
 			loop.Seed(prompt)
 			var job *jobs.Job
+			var started bool
 			if !mutates {
-				job = d.Jobs.Start("agent", agentID+" turn 1 ("+model+")", d.Emitter.Actor())
+				job, started = d.Jobs.TryStartTracked("agent", agentID+" turn 1 ("+model+")", d.Emitter.Actor())
 			} else {
-				job = d.Jobs.StartMutating("agent", agentID+" turn 1 ("+model+")", d.Emitter.Actor())
+				job, started = d.Jobs.TryStartMutatingTracked("agent", agentID+" turn 1 ("+model+")", d.Emitter.Actor())
+			}
+			if !started {
+				lease.Release()
+				return tools.ErrResult("spawn_agent: session is shutting down; agent was not started"), nil
 			}
 			trackAgentJob(loop, job)
 			h := &genericAgentHandle{id: agentID, spec: spec, loop: loop, job: job, round: 1, mutates: mutates, token: token, running: true}
@@ -189,19 +194,25 @@ func sendToAgent(d *Deps) *gollama.Tool {
 					return tools.ErrResult("send_to_agent: %v", acquireErr), nil
 				}
 			}
-			h.round++
-			h.loop.Post(prompt)
-			label := fmt.Sprintf("%s turn %d (%s)", agentID, h.round, h.spec.Name)
+			round := h.round + 1
+			label := fmt.Sprintf("%s turn %d (%s)", agentID, round, h.spec.Name)
 			var job *jobs.Job
+			var started bool
 			if h.mutates {
-				job = d.Jobs.StartMutating("agent", label, d.Emitter.Actor())
+				job, started = d.Jobs.TryStartMutatingTracked("agent", label, d.Emitter.Actor())
 			} else {
-				job = d.Jobs.Start("agent", label, d.Emitter.Actor())
+				job, started = d.Jobs.TryStartTracked("agent", label, d.Emitter.Actor())
 			}
+			if !started {
+				lease.Release()
+				d.mu.Unlock()
+				return tools.ErrResult("send_to_agent: session is shutting down; follow-up was not started"), nil
+			}
+			h.round = round
+			h.loop.Post(prompt)
 			trackAgentJob(h.loop, job)
 			h.job = job
 			h.running = true
-			round := h.round
 			d.mu.Unlock()
 
 			startGenericAgentJob(d, h, job, lease)
@@ -221,6 +232,7 @@ func startGenericAgentJob(d *Deps, h *genericAgentHandle, job *jobs.Job, lease *
 		"context_mode": map[bool]string{true: "fresh", false: "retain"}[round == 1], "round": round,
 	})
 	go func() {
+		defer job.ExecutionComplete()
 		defer lease.Release()
 		res, err := h.loop.Run(job.Context())
 		finish := map[string]any{

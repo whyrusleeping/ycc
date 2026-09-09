@@ -53,6 +53,31 @@ func (r *syncRec) find(t event.Type) (event.Event, bool) {
 // blockingTurner blocks in Turn until release is closed, then returns resp. It
 // keeps a background agent job in the Running state so single-writer-guard and
 // still-running assertions are deterministic.
+type bashThenError struct{ calls int }
+
+func (b *bashThenError) TurnCtx(context.Context, gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+	b.calls++
+	if b.calls == 1 {
+		return call("Bash", `{"command":"sleep 30","run_in_background":true}`), nil
+	}
+	return nil, fmt.Errorf("provider failed")
+}
+
+type bashThenCancel struct {
+	calls   int
+	waiting chan struct{}
+}
+
+func (b *bashThenCancel) TurnCtx(ctx context.Context, _ gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+	b.calls++
+	if b.calls == 1 {
+		return call("Bash", `{"command":"sleep 30","run_in_background":true}`), nil
+	}
+	close(b.waiting)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
 type blockingTurner struct {
 	release chan struct{}
 	resp    *gollama.ResponseMessageGenerate
@@ -415,13 +440,27 @@ func TestSpawnImplementerLeaseRejectsCrossSessionStart(t *testing.T) {
 	if !res.IsError || !strings.Contains(res.Content, "session one coordinator") || !strings.Contains(res.Content, "workstream") {
 		t.Fatalf("cross-session start refusal = %+v", res)
 	}
-	// A kill request makes the session job terminal immediately, but ownership
-	// stays with the agent until its Run actually unwinds.
-	first.Jobs.KillAll()
+	// A kill request makes the session job terminal immediately, but KillAll now
+	// joins the agent and therefore must not return while Run is still unwinding.
+	killed := make(chan struct{})
+	go func() {
+		first.Jobs.KillAll()
+		close(killed)
+	}()
+	select {
+	case <-killed:
+		t.Fatal("KillAll returned before the agent stopped")
+	case <-time.After(20 * time.Millisecond):
+	}
 	if res, _ = spawnImplementer(second).Call(context.Background(), map[string]any{"task_id": "0001", "plan": "too soon", "background": true}); !res.IsError {
 		t.Fatalf("killed-but-running agent released lease early: %+v", res)
 	}
 	close(blocker.release)
+	select {
+	case <-killed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("KillAll did not return after the agent stopped")
+	}
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		res, _ = spawnImplementer(second).Call(context.Background(), map[string]any{"task_id": "0001", "plan": "after exit", "background": true})
@@ -437,50 +476,179 @@ func TestSpawnImplementerLeaseRejectsCrossSessionStart(t *testing.T) {
 	waitJobDone(t, job)
 }
 
-func TestImplementerAsyncChildBlocksKilledJobRevisionUntilExit(t *testing.T) {
+func TestImplementerFinishCleansAndJoinsAsyncChild(t *testing.T) {
 	impl := &scripted{resp: []*gollama.ResponseMessageGenerate{
-		call("Bash", `{"command":"setsid sh -c 'echo detached; sleep 1' & sleep 30","run_in_background":true}`),
+		call("Bash", `{"command":"printf started; sleep 30","run_in_background":true}`),
 		call("finish", `{"report":"started a child"}`),
+		call("finish", `{"report":"follow-up ran"}`),
 	}}
-	d, _ := bgDeps(t, &syncRec{}, impl, nil)
+	rec := &syncRec{}
+	d, _ := bgDeps(t, rec, impl, nil)
 	ownership := workspacelease.NewService()
 	d.Ownership = ownership
 	d.CoordinatorToken = ownership.NewToken("session one coordinator")
 	defer d.Jobs.KillAll()
 
 	res, _ := spawnImplementer(d).Call(context.Background(), map[string]any{"task_id": "0001", "plan": "start child"})
-	if !res.IsError || !strings.Contains(res.Content, "asynchronous mutation") {
-		t.Fatalf("implementer finalized over live child: %+v", res)
+	if res.IsError || !strings.Contains(res.Content, "BACKGROUND JOBS RESOLVED") || !strings.Contains(res.Content, "job_1") {
+		t.Fatalf("implementer did not account for cleaned child: %+v", res)
 	}
 	job, ok := d.Jobs.Get("job_1")
-	if !ok {
-		t.Fatal("implementer background Bash was not registered")
+	if !ok || job.Status() != jobs.Killed {
+		t.Fatalf("implementer background Bash was not killed: %#v", job)
 	}
-	deadline := time.Now().Add(time.Second)
-	for !strings.Contains(job.Tail(20), "detached") {
-		if time.Now().After(deadline) {
-			t.Fatal("detached process did not start")
+	if live := d.Jobs.LiveMutating(); live != nil {
+		t.Fatalf("child execution still owns mutation after finish: %s", live.ID())
+	}
+	if ev, ok := rec.find(event.JobClaimed); !ok || ev.Data["id"] != "job_1" || ev.Data["reason"] != "subagent_exit" {
+		t.Fatalf("subagent cleanup notification claim missing: %+v", ev)
+	}
+	other := ownership.NewToken("session two coordinator")
+	lease, err := ownership.Acquire(d.Workspace, other)
+	if err != nil {
+		t.Fatalf("child ownership not released after joined finish: %v", err)
+	}
+	lease.Release()
+
+	res, _ = sendToImplementer(d).Call(context.Background(), map[string]any{"task_id": "0001", "instructions": "continue"})
+	if res.IsError || !strings.Contains(res.Content, "follow-up ran") {
+		t.Fatalf("retained follow-up after cleanup failed: %+v", res)
+	}
+}
+
+func TestImplementerNoProgressPreservesResolvedChildEvidence(t *testing.T) {
+	t.Run("fresh", func(t *testing.T) {
+		impl := &scripted{resp: []*gollama.ResponseMessageGenerate{
+			call("Bash", `{"command":"true","run_in_background":true}`),
+			text(""),
+		}}
+		d, _ := bgDeps(t, &syncRec{}, impl, nil)
+		defer d.Jobs.KillAll()
+		res, _ := spawnImplementer(d).Call(context.Background(), map[string]any{"task_id": "0001", "plan": "check"})
+		if !res.IsError || !strings.Contains(res.Content, "no changes") ||
+			!strings.Contains(res.Content, "BACKGROUND JOBS RESOLVED") || !strings.Contains(res.Content, "job_1") {
+			t.Fatalf("fresh no-progress result lost lifecycle evidence: %+v", res)
 		}
-		time.Sleep(5 * time.Millisecond)
+	})
+
+	t.Run("retained follow-up", func(t *testing.T) {
+		impl := &scripted{resp: []*gollama.ResponseMessageGenerate{
+			call("finish", `{"report":"initial done"}`),
+			call("Bash", `{"command":"true","run_in_background":true}`),
+			text(""),
+		}}
+		d, _ := bgDeps(t, &syncRec{}, impl, nil)
+		defer d.Jobs.KillAll()
+		if res, _ := spawnImplementer(d).Call(context.Background(), map[string]any{"task_id": "0001", "plan": "initial"}); res.IsError {
+			t.Fatalf("initial implementer run: %+v", res)
+		}
+		res, _ := sendToImplementer(d).Call(context.Background(), map[string]any{"task_id": "0001", "instructions": "check again"})
+		if !res.IsError || !strings.Contains(res.Content, "no changes") ||
+			!strings.Contains(res.Content, "BACKGROUND JOBS RESOLVED") || !strings.Contains(res.Content, "job_1") {
+			t.Fatalf("retained no-progress result lost lifecycle evidence: %+v", res)
+		}
+	})
+}
+
+func TestImplementerFailureCleansAndAccountsAsyncChild(t *testing.T) {
+	turner := &bashThenError{}
+	d, _ := bgDeps(t, &syncRec{}, nil, nil)
+	d.Implementer = AgentSpec{Name: "impl", Model: "m", NewClient: func() engine.Turner { return turner }}
+	ownership := workspacelease.NewService()
+	d.Ownership = ownership
+	d.CoordinatorToken = ownership.NewToken("session one coordinator")
+	defer d.Jobs.KillAll()
+
+	res, _ := spawnImplementer(d).Call(context.Background(), map[string]any{"task_id": "0001", "plan": "start then fail"})
+	if !res.IsError || !strings.Contains(res.Content, "provider failed") ||
+		!strings.Contains(res.Content, "BACKGROUND JOBS RESOLVED") || !strings.Contains(res.Content, "job_1") {
+		t.Fatalf("failed subagent did not account for child cleanup: %+v", res)
 	}
-	job.Kill()
-	res, _ = sendToImplementer(d).Call(context.Background(), map[string]any{"task_id": "0001", "instructions": "too early"})
-	if !res.IsError || !strings.Contains(res.Content, "background Bash") {
-		t.Fatalf("killed delegated child admitted a new implementer turn: %+v", res)
+	job, ok := d.Jobs.Get("job_1")
+	if !ok || job.Status() != jobs.Killed || d.Jobs.LiveMutating() != nil {
+		t.Fatalf("failed subagent left child execution live: %#v", job)
+	}
+}
+
+func TestImplementerCancellationCleansAndJoinsAsyncChild(t *testing.T) {
+	turner := &bashThenCancel{waiting: make(chan struct{})}
+	d, _ := bgDeps(t, &syncRec{}, nil, nil)
+	d.Implementer = AgentSpec{Name: "impl", Model: "m", NewClient: func() engine.Turner { return turner }}
+	ownership := workspacelease.NewService()
+	d.Ownership = ownership
+	d.CoordinatorToken = ownership.NewToken("session one coordinator")
+	defer d.Jobs.KillAll()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan *gollama.ToolResult, 1)
+	go func() {
+		res, _ := spawnImplementer(d).Call(ctx, map[string]any{"task_id": "0001", "plan": "start then cancel"})
+		result <- res
+	}()
+	<-turner.waiting
+	cancel()
+	res := <-result
+	if !res.IsError || !strings.Contains(res.Content, "context canceled") || !strings.Contains(res.Content, "BACKGROUND JOBS RESOLVED") {
+		t.Fatalf("cancelled subagent did not account for child cleanup: %+v", res)
+	}
+	job, ok := d.Jobs.Get("job_1")
+	if !ok || job.Status() != jobs.Killed || d.Jobs.LiveMutating() != nil {
+		t.Fatalf("cancelled subagent left child execution live: %#v", job)
+	}
+}
+
+func TestImplementerExplicitWatcherHandoffToParent(t *testing.T) {
+	impl := &scripted{resp: []*gollama.ResponseMessageGenerate{
+		call("Bash", `{"command":"printf watching; sleep 30","run_in_background":true}`),
+		call("finish", `{"report":"watcher installed","handoff_jobs":[{"job_id":"job_1","purpose":"observe the follow-up deployment"}]}`),
+		call("finish", `{"report":"follow-up after watcher"}`),
+	}}
+	rec := &syncRec{}
+	d, _ := bgDeps(t, rec, impl, nil)
+	ownership := workspacelease.NewService()
+	d.Ownership = ownership
+	d.CoordinatorToken = ownership.NewToken("session one coordinator")
+	defer d.Jobs.KillAll()
+
+	res, _ := spawnImplementer(d).Call(context.Background(), map[string]any{"task_id": "0001", "plan": "start watcher"})
+	if res.IsError || !strings.Contains(res.Content, "BACKGROUND JOB HANDOFF") ||
+		!strings.Contains(res.Content, `purpose="observe the follow-up deployment"`) ||
+		!strings.Contains(res.Content, `owner="coordinator"`) || !strings.Contains(res.Content, "exactly once") {
+		t.Fatalf("explicit handoff metadata missing: %+v", res)
+	}
+	job, ok := d.Jobs.Get("job_1")
+	if !ok || job.Status() != jobs.Running || job.Owner() != "coordinator" {
+		t.Fatalf("watcher was not transferred alive to parent: %#v", job)
+	}
+	infos := d.Jobs.List("coordinator", false)
+	if len(infos) != 1 || infos[0].Purpose != "observe the follow-up deployment" || infos[0].Delivery == "" {
+		t.Fatalf("handoff not discoverable: %+v", infos)
+	}
+	if ev, ok := rec.find(event.JobHandedOff); !ok || ev.Data["id"] != "job_1" || ev.Data["owner"] != "coordinator" {
+		t.Fatalf("durable handoff event missing: %+v", ev)
 	}
 
-	other := ownership.NewToken("session two coordinator")
-	deadline = time.Now().Add(3 * time.Second)
-	for {
-		lease, err := ownership.Acquire(d.Workspace, other)
-		if err == nil {
-			lease.Release()
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("child ownership not released after process exit: %v", err)
-		}
-		time.Sleep(10 * time.Millisecond)
+	res, _ = sendToImplementer(d).Call(context.Background(), map[string]any{"task_id": "0001", "instructions": "too early"})
+	if !res.IsError || !strings.Contains(res.Content, "background Bash") {
+		t.Fatalf("mutating follow-up started while handed-off watcher ran: %+v", res)
+	}
+	job.Kill()
+	job.WaitExecution()
+	res, _ = sendToImplementer(d).Call(context.Background(), map[string]any{"task_id": "0001", "instructions": "continue now"})
+	if res.IsError || !strings.Contains(res.Content, "follow-up after watcher") {
+		t.Fatalf("follow-up after watcher stopped failed: %+v", res)
+	}
+	// Handoff completion belongs to the parent and remains exactly-once for
+	// automatic delivery while repeatable evidence stays on the job.
+	reports := d.Jobs.DrainFinished("coordinator")
+	if len(reports) != 1 || reports[0].ID != "job_1" {
+		t.Fatalf("parent handoff delivery = %+v", reports)
+	}
+	if extra := d.Jobs.DrainFinished("coordinator"); len(extra) != 0 {
+		t.Fatalf("handoff delivered twice: %+v", extra)
+	}
+	if rep := job.Report(); rep.ID != "job_1" || rep.Status != jobs.Killed {
+		t.Fatalf("retained handoff result unavailable: %+v", rep)
 	}
 }
 
@@ -575,6 +743,86 @@ func TestReReviewRefusedWhileReviewJobLive(t *testing.T) {
 }
 
 // Background requested but no registry in this session → a clear error.
+func TestGenericFollowupDeclinesAfterJobShutdownWithoutStateOrLeaseLeak(t *testing.T) {
+	d, _ := bgDeps(t, &syncRec{}, nil, nil)
+	turner := &scripted{resp: []*gollama.ResponseMessageGenerate{text("first")}}
+	d.ResolveAgent = func(name string) (AgentSpec, error) {
+		return AgentSpec{Name: name, Model: "m", NewClient: func() engine.Turner { return turner }}, nil
+	}
+	ownership := workspacelease.NewService()
+	d.Ownership = ownership
+	d.CoordinatorToken = ownership.NewToken("session one coordinator")
+	res, _ := spawnAgent(d).Call(context.Background(), map[string]any{"model": "coder", "prompt": "first", "mutating": true})
+	if res.IsError {
+		t.Fatalf("initial generic agent: %+v", res)
+	}
+	job, _ := d.Jobs.Get("job_1")
+	waitJobDone(t, job)
+	job.WaitExecution()
+	d.Jobs.KillAll()
+
+	res, _ = sendToAgent(d).Call(context.Background(), map[string]any{"agent_id": "agent_1", "prompt": "late"})
+	if !res.IsError || !strings.Contains(res.Content, "shutting down") {
+		t.Fatalf("late generic follow-up = %+v", res)
+	}
+	d.mu.Lock()
+	h := d.genericAgent["agent_1"]
+	round, running, retainedJob := h.round, h.running, h.job
+	d.mu.Unlock()
+	if round != 1 || running || retainedJob != job {
+		t.Fatalf("declined follow-up mutated retained state: round=%d running=%t job=%v", round, running, retainedJob)
+	}
+	other := ownership.NewToken("session two coordinator")
+	lease, err := ownership.Acquire(d.Workspace, other)
+	if err != nil {
+		t.Fatalf("declined generic follow-up retained mutation lease: %v", err)
+	}
+	lease.Release()
+}
+
+func TestProductionAgentStartsDeclineAfterJobShutdown(t *testing.T) {
+	impl := &scripted{resp: []*gollama.ResponseMessageGenerate{call("finish", `{"report":"must not run"}`)}}
+	reviewer := AgentSpec{Name: "rev", Model: "m", NewClient: func() engine.Turner { return impl }}
+	d, _ := bgDeps(t, &syncRec{}, impl, []AgentSpec{reviewer})
+	ownership := workspacelease.NewService()
+	d.Ownership = ownership
+	d.CoordinatorToken = ownership.NewToken("session one coordinator")
+	d.ResolveAgent = func(name string) (AgentSpec, error) { return d.Implementer, nil }
+	d.Jobs.KillAll()
+
+	res, _ := spawnImplementer(d).Call(context.Background(), map[string]any{"task_id": "0001", "plan": "late", "background": true})
+	if !res.IsError || !strings.Contains(res.Content, "shutting down") {
+		t.Fatalf("late implementer start = %+v", res)
+	}
+	d.mu.Lock()
+	implRunning := d.implRunning
+	d.mu.Unlock()
+	if implRunning {
+		t.Fatal("declined implementer left its active-run guard set")
+	}
+	other := ownership.NewToken("session two coordinator")
+	lease, err := ownership.Acquire(d.Workspace, other)
+	if err != nil {
+		t.Fatalf("declined implementer retained mutation lease: %v", err)
+	}
+	lease.Release()
+
+	res, _ = spawnAgent(d).Call(context.Background(), map[string]any{"model": "impl", "prompt": "late", "mutating": true})
+	if !res.IsError || !strings.Contains(res.Content, "shutting down") {
+		t.Fatalf("late generic agent start = %+v", res)
+	}
+	lease, err = ownership.Acquire(d.Workspace, other)
+	if err != nil {
+		t.Fatalf("declined generic agent retained mutation lease: %v", err)
+	}
+	lease.Release()
+
+	res, _ = spawnReviewers(d).Call(context.Background(), map[string]any{"task_id": "0001", "background": true})
+	if !res.IsError || !strings.Contains(res.Content, "shutting down") {
+		t.Fatalf("late reviewer start = %+v", res)
+	}
+}
+
 func TestSpawnImplementerBackgroundUnavailable(t *testing.T) {
 	rec := &captureRec{}
 	impl := &scripted{resp: []*gollama.ResponseMessageGenerate{call("finish", `{"report":"x"}`)}}

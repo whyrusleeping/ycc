@@ -78,7 +78,7 @@ func Editing(ws *Workspace) []*gollama.Tool {
 // report_blocked, the structured escalation control tool for when the agent cannot
 // responsibly proceed without a decision that isn't its to make.
 func Worker(ws *Workspace) []*gollama.Tool {
-	return append(Editing(ws), Finish(), ReportBlocked())
+	return append(Editing(ws), SubagentFinish(), ReportBlocked())
 }
 
 func readFile(ws *Workspace) *gollama.Tool {
@@ -1012,15 +1012,16 @@ func bash(ws *Workspace) *gollama.Tool {
 			"instead; do not start one background job and immediately wait for it. Do NOT poll a background job. "
 		// Only the coordinator/pm/chat loop drains finished-job notifications at its
 		// session Checkpoint, so its background reports are pushed automatically.
-		// The implementer's loop has no drain hook, so its background jobs are
-		// wait-only — the report must be fetched with wait.
+		// The implementer's loop has no checkpoint drain: wait can synchronize during
+		// the run, and its exit lifecycle accounts any remaining completed reports.
 		if bgAutoDelivered(ws) {
 			desc += "Its report is delivered automatically when it finishes, or call wait(job_ids) after your independent " +
 				"work when its result gates the next step. Use job_output to peek at partial output, kill_job to stop it."
 			params["run_in_background"] = BoolProp("run the command as a background job and return a job_id immediately; use only to overlap meaningful independent work or leave a watcher running, never to immediately call wait")
 		} else {
 			desc += "After doing independent work, call wait(job_ids) when the result gates the next step. Use job_output " +
-				"to peek at partial output, kill_job to stop it."
+				"to peek at partial output, kill_job to stop it. Finishing your subagent run stops and joins owned jobs unless " +
+				"you explicitly list an intentional watcher and its purpose in finish(handoff_jobs)."
 			params["run_in_background"] = BoolProp("run the command as a background job and return a job_id immediately; use only to overlap meaningful independent work or leave a watcher running, never to immediately call wait")
 		}
 	}
@@ -1089,6 +1090,10 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 				return errResult("bash: %v", err), nil
 			}
 			job, artifactID := startBackgroundBash(ws, cmdStr, timeout, lease)
+			if job == nil {
+				lease.Release()
+				return errResult("bash: session is shutting down; background job was not started"), nil
+			}
 			artifactNote := fmt.Sprintf(" Output capture %s is stable but not ready until the process exits; then retrieve ranges with tool_output.", artifactID)
 			if bgAutoDelivered(ws) {
 				return okResult(fmt.Sprintf("started background job %s: %s\nIt runs in the background — do NOT poll it. "+
@@ -1160,8 +1165,8 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 
 // bgAutoDelivered reports whether a background job's final report is pushed at a
 // session checkpoint. Only the coordinator loop owns the Steer/Checkpoint that
-// drains finished jobs; implementer background jobs are wait-only. A nil emitter
-// is not auto-delivered, so callers are told to wait.
+// drains finished jobs; implementer jobs synchronize through wait during the run
+// and are resolved at its exit boundary. A nil emitter is not auto-delivered.
 func bgAutoDelivered(ws *Workspace) bool {
 	return ws.Emitter != nil && ws.Emitter.Actor() == "coordinator"
 }
@@ -1179,7 +1184,10 @@ func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration, le
 	// mutating job for the single-writer guard: a background
 	// implementer is refused while one is live. Conservative — a read-only
 	// command is still marked mutating — but safe.
-	job := ws.Jobs.StartMutating("bash", cmdStr, owner)
+	job, ok := ws.Jobs.TryStartMutatingTracked("bash", cmdStr, owner)
+	if !ok {
+		return nil, ""
+	}
 	artifactID := ws.artifactStore().reserve()
 	job.SetTerminationHint(fmt.Sprintf("[output artifact %s: capture finalizes after the process exits; retrieve ranges with tool_output; a not-ready response is temporary]", artifactID))
 	ws.Emitter.EmitAs(owner, event.JobStarted, map[string]any{
@@ -1217,9 +1225,11 @@ func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration, le
 		if job.Finish(jobs.Failed, result) {
 			emitJobFinished(ws.Emitter, owner, job)
 		}
+		job.ExecutionComplete()
 		return job, artifactID
 	}
 	go func() {
+		defer job.ExecutionComplete()
 		defer cancelTimeout()
 		defer lease.Release()
 		err := cmd.Wait()
@@ -1268,17 +1278,59 @@ func emitJobFinished(em *event.Emitter, owner string, job *jobs.Job) {
 	})
 }
 
-// Finish is a control tool: it ends the agent loop and returns the final report.
+// Finish is the top-level control tool: it ends the agent loop and returns the
+// final report. Session shutdown owns cleanup of any coordinator background jobs.
 func Finish() *gollama.Tool {
 	return &gollama.Tool{
 		Name: "finish",
 		Description: "Call when your assigned work is complete. Provide a concise report of what was done " +
-			"and how it was verified. This ends your run and returns the report to whoever is waiting on " +
-			"you (the user, or the coordinator that spawned you).",
+			"and how it was verified. This ends your run and returns the report to the user.",
 		Params: obj(map[string]any{"report": strProp("summary of the work performed and its outcome")}, "report"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			report, _ := getString(params, "report")
 			return &gollama.ToolResult{Content: "session finished", Structured: &Control{Stop: true, Report: report}}, nil
+		},
+	}
+}
+
+// SubagentFinish is the worker completion control. It carries an explicit
+// watcher handoff policy for the orchestrator's subagent lifecycle boundary.
+func SubagentFinish() *gollama.Tool {
+	return &gollama.Tool{
+		Name: "finish",
+		Description: "Call when your assigned work is complete. Provide a concise report of what was done " +
+			"and how it was verified. This ends your run and returns the report to whoever is waiting on " +
+			"you (the user, or the coordinator that spawned you). Any background jobs you own are stopped and joined " +
+			"before your result is returned. To intentionally continue a watcher, explicitly list it in handoff_jobs " +
+			"with its purpose; ownership and exactly-once completion delivery transfer to your parent.",
+		Params: obj(map[string]any{
+			"report": strProp("summary of the work performed and its outcome"),
+			"handoff_jobs": map[string]any{
+				"type": "array", "description": "running watchers that must intentionally continue under parent ownership; all other owned jobs are stopped and joined",
+				"items": map[string]any{"type": "object", "properties": map[string]any{
+					"job_id":  strProp("owned running job id"),
+					"purpose": strProp("why this watcher must continue and what follow-up it supports"),
+				}, "required": []string{"job_id", "purpose"}},
+			},
+		}, "report"),
+		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
+			report, _ := getString(params, "report")
+			var handoffs []jobs.RetainRequest
+			seen := make(map[string]bool)
+			for _, raw := range getMapSlice(params, "handoff_jobs") {
+				id, _ := getString(raw, "job_id")
+				purpose, _ := getString(raw, "purpose")
+				id, purpose = strings.TrimSpace(id), strings.TrimSpace(purpose)
+				if id == "" || purpose == "" {
+					return errResult("finish: every handoff_jobs entry requires non-empty job_id and purpose"), nil
+				}
+				if seen[id] {
+					return errResult("finish: duplicate handoff job %s", id), nil
+				}
+				seen[id] = true
+				handoffs = append(handoffs, jobs.RetainRequest{ID: id, Purpose: purpose})
+			}
+			return &gollama.ToolResult{Content: "session finished", Structured: &Control{Stop: true, Report: report, HandoffJobs: handoffs}}, nil
 		},
 	}
 }

@@ -54,6 +54,9 @@ func listJobsTool(ws *Workspace) *gollama.Tool {
 				}
 				fmt.Fprintf(&b, "%s [%s] kind=%s owner=%s elapsed=%s mutates=%t label=%q",
 					info.ID, info.Status, info.Kind, info.Owner, elapsed.Round(time.Millisecond), info.Mutates, truncate(info.Label, 512))
+				if info.Purpose != "" {
+					fmt.Fprintf(&b, "\n  handoff: purpose=%q delivery=%q", truncate(info.Purpose, 512), info.Delivery)
+				}
 				if info.Kind == "agent" {
 					activity := info.Activity
 					fmt.Fprintf(&b, "\n  activity: turns=%d usage={input:%d output:%d cache_read:%d cache_write:%d total:%d}",

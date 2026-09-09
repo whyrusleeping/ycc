@@ -466,12 +466,16 @@ func (s *Session) AnswerBatch(idxs []int, texts []string) error {
 func (s *Session) Stop() {
 	if s.logFailure() != nil {
 		s.cancel()
+		s.killJobs()
 		return
 	}
 	s.stopOnce.Do(func() {
 		s.setStatus(event.StatusStopped)
 		s.emitter.Emit(event.SessionStopped, map[string]any{})
 		s.cancel()
+		// Job cancellation has a separate execution-join boundary: keep the log and
+		// mutation ownership alive until every tracked process/agent has stopped.
+		s.killJobs()
 		s.log.Close()
 	})
 }
@@ -486,6 +490,7 @@ func (s *Session) Stop() {
 func (s *Session) reap() {
 	s.stopOnce.Do(func() {
 		s.cancel()
+		s.killJobs()
 		s.log.Close()
 	})
 }

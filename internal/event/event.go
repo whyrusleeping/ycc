@@ -51,15 +51,19 @@ const (
 	// Background jobs. JobStarted marks a job
 	// entering the registry (data: { id, kind, label, mutates }); JobFinished marks it
 	// reaching a terminal state (data: { id, kind, label, status, tail }). Both
-	// are tagged with the owning actor. JobClaimed records explicit-wait suppression
+	// are tagged with the owning actor. JobHandedOff records an explicit running-job
+	// transfer to a parent actor. JobClaimed records explicit-wait suppression
 	// of automatic delivery and carries the terminal evidence
 	// (data: { id, kind, label, status, result, reason }). JobNotified records the
 	// same terminal evidence plus its formatted report injected into the conversation
 	// at a Steer checkpoint as a user-role message
 	// (data: { id, kind, label, status, result, text }); recording it — like a
 	// steer correction — lets reopen replay the identical history.
-	JobStarted  Type = "job_started"
-	JobFinished Type = "job_finished"
+	JobStarted Type = "job_started"
+	// JobHandedOff records explicit transfer of a running child job to its parent
+	// (data: { id, owner, purpose, delivery }) so reopen preserves delivery ownership.
+	JobHandedOff Type = "job_handed_off"
+	JobFinished  Type = "job_finished"
 	// JobClaimed records that an explicit wait suppressed future automatic
 	// notification without adding another user-role message to replay history.
 	JobClaimed   Type = "job_claimed"

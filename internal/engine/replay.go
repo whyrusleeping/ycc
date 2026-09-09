@@ -446,6 +446,12 @@ func RestoreJobs(events []event.Event) *jobs.Registry {
 			if idx, ok := byID[str(ev.Data, "job_id")]; ok && boolv(ev.Data, "mutating") {
 				restored[idx].Mutates = true
 			}
+		case event.JobHandedOff:
+			if idx, ok := byID[str(ev.Data, "id")]; ok {
+				restored[idx].Owner = str(ev.Data, "owner")
+				restored[idx].Purpose = str(ev.Data, "purpose")
+				restored[idx].Delivery = str(ev.Data, "delivery")
+			}
 		case event.JobFinished:
 			id := str(ev.Data, "id")
 			idx, ok := byID[id]

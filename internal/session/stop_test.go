@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/whyrusleeping/ycc/internal/event"
+	"github.com/whyrusleeping/ycc/internal/jobs"
+	"github.com/whyrusleeping/ycc/internal/orchestrator"
 )
 
 // newStopSession builds a minimal Session backed by a real on-disk log so Stop's
@@ -95,6 +97,45 @@ func TestSessionStopUnblocksAsk(t *testing.T) {
 	s.Stop()
 	if n := countType(s.log.Snapshot(), event.SessionStopped); n != 1 {
 		t.Fatalf("session_stopped count after 2nd Stop = %d, want 1", n)
+	}
+}
+
+func TestSessionStopCancelsAndJoinsTrackedJobs(t *testing.T) {
+	s := newStopSession(t)
+	registry := jobs.NewRegistry()
+	s.deps = &orchestrator.Deps{Jobs: registry}
+	job, ok := registry.TryStartMutatingTracked("bash", "watch", "implementer")
+	if !ok {
+		t.Fatal("tracked start refused before shutdown")
+	}
+	cancelled := make(chan struct{})
+	release := make(chan struct{})
+	go func() {
+		<-job.Context().Done()
+		close(cancelled)
+		<-release
+		job.ExecutionComplete()
+	}()
+
+	stopped := make(chan struct{})
+	go func() {
+		s.Stop()
+		close(stopped)
+	}()
+	<-cancelled
+	select {
+	case <-stopped:
+		t.Fatal("session Stop returned before tracked job execution stopped")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("session Stop did not return after tracked job stopped")
+	}
+	if job.Status() != jobs.Killed || registry.LiveMutating() != nil {
+		t.Fatalf("session Stop left job execution live: %+v", job.Report())
 	}
 }
 

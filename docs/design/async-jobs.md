@@ -33,6 +33,19 @@ Completion notification and evidence access are separate:
 A completion found between results from one model tool-call batch is deferred until the complete batch
 has entered history, preserving provider requirements that tool results immediately follow their calls.
 
+A subagent turn is also an explicit child-job lifecycle boundary. By default, every running job owned by
+that subagent is cancelled and its process/agent execution is joined before the subagent releases mutation
+ownership; completed, previously unnotified reports are included in the subagent result. A watcher may
+continue only when the subagent's finish control explicitly hands over its job id and purpose. That transfer
+records the parent owner and delivery contract: completion is offered exactly once at a parent checkpoint
+unless an explicit wait claims it first, while `job_result` and output evidence remain repeatable. Handoffs
+are durable and discoverable through `list_jobs`. A mutating handoff keeps its lifetime lease, prevents a
+safe final changeset from being attributed, and blocks subsequent mutating work until the process actually
+stops. Error, blocked, cancellation, hard-stop, and session-shutdown paths apply the same cleanup-and-join
+rule; terminal report state alone is not proof that execution has stopped. Session shutdown closes job
+registration before snapshotting runners: a concurrent tracked start is either registered in time to be
+cancelled and joined, or is declined before launch and releases any mutation lease/agent-running guard.
+
 Bash output is retained as a bounded tail addressed by absolute byte cursors. Reads can request a
 forward cursor range or retained line tail, identify the retained absolute interval and any eviction
 gap, and return a truthful next cursor. Completed Bash reports continue to advertise the fuller output

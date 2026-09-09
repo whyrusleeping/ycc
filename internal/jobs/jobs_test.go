@@ -211,6 +211,74 @@ func TestKillAll(t *testing.T) {
 	}
 }
 
+func TestConcurrentTrackedStartAndShutdownCannotOrphanRunner(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		r := NewRegistry()
+		start := make(chan struct{})
+		started := make(chan *Job, 1)
+		cancelled := make(chan struct{}, 1)
+		release := make(chan struct{})
+		shutdown := make(chan struct{})
+		go func() {
+			<-start
+			job, ok := r.TryStartMutatingTracked("bash", "race", "implementer")
+			if !ok {
+				started <- nil
+				return
+			}
+			started <- job
+			go func() {
+				<-job.Context().Done()
+				cancelled <- struct{}{}
+				<-release
+				job.ExecutionComplete()
+			}()
+		}()
+		go func() {
+			<-start
+			r.KillAll()
+			close(shutdown)
+		}()
+		close(start)
+		job := <-started
+		if job == nil {
+			select {
+			case <-shutdown:
+			case <-time.After(time.Second):
+				t.Fatal("shutdown did not complete after declining concurrent start")
+			}
+			continue
+		}
+		select {
+		case <-cancelled:
+		case <-time.After(time.Second):
+			t.Fatal("accepted concurrent runner was not cancelled")
+		}
+		select {
+		case <-shutdown:
+			t.Fatal("shutdown missed accepted tracked runner")
+		case <-time.After(time.Millisecond):
+		}
+		close(release)
+		select {
+		case <-shutdown:
+		case <-time.After(time.Second):
+			t.Fatal("shutdown did not join accepted tracked runner")
+		}
+	}
+}
+
+func TestTrackedStartDeclinesAfterShutdownBarrier(t *testing.T) {
+	r := NewRegistry()
+	r.KillAll()
+	if job, ok := r.TryStartTracked("agent", "late", "coordinator"); ok || job != nil {
+		t.Fatalf("tracked start after shutdown = %#v, %v", job, ok)
+	}
+	if job, ok := r.TryStartMutatingTracked("bash", "late", "coordinator"); ok || job != nil {
+		t.Fatalf("mutating tracked start after shutdown = %#v, %v", job, ok)
+	}
+}
+
 // wait for="any" returns as soon as one target finishes and reports the still
 // running ones on timeout.
 func TestListIncludesOwnersTimingAndSafeAgentActivity(t *testing.T) {
@@ -252,6 +320,67 @@ func TestRestoredLostAndKilledJobsReserveIDs(t *testing.T) {
 	}
 	if next := r.Start("bash", "next", "coordinator"); next.ID() != "job_9" {
 		t.Fatalf("next id = %s, want job_9", next.ID())
+	}
+}
+
+func TestResolveOwnerAccountsFinishedAndJoinsCancelledExecution(t *testing.T) {
+	r := NewRegistry()
+	finished, ok := r.TryStartTracked("bash", "failed check", "implementer")
+	if !ok {
+		t.Fatal("tracked start refused before shutdown")
+	}
+	finished.Finish(Failed, "exit 7")
+	finished.ExecutionComplete()
+
+	running, ok := r.TryStartMutatingTracked("bash", "watch", "implementer")
+	if !ok {
+		t.Fatal("mutating tracked start refused before shutdown")
+	}
+	cancelled := make(chan struct{})
+	release := make(chan struct{})
+	go func() {
+		<-running.Context().Done()
+		close(cancelled)
+		<-release
+		running.ExecutionComplete()
+	}()
+
+	type outcome struct {
+		reports  []Report
+		handoffs []Handoff
+		rejected []string
+	}
+	resolved := make(chan outcome, 1)
+	go func() {
+		reports, handoffs, rejected := r.ResolveOwner("implementer", "coordinator", nil)
+		resolved <- outcome{reports, handoffs, rejected}
+	}()
+	<-cancelled
+	select {
+	case <-resolved:
+		t.Fatal("owner cleanup returned before tracked execution stopped")
+	case <-time.After(20 * time.Millisecond):
+	}
+	if live := r.LiveMutating(); live != running {
+		t.Fatalf("terminal-but-executing mutation was released: %#v", live)
+	}
+	close(release)
+	got := <-resolved
+	if len(got.reports) != 2 || got.reports[0].ID != finished.ID() || got.reports[0].Status != Failed ||
+		got.reports[1].ID != running.ID() || got.reports[1].Status != Killed {
+		t.Fatalf("resolved reports = %+v", got.reports)
+	}
+	if len(got.handoffs) != 0 || len(got.rejected) != 0 {
+		t.Fatalf("unexpected handoff result: %+v %+v", got.handoffs, got.rejected)
+	}
+	if live := r.LiveMutating(); live != nil {
+		t.Fatalf("mutation remained live after execution stop: %s", live.ID())
+	}
+	if duplicate := r.DrainFinished("implementer"); len(duplicate) != 0 {
+		t.Fatalf("resolved reports notified twice: %+v", duplicate)
+	}
+	if rep := running.Report(); rep.Status != Killed {
+		t.Fatalf("repeatable retained result lost: %+v", rep)
 	}
 }
 

@@ -748,10 +748,15 @@ func TestBashSurvivesEscapedGrandchild(t *testing.T) {
 func TestFinishIsControl(t *testing.T) {
 	root := t.TempDir()
 	reg := workerReg(root)
-	res := dispatch(t, reg, "finish", `{"report":"done"}`)
+	res := dispatch(t, reg, "finish", `{"report":"done","handoff_jobs":[{"job_id":"job_2","purpose":"watch deploy"}]}`)
 	ctrl := ControlOf(res)
-	if ctrl == nil || !ctrl.Stop || ctrl.Report != "done" {
+	if ctrl == nil || !ctrl.Stop || ctrl.Report != "done" || len(ctrl.HandoffJobs) != 1 ||
+		ctrl.HandoffJobs[0].ID != "job_2" || ctrl.HandoffJobs[0].Purpose != "watch deploy" {
 		t.Fatalf("finish control = %+v", ctrl)
+	}
+	res = dispatch(t, reg, "finish", `{"report":"done","handoff_jobs":[{"job_id":"job_2","purpose":""}]}`)
+	if !res.IsError || ControlOf(res) != nil {
+		t.Fatalf("invalid watcher handoff stopped the run: %+v", res)
 	}
 }
 

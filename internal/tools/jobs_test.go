@@ -1,6 +1,8 @@
 package tools
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -372,6 +374,32 @@ func TestJobToolsRejectUnknownIDs(t *testing.T) {
 			t.Fatalf("%s unknown id = %+v", tc.name, got)
 		}
 	}
+}
+
+func TestBackgroundBashDeclinesAfterRegistryShutdownAndReleasesLease(t *testing.T) {
+	root := t.TempDir()
+	jr := jobs.NewRegistry()
+	jr.KillAll()
+	ownership := workspacelease.NewService()
+	owner := ownership.NewToken("session one coordinator")
+	ws := &Workspace{Root: root, Jobs: jr, Emitter: event.NewEmitter(&captureRec{}, "coordinator"),
+		Ownership: ownership, MutationToken: owner}
+	reg := New()
+	reg.Add(Editing(ws)...)
+
+	res := dispatch(t, reg, "Bash", `{"command":"touch late","run_in_background":true}`)
+	if !res.IsError || !strings.Contains(res.Content, "shutting down") {
+		t.Fatalf("background Bash after shutdown = %+v", res)
+	}
+	if _, err := os.Stat(filepath.Join(root, "late")); !os.IsNotExist(err) {
+		t.Fatalf("declined background Bash ran: %v", err)
+	}
+	other := ownership.NewToken("session two coordinator")
+	lease, err := ownership.Acquire(root, other)
+	if err != nil {
+		t.Fatalf("declined background Bash retained mutation lease: %v", err)
+	}
+	lease.Release()
 }
 
 // run_in_background is rejected clearly when the session has no job registry.

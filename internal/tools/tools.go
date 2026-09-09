@@ -30,11 +30,12 @@ import (
 // work coordinator) is expected to resolve the decision, escalate to the user, or
 // mark the task blocked rather than treat it as completed work.
 type Control struct {
-	Stop    bool
-	Report  string
-	Mode    string
-	Prompt  string
-	Blocked bool
+	Stop        bool
+	Report      string
+	Mode        string
+	Prompt      string
+	Blocked     bool
+	HandoffJobs []jobs.RetainRequest
 }
 
 // ControlOf returns the *Control carried by a tool result, or nil.

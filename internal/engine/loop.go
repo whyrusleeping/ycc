@@ -15,6 +15,7 @@ import (
 
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/event"
+	"github.com/whyrusleeping/ycc/internal/jobs"
 	"github.com/whyrusleeping/ycc/internal/tools"
 )
 
@@ -358,6 +359,9 @@ type Result struct {
 	// the reason. Callers treat this distinctly from a normal finish: resolve the
 	// decision, escalate to the user, or mark the work blocked — not as done.
 	Blocked bool
+	// HandoffJobs explicitly requests that named running child watchers continue
+	// under parent ownership instead of receiving default exit cleanup.
+	HandoffJobs []jobs.RetainRequest
 	// Refused is set when the run ended on a provider-side safety refusal
 	// (stop_reason "refusal") with no tool call. The refused turn was kept OUT
 	// of the loop's history (it is still recorded as a model_turn event for the
@@ -1100,7 +1104,7 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 				if report == "" {
 					report = msg.Content
 				}
-				return &Result{Report: report, Turns: turn, NextMode: ctrl.Mode, NextPrompt: ctrl.Prompt, Blocked: ctrl.Blocked}, nil
+				return &Result{Report: report, Turns: turn, NextMode: ctrl.Mode, NextPrompt: ctrl.Prompt, Blocked: ctrl.Blocked, HandoffJobs: ctrl.HandoffJobs}, nil
 			}
 
 			// Safe checkpoint after a tool result: pause-to-steer if requested.
