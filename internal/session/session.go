@@ -1443,6 +1443,8 @@ func (s *Session) withAssumptions(report string) string {
 type Manager struct {
 	mu                sync.Mutex
 	sessions          map[string]*Session
+	historyCacheMu    sync.Mutex
+	historyCache      map[string]sessionSummaryCacheEntry
 	reg               *config.Registry
 	projects          *project.Registry
 	workstreams       *workstream.Registry
@@ -1513,6 +1515,7 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 	loopCtx, loopCancel := context.WithCancel(context.Background())
 	m := &Manager{
 		sessions:          map[string]*Session{},
+		historyCache:      map[string]sessionSummaryCacheEntry{},
 		reg:               reg,
 		projects:          projects,
 		workstreams:       workstream.NewMemory(),

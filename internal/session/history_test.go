@@ -2,9 +2,12 @@ package session
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,7 +17,7 @@ import (
 
 // writeSession writes a session dir with the given events as JSONL lines under
 // ws/.ycc/sessions/<id>/events.jsonl.
-func writeSession(t *testing.T, ws, id string, evs []event.Event) {
+func writeSession(t testing.TB, ws, id string, evs []event.Event) {
 	t.Helper()
 	dir := filepath.Join(ws, ".ycc", "sessions", id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -270,6 +273,17 @@ func TestScanSessionHistoryMalformedTolerated(t *testing.T) {
 	if sums[0].Turns != 1 {
 		t.Fatalf("want 1 valid model_turn, got %d", sums[0].Turns)
 	}
+
+	m := NewManager(config.NewRegistry(nil), ws)
+	if got, err := m.ListSessionHistory(""); err != nil || len(got) != 1 || got[0].Turns != 1 {
+		t.Fatalf("cached tolerant scan = %+v, %v", got, err)
+	}
+	m.historyCacheMu.Lock()
+	cacheEntries := len(m.historyCache)
+	m.historyCacheMu.Unlock()
+	if cacheEntries != 0 {
+		t.Fatalf("partial reduction cached: %d entries", cacheEntries)
+	}
 }
 
 func TestScanSessionHistoryEmptySkipped(t *testing.T) {
@@ -367,6 +381,10 @@ func TestListSessionHistoryLivePreservesPersistedUsage(t *testing.T) {
 		}},
 	})
 	m := NewManager(config.NewRegistry(nil), ws)
+	// Prime the persisted-summary cache before overlaying live state.
+	if got, err := m.ListSessionHistory(""); err != nil || len(got) != 1 {
+		t.Fatalf("prime ListSessionHistory = %+v, %v", got, err)
+	}
 	m.sessions["s_live_usage"] = &Session{
 		ID: "s_live_usage", Workspace: absWS, Mode: "work", status: event.StatusRunning,
 	}
@@ -443,4 +461,227 @@ func TestListSessionHistoryWaiting(t *testing.T) {
 	if len(got) != 1 || !got[0].Waiting {
 		t.Fatalf("want Waiting=true with a pending question, got %+v", got)
 	}
+}
+
+func TestListSessionHistoryCacheInvalidation(t *testing.T) {
+	ws := t.TempDir()
+	path := filepath.Join(ws, ".ycc", "sessions", "s_cache", "events.jsonl")
+	writeSession(t, ws, "s_cache", []event.Event{
+		{Seq: 1, TS: ts(1), Type: event.SessionStarted, Data: map[string]any{"mode": "work"}},
+		{Seq: 2, TS: ts(2), Type: event.UserInput, Data: map[string]any{"text": "first"}},
+	})
+	m := NewManager(config.NewRegistry(nil), ws)
+	got, err := m.ListSessionHistory("")
+	if err != nil || len(got) != 1 || got[0].Title != "first" {
+		t.Fatalf("initial history = %+v, %v", got, err)
+	}
+
+	// An append changes the cached summary and must preserve newly recorded usage.
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn, _ := marshalEvent(event.Event{Seq: 3, TS: ts(3), Type: event.ModelTurn, Data: map[string]any{
+		"model_name": "claude", "usage": event.Usage{Total: 123},
+	}})
+	if _, err := f.Write(append(turn, '\n')); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got, err = m.ListSessionHistory("")
+	if err != nil || len(got) != 1 || got[0].TotalTokens != 123 || got[0].Turns != 1 {
+		t.Fatalf("history after append = %+v, %v", got, err)
+	}
+
+	// Replacement is detected by file identity even when size and mtime match.
+	oldInfo, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := filepath.Join(filepath.Dir(path), "replacement.jsonl")
+	oldBytes, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newBytes := []byte(strings.Replace(string(oldBytes), `"text":"first"`, `"text":"other"`, 1))
+	if len(newBytes) != len(oldBytes) || string(newBytes) == string(oldBytes) {
+		t.Fatal("replacement fixture must change content without changing size")
+	}
+	if err := os.WriteFile(replacement, newBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(replacement, oldInfo.ModTime(), oldInfo.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, path); err != nil {
+		t.Fatal(err)
+	}
+	got, err = m.ListSessionHistory("")
+	if err != nil || len(got) != 1 || got[0].Title != "other" || got[0].TotalTokens != 123 {
+		t.Fatalf("history after replacement = %+v, %v", got, err)
+	}
+
+	if err := os.RemoveAll(filepath.Dir(path)); err != nil {
+		t.Fatal(err)
+	}
+	got, err = m.ListSessionHistory("")
+	if err != nil || len(got) != 0 {
+		t.Fatalf("history after removal = %+v, %v", got, err)
+	}
+	m.historyCacheMu.Lock()
+	cacheEntries := len(m.historyCache)
+	m.historyCacheMu.Unlock()
+	if cacheEntries != 0 {
+		t.Fatalf("removed log retained in cache: %d entries", cacheEntries)
+	}
+}
+
+func TestListSessionHistoryCacheDoesNotAliasCallers(t *testing.T) {
+	ws := t.TempDir()
+	writeSession(t, ws, "s_alias", []event.Event{
+		{Seq: 1, TS: ts(1), Type: event.SessionStarted, Data: map[string]any{"mode": "work"}},
+		{Seq: 2, TS: ts(2), Type: event.TaskFocus, Data: map[string]any{"task": "0343"}},
+		{Seq: 3, TS: ts(3), Type: event.ModelTurn, Data: map[string]any{
+			"model_name": "claude", "usage": event.Usage{Total: 50},
+		}},
+	})
+	m := NewManager(config.NewRegistry(nil), ws)
+	first, err := m.ListSessionHistory("")
+	if err != nil || len(first) != 1 {
+		t.Fatalf("first history = %+v, %v", first, err)
+	}
+	first[0].FocusTasks[0] = "mutated"
+	first[0].ModelUsage[0].Model = "mutated"
+
+	second, err := m.ListSessionHistory("")
+	if err != nil || len(second) != 1 {
+		t.Fatalf("second history = %+v, %v", second, err)
+	}
+	if !reflect.DeepEqual(second[0].FocusTasks, []string{"0343"}) ||
+		!reflect.DeepEqual(second[0].ModelUsage, []ModelUsage{{Model: "claude", Tokens: 50}}) {
+		t.Fatalf("caller mutation leaked into cache: %+v", second[0])
+	}
+}
+
+func TestListSessionHistoryCacheConcurrentCallers(t *testing.T) {
+	ws := t.TempDir()
+	writeSession(t, ws, "s_concurrent", []event.Event{
+		{Seq: 1, TS: ts(1), Type: event.SessionStarted, Data: map[string]any{"mode": "work"}},
+		{Seq: 2, TS: ts(2), Type: event.ModelTurn, Data: map[string]any{
+			"model_name": "claude", "usage": event.Usage{Total: 75},
+		}},
+	})
+	m := NewManager(config.NewRegistry(nil), ws)
+
+	const callers = 16
+	var wg sync.WaitGroup
+	errs := make(chan error, callers)
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			got, err := m.ListSessionHistory("")
+			if err != nil {
+				errs <- err
+				return
+			}
+			if len(got) != 1 || got[0].TotalTokens != 75 {
+				errs <- fmt.Errorf("unexpected history: %+v", got)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+}
+
+func TestListSessionHistoryCacheIsColdAfterRestart(t *testing.T) {
+	ws := t.TempDir()
+	writeSession(t, ws, "s_restart", []event.Event{
+		{Seq: 1, TS: ts(1), Type: event.SessionStarted, Data: map[string]any{"mode": "work"}},
+		{Seq: 2, TS: ts(2), Type: event.UserInput, Data: map[string]any{"text": "persisted"}},
+	})
+	first := NewManager(config.NewRegistry(nil), ws)
+	if got, err := first.ListSessionHistory(""); err != nil || len(got) != 1 {
+		t.Fatalf("first manager history = %+v, %v", got, err)
+	}
+
+	restarted := NewManager(config.NewRegistry(nil), ws)
+	restarted.historyCacheMu.Lock()
+	cacheEntries := len(restarted.historyCache)
+	restarted.historyCacheMu.Unlock()
+	if cacheEntries != 0 {
+		t.Fatalf("new manager inherited %d cache entries", cacheEntries)
+	}
+	got, err := restarted.ListSessionHistory("")
+	if err != nil || len(got) != 1 || got[0].Title != "persisted" {
+		t.Fatalf("restarted manager history = %+v, %v", got, err)
+	}
+}
+
+func BenchmarkSessionHistorySummaryCache(b *testing.B) {
+	const (
+		sessions         = 100
+		eventsPerSession = 1000
+	)
+	ws := b.TempDir()
+	evs := make([]event.Event, eventsPerSession)
+	evs[0] = event.Event{Seq: 1, TS: ts(1), Type: event.SessionStarted, Data: map[string]any{"mode": "work"}}
+	for i := 1; i < len(evs); i++ {
+		evs[i] = event.Event{
+			Seq: i + 1, TS: ts(i + 1), Type: event.ModelTurn,
+			Data: map[string]any{"model_name": "claude", "usage": event.Usage{Total: 100}},
+		}
+	}
+	var datasetBytes int64
+	for i := 0; i < sessions; i++ {
+		writeSession(b, ws, fmt.Sprintf("s_%03d", i), evs)
+		info, err := os.Stat(filepath.Join(ws, ".ycc", "sessions", fmt.Sprintf("s_%03d", i), "events.jsonl"))
+		if err != nil {
+			b.Fatal(err)
+		}
+		datasetBytes += info.Size()
+	}
+	reportDataset := func(b *testing.B) {
+		b.SetBytes(datasetBytes)
+		b.ReportMetric(sessions, "logs")
+		b.ReportMetric(sessions*eventsPerSession, "events")
+	}
+
+	b.Run("uncached", func(b *testing.B) {
+		reportDataset(b)
+		for i := 0; i < b.N; i++ {
+			if _, err := scanSessionHistory(ws); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("cache_cold", func(b *testing.B) {
+		reportDataset(b)
+		m := &Manager{}
+		for i := 0; i < b.N; i++ {
+			m.historyCache = nil
+			if _, err := m.scanSessionHistoryCached(ws); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("cache_warm", func(b *testing.B) {
+		reportDataset(b)
+		m := &Manager{}
+		if _, err := m.scanSessionHistoryCached(ws); err != nil {
+			b.Fatal(err)
+		}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if _, err := m.scanSessionHistoryCached(ws); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
 }

@@ -70,47 +70,59 @@ func scanSessionHistory(workspace string) ([]SessionSummary, error) {
 	var out []SessionSummary
 	for _, path := range paths {
 		evs := readEventsTolerant(path)
-		if len(evs) == 0 {
-			continue
+		if len(evs) != 0 {
+			out = append(out, reduceSessionSummary(workspace, path, evs))
 		}
-		id := filepath.Base(filepath.Dir(path))
-		proj := event.Reduce(evs)
-		models, totalTokens := sessionModelUsage(evs)
-		ws := proj.Workspace
-		if ws == "" {
-			ws = workspace
-		}
-		out = append(out, SessionSummary{
-			ID:            id,
-			Mode:          proj.Mode,
-			Status:        proj.Status,
-			Workspace:     ws,
-			Title:         deriveTitle(evs),
-			StartedAt:     evs[0].TS,
-			LastActivity:  evs[len(evs)-1].TS,
-			FocusTasks:    focusTasks(evs),
-			ModelUsage:    models,
-			TotalTokens:   totalTokens,
-			ContextTokens: sessionContextTokens(evs),
-			Turns:         proj.Turns,
-			ToolCalls:     proj.ToolCalls,
-		})
 	}
 	return out, nil
+}
+
+func reduceSessionSummary(workspace, path string, evs []event.Event) SessionSummary {
+	id := filepath.Base(filepath.Dir(path))
+	proj := event.Reduce(evs)
+	models, totalTokens := sessionModelUsage(evs)
+	ws := proj.Workspace
+	if ws == "" {
+		ws = workspace
+	}
+	return SessionSummary{
+		ID:            id,
+		Mode:          proj.Mode,
+		Status:        proj.Status,
+		Workspace:     ws,
+		Title:         deriveTitle(evs),
+		StartedAt:     evs[0].TS,
+		LastActivity:  evs[len(evs)-1].TS,
+		FocusTasks:    focusTasks(evs),
+		ModelUsage:    models,
+		TotalTokens:   totalTokens,
+		ContextTokens: sessionContextTokens(evs),
+		Turns:         proj.Turns,
+		ToolCalls:     proj.ToolCalls,
+	}
 }
 
 // readEventsTolerant reads a session log line by line, skipping (with a logged
 // warning) a file it can't open or any line that fails to parse, so a partial
 // or corrupt log still yields its good events instead of failing the whole scan.
 func readEventsTolerant(path string) []event.Event {
+	evs, _ := readEventsTolerantResult(path)
+	return evs
+}
+
+// readEventsTolerantResult additionally reports whether the reduction is safe
+// to cache. Open, scanner, and malformed-line failures still return any usable
+// events for tolerant display, but their partial result is not cached.
+func readEventsTolerantResult(path string) ([]event.Event, bool) {
 	f, err := os.Open(path)
 	if err != nil {
 		log.Printf("ycc: session history: skipping %s: %v", path, err)
-		return nil
+		return nil, false
 	}
 	defer f.Close()
 
 	var out []event.Event
+	cacheable := true
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	for sc.Scan() {
@@ -121,14 +133,16 @@ func readEventsTolerant(path string) []event.Event {
 		var ev event.Event
 		if err := json.Unmarshal(line, &ev); err != nil {
 			log.Printf("ycc: session history: skipping corrupt line in %s: %v", path, err)
+			cacheable = false
 			continue
 		}
 		out = append(out, ev)
 	}
 	if err := sc.Err(); err != nil {
 		log.Printf("ycc: session history: read error in %s: %v", path, err)
+		return out, false
 	}
-	return out
+	return out, cacheable
 }
 
 // deriveTitle uses the first user_input as the session title unless it is one
@@ -310,6 +324,94 @@ func truncateTitle(s string) string {
 	return string(r[:max]) + "…"
 }
 
+type sessionSummaryCacheEntry struct {
+	info    os.FileInfo
+	summary SessionSummary
+}
+
+func cloneSessionSummary(s SessionSummary) SessionSummary {
+	s.FocusTasks = append([]string(nil), s.FocusTasks...)
+	s.ModelUsage = append([]ModelUsage(nil), s.ModelUsage...)
+	return s
+}
+
+func sameSessionLogVersion(a, b os.FileInfo) bool {
+	return a != nil && b != nil && a.Size() == b.Size() &&
+		a.ModTime().Equal(b.ModTime()) && os.SameFile(a, b)
+}
+
+// scanSessionHistoryCached reduces only logs whose file identity, size, or
+// modification time changed. A log that changes while it is being read still
+// contributes its best-effort summary to this call but is not cached.
+func (m *Manager) scanSessionHistoryCached(workspace string) ([]SessionSummary, error) {
+	glob := filepath.Join(workspace, ".ycc", "sessions", "*", "events.jsonl")
+	paths, err := filepath.Glob(glob)
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(paths)
+	seen := make(map[string]bool, len(paths))
+
+	var out []SessionSummary
+	for _, path := range paths {
+		seen[path] = true
+		before, err := os.Stat(path)
+		if err != nil {
+			log.Printf("ycc: session history: skipping %s: %v", path, err)
+			m.historyCacheMu.Lock()
+			delete(m.historyCache, path)
+			m.historyCacheMu.Unlock()
+			continue
+		}
+
+		m.historyCacheMu.Lock()
+		cached, ok := m.historyCache[path]
+		m.historyCacheMu.Unlock()
+		if ok && sameSessionLogVersion(cached.info, before) {
+			out = append(out, cloneSessionSummary(cached.summary))
+			continue
+		}
+
+		evs, complete := readEventsTolerantResult(path)
+		after, statErr := os.Stat(path)
+		stable := complete && statErr == nil && sameSessionLogVersion(before, after)
+		if len(evs) == 0 {
+			m.historyCacheMu.Lock()
+			delete(m.historyCache, path)
+			m.historyCacheMu.Unlock()
+			continue
+		}
+
+		summary := reduceSessionSummary(workspace, path, evs)
+		out = append(out, summary)
+		m.historyCacheMu.Lock()
+		if stable {
+			if m.historyCache == nil {
+				m.historyCache = make(map[string]sessionSummaryCacheEntry)
+			}
+			m.historyCache[path] = sessionSummaryCacheEntry{
+				info:    after,
+				summary: cloneSessionSummary(summary),
+			}
+		} else {
+			delete(m.historyCache, path)
+		}
+		m.historyCacheMu.Unlock()
+	}
+
+	// A glob is the source of truth for removals. Keep entries for other
+	// workspaces while dropping logs that disappeared from this workspace.
+	sessionsDir := filepath.Join(workspace, ".ycc", "sessions") + string(os.PathSeparator)
+	m.historyCacheMu.Lock()
+	for path := range m.historyCache {
+		if strings.HasPrefix(path, sessionsDir) && !seen[path] {
+			delete(m.historyCache, path)
+		}
+	}
+	m.historyCacheMu.Unlock()
+	return out, nil
+}
+
 // ListSessionHistory enumerates all sessions for a project — both live (from the
 // manager map) and persisted on-disk logs — and returns their summaries sorted
 // most-recent first. The project may be omitted only when the
@@ -327,7 +429,7 @@ func (m *Manager) ListSessionHistory(project string) ([]SessionSummary, error) {
 		return nil, fmt.Errorf("resolve workspace: %w", err)
 	}
 
-	summaries, err := scanSessionHistory(absWS)
+	summaries, err := m.scanSessionHistoryCached(absWS)
 	if err != nil {
 		return nil, err
 	}
