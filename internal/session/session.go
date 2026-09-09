@@ -131,6 +131,11 @@ type Session struct {
 	// already crossed the line does not re-fire or re-ask.
 	budgetWarned   bool
 	budgetBreached bool
+	// budgetMu guards the incremental durable-event cursor and compact per-model
+	// usage totals used by budget checks.
+	budgetMu      sync.Mutex
+	budgetCursor  int
+	budgetByModel map[string]usage.Tokens
 	// refused marks a session parked after a provider-side safety refusal
 	// (engine Result.Refused): the coordinator's last turn came back
 	// with stop_reason "refusal" and was kept out of history. Refusals are

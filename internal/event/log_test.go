@@ -122,6 +122,30 @@ func TestLogPersistAndReopen(t *testing.T) {
 	}
 }
 
+func TestSnapshotFromReturnsOnlyNewDurableEvents(t *testing.T) {
+	l, err := OpenLog(filepath.Join(t.TempDir(), "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	emit(t, l, 1, SessionStarted)
+	emit(t, l, 2, ModelTurn)
+
+	first, cursor := l.SnapshotFrom(0)
+	if len(first) != 2 || cursor != 2 {
+		t.Fatalf("first tail = (%+v, %d), want two events and cursor 2", first, cursor)
+	}
+	if unchanged, next := l.SnapshotFrom(cursor); unchanged != nil || next != cursor {
+		t.Fatalf("unchanged tail = (%+v, %d), want (nil, %d)", unchanged, next, cursor)
+	}
+
+	emit(t, l, 3, ToolCall)
+	tail, next := l.SnapshotFrom(cursor)
+	if len(tail) != 1 || tail[0].Seq != 3 || next != 3 {
+		t.Fatalf("new tail = (%+v, %d), want seq 3 and cursor 3", tail, next)
+	}
+}
+
 // A late subscriber with from_seq replays only newer events, then receives live
 // ones — the reconnect-from-offset guarantee.
 func TestSubscribeReplayFromOffset(t *testing.T) {

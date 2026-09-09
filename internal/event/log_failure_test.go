@@ -148,8 +148,9 @@ func TestLogSyncFailureIsNotReportedAsRecorded(t *testing.T) {
 	if !errors.Is(l.Err(), syncErr) {
 		t.Fatalf("Err = %v, want injected sync error", l.Err())
 	}
-	if l.LastSeq() != 0 || len(l.Snapshot()) != 0 {
-		t.Fatalf("sync-failed event exposed in memory: LastSeq=%d Snapshot=%+v", l.LastSeq(), l.Snapshot())
+	tail, cursor := l.SnapshotFrom(0)
+	if l.LastSeq() != 0 || len(l.Snapshot()) != 0 || tail != nil || cursor != 0 {
+		t.Fatalf("sync-failed event exposed in memory: LastSeq=%d Snapshot=%+v tail=%+v cursor=%d", l.LastSeq(), l.Snapshot(), tail, cursor)
 	}
 	if again := l.Record("agent", ToolCall, nil); again.Seq != 0 {
 		t.Fatalf("Record after sync failure seq = %d, want 0", again.Seq)

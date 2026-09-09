@@ -1,12 +1,17 @@
 package session
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"math"
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/event"
+	"github.com/whyrusleeping/ycc/internal/usage"
 )
 
 // newBudgetSession builds a Session backed by a real event log + registry so the
@@ -20,6 +25,10 @@ func newBudgetSession(t *testing.T, unattended bool, cfg *config.Config) *Sessio
 		t.Fatalf("OpenLog: %v", err)
 	}
 	t.Cleanup(func() { lg.Close() })
+	return budgetSessionWithLog(unattended, reg, lg)
+}
+
+func budgetSessionWithLog(unattended bool, reg *config.Registry, lg *event.Log) *Session {
 	em := event.NewEmitter(lg, "coordinator")
 	return &Session{
 		ID:         "test",
@@ -225,4 +234,167 @@ func TestBudgetNoCapsNoop(t *testing.T) {
 	if n := countEvents(s, event.BudgetWarning) + countEvents(s, event.BudgetExceeded); n != 0 {
 		t.Fatalf("no-caps emitted %d budget events, want 0", n)
 	}
+}
+
+func referenceBudgetTotal(s *Session) usage.Row {
+	entries := usage.ReduceEvents(s.ID, s.log.Snapshot())
+	return usage.Aggregate(entries, s.reg, usage.Options{}).Total
+}
+
+func requireBudgetTotal(t *testing.T, got, want usage.Row) {
+	t.Helper()
+	if got.Tokens != want.Tokens || math.Abs(got.Cost-want.Cost) > 1e-12 || got.Status != want.Status {
+		t.Fatalf("incremental total = %+v, reference = %+v", got, want)
+	}
+}
+
+func TestIncrementalBudgetMatchesReferenceAcrossActorsAndCheckpoints(t *testing.T) {
+	s := newBudgetSession(t, true, budgetConfig(config.Budget{SessionTokens: 1_000_000}, true))
+	s.emitter.EmitAs("coordinator", event.ModelTurn, map[string]any{
+		"model_name": "a",
+		"usage":      event.Usage{Input: 100, Output: 20, CacheRead: 30, Total: 150},
+	})
+	s.emitter.EmitAs("implementer", event.ModelTurn, map[string]any{
+		"model_name": "a",
+		"usage": map[string]any{
+			"input": float64(200), "output": float64(40), "cache_write": float64(10), "total": float64(250),
+		},
+	})
+	// Legacy turns may be missing model_name. They still contribute tokens and
+	// remain unpriced, exactly as in the full usage reduction.
+	s.emitter.EmitAs("reviewer:legacy", event.ModelTurn, map[string]any{
+		"usage": map[string]any{"input": int64(7), "total": int64(7)},
+	})
+
+	requireBudgetTotal(t, s.incrementalBudgetTotal(), referenceBudgetTotal(s))
+	cursor := s.budgetCursor
+	// Unchanged checkpoints must neither rescan nor count any actor twice.
+	requireBudgetTotal(t, s.incrementalBudgetTotal(), referenceBudgetTotal(s))
+	if s.budgetCursor != cursor {
+		t.Fatalf("unchanged checkpoint advanced cursor %d -> %d", cursor, s.budgetCursor)
+	}
+
+	s.emitter.EmitAs("reviewer:a", event.ModelTurn, map[string]any{
+		"model_name": "a",
+		"usage":      &event.Usage{Input: 50, Output: 5, Total: 55},
+	})
+	requireBudgetTotal(t, s.incrementalBudgetTotal(), referenceBudgetTotal(s))
+	requireBudgetTotal(t, s.incrementalBudgetTotal(), referenceBudgetTotal(s))
+}
+
+func TestIncrementalBudgetReopenReconstructsOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	cfg := budgetConfig(config.Budget{SessionTokens: 1_000_000}, true)
+	reg := config.NewRegistry(cfg)
+
+	lg, err := event.OpenLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := budgetSessionWithLog(true, reg, lg)
+	s.spendTokens(100)
+	s.emitter.EmitAs("implementer", event.ModelTurn, map[string]any{
+		"model_name": "a", "usage": event.Usage{Input: 200, Total: 200},
+	})
+	s.emitter.EmitAs("reviewer:legacy", event.ModelTurn, map[string]any{
+		"usage": map[string]any{"total": 9}, // no model or token-class metadata
+	})
+	want := referenceBudgetTotal(s)
+	if err := lg.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopenedLog, err := event.OpenLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopenedLog.Close()
+	reopened := budgetSessionWithLog(true, reg, reopenedLog)
+	events := reopenedLog.Snapshot()
+	reopened.seedBudgetFromLog(events)
+	if reopened.budgetCursor != len(events) {
+		t.Fatalf("reopen cursor = %d, want %d", reopened.budgetCursor, len(events))
+	}
+	requireBudgetTotal(t, reopened.incrementalBudgetTotal(), want)
+	requireBudgetTotal(t, reopened.incrementalBudgetTotal(), want)
+
+	reopened.spendTokens(50)
+	requireBudgetTotal(t, reopened.incrementalBudgetTotal(), referenceBudgetTotal(reopened))
+}
+
+func TestIncrementalBudgetThresholdCrossingAfterRepeatedChecks(t *testing.T) {
+	s := newBudgetSession(t, true, budgetConfig(config.Budget{SessionTokens: 1000}, false))
+	s.spendTokens(799)
+	for i := 0; i < 3; i++ {
+		if msgs := s.checkBudget(context.Background()); msgs != nil {
+			t.Fatalf("check %d before warning = %v", i, msgs)
+		}
+	}
+	if got := countEvents(s, event.BudgetWarning); got != 0 {
+		t.Fatalf("warnings before threshold = %d, want 0", got)
+	}
+
+	s.spendTokens(1)
+	if msgs := s.checkBudget(context.Background()); msgs != nil {
+		t.Fatalf("warning check returned %v", msgs)
+	}
+	if got := countEvents(s, event.BudgetWarning); got != 1 {
+		t.Fatalf("warnings at threshold = %d, want 1", got)
+	}
+
+	s.spendTokens(200)
+	if msgs := s.checkBudget(context.Background()); len(msgs) != 1 {
+		t.Fatalf("breach check returned %d messages, want 1", len(msgs))
+	}
+	if got := countEvents(s, event.BudgetExceeded); got != 1 {
+		t.Fatalf("breaches at threshold = %d, want 1", got)
+	}
+}
+
+var benchmarkBudgetTotal usage.Row
+
+func BenchmarkBudgetCheckLargeHistory(b *testing.B) {
+	const eventCount = 20_000
+	path := filepath.Join(b.TempDir(), "events.jsonl")
+	var data bytes.Buffer
+	enc := json.NewEncoder(&data)
+	for i := 1; i <= eventCount; i++ {
+		ev := event.Event{
+			Seq:   i,
+			Actor: []string{"coordinator", "implementer", "reviewer:a"}[i%3],
+			Type:  event.ModelTurn,
+			Data: map[string]any{
+				"model_name": "a",
+				"usage":      event.Usage{Input: 1, Total: 1},
+			},
+		}
+		if err := enc.Encode(ev); err != nil {
+			b.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(path, data.Bytes(), 0o600); err != nil {
+		b.Fatal(err)
+	}
+	lg, err := event.OpenLog(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer lg.Close()
+	reg := config.NewRegistry(budgetConfig(config.Budget{SessionTokens: 1_000_000}, true))
+	s := budgetSessionWithLog(true, reg, lg)
+	events := lg.Snapshot()
+	s.seedBudgetFromLog(events)
+
+	b.Run("incremental_unchanged_checkpoint", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			if msgs := s.checkBudget(context.Background()); msgs != nil {
+				b.Fatal(msgs)
+			}
+		}
+	})
+	b.Run("reference_full_reduction", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			benchmarkBudgetTotal = usage.Aggregate(usage.ReduceEvents(s.ID, events), reg, usage.Options{}).Total
+		}
+	})
 }

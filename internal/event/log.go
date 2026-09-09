@@ -152,6 +152,28 @@ func (l *Log) Snapshot() []Event {
 	return out
 }
 
+// SnapshotFrom returns the persisted events at or after cursor and the cursor to
+// use for the next call. Cursors are event indexes, not sequence numbers. Since
+// events become visible only after their append and sync succeed, callers can
+// incrementally reduce the returned tail without observing an uncommitted event.
+func (l *Log) SnapshotFrom(cursor int) ([]Event, int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor > len(l.events) {
+		cursor = len(l.events)
+	}
+	next := len(l.events)
+	if cursor == next {
+		return nil, next
+	}
+	out := make([]Event, next-cursor)
+	copy(out, l.events[cursor:])
+	return out, next
+}
+
 // Record assigns the next seq, durably persists the event, and only then makes
 // it visible to snapshots and subscribers. It is the session's single sequence
 // authority and satisfies Recorder.

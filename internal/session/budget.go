@@ -10,6 +10,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -53,10 +54,9 @@ func (s *Session) checkBudget(ctx context.Context) []string {
 		return nil // already handled once this session
 	}
 
-	entries := usage.ReduceEvents(s.ID, s.log.Snapshot())
-	res := usage.Aggregate(entries, s.reg, usage.Options{})
-	tokens := int64(res.Total.Tokens.Total)
-	cost := res.Total.Cost
+	total := s.incrementalBudgetTotal()
+	tokens := int64(total.Tokens.Total)
+	cost := total.Cost
 
 	// pct is the fraction of the tightest configured cap that has been spent.
 	pct := 0.0
@@ -148,9 +148,55 @@ func budgetStatus(tokens int64, cost float64, caps config.Budget) string {
 	return strings.Join(parts, " / ")
 }
 
-// seedBudgetFromLog pre-sets the warned/breached flags from a replayed event log
-// so a reopened session that already crossed the line does not re-fire the
-// warning or re-ask the Confirm gate.
+// incrementalBudgetTotal folds only events committed since the previous check
+// into compact per-model totals, then prices those totals using the registry's
+// current pricing. SnapshotFrom exposes only append+sync-complete events, and its
+// cursor makes an unchanged checkpoint constant-time with respect to log length.
+func (s *Session) incrementalBudgetTotal() usage.Row {
+	s.budgetMu.Lock()
+	defer s.budgetMu.Unlock()
+
+	events, next := s.log.SnapshotFrom(s.budgetCursor)
+	s.addBudgetEventsLocked(events)
+	s.budgetCursor = next
+	return s.budgetTotalLocked()
+}
+
+func (s *Session) addBudgetEventsLocked(events []event.Event) {
+	// ReduceEvents is the shared decoder for live event.Usage values and legacy
+	// JSON-decoded maps. Task/day/actor buckets are collapsed below because a
+	// session budget counts every model turn exactly once regardless of attribution.
+	entries := usage.ReduceEvents(s.ID, events)
+	if len(entries) > 0 && s.budgetByModel == nil {
+		s.budgetByModel = make(map[string]usage.Tokens)
+	}
+	for _, entry := range entries {
+		total := s.budgetByModel[entry.Model]
+		total.Input += entry.Tokens.Input
+		total.Output += entry.Tokens.Output
+		total.CacheRead += entry.Tokens.CacheRead
+		total.CacheWrite += entry.Tokens.CacheWrite
+		total.Total += entry.Tokens.Total
+		s.budgetByModel[entry.Model] = total
+	}
+}
+
+func (s *Session) budgetTotalLocked() usage.Row {
+	models := make([]string, 0, len(s.budgetByModel))
+	for model := range s.budgetByModel {
+		models = append(models, model)
+	}
+	sort.Strings(models)
+	entries := make([]usage.Entry, 0, len(models))
+	for _, model := range models {
+		entries = append(entries, usage.Entry{Session: s.ID, Model: model, Tokens: s.budgetByModel[model]})
+	}
+	return usage.Aggregate(entries, s.reg, usage.Options{}).Total
+}
+
+// seedBudgetFromLog reconstructs the incremental usage totals and pre-sets the
+// warned/breached flags from a replayed event log. Reopen pays the full reduction
+// once; later checkpoints consume only newly committed events.
 func (s *Session) seedBudgetFromLog(events []event.Event) {
 	warned, breached := false, false
 	for _, ev := range events {
@@ -162,6 +208,13 @@ func (s *Session) seedBudgetFromLog(events []event.Event) {
 			warned = true
 		}
 	}
+
+	s.budgetMu.Lock()
+	s.budgetCursor = len(events)
+	s.budgetByModel = nil
+	s.addBudgetEventsLocked(events)
+	s.budgetMu.Unlock()
+
 	s.mu.Lock()
 	s.budgetWarned = warned
 	s.budgetBreached = breached
