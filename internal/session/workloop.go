@@ -152,6 +152,9 @@ type workLoop struct {
 	// runSession is the injectable seam: the default runs a real unattended work
 	// session; tests substitute a fake returning canned records.
 	runSession func(ctx context.Context) (loopSessRec, bool, error)
+	// startSession is the narrower seam used by realRunSession tests to control a
+	// real runner's session lifecycle without making a model request.
+	startSession func(Config) (*Session, error)
 	// waitFn waits for a retry delay and reports whether it elapsed. The default is
 	// stop-aware; tests replace it to avoid real multi-minute sleeps.
 	waitFn func(time.Duration) bool
@@ -215,6 +218,8 @@ func (wl *workLoop) waitForRetry(delay time.Duration) bool {
 		return true
 	case <-wl.stopCh:
 		return false
+	case <-wl.m.loopCtx.Done():
+		return false
 	}
 }
 
@@ -230,6 +235,10 @@ func (m *Manager) StartWorkLoop(project string) (*WorkLoop, error) {
 		return nil, err
 	}
 	m.loopMu.Lock()
+	if m.loopStop {
+		m.loopMu.Unlock()
+		return nil, fmt.Errorf("session manager is shutting down")
+	}
 	if m.workLoops[absWS] == nil {
 		m.restoreWorkLoopLocked(absWS)
 	}
@@ -254,6 +263,7 @@ func (m *Manager) StartWorkLoop(project string) (*WorkLoop, error) {
 		baseline:   map[string]docs.Status{},
 		stopCh:     make(chan struct{}),
 	}
+	wl.startSession = m.Start
 	wl.runSession = wl.realRunSession
 	wl.waitFn = wl.waitForRetry
 	if m.newRunSession != nil {
@@ -263,12 +273,16 @@ func (m *Manager) StartWorkLoop(project string) (*WorkLoop, error) {
 		wl.waitFn = m.newLoopWait(wl)
 	}
 	m.workLoops[absWS] = wl
+	m.loopWG.Add(1)
 	m.loopMu.Unlock()
 
 	// Record the live state before launching the goroutine. If the daemon exits at
 	// any later point, restoration can report an interruption instead of "no loop".
 	wl.persist()
-	go wl.run()
+	go func() {
+		defer m.loopWG.Done()
+		wl.run()
+	}()
 	return wl.snapshot(), nil
 }
 
@@ -367,6 +381,10 @@ func (wl *workLoop) run() {
 	var outageFailures int
 	var outageWait time.Duration
 	for {
+		if wl.m.loopCtx.Err() != nil {
+			wl.finish("loop interrupted: daemon shutting down", tasks)
+			return
+		}
 		if wl.stopRequested() {
 			wl.finish("loop stopped: requested", tasks)
 			return
@@ -398,7 +416,7 @@ func (wl *workLoop) run() {
 		wl.prevFP = fp
 		wl.mu.Unlock()
 
-		rec, breach, err := wl.runSession(context.Background())
+		rec, breach, err := wl.runSession(wl.m.loopCtx)
 		wl.accumulate(rec, breach)
 		if err != nil {
 			// Re-read the backlog so the digest reflects any progress the session
@@ -471,6 +489,10 @@ func (wl *workLoop) run() {
 		wl.persist()
 
 		elapsed := wl.waitFn(delay)
+		if wl.m.loopCtx.Err() != nil {
+			wl.finish("loop interrupted: daemon shutting down", tasks)
+			return
+		}
 		if !elapsed || wl.stopRequested() {
 			wl.finish("loop stopped: requested", tasks)
 			return
@@ -677,7 +699,11 @@ func (wl *workLoop) buildDigestLocked(final []*docs.Task) {
 // session complete (checked before the NEXT pick, not here).
 func (wl *workLoop) realRunSession(ctx context.Context) (loopSessRec, bool, error) {
 	start := time.Now()
-	sess, err := wl.m.Start(Config{Project: wl.projectArg, Mode: "work", Unattended: true})
+	startSession := wl.startSession
+	if startSession == nil {
+		startSession = wl.m.Start
+	}
+	sess, err := startSession(Config{Project: wl.projectArg, Mode: "work", Unattended: true})
 	if err != nil {
 		return loopSessRec{}, false, err
 	}
@@ -687,22 +713,43 @@ func (wl *workLoop) realRunSession(ctx context.Context) (loopSessRec, bool, erro
 	wl.persist()
 
 	// An unattended work session reaches Idle only after `finish` (it then blocks
-	// on input), so Idle == done here; Error is also terminal.
+	// on input), so Idle == done here; Error is also terminal. A hard stop or
+	// external reclaim is terminal for the batch rather than permission to start
+	// replacement work. The manager lifecycle context only cancels on shutdown;
+	// graceful StopWorkLoop deliberately does not cancel it.
+	var terminalErr error
 	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
 waitLoop:
 	for {
-		switch sess.Status() {
-		case event.StatusIdle, event.StatusError:
+		status := sess.Status()
+		switch status {
+		case event.StatusIdle, event.StatusError, event.StatusStopped:
+			// Claim terminal cleanup atomically with respect to Stop/Reopen. If
+			// another remover won, even a normal-looking Idle/Error is an external
+			// terminal outcome for this batch, not permission to restart work.
+			if !wl.m.reclaimIfCurrent(sess) {
+				terminalErr = fmt.Errorf("work session %s disappeared or was reclaimed", sess.ID)
+			} else if status == event.StatusStopped {
+				terminalErr = fmt.Errorf("work session %s was stopped externally", sess.ID)
+			}
+			break waitLoop
+		}
+		if live, ok := wl.m.Get(sess.ID); !ok || live != sess {
+			terminalErr = fmt.Errorf("work session %s disappeared or was reclaimed", sess.ID)
 			break waitLoop
 		}
 		select {
 		case <-ctx.Done():
+			if wl.m.reclaimIfCurrent(sess) {
+				terminalErr = fmt.Errorf("work session %s interrupted: %w", sess.ID, ctx.Err())
+			} else {
+				terminalErr = fmt.Errorf("work session %s disappeared or was reclaimed", sess.ID)
+			}
 			break waitLoop
 		case <-ticker.C:
 		}
 	}
-
+	ticker.Stop()
 	endedWithError := sess.Status() == event.StatusError
 	events := sess.Log().Snapshot()
 	rec := loopSessRec{id: sess.ID, priceStatus: string(usage.StatusUnpriced)}
@@ -737,9 +784,9 @@ waitLoop:
 	wl.mu.Lock()
 	wl.currentSessionID = ""
 	wl.mu.Unlock()
-	wl.m.reclaim(sess.ID)
+	wl.persist()
 	rec.duration = time.Since(start)
-	return rec, breach, nil
+	return rec, breach, terminalErr
 }
 
 // --- pure helpers (ported from the client driver) ---

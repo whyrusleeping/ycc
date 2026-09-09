@@ -283,6 +283,349 @@ func waitLoopFinished(t *testing.T, m *Manager, project string) *WorkLoop {
 	return nil
 }
 
+func TestRealRunSessionTerminalLifecycle(t *testing.T) {
+	tests := []struct {
+		name        string
+		act         func(*Manager, *Session, context.CancelFunc)
+		wantErr     string
+		wantErrKind string
+	}{
+		{
+			name: "idle",
+			act: func(_ *Manager, s *Session, _ context.CancelFunc) {
+				s.emitter.Emit(event.SessionIdle, map[string]any{"report": "done"})
+				s.setStatus(event.StatusIdle)
+			},
+		},
+		{
+			name: "error",
+			act: func(_ *Manager, s *Session, _ context.CancelFunc) {
+				s.emitter.Emit(event.SessionError, map[string]any{"kind": "auth", "retryable": false})
+				s.setStatus(event.StatusError)
+			},
+			wantErrKind: "auth",
+		},
+		{
+			name: "hard stop",
+			act: func(m *Manager, s *Session, _ context.CancelFunc) {
+				if err := m.Stop(s.ID); err != nil {
+					t.Errorf("Stop: %v", err)
+				}
+			},
+			wantErr: "work session controlled-hard-stop",
+		},
+		{
+			name: "reclaimed",
+			act: func(m *Manager, s *Session, _ context.CancelFunc) {
+				m.reclaimIfCurrent(s)
+			},
+			wantErr: "disappeared or was reclaimed",
+		},
+		{
+			name: "canceled",
+			act: func(_ *Manager, _ *Session, cancel context.CancelFunc) {
+				cancel()
+			},
+			wantErr: "interrupted: context canceled",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewManager(testRegistry(), "")
+			defer m.ReclaimAll()
+			ws := t.TempDir()
+			s := newStopSession(t)
+			s.ID = "controlled-" + strings.ReplaceAll(tt.name, " ", "-")
+			s.Workspace = ws
+			started := make(chan struct{})
+			wl := &workLoop{
+				m: m, loopID: "loop-controlled", project: "demo", workspace: ws,
+				state: "running", startedAt: time.Now(), baseline: map[string]docs.Status{},
+				startSession: func(Config) (*Session, error) {
+					m.mu.Lock()
+					m.sessions[s.ID] = s
+					m.mu.Unlock()
+					close(started)
+					return s, nil
+				},
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			type result struct {
+				rec loopSessRec
+				err error
+			}
+			done := make(chan result, 1)
+			go func() {
+				rec, _, err := wl.realRunSession(ctx)
+				done <- result{rec: rec, err: err}
+			}()
+			<-started
+			tt.act(m, s, cancel)
+
+			var got result
+			select {
+			case got = <-done:
+			case <-time.After(2 * time.Second):
+				t.Fatal("realRunSession did not return")
+			}
+			if tt.wantErr == "" && got.err != nil {
+				t.Fatalf("realRunSession error = %v", got.err)
+			}
+			if tt.wantErr != "" && (got.err == nil || !strings.Contains(got.err.Error(), tt.wantErr)) {
+				t.Fatalf("realRunSession error = %v, want substring %q", got.err, tt.wantErr)
+			}
+			if got.rec.id != s.ID || got.rec.errKind != tt.wantErrKind {
+				t.Fatalf("record = %+v, want id %q and error kind %q", got.rec, s.ID, tt.wantErrKind)
+			}
+			if current := wl.snapshot().CurrentSessionID; current != "" {
+				t.Fatalf("current session = %q after runner returned", current)
+			}
+			if _, ok := m.Get(s.ID); ok {
+				t.Fatal("session remained live after runner returned")
+			}
+			persisted, ok := readPersistedWorkLoop(ws)
+			if !ok || persisted.CurrentSessionID != "" {
+				t.Fatalf("persisted loop = %+v, present %v", persisted, ok)
+			}
+		})
+	}
+}
+
+func TestRealRunSessionTerminalRemovalPreservesSameIDReplacement(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		remove func(*Manager, *Session) error
+	}{
+		{
+			name: "hard stop after idle",
+			remove: func(m *Manager, s *Session) error {
+				return m.Stop(s.ID)
+			},
+		},
+		{
+			name: "reclaim after idle",
+			remove: func(m *Manager, s *Session) error {
+				m.reclaimIfCurrent(s)
+				return nil
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewManager(testRegistry(), "")
+			defer m.ReclaimAll()
+			ws := t.TempDir()
+			original := newStopSession(t)
+			original.ID = "reopened-session"
+			original.Workspace = ws
+			replacement := newStopSession(t)
+			replacement.ID = original.ID
+			replacement.Workspace = ws
+			startEntered := make(chan struct{})
+			releaseStart := make(chan struct{})
+			wl := &workLoop{
+				m: m, loopID: "loop-reopen-race", project: "demo", workspace: ws,
+				state: "running", startedAt: time.Now(), baseline: map[string]docs.Status{},
+				startSession: func(Config) (*Session, error) {
+					m.mu.Lock()
+					m.sessions[original.ID] = original
+					m.mu.Unlock()
+					close(startEntered)
+					<-releaseStart
+					return original, nil
+				},
+			}
+
+			type result struct {
+				rec loopSessRec
+				err error
+			}
+			done := make(chan result, 1)
+			go func() {
+				rec, _, err := wl.realRunSession(context.Background())
+				done <- result{rec: rec, err: err}
+			}()
+			<-startEntered
+
+			// The old implementation could observe this terminal status, then let
+			// Stop/reclaim remove the session and finally reclaim a reopened session
+			// by id during delayed cleanup. Hold startSession so that ordering is
+			// deterministic rather than relying on the runner's polling ticker.
+			original.emitter.Emit(event.SessionIdle, map[string]any{"report": "done"})
+			original.setStatus(event.StatusIdle)
+			if err := tc.remove(m, original); err != nil {
+				t.Fatal(err)
+			}
+			m.mu.Lock()
+			m.sessions[replacement.ID] = replacement
+			m.mu.Unlock()
+			close(releaseStart)
+
+			select {
+			case got := <-done:
+				if got.err == nil || !strings.Contains(got.err.Error(), "disappeared or was reclaimed") {
+					t.Fatalf("realRunSession error = %v", got.err)
+				}
+				if got.rec.id != original.ID {
+					t.Fatalf("record id = %q, want %q", got.rec.id, original.ID)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("realRunSession did not return")
+			}
+			if live, ok := m.Get(replacement.ID); !ok || live != replacement {
+				t.Fatalf("same-id replacement was removed: live=%p ok=%v, want %p", live, ok, replacement)
+			}
+			select {
+			case <-replacement.ctx.Done():
+				t.Fatal("same-id replacement was canceled")
+			default:
+			}
+			if current := wl.snapshot().CurrentSessionID; current != "" {
+				t.Fatalf("current session = %q after runner returned", current)
+			}
+		})
+	}
+}
+
+func controlledRealWorkLoop(t *testing.T) (*Manager, string, *Session, <-chan struct{}) {
+	t.Helper()
+	s := newStopSession(t)
+	s.ID = "controlled-loop-session"
+	started := make(chan struct{})
+	var m *Manager
+	factory := func(wl *workLoop) func(context.Context) (loopSessRec, bool, error) {
+		wl.startSession = func(Config) (*Session, error) {
+			m.mu.Lock()
+			m.sessions[s.ID] = s
+			m.mu.Unlock()
+			close(started)
+			return s, nil
+		}
+		return wl.realRunSession
+	}
+	var ws string
+	m, _, ws = loopTestManager(t, factory)
+	s.Workspace = ws
+	if _, err := docs.NewStore(ws).Create("controlled task", "", 1, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	return m, ws, s, started
+}
+
+func TestHardStoppedRealSessionTerminatesWorkLoop(t *testing.T) {
+	m, _, s, started := controlledRealWorkLoop(t)
+	defer m.ReclaimAll()
+	if _, err := m.StartWorkLoop("demo"); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if err := m.Stop(s.ID); err != nil {
+		t.Fatal(err)
+	}
+	final := waitLoopFinished(t, m, "demo")
+	if final.SessionsRun != 1 || final.CurrentSessionID != "" || !strings.Contains(final.Outcome, "work session "+s.ID) {
+		t.Fatalf("finished loop = %+v", final)
+	}
+}
+
+func TestGracefulStopWorkLoopLetsRealCurrentSessionFinish(t *testing.T) {
+	m, _, s, started := controlledRealWorkLoop(t)
+	defer m.ReclaimAll()
+	if _, err := m.StartWorkLoop("demo"); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	stopping, err := m.StopWorkLoop("demo")
+	if err != nil || stopping.State != "stopping" {
+		t.Fatalf("StopWorkLoop = %+v, %v", stopping, err)
+	}
+	if s.Status() != event.StatusRunning {
+		t.Fatalf("graceful stop changed session status to %q", s.Status())
+	}
+	s.emitter.Emit(event.SessionIdle, map[string]any{"report": "finished after stop request"})
+	s.setStatus(event.StatusIdle)
+	final := waitLoopFinished(t, m, "demo")
+	if final.Outcome != "loop stopped: requested" || final.SessionsRun != 1 || final.CurrentSessionID != "" {
+		t.Fatalf("finished loop = %+v", final)
+	}
+}
+
+func TestReclaimAllReleasesProviderRetryWait(t *testing.T) {
+	factory := func(*workLoop) func(context.Context) (loopSessRec, bool, error) {
+		return func(context.Context) (loopSessRec, bool, error) {
+			return loopSessRec{id: "failed", errKind: "network", errRetryable: true}, false, nil
+		}
+	}
+	m, _, ws := loopTestManager(t, factory)
+	if _, err := docs.NewStore(ws).Create("provider outage", "", 1, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.StartWorkLoop("demo"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		current, err := m.GetWorkLoop("demo")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if current.State == "waiting" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("loop did not enter provider retry wait")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	done := make(chan struct{})
+	go func() {
+		m.ReclaimAll()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ReclaimAll did not release the provider retry waiter")
+	}
+	final, err := m.GetWorkLoop("demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final.State != "finished" || final.Outcome != "loop interrupted: daemon shutting down" {
+		t.Fatalf("finished loop = %+v", final)
+	}
+}
+
+func TestReclaimAllCancelsAndJoinsRealWorkLoop(t *testing.T) {
+	m, ws, _, started := controlledRealWorkLoop(t)
+	if _, err := m.StartWorkLoop("demo"); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	done := make(chan struct{})
+	go func() {
+		m.ReclaimAll()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ReclaimAll did not release the work-loop waiter")
+	}
+	final, err := m.GetWorkLoop("demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final.State != "finished" || final.CurrentSessionID != "" || !strings.Contains(final.Outcome, "interrupted: context canceled") {
+		t.Fatalf("finished loop = %+v", final)
+	}
+	persisted, ok := readPersistedWorkLoop(ws)
+	if !ok || persisted.State != "finished" || persisted.CurrentSessionID != "" || persisted.Outcome != final.Outcome {
+		t.Fatalf("persisted loop = %+v, present %v", persisted, ok)
+	}
+}
+
 // TestWorkLoopSoleProjectOmitted covers project=="" as an unambiguous
 // convenience when the manager has exactly one named project.
 func TestWorkLoopSoleProjectOmitted(t *testing.T) {

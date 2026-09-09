@@ -1472,8 +1472,12 @@ type Manager struct {
 	// workLoops holds the daemon-side work loops keyed by resolved absolute
 	// workspace. Guarded by loopMu, a dedicated mutex so loop
 	// bookkeeping never contends with the session-map mu that Start/reclaim take.
-	loopMu    sync.Mutex
-	workLoops map[string]*workLoop
+	loopMu     sync.Mutex
+	workLoops  map[string]*workLoop
+	loopCtx    context.Context
+	loopCancel context.CancelFunc
+	loopWG     sync.WaitGroup
+	loopStop   bool
 	// newRunSession, when non-nil, overrides the loop's session runner (the test
 	// seam that drives control logic without a live model). Nil => the real runner.
 	newRunSession func(*workLoop) func(context.Context) (loopSessRec, bool, error)
@@ -1506,6 +1510,7 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 	}
 	integrationCtx, integrationCancel := context.WithCancel(context.Background())
 	gitSyncCtx, gitSyncCancel := context.WithCancel(context.Background())
+	loopCtx, loopCancel := context.WithCancel(context.Background())
 	m := &Manager{
 		sessions:          map[string]*Session{},
 		reg:               reg,
@@ -1519,6 +1524,8 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 		integrationCtx:    integrationCtx,
 		integrationCancel: integrationCancel,
 		workLoops:         map[string]*workLoop{},
+		loopCtx:           loopCtx,
+		loopCancel:        loopCancel,
 		gitSyncCache:      map[string]gitFetchState{},
 		gitSyncInterval:   defaultGitSyncInterval,
 		gitSyncWake:       make(chan struct{}, 1),
@@ -2738,23 +2745,26 @@ func (m *Manager) waitWorkstreamWatcher(id string) {
 	}
 }
 
-// reclaim removes an idle session from the live map to free memory WITHOUT
-// terminating it: it cancels the loop and closes the log via Session.reap but
-// does NOT emit the terminal session_stopped marker, so the durable log stays
-// resumable. Used by the background GC reaper; unknown
-// ids are silently ignored.
-func (m *Manager) reclaim(id string) {
+// reclaimIfCurrent reclaims s only while it is still the exact live instance
+// registered under its id. It cancels the loop and closes the log via
+// Session.reap without emitting a terminal session_stopped marker. A
+// stopped/reclaimed session can be reopened with the same id, so callers doing
+// delayed cleanup must never act on id alone.
+func (m *Manager) reclaimIfCurrent(s *Session) bool {
 	m.mu.Lock()
-	s, ok := m.sessions[id]
-	if ok {
-		delete(m.sessions, id)
+	current, ok := m.sessions[s.ID]
+	if ok && current == s {
+		delete(m.sessions, s.ID)
+	} else {
+		ok = false
 	}
 	m.mu.Unlock()
 	if !ok {
-		return
+		return false
 	}
 	s.reap()
-	m.waitWorkstreamWatcher(id)
+	m.waitWorkstreamWatcher(s.ID)
+	return true
 }
 
 // ReclaimAll releases every live session without writing session_stopped markers.
@@ -2766,6 +2776,17 @@ func (m *Manager) ReclaimAll() {
 	// their worktrees. This keeps daemon shutdown free of background git races.
 	m.gitSyncCancel()
 	m.gitSyncWG.Wait()
+
+	// Cancel and join daemon-owned work loops before draining the session map. The
+	// real runner uses this context to reclaim its current session, clear the
+	// persisted current-session id, and publish a terminal loop outcome.
+	m.loopMu.Lock()
+	if !m.loopStop {
+		m.loopStop = true
+		m.loopCancel()
+	}
+	m.loopMu.Unlock()
+	m.loopWG.Wait()
 
 	m.mu.Lock()
 	if !m.integrationStop {
