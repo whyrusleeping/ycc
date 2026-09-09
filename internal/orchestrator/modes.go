@@ -114,11 +114,12 @@ func BuildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 // The shared tooling guidance, split so read-only roles (reviewers) get the
 // read/search rules without the editing sentence they have no tools for.
 const (
-	inspectHint = "Use the Read tool to view files (prefer it over `cat`/`sed`), and search with Bash + " +
-		"ripgrep (`rg 'pattern'`, `rg --files -g '*.go'`) rather than grep. Every Bash command runs in a " +
-		"fresh shell already rooted at the workspace and the working directory does not carry between " +
-		"calls, so run commands directly instead of prefixing a redundant `cd` into the workspace root — " +
-		"write `rg 'pattern'`, not `cd <workspace> && rg 'pattern'`. (Chaining real steps with `&&`, e.g. " +
+	inspectHint = "Use Read to view files (prefer it over `cat`/`sed`) and Search for bounded textual " +
+		"queries with explicit scope, mode, context, and continuation. Use Bash + ripgrep only when the " +
+		"first-class Search contract does not cover the operation. Every Bash command runs in a fresh shell " +
+		"already rooted at the workspace and the working directory does not carry between calls, so run " +
+		"commands directly instead of prefixing a redundant `cd` into the workspace root — write " +
+		"`go test ./...`, not `cd <workspace> && go test ./...`. (Chaining real steps with `&&`, e.g. " +
 		"`go build ./... && go test ./...`, is fine; only the leading `cd` into the root is redundant.)"
 	editHint = "Change files with the Edit tool (exact string replacement) or Write (create/overwrite " +
 		"whole file) rather than via shell redirection."
@@ -131,7 +132,7 @@ const (
 	// encourage for every role.
 	batchHint = "BATCH INDEPENDENT TOOL CALLS: when you need several pieces of information and no call " +
 		"depends on another's result, issue them together in a single turn — e.g. Read three related " +
-		"files at once, or combine a Read with a ripgrep search — instead of one call per turn. Each " +
+		"files at once, or combine a Read with Search — instead of one call per turn. Each " +
 		"turn is a full round-trip that re-processes the whole conversation, so batching is " +
 		"significantly cheaper and faster. Sequence calls only when a later call genuinely needs an " +
 		"earlier result (and never guess values you haven't read yet)."

@@ -331,11 +331,36 @@ subset of output tokens, not a separate billable class.
 
 ## 8. Tools and access policy
 
-Worker tools provide file read/write/edit, shell execution, optional Exa web search/fetch,
-multimodal reads, and structured finish/block outcomes. Coordinator tools add backlog management,
-planning, implementation/review delegation, revision, commit, questions, memory, and session
-control. Tools are model-callable JSON-schema interfaces; control tools can suspend, resume, spawn,
-or end loops.
+Worker tools provide file read/write/edit, bounded textual code search, shell execution, optional
+Exa web search/fetch, multimodal reads, and structured finish/block outcomes. Coordinator tools add
+backlog management, planning, implementation/review delegation, revision, commit, questions,
+memory, and session control. Tools are model-callable JSON-schema interfaces; control tools can
+suspend, resume, spawn, or end loops.
+
+`Search` is a compact ripgrep-backed interface, available to editing and inspection agents while
+Bash remains the escape hatch. Its schema requires `pattern`; `path` (default `.`) and `glob[]`
+provide scope; `mode` is `literal` (default) or `regex`; `output` is `matches` (default), `files`, or
+`count`; `context` adds 0–10 nearby lines to match output; and `limit` (default 100, maximum 500),
+`max_bytes` (default 32 KiB, maximum 64 KiB), and `offset` bound and continue results. Calls execute
+`rg` with direct argv—never shell interpolation or a fallback that changes semantics—and report an
+actionable error when the executable, arguments, path, or regular expression is invalid. Successful
+results start with `status=ok`, `status=no_match`, or `status=end`, plus the effective mode/output,
+scope, offset, returned-record count, and truncation state. Truncated results include `next_offset`;
+repeating the same call with that offset retrieves the next deterministic path-sorted record range.
+Matches and context use ripgrep-style `path:line:text` and `path-line-text` references; file and count
+output use `path` and `path:count`. Repository ignore rules apply by default, hidden paths are omitted,
+and `.ycc`, `node_modules`, `vendor`, `dist`, and `build` trees are additionally excluded.
+`include_ignored`, `include_hidden`, and `include_generated` independently and explicitly override
+those policies.
+
+The reproducible fixture in `TestSearchRepresentativeComparison` compares representative Search
+calls with Bash+rg tool calls. Both return the same references in one call (one model round trip per
+operation). Reference response sizes were 131 versus 227 bytes for a quoting-sensitive literal, 604
+versus 703 for 20 scoped regex matches, and 464 versus 563 for 30 per-file counts (Search versus
+Bash+rg). Search also supplies the explicit scope, mode, status, and continuation metadata above.
+The ignore, Unicode, context, large-result, pagination, error, and cancellation fixtures beside it
+cover the remaining contracts; this is a deterministic tool comparison, not a claim of unperformed
+live-model evaluation.
 
 Read access is unrestricted because shell access already is. Write and Edit are confined by
 resolved filesystem paths to the workspace plus configured trusted write roots. This is an

@@ -84,7 +84,7 @@ func TestBuildModeToolsets(t *testing.T) {
 	// pm exposes planning/docs/backlog tools and switch_to_work, but NO
 	// implementation tools (no spawn_implementer / commit).
 	pmReg, _ := BuildMode("pm", d, false)
-	for _, want := range []string{"Read", "Edit", "Write", "Bash", "list_backlog", "get_task", "create_task", "update_task", "propose_plan", "switch_to_work", "ask_user", "finish"} {
+	for _, want := range []string{"Read", "Search", "Edit", "Write", "Bash", "list_backlog", "get_task", "create_task", "update_task", "propose_plan", "switch_to_work", "ask_user", "finish"} {
 		if !hasTool(pmReg, want) {
 			t.Fatalf("pm mode missing %s", want)
 		}
@@ -97,7 +97,7 @@ func TestBuildModeToolsets(t *testing.T) {
 	// chat is the freeform assistant: file tools + read AND write backlog tools
 	// (create_task/update_task), but no implementation pipeline or switch_to_work.
 	chatReg, _ := BuildMode("chat", d, false)
-	for _, want := range []string{"Read", "Edit", "Write", "Bash", "list_backlog", "get_task", "create_task", "update_task", "ask_user", "spawn_agent", "send_to_agent"} {
+	for _, want := range []string{"Read", "Search", "Edit", "Write", "Bash", "list_backlog", "get_task", "create_task", "update_task", "ask_user", "spawn_agent", "send_to_agent"} {
 		if !hasTool(chatReg, want) {
 			t.Fatalf("chat mode missing %s", want)
 		}
@@ -113,7 +113,7 @@ func TestBuildModeToolsets(t *testing.T) {
 	extraWriteRoot := t.TempDir()
 	d.WriteRoots = []string{extraWriteRoot}
 	integrateReg, _ := BuildMode("integrate", d, true)
-	for _, want := range []string{"Read", "Edit", "Write", "Bash", "request_integration", "report_blocked"} {
+	for _, want := range []string{"Read", "Search", "Edit", "Write", "Bash", "request_integration", "report_blocked"} {
 		if !hasTool(integrateReg, want) {
 			t.Fatalf("integrate mode missing %s", want)
 		}
@@ -157,7 +157,7 @@ func TestWorkCoordinatorDirectImplementation(t *testing.T) {
 		}
 	}
 	// It still edits the workspace itself and reviews.
-	for _, want := range []string{"Read", "Write", "Edit", "Bash", "spawn_reviewers", "re_review", "commit", "list_backlog", "create_task", "propose_plan"} {
+	for _, want := range []string{"Read", "Search", "Write", "Edit", "Bash", "spawn_reviewers", "re_review", "commit", "list_backlog", "create_task", "propose_plan"} {
 		if !hasTool(reg, want) {
 			t.Fatalf("direct work coordinator missing %s", want)
 		}

@@ -60,13 +60,13 @@ var imageMediaTypes = map[string]string{
 	".webp": "image/webp",
 }
 
-// Editing returns the file + shell tools (Read, Write, Edit, Bash) without a
-// control/finish tool — for open-ended modes (chat) where the agent yields
-// naturally rather than declaring the task complete. When ws.Jobs is set, the
-// background-job tools (job_output, wait, kill_job) are included too and Bash
+// Editing returns the file, Search, and shell tools (Read, Search, Write, Edit,
+// Bash) without a control/finish tool — for open-ended modes (chat) where the
+// agent yields naturally rather than declaring the task complete. When ws.Jobs
+// is set, the background-job tools (job_output, wait, kill_job) are included too and Bash
 // gains run_in_background.
 func Editing(ws *Workspace) []*gollama.Tool {
-	ts := append([]*gollama.Tool{readFile(ws), writeFile(ws), editFile(ws), bash(ws), toolOutput(ws)}, Web()...)
+	ts := append([]*gollama.Tool{readFile(ws), search(ws), writeFile(ws), editFile(ws), bash(ws), toolOutput(ws)}, Web()...)
 	if ws.Jobs != nil {
 		ts = append(ts, JobTools(ws)...)
 	}
@@ -994,9 +994,9 @@ func bash(ws *Workspace) *gollama.Tool {
 	desc := "Run a shell command and return a UTF-8-safe combined stdout+stderr preview, bounded to 64 KiB/2000 lines with useful head and tail when truncated. Captures up to 4 MiB are retained under an authorized artifact id for tool_output range retrieval; larger capture loss is explicit. Each call runs " +
 		"in a fresh shell already rooted at the workspace, and shell state (including the working directory) does " +
 		"NOT persist between calls — so there is never a need to `cd` into the workspace root; just run " +
-		"the command directly (write `rg 'pattern'`, not `cd <workspace> && rg 'pattern'`). Use this to explore " +
-		"and inspect: search with ripgrep (`rg 'pattern'`, `rg --files -g '*.go'`), list with `ls`, and run " +
-		"builds/tests. Prefer the Read tool over `cat` for viewing files. Foreground commands time out after 2 minutes " +
+		"the command directly (write `go test ./...`, not `cd <workspace> && go test ./...`). Use this to explore " +
+		"and inspect: list files, run builds/tests, and handle searches outside the first-class Search tool's " +
+		"textual contract. Prefer Search over shell quoting for ordinary text/path queries and Read over `cat` for viewing files. Foreground commands time out after 2 minutes " +
 		"by default; set timeout_s to change the runtime limit (maximum 3600 seconds). Background commands have no " +
 		"runtime limit by default; for them, timeout_s sets a total job-runtime limit."
 	params := map[string]any{
@@ -1042,9 +1042,9 @@ func sandboxedBash(ws *Workspace) *gollama.Tool {
 	desc := "Run a shell command and return a UTF-8-safe combined stdout+stderr preview, bounded to 64 KiB/2000 lines with head and tail. Captures up to 4 MiB are retained for tool_output range retrieval. Each call runs " +
 		"in a fresh shell already rooted at the workspace, and shell state (including the working directory) does " +
 		"NOT persist between calls — so there is never a need to `cd` into the workspace root; just run " +
-		"the command directly (write `rg 'pattern'`, not `cd <workspace> && rg 'pattern'`). Use this to inspect " +
-		"the change: run `git diff`, search with ripgrep (`rg 'pattern'`), list with `ls`, read files, and run " +
-		"builds/tests. Prefer the Read tool over `cat` for viewing files. Commands time out after 2 minutes by " +
+		"the command directly (write `git diff`, not `cd <workspace> && git diff`). Use this to inspect " +
+		"the change: run `git diff`, list files, run builds/tests, and handle searches outside the first-class " +
+		"Search tool's textual contract. Prefer Search for ordinary text/path queries and Read over `cat` for viewing files. Commands time out after 2 minutes by " +
 		"default; set timeout_s when a command needs longer (maximum 3600 seconds)."
 	if sandbox.Available() != sandbox.None {
 		desc += " NOTE: the workspace is mounted READ-ONLY for you — commands that try to write to or delete from " +
