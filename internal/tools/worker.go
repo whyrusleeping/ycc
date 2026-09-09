@@ -2,8 +2,12 @@ package tools
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -86,8 +90,10 @@ func readFile(ws *Workspace) *gollama.Tool {
 			"relative to the workspace root. Text reads scan at most 8 MiB, retain at most 64 KiB per source line, " +
 			"render at most 2000 Unicode code points per line, and return at most 2000 lines or 128 KiB; use " +
 			"offset (1-based start line) and limit (maximum 2000) to " +
-			"read a specific window. Images (PNG, JPEG, GIF, WebP) and PDFs are returned natively as visual content. " +
-			"Passing a directory path lists up to 1000 immediate entries (subdirectories have a trailing '/').",
+			"read a specific window. Regular files up to 8 MiB also report a full-content source_revision for safe " +
+			"Write overwrite calls; it is distinct from the bounded projection hash. Images (PNG, JPEG, GIF, WebP) " +
+			"and PDFs are returned natively as visual content. Passing a directory path lists up to 1000 immediate " +
+			"entries (subdirectories have a trailing '/').",
 		Params: obj(map[string]any{
 			"file_path": strProp("absolute path to the file (or relative to the workspace root)"),
 			"offset":    map[string]any{"type": "integer", "minimum": 1, "description": "1-based line number to start reading from (optional; text files only)"},
@@ -132,16 +138,39 @@ func readFile(ws *Workspace) *gollama.Tool {
 				return unsupportedReadFile(fp, info), nil
 			}
 
+			sourceRevision := ""
+			if info.Size() <= maxReadSourceBytes {
+				sourceRevision, err = fullContentRevision(ctx, f)
+				if err != nil {
+					return errResult("Read: %v", err), nil
+				}
+			}
+
 			// Images and PDFs are handed to the model as native content blocks
 			// rather than as numbered text, which would be meaningless binary.
-			if res, handled := readMedia(ctx, f, info, fp); handled {
+			if res, handled := readMedia(ctx, f, info, fp, sourceRevision); handled {
 				return res, nil
 			}
 			start := getInt(params, "offset", 1)
 			limit := getInt(params, "limit", maxReadLines)
-			return readTextWindow(ctx, f, info.Size(), fp, start, limit), nil
+			return readTextWindow(ctx, f, info.Size(), fp, start, limit, sourceRevision), nil
 		},
 	}
+}
+
+func fullContentRevision(ctx context.Context, f *os.File) (string, error) {
+	h := sha256.New()
+	n, err := io.Copy(h, io.LimitReader(&contextReader{ctx: ctx, r: f}, maxReadSourceBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return "", err
+	}
+	if n > maxReadSourceBytes {
+		return "", nil
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // readMedia classifies the opened file by extension and, if it is an image or PDF,
@@ -152,7 +181,7 @@ func readFile(ws *Workspace) *gollama.Tool {
 // fp is the caller-supplied display path used in the text note. Errors (too big,
 // unreadable) are returned as media-handled error results so the model gets a
 // clear message rather than a binary text dump.
-func readMedia(ctx context.Context, f *os.File, info os.FileInfo, fp string) (*gollama.ToolResult, bool) {
+func readMedia(ctx context.Context, f *os.File, info os.FileInfo, fp, sourceRevision string) (*gollama.ToolResult, bool) {
 	ext := strings.ToLower(filepath.Ext(f.Name()))
 	mediaType, isImage := imageMediaTypes[ext]
 	isPDF := ext == ".pdf"
@@ -171,13 +200,14 @@ func readMedia(ctx context.Context, f *os.File, info os.FileInfo, fp string) (*g
 		return errResult("Read: %s grew beyond the %d-byte inline limit. Use Bash for metadata, or extract/convert it first.",
 			fp, maxMediaBytes), true
 	}
+	revisionNote := sourceRevisionNote(sourceRevision, info.Size())
 	if len(data) == 0 {
-		return okResult("(file is empty)"), true
+		return okResult("(file is empty)\n" + revisionNote), true
 	}
 	b64 := base64.StdEncoding.EncodeToString(data)
 	if isPDF {
 		return &gollama.ToolResult{
-			Content: fmt.Sprintf("Read PDF %s (%d bytes); its pages are attached as a document.", fp, len(data)),
+			Content: fmt.Sprintf("Read PDF %s (%d bytes); its pages are attached as a document.\n%s", fp, len(data), revisionNote),
 			Documents: []gollama.Document{{
 				Base64:    b64,
 				MediaType: "application/pdf",
@@ -186,9 +216,19 @@ func readMedia(ctx context.Context, f *os.File, info os.FileInfo, fp string) (*g
 		}, true
 	}
 	return &gollama.ToolResult{
-		Content: fmt.Sprintf("Read image %s (%d bytes, %s); it is attached.", fp, len(data), mediaType),
+		Content: fmt.Sprintf("Read image %s (%d bytes, %s); it is attached.\n%s", fp, len(data), mediaType, revisionNote),
 		Images:  []string{b64},
 	}, true
+}
+
+func sourceRevisionNote(revision string, size int64) string {
+	if revision != "" {
+		return fmt.Sprintf("source_revision (full-content sha256): %s", revision)
+	}
+	if size > maxReadSourceBytes {
+		return fmt.Sprintf("source_revision unavailable: source exceeds the %d-byte revision limit; use sha256sum via Bash", maxReadSourceBytes)
+	}
+	return "source_revision unavailable; use sha256sum via Bash"
 }
 
 type contextReader struct {
@@ -253,7 +293,7 @@ func (d *binaryDetector) finish() bool {
 	return d.binary || len(d.pending) != 0
 }
 
-func readTextWindow(ctx context.Context, source io.Reader, size int64, fp string, start, limit int) *gollama.ToolResult {
+func readTextWindow(ctx context.Context, source io.Reader, size int64, fp string, start, limit int, sourceRevision string) *gollama.ToolResult {
 	if start < 1 {
 		start = 1
 	}
@@ -273,7 +313,7 @@ func readTextWindow(ctx context.Context, source io.Reader, size int64, fp string
 	var sampleDetector binaryDetector
 	sampleDetector.add(sample)
 	if sampleDetector.binary {
-		return binaryReadResult(fp, size, sample)
+		return binaryReadResult(fp, size, sample, sourceRevision)
 	}
 	if err := ctx.Err(); err != nil {
 		return errResult("Read: %v", err)
@@ -295,7 +335,7 @@ func readTextWindow(ctx context.Context, source io.Reader, size int64, fp string
 		fragment, err := reader.ReadSlice('\n')
 		detector.add(fragment)
 		if detector.binary {
-			return binaryReadResult(fp, size, sample)
+			return binaryReadResult(fp, size, sample, sourceRevision)
 		}
 
 		payload := fragment
@@ -346,7 +386,7 @@ func readTextWindow(ctx context.Context, source io.Reader, size int64, fp string
 		}
 	}
 	if reachedEOF && detector.finish() {
-		return binaryReadResult(fp, size, sample)
+		return binaryReadResult(fp, size, sample, sourceRevision)
 	}
 	if err := ctx.Err(); err != nil {
 		return errResult("Read: %v", err)
@@ -362,9 +402,9 @@ func readTextWindow(ctx context.Context, source io.Reader, size int64, fp string
 	}
 	if shown == 0 && reachedEOF {
 		if lineNumber == 1 {
-			return readWindowResult("(file is empty)\n", fp, size, start, 0, limit, true, false, 0, "")
+			return readWindowResult("(file is empty)\n", fp, size, start, 0, limit, true, false, 0, "", sourceRevision)
 		}
-		return readWindowResult(fmt.Sprintf("(offset %d is past end of file; %d lines total)\n", start, lineNumber-1), fp, size, start, 0, limit, true, false, lineNumber-1, "")
+		return readWindowResult(fmt.Sprintf("(offset %d is past end of file; %d lines total)\n", start, lineNumber-1), fp, size, start, 0, limit, true, false, lineNumber-1, "", sourceRevision)
 	}
 	continuation := ""
 	if sourceLimited {
@@ -380,10 +420,10 @@ func readTextWindow(ctx context.Context, source io.Reader, size int64, fp string
 	if reachedEOF {
 		totalLines = lineNumber - 1
 	}
-	return readWindowResult(out.String(), fp, size, start, shown, limit, reachedEOF, more, totalLines, continuation)
+	return readWindowResult(out.String(), fp, size, start, shown, limit, reachedEOF, more, totalLines, continuation, sourceRevision)
 }
 
-func readWindowResult(body, fp string, size int64, start, shown, limit int, complete, more bool, totalLines int, continuation string) *gollama.ToolResult {
+func readWindowResult(body, fp string, size int64, start, shown, limit int, complete, more bool, totalLines int, continuation, sourceRevision string) *gollama.ToolResult {
 	rangeText := "none"
 	if shown > 0 {
 		rangeText = fmt.Sprintf("%d-%d", start, start+shown-1)
@@ -396,9 +436,10 @@ func readWindowResult(body, fp string, size int64, start, shown, limit int, comp
 	if shown == 0 {
 		next = start
 	}
+	revisionText := sourceRevisionNote(sourceRevision, size)
 	makeFooter := func(digest string, projectionBytes int) string {
-		footer := fmt.Sprintf("[Read %s: shown lines %s; total lines %s; source %d bytes; projection %d bytes; budgets %d lines/%d bytes; more: %t; sha256(shown) %s]",
-			fp, rangeText, totalText, size, projectionBytes, limit, maxReadBytes, more, digest)
+		footer := fmt.Sprintf("[Read %s: shown lines %s; total lines %s; source %d bytes; projection %d bytes; budgets %d lines/%d bytes; more: %t; projection_sha256 %s; %s]",
+			fp, rangeText, totalText, size, projectionBytes, limit, maxReadBytes, more, digest, revisionText)
 		if continuation != "" {
 			footer += "\n" + continuation
 		} else if more {
@@ -453,14 +494,14 @@ func appendReadLine(out *strings.Builder, number int, line []byte, truncated boo
 	return true
 }
 
-func binaryReadResult(fp string, size int64, sample []byte) *gollama.ToolResult {
+func binaryReadResult(fp string, size int64, sample []byte, sourceRevision string) *gollama.ToolResult {
 	mediaType := http.DetectContentType(sample)
 	if strings.HasPrefix(mediaType, "text/") {
 		mediaType = "application/octet-stream"
 	}
 	return okResult(fmt.Sprintf(
-		"Read: %s contains binary data (size %d bytes, detected type %s); text was not returned. Use Bash with file(1) for metadata or xxd -l 256 for a bounded hex preview.",
-		fp, size, mediaType))
+		"Read: %s contains binary data (size %d bytes, detected type %s); text was not returned. Use Bash with file(1) for metadata or xxd -l 256 for a bounded hex preview.\n%s",
+		fp, size, mediaType, sourceRevisionNote(sourceRevision, size)))
 }
 
 func unsupportedReadFile(fp string, info os.FileInfo) *gollama.ToolResult {
@@ -527,22 +568,281 @@ func readDir(ctx context.Context, dir *os.File, fp string) *gollama.ToolResult {
 	return okResult(b.String())
 }
 
+const (
+	maxMutationReceiptBytes = 12 * 1024
+	maxReceiptRegionLines   = 6
+	maxReceiptLineChars     = 120
+)
+
+type mutationMetrics struct {
+	Bytes int64 `json:"bytes"`
+	Lines int64 `json:"lines"`
+}
+
+type mutationRegion struct {
+	BeforeLines   string `json:"before_lines"`
+	AfterLines    string `json:"after_lines"`
+	BeforeExcerpt string `json:"before_excerpt"`
+	AfterExcerpt  string `json:"after_excerpt"`
+}
+
+type mutationReceipt struct {
+	Operation string           `json:"operation"`
+	Path      string           `json:"path"`
+	Before    *mutationMetrics `json:"before,omitempty"`
+	After     mutationMetrics  `json:"after"`
+	Revision  string           `json:"revision"`
+	Region    *mutationRegion  `json:"changed_region,omitempty"`
+}
+
+func mutationResult(receipt mutationReceipt) *gollama.ToolResult {
+	var b strings.Builder
+	verb := receipt.Operation
+	if verb == "create" {
+		verb = "created"
+	} else if verb == "overwrite" {
+		verb = "overwrote"
+	} else {
+		verb = "edited"
+	}
+	fmt.Fprintf(&b, "%s %s\noperation: %s\n", verb, receipt.Path, receipt.Operation)
+	if receipt.Before == nil {
+		b.WriteString("before: absent\n")
+	} else {
+		fmt.Fprintf(&b, "before: %d bytes, %d lines\n", receipt.Before.Bytes, receipt.Before.Lines)
+	}
+	fmt.Fprintf(&b, "after: %d bytes, %d lines\nrevision (full-content sha256): %s",
+		receipt.After.Bytes, receipt.After.Lines, receipt.Revision)
+	if receipt.Region != nil {
+		region := renderMutationRegion(*receipt.Region)
+		if b.Len()+1+len(region) > maxMutationReceiptBytes {
+			region = fmt.Sprintf("changed region: before %s -> after %s\n(excerpts omitted to keep the receipt bounded)",
+				receipt.Region.BeforeLines, receipt.Region.AfterLines)
+		}
+		b.WriteByte('\n')
+		b.WriteString(region)
+	}
+	res := okResult(b.String())
+	res.Structured = &receipt
+	return res
+}
+
+func newMutationRegion(start int, before, after string) *mutationRegion {
+	return &mutationRegion{
+		BeforeLines:   mutationLineRange(start, before),
+		AfterLines:    mutationLineRange(start, after),
+		BeforeExcerpt: mutationExcerpt(start, before),
+		AfterExcerpt:  mutationExcerpt(start, after),
+	}
+}
+
+func renderMutationRegion(region mutationRegion) string {
+	return fmt.Sprintf("changed region: before %s -> after %s\nbefore:\n%s\nafter:\n%s",
+		region.BeforeLines, region.AfterLines, region.BeforeExcerpt, region.AfterExcerpt)
+}
+
+func mutationLineRange(start int, text string) string {
+	lines := lineCount([]byte(text))
+	if lines <= 1 {
+		return fmt.Sprintf("line %d", start)
+	}
+	return fmt.Sprintf("lines %d-%d", start, start+int(lines)-1)
+}
+
+func mutationExcerpt(start int, text string) string {
+	if text == "" {
+		return fmt.Sprintf("%6d\t(empty)", start)
+	}
+	lines := strings.Split(text, "\n")
+	if strings.HasSuffix(text, "\n") {
+		lines = lines[:len(lines)-1]
+	}
+	indexes := make([]int, 0, maxReceiptRegionLines)
+	if len(lines) <= maxReceiptRegionLines {
+		for i := range lines {
+			indexes = append(indexes, i)
+		}
+	} else {
+		for i := 0; i < maxReceiptRegionLines/2; i++ {
+			indexes = append(indexes, i)
+		}
+		for i := len(lines) - maxReceiptRegionLines/2; i < len(lines); i++ {
+			indexes = append(indexes, i)
+		}
+	}
+	var b strings.Builder
+	previous := -1
+	for _, i := range indexes {
+		if previous >= 0 && i != previous+1 {
+			fmt.Fprintf(&b, "… [%d lines omitted]\n", i-previous-1)
+		}
+		line := []rune(lines[i])
+		if len(line) > maxReceiptLineChars {
+			line = append(line[:maxReceiptLineChars], []rune("… [truncated]")...)
+		}
+		fmt.Fprintf(&b, "%6d\t%s\n", start+i, string(line))
+		previous = i
+	}
+	return strings.TrimSuffix(b.String(), "\n")
+}
+
+func validRevision(revision string) bool {
+	if len(revision) != sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(revision)
+	return err == nil
+}
+
+type mutationMetricCounter struct {
+	bytes    int64
+	newlines int64
+	last     byte
+}
+
+func (c *mutationMetricCounter) Write(p []byte) (int, error) {
+	c.bytes += int64(len(p))
+	c.newlines += int64(bytes.Count(p, []byte{'\n'}))
+	if len(p) > 0 {
+		c.last = p[len(p)-1]
+	}
+	return len(p), nil
+}
+
+func revisionMetrics(ctx context.Context, source io.Reader) (mutationMetrics, string, error) {
+	h := sha256.New()
+	counter := &mutationMetricCounter{}
+	buf := make([]byte, 32*1024)
+	if _, err := io.CopyBuffer(io.MultiWriter(h, counter), &contextReader{ctx: ctx, r: source}, buf); err != nil {
+		return mutationMetrics{}, "", err
+	}
+	lines := counter.newlines
+	if counter.bytes > 0 && counter.last != '\n' {
+		lines++
+	}
+	return mutationMetrics{Bytes: counter.bytes, Lines: lines}, hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func existingRevisionMetrics(ctx context.Context, path string) (mutationMetrics, string, os.FileMode, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return mutationMetrics{}, "", 0, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return mutationMetrics{}, "", 0, err
+	}
+	if !info.Mode().IsRegular() {
+		return mutationMetrics{}, "", 0, fmt.Errorf("not a regular file (mode %s)", info.Mode())
+	}
+	metrics, revision, err := revisionMetrics(ctx, f)
+	return metrics, revision, info.Mode(), err
+}
+
+func createAtomicTemp(dir string, mode os.FileMode) (*os.File, error) {
+	var token [16]byte
+	for range 100 {
+		if _, err := rand.Read(token[:]); err != nil {
+			return nil, err
+		}
+		path := filepath.Join(dir, ".ycc-write-"+hex.EncodeToString(token[:]))
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+		if os.IsExist(err) {
+			continue
+		}
+		return f, err
+	}
+	return nil, fmt.Errorf("could not allocate a temporary file in %s", dir)
+}
+
+func atomicPublish(path string, data []byte, mode os.FileMode, createOnly bool) error {
+	mode &= os.ModePerm | os.ModeSetuid | os.ModeSetgid | os.ModeSticky
+	tmp, err := createAtomicTemp(filepath.Dir(path), mode)
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	closed := false
+	defer func() {
+		if !closed {
+			_ = tmp.Close()
+		}
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		return err
+	}
+	if !createOnly {
+		if err := tmp.Chmod(mode); err != nil {
+			return err
+		}
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	closed = true
+	if createOnly {
+		if err := os.Link(tmpName, path); err != nil {
+			return err
+		}
+		return nil
+	}
+	return os.Rename(tmpName, path)
+}
+
 func writeFile(ws *Workspace) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "Write",
-		Description: "Write a file to the workspace, creating it or overwriting it entirely. Creates parent " +
-			"directories as needed. file_path may be absolute (within the workspace or a configured extra " +
-			"writable root) or relative to the workspace root.",
+		Description: "Write full file content with an explicit creation/overwrite policy. policy defaults to " +
+			"create, which fails if the path already exists. Replacing an existing file requires policy=overwrite " +
+			"and expected_revision set to its 64-character full-content SHA-256 source_revision from Read (not " +
+			"Read's projection_sha256); use sha256sum for files beyond Read's revision limit. Stale or invalid " +
+			"revisions fail without changing the file. Creates parent " +
+			"directories as needed. file_path may be absolute within the workspace or a configured extra writable " +
+			"root, or relative to the workspace root.",
 		Params: obj(map[string]any{
 			"file_path": strProp("absolute path to the file (or relative to the workspace root)"),
-			"content":   strProp("the full content to write to the file"),
+			"content":   strProp("the full content to write to the file; an empty string creates an empty file"),
+			"policy": map[string]any{
+				"type": "string", "enum": []string{"create", "overwrite"},
+				"description": "create (default) refuses existing paths; overwrite requires expected_revision",
+			},
+			"expected_revision": strProp("required with policy=overwrite: the existing file's 64-character full-content SHA-256 revision from Read source_revision or sha256sum"),
 		}, "file_path", "content"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			fp, ok := getString(params, "file_path")
 			if !ok {
 				return errResult("Write: missing 'file_path'"), nil
 			}
-			content, _ := getString(params, "content") // empty content is valid
+			m, ok := params.(map[string]any)
+			if !ok {
+				return errResult("Write: invalid arguments"), nil
+			}
+			content, ok := m["content"].(string)
+			if !ok {
+				return errResult("Write: missing or invalid 'content'"), nil
+			}
+			policy := "create"
+			if hasParam(params, "policy") {
+				policy, ok = getString(params, "policy")
+				if !ok {
+					return errResult("Write: invalid 'policy'; use create or overwrite"), nil
+				}
+			}
+			if policy != "create" && policy != "overwrite" {
+				return errResult("Write: invalid 'policy'; use create or overwrite"), nil
+			}
+			if policy == "create" && hasParam(params, "expected_revision") {
+				return errResult("Write: expected_revision is only valid with policy=overwrite"), nil
+			}
+			expectedRevision := ""
+			if policy == "overwrite" {
+				expectedRevision, ok = getString(params, "expected_revision")
+				if !ok || !validRevision(expectedRevision) {
+					return errResult("Write: policy=overwrite requires expected_revision as a 64-character full-content SHA-256 revision"), nil
+				}
+			}
 			abs, err := ws.resolve(fp)
 			if err != nil {
 				return errResult("Write: %v", err), nil
@@ -552,16 +852,52 @@ func writeFile(ws *Workspace) *gollama.Tool {
 				return errResult("Write: %v", err), nil
 			}
 			defer lease.Release()
-			if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			if err := ctx.Err(); err != nil {
 				return errResult("Write: %v", err), nil
 			}
-			if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
-				return errResult("Write: %v", err), nil
+			data := []byte(content)
+			receipt := mutationReceipt{
+				Operation: policy,
+				Path:      fp,
+				After:     mutationMetrics{Bytes: int64(len(data)), Lines: lineCount(data)},
+				Revision:  digestHex(data),
+			}
+			if policy == "create" {
+				if _, err := os.Lstat(abs); err == nil {
+					return errResult("Write: create policy refused existing path %s; use policy=overwrite with its current source_revision to replace it", fp), nil
+				} else if !os.IsNotExist(err) {
+					return errResult("Write: %v", err), nil
+				}
+				if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+					return errResult("Write: %v", err), nil
+				}
+				if err := atomicPublish(abs, data, 0o644, true); err != nil {
+					if os.IsExist(err) {
+						return errResult("Write: create policy refused existing path %s; file was not changed", fp), nil
+					}
+					return errResult("Write: %v", err), nil
+				}
+			} else {
+				before, actualRevision, mode, err := existingRevisionMetrics(ctx, abs)
+				if err != nil {
+					return errResult("Write: overwrite requires an existing readable regular file: %v", err), nil
+				}
+				if !strings.EqualFold(expectedRevision, actualRevision) {
+					return errResult("Write: revision conflict for %s: expected %s, current source_revision is %s; file was not changed", fp, expectedRevision, actualRevision), nil
+				}
+				publishPath, err := filepath.EvalSymlinks(abs)
+				if err != nil {
+					return errResult("Write: %v", err), nil
+				}
+				receipt.Before = &before
+				if err := atomicPublish(publishPath, data, mode, false); err != nil {
+					return errResult("Write: %v", err), nil
+				}
 			}
 			if ws.OnWrite != nil {
 				ws.OnWrite(abs)
 			}
-			return okResult(fmt.Sprintf("wrote %d bytes to %s", len(content), fp)), nil
+			return mutationResult(receipt), nil
 		},
 	}
 }
@@ -571,7 +907,7 @@ func editFile(ws *Workspace) *gollama.Tool {
 		Name: "Edit",
 		Description: "Perform an exact string replacement in a file. old_string must match exactly once in the " +
 			"file (include enough surrounding context to make it unique). Fails if old_string is not found, or if " +
-			"it matches more than once.",
+			"it matches more than once. Success returns a bounded, line-referenced changed-region receipt.",
 		Params: obj(map[string]any{
 			"file_path":  strProp("absolute path to the file (or relative to the workspace root)"),
 			"old_string": strProp("the exact text to replace"),
@@ -586,7 +922,14 @@ func editFile(ws *Workspace) *gollama.Tool {
 			if !ok {
 				return errResult("Edit: missing 'old_string'"), nil
 			}
-			newStr, _ := getString(params, "new_string")
+			m, ok := params.(map[string]any)
+			if !ok {
+				return errResult("Edit: invalid arguments"), nil
+			}
+			newStr, ok := m["new_string"].(string)
+			if !ok {
+				return errResult("Edit: missing or invalid 'new_string'"), nil
+			}
 			if newStr == oldStr {
 				return errResult("Edit: old_string and new_string are identical — nothing would change"), nil
 			}
@@ -599,25 +942,50 @@ func editFile(ws *Workspace) *gollama.Tool {
 				return errResult("Edit: %v", err), nil
 			}
 			defer lease.Release()
+			if err := ctx.Err(); err != nil {
+				return errResult("Edit: %v", err), nil
+			}
+			info, err := os.Stat(abs)
+			if err != nil {
+				return errResult("Edit: %v", err), nil
+			}
+			if !info.Mode().IsRegular() {
+				return errResult("Edit: %s is not a regular file (mode %s)", fp, info.Mode()), nil
+			}
 			data, err := os.ReadFile(abs)
 			if err != nil {
 				return errResult("Edit: %v", err), nil
 			}
-			count := strings.Count(string(data), oldStr)
+			text := string(data)
+			count := strings.Count(text, oldStr)
 			switch {
 			case count == 0:
-				return errResult("Edit: old_string not found in %s. %s", fp, editNotFoundHint(string(data), oldStr)), nil
+				return errResult("Edit: old_string not found in %s. %s", fp, editNotFoundHint(text, oldStr)), nil
 			case count > 1:
 				return errResult("Edit: old_string is not unique in %s (found %d matches); the search text must match exactly once — add more surrounding context to disambiguate", fp, count), nil
 			}
-			updated := strings.Replace(string(data), oldStr, newStr, 1)
-			if err := os.WriteFile(abs, []byte(updated), 0o644); err != nil {
+			matchAt := strings.Index(text, oldStr)
+			updated := text[:matchAt] + newStr + text[matchAt+len(oldStr):]
+			publishPath, err := filepath.EvalSymlinks(abs)
+			if err != nil {
+				return errResult("Edit: %v", err), nil
+			}
+			if err := atomicPublish(publishPath, []byte(updated), info.Mode(), false); err != nil {
 				return errResult("Edit: %v", err), nil
 			}
 			if ws.OnWrite != nil {
 				ws.OnWrite(abs)
 			}
-			return okResult(fmt.Sprintf("edited %s", fp)), nil
+			startLine := 1 + strings.Count(text[:matchAt], "\n")
+			receipt := mutationReceipt{
+				Operation: "edit",
+				Path:      fp,
+				Before:    &mutationMetrics{Bytes: int64(len(data)), Lines: lineCount(data)},
+				After:     mutationMetrics{Bytes: int64(len(updated)), Lines: lineCount([]byte(updated))},
+				Revision:  digestHex([]byte(updated)),
+				Region:    newMutationRegion(startLine, oldStr, newStr),
+			}
+			return mutationResult(receipt), nil
 		},
 	}
 }

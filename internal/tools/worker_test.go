@@ -135,6 +135,184 @@ func TestWriteReadEdit(t *testing.T) {
 	}
 }
 
+func TestWritePoliciesRevisionsAndReceipts(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "existing.txt")
+	original := []byte("old\ncontent\n")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var writes []string
+	reg := New()
+	reg.Add(Worker(&Workspace{Root: root, OnWrite: func(path string) { writes = append(writes, path) }})...)
+
+	assertOriginal := func(label string) {
+		t.Helper()
+		got, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(got, original) {
+			t.Fatalf("%s changed existing file to %q (err=%v)", label, got, err)
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		args string
+		want string
+	}{
+		{"omitted policy", `{"file_path":"existing.txt","content":"new"}`, "create policy refused"},
+		{"missing revision", `{"file_path":"existing.txt","content":"new","policy":"overwrite"}`, "requires expected_revision"},
+		{"invalid revision", `{"file_path":"existing.txt","content":"new","policy":"overwrite","expected_revision":"nope"}`, "requires expected_revision"},
+		{"stale revision", `{"file_path":"existing.txt","content":"new","policy":"overwrite","expected_revision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`, "revision conflict"},
+		{"invalid policy", `{"file_path":"existing.txt","content":"new","policy":"replace"}`, "invalid arguments"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := dispatch(t, reg, "Write", tc.args)
+			if !res.IsError || !strings.Contains(res.Content, tc.want) {
+				t.Fatalf("Write result = %q (err=%v), want %q", res.Content, res.IsError, tc.want)
+			}
+			assertOriginal(tc.name)
+		})
+	}
+	if len(writes) != 0 {
+		t.Fatalf("failed writes invoked OnWrite: %v", writes)
+	}
+
+	read := dispatch(t, reg, "Read", `{"file_path":"existing.txt","limit":1}`)
+	originalRevision := digestHex(original)
+	if read.IsError || !strings.Contains(read.Content, "projection_sha256") ||
+		!strings.Contains(read.Content, "source_revision (full-content sha256): "+originalRevision) {
+		t.Fatalf("Read did not expose distinct source revision: %q", read.Content)
+	}
+
+	res := dispatch(t, reg, "Write", fmt.Sprintf(
+		`{"file_path":"existing.txt","content":"new\nvalue","policy":"overwrite","expected_revision":%q}`,
+		originalRevision))
+	if res.IsError || !strings.Contains(res.Content, "operation: overwrite") ||
+		!strings.Contains(res.Content, "before: 12 bytes, 2 lines") ||
+		!strings.Contains(res.Content, "after: 9 bytes, 2 lines") ||
+		!strings.Contains(res.Content, "revision (full-content sha256): "+digestHex([]byte("new\nvalue"))) {
+		t.Fatalf("overwrite receipt = %q (err=%v)", res.Content, res.IsError)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("overwrite mode = %v, want 0600", info.Mode())
+	}
+	if len(writes) != 1 || writes[0] != path {
+		t.Fatalf("successful overwrite hooks = %v", writes)
+	}
+
+	res = dispatch(t, reg, "Write", `{"file_path":"empty.txt","content":""}`)
+	if res.IsError || !strings.Contains(res.Content, "operation: create") ||
+		!strings.Contains(res.Content, "before: absent") || !strings.Contains(res.Content, "after: 0 bytes, 0 lines") ||
+		!strings.Contains(res.Content, digestHex(nil)) {
+		t.Fatalf("empty create receipt = %q (err=%v)", res.Content, res.IsError)
+	}
+	if got, err := os.ReadFile(filepath.Join(root, "empty.txt")); err != nil || len(got) != 0 {
+		t.Fatalf("empty create = %q (err=%v)", got, err)
+	}
+	res = dispatch(t, reg, "Write", `{"file_path":"empty.txt","content":"not empty"}`)
+	if !res.IsError {
+		t.Fatalf("duplicate create succeeded: %q", res.Content)
+	}
+	if got, err := os.ReadFile(filepath.Join(root, "empty.txt")); err != nil || len(got) != 0 {
+		t.Fatalf("duplicate create changed empty file to %q (err=%v)", got, err)
+	}
+}
+
+func TestWriteOverwriteStreamsLargeExistingFile(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "large.bin")
+	const size = int64(16 * 1024 * 1024)
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(size); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before, revision, _, err := existingRevisionMetrics(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Bytes != size || before.Lines != 1 {
+		t.Fatalf("large-file metrics = %+v", before)
+	}
+
+	res := dispatch(t, workerReg(root), "Write", fmt.Sprintf(
+		`{"file_path":"large.bin","content":"small","policy":"overwrite","expected_revision":%q}`,
+		revision))
+	if res.IsError || !strings.Contains(res.Content, fmt.Sprintf("before: %d bytes, 1 lines", size)) {
+		t.Fatalf("large overwrite = %q (err=%v)", res.Content, res.IsError)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "small" {
+		t.Fatalf("large overwrite content = %q (err=%v)", got, err)
+	}
+}
+
+func TestWriteCreateHonorsUmask(t *testing.T) {
+	if os.Getenv("YCC_TEST_WRITE_UMASK") == "1" {
+		syscall.Umask(0o077)
+		root := t.TempDir()
+		res := dispatch(t, workerReg(root), "Write", `{"file_path":"private.txt","content":"secret"}`)
+		if res.IsError {
+			t.Fatalf("Write: %s", res.Content)
+		}
+		info, err := os.Stat(filepath.Join(root, "private.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("created mode = %o, want 600 under umask 077", info.Mode().Perm())
+		}
+		return
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestWriteCreateHonorsUmask$")
+	cmd.Env = append(os.Environ(), "YCC_TEST_WRITE_UMASK=1")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("umask subprocess: %v\n%s", err, out)
+	}
+}
+
+func TestEditReturnsBoundedChangedRegionReceipt(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "large.txt")
+	beforeRegion := strings.Repeat(strings.Repeat("b", 1000)+"\n", 100)
+	afterRegion := strings.Repeat(strings.Repeat("a", 1000)+"\n", 120)
+	before := "heading\ncontext\n" + beforeRegion + "tail\n"
+	if err := os.WriteFile(path, []byte(before), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	args := fmt.Sprintf(`{"file_path":"large.txt","old_string":%q,"new_string":%q}`, beforeRegion, afterRegion)
+	res := dispatch(t, workerReg(root), "Edit", args)
+	if res.IsError {
+		t.Fatalf("Edit: %s", res.Content)
+	}
+	if len(res.Content) > maxMutationReceiptBytes || !strings.Contains(res.Content, "operation: edit") ||
+		!strings.Contains(res.Content, "changed region: before lines 3-102 -> after lines 3-122") ||
+		!strings.Contains(res.Content, "lines omitted") || !strings.Contains(res.Content, "[truncated]") ||
+		!strings.Contains(res.Content, "revision (full-content sha256):") {
+		t.Fatalf("bounded Edit receipt (%d bytes) = %q", len(res.Content), res.Content)
+	}
+	want := "heading\ncontext\n" + afterRegion + "tail\n"
+	if got, err := os.ReadFile(path); err != nil || string(got) != want {
+		t.Fatalf("Edit content mismatch (err=%v)", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o640 {
+		t.Fatalf("Edit mode = %v, want 0640", info.Mode())
+	}
+}
+
 func TestReadOffsetLimit(t *testing.T) {
 	root := t.TempDir()
 	reg := workerReg(root)
@@ -322,7 +500,7 @@ func TestReadCancellationDuringRead(t *testing.T) {
 		cancel()
 		return n, nil
 	})
-	res := readTextWindow(ctx, source, int64(len("hello\n")), "cancel.txt", 1, 1)
+	res := readTextWindow(ctx, source, int64(len("hello\n")), "cancel.txt", 1, 1, "")
 	if !res.IsError || !strings.Contains(res.Content, context.Canceled.Error()) {
 		t.Fatalf("Read canceled during source read = %q (err=%v)", res.Content, res.IsError)
 	}

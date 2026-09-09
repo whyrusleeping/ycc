@@ -339,9 +339,15 @@ or end loops.
 
 Read access is unrestricted because shell access already is. Write and Edit are confined by
 resolved filesystem paths to the workspace plus configured trusted write roots. This is an
-accident guardrail, not a security boundary. Text Read accepts regular files, scans at most 8 MiB,
-retains at most 64 KiB per source line, renders at most 2,000 Unicode code points per line, and
-returns at most 2,000 lines or 128 KiB. Ordinary binary
+accident guardrail, not a security boundary. Write defaults to create-only; replacing an existing
+file requires an explicit overwrite policy and its current full-content SHA-256 revision. Missing,
+invalid, or stale preconditions leave existing content unchanged. Successful file mutations report
+before/after size and line counts plus the resulting revision; Edit additionally reports a bounded,
+line-referenced changed-region excerpt while retaining exact-match semantics. Text Read accepts
+regular files, scans at most 8 MiB, retains at most 64 KiB per source line, renders at most 2,000
+Unicode code points per line, and returns at most 2,000 lines or 128 KiB. Reads of regular files up
+to the scan limit expose a full-content source revision distinct from the bounded projection hash.
+Ordinary binary
 files return size and detected-type metadata instead of text. Pipes, devices, sockets, and other
 non-regular files are rejected; the opened descriptor is nonblocking and validated so a path
 replacement cannot turn a prior regular-file check into a blocking FIFO read. Cancellation is
