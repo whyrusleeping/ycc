@@ -409,6 +409,43 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertEqual(vm.actionError, "offline")
     }
 
+    func testPausedSteerActionWaitsForAuthoritativeResumeAndDeliveryEvents() async {
+        let source = MockSource()
+        source.transcript = [event(1, "interrupted", "{}")]
+        var continuation: AsyncThrowingStream<Ycc_V1_Event, Error>.Continuation!
+        source.streams = [AsyncThrowingStream { continuation = $0 }]
+        let actions = MockActionSource()
+        let vm = SessionViewModel(
+            source: source, actions: actions, sessionID: "s1", mode: .live)
+        vm.start()
+        await waitUntil { vm.phase == .paused && source.recordedFromSeqs.count == 1 }
+
+        await vm.send(text: "change course")
+        continuation.yield(event(
+            2, "user_input", #"{"text":"change course","queued":true}"#, actor: "user"))
+        await waitUntil { vm.projection.lastPersistedSeq == 2 }
+
+        XCTAssertEqual(actions.calls, [.init(kind: "send", text: "change course")])
+        XCTAssertEqual(vm.phase, .paused, "the queued echo must leave Resume available")
+        XCTAssertFalse(vm.isAwaitingAgentActivity)
+        XCTAssertEqual(vm.durableRows.first { $0.seq == 2 }?.userInputStatus, .queued)
+
+        await vm.resumeSession()
+        XCTAssertEqual(actions.calls.map(\.kind), ["send", "resume"])
+        XCTAssertEqual(vm.phase, .paused, "the RPC response does not replace the durable event")
+
+        // These stream events could equally result from another client's Resume;
+        // projection state, rather than local optimistic state, remains decisive.
+        continuation.yield(event(3, "resumed", "{}"))
+        continuation.yield(event(
+            4, "user_input_delivered", #"{"seq":2,"text":"change course"}"#, actor: "user"))
+        await waitUntil { vm.projection.lastPersistedSeq == 4 }
+        XCTAssertEqual(vm.phase, .running)
+        XCTAssertEqual(vm.durableRows.first { $0.seq == 2 }?.userInputStatus, .delivered)
+        continuation.finish()
+        vm.stop()
+    }
+
     func testSendIgnoresEmpty() async {
         let actions = MockActionSource()
         let vm = actionVM(actions)

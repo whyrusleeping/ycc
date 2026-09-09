@@ -885,7 +885,7 @@ private struct TranscriptRowView: View, Equatable {
     private var rowContent: some View {
         switch row.kind {
         case .userMessage(let text, let pictures):
-            userBubble(text: text, pictures: pictures)
+            userBubble(text: text, pictures: pictures, status: row.userInputStatus)
         case .modelMessage(let text):
             // The plant prefix already carries the subagent label; coordinator
             // rows retain the existing textual actor heading inside the bubble.
@@ -918,7 +918,11 @@ private struct TranscriptRowView: View, Equatable {
         }
     }
 
-    private func userBubble(text: String, pictures: [TranscriptRow.Picture]) -> some View {
+    private func userBubble(
+        text: String,
+        pictures: [TranscriptRow.Picture],
+        status: TranscriptRow.UserInputStatus?
+    ) -> some View {
         HStack {
             Spacer(minLength: 40)
             VStack(alignment: .trailing, spacing: 8) {
@@ -942,6 +946,15 @@ private struct TranscriptRowView: View, Equatable {
                         .padding(.vertical, 8)
                         .background(Color.accentColor.opacity(0.85), in: RoundedRectangle(cornerRadius: 14))
                         .foregroundStyle(.white)
+                }
+                if let status {
+                    Label(
+                        status == .queued ? "Queued" : "Delivered",
+                        systemImage: status == .queued ? "clock" : "checkmark"
+                    )
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel(status == .queued ? "Message queued" : "Message delivered")
                 }
             }
         }

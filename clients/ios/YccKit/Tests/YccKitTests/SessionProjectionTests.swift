@@ -814,6 +814,88 @@ final class SessionProjectionTests: XCTestCase {
         XCTAssertEqual(proj.phase, .stopped)
     }
 
+    func testPausedSteerStaysPausedUntilResumeThenReferencedDeliveryResolvesIt() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(seq: 1, type: "interrupted"))
+        proj.apply(makeEvent(
+            seq: 2, type: "user_input", actor: "user",
+            dataJson: #"{"text":"change course","queued":true}"#))
+
+        XCTAssertEqual(proj.phase, .paused, "accepting a steer must leave Resume available")
+        XCTAssertEqual(proj.durableRows.first { $0.seq == 2 }?.userInputStatus, .queued)
+
+        // Background agents can finish work while the coordinator remains blocked
+        // at its checkpoint. Their output and failures do not resume the session.
+        proj.apply(makeEvent(
+            seq: 3, type: "model_turn", actor: "implementer",
+            dataJson: #"{"text":"finished background work"}"#))
+        proj.apply(makeEvent(
+            seq: 4, type: "session_error", actor: "reviewer:fast",
+            dataJson: #"{"msg":"review failed"}"#))
+        proj.apply(makeEvent(seq: 5, type: "session_reopened", actor: "system"))
+        XCTAssertEqual(proj.phase, .paused)
+
+        proj.apply(makeEvent(seq: 6, type: "resumed"))
+        XCTAssertEqual(proj.phase, .running)
+        XCTAssertEqual(proj.durableRows.first { $0.seq == 2 }?.userInputStatus, .queued)
+
+        let delivered = makeEvent(
+            seq: 7, type: "user_input_delivered", actor: "user",
+            dataJson: #"{"seq":2,"text":"change course"}"#)
+        proj.apply(delivered)
+        XCTAssertEqual(proj.durableRows.first { $0.seq == 2 }?.userInputStatus, .delivered)
+
+        let snapshot = proj
+        proj.apply(delivered)
+        proj.apply(makeEvent(
+            seq: 2, type: "user_input", actor: "user",
+            dataJson: #"{"text":"change course","queued":true}"#))
+        XCTAssertEqual(proj, snapshot, "overlapping replay must not duplicate or regress delivery")
+    }
+
+    func testMultipleMidRunQueuedInputsResolveOnlyByReferencedSequence() {
+        let events = [
+            makeEvent(
+                seq: 1, type: "user_input", actor: "user",
+                dataJson: #"{"text":"first","queued":true}"#),
+            makeEvent(
+                seq: 2, type: "user_input", actor: "user",
+                dataJson: #"{"text":"second","queued":true}"#),
+            makeEvent(
+                seq: 3, type: "user_input_delivered", actor: "user",
+                dataJson: #"{"seq":2,"text":"second"}"#),
+        ]
+        var proj = SessionProjection()
+        proj.apply(events)
+
+        XCTAssertEqual(proj.phase, .running)
+        XCTAssertEqual(proj.durableRows.first { $0.seq == 1 }?.userInputStatus, .queued)
+        XCTAssertEqual(proj.durableRows.first { $0.seq == 2 }?.userInputStatus, .delivered)
+
+        proj.apply(makeEvent(
+            seq: 4, type: "user_input_delivered", actor: "user",
+            dataJson: #"{"seq":1,"text":"first"}"#))
+        XCTAssertEqual(
+            proj.durableRows.filter { $0.userInputStatus == .delivered }.map(\.seq),
+            [1, 2]
+        )
+
+        var replayed = SessionProjection()
+        replayed.apply(events)
+        replayed.apply(makeEvent(
+            seq: 4, type: "user_input_delivered", actor: "user",
+            dataJson: #"{"seq":1,"text":"first"}"#))
+        XCTAssertEqual(replayed, proj, "one-pass replay must reconstruct delivery state")
+    }
+
+    func testPlainUserInputIsAlreadyDelivered() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(
+            seq: 1, type: "user_input", actor: "user",
+            dataJson: #"{"text":"start"}"#))
+        XCTAssertEqual(proj.durableRows.first?.userInputStatus, .delivered)
+    }
+
     func testSessionErrorReadsMsgWithFallbacks() {
         // Production shape: the daemon emits the message under "msg".
         var proj = SessionProjection()

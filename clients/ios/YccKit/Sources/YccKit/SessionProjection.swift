@@ -19,6 +19,13 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
         }
     }
 
+    /// Delivery state of a user message. Mid-run input is first accepted into the
+    /// daemon's steer queue, then delivered to the conversation at a checkpoint.
+    public enum UserInputStatus: Equatable, Sendable {
+        case queued
+        case delivered
+    }
+
     /// Status of a `tool_call` / `tool_result` pair.
     public enum ToolStatus: Equatable, Sendable {
         case running
@@ -60,6 +67,8 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
     public var seq: Int64
     /// The actor that produced the row.
     public var actor: String
+    /// Delivery state for a user message; nil for every other row kind.
+    public var userInputStatus: UserInputStatus?
     /// Stable plant identity assigned to non-coordinator agents by the session
     /// projection. Empty for the coordinator, user, and daemon/system rows.
     public var actorEmoji: String
@@ -73,13 +82,14 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
 
     public init(
         id: String, kind: Kind, seq: Int64, actor: String, ts: String,
-        actorEmoji: String = "", liveAppend: String? = nil,
-        liveAppendBaseUTF8: Int? = nil
+        userInputStatus: UserInputStatus? = nil, actorEmoji: String = "",
+        liveAppend: String? = nil, liveAppendBaseUTF8: Int? = nil
     ) {
         self.id = id
         self.kind = kind
         self.seq = seq
         self.actor = actor
+        self.userInputStatus = userInputStatus
         self.actorEmoji = actorEmoji
         self.ts = ts
         self.liveAppend = liveAppend
@@ -249,7 +259,7 @@ public struct SessionProjection: Sendable, Equatable {
         if !event.ts.isEmpty { lastEventTimestamp = event.ts }
 
         let data = Self.parse(event.dataJson)
-        foldPhase(type: event.type, data: data)
+        foldPhase(type: event.type, actor: event.actor, data: data)
         foldCoordinatorModel(type: event.type, actor: event.actor, data: data)
         foldCurrentContext(type: event.type, actor: event.actor, data: data)
 
@@ -263,7 +273,13 @@ public struct SessionProjection: Sendable, Equatable {
                     filename: ($0["filename"] as? String) ?? ""
                 )
             }
-            appendDurable(event, .userMessage(text: text, pictures: pictures))
+            let status: TranscriptRow.UserInputStatus = data["queued"] as? Bool == true
+                ? .queued : .delivered
+            appendDurable(
+                event, .userMessage(text: text, pictures: pictures), userInputStatus: status)
+
+        case "user_input_delivered":
+            applyUserInputDelivered(data)
 
         case "model_turn":
             // The durable turn is the source of truth for this actor only. Other
@@ -469,6 +485,17 @@ public struct SessionProjection: Sendable, Equatable {
         liveTails.removeAll { $0.actor == actor }
     }
 
+    // MARK: - User input delivery
+
+    private mutating func applyUserInputDelivered(_ data: [String: Any]) {
+        guard let sequence = Self.integerField(data, "seq") else { return }
+        let referencedSeq = Int64(sequence)
+        guard let index = durableRows.lastIndex(where: { $0.seq == referencedSeq }),
+              case .userMessage = durableRows[index].kind
+        else { return }
+        durableRows[index].userInputStatus = .delivered
+    }
+
     // MARK: - Tool pairing
 
     private mutating func applyToolCall(_ event: Ycc_V1_Event, _ data: [String: Any]) {
@@ -513,11 +540,16 @@ public struct SessionProjection: Sendable, Equatable {
 
     // MARK: - Phase folding
 
-    /// Fold a durable lifecycle event into the derived ``phase``. Non-lifecycle
-    /// activity (`user_input`, `model_turn`, `thinking`, tool calls, questions)
-    /// implies the session is running again — this is what clears a paused/idle
-    /// banner once work resumes.
-    private mutating func foldPhase(type: String, data: [String: Any]) {
+    /// Fold a durable event into the coordinator session's derived ``phase``.
+    /// While paused, ordinary output cannot prove that the coordinator resumed:
+    /// concurrent subagents may continue emitting activity, and a `user_input`
+    /// echo may only mean the daemon accepted a queued steer. A durable `resumed`
+    /// (or another terminal/session lifecycle event) is authoritative.
+    private mutating func foldPhase(type: String, actor: String, data: [String: Any]) {
+        // Subagents have independent activity and failures; none of their events
+        // change the coordinator session chrome.
+        guard !Self.isSubagentActor(actor) else { return }
+
         switch type {
         case "interrupted":
             phase = .paused
@@ -534,10 +566,11 @@ public struct SessionProjection: Sendable, Equatable {
             phase = .error(msg, retryable: retryable)
         case "session_stopped", "session_ended":
             phase = .stopped
-        case "resumed", "session_reopened", "session_started",
-             "user_input", "model_turn", "thinking", "tool_call", "tool_result",
-             "question_asked", "turn_delta":
+        case "resumed", "session_started":
             phase = .running
+        case "user_input", "user_input_delivered", "model_turn", "thinking",
+             "tool_call", "tool_result", "question_asked":
+            if phase != .paused { phase = .running }
         default:
             break
         }
@@ -632,7 +665,8 @@ public struct SessionProjection: Sendable, Equatable {
         _ event: Ycc_V1_Event,
         _ kind: TranscriptRow.Kind,
         id: String? = nil,
-        actor actorOverride: String? = nil
+        actor actorOverride: String? = nil,
+        userInputStatus: TranscriptRow.UserInputStatus? = nil
     ) {
         let actor = actorOverride ?? event.actor
         durableRows.append(
@@ -642,6 +676,7 @@ public struct SessionProjection: Sendable, Equatable {
                 seq: event.seq,
                 actor: actor,
                 ts: event.ts,
+                userInputStatus: userInputStatus,
                 actorEmoji: subagentEmoji(for: actor)
             )
         )
