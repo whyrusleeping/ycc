@@ -37,11 +37,9 @@ func commitInto(t *testing.T, dir, name, content, msg string) string {
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", name, err)
 	}
-	sha, err := repo.Commit(msg)
-	if err != nil {
-		t.Fatalf("commit %s: %v", name, err)
-	}
-	return sha
+	sessionGitAt(t, repo.Dir, "add", "--", name)
+	sessionGitAt(t, repo.Dir, "commit", "-m", msg)
+	return sessionGitAt(t, repo.Dir, "rev-parse", "--short", "HEAD")
 }
 
 // snapshotHasEvent reports whether the session's in-memory log snapshot contains

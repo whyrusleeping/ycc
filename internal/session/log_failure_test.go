@@ -7,10 +7,14 @@ import (
 
 	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
+	"github.com/whyrusleeping/ycc/internal/git"
 )
 
 func TestSessionStopsWhenEventLogFails(t *testing.T) {
 	ws := t.TempDir()
+	if _, err := git.Open(ws); err != nil {
+		t.Fatal(err)
+	}
 	m := NewManager(testRegistry(), ws)
 	log, err := event.OpenLog(t.TempDir() + "/events.jsonl")
 	if err != nil {

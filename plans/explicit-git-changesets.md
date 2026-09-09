@@ -1,0 +1,18 @@
+# Explicit git changesets: incremental delivery
+
+## Contract
+
+A work session captures an immutable baseline before coordinator or delegated mutation. The baseline identifies HEAD, the real index tree, and the visible worktree tree including untracked files. Each inspection derives a sorted path scope and exact tree from changes after that baseline, and names both the baseline and changeset snapshot IDs in reviewer/report evidence. An existing unborn repository (or another repository whose baseline cannot be read) remains available for conversation, but review and commit refuse until the user creates a safe initial commit and starts a new session; ycc neither guesses a baseline later nor auto-commits the dirty tree.
+
+Paths already dirty at baseline remain outside task ownership. If their staged or worktree state changes, ownership is ambiguous and review or commit refuses with guidance to restore the captured state, use a clean worktree, or deliberately start a new baseline. This intentionally avoids hunk-ownership inference; in particular, an uncommitted task document that is changed during the session must be resolved before commit.
+
+Commits require a previously inspected changeset and reject stale snapshots. The `pre-commit`, `prepare-commit-msg`, and `commit-msg` validation hooks run once against an isolated index containing the reviewed tree; a hook-modified message is accepted, but a hook-modified index is refused as unreviewed content. Configured commit signing is honored when the validated tree is created with Git plumbing, after which HEAD is updated by compare-and-swap and only selected paths advance in the user's index. Unrelated staged, unstaged, and untracked state remains in place. A failed validation, signing, or commit leaves HEAD and the user's index unchanged. As with ordinary Git hooks, a hook can itself modify the worktree; ycc cannot roll back those arbitrary external side effects safely. Post-commit notification hooks are not run because HEAD is installed separately at the final compare-and-swap boundary.
+
+The baseline descriptor is persisted outside the worktree for the lifetime of the session, and its HEAD/index/worktree objects are pinned under `refs/ycc/baselines/`. Reopening after process restart restores that descriptor rather than treating task edits as pre-existing dirt. Legacy sessions without a descriptor remain usable for conversation, but scoped review and commit refuse with guidance to start a new session; ownership cannot be reconstructed safely after the fact.
+
+## Incremental delivery
+
+1. **Safe inspection and refusal (valuable independently).** Replace inspection-time `git add -A` with temporary-index snapshots, include untracked additions, expose path scope and immutable IDs, and reject overlap with baseline-dirty paths.
+2. **Scoped commit.** Require the validated snapshot at the commit boundary, run commit validation hooks against its isolated index and refuse unseen tree changes, honor configured signing, update HEAD with compare-and-swap, and preserve unrelated index/worktree state. Remove the whole-tree staging API rather than retaining an unsafe fallback.
+3. **Lifecycle wiring.** Capture and persist at session construction before direct-mode tools are available; restore the same object-pinned baseline after reopen/restart and reuse it for implementer reports, fresh handoffs, reviewer preload, re-review, and final commit. Refuse legacy recovery rather than recapturing current edits.
+4. **Future work kept separate.** Daemon-wide mutation leases and transactional task-finalization recovery remain independent changes. A later UI/API can expose snapshot-linked working-change inspection without weakening this conservative ownership rule.

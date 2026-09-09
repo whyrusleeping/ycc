@@ -27,6 +27,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/daemon"
 	"github.com/whyrusleeping/ycc/internal/event"
+	"github.com/whyrusleeping/ycc/internal/git"
 	"github.com/whyrusleeping/ycc/internal/server"
 	"github.com/whyrusleeping/ycc/internal/session"
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
@@ -47,6 +48,9 @@ func newRemoteServer(t *testing.T, token string) (string, *session.Manager, stri
 		Roles:  config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
 	})
 	ws := t.TempDir()
+	if _, err := git.Open(ws); err != nil {
+		t.Fatal(err)
+	}
 	mgr := session.NewManager(reg, ws)
 
 	// Same handler + interceptor pairing as daemon.buildHandler.

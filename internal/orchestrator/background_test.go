@@ -291,7 +291,7 @@ func TestSpawnImplementerBackground(t *testing.T) {
 	if len(reports) != 1 {
 		t.Fatalf("DrainFinished delivered %d reports, want 1", len(reports))
 	}
-	if !strings.Contains(reports[0].Result, "IMPLEMENTER REPORT") || !strings.Contains(reports[0].Result, "STAGED DIFF") {
+	if !strings.Contains(reports[0].Result, "IMPLEMENTER REPORT") || !strings.Contains(reports[0].Result, "SCOPED CHANGESET") {
 		t.Fatalf("job report not the synchronous outcome text:\n%s", reports[0].Result)
 	}
 	if !strings.Contains(reports[0].Result, "did the work") {

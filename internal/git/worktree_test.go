@@ -37,6 +37,12 @@ func baseBranch(t *testing.T, r *Repo) string {
 	return gitAt(t, r.Dir, "rev-parse", "--abbrev-ref", "HEAD")
 }
 
+func commitAllForTest(t *testing.T, r *Repo, message string) {
+	t.Helper()
+	gitAt(t, r.Dir, "add", "-A")
+	gitAt(t, r.Dir, "commit", "-m", message)
+}
+
 func TestWorktreeLifecycle(t *testing.T) {
 	base := t.TempDir()
 	r, err := Open(base)
@@ -45,9 +51,7 @@ func TestWorktreeLifecycle(t *testing.T) {
 	}
 	// Seed a tracked file on base so branches have content to diverge from.
 	writeFile(t, filepath.Join(base, "file.txt"), "line1\nline2\n")
-	if _, err := r.Commit("seed file"); err != nil {
-		t.Fatalf("seed commit: %v", err)
-	}
+	commitAllForTest(t, r, "seed file")
 	baseName := baseBranch(t, r)
 
 	// --- AddWorktree + ListWorktrees ---
@@ -136,9 +140,7 @@ func TestTrialMergeAndMergeConflict(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	writeFile(t, filepath.Join(base, "file.txt"), "original\n")
-	if _, err := r.Commit("seed file"); err != nil {
-		t.Fatalf("seed commit: %v", err)
-	}
+	commitAllForTest(t, r, "seed file")
 
 	// Branch that edits file.txt.
 	wtDir := filepath.Join(t.TempDir(), "ws")
@@ -152,9 +154,7 @@ func TestTrialMergeAndMergeConflict(t *testing.T) {
 
 	// Conflicting edit to the same file on base.
 	writeFile(t, filepath.Join(base, "file.txt"), "base change\n")
-	if _, err := r.Commit("base edit"); err != nil {
-		t.Fatalf("base commit: %v", err)
-	}
+	commitAllForTest(t, r, "base edit")
 
 	headBefore := gitAt(t, base, "rev-parse", "HEAD")
 
@@ -202,9 +202,7 @@ func TestCountCommits(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	writeFile(t, filepath.Join(base, "file.txt"), "seed\n")
-	if _, err := r.Commit("seed file"); err != nil {
-		t.Fatalf("seed commit: %v", err)
-	}
+	commitAllForTest(t, r, "seed file")
 	baseCommit := gitAt(t, base, "rev-parse", "HEAD")
 
 	wtDir := filepath.Join(t.TempDir(), "ws")

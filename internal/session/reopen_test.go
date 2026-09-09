@@ -2,8 +2,11 @@ package session
 
 import (
 	"context"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +14,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
+	"github.com/whyrusleeping/ycc/internal/git"
 	"github.com/whyrusleeping/ycc/internal/tools"
 )
 
@@ -59,6 +63,9 @@ func TestReopenUnknown(t *testing.T) {
 // informational and does not block reconstructing the session from its log.
 func TestReopenStopped(t *testing.T) {
 	ws := t.TempDir()
+	if _, err := git.Open(ws); err != nil {
+		t.Fatal(err)
+	}
 	absWS, _ := filepath.Abs(ws)
 	id := "s_stopped"
 	writeSession(t, ws, id, []event.Event{
@@ -84,6 +91,9 @@ func TestReopenStopped(t *testing.T) {
 // and reconstructs the loop history losslessly. No input is sent (no turn runs).
 func TestReopenFromDisk(t *testing.T) {
 	ws := t.TempDir()
+	if _, err := git.Open(ws); err != nil {
+		t.Fatal(err)
+	}
 	absWS, _ := filepath.Abs(ws)
 	id := "s_disk"
 	events := []event.Event{
@@ -107,11 +117,63 @@ func TestReopenFromDisk(t *testing.T) {
 	if sess.Mode != "work" {
 		t.Fatalf("Mode = %q, want work", sess.Mode)
 	}
+	if sess.deps.BaselineErr == nil || !strings.Contains(sess.deps.BaselineErr.Error(), "start a new session") {
+		t.Fatalf("legacy reopen baseline error = %v, want actionable refusal", sess.deps.BaselineErr)
+	}
 
 	want := engine.ReplayHistory(events)
 	got := sess.currentLoop().History()
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("history mismatch:\n got=%+v\nwant=%+v", got, want)
+	}
+}
+
+func TestReopenRestoresOriginalGitBaseline(t *testing.T) {
+	ws := t.TempDir()
+	absWS, _ := filepath.Abs(ws)
+	id := "s_baseline"
+	logPath := filepath.Join(ws, ".ycc", "sessions", id, "events.jsonl")
+	log, err := event.OpenLog(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(testRegistry(), ws)
+	original, err := m.newSession(absWS, id, "work", false, "", log, false, "")
+	if err != nil {
+		t.Fatalf("newSession: %v", err)
+	}
+	baselineID := original.deps.Baseline.ID
+	log.Record("coordinator", event.SessionStarted, map[string]any{"mode": "work", "workspace": absWS})
+	if err := os.WriteFile(filepath.Join(ws, "task.txt"), []byte("task mutation\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	original.cancel()
+	if err := log.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Baseline worktree/index trees are not commits. Ensure the durable refs keep
+	// them alive across the same pruning a daemon restart may encounter.
+	if out, err := exec.Command("git", "-C", ws, "gc", "--prune=now").CombinedOutput(); err != nil {
+		t.Fatalf("git gc: %v: %s", err, out)
+	}
+
+	reopened, err := m.Reopen("", id)
+	if err != nil {
+		t.Fatalf("Reopen: %v", err)
+	}
+	defer m.Stop(id)
+	if reopened.deps.BaselineErr != nil {
+		t.Fatalf("reopened baseline error: %v", reopened.deps.BaselineErr)
+	}
+	if got := reopened.deps.Baseline.ID; got != baselineID {
+		t.Fatalf("reopened baseline = %s, want original %s", got, baselineID)
+	}
+	changes, err := reopened.deps.Repo.Changes(reopened.deps.Baseline)
+	if err != nil {
+		t.Fatalf("Changes after reopen: %v", err)
+	}
+	if len(changes.Paths) != 1 || changes.Paths[0] != "task.txt" {
+		t.Fatalf("reopened scope = %q, want task.txt; task edits may have been reclassified as baseline", changes.Paths)
 	}
 }
 

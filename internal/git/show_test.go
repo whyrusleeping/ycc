@@ -13,8 +13,16 @@ func TestShow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
+	baseline, err := r.CaptureBaseline()
+	if err != nil {
+		t.Fatalf("baseline: %v", err)
+	}
 	writeFile(t, dir+"/hello.txt", "hello\nworld\n")
-	sha, err := r.Commit("add hello")
+	changes, err := r.Changes(baseline)
+	if err != nil {
+		t.Fatalf("changes: %v", err)
+	}
+	sha, err := r.Commit(changes, "add hello")
 	if err != nil {
 		t.Fatalf("commit: %v", err)
 	}

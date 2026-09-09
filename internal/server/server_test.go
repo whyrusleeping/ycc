@@ -762,6 +762,9 @@ func TestGetSessionTranscript(t *testing.T) {
 		Roles:  config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
 	})
 	ws := t.TempDir()
+	if _, err := git.Open(ws); err != nil {
+		t.Fatal(err)
+	}
 	srv := New(session.NewManager(reg, ws))
 	ctx := context.Background()
 

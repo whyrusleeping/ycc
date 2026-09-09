@@ -74,10 +74,18 @@ func commitInto(t *testing.T, dir, name, content, msg string) string {
 	if err != nil {
 		t.Fatalf("git.Open(%s): %v", dir, err)
 	}
+	baseline, err := repo.CaptureBaseline()
+	if err != nil {
+		t.Fatalf("baseline: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", name, err)
 	}
-	sha, err := repo.Commit(msg)
+	changes, err := repo.Changes(baseline)
+	if err != nil {
+		t.Fatalf("changes: %v", err)
+	}
+	sha, err := repo.Commit(changes, msg)
 	if err != nil {
 		t.Fatalf("commit %s: %v", name, err)
 	}

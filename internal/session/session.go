@@ -2156,9 +2156,34 @@ func (m *Manager) ReconcileWorkstreams() error {
 func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt string, log *event.Log, resumed bool, coordOverride string) (*Session, error) {
 	emitter := event.NewEmitter(log, "coordinator")
 	inter := newInteraction(unattended, emitter)
-	repo, err := git.Open(absWS)
+	var repo *git.Repo
+	var err error
+	if resumed {
+		repo, err = git.OpenExisting(absWS)
+	} else {
+		repo, err = git.Open(absWS)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("prepare git workspace: %w", err)
+	}
+	var baseline *git.Baseline
+	var baselineErr error
+	if resumed {
+		baseline, baselineErr = repo.LoadBaseline(id)
+		if baselineErr != nil {
+			baselineErr = fmt.Errorf("persisted git baseline for session %s is unavailable: %w; start a new session before reviewing or committing because change ownership cannot be reconstructed safely", id, baselineErr)
+		}
+	} else {
+		baseline = repo.OpenBaseline()
+		if baseline == nil {
+			cause := repo.OpenBaselineError()
+			if cause == nil {
+				cause = fmt.Errorf("initial baseline was not captured")
+			}
+			baselineErr = fmt.Errorf("git baseline for session %s is unavailable: %w; review and commit are disabled because change ownership cannot be reconstructed safely (create an initial commit without absorbing unrelated files, then start a new session)", id, cause)
+		} else if err := repo.PersistBaseline(id, baseline); err != nil {
+			return nil, fmt.Errorf("persist session git baseline: %w", err)
+		}
 	}
 	coordName := m.reg.CoordinatorName()
 	if coordOverride != "" {
@@ -2193,6 +2218,8 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 		Env:                worktreeEnv,
 		Docs:               m.backlogStore(absWS),
 		Repo:               repo,
+		Baseline:           baseline,
+		BaselineErr:        baselineErr,
 		Emitter:            emitter,
 		Implementer:        implSpec,
 		Reviewers:          reviewers,

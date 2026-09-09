@@ -105,9 +105,15 @@ type Deps struct {
 	Workspace string
 	// Env contains extra KEY=VALUE entries inherited by every agent shell in
 	// this session (used by per-project worktree bootstrap configuration).
-	Env         []string
-	Docs        *docs.Store
-	Repo        *git.Repo
+	Env  []string
+	Docs *docs.Store
+	Repo *git.Repo
+	// Baseline is captured when the session is assembled, before coordinator or
+	// worker tools can mutate the task tree. All review and commit scope derives
+	// from this immutable snapshot. BaselineErr records why a resumed legacy or
+	// damaged session cannot safely reconstruct ownership.
+	Baseline    *git.Baseline
+	BaselineErr error
 	Emitter     *event.Emitter // coordinator emitter (actor "coordinator")
 	Implementer AgentSpec
 	Reviewers   []AgentSpec
@@ -224,6 +230,27 @@ func (d *Deps) implementer() AgentSpec {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.Implementer
+}
+
+func (d *Deps) changeset() (*git.Changeset, error) {
+	if d.Repo == nil {
+		return nil, fmt.Errorf("git repository is not available")
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.BaselineErr != nil {
+		return nil, d.BaselineErr
+	}
+	if d.Baseline == nil {
+		// Repo.Open captured this snapshot before callers could receive mutation
+		// tools. Resumed sessions set BaselineErr above instead of using this
+		// process-local value, so missing legacy state is never reclassified.
+		d.Baseline = d.Repo.OpenBaseline()
+	}
+	if d.Baseline == nil {
+		return nil, fmt.Errorf("session has no persisted git baseline; start a new session before reviewing or committing because change ownership cannot be reconstructed safely")
+	}
+	return d.Repo.Changes(d.Baseline)
 }
 
 func (d *Deps) reviewerSpecs() []AgentSpec {
@@ -385,7 +412,7 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "spawn_implementer",
 		Description: "Delegate implementation of a task to a coding subagent. It edits the workspace and returns a " +
-			"report plus the staged diff. Provide the task id and a concise approach. Optionally attach advisory " +
+			"report plus an identified, explicitly scoped changeset diff. Provide the task id and a concise approach. Optionally attach advisory " +
 			"context_hints (relevant file paths, function/symbol refs, or small snippets) surfaced to the worker as " +
 			"non-prescriptive 'starting points'. For files the worker will certainly need, preload_files accepts " +
 			"structured path/offset/limit tuples and pre-reads them into its initial context. Call once per task; use send_to_implementer for follow-up revisions. " +
@@ -468,7 +495,11 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 			d.implJob = nil // cleared for a foreground spawn; set below for background
 			d.mu.Unlock()
 
-			before, _ := d.Repo.Diff()
+			changes, changeErr := d.changeset()
+			if changeErr != nil {
+				return tools.ErrResult("spawn_implementer: establish changeset: %v", changeErr), nil
+			}
+			before := changes.ID
 
 			if background {
 				// Register a mutating agent job and run the child loop under its
@@ -619,7 +650,11 @@ func sendToImplementer(d *Deps) *gollama.Tool {
 			d.mu.Lock()
 			d.implRound = round
 			d.mu.Unlock()
-			before, _ := d.Repo.Diff()
+			changes, changeErr := d.changeset()
+			if changeErr != nil {
+				return tools.ErrResult("send_to_implementer: inspect changeset: %v", changeErr), nil
+			}
+			before := changes.ID
 			spawnData := subagentSpawnData("implementer", spec, mode, round, priorTokens, newTokens, rolloverReason)
 			spawnData["revise"] = true
 			d.Emitter.Emit(event.SubagentSpawned, spawnData)
@@ -704,8 +739,8 @@ func freshImplementerLoop(d *Deps, spec AgentSpec, t *docs.Task, instructions, p
 		handoff.WriteString(truncate(report, 4096))
 	}
 	seed := freshRevisePrompt(t, boundedRevisionHandoff(handoff.String()))
-	if diff, err := d.Repo.Diff(); err == nil && strings.TrimSpace(diff) != "" {
-		seed += "\n\nCurrent bounded workspace diff (inspect the tree for anything omitted):\n" + truncate(diff, maxDiffChars)
+	if changes, err := d.changeset(); err == nil && strings.TrimSpace(changes.Diff) != "" {
+		seed += "\n\nCurrent bounded scoped changeset " + changes.ID + " (baseline " + changes.BaselineID + "; inspect the tree for anything omitted):\n" + truncate(changes.Diff, maxDiffChars)
 	}
 	loop.Seed(seed)
 	return loop
@@ -825,6 +860,13 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 			if err != nil {
 				return tools.ErrResult("spawn_reviewers: %v", err), nil
 			}
+			if _, err := d.changeset(); err != nil {
+				return tools.ErrResult("spawn_reviewers: changeset is unsafe to review: %v", err), nil
+			}
+			preloadedDiff := buildReviewDiffHistory(d.Repo, d.Baseline)
+			if preloadedDiff.Err != nil {
+				return tools.ErrResult("spawn_reviewers: changeset evidence failed: %v", preloadedDiff.Err), nil
+			}
 			tier, _ := tools.GetString(params, "review_tier")
 			var plan ReviewPlan
 			if d.ReviewTier != nil {
@@ -852,9 +894,9 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 				d.reviewers = nil
 				d.mu.Unlock()
 				return tools.OkResult(fmt.Sprintf("Review tier %q is a coordinator self-review: no reviewer agent was "+
-					"spawned — you (the coordinator) must review this change yourself. Inspect the diff (run 'git diff'), "+
-					"check it against the task's acceptance criteria, and decide whether to commit or send revisions to "+
-					"the implementer.", plan.Tier)), nil
+					"spawned — you (the coordinator) must review this change yourself. Check the identified scoped snapshot "+
+					"against the task's acceptance criteria, then decide whether to commit or send revisions to the implementer.\n\n%s",
+					plan.Tier, compactReviewDiffEvidence(preloadedDiff))), nil
 			}
 
 			specs := plan.Specs
@@ -869,7 +911,6 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 					"msg": "reviewer bash sandbox unavailable on this platform; reviewer non-mutation is prompt-enforced only",
 				})
 			}
-			preloadedDiff := buildReviewDiffHistory(d.Repo)
 			hasDiff := len(preloadedDiff.History) > 0
 			implementationEvidence := reviewerImplementationEvidence(d)
 			d.mu.Lock()
@@ -886,7 +927,7 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 					loop.SetHistory(append([]gollama.Message(nil), preloadedDiff.History...))
 					emitSyntheticReviewDiff(d.Emitter, spec, actor, preloadedDiff)
 				}
-				loop.Seed(reviewerPrompt(t, spec.Focus, hasDiff) + "\n\n" + implementationEvidence)
+				loop.Seed(reviewerPrompt(t, spec.Focus, hasDiff) + "\n\n" + compactReviewDiffEvidence(preloadedDiff) + "\n\n" + implementationEvidence)
 				d.reviewers = append(d.reviewers, &reviewerHandle{name: spec.label(), model: spec.Name, spec: spec, loop: loop, round: 1, contextMode: "fresh"})
 			}
 			handles := d.reviewers
@@ -955,6 +996,14 @@ func reReview(d *Deps) *gollama.Tool {
 			if getErr != nil {
 				return tools.ErrResult("re_review: %v", getErr), nil
 			}
+			if _, err := d.changeset(); err != nil {
+				return tools.ErrResult("re_review: changeset is unsafe to review: %v", err), nil
+			}
+			currentDiff := buildReviewDiffHistory(d.Repo, d.Baseline)
+			if currentDiff.Err != nil {
+				return tools.ErrResult("re_review: changeset evidence failed: %v", currentDiff.Err), nil
+			}
+			currentEvidence := compactReviewDiffEvidence(currentDiff)
 			for _, h := range handles {
 				h.priorContextTokens = h.loop.ContextTokensEstimate()
 				h.newContextTokens = 0
@@ -968,11 +1017,11 @@ func reReview(d *Deps) *gollama.Tool {
 					h.rolloverReason = "automatic_pressure"
 				}
 				if rollover {
-					h.loop = freshReviewerLoop(d, h.spec, t, h.handoff)
+					h.loop = freshReviewerLoop(d, h.spec, t, h.handoff, currentDiff)
 					h.newContextTokens = h.loop.ContextTokensEstimate()
 					h.contextMode = "fresh"
 				} else {
-					h.loop.Post(reReviewPrompt)
+					h.loop.Post(reReviewPrompt + "\n\n" + currentEvidence)
 					h.contextMode = "retain"
 				}
 				h.round++
@@ -1047,8 +1096,7 @@ func freshReviewerHandoff(d *Deps, handoff string) string {
 	return handoff + "\n\n" + evidence
 }
 
-func freshReviewerLoop(d *Deps, spec AgentSpec, t *docs.Task, handoff string) *engine.Loop {
-	preloadedDiff := buildReviewDiffHistory(d.Repo)
+func freshReviewerLoop(d *Deps, spec AgentSpec, t *docs.Task, handoff string, preloadedDiff reviewDiffBuild) *engine.Loop {
 	hasDiff := len(preloadedDiff.History) > 0
 	reg := tools.New()
 	reg.Add(tools.Reviewer(&tools.Workspace{Root: d.Workspace, Env: append([]string(nil), d.Env...)})...)
@@ -1059,7 +1107,7 @@ func freshReviewerLoop(d *Deps, spec AgentSpec, t *docs.Task, handoff string) *e
 		loop.SetHistory(append([]gollama.Message(nil), preloadedDiff.History...))
 		emitSyntheticReviewDiff(d.Emitter, spec, actor, preloadedDiff)
 	}
-	loop.Seed(freshReReviewPrompt(t, spec.Focus, freshReviewerHandoff(d, handoff), hasDiff))
+	loop.Seed(freshReReviewPrompt(t, spec.Focus, freshReviewerHandoff(d, handoff), hasDiff) + "\n\n" + compactReviewDiffEvidence(preloadedDiff))
 	return loop
 }
 
@@ -1150,15 +1198,22 @@ func commitTool(d *Deps) *gollama.Tool {
 			id, _ := tools.GetString(params, "task_id")
 			msg, _ := tools.GetString(params, "message")
 			outcome, _ := tools.GetString(params, "outcome")
-			// Compact and mark done immediately before committing so the accepted tree
-			// contains intent, criteria, outcome, and commit subject without duplicating
-			// the detailed session history.
+			// Refuse a stale or overlapping tree before finalization mutates the task
+			// document. Complete remains immediately before the commit so its compact
+			// accepted outcome is part of the explicit changeset.
+			if _, err := d.changeset(); err != nil {
+				return tools.ErrResult("commit: unsafe changeset: %v", err), nil
+			}
 			if _, err := d.Docs.Complete(id, outcome, msg); err != nil {
 				return tools.ErrResult("commit: %v", err), nil
 			}
-			sha, err := d.Repo.Commit(msg)
+			changes, err := d.changeset()
 			if err != nil {
-				return tools.ErrResult("commit: %v", err), nil
+				return tools.ErrResult("commit: unsafe changeset after task finalization: %v", err), nil
+			}
+			sha, err := d.Repo.Commit(changes, msg)
+			if err != nil {
+				return tools.ErrResult("commit changeset %s: %v", changes.ID, err), nil
 			}
 			d.Emitter.Emit(event.DecisionMade, map[string]any{"task": id, "decision": "accept"})
 			d.Emitter.Emit(event.CommitMade, map[string]any{"task": id, "sha": sha, "message": msg})
@@ -1215,17 +1270,22 @@ func runReviewers(ctx context.Context, d *Deps, handles []*reviewerHandle, taskI
 			// same-slot retry, even if the failed loop performed inspection tool calls.
 			if err != nil && engine.IsContextLengthError(err) && ctx.Err() == nil {
 				if t, getErr := d.Docs.Get(taskID); getErr == nil {
-					oldTokens := h.loop.ContextTokensEstimate()
-					h.loop = freshReviewerLoop(d, h.spec, t, h.handoff)
-					h.priorContextTokens = oldTokens
-					h.newContextTokens = h.loop.ContextTokensEstimate()
-					h.rolloverReason = "context_error_recovery"
-					mode = "fresh"
-					recoverySpawn := map[string]any{"role": "reviewer", "model": h.name, "logical_model": h.model,
-						"context_mode": mode, "round": h.round, "prior_context_tokens_est": oldTokens}
-					addRolloverFields(recoverySpawn, h.rolloverReason, oldTokens, h.newContextTokens)
-					d.Emitter.Emit(event.SubagentSpawned, recoverySpawn)
-					res, err = h.loop.Run(ctx)
+					currentDiff := buildReviewDiffHistory(d.Repo, d.Baseline)
+					if currentDiff.Err != nil {
+						err = fmt.Errorf("refresh scoped review evidence: %w", currentDiff.Err)
+					} else {
+						oldTokens := h.loop.ContextTokensEstimate()
+						h.loop = freshReviewerLoop(d, h.spec, t, h.handoff, currentDiff)
+						h.priorContextTokens = oldTokens
+						h.newContextTokens = h.loop.ContextTokensEstimate()
+						h.rolloverReason = "context_error_recovery"
+						mode = "fresh"
+						recoverySpawn := map[string]any{"role": "reviewer", "model": h.name, "logical_model": h.model,
+							"context_mode": mode, "round": h.round, "prior_context_tokens_est": oldTokens}
+						addRolloverFields(recoverySpawn, h.rolloverReason, oldTokens, h.newContextTokens)
+						d.Emitter.Emit(event.SubagentSpawned, recoverySpawn)
+						res, err = h.loop.Run(ctx)
+					}
 				}
 			}
 
@@ -1285,10 +1345,13 @@ func implementerOutcome(d *Deps, id, label, before string, res *engine.Result) *
 			reason = "(no reason given)"
 		}
 		d.Docs.AppendWorkLog(id, label+": BLOCKED — "+oneLine(reason))
-		diff, _ := d.Repo.Diff()
+		changes, err := d.changeset()
+		if err != nil {
+			return tools.ErrResult("implementer blocked, but its changeset is unsafe to inspect: %v", err)
+		}
 		out := "IMPLEMENTER BLOCKED (not finished): it cannot proceed without a decision.\n\nREASON: " + reason +
-			"\n\n=== STAGED DIFF (partial work may exist) ===\n" + truncate(diff, maxDiffChars)
-		if strings.TrimSpace(diff) == "" {
+			"\n\n=== SCOPED CHANGESET " + changes.ID + " (baseline " + changes.BaselineID + ") ===\n" + truncate(changes.Diff, maxDiffChars)
+		if strings.TrimSpace(changes.Diff) == "" {
 			out += "(no changes in the workspace)"
 		}
 		out += "\n\nDo not push it to guess. If this is an ordinary judgement call, decide it yourself and " +
@@ -1297,9 +1360,12 @@ func implementerOutcome(d *Deps, id, label, before string, res *engine.Result) *
 			"update_task 'blocked' with the reason (already recorded in the work log)."
 		return tools.OkResult(out)
 	}
-	after, _ := d.Repo.Diff()
+	changes, err := d.changeset()
+	if err != nil {
+		return tools.ErrResult("implementer changes cannot be safely attributed: %v", err)
+	}
 	noReport := strings.TrimSpace(res.Report) == "" || res.NoContent
-	if noReport && strings.TrimSpace(after) == strings.TrimSpace(before) {
+	if noReport && changes.ID == before {
 		d.Docs.AppendWorkLog(id, label+": no progress (empty report, no new changes)")
 		msg := "implementer returned no report and made no changes to the workspace."
 		if res.Truncated {
@@ -1309,14 +1375,21 @@ func implementerOutcome(d *Deps, id, label, before string, res *engine.Result) *
 		return tools.ErrResult("%s", msg)
 	}
 	d.Docs.AppendWorkLog(id, label+": "+oneLine(res.Report))
-	return tools.OkResult(reportWithDiff(d, res.Report))
+	changes, err = d.changeset() // include the work-log update in the evidence snapshot
+	if err != nil {
+		return tools.ErrResult("implementer report recorded, but changeset inspection failed: %v", err)
+	}
+	return tools.OkResult(reportWithDiff(changes, res.Report))
 }
 
-func reportWithDiff(d *Deps, report string) string {
-	diff, _ := d.Repo.Diff()
-	out := "IMPLEMENTER REPORT:\n" + report + "\n\n=== STAGED DIFF ===\n" + truncate(diff, maxDiffChars)
-	if strings.TrimSpace(diff) == "" {
-		out += "(no changes in the workspace)"
+func reportWithDiff(changes *git.Changeset, report string) string {
+	out := "IMPLEMENTER REPORT:\n" + report + "\n\n=== SCOPED CHANGESET " + changes.ID + " (baseline " + changes.BaselineID + ") ===\n"
+	if len(changes.Paths) > 0 {
+		out += "Paths: " + strings.Join(changes.Paths, ", ") + "\n\n"
+	}
+	out += truncate(changes.Diff, maxDiffChars)
+	if strings.TrimSpace(changes.Diff) == "" {
+		out += "(no task-owned changes in the workspace)"
 	}
 	return out
 }

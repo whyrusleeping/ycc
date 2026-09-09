@@ -29,10 +29,18 @@ func TestGetCommitDiff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("git open: %v", err)
 	}
+	baseline, err := repo.CaptureBaseline()
+	if err != nil {
+		t.Fatalf("baseline: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(ws, "hello.txt"), []byte("hello\nworld\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	sha, err := repo.Commit("add hello")
+	changes, err := repo.Changes(baseline)
+	if err != nil {
+		t.Fatalf("changes: %v", err)
+	}
+	sha, err := repo.Commit(changes, "add hello")
 	if err != nil {
 		t.Fatalf("commit: %v", err)
 	}

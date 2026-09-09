@@ -284,6 +284,15 @@ func TestReviseLoop(t *testing.T) {
 	if !strings.Contains(r4.Content, "1/1 reviewers accept") {
 		t.Fatalf("re-review should accept:\n%s", r4.Content)
 	}
+	var retainedEvidence string
+	for _, msg := range revTurner.messages {
+		if msg.Role == "user" && strings.Contains(msg.Content, "CURRENT SCOPED CHANGESET") {
+			retainedEvidence = msg.Content
+		}
+	}
+	if !strings.Contains(retainedEvidence, "Exact retrieval: git diff") || !strings.Contains(retainedEvidence, "add.go") {
+		t.Fatalf("retained re-review missing current identified evidence: %q", retainedEvidence)
+	}
 
 	r5, err := commitTool(d).Call(ctx, args("task_id", "0001", "message", "add Add", "outcome", "Added and verified Add."))
 	if err != nil || r5.IsError {
@@ -446,7 +455,7 @@ func TestImplementerRevisionRollsOverAtContextBudget(t *testing.T) {
 	if clients != 2 {
 		t.Fatalf("NewClient calls = %d, want pressure replacement", clients)
 	}
-	if len(fresh.messages) == 0 || !strings.Contains(fresh.messages[0].Content, "Current bounded workspace diff") ||
+	if len(fresh.messages) == 0 || !strings.Contains(fresh.messages[0].Content, "Current bounded scoped changeset") ||
 		!strings.Contains(fresh.messages[0].Content, "not yet verified") || !strings.Contains(fresh.messages[0].Content, "fix x and verify") {
 		t.Fatalf("fresh pressure handoff lacks current state: %+v", fresh.messages)
 	}
@@ -766,6 +775,44 @@ func TestFreshReReviewPreservesResolvedSlotsAndSeedsCurrentDiff(t *testing.T) {
 	}
 	if len(fresh.messages) < 4 || fresh.messages[2].Role != "tool" || !strings.Contains(fresh.messages[2].Content, "change.go") || !strings.Contains(fresh.messages[len(fresh.messages)-1].Content, "prior deadlock") {
 		t.Fatalf("fresh reviewer missing bounded diff/handoff: %+v", fresh.messages)
+	}
+	seed := fresh.messages[len(fresh.messages)-1].Content
+	if !strings.Contains(seed, "CURRENT SCOPED CHANGESET") || !strings.Contains(seed, "Exact retrieval: git diff") {
+		t.Fatalf("fresh re-review missing current identified evidence: %q", seed)
+	}
+}
+
+func TestFreshReReviewRefusesWhenCurrentChangesetCannotBeDerived(t *testing.T) {
+	ws := t.TempDir()
+	repo, err := git.Open(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := docs.NewStore(ws)
+	_, _ = store.Create("review stale", "## Acceptance\n- correct\n\n## Work log\n", 1, nil, nil)
+	reviewer := &scripted{resp: []*gollama.ResponseMessageGenerate{
+		call("submit_review", `{"verdict":"revise","summary":"fix"}`),
+	}}
+	spec := AgentSpec{Name: "review", Model: "m", NewClient: func() engine.Turner { return reviewer }}
+	d := &Deps{Workspace: ws, Docs: store, Repo: repo, Emitter: event.NewEmitter(&captureRec{}, "coordinator"), Asker: noopAsker{},
+		ReviewTier: func(string) ReviewPlan { return ReviewPlan{Tier: "standard", Specs: []AgentSpec{spec}} }}
+	if res, _ := spawnReviewers(d).Call(context.Background(), map[string]any{"task_id": "0001"}); res.IsError {
+		t.Fatalf("initial review: %s", res.Content)
+	}
+	cmd := exec.Command("git", "-C", ws, "add", "-A")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v: %s", err, out)
+	}
+	cmd = exec.Command("git", "-C", ws, "commit", "-m", "external head move")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v: %s", err, out)
+	}
+	res, _ := reReview(d).Call(context.Background(), map[string]any{"task_id": "0001", "context_mode": "fresh"})
+	if !res.IsError || !strings.Contains(res.Content, "HEAD moved") {
+		t.Fatalf("fresh re-review did not propagate changeset failure: %+v", res)
+	}
+	if reviewer.i != 1 {
+		t.Fatalf("reviewer ran %d turns; unsafe fresh rollover should be refused before a second turn", reviewer.i)
 	}
 }
 

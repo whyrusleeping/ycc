@@ -58,8 +58,9 @@ keep the backlog accurate. Your job each session: take ONE backlog task to a cor
 reviewed, committed state.
 
 You may inspect the workspace directly — verify state, run appropriate checks, and read the
-implementer's diffs first-hand ('git diff'). Edit/Write are available too, but delegate any
-non-trivial change to the implementer (spawn_implementer / send_to_implementer) rather than
+identified scoped changeset evidence returned by the implementation/review tools first-hand.
+Edit/Write are available too, but delegate any non-trivial change to the implementer
+(spawn_implementer / send_to_implementer) rather than
 editing it yourself; keep your own edits to at most tiny touch-ups.
 
 CHANGE DISCIPLINE: follow CONTRIBUTING.md when present. Make the smallest change that solves
@@ -302,8 +303,9 @@ complete a task. Judge whether the change correctly and completely satisfies the
 acceptance criteria and is of reasonable quality.
 
 How to review:
-- Start with the current diff (run 'git diff' if it was not preloaded), then read the touched
-  files for surrounding context; build or test when it helps ('go build ./...', 'go test ./...').
+- Start with the identified scoped changeset preloaded or supplied with an exact retrieval
+  command. Never substitute an unscoped working-tree diff. Then read the touched files for
+  surrounding context; build or test when it helps ('go build ./...', 'go test ./...').
 - Judge the change against the task, not against your taste: correctness first, then
   completeness against the acceptance criteria, integration with the surrounding code, and
   real defects. Follow CONTRIBUTING.md when present.
@@ -322,12 +324,12 @@ When finished, call submit_review exactly once:
 - summary: a short overall assessment.
 - findings: specific, actionable issues (severity blocker/major/minor/nit), each naming the
   file/function concerned; empty if none.
-You may be asked to re-review after the implementer revises: run 'git diff' again and
-submit_review again with your updated verdict.`
+You may be asked to re-review after the implementer revises: inspect the newly identified
+scoped snapshot using its supplied retrieval command and submit_review again.`
 
 const reReviewPrompt = `The implementer has revised the changes to address the previous findings. Re-inspect the
-workspace now (run 'git diff' again to see the current state) and submit_review again with
-your updated verdict.`
+current identified scoped snapshot using the exact retrieval command below, then submit_review
+again with your updated verdict.`
 
 // reviewerSystemFocused adds one reviewer's specialty without narrowing its
 // responsibility to report serious defects outside that specialty.
@@ -614,9 +616,9 @@ and call finish with a report of what you changed.`, t.ID, t.Title, t.Body, inst
 }
 
 func freshReReviewPrompt(t *docs.Task, focus, handoff string, hasDiff bool) string {
-	inspection := "Inspect the current working tree, starting with 'git diff HEAD'"
+	inspection := "Use the current identified scoped changeset and exact retrieval command supplied below"
 	if hasDiff {
-		inspection = "The current bounded diff is preloaded above; inspect further with Read/Bash as needed"
+		inspection = "The current bounded scoped diff is preloaded above; use its exact retrieval command for further inspection"
 	}
 	if strings.TrimSpace(handoff) == "" {
 		handoff = "No additional handoff was supplied. Independently verify the current change against the full task and acceptance criteria."
@@ -640,9 +642,9 @@ Revision handoff:
 }
 
 func reviewerPrompt(t *docs.Task, focus string, hasDiff bool) string {
-	inspection := "Inspect the working tree (start with 'git diff')"
+	inspection := "Use the identified scoped changeset and exact retrieval command supplied below"
 	if hasDiff {
-		inspection = "The current diff is already in your context above; inspect further with Read/Bash as needed"
+		inspection = "The current scoped diff is already in your context above; use its exact retrieval command for further inspection"
 	}
 	p := fmt.Sprintf(`Review the changes just made for this task.
 
