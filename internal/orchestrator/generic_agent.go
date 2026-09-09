@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/whyrusleeping/gollama"
+	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/jobs"
 	"github.com/whyrusleeping/ycc/internal/sandbox"
@@ -44,7 +45,8 @@ func spawnAgent(d *Deps) *gollama.Tool {
 			"configured model. It always runs as a session background job and returns both a stable agent_id and a job_id. " +
 			"Use job_output, wait, and kill_job exactly as for background Bash. Agents default to read-only inspection and " +
 			"may fan out concurrently; set mutating:true only when the task must edit the workspace, subject to the existing " +
-			"single-writer guard. Use send_to_agent after a turn completes to ask a follow-up with retained context.",
+			"single-writer guard. After a turn completes, send_to_agent can retain its context or replace it with a fresh handoff " +
+			"while preserving this handle's resolved model and access level.",
 		Params: tools.Obj(map[string]any{
 			"model":    genericModelProp(d),
 			"prompt":   tools.StrProp("self-contained task or question for the subagent"),
@@ -95,21 +97,9 @@ func spawnAgent(d *Deps) *gollama.Tool {
 					return tools.ErrResult("spawn_agent: %v", err), nil
 				}
 			}
-			reg := tools.New()
-			var system string
-			agentWS := &tools.Workspace{Root: d.Workspace, Env: append([]string(nil), d.Env...),
-				Ownership: d.Ownership, MutationToken: token}
-			if requestedMutating {
-				agentWS.WriteRoots = tools.NormalizeRoots(d.WriteRoots)
-				agentWS.Emitter = d.Emitter.With(actor)
-				reg.Add(tools.Worker(agentWS)...)
-				system = sys(genericCodingAgentSystem, false, d.Workspace)
-			} else {
-				reg.Add(tools.ReadOnlyInspect(agentWS)...)
-				system = inspectSys(genericAgentSystem, d.Workspace)
-			}
-			loop := d.newLoop(spec, system, reg, actor)
+			loop := newGenericAgentLoop(d, spec, actor, requestedMutating, token)
 			loop.Seed(prompt)
+			contextTokens := loop.ContextTokensEstimate()
 			var job *jobs.Job
 			var started bool
 			if !mutates {
@@ -122,7 +112,8 @@ func spawnAgent(d *Deps) *gollama.Tool {
 				return tools.ErrResult("spawn_agent: session is shutting down; agent was not started"), nil
 			}
 			trackAgentJob(loop, job)
-			h := &genericAgentHandle{id: agentID, spec: spec, loop: loop, job: job, round: 1, mutates: mutates, token: token, running: true}
+			h := &genericAgentHandle{id: agentID, spec: spec, loop: loop, job: job, round: 1, mutates: mutates,
+				writeAccess: requestedMutating, token: token, running: true}
 			d.mu.Lock()
 			if d.genericAgent == nil {
 				d.genericAgent = make(map[string]*genericAgentHandle)
@@ -130,7 +121,7 @@ func spawnAgent(d *Deps) *gollama.Tool {
 			d.genericAgent[agentID] = h
 			d.mu.Unlock()
 
-			startGenericAgentJob(d, h, job, lease)
+			startGenericAgentJob(d, h, job, lease, "fresh", 1, 0, contextTokens, "")
 			kind := "read-only"
 			if requestedMutating {
 				kind = "mutating"
@@ -139,8 +130,8 @@ func spawnAgent(d *Deps) *gollama.Tool {
 			}
 			return tools.OkResult(fmt.Sprintf("started %s subagent %s as background job %s using model %s. "+
 				"Do not poll it; its report arrives automatically, or call wait([%q]) when it gates your next step. "+
-				"After this turn completes, continue its retained context with send_to_agent(agent_id=%q, prompt=...).",
-				kind, agentID, job.ID(), model, job.ID(), agentID)), nil
+				"After this turn completes, continue it with send_to_agent(agent_id=%q, prompt=..., context_mode='retain'|'fresh').%s",
+				kind, agentID, job.ID(), model, job.ID(), agentID, subagentContextNote("fresh", 1, contextTokens, 0))), nil
 		},
 	}
 }
@@ -148,12 +139,17 @@ func spawnAgent(d *Deps) *gollama.Tool {
 func sendToAgent(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "send_to_agent",
-		Description: "Send a follow-up prompt to a general-purpose subagent after its previous turn has fully completed. " +
-			"The subagent retains its model, access level, tools, and conversation history. The follow-up is another background job and " +
-			"returns a new job_id; use wait/job_output/kill_job normally.",
+		Description: "Send a follow-up to a general-purpose subagent after its previous turn has fully completed. " +
+			"context_mode defaults to 'retain', which keeps conversation continuity. Use 'fresh' after context failure or when " +
+			"history is obsolete: it replaces the loop without replaying prior conversation, while preserving the stable agent id, " +
+			"originally resolved model, access level, and tools. A fresh prompt must be a bounded, self-contained handoff containing " +
+			"the request, relevant evidence/artifact references, unresolved questions, and verification requirements. Each follow-up " +
+			"is another background job; use wait/job_output/kill_job normally.",
 		Params: tools.Obj(map[string]any{
 			"agent_id": tools.StrProp("stable agent id returned by spawn_agent, e.g. agent_1"),
-			"prompt":   tools.StrProp("follow-up prompt or clarification"),
+			"prompt": tools.StrProp("follow-up prompt; with fresh context, a self-contained request including relevant evidence/artifact " +
+				"references, unresolved questions, and required verification; bounded to 32 KiB"),
+			"context_mode": map[string]any{"type": "string", "enum": []string{"retain", "fresh"}, "description": "optional context strategy: 'retain' (default) or 'fresh'"},
 		}, "agent_id", "prompt"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			if d.Jobs == nil {
@@ -164,6 +160,10 @@ func sendToAgent(d *Deps) *gollama.Tool {
 			agentID, prompt = strings.TrimSpace(agentID), strings.TrimSpace(prompt)
 			if agentID == "" || prompt == "" {
 				return tools.ErrResult("send_to_agent: non-empty agent_id and prompt are required"), nil
+			}
+			mode, err := revisionContextMode(params)
+			if err != nil {
+				return tools.ErrResult("send_to_agent: %v", err), nil
 			}
 
 			d.mu.Lock()
@@ -194,6 +194,13 @@ func sendToAgent(d *Deps) *gollama.Tool {
 					return tools.ErrResult("send_to_agent: %v", acquireErr), nil
 				}
 			}
+			priorTokens := h.loop.ContextTokensEstimate()
+			nextLoop := h.loop
+			rolloverReason := ""
+			if mode == "fresh" {
+				nextLoop = newGenericAgentLoop(d, h.spec, "agent:"+h.id, h.writeAccess, h.token)
+				rolloverReason = "coordinator_fresh"
+			}
 			round := h.round + 1
 			label := fmt.Sprintf("%s turn %d (%s)", agentID, round, h.spec.Name)
 			var job *jobs.Job
@@ -208,49 +215,89 @@ func sendToAgent(d *Deps) *gollama.Tool {
 				d.mu.Unlock()
 				return tools.ErrResult("send_to_agent: session is shutting down; follow-up was not started"), nil
 			}
+			if mode == "fresh" {
+				nextLoop.Seed(genericFreshHandoff(prompt))
+			} else {
+				nextLoop.Post(prompt)
+			}
+			contextTokens := nextLoop.ContextTokensEstimate()
 			h.round = round
-			h.loop.Post(prompt)
-			trackAgentJob(h.loop, job)
+			h.loop = nextLoop
+			trackAgentJob(nextLoop, job)
 			h.job = job
 			h.running = true
 			d.mu.Unlock()
 
-			startGenericAgentJob(d, h, job, lease)
-			return tools.OkResult(fmt.Sprintf("started follow-up turn %d for subagent %s as background job %s. "+
-				"Do not poll it; its report arrives automatically, or call wait([%q]) when needed.",
-				round, agentID, job.ID(), job.ID())), nil
+			startGenericAgentJob(d, h, job, lease, mode, round, priorTokens, contextTokens, rolloverReason)
+			return tools.OkResult(fmt.Sprintf("started follow-up turn %d for subagent %s as background job %s with context_mode=%s. "+
+				"The stable handle keeps logical model %s and its original access/tools. Do not poll it; its report arrives automatically, "+
+				"or call wait([%q]) when needed.%s", round, agentID, job.ID(), mode, h.spec.Name, job.ID(),
+				subagentContextNote(mode, round, contextTokens, priorTokens))), nil
 		},
 	}
 }
 
-func startGenericAgentJob(d *Deps, h *genericAgentHandle, job *jobs.Job, lease *workspacelease.Lease) {
-	round := h.round
+func newGenericAgentLoop(d *Deps, spec AgentSpec, actor string, writeAccess bool, token *workspacelease.Token) *engine.Loop {
+	reg := tools.New()
+	agentWS := &tools.Workspace{Root: d.Workspace, Env: append([]string(nil), d.Env...),
+		Ownership: d.Ownership, MutationToken: token}
+	var system string
+	if writeAccess {
+		agentWS.WriteRoots = tools.NormalizeRoots(d.WriteRoots)
+		agentWS.Emitter = d.Emitter.With(actor)
+		reg.Add(tools.Worker(agentWS)...)
+		system = sys(genericCodingAgentSystem, false, d.Workspace)
+	} else {
+		reg.Add(tools.ReadOnlyInspect(agentWS)...)
+		system = inspectSys(genericAgentSystem, d.Workspace)
+	}
+	loop := d.newLoop(spec, system, reg, actor)
+	loop.ContextLengthHandled = true
+	return loop
+}
+
+func genericFreshHandoff(prompt string) string {
+	return boundedRevisionHandoff(`Fresh-context generic-agent handoff. No prior conversation or tool log is being replayed.
+Treat this bounded handoff as the complete authoritative context. It must identify the request, relevant evidence or artifact references, unresolved questions, and verification requirements (including explicit "none" where appropriate).
+
+Caller handoff:
+` + strings.TrimSpace(prompt))
+}
+
+func startGenericAgentJob(d *Deps, h *genericAgentHandle, job *jobs.Job, lease *workspacelease.Lease, mode string, round, priorTokens, newTokens int, rolloverReason string) {
+	loop := h.loop
 	d.Emitter.Emit(event.JobStarted, map[string]any{"id": job.ID(), "kind": job.Kind(), "label": job.Label(), "mutates": job.Mutates()})
-	d.Emitter.Emit(event.SubagentSpawned, map[string]any{
-		"role": "generic", "agent_id": h.id, "model": h.spec.Model, "logical_model": h.spec.Name,
-		"job_id": job.ID(), "mutating": h.mutates,
-		"context_mode": map[bool]string{true: "fresh", false: "retain"}[round == 1], "round": round,
-	})
+	spawn := subagentSpawnData("generic", h.spec, mode, round, priorTokens, newTokens, rolloverReason)
+	spawn["agent_id"], spawn["job_id"], spawn["mutating"] = h.id, job.ID(), h.mutates
+	d.Emitter.Emit(event.SubagentSpawned, spawn)
 	go func() {
 		defer job.ExecutionComplete()
 		defer lease.Release()
-		res, err := h.loop.Run(job.Context())
+		res, err := loop.Run(job.Context())
+		contextTokens := loop.ContextTokensEstimate()
 		finish := map[string]any{
 			"role": "generic", "agent_id": h.id, "model": h.spec.Model, "logical_model": h.spec.Name,
-			"job_id": job.ID(), "round": round, "mutating": h.mutates, "context_tokens_est": h.loop.ContextTokensEstimate(),
+			"job_id": job.ID(), "round": round, "mutating": h.mutates, "context_mode": mode,
+			"context_tokens_est": contextTokens,
 		}
+		addRolloverFields(finish, rolloverReason, priorTokens, newTokens)
 		status := jobs.Done
 		report := ""
 		if err != nil {
 			status = jobs.Failed
 			report = "subagent failed: " + err.Error()
 			finish["error"] = err.Error()
+			if engine.IsContextLengthError(err) {
+				report += fmt.Sprintf("\n\nThis loop's context is unusable. Recover with send_to_agent(agent_id=%q, context_mode=\"fresh\", prompt=\"<bounded self-contained request with evidence/artifact references, unresolved questions, and verification requirements>\"); prior conversation and tool logs will not be replayed.", h.id)
+				finish["fresh_recovery_available"] = true
+			}
 		} else {
 			report = strings.TrimSpace(res.Report)
 			if report == "" {
 				report = "(subagent completed without a report)"
 			}
 		}
+		report += subagentContextNote(mode, round, contextTokens, priorTokens)
 		d.Emitter.Emit(event.SubagentFinished, finish)
 		d.mu.Lock()
 		// Run has returned, so retained history is now safe for a follow-up. Finish

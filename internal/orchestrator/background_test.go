@@ -68,6 +68,16 @@ type bashThenCancel struct {
 	waiting chan struct{}
 }
 
+type genericContextFailure struct{ calls int }
+
+func (t *genericContextFailure) TurnCtx(context.Context, gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+	t.calls++
+	if t.calls == 1 {
+		return text("initial answer"), nil
+	}
+	return nil, fmt.Errorf("maximum context length exceeded")
+}
+
 func (b *bashThenCancel) TurnCtx(ctx context.Context, _ gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
 	b.calls++
 	if b.calls == 1 {
@@ -117,6 +127,16 @@ func waitFor(t *testing.T, cond func() bool) {
 		time.Sleep(2 * time.Millisecond)
 	}
 	t.Fatal("condition not met in time")
+}
+
+func waitGenericIdle(t *testing.T, d *Deps, agentID string) {
+	t.Helper()
+	waitFor(t, func() bool {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		h := d.genericAgent[agentID]
+		return h != nil && !h.running
+	})
 }
 
 func bgDeps(t *testing.T, rec event.Recorder, impl *scripted, reviewers []AgentSpec) (*Deps, *docs.Store) {
@@ -176,7 +196,9 @@ func TestGenericAgentBackgroundModelAndFollowup(t *testing.T) {
 		t.Fatalf("generic job mutates = %v, sandbox = %s", job1.Mutates(), sandbox.Available())
 	}
 	waitJobDone(t, job1)
-	if rep := job1.Report(); rep.Status != jobs.Done || rep.Result != "first answer" {
+	waitGenericIdle(t, d, "agent_1")
+	if rep := job1.Report(); rep.Status != jobs.Done || !strings.Contains(rep.Result, "first answer") ||
+		!strings.Contains(rep.Result, "mode=fresh round=1") {
 		t.Fatalf("first report = %+v", rep)
 	}
 
@@ -186,7 +208,8 @@ func TestGenericAgentBackgroundModelAndFollowup(t *testing.T) {
 	}
 	job2, _ := d.Jobs.Get("job_2")
 	waitJobDone(t, job2)
-	if rep := job2.Report(); rep.Status != jobs.Done || rep.Result != "follow-up answer" {
+	if rep := job2.Report(); rep.Status != jobs.Done || !strings.Contains(rep.Result, "follow-up answer") ||
+		!strings.Contains(rep.Result, "mode=retain round=2") || !strings.Contains(rep.Result, "prior_tokens=") {
 		t.Fatalf("follow-up report = %+v", rep)
 	}
 	if turner.i != 2 {
@@ -216,6 +239,141 @@ func TestGenericAgentBackgroundModelAndFollowup(t *testing.T) {
 	}
 	if spawns != 2 {
 		t.Fatalf("generic spawn events = %d, want 2", spawns)
+	}
+}
+
+func TestGenericAgentFreshFollowupReplacesHistoryAndPreservesIdentity(t *testing.T) {
+	rec := &syncRec{}
+	d, _ := bgDeps(t, rec, nil, nil)
+	first := &scripted{resp: []*gollama.ResponseMessageGenerate{text("obsolete first answer")}}
+	fresh := &scripted{resp: []*gollama.ResponseMessageGenerate{text("fresh answer")}}
+	clients := []engine.Turner{first, fresh}
+	d.ResolveAgent = func(name string) (AgentSpec, error) {
+		return AgentSpec{Name: name, Model: "provider-model", Backend: "test", NewClient: func() engine.Turner {
+			client := clients[0]
+			clients = clients[1:]
+			return client
+		}}, nil
+	}
+
+	res, _ := spawnAgent(d).Call(context.Background(), map[string]any{
+		"model": "chosen", "prompt": "obsolete initial request", "mutating": true,
+	})
+	if res.IsError {
+		t.Fatalf("spawn = %+v", res)
+	}
+	job1, _ := d.Jobs.Get("job_1")
+	waitJobDone(t, job1)
+	waitGenericIdle(t, d, "agent_1")
+	d.mu.Lock()
+	oldLoop := d.genericAgent["agent_1"].loop
+	d.mu.Unlock()
+
+	handoff := "Request: implement beta. Evidence/artifacts: artifact://build-42. Unresolved questions: none. Verification: run go test ./...\nNotes: " +
+		strings.Repeat("x", maxRevisionHandoffBytes)
+	res, _ = sendToAgent(d).Call(context.Background(), map[string]any{
+		"agent_id": "agent_1", "prompt": handoff, "context_mode": "fresh",
+	})
+	if res.IsError || !strings.Contains(res.Content, "context_mode=fresh") ||
+		!strings.Contains(res.Content, "round=2") || !strings.Contains(res.Content, "logical model chosen") {
+		t.Fatalf("fresh follow-up = %+v", res)
+	}
+	job2, _ := d.Jobs.Get("job_2")
+	if !job2.Mutates() {
+		t.Fatal("fresh follow-up lost mutating job identity")
+	}
+	waitJobDone(t, job2)
+	waitGenericIdle(t, d, "agent_1")
+	d.mu.Lock()
+	h := d.genericAgent["agent_1"]
+	d.mu.Unlock()
+	if h.loop == oldLoop || h.spec.Name != "chosen" || h.spec.Model != "provider-model" || !h.writeAccess {
+		t.Fatalf("fresh replacement changed handle identity/access: %+v", h)
+	}
+	if !hasTool(h.loop.Tools, "Edit") || !hasTool(h.loop.Tools, "Write") {
+		t.Fatal("fresh replacement did not preserve worker tools")
+	}
+	if len(fresh.messages) == 0 {
+		t.Fatal("fresh client received no request")
+	}
+	seed := fresh.messages[len(fresh.messages)-1].Content
+	for _, want := range []string{"No prior conversation", "artifact://build-42", "Unresolved questions", "run go test ./..."} {
+		if !strings.Contains(seed, want) {
+			t.Fatalf("fresh handoff missing %q:\n%s", want, seed)
+		}
+	}
+	if strings.Contains(seed, "obsolete initial request") || strings.Contains(seed, "obsolete first answer") {
+		t.Fatalf("fresh handoff replayed obsolete history:\n%s", seed)
+	}
+	if len(seed) > maxRevisionHandoffBytes || !strings.Contains(seed, "handoff truncated") {
+		t.Fatalf("fresh handoff was not bounded: %d bytes\n%s", len(seed), seed)
+	}
+
+	var freshSpawn map[string]any
+	for _, ev := range rec.snapshot() {
+		if ev.Type == event.SubagentSpawned && ev.Data["role"] == "generic" && ev.Data["round"] == 2 {
+			freshSpawn = ev.Data
+		}
+	}
+	if freshSpawn == nil || freshSpawn["context_mode"] != "fresh" || freshSpawn["rollover_reason"] != "coordinator_fresh" ||
+		freshSpawn["logical_model"] != "chosen" || freshSpawn["mutating"] != true {
+		t.Fatalf("fresh spawn metadata = %+v", freshSpawn)
+	}
+}
+
+func TestGenericAgentFreshRecoveryAfterContextFailure(t *testing.T) {
+	d, _ := bgDeps(t, &syncRec{}, nil, nil)
+	retained := &genericContextFailure{}
+	fresh := &scripted{resp: []*gollama.ResponseMessageGenerate{text("recovered")}}
+	clients := []engine.Turner{retained, fresh}
+	d.ResolveAgent = func(name string) (AgentSpec, error) {
+		return AgentSpec{Name: name, Model: "m", NewClient: func() engine.Turner {
+			client := clients[0]
+			clients = clients[1:]
+			return client
+		}}, nil
+	}
+	if res, _ := spawnAgent(d).Call(context.Background(), map[string]any{"model": "chosen", "prompt": "initial"}); res.IsError {
+		t.Fatalf("spawn = %+v", res)
+	}
+	job1, _ := d.Jobs.Get("job_1")
+	waitJobDone(t, job1)
+	waitGenericIdle(t, d, "agent_1")
+	if res, _ := sendToAgent(d).Call(context.Background(), map[string]any{"agent_id": "agent_1", "prompt": "retained continuation"}); res.IsError {
+		t.Fatalf("retained follow-up start = %+v", res)
+	}
+	job2, _ := d.Jobs.Get("job_2")
+	waitJobDone(t, job2)
+	waitGenericIdle(t, d, "agent_1")
+	failed := job2.Report()
+	if failed.Status != jobs.Failed || !strings.Contains(failed.Result, `context_mode="fresh"`) ||
+		!strings.Contains(failed.Result, "prior conversation and tool logs will not be replayed") ||
+		!strings.Contains(failed.Result, "mode=retain round=2") {
+		t.Fatalf("context failure report = %+v", failed)
+	}
+
+	handoff := "Request: recover. Evidence/artifacts: artifact://failure. Unresolved questions: root cause. Verification: rerun test."
+	res, _ := sendToAgent(d).Call(context.Background(), map[string]any{
+		"agent_id": "agent_1", "prompt": handoff, "context_mode": "fresh",
+	})
+	if res.IsError || !strings.Contains(res.Content, "round=3") {
+		t.Fatalf("fresh recovery start = %+v", res)
+	}
+	job3, _ := d.Jobs.Get("job_3")
+	waitJobDone(t, job3)
+	if rep := job3.Report(); rep.Status != jobs.Done || !strings.Contains(rep.Result, "recovered") ||
+		!strings.Contains(rep.Result, "mode=fresh round=3") {
+		t.Fatalf("fresh recovery = %+v", rep)
+	}
+	seed := fresh.messages[len(fresh.messages)-1].Content
+	if strings.Contains(seed, "retained continuation") || !strings.Contains(seed, "artifact://failure") {
+		t.Fatalf("fresh recovery handoff = %q", seed)
+	}
+	d.mu.Lock()
+	recoveredLoop := d.genericAgent["agent_1"].loop
+	d.mu.Unlock()
+	if !hasTool(recoveredLoop.Tools, "Read") || hasTool(recoveredLoop.Tools, "Edit") {
+		t.Fatal("fresh replacement did not preserve read-only tools")
 	}
 }
 
@@ -267,7 +425,7 @@ func TestGenericAgentErrorsAndRunningFollowup(t *testing.T) {
 		t.Fatalf("spawn known = %+v", res)
 	}
 	<-blocker.started
-	if res, _ := sendToAgent(d).Call(context.Background(), map[string]any{"agent_id": "agent_1", "prompt": "too soon"}); !res.IsError || !strings.Contains(res.Content, "still running") {
+	if res, _ := sendToAgent(d).Call(context.Background(), map[string]any{"agent_id": "agent_1", "prompt": "too soon", "context_mode": "fresh"}); !res.IsError || !strings.Contains(res.Content, "still running") {
 		t.Fatalf("running follow-up = %+v", res)
 	}
 	if res, _ := sendToAgent(d).Call(context.Background(), map[string]any{"agent_id": "agent_999", "prompt": "p"}); !res.IsError || !strings.Contains(res.Content, "no such agent") {

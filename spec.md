@@ -302,13 +302,18 @@ start becomes terminal `lost`, and id allocation continues without collisions.
 Normal chat can spawn general-purpose subagents with an explicit prompt, any configured logical
 model, and an access level that defaults to read-only inspection but may explicitly allow workspace
 mutation for delegated coding. Each spawn returns a stable agent id and a background job id. Once
-a turn finishes, chat may send another prompt to that agent id; the same model loop, access level,
-tools, and isolated history are retained, while the follow-up receives a new job id. Read-only
-generic agents expose file reads and a read-only shell: supported hosts enforce workspace
-non-mutation with the reviewer sandbox, and unsupported hosts visibly degrade to prompt-only
-enforcement and conservatively count the agent as a mutating job. Explicitly mutating generic
-agents use worker tools and always participate in single-writer scheduling. Generic agent handles
-are live session state and are not reconstructed after daemon restart.
+a turn finishes, chat may send another prompt to that agent id with retained context (the default) or
+replace its loop with fresh context. Both modes preserve the stable handle, originally resolved model,
+access level, and tools, advance the round, and receive a new job id. A fresh prompt is a bounded,
+self-contained handoff containing the request, relevant evidence or artifact references, unresolved
+questions, and verification requirements; prior conversation and tool logs are not replayed. Generic
+lifecycle events and reports expose context mode, round, and advisory context estimates. A
+context-length failure reports an actionable explicit fresh retry rather than automatically replaying a
+turn that may have had side effects. Read-only generic agents expose file reads and a read-only shell:
+supported hosts enforce workspace non-mutation with the reviewer sandbox, and unsupported hosts
+visibly degrade to prompt-only enforcement and conservatively count the agent as a mutating job.
+Explicitly mutating generic agents use worker tools and always participate in single-writer scheduling.
+Generic agent handles are live session state and are not reconstructed after daemon restart.
 
 A daemon-wide lease keyed by the canonical, symlink-resolved worktree permits only one mutating
 execution scope across sessions. Direct coordinator operations, delegated agents, file tools, shell

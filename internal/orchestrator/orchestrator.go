@@ -172,14 +172,15 @@ type Deps struct {
 }
 
 type genericAgentHandle struct {
-	id      string
-	spec    AgentSpec
-	loop    *engine.Loop
-	job     *jobs.Job
-	round   int
-	mutates bool
-	token   *workspacelease.Token
-	running bool // Run may still be unwinding after kill_job marks job killed
+	id          string
+	spec        AgentSpec
+	loop        *engine.Loop
+	job         *jobs.Job
+	round       int
+	mutates     bool
+	writeAccess bool
+	token       *workspacelease.Token
+	running     bool // Run may still be unwinding after kill_job marks job killed
 }
 
 // emitFocus records a task_focus event when the active task changes. Re-focusing

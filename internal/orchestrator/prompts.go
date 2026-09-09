@@ -389,8 +389,9 @@ For independent research, analysis, verification, or delegated coding, spawn_age
 subagent as a session background job. Pick the configured logical model that fits the task and
 give it a self-contained prompt. Agents are read-only by default; request mutating access only for
 coding work, with at most one mutating job per worktree. Use job_output/wait/kill_job exactly as
-for background Bash; do not poll. After a subagent's turn completes, send_to_agent can ask it a
-follow-up while retaining its history and access level.
+for background Bash; do not poll. After a subagent's turn completes, send_to_agent can retain its
+history or start a fresh-context handoff while preserving its model and access level; fresh prompts
+must be bounded and self-contained with evidence references, unresolved questions, and verification.
 
 Use remember(note, category) to durably capture an operational learning worth keeping across
 sessions — an environment quirk, codebase gotcha, user preference, or lesson. Memory (memory.md)
