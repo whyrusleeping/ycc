@@ -131,6 +131,38 @@ func TestWorkstreamBlockedThenResolvedIsReady(t *testing.T) {
 	}
 }
 
+func TestWorkstreamWatcherWaitsForDelegatedJobs(t *testing.T) {
+	for _, awaiting := range []bool{true, false} {
+		t.Run(map[bool]string{true: "waiting", false: "finished"}[awaiting], func(t *testing.T) {
+			m := NewManager(testRegistry(), t.TempDir())
+			t.Cleanup(m.ReclaimAll)
+			s := newStopSession(t)
+			ws := workstream.Workstream{ID: "ws_jobs", SessionID: s.ID, Status: workstream.StatusActive}
+			if err := m.workstreams.Add(ws); err != nil {
+				t.Fatal(err)
+			}
+			m.startWorkstreamWatcher(ws, s.log)
+			m.mu.Lock()
+			done := m.workstreamWatches[s.ID]
+			m.mu.Unlock()
+			s.emitter.Emit(event.SessionIdle, map[string]any{"report": "progress", "awaiting_jobs": awaiting})
+			// Closing drains the durable event through the watcher before we assert.
+			if err := s.log.Close(); err != nil {
+				t.Fatal(err)
+			}
+			<-done
+			got, _ := m.workstreams.Get(ws.ID)
+			want := workstream.StatusNeedsAttention // a genuinely finished tree has no commits
+			if awaiting {
+				want = workstream.StatusActive
+			}
+			if got.Status != want {
+				t.Fatalf("status = %s, want %s", got.Status, want)
+			}
+		})
+	}
+}
+
 func TestWorkstreamTerminalStatusPreservesError(t *testing.T) {
 	events := []event.Event{{Type: event.SessionError}, {Type: event.SessionStopped}}
 	if got := workstreamTerminalStatus(events); got != event.StatusError {

@@ -111,6 +111,49 @@ func TestConcurrentCheckpointVsWait(t *testing.T) {
 	}
 }
 
+// The completion signal is the wake path for a session owner that is already
+// idle: it survives until received (so a completion racing the owner's
+// transition is not missed), coalesces bursts into one pending wake, and fires
+// for kills as well as normal finishes.
+func TestCompletionsSignalIsBufferedAndCoalesced(t *testing.T) {
+	r := NewRegistry()
+	defer r.KillAll()
+	select {
+	case <-r.Completions():
+		t.Fatal("completion signalled before any job finished")
+	default:
+	}
+
+	first := r.Start("bash", "one", "coordinator")
+	second := r.Start("bash", "two", "coordinator")
+	first.Finish(Done, "exit 0")
+	second.Finish(Done, "exit 0")
+
+	// Buffered: the owner was not waiting when either job finished.
+	select {
+	case <-r.Completions():
+	default:
+		t.Fatal("completion signal lost while the owner was busy")
+	}
+	// Coalesced: one wake covers every report available at that moment.
+	select {
+	case <-r.Completions():
+		t.Fatal("completion signal not coalesced")
+	default:
+	}
+	if reports := r.DrainFinished("coordinator"); len(reports) != 2 {
+		t.Fatalf("claimable reports = %d, want 2", len(reports))
+	}
+
+	killed := r.Start("bash", "three", "coordinator")
+	killed.Kill()
+	select {
+	case <-r.Completions():
+	default:
+		t.Fatal("kill did not signal completion")
+	}
+}
+
 // Output uses explicit absolute cursors and can revisit retained bytes without
 // changing notification delivery.
 func TestOutputExplicitCursorIsRepeatable(t *testing.T) {
@@ -164,6 +207,60 @@ func TestTailRemainsBoundedAfterInvalidUTF8Normalization(t *testing.T) {
 	}
 	if !strings.Contains(tail, "job report tail truncated") {
 		t.Fatalf("normalization expansion was not reported as truncation: %q", tail[:100])
+	}
+}
+
+// A tracked job becomes deliverable only once its execution has actually
+// stopped: a terminal report still holding its leases neither signals the
+// owner's wake nor is claimable by automatic delivery. Both orders of the two
+// boundaries produce exactly one readiness signal.
+func TestTrackedCompletionBecomesDeliverableAtExecutionRelease(t *testing.T) {
+	r := NewRegistry()
+	defer r.KillAll()
+
+	report, ok := r.TryStartTracked("agent", "reviewers", "coordinator")
+	if !ok {
+		t.Fatal("tracked start refused")
+	}
+	report.Finish(Done, "REVIEW: accepted")
+	select {
+	case <-r.Completions():
+		t.Fatal("completion signalled while the runner still held its execution lease")
+	default:
+	}
+	if got := r.DrainFinished("coordinator"); len(got) != 0 {
+		t.Fatalf("claimed %d reports before execution release, want 0", len(got))
+	}
+	report.ExecutionComplete()
+	select {
+	case <-r.Completions():
+	default:
+		t.Fatal("no completion signal at execution release")
+	}
+	if got := r.DrainFinished("coordinator"); len(got) != 1 {
+		t.Fatalf("claimed %d reports after execution release, want 1", len(got))
+	}
+
+	// Reverse order: execution stops first, so the later terminal report is
+	// immediately deliverable and signals once.
+	early, ok := r.TryStartTracked("bash", "watcher", "coordinator")
+	if !ok {
+		t.Fatal("tracked start refused")
+	}
+	early.ExecutionComplete()
+	select {
+	case <-r.Completions():
+		t.Fatal("completion signalled before any terminal report")
+	default:
+	}
+	early.Finish(Done, "exit 0")
+	select {
+	case <-r.Completions():
+	default:
+		t.Fatal("no completion signal for a job whose execution already stopped")
+	}
+	if got := r.DrainFinished("coordinator"); len(got) != 1 {
+		t.Fatalf("claimed %d reports, want 1", len(got))
 	}
 }
 

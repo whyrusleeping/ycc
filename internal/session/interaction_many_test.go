@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/orchestrator"
 )
@@ -135,15 +136,15 @@ func TestAnswerResolvesPendingBatch(t *testing.T) {
 }
 
 // Session.SendInput arriving while a batch ask_user is pending must answer the
-// batch, not silently buffer the text into inputCh (where the AskMany-blocked
+// batch, not silently buffer the text into the idle queue (where the AskMany-blocked
 // loop would never drain it).
 func TestSendInputAnswersPendingBatch(t *testing.T) {
 	rec := &captureRecorder{}
 	s := &Session{
-		ID:      "test",
-		emitter: event.NewEmitter(rec, "coordinator"),
-		inter:   newInteraction(false, event.NewEmitter(rec, "coordinator")),
-		inputCh: make(chan string, 4),
+		ID:        "test",
+		emitter:   event.NewEmitter(rec, "coordinator"),
+		inter:     newInteraction(false, event.NewEmitter(rec, "coordinator")),
+		messageCh: make(chan engine.UserMessage, 4),
 	}
 
 	qs := []orchestrator.Question{{Prompt: "q1"}, {Prompt: "q2"}}
@@ -167,10 +168,10 @@ func TestSendInputAnswersPendingBatch(t *testing.T) {
 		t.Fatal("AskMany did not return after SendInput")
 	}
 
-	// The text must NOT have been buffered onto inputCh.
+	// The text must NOT have been buffered onto the idle queue.
 	select {
-	case text := <-s.inputCh:
-		t.Fatalf("text was buffered onto inputCh (%q); it should have answered the batch", text)
+	case input := <-s.messageCh:
+		t.Fatalf("text was buffered onto the idle queue (%q); it should have answered the batch", input.Text)
 	default:
 	}
 }

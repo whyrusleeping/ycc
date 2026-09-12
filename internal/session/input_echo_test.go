@@ -4,6 +4,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
 )
 
@@ -49,15 +50,15 @@ func (c *captureRecorder) lastText(t event.Type) (string, bool) {
 
 // SendInput must emit the user_input echo at the moment the prod is accepted,
 // not when the (possibly busy) run loop later dequeues it. Here we simulate a
-// busy loop by never draining inputCh; the echo must still be recorded promptly
+// busy loop by never draining the idle queue; the echo must still be recorded promptly
 // and exactly once.
 func TestSendInputEmitsEchoOnEnqueue(t *testing.T) {
 	rec := &captureRecorder{}
 	s := &Session{
-		ID:      "test",
-		emitter: event.NewEmitter(rec, "coordinator"),
-		inter:   newInteraction(false, event.NewEmitter(rec, "coordinator")),
-		inputCh: make(chan string, 4),
+		ID:        "test",
+		emitter:   event.NewEmitter(rec, "coordinator"),
+		inter:     newInteraction(false, event.NewEmitter(rec, "coordinator")),
+		messageCh: make(chan engine.UserMessage, 4),
 	}
 
 	if err := s.SendInput("hello there"); err != nil {
@@ -74,12 +75,12 @@ func TestSendInputEmitsEchoOnEnqueue(t *testing.T) {
 
 	// The text is still queued for the loop to Post when it next goes idle.
 	select {
-	case text := <-s.inputCh:
-		if text != "hello there" {
-			t.Fatalf("queued text = %q, want %q", text, "hello there")
+	case input := <-s.messageCh:
+		if input.Text != "hello there" {
+			t.Fatalf("queued text = %q, want %q", input.Text, "hello there")
 		}
 	default:
-		t.Fatal("text was not enqueued onto inputCh")
+		t.Fatal("text was not enqueued onto the idle queue")
 	}
 
 	// Draining (the run loop's job) must not record a second echo.
@@ -92,10 +93,10 @@ func TestSendInputEmitsEchoOnEnqueue(t *testing.T) {
 func TestSendInputBufferFullNoEcho(t *testing.T) {
 	rec := &captureRecorder{}
 	s := &Session{
-		ID:      "test",
-		emitter: event.NewEmitter(rec, "coordinator"),
-		inter:   newInteraction(false, event.NewEmitter(rec, "coordinator")),
-		inputCh: make(chan string, 1),
+		ID:        "test",
+		emitter:   event.NewEmitter(rec, "coordinator"),
+		inter:     newInteraction(false, event.NewEmitter(rec, "coordinator")),
+		messageCh: make(chan engine.UserMessage, 1),
 	}
 	if err := s.SendInput("first"); err != nil {
 		t.Fatalf("SendInput first: %v", err)

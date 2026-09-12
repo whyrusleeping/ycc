@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
 )
 
@@ -14,11 +15,11 @@ func newSteerSession() (*Session, *captureRecorder) {
 	rec := &captureRecorder{}
 	em := event.NewEmitter(rec, "coordinator")
 	s := &Session{
-		ID:      "test",
-		emitter: em,
-		inter:   newInteraction(false, em),
-		inputCh: make(chan string, 4),
-		status:  event.StatusRunning,
+		ID:        "test",
+		emitter:   em,
+		inter:     newInteraction(false, em),
+		messageCh: make(chan engine.UserMessage, 4),
+		status:    event.StatusRunning,
 	}
 	return s, rec
 }

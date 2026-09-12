@@ -112,7 +112,11 @@ func (m *Manager) startWorkstreamWatcher(ws workstream.Workstream, log *event.Lo
 			case event.SubagentFinished:
 				blocked = updateWorkstreamBlocked(blocked, ev)
 			case event.SessionIdle:
-				m.evaluateWorkstreamReadiness(ws.ID, event.StatusIdle, blocked)
+				// A progress report with delegated work outstanding is not permission
+				// to integrate the tree while that work can still resume its owner.
+				if !boolVal(ev.Data, "awaiting_jobs") {
+					m.evaluateWorkstreamReadiness(ws.ID, event.StatusIdle, blocked)
+				}
 			case event.SessionError:
 				m.evaluateWorkstreamReadiness(ws.ID, event.StatusError, blocked)
 			case event.SessionStopped:

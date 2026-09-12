@@ -119,6 +119,7 @@ type Job struct {
 	cancel        context.CancelFunc
 	done          chan struct{} // terminal report is available
 	once          sync.Once
+	onFinish      func()        // registry-level completion signal, fired once
 	executionDone chan struct{} // tracked process/agent has actually stopped
 	executionOnce sync.Once
 	tracked       bool
@@ -129,6 +130,8 @@ type Job struct {
 	result          string // retained final report
 	terminationHint string // retrieval/readiness detail included if killed
 	notified        bool   // exactly-once automatic notification claim
+	execStopped     bool   // tracked execution has actually stopped
+	signalled       bool   // registry completion signal already fired
 	dropped         int64  // absolute offset of the retained output's first byte
 	started         time.Time
 	finished        time.Time
@@ -285,11 +288,25 @@ func (j *Job) Finish(status Status, result string) bool {
 }
 
 // ExecutionComplete marks a tracked process/agent as actually stopped. A kill
-// makes its report terminal immediately, but lifecycle cleanup and shutdown wait
-// for this separate boundary before releasing execution ownership.
+// makes its report terminal immediately, but lifecycle cleanup, shutdown, and
+// automatic completion delivery wait for this separate boundary before releasing
+// execution ownership.
 func (j *Job) ExecutionComplete() {
-	if j.tracked {
-		j.executionOnce.Do(func() { close(j.executionDone) })
+	if !j.tracked {
+		return
+	}
+	j.executionOnce.Do(func() { close(j.executionDone) })
+	// Report-then-release is the common order, so this is usually where a tracked
+	// job becomes deliverable and the owner's wake fires.
+	j.mu.Lock()
+	j.execStopped = true
+	signal := j.status != Running && !j.signalled
+	if signal {
+		j.signalled = true
+	}
+	j.mu.Unlock()
+	if signal && j.onFinish != nil {
+		j.onFinish()
 	}
 }
 
@@ -361,18 +378,39 @@ func (j *Job) Kill() bool {
 }
 
 func (j *Job) finalize(status Status, result string) bool {
-	fired := false
+	fired, signal := false, false
 	j.once.Do(func() {
 		j.mu.Lock()
 		j.status = status
 		j.result = result
 		j.finished = time.Now()
 		j.activity.CurrentTool = ""
+		// A tracked runner can still hold mutation/lifetime leases here (a kill
+		// finalizes the report long before the process exits), so its completion
+		// signal is deferred to ExecutionComplete. Otherwise a woken owner could
+		// start a turn against execution that has not released ownership.
+		if !j.tracked || j.execStopped {
+			j.signalled, signal = true, true
+		}
 		j.mu.Unlock()
 		close(j.done)
 		fired = true
 	})
+	// Signal outside the job lock and after the terminal state is visible, so a
+	// woken owner that immediately drains reports observes this completion.
+	if fired && signal && j.onFinish != nil {
+		j.onFinish()
+	}
 	return fired
+}
+
+// completionReady reports whether automatic notification delivery may claim this
+// job's report: a tracked job stays withheld until its execution has actually
+// stopped, so a wake never runs a turn while the work still holds its leases.
+func (j *Job) completionReady() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return !j.tracked || j.execStopped
 }
 
 // isDone reports whether the job has reached a terminal state.
@@ -419,12 +457,39 @@ type Registry struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	closing bool // registration barrier: KillAll has begun snapshotting runners
+	// completions coalesces terminal transitions into at most one pending wake
+	// for the single session owner that consumes them. Buffered so a completion
+	// that lands while the owner is running a turn is still observed when it
+	// next waits, and never blocks the finishing worker.
+	completions chan struct{}
 }
 
 // NewRegistry returns an empty registry with a fresh root context.
 func NewRegistry() *Registry {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Registry{jobs: map[string]*Job{}, ctx: ctx, cancel: cancel}
+	return &Registry{jobs: map[string]*Job{}, ctx: ctx, cancel: cancel,
+		completions: make(chan struct{}, 1)}
+}
+
+// Completions returns the coalescing job-completion signal. A receive means at
+// least one job reached a terminal state since the last receive; the receiver
+// must then check for actually deliverable reports (DrainFinished), because a
+// completion may already have been claimed by a checkpoint or an explicit wait.
+// It is intended for the single session owner, not for polling by tools.
+func (r *Registry) Completions() <-chan struct{} { return r.completions }
+
+// SignalCompletion re-arms the coalescing wake without changing any job state.
+// The session owner uses it when an explicit boundary consumed a completion edge
+// whose retained reports are still undelivered.
+func (r *Registry) SignalCompletion() { r.signalCompletion() }
+
+func (r *Registry) signalCompletion() {
+	// Lock-free by construction: finalize may run while another goroutine holds
+	// the registry mutex (KillAll, ResolveOwner), so this must never take it.
+	select {
+	case r.completions <- struct{}{}:
+	default:
+	}
 }
 
 // NewRestored rebuilds durable job metadata, notification state, and terminal
@@ -513,7 +578,7 @@ func (r *Registry) start(kind, label, owner string, mutates, tracked bool) *Job 
 		id: id, kind: kind, label: label, owner: owner, mutates: mutates,
 		ctx: ctx, cancel: cancel, done: make(chan struct{}),
 		executionDone: make(chan struct{}), tracked: tracked,
-		status: Running, started: started,
+		status: Running, started: started, onFinish: r.signalCompletion,
 	}
 	if kind == "agent" {
 		j.activity.Last = started
@@ -670,8 +735,48 @@ func (r *Registry) collect(targets []*Job) (reports []Report, running []string) 
 	return reports, running
 }
 
+// PendingContinuation reports whether owner still has automatic completion
+// delivery outstanding: a job that has not reached a terminal report, or a
+// terminal report whose exactly-once notification has been neither claimed nor
+// suppressed by an explicit wait. Callers use it to tell "waiting on delegated
+// work" apart from "finished", including in the gap between a job finishing and
+// its report being injected.
+//
+// Execution alone is not counted: once a job's automatic notification has been
+// claimed or suppressed it produces nothing further even while its process is
+// still exiting, and the single-writer guard plus the shutdown execution join
+// already keep that case safe.
+func (r *Registry) PendingContinuation(owner string) bool {
+	r.mu.Lock()
+	js := make([]*Job, 0, len(r.order))
+	for _, id := range r.order {
+		js = append(js, r.jobs[id])
+	}
+	r.mu.Unlock()
+	for _, j := range js {
+		if j.Owner() != owner {
+			continue
+		}
+		if j.deliveryPending() {
+			return true
+		}
+	}
+	return false
+}
+
+// deliveryPending reports whether this job can still produce an automatic
+// notification.
+func (j *Job) deliveryPending() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.status == Running || !j.notified
+}
+
 // DrainFinished claims and returns final reports not yet delivered or suppressed,
-// scoped to owner. Non-blocking; used only for automatic checkpoint injection.
+// scoped to owner. A tracked job whose execution has not actually stopped is left
+// unclaimed: its report becomes deliverable at the same boundary that releases its
+// leases, and the completion signal fires there. Non-blocking; used only for
+// automatic checkpoint/wake injection.
 func (r *Registry) DrainFinished(owner string) []Report {
 	r.mu.Lock()
 	js := make([]*Job, 0, len(r.order))
@@ -681,7 +786,7 @@ func (r *Registry) DrainFinished(owner string) []Report {
 	r.mu.Unlock()
 	var out []Report
 	for _, j := range js {
-		if j.Owner() != owner {
+		if j.Owner() != owner || !j.completionReady() {
 			continue
 		}
 		if j.claimNotification() {

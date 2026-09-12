@@ -228,7 +228,7 @@ const batchFreeTextMarker = "(the user replied with a single free-form message; 
 // the free-form text is delivered as the answer to the first question and the
 // remaining questions get batchFreeTextMarker pointing back to it. This keeps
 // scripted / non-TUI clients (e.g. `ycc send`) from having their reply silently
-// buffered into inputCh and lost while the loop is blocked inside AskMany.
+// buffered into the idle queue and lost while the loop is blocked inside AskMany.
 func (in *interaction) Answer(text string) bool {
 	in.mu.Lock()
 	ch := in.waiting

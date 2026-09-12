@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/whyrusleeping/ycc/internal/config"
+	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/usage"
 )
@@ -37,7 +38,7 @@ func budgetSessionWithLog(unattended bool, reg *config.Registry, lg *event.Log) 
 		inter:      newInteraction(unattended, em),
 		unattended: unattended,
 		reg:        reg,
-		inputCh:    make(chan string, 4),
+		messageCh:  make(chan engine.UserMessage, 4),
 		status:     event.StatusRunning,
 	}
 }

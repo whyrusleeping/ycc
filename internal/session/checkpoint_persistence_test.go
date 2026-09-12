@@ -96,7 +96,6 @@ func TestSessionIdleFailureStopsBeforeUsageAndCorrections(t *testing.T) {
 		loop:      loop,
 		inter:     newInteraction(false, emitter),
 		prompt:    "initial prompt",
-		inputCh:   make(chan string, 1),
 		messageCh: make(chan engine.UserMessage, 1),
 		retryCh:   make(chan struct{}),
 		ctx:       ctx,

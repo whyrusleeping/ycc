@@ -204,7 +204,8 @@ func waitTool(ws *Workspace) *gollama.Tool {
 		Description: "Block until background job(s) finish, then return their retained final report(s). Results are repeatable: waiting again " +
 			"can return the same finished evidence, while the first explicit wait suppresses a later automatic notification. Pass job_ids to " +
 			"select jobs (including another actor's known id), or omit them to wait on this actor's currently live jobs. 'for' selects any " +
-			"or all (default). timeout_s defaults to 600; timeout returns finished reports plus still-running ids without error.",
+			"or all (default). timeout_s defaults to 600; timeout returns finished reports plus still-running ids without error. When nothing " +
+			"independent is left to do, report progress and wait here instead of ending your turn to pass the time.",
 		Params: obj(map[string]any{
 			"job_ids":   StrArrProp("the job ids to wait on; omit to wait on all live jobs"),
 			"for":       map[string]any{"type": "string", "enum": []string{"any", "all"}, "description": "return after any one finishes, or after all (default all)"},

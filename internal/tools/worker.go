@@ -1284,7 +1284,9 @@ func Finish() *gollama.Tool {
 	return &gollama.Tool{
 		Name: "finish",
 		Description: "Call when your assigned work is complete. Provide a concise report of what was done " +
-			"and how it was verified. This ends your run and returns the report to the user.",
+			"and how it was verified. This ends your run and returns the report to the user. Do not finish just to " +
+			"pass the time while your background jobs run: report progress and wait on them instead. Their completion " +
+			"resumes you either way, so finishing never abandons them.",
 		Params: obj(map[string]any{"report": strProp("summary of the work performed and its outcome")}, "report"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			report, _ := getString(params, "report")

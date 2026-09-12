@@ -174,7 +174,11 @@ default) when the result gates your next step (the usual case: you spawn the imp
 review its diff). Use background ONLY when you have genuinely independent work to do meanwhile.
 Never poll a background job: its report is delivered to you automatically at a checkpoint, or
 you call wait([job_id]) when its result finally gates your next step (job_output only peeks at
-progress). One MUTATING job per tree: a background implementer is refused while another
+progress). When background work is still running and you have nothing independent left to do,
+say briefly where things stand and then wait on it — do not end the turn just to get out of the
+way, and never kill or abandon live jobs to "finish". Ending a turn with jobs still running is
+not final: their reports wake you automatically when they complete. One MUTATING job per tree: a
+background implementer is refused while another
 implementer or a mutating background bash job is live here — route truly parallel mutating work
 through a separate workstream (spec §14.1). Reviewers are read-only and run freely in parallel.`
 
@@ -268,7 +272,11 @@ and the reviewers run as a background job. Run FOREGROUND (the default) when the
 your next step (the usual case). Use background ONLY when you have genuinely independent work to
 do meanwhile. Never poll a background job: its report is delivered to you automatically at a
 checkpoint, or you call wait([job_id]) when its result finally gates your next step (job_output
-only peeks at progress). Reviewers are read-only and run freely in parallel.`
+only peeks at progress). When background work is still running and you have nothing independent
+left to do, say briefly where things stand and then wait on it — do not end the turn just to get
+out of the way, and never kill or abandon live jobs to "finish". Ending a turn with jobs still
+running is not final: their reports wake you automatically when they complete. Reviewers are
+read-only and run freely in parallel.`
 
 const implementerSystem = `You are the IMPLEMENTER: an autonomous coding agent. The coordinator assigns you one
 task with an approach; you make the change in the workspace and report back.
@@ -389,7 +397,10 @@ For independent research, analysis, verification, or delegated coding, spawn_age
 subagent as a session background job. Pick the configured logical model that fits the task and
 give it a self-contained prompt. Agents are read-only by default; request mutating access only for
 coding work, with at most one mutating job per worktree. Use job_output/wait/kill_job exactly as
-for background Bash; do not poll. After a subagent's turn completes, send_to_agent can retain its
+for background Bash; do not poll. When an agent is still running and nothing independent is left,
+report progress briefly and then wait on it rather than closing out the exchange; if you do reply
+and stop, its completion wakes you automatically — never kill live work to tie things off. After
+a subagent's turn completes, send_to_agent can retain its
 history or start a fresh-context handoff while preserving its model and access level; fresh prompts
 must be bounded and self-contained with evidence references, unresolved questions, and verification.
 

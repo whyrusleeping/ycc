@@ -33,6 +33,37 @@ Completion notification and evidence access are separate:
 A completion found between results from one model tool-call batch is deferred until the complete batch
 has entered history, preserving provider requirements that tool results immediately follow their calls.
 
+Automatic delivery is also gated on execution, not just on the report. A tracked process or subagent
+publishes its terminal report while it still holds its mutation/lifetime leases, so its completion
+signal and its claimable notification both become available at the separate boundary where execution
+actually stops. A wake therefore never starts a coordinator turn against work that is still releasing
+ownership, in either order of the two boundaries; an explicit `wait` keeps its existing contract and
+synchronizes with the terminal report itself.
+
+Checkpoint delivery only reaches a coordinator that is still running. A coordinator that already sent
+its final response while jobs remain live is therefore woken by the completion itself: the registry
+publishes a coalescing terminal-transition signal that the session's single run owner selects on while
+idle. Because the wake, user input, steer corrections, and context rollover are all consumed by that
+one owner, the woken turn cannot run in parallel with another model invocation, and the signal is
+buffered, so a job finishing exactly while the parent transitions to idle is still observed. An idle
+user message accepted just before the wake is absorbed into the same continuation ahead of the
+notification it durably precedes, so live and replayed history agree. Waking
+claims whatever is deliverable at that moment through the same exactly-once path as a checkpoint —
+suppressed by an earlier explicit wait, recorded as durable `job_notified` synthetic context rather
+than user intent, and coalesced so several completions enter history before one turn starts. States
+that represent an explicit human boundary — pause, stop, refusal, session error, a blocked report, a
+reopened session awaiting its first input, and an in-flight rollover — are never resumed this way;
+their reports fall back to checkpoint delivery. Prompt and tool guidance correspondingly tells a
+coordinator with no independent work left to report progress and wait rather than end the turn.
+
+Terminal-state observers use the same eligibility rather than lifecycle status alone. Status and the
+wake decision are recorded together, and a claimed-but-not-yet-running continuation stays visible, so
+the unattended work loop and the idle reaper cannot mistake a coordinator that is waiting for
+delegated work — or resuming on it — for a finished session and kill its jobs. Eligibility is false
+for anything nothing will wake, so a blocked or errored session is still reclaimed promptly.
+Execution that is terminal and already notified does not extend eligibility while its process is still
+exiting: the single-writer guard and the shutdown execution join already cover that case.
+
 A subagent turn is also an explicit child-job lifecycle boundary. By default, every running job owned by
 that subagent is cancelled and its process/agent execution is joined before the subagent releases mutation
 ownership; completed, previously unnotified reports are included in the subagent result. A watcher may

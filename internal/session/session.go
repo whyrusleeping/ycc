@@ -96,10 +96,12 @@ type Session struct {
 	// the first new input before continuing on the reconstructed history.
 	resumed bool
 
-	inputCh   chan string
+	// messageCh is the single ordered queue of idle user input (text and any
+	// native attachments). One queue is what keeps serially accepted inputs in
+	// their accepted order when the run owner drains them.
 	messageCh chan engine.UserMessage
 	// sendMu serializes idle senders across the capacity-check, durable echo, and
-	// channel delivery. The run goroutine only drains these channels, so once a
+	// channel delivery. The run goroutine only drains this channel, so once a
 	// slot is observed the post-record send is guaranteed not to block or fail.
 	sendMu sync.Mutex
 	// retryCh nudges the idle-after-error run loop to re-run the failed turn on
@@ -118,6 +120,13 @@ type Session struct {
 	coordinator string   // logical model name driving the coordinator
 	implementer string   // logical model name for the implementer role
 	reviewers   []string // logical model names for the reviewer role
+	// jobWakeArmed marks an idle session whose plain final response background
+	// work may resume by itself; jobWakePosted marks such a continuation already
+	// claimed and about to run. Both live under mu with status so a terminal-state
+	// observer (work loop, GC reaper) never sees a finished-looking session that
+	// is in fact waiting for, or resuming on, delegated work.
+	jobWakeArmed  bool
+	jobWakePosted bool
 	// thinkLevels holds per-model reasoning overrides, keyed
 	// by logical model name. An empty/missing entry means "use the model config";
 	// any of off/low/medium/high/xhigh/max forces that level for the model until
@@ -192,7 +201,66 @@ func (s *Session) Status() event.Status {
 func (s *Session) setStatus(st event.Status) {
 	s.mu.Lock()
 	s.status = st
+	// Any transition out of idle ends the automatic-continuation window, and the
+	// two are set together so no observer can pair a stale status with a later
+	// wake decision.
+	s.jobWakeArmed = false
+	s.jobWakePosted = false
 	s.mu.Unlock()
+}
+
+// setIdle records the idle transition together with whether background-job
+// completion may resume this session by itself (see jobWakeArmed).
+func (s *Session) setIdle(jobWake bool) {
+	s.mu.Lock()
+	s.status = event.StatusIdle
+	s.jobWakeArmed = jobWake
+	s.jobWakePosted = false
+	s.mu.Unlock()
+}
+
+// setJobWakePosted marks an automatic continuation as decided but not yet
+// running. The claim it covers has already left the registry, so this is what
+// keeps the window between claiming a report and starting the turn visible to
+// terminal-state observers.
+func (s *Session) setJobWakePosted(v bool) {
+	s.mu.Lock()
+	s.jobWakePosted = v
+	s.mu.Unlock()
+}
+
+// StatusWithJobContinuation reports the lifecycle status together with whether
+// an automatic background-job continuation may still resume the session. A
+// caller deciding that a session is finished must use this rather than Status
+// alone: an idle coordinator with live jobs, an unclaimed final report, or a
+// claim already in flight has not finished. Blocked, errored, refused, paused,
+// stopped, and just-reopened sessions are never awaiting (nothing will wake
+// them), so they stay terminal for their observers.
+func (s *Session) StatusWithJobContinuation() (event.Status, bool) {
+	s.mu.Lock()
+	st, armed, posted := s.status, s.jobWakeArmed, s.jobWakePosted
+	s.mu.Unlock()
+	if st != event.StatusIdle || !armed {
+		return st, false
+	}
+	if posted {
+		return st, true
+	}
+	pending := false
+	if s.deps != nil && s.deps.Jobs != nil {
+		pending = s.deps.Jobs.PendingContinuation("coordinator")
+	}
+	if pending {
+		return st, true
+	}
+	// Nothing looked pending, but the run owner may have claimed a report
+	// concurrently and be about to start the turn. Any change during this check
+	// is reported as still awaiting; the caller re-reads a stable state on its
+	// next poll instead of reclaiming a session that is resuming.
+	s.mu.Lock()
+	stable := s.status == st && !s.jobWakePosted
+	s.mu.Unlock()
+	return st, !stable
 }
 
 func (s *Session) logFailure() error {
@@ -354,6 +422,11 @@ func (s *Session) SendInputMessage(input engine.UserMessage) error {
 		}
 		return data
 	}
+	// Classify senders under the same lock as the completion-driven idle-to-run
+	// handoff, so a sender cannot enqueue idle input after that run takes over.
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
+
 	// Mid-run or paused: buffer as a correction and echo it as queued. A run in
 	// flight drains corrections at its next safe checkpoint; a paused loop drains
 	// them only on an explicit Resume. Either way multiple sends land in FIFO
@@ -380,21 +453,10 @@ func (s *Session) SendInputMessage(input engine.UserMessage) error {
 	// reject a full queue before recording, then record before making the input
 	// visible to the run goroutine. sendMu excludes competing producers, while the
 	// sole consumer can only create more capacity, so the final send cannot block.
-	s.sendMu.Lock()
-	defer s.sendMu.Unlock()
+	// Text and pictures share one queue, so serially accepted inputs keep their
+	// accepted order in live history exactly as the durable log replays them.
 	if err := s.logFailure(); err != nil {
 		return fmt.Errorf("session event log failed: %w", err)
-	}
-	if len(input.Images) == 0 {
-		if len(s.inputCh) >= cap(s.inputCh) {
-			return fmt.Errorf("session %s input buffer full", s.ID)
-		}
-		s.emitter.EmitAs("user", event.UserInput, eventData(false))
-		if err := s.logFailure(); err != nil {
-			return fmt.Errorf("session event log failed: %w", err)
-		}
-		s.inputCh <- input.Text
-		return nil
 	}
 	if len(s.messageCh) >= cap(s.messageCh) {
 		return fmt.Errorf("session %s input buffer full", s.ID)
@@ -505,7 +567,13 @@ func (s *Session) reap() {
 // paused/pausing for steer, and has no pending question. This deliberately
 // excludes sessions legitimately waiting for user input.
 func (s *Session) reapable() bool {
-	if s.Status() != event.StatusIdle {
+	status, awaiting := s.StatusWithJobContinuation()
+	if status != event.StatusIdle {
+		return false
+	}
+	// Delegated work still running, an unclaimed final report, or a claim already
+	// in flight all mean the session is waiting rather than gone quiet.
+	if awaiting || s.hasLiveJobs() {
 		return false
 	}
 	s.steerMu.Lock()
@@ -691,6 +759,119 @@ func (s *Session) killJobs() {
 	}
 }
 
+// jobCompletions is the registry's coalescing completion signal, or nil (a
+// forever-blocking select case) when this session has no job registry.
+func (s *Session) jobCompletions() <-chan struct{} {
+	if s.deps == nil || s.deps.Jobs == nil {
+		return nil
+	}
+	return s.deps.Jobs.Completions()
+}
+
+// hasLiveJobs reports whether any background job is still running. An idle
+// coordinator with live jobs is waiting for them, not quiescent, so the GC
+// reaper must not reclaim it out from under the completion wake.
+func (s *Session) hasLiveJobs() bool {
+	if s.deps == nil || s.deps.Jobs == nil {
+		return false
+	}
+	for _, info := range s.deps.Jobs.List("", true) {
+		if info.Status == jobs.Running {
+			return true
+		}
+	}
+	return false
+}
+
+// resumeForFinishedJobs delivers finished background-job reports to an idle
+// coordinator and reports whether the loop should run another turn. It runs on
+// the session run owner, so a wake can never invoke the model concurrently with
+// a turn or with input delivery. Reports are coalesced (every claimable one
+// enters history before the turn starts) and enter as synthetic job-completion
+// context, never as user input. An explicit pause or an unanswered question
+// keeps its boundary: nothing is claimed then, and the report falls back to
+// ordinary checkpoint delivery on the next turn.
+//
+// sendMu is held across the input sweep, the claim, and the idle→running
+// handoff so an idle sender is wholly before this boundary (its message is
+// absorbed into the same turn, ahead of the notification it durably precedes)
+// or wholly after it (queued as a correction the starting run delivers at its
+// first checkpoint). Otherwise live history could order a note before an input
+// that the durable log — and therefore reopen — orders first.
+func (s *Session) resumeForFinishedJobs() (bool, error) {
+	if s.deps == nil || s.deps.Jobs == nil || s.ctx.Err() != nil {
+		return false, nil
+	}
+	s.sendMu.Lock()
+	s.steerMu.Lock()
+	held := s.paused || s.pauseReq
+	s.steerMu.Unlock()
+	if held || (s.inter != nil && s.inter.pending()) {
+		s.sendMu.Unlock()
+		return false, nil
+	}
+	// Mark the continuation in flight BEFORE claiming anything: between the claim
+	// and the turn actually starting, the registry reports nothing pending, and a
+	// terminal-state observer must not read that gap as a finished session.
+	s.setJobWakePosted(true)
+	absorbed := s.absorbBufferedIdleInputs()
+	notes, err := s.drainJobNotes()
+	if err != nil || (!absorbed && len(notes) == 0) {
+		// Nothing to continue on: stay idle with senders still excluded, so no
+		// sender was ever classified against a run that is not going to start.
+		s.setJobWakePosted(false)
+		s.sendMu.Unlock()
+		return false, err
+	}
+	// Hand idle off to running while senders are still excluded. A pause request
+	// that lands now is honoured at the run's first checkpoint, as for any turn.
+	s.steerMu.Lock()
+	s.running = true
+	s.steerMu.Unlock()
+	s.sendMu.Unlock()
+	// The claim and its durable job_notified event already happened, so a
+	// cancellation racing this post still replays identically on reopen.
+	for _, note := range notes {
+		s.currentLoop().Post(note)
+	}
+	return true, nil
+}
+
+// absorbBufferedIdleInputs moves every idle input already accepted at this
+// boundary into live history before the turn that follows it. Their durable
+// user_input events are therefore at or before the boundary, and neither live
+// continuation nor replay appends them a second time. The single idle queue
+// preserves their accepted order.
+func (s *Session) absorbBufferedIdleInputs() bool {
+	absorbed := false
+	for {
+		select {
+		case input := <-s.messageCh:
+			s.currentLoop().PostMessage(input)
+			absorbed = true
+		default:
+			return absorbed
+		}
+	}
+}
+
+// rearmJobWake re-arms the completion check for an idle session that may still
+// be woken. An explicit boundary (a pause taken while idle) consumes the
+// coalescing completion edge without delivering anything, so clearing that
+// boundary must restore the check. It never retries errors, refusals, or blocked
+// outcomes: those are not armed for a wake in the first place.
+func (s *Session) rearmJobWake() {
+	if s.deps == nil || s.deps.Jobs == nil {
+		return
+	}
+	s.mu.Lock()
+	armed := s.status == event.StatusIdle && s.jobWakeArmed
+	s.mu.Unlock()
+	if armed {
+		s.deps.Jobs.SignalCompletion()
+	}
+}
+
 // deliverCorrections emits a user_input_delivered event for each queued
 // correction — marking the checkpoint at which its (queued) echo actually enters
 // the conversation — and returns their texts, in order, for the engine to Post
@@ -768,6 +949,11 @@ func (s *Session) Resume() error {
 		case s.retryCh <- struct{}{}:
 		default:
 		}
+	}
+	// An idle pause holds back delivery of finished background work and consumes
+	// its completion signal; clearing the pause must restore that check.
+	if !running {
+		s.rearmJobWake()
 	}
 	return nil
 }
@@ -1235,11 +1421,6 @@ func (s *Session) run() {
 		if !s.currentLoop().PendingResponse() {
 			s.setStatus(event.StatusIdle)
 			select {
-			case text := <-s.inputCh:
-				if s.ctx.Err() != nil {
-					return
-				}
-				s.currentLoop().Post(text)
 			case input := <-s.messageCh:
 				if s.ctx.Err() != nil {
 					return
@@ -1300,9 +1481,12 @@ func (s *Session) run() {
 		s.running = true
 		s.steerMu.Unlock()
 		res, err := s.currentLoop().Run(s.ctx)
+		// jobWake gates completion-driven continuation for THIS iteration's
+		// outcome; only a plain finished turn (set below) enables it.
+		jobWake := false
 		// Clear running BEFORE checking ctx/handling the result so a SendInput
 		// racing the end of the run either landed as a correction (drained just
-		// below) or, seeing running=false, takes the idle inputCh path.
+		// below) or, seeing running=false, takes the idle input-queue path.
 		s.steerMu.Lock()
 		s.running = false
 		s.steerMu.Unlock()
@@ -1355,8 +1539,17 @@ func (s *Session) run() {
 				s.emitter.Emit(event.SessionError, map[string]any{"msg": "mode switch failed: " + berr.Error()})
 			}
 		} else {
-			s.setStatus(event.StatusIdle)
+			// A plain final response is the only outcome that background work may
+			// resume by itself. Blocked reports, errors, refusals, explicit pauses,
+			// and a just-reopened session all keep their user boundary. Status and
+			// this decision are recorded together so an observer that sees idle also
+			// sees whether the session is still awaiting delegated work.
+			jobWake = !res.Blocked
+			s.setIdle(jobWake)
 			data := map[string]any{"report": s.withAssumptions(res.Report)}
+			if _, awaiting := s.StatusWithJobContinuation(); awaiting {
+				data["awaiting_jobs"] = true
+			}
 			if res.Blocked {
 				data["blocked"] = true
 			}
@@ -1389,27 +1582,50 @@ func (s *Session) run() {
 			continue
 		}
 
-		select {
-		case text := <-s.inputCh:
-			if s.ctx.Err() != nil {
+	waitForRun:
+		for {
+			// Background work that finished after the last checkpoint (including
+			// while this session was becoming idle) continues the conversation
+			// instead of stranding its report until the user types. Checked before
+			// blocking so a completion that raced the transition is never missed.
+			if jobWake {
+				resumed, err := s.resumeForFinishedJobs()
+				if err != nil {
+					return
+				}
+				if resumed {
+					break waitForRun
+				}
+			}
+			var completed <-chan struct{}
+			if jobWake {
+				completed = s.jobCompletions()
+			}
+			select {
+			case input := <-s.messageCh:
+				if s.ctx.Err() != nil {
+					return
+				}
+				s.currentLoop().PostMessage(input)
+				break waitForRun
+			case <-completed:
+				if s.ctx.Err() != nil {
+					return
+				}
+				// Re-check at the top: the completion may already have been claimed
+				// by a wait, or delivery may currently be held by a pause.
+			case <-s.retryCh:
+				if s.ctx.Err() != nil {
+					return
+				}
+				// Retry after a session error: mark the retry as resumed only when the
+				// parked run loop actually consumes it, then re-run the failed turn on
+				// existing history without injecting a user message.
+				s.emitter.Emit(event.Resumed, map[string]any{})
+				break waitForRun
+			case <-s.ctx.Done():
 				return
 			}
-			s.currentLoop().Post(text)
-		case input := <-s.messageCh:
-			if s.ctx.Err() != nil {
-				return
-			}
-			s.currentLoop().PostMessage(input)
-		case <-s.retryCh:
-			if s.ctx.Err() != nil {
-				return
-			}
-			// Retry after a session error: mark the retry as resumed only when the
-			// parked run loop actually consumes it, then re-run the failed turn on
-			// existing history without injecting a user message.
-			s.emitter.Emit(event.Resumed, map[string]any{})
-		case <-s.ctx.Done():
-			return
 		}
 	}
 }
@@ -2299,7 +2515,6 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 		reg:         m.reg,
 		prompt:      prompt,
 		resumed:     resumed,
-		inputCh:     make(chan string, 64),
 		messageCh:   make(chan engine.UserMessage, 64),
 		retryCh:     make(chan struct{}),
 		ctx:         ctx,

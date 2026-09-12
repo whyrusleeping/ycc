@@ -10,7 +10,9 @@ import (
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/docs"
 	"github.com/whyrusleeping/ycc/internal/event"
+	"github.com/whyrusleeping/ycc/internal/jobs"
 	"github.com/whyrusleeping/ycc/internal/notify"
+	"github.com/whyrusleeping/ycc/internal/orchestrator"
 )
 
 // --- pure decision logic (task 0179, spec §9/§20.6) ---
@@ -485,6 +487,121 @@ func TestRealRunSessionTerminalRemovalPreservesSameIDReplacement(t *testing.T) {
 				t.Fatalf("current session = %q after runner returned", current)
 			}
 		})
+	}
+}
+
+// An unattended batch session that finished its turn while delegated background
+// work can still resume it is NOT terminal: reclaiming there would kill the jobs
+// the coordinator is waiting for. The hold covers the gap between a job
+// finishing and its report being claimed by the wake.
+func TestRealRunSessionWaitsForBackgroundJobContinuation(t *testing.T) {
+	m := NewManager(testRegistry(), "")
+	defer m.ReclaimAll()
+	ws := t.TempDir()
+	s := newStopSession(t)
+	s.ID = "awaiting-jobs"
+	s.Workspace = ws
+	jr := jobs.NewRegistry()
+	defer jr.KillAll()
+	s.deps = &orchestrator.Deps{Jobs: jr, Emitter: s.emitter}
+	job := jr.Start("agent", "background implementer", "coordinator")
+	s.emitter.Emit(event.SessionIdle, map[string]any{"report": "spawned work, waiting"})
+	s.setIdle(true)
+
+	started := make(chan struct{})
+	wl := &workLoop{
+		m: m, loopID: "loop-awaiting", project: "demo", workspace: ws,
+		state: "running", startedAt: time.Now(), baseline: map[string]docs.Status{},
+		startSession: func(Config) (*Session, error) {
+			m.mu.Lock()
+			m.sessions[s.ID] = s
+			m.mu.Unlock()
+			close(started)
+			return s, nil
+		},
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := wl.realRunSession(context.Background())
+		done <- err
+	}()
+	<-started
+
+	select {
+	case err := <-done:
+		t.Fatalf("runner treated an idle session with a live job as finished (err %v)", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+	if _, ok := m.Get(s.ID); !ok {
+		t.Fatal("session was reclaimed while its background job was live")
+	}
+
+	// Finished but not yet claimed: the wake still owes this report.
+	job.Finish(jobs.Done, "IMPLEMENTER REPORT: done")
+	select {
+	case err := <-done:
+		t.Fatalf("runner reclaimed the session in the finished-to-wake gap (err %v)", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	// The wake claims the report; once nothing is outstanding the batch ends.
+	if reports := jr.DrainFinished("coordinator"); len(reports) != 1 {
+		t.Fatalf("claimable reports = %d, want 1", len(reports))
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("realRunSession error = %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("runner did not finish after the continuation was accounted")
+	}
+	if _, ok := m.Get(s.ID); ok {
+		t.Fatal("session remained live after the runner returned")
+	}
+}
+
+// A blocked final report is never woken by job completion, so the batch must not
+// wait on delegated work that will never be delivered to it.
+func TestRealRunSessionBlockedIdleDoesNotWaitForJobs(t *testing.T) {
+	m := NewManager(testRegistry(), "")
+	defer m.ReclaimAll()
+	ws := t.TempDir()
+	s := newStopSession(t)
+	s.ID = "blocked-with-jobs"
+	s.Workspace = ws
+	jr := jobs.NewRegistry()
+	defer jr.KillAll()
+	s.deps = &orchestrator.Deps{Jobs: jr, Emitter: s.emitter}
+	jr.Start("bash", "watcher", "coordinator")
+	s.emitter.Emit(event.SessionIdle, map[string]any{"report": "need a decision", "blocked": true})
+	s.setIdle(false)
+
+	started := make(chan struct{})
+	wl := &workLoop{
+		m: m, loopID: "loop-blocked", project: "demo", workspace: ws,
+		state: "running", startedAt: time.Now(), baseline: map[string]docs.Status{},
+		startSession: func(Config) (*Session, error) {
+			m.mu.Lock()
+			m.sessions[s.ID] = s
+			m.mu.Unlock()
+			close(started)
+			return s, nil
+		},
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := wl.realRunSession(context.Background())
+		done <- err
+	}()
+	<-started
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("realRunSession error = %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("blocked session was held by an unwakeable background job")
 	}
 }
 

@@ -717,13 +717,22 @@ func (wl *workLoop) realRunSession(ctx context.Context) (loopSessRec, bool, erro
 	// external reclaim is terminal for the batch rather than permission to start
 	// replacement work. The manager lifecycle context only cancels on shutdown;
 	// graceful StopWorkLoop deliberately does not cancel it.
+	//
+	// An idle session whose delegated background work can still resume it
+	// automatically (spec §7.3) has NOT finished the batch: reclaiming there would
+	// kill the very jobs the coordinator is waiting for. A blocked, errored, or
+	// otherwise unwakeable session is never "awaiting", so this cannot wait
+	// forever on work nothing will deliver.
 	var terminalErr error
 	ticker := time.NewTicker(200 * time.Millisecond)
 waitLoop:
 	for {
-		status := sess.Status()
+		status, awaitingJobs := sess.StatusWithJobContinuation()
 		switch status {
 		case event.StatusIdle, event.StatusError, event.StatusStopped:
+			if awaitingJobs {
+				break // still waiting on delegated work; poll again
+			}
 			// Claim terminal cleanup atomically with respect to Stop/Reopen. If
 			// another remover won, even a normal-looking Idle/Error is an external
 			// terminal outcome for this batch, not permission to restart work.

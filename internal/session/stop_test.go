@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/jobs"
 	"github.com/whyrusleeping/ycc/internal/orchestrator"
@@ -23,14 +24,14 @@ func newStopSession(t *testing.T) *Session {
 	em := event.NewEmitter(log, "coordinator")
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Session{
-		ID:      "test",
-		log:     log,
-		emitter: em,
-		inter:   newInteraction(false, em),
-		inputCh: make(chan string, 4),
-		ctx:     ctx,
-		cancel:  cancel,
-		status:  event.StatusRunning,
+		ID:        "test",
+		log:       log,
+		emitter:   em,
+		inter:     newInteraction(false, em),
+		messageCh: make(chan engine.UserMessage, 4),
+		ctx:       ctx,
+		cancel:    cancel,
+		status:    event.StatusRunning,
 	}
 }
 

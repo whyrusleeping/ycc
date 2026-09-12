@@ -15,7 +15,7 @@ func (s *Session) setRunning(v bool) {
 }
 
 // Mid-run SendInput (steer-by-default): the text is queued as a correction with a
-// queued:true echo rather than pushed to inputCh, and an unpaused Checkpoint
+// queued:true echo rather than pushed to the idle queue, and an unpaused Checkpoint
 // delivers it — returning the text and emitting user_input_delivered referencing
 // the queued echo's seq (spec §18.7).
 func TestSteerByDefaultDeliversAtCheckpoint(t *testing.T) {
@@ -26,10 +26,10 @@ func TestSteerByDefaultDeliversAtCheckpoint(t *testing.T) {
 		t.Fatalf("SendInput: %v", err)
 	}
 
-	// Not pushed to inputCh — it is a mid-run correction, not an idle prod.
+	// Not pushed to the idle queue — it is a mid-run correction, not an idle prod.
 	select {
-	case text := <-s.inputCh:
-		t.Fatalf("mid-run input reached inputCh (%q); want queued as correction", text)
+	case input := <-s.messageCh:
+		t.Fatalf("mid-run input reached the idle queue (%q); want queued as correction", input.Text)
 	default:
 	}
 
@@ -137,8 +137,8 @@ func TestSteerPausedStillDrainsOnResume(t *testing.T) {
 	}
 }
 
-// Idle SendInput is unchanged: it goes via inputCh with a plain echo (no queued
-// flag, no delivered event).
+// Idle SendInput is unchanged: it goes via the idle queue with a plain echo (no
+// queued flag, no delivered event).
 func TestIdleSendInputUnchanged(t *testing.T) {
 	s, rec := newSteerSession()
 	// running=false, not paused — the idle path.
@@ -146,12 +146,12 @@ func TestIdleSendInputUnchanged(t *testing.T) {
 		t.Fatalf("SendInput: %v", err)
 	}
 	select {
-	case text := <-s.inputCh:
-		if text != "go" {
-			t.Fatalf("inputCh text = %q", text)
+	case input := <-s.messageCh:
+		if input.Text != "go" {
+			t.Fatalf("idle queue text = %q", input.Text)
 		}
 	default:
-		t.Fatal("idle input did not reach inputCh")
+		t.Fatal("idle input did not reach the idle queue")
 	}
 	echo := lastEvent(rec, event.UserInput)
 	if echo == nil {

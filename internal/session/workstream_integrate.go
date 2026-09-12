@@ -582,8 +582,12 @@ Work only in this linked worktree. Re-run the rebase onto the named base when ne
 	defer timer.Stop()
 	var terminal event.Status
 	for terminal == "" {
-		switch status := s.Status(); status {
+		status, awaitingJobs := s.StatusWithJobContinuation()
+		switch status {
 		case event.StatusIdle, event.StatusError, event.StatusStopped:
+			if awaitingJobs {
+				break
+			}
 			terminal = status
 			continue
 		}

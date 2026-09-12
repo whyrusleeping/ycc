@@ -290,8 +290,24 @@ advisory context estimates. Reviewer fan-out runs concurrently.
 Background shell commands and subagents share stable session-owned job ids and the `list_jobs`,
 `job_output`, `job_result`, `wait`, and `kill_job` controls. Automatic final notifications are claimed
 exactly once at a checkpoint; an explicit wait suppresses a later notification but, like
-`job_result`, can retrieve the retained final report repeatedly. Output reads are non-consuming and
-use explicit absolute byte cursors/ranges or retained-tail requests, with retained intervals and
+`job_result`, can retrieve the retained final report repeatedly. A tracked process or subagent
+publishes its terminal report before its execution ends, so its automatic notification only becomes
+claimable once that execution has actually stopped and released its leases. A coordinator that has
+already returned a final response while its jobs run is woken by the completion itself: every report
+claimable at that moment is coalesced into synthetic job-completion context — never user input —
+and the conversation continues under the same single session owner, so no wake runs in parallel
+with a turn or with user input, and a completion that races the transition to idle is not missed.
+Sessions parked by an explicit pause, stop, provider refusal, session error, a blocked report, or a
+reopen awaiting first input are never resumed automatically; their reports are delivered at the next
+checkpoint instead, and clearing an idle pause restores the completion check it held back. While
+such a continuation is still possible — a live job, an unclaimed final report, or a claim already in
+flight — the session is not finished: neither the unattended work loop nor idle reclamation may end
+it and kill the work it is waiting for. Its `session_idle` report carries `awaiting_jobs: true`, so
+workstream observers do not treat that progress report as permission to integrate; integration
+recovery also waits for delegated continuation. Outcomes that nothing will wake stay terminal for
+those observers, so a blocked session never waits on delegated work forever.
+Output reads are non-consuming and use explicit absolute byte cursors/ranges or retained-tail
+requests, with retained intervals and
 eviction gaps reported. Job discovery is owner-scoped by default and includes lifecycle timing;
 agent progress exposes only bounded last-activity, current-tool, turn, and token-usage metadata, not
 model text or reasoning. Completed shell jobs continue to advertise their fuller retained output

@@ -67,8 +67,8 @@ func TestSessionStopsWhenEventLogFails(t *testing.T) {
 	if err := s.SendInput("must not be accepted"); err == nil || !strings.Contains(err.Error(), "event log failed") {
 		t.Fatalf("SendInput after log failure error = %v, want terminal log error", err)
 	}
-	if len(s.inputCh) != 0 || len(s.messageCh) != 0 || len(s.loop.History()) != 0 {
-		t.Fatalf("input reached failed session: input=%d messages=%d history=%+v", len(s.inputCh), len(s.messageCh), s.loop.History())
+	if len(s.messageCh) != 0 || len(s.loop.History()) != 0 {
+		t.Fatalf("input reached failed session: messages=%d history=%+v", len(s.messageCh), s.loop.History())
 	}
 	if err := s.Answer("no"); err == nil || !strings.Contains(err.Error(), "event log failed") {
 		t.Fatalf("Answer after log failure error = %v, want terminal log error", err)
