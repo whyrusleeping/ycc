@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -378,11 +379,16 @@ func (s *Store) SetPlan(id, plan string) (*Task, error) {
 	})
 }
 
-// Complete marks a task done and replaces its operational body with the compact
-// durable record: original intent, acceptance criteria, concise outcome, and the
-// accepted commit subject. Session events and git retain the detailed execution
-// history. It is intended to run immediately before the accepting commit.
-func (s *Store) Complete(id, outcome, commitSubject string) (*Task, error) {
+// Completion is the reversible document transition used while accepting a task.
+// Both forms are retained outside the committed tree until git and event
+// publication have finished, so an interrupted finalization can be resumed.
+type Completion struct {
+	Before *Task `json:"before"`
+	After  *Task `json:"after"`
+}
+
+// PrepareCompletion validates and builds a completion without changing the task.
+func (s *Store) PrepareCompletion(id, outcome, commitSubject string) (*Completion, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	outcome, err := completedText("outcome", outcome, maxOutcomeRunes)
@@ -393,10 +399,92 @@ func (s *Store) Complete(id, outcome, commitSubject string) (*Task, error) {
 	if err != nil {
 		return nil, err
 	}
-	return s.updateLocked(id, func(t *Task) {
-		t.Status = StatusDone
-		t.Body = compactCompletedBody(t.Body, outcome, commitSubject)
-	})
+	before, err := s.getLocked(id)
+	if err != nil {
+		return nil, err
+	}
+	after := cloneTask(before)
+	after.Status = StatusDone
+	after.Updated = time.Now().Format("2006-01-02")
+	after.Body = compactCompletedBody(after.Body, outcome, commitSubject)
+	return &Completion{Before: cloneTask(before), After: after}, nil
+}
+
+// ApplyCompletion atomically selects the completed or original form. Repeating
+// the same transition is a no-op; a third-party task edit is never overwritten.
+func (s *Store) ApplyCompletion(c *Completion, completed bool) (*Task, error) {
+	if c == nil || c.Before == nil || c.After == nil {
+		return nil, fmt.Errorf("completion transition is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, err := s.getLocked(c.Before.ID)
+	if err != nil {
+		return nil, err
+	}
+	want, other := c.Before, c.After
+	if completed {
+		want, other = c.After, c.Before
+	}
+	if sameTask(current, want) {
+		return cloneTask(current), nil
+	}
+	if !sameTask(current, other) {
+		return nil, fmt.Errorf("task %s changed during completion recovery; refusing to overwrite it", c.Before.ID)
+	}
+	want = cloneTask(want)
+	if err := s.write(want); err != nil {
+		return nil, err
+	}
+	return want, nil
+}
+
+// Complete marks a task done and replaces its operational body with the compact
+// durable record: original intent, acceptance criteria, concise outcome, and the
+// accepted commit subject. Session events and git retain the detailed execution
+// history.
+func (s *Store) Complete(id, outcome, commitSubject string) (*Task, error) {
+	completion, err := s.PrepareCompletion(id, outcome, commitSubject)
+	if err != nil {
+		return nil, err
+	}
+	return s.ApplyCompletion(completion, true)
+}
+
+func cloneTask(t *Task) *Task {
+	if t == nil {
+		return nil
+	}
+	out := *t
+	if t.DependsOn != nil {
+		out.DependsOn = append([]string{}, t.DependsOn...)
+	}
+	if t.SpecRefs != nil {
+		out.SpecRefs = append([]string{}, t.SpecRefs...)
+	}
+	return &out
+}
+
+func sameTask(a, b *Task) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	ac, bc := *a, *b
+	// YAML round-trips an omitted slice as empty in some hand-written task
+	// documents. Treat both forms as the same task state for recovery purposes.
+	if len(ac.DependsOn) == 0 {
+		ac.DependsOn = nil
+	}
+	if len(bc.DependsOn) == 0 {
+		bc.DependsOn = nil
+	}
+	if len(ac.SpecRefs) == 0 {
+		ac.SpecRefs = nil
+	}
+	if len(bc.SpecRefs) == 0 {
+		bc.SpecRefs = nil
+	}
+	return reflect.DeepEqual(&ac, &bc)
 }
 
 // CompactCompletedHistory conservatively migrates legacy done tasks. A task is
@@ -679,7 +767,28 @@ func (s *Store) write(t *Task) error {
 		body += "\n"
 	}
 	content := "---\n" + string(front) + "---\n\n" + strings.TrimLeft(body, "\n")
-	return os.WriteFile(t.Path, []byte(content), 0o644)
+	tmp, err := os.CreateTemp(filepath.Dir(t.Path), ".task-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0o644); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.WriteString(content); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, t.Path)
 }
 
 var frontmatterRe = regexp.MustCompile(`(?s)\A---\n(.*?)\n---\n?(.*)\z`)

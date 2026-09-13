@@ -1501,9 +1501,12 @@ func (*InterruptResponse) Descriptor() ([]byte, []int) {
 }
 
 // Resume continues a paused session (optionally after SendInput corrections).
+// rollover asks the session run owner for a durable compact coordinator view at
+// the next safe full-tool-batch checkpoint (including while idle/errored).
 type ResumeRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Rollover      bool                   `protobuf:"varint,2,opt,name=rollover,proto3" json:"rollover,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1543,6 +1546,13 @@ func (x *ResumeRequest) GetSessionId() string {
 		return x.SessionId
 	}
 	return ""
+}
+
+func (x *ResumeRequest) GetRollover() bool {
+	if x != nil {
+		return x.Rollover
+	}
+	return false
 }
 
 type ResumeResponse struct {
@@ -6265,22 +6275,25 @@ func (x *NotifyResponse) GetDelivered() bool {
 	return false
 }
 
-// WorkLoopDigestTask is one task row in a finished loop's batch digest, mirroring
-// the client digest surface: how the task changed plus its rolled-up commit sha,
-// review verdict tally, tokens, priced cost, and (for blocked tasks) the reason.
+// WorkLoopDigestTask is one task row in a work loop's incremental/final digest,
+// including the bounded evidence needed to continue unfinished accepted work.
 type WorkLoopDigestTask struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Title         string                 `protobuf:"bytes,2,opt,name=title,proto3" json:"title,omitempty"`
-	Status        string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
-	Sha           string                 `protobuf:"bytes,4,opt,name=sha,proto3" json:"sha,omitempty"`                                       // commit sha recorded for the task (if any)
-	VerdictTally  string                 `protobuf:"bytes,5,opt,name=verdict_tally,json=verdictTally,proto3" json:"verdict_tally,omitempty"` // e.g. "approve×2 reject×1"
-	Tokens        int64                  `protobuf:"varint,6,opt,name=tokens,proto3" json:"tokens,omitempty"`
-	Cost          float64                `protobuf:"fixed64,7,opt,name=cost,proto3" json:"cost,omitempty"`
-	PriceStatus   string                 `protobuf:"bytes,8,opt,name=price_status,json=priceStatus,proto3" json:"price_status,omitempty"` // priced | unpriced | partial
-	Reason        string                 `protobuf:"bytes,9,opt,name=reason,proto3" json:"reason,omitempty"`                              // blocked reason (from the task work log), blocked tasks only
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Id                string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Title             string                 `protobuf:"bytes,2,opt,name=title,proto3" json:"title,omitempty"`
+	Status            string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
+	Sha               string                 `protobuf:"bytes,4,opt,name=sha,proto3" json:"sha,omitempty"`                                       // commit sha recorded for the task (if any)
+	VerdictTally      string                 `protobuf:"bytes,5,opt,name=verdict_tally,json=verdictTally,proto3" json:"verdict_tally,omitempty"` // e.g. "approve×2 reject×1"
+	Tokens            int64                  `protobuf:"varint,6,opt,name=tokens,proto3" json:"tokens,omitempty"`
+	Cost              float64                `protobuf:"fixed64,7,opt,name=cost,proto3" json:"cost,omitempty"`
+	PriceStatus       string                 `protobuf:"bytes,8,opt,name=price_status,json=priceStatus,proto3" json:"price_status,omitempty"` // priced | unpriced | partial
+	Reason            string                 `protobuf:"bytes,9,opt,name=reason,proto3" json:"reason,omitempty"`                              // blocked reason (from the task work log), blocked tasks only
+	Attempts          int32                  `protobuf:"varint,10,opt,name=attempts,proto3" json:"attempts,omitempty"`
+	LatestEvidence    string                 `protobuf:"bytes,11,opt,name=latest_evidence,json=latestEvidence,proto3" json:"latest_evidence,omitempty"`
+	RemainingCriteria string                 `protobuf:"bytes,12,opt,name=remaining_criteria,json=remainingCriteria,proto3" json:"remaining_criteria,omitempty"`
+	NextStep          string                 `protobuf:"bytes,13,opt,name=next_step,json=nextStep,proto3" json:"next_step,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *WorkLoopDigestTask) Reset() {
@@ -6376,18 +6389,51 @@ func (x *WorkLoopDigestTask) GetReason() string {
 	return ""
 }
 
-// WorkLoopSession is a per-session record captured as each loop session finishes:
-// its id, the backlog task it focused, and its summed tokens/priced cost.
+func (x *WorkLoopDigestTask) GetAttempts() int32 {
+	if x != nil {
+		return x.Attempts
+	}
+	return 0
+}
+
+func (x *WorkLoopDigestTask) GetLatestEvidence() string {
+	if x != nil {
+		return x.LatestEvidence
+	}
+	return ""
+}
+
+func (x *WorkLoopDigestTask) GetRemainingCriteria() string {
+	if x != nil {
+		return x.RemainingCriteria
+	}
+	return ""
+}
+
+func (x *WorkLoopDigestTask) GetNextStep() string {
+	if x != nil {
+		return x.NextStep
+	}
+	return ""
+}
+
+// WorkLoopSession is a bounded per-attempt record captured as each loop session
+// finishes. Failure details remain available even when no session_idle report exists.
 type WorkLoopSession struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Focus         string                 `protobuf:"bytes,2,opt,name=focus,proto3" json:"focus,omitempty"`
-	Tokens        int64                  `protobuf:"varint,3,opt,name=tokens,proto3" json:"tokens,omitempty"`
-	Cost          float64                `protobuf:"fixed64,4,opt,name=cost,proto3" json:"cost,omitempty"`
-	PriceStatus   string                 `protobuf:"bytes,5,opt,name=price_status,json=priceStatus,proto3" json:"price_status,omitempty"`     // priced | unpriced | partial
-	DurationSecs  int64                  `protobuf:"varint,6,opt,name=duration_secs,json=durationSecs,proto3" json:"duration_secs,omitempty"` // wall-clock seconds the session took
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	SessionId      string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Focus          string                 `protobuf:"bytes,2,opt,name=focus,proto3" json:"focus,omitempty"`
+	Tokens         int64                  `protobuf:"varint,3,opt,name=tokens,proto3" json:"tokens,omitempty"`
+	Cost           float64                `protobuf:"fixed64,4,opt,name=cost,proto3" json:"cost,omitempty"`
+	PriceStatus    string                 `protobuf:"bytes,5,opt,name=price_status,json=priceStatus,proto3" json:"price_status,omitempty"`     // priced | unpriced | partial
+	DurationSecs   int64                  `protobuf:"varint,6,opt,name=duration_secs,json=durationSecs,proto3" json:"duration_secs,omitempty"` // wall-clock seconds the session took
+	Attempt        int32                  `protobuf:"varint,7,opt,name=attempt,proto3" json:"attempt,omitempty"`                               // attempt number for this focus within the loop
+	Evidence       string                 `protobuf:"bytes,8,opt,name=evidence,proto3" json:"evidence,omitempty"`                              // bounded latest session report or synthesized failure report
+	ErrorKind      string                 `protobuf:"bytes,9,opt,name=error_kind,json=errorKind,proto3" json:"error_kind,omitempty"`
+	ErrorMessage   string                 `protobuf:"bytes,10,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
+	ErrorRetryable bool                   `protobuf:"varint,11,opt,name=error_retryable,json=errorRetryable,proto3" json:"error_retryable,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *WorkLoopSession) Reset() {
@@ -6462,30 +6508,74 @@ func (x *WorkLoopSession) GetDurationSecs() int64 {
 	return 0
 }
 
+func (x *WorkLoopSession) GetAttempt() int32 {
+	if x != nil {
+		return x.Attempt
+	}
+	return 0
+}
+
+func (x *WorkLoopSession) GetEvidence() string {
+	if x != nil {
+		return x.Evidence
+	}
+	return ""
+}
+
+func (x *WorkLoopSession) GetErrorKind() string {
+	if x != nil {
+		return x.ErrorKind
+	}
+	return ""
+}
+
+func (x *WorkLoopSession) GetErrorMessage() string {
+	if x != nil {
+		return x.ErrorMessage
+	}
+	return ""
+}
+
+func (x *WorkLoopSession) GetErrorRetryable() bool {
+	if x != nil {
+		return x.ErrorRetryable
+	}
+	return false
+}
+
 // WorkLoopInfo is a snapshot of a work loop: its lifecycle state, the session it
 // is currently driving (Subscribe target), and — once finished — the rolled-up
 // batch digest classifying every task against the backlog baseline at loop start.
 type WorkLoopInfo struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	LoopId           string                 `protobuf:"bytes,1,opt,name=loop_id,json=loopId,proto3" json:"loop_id,omitempty"`
-	Project          string                 `protobuf:"bytes,2,opt,name=project,proto3" json:"project,omitempty"`
-	State            string                 `protobuf:"bytes,3,opt,name=state,proto3" json:"state,omitempty"`                                                 // running | waiting | stopping | finished
-	CurrentSessionId string                 `protobuf:"bytes,4,opt,name=current_session_id,json=currentSessionId,proto3" json:"current_session_id,omitempty"` // the session being driven now (Subscribe target); empty between sessions
-	Outcome          string                 `protobuf:"bytes,5,opt,name=outcome,proto3" json:"outcome,omitempty"`                                             // human outcome line once finished
-	StartedAt        string                 `protobuf:"bytes,6,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`                        // RFC3339
-	SessionsRun      int32                  `protobuf:"varint,7,opt,name=sessions_run,json=sessionsRun,proto3" json:"sessions_run,omitempty"`
-	Sessions         []*WorkLoopSession     `protobuf:"bytes,8,rep,name=sessions,proto3" json:"sessions,omitempty"`
-	Completed        []*WorkLoopDigestTask  `protobuf:"bytes,9,rep,name=completed,proto3" json:"completed,omitempty"`
-	Blocked          []*WorkLoopDigestTask  `protobuf:"bytes,10,rep,name=blocked,proto3" json:"blocked,omitempty"`
-	InReview         []*WorkLoopDigestTask  `protobuf:"bytes,11,rep,name=in_review,json=inReview,proto3" json:"in_review,omitempty"`
-	Created          []*WorkLoopDigestTask  `protobuf:"bytes,12,rep,name=created,proto3" json:"created,omitempty"`
-	TotalTokens      int64                  `protobuf:"varint,13,opt,name=total_tokens,json=totalTokens,proto3" json:"total_tokens,omitempty"`
-	TotalCost        float64                `protobuf:"fixed64,14,opt,name=total_cost,json=totalCost,proto3" json:"total_cost,omitempty"`
-	CostStatus       string                 `protobuf:"bytes,15,opt,name=cost_status,json=costStatus,proto3" json:"cost_status,omitempty"` // priced | unpriced | partial
-	ResumeAt         string                 `protobuf:"bytes,16,opt,name=resume_at,json=resumeAt,proto3" json:"resume_at,omitempty"`       // RFC3339; empty unless waiting
-	WaitKind         string                 `protobuf:"bytes,17,opt,name=wait_kind,json=waitKind,proto3" json:"wait_kind,omitempty"`       // provider failure kind; empty unless waiting
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state                    protoimpl.MessageState `protogen:"open.v1"`
+	LoopId                   string                 `protobuf:"bytes,1,opt,name=loop_id,json=loopId,proto3" json:"loop_id,omitempty"`
+	Project                  string                 `protobuf:"bytes,2,opt,name=project,proto3" json:"project,omitempty"`
+	State                    string                 `protobuf:"bytes,3,opt,name=state,proto3" json:"state,omitempty"`                                                 // running | waiting | stopping | finished
+	CurrentSessionId         string                 `protobuf:"bytes,4,opt,name=current_session_id,json=currentSessionId,proto3" json:"current_session_id,omitempty"` // the session being driven now (Subscribe target); empty between sessions
+	Outcome                  string                 `protobuf:"bytes,5,opt,name=outcome,proto3" json:"outcome,omitempty"`                                             // human outcome line once finished
+	StartedAt                string                 `protobuf:"bytes,6,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`                        // RFC3339
+	SessionsRun              int32                  `protobuf:"varint,7,opt,name=sessions_run,json=sessionsRun,proto3" json:"sessions_run,omitempty"`
+	Sessions                 []*WorkLoopSession     `protobuf:"bytes,8,rep,name=sessions,proto3" json:"sessions,omitempty"`
+	Completed                []*WorkLoopDigestTask  `protobuf:"bytes,9,rep,name=completed,proto3" json:"completed,omitempty"`
+	Blocked                  []*WorkLoopDigestTask  `protobuf:"bytes,10,rep,name=blocked,proto3" json:"blocked,omitempty"`
+	InReview                 []*WorkLoopDigestTask  `protobuf:"bytes,11,rep,name=in_review,json=inReview,proto3" json:"in_review,omitempty"`
+	Created                  []*WorkLoopDigestTask  `protobuf:"bytes,12,rep,name=created,proto3" json:"created,omitempty"`
+	TotalTokens              int64                  `protobuf:"varint,13,opt,name=total_tokens,json=totalTokens,proto3" json:"total_tokens,omitempty"`
+	TotalCost                float64                `protobuf:"fixed64,14,opt,name=total_cost,json=totalCost,proto3" json:"total_cost,omitempty"`
+	CostStatus               string                 `protobuf:"bytes,15,opt,name=cost_status,json=costStatus,proto3" json:"cost_status,omitempty"`                                              // priced | unpriced | partial
+	ResumeAt                 string                 `protobuf:"bytes,16,opt,name=resume_at,json=resumeAt,proto3" json:"resume_at,omitempty"`                                                    // RFC3339; empty unless waiting
+	WaitKind                 string                 `protobuf:"bytes,17,opt,name=wait_kind,json=waitKind,proto3" json:"wait_kind,omitempty"`                                                    // provider failure kind; empty unless waiting
+	SessionTokenLimit        int64                  `protobuf:"varint,18,opt,name=session_token_limit,json=sessionTokenLimit,proto3" json:"session_token_limit,omitempty"`                      // 0 = intentionally unbounded
+	SessionCostLimit         float64                `protobuf:"fixed64,19,opt,name=session_cost_limit,json=sessionCostLimit,proto3" json:"session_cost_limit,omitempty"`                        // 0 = intentionally unbounded
+	SessionTimeLimitSecs     int64                  `protobuf:"varint,20,opt,name=session_time_limit_secs,json=sessionTimeLimitSecs,proto3" json:"session_time_limit_secs,omitempty"`           // 0 = intentionally unbounded
+	LoopTokenLimit           int64                  `protobuf:"varint,21,opt,name=loop_token_limit,json=loopTokenLimit,proto3" json:"loop_token_limit,omitempty"`                               // 0 = intentionally unbounded
+	LoopCostLimit            float64                `protobuf:"fixed64,22,opt,name=loop_cost_limit,json=loopCostLimit,proto3" json:"loop_cost_limit,omitempty"`                                 // 0 = intentionally unbounded
+	LoopTimeLimitSecs        int64                  `protobuf:"varint,23,opt,name=loop_time_limit_secs,json=loopTimeLimitSecs,proto3" json:"loop_time_limit_secs,omitempty"`                    // 0 = intentionally unbounded
+	CostLimitsPricedOnly     bool                   `protobuf:"varint,24,opt,name=cost_limits_priced_only,json=costLimitsPricedOnly,proto3" json:"cost_limits_priced_only,omitempty"`           // cost totals/limits exclude unpriced usage
+	Unfinished               []*WorkLoopDigestTask  `protobuf:"bytes,25,rep,name=unfinished,proto3" json:"unfinished,omitempty"`                                                                // attempted accepted work still todo/in_progress
+	ResourceEnvelopeCaptured bool                   `protobuf:"varint,26,opt,name=resource_envelope_captured,json=resourceEnvelopeCaptured,proto3" json:"resource_envelope_captured,omitempty"` // false only for pre-envelope persisted snapshots
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *WorkLoopInfo) Reset() {
@@ -6635,6 +6725,69 @@ func (x *WorkLoopInfo) GetWaitKind() string {
 		return x.WaitKind
 	}
 	return ""
+}
+
+func (x *WorkLoopInfo) GetSessionTokenLimit() int64 {
+	if x != nil {
+		return x.SessionTokenLimit
+	}
+	return 0
+}
+
+func (x *WorkLoopInfo) GetSessionCostLimit() float64 {
+	if x != nil {
+		return x.SessionCostLimit
+	}
+	return 0
+}
+
+func (x *WorkLoopInfo) GetSessionTimeLimitSecs() int64 {
+	if x != nil {
+		return x.SessionTimeLimitSecs
+	}
+	return 0
+}
+
+func (x *WorkLoopInfo) GetLoopTokenLimit() int64 {
+	if x != nil {
+		return x.LoopTokenLimit
+	}
+	return 0
+}
+
+func (x *WorkLoopInfo) GetLoopCostLimit() float64 {
+	if x != nil {
+		return x.LoopCostLimit
+	}
+	return 0
+}
+
+func (x *WorkLoopInfo) GetLoopTimeLimitSecs() int64 {
+	if x != nil {
+		return x.LoopTimeLimitSecs
+	}
+	return 0
+}
+
+func (x *WorkLoopInfo) GetCostLimitsPricedOnly() bool {
+	if x != nil {
+		return x.CostLimitsPricedOnly
+	}
+	return false
+}
+
+func (x *WorkLoopInfo) GetUnfinished() []*WorkLoopDigestTask {
+	if x != nil {
+		return x.Unfinished
+	}
+	return nil
+}
+
+func (x *WorkLoopInfo) GetResourceEnvelopeCaptured() bool {
+	if x != nil {
+		return x.ResourceEnvelopeCaptured
+	}
+	return false
 }
 
 // StartWorkLoop starts an unattended work loop for a project. It fails
@@ -7969,10 +8122,11 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x10InterruptRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\"\x13\n" +
-	"\x11InterruptResponse\".\n" +
+	"\x11InterruptResponse\"J\n" +
 	"\rResumeRequest\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x01 \x01(\tR\tsessionId\"\x10\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1a\n" +
+	"\brollover\x18\x02 \x01(\bR\brollover\"\x10\n" +
 	"\x0eResumeResponse\"3\n" +
 	"\x12StopSessionRequest\x12\x1d\n" +
 	"\n" +
@@ -8321,7 +8475,7 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x04 \x01(\tR\tsessionId\".\n" +
 	"\x0eNotifyResponse\x12\x1c\n" +
-	"\tdelivered\x18\x01 \x01(\bR\tdelivered\"\xf0\x01\n" +
+	"\tdelivered\x18\x01 \x01(\bR\tdelivered\"\x81\x03\n" +
 	"\x12WorkLoopDigestTask\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
 	"\x05title\x18\x02 \x01(\tR\x05title\x12\x16\n" +
@@ -8331,7 +8485,12 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x06tokens\x18\x06 \x01(\x03R\x06tokens\x12\x12\n" +
 	"\x04cost\x18\a \x01(\x01R\x04cost\x12!\n" +
 	"\fprice_status\x18\b \x01(\tR\vpriceStatus\x12\x16\n" +
-	"\x06reason\x18\t \x01(\tR\x06reason\"\xba\x01\n" +
+	"\x06reason\x18\t \x01(\tR\x06reason\x12\x1a\n" +
+	"\battempts\x18\n" +
+	" \x01(\x05R\battempts\x12'\n" +
+	"\x0flatest_evidence\x18\v \x01(\tR\x0elatestEvidence\x12-\n" +
+	"\x12remaining_criteria\x18\f \x01(\tR\x11remainingCriteria\x12\x1b\n" +
+	"\tnext_step\x18\r \x01(\tR\bnextStep\"\xdd\x02\n" +
 	"\x0fWorkLoopSession\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x14\n" +
@@ -8339,7 +8498,14 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x06tokens\x18\x03 \x01(\x03R\x06tokens\x12\x12\n" +
 	"\x04cost\x18\x04 \x01(\x01R\x04cost\x12!\n" +
 	"\fprice_status\x18\x05 \x01(\tR\vpriceStatus\x12#\n" +
-	"\rduration_secs\x18\x06 \x01(\x03R\fdurationSecs\"\x92\x05\n" +
+	"\rduration_secs\x18\x06 \x01(\x03R\fdurationSecs\x12\x18\n" +
+	"\aattempt\x18\a \x01(\x05R\aattempt\x12\x1a\n" +
+	"\bevidence\x18\b \x01(\tR\bevidence\x12\x1d\n" +
+	"\n" +
+	"error_kind\x18\t \x01(\tR\terrorKind\x12#\n" +
+	"\rerror_message\x18\n" +
+	" \x01(\tR\ferrorMessage\x12'\n" +
+	"\x0ferror_retryable\x18\v \x01(\bR\x0eerrorRetryable\"\xdb\b\n" +
 	"\fWorkLoopInfo\x12\x17\n" +
 	"\aloop_id\x18\x01 \x01(\tR\x06loopId\x12\x18\n" +
 	"\aproject\x18\x02 \x01(\tR\aproject\x12\x14\n" +
@@ -8361,7 +8527,18 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\vcost_status\x18\x0f \x01(\tR\n" +
 	"costStatus\x12\x1b\n" +
 	"\tresume_at\x18\x10 \x01(\tR\bresumeAt\x12\x1b\n" +
-	"\twait_kind\x18\x11 \x01(\tR\bwaitKind\"0\n" +
+	"\twait_kind\x18\x11 \x01(\tR\bwaitKind\x12.\n" +
+	"\x13session_token_limit\x18\x12 \x01(\x03R\x11sessionTokenLimit\x12,\n" +
+	"\x12session_cost_limit\x18\x13 \x01(\x01R\x10sessionCostLimit\x125\n" +
+	"\x17session_time_limit_secs\x18\x14 \x01(\x03R\x14sessionTimeLimitSecs\x12(\n" +
+	"\x10loop_token_limit\x18\x15 \x01(\x03R\x0eloopTokenLimit\x12&\n" +
+	"\x0floop_cost_limit\x18\x16 \x01(\x01R\rloopCostLimit\x12/\n" +
+	"\x14loop_time_limit_secs\x18\x17 \x01(\x03R\x11loopTimeLimitSecs\x125\n" +
+	"\x17cost_limits_priced_only\x18\x18 \x01(\bR\x14costLimitsPricedOnly\x12:\n" +
+	"\n" +
+	"unfinished\x18\x19 \x03(\v2\x1a.ycc.v1.WorkLoopDigestTaskR\n" +
+	"unfinished\x12<\n" +
+	"\x1aresource_envelope_captured\x18\x1a \x01(\bR\x18resourceEnvelopeCaptured\"0\n" +
 	"\x14StartWorkLoopRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\"A\n" +
 	"\x15StartWorkLoopResponse\x12(\n" +
@@ -8687,126 +8864,127 @@ var file_ycc_v1_ycc_proto_depIdxs = []int32{
 	106, // 31: ycc.v1.WorkLoopInfo.blocked:type_name -> ycc.v1.WorkLoopDigestTask
 	106, // 32: ycc.v1.WorkLoopInfo.in_review:type_name -> ycc.v1.WorkLoopDigestTask
 	106, // 33: ycc.v1.WorkLoopInfo.created:type_name -> ycc.v1.WorkLoopDigestTask
-	108, // 34: ycc.v1.StartWorkLoopResponse.loop:type_name -> ycc.v1.WorkLoopInfo
-	108, // 35: ycc.v1.StopWorkLoopResponse.loop:type_name -> ycc.v1.WorkLoopInfo
-	108, // 36: ycc.v1.GetWorkLoopResponse.loop:type_name -> ycc.v1.WorkLoopInfo
-	115, // 37: ycc.v1.SpawnWorkstreamResponse.workstream:type_name -> ycc.v1.WorkstreamInfo
-	115, // 38: ycc.v1.ListWorkstreamsResponse.workstreams:type_name -> ycc.v1.WorkstreamInfo
-	115, // 39: ycc.v1.RetryIntegrationResponse.workstream:type_name -> ycc.v1.WorkstreamInfo
-	52,  // 40: ycc.v1.TestModelRequest.model:type_name -> ycc.v1.ModelConfig
-	33,  // 41: ycc.v1.SessionService.ListModes:input_type -> ycc.v1.ListModesRequest
-	1,   // 42: ycc.v1.SessionService.StartSession:input_type -> ycc.v1.StartSessionRequest
-	37,  // 43: ycc.v1.SessionService.ListSessions:input_type -> ycc.v1.ListSessionsRequest
-	40,  // 44: ycc.v1.SessionService.ListSessionHistory:input_type -> ycc.v1.ListSessionHistoryRequest
-	43,  // 45: ycc.v1.SessionService.GetSessionTranscript:input_type -> ycc.v1.GetSessionTranscriptRequest
-	45,  // 46: ycc.v1.SessionService.GetSessionAttachment:input_type -> ycc.v1.GetSessionAttachmentRequest
-	47,  // 47: ycc.v1.SessionService.GetCommitDiff:input_type -> ycc.v1.GetCommitDiffRequest
-	16,  // 48: ycc.v1.SessionService.Subscribe:input_type -> ycc.v1.SubscribeRequest
-	18,  // 49: ycc.v1.SessionService.SendInput:input_type -> ycc.v1.SendInputRequest
-	20,  // 50: ycc.v1.SessionService.AnswerQuestion:input_type -> ycc.v1.AnswerQuestionRequest
-	23,  // 51: ycc.v1.SessionService.AnswerQuestions:input_type -> ycc.v1.AnswerQuestionsRequest
-	25,  // 52: ycc.v1.SessionService.Interrupt:input_type -> ycc.v1.InterruptRequest
-	27,  // 53: ycc.v1.SessionService.Resume:input_type -> ycc.v1.ResumeRequest
-	29,  // 54: ycc.v1.SessionService.StopSession:input_type -> ycc.v1.StopSessionRequest
-	31,  // 55: ycc.v1.SessionService.ResumeSession:input_type -> ycc.v1.ResumeSessionRequest
-	5,   // 56: ycc.v1.SessionService.ListProjects:input_type -> ycc.v1.ListProjectsRequest
-	7,   // 57: ycc.v1.SessionService.AddProject:input_type -> ycc.v1.AddProjectRequest
-	9,   // 58: ycc.v1.SessionService.RemoveProject:input_type -> ycc.v1.RemoveProjectRequest
-	11,  // 59: ycc.v1.SessionService.RenameProject:input_type -> ycc.v1.RenameProjectRequest
-	14,  // 60: ycc.v1.SessionService.ListDir:input_type -> ycc.v1.ListDirRequest
-	49,  // 61: ycc.v1.SessionService.ListModels:input_type -> ycc.v1.ListModelsRequest
-	61,  // 62: ycc.v1.SessionService.SetRoleConfig:input_type -> ycc.v1.SetRoleConfigRequest
-	63,  // 63: ycc.v1.SessionService.SetThinking:input_type -> ycc.v1.SetThinkingRequest
-	65,  // 64: ycc.v1.SessionService.SetWorkImplementation:input_type -> ycc.v1.SetWorkImplementationRequest
-	53,  // 65: ycc.v1.SessionService.UpsertModel:input_type -> ycc.v1.UpsertModelRequest
-	55,  // 66: ycc.v1.SessionService.RemoveModel:input_type -> ycc.v1.RemoveModelRequest
-	57,  // 67: ycc.v1.SessionService.GetModelConfig:input_type -> ycc.v1.GetModelConfigRequest
-	59,  // 68: ycc.v1.SessionService.DiscoverModels:input_type -> ycc.v1.DiscoverModelsRequest
-	129, // 69: ycc.v1.SessionService.TestModel:input_type -> ycc.v1.TestModelRequest
-	69,  // 70: ycc.v1.SessionService.ListReviewTiers:input_type -> ycc.v1.ListReviewTiersRequest
-	71,  // 71: ycc.v1.SessionService.UpsertReviewTier:input_type -> ycc.v1.UpsertReviewTierRequest
-	73,  // 72: ycc.v1.SessionService.RemoveReviewTier:input_type -> ycc.v1.RemoveReviewTierRequest
-	75,  // 73: ycc.v1.SessionService.SetReviewDefault:input_type -> ycc.v1.SetReviewDefaultRequest
-	77,  // 74: ycc.v1.SessionService.ListBacklog:input_type -> ycc.v1.ListBacklogRequest
-	80,  // 75: ycc.v1.SessionService.GetTask:input_type -> ycc.v1.GetTaskRequest
-	83,  // 76: ycc.v1.SessionService.UpdateTask:input_type -> ycc.v1.UpdateTaskRequest
-	85,  // 77: ycc.v1.SessionService.CreateTask:input_type -> ycc.v1.CreateTaskRequest
-	87,  // 78: ycc.v1.SessionService.ListPlans:input_type -> ycc.v1.ListPlansRequest
-	90,  // 79: ycc.v1.SessionService.GetPlan:input_type -> ycc.v1.GetPlanRequest
-	92,  // 80: ycc.v1.SessionService.GetMemory:input_type -> ycc.v1.GetMemoryRequest
-	94,  // 81: ycc.v1.SessionService.CaptureBacklogItem:input_type -> ycc.v1.CaptureBacklogItemRequest
-	95,  // 82: ycc.v1.SessionService.GetUsage:input_type -> ycc.v1.GetUsageRequest
-	98,  // 83: ycc.v1.SessionService.GetSubscriptionUsage:input_type -> ycc.v1.GetSubscriptionUsageRequest
-	102, // 84: ycc.v1.SessionService.GetBudget:input_type -> ycc.v1.GetBudgetRequest
-	104, // 85: ycc.v1.SessionService.Notify:input_type -> ycc.v1.NotifyRequest
-	109, // 86: ycc.v1.SessionService.StartWorkLoop:input_type -> ycc.v1.StartWorkLoopRequest
-	111, // 87: ycc.v1.SessionService.StopWorkLoop:input_type -> ycc.v1.StopWorkLoopRequest
-	113, // 88: ycc.v1.SessionService.GetWorkLoop:input_type -> ycc.v1.GetWorkLoopRequest
-	116, // 89: ycc.v1.SessionService.SpawnWorkstream:input_type -> ycc.v1.SpawnWorkstreamRequest
-	118, // 90: ycc.v1.SessionService.ListWorkstreams:input_type -> ycc.v1.ListWorkstreamsRequest
-	120, // 91: ycc.v1.SessionService.PreviewMerge:input_type -> ycc.v1.PreviewMergeRequest
-	122, // 92: ycc.v1.SessionService.MergeWorkstream:input_type -> ycc.v1.MergeWorkstreamRequest
-	124, // 93: ycc.v1.SessionService.DiscardWorkstream:input_type -> ycc.v1.DiscardWorkstreamRequest
-	126, // 94: ycc.v1.SessionService.RetryIntegration:input_type -> ycc.v1.RetryIntegrationRequest
-	36,  // 95: ycc.v1.SessionService.ListModes:output_type -> ycc.v1.ListModesResponse
-	2,   // 96: ycc.v1.SessionService.StartSession:output_type -> ycc.v1.StartSessionResponse
-	39,  // 97: ycc.v1.SessionService.ListSessions:output_type -> ycc.v1.ListSessionsResponse
-	42,  // 98: ycc.v1.SessionService.ListSessionHistory:output_type -> ycc.v1.ListSessionHistoryResponse
-	44,  // 99: ycc.v1.SessionService.GetSessionTranscript:output_type -> ycc.v1.GetSessionTranscriptResponse
-	46,  // 100: ycc.v1.SessionService.GetSessionAttachment:output_type -> ycc.v1.GetSessionAttachmentResponse
-	48,  // 101: ycc.v1.SessionService.GetCommitDiff:output_type -> ycc.v1.GetCommitDiffResponse
-	0,   // 102: ycc.v1.SessionService.Subscribe:output_type -> ycc.v1.Event
-	19,  // 103: ycc.v1.SessionService.SendInput:output_type -> ycc.v1.SendInputResponse
-	21,  // 104: ycc.v1.SessionService.AnswerQuestion:output_type -> ycc.v1.AnswerQuestionResponse
-	24,  // 105: ycc.v1.SessionService.AnswerQuestions:output_type -> ycc.v1.AnswerQuestionsResponse
-	26,  // 106: ycc.v1.SessionService.Interrupt:output_type -> ycc.v1.InterruptResponse
-	28,  // 107: ycc.v1.SessionService.Resume:output_type -> ycc.v1.ResumeResponse
-	30,  // 108: ycc.v1.SessionService.StopSession:output_type -> ycc.v1.StopSessionResponse
-	32,  // 109: ycc.v1.SessionService.ResumeSession:output_type -> ycc.v1.ResumeSessionResponse
-	6,   // 110: ycc.v1.SessionService.ListProjects:output_type -> ycc.v1.ListProjectsResponse
-	8,   // 111: ycc.v1.SessionService.AddProject:output_type -> ycc.v1.AddProjectResponse
-	10,  // 112: ycc.v1.SessionService.RemoveProject:output_type -> ycc.v1.RemoveProjectResponse
-	12,  // 113: ycc.v1.SessionService.RenameProject:output_type -> ycc.v1.RenameProjectResponse
-	15,  // 114: ycc.v1.SessionService.ListDir:output_type -> ycc.v1.ListDirResponse
-	51,  // 115: ycc.v1.SessionService.ListModels:output_type -> ycc.v1.ListModelsResponse
-	62,  // 116: ycc.v1.SessionService.SetRoleConfig:output_type -> ycc.v1.SetRoleConfigResponse
-	64,  // 117: ycc.v1.SessionService.SetThinking:output_type -> ycc.v1.SetThinkingResponse
-	66,  // 118: ycc.v1.SessionService.SetWorkImplementation:output_type -> ycc.v1.SetWorkImplementationResponse
-	54,  // 119: ycc.v1.SessionService.UpsertModel:output_type -> ycc.v1.UpsertModelResponse
-	56,  // 120: ycc.v1.SessionService.RemoveModel:output_type -> ycc.v1.RemoveModelResponse
-	58,  // 121: ycc.v1.SessionService.GetModelConfig:output_type -> ycc.v1.GetModelConfigResponse
-	60,  // 122: ycc.v1.SessionService.DiscoverModels:output_type -> ycc.v1.DiscoverModelsResponse
-	130, // 123: ycc.v1.SessionService.TestModel:output_type -> ycc.v1.TestModelResponse
-	70,  // 124: ycc.v1.SessionService.ListReviewTiers:output_type -> ycc.v1.ListReviewTiersResponse
-	72,  // 125: ycc.v1.SessionService.UpsertReviewTier:output_type -> ycc.v1.UpsertReviewTierResponse
-	74,  // 126: ycc.v1.SessionService.RemoveReviewTier:output_type -> ycc.v1.RemoveReviewTierResponse
-	76,  // 127: ycc.v1.SessionService.SetReviewDefault:output_type -> ycc.v1.SetReviewDefaultResponse
-	79,  // 128: ycc.v1.SessionService.ListBacklog:output_type -> ycc.v1.ListBacklogResponse
-	82,  // 129: ycc.v1.SessionService.GetTask:output_type -> ycc.v1.GetTaskResponse
-	84,  // 130: ycc.v1.SessionService.UpdateTask:output_type -> ycc.v1.UpdateTaskResponse
-	86,  // 131: ycc.v1.SessionService.CreateTask:output_type -> ycc.v1.CreateTaskResponse
-	89,  // 132: ycc.v1.SessionService.ListPlans:output_type -> ycc.v1.ListPlansResponse
-	91,  // 133: ycc.v1.SessionService.GetPlan:output_type -> ycc.v1.GetPlanResponse
-	93,  // 134: ycc.v1.SessionService.GetMemory:output_type -> ycc.v1.GetMemoryResponse
-	0,   // 135: ycc.v1.SessionService.CaptureBacklogItem:output_type -> ycc.v1.Event
-	97,  // 136: ycc.v1.SessionService.GetUsage:output_type -> ycc.v1.GetUsageResponse
-	101, // 137: ycc.v1.SessionService.GetSubscriptionUsage:output_type -> ycc.v1.GetSubscriptionUsageResponse
-	103, // 138: ycc.v1.SessionService.GetBudget:output_type -> ycc.v1.GetBudgetResponse
-	105, // 139: ycc.v1.SessionService.Notify:output_type -> ycc.v1.NotifyResponse
-	110, // 140: ycc.v1.SessionService.StartWorkLoop:output_type -> ycc.v1.StartWorkLoopResponse
-	112, // 141: ycc.v1.SessionService.StopWorkLoop:output_type -> ycc.v1.StopWorkLoopResponse
-	114, // 142: ycc.v1.SessionService.GetWorkLoop:output_type -> ycc.v1.GetWorkLoopResponse
-	117, // 143: ycc.v1.SessionService.SpawnWorkstream:output_type -> ycc.v1.SpawnWorkstreamResponse
-	119, // 144: ycc.v1.SessionService.ListWorkstreams:output_type -> ycc.v1.ListWorkstreamsResponse
-	121, // 145: ycc.v1.SessionService.PreviewMerge:output_type -> ycc.v1.PreviewMergeResponse
-	123, // 146: ycc.v1.SessionService.MergeWorkstream:output_type -> ycc.v1.MergeWorkstreamResponse
-	125, // 147: ycc.v1.SessionService.DiscardWorkstream:output_type -> ycc.v1.DiscardWorkstreamResponse
-	127, // 148: ycc.v1.SessionService.RetryIntegration:output_type -> ycc.v1.RetryIntegrationResponse
-	95,  // [95:149] is the sub-list for method output_type
-	41,  // [41:95] is the sub-list for method input_type
-	41,  // [41:41] is the sub-list for extension type_name
-	41,  // [41:41] is the sub-list for extension extendee
-	0,   // [0:41] is the sub-list for field type_name
+	106, // 34: ycc.v1.WorkLoopInfo.unfinished:type_name -> ycc.v1.WorkLoopDigestTask
+	108, // 35: ycc.v1.StartWorkLoopResponse.loop:type_name -> ycc.v1.WorkLoopInfo
+	108, // 36: ycc.v1.StopWorkLoopResponse.loop:type_name -> ycc.v1.WorkLoopInfo
+	108, // 37: ycc.v1.GetWorkLoopResponse.loop:type_name -> ycc.v1.WorkLoopInfo
+	115, // 38: ycc.v1.SpawnWorkstreamResponse.workstream:type_name -> ycc.v1.WorkstreamInfo
+	115, // 39: ycc.v1.ListWorkstreamsResponse.workstreams:type_name -> ycc.v1.WorkstreamInfo
+	115, // 40: ycc.v1.RetryIntegrationResponse.workstream:type_name -> ycc.v1.WorkstreamInfo
+	52,  // 41: ycc.v1.TestModelRequest.model:type_name -> ycc.v1.ModelConfig
+	33,  // 42: ycc.v1.SessionService.ListModes:input_type -> ycc.v1.ListModesRequest
+	1,   // 43: ycc.v1.SessionService.StartSession:input_type -> ycc.v1.StartSessionRequest
+	37,  // 44: ycc.v1.SessionService.ListSessions:input_type -> ycc.v1.ListSessionsRequest
+	40,  // 45: ycc.v1.SessionService.ListSessionHistory:input_type -> ycc.v1.ListSessionHistoryRequest
+	43,  // 46: ycc.v1.SessionService.GetSessionTranscript:input_type -> ycc.v1.GetSessionTranscriptRequest
+	45,  // 47: ycc.v1.SessionService.GetSessionAttachment:input_type -> ycc.v1.GetSessionAttachmentRequest
+	47,  // 48: ycc.v1.SessionService.GetCommitDiff:input_type -> ycc.v1.GetCommitDiffRequest
+	16,  // 49: ycc.v1.SessionService.Subscribe:input_type -> ycc.v1.SubscribeRequest
+	18,  // 50: ycc.v1.SessionService.SendInput:input_type -> ycc.v1.SendInputRequest
+	20,  // 51: ycc.v1.SessionService.AnswerQuestion:input_type -> ycc.v1.AnswerQuestionRequest
+	23,  // 52: ycc.v1.SessionService.AnswerQuestions:input_type -> ycc.v1.AnswerQuestionsRequest
+	25,  // 53: ycc.v1.SessionService.Interrupt:input_type -> ycc.v1.InterruptRequest
+	27,  // 54: ycc.v1.SessionService.Resume:input_type -> ycc.v1.ResumeRequest
+	29,  // 55: ycc.v1.SessionService.StopSession:input_type -> ycc.v1.StopSessionRequest
+	31,  // 56: ycc.v1.SessionService.ResumeSession:input_type -> ycc.v1.ResumeSessionRequest
+	5,   // 57: ycc.v1.SessionService.ListProjects:input_type -> ycc.v1.ListProjectsRequest
+	7,   // 58: ycc.v1.SessionService.AddProject:input_type -> ycc.v1.AddProjectRequest
+	9,   // 59: ycc.v1.SessionService.RemoveProject:input_type -> ycc.v1.RemoveProjectRequest
+	11,  // 60: ycc.v1.SessionService.RenameProject:input_type -> ycc.v1.RenameProjectRequest
+	14,  // 61: ycc.v1.SessionService.ListDir:input_type -> ycc.v1.ListDirRequest
+	49,  // 62: ycc.v1.SessionService.ListModels:input_type -> ycc.v1.ListModelsRequest
+	61,  // 63: ycc.v1.SessionService.SetRoleConfig:input_type -> ycc.v1.SetRoleConfigRequest
+	63,  // 64: ycc.v1.SessionService.SetThinking:input_type -> ycc.v1.SetThinkingRequest
+	65,  // 65: ycc.v1.SessionService.SetWorkImplementation:input_type -> ycc.v1.SetWorkImplementationRequest
+	53,  // 66: ycc.v1.SessionService.UpsertModel:input_type -> ycc.v1.UpsertModelRequest
+	55,  // 67: ycc.v1.SessionService.RemoveModel:input_type -> ycc.v1.RemoveModelRequest
+	57,  // 68: ycc.v1.SessionService.GetModelConfig:input_type -> ycc.v1.GetModelConfigRequest
+	59,  // 69: ycc.v1.SessionService.DiscoverModels:input_type -> ycc.v1.DiscoverModelsRequest
+	129, // 70: ycc.v1.SessionService.TestModel:input_type -> ycc.v1.TestModelRequest
+	69,  // 71: ycc.v1.SessionService.ListReviewTiers:input_type -> ycc.v1.ListReviewTiersRequest
+	71,  // 72: ycc.v1.SessionService.UpsertReviewTier:input_type -> ycc.v1.UpsertReviewTierRequest
+	73,  // 73: ycc.v1.SessionService.RemoveReviewTier:input_type -> ycc.v1.RemoveReviewTierRequest
+	75,  // 74: ycc.v1.SessionService.SetReviewDefault:input_type -> ycc.v1.SetReviewDefaultRequest
+	77,  // 75: ycc.v1.SessionService.ListBacklog:input_type -> ycc.v1.ListBacklogRequest
+	80,  // 76: ycc.v1.SessionService.GetTask:input_type -> ycc.v1.GetTaskRequest
+	83,  // 77: ycc.v1.SessionService.UpdateTask:input_type -> ycc.v1.UpdateTaskRequest
+	85,  // 78: ycc.v1.SessionService.CreateTask:input_type -> ycc.v1.CreateTaskRequest
+	87,  // 79: ycc.v1.SessionService.ListPlans:input_type -> ycc.v1.ListPlansRequest
+	90,  // 80: ycc.v1.SessionService.GetPlan:input_type -> ycc.v1.GetPlanRequest
+	92,  // 81: ycc.v1.SessionService.GetMemory:input_type -> ycc.v1.GetMemoryRequest
+	94,  // 82: ycc.v1.SessionService.CaptureBacklogItem:input_type -> ycc.v1.CaptureBacklogItemRequest
+	95,  // 83: ycc.v1.SessionService.GetUsage:input_type -> ycc.v1.GetUsageRequest
+	98,  // 84: ycc.v1.SessionService.GetSubscriptionUsage:input_type -> ycc.v1.GetSubscriptionUsageRequest
+	102, // 85: ycc.v1.SessionService.GetBudget:input_type -> ycc.v1.GetBudgetRequest
+	104, // 86: ycc.v1.SessionService.Notify:input_type -> ycc.v1.NotifyRequest
+	109, // 87: ycc.v1.SessionService.StartWorkLoop:input_type -> ycc.v1.StartWorkLoopRequest
+	111, // 88: ycc.v1.SessionService.StopWorkLoop:input_type -> ycc.v1.StopWorkLoopRequest
+	113, // 89: ycc.v1.SessionService.GetWorkLoop:input_type -> ycc.v1.GetWorkLoopRequest
+	116, // 90: ycc.v1.SessionService.SpawnWorkstream:input_type -> ycc.v1.SpawnWorkstreamRequest
+	118, // 91: ycc.v1.SessionService.ListWorkstreams:input_type -> ycc.v1.ListWorkstreamsRequest
+	120, // 92: ycc.v1.SessionService.PreviewMerge:input_type -> ycc.v1.PreviewMergeRequest
+	122, // 93: ycc.v1.SessionService.MergeWorkstream:input_type -> ycc.v1.MergeWorkstreamRequest
+	124, // 94: ycc.v1.SessionService.DiscardWorkstream:input_type -> ycc.v1.DiscardWorkstreamRequest
+	126, // 95: ycc.v1.SessionService.RetryIntegration:input_type -> ycc.v1.RetryIntegrationRequest
+	36,  // 96: ycc.v1.SessionService.ListModes:output_type -> ycc.v1.ListModesResponse
+	2,   // 97: ycc.v1.SessionService.StartSession:output_type -> ycc.v1.StartSessionResponse
+	39,  // 98: ycc.v1.SessionService.ListSessions:output_type -> ycc.v1.ListSessionsResponse
+	42,  // 99: ycc.v1.SessionService.ListSessionHistory:output_type -> ycc.v1.ListSessionHistoryResponse
+	44,  // 100: ycc.v1.SessionService.GetSessionTranscript:output_type -> ycc.v1.GetSessionTranscriptResponse
+	46,  // 101: ycc.v1.SessionService.GetSessionAttachment:output_type -> ycc.v1.GetSessionAttachmentResponse
+	48,  // 102: ycc.v1.SessionService.GetCommitDiff:output_type -> ycc.v1.GetCommitDiffResponse
+	0,   // 103: ycc.v1.SessionService.Subscribe:output_type -> ycc.v1.Event
+	19,  // 104: ycc.v1.SessionService.SendInput:output_type -> ycc.v1.SendInputResponse
+	21,  // 105: ycc.v1.SessionService.AnswerQuestion:output_type -> ycc.v1.AnswerQuestionResponse
+	24,  // 106: ycc.v1.SessionService.AnswerQuestions:output_type -> ycc.v1.AnswerQuestionsResponse
+	26,  // 107: ycc.v1.SessionService.Interrupt:output_type -> ycc.v1.InterruptResponse
+	28,  // 108: ycc.v1.SessionService.Resume:output_type -> ycc.v1.ResumeResponse
+	30,  // 109: ycc.v1.SessionService.StopSession:output_type -> ycc.v1.StopSessionResponse
+	32,  // 110: ycc.v1.SessionService.ResumeSession:output_type -> ycc.v1.ResumeSessionResponse
+	6,   // 111: ycc.v1.SessionService.ListProjects:output_type -> ycc.v1.ListProjectsResponse
+	8,   // 112: ycc.v1.SessionService.AddProject:output_type -> ycc.v1.AddProjectResponse
+	10,  // 113: ycc.v1.SessionService.RemoveProject:output_type -> ycc.v1.RemoveProjectResponse
+	12,  // 114: ycc.v1.SessionService.RenameProject:output_type -> ycc.v1.RenameProjectResponse
+	15,  // 115: ycc.v1.SessionService.ListDir:output_type -> ycc.v1.ListDirResponse
+	51,  // 116: ycc.v1.SessionService.ListModels:output_type -> ycc.v1.ListModelsResponse
+	62,  // 117: ycc.v1.SessionService.SetRoleConfig:output_type -> ycc.v1.SetRoleConfigResponse
+	64,  // 118: ycc.v1.SessionService.SetThinking:output_type -> ycc.v1.SetThinkingResponse
+	66,  // 119: ycc.v1.SessionService.SetWorkImplementation:output_type -> ycc.v1.SetWorkImplementationResponse
+	54,  // 120: ycc.v1.SessionService.UpsertModel:output_type -> ycc.v1.UpsertModelResponse
+	56,  // 121: ycc.v1.SessionService.RemoveModel:output_type -> ycc.v1.RemoveModelResponse
+	58,  // 122: ycc.v1.SessionService.GetModelConfig:output_type -> ycc.v1.GetModelConfigResponse
+	60,  // 123: ycc.v1.SessionService.DiscoverModels:output_type -> ycc.v1.DiscoverModelsResponse
+	130, // 124: ycc.v1.SessionService.TestModel:output_type -> ycc.v1.TestModelResponse
+	70,  // 125: ycc.v1.SessionService.ListReviewTiers:output_type -> ycc.v1.ListReviewTiersResponse
+	72,  // 126: ycc.v1.SessionService.UpsertReviewTier:output_type -> ycc.v1.UpsertReviewTierResponse
+	74,  // 127: ycc.v1.SessionService.RemoveReviewTier:output_type -> ycc.v1.RemoveReviewTierResponse
+	76,  // 128: ycc.v1.SessionService.SetReviewDefault:output_type -> ycc.v1.SetReviewDefaultResponse
+	79,  // 129: ycc.v1.SessionService.ListBacklog:output_type -> ycc.v1.ListBacklogResponse
+	82,  // 130: ycc.v1.SessionService.GetTask:output_type -> ycc.v1.GetTaskResponse
+	84,  // 131: ycc.v1.SessionService.UpdateTask:output_type -> ycc.v1.UpdateTaskResponse
+	86,  // 132: ycc.v1.SessionService.CreateTask:output_type -> ycc.v1.CreateTaskResponse
+	89,  // 133: ycc.v1.SessionService.ListPlans:output_type -> ycc.v1.ListPlansResponse
+	91,  // 134: ycc.v1.SessionService.GetPlan:output_type -> ycc.v1.GetPlanResponse
+	93,  // 135: ycc.v1.SessionService.GetMemory:output_type -> ycc.v1.GetMemoryResponse
+	0,   // 136: ycc.v1.SessionService.CaptureBacklogItem:output_type -> ycc.v1.Event
+	97,  // 137: ycc.v1.SessionService.GetUsage:output_type -> ycc.v1.GetUsageResponse
+	101, // 138: ycc.v1.SessionService.GetSubscriptionUsage:output_type -> ycc.v1.GetSubscriptionUsageResponse
+	103, // 139: ycc.v1.SessionService.GetBudget:output_type -> ycc.v1.GetBudgetResponse
+	105, // 140: ycc.v1.SessionService.Notify:output_type -> ycc.v1.NotifyResponse
+	110, // 141: ycc.v1.SessionService.StartWorkLoop:output_type -> ycc.v1.StartWorkLoopResponse
+	112, // 142: ycc.v1.SessionService.StopWorkLoop:output_type -> ycc.v1.StopWorkLoopResponse
+	114, // 143: ycc.v1.SessionService.GetWorkLoop:output_type -> ycc.v1.GetWorkLoopResponse
+	117, // 144: ycc.v1.SessionService.SpawnWorkstream:output_type -> ycc.v1.SpawnWorkstreamResponse
+	119, // 145: ycc.v1.SessionService.ListWorkstreams:output_type -> ycc.v1.ListWorkstreamsResponse
+	121, // 146: ycc.v1.SessionService.PreviewMerge:output_type -> ycc.v1.PreviewMergeResponse
+	123, // 147: ycc.v1.SessionService.MergeWorkstream:output_type -> ycc.v1.MergeWorkstreamResponse
+	125, // 148: ycc.v1.SessionService.DiscardWorkstream:output_type -> ycc.v1.DiscardWorkstreamResponse
+	127, // 149: ycc.v1.SessionService.RetryIntegration:output_type -> ycc.v1.RetryIntegrationResponse
+	96,  // [96:150] is the sub-list for method output_type
+	42,  // [42:96] is the sub-list for method input_type
+	42,  // [42:42] is the sub-list for extension type_name
+	42,  // [42:42] is the sub-list for extension extendee
+	0,   // [0:42] is the sub-list for field type_name
 }
 
 func init() { file_ycc_v1_ycc_proto_init() }

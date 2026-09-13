@@ -15,22 +15,47 @@ func TestDigestFromWorkLoop(t *testing.T) {
 	started := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
 	d := digestFromWorkLoop(&v1.WorkLoopInfo{
 		Outcome: "loop complete", StartedAt: started, TotalTokens: 30, TotalCost: 1.25, CostStatus: "partial",
-		Sessions:  []*v1.WorkLoopSession{{SessionId: "s1", Focus: "0001", Tokens: 30, Cost: .5, PriceStatus: "priced"}},
+		ResourceEnvelopeCaptured: true, SessionTokenLimit: 10_000, LoopCostLimit: 5, CostLimitsPricedOnly: true,
+		Sessions:  []*v1.WorkLoopSession{{SessionId: "s1", Focus: "0001", Attempt: 2, Evidence: "latest experiment", ErrorKind: "server_error", Tokens: 30, Cost: .5, PriceStatus: "priced"}},
 		Completed: []*v1.WorkLoopDigestTask{{Id: "0001", Title: "done", Status: "done", Sha: "abcdef123", VerdictTally: "approve×1", Tokens: 20, Cost: .4, PriceStatus: "priced"}},
 		Blocked:   []*v1.WorkLoopDigestTask{{Id: "0002", Title: "blocked", Status: "blocked", Reason: "needs key", Tokens: 10, PriceStatus: "unpriced"}},
 		InReview:  []*v1.WorkLoopDigestTask{{Id: "0003"}}, Created: []*v1.WorkLoopDigestTask{{Id: "0004"}},
+		Unfinished: []*v1.WorkLoopDigestTask{{Id: "0005", Title: "diagnose", Attempts: 3, LatestEvidence: "ruled out cache", RemainingCriteria: "reproduce", NextStep: "inspect trace"}},
 	})
 	if d == nil || d.outcome != "loop complete" || d.totalTokens != 30 || d.totalCost != 1.25 || d.costStatus != "partial" {
 		t.Fatalf("bad totals/outcome: %+v", d)
 	}
-	if len(d.sessions) != 1 || d.sessions[0].id != "s1" || d.sessions[0].cost != .5 {
+	if len(d.sessions) != 1 || d.sessions[0].id != "s1" || d.sessions[0].cost != .5 ||
+		d.sessions[0].attempt != 2 || d.sessions[0].evidence != "latest experiment" || d.sessions[0].errKind != "server_error" {
 		t.Fatalf("bad sessions: %+v", d.sessions)
 	}
 	if len(d.completed) != 1 || d.completed[0].sha != "abcdef123" || d.completed[0].verdictTally != "approve×1" || d.completed[0].priceStatus != "priced" {
 		t.Fatalf("bad completed mapping: %+v", d.completed)
 	}
-	if len(d.blocked) != 1 || d.blocked[0].reason != "needs key" || len(d.inReview) != 1 || len(d.created) != 1 {
-		t.Fatalf("bad sections: blocked=%+v review=%+v created=%+v", d.blocked, d.inReview, d.created)
+	if len(d.blocked) != 1 || d.blocked[0].reason != "needs key" || len(d.inReview) != 1 || len(d.created) != 1 ||
+		len(d.unfinished) != 1 || d.unfinished[0].attempts != 3 || d.unfinished[0].nextStep != "inspect trace" {
+		t.Fatalf("bad sections: blocked=%+v review=%+v unfinished=%+v created=%+v", d.blocked, d.inReview, d.unfinished, d.created)
+	}
+	rows, _ := (model{loopDigest: d}).digestRows()
+	var rendered strings.Builder
+	for _, row := range rows {
+		rendered.WriteString(row.text)
+		rendered.WriteString(row.suffix)
+	}
+	for _, want := range []string{"resource envelope", "session: 10,000 tokens", "attempt 2", "latest experiment", "unfinished", "remaining: reproduce", "next: inspect trace"} {
+		if !strings.Contains(rendered.String(), want) {
+			t.Fatalf("digest rows missing %q: %q", want, rendered.String())
+		}
+	}
+}
+
+func TestWorkLoopResourceLinesExposeUnboundedEnvelope(t *testing.T) {
+	info := &v1.WorkLoopInfo{ResourceEnvelopeCaptured: true, CostLimitsPricedOnly: true}
+	got := strings.Join(workLoopResourceLines(info), "\n")
+	for _, want := range []string{"session: tokens unbounded · cost unbounded · wall time unbounded", "loop: tokens unbounded · cost unbounded · wall time unbounded", "priced models only", "attempts: no fixed limit"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("resource envelope missing %q: %q", want, got)
+		}
 	}
 }
 

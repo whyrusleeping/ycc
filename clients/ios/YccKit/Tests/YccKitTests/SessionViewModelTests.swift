@@ -144,6 +144,7 @@ private final class MockActionSource: SessionActionSource, SessionTranscriptSour
     }
     func interrupt(sessionId: String) async throws { try record(Call(kind: "interrupt")) }
     func resume(sessionId: String) async throws { try record(Call(kind: "resume")) }
+    func rolloverContext(sessionId: String) async throws { try record(Call(kind: "rollover")) }
     func stopSession(sessionId: String) async throws { try record(Call(kind: "stop")) }
 
     // SessionTranscriptSource — no stream held open.

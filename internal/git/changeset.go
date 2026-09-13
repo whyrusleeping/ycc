@@ -49,6 +49,52 @@ type Changeset struct {
 	baseline *Baseline
 }
 
+// CommitRecovery is the durable identity of a reviewed scoped tree. It contains
+// enough information to recognize and finish a commit whose HEAD update already
+// succeeded, without reconstructing or broadening the changeset after restart.
+type CommitRecovery struct {
+	ChangesetID string   `json:"changeset_id"`
+	BaseCommit  string   `json:"base_commit"`
+	Tree        string   `json:"tree"`
+	Paths       []string `json:"paths"`
+}
+
+// Recovery returns the non-secret, immutable identity needed to resume Commit.
+func (c *Changeset) Recovery() *CommitRecovery {
+	if c == nil {
+		return nil
+	}
+	return &CommitRecovery{
+		ChangesetID: c.ID,
+		BaseCommit:  c.BaseCommit,
+		Tree:        c.Tree,
+		Paths:       append([]string(nil), c.Paths...),
+	}
+}
+
+type commitIdentity struct {
+	Version  int            `json:"version"`
+	Recovery CommitRecovery `json:"recovery"`
+	Message  string         `json:"message"`
+	Commit   string         `json:"commit"`
+}
+
+const commitIdentityVersion = 1
+
+// CommitState describes how far an exact reviewed commit progressed. Created
+// means its identity is durable but HEAD is still at the reviewed parent;
+// installed means HEAD names that commit (index publication may still be
+// pending). Diverged means HEAD definitively contains neither the reviewed
+// commit nor its history, so the compare-and-swap did not install it.
+type CommitState int
+
+const (
+	CommitUncreated CommitState = iota
+	CommitCreated
+	CommitInstalled
+	CommitDiverged
+)
+
 // CaptureBaseline records HEAD, staged state, unstaged state, and untracked
 // files without changing the real index or worktree.
 func (r *Repo) CaptureBaseline() (*Baseline, error) {
@@ -288,12 +334,21 @@ func (r *Repo) Changes(b *Baseline) (*Changeset, error) {
 
 // Commit commits exactly the immutable scoped snapshot. It refuses if the
 // snapshot is stale, runs the normal commit validation hooks against an isolated
-// index, and refuses any hook that changes the reviewed tree. After success,
-// only selected paths are advanced in the real index; unrelated staged/unstaged
-// state is preserved.
+// index, and refuses any hook that changes the reviewed tree. The created commit
+// identity is persisted before HEAD moves, making retries idempotent. After
+// success, only selected paths are advanced in the real index; unrelated state
+// is preserved.
 func (r *Repo) Commit(c *Changeset, message string) (string, error) {
 	if c == nil || c.baseline == nil {
 		return "", fmt.Errorf("explicit changeset is required; whole-tree commits are unsafe")
+	}
+	recovery := c.Recovery()
+	head, err := r.RevParse("HEAD")
+	if err != nil {
+		return "", err
+	}
+	if head != recovery.BaseCommit {
+		return r.RecoverCommit(recovery, message)
 	}
 	current, err := r.Changes(c.baseline)
 	if err != nil {
@@ -305,63 +360,337 @@ func (r *Repo) Commit(c *Changeset, message string) (string, error) {
 	// Use the freshly validated representation below; exported evidence fields on
 	// the caller's value are descriptive and must not influence git mutation.
 	c = current
+	recovery = c.Recovery()
 	if strings.TrimSpace(c.Diff) == "" {
 		return "", fmt.Errorf("nothing to commit in changeset %s", c.ID)
 	}
 
-	indexPath, err := r.indexPath()
+	postPath, indexPath, err := r.preparePostCommitIndex(recovery)
 	if err != nil {
 		return "", err
-	}
-	indexDir := filepath.Dir(indexPath)
-	postIndex, err := os.CreateTemp(indexDir, "ycc-post-index-*")
-	if err != nil {
-		return "", fmt.Errorf("prepare scoped index: %w", err)
-	}
-	postPath := postIndex.Name()
-	if err := postIndex.Close(); err != nil {
-		os.Remove(postPath)
-		return "", fmt.Errorf("prepare scoped index: %w", err)
 	}
 	defer os.Remove(postPath)
-	if err := copyFile(indexPath, postPath); err != nil {
-		return "", fmt.Errorf("preserve index: %w", err)
-	}
-	resetArgs := []string{"reset", "-q", c.Tree, "--"}
-	resetArgs = append(resetArgs, topLiteralPathspecs(c.Paths)...)
-	if _, err := r.runEnv([]string{"GIT_INDEX_FILE=" + postPath}, resetArgs...); err != nil {
-		return "", fmt.Errorf("prepare post-commit index: %w", err)
-	}
-
-	messagePath, err := r.validateCommit(c, message, indexDir)
+	identity, found, err := r.loadCommitIdentity(recovery, message)
 	if err != nil {
 		return "", err
 	}
-	defer os.Remove(messagePath)
-	commitArgs := []string{"commit-tree", c.Tree, "-p", c.BaseCommit}
-	sign, err := r.commitSigningEnabled()
-	if err != nil {
-		return "", fmt.Errorf("read commit signing policy: %w", err)
+	if !found {
+		messagePath, err := r.validateCommit(c, message, filepath.Dir(indexPath))
+		if err != nil {
+			return "", err
+		}
+		defer os.Remove(messagePath)
+		commitArgs := []string{"commit-tree", c.Tree, "-p", c.BaseCommit}
+		sign, err := r.commitSigningEnabled()
+		if err != nil {
+			return "", fmt.Errorf("read commit signing policy: %w", err)
+		}
+		if sign {
+			commitArgs = append(commitArgs, "-S")
+		}
+		commitArgs = append(commitArgs, "-F", messagePath)
+		commit, err := r.run(commitArgs...)
+		if err != nil {
+			return "", fmt.Errorf("create exact changeset commit: %w", err)
+		}
+		identity = &commitIdentity{
+			Version: commitIdentityVersion, Recovery: *recovery,
+			Message: message, Commit: strings.TrimSpace(commit),
+		}
+		if err := r.saveCommitIdentity(identity); err != nil {
+			return "", fmt.Errorf("persist created commit identity: %w", err)
+		}
 	}
-	if sign {
-		commitArgs = append(commitArgs, "-S")
-	}
-	commitArgs = append(commitArgs, "-F", messagePath)
-	commit, err := r.run(commitArgs...)
-	if err != nil {
-		return "", fmt.Errorf("create exact changeset commit: %w", err)
-	}
-	commit = strings.TrimSpace(commit)
 	// Updating HEAD with the reviewed parent as the expected old value is the
-	// compare-and-swap boundary. A concurrent HEAD move leaves both HEAD and the
-	// user's index unchanged.
-	if _, err := r.run("update-ref", "HEAD", commit, c.BaseCommit); err != nil {
-		return "", fmt.Errorf("advance HEAD for changeset %s: %w", c.ID, err)
+	// compare-and-swap boundary. A concurrent unrelated HEAD move leaves both HEAD
+	// and the user's index unchanged; an interrupted retry recognizes identity.Commit.
+	if _, err := r.run("update-ref", "HEAD", identity.Commit, c.BaseCommit); err != nil {
+		if now, parseErr := r.RevParse("HEAD"); parseErr != nil || now != identity.Commit {
+			return "", fmt.Errorf("advance HEAD for changeset %s: %w", c.ID, err)
+		}
 	}
 	if err := os.Rename(postPath, indexPath); err != nil {
-		return "", fmt.Errorf("commit succeeded but could not advance selected paths in index: %w", err)
+		return "", fmt.Errorf("commit %s succeeded but could not advance selected paths in index: %w", shortSHA(identity.Commit), err)
 	}
-	return shortSHA(commit), nil
+	return shortSHA(identity.Commit), nil
+}
+
+// CommitStatus reports whether an exact commit is absent, durably created,
+// installed as HEAD, or definitively uninstalled after HEAD diverged. If the
+// commit is already in a descendant HEAD's history, it returns an error rather
+// than risk overwriting newer work during index recovery.
+func (r *Repo) CommitStatus(recovery *CommitRecovery, message string) (CommitState, string, error) {
+	identity, found, err := r.loadCommitIdentity(recovery, message)
+	if err != nil {
+		return CommitUncreated, "", err
+	}
+	head, err := r.RevParse("HEAD")
+	if err != nil {
+		return CommitUncreated, "", err
+	}
+	if !found {
+		if head != recovery.BaseCommit {
+			// HEAD can only be advanced to this operation's exact commit after its
+			// identity is retained. With no identity, a moved HEAD therefore proves
+			// this finalization was not installed and must not keep the task done.
+			return CommitDiverged, "", nil
+		}
+		return CommitUncreated, "", nil
+	}
+	sha := shortSHA(identity.Commit)
+	switch head {
+	case recovery.BaseCommit:
+		return CommitCreated, sha, nil
+	case identity.Commit:
+		return CommitInstalled, sha, nil
+	default:
+		installedInHistory, ancestorErr := r.IsAncestor(identity.Commit, head)
+		if ancestorErr != nil {
+			return CommitCreated, sha, fmt.Errorf("inspect whether retained commit %s is installed in HEAD history: %w", sha, ancestorErr)
+		}
+		if installedInHistory {
+			// The completed task is committed, but publishing an index snapshot over a
+			// descendant HEAD could overwrite newer work. Keep recovery pending for
+			// explicit inspection rather than pretending either rollback or index
+			// publication is safe.
+			return CommitCreated, sha, fmt.Errorf("changeset %s commit %s is an ancestor of current HEAD %s; inspect descendant work before recovering finalization", recovery.ChangesetID, sha, shortSHA(head))
+		}
+		return CommitDiverged, sha, nil
+	}
+}
+
+// RecoverCommit recognizes the exact persisted commit created for recovery and
+// finishes advancing the selected index paths. It never creates a commit and
+// refuses an unrelated HEAD move.
+func (r *Repo) RecoverCommit(recovery *CommitRecovery, message string) (string, error) {
+	identity, found, err := r.loadCommitIdentity(recovery, message)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", fmt.Errorf("no created commit identity for changeset %s", recoveryID(recovery))
+	}
+	head, err := r.RevParse("HEAD")
+	if err != nil {
+		return "", err
+	}
+	if head != recovery.BaseCommit && head != identity.Commit {
+		return "", fmt.Errorf("changeset %s was not installed at current HEAD %s; expected reviewed parent %s or recovered commit %s", recovery.ChangesetID, shortSHA(head), shortSHA(recovery.BaseCommit), shortSHA(identity.Commit))
+	}
+	postPath, indexPath, err := r.preparePostCommitIndex(recovery)
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(postPath)
+	if head == recovery.BaseCommit {
+		if _, err := r.run("update-ref", "HEAD", identity.Commit, recovery.BaseCommit); err != nil {
+			now, inspectErr := r.RevParse("HEAD")
+			if inspectErr != nil || now != identity.Commit {
+				return "", fmt.Errorf("advance HEAD for recovered changeset %s: %w", recovery.ChangesetID, err)
+			}
+		}
+	}
+	if err := os.Rename(postPath, indexPath); err != nil {
+		return "", fmt.Errorf("commit %s exists but could not advance selected paths in index: %w", shortSHA(identity.Commit), err)
+	}
+	return shortSHA(identity.Commit), nil
+}
+
+func (r *Repo) preparePostCommitIndex(recovery *CommitRecovery) (postPath, indexPath string, err error) {
+	if err := validateRecovery(recovery); err != nil {
+		return "", "", err
+	}
+	indexPath, err = r.indexPath()
+	if err != nil {
+		return "", "", err
+	}
+	postIndex, err := os.CreateTemp(filepath.Dir(indexPath), "ycc-post-index-*")
+	if err != nil {
+		return "", "", fmt.Errorf("prepare scoped index: %w", err)
+	}
+	postPath = postIndex.Name()
+	if err := postIndex.Close(); err != nil {
+		os.Remove(postPath)
+		return "", "", fmt.Errorf("prepare scoped index: %w", err)
+	}
+	if err := copyFile(indexPath, postPath); err != nil {
+		os.Remove(postPath)
+		return "", "", fmt.Errorf("preserve index: %w", err)
+	}
+	resetArgs := []string{"reset", "-q", recovery.Tree, "--"}
+	resetArgs = append(resetArgs, topLiteralPathspecs(recovery.Paths)...)
+	if _, err := r.runEnv([]string{"GIT_INDEX_FILE=" + postPath}, resetArgs...); err != nil {
+		os.Remove(postPath)
+		return "", "", fmt.Errorf("prepare post-commit index: %w", err)
+	}
+	return postPath, indexPath, nil
+}
+
+func validateRecovery(recovery *CommitRecovery) error {
+	if recovery == nil || len(recovery.ChangesetID) != 64 {
+		return fmt.Errorf("valid changeset recovery identity is required")
+	}
+	if _, err := hex.DecodeString(recovery.ChangesetID); err != nil {
+		return fmt.Errorf("invalid changeset recovery identity: %w", err)
+	}
+	for name, object := range map[string]string{"base commit": recovery.BaseCommit, "tree": recovery.Tree} {
+		if len(object) != 40 && len(object) != 64 {
+			return fmt.Errorf("invalid recovery %s %q", name, object)
+		}
+		if _, err := hex.DecodeString(object); err != nil {
+			return fmt.Errorf("invalid recovery %s %q", name, object)
+		}
+	}
+	if !sort.StringsAreSorted(recovery.Paths) {
+		return fmt.Errorf("recovery paths are not sorted")
+	}
+	for _, path := range recovery.Paths {
+		clean := filepath.ToSlash(filepath.Clean(path))
+		if path == "" || clean != path || filepath.IsAbs(path) || path == ".." || strings.HasPrefix(path, "../") {
+			return fmt.Errorf("invalid recovery path %q", path)
+		}
+	}
+	return nil
+}
+
+func recoveryID(recovery *CommitRecovery) string {
+	if recovery == nil {
+		return "<missing>"
+	}
+	return recovery.ChangesetID
+}
+
+func sameRecovery(a, b *CommitRecovery) bool {
+	if a == nil || b == nil || a.ChangesetID != b.ChangesetID || a.BaseCommit != b.BaseCommit || a.Tree != b.Tree || len(a.Paths) != len(b.Paths) {
+		return false
+	}
+	for i := range a.Paths {
+		if a.Paths[i] != b.Paths[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func (r *Repo) commitIdentityPath(changesetID string) (string, error) {
+	if len(changesetID) != 64 {
+		return "", fmt.Errorf("invalid changeset identity %q", changesetID)
+	}
+	if _, err := hex.DecodeString(changesetID); err != nil {
+		return "", fmt.Errorf("invalid changeset identity %q", changesetID)
+	}
+	out, err := r.run("rev-parse", "--git-path", "ycc/commit-recovery/"+changesetID+".json")
+	if err != nil {
+		return "", fmt.Errorf("locate commit recovery record: %w", err)
+	}
+	path := strings.TrimSpace(out)
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(r.Dir, path)
+	}
+	return filepath.Clean(path), nil
+}
+
+func (r *Repo) loadCommitIdentity(recovery *CommitRecovery, message string) (*commitIdentity, bool, error) {
+	if err := validateRecovery(recovery); err != nil {
+		return nil, false, err
+	}
+	path, err := r.commitIdentityPath(recovery.ChangesetID)
+	if err != nil {
+		return nil, false, err
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		// The ref is written first so the commit stays reachable even if the
+		// sidecar write or process is interrupted in between.
+		commit, refErr := r.run("rev-parse", "--verify", "--quiet", commitRecoveryRef(recovery, message))
+		if refErr != nil {
+			return nil, false, nil
+		}
+		identity := &commitIdentity{
+			Version: commitIdentityVersion, Recovery: *recovery,
+			Message: message, Commit: strings.TrimSpace(commit),
+		}
+		if err := r.validateCommitIdentity(identity, recovery, message); err != nil {
+			return nil, false, err
+		}
+		return identity, true, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("read commit recovery record: %w", err)
+	}
+	var identity commitIdentity
+	if err := json.Unmarshal(data, &identity); err != nil {
+		return nil, false, fmt.Errorf("decode commit recovery record: %w", err)
+	}
+	if err := r.validateCommitIdentity(&identity, recovery, message); err != nil {
+		return nil, false, err
+	}
+	return &identity, true, nil
+}
+
+func (r *Repo) validateCommitIdentity(identity *commitIdentity, recovery *CommitRecovery, message string) error {
+	if identity.Version != commitIdentityVersion || identity.Message != message || !sameRecovery(&identity.Recovery, recovery) {
+		return fmt.Errorf("commit recovery record for changeset %s does not match this commit request", recovery.ChangesetID)
+	}
+	if err := r.requireObject(identity.Commit, "commit"); err != nil {
+		return fmt.Errorf("validate recovered commit: %w", err)
+	}
+	tree, err := r.RevParse(identity.Commit + "^{tree}")
+	if err != nil || tree != recovery.Tree {
+		return fmt.Errorf("recovered commit %s tree does not match reviewed tree %s", shortSHA(identity.Commit), shortSHA(recovery.Tree))
+	}
+	parent, err := r.RevParse(identity.Commit + "^")
+	if err != nil || parent != recovery.BaseCommit {
+		return fmt.Errorf("recovered commit %s parent does not match reviewed base %s", shortSHA(identity.Commit), shortSHA(recovery.BaseCommit))
+	}
+	return nil
+}
+
+func commitRecoveryRef(recovery *CommitRecovery, message string) string {
+	return "refs/ycc/commits/" + recovery.ChangesetID + "/" + snapshotID(message)
+}
+
+func (r *Repo) saveCommitIdentity(identity *commitIdentity) error {
+	if _, err := r.run("update-ref", commitRecoveryRef(&identity.Recovery, identity.Message), identity.Commit); err != nil {
+		return fmt.Errorf("retain created commit: %w", err)
+	}
+	path, err := r.commitIdentityPath(identity.Recovery.ChangesetID)
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(identity)
+	if err != nil {
+		return err
+	}
+	return writeAtomicPrivate(path, append(data, '\n'))
+}
+
+func writeAtomicPrivate(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".recovery-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 // validateCommit runs the hooks that can reject or prepare a normal commit. The

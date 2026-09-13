@@ -295,6 +295,12 @@ func (m *model) renderBody(ev *v1.Event) string {
 			body += "\n" + m.markdown(summary)
 		}
 		return indentLines(body, "  ")
+	case "context_view_changed":
+		summary := dataField(ev, "summary")
+		if w := m.w - lipgloss.Width(bodyBar); w > 0 {
+			summary = wrap.String(wordwrap.String(summary, w), w)
+		}
+		return indentLines(summary, bodyBar)
 	case "session_notice":
 		msg := dataField(ev, "msg")
 		if w := m.w - lipgloss.Width(bodyBar); w > 0 {
@@ -425,6 +431,8 @@ func detailLine(ev *v1.Event) string {
 			parts = append(parts, oneLine(plan, 100))
 		}
 		return strings.Join(parts, " — ")
+	case "context_view_changed":
+		return fmt.Sprintf("context rolled over (%s → %s tokens, %s)", dataField(ev, "old_context_tokens_est"), dataField(ev, "new_context_tokens_est"), dataField(ev, "reason"))
 	case "mode_changed":
 		return dataField(ev, "from") + " → " + dataField(ev, "to")
 	case "session_idle":

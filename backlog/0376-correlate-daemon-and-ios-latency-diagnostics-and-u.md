@@ -1,10 +1,10 @@
 ---
 id: "0376"
 title: Correlate daemon and iOS latency diagnostics and unblock partial home-list display
-status: todo
+status: blocked
 priority: 2
 created: "2026-09-09"
-updated: "2026-09-09"
+updated: "2026-09-10"
 depends_on:
     - "0343"
 spec_refs: []
@@ -23,3 +23,5 @@ Acceptance criteria:
 ## Acceptance criteria
 
 ## Work log
+
+- Preflight: blocked in this workspace by unrelated changes in the required daemon server and iOS `YccClient`, transcript source, and view-model paths. The verified changeset ownership guard refuses editing baseline-dirty paths. No implementation attempted; requires an isolated clean task session or resolution of existing owners' changes before a new baseline. Mac runtime measurement remains an explicit external verification requirement.

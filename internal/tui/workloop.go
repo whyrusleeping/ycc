@@ -92,6 +92,10 @@ func workLoopWaitingStatus(info *v1.WorkLoopInfo) string {
 type loopSessRec struct {
 	id          string
 	focus       string
+	attempt     int32
+	evidence    string
+	errKind     string
+	errMessage  string
 	tokens      int64
 	cost        float64
 	priceStatus string
@@ -106,21 +110,82 @@ type digestTask struct {
 	cost              float64
 	priceStatus       string
 	reason            string
+	attempts          int32
+	latestEvidence    string
+	remainingCriteria string
+	nextStep          string
 }
 
 // loopDigest is the finished, re-openable batch digest surface.
 type loopDigest struct {
-	outcome     string
-	startedAt   time.Time
-	dur         time.Duration
-	sessions    []loopSessRec
-	completed   []digestTask
-	blocked     []digestTask
-	inReview    []digestTask
-	created     []digestTask
-	totalTokens int64
-	totalCost   float64
-	costStatus  string
+	outcome       string
+	startedAt     time.Time
+	dur           time.Duration
+	sessions      []loopSessRec
+	completed     []digestTask
+	blocked       []digestTask
+	inReview      []digestTask
+	created       []digestTask
+	unfinished    []digestTask
+	resourceLines []string
+	totalTokens   int64
+	totalCost     float64
+	costStatus    string
+}
+
+func workLoopResourceLines(info *v1.WorkLoopInfo) []string {
+	if info == nil || !info.ResourceEnvelopeCaptured {
+		return []string{"resource envelope unavailable for this pre-upgrade snapshot"}
+	}
+	limit := func(tokens int64, cost float64, wallSecs int64) string {
+		tokenText := "tokens unbounded"
+		if tokens > 0 {
+			tokenText = commasTUI(tokens) + " tokens"
+		}
+		costText := "cost unbounded"
+		if cost > 0 {
+			costText = fmt.Sprintf("$%.2f priced cost", cost)
+		}
+		timeText := "wall time unbounded"
+		if wallSecs > 0 {
+			timeText = fmtElapsed(time.Duration(wallSecs)*time.Second) + " wall time"
+		}
+		return strings.Join([]string{tokenText, costText, timeText}, " · ")
+	}
+	pricing := "cost-limit pricing semantics unavailable"
+	if info.CostLimitsPricedOnly {
+		pricing = "cost caps/totals count priced models only; tokens count all models"
+	}
+	return []string{
+		"session: " + limit(info.SessionTokenLimit, info.SessionCostLimit, info.SessionTimeLimitSecs),
+		"loop: " + limit(info.LoopTokenLimit, info.LoopCostLimit, info.LoopTimeLimitSecs),
+		pricing,
+		"attempts: no fixed limit; ready work continues until stopped, budget-limited, or blocked",
+	}
+}
+
+func workLoopResourceSummary(info *v1.WorkLoopInfo) string {
+	if info == nil || !info.ResourceEnvelopeCaptured {
+		return "resource envelope unavailable"
+	}
+	compact := func(tokens int64, cost float64, wallSecs int64) string {
+		t := "∞ tok"
+		if tokens > 0 {
+			t = fmtTokens(int(tokens)) + " tok"
+		}
+		c := "∞ cost"
+		if cost > 0 {
+			c = fmt.Sprintf("$%.2f priced", cost)
+		}
+		wall := "∞ wall"
+		if wallSecs > 0 {
+			wall = fmtElapsed(time.Duration(wallSecs)*time.Second) + " wall"
+		}
+		return strings.Join([]string{t, c, wall}, "/")
+	}
+	return fmt.Sprintf("session %s; loop %s; attempts ∞",
+		compact(info.SessionTokenLimit, info.SessionCostLimit, info.SessionTimeLimitSecs),
+		compact(info.LoopTokenLimit, info.LoopCostLimit, info.LoopTimeLimitSecs))
 }
 
 // digestFromWorkLoop maps the daemon's durable loop snapshot onto the existing
@@ -132,6 +197,7 @@ func digestFromWorkLoop(info *v1.WorkLoopInfo) *loopDigest {
 	d := &loopDigest{
 		outcome: info.Outcome, totalTokens: info.TotalTokens,
 		totalCost: info.TotalCost, costStatus: info.CostStatus,
+		resourceLines: workLoopResourceLines(info),
 	}
 	if started, err := time.Parse(time.RFC3339, info.StartedAt); err == nil {
 		d.startedAt = started
@@ -139,8 +205,9 @@ func digestFromWorkLoop(info *v1.WorkLoopInfo) *loopDigest {
 	}
 	for _, s := range info.Sessions {
 		d.sessions = append(d.sessions, loopSessRec{
-			id: s.SessionId, focus: s.Focus, tokens: s.Tokens,
-			cost: s.Cost, priceStatus: s.PriceStatus,
+			id: s.SessionId, focus: s.Focus, attempt: s.Attempt,
+			evidence: s.Evidence, errKind: s.ErrorKind, errMessage: s.ErrorMessage,
+			tokens: s.Tokens, cost: s.Cost, priceStatus: s.PriceStatus,
 		})
 	}
 	mapTasks := func(src []*v1.WorkLoopDigestTask) []digestTask {
@@ -149,7 +216,9 @@ func digestFromWorkLoop(info *v1.WorkLoopInfo) *loopDigest {
 			out = append(out, digestTask{
 				id: t.Id, title: t.Title, status: t.Status, sha: t.Sha,
 				verdictTally: t.VerdictTally, tokens: t.Tokens, cost: t.Cost,
-				priceStatus: t.PriceStatus, reason: t.Reason,
+				priceStatus: t.PriceStatus, reason: t.Reason, attempts: t.Attempts,
+				latestEvidence: t.LatestEvidence, remainingCriteria: t.RemainingCriteria,
+				nextStep: t.NextStep,
 			})
 		}
 		return out
@@ -158,6 +227,7 @@ func digestFromWorkLoop(info *v1.WorkLoopInfo) *loopDigest {
 	d.blocked = mapTasks(info.Blocked)
 	d.inReview = mapTasks(info.InReview)
 	d.created = mapTasks(info.Created)
+	d.unfinished = mapTasks(info.Unfinished)
 	return d
 }
 
@@ -185,6 +255,30 @@ func (m model) digestRows() (rows []browserRow, nav []string) {
 	add(dimStyle.Render(fmt.Sprintf("%d session(s) · %s", len(d.sessions), fmtElapsed(d.dur))), "", "")
 	add(dimStyle.Render(fmt.Sprintf("total: %s tok · %s", commasTUI(d.totalTokens),
 		costCellTUI(&v1.UsageRow{Cost: d.totalCost, PriceStatus: d.costStatus}))), "", "")
+	add(dimStyle.Render("resource envelope"), "", "")
+	for _, line := range d.resourceLines {
+		add(dimStyle.Render(line), "", "")
+	}
+	if len(d.sessions) > 0 {
+		add(dimStyle.Render(fmt.Sprintf("attempts (%d)", len(d.sessions))), "", "")
+		for _, s := range d.sessions {
+			label := s.focus
+			if label == "" {
+				label = shortSHA(s.id)
+			}
+			if s.attempt > 0 {
+				label += fmt.Sprintf(" attempt %d", s.attempt)
+			}
+			if s.errKind != "" {
+				label += " failed (" + s.errKind + ")"
+			}
+			evidence := s.evidence
+			if evidence == "" {
+				evidence = s.errMessage
+			}
+			add("↻ "+label, "  "+dimStyle.Render(oneLine(evidence, 72)), s.focus)
+		}
+	}
 
 	section := func(title, marker string, tasks []digestTask, suf func(digestTask) string) {
 		if len(tasks) == 0 {
@@ -198,6 +292,22 @@ func (m model) digestRows() (rows []browserRow, nav []string) {
 	tokCost := func(t digestTask) string {
 		return fmt.Sprintf("%s tok · %s", commasTUI(t.tokens),
 			costCellTUI(&v1.UsageRow{Cost: t.cost, PriceStatus: t.priceStatus}))
+	}
+	actionable := func(t digestTask) string {
+		parts := []string{}
+		if t.attempts > 0 {
+			parts = append(parts, fmt.Sprintf("%d attempt(s)", t.attempts))
+		}
+		if t.latestEvidence != "" {
+			parts = append(parts, "latest: "+oneLine(t.latestEvidence, 48))
+		}
+		if t.remainingCriteria != "" {
+			parts = append(parts, "remaining: "+oneLine(t.remainingCriteria, 48))
+		}
+		if t.nextStep != "" {
+			parts = append(parts, "next: "+oneLine(t.nextStep, 48))
+		}
+		return strings.Join(parts, " · ")
 	}
 	section("completed", "✔", d.completed, func(t digestTask) string {
 		parts := []string{}
@@ -215,13 +325,23 @@ func (m model) digestRows() (rows []browserRow, nav []string) {
 		if reason == "" {
 			reason = "(no reason recorded — open to view)"
 		}
-		return "  " + dimStyle.Render(oneLine(reason, 60))
+		if context := actionable(t); context != "" {
+			reason += " · " + context
+		}
+		return "  " + dimStyle.Render(oneLine(reason, 120))
 	})
-	section("in_review / unfinished", "◌", d.inReview, func(t digestTask) string {
+	section("in review", "◌", d.inReview, func(t digestTask) string {
 		return "  " + dimStyle.Render(tokCost(t))
 	})
+	section("unfinished", "↻", d.unfinished, func(t digestTask) string {
+		return "  " + dimStyle.Render(oneLine(actionable(t), 120))
+	})
 	section("created during run", "+", d.created, func(t digestTask) string {
-		return "  " + dimStyle.Render(t.status)
+		parts := []string{t.status}
+		if context := actionable(t); context != "" {
+			parts = append(parts, context)
+		}
+		return "  " + dimStyle.Render(oneLine(strings.Join(parts, " · "), 120))
 	})
 	return rows, nav
 }

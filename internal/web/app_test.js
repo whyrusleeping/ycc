@@ -280,6 +280,29 @@ test("feedIngest: question_answered clears the pending gate", function () {
   assert.strictEqual(feed.pending, null);
 });
 
+test("feedIngest: repeated overflow disables rollover until coordinator identity changes", function () {
+  var feed = w.makeFeed();
+  w.feedIngest(feed, { seq: "1", actor: "coordinator", type: "session_started", dataJson: JSON.stringify({ coordinator: "small" }) });
+  assert.strictEqual(feed.rolloverAvailable, true);
+  w.feedIngest(feed, { seq: "2", actor: "coordinator", type: "session_error", dataJson: JSON.stringify({ action: "switch_model", kind: "context_length" }) });
+  assert.strictEqual(feed.rolloverAvailable, false);
+  w.feedIngest(feed, { seq: "3", actor: "coordinator", type: "role_config_changed", dataJson: JSON.stringify({ implementer: "other" }) });
+  assert.strictEqual(feed.rolloverAvailable, false);
+  w.feedIngest(feed, { seq: "4", actor: "coordinator", type: "role_config_changed", dataJson: JSON.stringify({ coordinator: "small" }) });
+  assert.strictEqual(feed.rolloverAvailable, false);
+  w.feedIngest(feed, { seq: "5", actor: "coordinator", type: "role_config_changed", dataJson: JSON.stringify({ coordinator: "larger" }) });
+  assert.strictEqual(feed.rolloverAvailable, true);
+});
+
+test("feedIngest: paused lifecycle gates context rollover", function () {
+  var feed = w.makeFeed();
+  assert.strictEqual(feed.paused, false);
+  w.feedIngest(feed, { seq: "1", actor: "coordinator", type: "interrupted", dataJson: "{}" });
+  assert.strictEqual(feed.paused, true);
+  w.feedIngest(feed, { seq: "2", actor: "coordinator", type: "resumed", dataJson: "{}" });
+  assert.strictEqual(feed.paused, false);
+});
+
 test("feedIngest: terminal events clear the pending gate", function () {
   ["session_idle", "session_error", "session_stopped"].forEach(function (t, i) {
     var feed = w.makeFeed();

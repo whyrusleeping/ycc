@@ -249,6 +249,53 @@ func TestCommitRefusesContentStagedByHook(t *testing.T) {
 	}
 }
 
+func TestCommitRetryRecognizesPersistedCommitIdentity(t *testing.T) {
+	r, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedTracked(t, r, map[string]string{"task.txt": "old\n"})
+	baseline, err := r.CaptureBaseline()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(r.Dir, "task.txt"), "new\n")
+	changes, err := r.Changes(baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(r.Dir, ".git", "hook-count")
+	hook := filepath.Join(r.Dir, ".git", "hooks", "pre-commit")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\necho run >> \""+marker+"\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	first, err := r.Commit(changes, "idempotent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identityPath, err := r.commitIdentityPath(changes.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(identityPath); err != nil {
+		t.Fatal(err)
+	}
+	second, err := r.Commit(changes, "idempotent")
+	if err != nil {
+		t.Fatalf("retry committed changeset: %v", err)
+	}
+	if second != first {
+		t.Fatalf("retry commit = %s, want %s", second, first)
+	}
+	data, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(data), "run") != 1 {
+		t.Fatalf("commit validation reran after commit identity was durable: %q", data)
+	}
+}
+
 func TestCommitHookRejectionLeavesHeadAndIndexUnchanged(t *testing.T) {
 	r, err := Open(t.TempDir())
 	if err != nil {

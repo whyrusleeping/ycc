@@ -243,9 +243,10 @@ type model struct {
 	// is currently awaiting an answer; 0 when none. It lets the transcript row
 	// collapse to a pointer while the footer picker shows the same prompt, so
 	// the question is never rendered twice on screen at once.
-	pendingSeq int64
-	status     string
-	paused     bool // session is paused-to-steer
+	pendingSeq          int64
+	status              string
+	paused              bool // session is paused-to-steer
+	rolloverUnavailable bool // terminal compact overflow requires a coordinator model change
 
 	// live status-bar state: a running per-model token tally summed
 	// from model_turn usage blocks, per-model pricing surfaced via ListModels, the
@@ -1188,13 +1189,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.loopSeq++
 			}
 			if msg.alreadyRunning {
-				m.status = "loop already running — attached"
+				m.status = "loop already running — attached · " + workLoopResourceSummary(msg.info)
 			} else if msg.info.State == "waiting" {
 				m.status = workLoopWaitingStatus(msg.info)
 			} else if msg.info.State == "stopping" {
 				m.status = "loop stopping: current task finishes, next not picked"
 			} else if !wasLooping {
-				m.status = "loop started"
+				m.status = "loop started · " + workLoopResourceSummary(msg.info)
 			}
 			cmds := []tea.Cmd{m.loopRefreshTick()}
 			if msg.info.State == "waiting" {

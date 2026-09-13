@@ -387,6 +387,14 @@ public final class YccClient: Sendable {
         try unary(await generated.resume(request: request))
     }
 
+    /// Select a compact, durable coordinator context at the next safe checkpoint.
+    public func rolloverContext(sessionId: String) async throws {
+        var request = Ycc_V1_ResumeRequest()
+        request.sessionID = sessionId
+        request.rollover = true
+        try unary(await generated.resume(request: request))
+    }
+
     /// Hard-terminate a session (`StopSession`) — no resume.
     public func stopSession(sessionId: String) async throws {
         var request = Ycc_V1_StopSessionRequest()

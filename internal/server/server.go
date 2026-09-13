@@ -414,12 +414,18 @@ func (s *Server) Interrupt(_ context.Context, req *connect.Request[v1.InterruptR
 
 // Resume continues a paused session (optionally after SendInput corrections),
 // continuing the same loop/conversation.
-func (s *Server) Resume(_ context.Context, req *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error) {
+func (s *Server) Resume(ctx context.Context, req *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error) {
 	sess, ok := s.mgr.Get(req.Msg.SessionId)
 	if !ok {
 		return nil, connect.NewError(connect.CodeNotFound, errNoSession)
 	}
-	if err := sess.Resume(); err != nil {
+	var err error
+	if req.Msg.Rollover {
+		err = sess.Rollover(ctx)
+	} else {
+		err = sess.Resume()
+	}
+	if err != nil {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
 	}
 	return connect.NewResponse(&v1.ResumeResponse{}), nil
@@ -1298,29 +1304,40 @@ func workLoopToProto(wl *session.WorkLoop) *v1.WorkLoopInfo {
 		resumeAt = wl.ResumeAt.UTC().Format(time.RFC3339)
 	}
 	info := &v1.WorkLoopInfo{
-		LoopId:           wl.LoopID,
-		Project:          wl.Project,
-		State:            wl.State,
-		CurrentSessionId: wl.CurrentSessionID,
-		Outcome:          wl.Outcome,
-		StartedAt:        startedAt,
-		ResumeAt:         resumeAt,
-		WaitKind:         wl.WaitKind,
-		SessionsRun:      int32(wl.SessionsRun),
-		TotalTokens:      wl.TotalTokens,
-		TotalCost:        wl.TotalCost,
-		CostStatus:       wl.CostStatus,
+		LoopId:                   wl.LoopID,
+		Project:                  wl.Project,
+		State:                    wl.State,
+		CurrentSessionId:         wl.CurrentSessionID,
+		Outcome:                  wl.Outcome,
+		StartedAt:                startedAt,
+		ResumeAt:                 resumeAt,
+		WaitKind:                 wl.WaitKind,
+		SessionsRun:              int32(wl.SessionsRun),
+		TotalTokens:              wl.TotalTokens,
+		TotalCost:                wl.TotalCost,
+		CostStatus:               wl.CostStatus,
+		SessionTokenLimit:        wl.SessionTokenLimit,
+		SessionCostLimit:         wl.SessionCostLimit,
+		SessionTimeLimitSecs:     wl.SessionTimeLimitSecs,
+		LoopTokenLimit:           wl.LoopTokenLimit,
+		LoopCostLimit:            wl.LoopCostLimit,
+		LoopTimeLimitSecs:        wl.LoopTimeLimitSecs,
+		CostLimitsPricedOnly:     wl.CostLimitsPricedOnly,
+		ResourceEnvelopeCaptured: wl.ResourceEnvelopeCaptured,
 	}
 	for _, sn := range wl.Sessions {
 		info.Sessions = append(info.Sessions, &v1.WorkLoopSession{
-			SessionId: sn.SessionID, Focus: sn.Focus, Tokens: sn.Tokens,
-			Cost: sn.Cost, PriceStatus: sn.PriceStatus, DurationSecs: sn.DurationSecs,
+			SessionId: sn.SessionID, Focus: sn.Focus, Attempt: int32(sn.Attempt),
+			Evidence: sn.Evidence, ErrorKind: sn.ErrorKind, ErrorMessage: sn.ErrorMessage,
+			ErrorRetryable: sn.ErrorRetryable, Tokens: sn.Tokens, Cost: sn.Cost,
+			PriceStatus: sn.PriceStatus, DurationSecs: sn.DurationSecs,
 		})
 	}
 	info.Completed = digestTasksToProto(wl.Completed)
 	info.Blocked = digestTasksToProto(wl.Blocked)
 	info.InReview = digestTasksToProto(wl.InReview)
 	info.Created = digestTasksToProto(wl.Created)
+	info.Unfinished = digestTasksToProto(wl.Unfinished)
 	return info
 }
 
@@ -1333,7 +1350,9 @@ func digestTasksToProto(tasks []session.WorkLoopDigestTask) []*v1.WorkLoopDigest
 		out = append(out, &v1.WorkLoopDigestTask{
 			Id: t.ID, Title: t.Title, Status: t.Status, Sha: t.SHA,
 			VerdictTally: t.VerdictTally, Tokens: t.Tokens, Cost: t.Cost,
-			PriceStatus: t.PriceStatus, Reason: t.Reason,
+			PriceStatus: t.PriceStatus, Reason: t.Reason, Attempts: int32(t.Attempts),
+			LatestEvidence: t.LatestEvidence, RemainingCriteria: t.RemainingCriteria,
+			NextStep: t.NextStep,
 		})
 	}
 	return out

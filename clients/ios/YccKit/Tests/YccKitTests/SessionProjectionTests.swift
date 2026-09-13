@@ -814,6 +814,31 @@ final class SessionProjectionTests: XCTestCase {
         XCTAssertEqual(proj.phase, .stopped)
     }
 
+    func testRepeatedContextOverflowDisablesRolloverUntilCoordinatorIdentityChanges() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(
+            seq: 1, type: "session_started",
+            dataJson: #"{"coordinator":"small"}"#))
+        XCTAssertTrue(proj.rolloverAvailable)
+        proj.apply(makeEvent(
+            seq: 2, type: "session_error",
+            dataJson: #"{"kind":"context_length","action":"switch_model"}"#))
+        XCTAssertFalse(proj.rolloverAvailable)
+
+        proj.apply(makeEvent(
+            seq: 3, type: "role_config_changed",
+            dataJson: #"{"implementer":"other"}"#))
+        XCTAssertFalse(proj.rolloverAvailable)
+        proj.apply(makeEvent(
+            seq: 4, type: "role_config_changed",
+            dataJson: #"{"coordinator":"small"}"#))
+        XCTAssertFalse(proj.rolloverAvailable)
+        proj.apply(makeEvent(
+            seq: 5, type: "role_config_changed",
+            dataJson: #"{"coordinator":"larger-context"}"#))
+        XCTAssertTrue(proj.rolloverAvailable)
+    }
+
     func testPausedSteerStaysPausedUntilResumeThenReferencedDeliveryResolvesIt() {
         var proj = SessionProjection()
         proj.apply(makeEvent(seq: 1, type: "interrupted"))

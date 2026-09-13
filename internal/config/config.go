@@ -702,9 +702,8 @@ type GC struct {
 	LogRetentionDays   int `toml:"log_retention_days,omitempty"`
 }
 
-// Budget configures optional spend caps. Session caps are
-// enforced daemon-side at safe checkpoints; loop caps are enforced client-side by
-// the TUI work-loop driver via GetBudget. Every field defaults to 0 meaning
+// Budget configures optional spend caps. Session and unattended work-loop caps
+// are enforced daemon-side at safe checkpoints. Every field defaults to 0 meaning
 // "unlimited" so an absent [budget] block preserves the current no-ceiling
 // behaviour. Cost caps are in US dollars; token caps count total tokens. A model
 // with no configured pricing contributes tokens but no dollars, so it can

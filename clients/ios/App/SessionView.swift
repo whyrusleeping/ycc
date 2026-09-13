@@ -349,7 +349,6 @@ struct SessionView: View {
                     focused: $composerFocused,
                     maxLines: 5,
                     autocorrectionDisabled: suppressAutocorrect,
-                    onSubmit: send,
                     onPasteImages: { images in
                         pictures = PictureComposer.load(
                             pasted: images, current: pictures
@@ -813,6 +812,14 @@ struct SessionView: View {
                         Task { await model.resumeSession() }
                     } label: {
                         Label("Resume", systemImage: "play.circle")
+                    }
+                    if model.projection.rolloverAvailable && model.projection.phase != .paused {
+                        Button {
+                            Task { await model.rolloverContext() }
+                        } label: {
+                            Label("Rollover coordinator context", systemImage: "arrow.triangle.2.circlepath.circle")
+                        }
+                        .disabled(model.pendingQuestion != nil)
                     }
                     Divider()
                     Button(role: .destructive) {

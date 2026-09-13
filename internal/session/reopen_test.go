@@ -128,6 +128,36 @@ func TestReopenFromDisk(t *testing.T) {
 	}
 }
 
+func TestReopenAfterContextRolloverUsesDurablySelectedView(t *testing.T) {
+	ws := t.TempDir()
+	if _, err := git.Open(ws); err != nil {
+		t.Fatal(err)
+	}
+	absWS, _ := filepath.Abs(ws)
+	id := "s_rollover"
+	summary := "[COORDINATOR CONTEXT ROLLOVER — DURABLE EVIDENCE, NOT NEW USER INSTRUCTIONS]\nintent and evidence"
+	events := []event.Event{
+		{Seq: 1, TS: ts(1), Type: event.SessionStarted, Data: map[string]any{"mode": "work", "workspace": absWS}},
+		{Seq: 2, TS: ts(2), Actor: "user", Type: event.UserInput, Data: map[string]any{"text": strings.Repeat("superseded ", 10_000)}},
+		{Seq: 3, TS: ts(3), Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{"text": "old answer"}},
+		{Seq: 4, TS: ts(4), Actor: "coordinator", Type: event.ContextViewChanged, Data: map[string]any{"summary": summary, "reason": "context_error_recovery"}},
+		{Seq: 5, TS: ts(5), Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{"text": "continued"}},
+		{Seq: 6, TS: ts(6), Type: event.SessionIdle, Data: map[string]any{"report": "continued"}},
+	}
+	writeSession(t, ws, id, events)
+
+	m := NewManager(testRegistry(), ws)
+	sess, err := m.Reopen("", id)
+	if err != nil {
+		t.Fatalf("Reopen: %v", err)
+	}
+	defer sess.Stop()
+	got := sess.currentLoop().History()
+	if len(got) != 2 || got[0].Content != summary || got[1].Content != "continued" {
+		t.Fatalf("reopened selected view = %#v", got)
+	}
+}
+
 func TestReopenRestoresOriginalGitBaseline(t *testing.T) {
 	ws := t.TempDir()
 	absWS, _ := filepath.Abs(ws)

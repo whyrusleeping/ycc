@@ -39,6 +39,7 @@ final class WorkLoopModelTests: XCTestCase {
         completed: [Ycc_V1_WorkLoopDigestTask] = [],
         blocked: [Ycc_V1_WorkLoopDigestTask] = [],
         inReview: [Ycc_V1_WorkLoopDigestTask] = [],
+        unfinished: [Ycc_V1_WorkLoopDigestTask] = [],
         created: [Ycc_V1_WorkLoopDigestTask] = [],
         resumeAt: String = "",
         waitKind: String = ""
@@ -51,6 +52,7 @@ final class WorkLoopModelTests: XCTestCase {
         value.completed = completed
         value.blocked = blocked
         value.inReview = inReview
+        value.unfinished = unfinished
         value.created = created
         value.resumeAt = resumeAt
         value.waitKind = waitKind
@@ -180,12 +182,43 @@ final class WorkLoopModelTests: XCTestCase {
             state: "finished",
             completed: [task("done")],
             blocked: [task("blocked", reason: "dependency missing")],
+            unfinished: [task("unfinished")],
             created: [task("new")])
 
         let sections = WorkLoopModel.digestSections(for: value)
 
-        XCTAssertEqual(sections.flatMap(\.rows).map(\.id), ["done", "blocked", "new"])
+        XCTAssertEqual(sections.flatMap(\.rows).map(\.id), ["done", "blocked", "unfinished", "new"])
         XCTAssertEqual(sections[1].rows[0].reason, "dependency missing")
+    }
+
+    func testResourceEnvelopeMakesBoundedAndUnboundedDimensionsExplicit() {
+        var value = loop(state: "running")
+        value.sessionTokenLimit = 12_000
+        value.sessionCostLimit = 1.25
+        value.loopTokenLimit = 100_000
+        value.loopCostLimit = 8.5
+        value.costLimitsPricedOnly = true
+        value.resourceEnvelopeCaptured = true
+
+        XCTAssertEqual(WorkLoopModel.resourceEnvelopeLines(for: value), [
+            "Session: 12.0k tokens · $1.25 priced cost · wall time unbounded",
+            "Loop: 100.0k tokens · $8.50 priced cost · wall time unbounded",
+            "Cost caps and totals count priced models only; tokens count all models.",
+            "Attempts: no fixed limit; ready work continues until stopped, budget-limited, or blocked.",
+        ])
+
+        value = loop(state: "running")
+        XCTAssertEqual(WorkLoopModel.resourceEnvelopeLines(for: value), [
+            "Resource envelope unavailable for this pre-upgrade snapshot.",
+        ])
+        value.costLimitsPricedOnly = true
+        value.resourceEnvelopeCaptured = true
+        XCTAssertEqual(WorkLoopModel.resourceEnvelopeLines(for: value), [
+            "Session: tokens unbounded · cost unbounded · wall time unbounded",
+            "Loop: tokens unbounded · cost unbounded · wall time unbounded",
+            "Cost caps and totals count priced models only; tokens count all models.",
+            "Attempts: no fixed limit; ready work continues until stopped, budget-limited, or blocked.",
+        ])
     }
 
     func testUnknownStateDoesNotCrash() {

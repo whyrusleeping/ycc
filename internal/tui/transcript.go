@@ -134,6 +134,12 @@ func sessionErrorHead(ev *v1.Event) string {
 		head += " — check the model's API key / credentials"
 	case "rate_limit", "overloaded", "server", "timeout", "network":
 		head += " — transient; sending a message retries the turn"
+	case "context_length":
+		if dataField(ev, "action") == "switch_model" {
+			head += " — compact context also overflowed; switch coordinator to a larger-context model"
+		} else {
+			head += " — use context rollover at a safe checkpoint"
+		}
 	}
 	return head
 }
@@ -170,6 +176,10 @@ func (m *model) appendEvent(ev *v1.Event) {
 		}
 	}
 	switch ev.Type {
+	case "session_started":
+		if name := dataField(ev, "coordinator"); name != "" {
+			m.roleCoord = name
+		}
 	case "model_turn":
 		// A coordinator turn identifies the model that actually produced it. Keep
 		// the top bar aligned with recorded reality (especially when replaying a
@@ -316,6 +326,9 @@ func (m *model) appendEvent(ev *v1.Event) {
 		}
 	case "session_error":
 		m.status = "error"
+		if dataField(ev, "action") == "switch_model" {
+			m.rolloverUnavailable = true
+		}
 		// A failed turn ends any in-progress stream: drop the actor's live tail so
 		// no stale streamed text lingers below the error, and drop any
 		// pending retry note (the failure is now durable).
@@ -343,6 +356,9 @@ func (m *model) appendEvent(ev *v1.Event) {
 		}
 	case "role_config_changed":
 		if c := dataField(ev, "coordinator"); c != "" {
+			if c != m.roleCoord {
+				m.rolloverUnavailable = false
+			}
 			m.roleCoord = c
 		}
 		if i := dataField(ev, "implementer"); i != "" {

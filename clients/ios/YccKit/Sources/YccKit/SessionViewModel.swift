@@ -499,6 +499,14 @@ public final class SessionViewModel {
         }
     }
 
+    /// Durably compact the coordinator context at a safe checkpoint. The daemon
+    /// rejects this without changing history when authority cannot fit safely.
+    public func rolloverContext() async {
+        await perform("context rollover") { actions in
+            try await actions.rolloverContext(sessionId: self.sessionID)
+        }
+    }
+
     /// Retry after a session error (an LLM API failure that exhausted the
     /// daemon's automatic retries). This reuses the `Resume` RPC — on the daemon
     /// a `Resume` of an errored, idle session re-runs the failed turn on the

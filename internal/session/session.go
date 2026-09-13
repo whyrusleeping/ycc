@@ -43,6 +43,9 @@ type Config struct {
 	Mode       string
 	Unattended bool
 	Prompt     string
+	// loopContinuation is daemon-generated context, seeded separately from the
+	// opening user input so a prior model report is never echoed as user intent.
+	loopContinuation string
 	// Project, when set, names a registered project whose workspace is used,
 	// overriding Workspace.
 	Project string
@@ -79,9 +82,10 @@ type Session struct {
 	coordinatorExplicit bool // StartSession coordinator_model won over any preset binding
 	// startupNotice is emitted as a visible, non-fatal event after the session
 	// lifecycle marker (used when a stale preset binding falls back safely).
-	startupNotice  string
-	startupPreload orchestrator.ExplicitTaskPreload
-	buildLoop      func(mode, prompt string) (*engine.Loop, error)
+	startupNotice    string
+	loopContinuation string // startup-only synthetic context, recorded for replay
+	startupPreload   orchestrator.ExplicitTaskPreload
+	buildLoop        func(mode, prompt string) (*engine.Loop, error)
 
 	// promptImages are pictures attached to the OPENING prompt. The bytes seed the
 	// first loop's history exactly once and are retained separately for transcript
@@ -108,8 +112,12 @@ type Session struct {
 	// the existing history (no new user message). Unbuffered so a Retry while the
 	// loop is running/paused is a harmless no-op (nothing is receiving).
 	retryCh chan struct{}
-	ctx     context.Context
-	cancel  context.CancelFunc
+	// rolloverCh serializes explicit context-view changes through the run owner.
+	// The same channel is consumed by an in-flight loop checkpoint and by the idle
+	// run wait, so no RPC goroutine can replace history concurrently with input.
+	rolloverCh chan *rolloverRequest
+	ctx        context.Context
+	cancel     context.CancelFunc
 
 	// stopOnce guards Stop so a hard terminate runs at most once even if both a
 	// StopSession RPC and a manager teardown race to call it.
@@ -163,13 +171,18 @@ type Session struct {
 	// to wake. running is true while the agent loop's Run is executing, so a
 	// mid-run SendInput is queued as a correction (steer-by-default) and delivered
 	// at the next safe checkpoint rather than waiting for the run to finish.
-	steerMu     sync.Mutex
-	pauseReq    bool
-	paused      bool
-	running     bool
-	resumeReq   bool
-	corrections []correction
-	resumeCh    chan struct{}
+	steerMu         sync.Mutex
+	pauseReq        bool
+	paused          bool
+	running         bool
+	resumeReq       bool
+	corrections     []correction
+	resumeCh        chan struct{}
+	rolloverPending bool // explicit request accepted; idle input is queued until its durable view boundary
+
+	// contextSummary is a test seam; nil uses the deterministic durable-evidence
+	// summary builder.
+	contextSummary contextSummaryBuilder
 }
 
 // correction is a steered-in user message buffered until the next checkpoint (or
@@ -406,6 +419,9 @@ func (s *Session) SendInputMessage(input engine.UserMessage) error {
 	if s.Refused() {
 		return fmt.Errorf("the model's provider refused the last turn (safety classifier); sending another message would be refused too — switch the coordinator to a different model (retries automatically) or retry the turn")
 	}
+	if s.contextModelSwitchRequired() {
+		return fmt.Errorf("the compact coordinator context still exceeds this model's window; switch the coordinator to a model with a larger context window before sending more input")
+	}
 	if len(input.Images) > 0 && s.inter.pending() {
 		return fmt.Errorf("answer the pending question before sending pictures")
 	}
@@ -422,18 +438,20 @@ func (s *Session) SendInputMessage(input engine.UserMessage) error {
 		}
 		return data
 	}
-	// Classify senders under the same lock as the completion-driven idle-to-run
-	// handoff, so a sender cannot enqueue idle input after that run takes over.
+	// Serialize classification with explicit rollover acceptance. Taking sendMu
+	// before steerMu means a sender is wholly before the selected-view request or
+	// observes rolloverPending and receives a durable delivered event after it;
+	// there is no non-queued user_input stranded immediately before the reset.
 	s.sendMu.Lock()
 	defer s.sendMu.Unlock()
 
-	// Mid-run or paused: buffer as a correction and echo it as queued. A run in
-	// flight drains corrections at its next safe checkpoint; a paused loop drains
-	// them only on an explicit Resume. Either way multiple sends land in FIFO
-	// order because the queued echo (which stamps the seq) and the append happen
-	// together under steerMu. It does NOT auto-resume a paused loop.
+	// Mid-run, paused, or while an idle rollover is being built: buffer as a
+	// correction and echo it as queued. A run drains corrections at its next safe
+	// checkpoint; an idle rollover records their delivery only after its durable
+	// selected-view transition. Multiple sends remain FIFO under steerMu. It does
+	// NOT auto-resume a paused loop.
 	s.steerMu.Lock()
-	if s.paused || s.pauseReq || s.running {
+	if s.paused || s.pauseReq || s.running || s.rolloverPending {
 		if err := s.retainImages(input.Images); err != nil {
 			s.steerMu.Unlock()
 			return err
@@ -788,9 +806,9 @@ func (s *Session) hasLiveJobs() bool {
 // the session run owner, so a wake can never invoke the model concurrently with
 // a turn or with input delivery. Reports are coalesced (every claimable one
 // enters history before the turn starts) and enter as synthetic job-completion
-// context, never as user input. An explicit pause or an unanswered question
-// keeps its boundary: nothing is claimed then, and the report falls back to
-// ordinary checkpoint delivery on the next turn.
+// context, never as user input. An explicit pause, a pending rollover, or an
+// unanswered question keeps its boundary: nothing is claimed then, and the
+// report falls back to ordinary checkpoint delivery on the next turn.
 //
 // sendMu is held across the input sweep, the claim, and the idle→running
 // handoff so an idle sender is wholly before this boundary (its message is
@@ -804,7 +822,7 @@ func (s *Session) resumeForFinishedJobs() (bool, error) {
 	}
 	s.sendMu.Lock()
 	s.steerMu.Lock()
-	held := s.paused || s.pauseReq
+	held := s.paused || s.pauseReq || s.rolloverPending
 	s.steerMu.Unlock()
 	if held || (s.inter != nil && s.inter.pending()) {
 		s.sendMu.Unlock()
@@ -837,24 +855,6 @@ func (s *Session) resumeForFinishedJobs() (bool, error) {
 	return true, nil
 }
 
-// absorbBufferedIdleInputs moves every idle input already accepted at this
-// boundary into live history before the turn that follows it. Their durable
-// user_input events are therefore at or before the boundary, and neither live
-// continuation nor replay appends them a second time. The single idle queue
-// preserves their accepted order.
-func (s *Session) absorbBufferedIdleInputs() bool {
-	absorbed := false
-	for {
-		select {
-		case input := <-s.messageCh:
-			s.currentLoop().PostMessage(input)
-			absorbed = true
-		default:
-			return absorbed
-		}
-	}
-}
-
 // rearmJobWake re-arms the completion check for an idle session that may still
 // be woken. An explicit boundary (a pause taken while idle) consumes the
 // coalescing completion edge without delivering anything, so clearing that
@@ -884,11 +884,7 @@ func (s *Session) deliverCorrections(corr []correction) ([]engine.UserMessage, e
 	messages := make([]engine.UserMessage, 0, len(corr))
 	for _, c := range corr {
 		data := map[string]any{"seq": c.seq, "text": c.message.Text}
-		if len(c.message.Images) > 0 {
-			images := make([]map[string]any, len(c.message.Images))
-			for j, img := range c.message.Images {
-				images[j] = map[string]any{"media_type": img.MediaType, "filename": img.Filename}
-			}
+		if images := imageMetadata(c.message.Images); images != nil {
 			data["images"] = images
 		}
 		s.emitter.EmitAs("user", event.UserInputDelivered, data)
@@ -917,6 +913,10 @@ func (s *Session) Interrupt() error {
 		return fmt.Errorf("session event log failed: %w", err)
 	}
 	s.steerMu.Lock()
+	if s.rolloverPending {
+		s.steerMu.Unlock()
+		return fmt.Errorf("coordinator context rollover is pending; wait for it to finish before pausing")
+	}
 	s.pauseReq = true
 	s.steerMu.Unlock()
 	return nil
@@ -931,6 +931,9 @@ func (s *Session) Interrupt() error {
 func (s *Session) Resume() error {
 	if err := s.logFailure(); err != nil {
 		return fmt.Errorf("session event log failed: %w", err)
+	}
+	if s.contextModelSwitchRequired() {
+		return fmt.Errorf("the compact coordinator context still exceeds this model's window; switch the coordinator to a model with a larger context window instead of retrying the unchanged request")
 	}
 	s.steerMu.Lock()
 	if s.paused {
@@ -1394,8 +1397,10 @@ func (s *Session) reviewTiers() []orchestrator.ReviewTierInfo {
 
 func (s *Session) run() {
 	// Kill every background job when the coordinator loop's lifetime ends, so a
-	// session leaves no orphan processes.
+	// session leaves no orphan processes. Also release an RPC waiting on a rollover
+	// request that cancellation prevented this owner from reaching.
 	defer s.killJobs()
+	defer s.rejectPendingRollover(fmt.Errorf("session %s ended before context rollover", s.ID))
 	if s.resumed {
 		// Reopened session ("resume = replay"): the loop already
 		// carries a history reconstructed from the existing log, so do NOT emit a
@@ -1420,14 +1425,30 @@ func (s *Session) run() {
 		// backends reject with a 400 invalid_request_error.
 		if !s.currentLoop().PendingResponse() {
 			s.setStatus(event.StatusIdle)
-			select {
-			case input := <-s.messageCh:
-				if s.ctx.Err() != nil {
+		waitReopened:
+			for {
+				select {
+				case input := <-s.messageCh:
+					if s.ctx.Err() != nil {
+						return
+					}
+					s.currentLoop().PostMessage(input)
+					break waitReopened
+				case req := <-s.rolloverCh:
+					absorbed := s.absorbBufferedIdleInputs()
+					rErr := s.performRolloverRequest(req, "explicit")
+					var released bool
+					released, rErr = s.releaseRolloverInputs(rErr, absorbed)
+					req.complete(rErr)
+					if rErr == nil {
+						s.emitter.Emit(event.Resumed, map[string]any{"reason": "context_rollover"})
+					}
+					if rErr == nil || absorbed || released {
+						break waitReopened
+					}
+				case <-s.ctx.Done():
 					return
 				}
-				s.currentLoop().PostMessage(input)
-			case <-s.ctx.Done():
-				return
 			}
 		}
 	} else {
@@ -1458,6 +1479,9 @@ func (s *Session) run() {
 			initial["images"] = meta
 		}
 		s.emitter.EmitAs("user", event.UserInput, initial)
+		if s.loopContinuation != "" {
+			s.emitter.Emit(event.LoopContinuation, map[string]any{"text": s.loopContinuation})
+		}
 		// When the opening prompt named one existing task, Start already executed
 		// the routine backlog reads and appended their synthetic exchange to model
 		// history. Record that exact exchange immediately after the real user input
@@ -1468,6 +1492,7 @@ func (s *Session) run() {
 		}
 	}
 
+	contextRecoveryUsed := false
 	for {
 		if s.ctx.Err() != nil {
 			return
@@ -1481,6 +1506,7 @@ func (s *Session) run() {
 		s.running = true
 		s.steerMu.Unlock()
 		res, err := s.currentLoop().Run(s.ctx)
+		rolloverInputReady := false
 		// jobWake gates completion-driven continuation for THIS iteration's
 		// outcome; only a plain finished turn (set below) enables it.
 		jobWake := false
@@ -1493,7 +1519,45 @@ func (s *Session) run() {
 		if s.ctx.Err() != nil {
 			return
 		}
-		if err != nil {
+		if err == nil {
+			contextRecoveryUsed = false
+		}
+		if err != nil && engine.IsContextLengthError(err) {
+			// The rejected request made no model/tool mutation. Recover at this full-
+			// batch boundary exactly once, and only continue after the smaller selected
+			// view has been durably recorded. An explicit request already queued for this
+			// boundary owns the same single attempt; never apply it and then auto-roll a
+			// second time.
+			if !contextRecoveryUsed {
+				contextRecoveryUsed = true
+				var rolloverErr error
+				select {
+				case req := <-s.rolloverCh:
+					rolloverErr = s.performRolloverRequest(req, "explicit")
+					rolloverInputReady, rolloverErr = s.releaseRolloverInputs(rolloverErr, false)
+					req.complete(rolloverErr)
+				default:
+					absorbed, beginErr := s.beginOwnedRollover()
+					if beginErr != nil {
+						rolloverErr = beginErr
+					} else {
+						rolloverErr = s.performContextRollover(s.ctx, "context_error_recovery")
+						rolloverInputReady, rolloverErr = s.releaseRolloverInputs(rolloverErr, absorbed)
+					}
+				}
+				if rolloverErr == nil {
+					continue
+				}
+				err = fmt.Errorf("%v; automatic context recovery failed: %w", err, rolloverErr)
+			}
+			s.setStatus(event.StatusError)
+			s.rejectPendingRollover(fmt.Errorf("the compact coordinator context still exceeds this model's window; switch the coordinator to a model with a larger context window or start a new session with narrower authorized input"))
+			s.emitter.Emit(event.SessionError, map[string]any{
+				"msg":  err.Error() + "; context cannot be safely reduced further — switch the coordinator to a model with a larger context window or start a new session with narrower authorized input",
+				"kind": string(engine.KindContextLength), "retryable": false,
+				"action": "switch_model",
+			})
+		} else if err != nil {
 			s.setStatus(event.StatusError)
 			// A model-turn failure was already recorded by the engine loop as a
 			// structured session_error (engine.TurnError marks that); emitting it
@@ -1534,6 +1598,9 @@ func (s *Session) run() {
 				}
 				s.Mode = res.NextMode
 				s.setLoop(next)
+				// The completed control result is authoritative. A rollover that
+				// raced it must not replace its handoff or manufacture a mutation turn.
+				s.rejectPendingRollover(fmt.Errorf("coordinator completed a mode handoff before the rollover checkpoint; context was not changed"))
 				continue // run the new mode's loop immediately (its first checkpoint drains any pending corrections)
 			} else {
 				s.emitter.Emit(event.SessionError, map[string]any{"msg": "mode switch failed: " + berr.Error()})
@@ -1561,6 +1628,13 @@ func (s *Session) run() {
 		}
 		if s.logFailure() != nil || s.ctx.Err() != nil {
 			return
+		}
+		// A request that missed Run's final full-turn checkpoint cannot take
+		// precedence over the result just recorded above (finish/block/refusal/error).
+		// Reject it; a later request made while truly idle is handled below.
+		s.rejectPendingRollover(fmt.Errorf("coordinator completed the turn before the rollover checkpoint; context was not changed"))
+		if rolloverInputReady {
+			continue
 		}
 
 		// Steer-by-default race: input that arrived after the run's final
@@ -1613,7 +1687,7 @@ func (s *Session) run() {
 					return
 				}
 				// Re-check at the top: the completion may already have been claimed
-				// by a wait, or delivery may currently be held by a pause.
+				// by a wait, or delivery may currently be held by a pause/rollover.
 			case <-s.retryCh:
 				if s.ctx.Err() != nil {
 					return
@@ -1623,6 +1697,27 @@ func (s *Session) run() {
 				// existing history without injecting a user message.
 				s.emitter.Emit(event.Resumed, map[string]any{})
 				break waitForRun
+			case req := <-s.rolloverCh:
+				if s.ctx.Err() != nil {
+					s.steerMu.Lock()
+					s.rolloverPending = false
+					s.steerMu.Unlock()
+					req.complete(fmt.Errorf("session %s was cancelled before context rollover", s.ID))
+					return
+				}
+				absorbed := s.absorbBufferedIdleInputs()
+				rErr := s.performRolloverRequest(req, "explicit")
+				var released bool
+				released, rErr = s.releaseRolloverInputs(rErr, absorbed)
+				req.complete(rErr)
+				if rErr == nil {
+					s.emitter.Emit(event.Resumed, map[string]any{"reason": "context_rollover"})
+				}
+				// On failure the selected view stays unchanged, but independently
+				// accepted input must still run rather than remain a queued orphan.
+				if rErr == nil || absorbed || released {
+					break waitForRun
+				}
 			case <-s.ctx.Done():
 				return
 			}
@@ -2064,6 +2159,10 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 	loop, err := s.buildLoop(mode, prompt)
 	if err != nil {
 		return nil, err
+	}
+	if cfg.loopContinuation != "" {
+		s.loopContinuation = cfg.loopContinuation
+		loop.Seed(cfg.loopContinuation)
 	}
 	// A specific task id in a work-session prompt makes the coordinator's first
 	// list_backlog/get_task calls deterministic. Execute and seed them now, after
@@ -2517,6 +2616,7 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 		resumed:     resumed,
 		messageCh:   make(chan engine.UserMessage, 64),
 		retryCh:     make(chan struct{}),
+		rolloverCh:  make(chan *rolloverRequest, 1),
 		ctx:         ctx,
 		cancel:      cancel,
 		status:      event.StatusRunning,
@@ -2567,6 +2667,7 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 			System: sys, Tools: reg, Emitter: emitter, ContextWindow: contextWindow,
 			MaxTok: m.reg.MaxTokens(), MaxTurns: m.reg.MaxTurns(), Retry: m.reg.RetryPolicy(),
 			Thinking: th.Thinking, Effort: th.Effort, ThinkingDisplay: th.ThinkingDisplay,
+			ContextLengthHandled: true,
 		}
 		loop.Steer = s
 		// Mode transitions and Start always pass a non-empty seed; reopen passes

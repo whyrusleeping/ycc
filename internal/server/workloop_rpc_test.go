@@ -50,7 +50,7 @@ func TestWorkLoopToProto(t *testing.T) {
 		WaitKind:         "rate_limit",
 		SessionsRun:      2,
 		Sessions: []session.WorkLoopSession{
-			{SessionID: "s1", Focus: "0001", Tokens: 100, Cost: 0.01, PriceStatus: "priced", DurationSecs: 372},
+			{SessionID: "s1", Focus: "0001", Attempt: 2, Evidence: "latest experiment", ErrorKind: "server_error", ErrorMessage: "503", ErrorRetryable: true, Tokens: 100, Cost: 0.01, PriceStatus: "priced", DurationSecs: 372},
 		},
 		Completed: []session.WorkLoopDigestTask{
 			{ID: "0001", Title: "First", Status: "done", SHA: "abc", VerdictTally: "approve×2", Tokens: 100, Cost: 0.01, PriceStatus: "priced"},
@@ -58,9 +58,18 @@ func TestWorkLoopToProto(t *testing.T) {
 		Blocked: []session.WorkLoopDigestTask{
 			{ID: "0002", Title: "Second", Status: "blocked", Reason: "blocked: needs input"},
 		},
-		TotalTokens: 100,
-		TotalCost:   0.01,
-		CostStatus:  "priced",
+		Unfinished: []session.WorkLoopDigestTask{
+			{ID: "0003", Title: "Third", Status: "in_progress", Attempts: 3, LatestEvidence: "ruled out cache", RemainingCriteria: "reproduce", NextStep: "inspect trace"},
+		},
+		TotalTokens:              100,
+		TotalCost:                0.01,
+		CostStatus:               "priced",
+		SessionTokenLimit:        10_000,
+		SessionCostLimit:         1,
+		LoopTokenLimit:           50_000,
+		LoopCostLimit:            5,
+		CostLimitsPricedOnly:     true,
+		ResourceEnvelopeCaptured: true,
 	}
 	info := workLoopToProto(wl)
 	if info.LoopId != "loop_abcd" || info.State != "finished" || info.CurrentSessionId != "s1" {
@@ -72,7 +81,8 @@ func TestWorkLoopToProto(t *testing.T) {
 	if info.ResumeAt != "2026-07-15T10:30:00Z" || info.WaitKind != "rate_limit" {
 		t.Fatalf("wait fields = %q/%q", info.ResumeAt, info.WaitKind)
 	}
-	if info.SessionsRun != 2 || len(info.Sessions) != 1 || info.Sessions[0].SessionId != "s1" || info.Sessions[0].DurationSecs != 372 {
+	if info.SessionsRun != 2 || len(info.Sessions) != 1 || info.Sessions[0].SessionId != "s1" || info.Sessions[0].DurationSecs != 372 ||
+		info.Sessions[0].Attempt != 2 || info.Sessions[0].Evidence != "latest experiment" || info.Sessions[0].ErrorMessage != "503" || !info.Sessions[0].ErrorRetryable {
 		t.Fatalf("sessions wrong: %+v", info.Sessions)
 	}
 	if len(info.Completed) != 1 || info.Completed[0].VerdictTally != "approve×2" {
@@ -83,5 +93,14 @@ func TestWorkLoopToProto(t *testing.T) {
 	}
 	if info.TotalTokens != 100 || info.TotalCost != 0.01 || info.CostStatus != "priced" {
 		t.Fatalf("totals wrong: %+v", info)
+	}
+	if info.SessionTokenLimit != 10_000 || info.SessionCostLimit != 1 || info.SessionTimeLimitSecs != 0 ||
+		info.LoopTokenLimit != 50_000 || info.LoopCostLimit != 5 || info.LoopTimeLimitSecs != 0 ||
+		!info.CostLimitsPricedOnly || !info.ResourceEnvelopeCaptured {
+		t.Fatalf("resource envelope wrong: %+v", info)
+	}
+	if len(info.Unfinished) != 1 || info.Unfinished[0].Attempts != 3 || info.Unfinished[0].LatestEvidence != "ruled out cache" ||
+		info.Unfinished[0].RemainingCriteria != "reproduce" || info.Unfinished[0].NextStep != "inspect trace" {
+		t.Fatalf("unfinished digest wrong: %+v", info.Unfinished)
 	}
 }

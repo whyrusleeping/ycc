@@ -2,6 +2,7 @@ package docs
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -159,6 +160,45 @@ func TestCompleteOmitsMissingCriteriaAndRejectsOverlongRecords(t *testing.T) {
 	}
 	if strings.Contains(got.Body, "## Acceptance criteria") {
 		t.Fatalf("missing criteria rendered as an empty section:\n%s", got.Body)
+	}
+}
+
+func TestApplyCompletionTreatsOmittedSlicesAsEmpty(t *testing.T) {
+	ws := t.TempDir()
+	backlog := filepath.Join(ws, "backlog")
+	if err := os.MkdirAll(backlog, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(backlog, "0001-hand-written.md")
+	content := `---
+id: "0001"
+title: hand written
+status: in_review
+priority: 1
+created: 2026-01-01
+updated: 2026-01-01
+---
+
+## Description
+
+Keep intent.
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := NewStore(ws)
+	completion, err := s.PrepareCompletion("1", "Recovered safely.", "finish safely")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ApplyCompletion(completion, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ApplyCompletion(completion, false); err != nil {
+		t.Fatalf("restore after YAML normalized omitted slices: %v", err)
+	}
+	if task, err := s.Get("0001"); err != nil || task.Status != StatusInReview {
+		t.Fatalf("restored task = %+v, %v", task, err)
 	}
 }
 

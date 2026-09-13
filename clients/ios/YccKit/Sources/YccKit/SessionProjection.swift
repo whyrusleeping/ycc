@@ -168,6 +168,10 @@ public struct SessionProjection: Sendable, Equatable {
     /// was at its latest model call. Nil for older logs that predate
     /// `context_tokens_est` and before the first completed turn.
     public private(set) var currentContextTokensEstimate: Int?
+    /// False after the daemon reports that its one compact replacement also
+    /// overflowed; clients should direct the user to a larger model instead of
+    /// advertising another identical rollover.
+    public private(set) var rolloverAvailable: Bool = true
     public init() {}
 
     /// A derived, coarse lifecycle phase for chrome (banners, toolbar). Folded
@@ -556,6 +560,9 @@ public struct SessionProjection: Sendable, Equatable {
         case "session_idle":
             phase = .idle
         case "session_error":
+            if (data["action"] as? String) == "switch_model" {
+                rolloverAvailable = false
+            }
             let msg = (data["msg"] as? String)
                 ?? (data["error"] as? String)
                 ?? (data["text"] as? String) ?? ""
@@ -566,6 +573,11 @@ public struct SessionProjection: Sendable, Equatable {
             phase = .error(msg, retryable: retryable)
         case "session_stopped", "session_ended":
             phase = .stopped
+        case "role_config_changed":
+            let nextCoordinator = (data["coordinator"] as? String) ?? ""
+            if !nextCoordinator.isEmpty && nextCoordinator != coordinatorModel {
+                rolloverAvailable = true
+            }
         case "resumed", "session_started":
             phase = .running
         case "user_input", "user_input_delivered", "model_turn", "thinking",

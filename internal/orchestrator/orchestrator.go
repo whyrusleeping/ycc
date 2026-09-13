@@ -1402,7 +1402,7 @@ func askUser(d *Deps) *gollama.Tool {
 func commitTool(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name:        "commit",
-		Description: "Compact the completed task, mark it done, and commit the accepted changes to git. Detailed execution remains in session events and git history.",
+		Description: "Finalize an accepted active task: compact it, mark it done, and commit the scoped changes to git. Do not mark the task done first. Detailed execution remains in session events and git history.",
 		Params: tools.Obj(map[string]any{
 			"task_id": tools.StrProp("task id being committed"),
 			"message": tools.StrProp("concise commit message"),
@@ -1412,25 +1412,10 @@ func commitTool(d *Deps) *gollama.Tool {
 			id, _ := tools.GetString(params, "task_id")
 			msg, _ := tools.GetString(params, "message")
 			outcome, _ := tools.GetString(params, "outcome")
-			// Refuse a stale or overlapping tree before finalization mutates the task
-			// document. Complete remains immediately before the commit so its compact
-			// accepted outcome is part of the explicit changeset.
-			if _, err := d.changeset(); err != nil {
-				return tools.ErrResult("commit: unsafe changeset: %v", err), nil
-			}
-			if _, err := d.Docs.Complete(id, outcome, msg); err != nil {
+			sha, err := finalizeTask(ctx, d, id, msg, outcome)
+			if err != nil {
 				return tools.ErrResult("commit: %v", err), nil
 			}
-			changes, err := d.changeset()
-			if err != nil {
-				return tools.ErrResult("commit: unsafe changeset after task finalization: %v", err), nil
-			}
-			sha, err := d.Repo.Commit(changes, msg)
-			if err != nil {
-				return tools.ErrResult("commit changeset %s: %v", changes.ID, err), nil
-			}
-			d.Emitter.Emit(event.DecisionMade, map[string]any{"task": id, "decision": "accept"})
-			d.Emitter.Emit(event.CommitMade, map[string]any{"task": id, "sha": sha, "message": msg})
 			return tools.OkResult("committed " + sha), nil
 		},
 	}

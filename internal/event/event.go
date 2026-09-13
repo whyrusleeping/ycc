@@ -19,8 +19,16 @@ type Type string
 
 const (
 	SessionStarted Type = "session_started"
-	ModeChanged    Type = "mode_changed"
-	UserInput      Type = "user_input"
+	// LoopContinuation records bounded, untrusted prior-session evidence seeded
+	// into a fresh loop session (data: { text }). It is not user input.
+	LoopContinuation Type = "loop_continuation"
+	// ContextViewChanged durably selects a compact replacement for the coordinator's
+	// model-facing history without deleting prior events (data: { summary, reason,
+	// old_context_tokens_est, new_context_tokens_est }). The summary is labeled
+	// evidence, not a new user instruction; replay applies the latest transition.
+	ContextViewChanged Type = "context_view_changed"
+	ModeChanged        Type = "mode_changed"
+	UserInput          Type = "user_input"
 	// UserInputDelivered marks the safe checkpoint at which a queued mid-run
 	// user_input actually entered the conversation (steer-by-default).
 	// A user_input echoed while a run was in flight carries queued:true and is not

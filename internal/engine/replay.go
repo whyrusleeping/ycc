@@ -173,6 +173,28 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 
 	for _, ev := range events {
 		switch ev.Type {
+		case event.LoopContinuation:
+			// Startup-only synthetic context follows the opening user input. Keep
+			// it on replay without presenting the prior report as new user intent.
+			if text := str(ev.Data, "text"); text != "" {
+				history = append(history, gollama.Message{Role: "user", Content: text})
+			}
+		case event.ContextViewChanged:
+			// A rollover selects a new model view; it does not remove any earlier
+			// events. Reset all conversation-local pairing state so subsequent events
+			// extend exactly the durably selected summary rather than the old view.
+			if summary := str(ev.Data, "summary"); summary != "" {
+				history = []gollama.Message{{Role: "user", Content: summary}}
+				assistantIdx = -1
+				answered = map[string]bool{}
+				idMap = map[string]string{}
+				usedIDs = map[string]bool{}
+				canonByRaw = map[string]string{}
+				pending = nil
+				deferredUser = nil
+				expectedCalls, seenCalls = 0, 0
+				lastTurnTruncated = false
+			}
 		case event.UserInput:
 			// All user inputs belong to the coordinator conversation regardless of
 			// actor (they are emitted as actor "user").

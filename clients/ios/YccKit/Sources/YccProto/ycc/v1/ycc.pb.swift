@@ -512,12 +512,16 @@ public nonisolated struct Ycc_V1_InterruptResponse: Sendable {
 }
 
 /// Resume continues a paused session (optionally after SendInput corrections).
+/// rollover asks the session run owner for a durable compact coordinator view at
+/// the next safe full-tool-batch checkpoint (including while idle/errored).
 public nonisolated struct Ycc_V1_ResumeRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
   public var sessionID: String = String()
+
+  public var rollover: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -2170,9 +2174,8 @@ public nonisolated struct Ycc_V1_NotifyResponse: Sendable {
   public init() {}
 }
 
-/// WorkLoopDigestTask is one task row in a finished loop's batch digest, mirroring
-/// the client digest surface: how the task changed plus its rolled-up commit sha,
-/// review verdict tally, tokens, priced cost, and (for blocked tasks) the reason.
+/// WorkLoopDigestTask is one task row in a work loop's incremental/final digest,
+/// including the bounded evidence needed to continue unfinished accepted work.
 public nonisolated struct Ycc_V1_WorkLoopDigestTask: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -2200,13 +2203,21 @@ public nonisolated struct Ycc_V1_WorkLoopDigestTask: Sendable {
   /// blocked reason (from the task work log), blocked tasks only
   public var reason: String = String()
 
+  public var attempts: Int32 = 0
+
+  public var latestEvidence: String = String()
+
+  public var remainingCriteria: String = String()
+
+  public var nextStep: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 }
 
-/// WorkLoopSession is a per-session record captured as each loop session finishes:
-/// its id, the backlog task it focused, and its summed tokens/priced cost.
+/// WorkLoopSession is a bounded per-attempt record captured as each loop session
+/// finishes. Failure details remain available even when no session_idle report exists.
 public nonisolated struct Ycc_V1_WorkLoopSession: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -2225,6 +2236,18 @@ public nonisolated struct Ycc_V1_WorkLoopSession: Sendable {
 
   /// wall-clock seconds the session took
   public var durationSecs: Int64 = 0
+
+  /// attempt number for this focus within the loop
+  public var attempt: Int32 = 0
+
+  /// bounded latest session report or synthesized failure report
+  public var evidence: String = String()
+
+  public var errorKind: String = String()
+
+  public var errorMessage: String = String()
+
+  public var errorRetryable: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -2329,6 +2352,60 @@ public nonisolated struct Ycc_V1_WorkLoopInfo: @unchecked Sendable {
   public var waitKind: String {
     get {_storage._waitKind}
     set {_uniqueStorage()._waitKind = newValue}
+  }
+
+  /// 0 = intentionally unbounded
+  public var sessionTokenLimit: Int64 {
+    get {_storage._sessionTokenLimit}
+    set {_uniqueStorage()._sessionTokenLimit = newValue}
+  }
+
+  /// 0 = intentionally unbounded
+  public var sessionCostLimit: Double {
+    get {_storage._sessionCostLimit}
+    set {_uniqueStorage()._sessionCostLimit = newValue}
+  }
+
+  /// 0 = intentionally unbounded
+  public var sessionTimeLimitSecs: Int64 {
+    get {_storage._sessionTimeLimitSecs}
+    set {_uniqueStorage()._sessionTimeLimitSecs = newValue}
+  }
+
+  /// 0 = intentionally unbounded
+  public var loopTokenLimit: Int64 {
+    get {_storage._loopTokenLimit}
+    set {_uniqueStorage()._loopTokenLimit = newValue}
+  }
+
+  /// 0 = intentionally unbounded
+  public var loopCostLimit: Double {
+    get {_storage._loopCostLimit}
+    set {_uniqueStorage()._loopCostLimit = newValue}
+  }
+
+  /// 0 = intentionally unbounded
+  public var loopTimeLimitSecs: Int64 {
+    get {_storage._loopTimeLimitSecs}
+    set {_uniqueStorage()._loopTimeLimitSecs = newValue}
+  }
+
+  /// cost totals/limits exclude unpriced usage
+  public var costLimitsPricedOnly: Bool {
+    get {_storage._costLimitsPricedOnly}
+    set {_uniqueStorage()._costLimitsPricedOnly = newValue}
+  }
+
+  /// attempted accepted work still todo/in_progress
+  public var unfinished: [Ycc_V1_WorkLoopDigestTask] {
+    get {_storage._unfinished}
+    set {_uniqueStorage()._unfinished = newValue}
+  }
+
+  /// false only for pre-envelope persisted snapshots
+  public var resourceEnvelopeCaptured: Bool {
+    get {_storage._resourceEnvelopeCaptured}
+    set {_uniqueStorage()._resourceEnvelopeCaptured = newValue}
   }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -3722,7 +3799,7 @@ nonisolated extension Ycc_V1_InterruptResponse: SwiftProtobuf.Message, SwiftProt
 
 nonisolated extension Ycc_V1_ResumeRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ResumeRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}rollover\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -3731,6 +3808,7 @@ nonisolated extension Ycc_V1_ResumeRequest: SwiftProtobuf.Message, SwiftProtobuf
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
+      case 2: try { try decoder.decodeSingularBoolField(value: &self.rollover) }()
       default: break
       }
     }
@@ -3740,11 +3818,15 @@ nonisolated extension Ycc_V1_ResumeRequest: SwiftProtobuf.Message, SwiftProtobuf
     if !self.sessionID.isEmpty {
       try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 1)
     }
+    if self.rollover != false {
+      try visitor.visitSingularBoolField(value: self.rollover, fieldNumber: 2)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Ycc_V1_ResumeRequest, rhs: Ycc_V1_ResumeRequest) -> Bool {
     if lhs.sessionID != rhs.sessionID {return false}
+    if lhs.rollover != rhs.rollover {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -6768,7 +6850,7 @@ nonisolated extension Ycc_V1_NotifyResponse: SwiftProtobuf.Message, SwiftProtobu
 
 nonisolated extension Ycc_V1_WorkLoopDigestTask: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".WorkLoopDigestTask"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}title\0\u{1}status\0\u{1}sha\0\u{3}verdict_tally\0\u{1}tokens\0\u{1}cost\0\u{3}price_status\0\u{1}reason\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}title\0\u{1}status\0\u{1}sha\0\u{3}verdict_tally\0\u{1}tokens\0\u{1}cost\0\u{3}price_status\0\u{1}reason\0\u{1}attempts\0\u{3}latest_evidence\0\u{3}remaining_criteria\0\u{3}next_step\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -6785,6 +6867,10 @@ nonisolated extension Ycc_V1_WorkLoopDigestTask: SwiftProtobuf.Message, SwiftPro
       case 7: try { try decoder.decodeSingularDoubleField(value: &self.cost) }()
       case 8: try { try decoder.decodeSingularStringField(value: &self.priceStatus) }()
       case 9: try { try decoder.decodeSingularStringField(value: &self.reason) }()
+      case 10: try { try decoder.decodeSingularInt32Field(value: &self.attempts) }()
+      case 11: try { try decoder.decodeSingularStringField(value: &self.latestEvidence) }()
+      case 12: try { try decoder.decodeSingularStringField(value: &self.remainingCriteria) }()
+      case 13: try { try decoder.decodeSingularStringField(value: &self.nextStep) }()
       default: break
       }
     }
@@ -6818,6 +6904,18 @@ nonisolated extension Ycc_V1_WorkLoopDigestTask: SwiftProtobuf.Message, SwiftPro
     if !self.reason.isEmpty {
       try visitor.visitSingularStringField(value: self.reason, fieldNumber: 9)
     }
+    if self.attempts != 0 {
+      try visitor.visitSingularInt32Field(value: self.attempts, fieldNumber: 10)
+    }
+    if !self.latestEvidence.isEmpty {
+      try visitor.visitSingularStringField(value: self.latestEvidence, fieldNumber: 11)
+    }
+    if !self.remainingCriteria.isEmpty {
+      try visitor.visitSingularStringField(value: self.remainingCriteria, fieldNumber: 12)
+    }
+    if !self.nextStep.isEmpty {
+      try visitor.visitSingularStringField(value: self.nextStep, fieldNumber: 13)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -6831,6 +6929,10 @@ nonisolated extension Ycc_V1_WorkLoopDigestTask: SwiftProtobuf.Message, SwiftPro
     if lhs.cost != rhs.cost {return false}
     if lhs.priceStatus != rhs.priceStatus {return false}
     if lhs.reason != rhs.reason {return false}
+    if lhs.attempts != rhs.attempts {return false}
+    if lhs.latestEvidence != rhs.latestEvidence {return false}
+    if lhs.remainingCriteria != rhs.remainingCriteria {return false}
+    if lhs.nextStep != rhs.nextStep {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -6838,7 +6940,7 @@ nonisolated extension Ycc_V1_WorkLoopDigestTask: SwiftProtobuf.Message, SwiftPro
 
 nonisolated extension Ycc_V1_WorkLoopSession: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".WorkLoopSession"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}focus\0\u{1}tokens\0\u{1}cost\0\u{3}price_status\0\u{3}duration_secs\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}focus\0\u{1}tokens\0\u{1}cost\0\u{3}price_status\0\u{3}duration_secs\0\u{1}attempt\0\u{1}evidence\0\u{3}error_kind\0\u{3}error_message\0\u{3}error_retryable\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -6852,6 +6954,11 @@ nonisolated extension Ycc_V1_WorkLoopSession: SwiftProtobuf.Message, SwiftProtob
       case 4: try { try decoder.decodeSingularDoubleField(value: &self.cost) }()
       case 5: try { try decoder.decodeSingularStringField(value: &self.priceStatus) }()
       case 6: try { try decoder.decodeSingularInt64Field(value: &self.durationSecs) }()
+      case 7: try { try decoder.decodeSingularInt32Field(value: &self.attempt) }()
+      case 8: try { try decoder.decodeSingularStringField(value: &self.evidence) }()
+      case 9: try { try decoder.decodeSingularStringField(value: &self.errorKind) }()
+      case 10: try { try decoder.decodeSingularStringField(value: &self.errorMessage) }()
+      case 11: try { try decoder.decodeSingularBoolField(value: &self.errorRetryable) }()
       default: break
       }
     }
@@ -6876,6 +6983,21 @@ nonisolated extension Ycc_V1_WorkLoopSession: SwiftProtobuf.Message, SwiftProtob
     if self.durationSecs != 0 {
       try visitor.visitSingularInt64Field(value: self.durationSecs, fieldNumber: 6)
     }
+    if self.attempt != 0 {
+      try visitor.visitSingularInt32Field(value: self.attempt, fieldNumber: 7)
+    }
+    if !self.evidence.isEmpty {
+      try visitor.visitSingularStringField(value: self.evidence, fieldNumber: 8)
+    }
+    if !self.errorKind.isEmpty {
+      try visitor.visitSingularStringField(value: self.errorKind, fieldNumber: 9)
+    }
+    if !self.errorMessage.isEmpty {
+      try visitor.visitSingularStringField(value: self.errorMessage, fieldNumber: 10)
+    }
+    if self.errorRetryable != false {
+      try visitor.visitSingularBoolField(value: self.errorRetryable, fieldNumber: 11)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -6886,6 +7008,11 @@ nonisolated extension Ycc_V1_WorkLoopSession: SwiftProtobuf.Message, SwiftProtob
     if lhs.cost != rhs.cost {return false}
     if lhs.priceStatus != rhs.priceStatus {return false}
     if lhs.durationSecs != rhs.durationSecs {return false}
+    if lhs.attempt != rhs.attempt {return false}
+    if lhs.evidence != rhs.evidence {return false}
+    if lhs.errorKind != rhs.errorKind {return false}
+    if lhs.errorMessage != rhs.errorMessage {return false}
+    if lhs.errorRetryable != rhs.errorRetryable {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -6893,7 +7020,7 @@ nonisolated extension Ycc_V1_WorkLoopSession: SwiftProtobuf.Message, SwiftProtob
 
 nonisolated extension Ycc_V1_WorkLoopInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".WorkLoopInfo"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}loop_id\0\u{1}project\0\u{1}state\0\u{3}current_session_id\0\u{1}outcome\0\u{3}started_at\0\u{3}sessions_run\0\u{1}sessions\0\u{1}completed\0\u{1}blocked\0\u{3}in_review\0\u{1}created\0\u{3}total_tokens\0\u{3}total_cost\0\u{3}cost_status\0\u{3}resume_at\0\u{3}wait_kind\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}loop_id\0\u{1}project\0\u{1}state\0\u{3}current_session_id\0\u{1}outcome\0\u{3}started_at\0\u{3}sessions_run\0\u{1}sessions\0\u{1}completed\0\u{1}blocked\0\u{3}in_review\0\u{1}created\0\u{3}total_tokens\0\u{3}total_cost\0\u{3}cost_status\0\u{3}resume_at\0\u{3}wait_kind\0\u{3}session_token_limit\0\u{3}session_cost_limit\0\u{3}session_time_limit_secs\0\u{3}loop_token_limit\0\u{3}loop_cost_limit\0\u{3}loop_time_limit_secs\0\u{3}cost_limits_priced_only\0\u{1}unfinished\0\u{3}resource_envelope_captured\0")
 
   fileprivate class _StorageClass {
     var _loopID: String = String()
@@ -6913,6 +7040,15 @@ nonisolated extension Ycc_V1_WorkLoopInfo: SwiftProtobuf.Message, SwiftProtobuf.
     var _costStatus: String = String()
     var _resumeAt: String = String()
     var _waitKind: String = String()
+    var _sessionTokenLimit: Int64 = 0
+    var _sessionCostLimit: Double = 0
+    var _sessionTimeLimitSecs: Int64 = 0
+    var _loopTokenLimit: Int64 = 0
+    var _loopCostLimit: Double = 0
+    var _loopTimeLimitSecs: Int64 = 0
+    var _costLimitsPricedOnly: Bool = false
+    var _unfinished: [Ycc_V1_WorkLoopDigestTask] = []
+    var _resourceEnvelopeCaptured: Bool = false
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -6940,6 +7076,15 @@ nonisolated extension Ycc_V1_WorkLoopInfo: SwiftProtobuf.Message, SwiftProtobuf.
       _costStatus = source._costStatus
       _resumeAt = source._resumeAt
       _waitKind = source._waitKind
+      _sessionTokenLimit = source._sessionTokenLimit
+      _sessionCostLimit = source._sessionCostLimit
+      _sessionTimeLimitSecs = source._sessionTimeLimitSecs
+      _loopTokenLimit = source._loopTokenLimit
+      _loopCostLimit = source._loopCostLimit
+      _loopTimeLimitSecs = source._loopTimeLimitSecs
+      _costLimitsPricedOnly = source._costLimitsPricedOnly
+      _unfinished = source._unfinished
+      _resourceEnvelopeCaptured = source._resourceEnvelopeCaptured
     }
   }
 
@@ -6975,6 +7120,15 @@ nonisolated extension Ycc_V1_WorkLoopInfo: SwiftProtobuf.Message, SwiftProtobuf.
         case 15: try { try decoder.decodeSingularStringField(value: &_storage._costStatus) }()
         case 16: try { try decoder.decodeSingularStringField(value: &_storage._resumeAt) }()
         case 17: try { try decoder.decodeSingularStringField(value: &_storage._waitKind) }()
+        case 18: try { try decoder.decodeSingularInt64Field(value: &_storage._sessionTokenLimit) }()
+        case 19: try { try decoder.decodeSingularDoubleField(value: &_storage._sessionCostLimit) }()
+        case 20: try { try decoder.decodeSingularInt64Field(value: &_storage._sessionTimeLimitSecs) }()
+        case 21: try { try decoder.decodeSingularInt64Field(value: &_storage._loopTokenLimit) }()
+        case 22: try { try decoder.decodeSingularDoubleField(value: &_storage._loopCostLimit) }()
+        case 23: try { try decoder.decodeSingularInt64Field(value: &_storage._loopTimeLimitSecs) }()
+        case 24: try { try decoder.decodeSingularBoolField(value: &_storage._costLimitsPricedOnly) }()
+        case 25: try { try decoder.decodeRepeatedMessageField(value: &_storage._unfinished) }()
+        case 26: try { try decoder.decodeSingularBoolField(value: &_storage._resourceEnvelopeCaptured) }()
         default: break
         }
       }
@@ -7034,6 +7188,33 @@ nonisolated extension Ycc_V1_WorkLoopInfo: SwiftProtobuf.Message, SwiftProtobuf.
       if !_storage._waitKind.isEmpty {
         try visitor.visitSingularStringField(value: _storage._waitKind, fieldNumber: 17)
       }
+      if _storage._sessionTokenLimit != 0 {
+        try visitor.visitSingularInt64Field(value: _storage._sessionTokenLimit, fieldNumber: 18)
+      }
+      if _storage._sessionCostLimit.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._sessionCostLimit, fieldNumber: 19)
+      }
+      if _storage._sessionTimeLimitSecs != 0 {
+        try visitor.visitSingularInt64Field(value: _storage._sessionTimeLimitSecs, fieldNumber: 20)
+      }
+      if _storage._loopTokenLimit != 0 {
+        try visitor.visitSingularInt64Field(value: _storage._loopTokenLimit, fieldNumber: 21)
+      }
+      if _storage._loopCostLimit.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._loopCostLimit, fieldNumber: 22)
+      }
+      if _storage._loopTimeLimitSecs != 0 {
+        try visitor.visitSingularInt64Field(value: _storage._loopTimeLimitSecs, fieldNumber: 23)
+      }
+      if _storage._costLimitsPricedOnly != false {
+        try visitor.visitSingularBoolField(value: _storage._costLimitsPricedOnly, fieldNumber: 24)
+      }
+      if !_storage._unfinished.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._unfinished, fieldNumber: 25)
+      }
+      if _storage._resourceEnvelopeCaptured != false {
+        try visitor.visitSingularBoolField(value: _storage._resourceEnvelopeCaptured, fieldNumber: 26)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -7060,6 +7241,15 @@ nonisolated extension Ycc_V1_WorkLoopInfo: SwiftProtobuf.Message, SwiftProtobuf.
         if _storage._costStatus != rhs_storage._costStatus {return false}
         if _storage._resumeAt != rhs_storage._resumeAt {return false}
         if _storage._waitKind != rhs_storage._waitKind {return false}
+        if _storage._sessionTokenLimit != rhs_storage._sessionTokenLimit {return false}
+        if _storage._sessionCostLimit != rhs_storage._sessionCostLimit {return false}
+        if _storage._sessionTimeLimitSecs != rhs_storage._sessionTimeLimitSecs {return false}
+        if _storage._loopTokenLimit != rhs_storage._loopTokenLimit {return false}
+        if _storage._loopCostLimit != rhs_storage._loopCostLimit {return false}
+        if _storage._loopTimeLimitSecs != rhs_storage._loopTimeLimitSecs {return false}
+        if _storage._costLimitsPricedOnly != rhs_storage._costLimitsPricedOnly {return false}
+        if _storage._unfinished != rhs_storage._unfinished {return false}
+        if _storage._resourceEnvelopeCaptured != rhs_storage._resourceEnvelopeCaptured {return false}
         return true
       }
       if !storagesAreEqual {return false}

@@ -68,7 +68,9 @@ and renders thumbnails, degrading to a labelled placeholder for legacy or reclai
 Outgoing pictures reach the composer draft two ways — the Photos picker and pasting an image
 directly into the message field (a UIKit-backed text view, since SwiftUI text fields refuse image
 pastes) — both funneled through one normalize/merge pipeline that caps count and per-image bytes to
-the daemon's limits.
+the daemon's limits. In both new-session and existing-session composers, Return inserts a newline
+(with normal IME composition handling); it never submits the draft. Sending requires the explicit
+send/start control, avoiding accidental sends while composing multiline messages.
 Daemon work loops remain daemon-owned because iOS background execution cannot reliably host
 long-running work.
 

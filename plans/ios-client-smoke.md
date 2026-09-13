@@ -60,8 +60,16 @@ resumable, and Stop is clearly destructive.
    thumbnails can be removed before send and the model receives the retained images on the first
    relevant turn.
 
-Pass condition: keyboard avoidance works on real bottom chrome and PhotosPicker content reaches
-the model without a text-only workaround.
+3. In both the new-session and existing-session composers, type text and press Return several
+   times. Confirm newlines appear, the draft stays editable, and nothing is sent or started. Repeat
+   with a hardware keyboard when available, and paste multiline text. Tap the send/start control
+   and confirm exactly one message is submitted with its internal newlines preserved.
+4. In-session, attach a picture and press Return in the message field. Confirm the picture remains
+   in the draft until tapping send. Check that sending with a pending autocorrection still clears
+   the draft without leaving a stray corrected word.
+
+Pass condition: keyboard avoidance works on real bottom chrome, Return never sends a draft, and
+PhotosPicker content reaches the model without a text-only workaround.
 
 ### 5. Navigation, deep links, and notifications
 

@@ -205,6 +205,30 @@ func TestAppendEventClearsLatchedError(t *testing.T) {
 	}
 }
 
+func TestContextRolloverGateClearsOnlyOnCoordinatorModelChange(t *testing.T) {
+	m := &model{w: 80, follow: true, roleCoord: "global-default"}
+	m.appendEvent(&v1.Event{Type: "session_started", DataJson: `{"coordinator":"small"}`})
+	if m.roleCoord != "small" {
+		t.Fatalf("session coordinator = %q, want durable per-session identity", m.roleCoord)
+	}
+	m.appendEvent(&v1.Event{Type: "session_error", DataJson: `{"kind":"context_length","action":"switch_model"}`})
+	if !m.rolloverUnavailable {
+		t.Fatal("terminal overflow did not gate rollover")
+	}
+	m.appendEvent(&v1.Event{Type: "role_config_changed", DataJson: `{"implementer":"other"}`})
+	if !m.rolloverUnavailable {
+		t.Fatal("implementer-only change incorrectly cleared rollover gate")
+	}
+	m.appendEvent(&v1.Event{Type: "role_config_changed", DataJson: `{"coordinator":"small"}`})
+	if !m.rolloverUnavailable {
+		t.Fatal("same coordinator identity incorrectly cleared rollover gate")
+	}
+	m.appendEvent(&v1.Event{Type: "role_config_changed", DataJson: `{"coordinator":"large"}`})
+	if m.rolloverUnavailable {
+		t.Fatal("coordinator model change did not clear rollover gate")
+	}
+}
+
 // The status header must not latch on "idle" either: prodding a finished
 // session emits a user_input echo as soon as the daemon accepts it, but the
 // first model event can lag far behind (long context + thinking). The echo —

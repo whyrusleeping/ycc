@@ -110,6 +110,20 @@ func (m model) resume() tea.Cmd {
 	}
 }
 
+// rollover asks the daemon to durably select a compact coordinator view at a
+// safe between-turn checkpoint. The original transcript remains intact.
+func (m model) rollover() tea.Cmd {
+	return func() tea.Msg {
+		if m.sessionID == "" {
+			return nil
+		}
+		if _, err := m.client.Resume(m.ctx, connect.NewRequest(&v1.ResumeRequest{SessionId: m.sessionID, Rollover: true})); err != nil {
+			return errMsg{err}
+		}
+		return nil
+	}
+}
+
 func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.MouseWheelMsg:
@@ -296,6 +310,13 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+_":
 			m.openHelp()
 			return m, nil
+		case "ctrl+k":
+			// Explicitly compact coordinator history without deleting the transcript.
+			// The daemon defers an in-flight request until a full tool batch finishes.
+			if strings.TrimSpace(m.input.Value()) == "" && m.pending == "" && !m.wizActive && !m.paused && !m.rolloverUnavailable {
+				m.status = "context rollover requested…"
+				return m, m.rollover()
+			}
 		case "ctrl+i", "ctrl+x":
 			// Gracefully interrupt the running agent to steer it.
 			// ctrl+i is the historical chord but is byte-identical to Tab (0x09)
@@ -533,22 +554,30 @@ func (m model) sessionView() string {
 		help := m.footer(" ⏸ paused — type a correction + enter to steer · enter to resume · esc settings")
 		return top + "\n" + body + "\n" + m.inputRow() + "\n" + help
 	}
-	help := m.footer(searchHint + " ? help · enter send/expand · shift+enter newline · ↑↓ select · click expand · drag copy · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings · ctrl+b backlog · ctrl+o browse · ctrl+n new task")
+	rolloverHint := " · ctrl+k roll over context"
+	if m.rolloverUnavailable {
+		rolloverHint = " · switch coordinator model for context recovery"
+	}
+	help := m.footer(searchHint + " ? help · enter send/expand · shift+enter newline · ↑↓ select · click expand · drag copy · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt" + rolloverHint + " · esc settings · ctrl+b backlog · ctrl+o browse · ctrl+n new task")
 	if m.mode == "work" {
 		switch {
 		case m.looping:
-			help = m.footer(searchHint + " ? help · shift+tab halt loop · enter send/expand · ↑↓ select · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings")
+			help = m.footer(searchHint + " ? help · shift+tab halt loop · enter send/expand · ↑↓ select · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt" + rolloverHint + " · esc settings")
 		case m.loopArmed:
-			help = m.footer(searchHint + " ? help · shift+tab disarm loop · enter send/expand · ↑↓ select · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings")
+			help = m.footer(searchHint + " ? help · shift+tab disarm loop · enter send/expand · ↑↓ select · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt" + rolloverHint + " · esc settings")
 		default:
-			help = m.footer(searchHint + " ? help · shift+tab arm loop · enter send/expand · ↑↓ select · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt · esc settings")
+			help = m.footer(searchHint + " ? help · shift+tab arm loop · enter send/expand · ↑↓ select · pgup/pgdn scroll · " + m.interruptKeyHint() + " interrupt" + rolloverHint + " · esc settings")
 		}
 	}
 	if m.sessionFinished() {
 		// A finished (idle / stream-closed), non-looping session leads the footer with
 		// a clean way back to the menu. This takes precedence over the
 		// work-mode loop-toggle hints above.
-		help = m.footer(searchHint + " ✔ session finished — q return to menu · ? help · enter expand · ↑↓ select · pgup/pgdn scroll · esc settings")
+		if m.rolloverUnavailable {
+			help = m.footer(searchHint + " ✔ session finished — q return · switch coordinator model for context recovery · ? help · enter expand · ↑↓ select · esc settings")
+		} else {
+			help = m.footer(searchHint + " ✔ session finished — q return · ctrl+k roll over context and continue · ? help · enter expand · ↑↓ select · esc settings")
+		}
 	}
 	return top + "\n" + body + "\n" + m.inputRow() + "\n" + help
 }

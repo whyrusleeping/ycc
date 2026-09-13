@@ -1,10 +1,10 @@
 ---
 id: "0325"
 title: Transactional Patch tool with file revisions and occurrence selectors
-status: proposed
+status: blocked
 priority: 3
 created: "2026-08-12"
-updated: "2026-08-12"
+updated: "2026-09-10"
 depends_on: []
 spec_refs:
     - §8 Tools and access policy
@@ -32,4 +32,17 @@ On a stale revision, missing or ambiguous target, invalid occurrence, overlap, o
 - `Patch` uses the same workspace/write-root and symlink-aware path confinement as `Write` and `Edit`.
 - Tests cover duplicate snippets, stale revisions, same-file multi-hunk atomicity, overlapping targets, path confinement and symlink escapes, CRLF and final-newline preservation, and UTF-8 diagnostics.
 
+## Plan
+
+Implement a bounded, revision-bound single-file Patch tool alongside unchanged Edit. Resolve every replacement against one base snapshot, validate occurrence selectors/non-overlap before one write, and emit bounded rune-safe diagnostics with current revision and per-target status. Extend text Read's existing revision scan to provide whole-file hashes for partial windows without whole-file allocation, explicitly documenting the separate cancellable full scan while preserving the window scan budget. Reuse existing path confinement and mutation receipts where appropriate. Add focused tests for transactional rejection, selectors, encoding/newlines, revision scanning/cancellation, callback behavior, and escapes; verify scoped clean-HEAD compatibility and review security/atomicity before committing. Do not modify pre-existing dirty source/spec/client paths or absorb unrelated work.
+
+### Starting points
+- internal/tools/worker.go: Editing, readFile, fullContentRevision, sourceRevisionNote, editFile
+- internal/tools/tools.go: Workspace.resolveWrite and OnWrite
+- internal/tools/editdiag.go; internal/tools/worker_test.go; internal/tools/writeroots_test.go
+- Working tree has many unrelated staged changes. internal/tools is clean; preserve unrelated index/worktree state. Existing ownership guard rejects editing baseline-dirty source files.
+
 ## Work log
+
+- Preflight found `internal/tools` clean and recorded an implementation plan, but `spawn_implementer` failed before running any model or editing source: `establish changeset: task changes overlap paths that were already dirty at baseline acf21d93aae6510615f9e054d38fa0b7cff1a4d28dfbde8e170da71625991afa`, including this task's own pre-existing staged backlog file and the pre-existing staged backlog files 0370–0373 updated during selection. The guard covers task bookkeeping as well as source files: changing status or adding a plan to a baseline-dirty task prevents delegation even when implementation paths are clean. No code, tests, review, or commit occurred.
+- Blocked on repository/session isolation, not a Patch design decision. Resume in an isolated clean worktree/session containing the accepted task, or have the existing owners resolve their staged work before capturing a new baseline. Do not discard, absorb, or falsely commit that unrelated work; do not retry the same delegation in this baseline. Implement the retained plan and original criteria once isolation is available.

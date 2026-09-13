@@ -91,6 +91,28 @@ func TestSessionInputEnterSendsAndClears(t *testing.T) {
 	}
 }
 
+func TestContextRolloverChordIsGatedAfterTerminalOverflowAndWhilePaused(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		paused      bool
+		unavailable bool
+	}{
+		{name: "terminal_overflow", unavailable: true},
+		{name: "paused", paused: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newSessionTextareaModel(t)
+			m.paused = tc.paused
+			m.rolloverUnavailable = tc.unavailable
+			updated, cmd := m.Update(keyMsg("ctrl+k"))
+			m = updated.(model)
+			if m.status == "context rollover requested…" || cmd != nil {
+				t.Fatalf("gated ctrl+k requested rollover: status=%q cmd=%v", m.status, cmd != nil)
+			}
+		})
+	}
+}
+
 func TestSessionInputShiftEnterInsertsNewline(t *testing.T) {
 	m := newSessionTextareaModel(t)
 	m = typeText(t, m, "ab")

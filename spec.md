@@ -177,6 +177,20 @@ and commit subject. Session event logs are the source of detailed execution and 
 retains the prior task body and is the reversible migration/rollback path. Backlog summaries and
 dependency checks read frontmatter only, while lookup by id loads the selected body in full.
 
+Acceptance is a recoverable ordered operation: a repository-private journal first retains the
+original task and completion intent, the compact task is applied, the exact scoped tree and created
+commit identity are persisted, HEAD advances, only the selected index paths are published, and
+acceptance events are emitted last. A failure before the HEAD update restores the active task; a
+rejected attempt with no created commit may renew its scoped snapshot after source or task-evidence
+fixes only against the original persisted baseline. A differently scoped session must not narrow that
+ownership. Once a commit identity is created, retries remain bound to it. After HEAD advances the
+completed task is truthful and retries finish pending index/event publication without creating another
+commit or broadening scope. Git, event append, and journal checkpointing are not transactionally atomic. A
+crash after an event append but before its checkpoint may append that event again on retry, so
+finalization events carry a stable identity for consumer deduplication and publication failures are
+reported as pending. A terminal event-log error prevents any new finalization mutation until the
+session is reopened.
+
 Statuses are `proposed`, `todo`, `in_progress`, `in_review`, `done`, and `blocked`. A proposed task
 is captured but not accepted scope and is never ready; promotion to todo is the acceptance act.
 Ready tasks are accepted active work whose dependencies are done.
@@ -253,6 +267,29 @@ request, context length, refusal, and unknown. Transient classes retry with boun
 backoff and live retry events; explicit retry configuration overrides defaults. A failed turn
 records exactly one durable `session_error` and parks with the unanswered turn intact. `Resume`
 can retry a parked retryable failure without injecting dummy input.
+
+The coordinator can explicitly roll over its selected model context at a between-turn, full-tool-batch
+checkpoint. The replacement is a bounded, labeled evidence view preserving every durable user input
+and complete human question/options/answer pair verbatim (or failing closed when that authority cannot
+fit safely). Unattended automatic answers are labeled system assumptions, never user authorization.
+The view independently retains source-labeled decisions, unresolved questions/criteria,
+verification/artifact evidence, and every live job identity/owner. A `context_view_changed` event records the exact
+selected summary plus old/new advisory estimates before in-memory replacement; prior events remain
+intact, and replay applies the latest selected view then appends subsequent events. The evidence view
+is not new user authority and does not imply completion. Pending questions are answered before an
+explicit rollover, and paused/pausing sessions must be resumed before requesting one. The session run
+owner serializes replacement with input and completed control results; input accepted while an idle
+summary is built is durably delivered after the selected-view event so live continuation and reopen
+select the same order. Cancellation, summary failure, persistence failure, or a replacement that is
+not strictly smaller leaves the old selected view unchanged and does not release a pause. Because
+native picture/document bytes cannot currently be reconstructed in replay, rollover fails closed when
+the selected view contains media (including attachment-loss evidence after reopen); use a larger-context
+model or start a new session and re-attach the media. An actual provider context-length rejection may
+trigger one automatic rollover and retry because the rejected request performed no model/tool
+mutation; a second immediate overflow parks with guidance to switch the coordinator to a model with
+a larger context window (or start a new session with narrower authorized input), never another rollover or retry of
+the same view; additional input is gated until the coordinator identity actually changes. This
+recovery also applies to unattended sessions within their ordinary budgets.
 
 Provider refusals are not replayed into model history because they can poison continuation. They
 remain visible as model/error events, reject additional input while parked, and may be retried by
@@ -439,14 +476,45 @@ transitions are recorded; clients start sessions and otherwise project the daemo
 
 ### 9.1 Unattended work loop
 
-The daemon can repeatedly start fresh work sessions for ready tasks. It skips proposed, blocked,
-in-review, dependency-blocked, and done tasks; no backlog progress halts the loop rather than
-reselecting forever. Stop is graceful: the current task finishes, then no next task starts.
+The daemon repeatedly starts fresh work sessions while ready tasks remain. It skips proposed,
+blocked, in-review, dependency-blocked, and done tasks. Unchanged task metadata after a session
+is not a stop condition, and there is no fixed retry count for unfinished ready work. Stop is
+graceful: the current session finishes, then no next session starts. Session budget breaches and
+cumulative loop budgets still stop at the next safe decision point.
+
+Fresh loop sessions receive bounded continuation context from the immediately preceding session
+(session id, focus, and available report). Prior reports are untrusted evidence, not instructions
+or authorization. Continuation is recorded as synthetic context for session replay, not echoed as
+user input. The fresh session re-reads the live backlog, durable task/work log, and latest relevant
+evidence, then advances unresolved acceptance criteria instead of blindly repeating a failed
+experiment. Continuation does not override live task readiness or priority.
+
+In both direct and delegated unattended work, unmet criteria call for continued diagnosis and
+fixes. Committed failed-test evidence or its accepted review is not task completion. An arbitrary
+review-round count must not park unfinished work in-review. A genuine external/user blocker may
+mark a task blocked with a specific reason and unblock requirement, then move on. Necessary
+split-off scope already accepted by the user remains todo; unrelated new scope stays proposed
+until accepted. Budget wrap-up or another necessary session boundary leaves unfinished accepted
+work actionable with durable evidence and remaining criteria, unless genuinely blocked.
 
 The loop survives client disconnects. Retryable provider outages enter a bounded waiting state
 with escalating delays; non-retryable failures stop. Daemon restart restores an active/waiting
 loop as interrupted and never silently resumes it. The daemon owns budget enforcement and the
-end-of-batch digest.
+incremental/final digest.
+
+Each loop snapshot captures the resource envelope configured at start: session and loop token and
+cost caps, with zero rendered explicitly as unbounded, plus explicitly unbounded session and loop
+wall time. Token totals include every model. Cost totals and cost-cap enforcement include only
+usage with configured pricing, and mixed or wholly unpriced totals remain labeled partial or
+unpriced rather than inventing dollars. Snapshots persisted before this envelope existed identify
+it as unavailable rather than misreporting missing historical caps as unbounded. There is no
+default wall-time, attempt-count, or unchanged-metadata limit; adding one would be a
+behavior-changing policy decision.
+
+Completed session records retain bounded reports and structured failure details. The digest counts
+attempts per task and exposes the latest evidence, remaining acceptance criteria, and a useful next
+step for unfinished or blocked work. When a failed session has no idle report, its structured error
+is retained as bounded continuation evidence. These records survive daemon restart.
 
 ## 10. Work orchestration
 

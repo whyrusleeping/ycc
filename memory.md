@@ -19,6 +19,7 @@
 - Model turns are ctx-aware via TurnCtx/TurnStreamCtx (0204); gollama legacy Turn/TurnStream use context.Background — never use in inference paths.
 - ycc spec-check symbol search matches untracked .ycc/ logs — can pass live yet fail on a clean checkout; verify via git archive temp dir (0301 open).
 - GetUsage with empty project + multiple projects returns the ALL-projects rollup (0287); iOS drawer's Usage row opens .usage(project: "").
+- 2026-09-04: key_env in ycc.toml must hold the NAME of an env var / secrets entry (resolved env-then-secrets in config.resolveKey), never the key itself; Fireworks model ids need the full accounts/fireworks/models/ prefix, and strict openai-compatible servers reject unknown body fields (gollama b9fcec4 sends nested 'options' to Ollama only).
 
 ## Environment & tooling
 

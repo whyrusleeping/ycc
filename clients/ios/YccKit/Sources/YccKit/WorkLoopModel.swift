@@ -175,6 +175,7 @@ public final class WorkLoopModel {
             WorkLoopDigestSection(title: "Completed", systemImage: "checkmark.circle", rows: loop.completed),
             WorkLoopDigestSection(title: "Blocked", systemImage: "exclamationmark.octagon", rows: loop.blocked),
             WorkLoopDigestSection(title: "In review", systemImage: "eye", rows: loop.inReview),
+            WorkLoopDigestSection(title: "Unfinished", systemImage: "arrow.clockwise.circle", rows: loop.unfinished),
             WorkLoopDigestSection(title: "Created", systemImage: "plus.circle", rows: loop.created),
         ].filter { !$0.rows.isEmpty }
     }
@@ -205,6 +206,7 @@ public final class WorkLoopModel {
             (loop.completed.count, "completed"),
             (loop.blocked.count, "blocked"),
             (loop.inReview.count, "in review"),
+            (loop.unfinished.count, "unfinished"),
             (loop.created.count, "created"),
         ]
         let digestPart = counts.compactMap { count, label in
@@ -219,6 +221,36 @@ public final class WorkLoopModel {
 
     public static func totalsLine(tokens: Int64, cost: Double, priceStatus: String) -> String {
         "\(UsageModel.formatTokens(tokens)) tokens · \(formatCost(cost, status: priceStatus))"
+    }
+
+    /// The resource envelope captured when the loop started. Zero-valued limits
+    /// are intentionally unbounded rather than omitted or unknown.
+    public static func resourceEnvelopeLines(for loop: Ycc_V1_WorkLoopInfo) -> [String] {
+        guard loop.resourceEnvelopeCaptured else {
+            return ["Resource envelope unavailable for this pre-upgrade snapshot."]
+        }
+        let session = resourceLimitLine(
+            scope: "Session",
+            tokens: loop.sessionTokenLimit,
+            cost: loop.sessionCostLimit,
+            timeSecs: loop.sessionTimeLimitSecs)
+        let wholeLoop = resourceLimitLine(
+            scope: "Loop",
+            tokens: loop.loopTokenLimit,
+            cost: loop.loopCostLimit,
+            timeSecs: loop.loopTimeLimitSecs)
+        let pricing = loop.costLimitsPricedOnly
+            ? "Cost caps and totals count priced models only; tokens count all models."
+            : "Cost-limit pricing semantics unavailable."
+        let attempts = "Attempts: no fixed limit; ready work continues until stopped, budget-limited, or blocked."
+        return [session, wholeLoop, pricing, attempts]
+    }
+
+    private static func resourceLimitLine(scope: String, tokens: Int64, cost: Double, timeSecs: Int64) -> String {
+        let tokenText = tokens > 0 ? "\(UsageModel.formatTokens(tokens)) tokens" : "tokens unbounded"
+        let costText = cost > 0 ? String(format: "$%.2f priced cost", cost) : "cost unbounded"
+        let timeText = durationText(secs: timeSecs).map { "\($0) wall time" } ?? "wall time unbounded"
+        return "\(scope): \(tokenText) · \(costText) · \(timeText)"
     }
 
     /// Compact wall-clock duration for a completed work-loop session.

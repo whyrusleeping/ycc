@@ -5,6 +5,7 @@ package git
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -89,6 +90,23 @@ func (r *Repo) OpenBaseline() *Baseline { return r.openBaseline }
 // use remains available; ownership-sensitive review and commit must refuse.
 func (r *Repo) OpenBaselineError() error { return r.openBaselineErr }
 
+// FinalizationPath returns the repository-private path for one task's durable
+// finalization journal. The journal lives outside the committed worktree.
+func (r *Repo) FinalizationPath(taskID string) (string, error) {
+	if taskID == "" || strings.ContainsAny(taskID, "/\\") || taskID == "." || taskID == ".." {
+		return "", fmt.Errorf("invalid task id %q for finalization journal", taskID)
+	}
+	out, err := r.run("rev-parse", "--git-path", "ycc/task-finalizations/"+taskID+".json")
+	if err != nil {
+		return "", fmt.Errorf("locate finalization journal: %w", err)
+	}
+	path := strings.TrimSpace(out)
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(r.Dir, path)
+	}
+	return filepath.Clean(path), nil
+}
+
 // RevParse resolves a ref (branch, tag, or commit-ish) to its full commit sha.
 func (r *Repo) RevParse(ref string) (string, error) {
 	out, err := r.run("rev-parse", ref)
@@ -96,6 +114,40 @@ func (r *Repo) RevParse(ref string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(out), nil
+}
+
+// WorktreeFileMatchesHEAD reports whether path is tracked at HEAD and its
+// current representation (including mode) is unchanged. It is used only to
+// validate an already-completed no-op; an untracked path never counts as
+// committed merely because git diff omits it.
+func (r *Repo) WorktreeFileMatchesHEAD(path string) (bool, error) {
+	if filepath.IsAbs(path) {
+		var err error
+		path, err = filepath.Rel(r.Dir, path)
+		if err != nil {
+			return false, err
+		}
+	}
+	path = filepath.ToSlash(filepath.Clean(path))
+	if path == "." || path == ".." || strings.HasPrefix(path, "../") {
+		return false, fmt.Errorf("path %q is outside repository", path)
+	}
+	tracked, stderr, err := r.runAllow("", "ls-tree", "--name-only", "HEAD", "--", path)
+	if err != nil {
+		return false, fmt.Errorf("inspect HEAD path %s: %v: %s", path, err, strings.TrimSpace(stderr))
+	}
+	if strings.TrimSpace(tracked) != path {
+		return false, nil
+	}
+	_, stderr, err = r.runAllow("", "diff", "--quiet", "--no-ext-diff", "HEAD", "--", path)
+	if err == nil {
+		return true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, fmt.Errorf("compare HEAD path %s: %v: %s", path, err, strings.TrimSpace(stderr))
 }
 
 // Show returns the full `git show` output (stat + patch) for a commit, for the

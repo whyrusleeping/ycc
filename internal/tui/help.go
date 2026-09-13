@@ -84,6 +84,7 @@ func (m model) helpSections() []helpSection {
 			{"y", "copy the selected row to the clipboard (commit → sha, error → message; input empty)"},
 			{"enter (on ● commit)", "view the commit's diff (git show)"},
 			{m.interruptKeyHint(), "interrupt the running agent to steer it"},
+			{"ctrl+k", "durably roll over coordinator context at a safe checkpoint"},
 			{"shift+tab", "toggle work (loop) mid-session (work mode)"},
 			{"q", "return to the menu when the session has finished (input empty; stops the session cleanly)"},
 		}},

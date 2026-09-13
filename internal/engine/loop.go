@@ -86,6 +86,13 @@ type MessageSteer interface {
 	CheckpointMessages(ctx context.Context) ([]UserMessage, error)
 }
 
+// ContextRoller is an optional Steer extension consulted only between complete
+// turns. Its owner may durably replace the loop's selected history there; unlike
+// Checkpoint, it is never called in the middle of a tool-call batch.
+type ContextRoller interface {
+	RolloverCheckpoint(ctx context.Context) error
+}
+
 // ActivityUpdate is a bounded progress signal for an owning background agent
 // job. It intentionally contains only tool/lifecycle/accounting metadata.
 type ActivityUpdate struct {
@@ -188,6 +195,11 @@ func (l *Loop) steerCheckpoint(ctx context.Context) error {
 	}
 	for _, m := range msgs {
 		l.PostMessage(m)
+	}
+	if roller, ok := l.Steer.(ContextRoller); ok {
+		if err := roller.RolloverCheckpoint(ctx); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -523,8 +535,20 @@ func (l *Loop) ContextTokensEstimateWith(content string) int {
 	return l.contextEstimateLocked(content).Tokens
 }
 
+// ContextTokensEstimateForHistory estimates the next request after a prospective
+// history replacement without changing the live selected view.
+func (l *Loop) ContextTokensEstimateForHistory(history []gollama.Message) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.contextEstimateForHistoryLocked(history, "").Tokens
+}
+
 func (l *Loop) contextEstimateLocked(extra string) contextEstimate {
-	messages := l.history
+	return l.contextEstimateForHistoryLocked(l.history, extra)
+}
+
+func (l *Loop) contextEstimateForHistoryLocked(history []gollama.Message, extra string) contextEstimate {
+	messages := history
 	if extra != "" {
 		messages = append(append([]gollama.Message(nil), messages...), gollama.Message{Role: "user", Content: extra})
 	}

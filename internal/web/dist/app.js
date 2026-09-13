@@ -137,7 +137,7 @@
   // seq folded), the per-actor live-tail snapshots, and the pending ask_user gate
   // (null when no question is open) that drives the answer sheet.
   function makeFeed() {
-    return { cursor: 0, tails: {}, pending: null };
+    return { cursor: 0, tails: {}, pending: null, rolloverAvailable: true, paused: false, coordinatorModel: "" };
   }
 
   // asStr coerces any value to a string ("" for null/undefined). A pure-section
@@ -231,6 +231,28 @@
       return { kind: "duplicate", ev: ev };
     }
     feed.cursor = seq;
+
+    var durableData = parseData(ev);
+    if (type === "session_error" && durableData.action === "switch_model") {
+      // The daemon already tried the one safe compact view. Do not keep
+      // advertising a rollover that would rebuild the same/even larger request.
+      feed.rolloverAvailable = false;
+    } else if (type === "session_started") {
+      if (durableData.coordinator) {
+        feed.coordinatorModel = asStr(durableData.coordinator);
+      }
+    } else if (type === "role_config_changed" && durableData.coordinator) {
+      var nextCoordinator = asStr(durableData.coordinator);
+      if (nextCoordinator !== feed.coordinatorModel) {
+        feed.rolloverAvailable = true;
+      }
+      feed.coordinatorModel = nextCoordinator;
+    }
+    if (type === "interrupted") {
+      feed.paused = true;
+    } else if (type === "resumed" || type === "session_stopped" || type === "session_ended") {
+      feed.paused = false;
+    }
 
     if (type === "question_asked") {
       var pend = pendingFromAsk(ev, seq);
@@ -988,6 +1010,19 @@
       closeMenu(state);
       controlAction(state, "Resume", "Resume sent");
     }));
+    if (state.feed.rolloverAvailable && !state.feed.paused) {
+      menu.appendChild(menuItem("Rollover coordinator context", function () {
+        closeMenu(state);
+        rpc("Resume", { sessionId: state.sessionId, rollover: true }).then(function () {
+          toast("Context rollover completed");
+        }).catch(function (err) {
+          if (err && err.message === "unauthenticated") {
+            return;
+          }
+          toast((err && err.message) || "Context rollover failed");
+        });
+      }));
+    }
     var stop = menuItem("Stop session", null);
     stop.classList.add("danger");
     stop.addEventListener("click", function () {

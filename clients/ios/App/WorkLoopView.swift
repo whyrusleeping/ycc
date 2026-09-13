@@ -118,6 +118,14 @@ struct WorkLoopView: View {
                 header(model, loop)
             }
 
+            Section("Resource envelope") {
+                ForEach(WorkLoopModel.resourceEnvelopeLines(for: loop), id: \.self) { line in
+                    Text(line)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             if !model.currentSessionID.isEmpty {
                 Section("Current session") {
                     Button {
@@ -239,6 +247,11 @@ struct WorkLoopView: View {
                 if !session.focus.isEmpty {
                     Text(session.focus).lineLimit(1)
                 }
+                if session.attempt > 0 {
+                    Text("attempt \(session.attempt)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
@@ -247,6 +260,21 @@ struct WorkLoopView: View {
             Text(secondary)
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
+            if !session.errorKind.isEmpty {
+                let detail = session.errorMessage.isEmpty
+                    ? "Failed (\(session.errorKind))"
+                    : "Failed (\(session.errorKind)): \(session.errorMessage)"
+                Label(detail, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .lineLimit(3)
+            }
+            if !session.evidence.isEmpty {
+                Text(session.evidence)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(4)
+            }
         }
         .padding(.vertical, 2)
     }
@@ -263,6 +291,9 @@ struct WorkLoopView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            if task.attempts > 0 {
+                Label("\(task.attempts) \(task.attempts == 1 ? "attempt" : "attempts")", systemImage: "arrow.clockwise")
+            }
             if !task.verdictTally.isEmpty {
                 Label(task.verdictTally, systemImage: "checkmark.seal")
             }
@@ -274,6 +305,20 @@ struct WorkLoopView: View {
             if blocked && !task.reason.isEmpty {
                 Label(task.reason, systemImage: "exclamationmark.bubble")
                     .foregroundStyle(.orange)
+            }
+            if !task.latestEvidence.isEmpty {
+                Text("Latest evidence: \(task.latestEvidence)")
+                    .lineLimit(5)
+            }
+            if !task.remainingCriteria.isEmpty {
+                Text("Remaining criteria: \(task.remainingCriteria)")
+                    .foregroundStyle(.secondary)
+                    .lineLimit(4)
+            }
+            if !task.nextStep.isEmpty {
+                Text("Next step: \(task.nextStep)")
+                    .foregroundStyle(.secondary)
+                    .lineLimit(4)
             }
         }
         .font(.caption)

@@ -18,48 +18,23 @@ import (
 // --- pure decision logic (task 0179, spec §9/§20.6) ---
 
 func TestDecideLoopStopsWhenEmpty(t *testing.T) {
-	d := decideLoop(loopDecideInput{next: "", loopStarted: true, fp: "x", prevFP: "y"})
+	d := decideLoop(loopDecideInput{next: "", loopStarted: true})
 	if !d.stop || d.outcome != "loop complete: no ready tasks remain" {
 		t.Fatalf("expected empty-backlog completion, got %+v", d)
 	}
 }
 
-func TestDecideLoopStopsOnNoProgress(t *testing.T) {
-	d := decideLoop(loopDecideInput{next: "0001", loopStarted: true, fp: "same", prevFP: "same"})
-	if !d.stop || d.outcome != "loop stopped: session made no progress" {
-		t.Fatalf("expected no-progress stop, got %+v", d)
-	}
-}
-
-func TestDecideLoopErroredSessionSkipsNoProgress(t *testing.T) {
-	d := decideLoop(loopDecideInput{
-		next: "0001", loopStarted: true, fp: "same", prevFP: "same", prevErrored: true,
-	})
-	if d.stop {
-		t.Fatalf("expected errored session to skip no-progress guard, got %+v", d)
-	}
-
-	// Empty backlog and loop budgets remain authoritative even after an error.
-	if d := decideLoop(loopDecideInput{loopStarted: true, prevErrored: true}); !d.stop {
-		t.Fatalf("expected empty backlog to stop, got %+v", d)
-	}
-	if d := decideLoop(loopDecideInput{
-		next: "0001", loopStarted: true, prevErrored: true,
-		cumTokens: 10, loopTokens: 10,
-	}); !d.stop || !strings.Contains(d.outcome, "budget reached") {
-		t.Fatalf("expected budget cap to stop, got %+v", d)
-	}
-}
-
-func TestDecideLoopContinuesWhenBacklogChanged(t *testing.T) {
-	d := decideLoop(loopDecideInput{next: "0002", loopStarted: true, fp: "new", prevFP: "old"})
-	if d.stop {
-		t.Fatalf("expected loop to continue, got %+v", d)
+func TestDecideLoopContinuesWithReadyWork(t *testing.T) {
+	for i := 0; i < 10; i++ {
+		d := decideLoop(loopDecideInput{next: "0001", loopStarted: true})
+		if d.stop {
+			t.Fatalf("unchanged ready task must continue, iteration %d: %+v", i, d)
+		}
 	}
 }
 
 func TestDecideLoopStopsOnSessionBreach(t *testing.T) {
-	d := decideLoop(loopDecideInput{next: "0002", loopStarted: true, fp: "new", prevFP: "old", prevBreach: true})
+	d := decideLoop(loopDecideInput{next: "0002", loopStarted: true, prevBreach: true})
 	if !d.stop || d.outcome != "loop stopped: session budget reached" {
 		t.Fatalf("expected session-breach stop, got %+v", d)
 	}
@@ -67,7 +42,7 @@ func TestDecideLoopStopsOnSessionBreach(t *testing.T) {
 
 func TestDecideLoopStopsAtTokenCap(t *testing.T) {
 	d := decideLoop(loopDecideInput{
-		next: "0002", loopStarted: true, fp: "new", prevFP: "old",
+		next: "0002", loopStarted: true,
 		cumTokens: 12000, loopTokens: 10000,
 	})
 	if !d.stop {
@@ -80,7 +55,7 @@ func TestDecideLoopStopsAtTokenCap(t *testing.T) {
 
 func TestDecideLoopStopsAtCostCap(t *testing.T) {
 	d := decideLoop(loopDecideInput{
-		next: "0002", loopStarted: true, fp: "new", prevFP: "old",
+		next: "0002", loopStarted: true,
 		cumCost: 5.5, loopCost: 5.0,
 	})
 	if !d.stop {
@@ -93,7 +68,7 @@ func TestDecideLoopStopsAtCostCap(t *testing.T) {
 
 func TestDecideLoopNoCapContinues(t *testing.T) {
 	d := decideLoop(loopDecideInput{
-		next: "0002", loopStarted: true, fp: "new", prevFP: "old",
+		next: "0002", loopStarted: true,
 		cumTokens: 999999, cumCost: 999, // caps are 0 (unlimited)
 	})
 	if d.stop {
@@ -102,9 +77,8 @@ func TestDecideLoopNoCapContinues(t *testing.T) {
 }
 
 func TestDecideLoopFirstIterationSkipsGuards(t *testing.T) {
-	// loopStarted=false: no prior session, so the no-progress / breach / cap guards
-	// must not trip even when fp==prevFP.
-	d := decideLoop(loopDecideInput{next: "0001", loopStarted: false, fp: "same", prevFP: "same", prevBreach: true, cumTokens: 1e6, loopTokens: 1})
+	// loopStarted=false: no prior session, so breach / cap guards must not trip.
+	d := decideLoop(loopDecideInput{next: "0001", loopStarted: false, prevBreach: true, cumTokens: 1e6, loopTokens: 1})
 	if d.stop {
 		t.Fatalf("expected first iteration to continue, got %+v", d)
 	}
@@ -141,14 +115,6 @@ func TestLoopSessionFailureUsesLastStructuredError(t *testing.T) {
 	kind, retryable = loopSessionFailure([]event.Event{{Type: event.SessionError}})
 	if kind != "unknown" || retryable {
 		t.Fatalf("missing fields failure = %q/%v", kind, retryable)
-	}
-}
-
-func TestBacklogFingerprintStable(t *testing.T) {
-	a := backlogFingerprint([]*docs.Task{{ID: "0002", Status: docs.StatusTodo}, {ID: "0001", Status: docs.StatusDone}})
-	b := backlogFingerprint([]*docs.Task{{ID: "0001", Status: docs.StatusDone}, {ID: "0002", Status: docs.StatusTodo}})
-	if a != b {
-		t.Fatalf("fingerprint not order-independent: %q vs %q", a, b)
 	}
 }
 
@@ -917,32 +883,78 @@ func TestWorkLoopPublishesIncrementalDigest(t *testing.T) {
 	}
 }
 
-func TestWorkLoopNoProgressStops(t *testing.T) {
-	// A runner that never changes the backlog: the loop runs one session, sees an
-	// unchanged fingerprint, and stops with the no-progress outcome.
-	var ws string
-	factory := func(wl *workLoop) func(context.Context) (loopSessRec, bool, error) {
-		return func(ctx context.Context) (loopSessRec, bool, error) {
-			return loopSessRec{id: "sX", focus: "0001", tokens: 50, priceStatus: "unpriced"}, false, nil
-		}
-	}
-	m, _, w := loopTestManager(t, factory)
-	ws = w
-
-	store := docs.NewStore(ws)
-	if _, err := store.Create("stuck", "", 3, nil, nil); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-
-	if _, err := m.StartWorkLoop("demo"); err != nil {
-		t.Fatalf("StartWorkLoop: %v", err)
-	}
-	final := waitLoopFinished(t, m, "demo")
-	if final.Outcome != "loop stopped: session made no progress" {
-		t.Fatalf("outcome = %q", final.Outcome)
-	}
-	if final.SessionsRun != 1 {
-		t.Fatalf("sessions run = %d, want 1", final.SessionsRun)
+func TestWorkLoopUnchangedSessions(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		outcome  string
+		sessions int
+	}{
+		{"complete", "loop complete: no ready tasks remain", 4},
+		{"tokens", "loop stopped: budget reached (100 tokens, cap 100)", 2},
+		{"cost", "loop stopped: budget reached ($1.00, cap $1.00)", 2},
+		{"session budget", "loop stopped: session budget reached", 2},
+		{"stop", "loop stopped: requested", 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var m *Manager
+			var store *docs.Store
+			var id string
+			calls := 0
+			factory := func(wl *workLoop) func(context.Context) (loopSessRec, bool, error) {
+				if tc.name == "tokens" {
+					wl.loopTokens = 100
+				}
+				if tc.name == "cost" {
+					wl.loopCost = 1
+				}
+				return func(context.Context) (loopSessRec, bool, error) {
+					calls++
+					// Three sessions return the task to todo after recording evidence.
+					// The fourth completes it. Metadata equality is not a retry limit.
+					_, err := store.Update(id, func(task *docs.Task) {
+						task.Body += fmt.Sprintf("\n- experiment %d", calls)
+						if calls >= 4 {
+							task.Status = docs.StatusDone
+						}
+					})
+					if tc.name == "stop" && calls == 2 {
+						_, err = m.StopWorkLoop("demo")
+					}
+					return loopSessRec{id: fmt.Sprintf("s%d", calls), focus: id,
+							tokens: 50, cost: 0.5, priceStatus: "priced"},
+						tc.name == "session budget" && calls == 2, err
+				}
+			}
+			var ws string
+			m, _, ws = loopTestManager(t, factory)
+			store = docs.NewStore(ws)
+			task, err := store.Create("unfinished criteria", "## Work log", 3, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			id = task.ID
+			if _, err := m.StartWorkLoop("demo"); err != nil {
+				t.Fatal(err)
+			}
+			final := waitLoopFinished(t, m, "demo")
+			if final.Outcome != tc.outcome || final.SessionsRun != tc.sessions {
+				t.Fatalf("final = %+v, want %q after %d sessions", final, tc.outcome, tc.sessions)
+			}
+			if final.TotalTokens != int64(tc.sessions*50) || final.TotalCost != float64(tc.sessions)*0.5 {
+				t.Fatalf("usage lost across unchanged sessions: %+v", final)
+			}
+			task, err = store.Get(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := docs.StatusTodo
+			if tc.name == "complete" {
+				want = docs.StatusDone
+			}
+			if task.Status != want {
+				t.Fatalf("status = %s, want %s", task.Status, want)
+			}
+		})
 	}
 }
 

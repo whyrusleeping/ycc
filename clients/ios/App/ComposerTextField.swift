@@ -13,7 +13,7 @@ import UIKit
 /// - placeholder label (UITextView has no built-in placeholder),
 /// - growth with content up to `maxLines`, then internal scrolling,
 /// - a `Bool` focus binding (replacing `@FocusState`),
-/// - optional return-key submit (the live session sends on return),
+/// - Return inserts a newline; sending is only via the explicit send control,
 /// - the autocorrect-suppression pulse (see SessionView.send()),
 /// - `.disabled(...)` support via the SwiftUI environment.
 struct ComposerTextField: View {
@@ -28,8 +28,6 @@ struct ComposerTextField: View {
     /// Pulsed true for a runloop turn after sending — makes the keyboard drop a
     /// pending autocorrection instead of committing it into the cleared draft.
     var autocorrectionDisabled: Bool = false
-    /// When set, the return key submits instead of inserting a newline.
-    var onSubmit: (@MainActor () -> Void)? = nil
     /// Receives pictures pasted into the field (long-press → Paste, or ⌘V).
     let onPasteImages: @MainActor ([UIImage]) -> Void
 
@@ -40,7 +38,6 @@ struct ComposerTextField: View {
             focused: focused,
             maxLines: maxLines,
             autocorrectionDisabled: autocorrectionDisabled,
-            onSubmit: onSubmit,
             onPasteImages: onPasteImages
         )
         // Approximate `.textFieldStyle(.roundedBorder)` so the swap is not a
@@ -97,7 +94,6 @@ private struct Representable: UIViewRepresentable {
     let focused: Binding<Bool>?
     let maxLines: Int
     let autocorrectionDisabled: Bool
-    let onSubmit: (@MainActor () -> Void)?
     let onPasteImages: @MainActor ([UIImage]) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -227,22 +223,6 @@ private struct Representable: UIViewRepresentable {
             if let focused = parent.focused, focused.wrappedValue != false {
                 focused.wrappedValue = false
             }
-        }
-
-        func textView(
-            _ textView: UITextView,
-            shouldChangeTextIn range: NSRange,
-            replacementText text: String
-        ) -> Bool {
-            // Return submits (matching the old `.onSubmit`) — but only for the
-            // actual return KEY (`text == "\n"`), never a pasted string that
-            // contains newlines, and never while an IME composition is active
-            // (return then confirms the composition).
-            if let onSubmit = parent.onSubmit, text == "\n", textView.markedTextRange == nil {
-                onSubmit()
-                return false
-            }
-            return true
         }
     }
 }

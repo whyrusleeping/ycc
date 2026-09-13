@@ -153,7 +153,12 @@ message AnswerQuestionsResponse {}
 message InterruptRequest { string session_id = 1; }
 message InterruptResponse {}
 // Resume continues a paused session (optionally after SendInput corrections).
-message ResumeRequest { string session_id = 1; }
+// rollover asks the session run owner for a durable compact coordinator view at
+// the next safe full-tool-batch checkpoint (including while idle/errored).
+message ResumeRequest {
+  string session_id = 1;
+  bool rollover = 2;
+}
 message ResumeResponse {}
 // StopSession hard-terminates a session: it cancels the agent loop,
 // closes the event log, and removes the session from the daemon. Distinct from
@@ -660,13 +665,12 @@ message NotifyRequest {
 message NotifyResponse { bool delivered = 1; }
 
 // The daemon-owned unattended backlog drain starts fresh `work` sessions one
-// after another, enforces the no-progress guard and per-loop budget caps, and
-// accumulates the end-of-batch digest. It survives client disconnects and clients
-// observe it through GetWorkLoop plus Subscribe on current_session_id.
+// after another, enforces configured resource caps at safe boundaries, and
+// accumulates an incremental/final digest. It survives client disconnects and
+// clients observe it through GetWorkLoop plus Subscribe on current_session_id.
 
-// WorkLoopDigestTask is one task row in a finished loop's batch digest, mirroring
-// the client digest surface: how the task changed plus its rolled-up commit sha,
-// review verdict tally, tokens, priced cost, and (for blocked tasks) the reason.
+// WorkLoopDigestTask is one task row in a work loop's incremental/final digest,
+// including the bounded evidence needed to continue unfinished accepted work.
 message WorkLoopDigestTask {
   string id = 1;
   string title = 2;
@@ -677,10 +681,14 @@ message WorkLoopDigestTask {
   double cost = 7;
   string price_status = 8; // priced | unpriced | partial
   string reason = 9;       // blocked reason (from the task work log), blocked tasks only
+  int32 attempts = 10;
+  string latest_evidence = 11;
+  string remaining_criteria = 12;
+  string next_step = 13;
 }
 
-// WorkLoopSession is a per-session record captured as each loop session finishes:
-// its id, the backlog task it focused, and its summed tokens/priced cost.
+// WorkLoopSession is a bounded per-attempt record captured as each loop session
+// finishes. Failure details remain available even when no session_idle report exists.
 message WorkLoopSession {
   string session_id = 1;
   string focus = 2;
@@ -688,6 +696,11 @@ message WorkLoopSession {
   double cost = 4;
   string price_status = 5; // priced | unpriced | partial
   int64 duration_secs = 6; // wall-clock seconds the session took
+  int32 attempt = 7;       // attempt number for this focus within the loop
+  string evidence = 8;     // bounded latest session report or synthesized failure report
+  string error_kind = 9;
+  string error_message = 10;
+  bool error_retryable = 11;
 }
 
 // WorkLoopInfo is a snapshot of a work loop: its lifecycle state, the session it
@@ -711,6 +724,15 @@ message WorkLoopInfo {
   string cost_status = 15; // priced | unpriced | partial
   string resume_at = 16;   // RFC3339; empty unless waiting
   string wait_kind = 17;   // provider failure kind; empty unless waiting
+  int64 session_token_limit = 18;     // 0 = intentionally unbounded
+  double session_cost_limit = 19;     // 0 = intentionally unbounded
+  int64 session_time_limit_secs = 20; // 0 = intentionally unbounded
+  int64 loop_token_limit = 21;        // 0 = intentionally unbounded
+  double loop_cost_limit = 22;        // 0 = intentionally unbounded
+  int64 loop_time_limit_secs = 23;    // 0 = intentionally unbounded
+  bool cost_limits_priced_only = 24;  // cost totals/limits exclude unpriced usage
+  repeated WorkLoopDigestTask unfinished = 25; // attempted accepted work still todo/in_progress
+  bool resource_envelope_captured = 26; // false only for pre-envelope persisted snapshots
 }
 
 // StartWorkLoop starts an unattended work loop for a project. It fails

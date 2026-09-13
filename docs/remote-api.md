@@ -573,12 +573,28 @@ history with **no injected user message** — so a client can offer a plain "Ret
 button instead of making the user send a throwaway message. The `session_error`
 event carries a `retryable` flag (see [Event model](#event-model)) so clients can
 show the affordance only when a retry can help (transient rate-limit/server/network
-failures) and hide it for terminal ones (auth, invalid request, context-length).
+failures) and hide it for terminal ones (auth or invalid request).
+
+Set `rollover: true` on `Resume` to ask the session's run owner to select a durable
+compact coordinator context at the next safe full-tool-batch checkpoint (including
+while currently idle/errored). The transcript is not deleted. Pending questions must
+be answered first, and a paused/pausing session must be resumed first. Durable user
+input and complete human question/options/answer pairs remain verbatim or rollover
+fails closed; unattended automatic answers remain labeled system assumptions. Evidence
+and live-job ownership remain source-labeled. Rollover also fails closed when native
+picture/document input is still in the selected view because replay cannot restore its
+bytes; choose a larger-context model or start a new session and re-attach the media.
+The daemon also performs one bounded automatic rollover after an actual context-length rejection. If that
+compact request also overflows, `session_error.action` is `switch_model`: clients must
+not advertise another rollover of the same view and should direct the user to a
+coordinator model with a larger context window (or a new session with narrower authorized input).
 
 ```
 curl -sS -H "$AUTH" -H "$JSON" -d '{"sessionId":"s_doc"}' \
   $B/ycc.v1.SessionService/Interrupt
 curl -sS -H "$AUTH" -H "$JSON" -d '{"sessionId":"s_doc"}' \
+  $B/ycc.v1.SessionService/Resume
+curl -sS -H "$AUTH" -H "$JSON" -d '{"sessionId":"s_doc","rollover":true}' \
   $B/ycc.v1.SessionService/Resume
 ```
 
@@ -769,8 +785,10 @@ session list with an alert rather than a dead view.
 
 Drive the daemon-side unattended **work loop** (spec §9, §20.6; task 0179). The
 loop starts fresh unattended `work` sessions one after another, re-reading the
-live backlog before each pick, enforcing the no-progress guard and the per-loop
-budget caps daemon-side, and rolling every session up into an end-of-batch digest.
+live backlog before each pick and continuing while ready work remains, even when
+prior sessions leave task metadata unchanged (spec §9.1). Session and per-loop
+budget caps remain daemon-enforced; every session rolls up into an incremental/final digest
+with bounded continuation evidence.
 Because it lives in the daemon, a loop **survives client disconnects**: any client
 can start it, poll `GetWorkLoop`, `Subscribe` to `currentSessionId`, and later stop
 it gracefully. All three take a single `project` (empty is accepted only when the
@@ -800,20 +818,31 @@ curl -sS -H "$AUTH" -H "$JSON" -d '{"project":"myrepo"}' \
 |-------|------|-------|
 | `loopId` | string | stable id (`loop_<8-hex>`) |
 | `project` | string | human project label |
-| `state` | string | `running` \| `stopping` \| `finished` |
+| `state` | string | `running` \| `waiting` \| `stopping` \| `finished` |
 | `currentSessionId` | string | session being driven now (Subscribe target); empty between sessions |
 | `outcome` | string | human outcome line once finished |
 | `startedAt` | string | RFC3339 |
 | `sessionsRun` | int32 | number of sessions the loop drove |
-| `sessions` | `WorkLoopSession[]` | per-session records (`sessionId`, `focus`, `tokens`, `cost`, `priceStatus`) |
-| `completed` / `blocked` / `inReview` / `created` | `WorkLoopDigestTask[]` | digest tasks classified against the backlog baseline at loop start |
-| `totalTokens` | int64 (JSON string) | cumulative tokens across the run |
+| `sessions` | `WorkLoopSession[]` | bounded per-attempt records; see below |
+| `completed` / `blocked` / `inReview` / `unfinished` / `created` | `WorkLoopDigestTask[]` | digest tasks classified against the backlog baseline at loop start |
+| `totalTokens` | int64 (JSON string) | cumulative tokens across the run, including unpriced models |
 | `totalCost` | double | cumulative priced cost (unpriced models add none) |
 | `costStatus` | string | `priced` \| `unpriced` \| `partial` |
+| `sessionTokenLimit` / `loopTokenLimit` | int64 (JSON string) | envelope captured at start; `0` means intentionally unbounded |
+| `sessionCostLimit` / `loopCostLimit` | double | priced-cost envelope captured at start; `0` means intentionally unbounded |
+| `sessionTimeLimitSecs` / `loopTimeLimitSecs` | int64 (JSON string) | currently `0`, explicitly unbounded |
+| `costLimitsPricedOnly` | bool | cost caps/totals exclude usage without configured pricing |
+| `resourceEnvelopeCaptured` | bool | false only when reading a pre-envelope persisted snapshot |
+
+`WorkLoopSession`: `sessionId`, `focus`, per-focus `attempt`, bounded `evidence`,
+structured `errorKind` / `errorMessage` / `errorRetryable`, `tokens`, `cost`,
+`priceStatus`, and `durationSecs`. When a failed session has no `session_idle`
+report, `evidence` contains a bounded failure report synthesized from `session_error`.
 
 `WorkLoopDigestTask`: `id`, `title`, `status`, `sha` (commit recorded for the
 task), `verdictTally` (e.g. `approve×2 reject×1`), `tokens`, `cost`, `priceStatus`,
-and `reason` (blocked reason from the task work log; blocked tasks only).
+`reason` (blocked reason from the task work log; blocked tasks only), `attempts`,
+`latestEvidence`, `remainingCriteria`, and `nextStep`.
 
 ---
 
@@ -842,14 +871,19 @@ Common `type` values (initial set; full table in spec §5.2):
 `subagent_spawned` / `subagent_finished`, `question_asked` / `question_answered`,
 `interrupted` / `resumed`, `user_input` / `user_input_delivered`, `plan_proposed`,
 `review_submitted`, `decision_made`, `doc_updated`, `commit_made`,
-`session_idle` / `session_error`, `session_stopped` / `session_reopened`, `log`,
-and the transient `turn_delta`.
+`context_view_changed`, `session_idle` / `session_error`, `session_stopped` /
+`session_reopened`, `log`, and the transient `turn_delta`.
+
+`context_view_changed` durably selects the exact coordinator summary replay must use;
+it does not delete prior events. Its summary is labeled evidence, not new authority.
 
 A `session_error` payload carries `msg` plus the daemon's failure classification:
 `kind`, `status` (HTTP status when known), and `retryable` (bool). A retryable
 error (rate-limit/server/network, exhausted automatic retries) can be re-attempted
 with [`Resume`](#interrupt--resume); a non-retryable one (auth, invalid request,
-context-length) cannot. Absence of the flag should be treated as retryable.
+context-length) cannot. Absence of the flag should be treated as retryable. An optional
+`action` is recovery guidance; `switch_model` means bounded context rollover was already
+used or could not safely preserve authority, so another rollover must not be offered.
 
 ### Replay-from-seq reconnection
 

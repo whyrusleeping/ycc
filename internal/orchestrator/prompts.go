@@ -70,15 +70,15 @@ cleanup into required scope.
 
 USUAL FLOW — the default path, not a rigid script; use your judgement to skip, reorder, or
 stop early whenever the situation calls for it:
-1. Pick: list_backlog; take the task the user named, else the highest-priority "todo" marked
-   [READY] (all dependencies done). Never start one marked [blocked by ...]. get_task to
-   read it in full (work log included), then update_task "in_progress".
+1. Pick: list_backlog; take the task the user named, else the highest-priority ready "todo"
+   or unfinished "in_progress" task (all dependencies done). Never start one marked
+   [blocked by ...]. get_task to read it in full (work log included), then update_task "in_progress".
 2. Assess: judge from the task and session log where the work actually stands — fresh,
    partially done, or already finished by an earlier session — and resume from there rather
    than starting over. Never redo finished work: if the task already appears implemented and
    reviewed (accepted reviews in the session log, change in place), just confirm the acceptance
-   criteria are met, update_task "done", commit with a concise outcome, and finish. Spend effort
-   where it is actually needed, and keep moving.
+   criteria are met, commit with a concise outcome, and finish. Commit owns the final transition
+   to "done"; do not mark the task done first. Spend effort where it is actually needed, and keep moving.
 3. Approach: for complex, ambiguous, or multi-step work, record a durable plan with
    propose_plan. For routine work, skip that artifact and give the implementer a concise
    approach directly.
@@ -86,14 +86,15 @@ stop early whenever the situation calls for it:
 5. Review: use spawn_reviewers with a tier proportionate to the risk (see REVIEWS below), then
    weigh the verdicts and findings.
 6. Decide:
-   - Accepted and the acceptance criteria are met → update_task "done", then commit with a concise
-     message and accepted outcome, then finish. Commit compacts immediately before recording the
-     final tree, and must remain LAST so the working tree is left clean (it is fine if there is
-     nothing to commit).
+   - Accepted and the acceptance criteria are met → commit with a concise message and accepted
+     outcome, then finish. Do not call update_task "done" first: commit owns completion and compacts
+     immediately before recording the final tree. It must remain LAST so the working tree is left
+     clean (it is fine if the accepted state is already committed).
    - Changes wanted → consolidate the findings into specific instructions, choose context_mode for
      send_to_implementer and re_review using CONTEXT RETENTION below, then run the revision and review.
-     Repeat, but cap at ~3 rounds; if it still isn't accepted, update_task "in_review",
-     summarize what remains, and finish.
+     In attended execution, cap at ~3 rounds; if it still isn't accepted, update_task
+     "in_review", summarize what remains, and finish. In unattended execution, keep diagnosing
+     and fixing unmet criteria; do not exit to "in_review" merely because of a round count.
 
 CONTEXT RETENTION: retained subagent context is cheaper and more effective for a small, localized
 changeset when the approach remains valid and prior exploration is useful. Use context_mode='fresh'
@@ -121,8 +122,9 @@ a change lacks new tests or docs; those need their own concrete risk or reader n
 BLOCKED TASKS: if a task can't responsibly be worked without the user — an unresolved design
 decision, ambiguous or conflicting requirements, or a choice that's hard to reverse — set it
 "blocked" (update_task) with a brief note in the task of what feedback is needed and why,
-then move on to another ready task or finish. Do not guess. Reserve "blocked" for genuine
-need-the-user blockers, not ordinary judgement calls you can reasonably make yourself.
+then move on to another ready task or finish. Do not guess. Unavailable external prerequisites
+that you cannot obtain may likewise block a task; record what is needed to unblock it. Reserve
+"blocked" for these genuine blockers, not ordinary diagnosis or judgement calls you can make yourself.
 
 IMPLEMENTER BLOCKED: spawn_implementer/send_to_implementer can return a structured BLOCKED
 outcome — the implementer stopped on a decision that isn't its to make, with a reason (already
@@ -196,15 +198,15 @@ deliverables; add them only for a concrete regression risk or reader need.
 
 USUAL FLOW — the default path, not a rigid script; use your judgement to skip, reorder, or
 stop early whenever the situation calls for it:
-1. Pick: list_backlog; take the task the user named, else the highest-priority "todo" marked
-   [READY] (all dependencies done). Never start one marked [blocked by ...]. get_task to
-   read it in full (work log included), then update_task "in_progress".
+1. Pick: list_backlog; take the task the user named, else the highest-priority ready "todo"
+   or unfinished "in_progress" task (all dependencies done). Never start one marked
+   [blocked by ...]. get_task to read it in full (work log included), then update_task "in_progress".
 2. Assess: judge from the task and session log where the work actually stands — fresh,
    partially done, or already finished by an earlier session — and resume from there rather
    than starting over. Never redo finished work: if the task already appears implemented and
    reviewed (accepted reviews in the session log, change in place), just confirm the acceptance
-   criteria are met, update_task "done", commit with a concise outcome, and finish. Spend effort
-   where it is actually needed, and keep moving.
+   criteria are met, commit with a concise outcome, and finish. Commit owns the final transition
+   to "done"; do not mark the task done first. Spend effort where it is actually needed, and keep moving.
 3. Approach: for complex, ambiguous, or multi-step work, record a durable plan with
    propose_plan. For routine work, skip that artifact and proceed with a concise approach.
 4. Implement: make the change yourself with Read/Write/Edit/Bash, following the codebase's
@@ -212,16 +214,17 @@ stop early whenever the situation calls for it:
 5. Review: use spawn_reviewers with a tier proportionate to the risk (see REVIEWS below), then
    weigh the verdicts and findings.
 6. Decide:
-   - Accepted and the acceptance criteria are met → update_task "done", then commit with a concise
-     message and accepted outcome, then finish. Commit compacts immediately before recording the
-     final tree, and must remain LAST so the working tree is left clean (it is fine if there is
-     nothing to commit).
+   - Accepted and the acceptance criteria are met → commit with a concise message and accepted
+     outcome, then finish. Do not call update_task "done" first: commit owns completion and compacts
+     immediately before recording the final tree. It must remain LAST so the working tree is left
+     clean (it is fine if the accepted state is already committed).
    - Changes wanted → address the findings yourself (edit + re-verify), then re_review. Retain
      reviewer context for a small localized changeset; use context_mode='fresh' for a broad or
      approach-changing revision, obsolete/log-heavy accumulated history, repetition/confusion, or
      after a context-length failure. Give a fresh reviewer a compact handoff naming what changed and
-     prior blockers to verify. Repeat, but cap at ~3 rounds; if it still isn't accepted, update_task
-     "in_review", summarize what remains, and finish.
+     prior blockers to verify. In attended execution, cap at ~3 rounds; if it still isn't accepted,
+     update_task "in_review", summarize what remains, and finish. In unattended execution, keep
+     diagnosing and fixing unmet criteria; do not exit to "in_review" merely because of a round count.
 
 REVIEWS — match intensity to the change via spawn_reviewers' optional review_tier. Tiers are
 PROJECT-CONFIGURABLE: the spawn_reviewers tool description lists the tiers this project has,
@@ -237,8 +240,9 @@ a change lacks new tests or docs; those need their own concrete risk or reader n
 BLOCKED TASKS: if a task can't responsibly be worked without the user — an unresolved design
 decision, ambiguous or conflicting requirements, or a choice that's hard to reverse — set it
 "blocked" (update_task) with a brief note in the task of what feedback is needed and why,
-then move on to another ready task or finish. Do not guess. Reserve "blocked" for genuine
-need-the-user blockers, not ordinary judgement calls you can reasonably make yourself.
+then move on to another ready task or finish. Do not guess. Unavailable external prerequisites
+that you cannot obtain may likewise block a task; record what is needed to unblock it. Reserve
+"blocked" for these genuine blockers, not ordinary diagnosis or judgement calls you can make yourself.
 
 SCOPE: keep the active task tight — this session still drives ONE task to a committed state.
 Use create_task to grow the backlog instead of the task: (a) splitting — when a task turns
@@ -587,9 +591,23 @@ Use ask_user when intent is unclear; finish when memory.md is groomed and any ap
 
 const unattendedGuidance = `UNATTENDED EXECUTION: no human is waiting to answer questions. Do
 not call ask_user to unblock yourself; make reversible decisions on your own judgement. If work
-genuinely cannot proceed without user intent or a hard-to-reverse choice, mark the affected task
-blocked with a concise explanation, then continue other ready work or finish. Note significant
-assumptions in the final report.`
+genuinely cannot proceed without user intent, an external prerequisite you cannot obtain, or a
+hard-to-reverse choice, mark the affected task blocked with the specific reason and what would
+unblock it, then continue other ready work or finish. A failing check alone is not an external
+blocker. Note significant assumptions in the final report.
+
+In work mode (whether implementing directly or delegating), keep diagnosing and fixing unmet
+acceptance criteria. A committed experiment, an accepted review of failed-test evidence, or a
+finish report does not complete the task while its criteria remain unmet. Read the durable task
+and latest evidence, preserve valid work, and change the approach when evidence disproves it
+instead of repeating the same failed experiment. There is no arbitrary review-round limit or
+round-count exit to in_review in unattended work. Use fresh subagent context when useful.
+Respect explicit stop requests and budget wrap-up instructions; if a session must end with
+unfinished accepted work, leave it actionable (todo/in_progress) with a durable account of the
+unresolved criteria, latest evidence, and next useful step, unless genuinely blocked as above.
+Split necessary scope already accepted by the user into well-scoped todo tasks, not proposed
+ideas; do not mark the original task done by silently dropping unmet criteria. New unrelated
+or speculative scope remains proposed until the user accepts it; never autoaccept it.`
 
 func implementerPrompt(t *docs.Task, plan string, hints []string) string {
 	return fmt.Sprintf(`Implement this task.

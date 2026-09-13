@@ -1,10 +1,10 @@
 ---
 id: "0156"
 title: 'ycc task import <issue-url>: GitHub issue → backlog task (origin field, dedupe)'
-status: todo
+status: blocked
 priority: 4
 created: "2026-07-06"
-updated: "2026-08-13"
+updated: "2026-09-10"
 depends_on:
     - "0155"
 spec_refs:
@@ -29,3 +29,6 @@ New `ycc task import <issue-url>` subcommand in cmd/ycc/task.go beside add/list/
 - [ ] Documented in docs/cli.md.
 
 ## Work log
+
+- Preflight: dependency 0155 is done, but required implementation paths contain unrelated staged/unstaged changes: `internal/docs/docs.go`, `proto/ycc/v1/ycc.proto`, `proto/ycc/v1/ycc.pb.go`, and `clients/ios/YccKit/Sources/YccProto/ycc/v1/ycc.pb.swift` (server source is dirty too). The current changeset guard rejects modifying baseline-dirty paths; adding the required origin field cannot be safely reviewed/finalized in this session. No implementation, tests, or review occurred.
+- Blocked pending an isolated clean task worktree/session, or resolution of these changes by their owners followed by a new baseline. Preserve the existing source/index state. Resume the original import, RPC/direct-backend, dedupe, actionable-error, and documentation criteria once isolation is available; none were dropped.

@@ -57,6 +57,8 @@ public protocol SessionActionSource: Sendable {
     func interrupt(sessionId: String) async throws
     /// Continue a paused session (`Resume`).
     func resume(sessionId: String) async throws
+    /// Durably compact the coordinator's selected context at a safe checkpoint.
+    func rolloverContext(sessionId: String) async throws
     /// Hard-terminate a session (`StopSession`).
     func stopSession(sessionId: String) async throws
 }
