@@ -16,7 +16,7 @@ import (
 
 // Baseline is an immutable snapshot of HEAD, the index, and the visible
 // worktree (including untracked files) captured before a task can mutate the
-// repository. Dirty baseline paths are never assigned to the task.
+// repository. Dirty baseline paths are excluded unless explicitly adopted.
 type Baseline struct {
 	ID string
 
@@ -47,6 +47,7 @@ type Changeset struct {
 	Diff       string
 
 	baseline *Baseline
+	adopted  []string // canonical repo-relative files, retained for commit revalidation
 }
 
 // CommitRecovery is the durable identity of a reviewed scoped tree. It contains
@@ -264,6 +265,41 @@ func (r *Repo) requireObject(object, wantType string) error {
 // that was dirty at baseline is excluded while unchanged; if either its index
 // or worktree state changed, ownership is ambiguous and Changes refuses it.
 func (r *Repo) Changes(b *Baseline) (*Changeset, error) {
+	return r.changesIncluding(b, nil)
+}
+
+// ChangesIncluding explicitly adopts individual files, including their preexisting
+// worktree content. Paths are absolute or relative to Repo.Dir, not pathspecs.
+// All other dirty baseline paths retain the strict Changes ownership checks.
+func (r *Repo) ChangesIncluding(b *Baseline, paths ...string) (*Changeset, error) {
+	root, err := r.run("rev-parse", "--show-toplevel")
+	if err != nil {
+		return nil, err
+	}
+	var adopted []string
+	for _, path := range paths {
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(r.Dir, path)
+		}
+		path, err = filepath.Abs(path)
+		if err != nil {
+			return nil, err
+		}
+		path, err = filepath.Rel(strings.TrimSpace(root), path)
+		if err != nil {
+			return nil, err
+		}
+		path = filepath.ToSlash(path)
+		if path == "." || path == ".." || strings.HasPrefix(path, "../") {
+			return nil, fmt.Errorf("adopted file %q is outside repository or is not a file", path)
+		}
+		adopted = append(adopted, path)
+	}
+	sort.Strings(adopted)
+	return r.changesIncluding(b, adopted)
+}
+
+func (r *Repo) changesIncluding(b *Baseline, adopted []string) (*Changeset, error) {
 	if b == nil {
 		return nil, fmt.Errorf("changeset baseline is required; capture it before task mutation")
 	}
@@ -291,8 +327,36 @@ func (r *Repo) Changes(b *Baseline) (*Changeset, error) {
 	if err != nil {
 		return nil, err
 	}
+	owned := make(map[string]bool, len(adopted))
+	for _, path := range adopted {
+		// Compare staged variants in each snapshot before assigning ownership;
+		// committing the worktree must not silently discard a staged version.
+		entries := make([]string, 5)
+		for i, tree := range []string{head, b.indexTree, b.worktreeTree, indexTree, worktreeTree} {
+			entry, err := r.run("--literal-pathspecs", "ls-tree", "--full-tree", "-z", tree, "--", path)
+			if err != nil {
+				return nil, err
+			}
+			if strings.HasPrefix(entry, "040000 tree ") {
+				return nil, fmt.Errorf("adoption requires an individual file, not directory %s", path)
+			}
+			entries[i] = entry
+		}
+		if entries[1] != entries[0] && entries[1] != entries[2] {
+			return nil, fmt.Errorf("cannot adopt %s: baseline index holds distinct staged content; preserve or resolve it before proceeding", path)
+		}
+		// An unchanged index may still name the adopted baseline document after
+		// task bookkeeping edits it. That is not a separate staged variant.
+		if entries[3] != entries[0] && entries[3] != entries[1] && entries[3] != entries[4] {
+			return nil, fmt.Errorf("cannot adopt %s: current index holds distinct staged content; preserve or resolve it before proceeding", path)
+		}
+		owned[path] = true
+	}
 	var overlaps []string
 	for path := range b.dirtyPaths {
+		if owned[path] {
+			continue
+		}
 		if _, ok := indexChanged[path]; ok {
 			overlaps = append(overlaps, path)
 			continue
@@ -312,7 +376,7 @@ func (r *Repo) Changes(b *Baseline) (*Changeset, error) {
 	}
 	paths := make([]string, 0, len(currentPaths))
 	for path := range currentPaths {
-		if _, preexisting := b.dirtyPaths[path]; !preexisting {
+		if _, preexisting := b.dirtyPaths[path]; !preexisting || owned[path] {
 			paths = append(paths, path)
 		}
 	}
@@ -326,10 +390,13 @@ func (r *Repo) Changes(b *Baseline) (*Changeset, error) {
 		return nil, fmt.Errorf("render scoped changeset: %w", err)
 	}
 	id := snapshotID(b.ID, tree, strings.Join(paths, "\x00"))
+	if len(adopted) > 0 {
+		id = snapshotID(id, strings.Join(adopted, "\x00"))
+	}
 	if _, err := r.run("update-ref", "refs/ycc/changesets/"+id, tree); err != nil {
 		return nil, fmt.Errorf("retain changeset snapshot %s: %w", id, err)
 	}
-	return &Changeset{ID: id, BaselineID: b.ID, BaseCommit: head, Tree: tree, Paths: paths, Diff: diff, baseline: b}, nil
+	return &Changeset{ID: id, BaselineID: b.ID, BaseCommit: head, Tree: tree, Paths: paths, Diff: diff, baseline: b, adopted: append([]string(nil), adopted...)}, nil
 }
 
 // Commit commits exactly the immutable scoped snapshot. It refuses if the
@@ -350,7 +417,7 @@ func (r *Repo) Commit(c *Changeset, message string) (string, error) {
 	if head != recovery.BaseCommit {
 		return r.RecoverCommit(recovery, message)
 	}
-	current, err := r.Changes(c.baseline)
+	current, err := r.changesIncluding(c.baseline, c.adopted)
 	if err != nil {
 		return "", err
 	}

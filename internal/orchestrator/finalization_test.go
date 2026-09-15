@@ -423,7 +423,7 @@ func TestCommitFinalizationResumesEventPublicationAfterRestart(t *testing.T) {
 func TestCommitFinalizationResumesInterruptedTaskTransition(t *testing.T) {
 	ws, repo, baseline, store := setupFinalizationRepo(t)
 	d := finalizationDeps(ws, repo, baseline, store, &captureRec{})
-	preflight, err := d.changeset()
+	preflight, err := d.changeset("0001")
 	if err != nil {
 		t.Fatal(err)
 	}

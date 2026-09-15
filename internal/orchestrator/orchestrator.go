@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -273,7 +274,7 @@ func (d *Deps) implementer() AgentSpec {
 	return d.Implementer
 }
 
-func (d *Deps) changeset() (*git.Changeset, error) {
+func (d *Deps) changeset(taskID string) (*git.Changeset, error) {
 	if d.Repo == nil {
 		return nil, fmt.Errorf("git repository is not available")
 	}
@@ -291,7 +292,15 @@ func (d *Deps) changeset() (*git.Changeset, error) {
 	if d.Baseline == nil {
 		return nil, fmt.Errorf("session has no persisted git baseline; start a new session before reviewing or committing because change ownership cannot be reconstructed safely")
 	}
-	return d.Repo.Changes(d.Baseline)
+	task, err := d.Docs.Get(taskID)
+	if err != nil {
+		return nil, err
+	}
+	path, err := filepath.Abs(task.Path)
+	if err != nil {
+		return nil, err
+	}
+	return d.Repo.ChangesIncluding(d.Baseline, path)
 }
 
 func (d *Deps) reviewerSpecs() []AgentSpec {
@@ -556,7 +565,7 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 			d.implRunning = true
 			d.mu.Unlock()
 
-			changes, changeErr := d.changeset()
+			changes, changeErr := d.changeset(id)
 			if changeErr != nil {
 				return tools.ErrResult("spawn_implementer: establish changeset: %v", changeErr), nil
 			}
@@ -827,7 +836,7 @@ func sendToImplementer(d *Deps) *gollama.Tool {
 			d.mu.Lock()
 			d.implRound = round
 			d.mu.Unlock()
-			changes, changeErr := d.changeset()
+			changes, changeErr := d.changeset(id)
 			if changeErr != nil {
 				return tools.ErrResult("send_to_implementer: inspect changeset: %v", changeErr), nil
 			}
@@ -941,7 +950,7 @@ func freshImplementerLoop(d *Deps, spec AgentSpec, token *workspacelease.Token, 
 		handoff.WriteString(truncate(report, 4096))
 	}
 	seed := freshRevisePrompt(t, boundedRevisionHandoff(handoff.String()))
-	if changes, err := d.changeset(); err == nil && strings.TrimSpace(changes.Diff) != "" {
+	if changes, err := d.changeset(t.ID); err == nil && strings.TrimSpace(changes.Diff) != "" {
 		seed += "\n\nCurrent bounded scoped changeset " + changes.ID + " (baseline " + changes.BaselineID + "; inspect the tree for anything omitted):\n" + truncate(changes.Diff, maxDiffChars)
 	}
 	loop.Seed(seed)
@@ -1063,10 +1072,7 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 			if err != nil {
 				return tools.ErrResult("spawn_reviewers: %v", err), nil
 			}
-			if _, err := d.changeset(); err != nil {
-				return tools.ErrResult("spawn_reviewers: changeset is unsafe to review: %v", err), nil
-			}
-			preloadedDiff := buildReviewDiffHistory(d.Repo, d.Baseline)
+			preloadedDiff := d.reviewDiff(id)
 			if preloadedDiff.Err != nil {
 				return tools.ErrResult("spawn_reviewers: changeset evidence failed: %v", preloadedDiff.Err), nil
 			}
@@ -1207,10 +1213,7 @@ func reReview(d *Deps) *gollama.Tool {
 			if getErr != nil {
 				return tools.ErrResult("re_review: %v", getErr), nil
 			}
-			if _, err := d.changeset(); err != nil {
-				return tools.ErrResult("re_review: changeset is unsafe to review: %v", err), nil
-			}
-			currentDiff := buildReviewDiffHistory(d.Repo, d.Baseline)
+			currentDiff := d.reviewDiff(id)
 			if currentDiff.Err != nil {
 				return tools.ErrResult("re_review: changeset evidence failed: %v", currentDiff.Err), nil
 			}
@@ -1469,7 +1472,7 @@ func runReviewers(ctx context.Context, d *Deps, handles []*reviewerHandle, taskI
 			// same-slot retry, even if the failed loop performed inspection tool calls.
 			if err != nil && engine.IsContextLengthError(err) && ctx.Err() == nil {
 				if t, getErr := d.Docs.Get(taskID); getErr == nil {
-					currentDiff := buildReviewDiffHistory(d.Repo, d.Baseline)
+					currentDiff := d.reviewDiff(taskID)
 					if currentDiff.Err != nil {
 						err = fmt.Errorf("refresh scoped review evidence: %w", currentDiff.Err)
 					} else {
@@ -1545,7 +1548,7 @@ func implementerOutcome(d *Deps, id, label, before string, res *engine.Result, l
 			reason = "(no reason given)"
 		}
 		d.Docs.AppendWorkLog(id, label+": BLOCKED — "+oneLine(reason))
-		changes, err := d.changeset()
+		changes, err := d.changeset(id)
 		if err != nil {
 			return tools.ErrResult("implementer blocked, but its changeset is unsafe to inspect: %v", err)
 		}
@@ -1558,7 +1561,7 @@ func implementerOutcome(d *Deps, id, label, before string, res *engine.Result, l
 			"update_task 'blocked' with the reason (already recorded in the work log)."
 		return tools.OkResult(out)
 	}
-	changes, err := d.changeset()
+	changes, err := d.changeset(id)
 	if err != nil {
 		return tools.ErrResult("implementer changes cannot be safely attributed: %v", err)
 	}
@@ -1574,7 +1577,7 @@ func implementerOutcome(d *Deps, id, label, before string, res *engine.Result, l
 		return tools.ErrResult("%s", msg)
 	}
 	d.Docs.AppendWorkLog(id, label+": "+oneLine(fullReport))
-	changes, err = d.changeset() // include the work-log update in the evidence snapshot
+	changes, err = d.changeset(id) // include the work-log update in the evidence snapshot
 	if err != nil {
 		return tools.ErrResult("implementer report recorded, but changeset inspection failed: %v", err)
 	}

@@ -1,7 +1,7 @@
 ---
 id: "0382"
 title: Serve indexed, paginated session views instead of full-log client replay
-status: blocked
+status: todo
 priority: 1
 created: "2026-09-15"
 updated: "2026-09-15"
@@ -37,4 +37,5 @@ Implement additive indexed presentation API and switch iOS, as explicitly approv
 
 ## Work log
 - User explicitly approved including both daemon/API and the iOS switch in this task (2026-09-15).
-- Implementation has not started: the delegation tool refused because this task file was untracked at the session's immutable baseline and task updates triggered its dirty-path ownership guard. User approved committing only this definition/plan. Unblock in a new session with a clean baseline (not a resume of the old session), set in_progress, and implement the saved plan.
+- Implementation has not started: delegation refused because this task file was untracked at the session's immutable baseline and task updates triggered its dirty-path ownership guard. User approved committing only this definition/plan.
+- The bookkeeping ownership defect is fixed by task 0383; returned to todo. After rebuilding/restarting the daemon with that fix, start a work session and implement the saved plan. The original session's HEAD baseline became stale when the definition was committed, so use a new session for this task.

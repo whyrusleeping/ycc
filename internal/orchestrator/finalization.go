@@ -82,14 +82,18 @@ func finalizeTaskWithJournal(ctx context.Context, d *Deps, taskID, message, outc
 		return "", err
 	}
 	if record == nil {
-		preflight, err := d.changeset()
+		preflight, err := d.changeset(taskID)
 		if err != nil {
 			return "", fmt.Errorf("unsafe changeset: %w", err)
 		}
-		// Legacy coordinators marked a task done before calling commit. If that
-		// completed state is already the whole scoped tree, treat the call as an
-		// idempotent no-op rather than compacting or creating an empty commit.
-		if task.Status == docs.StatusDone && strings.TrimSpace(preflight.Diff) == "" {
+		// Adoption must not turn a previously completed, unowned task into an
+		// accepted implementation. Keep the legacy done/no-op guard strict.
+		legacyEmpty := false
+		if task.Status == docs.StatusDone {
+			strict, strictErr := d.Repo.Changes(d.Baseline)
+			legacyEmpty = strictErr == nil && strings.TrimSpace(strict.Diff) == ""
+		}
+		if task.Status == docs.StatusDone && (legacyEmpty || strings.TrimSpace(preflight.Diff) == "") {
 			committed, err := d.Repo.WorktreeFileMatchesHEAD(task.Path)
 			if err != nil {
 				return "", fmt.Errorf("verify completed task in HEAD: %w", err)
@@ -213,7 +217,7 @@ func renewUncommittedFinalization(d *Deps, journal finalizationJournal, record *
 			return nil
 		}
 	}
-	preflight, err := d.changeset()
+	preflight, err := d.changeset(record.TaskID)
 	if err != nil {
 		return fmt.Errorf("unsafe changeset while renewing finalization: %w", err)
 	}
@@ -271,7 +275,7 @@ func finishGitCommit(d *Deps, record *finalizationRecord, journal finalizationJo
 			return recoveredOr(sha, latestSHA), latest, true, recoverErr
 		}
 	}
-	changes, err := d.changeset()
+	changes, err := d.changeset(record.TaskID)
 	if err != nil {
 		return "", git.CommitUncreated, true, fmt.Errorf("unsafe changeset after task finalization: %w", err)
 	}

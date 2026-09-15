@@ -177,6 +177,16 @@ and commit subject. Session event logs are the source of detailed execution and 
 retains the prior task body and is the reversible migration/rollback path. Backlog summaries and
 dependency checks read frontmatter only, while lookup by id loads the selected body in full.
 
+The selected task's canonical document is explicitly included in its changeset even when it was
+untracked, unstaged, or staged at session startup. Review sees its full change against HEAD, and
+acceptance commits it with the implementation. Only that document is adopted: unrelated baseline-dirty
+source and backlog files remain excluded, and subsequent overlapping edits still refuse review/commit.
+Adoption refuses a baseline index version distinct from both HEAD and the baseline worktree, or a
+new staged version distinct from HEAD, the accepted baseline index, and the current worktree. Normal
+bookkeeping can thus update an already-staged task without discarding independently staged content.
+The persisted baseline is unchanged; explicit task identity restores the same scope after reopen,
+without relying on session focus. A preexisting dirty `done` task alone is not proof of acceptance.
+
 Acceptance is a recoverable ordered operation: a repository-private journal first retains the
 original task and completion intent, the compact task is applied, the exact scoped tree and created
 commit identity are persisted, HEAD advances, only the selected index paths are published, and
