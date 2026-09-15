@@ -31,7 +31,7 @@ private final class MockSource: SessionTranscriptSource, @unchecked Sendable {
     }
 
     func getSessionAttachment(project: String, sessionId: String, attachmentId: String) async throws -> MessageImage {
-        throw YccError.notFound("attachment not found")
+        throw YccError.notFound(message: "attachment not found")
     }
 
     func subscribe(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_Event, Error> {
@@ -71,7 +71,7 @@ private final class IndexedPendingSource: SessionTranscriptSource, @unchecked Se
     }
     func getSessionTranscript(project: String, sessionId: String) async throws -> [Ycc_V1_Event] { [] }
     func getSessionAttachment(project: String, sessionId: String, attachmentId: String) async throws -> MessageImage {
-        throw YccError.notFound("attachment not found")
+        throw YccError.notFound(message: "attachment not found")
     }
     func subscribe(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_Event, Error> {
         AsyncThrowingStream { $0.finish() }
@@ -111,7 +111,7 @@ private final class SuspendedTranscriptSource: SessionTranscriptSource, @uncheck
     }
 
     func getSessionAttachment(project: String, sessionId: String, attachmentId: String) async throws -> MessageImage {
-        throw YccError.notFound("attachment not found")
+        throw YccError.notFound(message: "attachment not found")
     }
 
     func subscribe(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_Event, Error> {
@@ -186,7 +186,7 @@ private final class MockActionSource: SessionActionSource, SessionTranscriptSour
         transcript
     }
     func getSessionAttachment(project: String, sessionId: String, attachmentId: String) async throws -> MessageImage {
-        throw YccError.notFound("attachment not found")
+        throw YccError.notFound(message: "attachment not found")
     }
     func subscribe(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_Event, Error> {
         AsyncThrowingStream { $0.finish() }
@@ -608,7 +608,9 @@ final class SessionViewModelTests: XCTestCase {
         let vm = SessionViewModel(source: source, sessionID: "s1", mode: .live)
 
         vm.start()
-        await waitUntil { vm.state == .idle }
+        // `.idle` is also the initial state; wait for the subscription to have
+        // been attempted and cancelled, not merely for the model to be untouched.
+        await waitUntil { source.recordedFromSeqs == [0] && vm.state == .idle }
 
         XCTAssertEqual(vm.state, .idle)
         XCTAssertFalse(vm.isAwaitingAgentActivity)
@@ -672,9 +674,12 @@ final class SessionViewModelTests: XCTestCase {
         let vm = SessionViewModel(source: source, sessionID: "s1", mode: .live)
 
         vm.start()
-        await waitUntil { vm.transcriptRevision == 2 }
+        // Each streamed event is its own main-actor job, and SwiftUI runs one
+        // update per observable write from a distinct job. A burst therefore
+        // publishes once so the transcript never updates twice in one frame.
+        await waitUntil { vm.transcriptRevision == 1 }
 
-        XCTAssertEqual(vm.transcriptRevision, 2)
+        XCTAssertEqual(vm.transcriptRevision, 1)
         XCTAssertEqual(vm.durableRows, [])
         guard case .liveTail(let text)? = vm.liveTail?.kind else {
             return XCTFail("expected the last live-tail snapshot")

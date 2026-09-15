@@ -146,6 +146,23 @@ public final class SessionViewModel {
     private let sleep: @Sendable (UInt64) async throws -> Void
     private var streamTask: Task<Void, Never>?
     private var streamGeneration: UInt64 = 0
+    /// Streamed updates waiting for the next publish. Each arrives as its own
+    /// main-actor job, and SwiftUI runs a separate update for every observable
+    /// mutation made from a distinct job. Several updates in one frame re-fire
+    /// `onChange`/preference bridges and log "tried to update multiple times per
+    /// frame". Folding a burst into one projection write per interval keeps the
+    /// transcript to at most one update per frame, for both the indexed view
+    /// stream and the legacy raw event stream.
+    private enum PendingUpdate {
+        case event(Ycc_V1_Event)
+        case indexed(Ycc_V1_SessionViewUpdate)
+    }
+    private var pendingUpdates: [PendingUpdate] = []
+    private var publishTask: Task<Void, Never>?
+    private let publishInterval: UInt64
+    /// Longer than one frame at 60Hz so two consecutive publishes can never land
+    /// in the same frame, yet well under the daemon's 100ms snapshot cadence.
+    public nonisolated static let defaultPublishInterval: UInt64 = 25_000_000
 
     /// Reconnect backoff bounds (nanoseconds). Small by default; overridable in
     /// tests to keep them fast.
@@ -165,11 +182,13 @@ public final class SessionViewModel {
         sessionID: String,
         mode: Mode,
         backoff: BackoffPolicy = BackoffPolicy(),
+        publishInterval: UInt64 = SessionViewModel.defaultPublishInterval,
         sleep: @escaping @Sendable (UInt64) async throws -> Void = {
             try await Task.sleep(nanoseconds: $0)
         }
     ) {
         self.source = source
+        self.publishInterval = publishInterval
         // Auto-wire the action surface from the same object when it conforms to
         // both (YccClient does), so callers need only pass `source`.
         self.actions = actions ?? (source as? SessionActionSource)
@@ -208,6 +227,9 @@ public final class SessionViewModel {
         let activeTask = streamTask
         streamTask = nil
         activeTask?.cancel()
+        // Unpublished updates belong to the cancelled subscription. The next
+        // subscribe starts from the last *applied* seq and receives them again.
+        pendingUpdates.removeAll()
     }
 
     /// Re-establish the live stream from the last persisted seq — call on app
@@ -255,32 +277,17 @@ public final class SessionViewModel {
                         fromSeq: self.projection.lastPersistedSeq)
                     for try await update in updates {
                         guard self.isCurrent(generation), !Task.isCancelled else { return }
-                        if update.hasTransientEvent {
-                            self.applyToProjection(update.transientEvent)
-                        } else if update.hasState {
-                            self.projection.applyIndexed(
-                                state: update.state,
-                                upserts: update.upsertedRows,
-                                deletedIDs: update.deletedRowIds)
-                            self.transcriptRevision &+= 1
-                            if update.state.pendingQuestionsTruncated,
-                               !update.state.pendingRowID.isEmpty {
-                                let rowID = update.state.pendingRowID
-                                Task { [weak self] in await self?.loadDetail(rowID: rowID) }
-                            }
-                            if self.isAwaitingAgentActivity,
-                               update.upsertedRows.contains(where: { row in
-                                   row.events.contains(where: Self.isAgentActivity)
-                               }) { self.isAwaitingAgentActivity = false }
-                        }
+                        self.enqueue(.indexed(update))
                         delay = self.backoff.initial
                     }
                     guard self.isCurrent(generation), !Task.isCancelled else { return }
+                    self.publishPendingUpdates()
                     self.clearTransientPresentation()
                     self.state = .finished
                     return
                 } catch {
                     guard self.isCurrent(generation), !Task.isCancelled else { return }
+                    self.publishPendingUpdates()
                     switch Self.classify(error) {
                     case .transient:
                         self.state = .reconnecting
@@ -397,6 +404,7 @@ public final class SessionViewModel {
             }
 
             while self.isCurrent(generation), !Task.isCancelled {
+                self.publishPendingUpdates()
                 let fromSeq = self.projection.lastPersistedSeq
                 // Drop stale streamed tails from before a disconnect so none
                 // linger until each actor's next delta/model_turn replaces them.
@@ -410,13 +418,14 @@ public final class SessionViewModel {
                         sessionId: self.sessionID, fromSeq: fromSeq)
                     for try await event in stream {
                         guard self.isCurrent(generation), !Task.isCancelled else { return }
-                        self.applyToProjection(event)
+                        self.enqueue(.event(event))
                         // Once the connection proves healthy, a later flap starts
                         // again at the shortest delay rather than retaining an old
                         // outage's penalty.
                         delay = self.backoff.initial
                     }
                     guard self.isCurrent(generation), !Task.isCancelled else { return }
+                    self.publishPendingUpdates()
                     // A clean server close is terminal for this subscription. A
                     // later explicit start/reconnect may subscribe again.
                     self.clearTransientPresentation()
@@ -424,6 +433,7 @@ public final class SessionViewModel {
                     return
                 } catch {
                     guard self.isCurrent(generation), !Task.isCancelled else { return }
+                    self.publishPendingUpdates()
                     switch Self.classify(error) {
                     case .transient:
                         self.state = .reconnecting
@@ -703,14 +713,67 @@ public final class SessionViewModel {
         }
     }
 
-    /// Apply stream/replay events and retire the optimistic working indicator as
-    /// soon as the agent produces something user-visible. A user_input echo alone
-    /// does not retire it — that only confirms receipt of the submitted message.
-    private func applyToProjection(_ event: Ycc_V1_Event) {
-        projection.apply(event)
+    /// Queue a streamed update and schedule one publish for the whole burst. The
+    /// first update of a quiet transcript still waits a full interval; that delay
+    /// is far below the daemon's own snapshot cadence.
+    private func enqueue(_ update: PendingUpdate) {
+        pendingUpdates.append(update)
+        guard publishTask == nil else { return }
+        let interval = publishInterval
+        publishTask = Task { @MainActor [weak self] in
+            if interval > 0 {
+                try? await Task.sleep(nanoseconds: interval)
+            }
+            guard let self else { return }
+            self.publishTask = nil
+            self.publishPendingUpdates()
+        }
+    }
+
+    /// Apply queued stream updates in one observable write and retire the
+    /// optimistic working indicator as soon as the agent produces something
+    /// user-visible. A user_input echo alone does not retire it — that only
+    /// confirms receipt of the submitted message. Safe to call when nothing is
+    /// pending; the stream loops do so before deriving a resume seq and before
+    /// reacting to the subscription ending, so no accepted update is lost.
+    private func publishPendingUpdates() {
+        guard !pendingUpdates.isEmpty else { return }
+        let updates = pendingUpdates
+        pendingUpdates.removeAll(keepingCapacity: true)
+        var sawAgentActivity = false
+        var truncatedPendingRowIDs: [String] = []
+        for update in updates {
+            switch update {
+            case .event(let event):
+                projection.apply(event)
+                sawAgentActivity = sawAgentActivity || Self.isAgentActivity(event)
+            case .indexed(let update) where update.hasTransientEvent:
+                projection.apply(update.transientEvent)
+                sawAgentActivity = sawAgentActivity || Self.isAgentActivity(update.transientEvent)
+            case .indexed(let update) where update.hasState:
+                projection.applyIndexed(
+                    state: update.state,
+                    upserts: update.upsertedRows,
+                    deletedIDs: update.deletedRowIds)
+                if update.state.pendingQuestionsTruncated,
+                   !update.state.pendingRowID.isEmpty {
+                    truncatedPendingRowIDs.append(update.state.pendingRowID)
+                }
+                sawAgentActivity = sawAgentActivity || update.upsertedRows.contains { row in
+                    row.events.contains(where: Self.isAgentActivity)
+                }
+            case .indexed:
+                break
+            }
+        }
         transcriptRevision &+= 1
-        if isAwaitingAgentActivity, Self.isAgentActivity(event) {
+        if isAwaitingAgentActivity, sawAgentActivity {
             isAwaitingAgentActivity = false
+        }
+        // A pending question whose row fell outside the recent page needs its
+        // full detail; `loadDetail` de-duplicates in-flight requests.
+        for rowID in truncatedPendingRowIDs {
+            Task { [weak self] in await self?.loadDetail(rowID: rowID) }
         }
     }
 

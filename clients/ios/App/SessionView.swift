@@ -1030,12 +1030,12 @@ private struct TranscriptRowView: View, Equatable {
                 preview: ToolPreview.oneLine(text, limit: 70),
                 detail: text,
                 detailIsAside: true,
-                loadDetail: row.detailAvailable ? { await loadDetail(row.id) } : nil
+                loadDetail: detailLoader
             )
         case .tool(let name, let status, let args, let output):
             ToolRowView(
                 name: name, status: status, args: args, output: output,
-                loadDetail: row.detailAvailable ? { await loadDetail(row.id) } : nil)
+                loadDetail: detailLoader)
         case .question(let prompt, let options, let answer):
             QuestionRowView(prompt: prompt, options: options, answer: answer)
         case .system(let text):
@@ -1049,6 +1049,16 @@ private struct TranscriptRowView: View, Equatable {
                 appendBaseUTF8: row.liveAppendBaseUTF8
             )
         }
+    }
+
+    /// Disclosure-driven detail fetch for abbreviated rows, or nil when the row
+    /// is already complete. Built here rather than inline: a `cond ? { … } : nil`
+    /// ternary over a closure literal does not type-check.
+    private var detailLoader: (@MainActor () async -> Void)? {
+        guard row.detailAvailable else { return nil }
+        let rowID = row.id
+        let load = loadDetail
+        return { await load(rowID) }
     }
 
     private func detailButton(_ title: String) -> some View {

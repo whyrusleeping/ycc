@@ -73,7 +73,7 @@ final class ReviewTiersModelTests: XCTestCase {
         XCTAssertEqual(source.defaultSet, "self-review")
         XCTAssertEqual(model.defaultTier, "self-review")
 
-        source.error = YccError.rpc("unknown review tier \"nope\"")
+        source.error = YccError.rpc(message: "unknown review tier \"nope\"")
         await model.setDefault("nope")
         XCTAssertEqual(model.defaultTier, "self-review", "failed default change must revert")
         XCTAssertEqual(model.errorMessage, "unknown review tier \"nope\"")
@@ -101,7 +101,7 @@ final class ReviewTiersModelTests: XCTestCase {
         let source = seededSource()
         let model = ReviewTiersModel(source: source)
         await model.load()
-        source.error = YccError.rpc("reviews.tiers.bad: unknown model \"missing\"")
+        source.error = YccError.rpc(message: "reviews.tiers.bad: unknown model \"missing\"")
 
         let ok = await model.save(ReviewTierDraft(
             name: "bad", slots: [ReviewerSlotDraft(model: "missing")]))
