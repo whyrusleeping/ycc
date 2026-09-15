@@ -73,6 +73,18 @@ public final class SessionViewModel {
     /// Durable rows exposed separately so live-tail updates do not have to
     /// allocate and diff a fresh combined array in SwiftUI.
     public var durableRows: [TranscriptRow] { projection.durableRows }
+    /// Only the recent page is mounted initially; all rows remain in the reducer
+    /// for tool pairing, pending questions, and the reconnect cursor. Keep the
+    /// start fixed as live rows arrive so reading scrollback does not remove rows.
+    public private(set) var earlierRowCount = 0
+    public var visibleDurableRows: ArraySlice<TranscriptRow> {
+        projection.durableRows.dropFirst(earlierRowCount)
+    }
+    private static let transcriptPageSize = 200
+
+    public func loadEarlierRows() {
+        earlierRowCount = max(0, earlierRowCount - Self.transcriptPageSize)
+    }
     /// Stable transient rows for every actor currently streaming, rendered
     /// separately so one subagent's snapshots do not invalidate another's text.
     public var liveTails: [TranscriptRow] { projection.liveTails }
@@ -187,7 +199,7 @@ public final class SessionViewModel {
                 let events = try await self.source.getSessionTranscript(
                     project: self.project, sessionId: self.sessionID)
                 guard self.isCurrent(generation), !Task.isCancelled else { return }
-                self.applyToProjection(events)
+                guard try await self.applyReplay(events, generation: generation) else { return }
                 self.state = .finished
             } catch {
                 guard self.isCurrent(generation), !Task.isCancelled else { return }
@@ -213,22 +225,30 @@ public final class SessionViewModel {
             defer { self.clearStreamTask(generation: generation) }
             var delay = self.backoff.initial
 
-            // First connect: catch up via the one-shot transcript, folded in a
-            // SINGLE observable mutation. A transient catch-up failure can still
-            // replay safely through Subscribe from the durable cursor; auth,
-            // missing-history, and terminal failures must not become retry loops.
-            if self.projection.lastPersistedSeq == 0 {
+            // First connect must use atomic, off-main replay even after a
+            // transient fetch failure. Falling back to Subscribe(0) would fold
+            // and eagerly mount the entire history one event at a time on the UI.
+            while self.projection.lastPersistedSeq == 0,
+                  self.isCurrent(generation), !Task.isCancelled {
                 self.state = .loading
                 do {
                     let events = try await self.source.getSessionTranscript(
                         project: self.project, sessionId: self.sessionID)
                     guard self.isCurrent(generation), !Task.isCancelled else { return }
-                    self.applyToProjection(events)
+                    guard try await self.applyReplay(events, generation: generation) else { return }
+                    delay = self.backoff.initial
+                    break // A successful empty snapshot may subscribe from zero.
                 } catch {
                     guard self.isCurrent(generation), !Task.isCancelled else { return }
                     switch Self.classify(error) {
                     case .transient:
-                        break
+                        self.state = .reconnecting
+                        do {
+                            try await self.sleep(delay)
+                        } catch {
+                            return
+                        }
+                        delay = min(delay * 2, self.backoff.maximum)
                     case .cancelled:
                         self.clearTransientPresentation()
                         self.state = .idle
@@ -318,7 +338,7 @@ public final class SessionViewModel {
                 state = .failed("session history not found")
                 return
             }
-            applyToProjection(events)
+            guard try await applyReplay(events, generation: generation) else { return }
             isAwaitingAgentActivity = false
             mode = .persisted
             state = .finished
@@ -562,16 +582,50 @@ public final class SessionViewModel {
         }
     }
 
-    private func applyToProjection(_ events: [Ycc_V1_Event]) {
-        guard !events.isEmpty else { return }
-        projection.apply(events)
-        transcriptRevision &+= 1
-        if isAwaitingAgentActivity, events.contains(where: Self.isAgentActivity) {
-            isAwaitingAgentActivity = false
+    /// Decode/fold historical payloads away from the UI executor, then publish
+    /// once. Detached work needs explicit cancellation forwarding and a generation
+    /// check *after* the await: navigation/reconnect can replace this load meanwhile.
+    private func applyReplay(_ events: [Ycc_V1_Event], generation: UInt64) async throws -> Bool {
+        while isCurrent(generation) {
+            try Task.checkCancellation()
+            guard !events.isEmpty else { return true }
+            let revision = transcriptRevision
+            let isInitialReplay = projection.lastPersistedSeq == 0
+            let worker = Task.detached(priority: .userInitiated) { [initial = projection] in
+                var folded = initial
+                var hasAgentActivity = false
+                for (index, event) in events.enumerated() {
+                    if index % 64 == 0 { try Task.checkCancellation() }
+                    folded.apply(event)
+                    hasAgentActivity = hasAgentActivity || Self.isAgentActivity(event)
+                }
+                try Task.checkCancellation()
+                return (folded, hasAgentActivity)
+            }
+            let (folded, hasAgentActivity) = try await withTaskCancellationHandler {
+                try await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
+            try Task.checkCancellation()
+            guard isCurrent(generation) else { return false }
+            // An interactive answer can change the projection while recovery is
+            // folding. Rebase rather than overwrite that newer local state.
+            guard transcriptRevision == revision else { continue }
+            projection = folded
+            if isInitialReplay {
+                earlierRowCount = max(0, folded.durableRows.count - Self.transcriptPageSize)
+            }
+            transcriptRevision &+= 1
+            if isAwaitingAgentActivity, hasAgentActivity {
+                isAwaitingAgentActivity = false
+            }
+            return true
         }
+        return false
     }
 
-    private static func isAgentActivity(_ event: Ycc_V1_Event) -> Bool {
+    private nonisolated static func isAgentActivity(_ event: Ycc_V1_Event) -> Bool {
         switch event.type {
         case "turn_delta", "model_turn", "thinking", "tool_call", "tool_result",
              "question_asked", "session_idle", "session_error", "session_stopped",

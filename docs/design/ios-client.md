@@ -22,6 +22,13 @@ The app calls the daemon's existing Connect service directly. It does not introd
 facade, proxy daemon, or replicated session store. Unary calls use Connect JSON and subscription
 uses server streaming with replay from the last durable sequence. Transient events never move the
 cursor. Reconnection clears stale live-tail state and reduces replayed events idempotently.
+History reduction runs off the UI executor and publishes atomically, discarding cancelled or
+superseded loads. Transient initial-fetch failures retry with backoff rather than bypassing bulk
+replay through an event-by-event subscription. Initial rendering mounts only the latest 200 durable
+rows; **Load earlier** reveals preceding pages while retaining the previous first row as the reading anchor. The full
+projection remains available for lifecycle, questions, tool pairing, and reconnect cursors. This
+bounds initial eager layout without reintroducing lazy-stack geometry failures during streaming;
+explicitly loaded pages and subsequent live rows can grow the mounted history.
 
 ### State and credentials
 

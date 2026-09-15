@@ -219,6 +219,76 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertTrue(source.recordedFromSeqs.isEmpty, "persisted mode holds no stream open")
     }
 
+    func testLargeReplayPagesPresentationWithoutTruncatingProjection() async {
+        let source = MockSource()
+        source.transcript = [event(1, "question_asked", #"{"prompt":"Proceed?","options":["yes","no"]}"#)]
+        source.transcript += (2...15_000).map {
+            event(Int64($0), "user_input", #"{"text":"history"}"#, actor: "user")
+        }
+        let vm = SessionViewModel(source: source, sessionID: "large", mode: .persisted)
+        vm.start()
+        await waitUntil({ vm.state == .finished }, timeout: 10)
+
+        XCTAssertEqual(vm.state, .finished)
+        XCTAssertEqual(vm.durableRows.count, 15_000)
+        XCTAssertEqual(vm.visibleDurableRows.count, 200)
+        XCTAssertEqual(vm.visibleDurableRows.first?.seq, 14_801)
+        XCTAssertEqual(vm.visibleDurableRows.last?.seq, 15_000)
+        XCTAssertEqual(vm.projection.lastPersistedSeq, 15_000)
+        XCTAssertNotNil(vm.pendingQuestion, "a hidden question must still drive the banner")
+        XCTAssertEqual(vm.transcriptRevision, 1, "history must publish atomically")
+
+        let firstPageIDs = vm.visibleDurableRows.map(\.id)
+        vm.loadEarlierRows()
+        XCTAssertEqual(vm.visibleDurableRows.count, 400)
+        XCTAssertEqual(vm.visibleDurableRows.suffix(200).map(\.id), firstPageIDs)
+        while vm.earlierRowCount > 0 { vm.loadEarlierRows() }
+        vm.loadEarlierRows() // Already at the beginning.
+        XCTAssertEqual(vm.visibleDurableRows.count, 15_000)
+        XCTAssertEqual(vm.visibleDurableRows.first?.seq, 1)
+
+        vm.start() // Reloading the same persisted view must retain its chosen window.
+        await waitUntil({ vm.state == .finished }, timeout: 10)
+        XCTAssertEqual(vm.earlierRowCount, 0)
+        XCTAssertEqual(vm.durableRows.count, 15_000)
+    }
+
+    func testPagedHistoryKeepsItsAnchorAndHiddenToolPairingAcrossLiveReconnect() async {
+        let source = MockSource()
+        source.transcript = [event(1, "tool_call", #"{"id":"old","name":"Read","args":"{}"}"#)]
+        source.transcript += (2...601).map {
+            event(Int64($0), "user_input", #"{"text":"history"}"#, actor: "user")
+        }
+        let (events, continuation) = AsyncThrowingStream<Ycc_V1_Event, Error>.makeStream()
+        source.streams = [events, AsyncThrowingStream { _ in }]
+        let vm = SessionViewModel(source: source, sessionID: "large", mode: .live)
+        vm.start()
+        await waitUntil { vm.state == .streaming }
+        XCTAssertEqual(source.recordedFromSeqs, [601])
+        vm.loadEarlierRows()
+        let hiddenCount = vm.earlierRowCount
+        let anchor = vm.visibleDurableRows.first?.id
+
+        let result = event(602, "tool_result", #"{"id":"old","name":"Read","result":"done"}"#)
+        let message = event(603, "model_turn", #"{"text":"latest"}"#)
+        continuation.yield(result)
+        continuation.yield(message)
+        await waitUntil { vm.projection.lastPersistedSeq == 603 }
+        XCTAssertEqual(vm.earlierRowCount, hiddenCount)
+        XCTAssertEqual(vm.visibleDurableRows.first?.id, anchor)
+        var expected = SessionProjection()
+        expected.apply(source.transcript + [result, message])
+        XCTAssertEqual(vm.durableRows, expected.durableRows, "hidden calls still receive results")
+
+        vm.reconnect()
+        await waitUntil { source.recordedFromSeqs.count == 2 }
+        XCTAssertEqual(source.recordedFromSeqs, [601, 603])
+        XCTAssertEqual(vm.earlierRowCount, hiddenCount)
+        XCTAssertEqual(vm.visibleDurableRows.first?.id, anchor)
+        vm.stop()
+        continuation.finish()
+    }
+
     /// Reopening a live session whose transcript already contains an answered
     /// `ask_user` must never expose an intermediate pending-question state (the
     /// bug: the answer sheet flashed open, then dismissed, during per-event
@@ -254,24 +324,37 @@ final class SessionViewModelTests: XCTestCase {
         vm.stop()
     }
 
-    func testLiveStartFallsBackToStreamReplayWhenTranscriptFails() async {
+    func testLiveStartRetriesTranscriptWithoutStreamingUnboundedHistory() async {
         let source = MockSource()
-        source.transcriptError = YccError.rpc(message: "boom")
-        source.streams = [stream(sampleEvents)]
+        let history = (1...601).map {
+            event(Int64($0), "user_input", #"{"text":"history"}"#, actor: "user")
+        }
+        source.transcriptResults = [
+            .failure(YccError.rpc(message: "boom")),
+            .failure(YccError.rpc(message: "still offline")),
+            .success(history),
+        ]
+        source.streams = [stream([])]
+        let delays = DelayRecorder()
         let vm = SessionViewModel(
             source: source,
             sessionID: "s1",
             mode: .live,
-            backoff: .init(initial: 1_000_000, maximum: 2_000_000)
+            backoff: .init(initial: 1_000_000, maximum: 2_000_000),
+            sleep: { await delays.record($0) }
         )
 
         vm.start()
         await waitUntil { vm.state == .finished }
 
-        // Full replay still arrives via the stream from seq 0 — never a gap.
-        XCTAssertEqual(vm.projection.lastPersistedSeq, 5)
-        XCTAssertEqual(vm.rows.count, 4)
-        XCTAssertEqual(source.recordedFromSeqs, [0])
+        XCTAssertEqual(vm.state, .finished)
+        XCTAssertEqual(vm.projection.lastPersistedSeq, 601)
+        XCTAssertEqual(vm.durableRows.count, 601)
+        XCTAssertEqual(vm.visibleDurableRows.count, 200)
+        XCTAssertEqual(source.transcriptRequestCount, 3)
+        XCTAssertEqual(source.recordedFromSeqs, [601], "never replay a failed bulk load event-by-event")
+        let recordedDelays = await delays.snapshot()
+        XCTAssertEqual(recordedDelays, [1_000_000, 2_000_000])
     }
 
     func testLiveReconnectReplaysFromLastPersistedSeq() async {

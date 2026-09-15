@@ -29,6 +29,10 @@ struct SessionView: View {
     /// viewport or a streaming row grows, neither of which is a user request to
     /// stop following.
     @State private var isFollowingLatest = true
+    /// Paging is explicit scrollback intent. Stale geometry/drag callbacks must
+    /// not re-enable follow until a fresh drag or Jump to latest.
+    @State private var isBrowsingEarlier = false
+    @State private var historyAnchor: String?
     /// User drags opt out of follow mode while the follow-state reconciler
     /// resumes it once the live edge is visible and dragging has gone quiet.
     /// Corrective scrolls keep a following transcript pinned through late layout.
@@ -131,6 +135,15 @@ struct SessionView: View {
             .onChange(of: composerFocused) { _, _ in
                 requestScrollToLatest(proxy: proxy)
             }
+            .task(id: historyAnchor) {
+                // Run after the expanded row hierarchy has been installed. A new
+                // page, drag, jump, or disappearance cancels this restoration.
+                guard let anchor = historyAnchor else { return }
+                await Task.yield()
+                guard !Task.isCancelled, isBrowsingEarlier,
+                      historyAnchor == anchor else { return }
+                proxy.scrollTo(anchor, anchor: .top)
+            }
         }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
@@ -227,6 +240,8 @@ struct SessionView: View {
             // that lands, or the session finishing while the phone is away —
             // shows up as unread on the list.
             markRead()
+            historyAnchor = nil
+            scrollToken.value &+= 1
             model.stop()
         }
         .onChange(of: scenePhase) { _, phase in
@@ -408,8 +423,8 @@ struct SessionView: View {
             // times per second (the streaming tail) while ScrollViewReader also
             // keeps that row pinned. The resulting stale offset presents as an
             // empty transcript until a manual scroll forces another layout pass.
-            // Session rows already collapse heavy tool/thinking details, so the
-            // predictable geometry is worth the modest eager-layout cost here.
+            // Bound the initial eager layout to a recent page. Even collapsed
+            // tool rows are expensive when a session contains thousands of them.
             VStack(alignment: .leading, spacing: 10) {
                 if model.durableRows.isEmpty, model.liveTails.isEmpty, model.state == .loading {
                     ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
@@ -417,7 +432,16 @@ struct SessionView: View {
                 // Keep immutable history separate from rapidly-changing tails.
                 // Building one combined array every 100ms made SwiftUI diff the
                 // entire transcript for every snapshot.
-                ForEach(model.durableRows) { row in
+                if model.earlierRowCount > 0 {
+                    Button {
+                        loadEarlierRows()
+                    } label: {
+                        Label("Load earlier (\(model.earlierRowCount) more)", systemImage: "arrow.up")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+                ForEach(model.visibleDurableRows) { row in
                     TranscriptRowView(
                         row: row,
                         onOpenCommit: { sha in
@@ -499,7 +523,7 @@ struct SessionView: View {
             if dragging, !isLatestVisible {
                 stopFollowingLatest()
             } else if isLatestVisible || dragActivity.sawLiveEdge,
-                      !isFollowingLatest, !dragging,
+                      !isFollowingLatest, !isBrowsingEarlier, !dragging,
                       dragAge >= Self.dragQuietPeriod {
                 // Reaching the live edge by scrolling is equivalent to tapping the
                 // pill. If growth moved it again, restore the pin immediately.
@@ -529,6 +553,11 @@ struct SessionView: View {
         .simultaneousGesture(
             DragGesture(minimumDistance: 4)
                 .onChanged { value in
+                    if isBrowsingEarlier {
+                        isBrowsingEarlier = false
+                        historyAnchor = nil
+                        dragActivity.sawLiveEdge = false
+                    }
                     dragActivity.last = Date()
                     // Schedule from activity, not onEnded: ScrollView can swallow
                     // onEnded, and an idle transcript may produce no later geometry
@@ -550,7 +579,7 @@ struct SessionView: View {
                             }
                             isDraggingTranscript = false
                             if isLatestVisible || dragActivity.sawLiveEdge,
-                               !isFollowingLatest {
+                               !isFollowingLatest, !isBrowsingEarlier {
                                 isFollowingLatest = true
                                 if !isLatestVisible {
                                     requestScrollToLatest(proxy: proxy)
@@ -577,7 +606,7 @@ struct SessionView: View {
                     // content.
                     if value.predictedEndTranslation.height <= 0,
                        isLatestVisible || dragActivity.sawLiveEdge,
-                       !isFollowingLatest {
+                       !isFollowingLatest, !isBrowsingEarlier {
                         isFollowingLatest = true
                         requestScrollToLatest(proxy: proxy)
                     }
@@ -586,7 +615,7 @@ struct SessionView: View {
                     // they have gone quiet so an idle transcript can resume too.
                     Task { @MainActor in
                         try? await Task.sleep(nanoseconds: 450_000_000)
-                        guard !isFollowingLatest,
+                        guard !isFollowingLatest, !isBrowsingEarlier,
                               isLatestVisible || dragActivity.sawLiveEdge,
                               !isDraggingTranscript else { return }
                         isFollowingLatest = true
@@ -637,6 +666,21 @@ struct SessionView: View {
             : "\(model.coordinatorModel) is working…"
     }
 
+    private func loadEarlierRows() {
+        guard let anchor = model.visibleDurableRows.first?.id else { return }
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            stopFollowingLatest()
+            isBrowsingEarlier = true
+            dragActivity.sawLiveEdge = false
+            isLatestVisible = false
+            scrollToken.value &+= 1
+            historyAnchor = anchor
+            model.loadEarlierRows()
+        }
+    }
+
     private func stopFollowingLatest() {
         guard isFollowingLatest else { return }
         isFollowingLatest = false
@@ -650,7 +694,7 @@ struct SessionView: View {
         scrollToken.value &+= 1
         let request = scrollToken.value
         Task { @MainActor in
-            // Let LazyVStack, the keyboard safe area, and the composer all
+            // Let the transcript, keyboard safe area, and composer all
             // finish the current layout pass. A newer request supersedes us.
             await Task.yield()
             guard request == scrollToken.value, isFollowingLatest else { return }
@@ -667,8 +711,10 @@ struct SessionView: View {
 
     private func jumpToLatestPill(proxy: ScrollViewProxy) -> some View {
         Button {
+            historyAnchor = nil
+            isBrowsingEarlier = false
             isFollowingLatest = true
-            proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+            requestScrollToLatest(proxy: proxy)
         } label: {
             Label("Jump to latest", systemImage: "arrow.down")
                 .font(.subheadline.weight(.semibold))
