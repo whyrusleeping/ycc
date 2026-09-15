@@ -170,6 +170,80 @@ public final class YccClient: Sendable {
         }
     }
 
+    public var supportsIndexedSessionView: Bool { true }
+
+    public func getSessionView(
+        project: String = "", sessionId: String
+    ) async throws -> Ycc_V1_GetSessionViewResponse {
+        var request = Ycc_V1_GetSessionViewRequest()
+        request.project = project
+        request.sessionID = sessionId
+        request.maxRows = 200
+        request.maxBytes = 393_216
+        let response = await generated.getSessionView(request: request)
+        switch response.result {
+        case .success(let message): return message
+        case .failure(let error): throw Self.mapSessionTransport(error)
+        }
+    }
+
+    public func getSessionViewPage(
+        project: String = "", sessionId: String, cursor: String
+    ) async throws -> Ycc_V1_GetSessionViewPageResponse {
+        var request = Ycc_V1_GetSessionViewPageRequest()
+        request.project = project
+        request.sessionID = sessionId
+        request.cursor = cursor
+        request.maxRows = 200
+        request.maxBytes = 393_216
+        let response = await generated.getSessionViewPage(request: request)
+        switch response.result {
+        case .success(let message): return message
+        case .failure(let error): throw Self.mapSessionTransport(error)
+        }
+    }
+
+    public func getSessionViewDetail(
+        project: String = "", sessionId: String, rowId: String
+    ) async throws -> Ycc_V1_SessionPresentationRow {
+        var request = Ycc_V1_GetSessionViewDetailRequest()
+        request.project = project
+        request.sessionID = sessionId
+        request.rowID = rowId
+        let response = await generated.getSessionViewDetail(request: request)
+        switch response.result {
+        case .success(let message): return message.row
+        case .failure(let error): throw Self.mapSessionTransport(error)
+        }
+    }
+
+    public func subscribeSessionView(
+        sessionId: String, fromSeq: Int64
+    ) -> AsyncThrowingStream<Ycc_V1_SessionViewUpdate, Error> {
+        let stream = generated.subscribeSessionView()
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                var request = Ycc_V1_SubscribeSessionViewRequest()
+                request.sessionID = sessionId
+                request.fromSeq = fromSeq
+                do { try stream.send(request) }
+                catch { continuation.finish(throwing: Self.mapSessionTransport(error)); return }
+                for await result in stream.results() {
+                    switch result {
+                    case .headers: continue
+                    case .message(let update): continuation.yield(update)
+                    case .complete(_, let error, _):
+                        if let error { continuation.finish(throwing: Self.mapSessionTransport(error)) }
+                        else { continuation.finish() }
+                        return
+                    }
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel(); stream.cancel() }
+        }
+    }
+
     /// Fetch all display events, without opaque provider replay blocks the UI
     /// never uses. `project` is optional for a single-project daemon.
     public func getSessionTranscript(

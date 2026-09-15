@@ -108,10 +108,20 @@ Each session's source of truth is append-only JSONL at:
 <workspace>/.ycc/sessions/<session-id>/events.jsonl
 ```
 
-A reduced snapshot may accelerate startup, but it never replaces the log. On Unix, session-state
-directories are owner-only and event logs are owner-readable/writable only because transcripts
-may contain prompts, source excerpts, tool output, and credentials echoed by external programs.
-Opening legacy state repairs these modes best-effort.
+A versioned SQLite presentation index at `<workspace>/.ycc/session-view.sqlite` accelerates remote
+session opening, but it never replaces or leads the log: live catch-up is capped by the event
+log's post-fsync sequence/byte boundary and ignores unterminated records. It transactionally records an
+indexed-through sequence, current presentation state, stable row positions and row-update
+sequences. Schema/source mismatch rebuilds it from JSONL; otherwise catch-up starts at its durable
+byte offset, so a warm page does not replay prior history. Snapshot state and rows are read
+atomically; snapshot and earlier-page RPCs bound complete encoded responses by both rows and bytes.
+Details are fetched by stable row id, while per-row update sequences and coalesced live changes
+through each advertised watermark prevent stale page/detail races and preserve edits to older or
+unloaded rows. The database and its containing directory are owner-only on Unix.
+
+On Unix, session-state directories are owner-only and event logs are owner-readable/writable only
+because transcripts may contain prompts, source excerpts, tool output, and credentials echoed by
+external programs. Opening legacy state repairs these modes best-effort.
 
 Durable emission is fail-stop: once appending the event log fails, the session must not continue
 mutating state that can no longer be represented. Reopening replays model turns, tool calls and

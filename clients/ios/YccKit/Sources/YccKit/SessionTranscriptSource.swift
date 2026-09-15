@@ -19,7 +19,15 @@ public struct MessageImage: Sendable, Equatable {
 /// with an in-memory stub — no network, no simulator. ``YccClient`` is the
 /// production conformer.
 public protocol SessionTranscriptSource: Sendable {
-    /// Fetch a session's full event log for a read-only replayed transcript.
+    /// Whether this source implements the additive indexed presentation API.
+    /// Test/legacy sources default to full transcript replay.
+    var supportsIndexedSessionView: Bool { get }
+    func getSessionView(project: String, sessionId: String) async throws -> Ycc_V1_GetSessionViewResponse
+    func getSessionViewPage(project: String, sessionId: String, cursor: String) async throws -> Ycc_V1_GetSessionViewPageResponse
+    func getSessionViewDetail(project: String, sessionId: String, rowId: String) async throws -> Ycc_V1_SessionPresentationRow
+    func subscribeSessionView(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_SessionViewUpdate, Error>
+
+    /// Fetch a session's full event log for compatibility/read-only export clients.
     func getSessionTranscript(project: String, sessionId: String) async throws -> [Ycc_V1_Event]
 
     /// Fetch one retained picture referenced by a user_input event.
@@ -27,6 +35,22 @@ public protocol SessionTranscriptSource: Sendable {
 
     /// Subscribe to a session's live event stream, replaying `seq > fromSeq`.
     func subscribe(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_Event, Error>
+}
+
+public extension SessionTranscriptSource {
+    var supportsIndexedSessionView: Bool { false }
+    func getSessionView(project: String, sessionId: String) async throws -> Ycc_V1_GetSessionViewResponse {
+        throw YccError.rpc(message: "indexed session view unavailable")
+    }
+    func getSessionViewPage(project: String, sessionId: String, cursor: String) async throws -> Ycc_V1_GetSessionViewPageResponse {
+        throw YccError.rpc(message: "indexed session view unavailable")
+    }
+    func getSessionViewDetail(project: String, sessionId: String, rowId: String) async throws -> Ycc_V1_SessionPresentationRow {
+        throw YccError.rpc(message: "indexed session detail unavailable")
+    }
+    func subscribeSessionView(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_SessionViewUpdate, Error> {
+        AsyncThrowingStream { $0.finish(throwing: YccError.rpc(message: "indexed session stream unavailable")) }
+    }
 }
 
 extension YccClient: SessionTranscriptSource {}

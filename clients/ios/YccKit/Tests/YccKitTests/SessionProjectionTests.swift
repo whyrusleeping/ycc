@@ -968,3 +968,132 @@ final class SessionProjectionTests: XCTestCase {
         }
         XCTAssertEqual(sha, "")
     }
+
+    // MARK: - Indexed presentation races
+
+    private func indexedRow(
+        id: String, position: Int64, updated: Int64,
+        events: [Ycc_V1_Event], hasDetail: Bool = false
+    ) -> Ycc_V1_SessionPresentationRow {
+        var row = Ycc_V1_SessionPresentationRow()
+        row.id = id
+        row.positionSeq = position
+        row.updatedSeq = updated
+        row.events = events
+        row.hasDetail_p = hasDetail
+        return row
+    }
+
+    private func indexedState(_ seq: Int64, phase: String = "running") -> Ycc_V1_SessionViewState {
+        var state = Ycc_V1_SessionViewState()
+        state.indexedThroughSeq = seq
+        state.phase = phase
+        return state
+    }
+
+    func testIndexedPageAndDetailResponsesCannotRegressLiveVersions() {
+        let recent = indexedRow(
+            id: "seq-10", position: 10, updated: 10,
+            events: [makeEvent(seq: 10, type: "model_turn", dataJson: #"{"text":"recent"}"#)])
+        var projection = SessionProjection()
+        projection.installIndexed(state: indexedState(10), rows: [recent])
+
+        let currentTool = indexedRow(
+            id: "tool-old", position: 2, updated: 12,
+            events: [
+                makeEvent(seq: 2, type: "tool_call", dataJson: #"{"id":"old","name":"Read","args":"a"}"#),
+                makeEvent(seq: 12, type: "tool_result", dataJson: #"{"id":"old","name":"Read","result":"new"}"#),
+            ])
+        projection.applyIndexed(
+            state: indexedState(12), upserts: [currentTool], deletedIDs: ["seq-1"])
+
+        let staleDeleted = indexedRow(
+            id: "seq-1", position: 1, updated: 1,
+            events: [makeEvent(seq: 1, type: "model_turn", dataJson: #"{"text":"deleted"}"#)])
+        let staleTool = indexedRow(
+            id: "tool-old", position: 2, updated: 2,
+            events: [makeEvent(seq: 2, type: "tool_call", dataJson: #"{"id":"old","name":"Read","args":"old"}"#)],
+            hasDetail: true)
+        projection.prependIndexed([staleDeleted, staleTool], indexedThroughSeq: 10)
+        XCTAssertFalse(projection.durableRows.contains { $0.id == "seq-1" })
+        XCTAssertTrue(projection.durableRows.contains { row in
+            guard row.id == "tool-old", case .tool(_, _, _, let output) = row.kind else { return false }
+            return output == "new"
+        }, "stale page must merge the buffered live version of an unloaded row")
+
+        projection.prependIndexed([currentTool], indexedThroughSeq: 12)
+        XCTAssertTrue(projection.durableRows.contains { row in
+            guard row.id == "tool-old", case .tool(_, _, _, let output) = row.kind else { return false }
+            return output == "new"
+        })
+        projection.installIndexedDetail(staleTool)
+        XCTAssertTrue(projection.durableRows.contains { row in
+            guard row.id == "tool-old", case .tool(_, _, _, let output) = row.kind else { return false }
+            return output == "new"
+        }, "stale detail must not overwrite a newer tool result")
+    }
+
+    func testIndexedPendingQuestionDetailRestoresBoundedState() {
+        var state = indexedState(4)
+        state.pendingRowID = "seq-4"
+        state.pendingQuestionsTruncated = true
+        var first = Ycc_V1_SessionViewQuestion()
+        first.prompt = "first"
+        state.pendingQuestions = [first]
+        var projection = SessionProjection()
+        projection.installIndexed(state: state, rows: [])
+        XCTAssertNil(projection.pendingQuestion, "an incomplete batch must not expose invalid answer controls")
+        XCTAssertTrue(projection.needsIndexedPendingDetail(rowID: "seq-4"))
+
+        let detail = indexedRow(
+            id: "seq-4", position: 4, updated: 4,
+            events: [makeEvent(
+                seq: 4, type: "question_asked",
+                dataJson: #"{"questions":[{"question":"first"},{"question":"second"}]}"#)])
+        projection.installIndexedDetail(detail)
+        XCTAssertEqual(projection.pendingQuestion?.questions.map(\.prompt), ["first", "second"])
+        XCTAssertTrue(projection.durableRows.isEmpty, "pending detail must not insert an out-of-page row")
+    }
+
+    func testIndexedDetailRacingAcceptedAnswerDoesNotReopenQuestion() {
+        var state = indexedState(4)
+        state.pendingRowID = "seq-4"
+        var question = Ycc_V1_SessionViewQuestion()
+        question.prompt = "Proceed?"
+        state.pendingQuestions = [question]
+        let summary = indexedRow(
+            id: "seq-4", position: 4, updated: 4,
+            events: [makeEvent(
+                seq: 4, type: "question_asked",
+                dataJson: #"{"question":"Proceed?"}"#)], hasDetail: true)
+        var projection = SessionProjection()
+        projection.installIndexed(state: state, rows: [summary])
+
+        // The disclosure detail request started while controls were open, but its
+        // response arrives after the daemon accepted this client's answer.
+        projection.resolvePendingQuestion(answer: "yes")
+        projection.installIndexedDetail(summary)
+        XCTAssertNil(projection.pendingQuestion)
+    }
+
+    func testIndexedDurableRowsRetireOnlyTheCorrectConcurrentLiveTails() {
+        var projection = SessionProjection()
+        projection.installIndexed(state: indexedState(1), rows: [])
+        projection.apply(delta("coordinator live"))
+        projection.apply(delta("agent live", actor: "implementer"))
+        XCTAssertEqual(projection.liveTails.count, 2)
+
+        let coordinatorTurn = indexedRow(
+            id: "seq-2", position: 2, updated: 2,
+            events: [makeEvent(
+                seq: 2, type: "model_turn", actor: "coordinator",
+                dataJson: #"{"text":"done"}"#)])
+        projection.applyIndexed(
+            state: indexedState(2), upserts: [coordinatorTurn], deletedIDs: [])
+        XCTAssertEqual(projection.liveTails.map(\.actor), ["implementer"])
+
+        projection.applyIndexed(
+            state: indexedState(3, phase: "idle"), upserts: [], deletedIDs: [])
+        XCTAssertTrue(projection.liveTails.isEmpty)
+    }
+}

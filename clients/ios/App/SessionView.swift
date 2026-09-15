@@ -458,7 +458,7 @@ struct SessionView: View {
                     Button {
                         loadEarlierRows()
                     } label: {
-                        Label("Load earlier (\(model.earlierRowCount) more)", systemImage: "arrow.up")
+                        Label("Load earlier", systemImage: "arrow.up")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
@@ -469,6 +469,7 @@ struct SessionView: View {
                         onOpenCommit: { sha in
                             commitTarget = CommitDiffTarget(sha: sha)
                         },
+                        loadDetail: { rowID in await model.loadDetail(rowID: rowID) },
                         loadPicture: { attachmentID in
                             guard !attachmentID.isEmpty,
                                   let image = try? await client.getSessionAttachment(
@@ -972,6 +973,8 @@ private struct TranscriptRowView: View, Equatable {
     var model: String = ""
     /// Called with the commit sha when a `commit_made` row is tapped.
     var onOpenCommit: (String) -> Void = { _ in }
+    /// Fetches a large abbreviated row only when its disclosure is opened.
+    var loadDetail: @MainActor (String) async -> Void = { _ in }
     /// Lazily retrieves a retained user picture. Returning nil renders the
     /// metadata fallback instead of a broken thumbnail.
     var loadPicture: @Sendable (String) async -> Data? = { _ in nil }
@@ -1003,13 +1006,22 @@ private struct TranscriptRowView: View, Equatable {
     private var rowContent: some View {
         switch row.kind {
         case .userMessage(let text, let pictures):
-            userBubble(text: text, pictures: pictures, status: row.userInputStatus)
+            VStack(alignment: .leading, spacing: 4) {
+                userBubble(text: text, pictures: pictures, status: row.userInputStatus)
+                if row.detailAvailable { detailButton("Load full message") }
+            }
         case .modelMessage(let text):
             // The plant prefix already carries the subagent label; coordinator
             // rows retain the existing textual actor heading inside the bubble.
-            bubble(text: text, isUser: false, actor: row.actorEmoji.isEmpty ? row.actor : "")
+            VStack(alignment: .leading, spacing: 4) {
+                bubble(text: text, isUser: false, actor: row.actorEmoji.isEmpty ? row.actor : "")
+                if row.detailAvailable { detailButton("Load full message") }
+            }
         case .finalReport(let text):
-            finalReport(text)
+            VStack(alignment: .leading, spacing: 4) {
+                finalReport(text)
+                if row.detailAvailable { detailButton("Load full report") }
+            }
         case .thinking(let text):
             ExpandableRow(
                 title: "Thinking",
@@ -1017,10 +1029,13 @@ private struct TranscriptRowView: View, Equatable {
                 tint: .purple,
                 preview: ToolPreview.oneLine(text, limit: 70),
                 detail: text,
-                detailIsAside: true
+                detailIsAside: true,
+                loadDetail: row.detailAvailable ? { await loadDetail(row.id) } : nil
             )
         case .tool(let name, let status, let args, let output):
-            ToolRowView(name: name, status: status, args: args, output: output)
+            ToolRowView(
+                name: name, status: status, args: args, output: output,
+                loadDetail: row.detailAvailable ? { await loadDetail(row.id) } : nil)
         case .question(let prompt, let options, let answer):
             QuestionRowView(prompt: prompt, options: options, answer: answer)
         case .system(let text):
@@ -1034,6 +1049,12 @@ private struct TranscriptRowView: View, Equatable {
                 appendBaseUTF8: row.liveAppendBaseUTF8
             )
         }
+    }
+
+    private func detailButton(_ title: String) -> some View {
+        Button(title) { Task { await loadDetail(row.id) } }
+            .font(.caption)
+            .buttonStyle(.borderless)
     }
 
     private func userBubble(
@@ -1356,13 +1377,16 @@ private struct ExpandableRow: View {
     /// Render the body as a quiet aside (dimmed + italic) rather
     /// than as prose competing with the model's actual reply.
     var detailIsAside = false
+    var loadDetail: (@MainActor () async -> Void)?
 
     @State private var expanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Button {
+                let opening = !expanded
                 withAnimation(.snappy) { expanded.toggle() }
+                if opening, let loadDetail { Task { await loadDetail() } }
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: systemImage)
@@ -1413,6 +1437,7 @@ private struct ToolRowView: View {
     let status: TranscriptRow.ToolStatus
     let args: String
     let output: String
+    var loadDetail: (@MainActor () async -> Void)?
 
     @State private var expanded = false
 
@@ -1421,7 +1446,9 @@ private struct ToolRowView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Button {
+                let opening = !expanded
                 withAnimation(.snappy) { expanded.toggle() }
+                if opening, let loadDetail { Task { await loadDetail() } }
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: ToolPreview.symbol(for: name))

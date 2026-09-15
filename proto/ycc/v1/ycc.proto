@@ -259,6 +259,77 @@ message GetSessionTranscriptRequest {
 }
 message GetSessionTranscriptResponse { repeated Event events = 1; }
 
+// SessionPresentationRow is one stable, independently reducible transcript row.
+// events contains only the event(s) that create and subsequently edit this row;
+// clients do not need earlier reducer history. Large fields may be abbreviated in
+// pages when has_detail is true; GetSessionViewDetail returns the complete bundle.
+message SessionPresentationRow {
+  string id = 1;
+  int64 position_seq = 2;
+  int64 updated_seq = 3;
+  repeated Event events = 4;
+  bool has_detail = 5;
+}
+message SessionViewQuestion {
+  string prompt = 1;
+  repeated string options = 2;
+}
+message SessionViewState {
+  int64 indexed_through_seq = 1;
+  string last_event_timestamp = 2;
+  string phase = 3; // running | paused | idle | error | stopped
+  string error_message = 4;
+  bool error_retryable = 5;
+  string coordinator_model = 6;
+  int64 context_tokens = 7;
+  bool has_context_tokens = 8;
+  bool rollover_available = 9;
+  repeated SessionViewQuestion pending_questions = 10;
+  string pending_row_id = 11;
+  // True when bounded state contains only a prefix; fetch pending_row_id detail.
+  bool pending_questions_truncated = 12;
+}
+message GetSessionViewRequest {
+  string project = 1;
+  string session_id = 2;
+  int32 max_rows = 3;  // daemon clamps to a safe range; zero uses the default
+  int32 max_bytes = 4; // complete encoded response budget; zero uses default; daemon enforces a safe minimum
+}
+message GetSessionViewResponse {
+  SessionViewState state = 1;
+  repeated SessionPresentationRow rows = 2;
+  string earlier_cursor = 3; // opaque, empty when all earlier rows are included
+}
+message GetSessionViewPageRequest {
+  string project = 1;
+  string session_id = 2;
+  string cursor = 3;
+  int32 max_rows = 4;
+  int32 max_bytes = 5;
+}
+message GetSessionViewPageResponse {
+  repeated SessionPresentationRow rows = 1;
+  string earlier_cursor = 2;
+  int64 indexed_through_seq = 3;
+}
+message GetSessionViewDetailRequest {
+  string project = 1;
+  string session_id = 2;
+  string row_id = 3;
+}
+message GetSessionViewDetailResponse { SessionPresentationRow row = 1; }
+message SubscribeSessionViewRequest {
+  string session_id = 1;
+  int64 from_seq = 2;
+}
+message SessionViewUpdate {
+  int64 seq = 1;
+  SessionViewState state = 2;
+  repeated SessionPresentationRow upserted_rows = 3;
+  repeated string deleted_row_ids = 4;
+  Event transient_event = 5;
+}
+
 // GetSessionAttachment returns one picture referenced by attachment_id in a
 // user_input event. The payload is stored beside (not inside) events.jsonl and
 // follows the session log's retention lifecycle.
@@ -863,6 +934,12 @@ service SessionService {
   // GetSessionTranscript returns a session's full event log (live or persisted)
   // for the read-only transcript drill-in.
   rpc GetSessionTranscript(GetSessionTranscriptRequest) returns (GetSessionTranscriptResponse);
+  // Indexed, bounded presentation APIs. The append-only transcript remains the
+  // authoritative replay/export surface above.
+  rpc GetSessionView(GetSessionViewRequest) returns (GetSessionViewResponse);
+  rpc GetSessionViewPage(GetSessionViewPageRequest) returns (GetSessionViewPageResponse);
+  rpc GetSessionViewDetail(GetSessionViewDetailRequest) returns (GetSessionViewDetailResponse);
+  rpc SubscribeSessionView(SubscribeSessionViewRequest) returns (stream SessionViewUpdate);
   // GetSessionAttachment returns a retained picture referenced by a user_input
   // event, without putting binary payloads in the event log.
   rpc GetSessionAttachment(GetSessionAttachmentRequest) returns (GetSessionAttachmentResponse);

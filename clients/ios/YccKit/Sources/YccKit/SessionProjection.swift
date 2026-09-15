@@ -65,6 +65,9 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
     public var kind: Kind
     /// The persisted seq this row came from (`0` for the transient live tail).
     public var seq: Int64
+    /// Latest durable sequence that changed this stable row. For legacy rows it
+    /// equals `seq`; indexed page/detail merges use it to reject stale responses.
+    public var updatedSeq: Int64
     /// The actor that produced the row.
     public var actor: String
     /// Delivery state for a user message; nil for every other row kind.
@@ -79,21 +82,28 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
     /// or replacing the complete snapshot. Nil for durable rows/older daemons.
     public var liveAppend: String?
     public var liveAppendBaseUTF8: Int?
+    /// The indexed page abbreviated a large payload; expansion can fetch the
+    /// complete independently-reducible row bundle on demand.
+    public var detailAvailable: Bool
 
     public init(
         id: String, kind: Kind, seq: Int64, actor: String, ts: String,
+        updatedSeq: Int64? = nil,
         userInputStatus: UserInputStatus? = nil, actorEmoji: String = "",
-        liveAppend: String? = nil, liveAppendBaseUTF8: Int? = nil
+        liveAppend: String? = nil, liveAppendBaseUTF8: Int? = nil,
+        detailAvailable: Bool = false
     ) {
         self.id = id
         self.kind = kind
         self.seq = seq
+        self.updatedSeq = updatedSeq ?? seq
         self.actor = actor
         self.userInputStatus = userInputStatus
         self.actorEmoji = actorEmoji
         self.ts = ts
         self.liveAppend = liveAppend
         self.liveAppendBaseUTF8 = liveAppendBaseUTF8
+        self.detailAvailable = detailAvailable
     }
 }
 
@@ -132,6 +142,15 @@ public struct SessionProjection: Sendable, Equatable {
     ]
     private var subagentEmojiByActor: [String: String] = [:]
     private var nextSubagentEmojiIndex = 0
+    /// Versions are retained even for unloaded indexed rows so a page captured
+    /// before a live upsert/tombstone cannot later install stale content.
+    private var indexedRowVersions: [String: Int64] = [:]
+    private var indexedTombstoneVersions: [String: Int64] = [:]
+    private var indexedPendingRows: [String: TranscriptRow] = [:]
+    /// A truncated pending-question state needs detail even when its old row is
+    /// outside the loaded page. Separate this from openQuestionRowID, which stays
+    /// set after an optimistic answer solely to fold the authoritative answer row.
+    private var indexedPendingDetailRowID: String?
 
     /// Highest **persisted** seq folded so far — the reconnect resume cursor.
     /// Transient events (seq 0) never advance it.
@@ -657,6 +676,7 @@ public struct SessionProjection: Sendable, Equatable {
     public mutating func resolvePendingQuestion(answer: String) {
         foldAnswer(answer)
         pendingQuestion = nil
+        indexedPendingDetailRowID = nil
     }
 
     /// Mark the open question row answered. An empty answer still resolves the
@@ -669,6 +689,213 @@ public struct SessionProjection: Sendable, Equatable {
         else { return }
         let text = answer.isEmpty ? (existing ?? "") : answer
         durableRows[idx].kind = .question(prompt: prompt, options: options, answer: text)
+    }
+
+    // MARK: - Indexed presentation
+
+    /// Install a daemon-reduced current state and independently reducible page.
+    /// No event preceding the page is needed for row pairing or session chrome.
+    public mutating func installIndexed(
+        state: Ycc_V1_SessionViewState,
+        rows: [Ycc_V1_SessionPresentationRow]
+    ) {
+        applyIndexedState(state)
+        durableRows = rows.compactMap(Self.decodeIndexedRow)
+        indexedRowVersions = Dictionary(uniqueKeysWithValues: durableRows.map { ($0.id, $0.updatedSeq) })
+        indexedTombstoneVersions.removeAll(keepingCapacity: true)
+        indexedPendingRows.removeAll(keepingCapacity: true)
+        subagentEmojiByActor.removeAll(keepingCapacity: true)
+        for row in durableRows where Self.isSubagentActor(row.actor) {
+            subagentEmojiByActor[Self.normalizedActor(row.actor)] = row.actorEmoji
+        }
+        liveTails.removeAll(keepingCapacity: true)
+    }
+
+    /// Prepend an earlier page with a sequence-aware merge. Versions learned from
+    /// live updates are retained even for unloaded rows, so a response captured
+    /// before an upsert or deletion cannot resurrect stale content.
+    public mutating func prependIndexed(
+        _ rows: [Ycc_V1_SessionPresentationRow], indexedThroughSeq: Int64
+    ) {
+        var decoded: [TranscriptRow] = []
+        for encoded in rows {
+            let known = indexedRowVersions[encoded.id] ?? 0
+            let tombstone = indexedTombstoneVersions[encoded.id] ?? 0
+            var candidate: TranscriptRow?
+            if let pending = indexedPendingRows[encoded.id],
+               pending.updatedSeq >= known, pending.updatedSeq > tombstone {
+                // The page proves this old row is now in the requested range, but
+                // its captured payload predates a live upsert. Install the buffered
+                // current row rather than either stale content or no row at all.
+                candidate = pending
+            } else if encoded.updatedSeq <= indexedThroughSeq,
+                      encoded.updatedSeq >= known, encoded.updatedSeq > tombstone {
+                candidate = Self.decodeIndexedRow(encoded)
+            }
+            guard var row = candidate else { continue }
+            indexedPendingRows.removeValue(forKey: row.id)
+            indexedRowVersions[row.id] = row.updatedSeq
+            row.actorEmoji = subagentEmoji(for: row.actor)
+            if let index = durableRows.firstIndex(where: { $0.id == row.id }) {
+                durableRows[index] = row
+            } else {
+                decoded.append(row)
+            }
+        }
+        durableRows.insert(contentsOf: decoded, at: 0)
+    }
+
+    /// Apply one coalesced, gap-free indexed update. The daemon guarantees that
+    /// this mutation contains every row change through the state's watermark.
+    public mutating func applyIndexed(
+        state: Ycc_V1_SessionViewState,
+        upserts: [Ycc_V1_SessionPresentationRow],
+        deletedIDs: [String]
+    ) {
+        guard state.indexedThroughSeq > lastPersistedSeq else { return }
+        applyIndexedTailRetirement(state: state, rows: upserts)
+        applyIndexedState(state)
+        if !deletedIDs.isEmpty {
+            let deleted = Set(deletedIDs)
+            for id in deletedIDs {
+                indexedTombstoneVersions[id] = state.indexedThroughSeq
+                indexedRowVersions[id] = max(indexedRowVersions[id] ?? 0, state.indexedThroughSeq)
+                indexedPendingRows.removeValue(forKey: id)
+            }
+            durableRows.removeAll { deleted.contains($0.id) }
+        }
+        let newestPosition = durableRows.last?.seq ?? 0
+        for encoded in upserts {
+            let known = indexedRowVersions[encoded.id] ?? 0
+            let tombstone = indexedTombstoneVersions[encoded.id] ?? 0
+            guard encoded.updatedSeq >= known, encoded.updatedSeq > tombstone,
+                  var row = Self.decodeIndexedRow(encoded) else { continue }
+            indexedRowVersions[row.id] = row.updatedSeq
+            indexedTombstoneVersions.removeValue(forKey: row.id)
+            row.actorEmoji = subagentEmoji(for: row.actor)
+            if let index = durableRows.firstIndex(where: { $0.id == row.id }) {
+                indexedPendingRows.removeValue(forKey: row.id)
+                durableRows[index] = row
+            } else if encoded.positionSeq > newestPosition {
+                indexedPendingRows.removeValue(forKey: row.id)
+                durableRows.append(row)
+            } else {
+                indexedPendingRows[row.id] = row
+            }
+        }
+    }
+
+    /// Whether bounded current state requires a full pending-question row, even
+    /// when that old row is not part of the loaded presentation page.
+    public func needsIndexedPendingDetail(rowID: String) -> Bool {
+        indexedPendingDetailRowID == rowID
+    }
+
+    /// Replace an abbreviated loaded row only if it is still the same version.
+    /// A detail response racing a newer tool result must never overwrite it. A
+    /// required pending-question detail may restore state without inserting its
+    /// out-of-page transcript row.
+    public mutating func installIndexedDetail(_ encoded: Ycc_V1_SessionPresentationRow) {
+        let restoresPending = indexedPendingDetailRowID == encoded.id
+        let known = indexedRowVersions[encoded.id] ?? 0
+        let tombstone = indexedTombstoneVersions[encoded.id] ?? 0
+        guard encoded.updatedSeq >= known, encoded.updatedSeq > tombstone,
+              var row = Self.decodeIndexedRow(encoded) else { return }
+
+        if let index = durableRows.firstIndex(where: { $0.id == row.id }) {
+            guard encoded.updatedSeq >= durableRows[index].updatedSeq else { return }
+            row.detailAvailable = false
+            row.actorEmoji = durableRows[index].actorEmoji
+            indexedRowVersions[row.id] = row.updatedSeq
+            durableRows[index] = row
+        } else if !restoresPending {
+            return
+        }
+
+        guard restoresPending else { return }
+        var detailProjection = SessionProjection()
+        detailProjection.apply(encoded.events)
+        if let expanded = detailProjection.pendingQuestion {
+            pendingQuestion = expanded
+            openQuestionRowID = expanded.rowID
+            indexedPendingDetailRowID = nil
+        } else if encoded.events.contains(where: { $0.type == "question_answered" }) {
+            pendingQuestion = nil
+            openQuestionRowID = nil
+            indexedPendingDetailRowID = nil
+        }
+    }
+
+    private mutating func applyIndexedTailRetirement(
+        state: Ycc_V1_SessionViewState, rows: [Ycc_V1_SessionPresentationRow]
+    ) {
+        if state.phase == "idle" || state.phase == "stopped" {
+            clearLiveTails()
+            return
+        }
+        for event in rows.flatMap(\.events) {
+            if event.type == "model_turn" || event.type == "session_error" {
+                removeLiveTail(actor: event.actor)
+            } else if event.type == "session_idle" || event.type == "session_stopped" || event.type == "session_ended" {
+                clearLiveTails()
+            }
+        }
+    }
+
+    private mutating func applyIndexedState(_ state: Ycc_V1_SessionViewState) {
+        lastPersistedSeq = state.indexedThroughSeq
+        lastEventTimestamp = state.lastEventTimestamp
+        coordinatorModel = state.coordinatorModel
+        currentContextTokensEstimate = state.hasContextTokens_p ? Int(state.contextTokens) : nil
+        rolloverAvailable = state.rolloverAvailable
+        switch state.phase {
+        case "paused": phase = .paused
+        case "idle": phase = .idle
+        case "error": phase = .error(state.errorMessage, retryable: state.errorRetryable)
+        case "stopped": phase = .stopped
+        default: phase = .running
+        }
+        if state.pendingQuestionsTruncated, !state.pendingRowID.isEmpty {
+            // Do not expose an incomplete batch to AnswerQuestions. The view model
+            // fetches this row's full detail, which restores all controls below.
+            pendingQuestion = nil
+            openQuestionRowID = state.pendingRowID
+            indexedPendingDetailRowID = state.pendingRowID
+        } else if !state.pendingQuestions.isEmpty, !state.pendingRowID.isEmpty {
+            let questions = state.pendingQuestions.map { Question(prompt: $0.prompt, options: $0.options) }
+            let summary = Self.summaryQuestion(questions)
+            pendingQuestion = PendingQuestion(
+                prompt: summary.prompt, options: summary.options,
+                questions: questions, rowID: state.pendingRowID)
+            openQuestionRowID = state.pendingRowID
+            indexedPendingDetailRowID = nil
+        } else {
+            pendingQuestion = nil
+            openQuestionRowID = nil
+            indexedPendingDetailRowID = nil
+        }
+    }
+
+    private static func decodeIndexedRow(_ encoded: Ycc_V1_SessionPresentationRow) -> TranscriptRow? {
+        var projection = SessionProjection()
+        projection.apply(encoded.events)
+        guard var row = projection.durableRows.first else { return nil }
+        row.detailAvailable = encoded.hasDetail_p
+        // The server is authoritative for stable identity/position even when a
+        // malformed legacy payload made the local fallback choose another id.
+        row = TranscriptRow(
+            id: encoded.id, kind: row.kind, seq: encoded.positionSeq,
+            actor: row.actor, ts: row.ts, updatedSeq: encoded.updatedSeq,
+            userInputStatus: row.userInputStatus,
+            actorEmoji: stableActorEmoji(row.actor), detailAvailable: encoded.hasDetail_p)
+        return row
+    }
+
+    private static func stableActorEmoji(_ actor: String) -> String {
+        guard isSubagentActor(actor) else { return "" }
+        var hash: UInt64 = 1469598103934665603
+        for byte in actor.utf8 { hash = (hash ^ UInt64(byte)) &* 1099511628211 }
+        return subagentEmojiPalette[Int(hash % UInt64(subagentEmojiPalette.count))]
     }
 
     // MARK: - Row helpers

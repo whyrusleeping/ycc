@@ -209,6 +209,8 @@ JSON="Content-Type: application/json"
 | [`ListSessions`](#listsessions) | live sessions (optionally filtered by project) |
 | [`ListSessionHistory`](#listsessionhistory) | live + persisted sessions, most-recent first |
 | [`GetSessionTranscript`](#getsessiontranscript) | full event log for one session |
+| [`GetSessionView`](#indexed-session-view) / `GetSessionViewPage` / `GetSessionViewDetail` | bounded indexed presentation pages and detail |
+| [`SubscribeSessionView`](#indexed-session-view) | sequence-safe presentation row/state updates |
 | [`GetSessionAttachment`](#getsessionattachment) | fetch a retained user-picture payload |
 | [`StartSession`](#startsession) | start a new session |
 | [`Subscribe`](#subscribe) | stream a session's events (replay + live) |
@@ -412,6 +414,33 @@ curl -sS -H "$AUTH" -H "$JSON" -d '{"project":"work","sessionId":"s_doc"}' \
 ```
 
 See [Event model](#event-model) for the `Event` shape and `dataJson` parsing.
+
+### Indexed session view
+
+Presentation clients should use `GetSessionView`, not the full transcript. It returns current
+session chrome/question state, the newest stable rows, an `indexedThroughSeq`, and an opaque
+`earlierCursor`. `maxRows` and `maxBytes` are both enforced (and clamped by the daemon); `maxBytes`
+budgets the complete encoded response, including state/envelope, with a 32 KiB safe minimum and a
+384 KiB default. Pass the cursor to `GetSessionViewPage` until the
+returned cursor is empty. Row positions are immutable, so concurrent appends cannot duplicate or
+skip earlier pages.
+
+Each `SessionPresentationRow.events` bundle is independently reducible: it contains the creation
+event and any later event that edits that row (tool result, queued-message delivery, or question
+answer). A page may abbreviate large fields and set `hasDetail`; fetch that row from
+`GetSessionViewDetail` when opened. The detail bundle is complete. Pathologically large pending
+question state is also prefix-bounded and marked `pendingQuestionsTruncated`; fetch the pending row's
+detail before presenting the complete batch of answer controls.
+
+For a live session, call `SubscribeSessionView` with the snapshot's `indexedThroughSeq`. Durable
+updates carry a new state watermark plus coalesced row upserts/tombstones for every mutation through
+that watermark, including changes to loaded or unloaded old rows. Page/detail rows carry their own
+`updatedSeq`, so clients reject responses that raced a newer live version. Transient `turn_delta`
+remains an `Event` in `transientEvent`. On reconnect,
+repeat the snapshot/subscription handoff; the durable log subscription replays sequences after the
+snapshot, so there is no replay/live gap. Live indexing is capped by the log's post-fsync
+sequence/byte boundary and never consumes an unterminated tail. The SQLite index is versioned and
+rebuildable from JSONL; legacy transcript/export/model-replay APIs are unchanged.
 
 ### GetSessionAttachment
 

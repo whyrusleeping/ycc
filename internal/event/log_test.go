@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -106,8 +107,10 @@ func TestLogPersistAndReopen(t *testing.T) {
 	}
 	emit(t, l, 1, SessionStarted)
 	emit(t, l, 2, ModelTurn)
-	if l.LastSeq() != 2 {
-		t.Fatalf("LastSeq = %d, want 2", l.LastSeq())
+	seq, offset := l.DurableBoundary()
+	info, statErr := os.Stat(path)
+	if seq != 2 || statErr != nil || offset != info.Size() {
+		t.Fatalf("durable boundary=(%d,%d), file=%v err=%v", seq, offset, info, statErr)
 	}
 	l.Close()
 
@@ -119,6 +122,41 @@ func TestLogPersistAndReopen(t *testing.T) {
 	defer l2.Close()
 	if l2.LastSeq() != 2 {
 		t.Fatalf("after reopen LastSeq = %d, want 2", l2.LastSeq())
+	}
+}
+
+func TestOpenLogRejectsUnterminatedExistingRecordWithoutModification(t *testing.T) {
+	cases := []struct {
+		name     string
+		contents string
+		readable bool
+	}{
+		{name: "valid JSON", contents: `{"seq":1,"type":"model_turn"}`, readable: true},
+		{name: "partial JSON", contents: `{"seq":`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "events.jsonl")
+			if err := os.WriteFile(path, []byte(tc.contents), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if events, err := ReadLog(path); tc.readable && (err != nil || len(events) != 1) {
+				t.Fatalf("read-only log behavior changed: events=%+v err=%v", events, err)
+			}
+			if log, err := OpenLog(path); err == nil {
+				log.Close()
+				t.Fatal("OpenLog accepted an unterminated record")
+			} else if !strings.Contains(err.Error(), "unterminated final record") {
+				t.Fatalf("OpenLog error = %v", err)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(after) != tc.contents {
+				t.Fatalf("failed reopen modified log: got %q, want %q", after, tc.contents)
+			}
+		})
 	}
 }
 

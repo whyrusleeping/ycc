@@ -5,11 +5,13 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"maps"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -115,8 +117,119 @@ func TestTranscriptPresentationOverBinaryAndJSON(t *testing.T) {
 	}
 }
 
+func TestIndexedSessionViewPagesAndDetail(t *testing.T) {
+	ws := t.TempDir()
+	logPath := filepath.Join(ws, ".ycc", "sessions", "s_view", "events.jsonl")
+	log, err := event.OpenLog(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 8; i++ {
+		log.Record("coordinator", event.ModelTurn, map[string]any{"text": fmt.Sprintf("message-%d", i)})
+	}
+	log.Record("coordinator", event.ToolCall, map[string]any{"id": "t1", "name": "Read", "args": strings.Repeat("x", 40000)})
+	log.Record("coordinator", event.ToolResult, map[string]any{"id": "t1", "name": "Read", "result": "ok"})
+	if err := log.Close(); err != nil {
+		t.Fatal(err)
+	}
+	mgr := session.NewManager(config.NewRegistry(&config.Config{}), ws)
+	defer mgr.ReclaimAll()
+	_, handler := yccv1connect.NewSessionServiceHandler(New(mgr))
+	httpServer := httptest.NewServer(handler)
+	defer httpServer.Close()
+	client := yccv1connect.NewSessionServiceClient(httpServer.Client(), httpServer.URL)
+	first, err := client.GetSessionView(context.Background(), connect.NewRequest(&v1.GetSessionViewRequest{SessionId: "s_view", MaxRows: 3, MaxBytes: 64 << 10}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Msg.State.IndexedThroughSeq != 10 || len(first.Msg.Rows) != 3 || first.Msg.EarlierCursor == "" {
+		t.Fatalf("first=%+v", first.Msg)
+	}
+	if total := proto.Size(first.Msg); total > 64<<10 {
+		t.Fatalf("encoded response=%d", total)
+	}
+	last := first.Msg.Rows[len(first.Msg.Rows)-1]
+	if last.Id != "tool-t1" || !last.HasDetail {
+		t.Fatalf("tool row=%+v", last)
+	}
+	detail, err := client.GetSessionViewDetail(context.Background(), connect.NewRequest(&v1.GetSessionViewDetailRequest{SessionId: "s_view", RowId: "tool-t1"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var args map[string]any
+	if err := json.Unmarshal([]byte(detail.Msg.Row.Events[0].DataJson), &args); err != nil {
+		t.Fatal(err)
+	}
+	if len(args["args"].(string)) != 40000 {
+		t.Fatal("detail was abbreviated")
+	}
+	page, err := client.GetSessionViewPage(context.Background(), connect.NewRequest(&v1.GetSessionViewPageRequest{SessionId: "s_view", Cursor: first.Msg.EarlierCursor, MaxRows: 3, MaxBytes: 64 << 10}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Msg.Rows) != 3 || page.Msg.Rows[len(page.Msg.Rows)-1].PositionSeq >= first.Msg.Rows[0].PositionSeq {
+		t.Fatalf("unstable earlier page: %+v", page.Msg.Rows)
+	}
+}
+
 // Set YCC_BENCH_TRANSCRIPT to a local events.jsonl to measure actual encoded
 // transcript cost without checking private session data into a fixture.
+func TestIndexedSessionViewBoundsWholePathologicalResponse(t *testing.T) {
+	ws := t.TempDir()
+	logPath := filepath.Join(ws, ".ycc", "sessions", "s_large", "events.jsonl")
+	log, err := event.OpenLog(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	huge := strings.Repeat("界", 10000)
+	log.Record("coordinator", event.SessionError, map[string]any{"msg": huge})
+	questions := make([]map[string]any, 20)
+	for i := range questions {
+		questions[i] = map[string]any{"question": huge, "options": []string{huge, huge, huge, huge}}
+	}
+	log.Record("coordinator", event.QuestionAsked, map[string]any{"questions": questions})
+	if err := log.Close(); err != nil {
+		t.Fatal(err)
+	}
+	mgr := session.NewManager(config.NewRegistry(&config.Config{}), ws)
+	defer mgr.ReclaimAll()
+	_, handler := yccv1connect.NewSessionServiceHandler(New(mgr))
+	httpServer := httptest.NewServer(handler)
+	defer httpServer.Close()
+	client := yccv1connect.NewSessionServiceClient(httpServer.Client(), httpServer.URL)
+	response, err := client.GetSessionView(context.Background(), connect.NewRequest(&v1.GetSessionViewRequest{
+		SessionId: "s_large", MaxRows: 1, MaxBytes: 1,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := proto.Size(response.Msg); got > 32<<10 {
+		t.Fatalf("pathological initial response=%d, want <= %d", got, 32<<10)
+	}
+	if len(response.Msg.Rows) != 1 || !response.Msg.Rows[0].HasDetail {
+		t.Fatalf("oversized row is not compact and detail-reachable: %+v", response.Msg.Rows)
+	}
+	if len(response.Msg.State.ErrorMessage) > 2051 { // 2048 bytes plus one ellipsis rune
+		t.Fatalf("state error remained unbounded: %d bytes", len(response.Msg.State.ErrorMessage))
+	}
+	if len(response.Msg.State.PendingQuestions) > 8 || !response.Msg.State.PendingQuestionsTruncated {
+		t.Fatalf("pending state was not bounded/detail-marked: %+v", response.Msg.State)
+	}
+	detail, err := client.GetSessionViewDetail(context.Background(), connect.NewRequest(&v1.GetSessionViewDetailRequest{
+		SessionId: "s_large", RowId: response.Msg.State.PendingRowId,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var full map[string]any
+	if err := json.Unmarshal([]byte(detail.Msg.Row.Events[0].DataJson), &full); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(full["questions"].([]any)); got != 20 {
+		t.Fatalf("pending detail has %d questions, want 20", got)
+	}
+}
+
 func BenchmarkTranscriptEncoding(b *testing.B) {
 	path := os.Getenv("YCC_BENCH_TRANSCRIPT")
 	if path == "" {

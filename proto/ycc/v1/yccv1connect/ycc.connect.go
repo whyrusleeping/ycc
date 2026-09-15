@@ -48,6 +48,18 @@ const (
 	// SessionServiceGetSessionTranscriptProcedure is the fully-qualified name of the SessionService's
 	// GetSessionTranscript RPC.
 	SessionServiceGetSessionTranscriptProcedure = "/ycc.v1.SessionService/GetSessionTranscript"
+	// SessionServiceGetSessionViewProcedure is the fully-qualified name of the SessionService's
+	// GetSessionView RPC.
+	SessionServiceGetSessionViewProcedure = "/ycc.v1.SessionService/GetSessionView"
+	// SessionServiceGetSessionViewPageProcedure is the fully-qualified name of the SessionService's
+	// GetSessionViewPage RPC.
+	SessionServiceGetSessionViewPageProcedure = "/ycc.v1.SessionService/GetSessionViewPage"
+	// SessionServiceGetSessionViewDetailProcedure is the fully-qualified name of the SessionService's
+	// GetSessionViewDetail RPC.
+	SessionServiceGetSessionViewDetailProcedure = "/ycc.v1.SessionService/GetSessionViewDetail"
+	// SessionServiceSubscribeSessionViewProcedure is the fully-qualified name of the SessionService's
+	// SubscribeSessionView RPC.
+	SessionServiceSubscribeSessionViewProcedure = "/ycc.v1.SessionService/SubscribeSessionView"
 	// SessionServiceGetSessionAttachmentProcedure is the fully-qualified name of the SessionService's
 	// GetSessionAttachment RPC.
 	SessionServiceGetSessionAttachmentProcedure = "/ycc.v1.SessionService/GetSessionAttachment"
@@ -202,6 +214,12 @@ type SessionServiceClient interface {
 	// GetSessionTranscript returns a session's full event log (live or persisted)
 	// for the read-only transcript drill-in.
 	GetSessionTranscript(context.Context, *connect.Request[v1.GetSessionTranscriptRequest]) (*connect.Response[v1.GetSessionTranscriptResponse], error)
+	// Indexed, bounded presentation APIs. The append-only transcript remains the
+	// authoritative replay/export surface above.
+	GetSessionView(context.Context, *connect.Request[v1.GetSessionViewRequest]) (*connect.Response[v1.GetSessionViewResponse], error)
+	GetSessionViewPage(context.Context, *connect.Request[v1.GetSessionViewPageRequest]) (*connect.Response[v1.GetSessionViewPageResponse], error)
+	GetSessionViewDetail(context.Context, *connect.Request[v1.GetSessionViewDetailRequest]) (*connect.Response[v1.GetSessionViewDetailResponse], error)
+	SubscribeSessionView(context.Context, *connect.Request[v1.SubscribeSessionViewRequest]) (*connect.ServerStreamForClient[v1.SessionViewUpdate], error)
 	// GetSessionAttachment returns a retained picture referenced by a user_input
 	// event, without putting binary payloads in the event log.
 	GetSessionAttachment(context.Context, *connect.Request[v1.GetSessionAttachmentRequest]) (*connect.Response[v1.GetSessionAttachmentResponse], error)
@@ -350,6 +368,30 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			httpClient,
 			baseURL+SessionServiceGetSessionTranscriptProcedure,
 			connect.WithSchema(sessionServiceMethods.ByName("GetSessionTranscript")),
+			connect.WithClientOptions(opts...),
+		),
+		getSessionView: connect.NewClient[v1.GetSessionViewRequest, v1.GetSessionViewResponse](
+			httpClient,
+			baseURL+SessionServiceGetSessionViewProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("GetSessionView")),
+			connect.WithClientOptions(opts...),
+		),
+		getSessionViewPage: connect.NewClient[v1.GetSessionViewPageRequest, v1.GetSessionViewPageResponse](
+			httpClient,
+			baseURL+SessionServiceGetSessionViewPageProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("GetSessionViewPage")),
+			connect.WithClientOptions(opts...),
+		),
+		getSessionViewDetail: connect.NewClient[v1.GetSessionViewDetailRequest, v1.GetSessionViewDetailResponse](
+			httpClient,
+			baseURL+SessionServiceGetSessionViewDetailProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("GetSessionViewDetail")),
+			connect.WithClientOptions(opts...),
+		),
+		subscribeSessionView: connect.NewClient[v1.SubscribeSessionViewRequest, v1.SessionViewUpdate](
+			httpClient,
+			baseURL+SessionServiceSubscribeSessionViewProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("SubscribeSessionView")),
 			connect.WithClientOptions(opts...),
 		),
 		getSessionAttachment: connect.NewClient[v1.GetSessionAttachmentRequest, v1.GetSessionAttachmentResponse](
@@ -656,6 +698,10 @@ type sessionServiceClient struct {
 	listSessions          *connect.Client[v1.ListSessionsRequest, v1.ListSessionsResponse]
 	listSessionHistory    *connect.Client[v1.ListSessionHistoryRequest, v1.ListSessionHistoryResponse]
 	getSessionTranscript  *connect.Client[v1.GetSessionTranscriptRequest, v1.GetSessionTranscriptResponse]
+	getSessionView        *connect.Client[v1.GetSessionViewRequest, v1.GetSessionViewResponse]
+	getSessionViewPage    *connect.Client[v1.GetSessionViewPageRequest, v1.GetSessionViewPageResponse]
+	getSessionViewDetail  *connect.Client[v1.GetSessionViewDetailRequest, v1.GetSessionViewDetailResponse]
+	subscribeSessionView  *connect.Client[v1.SubscribeSessionViewRequest, v1.SessionViewUpdate]
 	getSessionAttachment  *connect.Client[v1.GetSessionAttachmentRequest, v1.GetSessionAttachmentResponse]
 	getCommitDiff         *connect.Client[v1.GetCommitDiffRequest, v1.GetCommitDiffResponse]
 	subscribe             *connect.Client[v1.SubscribeRequest, v1.Event]
@@ -730,6 +776,26 @@ func (c *sessionServiceClient) ListSessionHistory(ctx context.Context, req *conn
 // GetSessionTranscript calls ycc.v1.SessionService.GetSessionTranscript.
 func (c *sessionServiceClient) GetSessionTranscript(ctx context.Context, req *connect.Request[v1.GetSessionTranscriptRequest]) (*connect.Response[v1.GetSessionTranscriptResponse], error) {
 	return c.getSessionTranscript.CallUnary(ctx, req)
+}
+
+// GetSessionView calls ycc.v1.SessionService.GetSessionView.
+func (c *sessionServiceClient) GetSessionView(ctx context.Context, req *connect.Request[v1.GetSessionViewRequest]) (*connect.Response[v1.GetSessionViewResponse], error) {
+	return c.getSessionView.CallUnary(ctx, req)
+}
+
+// GetSessionViewPage calls ycc.v1.SessionService.GetSessionViewPage.
+func (c *sessionServiceClient) GetSessionViewPage(ctx context.Context, req *connect.Request[v1.GetSessionViewPageRequest]) (*connect.Response[v1.GetSessionViewPageResponse], error) {
+	return c.getSessionViewPage.CallUnary(ctx, req)
+}
+
+// GetSessionViewDetail calls ycc.v1.SessionService.GetSessionViewDetail.
+func (c *sessionServiceClient) GetSessionViewDetail(ctx context.Context, req *connect.Request[v1.GetSessionViewDetailRequest]) (*connect.Response[v1.GetSessionViewDetailResponse], error) {
+	return c.getSessionViewDetail.CallUnary(ctx, req)
+}
+
+// SubscribeSessionView calls ycc.v1.SessionService.SubscribeSessionView.
+func (c *sessionServiceClient) SubscribeSessionView(ctx context.Context, req *connect.Request[v1.SubscribeSessionViewRequest]) (*connect.ServerStreamForClient[v1.SessionViewUpdate], error) {
+	return c.subscribeSessionView.CallServerStream(ctx, req)
 }
 
 // GetSessionAttachment calls ycc.v1.SessionService.GetSessionAttachment.
@@ -988,6 +1054,12 @@ type SessionServiceHandler interface {
 	// GetSessionTranscript returns a session's full event log (live or persisted)
 	// for the read-only transcript drill-in.
 	GetSessionTranscript(context.Context, *connect.Request[v1.GetSessionTranscriptRequest]) (*connect.Response[v1.GetSessionTranscriptResponse], error)
+	// Indexed, bounded presentation APIs. The append-only transcript remains the
+	// authoritative replay/export surface above.
+	GetSessionView(context.Context, *connect.Request[v1.GetSessionViewRequest]) (*connect.Response[v1.GetSessionViewResponse], error)
+	GetSessionViewPage(context.Context, *connect.Request[v1.GetSessionViewPageRequest]) (*connect.Response[v1.GetSessionViewPageResponse], error)
+	GetSessionViewDetail(context.Context, *connect.Request[v1.GetSessionViewDetailRequest]) (*connect.Response[v1.GetSessionViewDetailResponse], error)
+	SubscribeSessionView(context.Context, *connect.Request[v1.SubscribeSessionViewRequest], *connect.ServerStream[v1.SessionViewUpdate]) error
 	// GetSessionAttachment returns a retained picture referenced by a user_input
 	// event, without putting binary payloads in the event log.
 	GetSessionAttachment(context.Context, *connect.Request[v1.GetSessionAttachmentRequest]) (*connect.Response[v1.GetSessionAttachmentResponse], error)
@@ -1132,6 +1204,30 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		SessionServiceGetSessionTranscriptProcedure,
 		svc.GetSessionTranscript,
 		connect.WithSchema(sessionServiceMethods.ByName("GetSessionTranscript")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceGetSessionViewHandler := connect.NewUnaryHandler(
+		SessionServiceGetSessionViewProcedure,
+		svc.GetSessionView,
+		connect.WithSchema(sessionServiceMethods.ByName("GetSessionView")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceGetSessionViewPageHandler := connect.NewUnaryHandler(
+		SessionServiceGetSessionViewPageProcedure,
+		svc.GetSessionViewPage,
+		connect.WithSchema(sessionServiceMethods.ByName("GetSessionViewPage")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceGetSessionViewDetailHandler := connect.NewUnaryHandler(
+		SessionServiceGetSessionViewDetailProcedure,
+		svc.GetSessionViewDetail,
+		connect.WithSchema(sessionServiceMethods.ByName("GetSessionViewDetail")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceSubscribeSessionViewHandler := connect.NewServerStreamHandler(
+		SessionServiceSubscribeSessionViewProcedure,
+		svc.SubscribeSessionView,
+		connect.WithSchema(sessionServiceMethods.ByName("SubscribeSessionView")),
 		connect.WithHandlerOptions(opts...),
 	)
 	sessionServiceGetSessionAttachmentHandler := connect.NewUnaryHandler(
@@ -1440,6 +1536,14 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceListSessionHistoryHandler.ServeHTTP(w, r)
 		case SessionServiceGetSessionTranscriptProcedure:
 			sessionServiceGetSessionTranscriptHandler.ServeHTTP(w, r)
+		case SessionServiceGetSessionViewProcedure:
+			sessionServiceGetSessionViewHandler.ServeHTTP(w, r)
+		case SessionServiceGetSessionViewPageProcedure:
+			sessionServiceGetSessionViewPageHandler.ServeHTTP(w, r)
+		case SessionServiceGetSessionViewDetailProcedure:
+			sessionServiceGetSessionViewDetailHandler.ServeHTTP(w, r)
+		case SessionServiceSubscribeSessionViewProcedure:
+			sessionServiceSubscribeSessionViewHandler.ServeHTTP(w, r)
 		case SessionServiceGetSessionAttachmentProcedure:
 			sessionServiceGetSessionAttachmentHandler.ServeHTTP(w, r)
 		case SessionServiceGetCommitDiffProcedure:
@@ -1565,6 +1669,22 @@ func (UnimplementedSessionServiceHandler) ListSessionHistory(context.Context, *c
 
 func (UnimplementedSessionServiceHandler) GetSessionTranscript(context.Context, *connect.Request[v1.GetSessionTranscriptRequest]) (*connect.Response[v1.GetSessionTranscriptResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetSessionTranscript is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) GetSessionView(context.Context, *connect.Request[v1.GetSessionViewRequest]) (*connect.Response[v1.GetSessionViewResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetSessionView is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) GetSessionViewPage(context.Context, *connect.Request[v1.GetSessionViewPageRequest]) (*connect.Response[v1.GetSessionViewPageResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetSessionViewPage is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) GetSessionViewDetail(context.Context, *connect.Request[v1.GetSessionViewDetailRequest]) (*connect.Response[v1.GetSessionViewDetailResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetSessionViewDetail is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) SubscribeSessionView(context.Context, *connect.Request[v1.SubscribeSessionViewRequest], *connect.ServerStream[v1.SessionViewUpdate]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.SubscribeSessionView is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) GetSessionAttachment(context.Context, *connect.Request[v1.GetSessionAttachmentRequest]) (*connect.Response[v1.GetSessionAttachmentResponse], error) {

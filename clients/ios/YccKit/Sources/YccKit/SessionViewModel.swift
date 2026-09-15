@@ -5,15 +5,13 @@ import YccProto
 /// Drives a session transcript view by folding events through a
 /// ``SessionProjection``. Two modes:
 ///
-/// - **live** — catches up via a one-shot `GetSessionTranscript` folded as a
-///   single mutation (so replayed history — e.g. an already-answered question —
-///   never flashes transient UI), then `Subscribe`s from the caught-up seq for
-///   the live tail. On a stream drop it reconnects with a small backoff, and on
-///   app foregrounding ``reconnect()`` re-`Subscribe`s from the last
-///   **persisted** seq, so there is no gap and no duplication
-///   (docs/remote-api.md "Replay-from-seq").
-/// - **persisted** — `GetSessionTranscript` once, folded with no live tail and
-///   no stream held open.
+/// - **live** — loads a bounded indexed `GetSessionView` snapshot, then
+///   `SubscribeSessionView`s from its exact durable sequence. Reconnect repeats
+///   that atomic handoff, so row upserts (including edits to old rows) and live
+///   tails have no replay gap.
+/// - **persisted** — loads the same bounded view with no stream held open.
+///
+/// Injected legacy/test sources retain the full-transcript reducer path.
 ///
 /// The stream source is injected (``SessionTranscriptSource``) so the reconnect
 /// and fold logic is testable headlessly. `@MainActor` because it publishes
@@ -82,12 +80,37 @@ public final class SessionViewModel {
     /// start fixed as live rows arrive so reading scrollback does not remove rows.
     public private(set) var earlierRowCount = 0
     public var visibleDurableRows: ArraySlice<TranscriptRow> {
-        projection.durableRows.dropFirst(earlierRowCount)
+        projection.durableRows.dropFirst(source.supportsIndexedSessionView ? 0 : earlierRowCount)
     }
     private static let transcriptPageSize = 200
+    private var earlierCursor = ""
+    private var loadingEarlier = false
+    private var loadingDetailIDs: Set<String> = []
 
     public func loadEarlierRows() {
-        earlierRowCount = max(0, earlierRowCount - Self.transcriptPageSize)
+        guard source.supportsIndexedSessionView else {
+            earlierRowCount = max(0, earlierRowCount - Self.transcriptPageSize)
+            return
+        }
+        guard !earlierCursor.isEmpty, !loadingEarlier else { return }
+        loadingEarlier = true
+        let cursor = earlierCursor
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.loadingEarlier = false }
+            do {
+                let page = try await self.source.getSessionViewPage(
+                    project: self.project, sessionId: self.sessionID, cursor: cursor)
+                guard cursor == self.earlierCursor else { return }
+                self.projection.prependIndexed(
+                    page.rows, indexedThroughSeq: page.indexedThroughSeq)
+                self.earlierCursor = page.earlierCursor
+                self.earlierRowCount = page.earlierCursor.isEmpty ? 0 : 1
+                self.transcriptRevision &+= 1
+            } catch {
+                self.actionError = Self.actionMessage("load earlier", error)
+            }
+        }
     }
     /// Stable transient rows for every actor currently streaming, rendered
     /// separately so one subagent's snapshots do not invalidate another's text.
@@ -161,6 +184,11 @@ public final class SessionViewModel {
     /// Begin loading. Idempotent: a second call while already running is ignored.
     public func start() {
         guard streamTask == nil, !unauthorized else { return }
+        if source.supportsIndexedSessionView {
+            if mode == .live { isAwaitingAgentActivity = true }
+            startIndexedLoop(stream: mode == .live)
+            return
+        }
         switch mode {
         case .persisted:
             loadTranscript()
@@ -187,7 +215,107 @@ public final class SessionViewModel {
     public func reconnect() {
         guard mode == .live, !unauthorized else { return }
         stop()
-        startLiveLoop()
+        if source.supportsIndexedSessionView { startIndexedLoop(stream: true) }
+        else { startLiveLoop() }
+    }
+
+    // MARK: - Indexed presentation
+
+    private func startIndexedLoop(stream: Bool) {
+        streamGeneration &+= 1
+        let generation = streamGeneration
+        streamTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.clearStreamTask(generation: generation) }
+            var delay = self.backoff.initial
+            while self.isCurrent(generation), !Task.isCancelled {
+                self.state = self.hasCompletedInitialReplay ? .reconnecting : .loading
+                do {
+                    let snapshot = try await self.source.getSessionView(
+                        project: self.project, sessionId: self.sessionID)
+                    guard self.isCurrent(generation), !Task.isCancelled else { return }
+                    self.projection.installIndexed(state: snapshot.state, rows: snapshot.rows)
+                    self.earlierCursor = snapshot.earlierCursor
+                    self.earlierRowCount = snapshot.earlierCursor.isEmpty ? 0 : 1
+                    self.hasCompletedInitialReplay = true
+                    self.transcriptRevision &+= 1
+                    if snapshot.state.pendingQuestionsTruncated,
+                       !snapshot.state.pendingRowID.isEmpty {
+                        let rowID = snapshot.state.pendingRowID
+                        Task { [weak self] in await self?.loadDetail(rowID: rowID) }
+                    }
+                    if self.isAwaitingAgentActivity,
+                       snapshot.rows.contains(where: { row in
+                           row.events.contains(where: Self.isAgentActivity)
+                       }) { self.isAwaitingAgentActivity = false }
+                    guard stream else { self.state = .finished; return }
+                    self.state = .streaming
+                    let updates = self.source.subscribeSessionView(
+                        sessionId: self.sessionID,
+                        fromSeq: self.projection.lastPersistedSeq)
+                    for try await update in updates {
+                        guard self.isCurrent(generation), !Task.isCancelled else { return }
+                        if update.hasTransientEvent {
+                            self.applyToProjection(update.transientEvent)
+                        } else if update.hasState {
+                            self.projection.applyIndexed(
+                                state: update.state,
+                                upserts: update.upsertedRows,
+                                deletedIDs: update.deletedRowIds)
+                            self.transcriptRevision &+= 1
+                            if update.state.pendingQuestionsTruncated,
+                               !update.state.pendingRowID.isEmpty {
+                                let rowID = update.state.pendingRowID
+                                Task { [weak self] in await self?.loadDetail(rowID: rowID) }
+                            }
+                            if self.isAwaitingAgentActivity,
+                               update.upsertedRows.contains(where: { row in
+                                   row.events.contains(where: Self.isAgentActivity)
+                               }) { self.isAwaitingAgentActivity = false }
+                        }
+                        delay = self.backoff.initial
+                    }
+                    guard self.isCurrent(generation), !Task.isCancelled else { return }
+                    self.clearTransientPresentation()
+                    self.state = .finished
+                    return
+                } catch {
+                    guard self.isCurrent(generation), !Task.isCancelled else { return }
+                    switch Self.classify(error) {
+                    case .transient:
+                        self.state = .reconnecting
+                        do { try await self.sleep(delay) } catch { return }
+                        delay = min(delay * 2, self.backoff.maximum)
+                    case .cancelled: self.clearTransientPresentation(); self.state = .idle; return
+                    case .unauthorized: self.failUnauthorized(); return
+                    case .missing:
+                        if stream { self.mode = .persisted }
+                        self.clearTransientPresentation(); self.state = .finished; return
+                    case .terminal:
+                        self.clearTransientPresentation(); self.state = .failed(Self.message(error)); return
+                    }
+                }
+            }
+        }
+    }
+
+    /// Fetch and install a complete abbreviated row when a disclosure is opened.
+    public func loadDetail(rowID: String) async {
+        let loadedRowHasDetail = projection.durableRows.first(where: { $0.id == rowID })?.detailAvailable == true
+        let pendingStateNeedsDetail = projection.needsIndexedPendingDetail(rowID: rowID)
+        guard source.supportsIndexedSessionView,
+              !loadingDetailIDs.contains(rowID),
+              loadedRowHasDetail || pendingStateNeedsDetail else { return }
+        loadingDetailIDs.insert(rowID)
+        defer { loadingDetailIDs.remove(rowID) }
+        do {
+            let row = try await source.getSessionViewDetail(
+                project: project, sessionId: sessionID, rowId: rowID)
+            projection.installIndexedDetail(row)
+            transcriptRevision &+= 1
+        } catch {
+            actionError = Self.actionMessage("load detail", error)
+        }
     }
 
     // MARK: - Persisted

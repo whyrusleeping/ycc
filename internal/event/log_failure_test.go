@@ -2,6 +2,7 @@ package event
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -149,8 +150,12 @@ func TestLogSyncFailureIsNotReportedAsRecorded(t *testing.T) {
 		t.Fatalf("Err = %v, want injected sync error", l.Err())
 	}
 	tail, cursor := l.SnapshotFrom(0)
-	if l.LastSeq() != 0 || len(l.Snapshot()) != 0 || tail != nil || cursor != 0 {
-		t.Fatalf("sync-failed event exposed in memory: LastSeq=%d Snapshot=%+v tail=%+v cursor=%d", l.LastSeq(), l.Snapshot(), tail, cursor)
+	durableSeq, durableOffset := l.DurableBoundary()
+	if durableSeq != 0 || durableOffset != 0 || len(l.Snapshot()) != 0 || tail != nil || cursor != 0 {
+		t.Fatalf("sync-failed event exposed: boundary=(%d,%d) Snapshot=%+v tail=%+v cursor=%d", durableSeq, durableOffset, l.Snapshot(), tail, cursor)
+	}
+	if info, err := os.Stat(path); err != nil || info.Size() == 0 {
+		t.Fatalf("test did not expose failed-sync bytes on disk: info=%v err=%v", info, err)
 	}
 	if again := l.Record("agent", ToolCall, nil); again.Seq != 0 {
 		t.Fatalf("Record after sync failure seq = %d, want 0", again.Seq)

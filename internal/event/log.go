@@ -20,14 +20,15 @@ import (
 // broadcast-only events (Broadcast): these are delivered to live subscribers
 // but never persisted, replayed, or seq-numbered.
 type Log struct {
-	mu     sync.Mutex
-	cond   *sync.Cond
-	path   string
-	f      logFile
-	events []Event
-	seq    int
-	closed bool
-	failed error
+	mu           sync.Mutex
+	cond         *sync.Cond
+	path         string
+	f            logFile
+	events       []Event
+	seq          int
+	durableBytes int64
+	closed       bool
+	failed       error
 
 	// onFailure lets the owning session stop as soon as durability is lost. The
 	// callback is captured exactly once under mu and invoked after mu is released.
@@ -78,6 +79,9 @@ func OpenLog(path string) (*Log, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
+	if err := requireTerminatedLog(path); err != nil {
+		return nil, err
+	}
 	existing, err := readEvents(path)
 	if err != nil {
 		return nil, err
@@ -91,7 +95,12 @@ func OpenLog(path string) (*Log, error) {
 	// otherwise usable durable log fail to open.
 	_ = os.Chmod(dir, 0o700)
 	_ = f.Chmod(0o600)
-	l := &Log{path: path, f: f, events: existing, subs: map[int]*subscriber{}}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	l := &Log{path: path, f: f, events: existing, durableBytes: info.Size(), subs: map[int]*subscriber{}}
 	if n := len(existing); n > 0 {
 		l.seq = existing[n-1].Seq
 	}
@@ -104,6 +113,32 @@ func OpenLog(path string) (*Log, error) {
 // a corrupt line is a hard error. It backs the read-only transcript view.
 func ReadLog(path string) ([]Event, error) {
 	return readEvents(path)
+}
+
+func requireTerminatedLog(path string) error {
+	f, err := os.Open(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if info.Size() == 0 {
+		return nil
+	}
+	var last [1]byte
+	if _, err := f.ReadAt(last[:], info.Size()-1); err != nil {
+		return err
+	}
+	if last[0] != '\n' {
+		return fmt.Errorf("corrupt event log %s: unterminated final record", path)
+	}
+	return nil
 }
 
 func readEvents(path string) ([]Event, error) {
@@ -134,12 +169,17 @@ func readEvents(path string) ([]Event, error) {
 
 // LastSeq returns the seq of the most recent persisted event, or 0 if empty.
 func (l *Log) LastSeq() int {
+	seq, _ := l.DurableBoundary()
+	return seq
+}
+
+// DurableBoundary returns the committed sequence and byte offset under the same
+// lock used by Record. Neither advances until append and fsync both succeed, so
+// disk-backed read indexes can avoid observing a failed or in-flight candidate.
+func (l *Log) DurableBoundary() (seq int, offset int64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if len(l.events) == 0 {
-		return 0
-	}
-	return l.events[len(l.events)-1].Seq
+	return l.seq, l.durableBytes
 }
 
 // Snapshot returns a copy of the log's events so callers can reduce/project over
@@ -222,6 +262,7 @@ func (l *Log) Record(actor string, t Type, data map[string]any) Event {
 	}
 
 	l.seq = ev.Seq
+	l.durableBytes += int64(len(line))
 	l.events = append(l.events, ev)
 	l.cond.Broadcast()
 	l.mu.Unlock()

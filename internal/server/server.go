@@ -5,14 +5,17 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"connectrpc.com/connect"
@@ -25,6 +28,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/orchestrator"
 	"github.com/whyrusleeping/ycc/internal/session"
+	"github.com/whyrusleeping/ycc/internal/sessionview"
 	"github.com/whyrusleeping/ycc/internal/subusage"
 	"github.com/whyrusleeping/ycc/internal/usage"
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
@@ -34,13 +38,15 @@ import (
 // Server adapts a session.Manager to the generated SessionServiceHandler.
 type Server struct {
 	yccv1connect.UnimplementedSessionServiceHandler
-	mgr      *session.Manager
-	subUsage *subusage.Service
+	mgr        *session.Manager
+	subUsage   *subusage.Service
+	viewMu     sync.Mutex
+	viewStores map[string]*sessionview.Store
 }
 
 // New returns a Server backed by mgr.
 func New(mgr *session.Manager) *Server {
-	return &Server{mgr: mgr, subUsage: subusage.NewService(nil)}
+	return &Server{mgr: mgr, subUsage: subusage.NewService(nil), viewStores: make(map[string]*sessionview.Store)}
 }
 
 // ListModes returns the selectable session modes and opening-prompt presets for
@@ -229,6 +235,248 @@ func (s *Server) GetSessionTranscript(_ context.Context, req *connect.Request[v1
 		out = append(out, transcriptEventToProto(ev, req.Msg.OmitProviderState))
 	}
 	return connect.NewResponse(&v1.GetSessionTranscriptResponse{Events: out}), nil
+}
+
+func (s *Server) sessionViewStore(project, id string) (*sessionview.Store, string, int64, int64, error) {
+	workspace, logPath, durableSeq, durableOffset, err := s.mgr.SessionViewLogPath(project, id)
+	if err != nil {
+		return nil, "", 0, 0, err
+	}
+	s.viewMu.Lock()
+	defer s.viewMu.Unlock()
+	store := s.viewStores[workspace]
+	if store == nil {
+		store, err = sessionview.Open(filepath.Join(workspace, ".ycc", "session-view.sqlite"))
+		if err != nil {
+			return nil, "", 0, 0, err
+		}
+		s.viewStores[workspace] = store
+	}
+	return store, logPath, durableSeq, durableOffset, nil
+}
+
+func sessionViewError(err error) error {
+	switch {
+	case errors.Is(err, session.ErrUnknownProject):
+		return connect.NewError(connect.CodeInvalidArgument, err)
+	case errors.Is(err, session.ErrUnknownSession), errors.Is(err, sql.ErrNoRows), errors.Is(err, os.ErrNotExist):
+		return connect.NewError(connect.CodeNotFound, err)
+	default:
+		return connect.NewError(connect.CodeInternal, err)
+	}
+}
+
+func presentationState(st sessionview.State) *v1.SessionViewState {
+	out := &v1.SessionViewState{IndexedThroughSeq: st.IndexedThrough, LastEventTimestamp: truncatePresentationString(st.LastTimestamp, 128),
+		Phase: st.Phase, ErrorMessage: truncatePresentationString(st.ErrorMessage, 2048), ErrorRetryable: st.ErrorRetryable,
+		CoordinatorModel: truncatePresentationString(st.Coordinator, 256), ContextTokens: st.ContextTokens, HasContextTokens: st.HasContext,
+		RolloverAvailable: st.Rollover, PendingRowId: truncatePresentationString(st.PendingRowID, 256)}
+	pending := st.Pending
+	if len(pending) > 8 {
+		out.PendingQuestionsTruncated = true
+		pending = pending[:8]
+	}
+	for _, q := range pending {
+		options := q.Options
+		if len(options) > 8 {
+			out.PendingQuestionsTruncated = true
+			options = options[:8]
+		}
+		bounded := make([]string, len(options))
+		for i, option := range options {
+			if len(option) > 128 {
+				out.PendingQuestionsTruncated = true
+			}
+			bounded[i] = truncatePresentationString(option, 128)
+		}
+		if len(q.Prompt) > 256 {
+			out.PendingQuestionsTruncated = true
+		}
+		out.PendingQuestions = append(out.PendingQuestions, &v1.SessionViewQuestion{Prompt: truncatePresentationString(q.Prompt, 256), Options: bounded})
+	}
+	return out
+}
+
+func truncatePresentationString(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	for limit > 0 && value[limit]&0xc0 == 0x80 {
+		limit--
+	}
+	return value[:limit] + "…"
+}
+
+func presentationRow(r sessionview.Row) *v1.SessionPresentationRow {
+	out := &v1.SessionPresentationRow{Id: r.ID, PositionSeq: r.PositionSeq, UpdatedSeq: r.UpdatedSeq, HasDetail: r.HasDetail}
+	for _, ev := range r.Events {
+		out.Events = append(out.Events, transcriptEventToProto(ev, true))
+	}
+	return out
+}
+
+func trimSessionViewResponse(out *v1.GetSessionViewResponse, requestedBytes int) {
+	budget := sessionview.ByteLimit(requestedBytes)
+	for proto.Size(out) > budget && len(out.Rows) > 1 {
+		out.Rows = out.Rows[1:]
+	}
+}
+
+func trimSessionViewPageResponse(out *v1.GetSessionViewPageResponse, requestedBytes int) {
+	budget := sessionview.ByteLimit(requestedBytes)
+	for proto.Size(out) > budget && len(out.Rows) > 1 {
+		out.Rows = out.Rows[1:]
+	}
+}
+
+type viewCursor struct {
+	Session  string `json:"i"`
+	Snapshot int64  `json:"s"`
+	Before   int64  `json:"b"`
+}
+
+func encodeViewCursor(c viewCursor) string {
+	b, _ := json.Marshal(c)
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+func decodeViewCursor(raw string) (viewCursor, error) {
+	var c viewCursor
+	b, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return c, err
+	}
+	err = json.Unmarshal(b, &c)
+	if err == nil && (c.Snapshot < 0 || c.Before <= 0) {
+		err = errors.New("invalid session view cursor")
+	}
+	return c, err
+}
+
+// GetSessionView catches the rebuildable projection up to the log's committed
+// sequence/byte boundary and returns only the newest bounded presentation page.
+func (s *Server) GetSessionView(ctx context.Context, req *connect.Request[v1.GetSessionViewRequest]) (*connect.Response[v1.GetSessionViewResponse], error) {
+	store, logPath, durableSeq, durableOffset, err := s.sessionViewStore(req.Msg.Project, req.Msg.SessionId)
+	if err != nil {
+		return nil, sessionViewError(err)
+	}
+	st, rows, before, err := store.View(ctx, req.Msg.SessionId, logPath, durableSeq, durableOffset, int(req.Msg.MaxRows), int(req.Msg.MaxBytes))
+	if err != nil {
+		return nil, sessionViewError(err)
+	}
+	out := &v1.GetSessionViewResponse{State: presentationState(st)}
+	for _, row := range rows {
+		out.Rows = append(out.Rows, presentationRow(row))
+	}
+	if before > 0 {
+		out.EarlierCursor = encodeViewCursor(viewCursor{Session: req.Msg.SessionId, Snapshot: st.IndexedThrough, Before: before})
+	}
+	originalRows := len(out.Rows)
+	trimSessionViewResponse(out, int(req.Msg.MaxBytes))
+	if len(out.Rows) < originalRows {
+		out.EarlierCursor = encodeViewCursor(viewCursor{Session: req.Msg.SessionId, Snapshot: st.IndexedThrough, Before: out.Rows[0].PositionSeq})
+	}
+	if proto.Size(out) > sessionview.ByteLimit(int(req.Msg.MaxBytes)) {
+		return nil, sessionViewError(errors.New("session view response exceeds encoded byte limit"))
+	}
+	return connect.NewResponse(out), nil
+}
+
+func (s *Server) GetSessionViewPage(ctx context.Context, req *connect.Request[v1.GetSessionViewPageRequest]) (*connect.Response[v1.GetSessionViewPageResponse], error) {
+	cursor, err := decodeViewCursor(req.Msg.Cursor)
+	if err != nil || cursor.Session != req.Msg.SessionId {
+		if err == nil {
+			err = errors.New("session view cursor belongs to another session")
+		}
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	store, logPath, durableSeq, durableOffset, err := s.sessionViewStore(req.Msg.Project, req.Msg.SessionId)
+	if err != nil {
+		return nil, sessionViewError(err)
+	}
+	st, rows, before, err := store.EarlierPage(ctx, req.Msg.SessionId, logPath, durableSeq, durableOffset, cursor.Before, int(req.Msg.MaxRows), int(req.Msg.MaxBytes))
+	if err != nil {
+		return nil, sessionViewError(err)
+	}
+	if st.IndexedThrough < cursor.Snapshot {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("session view index is behind cursor snapshot"))
+	}
+	out := &v1.GetSessionViewPageResponse{IndexedThroughSeq: st.IndexedThrough}
+	for _, row := range rows {
+		out.Rows = append(out.Rows, presentationRow(row))
+	}
+	if before > 0 {
+		out.EarlierCursor = encodeViewCursor(viewCursor{Session: req.Msg.SessionId, Snapshot: cursor.Snapshot, Before: before})
+	}
+	originalRows := len(out.Rows)
+	trimSessionViewPageResponse(out, int(req.Msg.MaxBytes))
+	if len(out.Rows) < originalRows {
+		out.EarlierCursor = encodeViewCursor(viewCursor{Session: req.Msg.SessionId, Snapshot: cursor.Snapshot, Before: out.Rows[0].PositionSeq})
+	}
+	if proto.Size(out) > sessionview.ByteLimit(int(req.Msg.MaxBytes)) {
+		return nil, sessionViewError(errors.New("session view page exceeds encoded byte limit"))
+	}
+	return connect.NewResponse(out), nil
+}
+
+func (s *Server) GetSessionViewDetail(ctx context.Context, req *connect.Request[v1.GetSessionViewDetailRequest]) (*connect.Response[v1.GetSessionViewDetailResponse], error) {
+	store, logPath, durableSeq, durableOffset, err := s.sessionViewStore(req.Msg.Project, req.Msg.SessionId)
+	if err != nil {
+		return nil, sessionViewError(err)
+	}
+	_, row, err := store.CurrentDetail(ctx, req.Msg.SessionId, logPath, req.Msg.RowId, durableSeq, durableOffset)
+	if err != nil {
+		return nil, sessionViewError(err)
+	}
+	return connect.NewResponse(&v1.GetSessionViewDetailResponse{Row: presentationRow(row)}), nil
+}
+
+// SubscribeSessionView hands off from an exact indexed snapshot sequence to the
+// durable log subscription. Durable events become row upserts/tombstones; only
+// transient live-tail events are still sent as raw events.
+func (s *Server) SubscribeSessionView(ctx context.Context, req *connect.Request[v1.SubscribeSessionViewRequest], stream *connect.ServerStream[v1.SessionViewUpdate]) error {
+	sess, ok := s.mgr.Get(req.Msg.SessionId)
+	if !ok {
+		return connect.NewError(connect.CodeNotFound, errNoSession)
+	}
+	store, logPath, _, _, err := s.sessionViewStore("", req.Msg.SessionId)
+	if err != nil {
+		return sessionViewError(err)
+	}
+	ch, cancel := sess.Log().Subscribe(int(req.Msg.FromSeq))
+	defer cancel()
+	delivered := req.Msg.FromSeq
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case ev, open := <-ch:
+			if !open {
+				return nil
+			}
+			if ev.Transient || ev.Seq == 0 {
+				if err := stream.Send(&v1.SessionViewUpdate{TransientEvent: toProto(ev)}); err != nil {
+					return err
+				}
+				continue
+			}
+			if int64(ev.Seq) <= delivered {
+				continue
+			}
+			durableSeq, durableOffset := sess.Log().DurableBoundary()
+			st, rows, deleted, err := store.ChangesSince(ctx, req.Msg.SessionId, logPath, int64(durableSeq), durableOffset, delivered)
+			if err != nil {
+				return sessionViewError(err)
+			}
+			out := &v1.SessionViewUpdate{Seq: st.IndexedThrough, State: presentationState(st), DeletedRowIds: deleted}
+			for _, row := range rows {
+				out.UpsertedRows = append(out.UpsertedRows, presentationRow(row))
+			}
+			if err := stream.Send(out); err != nil {
+				return err
+			}
+			delivered = st.IndexedThrough
+		}
+	}
 }
 
 // GetSessionAttachment returns one retained picture referenced by a user_input

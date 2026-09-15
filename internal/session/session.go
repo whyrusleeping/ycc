@@ -2889,6 +2889,52 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 	return s, nil
 }
 
+// SessionLogPath resolves a session to its authoritative JSONL log and workspace.
+// It is used by rebuildable read indexes; callers must still treat the log as the
+// source of truth. Session ids are constrained to one path component.
+func (m *Manager) SessionLogPath(project, id string) (workspace, logPath string, err error) {
+	if id == "" || id == "." || filepath.Base(id) != id {
+		return "", "", fmt.Errorf("%w %q", ErrUnknownSession, id)
+	}
+	if s, ok := m.Get(id); ok {
+		workspace = s.Workspace
+	} else {
+		workspace, err = m.resolveProjectWorkspace(project)
+		if err != nil {
+			return "", "", err
+		}
+	}
+	absWS, err := filepath.Abs(workspace)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve workspace: %w", err)
+	}
+	logPath = filepath.Join(absWS, ".ycc", "sessions", id, "events.jsonl")
+	if _, err := os.Stat(logPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", "", fmt.Errorf("%w %q", ErrUnknownSession, id)
+		}
+		return "", "", err
+	}
+	return absWS, logPath, nil
+}
+
+// SessionViewLogPath resolves the authoritative log together with an explicit
+// indexing upper bound. A live log's sequence and byte offset are read through
+// Log's durability lock and exclude a write that has not completed fsync. A -1
+// boundary means a closed persisted log may be indexed through its complete newline-terminated
+// file snapshot.
+func (m *Manager) SessionViewLogPath(project, id string) (workspace, logPath string, durableSeq, durableOffset int64, err error) {
+	workspace, logPath, err = m.SessionLogPath(project, id)
+	if err != nil {
+		return "", "", 0, 0, err
+	}
+	if live, ok := m.Get(id); ok {
+		seq, offset := live.Log().DurableBoundary()
+		return workspace, logPath, int64(seq), offset, nil
+	}
+	return workspace, logPath, -1, -1, nil
+}
+
 // SessionTranscript returns the full event log for a session — live or persisted
 // on disk — for the read-only transcript view. A live session
 // returns its in-memory snapshot; otherwise the persisted

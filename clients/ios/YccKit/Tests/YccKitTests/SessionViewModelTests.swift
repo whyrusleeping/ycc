@@ -44,6 +44,40 @@ private final class MockSource: SessionTranscriptSource, @unchecked Sendable {
     }
 }
 
+private final class IndexedPendingSource: SessionTranscriptSource, @unchecked Sendable {
+    let view: Ycc_V1_GetSessionViewResponse
+    let detail: Ycc_V1_SessionPresentationRow
+    private let lock = NSLock()
+    private var _detailRequests: [String] = []
+    var detailRequests: [String] { lock.lock(); defer { lock.unlock() }; return _detailRequests }
+
+    init(view: Ycc_V1_GetSessionViewResponse, detail: Ycc_V1_SessionPresentationRow) {
+        self.view = view
+        self.detail = detail
+    }
+
+    var supportsIndexedSessionView: Bool { true }
+    func getSessionView(project: String, sessionId: String) async throws -> Ycc_V1_GetSessionViewResponse {
+        view
+    }
+    func getSessionViewDetail(project: String, sessionId: String, rowId: String) async throws -> Ycc_V1_SessionPresentationRow {
+        recordDetailRequest(rowId)
+        return detail
+    }
+    private func recordDetailRequest(_ rowID: String) {
+        lock.lock()
+        _detailRequests.append(rowID)
+        lock.unlock()
+    }
+    func getSessionTranscript(project: String, sessionId: String) async throws -> [Ycc_V1_Event] { [] }
+    func getSessionAttachment(project: String, sessionId: String, attachmentId: String) async throws -> MessageImage {
+        throw YccError.notFound("attachment not found")
+    }
+    func subscribe(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_Event, Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
+}
+
 /// Holds its first transcript request even after task cancellation, allowing a
 /// stale completion to race a replacement live subscription deterministically.
 private final class SuspendedTranscriptSource: SessionTranscriptSource, @unchecked Sendable {
@@ -217,6 +251,33 @@ final class SessionViewModelTests: XCTestCase {
         // user bubble + model + tool + model = 4 rows.
         XCTAssertEqual(vm.rows.count, 4)
         XCTAssertTrue(source.recordedFromSeqs.isEmpty, "persisted mode holds no stream open")
+    }
+
+    func testIndexedPendingDetailLoadsWhenQuestionRowIsOutsideRecentPage() async {
+        var state = Ycc_V1_SessionViewState()
+        state.indexedThroughSeq = 20
+        state.phase = "running"
+        state.pendingRowID = "seq-4"
+        state.pendingQuestionsTruncated = true
+        var view = Ycc_V1_GetSessionViewResponse()
+        view.state = state
+
+        var detail = Ycc_V1_SessionPresentationRow()
+        detail.id = "seq-4"
+        detail.positionSeq = 4
+        detail.updatedSeq = 4
+        detail.events = [event(
+            4, "question_asked",
+            #"{"questions":[{"question":"first"},{"question":"second"}]}"#)]
+        let source = IndexedPendingSource(view: view, detail: detail)
+        let vm = SessionViewModel(source: source, sessionID: "indexed", mode: .persisted)
+
+        vm.start()
+        await waitUntil { vm.pendingQuestion?.questions.count == 2 }
+
+        XCTAssertEqual(source.detailRequests, ["seq-4"])
+        XCTAssertEqual(vm.pendingQuestion?.questions.map(\.prompt), ["first", "second"])
+        XCTAssertTrue(vm.durableRows.isEmpty, "state-only detail must not inject an out-of-page row")
     }
 
     func testInitialReplayReadinessWaitsForInstalledHistory() async {
