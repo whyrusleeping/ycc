@@ -26,8 +26,8 @@ fileprivate nonisolated struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobu
 }
 
 /// Event mirrors internal/event.Event. Data is carried as a JSON string so the
-/// heterogeneous per-type payload needs no proto schema churn (and matches the
-/// on-disk JSONL exactly).
+/// heterogeneous per-type payload needs no proto schema churn. Data matches the
+/// on-disk JSONL unless GetSessionTranscript's omit_provider_state is requested.
 public nonisolated struct Ycc_V1_Event: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -801,6 +801,12 @@ public nonisolated struct Ycc_V1_GetSessionTranscriptRequest: Sendable {
   public var project: String = String()
 
   public var sessionID: String = String()
+
+  /// Presentation-only clients may omit model_turn.data.thinking_blocks, opaque
+  /// provider state needed for model replay but not transcript display. All events,
+  /// cursors, visible thinking, text, tools, and usage remain unchanged. The default
+  /// returns the full log; this never changes persisted or in-memory session state.
+  public var omitProviderState: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -4391,7 +4397,7 @@ nonisolated extension Ycc_V1_ListSessionHistoryResponse: SwiftProtobuf.Message, 
 
 nonisolated extension Ycc_V1_GetSessionTranscriptRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GetSessionTranscriptRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{3}session_id\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{3}session_id\0\u{3}omit_provider_state\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -4401,6 +4407,7 @@ nonisolated extension Ycc_V1_GetSessionTranscriptRequest: SwiftProtobuf.Message,
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.omitProviderState) }()
       default: break
       }
     }
@@ -4413,12 +4420,16 @@ nonisolated extension Ycc_V1_GetSessionTranscriptRequest: SwiftProtobuf.Message,
     if !self.sessionID.isEmpty {
       try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 2)
     }
+    if self.omitProviderState != false {
+      try visitor.visitSingularBoolField(value: self.omitProviderState, fieldNumber: 3)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Ycc_V1_GetSessionTranscriptRequest, rhs: Ycc_V1_GetSessionTranscriptRequest) -> Bool {
     if lhs.project != rhs.project {return false}
     if lhs.sessionID != rhs.sessionID {return false}
+    if lhs.omitProviderState != rhs.omitProviderState {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

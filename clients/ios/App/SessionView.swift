@@ -33,6 +33,7 @@ struct SessionView: View {
     /// not re-enable follow until a fresh drag or Jump to latest.
     @State private var isBrowsingEarlier = false
     @State private var historyAnchor: String?
+    @State private var didRunInitialPin = false
     /// User drags opt out of follow mode while the follow-state reconciler
     /// resumes it once the live edge is visible and dragging has gone quiet.
     /// Corrective scrolls keep a following transcript pinned through late layout.
@@ -117,6 +118,14 @@ struct SessionView: View {
         ScrollViewReader { proxy in
             ZStack(alignment: .bottom) {
                 transcript(proxy: proxy)
+                    // Replace the spinner-era ScrollView exactly once. Reusing
+                    // its target registry can leave the loaded history at offset
+                    // zero even after an early scrollTo(bottom) has run.
+                    .id(model.hasCompletedInitialReplay)
+                    .task(id: model.hasCompletedInitialReplay) { [ready = model.hasCompletedInitialReplay] in
+                        guard ready else { return }
+                        await pinInitialTranscript(proxy: proxy)
+                    }
                 if !isFollowingLatest {
                     jumpToLatestPill(proxy: proxy)
                         .padding(.bottom, 12)
@@ -553,6 +562,7 @@ struct SessionView: View {
         .simultaneousGesture(
             DragGesture(minimumDistance: 4)
                 .onChanged { value in
+                    guard model.hasCompletedInitialReplay else { return }
                     if isBrowsingEarlier {
                         isBrowsingEarlier = false
                         historyAnchor = nil
@@ -597,6 +607,7 @@ struct SessionView: View {
                     }
                 }
                 .onEnded { value in
+                    guard model.hasCompletedInitialReplay else { return }
                     // Deceleration continues after this callback. Follow mode was
                     // already disabled as soon as the drag moved off the live edge.
                     isDraggingTranscript = false
@@ -687,6 +698,29 @@ struct SessionView: View {
         // Invalidate a post-layout or keyboard-settle request that was queued
         // while the transcript was still following the live edge.
         scrollToken.value &+= 1
+    }
+
+    @MainActor
+    private func pinInitialTranscript(proxy: ScrollViewProxy) async {
+        guard !Task.isCancelled, model.hasCompletedInitialReplay, !didRunInitialPin else { return }
+        // A yield alone is not a layout barrier for hundreds of newly mounted
+        // rows. Make bounded initial-only corrections as text layout settles.
+        // Live revision tokens must not cancel these; user scrollback must.
+        await Task.yield()
+        for delay in [UInt64(0), 100_000_000, 250_000_000] {
+            if delay > 0 {
+                do { try await Task.sleep(nanoseconds: delay) }
+                catch { return }
+            }
+            guard !Task.isCancelled, isFollowingLatest,
+                  !isBrowsingEarlier, !isDraggingTranscript else { return }
+            didRunInitialPin = true
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+            }
+        }
     }
 
     private func requestScrollToLatest(proxy: ScrollViewProxy) {

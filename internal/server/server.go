@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -225,7 +226,7 @@ func (s *Server) GetSessionTranscript(_ context.Context, req *connect.Request[v1
 	}
 	out := make([]*v1.Event, 0, len(evs))
 	for _, ev := range evs {
-		out = append(out, toProto(ev))
+		out = append(out, transcriptEventToProto(ev, req.Msg.OmitProviderState))
 	}
 	return connect.NewResponse(&v1.GetSessionTranscriptResponse{Events: out}), nil
 }
@@ -1373,6 +1374,19 @@ func usageRowToProto(r usage.Row) *v1.UsageRow {
 		Cost:        r.Cost,
 		PriceStatus: string(r.Status),
 	}
+}
+
+// transcriptEventToProto only filters wire presentation data. Snapshot events
+// share their maps with the live log, whose provider state must remain intact for
+// model replay; never delete from the original map or alter other event families.
+func transcriptEventToProto(ev event.Event, omitProviderState bool) *v1.Event {
+	if omitProviderState && ev.Type == event.ModelTurn {
+		if _, ok := ev.Data["thinking_blocks"]; ok {
+			ev.Data = maps.Clone(ev.Data)
+			delete(ev.Data, "thinking_blocks")
+		}
+	}
+	return toProto(ev)
 }
 
 func toProto(ev event.Event) *v1.Event {

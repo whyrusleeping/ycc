@@ -19,16 +19,23 @@ projection, and model logic. Generated Swift protobuf and Connect sources are co
 the app does not require code generation or a JavaScript toolchain.
 
 The app calls the daemon's existing Connect service directly. It does not introduce a mobile REST
-facade, proxy daemon, or replicated session store. Unary calls use Connect JSON and subscription
-uses server streaming with replay from the last durable sequence. Transient events never move the
-cursor. Reconnection clears stale live-tail state and reduces replayed events idempotently.
-History reduction runs off the UI executor and publishes atomically, discarding cancelled or
-superseded loads. Transient initial-fetch failures retry with backoff rather than bypassing bulk
-replay through an event-by-event subscription. Initial rendering mounts only the latest 200 durable
-rows; **Load earlier** reveals preceding pages while retaining the previous first row as the reading anchor. The full
-projection remains available for lifecycle, questions, tool pairing, and reconnect cursors. This
-bounds initial eager layout without reintroducing lazy-stack geometry failures during streaming;
-explicitly loaded pages and subsequent live rows can grow the mounted history.
+facade, proxy daemon, or replicated session store. Calls use Connect binary protobuf, avoiding an
+outer JSON decode around the per-event JSON strings; subscriptions replay from the last durable
+sequence. Transient events never move the cursor. Reconnection clears stale live-tail state and
+reduces replayed events idempotently. Initial transcript requests opt out of opaque provider replay
+blocks (`omit_provider_state`); all display events and reducer state remain available, and the daemon's
+source log is unchanged.
+
+Unary transport response decoding and history reduction run off the UI executor. Replay publishes
+atomically, discarding cancelled or superseded loads. Transient initial-fetch failures retry with
+backoff rather than bypassing bulk replay through an event-by-event subscription. Initial rendering
+mounts only the latest 200 durable rows; **Load earlier** reveals preceding pages while retaining the
+previous first row as the reading anchor. The full projection remains available for lifecycle,
+questions, tool pairing, and reconnect cursors. This bounds initial eager layout without reintroducing
+lazy-stack geometry failures during streaming; explicitly loaded pages and subsequent live rows can
+grow the mounted history. A one-shot successful-replay edge replaces the loading scroll container
+and pins the installed transcript at the latest row with bounded layout-settling corrections.
+Reconnects and paging do not recreate the container, and user scrollback cancels initial pinning.
 
 ### State and credentials
 

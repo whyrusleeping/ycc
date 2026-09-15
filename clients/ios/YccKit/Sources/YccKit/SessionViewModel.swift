@@ -49,6 +49,10 @@ public final class SessionViewModel {
     /// The folded projection. Views render ``rows``.
     public private(set) var projection = SessionProjection()
     public private(set) var state: ConnectionState = .idle
+    /// One-shot lifecycle edge for installing the real transcript hierarchy and
+    /// positioning it after replay. Unlike state/row count, this never resets on
+    /// reconnect, paging, or a successful empty snapshot followed by live events.
+    public private(set) var hasCompletedInitialReplay = false
     /// Set when transcript loading or subscription discovers that the saved
     /// credentials are no longer accepted. The app observes this and routes the
     /// failure through its shared authentication-reset path.
@@ -588,7 +592,10 @@ public final class SessionViewModel {
     private func applyReplay(_ events: [Ycc_V1_Event], generation: UInt64) async throws -> Bool {
         while isCurrent(generation) {
             try Task.checkCancellation()
-            guard !events.isEmpty else { return true }
+            guard !events.isEmpty else {
+                hasCompletedInitialReplay = true
+                return true
+            }
             let revision = transcriptRevision
             let isInitialReplay = projection.lastPersistedSeq == 0
             let worker = Task.detached(priority: .userInitiated) { [initial = projection] in
@@ -616,6 +623,7 @@ public final class SessionViewModel {
             if isInitialReplay {
                 earlierRowCount = max(0, folded.durableRows.count - Self.transcriptPageSize)
             }
+            hasCompletedInitialReplay = true
             transcriptRevision &+= 1
             if isAwaitingAgentActivity, hasAgentActivity {
                 isAwaitingAgentActivity = false

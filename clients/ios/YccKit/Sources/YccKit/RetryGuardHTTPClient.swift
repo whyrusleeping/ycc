@@ -21,6 +21,25 @@ final class RetryGuardHTTPClient: URLSessionHTTPClient, @unchecked Sendable {
     private let lock = NSLock()
     /// Task identifiers whose body stream has already been handed to CFNetwork.
     private var vendedTaskIDs = Set<Int>()
+    // Connect's URLSession delegate runs on main and invokes the response
+    // callback inline, including codec deserialization. Deliver unary responses
+    // on a serial worker so a large transcript cannot block UI input/layout.
+    private let unaryResponseQueue = DispatchQueue(
+        label: "ycc.transport.unary-response", qos: .userInitiated)
+
+    @discardableResult
+    override func unary(
+        request: HTTPRequest<Data?>,
+        onMetrics: @escaping @Sendable (HTTPMetrics) -> Void,
+        onResponse: @escaping @Sendable (HTTPResponse) -> Void
+    ) -> Cancelable {
+        let queue = unaryResponseQueue
+        return super.unary(request: request, onMetrics: onMetrics) { response in
+            // Always complete the callback, including cancelled requests, so
+            // Connect's awaiting continuation is resumed exactly once.
+            queue.async { onResponse(response) }
+        }
+    }
 
     override func urlSession(
         _ session: URLSession, task: URLSessionTask,

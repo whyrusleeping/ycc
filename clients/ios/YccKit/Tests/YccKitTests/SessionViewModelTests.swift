@@ -219,6 +219,52 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertTrue(source.recordedFromSeqs.isEmpty, "persisted mode holds no stream open")
     }
 
+    func testInitialReplayReadinessWaitsForInstalledHistory() async {
+        let source = SuspendedTranscriptSource()
+        let vm = SessionViewModel(source: source, sessionID: "delayed", mode: .persisted)
+        XCTAssertFalse(vm.hasCompletedInitialReplay)
+        vm.start()
+        await waitUntil { source.transcriptCalls == 1 }
+        XCTAssertFalse(vm.hasCompletedInitialReplay, "spinner-era layout is not the transcript")
+        let history = (1...601).map {
+            event(Int64($0), "user_input", #"{"text":"history"}"#, actor: "user")
+        }
+        source.finishFirst(with: history)
+        await waitUntil { vm.hasCompletedInitialReplay }
+        XCTAssertTrue(vm.hasCompletedInitialReplay)
+        XCTAssertEqual(vm.projection.lastPersistedSeq, 601)
+        XCTAssertEqual(vm.visibleDurableRows.count, 200, "readiness and the page publish together")
+        vm.loadEarlierRows()
+        vm.start()
+        await waitUntil { vm.state == .finished }
+        XCTAssertTrue(vm.hasCompletedInitialReplay, "later loads must not recreate the scroll view")
+        XCTAssertEqual(vm.visibleDurableRows.count, 400)
+    }
+
+    func testCancelledInitialLoadCannotInstallTranscriptLayout() async {
+        let source = SuspendedTranscriptSource()
+        let vm = SessionViewModel(source: source, sessionID: "cancelled", mode: .persisted)
+        vm.start()
+        await waitUntil { source.transcriptCalls == 1 }
+        vm.stop()
+        source.finishFirst(with: sampleEvents)
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        XCTAssertFalse(vm.hasCompletedInitialReplay)
+        XCTAssertTrue(vm.durableRows.isEmpty)
+    }
+
+    func testEmptyInitialReplayStillInstallsTranscript() async {
+        let vm = SessionViewModel(source: MockSource(), sessionID: "empty", mode: .live)
+        vm.start()
+        await waitUntil { vm.state == .finished }
+        XCTAssertTrue(vm.hasCompletedInitialReplay)
+        XCTAssertTrue(vm.durableRows.isEmpty)
+        vm.reconnect()
+        await waitUntil { vm.state == .finished }
+        XCTAssertTrue(vm.hasCompletedInitialReplay)
+        vm.stop()
+    }
+
     func testLargeReplayPagesPresentationWithoutTruncatingProjection() async {
         let source = MockSource()
         source.transcript = [event(1, "question_asked", #"{"prompt":"Proceed?","options":["yes","no"]}"#)]

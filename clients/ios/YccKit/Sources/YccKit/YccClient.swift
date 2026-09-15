@@ -6,8 +6,8 @@ import YccProto
 /// that pins a base URL + bearer token and exposes typed async methods.
 ///
 /// All requests carry the bearer token via ``AuthInterceptor`` (unary and
-/// streaming alike). The connect protocol + JSON codec keep traffic
-/// human-readable when debugging against the daemon.
+/// streaming alike). Binary protobuf avoids decoding and unescaping a large
+/// outer JSON document around the transcript's per-event JSON payloads.
 public final class YccClient: Sendable {
     /// The underlying generated service client, for RPCs not yet wrapped here.
     public let generated: Ycc_V1_SessionServiceClient
@@ -26,7 +26,7 @@ public final class YccClient: Sendable {
         let config = ProtocolClientConfig(
             host: host,
             networkProtocol: .connect,
-            codec: JSONCodec(),
+            codec: ProtoCodec(),
             interceptors: [AuthInterceptor.factory(token: token)]
         )
         // RetryGuardHTTPClient prevents a CFNetwork abort when a streaming
@@ -170,14 +170,15 @@ public final class YccClient: Sendable {
         }
     }
 
-    /// Fetch a session's full event log for a read-only replayed transcript
-    /// (no stream held open). `project` is optional for a single-project daemon.
+    /// Fetch all display events, without opaque provider replay blocks the UI
+    /// never uses. `project` is optional for a single-project daemon.
     public func getSessionTranscript(
         project: String = "", sessionId: String
     ) async throws -> [Ycc_V1_Event] {
         var request = Ycc_V1_GetSessionTranscriptRequest()
         request.project = project
         request.sessionID = sessionId
+        request.omitProviderState = true
         let response = await generated.getSessionTranscript(request: request)
         switch response.result {
         case .success(let message):

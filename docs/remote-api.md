@@ -390,6 +390,13 @@ The full event log for a session — live or persisted — for a read-only repla
 transcript. Requires `sessionId` and its registered `project` (the project may be
 omitted only on a single-project daemon).
 
+Presentation-only clients may set `omitProviderState: true` to omit
+`model_turn.data.thinking_blocks`: opaque provider replay blocks not needed for display.
+All events, sequence numbers, visible `thinking` events, text, tools, and usage remain intact.
+Omitting the flag (or setting it false) preserves the full event data contract. Filtering affects
+only this response, never the source log, in-memory history, or subsequent subscriptions.
+Older daemons ignore the option and return the full transcript.
+
 ```
 curl -sS -H "$AUTH" -H "$JSON" -d '{"project":"work","sessionId":"s_doc"}' \
   $B/ycc.v1.SessionService/GetSessionTranscript

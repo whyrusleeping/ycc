@@ -22,8 +22,8 @@ const (
 )
 
 // Event mirrors internal/event.Event. Data is carried as a JSON string so the
-// heterogeneous per-type payload needs no proto schema churn (and matches the
-// on-disk JSONL exactly).
+// heterogeneous per-type payload needs no proto schema churn. Data matches the
+// on-disk JSONL unless GetSessionTranscript's omit_provider_state is requested.
 type Event struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Seq           int64                  `protobuf:"varint,1,opt,name=seq,proto3" json:"seq,omitempty"`
@@ -2440,11 +2440,16 @@ func (x *ListSessionHistoryResponse) GetSessions() []*SessionSummary {
 // persisted on disk — so the session browser can render a read-only replayed
 // transcript with the same event components as the live view.
 type GetSessionTranscriptRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"` // registered project; empty allowed only when exactly one exists
-	SessionId     string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Project   string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"` // registered project; empty allowed only when exactly one exists
+	SessionId string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	// Presentation-only clients may omit model_turn.data.thinking_blocks, opaque
+	// provider state needed for model replay but not transcript display. All events,
+	// cursors, visible thinking, text, tools, and usage remain unchanged. The default
+	// returns the full log; this never changes persisted or in-memory session state.
+	OmitProviderState bool `protobuf:"varint,3,opt,name=omit_provider_state,json=omitProviderState,proto3" json:"omit_provider_state,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *GetSessionTranscriptRequest) Reset() {
@@ -2489,6 +2494,13 @@ func (x *GetSessionTranscriptRequest) GetSessionId() string {
 		return x.SessionId
 	}
 	return ""
+}
+
+func (x *GetSessionTranscriptRequest) GetOmitProviderState() bool {
+	if x != nil {
+		return x.OmitProviderState
+	}
+	return false
 }
 
 type GetSessionTranscriptResponse struct {
@@ -8191,11 +8203,12 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\ftotal_tokens\x18\x0e \x01(\x03R\vtotalTokens\x12%\n" +
 	"\x0econtext_tokens\x18\x0f \x01(\x03R\rcontextTokens\"P\n" +
 	"\x1aListSessionHistoryResponse\x122\n" +
-	"\bsessions\x18\x01 \x03(\v2\x16.ycc.v1.SessionSummaryR\bsessions\"V\n" +
+	"\bsessions\x18\x01 \x03(\v2\x16.ycc.v1.SessionSummaryR\bsessions\"\x86\x01\n" +
 	"\x1bGetSessionTranscriptRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x02 \x01(\tR\tsessionId\"E\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12.\n" +
+	"\x13omit_provider_state\x18\x03 \x01(\bR\x11omitProviderState\"E\n" +
 	"\x1cGetSessionTranscriptResponse\x12%\n" +
 	"\x06events\x18\x01 \x03(\v2\r.ycc.v1.EventR\x06events\"{\n" +
 	"\x1bGetSessionAttachmentRequest\x12\x18\n" +

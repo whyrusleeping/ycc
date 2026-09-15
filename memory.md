@@ -20,6 +20,7 @@
 - ycc spec-check symbol search matches untracked .ycc/ logs — can pass live yet fail on a clean checkout; verify via git archive temp dir (0301 open).
 - GetUsage with empty project + multiple projects returns the ALL-projects rollup (0287); iOS drawer's Usage row opens .usage(project: "").
 - 2026-09-04: key_env in ycc.toml must hold the NAME of an env var / secrets entry (resolved env-then-secrets in config.resolveKey), never the key itself; Fireworks model ids need the full accounts/fireworks/models/ prefix, and strict openai-compatible servers reject unknown body fields (gollama b9fcec4 sends nested 'options' to Ollama only).
+- 2026-09-15: connect-swift URLSessionHTTPClient delivers unary callbacks on the main delegate queue (verified 1.0.0/1.2.x); codec decoding runs inline there. RetryGuardHTTPClient now forwards unary completions off-main, while SessionViewModel separately detaches projection folding.
 
 ## Environment & tooling
 

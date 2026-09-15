@@ -5,8 +5,8 @@ package ycc.v1;
 option go_package = "github.com/whyrusleeping/ycc/proto/ycc/v1;yccv1";
 
 // Event mirrors internal/event.Event. Data is carried as a JSON string so the
-// heterogeneous per-type payload needs no proto schema churn (and matches the
-// on-disk JSONL exactly).
+// heterogeneous per-type payload needs no proto schema churn. Data matches the
+// on-disk JSONL unless GetSessionTranscript's omit_provider_state is requested.
 message Event {
   int64 seq = 1;
   string ts = 2; // RFC3339
@@ -251,6 +251,11 @@ message ListSessionHistoryResponse { repeated SessionSummary sessions = 1; }
 message GetSessionTranscriptRequest {
   string project = 1;    // registered project; empty allowed only when exactly one exists
   string session_id = 2;
+  // Presentation-only clients may omit model_turn.data.thinking_blocks, opaque
+  // provider state needed for model replay but not transcript display. All events,
+  // cursors, visible thinking, text, tools, and usage remain unchanged. The default
+  // returns the full log; this never changes persisted or in-memory session state.
+  bool omit_provider_state = 3;
 }
 message GetSessionTranscriptResponse { repeated Event events = 1; }
 
