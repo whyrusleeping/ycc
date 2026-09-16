@@ -3,6 +3,23 @@ import XCTest
 import YccProto
 @testable import YccKit
 
+/// Explicit gates keep slow-request tests independent of network/timer ordering.
+private actor ListLoadGate {
+    private var opened = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        if opened { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func open() {
+        opened = true
+        for waiter in waiters { waiter.resume() }
+        waiters.removeAll()
+    }
+}
+
 /// A scripted in-memory ``SessionListSource`` for headless model tests. Records
 /// the project passed to each history query so the filter round-trip is testable.
 private final class MockListSource: SessionListSource, @unchecked Sendable {
@@ -15,6 +32,8 @@ private final class MockListSource: SessionListSource, @unchecked Sendable {
     var projectsError: Error?
     var projectFailuresRemaining = 0
     var historyDelayNanoseconds: UInt64 = 0
+    var historyGates: [String: ListLoadGate] = [:]
+    var loopGates: [String: ListLoadGate] = [:]
     var removeError: Error?
     var renameError: Error?
     var loopsByProject: [String: Ycc_V1_WorkLoopInfo] = [:]
@@ -36,8 +55,10 @@ private final class MockListSource: SessionListSource, @unchecked Sendable {
         let generalError = historyError
         let response = sessionsByProject[project] ?? sessions
         let delay = historyDelayNanoseconds
+        let gate = historyGates[project]
         lock.unlock()
 
+        await gate?.wait()
         if delay > 0 { try await Task.sleep(nanoseconds: delay) }
         if shouldFailTransiently { throw YccError.rpc(message: "transient history failure") }
         if let projectError { throw projectError }
@@ -84,8 +105,14 @@ private final class MockListSource: SessionListSource, @unchecked Sendable {
     }
 
     func workLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo? {
-        if let error = loopErrorsByProject[project] { throw error }
-        return loopsByProject[project]
+        lock.lock()
+        let error = loopErrorsByProject[project]
+        let loop = loopsByProject[project]
+        let gate = loopGates[project]
+        lock.unlock()
+        await gate?.wait()
+        if let error { throw error }
+        return loop
     }
 }
 
@@ -479,6 +506,151 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertEqual(model.projects.map(\.name), ["one"])
         XCTAssertEqual(model.sessions.map(\.sessionID), ["available"])
         XCTAssertNil(model.errorMessage)
+    }
+
+    /// Wait only for model publication; the simulated RPCs themselves remain
+    /// gated until the test explicitly releases them.
+    private func eventually(_ condition: () -> Bool, file: StaticString = #filePath, line: UInt = #line) async {
+        for _ in 0..<200 {
+            if condition() { return }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTFail("Model did not publish the expected state", file: file, line: line)
+    }
+
+    func testHistoryPublishesBeforeOtherProjectsAndLoopBadges() async {
+        let source = MockListSource()
+        source.projects = [project("one"), project("two")]
+        source.sessionsByProject = ["one": [session(id: "one")], "two": [session(id: "two")]]
+        let slowHistory = ListLoadGate()
+        let slowLoop = ListLoadGate()
+        source.historyGates["one"] = slowHistory
+        source.loopGates = ["one": slowLoop, "two": slowLoop]
+        var loop = Ycc_V1_WorkLoopInfo()
+        loop.currentSessionID = "two"
+        source.loopsByProject["two"] = loop
+        let model = SessionListModel(source: source, retryDelays: [])
+        let refresh = Task { await model.refresh() }
+
+        await eventually { model.allSessions.map(\.sessionID) == ["two"] }
+        XCTAssertTrue(model.isLoading)
+        XCTAssertEqual(model.sessionProjects["two"], "two")
+        XCTAssertEqual(model.unreadCount, 0)
+        XCTAssertFalse(model.isLoopSession(sessionID: "two"))
+        XCTAssertNil(model.partialWarning)
+
+        await slowHistory.open()
+        await eventually { !model.isLoading }
+        // Equal dates preserve registry order, not completion order.
+        XCTAssertEqual(model.allSessions.map(\.sessionID), ["one", "two"])
+        await slowLoop.open()
+        await refresh.value
+        XCTAssertTrue(model.isLoopSession(sessionID: "two"))
+    }
+
+    func testProgressiveRefreshRetainsPendingAndFailedProjectRows() async {
+        let source = MockListSource()
+        source.projects = [project("one"), project("two")]
+        source.sessionsByProject = ["one": [session(id: "old")], "two": [session(id: "cached")]]
+        let model = SessionListModel(source: source, retryDelays: [])
+        await model.refresh()
+        let slowHistory = ListLoadGate()
+        source.historyGates["two"] = slowHistory
+        source.historyErrorsByProject["two"] = YccError.rpc(message: "offline")
+        source.sessionsByProject["one"] = [session(id: "fresh")]
+        let refresh = Task { await model.refresh() }
+
+        await eventually { model.allSessions.contains { $0.sessionID == "fresh" } }
+        XCTAssertEqual(model.allSessions.map(\.sessionID), ["fresh", "cached"])
+        XCTAssertEqual(model.sessionProjects["cached"], "two")
+        XCTAssertNil(model.partialWarning)
+        await slowHistory.open()
+        await refresh.value
+        XCTAssertEqual(model.allSessions.map(\.sessionID), ["fresh", "cached"])
+        XCTAssertEqual(model.partialWarning, "Some projects couldn’t be loaded: two.")
+    }
+
+    func testDuplicateRoutingConvergesRegardlessOfCompletionOrder() async {
+        let source = MockListSource()
+        source.projects = [project("one"), project("two")]
+        source.sessionsByProject = [
+            "one": [session(id: "same", title: "primary")],
+            "two": [session(id: "same", title: "secondary")],
+        ]
+        let slowHistory = ListLoadGate()
+        source.historyGates["one"] = slowHistory
+        let model = SessionListModel(source: source, retryDelays: [])
+        let refresh = Task { await model.refresh() }
+        await eventually { model.sessionProjects["same"] == "two" }
+        await slowHistory.open()
+        await refresh.value
+        XCTAssertEqual(model.allSessions.map(\.title), ["primary"])
+        XCTAssertEqual(model.sessionProjects["same"], "one")
+    }
+
+    func testProgressiveUnreadBaselineUsesOneAggregateWatermark() async {
+        // With no prior watermark the whole first list is read. With an existing
+        // watermark both newly discovered sessions are unread, regardless of which
+        // one completes first (the earlier response must not advance the baseline).
+        for hasPriorWatermark in [false, true] {
+            for reverseOrder in [false, true] {
+                let marks = SessionReadStore.ephemeral()
+                if hasPriorWatermark {
+                    marks.noteSeen([session(id: "known", lastActivity: "2026-07-08T09:00:00Z")])
+                }
+                let source = MockListSource()
+                source.projects = [project("one"), project("two")]
+                source.sessionsByProject = [
+                    "one": [session(id: "one", lastActivity: "2026-07-08T10:00:00Z")],
+                    "two": [session(id: "two", lastActivity: "2026-07-08T11:00:00Z")],
+                ]
+                let gate = ListLoadGate()
+                source.historyGates[reverseOrder ? "one" : "two"] = gate
+                let model = SessionListModel(source: source, readMarks: marks, retryDelays: [])
+                let refresh = Task { await model.refresh() }
+                await eventually { model.allSessions.count == 1 }
+                await gate.open()
+                await refresh.value
+                XCTAssertEqual(model.unreadCount, hasPriorWatermark ? 2 : 0)
+            }
+        }
+    }
+
+    func testFailedSupplementalRequestRetainsBadgesButSuccessfulNilClearsThem() async {
+        let source = MockListSource()
+        source.projects = [project("one")]
+        source.sessionsByProject["one"] = [session(id: "owned")]
+        var loop = Ycc_V1_WorkLoopInfo()
+        loop.currentSessionID = "owned"
+        source.loopsByProject["one"] = loop
+        let model = SessionListModel(source: source, retryDelays: [])
+        await model.refresh()
+        XCTAssertTrue(model.isLoopSession(sessionID: "owned"))
+
+        source.historyErrorsByProject["one"] = YccError.rpc(message: "offline")
+        source.loopErrorsByProject["one"] = YccError.rpc(message: "offline")
+        await model.refresh()
+        XCTAssertEqual(model.allSessions.map(\.sessionID), ["owned"])
+        XCTAssertTrue(model.isLoopSession(sessionID: "owned"))
+
+        source.loopErrorsByProject = [:]
+        source.loopsByProject = [:]
+        await model.refresh()
+        XCTAssertFalse(model.isLoopSession(sessionID: "owned"))
+    }
+
+    func testNoProjectFallbackDoesNotWaitForLoop() async {
+        let source = MockListSource()
+        source.sessions = [session(id: "fallback")]
+        let slowLoop = ListLoadGate()
+        source.loopGates[""] = slowLoop
+        let model = SessionListModel(source: source, retryDelays: [])
+        let refresh = Task { await model.refresh() }
+        await eventually { !model.allSessions.isEmpty }
+        XCTAssertFalse(model.isLoading)
+        XCTAssertEqual(model.sessionProjects["fallback"], "")
+        await slowLoop.open()
+        await refresh.value
     }
 
     func testOverlappingRefreshesShareOneLoad() async {

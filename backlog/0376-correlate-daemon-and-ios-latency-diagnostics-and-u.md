@@ -24,4 +24,6 @@ Acceptance criteria:
 
 ## Work log
 
+- Progressive home-list publication is implemented in 0384, including preservation of routing, unread baselines and cached rows/badges on failed requests. Broader correlated diagnostics and device timing in this task remain outstanding.
+
 - Preflight: blocked in this workspace by unrelated changes in the required daemon server and iOS `YccClient`, transcript source, and view-model paths. The verified changeset ownership guard refuses editing baseline-dirty paths. No implementation attempted; requires an isolated clean task session or resolution of existing owners' changes before a new baseline. Mac runtime measurement remains an explicit external verification requirement.

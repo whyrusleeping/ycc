@@ -37,6 +37,13 @@ private struct HistoryLoad: Sendable {
     var loopSessionIDs: Set<String> = []
     var error: String?
     var unauthorized = false
+    var hasHistory = false
+}
+
+private enum HistoryUpdate: Sendable {
+    case history(HistoryLoad)
+    // nil means the supplemental request failed; an empty set clears badges.
+    case loop(project: String, ids: Set<String>?)
 }
 
 /// The canonical status of a session, parsed from the daemon's free-form
@@ -173,11 +180,14 @@ public final class SessionListModel {
     /// The daemon-wide home feed is one globally recency-sorted list. A scoped
     /// project view retains the phone-focused needs-answer pinning behavior.
     public var sections: [SessionSection] {
+        // The aggregate is already sorted on ingestion; filtering and stable
+        // partitioning preserve that order without reparsing dates on UI reads.
+        let visible = sessions
         guard selectedProject != nil else {
-            return sessions.isEmpty ? [] : [SessionSection(
-                kind: .all, title: nil, sessions: Self.sortedByRecency(sessions))]
+            return visible.isEmpty ? [] : [SessionSection(
+                kind: .all, title: nil, sessions: visible)]
         }
-        return Self.sections(from: sessions)
+        return Self.sectionsFromSorted(visible)
     }
 
     /// Maps each loaded session id to the project argument required by transcript
@@ -317,16 +327,7 @@ public final class SessionListModel {
                 // A daemon that reports no registered project can still own a
                 // session log for its startup workspace; query it by the selected
                 // name (an empty name resolves server-side).
-                let name = selectedProject ?? ""
-                async let history = Self.retrying(delays: retryDelays) {
-                    try await source.listSessionHistory(project: name)
-                }
-                async let loop = Self.loadWorkLoop(from: source, project: name)
-                let loaded = try await history
-                apply(loads: [HistoryLoad(
-                    project: name,
-                    sessions: loaded,
-                    loopSessionIDs: Self.loopSessionIDs(from: await loop))])
+                await refreshHistories(targets: [selectedProject ?? ""])
                 return
             }
 
@@ -369,88 +370,107 @@ public final class SessionListModel {
             let identity = path.isEmpty ? "name:\(project.name)" : "path:\(path)"
             return seenPaths.insert(identity).inserted ? project.name : nil
         }
-        let queryTargets = targets
-        let retryDelays = retryDelays
+        await refreshHistories(targets: targets)
+    }
 
-        let loads = await withTaskGroup(of: HistoryLoad.self, returning: [HistoryLoad].self) { group in
-            for project in queryTargets {
-                let source = source
+    private func refreshHistories(targets: [String]) async {
+        let source = source
+        let retryDelays = retryDelays
+        var byProject: [String: HistoryLoad] = [:]
+        for project in targets {
+            // Keep existing badges until their supplemental request completes.
+            let ids = Set(loopSessionIDs.filter { sessionProjects[$0] == project })
+            byProject[project] = HistoryLoad(
+                project: project,
+                sessions: allSessions.filter { sessionProjects[$0.sessionID] == project },
+                loopSessionIDs: ids,
+                hasHistory: loadedProjects.contains(project))
+        }
+        var pendingHistories = targets.count
+
+        await withTaskGroup(of: HistoryUpdate.self) { group in
+            for project in targets {
                 group.addTask {
                     do {
-                        async let history = Self.retrying(delays: retryDelays) {
+                        let history = try await Self.retrying(delays: retryDelays) {
                             try await source.listSessionHistory(project: project)
                         }
-                        async let loop = Self.loadWorkLoop(from: source, project: project)
-                        return HistoryLoad(
-                            project: project,
-                            sessions: try await history,
-                            loopSessionIDs: Self.loopSessionIDs(from: await loop))
+                        return .history(HistoryLoad(project: project, sessions: history, hasHistory: true))
                     } catch YccError.unauthorized {
-                        return HistoryLoad(project: project, unauthorized: true)
+                        return .history(HistoryLoad(project: project, unauthorized: true))
                     } catch {
-                        return HistoryLoad(
+                        return .history(HistoryLoad(
                             project: project,
-                            error: (error as? YccError)?.displayMessage ?? error.localizedDescription)
+                            error: (error as? YccError)?.displayMessage ?? error.localizedDescription))
+                    }
+                }
+                group.addTask {
+                    do {
+                        let loop = try await source.workLoop(project: project)
+                        return .loop(project: project, ids: Self.loopSessionIDs(from: loop))
+                    } catch {
+                        return .loop(project: project, ids: nil)
                     }
                 }
             }
-            var byProject: [String: HistoryLoad] = [:]
-            for await load in group { byProject[load.project] = load }
-            // Restore project-list order so equal timestamps and deduplication are stable.
-            return queryTargets.compactMap { byProject[$0] }
+            for await update in group {
+                guard !unauthorized else { continue }
+                switch update {
+                case .history(var load):
+                    if load.unauthorized {
+                        unauthorized = true
+                        group.cancelAll()
+                        continue
+                    }
+                    let previous = byProject[load.project]
+                    load.loopSessionIDs = previous?.loopSessionIDs ?? []
+                    if load.error != nil {
+                        load.sessions = previous?.sessions ?? []
+                        load.hasHistory = previous?.hasHistory ?? false
+                    }
+                    byProject[load.project] = load
+                    pendingHistories -= 1
+                    // Apply in registry order, not completion order: duplicate IDs
+                    // and equal timestamps must converge to the same result.
+                    apply(loads: targets.compactMap { byProject[$0] })
+                    if pendingHistories == 0 {
+                        // One aggregate baseline per refresh: advancing the shared
+                        // watermark for partial results would make unread status
+                        // depend on which project happened to finish first.
+                        readMarks.noteSeen(allSessions)
+                        isLoading = false
+                    }
+                case let .loop(project, ids):
+                    guard let ids else { continue }
+                    byProject[project]?.loopSessionIDs = ids
+                    // Badge arrival must not re-sort/re-baseline the histories.
+                    loopSessionIDs = byProject.values.reduce(into: Set<String>()) { result, load in
+                        result.formUnion(load.loopSessionIDs)
+                    }
+                }
+            }
         }
-
-        if loads.contains(where: \.unauthorized) {
-            unauthorized = true
-            return
-        }
-        apply(loads: loads)
     }
 
     /// Merge per-project history loads into the aggregate feed, its routing
     /// table, the drawer's activity counts, and the error/partial-warning state.
     private func apply(loads: [HistoryLoad]) {
-        // A project that stays unreachable after retries should not disappear from
-        // the drawer. Preserve its last successful rows and routing while still
-        // surfacing the persistent warning/error below.
-        let previousSessions = allSessions
-        let previousRoutes = sessionProjects
-        let previouslyLoaded = Set(loadedProjects)
-        let previousLoopSessionIDs = loopSessionIDs
-
+        // Pending/failed projects carry their pre-refresh snapshot in loads,
+        // independent of any temporary deduplication during partial publication.
         var merged: [Ycc_V1_SessionSummary] = []
         var routes: [String: String] = [:]
         var seenSessionIDs = Set<String>()
         var succeeded: [String] = []
-        var retainedLoopSessionIDs = Set<String>()
-        for load in loads {
-            if load.error == nil {
-                succeeded.append(load.project)
-                for session in load.sessions where seenSessionIDs.insert(session.sessionID).inserted {
-                    merged.append(session)
-                    routes[session.sessionID] = load.project
-                }
-            } else if previouslyLoaded.contains(load.project) {
-                succeeded.append(load.project)
-                for session in previousSessions
-                where previousRoutes[session.sessionID] == load.project
-                    && seenSessionIDs.insert(session.sessionID).inserted
-                {
-                    merged.append(session)
-                    routes[session.sessionID] = load.project
-                    if previousLoopSessionIDs.contains(session.sessionID) {
-                        retainedLoopSessionIDs.insert(session.sessionID)
-                    }
-                }
+        for load in loads where load.hasHistory {
+            succeeded.append(load.project)
+            for session in load.sessions where seenSessionIDs.insert(session.sessionID).inserted {
+                merged.append(session)
+                routes[session.sessionID] = load.project
             }
         }
         allSessions = Self.sortedByRecency(merged)
-        // Sessions this device has never seen are baselined as read: a first
-        // load (or a freshly registered project's back-catalogue) must not shout
-        // "unread" about history the user was never shown.
-        readMarks.noteSeen(allSessions)
         sessionProjects = routes
-        loopSessionIDs = loads.reduce(into: retainedLoopSessionIDs) { ids, load in
+        loopSessionIDs = loads.reduce(into: Set<String>()) { ids, load in
             ids.formUnion(load.loopSessionIDs)
         }
         loadedProjects = succeeded
@@ -490,12 +510,6 @@ public final class SessionListModel {
                 }
             }
         }
-    }
-
-    nonisolated private static func loadWorkLoop(
-        from source: SessionListSource, project: String
-    ) async -> Ycc_V1_WorkLoopInfo? {
-        try? await source.workLoop(project: project)
     }
 
     nonisolated private static func loopSessionIDs(from loop: Ycc_V1_WorkLoopInfo?) -> Set<String> {
@@ -568,8 +582,11 @@ public final class SessionListModel {
     /// by `lastActivity` (RFC3339) descending, falling back to `startedAt` then
     /// a stable original order when timestamps are missing/unparseable.
     public static func sections(from sessions: [Ycc_V1_SessionSummary]) -> [SessionSection] {
-        // Stable partition preserving original order within each group so the
-        // recency sort (which is stable) has a deterministic base.
+        sectionsFromSorted(sortedByRecency(sessions))
+    }
+
+    private static func sectionsFromSorted(_ sessions: [Ycc_V1_SessionSummary]) -> [SessionSection] {
+        // Stable partition of the already recency-sorted input.
         var needsAnswer: [Ycc_V1_SessionSummary] = []
         var rest: [Ycc_V1_SessionSummary] = []
         for session in sessions {
@@ -585,7 +602,7 @@ public final class SessionListModel {
             out.append(SessionSection(
                 kind: .needsAnswer,
                 title: "Needs answer",
-                sessions: sortedByRecency(needsAnswer)))
+                sessions: needsAnswer))
         }
         if !rest.isEmpty {
             out.append(SessionSection(
@@ -593,7 +610,7 @@ public final class SessionListModel {
                 // Only label the remainder when there's a needs-answer section
                 // above it to distinguish from.
                 title: needsAnswer.isEmpty ? nil : "All sessions",
-                sessions: sortedByRecency(rest)))
+                sessions: rest))
         }
         return out
     }
@@ -601,20 +618,18 @@ public final class SessionListModel {
     /// Most-recent-first by `lastActivity` (fallback `startedAt`). Uses a stable
     /// sort so equal / unparseable timestamps keep their original relative order.
     static func sortedByRecency(_ sessions: [Ycc_V1_SessionSummary]) -> [Ycc_V1_SessionSummary] {
-        enumeratedStableSort(sessions) { a, b in
-            let da = recencyDate(a)
-            let db = recencyDate(b)
-            switch (da, db) {
-            case let (x?, y?):
-                return x > y
-            case (_?, nil):
-                return true   // rows with a date sort before rows without
-            case (nil, _?):
-                return false
-            case (nil, nil):
-                return false  // keep original order (stable)
+        // ISO8601 parsing is far more expensive than comparing Dates. Decorate
+        // once per row rather than parsing both sides of every sort comparison.
+        sessions.enumerated().map { (index: $0.offset, session: $0.element, date: recencyDate($0.element)) }
+            .sorted { lhs, rhs in
+                switch (lhs.date, rhs.date) {
+                case let (x?, y?) where x != y: return x > y
+                case (_?, nil): return true
+                case (nil, _?): return false
+                default: return lhs.index < rhs.index
+                }
             }
-        }
+            .map(\.session)
     }
 
     /// The date to sort a session by: `lastActivity`, falling back to
@@ -785,18 +800,4 @@ public final class SessionListModel {
         return items
     }
 
-    /// A stable sort: Swift's `sort(by:)` is not guaranteed stable, so decorate
-    /// with the original index and break ties on it.
-    private static func enumeratedStableSort(
-        _ items: [Ycc_V1_SessionSummary],
-        by areInIncreasingOrder: (Ycc_V1_SessionSummary, Ycc_V1_SessionSummary) -> Bool
-    ) -> [Ycc_V1_SessionSummary] {
-        items.enumerated()
-            .sorted { lhs, rhs in
-                if areInIncreasingOrder(lhs.element, rhs.element) { return true }
-                if areInIncreasingOrder(rhs.element, lhs.element) { return false }
-                return lhs.offset < rhs.offset
-            }
-            .map(\.element)
-    }
 }

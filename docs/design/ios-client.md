@@ -88,6 +88,16 @@ send/start control, avoiding accidental sends while composing multiline messages
 Daemon work loops remain daemon-owned because iOS background execution cannot reliably host
 long-running work.
 
+### Recent-session loading
+
+Recent publishes each project's history as it arrives, retaining prior rows for pending or
+failed projects. Supplemental work-loop badges never gate history display; failed badge requests
+retain known ownership, while successful empty results clear it. Aggregate ordering and duplicate
+routing follow registry order, not request completion order. Histories are sorted on ingestion;
+section/filter reads preserve that order without re-parsing timestamps. Read-watermark baselining
+runs once after all history requests finish, so request order cannot turn first-load history into
+unread activity or hide genuinely new sessions.
+
 ### Notifications
 
 Push notifications are daemon-side ntfy-compatible webhooks with a `ycc://` click-through URL.

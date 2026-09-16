@@ -744,7 +744,10 @@ clients do not maintain a second backlog representation.
 ### 18.6 Session history and reopen
 
 Projects expose session history, transcripts, commit diffs, plans, memory, usage, allowance, work
-loops, and workstreams through read RPCs. Reopening a session reconstructs model history and
+loops, and workstreams through read RPCs. History summaries are cached in memory against log file
+identity, size, and modification time; cold or changed logs are read with a summary-only decoder
+that validates the JSON while avoiding materialization of unrelated transcript payloads. The full
+event reader remains authoritative for replay. Reopening a session reconstructs model history and
 continues its existing event log. A persisted-only transcript is finite and read-only until the
 session is explicitly resumed.
 

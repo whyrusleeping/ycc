@@ -69,7 +69,7 @@ func scanSessionHistory(workspace string) ([]SessionSummary, error) {
 
 	var out []SessionSummary
 	for _, path := range paths {
-		evs := readEventsTolerant(path)
+		evs, _ := readSummaryEventsTolerantResult(path)
 		if len(evs) != 0 {
 			out = append(out, reduceSessionSummary(workspace, path, evs))
 		}
@@ -114,6 +114,12 @@ func readEventsTolerant(path string) []event.Event {
 // to cache. Open, scanner, and malformed-line failures still return any usable
 // events for tolerant display, but their partial result is not cached.
 func readEventsTolerantResult(path string) ([]event.Event, bool) {
+	return readHistoryEvents(path, func(line []byte, ev *event.Event) error {
+		return json.Unmarshal(line, ev)
+	})
+}
+
+func readHistoryEvents(path string, decode func([]byte, *event.Event) error) ([]event.Event, bool) {
 	f, err := os.Open(path)
 	if err != nil {
 		log.Printf("ycc: session history: skipping %s: %v", path, err)
@@ -131,7 +137,7 @@ func readEventsTolerantResult(path string) ([]event.Event, bool) {
 			continue
 		}
 		var ev event.Event
-		if err := json.Unmarshal(line, &ev); err != nil {
+		if err := decode(line, &ev); err != nil {
 			log.Printf("ycc: session history: skipping corrupt line in %s: %v", path, err)
 			cacheable = false
 			continue
@@ -372,7 +378,7 @@ func (m *Manager) scanSessionHistoryCached(workspace string) ([]SessionSummary, 
 			continue
 		}
 
-		evs, complete := readEventsTolerantResult(path)
+		evs, complete := readSummaryEventsTolerantResult(path)
 		after, statErr := os.Stat(path)
 		stable := complete && statErr == nil && sameSessionLogVersion(before, after)
 		if len(evs) == 0 {
