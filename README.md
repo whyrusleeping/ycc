@@ -89,16 +89,50 @@ Launching the TUI with no usable config runs a first-run setup wizard that write
 
 ## Secrets & environment
 
-API keys are resolved from the **environment first**, then a machine-local
-secrets store managed with `ycc token` (values are read from stdin, never from
-argv, so they don't land in shell history):
+Never paste credentials into a session prompt or an `ask_user` answer: those
+strings are durable model history. Use the local secret-entry command instead.
+Interactive entry disables terminal echo; stdin is supported for password-manager
+pipes, and values are never accepted in argv:
 
 ```sh
-ycc token set ANTHROPIC_API_KEY   # paste at the prompt, or pipe the value in
+ycc token set ANTHROPIC_API_KEY
 ycc token set EXA_API_KEY
 ycc token list
 ycc token rm EXA_API_KEY
 ```
+
+Model backend credentials named by `key_env` are resolved from the daemon
+environment first and then this machine-local store. Stored values are not added
+to tool process environments and there is no model-visible secret lookup tool.
+The only model-visible named-secret consumers are currently the Exa tools. Each
+stored-secret use requires a separate authorization scoped to the canonical
+workspace and one tool invocation:
+
+```sh
+ycc token authorize EXA_API_KEY --tool web_search --workspace /path/to/project
+ycc token authorize EXA_API_KEY --tool fetch_page --workspace /path/to/project
+ycc token authorizations   # reference-only grant/use audit; never values
+```
+
+An `EXA_API_KEY` deliberately placed in the daemon environment is already
+operator-authorized for that daemon process; use the stored-secret workflow when
+single-use tool authorization is wanted.
+
+YCC refuses high-confidence credential-shaped prompts and question answers before
+recording them, and exports and routine CLI event displays redact exact stored
+values plus a few obvious credential shapes with a visible warning. These are
+guardrails, not perfect secret detection:
+arbitrary prompts, files, shell commands, tool output, web content, screenshots,
+or unfamiliar credential formats can still leak values. YCC does not regex-rewrite
+durable events because doing so could silently corrupt model replay.
+
+If a credential was previously entered into a session, rotate/revoke it at the
+provider first. Then choose deliberately: retain the owner-only session log for
+replay, delete the entire affected `.ycc/sessions/<session-id>` directory while the
+daemon is stopped (losing that session's replay/export), or make a separately
+redacted copy for sharing. Hand-editing `events.jsonl` trades away append-only
+history integrity and may break replay; YCC never edits or deletes old logs
+automatically.
 
 | Variable            | Used for |
 |---------------------|----------|

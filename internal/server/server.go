@@ -27,6 +27,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/orchestrator"
+	"github.com/whyrusleeping/ycc/internal/secrets"
 	"github.com/whyrusleeping/ycc/internal/session"
 	"github.com/whyrusleeping/ycc/internal/sessionview"
 	"github.com/whyrusleeping/ycc/internal/subusage"
@@ -63,9 +64,21 @@ func (s *Server) ListModes(_ context.Context, _ *connect.Request[v1.ListModesReq
 	return connect.NewResponse(&v1.ListModesResponse{Modes: modes, Presets: presets}), nil
 }
 
+func rejectObviousCredential(text string) error {
+	if !secrets.LooksLikeCredential(text) {
+		return nil
+	}
+	return connect.NewError(connect.CodeInvalidArgument, errors.New(
+		"input looks like it contains a credential and was not recorded; store it locally with `ycc token set <KEY_ENV>` and refer to the credential name instead",
+	))
+}
+
 // StartSession creates and launches a new session.
 func (s *Server) StartSession(_ context.Context, req *connect.Request[v1.StartSessionRequest]) (*connect.Response[v1.StartSessionResponse], error) {
 	m := req.Msg
+	if err := rejectObviousCredential(m.Prompt); err != nil {
+		return nil, err
+	}
 	// Opening-prompt attachments follow exactly the SendInput rules, and are
 	// validated BEFORE Start so a bad picture never leaves a stray session log.
 	images, err := checkInputImages(m.Images)
@@ -630,6 +643,9 @@ func (s *Server) SendInput(_ context.Context, req *connect.Request[v1.SendInputR
 	if strings.TrimSpace(req.Msg.Text) == "" && len(req.Msg.Images) == 0 {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("message must contain text or a picture"))
 	}
+	if err := rejectObviousCredential(req.Msg.Text); err != nil {
+		return nil, err
+	}
 	images, err := checkInputImages(req.Msg.Images)
 	if err != nil {
 		return nil, err
@@ -725,6 +741,9 @@ func (s *Server) AnswerQuestion(_ context.Context, req *connect.Request[v1.Answe
 	if !ok {
 		return nil, connect.NewError(connect.CodeNotFound, errNoSession)
 	}
+	if err := rejectObviousCredential(req.Msg.Text); err != nil {
+		return nil, err
+	}
 	if err := sess.AnswerOption(int(req.Msg.OptionIndex), req.Msg.Text); err != nil {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
 	}
@@ -742,6 +761,9 @@ func (s *Server) AnswerQuestions(_ context.Context, req *connect.Request[v1.Answ
 	idxs := make([]int, len(req.Msg.Answers))
 	texts := make([]string, len(req.Msg.Answers))
 	for i, a := range req.Msg.Answers {
+		if err := rejectObviousCredential(a.Text); err != nil {
+			return nil, err
+		}
 		idxs[i] = int(a.OptionIndex)
 		texts[i] = a.Text
 	}

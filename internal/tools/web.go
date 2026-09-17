@@ -42,22 +42,40 @@ var exaBaseURL = "https://api.exa.ai"
 // exaHTTPClient is the HTTP client used for Exa calls (overridable in tests).
 var exaHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
-// exaAPIKey resolves the Exa API key following the project's key precedence:
-// the environment first, then the machine-local secrets store. ok is false when
-// no non-empty key is configured.
-func exaAPIKey() (string, bool) {
+// exaAPIKey resolves the Exa API key. An environment value is explicitly
+// process-scoped by the daemon operator. A machine-local named secret requires
+// a single-use authorization for this exact canonical workspace and tool.
+func exaAPIKey(workspace, tool string) (key string, named bool, err error) {
 	if v := strings.TrimSpace(os.Getenv("EXA_API_KEY")); v != "" {
-		return v, true
+		return v, false, nil
 	}
-	if v, ok := secrets.Lookup("EXA_API_KEY"); ok && strings.TrimSpace(v) != "" {
-		return strings.TrimSpace(v), true
+	v, err := secrets.ConsumeAuthorized("EXA_API_KEY", workspace, tool)
+	if err != nil {
+		return "", false, err
 	}
-	return "", false
+	return strings.TrimSpace(v), true, nil
 }
 
-// Web returns the web tools (web_search, fetch_page). They are workspace-free.
-func Web() []*gollama.Tool {
-	return []*gollama.Tool{webSearch(), fetchPage()}
+// safeSecretOutput prevents the credential supplied to this request from being
+// reflected by an upstream error or response. This exact-value guard does not
+// claim to recognize unrelated credentials in arbitrary web content.
+func safeSecretOutput(text, key string) string {
+	if key == "" {
+		return text
+	}
+	return strings.ReplaceAll(text, key, "[REDACTED AUTHORIZED SECRET]")
+}
+
+func secretAuditPrefix(named bool, workspace, tool string) string {
+	if !named {
+		return ""
+	}
+	return fmt.Sprintf("[used authorized secret EXA_API_KEY for %s in workspace %s]\n\n", tool, workspace)
+}
+
+// Web returns the web tools scoped to a workspace for named-secret authorization.
+func Web(workspace string) []*gollama.Tool {
+	return []*gollama.Tool{webSearch(workspace), fetchPage(workspace)}
 }
 
 // exaPost marshals body, POSTs it to {exaBaseURL}{path} with the Exa auth
@@ -87,7 +105,7 @@ func exaPost(ctx context.Context, key, path string, body any, out any) error {
 		return fmt.Errorf("reading response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		snippet := strings.TrimSpace(string(data))
+		snippet := strings.TrimSpace(safeSecretOutput(string(data), key))
 		if len(snippet) > exaErrBodyCap {
 			snippet = snippet[:exaErrBodyCap] + "…"
 		}
@@ -109,7 +127,7 @@ func truncate(s string, n int) string {
 
 // webSearch is the web_search tool: it queries the web via Exa and returns a
 // numbered list of ranked results (title, URL, snippet).
-func webSearch() *gollama.Tool {
+func webSearch(workspace string) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "web_search",
 		Description: "Search the web via Exa and return ranked results (title, URL, and a short snippet) for a " +
@@ -129,10 +147,11 @@ func webSearch() *gollama.Tool {
 			if !ok {
 				return errResult("web_search: missing 'query'"), nil
 			}
-			key, ok := exaAPIKey()
-			if !ok {
-				return errResult("web_search: EXA_API_KEY is not set; set it in the environment or save it in the ycc secrets store"), nil
+			key, named, err := exaAPIKey(workspace, "web_search")
+			if err != nil {
+				return errResult("web_search: EXA_API_KEY is unavailable or not authorized; run `ycc token set EXA_API_KEY`, then `ycc token authorize EXA_API_KEY --tool web_search --workspace %s`", workspace), nil
 			}
+			prefix := secretAuditPrefix(named, workspace, "web_search")
 			n := getInt(params, "num_results", exaDefaultResults)
 			if n < 1 {
 				n = 1
@@ -160,10 +179,10 @@ func webSearch() *gollama.Tool {
 				} `json:"results"`
 			}
 			if err := exaPost(ctx, key, "/search", reqBody, &out); err != nil {
-				return errResult("web_search: %v", err), nil
+				return errResult("%s", safeSecretOutput(prefix+"web_search: "+err.Error(), key)), nil
 			}
 			if len(out.Results) == 0 {
-				return okResult(fmt.Sprintf("No results found for %q.", query)), nil
+				return okResult(safeSecretOutput(prefix+fmt.Sprintf("No results found for %q.", query), key)), nil
 			}
 
 			var b strings.Builder
@@ -177,21 +196,21 @@ func webSearch() *gollama.Tool {
 				if snippet == "" {
 					snippet = strings.TrimSpace(r.Text)
 				}
-				snippet = truncate(strings.Join(strings.Fields(snippet), " "), exaSnippetCap)
+				snippet = truncate(safeSecretOutput(strings.Join(strings.Fields(snippet), " "), key), exaSnippetCap)
 				fmt.Fprintf(&b, "%d. %s\n   %s\n", i+1, title, strings.TrimSpace(r.URL))
 				if snippet != "" {
 					fmt.Fprintf(&b, "   %s\n", snippet)
 				}
 				b.WriteString("\n")
 			}
-			return okResult(strings.TrimRight(b.String(), "\n")), nil
+			return okResult(safeSecretOutput(prefix+strings.TrimRight(b.String(), "\n"), key)), nil
 		},
 	}
 }
 
 // fetchPage is the fetch_page tool: it retrieves the readable text/markdown
 // content of a URL via Exa for the agent to read.
-func fetchPage() *gollama.Tool {
+func fetchPage(workspace string) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "fetch_page",
 		Description: "Fetch the readable text content of a URL via Exa for you to read. Use this to read a web page " +
@@ -205,10 +224,11 @@ func fetchPage() *gollama.Tool {
 			if !ok {
 				return errResult("fetch_page: missing 'url'"), nil
 			}
-			key, ok := exaAPIKey()
-			if !ok {
-				return errResult("fetch_page: EXA_API_KEY is not set; set it in the environment or save it in the ycc secrets store"), nil
+			key, named, err := exaAPIKey(workspace, "fetch_page")
+			if err != nil {
+				return errResult("fetch_page: EXA_API_KEY is unavailable or not authorized; run `ycc token set EXA_API_KEY`, then `ycc token authorize EXA_API_KEY --tool fetch_page --workspace %s`", workspace), nil
 			}
+			prefix := secretAuditPrefix(named, workspace, "fetch_page")
 
 			reqBody := map[string]any{
 				"urls": []string{url},
@@ -222,10 +242,10 @@ func fetchPage() *gollama.Tool {
 				} `json:"results"`
 			}
 			if err := exaPost(ctx, key, "/contents", reqBody, &out); err != nil {
-				return errResult("fetch_page: %v", err), nil
+				return errResult("%s", safeSecretOutput(prefix+"fetch_page: "+err.Error(), key)), nil
 			}
 			if len(out.Results) == 0 {
-				return errResult("fetch_page: no content returned for %q", url), nil
+				return errResult("%s", safeSecretOutput(prefix+fmt.Sprintf("fetch_page: no content returned for %q", url), key)), nil
 			}
 
 			r := out.Results[0]
@@ -239,12 +259,12 @@ func fetchPage() *gollama.Tool {
 			if b.Len() > 0 {
 				b.WriteString("\n")
 			}
-			text := strings.TrimSpace(r.Text)
+			text := strings.TrimSpace(safeSecretOutput(r.Text, key))
 			if len(text) > exaFetchCap {
 				text = text[:exaFetchCap] + "\n…[content truncated]"
 			}
 			b.WriteString(text)
-			return okResult(b.String()), nil
+			return okResult(safeSecretOutput(prefix+b.String(), key)), nil
 		},
 	}
 }

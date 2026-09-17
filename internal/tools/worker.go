@@ -66,7 +66,7 @@ var imageMediaTypes = map[string]string{
 // is set, job discovery/progress/result/wait/cancellation tools are included too
 // and Bash gains run_in_background.
 func Editing(ws *Workspace) []*gollama.Tool {
-	ts := append([]*gollama.Tool{readFile(ws), search(ws), writeFile(ws), editFile(ws), bash(ws), toolOutput(ws)}, Web()...)
+	ts := append([]*gollama.Tool{readFile(ws), search(ws), writeFile(ws), editFile(ws), bash(ws), toolOutput(ws)}, Web(ws.Root)...)
 	if ws.Jobs != nil {
 		ts = append(ts, JobTools(ws)...)
 	}

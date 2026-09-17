@@ -20,6 +20,28 @@ import (
 
 func boolPtr(value bool) *bool { return &value }
 
+func TestObviousCredentialInputIsRejectedWithoutEcho(t *testing.T) {
+	const sentinel = "sk-test-SESSION-SENTINEL-CREDENTIAL-0389"
+	srv, workspace := newImageTestServer(t)
+	_, err := srv.StartSession(context.Background(), connect.NewRequest(&v1.StartSessionRequest{
+		Workspace: workspace,
+		Mode:      "chat",
+		Prompt:    "my api key is " + sentinel,
+	}))
+	if err == nil || connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("StartSession error = %v", err)
+	}
+	if strings.Contains(err.Error(), sentinel) {
+		t.Fatal("credential warning echoed the supplied value")
+	}
+	if sessions := srv.mgr.List(); len(sessions) != 0 {
+		t.Fatalf("sessions after rejected credential = %+v, want none", sessions)
+	}
+	if err := rejectObviousCredential("use the credential named EXA_API_KEY"); err != nil {
+		t.Fatalf("reference-only input rejected: %v", err)
+	}
+}
+
 // SetThinking with no live session resolves the requested role to its current
 // model and persists the level in that model's config — a home-menu change must
 // survive a restart (spec §7.4, §18.2). An invalid level is still rejected.

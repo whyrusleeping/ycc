@@ -25,14 +25,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"text/tabwriter"
+	"time"
 
 	"connectrpc.com/connect"
+	"github.com/charmbracelet/x/term"
 	cli "github.com/urfave/cli/v3"
 
 	"github.com/whyrusleeping/ycc/internal/config"
@@ -509,20 +512,17 @@ func tokenCommand() *cli.Command {
 				Usage:     "store a token, read from stdin (never from argv)",
 				ArgsUsage: "<KEY_ENV>",
 				Action: func(ctx context.Context, cmd *cli.Command) error {
-					keyEnv := cmd.Args().First()
-					if keyEnv == "" {
+					if cmd.Args().Len() != 1 {
 						return fmt.Errorf("usage: ycc token set <KEY_ENV>")
 					}
-					// Prompt only when stdin is a terminal; a piped value works unattended.
-					if fi, err := os.Stdin.Stat(); err == nil && (fi.Mode()&os.ModeCharDevice) != 0 {
-						fmt.Fprintf(os.Stderr, "enter token for %s (input hidden if piped): ", keyEnv)
+					keyEnv := cmd.Args().First()
+					if !validKeyEnv(keyEnv) {
+						return fmt.Errorf("KEY_ENV must be an environment-variable name; provide the secret value through hidden input or stdin")
 					}
-					r := bufio.NewReader(os.Stdin)
-					line, err := r.ReadString('\n')
-					if err != nil && line == "" {
-						return fmt.Errorf("reading token: %w", err)
+					tok, err := readSecretToken(os.Stdin, keyEnv)
+					if err != nil {
+						return err
 					}
-					tok := strings.TrimSpace(line)
 					if tok == "" {
 						return fmt.Errorf("empty token, nothing stored")
 					}
@@ -530,6 +530,62 @@ func tokenCommand() *cli.Command {
 						return err
 					}
 					fmt.Printf("stored token for %s\n", keyEnv)
+					return nil
+				},
+			},
+			{
+				Name:      "authorize",
+				Usage:     "authorize one workspace-scoped tool use of a stored secret",
+				ArgsUsage: "<KEY_ENV>",
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: "tool", Usage: "model-visible tool to authorize (web_search or fetch_page)", Required: true},
+					&cli.StringFlag{Name: "workspace", Aliases: []string{"C"}, Usage: "workspace path (default: current directory)"},
+				},
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					keyEnv := cmd.Args().First()
+					if keyEnv == "" {
+						return fmt.Errorf("usage: ycc token authorize <KEY_ENV> --tool <TOOL> [--workspace DIR]")
+					}
+					tool := cmd.String("tool")
+					if keyEnv != "EXA_API_KEY" || (tool != "web_search" && tool != "fetch_page") {
+						return fmt.Errorf("supported named-secret uses are EXA_API_KEY with web_search or fetch_page")
+					}
+					workspace := cmd.String("workspace")
+					if workspace == "" {
+						var err error
+						workspace, err = os.Getwd()
+						if err != nil {
+							return err
+						}
+					}
+					canonical, err := secrets.CanonicalWorkspace(workspace)
+					if err != nil {
+						return err
+					}
+					if err := secrets.Authorize(keyEnv, canonical, tool); err != nil {
+						return err
+					}
+					fmt.Printf("authorized one %s use of secret %s in workspace %s\n", tool, keyEnv, canonical)
+					return nil
+				},
+			},
+			{
+				Name:    "authorizations",
+				Aliases: []string{"auths"},
+				Usage:   "list reference-only secret authorization audit records",
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					auths := secrets.Authorizations()
+					if len(auths) == 0 {
+						fmt.Println("(no secret authorizations)")
+						return nil
+					}
+					for _, auth := range auths {
+						status := "pending"
+						if !auth.UsedAt.IsZero() {
+							status = "used " + auth.UsedAt.Format(time.RFC3339)
+						}
+						fmt.Printf("%s %s %s %s (granted %s)\n", auth.Key, auth.Tool, auth.Workspace, status, auth.GrantedAt.Format(time.RFC3339))
+					}
 					return nil
 				},
 			},
@@ -567,6 +623,42 @@ func tokenCommand() *cli.Command {
 			},
 		},
 	}
+}
+
+func validKeyEnv(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_' || (i > 0 && c >= '0' && c <= '9') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// readSecretToken keeps interactive entry out of terminal echo and command-line
+// arguments. Non-terminal stdin remains supported for password-manager pipes.
+func readSecretToken(in *os.File, key string) (string, error) {
+	var value []byte
+	var err error
+	if term.IsTerminal(in.Fd()) {
+		fmt.Fprintf(os.Stderr, "enter token for %s (input hidden): ", key)
+		value, err = term.ReadPassword(in.Fd())
+		fmt.Fprintln(os.Stderr)
+	} else {
+		line, readErr := bufio.NewReader(in).ReadString('\n')
+		value, err = []byte(line), readErr
+		if err == io.EOF && len(value) > 0 {
+			err = nil
+		}
+	}
+	if err != nil {
+		return "", fmt.Errorf("reading token: %w", err)
+	}
+	return strings.TrimSpace(string(value)), nil
 }
 
 // daemonCommand runs the explicit, persistent, foreground service. It serves
@@ -726,12 +818,21 @@ func readStdinInto(ctx context.Context, client yccv1connect.SessionServiceClient
 }
 
 func printEvent(ev *v1.Event) {
+	fmt.Println(formatEvent(ev))
+}
+
+func formatEvent(ev *v1.Event) string {
 	var data map[string]any
 	if ev.DataJson != "" {
 		json.Unmarshal([]byte(ev.DataJson), &data)
 	}
+	wasRedacted := false
 	get := func(k string) string {
 		if s, ok := data[k].(string); ok {
+			if protected, changed := secrets.RedactForPresentation(s); changed {
+				wasRedacted = true
+				return protected
+			}
 			return s
 		}
 		return ""
@@ -753,7 +854,10 @@ func printEvent(ev *v1.Event) {
 			line += " " + m
 		}
 	}
-	fmt.Println(line)
+	if wasRedacted {
+		line += " [possible credential redacted from display]"
+	}
+	return line
 }
 
 func truncate(s string, n int) string {

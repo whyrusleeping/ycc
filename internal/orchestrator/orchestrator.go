@@ -1339,7 +1339,8 @@ func askUser(d *Deps) *gollama.Tool {
 			"For a single question, pass `question` (and optional `options`, a short list of suggested answers). " +
 			"To ask several questions in one round-trip, pass `questions`: a list where each item has its own " +
 			"`question` text and its own optional `options` list. The client renders options as a picker so the " +
-			"user can choose crisply, and may still type free text. Answers are returned mapped to each question.",
+			"user can choose crisply, and may still type free text. Answers are returned mapped to each question. " +
+			"Never ask the user to paste a password, API key, token, or other credential here; ask only for its KEY_ENV/name and direct them to the local `ycc token set <KEY_ENV>` workflow.",
 		Params: tools.Obj(map[string]any{
 			"question": tools.StrProp("the question for the user (single-question form)"),
 			"options":  tools.StrArrProp("optional suggested answers to offer as selectable choices (single-question form)"),

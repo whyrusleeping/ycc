@@ -9,6 +9,7 @@ import (
 	cli "github.com/urfave/cli/v3"
 
 	"github.com/whyrusleeping/ycc/internal/export"
+	"github.com/whyrusleeping/ycc/internal/secrets"
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 )
 
@@ -65,6 +66,10 @@ func (a *app) exportCommand() *cli.Command {
 			}
 
 			md := export.Markdown(resp.Msg.Events, opts)
+			if protected, changed := secrets.RedactForPresentation(md); changed {
+				md = "> [!WARNING]\n> Possible credential values were redacted from this presentation. The durable session history was not modified.\n\n" + protected
+				fmt.Fprintln(os.Stderr, "warning: possible credential values were redacted from the export; rotate any credential previously entered into a session")
+			}
 
 			out := cmd.String("out")
 			if out == "" {

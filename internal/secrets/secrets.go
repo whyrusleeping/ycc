@@ -7,11 +7,15 @@ package secrets
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
+	"time"
 )
 
 // mutationMu serializes complete read-modify-write transactions within this
@@ -23,10 +27,25 @@ var mutationMu sync.Mutex
 // store already exists. Production always leaves it set to os.CreateTemp.
 var createTempFile = os.CreateTemp
 
-// Store maps a key_env name to its stored API token.
+// Store maps a key_env name to its stored API token and retains reference-only
+// authorization audit records. Authorization records never contain token values.
 type Store struct {
-	Tokens map[string]string `json:"tokens"`
+	Tokens         map[string]string `json:"tokens"`
+	Authorizations []Authorization   `json:"authorizations,omitempty"`
 }
+
+// Authorization permits one model-visible tool invocation to use a named secret
+// in one canonical workspace. UsedAt is set before the secret is released to the
+// caller, leaving a value-free local audit record of both grants and uses.
+type Authorization struct {
+	Key       string    `json:"key"`
+	Workspace string    `json:"workspace"`
+	Tool      string    `json:"tool"`
+	GrantedAt time.Time `json:"granted_at"`
+	UsedAt    time.Time `json:"used_at,omitempty"`
+}
+
+var ErrNotAuthorized = errors.New("secret use is not authorized")
 
 // Path returns the secrets file location (best-effort; "" on error).
 func Path() string {
@@ -183,14 +202,121 @@ func Set(key, token string) error {
 	})
 }
 
-// Remove deletes the token stored under key.
+// Remove deletes the token stored under key and any authorization records for it.
 func Remove(key string) error {
 	return mutate(func(s *Store) {
 		delete(s.Tokens, key)
+		kept := s.Authorizations[:0]
+		for _, auth := range s.Authorizations {
+			if auth.Key != key {
+				kept = append(kept, auth)
+			}
+		}
+		s.Authorizations = kept
 	})
 }
 
+// CanonicalWorkspace returns the stable absolute workspace identity used by
+// single-use authorizations.
+func CanonicalWorkspace(path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", errors.New("workspace is required")
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	abs = filepath.Clean(abs)
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	}
+	return abs, nil
+}
+
+// Authorize permits one future use of key by tool in workspace. Each call adds
+// one grant; the token value is never copied into the authorization record.
+func Authorize(key, workspace, tool string) error {
+	key = strings.TrimSpace(key)
+	tool = strings.TrimSpace(tool)
+	if key == "" || tool == "" {
+		return errors.New("secret name and tool are required")
+	}
+	workspace, err := CanonicalWorkspace(workspace)
+	if err != nil {
+		return err
+	}
+	return mutateErr(func(s *Store) error {
+		if strings.TrimSpace(s.Tokens[key]) == "" {
+			return fmt.Errorf("no stored token for %s", key)
+		}
+		s.Authorizations = append(s.Authorizations, Authorization{
+			Key: key, Workspace: workspace, Tool: tool, GrantedAt: time.Now().UTC(),
+		})
+		return nil
+	})
+}
+
+// ConsumeAuthorized atomically consumes one matching grant and returns its
+// secret to the named tool implementation. Model-facing callers must not return
+// the value in results or errors.
+func ConsumeAuthorized(key, workspace, tool string) (string, error) {
+	workspace, err := CanonicalWorkspace(workspace)
+	if err != nil {
+		return "", err
+	}
+	mutationMu.Lock()
+	defer mutationMu.Unlock()
+
+	fp := Path()
+	if fp == "" {
+		return "", ErrNotAuthorized
+	}
+	unlock, err := lockStore(fp)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+
+	s, err := load(fp)
+	if err != nil {
+		return "", err
+	}
+	for i := range s.Authorizations {
+		auth := &s.Authorizations[i]
+		if auth.Key == key && auth.Workspace == workspace && auth.Tool == tool && auth.UsedAt.IsZero() {
+			token := strings.TrimSpace(s.Tokens[key])
+			if token == "" {
+				return "", ErrNotAuthorized
+			}
+			auth.UsedAt = time.Now().UTC()
+			if err := saveAtomic(fp, s); err != nil {
+				return "", err
+			}
+			return token, nil
+		}
+	}
+	return "", ErrNotAuthorized
+}
+
+// Authorizations returns reference-only authorization audit records.
+func Authorizations() []Authorization {
+	s, err := Load()
+	if err != nil {
+		return nil
+	}
+	out := append([]Authorization(nil), s.Authorizations...)
+	sort.Slice(out, func(i, j int) bool { return out[i].GrantedAt.Before(out[j].GrantedAt) })
+	return out
+}
+
 func mutate(fn func(*Store)) error {
+	return mutateErr(func(s *Store) error {
+		fn(s)
+		return nil
+	})
+}
+
+func mutateErr(fn func(*Store) error) error {
 	mutationMu.Lock()
 	defer mutationMu.Unlock()
 
@@ -208,8 +334,32 @@ func mutate(fn func(*Store)) error {
 	if err != nil {
 		return err
 	}
-	fn(s)
+	if err := fn(s); err != nil {
+		return err
+	}
 	return saveAtomic(fp, s)
+}
+
+// RedactKnown replaces exact values from the local secret store in presentation
+// text. It is deliberately best-effort: it does not guess arbitrary credentials
+// and must never be used to alter durable event history or model replay.
+func RedactKnown(text string) (string, bool) {
+	s, err := Load()
+	if err != nil {
+		return text, false
+	}
+	values := make([]string, 0, len(s.Tokens))
+	for _, value := range s.Tokens {
+		if len(value) >= 8 && strings.Contains(text, value) {
+			values = append(values, value)
+		}
+	}
+	// Replace longer values first in case one stored value contains another.
+	sort.Slice(values, func(i, j int) bool { return len(values[i]) > len(values[j]) })
+	for _, value := range values {
+		text = strings.ReplaceAll(text, value, "[REDACTED STORED SECRET]")
+	}
+	return text, len(values) > 0
 }
 
 // Keys returns the sorted list of stored key names (never the values).
