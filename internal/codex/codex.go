@@ -157,7 +157,7 @@ func buildRequest(opts gollama.RequestOptions) request {
 		Instructions:      opts.System,
 		Input:             buildInput(opts.Messages, opts.Model),
 		ToolChoice:        "auto",
-		ParallelToolCalls: false,
+		ParallelToolCalls: true,
 		Store:             false,
 		Stream:            true,
 		Include:           []string{"reasoning.encrypted_content"},
