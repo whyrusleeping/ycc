@@ -87,6 +87,21 @@ workflow roles. It is discovered in this order:
 Launching the TUI with no usable config runs a first-run setup wizard that writes
 `~/.config/ycc/ycc.toml`. You can also pass an explicit file with `--config`.
 
+### Design-document set
+
+Projects with normative design documents beyond `spec.md` declare them in the committed
+`.ycc/config.toml` project config:
+
+```toml
+spec_path = "spec.md"
+doc_globs = ["docs/design/*.md"]
+```
+
+Keep runtime state ignored while making that one file committable with `.gitignore` rules such
+as `.ycc/*` followed by `!.ycc/config.toml`. Use narrow globs for normative documents; do not
+include `memory.md`, `backlog/`, generated files, or advisory reports. `ycc spec-check` scans the
+entry point and every matching file.
+
 ## Secrets & environment
 
 Never paste credentials into a session prompt or an `ask_user` answer: those

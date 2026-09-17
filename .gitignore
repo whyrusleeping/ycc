@@ -9,8 +9,9 @@ ant-key
 /cmd/*/ycc
 /cmd/*/yccd
 
-# session state + scratch
-.ycc/
+# session state + scratch; project docs configuration is committed
+.ycc/*
+!.ycc/config.toml
 scratch/
 lsp.webp
 

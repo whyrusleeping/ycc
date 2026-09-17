@@ -36,6 +36,43 @@ func TestRunSpecCheckStale(t *testing.T) {
 	}
 }
 
+func TestRunSpecCheckConfiguredDocs(t *testing.T) {
+	ws := t.TempDir()
+	write := func(rel, body string) {
+		t.Helper()
+		path := filepath.Join(ws, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(".ycc/config.toml", "doc_globs = [\"docs/design/*.md\"]\n")
+	write("internal/docs/x.go", "package docs\n")
+	write("spec.md", "# Spec\n")
+	write("docs/design/architecture.md", "# Architecture\n\nThe `internal/removed` package no longer exists.\n")
+	write("docs/reports/advisory.md", "The `also/removed` package is advisory.\n")
+
+	var out bytes.Buffer
+	stale, err := runSpecCheck(ws, &out)
+	if err != nil {
+		t.Fatalf("runSpecCheck: %v", err)
+	}
+	if !stale {
+		t.Fatalf("configured design doc should be checked:\n%s", out.String())
+	}
+	if !bytes.Contains(out.Bytes(), []byte("across 2 docs")) {
+		t.Fatalf("report should include the entry point and configured design doc:\n%s", out.String())
+	}
+	if !bytes.Contains(out.Bytes(), []byte("docs/design/architecture.md")) {
+		t.Fatalf("report should identify the configured design doc:\n%s", out.String())
+	}
+	if bytes.Contains(out.Bytes(), []byte("also/removed")) {
+		t.Fatalf("report should exclude non-configured advisory docs:\n%s", out.String())
+	}
+}
+
 // A clean spec (every reference resolves) reports stale=false.
 func TestRunSpecCheckClean(t *testing.T) {
 	ws := t.TempDir()

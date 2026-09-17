@@ -1,7 +1,9 @@
 package docs
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -188,6 +190,77 @@ func TestDocFilesDefault(t *testing.T) {
 	}
 	if len(empty) != 0 {
 		t.Fatalf("DocFiles() on empty workspace = %v, want none", empty)
+	}
+}
+
+func TestRepositoryDocsConfig(t *testing.T) {
+	root := filepath.Clean(filepath.Join("..", ".."))
+	if _, err := os.Stat(filepath.Join(root, ".git")); err != nil {
+		t.Skip("repository checkout not available")
+	}
+	if _, err := os.Stat(filepath.Join(root, ".ycc", "config.toml")); err != nil {
+		t.Fatalf("committed docs config: %v", err)
+	}
+
+	isIgnored := func(path string) bool {
+		t.Helper()
+		cmd := exec.Command("git", "check-ignore", "--quiet", "--no-index", "--", path)
+		cmd.Dir = root
+		err := cmd.Run()
+		if err == nil {
+			return true
+		}
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return false
+		}
+		t.Fatalf("git check-ignore %q: %v", path, err)
+		return false
+	}
+	if isIgnored(".ycc/config.toml") {
+		t.Fatal(".ycc/config.toml must be committable")
+	}
+	for _, path := range []string{".ycc/sessions/example/events.jsonl", ".ycc/workloop.json"} {
+		if !isIgnored(path) {
+			t.Fatalf("runtime state %q must remain ignored", path)
+		}
+	}
+
+	files, err := NewStore(root).DocFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(map[string]bool, len(files))
+	for _, file := range files {
+		rel, err := filepath.Rel(root, file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got[filepath.ToSlash(rel)] = true
+	}
+	want := []string{
+		"spec.md",
+		"docs/design/async-jobs.md",
+		"docs/design/doc-style.md",
+		"docs/design/forge-integration.md",
+		"docs/design/ios-client.md",
+		"docs/design/parallel-workstreams.md",
+		"docs/design/project-memory.md",
+		"docs/design/web-client.md",
+		"docs/design/workstream-integration.md",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("configured docs set = %v, want %v", got, want)
+	}
+	for _, path := range want {
+		if !got[path] {
+			t.Errorf("configured docs set missing %q", path)
+		}
+	}
+	for _, path := range []string{"memory.md", "backlog/0206-task.md", "docs/reports/report.md", "docs/tui.png"} {
+		if got[path] {
+			t.Errorf("configured docs set includes non-normative %q", path)
+		}
 	}
 }
 
