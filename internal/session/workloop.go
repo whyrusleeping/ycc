@@ -914,18 +914,15 @@ waitLoop:
 
 // --- pure helpers (ported from the client driver) ---
 
-// topReadyTask returns the id of the task a work session would pick next: the
-// highest-priority (lowest priority number) actionable task that is ready and not
-// yet done/blocked/in-review. Ties break by id. "" when nothing is ready.
+// topReadyTask returns the id of the highest-priority work-loop-eligible task.
+// Eligibility is shared with backlog display; selection additionally orders by
+// lowest priority number, then id. "" means nothing is actionable.
 func topReadyTask(tasks []*docs.Task) string {
 	byID := docs.StatusByID(tasks)
 	best := ""
 	bestPrio := 0
 	for _, t := range tasks {
-		if t.Status != docs.StatusTodo && t.Status != docs.StatusInProgress {
-			continue
-		}
-		if len(docs.BlockingDeps(t, byID)) != 0 {
+		if !docs.EligibilityFor(t, byID).Actionable {
 			continue
 		}
 		if best == "" || t.Priority < bestPrio || (t.Priority == bestPrio && t.ID < best) {

@@ -102,6 +102,29 @@ func TestTopReadyTaskDaemon(t *testing.T) {
 	}
 }
 
+func TestTopReadyTaskContinuesInProgress(t *testing.T) {
+	tasks := []*docs.Task{
+		{ID: "0001", Status: docs.StatusDone, Priority: 1},
+		{ID: "0002", Status: docs.StatusInProgress, Priority: 3, DependsOn: []string{"0001"}},
+		{ID: "0003", Status: docs.StatusBlocked, Priority: 1, DependsOn: []string{"0001"}},
+	}
+	if got := topReadyTask(tasks); got != "0002" {
+		t.Fatalf("topReadyTask = %q, want actionable continuation 0002", got)
+	}
+}
+
+func TestTopReadyTaskAllBlocked(t *testing.T) {
+	tasks := []*docs.Task{
+		{ID: "0001", Status: docs.StatusBlocked, Priority: 1},
+		{ID: "0002", Status: docs.StatusProposed, Priority: 1},
+		{ID: "0003", Status: docs.StatusInReview, Priority: 1},
+		{ID: "0004", Status: docs.StatusTodo, Priority: 1, DependsOn: []string{"9999"}},
+	}
+	if got := topReadyTask(tasks); got != "" {
+		t.Fatalf("topReadyTask = %q, want no actionable task", got)
+	}
+}
+
 func TestLoopSessionFailureUsesLastStructuredError(t *testing.T) {
 	events := []event.Event{
 		{Type: event.SessionError, Data: map[string]any{"kind": "auth", "retryable": false}},

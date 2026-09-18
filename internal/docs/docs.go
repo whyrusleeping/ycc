@@ -261,7 +261,8 @@ func StatusByID(tasks []*Task) map[string]Status {
 // BlockingDeps returns the ids of t's dependencies that are not yet done,
 // according to byID (build it with StatusByID). A dependency id missing from
 // byID is treated as blocking — it names a task that does not exist. The result
-// is nil when every dependency is done, i.e. t is ready to start.
+// is nil when every dependency requirement is satisfied; lifecycle status may
+// still make the task ineligible for work.
 func BlockingDeps(t *Task, byID map[string]Status) []string {
 	var blocking []string
 	for _, dep := range t.DependsOn {
@@ -270,6 +271,69 @@ func BlockingDeps(t *Task, byID map[string]Status) []string {
 		}
 	}
 	return blocking
+}
+
+// EligibilityGate identifies the lifecycle gate that applies after dependency
+// requirements are considered.
+type EligibilityGate string
+
+const (
+	EligibilityReadyToStart    EligibilityGate = "ready_to_start"
+	EligibilityReadyToContinue EligibilityGate = "ready_to_continue"
+	EligibilityExplicitBlocker EligibilityGate = "explicit_blocker"
+	EligibilityUserAcceptance  EligibilityGate = "user_acceptance"
+	EligibilityReview          EligibilityGate = "review"
+	EligibilityComplete        EligibilityGate = "complete"
+	EligibilityUnknownStatus   EligibilityGate = "unknown_status"
+)
+
+// TaskEligibility is the shared contract for backlog display and work-loop
+// selection. Dependencies and lifecycle gates are deliberately separate: a
+// blocked task can have satisfied dependencies without becoming actionable.
+type TaskEligibility struct {
+	Actionable            bool
+	DependenciesSatisfied bool
+	BlockingDependencies  []string
+	MissingDependencies   []string
+	Gate                  EligibilityGate
+}
+
+// EligibilityFor reports whether t may be selected for work. Only todo and
+// in-progress tasks whose declared dependencies all exist and are done are
+// actionable; no status is changed as a side effect.
+func EligibilityFor(t *Task, byID map[string]Status) TaskEligibility {
+	e := TaskEligibility{DependenciesSatisfied: true}
+	for _, dep := range t.DependsOn {
+		status, exists := byID[normalizeID(dep)]
+		switch {
+		case !exists:
+			e.DependenciesSatisfied = false
+			e.MissingDependencies = append(e.MissingDependencies, dep)
+		case status != StatusDone:
+			e.DependenciesSatisfied = false
+			e.BlockingDependencies = append(e.BlockingDependencies, dep)
+		}
+	}
+
+	switch t.Status {
+	case StatusTodo:
+		e.Gate = EligibilityReadyToStart
+	case StatusInProgress:
+		e.Gate = EligibilityReadyToContinue
+	case StatusBlocked:
+		e.Gate = EligibilityExplicitBlocker
+	case StatusProposed:
+		e.Gate = EligibilityUserAcceptance
+	case StatusInReview:
+		e.Gate = EligibilityReview
+	case StatusDone:
+		e.Gate = EligibilityComplete
+	default:
+		e.Gate = EligibilityUnknownStatus
+	}
+	e.Actionable = e.DependenciesSatisfied &&
+		(e.Gate == EligibilityReadyToStart || e.Gate == EligibilityReadyToContinue)
+	return e
 }
 
 // Get returns the task with the given id.

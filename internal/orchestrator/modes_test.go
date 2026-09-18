@@ -170,22 +170,61 @@ func TestWorkCoordinatorDirectImplementation(t *testing.T) {
 	}
 }
 
-func TestListBacklogReadiness(t *testing.T) {
+func TestListBacklogUsesWorkLoopEligibility(t *testing.T) {
 	d := depsFor(t)
-	a, _ := d.Docs.Create("alpha", "", 1, nil, nil) // 0001, no deps -> READY
-	d.Docs.Update(a.ID, func(tk *docs.Task) { tk.Status = docs.StatusDone })
-	d.Docs.Create("beta", "", 1, []string{a.ID}, nil)    // 0002 dep on done 0001 -> READY
-	d.Docs.Create("gamma", "", 1, []string{"0002"}, nil) // 0003 dep on todo 0002 -> blocked
+	done, _ := d.Docs.Create("done dependency", "", 1, nil, nil)
+	d.Docs.Update(done.ID, func(tk *docs.Task) { tk.Status = docs.StatusDone })
+	d.Docs.Create("ready todo", "", 1, []string{done.ID}, nil)
+	blocked, _ := d.Docs.Create("external gate", "", 1, []string{done.ID}, nil)
+	d.Docs.Update(blocked.ID, func(tk *docs.Task) { tk.Status = docs.StatusBlocked })
+	continuation, _ := d.Docs.Create("active continuation", "", 1, []string{done.ID}, nil)
+	d.Docs.Update(continuation.ID, func(tk *docs.Task) { tk.Status = docs.StatusInProgress })
+	d.Docs.Create("missing dependency", "", 1, []string{"9999"}, nil)
+
 	res, _ := listBacklog(d).Call(context.Background(), map[string]any{})
 	out := res.Content
-	if !strings.Contains(out, "0002") || !strings.Contains(out, "[READY]") {
-		t.Fatalf("expected 0002 marked READY:\n%s", out)
+	for _, want := range []string{
+		"0002 [todo]", "[READY TO START]",
+		"0003 [blocked]", "dependencies satisfied; explicit blocked status remains",
+		"0004 [in_progress]", "[READY TO CONTINUE]",
+		"0005 [todo]", "missing dependency 9999; create or restore it, then complete it",
+		"Work-loop eligible: 0002 (ready to start), 0004 (ready to continue)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("list_backlog missing %q:\n%s", want, out)
+		}
 	}
-	if !strings.Contains(out, "[blocked by 0002]") {
-		t.Fatalf("expected 0003 blocked by 0002:\n%s", out)
+	view := tools.ViewOf(res)
+	if view == nil || view.Summary != "2 work-loop eligible task(s)" {
+		t.Fatalf("structured view = %+v", view)
 	}
-	if !strings.Contains(out, "Ready to start (all deps done): 0002") {
-		t.Fatalf("expected ready summary listing 0002:\n%s", out)
+	var structured strings.Builder
+	for _, node := range view.Nodes {
+		structured.WriteString(node.Label)
+		for _, child := range node.Children {
+			structured.WriteString(" " + child.Label + ": " + child.Detail)
+		}
+	}
+	for _, want := range []string{"missing: 9999", "resolve the recorded blocker"} {
+		if !strings.Contains(structured.String(), want) {
+			t.Fatalf("structured backlog missing %q: %s", want, structured.String())
+		}
+	}
+}
+
+func TestListBacklogAllBlocked(t *testing.T) {
+	d := depsFor(t)
+	blocked, _ := d.Docs.Create("waiting for authorization", "", 1, nil, nil)
+	d.Docs.Update(blocked.ID, func(tk *docs.Task) { tk.Status = docs.StatusBlocked })
+	d.Docs.Create("waiting for missing work", "", 1, []string{"9999"}, nil)
+
+	res, _ := listBacklog(d).Call(context.Background(), map[string]any{})
+	if strings.Contains(res.Content, "READY TO") || !strings.Contains(res.Content, "no tasks are work-loop eligible") {
+		t.Fatalf("all-blocked backlog reported actionable work:\n%s", res.Content)
+	}
+	view := tools.ViewOf(res)
+	if view == nil || view.Status != "warn" || view.Summary != "0 work-loop eligible task(s)" {
+		t.Fatalf("all-blocked structured view = %+v", view)
 	}
 }
 
@@ -207,11 +246,16 @@ func TestCreateTaskProposedNeverReady(t *testing.T) {
 	}
 
 	out, _ := listBacklog(d).Call(context.Background(), map[string]any{})
-	if strings.Contains(out.Content, "[READY]") {
+	if strings.Contains(out.Content, "[READY") {
 		t.Fatalf("proposed task must not be READY:\n%s", out.Content)
 	}
-	if !strings.Contains(out.Content, "proposed task(s)") {
-		t.Fatalf("expected proposed-count note:\n%s", out.Content)
+	if !strings.Contains(out.Content, "user acceptance required") || !strings.Contains(out.Content, "proposed task(s)") {
+		t.Fatalf("expected proposed unblock requirement:\n%s", out.Content)
+	}
+	view := tools.ViewOf(out)
+	if view == nil || len(view.Nodes) != 1 || len(view.Nodes[0].Children) != 2 ||
+		!strings.Contains(view.Nodes[0].Children[1].Detail, "user acceptance required") {
+		t.Fatalf("proposed structured eligibility = %+v", view)
 	}
 
 	// Default (no status) stays todo; a bogus status is rejected.

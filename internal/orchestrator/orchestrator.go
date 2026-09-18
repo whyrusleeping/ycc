@@ -348,10 +348,10 @@ func (d *Deps) newLoop(spec AgentSpec, system string, reg *tools.Registry, actor
 func listBacklog(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "list_backlog",
-		Description: "List backlog tasks with id, status, priority, title, and dependencies. Each open todo/blocked " +
-			"task is annotated [READY] when all of its dependencies are done, or [blocked by <ids>] otherwise, and a " +
-			"trailing summary lists the ids that are ready to start. 'proposed' tasks are ideas awaiting the user's " +
-			"acceptance — never ready to start. Completed (done) tasks are hidden unless include_done is true.",
+		Description: "List backlog tasks with id, status, priority, title, dependencies, and work-loop eligibility. " +
+			"Only todo and in_progress tasks whose dependencies all exist and are done are actionable. Blocked, proposed, " +
+			"and in_review tasks retain their explicit gates even when dependencies are satisfied. Completed (done) tasks " +
+			"are hidden unless include_done is true.",
 		Params: tools.Obj(map[string]any{"include_done": tools.BoolProp("include completed (done) tasks in the output (default false)")}),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			ts, err := d.Docs.ListMetadata()
@@ -363,8 +363,9 @@ func listBacklog(d *Deps) *gollama.Tool {
 			var b strings.Builder
 			hidden := 0
 			proposed := 0
-			var ready []string
-			for _, t := range ts {
+			var actionable []string
+			var nodes []tools.ViewNode
+			for _, t := range ts { // ListMetadata supplies id order; the work loop separately ranks by priority then id.
 				if t.Status == docs.StatusDone && !includeDone {
 					hidden++
 					continue
@@ -376,17 +377,21 @@ func listBacklog(d *Deps) *gollama.Tool {
 				if dep == "" {
 					dep = "-"
 				}
-				// Readiness only applies to not-yet-started tasks; in_progress/in_review/done are already past the gate.
-				mark := ""
-				if t.Status == docs.StatusTodo || t.Status == docs.StatusBlocked {
-					if blocking := docs.BlockingDeps(t, byID); len(blocking) > 0 {
-						mark = "  [blocked by " + strings.Join(blocking, ",") + "]"
-					} else {
-						mark = "  [READY]"
-						ready = append(ready, t.ID)
-					}
+				eligibility := docs.EligibilityFor(t, byID)
+				mark, requirement := backlogEligibilityText(eligibility)
+				if eligibility.Actionable {
+					actionable = append(actionable, fmt.Sprintf("%s (%s)", t.ID, requirement))
 				}
-				fmt.Fprintf(&b, "%s [%s] p%d  %s  (deps: %s)%s\n", t.ID, t.Status, t.Priority, t.Title, dep, mark)
+				fmt.Fprintf(&b, "%s [%s] p%d  %s  (deps: %s)  [%s]\n", t.ID, t.Status, t.Priority, t.Title, dep, mark)
+				nodes = append(nodes, tools.ViewNode{
+					Label:  t.ID + " " + t.Title,
+					Detail: fmt.Sprintf("%s · p%d", t.Status, t.Priority),
+					Kind:   backlogEligibilityKind(eligibility),
+					Children: []tools.ViewNode{
+						{Label: "Dependencies", Detail: backlogDependencyText(eligibility)},
+						{Label: "Eligibility", Detail: requirement},
+					},
+				})
 			}
 			if b.Len() == 0 {
 				if hidden > 0 {
@@ -394,10 +399,10 @@ func listBacklog(d *Deps) *gollama.Tool {
 				}
 				return tools.OkResult("(backlog is empty)"), nil
 			}
-			if len(ready) > 0 {
-				fmt.Fprintf(&b, "\nReady to start (all deps done): %s\n", strings.Join(ready, ", "))
+			if len(actionable) > 0 {
+				fmt.Fprintf(&b, "\nWork-loop eligible: %s\n", strings.Join(actionable, ", "))
 			} else {
-				fmt.Fprintf(&b, "\n(no tasks are ready to start — open tasks are blocked, in progress, or in review)\n")
+				fmt.Fprintf(&b, "\n(no tasks are work-loop eligible; resolve the requirements shown above)\n")
 			}
 			if proposed > 0 {
 				fmt.Fprintf(&b, "(%d proposed task(s) — ideas awaiting the user's acceptance; promote to 'todo' with update_task only when the user confirms)\n", proposed)
@@ -405,9 +410,78 @@ func listBacklog(d *Deps) *gollama.Tool {
 			if hidden > 0 {
 				fmt.Fprintf(&b, "(%d done task(s) hidden — pass include_done=true to show them)\n", hidden)
 			}
-			return tools.OkResult(b.String()), nil
+			status := "ok"
+			if len(actionable) == 0 {
+				status = "warn"
+			}
+			view := &tools.ResultView{
+				Summary: fmt.Sprintf("%d work-loop eligible task(s)", len(actionable)),
+				Status:  status,
+				Nodes:   nodes,
+			}
+			return tools.OkResultView(b.String(), view), nil
 		},
 	}
+}
+
+func backlogEligibilityText(e docs.TaskEligibility) (mark, requirement string) {
+	var blockers []string
+	if len(e.MissingDependencies) > 0 {
+		blockers = append(blockers, "missing dependency "+strings.Join(e.MissingDependencies, ",")+"; create or restore it, then complete it")
+	}
+	if len(e.BlockingDependencies) > 0 {
+		blockers = append(blockers, "dependencies not done: "+strings.Join(e.BlockingDependencies, ",")+"; complete them")
+	}
+
+	switch e.Gate {
+	case docs.EligibilityReadyToStart:
+		if e.Actionable {
+			return "READY TO START", "ready to start"
+		}
+	case docs.EligibilityReadyToContinue:
+		if e.Actionable {
+			return "READY TO CONTINUE", "ready to continue"
+		}
+	case docs.EligibilityExplicitBlocker:
+		blockers = append(blockers, "explicit blocked status remains; resolve the recorded blocker, then explicitly change status to todo or in_progress")
+	case docs.EligibilityUserAcceptance:
+		blockers = append(blockers, "user acceptance required; promote to todo only after confirmation")
+	case docs.EligibilityReview:
+		blockers = append(blockers, "review must complete and status must be explicitly transitioned")
+	case docs.EligibilityComplete:
+		blockers = append(blockers, "task is complete")
+	default:
+		blockers = append(blockers, "unsupported task status must be corrected")
+	}
+	if e.DependenciesSatisfied && e.Gate != docs.EligibilityComplete {
+		blockers = append([]string{"dependencies satisfied"}, blockers...)
+	}
+	requirement = strings.Join(blockers, "; ")
+	return "NOT ACTIONABLE: " + requirement, requirement
+}
+
+func backlogDependencyText(e docs.TaskEligibility) string {
+	if e.DependenciesSatisfied {
+		return "satisfied"
+	}
+	var parts []string
+	if len(e.MissingDependencies) > 0 {
+		parts = append(parts, "missing: "+strings.Join(e.MissingDependencies, ","))
+	}
+	if len(e.BlockingDependencies) > 0 {
+		parts = append(parts, "not done: "+strings.Join(e.BlockingDependencies, ","))
+	}
+	return strings.Join(parts, "; ")
+}
+
+func backlogEligibilityKind(e docs.TaskEligibility) string {
+	if e.Actionable {
+		return "ok"
+	}
+	if e.Gate == docs.EligibilityComplete {
+		return "muted"
+	}
+	return "warn"
 }
 
 func getTask(d *Deps) *gollama.Tool {

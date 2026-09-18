@@ -286,6 +286,40 @@ func TestBlockingDeps(t *testing.T) {
 	}
 }
 
+func TestEligibilityForSeparatesDependenciesFromLifecycleGates(t *testing.T) {
+	tasks := []*Task{
+		{ID: "0001", Status: StatusDone},
+		{ID: "0002", Status: StatusTodo},
+		{ID: "0003", Status: StatusBlocked, DependsOn: []string{"0001"}},
+		{ID: "0004", Status: StatusInProgress, DependsOn: []string{"0001"}},
+		{ID: "0005", Status: StatusProposed, DependsOn: []string{"0001"}},
+		{ID: "0006", Status: StatusTodo, DependsOn: []string{"9999"}},
+		{ID: "0007", Status: StatusTodo, DependsOn: []string{"0002"}},
+	}
+	byID := StatusByID(tasks)
+
+	blocked := EligibilityFor(byID2task(tasks, "0003"), byID)
+	if blocked.Actionable || !blocked.DependenciesSatisfied || blocked.Gate != EligibilityExplicitBlocker {
+		t.Fatalf("dependency-clear blocked eligibility = %+v", blocked)
+	}
+	continuation := EligibilityFor(byID2task(tasks, "0004"), byID)
+	if !continuation.Actionable || !continuation.DependenciesSatisfied || continuation.Gate != EligibilityReadyToContinue {
+		t.Fatalf("in-progress continuation eligibility = %+v", continuation)
+	}
+	proposed := EligibilityFor(byID2task(tasks, "0005"), byID)
+	if proposed.Actionable || proposed.Gate != EligibilityUserAcceptance {
+		t.Fatalf("proposed eligibility = %+v", proposed)
+	}
+	missing := EligibilityFor(byID2task(tasks, "0006"), byID)
+	if missing.Actionable || missing.DependenciesSatisfied || strings.Join(missing.MissingDependencies, ",") != "9999" {
+		t.Fatalf("missing-dependency eligibility = %+v", missing)
+	}
+	waiting := EligibilityFor(byID2task(tasks, "0007"), byID)
+	if waiting.Actionable || waiting.DependenciesSatisfied || strings.Join(waiting.BlockingDependencies, ",") != "0002" {
+		t.Fatalf("unfinished-dependency eligibility = %+v", waiting)
+	}
+}
+
 func byID2task(tasks []*Task, id string) *Task {
 	for _, t := range tasks {
 		if t.ID == id {
