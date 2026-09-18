@@ -32,9 +32,13 @@ type baselineRecord struct {
 	Head         string `json:"head"`
 	IndexTree    string `json:"index_tree"`
 	WorktreeTree string `json:"worktree_tree"`
+	Workspace    string `json:"workspace,omitempty"`
 }
 
-const baselineRecordVersion = 1
+const (
+	baselineRecordLegacyVersion = 1
+	baselineRecordVersion       = 2
+)
 
 // Changeset is the current task-owned work relative to a Baseline. Paths is an
 // explicit, sorted scope and Diff is the exact patch represented by ID.
@@ -139,41 +143,47 @@ func (r *Repo) PersistBaseline(sessionID string, b *Baseline) error {
 	if err != nil {
 		return err
 	}
-	if err := r.retainBaseline(b); err != nil {
-		return fmt.Errorf("retain baseline %s: %w", b.ID, err)
-	}
-	record := baselineRecord{
-		Version: baselineRecordVersion, ID: b.ID, Head: b.head,
-		IndexTree: b.indexTree, WorktreeTree: b.worktreeTree,
-	}
-	data, err := json.Marshal(record)
+	workspace, err := r.workspaceRelativePath()
 	if err != nil {
-		return fmt.Errorf("encode baseline: %w", err)
+		return fmt.Errorf("locate baseline workspace: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create baseline directory: %w", err)
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".baseline-*")
-	if err != nil {
-		return fmt.Errorf("create baseline record: %w", err)
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return fmt.Errorf("secure baseline record: %w", err)
-	}
-	if _, err := tmp.Write(append(data, '\n')); err != nil {
-		tmp.Close()
-		return fmt.Errorf("write baseline record: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("write baseline record: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("install baseline record: %w", err)
-	}
-	return nil
+	return r.withSnapshotLock(func(_ string) error {
+		if err := r.retainBaseline(b); err != nil {
+			return fmt.Errorf("retain baseline %s: %w", b.ID, err)
+		}
+		record := baselineRecord{
+			Version: baselineRecordVersion, ID: b.ID, Head: b.head,
+			IndexTree: b.indexTree, WorktreeTree: b.worktreeTree, Workspace: workspace,
+		}
+		data, err := json.Marshal(record)
+		if err != nil {
+			return fmt.Errorf("encode baseline: %w", err)
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return fmt.Errorf("create baseline directory: %w", err)
+		}
+		tmp, err := os.CreateTemp(filepath.Dir(path), ".baseline-*")
+		if err != nil {
+			return fmt.Errorf("create baseline record: %w", err)
+		}
+		tmpPath := tmp.Name()
+		defer os.Remove(tmpPath)
+		if err := tmp.Chmod(0o600); err != nil {
+			tmp.Close()
+			return fmt.Errorf("secure baseline record: %w", err)
+		}
+		if _, err := tmp.Write(append(data, '\n')); err != nil {
+			tmp.Close()
+			return fmt.Errorf("write baseline record: %w", err)
+		}
+		if err := tmp.Close(); err != nil {
+			return fmt.Errorf("write baseline record: %w", err)
+		}
+		if err := os.Rename(tmpPath, path); err != nil {
+			return fmt.Errorf("install baseline record: %w", err)
+		}
+		return nil
+	})
 }
 
 // LoadBaseline restores the immutable baseline captured for sessionID. It never
@@ -192,8 +202,17 @@ func (r *Repo) LoadBaseline(sessionID string) (*Baseline, error) {
 	if err := json.Unmarshal(data, &record); err != nil {
 		return nil, fmt.Errorf("decode persisted baseline: %w", err)
 	}
-	if record.Version != baselineRecordVersion {
+	if record.Version != baselineRecordLegacyVersion && record.Version != baselineRecordVersion {
 		return nil, fmt.Errorf("unsupported persisted baseline version %d", record.Version)
+	}
+	if record.Version == baselineRecordVersion {
+		workspace, err := r.workspaceRelativePath()
+		if err != nil {
+			return nil, fmt.Errorf("locate baseline workspace: %w", err)
+		}
+		if record.Workspace != workspace {
+			return nil, fmt.Errorf("persisted baseline belongs to workspace %q, not %q", record.Workspace, workspace)
+		}
 	}
 	if err := r.requireObject(record.Head, "commit"); err != nil {
 		return nil, fmt.Errorf("validate baseline HEAD: %w", err)
@@ -211,7 +230,7 @@ func (r *Repo) LoadBaseline(sessionID string) (*Baseline, error) {
 	if record.ID != b.ID {
 		return nil, fmt.Errorf("persisted baseline identity mismatch: record %q, computed %q", record.ID, b.ID)
 	}
-	if err := r.retainBaseline(b); err != nil {
+	if err := r.withSnapshotLock(func(_ string) error { return r.retainBaseline(b) }); err != nil {
 		return nil, fmt.Errorf("retain restored baseline %s: %w", b.ID, err)
 	}
 	return b, nil
@@ -393,7 +412,9 @@ func (r *Repo) changesIncluding(b *Baseline, adopted []string) (*Changeset, erro
 	if len(adopted) > 0 {
 		id = snapshotID(id, strings.Join(adopted, "\x00"))
 	}
-	if _, err := r.run("update-ref", "refs/ycc/changesets/"+id, tree); err != nil {
+	if err := r.saveChangesetRecord(changesetRecord{
+		Version: changesetRecordVersion, ID: id, BaselineID: b.ID, Tree: tree,
+	}); err != nil {
 		return nil, fmt.Errorf("retain changeset snapshot %s: %w", id, err)
 	}
 	return &Changeset{ID: id, BaselineID: b.ID, BaseCommit: head, Tree: tree, Paths: paths, Diff: diff, baseline: b, adopted: append([]string(nil), adopted...)}, nil
@@ -718,18 +739,20 @@ func commitRecoveryRef(recovery *CommitRecovery, message string) string {
 }
 
 func (r *Repo) saveCommitIdentity(identity *commitIdentity) error {
-	if _, err := r.run("update-ref", commitRecoveryRef(&identity.Recovery, identity.Message), identity.Commit); err != nil {
-		return fmt.Errorf("retain created commit: %w", err)
-	}
-	path, err := r.commitIdentityPath(identity.Recovery.ChangesetID)
-	if err != nil {
-		return err
-	}
-	data, err := json.Marshal(identity)
-	if err != nil {
-		return err
-	}
-	return writeAtomicPrivate(path, append(data, '\n'))
+	return r.withSnapshotLock(func(_ string) error {
+		if _, err := r.run("update-ref", commitRecoveryRef(&identity.Recovery, identity.Message), identity.Commit); err != nil {
+			return fmt.Errorf("retain created commit: %w", err)
+		}
+		path, err := r.commitIdentityPath(identity.Recovery.ChangesetID)
+		if err != nil {
+			return err
+		}
+		data, err := json.Marshal(identity)
+		if err != nil {
+			return err
+		}
+		return writeAtomicPrivate(path, append(data, '\n'))
+	})
 }
 
 func writeAtomicPrivate(path string, data []byte) error {

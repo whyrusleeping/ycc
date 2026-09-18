@@ -20,6 +20,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/daemon"
 	"github.com/whyrusleeping/ycc/internal/docs"
 	"github.com/whyrusleeping/ycc/internal/forge"
+	gitrepo "github.com/whyrusleeping/ycc/internal/git"
 	"github.com/whyrusleeping/ycc/internal/openaiauth"
 	"github.com/whyrusleeping/ycc/internal/sandbox"
 	"github.com/whyrusleeping/ycc/internal/secrets"
@@ -45,7 +46,31 @@ func (a *app) doctorCommand() *cli.Command {
 			"Runs locally against the workspace; no daemon is required (daemon checks are\n" +
 			"best-effort probes). Exits non-zero when a hard failure — an unresolvable model key\n" +
 			"or a malformed config — is found, so it works in scripts and CI.",
+		Flags: []cli.Flag{
+			&cli.BoolFlag{Name: "git-snapshots", Usage: "audit expired retained Git snapshots (dry run)"},
+			&cli.BoolFlag{Name: "prune-git-snapshots", Usage: "remove Git snapshots whose session/recovery evidence has expired"},
+		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
+			if cmd.Bool("git-snapshots") || cmd.Bool("prune-git-snapshots") {
+				repo, err := gitrepo.OpenExisting(a.workspace)
+				if err != nil {
+					return cli.Exit(fmt.Sprintf("git snapshot cleanup: %v", err), 1)
+				}
+				dryRun := !cmd.Bool("prune-git-snapshots")
+				result, err := repo.PruneSnapshots(dryRun)
+				if err != nil {
+					return cli.Exit(fmt.Sprintf("git snapshot cleanup: %v", err), 1)
+				}
+				verb := "would remove"
+				if !dryRun {
+					verb = "removed"
+				}
+				fmt.Fprintf(os.Stdout, "git snapshots: %s %d record(s) and %d ref(s); examined %d baseline and %d changeset record(s)", verb, result.RemovedRecords, result.RemovedRefs, result.BaselineRecords, result.ChangesetRecords)
+				if result.AmbiguousRefs > 0 {
+					fmt.Fprintf(os.Stdout, "; retained %d legacy ref(s) without ownership metadata", result.AmbiguousRefs)
+				}
+				fmt.Fprintln(os.Stdout)
+			}
 			hardFail := runDoctor(a.workspace, a.configPath, a.addr, a.token, os.Stdout)
 			if hardFail {
 				return cli.Exit("", 1)

@@ -264,7 +264,20 @@ Checks, in order:
 ```sh
 ycc doctor                     # check the current workspace
 ycc --workspace ../proj doctor
+ycc doctor --git-snapshots     # dry-run retained snapshot cleanup
+ycc doctor --prune-git-snapshots
 ```
+
+Git snapshot cleanup uses session evidence lifetime, not coordinator completion: a
+baseline remains pinned while its session directory can be reopened, and changesets
+remain pinned while named by retained session review events or task-finalization
+recovery. Persisted ownership makes nested ycc workspaces discoverable, and all
+workspaces in linked Git worktrees are considered. Cleanup is serialized with snapshot
+writers, validates all evidence before changing refs or records, and fails without
+mutation when retained evidence is unreadable or malformed. Legacy records or refs
+that predate ownership metadata are retained rather than guessed at. Destructive
+cleanup is unavailable on platforms without the required advisory file locking; the
+dry-run audit and normal snapshot writers remain available.
 
 **Exit codes** make it scriptable:
 
