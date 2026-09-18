@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -538,5 +539,39 @@ func TestFailedScopedCommitLeavesStateUnchanged(t *testing.T) {
 	}
 	if got := readIndex(t, r); !bytes.Equal(got, indexBefore) {
 		t.Fatal("failed commit changed index")
+	}
+}
+
+func BenchmarkRepositoryOpen(b *testing.B) {
+	dir := b.TempDir()
+	if _, err := Open(dir); err != nil {
+		b.Fatal(err)
+	}
+	payload := bytes.Repeat([]byte("x"), 4*1024)
+	for i := 0; i < 1000; i++ {
+		content := append([]byte(strconv.Itoa(i)+"\n"), payload...)
+		path := filepath.Join(dir, "fixture", strconv.Itoa(i)+".txt")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			b.Fatal(err)
+		}
+		if err := os.WriteFile(path, content, 0o644); err != nil {
+			b.Fatal(err)
+		}
+	}
+
+	for _, tc := range []struct {
+		name string
+		open func(string) (*Repo, error)
+	}{
+		{name: "CaptureBaseline", open: Open},
+		{name: "ExistingReadOnly", open: OpenExisting},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				if _, err := tc.open(dir); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }

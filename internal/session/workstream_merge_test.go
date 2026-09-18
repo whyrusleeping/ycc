@@ -536,6 +536,56 @@ func TestDiscardWorkstreamPreservesTranscript(t *testing.T) {
 	}
 }
 
+func TestReadOnlyGitOperationsDoNotCaptureWorktreeBaseline(t *testing.T) {
+	m, proj := newWorkstreamManager(t)
+	ws, s, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
+	if err != nil {
+		t.Fatalf("SpawnWorkstream: %v", err)
+	}
+	defer m.Stop(s.ID)
+	commitInto(t, ws.WorktreePath, "feature.txt", "feature\n", "add feature")
+
+	const sentinel = "read-only-baseline-sentinel.txt"
+	if err := os.WriteFile(filepath.Join(proj, sentinel), []byte("untracked sentinel: "+proj+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oid := sessionGitAt(t, proj, "hash-object", "--no-filters", "--", sentinel)
+	assertNotMaterialized := func(operation string) {
+		t.Helper()
+		cmd := exec.Command("git", "cat-file", "-e", oid+"^{blob}")
+		cmd.Dir = proj
+		if err := cmd.Run(); err == nil {
+			t.Fatalf("%s materialized the untracked worktree blob, indicating a baseline capture", operation)
+		}
+	}
+	assertNotMaterialized("fixture setup")
+
+	counts := m.WorkstreamCommitCounts([]workstream.Workstream{ws})
+	if counts[ws.ID] != 1 {
+		t.Fatalf("commit count = %d, want 1", counts[ws.ID])
+	}
+	assertNotMaterialized("WorkstreamCommitCounts")
+
+	preview, err := m.PreviewWorkstreamMerge(ws.ID)
+	if err != nil {
+		t.Fatalf("PreviewWorkstreamMerge: %v", err)
+	}
+	if !preview.Clean || !strings.Contains(preview.Diff, "feature") {
+		t.Fatalf("preview = %+v, want clean feature diff", preview)
+	}
+	assertNotMaterialized("PreviewWorkstreamMerge")
+
+	sha := sessionGitAt(t, proj, "rev-parse", ws.Branch)
+	diff, err := m.CommitDiff("demo", sha)
+	if err != nil {
+		t.Fatalf("CommitDiff: %v", err)
+	}
+	if !strings.Contains(diff, "feature") {
+		t.Fatalf("CommitDiff omitted feature change:\n%s", diff)
+	}
+	assertNotMaterialized("CommitDiff")
+}
+
 // TestWorkstreamCommitCountsMatchesSingle verifies the batch counter returns the
 // same per-workstream counts as the single-workstream method for multiple
 // workstreams sharing a project, and that best-effort behaviour is unchanged for
