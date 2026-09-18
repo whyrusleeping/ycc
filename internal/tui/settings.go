@@ -29,10 +29,9 @@ func (m model) setThinking(role, level string) tea.Cmd {
 	}
 }
 
-// setRoleConfig issues SetRoleConfig. With a live session it applies
-// the change to that session and persists it; with no session (changed from the
-// home menu) an empty session_id just persists the new default. Either way the
-// selection is written to ycc.toml so it survives a restart.
+// setRoleConfig issues SetRoleConfig. With a live session it changes only that
+// session; with no session (changed from the home menu), an empty session_id
+// persists the new global default.
 func (m model) setRoleConfig(coord, impl string, reviewers []string) tea.Cmd {
 	return func() tea.Msg {
 		if _, err := m.client.SetRoleConfig(m.ctx, connect.NewRequest(&v1.SetRoleConfigRequest{
@@ -146,8 +145,7 @@ func (m model) overlayAdjust(d int) (tea.Model, tea.Cmd) {
 	switch m.ovCursor {
 	case ovCoord:
 		m.roleCoord = cycleModel(m.models, m.roleCoord, d)
-		// Apply immediately so the choice sticks without a separate "apply" step —
-		// the daemon persists it to ycc.toml.
+		// Apply immediately so the choice sticks without a separate "apply" step.
 		return m, m.setRoleConfig(m.roleCoord, "", nil)
 	case ovImpl:
 		m.roleImpl = cycleModel(m.models, m.roleImpl, d)

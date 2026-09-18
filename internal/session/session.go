@@ -961,12 +961,11 @@ func (s *Session) Resume() error {
 	return nil
 }
 
-// SetRoleConfig reassigns per-role logical models mid-session and rebuilds the
-// relevant gollama clients so the next coordinator turn / next spawned subagent
-// uses the new assignment. Empty coordinator/implementer leaves
-// that role unchanged; an empty reviewers slice leaves reviewers unchanged. The
-// new assignment is also persisted as the default (roles in ycc.toml) so it
-// survives a restart and applies to future sessions.
+// SetRoleConfig reassigns per-role logical models for this session and rebuilds
+// the relevant gollama clients so the next coordinator turn / next spawned
+// subagent uses the new assignment. Empty coordinator/implementer leaves that
+// role unchanged; an empty reviewers slice leaves reviewers unchanged. Global
+// defaults are deliberately unaffected.
 func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []string) error {
 	if err := s.logFailure(); err != nil {
 		return fmt.Errorf("session event log failed: %w", err)
@@ -1075,23 +1074,6 @@ func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []str
 	if err := s.logFailure(); err != nil {
 		return fmt.Errorf("session event log failed: %w", err)
 	}
-	// Persist defaults only after the session mutation is replayable. Full-state
-	// clients submit unchanged roles too, but a per-session override must not become
-	// the global default merely because another role changed; persist deltas only.
-	persistCoord, persistImpl := "", ""
-	var persistReviewers []string
-	if coordChanged {
-		persistCoord = newCoord
-	}
-	if implChanged {
-		persistImpl = newImpl
-	}
-	if reviewersChanged {
-		persistReviewers = newRevs
-	}
-	if err := s.reg.SetRoles(persistCoord, persistImpl, persistReviewers); err != nil {
-		return fmt.Errorf("persist role config: %w", err)
-	}
 	if wasRefused {
 		// Non-blocking, like Resume: if the loop is mid-run (not parked on the
 		// retry-aware wait) the nudge falls through as a harmless no-op.
@@ -1101,6 +1083,25 @@ func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []str
 		}
 	}
 	return nil
+}
+
+// RoleConfigSnapshot returns one synchronized view of this session's live role
+// assignments and the model-owned thinking level resolved for each role. The
+// first reviewer model represents the reviewer row, matching global settings.
+func (s *Session) RoleConfigSnapshot() (coordinator, implementer string, reviewers []string, coordinatorThinking, implementerThinking, reviewersThinking string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	coordinator, implementer = s.coordinator, s.implementer
+	reviewers = append([]string(nil), s.reviewers...)
+	reviewer := ""
+	if len(reviewers) > 0 {
+		reviewer = reviewers[0]
+	}
+	return coordinator, implementer, reviewers,
+		s.reg.ModelThinkingLevel(coordinator),
+		s.reg.ModelThinkingLevel(implementer),
+		s.reg.ModelThinkingLevel(reviewer)
 }
 
 // ReferencesModel reports whether the session's current (possibly mid-session
@@ -3295,11 +3296,9 @@ func (m *Manager) SetWorkImplementation(impl string) error {
 	return m.reg.SetWorkImplementation(impl)
 }
 
-// SetRoles updates the default per-role model assignment (config.Roles) and
-// persists it to ycc.toml. Used when a role change is made with no
-// live session to apply it to (e.g. from the home-menu settings overlay); a
-// change made inside a session goes through Session.SetRoleConfig, which also
-// applies it live before persisting the same way.
+// SetRoles updates and persists the default per-role model assignment. It is
+// used only for global settings changes made without a session id; live-session
+// changes go through Session.SetRoleConfig and remain local to that session.
 func (m *Manager) SetRoles(coordinator, implementer string, reviewers []string) error {
 	return m.reg.SetRoles(coordinator, implementer, reviewers)
 }

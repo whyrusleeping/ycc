@@ -803,10 +803,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case modelsMsg:
 		m.rpcOK()
 		m.models = msg.models
-		// Seed the per-role pickers with the daemon's CURRENT default assignment
-		// (config.Roles) so the settings overlay shows the real selection — even
-		// when opened from the home menu with no live session. A live session keeps
-		// these in sync via role_config_changed events.
+		// Seed the role pickers from the requested scope: live session assignments
+		// in the session overlay, or persisted defaults in global settings.
 		if msg.coordinator != "" {
 			m.roleCoord = msg.coordinator
 		}
@@ -821,7 +819,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.reviewerSub >= len(m.reviewerModels()) {
 			m.reviewerSub = 0
 		}
-		// Seed the thinking pickers with the daemon's current default levels too.
+		// Thinking follows the assigned model in the same requested scope.
 		if msg.coordThink != "" {
 			m.thinkLevels["coordinator"] = msg.coordThink
 		}
@@ -1664,9 +1662,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.relayout()
 			return m, m.input.Focus()
 		}
-		// Esc opens the overlay rather than leaving the session.
+		// Esc opens the overlay rather than leaving the session. Refresh through
+		// the session-scoped ListModels request so role pickers reflect live state.
 		m.openOverlay()
-		return m, nil
+		return m, m.fetchModels
 	}
 
 	if m.state == stateMenu {

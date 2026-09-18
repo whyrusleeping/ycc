@@ -33,6 +33,26 @@ func TestCycleThinkLevels(t *testing.T) {
 	}
 }
 
+func TestFetchModelsScopesLiveSession(t *testing.T) {
+	f := newFakeClient()
+	m := initialModel(context.Background(), f, t_tempWorkspace, false)
+
+	m.fetchModels()
+	if f.lastListModels == nil || f.lastListModels.SessionId != "" {
+		t.Fatalf("global ListModels request = %+v", f.lastListModels)
+	}
+	m.sessionID = "stale-session"
+	m.fetchModels()
+	if f.lastListModels.SessionId != "" {
+		t.Fatalf("menu ListModels id = %q, want global scope", f.lastListModels.SessionId)
+	}
+	m.state, m.sessionID = stateSession, "session-1"
+	m.fetchModels()
+	if f.lastListModels.SessionId != "session-1" {
+		t.Fatalf("session ListModels id = %q, want session-1", f.lastListModels.SessionId)
+	}
+}
+
 func TestCycleModelSkipsDisabled(t *testing.T) {
 	models := []*v1.ModelInfo{
 		{Name: "a"},
@@ -52,8 +72,8 @@ func TestCycleModelSkipsDisabled(t *testing.T) {
 
 // TestOverlayCoordinatorAppliesImmediately covers the fix for the "role change
 // didn't stick" bug: cycling the coordinator with →  in the settings overlay must
-// issue SetRoleConfig right away (no separate "apply" step), so the daemon
-// persists it. It works even with no active session (empty session_id).
+// issue SetRoleConfig right away (no separate "apply" step). With no active
+// session (empty session_id), the daemon persists it as the global default.
 func TestOverlayCoordinatorAppliesImmediately(t *testing.T) {
 	f := newFakeClient(
 		&v1.ModelConfig{Name: "claude", Backend: "anthropic", Model: "claude-x"},

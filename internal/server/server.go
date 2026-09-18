@@ -773,10 +773,11 @@ func (s *Server) AnswerQuestions(_ context.Context, req *connect.Request[v1.Answ
 	return connect.NewResponse(&v1.AnswerQuestionsResponse{}), nil
 }
 
-// ListModels enumerates the configured logical models and current role assignments
-// for the settings overlay. The three role-oriented thinking
-// fields resolve from each role's currently assigned model (first reviewer model).
-func (s *Server) ListModels(_ context.Context, _ *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error) {
+// ListModels enumerates configured logical models and role assignments for the
+// settings overlay. A session-scoped request returns one synchronized snapshot
+// of that live session; an empty session id returns persisted global defaults.
+// Thinking resolves from each assigned model (the first reviewer model).
+func (s *Server) ListModels(_ context.Context, req *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error) {
 	var models []*v1.ModelInfo
 	for _, m := range s.mgr.Models() {
 		mi := &v1.ModelInfo{Name: m.Name, Backend: m.Backend, Model: m.Model, Priced: m.Pricing.Configured, Disabled: m.Disabled}
@@ -791,8 +792,18 @@ func (s *Server) ListModels(_ context.Context, _ *connect.Request[v1.ListModelsR
 		}
 		models = append(models, mi)
 	}
-	coord, impl, revs := s.mgr.Roles()
-	ct, it, rt := s.mgr.ThinkingLevels()
+	var coord, impl, ct, it, rt string
+	var revs []string
+	if req.Msg.SessionId == "" {
+		coord, impl, revs = s.mgr.Roles()
+		ct, it, rt = s.mgr.ThinkingLevels()
+	} else {
+		sess, ok := s.mgr.Get(req.Msg.SessionId)
+		if !ok {
+			return nil, connect.NewError(connect.CodeNotFound, errNoSession)
+		}
+		coord, impl, revs, ct, it, rt = sess.RoleConfigSnapshot()
+	}
 	return connect.NewResponse(&v1.ListModelsResponse{
 		Models: models, Coordinator: coord, Implementer: impl, Reviewers: revs,
 		CoordinatorThinking: ct, ImplementerThinking: it, ReviewersThinking: rt,
@@ -1071,12 +1082,14 @@ func (s *Server) SetReviewDefault(_ context.Context, req *connect.Request[v1.Set
 	return connect.NewResponse(&v1.SetReviewDefaultResponse{}), nil
 }
 
-// SetRoleConfig reassigns per-role logical models. When
-// session_id names a live session the change applies to it immediately and is
-// persisted; with an empty/unknown session_id (e.g. changed from the home menu
-// before any session exists) it just updates the persisted default in ycc.toml.
+// SetRoleConfig reassigns per-role logical models. A live session id changes
+// only that session; an empty session id updates the persisted global default.
 func (s *Server) SetRoleConfig(_ context.Context, req *connect.Request[v1.SetRoleConfigRequest]) (*connect.Response[v1.SetRoleConfigResponse], error) {
-	if sess, ok := s.mgr.Get(req.Msg.SessionId); ok {
+	if req.Msg.SessionId != "" {
+		sess, ok := s.mgr.Get(req.Msg.SessionId)
+		if !ok {
+			return nil, connect.NewError(connect.CodeNotFound, errNoSession)
+		}
 		if err := sess.SetRoleConfig(req.Msg.Coordinator, req.Msg.Implementer, req.Msg.Reviewers); err != nil {
 			if errors.Is(err, config.ErrModelDisabled) {
 				return nil, connect.NewError(connect.CodeFailedPrecondition, err)
@@ -1085,8 +1098,7 @@ func (s *Server) SetRoleConfig(_ context.Context, req *connect.Request[v1.SetRol
 		}
 		return connect.NewResponse(&v1.SetRoleConfigResponse{}), nil
 	}
-	// No live session to apply to — persist the default assignment so it takes
-	// effect for the next session (and survives a restart).
+	// No session target: persist the default assignment for future sessions.
 	if err := s.mgr.SetRoles(req.Msg.Coordinator, req.Msg.Implementer, req.Msg.Reviewers); err != nil {
 		if errors.Is(err, config.ErrModelDisabled) {
 			return nil, connect.NewError(connect.CodeFailedPrecondition, err)

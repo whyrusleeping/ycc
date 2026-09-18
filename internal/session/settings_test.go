@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -120,24 +121,41 @@ func TestSetRoleConfigRebuildsClients(t *testing.T) {
 	_ = fakeTurner{}
 }
 
-func TestSetRoleConfigDoesNotPersistDisabledSessionOverrideWhenAnotherRoleChanges(t *testing.T) {
+func TestSetRoleConfigRemainsSessionLocal(t *testing.T) {
 	s, _ := newTestSession(t)
-	// Simulate a session-only coordinator override without changing global roles.
-	s.coordinator = "b"
-	override, _ := s.reg.GetModel("b")
-	override.Disabled = true
-	if err := s.reg.UpsertModel("b", override, false); err != nil {
-		t.Fatal(err)
-	}
 
-	if err := s.SetRoleConfig("b", "c", []string{"a"}); err != nil {
-		t.Fatalf("change implementer with disabled session override: %v", err)
+	if err := s.SetRoleConfig("b", "c", []string{"b", "c"}); err != nil {
+		t.Fatalf("SetRoleConfig: %v", err)
+	}
+	if s.coordinator != "b" || s.implementer != "c" || !slices.Equal(s.reviewers, []string{"b", "c"}) {
+		t.Fatalf("live roles = %q/%q/%v", s.coordinator, s.implementer, s.reviewers)
 	}
 	if got := s.reg.CoordinatorName(); got != "a" {
-		t.Fatalf("session override leaked into global coordinator: %q", got)
+		t.Fatalf("global coordinator = %q, want unchanged a", got)
 	}
-	if got := s.reg.ImplementerName(); got != "c" {
-		t.Fatalf("global implementer = %q, want c", got)
+	if got := s.reg.ImplementerName(); got != "a" {
+		t.Fatalf("global implementer = %q, want unchanged a", got)
+	}
+	if got := s.reg.ReviewerNames(); !slices.Equal(got, []string{"a"}) {
+		t.Fatalf("global reviewers = %v, want unchanged [a]", got)
+	}
+
+	b, _ := s.reg.GetModel("b")
+	b.Thinking, b.Effort = "adaptive", "high"
+	if err := s.reg.UpsertModel("b", b, false); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := s.reg.GetModel("c")
+	c.Thinking, c.Effort = "adaptive", "low"
+	if err := s.reg.UpsertModel("c", c, false); err != nil {
+		t.Fatal(err)
+	}
+	coord, impl, reviewers, coordThinking, implThinking, reviewersThinking := s.RoleConfigSnapshot()
+	if coord != "b" || impl != "c" || !slices.Equal(reviewers, []string{"b", "c"}) {
+		t.Fatalf("snapshot roles = %q/%q/%v", coord, impl, reviewers)
+	}
+	if coordThinking != "high" || implThinking != "low" || reviewersThinking != "high" {
+		t.Fatalf("snapshot thinking = %q/%q/%q", coordThinking, implThinking, reviewersThinking)
 	}
 }
 

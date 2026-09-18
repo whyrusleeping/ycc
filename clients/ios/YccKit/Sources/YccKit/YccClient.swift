@@ -651,7 +651,14 @@ public final class YccClient: Sendable {
     /// assigned model's thinking level (`ListModels`). The
     /// settings sheet seeds its pickers from this so it reflects reality.
     public func listModels() async throws -> Ycc_V1_ListModelsResponse {
-        let response = await generated.listModels(request: Ycc_V1_ListModelsRequest())
+        try await listModels(sessionId: "")
+    }
+
+    /// List configured models with role assignments scoped to a live session.
+    public func listModels(sessionId: String) async throws -> Ycc_V1_ListModelsResponse {
+        var request = Ycc_V1_ListModelsRequest()
+        request.sessionID = sessionId
+        let response = await generated.listModels(request: request)
         switch response.result {
         case .success(let message):
             return message
@@ -662,8 +669,8 @@ public final class YccClient: Sendable {
 
     /// Reassign per-role logical models (`SetRoleConfig`). An
     /// empty `coordinator`/`implementer` leaves that role unchanged; an empty
-    /// `reviewers` list leaves reviewers unchanged. The change applies to the live
-    /// session (when `sessionId` names one) and persists as the default.
+    /// `reviewers` list leaves reviewers unchanged. A live-session change remains
+    /// local to that session; an empty `sessionId` updates the global default.
     public func setRoleConfig(
         sessionId: String, coordinator: String, implementer: String, reviewers: [String]
     ) async throws {

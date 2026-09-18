@@ -3531,10 +3531,13 @@ func (x *GetCommitDiffResponse) GetTruncated() bool {
 	return false
 }
 
-// ListModels enumerates every configured logical model for global editing.
+// ListModels enumerates every configured logical model. With an empty session_id,
+// role assignments are the persisted global defaults. A non-empty session_id must
+// name a live session and returns that session's current assignments.
 // Selection clients omit disabled entries except to display an existing assignment.
 type ListModelsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3567,6 +3570,13 @@ func (x *ListModelsRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use ListModelsRequest.ProtoReflect.Descriptor instead.
 func (*ListModelsRequest) Descriptor() ([]byte, []int) {
 	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{60}
+}
+
+func (x *ListModelsRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
 }
 
 type ModelInfo struct {
@@ -3687,9 +3697,8 @@ func (x *ModelInfo) GetDisabled() bool {
 type ListModelsResponse struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	Models []*ModelInfo           `protobuf:"bytes,1,rep,name=models,proto3" json:"models,omitempty"`
-	// Current default per-role assignment (config.Roles) so the settings overlay can
-	// seed its per-role pickers with the ACTUAL current selection — even when opened
-	// from the home menu with no live session.
+	// Per-role assignment scoped by ListModelsRequest.session_id: a live session's
+	// current assignment when specified, otherwise the persisted global defaults.
 	Coordinator string   `protobuf:"bytes,2,opt,name=coordinator,proto3" json:"coordinator,omitempty"`
 	Implementer string   `protobuf:"bytes,3,opt,name=implementer,proto3" json:"implementer,omitempty"`
 	Reviewers   []string `protobuf:"bytes,4,rep,name=reviewers,proto3" json:"reviewers,omitempty"`
@@ -4339,10 +4348,9 @@ func (x *DiscoverModelsResponse) GetNote() string {
 
 // SetRoleConfig reassigns per-role logical models. Empty
 // coordinator/implementer leaves that role unchanged; an empty reviewers list
-// leaves reviewers unchanged. The assignment is persisted as the default (roles
-// in ycc.toml) so it survives a restart. When session_id names a live session the
-// change also applies to it immediately; an empty/unknown session_id just updates
-// the persisted default (e.g. changed from the home menu with no session).
+// leaves reviewers unchanged. With an empty session_id, the assignment updates
+// the persisted defaults in ycc.toml. A non-empty session_id must name a live
+// session and changes only that session's assignment.
 type SetRoleConfigRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -9049,8 +9057,10 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x03sha\x18\x02 \x01(\tR\x03sha\"I\n" +
 	"\x15GetCommitDiffResponse\x12\x12\n" +
 	"\x04diff\x18\x01 \x01(\tR\x04diff\x12\x1c\n" +
-	"\ttruncated\x18\x02 \x01(\bR\ttruncated\"\x13\n" +
-	"\x11ListModelsRequest\"\xfd\x02\n" +
+	"\ttruncated\x18\x02 \x01(\bR\ttruncated\"2\n" +
+	"\x11ListModelsRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\"\xfd\x02\n" +
 	"\tModelInfo\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\abackend\x18\x02 \x01(\tR\abackend\x12\x14\n" +

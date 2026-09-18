@@ -1,16 +1,17 @@
 ---
 id: "0241"
 title: ListModels should report a live session's role assignment, not just the defaults
-status: proposed
+status: done
 priority: 3
 created: "2026-08-05"
-updated: "2026-08-05"
+updated: "2026-09-18"
 depends_on: []
 spec_refs:
     - 18.2 Settings overlay (esc — "video-game style")
 ---
 
 ## Description
+
 `ListModels` reports the daemon's persisted default role assignments only. Now
 that a session can be started with a per-session coordinator override
 (`StartSession.coordinator_model`, task 0240), the session settings sheet (iOS)
@@ -21,7 +22,8 @@ silently rewrites the persisted defaults.
 Idea: `ListModelsRequest` gains an optional `session_id`; when it names a live
 session the response's `coordinator`/`implementer`/`reviewers` + thinking levels
 report THAT session's live assignment (`Session.coordinator` etc.) instead of the
-config defaults. Clients pass the session id from the session settings sheet and
+config defaults. Thinking remains model-owned per 0289; report the assigned model's
+configuration rather than introducing independent per-role thinking overrides. Clients pass the session id from the session settings sheet and
 leave it empty for the global Settings screen.
 
 Open question: should `SetRoleConfig` with a session id also stop persisting the
@@ -34,5 +36,8 @@ per-session? That would make start-time and mid-session overrides consistent.
 - [ ] iOS session settings sheet + TUI overlay pass the session id
 - [ ] decided + documented whether an in-session `SetRoleConfig` still writes the default
 
+## Outcome
 
-## Work log
+ListModels accepts session_id and returns live role assignments with model-owned thinking; iOS session settings and TUI overlay pass session scope. Session-targeted SetRoleConfig stays session-local, empty-ID changes persist global defaults, and unknown IDs return NotFound. Decision documented in RPC contract; Go and Swift protobufs regenerated. Independent review accepted. Implementer reported go test ./... and focused race checks passing; coordinator confirmed server/session/TUI tests in clean scoped tree on rerun and diff check. Swift execution unavailable (no toolchain). Unrelated pre-existing work preserved.
+
+Commit: Scope model settings to live sessions without changing global defaults

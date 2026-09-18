@@ -189,8 +189,7 @@ struct SessionView: View {
         // pad itself by the observed keyboard overlap instead.
         .ignoresSafeArea(.keyboard, edges: .bottom)
         .sheet(isPresented: $showSettings) {
-            SessionSettingsView(
-                client: client, sessionID: sessionID, coordinator: model.coordinatorModel)
+            SessionSettingsView(client: client, sessionID: sessionID)
         }
         .sheet(isPresented: $showSessionUsage) {
             SessionUsageSheet(

@@ -356,9 +356,13 @@ message GetCommitDiffResponse {
   bool truncated = 2;
 }
 
-// ListModels enumerates every configured logical model for global editing.
+// ListModels enumerates every configured logical model. With an empty session_id,
+// role assignments are the persisted global defaults. A non-empty session_id must
+// name a live session and returns that session's current assignments.
 // Selection clients omit disabled entries except to display an existing assignment.
-message ListModelsRequest {}
+message ListModelsRequest {
+  string session_id = 1;
+}
 message ModelInfo {
   string name = 1;    // logical name (e.g. "claude", "gpt")
   string backend = 2; // anthropic | openai | ollama | ...
@@ -379,9 +383,8 @@ message ModelInfo {
 }
 message ListModelsResponse {
   repeated ModelInfo models = 1;
-  // Current default per-role assignment (config.Roles) so the settings overlay can
-  // seed its per-role pickers with the ACTUAL current selection — even when opened
-  // from the home menu with no live session.
+  // Per-role assignment scoped by ListModelsRequest.session_id: a live session's
+  // current assignment when specified, otherwise the persisted global defaults.
   string coordinator = 2;
   string implementer = 3;
   repeated string reviewers = 4;
@@ -454,10 +457,9 @@ message DiscoverModelsResponse {
 
 // SetRoleConfig reassigns per-role logical models. Empty
 // coordinator/implementer leaves that role unchanged; an empty reviewers list
-// leaves reviewers unchanged. The assignment is persisted as the default (roles
-// in ycc.toml) so it survives a restart. When session_id names a live session the
-// change also applies to it immediately; an empty/unknown session_id just updates
-// the persisted default (e.g. changed from the home menu with no session).
+// leaves reviewers unchanged. With an empty session_id, the assignment updates
+// the persisted defaults in ycc.toml. A non-empty session_id must name a live
+// session and changes only that session's assignment.
 message SetRoleConfigRequest {
   string session_id = 1;
   string coordinator = 2;

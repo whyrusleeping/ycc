@@ -19,11 +19,8 @@ struct SessionSettingsView: View {
 
     @State private var model: SessionSettingsModel
 
-    /// `coordinator` seeds the role picker with the model THIS session is running
-    /// on (from its event log); `ListModels` alone would show the global default.
-    init(client: YccClient, sessionID: String, coordinator: String = "") {
-        _model = State(initialValue: SessionSettingsModel(
-            source: client, sessionId: sessionID, sessionCoordinator: coordinator))
+    init(client: YccClient, sessionID: String) {
+        _model = State(initialValue: SessionSettingsModel(source: client, sessionId: sessionID))
     }
 
     var body: some View {
@@ -132,7 +129,7 @@ struct SessionSettingsView: View {
         } header: {
             Text("Roles")
         } footer: {
-            Text("Model changes take effect on the next turn / spawn and are saved as the default.")
+            Text("Model changes take effect on the next turn / spawn for this session.")
         }
     }
 

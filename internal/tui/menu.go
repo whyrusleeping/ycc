@@ -26,7 +26,11 @@ func (m model) fetchModes() tea.Msg {
 }
 
 func (m model) fetchModels() tea.Msg {
-	resp, err := m.client.ListModels(m.ctx, connect.NewRequest(&v1.ListModelsRequest{}))
+	sessionID := ""
+	if m.state == stateSession {
+		sessionID = m.sessionID
+	}
+	resp, err := m.client.ListModels(m.ctx, connect.NewRequest(&v1.ListModelsRequest{SessionId: sessionID}))
 	if err != nil {
 		return nil // models are optional for the overlay; don't surface as a fatal error
 	}

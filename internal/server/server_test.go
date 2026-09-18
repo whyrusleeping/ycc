@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -776,6 +777,82 @@ func TestModelBackendRPCs(t *testing.T) {
 	}
 	if _, err := srv.GetModelConfig(ctx, connect.NewRequest(&v1.GetModelConfigRequest{Name: "gpt"})); err == nil {
 		t.Fatal("expected NotFound after removal")
+	}
+}
+
+func TestListModelsLiveSessionAndSessionOverrideIsolation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ycc.toml")
+	if err := config.Save(path, &config.Config{
+		Models: map[string]config.Model{
+			"a": {Backend: "ollama", BaseURL: "http://127.0.0.1:1", Model: "model-a", Thinking: "adaptive", Effort: "low"},
+			"b": {Backend: "ollama", BaseURL: "http://127.0.0.1:1", Model: "model-b", Thinking: "adaptive", Effort: "high"},
+		},
+		Roles: config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
+	}); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := config.NewRegistry(cfg)
+	reg.SetPath(path)
+	workspace := t.TempDir()
+	srv := New(session.NewManager(reg, workspace))
+	ctx := context.Background()
+
+	started, err := srv.StartSession(ctx, connect.NewRequest(&v1.StartSessionRequest{
+		Workspace: workspace, Mode: "chat", CoordinatorModel: "b",
+	}))
+	if err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	defer srv.StopSession(ctx, connect.NewRequest(&v1.StopSessionRequest{SessionId: started.Msg.SessionId})) //nolint:errcheck
+
+	global, err := srv.ListModels(ctx, connect.NewRequest(&v1.ListModelsRequest{}))
+	if err != nil {
+		t.Fatalf("global ListModels: %v", err)
+	}
+	if global.Msg.Coordinator != "a" || global.Msg.CoordinatorThinking != "low" {
+		t.Fatalf("global assignment = %q (%q), want a (low)", global.Msg.Coordinator, global.Msg.CoordinatorThinking)
+	}
+	live, err := srv.ListModels(ctx, connect.NewRequest(&v1.ListModelsRequest{SessionId: started.Msg.SessionId}))
+	if err != nil {
+		t.Fatalf("session ListModels: %v", err)
+	}
+	if live.Msg.Coordinator != "b" || live.Msg.CoordinatorThinking != "high" {
+		t.Fatalf("live coordinator = %q (%q), want b (high)", live.Msg.Coordinator, live.Msg.CoordinatorThinking)
+	}
+
+	if _, err := srv.SetRoleConfig(ctx, connect.NewRequest(&v1.SetRoleConfigRequest{
+		SessionId: started.Msg.SessionId, Implementer: "b", Reviewers: []string{"b"},
+	})); err != nil {
+		t.Fatalf("session SetRoleConfig: %v", err)
+	}
+	live, err = srv.ListModels(ctx, connect.NewRequest(&v1.ListModelsRequest{SessionId: started.Msg.SessionId}))
+	if err != nil {
+		t.Fatalf("session ListModels after role change: %v", err)
+	}
+	if live.Msg.Coordinator != "b" || live.Msg.Implementer != "b" || !slices.Equal(live.Msg.Reviewers, []string{"b"}) {
+		t.Fatalf("live assignment = %q/%q/%v, want b/b/[b]", live.Msg.Coordinator, live.Msg.Implementer, live.Msg.Reviewers)
+	}
+	if live.Msg.CoordinatorThinking != "high" || live.Msg.ImplementerThinking != "high" || live.Msg.ReviewersThinking != "high" {
+		t.Fatalf("live thinking = %q/%q/%q, want high/high/high", live.Msg.CoordinatorThinking, live.Msg.ImplementerThinking, live.Msg.ReviewersThinking)
+	}
+
+	reloaded, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Roles.Coordinator != "a" || reloaded.Roles.Implementer != "a" || !slices.Equal(reloaded.Roles.Reviewers, []string{"a"}) {
+		t.Fatalf("session override persisted as globals: %+v", reloaded.Roles)
+	}
+
+	if _, err := srv.ListModels(ctx, connect.NewRequest(&v1.ListModelsRequest{SessionId: "missing"})); connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("unknown session ListModels code = %v, want NotFound", connect.CodeOf(err))
+	}
+	if _, err := srv.SetRoleConfig(ctx, connect.NewRequest(&v1.SetRoleConfigRequest{SessionId: "missing", Coordinator: "b"})); connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("unknown session SetRoleConfig code = %v, want NotFound", connect.CodeOf(err))
 	}
 }
 

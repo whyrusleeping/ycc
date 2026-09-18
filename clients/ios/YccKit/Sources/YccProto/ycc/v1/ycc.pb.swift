@@ -1146,12 +1146,16 @@ public nonisolated struct Ycc_V1_GetCommitDiffResponse: Sendable {
   public init() {}
 }
 
-/// ListModels enumerates every configured logical model for global editing.
+/// ListModels enumerates every configured logical model. With an empty session_id,
+/// role assignments are the persisted global defaults. A non-empty session_id must
+/// name a live session and returns that session's current assignments.
 /// Selection clients omit disabled entries except to display an existing assignment.
 public nonisolated struct Ycc_V1_ListModelsRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
+
+  public var sessionID: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -1236,9 +1240,8 @@ public nonisolated struct Ycc_V1_ListModelsResponse: Sendable {
 
   public var models: [Ycc_V1_ModelInfo] = []
 
-  /// Current default per-role assignment (config.Roles) so the settings overlay can
-  /// seed its per-role pickers with the ACTUAL current selection — even when opened
-  /// from the home menu with no live session.
+  /// Per-role assignment scoped by ListModelsRequest.session_id: a live session's
+  /// current assignment when specified, otherwise the persisted global defaults.
   public var coordinator: String = String()
 
   public var implementer: String = String()
@@ -1492,10 +1495,9 @@ public nonisolated struct Ycc_V1_DiscoverModelsResponse: Sendable {
 
 /// SetRoleConfig reassigns per-role logical models. Empty
 /// coordinator/implementer leaves that role unchanged; an empty reviewers list
-/// leaves reviewers unchanged. The assignment is persisted as the default (roles
-/// in ycc.toml) so it survives a restart. When session_id names a live session the
-/// change also applies to it immediately; an empty/unknown session_id just updates
-/// the persisted default (e.g. changed from the home menu with no session).
+/// leaves reviewers unchanged. With an empty session_id, the assignment updates
+/// the persisted defaults in ycc.toml. A non-empty session_id must name a live
+/// session and changes only that session's assignment.
 public nonisolated struct Ycc_V1_SetRoleConfigRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -5420,18 +5422,29 @@ nonisolated extension Ycc_V1_GetCommitDiffResponse: SwiftProtobuf.Message, Swift
 
 nonisolated extension Ycc_V1_ListModelsRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ListModelsRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    // Load everything into unknown fields
-    while try decoder.nextFieldNumber() != nil {}
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
+      default: break
+      }
+    }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.sessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 1)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Ycc_V1_ListModelsRequest, rhs: Ycc_V1_ListModelsRequest) -> Bool {
+    if lhs.sessionID != rhs.sessionID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

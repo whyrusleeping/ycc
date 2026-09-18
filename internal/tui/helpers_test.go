@@ -54,9 +54,10 @@ type fakeClient struct {
 	discoverNote string
 	lastDiscover *v1.DiscoverModelsRequest
 
-	lastRoleReq  *v1.SetRoleConfigRequest         // most recent SetRoleConfig call
-	lastWorkImpl *v1.SetWorkImplementationRequest // most recent SetWorkImplementation call
-	lastStartReq *v1.StartSessionRequest          // most recent StartSession call
+	lastListModels *v1.ListModelsRequest            // most recent ListModels call
+	lastRoleReq    *v1.SetRoleConfigRequest         // most recent SetRoleConfig call
+	lastWorkImpl   *v1.SetWorkImplementationRequest // most recent SetWorkImplementation call
+	lastStartReq   *v1.StartSessionRequest          // most recent StartSession call
 
 	projects          []*v1.ProjectInfo
 	listProjectsCalls int
@@ -166,7 +167,8 @@ func (f *fakeClient) RemoveProject(_ context.Context, req *connect.Request[v1.Re
 	return connect.NewResponse(&v1.RemoveProjectResponse{}), nil
 }
 
-func (f *fakeClient) ListModels(_ context.Context, _ *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error) {
+func (f *fakeClient) ListModels(_ context.Context, req *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error) {
+	f.lastListModels = req.Msg
 	var out []*v1.ModelInfo
 	for _, name := range f.order {
 		c := f.models[name]

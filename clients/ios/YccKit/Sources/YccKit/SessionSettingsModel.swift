@@ -8,9 +8,9 @@ import YccProto
 /// production conformer. (Mirrors the ``UsageSource`` / ``NewSessionSource``
 /// patterns.)
 public protocol SessionSettingsSource: Sendable {
-    /// Configured logical models + CURRENT role assignments and each assigned
-    /// model's thinking level (`ListModels`); seeds the pickers with reality.
-    func listModels() async throws -> Ycc_V1_ListModelsResponse
+    /// Configured logical models + this live session's role assignments and each
+    /// assigned model's thinking level (`ListModels`); seeds pickers with reality.
+    func listModels(sessionId: String) async throws -> Ycc_V1_ListModelsResponse
     /// Reassign per-role logical models (`SetRoleConfig`); empty fields unchanged.
     func setRoleConfig(
         sessionId: String, coordinator: String, implementer: String, reviewers: [String]
@@ -122,12 +122,6 @@ public final class SessionSettingsModel {
 
     private let source: SessionSettingsSource
     private let sessionId: String
-    /// The coordinator model this SESSION is actually running on, when the caller
-    /// knows it (folded from the session's event log). `ListModels` reports only
-    /// the daemon's GLOBAL role defaults, so without this a session started with a
-    /// per-session `coordinator_model` override would seed its picker with the
-    /// wrong model and silently reassign it on the next apply.
-    private let sessionCoordinator: String
 
     // Committed (daemon-confirmed) values, so a failed apply can revert the
     // corresponding picker back to reality rather than lie about the state.
@@ -135,14 +129,9 @@ public final class SessionSettingsModel {
     private var committedImplementer = ""
     private var committedReviewers: [String] = []
 
-    public init(
-        source: SessionSettingsSource,
-        sessionId: String,
-        sessionCoordinator: String = ""
-    ) {
+    public init(source: SessionSettingsSource, sessionId: String) {
         self.source = source
         self.sessionId = sessionId
-        self.sessionCoordinator = sessionCoordinator
     }
 
     /// Load the model list and seed every picker from the daemon's CURRENT role
@@ -152,19 +141,14 @@ public final class SessionSettingsModel {
         isLoading = true
         defer { isLoading = false }
         do {
-            let response = try await source.listModels()
+            let response = try await source.listModels(sessionId: sessionId)
             // Keep the complete list: the view creates role-specific enabled
             // choices while retaining each role's disabled current value for migration.
             models = response.models
-            // The session's own coordinator wins over the global default when the
-            // caller knows it AND it is a configured model (an unknown name would
-            // leave the picker with no matching tag).
-            let known = models.contains { $0.name == sessionCoordinator }
-            let coord = known ? sessionCoordinator : response.coordinator
-            coordinator = coord
+            coordinator = response.coordinator
             implementer = response.implementer
             reviewers = response.reviewers
-            committedCoordinator = coord
+            committedCoordinator = response.coordinator
             committedImplementer = response.implementer
             committedReviewers = response.reviewers
             coordinatorThinking = ThinkingLevel.parse(response.coordinatorThinking)
