@@ -60,7 +60,7 @@ var codeExts = map[string]bool{".go": true, ".proto": true, ".mod": true}
 
 // excludedDirs are never walked when building the symbol-search corpus.
 var excludedDirs = map[string]bool{
-	".git": true, "vendor": true, "node_modules": true,
+	".git": true, ".ycc": true, "vendor": true, "node_modules": true,
 }
 
 // identRe matches a Go-ish identifier, optionally dotted (Type.Method, pkg.Func).
@@ -75,9 +75,9 @@ var lowerSegRe = regexp.MustCompile(`^[a-z0-9._-]+$`)
 // from every doc, classifies each conservatively as a path or a symbol (skipping
 // anything ambiguous), and resolves it against the repo rooted at root. Paths are
 // checked with os.Stat (a file OR a directory both resolve); symbols are resolved
-// by a word-boundary search across the workspace source files, excluding VCS
-// dirs and the docs set itself so a reference never trivially matches its own
-// mention.
+// by a word-boundary search across the workspace source files, excluding VCS,
+// runtime-state, and dependency dirs plus the docs set itself so a reference
+// never trivially matches its own mention.
 func Check(root string, docs []DocFile) *Report {
 	rep := &Report{Docs: len(docs)}
 
@@ -392,9 +392,9 @@ func symbolFound(corpus []string, sym string) bool {
 }
 
 // loadSearchCorpus reads the text of the workspace source files used to resolve
-// symbols, excluding VCS/vendor dirs, the docs set, and backlog/ (so a symbol is
-// never resolved by its own doc/task mention). Binary and oversized files are
-// skipped.
+// symbols, excluding VCS/runtime/dependency dirs, the docs set, and backlog/ (so
+// a symbol is never resolved by its own doc/task mention). Binary and oversized
+// files are skipped.
 func loadSearchCorpus(root string, excludeDoc map[string]bool) []string {
 	const maxFile = 1 << 20 // 1 MiB
 	var corpus []string

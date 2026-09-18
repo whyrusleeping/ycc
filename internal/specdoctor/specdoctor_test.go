@@ -162,6 +162,18 @@ func TestBacklogExcludedFromSymbolSearch(t *testing.T) {
 	}
 }
 
+func TestRuntimeStateExcludedFromSymbolSearch(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"real.go":                    "package x\n",
+		".ycc/sessions/events.jsonl": `{"message":"HistoricalSymbol"}`,
+	})
+	spec := DocFile{Path: "spec.md", Content: "The `HistoricalSymbol` type does the work.\n"}
+	rep := Check(root, []DocFile{spec})
+	if !hasRef(rep.Missing, "HistoricalSymbol") {
+		t.Fatalf("runtime-state mention should not resolve a spec symbol; missing=%v", rep.Missing)
+	}
+}
+
 func TestMarkdownCleanAndDirty(t *testing.T) {
 	root := writeTree(t, map[string]string{"go.mod": "module x\n", "internal/x.go": "package x\n"})
 
