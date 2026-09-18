@@ -535,19 +535,35 @@ func (l *Loop) ContextTokensEstimateWith(content string) int {
 	return l.contextEstimateLocked(content).Tokens
 }
 
-// ContextTokensEstimateForHistory estimates the next request after a prospective
-// history replacement without changing the live selected view.
+// ContextTokensEstimateForHistory estimates the complete next request after a
+// prospective history replacement without changing the live selected view. A
+// replacement is discontinuous, so an old history's measured growth anchor does
+// not apply.
 func (l *Loop) ContextTokensEstimateForHistory(history []gollama.Message) int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.contextEstimateForHistoryLocked(history, "").Tokens
+	return l.completeContextEstimateForHistoryLocked(history, "").Tokens
+}
+
+// ContextTokensEstimatesForReplacement returns comparable complete estimates
+// for the current and prospective histories under one selected request shape.
+func (l *Loop) ContextTokensEstimatesForReplacement(history []gollama.Message) (current, replacement int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.completeContextEstimateForHistoryLocked(l.history, "").Tokens,
+		l.completeContextEstimateForHistoryLocked(history, "").Tokens
 }
 
 func (l *Loop) contextEstimateLocked(extra string) contextEstimate {
-	return l.contextEstimateForHistoryLocked(l.history, extra)
+	est := l.completeContextEstimateForHistoryLocked(l.history, extra)
+	shape := requestShape(l.Client, l.Backend)
+	if prior := l.lastInput; prior.Measured > 0 && prior.Model == l.Model && prior.Shape == shape {
+		est.Tokens = max(0, prior.Measured+est.RawTokens-prior.RawEstimate)
+	}
+	return est
 }
 
-func (l *Loop) contextEstimateForHistoryLocked(history []gollama.Message, extra string) contextEstimate {
+func (l *Loop) completeContextEstimateForHistoryLocked(history []gollama.Message, extra string) contextEstimate {
 	messages := history
 	if extra != "" {
 		messages = append(append([]gollama.Message(nil), messages...), gollama.Message{Role: "user", Content: extra})
@@ -557,14 +573,10 @@ func (l *Loop) contextEstimateForHistoryLocked(history []gollama.Message, extra 
 		defs = l.Tools.APIDefs()
 	}
 	shape := requestShape(l.Client, l.Backend)
-	est := estimateRequestContext(gollama.RequestOptions{
+	return estimateRequestContext(gollama.RequestOptions{
 		Model: l.Model, System: l.System,
 		Messages: messagesForBackend(messages, l.Backend), Tools: defs,
 	}, shape)
-	if prior := l.lastInput; prior.Measured > 0 && prior.Model == l.Model && prior.Shape == shape {
-		est.Tokens = max(0, prior.Measured+est.RawTokens-prior.RawEstimate)
-	}
-	return est
 }
 
 func (l *Loop) contextEstimateForOptions(opts gollama.RequestOptions, client Turner, ident modelIdentity) contextEstimate {

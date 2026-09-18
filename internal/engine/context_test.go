@@ -211,6 +211,55 @@ func TestSetHistoryInvalidatesMeasuredContextBaseline(t *testing.T) {
 	}
 }
 
+func TestProspectiveReplacementUsesCompleteComparableEstimates(t *testing.T) {
+	loop := &Loop{Client: shapedTurner{shape: "openai"}, Model: "m", Backend: "openai"}
+	old := []gollama.Message{{Role: "user", Content: strings.Repeat("o", 200_000)}}
+	replacement := []gollama.Message{{Role: "user", Content: strings.Repeat("summary ", 2_400)}}
+	loop.SetHistory(old)
+	rawOld := loop.ContextTokensEstimateForHistory(old)
+	loop.lastInput = inputMeasurement{Model: "m", Shape: "openai", RawEstimate: rawOld, Measured: 20_000}
+
+	if got := loop.ContextTokensEstimate(); got < 19_900 || got > 20_100 {
+		t.Fatalf("ordinary next-request estimate lost measured anchor: %d", got)
+	}
+	oldEstimate, newEstimate := loop.ContextTokensEstimatesForReplacement(replacement)
+	if oldEstimate != rawOld {
+		t.Fatalf("comparable old estimate = %d, want complete estimate %d", oldEstimate, rawOld)
+	}
+	if newEstimate < 4_000 || newEstimate >= oldEstimate {
+		t.Fatalf("replacement estimate = %d, want plausible positive size below old %d", newEstimate, oldEstimate)
+	}
+	if got := loop.ContextTokensEstimateForHistory(replacement); got != newEstimate {
+		t.Fatalf("prospective estimate = %d, want pair estimate %d", got, newEstimate)
+	}
+
+	loop.SetHistory(replacement)
+	if got := loop.ContextTokensEstimate(); got != newEstimate {
+		t.Fatalf("live replacement estimate = %d, want prospective estimate %d", got, newEstimate)
+	}
+}
+
+func TestProspectiveReplacementUsesSelectedProviderAndModel(t *testing.T) {
+	state := gollama.ThinkingBlock{Redacted: codexItemsBlockMarker + `{"model":"m1","items":[{"type":"reasoning","id":"r1","encrypted_content":"` + strings.Repeat("z", 40_000) + `"},{"type":"message","id":"msg1"}]}`}
+	candidate := []gollama.Message{{Role: "assistant", Content: "done", ThinkingBlocks: []gollama.ThinkingBlock{state}}}
+	loop := &Loop{Client: shapedTurner{shape: codexRequestShape}, Model: "m1", Backend: "openai"}
+	matching := loop.ContextTokensEstimateForHistory(candidate)
+	loop.lastInput = inputMeasurement{Model: "m1", Shape: codexRequestShape, RawEstimate: 1, Measured: 500_000}
+	loop.SetBackendWithContextWindow(shapedTurner{shape: codexRequestShape}, "m2", "other", "openai", 123_000, Thinking{})
+	foreignModel := loop.ContextTokensEstimateForHistory(candidate)
+	if matching-foreignModel < 9_900 {
+		t.Fatalf("prospective model switch state delta = %d, want m1 replay state excluded by m2", matching-foreignModel)
+	}
+
+	native := []gollama.Message{{Role: "assistant", ThinkingBlocks: []gollama.ThinkingBlock{{Thinking: strings.Repeat("reasoning", 5_000), Signature: "provider-signature"}}}}
+	openAI := loop.ContextTokensEstimateForHistory(native)
+	loop.SetBackendWithContextWindow(shapedTurner{shape: "anthropic"}, "claude", "claude", "anthropic", 200_000, Thinking{})
+	anthropic := loop.ContextTokensEstimateForHistory(native)
+	if anthropic-openAI < 9_900 {
+		t.Fatalf("prospective provider switch state delta = %d, want Anthropic replay state counted", anthropic-openAI)
+	}
+}
+
 func TestRequestContextEstimateIncludesUncertainMedia(t *testing.T) {
 	// A valid 1x1 PNG. Even tiny media must be represented, but the estimate is
 	// marked uncertain because provider/model image accounting is not universal.

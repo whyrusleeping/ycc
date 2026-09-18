@@ -343,6 +343,95 @@ func TestFailedContextSummaryLeavesSelectedViewUnchanged(t *testing.T) {
 	s.Stop()
 }
 
+type measuredRolloverTurner struct{}
+
+func (measuredRolloverTurner) ContextRequestShape() string { return "openai" }
+
+func (measuredRolloverTurner) TurnCtx(context.Context, gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+	return &gollama.ResponseMessageGenerate{
+		Choices: []gollama.GenChoice{{Message: gollama.Message{Role: "assistant", Content: "old answer"}}},
+		Usage:   gollama.Usage{PromptTokens: 20_000, TotalTokens: 20_010, CompletionTokens: 10},
+	}, nil
+}
+
+func TestContextRolloverPersistsCompleteComparableEstimates(t *testing.T) {
+	s := newStopSession(t)
+	loop := &engine.Loop{Client: measuredRolloverTurner{}, Model: "test", Backend: "openai", Emitter: s.emitter}
+	loop.SetHistory([]gollama.Message{{Role: "user", Content: strings.Repeat("old history ", 16_000)}})
+	if _, err := loop.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s.loop = loop
+
+	summary := strings.Repeat("summary evidence ", 1_200)
+	s.contextSummary = func(context.Context, []event.Event, []jobs.Info, string) (string, error) {
+		return summary, nil
+	}
+	selected := []gollama.Message{{Role: "user", Content: summary}}
+	wantOld, wantNew := loop.ContextTokensEstimatesForReplacement(selected)
+	if anchored := loop.ContextTokensEstimate(); anchored >= wantOld || anchored < 19_000 {
+		t.Fatalf("test measurement did not differ usefully from complete estimate: anchored=%d complete=%d", anchored, wantOld)
+	}
+	if wantNew <= 4_000 || wantNew >= wantOld {
+		t.Fatalf("test replacement estimate is not plausibly smaller: old=%d new=%d", wantOld, wantNew)
+	}
+
+	if err := s.performContextRollover(context.Background(), "explicit"); err != nil {
+		t.Fatal(err)
+	}
+	events := s.log.Snapshot()
+	var transition event.Event
+	for _, ev := range events {
+		if ev.Type == event.ContextViewChanged {
+			transition = ev
+		}
+	}
+	if transition.Seq == 0 {
+		t.Fatal("missing durable context transition")
+	}
+	if got := transition.Data["old_context_tokens_est"]; got != wantOld {
+		t.Fatalf("persisted old estimate = %#v, want complete estimate %d", got, wantOld)
+	}
+	if got := transition.Data["new_context_tokens_est"]; got != wantNew {
+		t.Fatalf("persisted replacement estimate = %#v, want %d", got, wantNew)
+	}
+	if got := loop.ContextTokensEstimate(); got != wantNew {
+		t.Fatalf("live replacement estimate = %d, want persisted %d", got, wantNew)
+	}
+	replayed := engine.ReplayHistory(events)
+	if got := loop.History(); !reflect.DeepEqual(got, replayed) {
+		t.Fatalf("live and reopened selections differ\nlive=%#v\nreplay=%#v", got, replayed)
+	}
+	reopened := &engine.Loop{Client: measuredRolloverTurner{}, Model: "test", Backend: "openai"}
+	reopened.SetHistory(replayed)
+	if got := reopened.ContextTokensEstimate(); got != wantNew {
+		t.Fatalf("reopened replacement estimate = %d, want persisted %d", got, wantNew)
+	}
+	s.Stop()
+}
+
+func TestContextRolloverRejectsNonSmallerCompleteReplacement(t *testing.T) {
+	s := newStopSession(t)
+	s.loop = &engine.Loop{Client: measuredRolloverTurner{}, Model: "test", Backend: "openai", Emitter: s.emitter}
+	original := []gollama.Message{{Role: "user", Content: "small old view"}}
+	s.loop.SetHistory(original)
+	s.contextSummary = func(context.Context, []event.Event, []jobs.Info, string) (string, error) {
+		return strings.Repeat("larger replacement ", 100), nil
+	}
+
+	err := s.performContextRollover(context.Background(), "explicit")
+	if err == nil || !strings.Contains(err.Error(), "cannot be safely reduced further") {
+		t.Fatalf("non-smaller rollover error = %v", err)
+	}
+	if got := s.loop.History(); !reflect.DeepEqual(got, original) {
+		t.Fatalf("rejected replacement changed live selection: %#v", got)
+	}
+	if countType(s.log.Snapshot(), event.ContextViewChanged) != 0 {
+		t.Fatal("rejected replacement was persisted")
+	}
+	s.Stop()
+}
+
 type captureFinalTurner struct {
 	entered chan struct{}
 	release chan struct{}

@@ -207,7 +207,6 @@ func (s *Session) performContextRollover(ctx context.Context, reason string) err
 	if loop == nil {
 		return fmt.Errorf("coordinator loop is unavailable")
 	}
-	oldEstimate := loop.ContextTokensEstimate()
 	events := s.log.Snapshot()
 	if selectedViewContainsMedia(loop.History(), events) {
 		return fmt.Errorf("coordinator context contains picture or document input whose native bytes cannot be preserved in a compact replayable view; switch to a model with a larger context window or start a new session and re-attach the media")
@@ -228,7 +227,7 @@ func (s *Session) performContextRollover(ctx context.Context, reason string) err
 		return fmt.Errorf("summarize coordinator context: empty summary")
 	}
 	selected := []gollama.Message{{Role: "user", Content: summary}}
-	newEstimate := loop.ContextTokensEstimateForHistory(selected)
+	oldEstimate, newEstimate := loop.ContextTokensEstimatesForReplacement(selected)
 	if newEstimate >= oldEstimate {
 		return fmt.Errorf("coordinator context cannot be safely reduced further (old estimate %d, replacement estimate %d); switch the coordinator to a model with a larger context window or start a new session with narrower authorized input", oldEstimate, newEstimate)
 	}
