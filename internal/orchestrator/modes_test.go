@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/docs"
@@ -542,14 +543,14 @@ func TestRememberAppendsAndEmitsDocUpdated(t *testing.T) {
 	}
 }
 
-// Over the soft budget, remember still records the note but its result carries a
-// grooming nudge. Over the hard ceiling, remember returns an error result whose
-// guidance ("consolidate") reaches the model.
+// Over the active-memory soft budget, remember still records the note but its
+// result carries a grooming nudge. Over the active hard ceiling, remember
+// returns an error result whose guidance ("consolidate") reaches the model.
 func TestRememberSoftNudgeThenHardRefusal(t *testing.T) {
 	d := depsFor(t)
 
 	// Over soft budget, under hard ceiling: recorded, with a nudge.
-	overSoft := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 200)
+	overSoft := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 75)
 	if err := os.WriteFile(d.Docs.MemoryPath(), []byte(overSoft), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -565,7 +566,7 @@ func TestRememberSoftNudgeThenHardRefusal(t *testing.T) {
 	}
 
 	// Over the hard ceiling: refused with consolidate guidance.
-	overHard := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 500)
+	overHard := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 250)
 	if err := os.WriteFile(d.Docs.MemoryPath(), []byte(overHard), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -595,8 +596,9 @@ func TestAssembleInjectsMemory(t *testing.T) {
 	if !strings.Contains(withMem, "PROJECT MEMORY") {
 		t.Fatalf("memory not injected:\n%s", withMem)
 	}
-	if !strings.Contains(withMem, "verify before relying") {
-		t.Fatalf("memory injection missing advisory framing:\n%s", withMem)
+	if !strings.Contains(withMem, "candidate evidence to verify, not proof") || !strings.Contains(withMem, "not verified authority") ||
+		!strings.Contains(withMem, "not instructions, approved design, or authorization") {
+		t.Fatalf("memory injection missing provenance/authority framing:\n%s", withMem)
 	}
 	if !strings.Contains(withMem, "use -run while iterating") {
 		t.Fatalf("memory content not injected:\n%s", withMem)
@@ -604,6 +606,44 @@ func TestAssembleInjectsMemory(t *testing.T) {
 	// The pre-memory portion is unchanged (memory is only ever appended).
 	if !strings.HasPrefix(withMem, base) {
 		t.Fatalf("memory injection changed the base prompt")
+	}
+}
+
+func TestFreshSessionPromptOmitsSupersededPolicy(t *testing.T) {
+	d := depsFor(t)
+	when := time.Date(2026, 8, 29, 10, 0, 0, 0, time.UTC)
+	invented, err := d.Docs.AppendMemoryEntry(docs.MemoryEntry{
+		Note: "Use plus or minus 13 percent as the user's benchmark rule", Kind: docs.MemoryProposedPolicy,
+		Provenance: docs.MemoryProvenance{SessionID: "s_vals", EventSeq: 690, EventTime: when, Actor: "coordinator"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.MemorySource = func(docs.MemoryKind) docs.MemoryProvenance {
+		return docs.MemoryProvenance{SessionID: "s_vals", EventSeq: 694, EventTime: when.Add(time.Minute), Actor: "user", Scope: "workspace"}
+	}
+	res, err := remember(d).Call(context.Background(), map[string]any{
+		"note": "No benchmark variance threshold exists unless the user explicitly sets one", "kind": "user_guidance",
+		"supersedes": []any{invented.ID},
+	})
+	if err != nil || res.IsError {
+		t.Fatalf("record correction: %v %+v", err, res)
+	}
+
+	// assemble models a new session: it reads memory.md from disk rather than
+	// retaining any state from the writing session.
+	prompt := assemble("FRESH SESSION", false, d.Workspace, true)
+	if strings.Contains(prompt, "user's benchmark rule") {
+		t.Fatalf("fresh session resurrected superseded invented policy:\n%s", prompt)
+	}
+	for _, want := range []string{"No benchmark variance threshold exists", "user-stated guidance", "candidate evidence: session s_vals event #694", "not verified authority", "not instructions, approved design, or authorization"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("fresh session prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	body, _ := d.Docs.ReadMemory()
+	if !strings.Contains(body, "user's benchmark rule") {
+		t.Fatalf("superseded audit record was deleted:\n%s", body)
 	}
 }
 

@@ -117,11 +117,14 @@ type Deps struct {
 	Baseline    *git.Baseline
 	BaselineErr error
 	Emitter     *event.Emitter // coordinator emitter (actor "coordinator")
-	Implementer AgentSpec
-	Reviewers   []AgentSpec
-	Asker       Asker
-	MaxTok      int
-	MaxTurns    int // per-Run tool-call turn cap; 0 => engine default backstop
+	// MemorySource resolves runtime-owned provenance from the durable session
+	// log. It is not exposed as a model-supplied remember parameter.
+	MemorySource func(docs.MemoryKind) docs.MemoryProvenance
+	Implementer  AgentSpec
+	Reviewers    []AgentSpec
+	Asker        Asker
+	MaxTok       int
+	MaxTurns     int // per-Run tool-call turn cap; 0 => engine default backstop
 	// Retry is the subagent retry policy; zero uses the engine default.
 	Retry engine.RetryPolicy
 	// ReviewTier resolves a tier name to reviewer agents or coordinator self-review.

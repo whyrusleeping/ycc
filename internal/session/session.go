@@ -2601,6 +2601,9 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 		Ownership:          m.ownership,
 	}
 	deps.CoordinatorToken = m.ownership.NewToken(fmt.Sprintf("session %s coordinator", id))
+	deps.MemorySource = func(kind docs.MemoryKind) docs.MemoryProvenance {
+		return memorySourceFromEvents(id, log.Snapshot(), kind)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{
@@ -3530,6 +3533,57 @@ func (m *Manager) UsageReport(project string, opts usage.Options) (*usage.Result
 	res := usage.Aggregate(entries, m.reg, opts)
 	res.Workspace = absWS
 	return &res, nil
+}
+
+// memorySourceFromEvents chooses the closest durable candidate evidence
+// available for a remember call. This structural match is not proof that the
+// event semantically supports the note. User guidance prefers the latest actual
+// user-authored event; measurements prefer tool output. Inferences and proposals
+// point at the latest event (normally the remember call containing the claim).
+func memorySourceFromEvents(sessionID string, events []event.Event, kind docs.MemoryKind) docs.MemoryProvenance {
+	matches := func(ev event.Event) bool {
+		switch kind {
+		case docs.MemoryUserGuidance:
+			if ev.Type == event.QuestionAnswered {
+				auto, _ := ev.Data["auto"].(bool)
+				return !auto
+			}
+			return ev.Actor == "user" && (ev.Type == event.UserInput || ev.Type == event.UserInputDelivered)
+		case docs.MemoryObservation:
+			return ev.Type == event.ToolResult
+		default:
+			return true
+		}
+	}
+	var source *event.Event
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Transient || !matches(events[i]) {
+			continue
+		}
+		source = &events[i]
+		break
+	}
+	if source == nil && kind != docs.MemoryUserGuidance {
+		for i := len(events) - 1; i >= 0; i-- {
+			if !events[i].Transient {
+				source = &events[i]
+				break
+			}
+		}
+	}
+	// Preserve the session reference even when no event of the preferred kind is
+	// available. AppendMemoryEntry will conservatively downgrade unsupported
+	// user-guidance claims instead of inventing user authority.
+	provenance := docs.MemoryProvenance{SessionID: sessionID, Scope: "workspace"}
+	if source != nil {
+		provenance.EventSeq = source.Seq
+		provenance.EventTime = source.TS
+		provenance.Actor = source.Actor
+		if source.Type == event.QuestionAnswered {
+			provenance.Actor = "user"
+		}
+	}
+	return provenance
 }
 
 func newID() (string, error) {
