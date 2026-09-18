@@ -14,8 +14,10 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	pathpkg "path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -1033,33 +1035,313 @@ func bash(ws *Workspace) *gollama.Tool {
 	}
 }
 
-// sandboxedBash is the reviewer's Bash tool: identical to bash() but its command
-// runs inside a sandbox (see internal/sandbox) that makes the workspace read-only
-// so a reviewer cannot mutate the change under review. Read-only inspection (git
-// diff, cat, grep, ls, builds) still works. When no sandbox mechanism is
-// available on the host, it degrades to the same unconfined behavior as bash()
-// (reviewer non-mutation is then prompt-enforced only).
+// sandboxedBash is the reviewer's Bash tool. It runs only when the OS can make
+// all source bytes and modes read-only; otherwise it fails closed and reviewers
+// retain the non-shell Read and Search tools.
 func sandboxedBash(ws *Workspace) *gollama.Tool {
-	desc := "Run a shell command and return a UTF-8-safe combined stdout+stderr preview, bounded to 64 KiB/2000 lines with head and tail. Captures up to 4 MiB are retained for tool_output range retrieval. Each call runs " +
-		"in a fresh shell already rooted at the workspace, and shell state (including the working directory) does " +
-		"NOT persist between calls — so there is never a need to `cd` into the workspace root; just run " +
-		"the command directly (write `git diff`, not `cd <workspace> && git diff`). Use this to inspect " +
-		"the change: run `git diff`, list files, run builds/tests, and handle searches outside the first-class " +
-		"Search tool's textual contract. Prefer Search for ordinary text/path queries and Read over `cat` for viewing files. Commands time out after 2 minutes by " +
-		"default; set timeout_s when a command needs longer (maximum 3600 seconds)."
+	desc := "Run a shell command in the securely read-only live workspace for inspection, or set source_bound=true to run it from an exact private materialization of the assigned Git tree for independent verification. " +
+		"A normal call is NOT evidence that the assigned snapshot was built. A source-bound call writes Git blobs and modes directly without checkout filters or export transformations, and the result returns a trusted receipt_id for that command and snapshot. " +
+		"Every call gets empty private CARGO_TARGET_DIR, CARGO_HOME, TMPDIR, and Go caches; a source-bound call also gets the writable source copy. This avoids workspace writes, cross-device artifact moves, stale targets, and shared-cache collisions. Dependencies, source-local build scripts, and outputs may write only inside that scratch tree. " +
+		"The writable source, caches, temporary files, and outputs share a hard 4 GiB/1,000,000-inode tmpfs capacity; exact-tree staging is separately bounded to 4 GiB of blobs and 100,000 entries and is removed after the call. Commands time out after 2 minutes by default (maximum 3600 seconds). If this host's secure sandbox cannot support compiler renames, source_bound is reported unavailable rather than run with weaker confinement. " +
+		"The original workspace, Git index, and lockfiles remain read-only. Prefer Search for ordinary text/path queries and Read over `cat`."
 	if sandbox.Available() != sandbox.None {
-		desc += " NOTE: the workspace is mounted READ-ONLY for you — commands that try to write to or delete from " +
+		desc += " NOTE: the workspace is mounted READ-ONLY for you — commands that try to write to, truncate, chmod, or delete from " +
 			"the workspace will fail. That is expected; you are a reviewer, not an editor."
+	} else {
+		desc += " NOTE: no mechanism that protects both file bytes and modes is available, so reviewer Bash fails closed on this host."
 	}
 	return &gollama.Tool{
 		Name:        "Bash",
 		Description: desc,
 		Params: obj(map[string]any{
-			"command":   strProp("shell command to execute via 'sh -c'"),
-			"timeout_s": map[string]any{"type": "integer", "minimum": 1, "maximum": maxBashTimeoutSeconds, "description": "timeout in seconds (default 120, maximum 3600)"},
+			"command":      strProp("shell command to execute via 'sh -c'"),
+			"source_bound": BoolProp("run with cwd set to the exact assigned Git tree; required for current-snapshot build/test provenance"),
+			"timeout_s":    map[string]any{"type": "integer", "minimum": 1, "maximum": maxBashTimeoutSeconds, "description": "timeout in seconds (default 120, maximum 3600)"},
 		}, "command"),
 		Call: bashCall(ws, true),
 	}
+}
+
+// reviewerScratch creates one private filesystem tree for a single sandboxed
+// command. Build outputs, package caches, and compiler temporary files share its
+// filesystem, which avoids cross-device renames while keeping shared caches and
+// stale workspace artifacts out of fresh verification.
+func reviewerScratch(root string) (string, []string, error) {
+	bases := []string{os.TempDir(), "/var/tmp"}
+	if cache, err := os.UserCacheDir(); err == nil {
+		bases = append(bases, cache)
+	}
+	var lastErr error
+	for _, base := range bases {
+		if base == "" || withinRoot(base, root) {
+			continue
+		}
+		scratch, err := os.MkdirTemp(base, "ycc-review-")
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if withinRoot(scratch, root) || withinRoot(root, scratch) {
+			_ = os.RemoveAll(scratch)
+			lastErr = fmt.Errorf("scratch path overlaps workspace")
+			continue
+		}
+		quota := filepath.Join(scratch, "quota")
+		dirs := []string{"quota", "quota/tmp", "quota/cargo-home", "quota/cargo-target", "quota/cache", "quota/go-build", "quota/go-mod", "quota/go", "quota/source", "rootfs"}
+		for _, dir := range dirs {
+			if err := os.MkdirAll(filepath.Join(scratch, dir), 0o700); err != nil {
+				_ = os.RemoveAll(scratch)
+				return "", nil, err
+			}
+		}
+		env := []string{
+			"TMPDIR=" + filepath.Join(quota, "tmp"),
+			"TMP=" + filepath.Join(quota, "tmp"),
+			"TEMP=" + filepath.Join(quota, "tmp"),
+			"XDG_CACHE_HOME=" + filepath.Join(quota, "cache"),
+			"CARGO_HOME=" + filepath.Join(quota, "cargo-home"),
+			"CARGO_TARGET_DIR=" + filepath.Join(quota, "cargo-target"),
+			"GOCACHE=" + filepath.Join(quota, "go-build"),
+			"GOMODCACHE=" + filepath.Join(quota, "go-mod"),
+			"GOPATH=" + filepath.Join(quota, "go"),
+			"YCC_REVIEW_SCRATCH=" + quota,
+			"YCC_REVIEW_SOURCE=" + filepath.Join(quota, "source"),
+		}
+		return scratch, env, nil
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no scratch base outside workspace")
+	}
+	return "", nil, lastErr
+}
+
+const (
+	maxReviewTreeEntries  = 100_000
+	maxReviewTreeMetadata = 64 << 20
+)
+
+// materializeReviewTree writes the exact blobs and modes named by tree without
+// invoking Git's checkout machinery. In particular, no .gitattributes filter,
+// export substitution, or mutable checkout configuration is consulted. The
+// aggregate blob bytes, metadata, entry count, and every Git subprocess are
+// bounded; gitlinks become empty directories, matching a checkout before its
+// submodules are initialized.
+func materializeReviewTree(ctx context.Context, root, tree, scratch string) error {
+	if len(tree) != 40 && len(tree) != 64 {
+		return fmt.Errorf("assigned review tree is unavailable")
+	}
+	if _, err := hex.DecodeString(tree); err != nil {
+		return fmt.Errorf("assigned review tree is invalid")
+	}
+	env := reviewGitEnvironment()
+	gitDirCmd := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "--absolute-git-dir")
+	gitDirCmd.Env = env
+	gitDirOut, err := gitDirCmd.Output()
+	if err != nil {
+		return fmt.Errorf("locate review object database: %w", err)
+	}
+	gitDir := strings.TrimSpace(string(gitDirOut))
+	if gitDir == "" {
+		return fmt.Errorf("locate review object database: empty path")
+	}
+
+	list := exec.CommandContext(ctx, "git", "--no-replace-objects", "--git-dir="+gitDir,
+		"ls-tree", "-rz", "-l", "--full-tree", tree)
+	list.Env = env
+	stdout, err := list.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("list exact review tree: %w", err)
+	}
+	var stderr bytes.Buffer
+	list.Stderr = &stderr
+	if err := list.Start(); err != nil {
+		return fmt.Errorf("list exact review tree: %w", err)
+	}
+	metadata, readErr := io.ReadAll(io.LimitReader(stdout, maxReviewTreeMetadata+1))
+	waitErr := list.Wait()
+	if readErr != nil {
+		return fmt.Errorf("list exact review tree: %w", readErr)
+	}
+	if waitErr != nil {
+		return fmt.Errorf("list exact review tree: %v (%s)", waitErr, strings.TrimSpace(stderr.String()))
+	}
+	if len(metadata) > maxReviewTreeMetadata {
+		return fmt.Errorf("review tree metadata exceeds %d bytes", maxReviewTreeMetadata)
+	}
+	if len(metadata) > 0 && metadata[len(metadata)-1] != 0 {
+		return fmt.Errorf("malformed review tree listing")
+	}
+
+	source := filepath.Join(scratch, "staged-source")
+	var total int64
+	records := bytes.Split(bytes.TrimSuffix(metadata, []byte{0}), []byte{0})
+	if len(metadata) == 0 {
+		records = nil
+	}
+	if len(records) > maxReviewTreeEntries {
+		return fmt.Errorf("review tree has more than %d entries", maxReviewTreeEntries)
+	}
+	for _, record := range records {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		header, rawName, ok := bytes.Cut(record, []byte{'\t'})
+		if !ok {
+			return fmt.Errorf("malformed review tree entry")
+		}
+		fields := strings.Fields(string(header))
+		if len(fields) != 4 {
+			return fmt.Errorf("malformed review tree entry header")
+		}
+		mode, objectType, oid, sizeText := fields[0], fields[1], fields[2], fields[3]
+		if len(oid) != 40 && len(oid) != 64 {
+			return fmt.Errorf("invalid object ID in review tree entry")
+		}
+		if _, err := hex.DecodeString(oid); err != nil {
+			return fmt.Errorf("invalid object ID in review tree entry")
+		}
+		name := string(rawName)
+		clean := pathpkg.Clean(name)
+		if name == "" || clean != name || pathpkg.IsAbs(name) || clean == ".." || strings.HasPrefix(clean, "../") {
+			return fmt.Errorf("unsafe review tree path %q", name)
+		}
+		destination := filepath.Join(source, filepath.FromSlash(name))
+		if !withinRoot(destination, source) {
+			return fmt.Errorf("review tree path escaped source: %q", name)
+		}
+		if mode == "160000" && objectType == "commit" {
+			if sizeText != "-" {
+				return fmt.Errorf("malformed gitlink %q", name)
+			}
+			if err := os.MkdirAll(destination, 0o755); err != nil {
+				return fmt.Errorf("materialize gitlink %q: %w", name, err)
+			}
+			continue
+		}
+		if objectType != "blob" || (mode != "100644" && mode != "100755" && mode != "120000") {
+			return fmt.Errorf("unsupported review tree entry %s %s at %q", mode, objectType, name)
+		}
+		size, err := strconv.ParseInt(sizeText, 10, 64)
+		if err != nil || size < 0 || size > sandbox.ReviewerScratchBytes-total {
+			return fmt.Errorf("review tree blobs exceed %d bytes", sandbox.ReviewerScratchBytes)
+		}
+		total += size
+		if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+			return fmt.Errorf("create review tree parent: %w", err)
+		}
+		if mode == "120000" {
+			var target bytes.Buffer
+			if err := copyReviewBlob(ctx, env, gitDir, oid, size, &target); err != nil {
+				return fmt.Errorf("read symlink %q: %w", name, err)
+			}
+			if strings.IndexByte(target.String(), 0) >= 0 {
+				return fmt.Errorf("symlink %q contains NUL", name)
+			}
+			if err := os.Symlink(target.String(), destination); err != nil {
+				return fmt.Errorf("materialize symlink %q: %w", name, err)
+			}
+			continue
+		}
+		perm := os.FileMode(0o644)
+		if mode == "100755" {
+			perm = 0o755
+		}
+		file, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+		if err != nil {
+			return fmt.Errorf("create review blob %q: %w", name, err)
+		}
+		copyErr := copyReviewBlob(ctx, env, gitDir, oid, size, file)
+		closeErr := file.Close()
+		if copyErr != nil {
+			return fmt.Errorf("materialize review blob %q: %w", name, copyErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close review blob %q: %w", name, closeErr)
+		}
+		if err := os.Chmod(destination, perm); err != nil {
+			return fmt.Errorf("set review blob mode %q: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func reviewGitEnvironment() []string {
+	env := make([]string, 0, len(os.Environ())+4)
+	for _, item := range os.Environ() {
+		if strings.HasPrefix(item, "GIT_") {
+			continue
+		}
+		env = append(env, item)
+	}
+	return append(env, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_NO_REPLACE_OBJECTS=1", "GIT_TERMINAL_PROMPT=0")
+}
+
+func copyReviewBlob(ctx context.Context, env []string, gitDir, oid string, expected int64, destination io.Writer) error {
+	if len(oid) != 40 && len(oid) != 64 {
+		return fmt.Errorf("invalid blob object ID")
+	}
+	if _, err := hex.DecodeString(oid); err != nil {
+		return fmt.Errorf("invalid blob object ID")
+	}
+	cmd := exec.CommandContext(ctx, "git", "--no-replace-objects", "--git-dir="+gitDir, "cat-file", "blob", oid)
+	cmd.Env = env
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	written, copyErr := io.Copy(destination, io.LimitReader(stdout, expected+1))
+	if written > expected {
+		_ = cmd.Process.Kill()
+	}
+	waitErr := cmd.Wait()
+	if copyErr != nil {
+		return copyErr
+	}
+	if written != expected {
+		return fmt.Errorf("blob size mismatch: listed %d, read %d", expected, written)
+	}
+	if waitErr != nil {
+		return fmt.Errorf("cat-file: %v (%s)", waitErr, strings.TrimSpace(stderr.String()))
+	}
+	return nil
+}
+
+func cleanupReviewerScratch(root string) error {
+	// A build script can tighten permissions inside scratch. Restore directory
+	// traversal without following symlinks, then remove the complete private tree.
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err == nil && entry.IsDir() {
+			_ = os.Chmod(path, 0o700)
+		}
+		return nil
+	})
+	return os.RemoveAll(root)
+}
+
+func newReviewReceiptID() (string, error) {
+	var token [16]byte
+	if _, err := rand.Read(token[:]); err != nil {
+		return "", err
+	}
+	return "rv_" + hex.EncodeToString(token[:]), nil
+}
+
+func reviewExecutionResult(err error, ctxErr error) string {
+	if errors.Is(ctxErr, context.DeadlineExceeded) {
+		return "timed out"
+	}
+	if err == nil {
+		return "exit 0"
+	}
+	if exit, ok := err.(*exec.ExitError); ok {
+		return fmt.Sprintf("exit %d", exit.ExitCode())
+	}
+	return "execution error: " + err.Error()
 }
 
 // bashCall builds the Call closure shared by bash() and sandboxedBash(). When
@@ -1071,6 +1353,17 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 		cmdStr, ok := getString(params, "command")
 		if !ok {
 			return errResult("bash: missing 'command'"), nil
+		}
+		sourceBound := sandboxed && getBool(params, "source_bound", false)
+		reviewSnapshot, reviewTree := ws.reviewIdentity()
+		if sandboxed && sandbox.Available() == sandbox.None {
+			if sourceBound {
+				return errResult("bash: source-bound verification unavailable: no sandbox that protects source bytes and modes is available on this host"), nil
+			}
+			return errResult("bash: reviewer shell unavailable: no sandbox that protects workspace bytes and modes is available on this host; use Read and Search"), nil
+		}
+		if sourceBound && !sandbox.BuildCapable() {
+			return errResult("bash: source-bound verification unavailable: sandbox %s cannot safely support compiler operations on this host", sandbox.Available()), nil
 		}
 		// Start a background command as a job and return its id immediately. Not offered to the sandboxed reviewer Bash.
 		if !sandboxed && getBool(params, "run_in_background", false) {
@@ -1124,20 +1417,65 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 		}
 		cctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
-		var cmd *exec.Cmd
+		var (
+			cmd        *exec.Cmd
+			mechanism  = sandbox.None
+			scratch    string
+			scratchEnv []string
+			receiptID  string
+			signalRead *os.File
+			signalPath string
+		)
+		workingDir := ws.Root
 		if sandboxed {
-			cmd, _ = sandbox.Command(cctx, ws.Root, cmdStr)
+			var err error
+			scratch, scratchEnv, err = reviewerScratch(ws.Root)
+			if err != nil {
+				return errResult("bash: cannot create private reviewer scratch: %v", err), nil
+			}
+			defer func() { _ = cleanupReviewerScratch(scratch) }()
+			script := cmdStr
+			if sourceBound {
+				if err := materializeReviewTree(cctx, ws.Root, reviewTree, scratch); err != nil {
+					return errResult("bash: source-bound verification unavailable: %v", err), nil
+				}
+				workingDir = filepath.Join(scratch, "quota", "source")
+				receiptID, err = newReviewReceiptID()
+				if err != nil {
+					return errResult("bash: source-bound verification unavailable: create execution receipt: %v", err), nil
+				}
+			}
+			signalRead, signalPath, err = sandbox.NewStartupPipe(scratch)
+			if err != nil {
+				return errResult("bash: cannot create confinement startup signal: %v", err), nil
+			}
+			defer signalRead.Close()
+			// The confined helper opens the private FIFO as FD 3. One byte written
+			// after the final shell exec proves the reviewed command actually started.
+			script = "printf x >&3 || exit 125; exec 3>&-\n" + script
+			commandEnv := append([]string(nil), os.Environ()...)
+			commandEnv = append(commandEnv, ws.Env...)
+			commandEnv = append(commandEnv, scratchEnv...)
+			capability := "unavailable"
+			if sourceBound {
+				capability = "exact_git_tree"
+			} else if sandbox.BuildCapable() && reviewTree != "" {
+				capability = "set_source_bound_true_to_materialize"
+			}
+			commandEnv = append(commandEnv,
+				"YCC_REVIEW_SNAPSHOT_ID="+reviewSnapshot,
+				"YCC_REVIEW_TREE="+reviewTree,
+				"YCC_REVIEW_SOURCE_STATUS="+capability,
+			)
+			cmd, mechanism = sandbox.Command(cctx, ws.Root, scratch, workingDir, signalPath, script, commandEnv)
 		} else {
 			cmd = exec.CommandContext(cctx, "sh", "-c", cmdStr)
-		}
-		cmd.Dir = ws.Root
-		if len(ws.Env) > 0 {
 			cmd.Env = append(os.Environ(), ws.Env...)
 		}
-		// Run the command in its own process group so a timeout kills the whole
-		// tree (the shell plus every pipeline child), not just the direct `sh`
-		// child — exec's default cancel only signals the leader, leaving
-		// grandchildren alive.
+		cmd.Dir = workingDir
+		// Run the command in its own process group so cancellation covers ordinary
+		// pipelines. Build-capable reviewer mechanisms additionally supervise a PID
+		// namespace, which also contains setsid/double-fork descendants until Wait.
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		cmd.Cancel = func() error {
 			// Negative pid => signal the entire process group.
@@ -1152,12 +1490,54 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 		capture := newCommandCapture()
 		cmd.Stdout = capture
 		cmd.Stderr = capture
-		err := cmd.Run()
+		err := cmd.Start()
+		executionRan := false
+		if err == nil {
+			err = cmd.Wait()
+			if sandboxed {
+				var signal [1]byte
+				if n, readErr := signalRead.Read(signal[:]); n == 1 && readErr == nil && signal[0] == 'x' {
+					executionRan = true
+				}
+			}
+		}
 		result, _ := commandResult(ws.artifactStore(), capture)
+		executionOutcome := reviewExecutionResult(err, cctx.Err())
+		if sourceBound && executionRan {
+			ws.recordReviewExecution(reviewExecutionReceipt{
+				ID: receiptID, Snapshot: reviewSnapshot, Tree: reviewTree,
+				Command: cmdStr, Result: executionOutcome,
+			})
+		}
 		if cctx.Err() == context.DeadlineExceeded {
 			result.Content += fmt.Sprintf("\n[command timed out after %s]", timeout)
-		} else if err != nil {
+		}
+		if err != nil && cctx.Err() != context.DeadlineExceeded {
 			result.Content += fmt.Sprintf("\n[exit: %v]", err)
+		}
+		if sandboxed {
+			snapshot := reviewSnapshot
+			if snapshot == "" {
+				snapshot = "unassigned"
+			}
+			cleanup := "private scratch cleaned after command"
+			if cleanupErr := cleanupReviewerScratch(scratch); cleanupErr != nil {
+				cleanup = "private scratch cleanup failed: " + cleanupErr.Error()
+			}
+			if sourceBound {
+				result.Content += fmt.Sprintf("\n[review source: exact Git tree %s for assigned snapshot %s; sandbox %s; %s]", reviewTree, snapshot, mechanism, cleanup)
+				if executionRan {
+					result.Content += fmt.Sprintf("\n[review execution receipt: %s; command %q; result %s]", receiptID, cmdStr, executionOutcome)
+				} else {
+					result.Content += "\n[review execution receipt unavailable: confinement setup or shell startup failed before the command executed]"
+				}
+			} else {
+				workspaceMode := "live read-only workspace"
+				if mechanism == sandbox.None {
+					workspaceMode = "live workspace; OS write confinement unavailable"
+				}
+				result.Content += fmt.Sprintf("\n[review inspection: %s; no source-bound verification claim; assigned snapshot %s; sandbox %s; %s]", workspaceMode, snapshot, mechanism, cleanup)
+			}
 		}
 		return result, nil
 	}

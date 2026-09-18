@@ -78,7 +78,7 @@ func spawnAgent(d *Deps) *gollama.Tool {
 				}
 				if !requestedMutating {
 					d.Emitter.Emit(event.Narration, map[string]any{
-						"msg": "generic subagent shell sandbox unavailable on this platform; treating it as a mutating job because read-only behavior is prompt-enforced only",
+						"msg": "secure read-only shell confinement is unavailable; generic subagent Bash will fail closed while Read and Search remain available, and the job is conservatively scheduled as mutating",
 					})
 				}
 			}

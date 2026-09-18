@@ -1,27 +1,25 @@
 // Package sandbox hard-enforces that reviewer bash (and any command run through
 // it) cannot mutate the workspace, while keeping read-only inspection (git diff,
-// cat, grep, ls, builds) working. It is a best-effort, platform-dependent guard
-// that degrades gracefully: on Linux it uses Landlock (preferred, no external
-// dependency) or bubblewrap; everywhere else it is a no-op and callers fall back
-// to prompt-only enforcement.
+// cat, grep, ls) working and enabling builds only when the selected mechanism
+// supports them safely. On Linux production selection uses bubblewrap or a
+// verified unprivileged mount namespace; when neither is available callers must
+// fail closed rather than execute reviewer shell commands without confinement.
 //
 // Mechanism selection (see Available):
 //
-//   - "landlock": a Landlock LSM ruleset that denies all filesystem writes by
-//     default and re-allows writes only under a small allowlist (temp dirs, the
-//     Go build/module caches, /dev, /run) that excludes the workspace. Reads and
-//     execs are allowed everywhere. This is symlink-proof: Landlock resolves the
-//     real inode, so a symlink inside the workspace pointing outward cannot be
-//     used to write into a denied path, and vice versa.
-//   - "bwrap": bubblewrap mounts the whole filesystem as-is but re-binds the
-//     workspace read-only.
-//   - "none": no sandbox available (non-Linux, or no kernel/tool support). The
-//     command runs normally; reviewer non-mutation is prompt-enforced only and
-//     the orchestrator emits a warning.
+//   - "landlock": available only for direct capability tests, not production
+//     selection. Landlock cannot mediate chmod (and ABI 1/2 cannot mediate
+//     truncate), so it cannot uphold the required read-only source contract.
+//   - "bwrap": bubblewrap mounts the filesystem read-only, adds only a bounded
+//     scratch tmpfs writable, and supervises a private PID/proc view.
+//   - "mountns": unprivileged user/mount/PID namespaces provide the same layout
+//     and kill all namespace descendants when the reviewed command exits.
+//   - "none": no sandbox with the required byte-and-mode protection is available.
+//     Reviewer callers fail closed and retain non-shell inspection tools.
 //
-// The Landlock path re-executes the ycc binary as a hidden helper (HelperArg)
+// Landlock and mountns re-execute the ycc binary as a hidden helper (HelperArg)
 // which applies the policy and then execs the real command on the same locked OS
-// thread. It fails CLOSED: if the policy cannot be applied the helper exits
+// thread. They fail CLOSED: if the policy cannot be applied the helper exits
 // non-zero rather than running the command unsandboxed. cmd/ycc must call
 // MaybeHelper at the very top of main so the helper dispatch runs before CLI
 // parsing.
@@ -32,6 +30,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -46,6 +46,8 @@ const (
 	Landlock Mechanism = "landlock"
 	// Bwrap uses the bubblewrap (bwrap) helper.
 	Bwrap Mechanism = "bwrap"
+	// MountNS uses an unprivileged user/mount namespace and chroot.
+	MountNS Mechanism = "mountns"
 )
 
 // HelperArg is the hidden first argument that marks a re-exec of the ycc binary
@@ -65,51 +67,279 @@ func Available() Mechanism {
 	return availableMech
 }
 
-// Command builds an *exec.Cmd that runs `sh -c script` with the workspace root
-// confined read-only, using whichever mechanism Available reports. The caller is
-// responsible for setting Dir, SysProcAttr, output capture, etc. — Command only
-// decides how the command is wrapped. It also returns the mechanism actually
-// used so callers can log/report it.
-//
-// For None the returned command is a plain unconfined `sh -c script`. For the
-// Landlock path, if the helper re-exec cannot be set up (os.Executable fails),
-// Command fails CLOSED: it returns a command that does NOT run the script but
-// instead prints an error and exits non-zero, so the script is never run
-// unsandboxed. The mechanism stays Landlock in that case.
-func Command(ctx context.Context, root, script string) (*exec.Cmd, Mechanism) {
-	switch Available() {
+// BuildCapable reports whether the selected mechanism supports compiler artifact
+// publication (including cross-directory rename) while preserving confinement.
+func BuildCapable() bool { return buildCapable(Available()) }
+
+// ReviewerScratchBytes and ReviewerScratchInodes are hard tmpfs capacity limits
+// for one reviewer command. The exact-tree source copy and every build/cache/temp
+// output share these limits.
+const (
+	ReviewerScratchBytes  int64 = 4 << 30
+	ReviewerScratchInodes int64 = 1_000_000
+)
+
+type quotaLimits struct {
+	bytes  int64
+	inodes int64
+}
+
+var productionQuota = quotaLimits{bytes: ReviewerScratchBytes, inodes: ReviewerScratchInodes}
+
+// Command builds an *exec.Cmd that runs `sh -c script` with the filesystem
+// read-only except for a size-and-inode-bounded tmpfs at scratch/quota. root,
+// scratch, and workingDir must already exist; workingDir must be within root or
+// scratch, and scratch must not overlap root. startupPipe is either "-" or a
+// private FIFO beneath scratch that the helper opens as FD 3. If
+// scratch/staged-source exists it is copied into the tmpfs as
+// scratch/quota/source before the reviewed command starts. commandEnv is
+// deliberately applied only after confinement and capability dropping;
+// bootstrap helpers receive a sanitized environment.
+func Command(ctx context.Context, root, scratch, workingDir, startupPipe, script string, commandEnv []string) (*exec.Cmd, Mechanism) {
+	return commandForMechanismEnv(ctx, Available(), root, scratch, workingDir, startupPipe, script, commandEnv, productionQuota)
+}
+
+// commandForMechanism is retained for focused package tests that do not need a
+// custom command environment or startup receipt pipe.
+func commandForMechanism(ctx context.Context, mechanism Mechanism, root, scratch, workingDir, script string) (*exec.Cmd, Mechanism) {
+	return commandForMechanismEnv(ctx, mechanism, root, scratch, workingDir, "-", script, os.Environ(), productionQuota)
+}
+
+func commandForMechanismEnv(ctx context.Context, mechanism Mechanism, root, scratch, workingDir, startupPipe, script string, commandEnv []string, limits quotaLimits) (*exec.Cmd, Mechanism) {
+	if mechanism == None {
+		cmd := plainCommand(ctx, script)
+		cmd.Dir = workingDir
+		cmd.Env = append([]string(nil), commandEnv...)
+		return cmd, None
+	}
+	resolvedRoot, resolvedScratch, resolvedDir, err := validatePaths(root, scratch, workingDir)
+	if err != nil {
+		return failedCommand(ctx, fmt.Sprintf("ycc sandbox: unsafe paths: %v", err)), mechanism
+	}
+	root, scratch, workingDir = resolvedRoot, resolvedScratch, resolvedDir
+	if limits.bytes < 1 || limits.inodes < 1 {
+		return failedCommand(ctx, "ycc sandbox: invalid scratch capacity"), mechanism
+	}
+	quota := filepath.Join(scratch, "quota")
+	if err := os.MkdirAll(quota, 0o700); err != nil {
+		return failedCommand(ctx, "ycc sandbox: cannot prepare scratch mountpoint"), mechanism
+	}
+	if err := os.MkdirAll(filepath.Join(scratch, "empty-cover"), 0o700); err != nil {
+		return failedCommand(ctx, "ycc sandbox: cannot prepare read-only mount cover"), mechanism
+	}
+	if !withinPath(resolvePath(quota), scratch) {
+		return failedCommand(ctx, "ycc sandbox: scratch mountpoint escaped private root"), mechanism
+	}
+	stagedSource := filepath.Join(scratch, "staged-source")
+	if info, statErr := os.Stat(stagedSource); statErr != nil || !info.IsDir() {
+		stagedSource = "-"
+	}
+	if startupPipe != "-" && !withinPath(resolvePath(startupPipe), scratch) {
+		return failedCommand(ctx, "ycc sandbox: startup pipe escaped private root"), mechanism
+	}
+	envFile, err := writeCommandEnvironment(scratch, commandEnv)
+	if err != nil {
+		return failedCommand(ctx, "ycc sandbox: cannot prepare command environment"), mechanism
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return failedCommand(ctx, "ycc sandbox: cannot resolve executable"), mechanism
+	}
+	limitArgs := []string{strconv.FormatInt(limits.bytes, 10), strconv.FormatInt(limits.inodes, 10)}
+	var cmd *exec.Cmd
+	switch mechanism {
 	case Landlock:
-		exe, err := os.Executable()
-		if err != nil {
-			// Fail closed: we intended to sandbox but cannot locate the binary to
-			// re-exec as the helper. Never run the script unconfined — emit a
-			// visible error and exit non-zero. The error text is our own literal
-			// (no script interpolation).
-			msg := fmt.Sprintf("ycc sandbox: cannot locate ycc binary for sandbox helper: %v", err)
-			return exec.CommandContext(ctx, "sh", "-c",
-				fmt.Sprintf("echo %s >&2; exit 126", shellSingleQuote(msg))), Landlock
-		}
-		// Re-exec self as the sandbox helper: it applies the Landlock policy for
-		// root, then execs `sh -c script`.
-		return exec.CommandContext(ctx, exe, HelperArg, root, "sh", "-c", script), Landlock
+		cmd = exec.CommandContext(ctx, exe, HelperArg, "landlock", root, scratch, workingDir, envFile, "/bin/sh", "-c", script)
 	case Bwrap:
-		return exec.CommandContext(ctx, "bwrap",
-			"--die-with-parent",
-			"--dev-bind", "/", "/",
-			"--ro-bind", root, root,
-			"--chdir", root,
-			"sh", "-c", script,
-		), Bwrap
+		bwrap, resolveErr := trustedExecutable("bwrap", root, scratch)
+		if resolveErr != nil {
+			return failedCommand(ctx, "ycc sandbox: trusted bubblewrap unavailable"), Bwrap
+		}
+		// Bubblewrap intentionally closes arbitrary inherited descriptors. The
+		// receipt pipe is therefore a named FIFO in private scratch, opened by the
+		// confined helper, rather than an unsupported --preserve-fds option.
+		args := []string{
+			"--die-with-parent", "--unshare-user", "--unshare-pid",
+			"--uid", "0", "--gid", "0", "--cap-add", "CAP_SYS_ADMIN", "--cap-add", "CAP_SETPCAP",
+			"--ro-bind", "/", "/", "--dev", "/dev", "--remount-ro", "/dev",
+			"--proc", "/proc", "--remount-ro", "/proc", "--chdir", "/",
+			exe, HelperArg, "bwrap", root, scratch, quota, stagedSource, workingDir, envFile, startupPipe,
+		}
+		args = append(args, limitArgs...)
+		args = append(args, "/bin/sh", "-c", script)
+		cmd = exec.CommandContext(ctx, bwrap, args...)
+	case MountNS:
+		unshare, resolveErr := trustedExecutable("unshare", root, scratch)
+		if resolveErr != nil {
+			return failedCommand(ctx, "ycc sandbox: trusted unshare unavailable"), MountNS
+		}
+		rootfs := filepath.Join(scratch, "rootfs")
+		args := []string{"-Urmpf", "--kill-child=KILL", exe, HelperArg, "mountns", root, scratch, rootfs, quota, stagedSource, workingDir, envFile, startupPipe}
+		args = append(args, limitArgs...)
+		args = append(args, "/bin/sh", "-c", script)
+		cmd = exec.CommandContext(ctx, unshare, args...)
 	default:
-		return plainCommand(ctx, script), None
+		return failedCommand(ctx, "ycc sandbox: unknown confinement mechanism"), mechanism
+	}
+	cmd.Env = bootstrapEnvironment()
+	return cmd, mechanism
+}
+
+func writeCommandEnvironment(scratch string, env []string) (string, error) {
+	env = normalizeEnvironment(env)
+	for _, item := range env {
+		if strings.IndexByte(item, 0) >= 0 || !strings.Contains(item, "=") {
+			return "", fmt.Errorf("invalid environment entry")
+		}
+	}
+	file, err := os.CreateTemp(scratch, ".command-env-")
+	if err != nil {
+		return "", err
+	}
+	name := file.Name()
+	defer func() {
+		_ = file.Close()
+	}()
+	if err := file.Chmod(0o600); err != nil {
+		return "", err
+	}
+	if _, err := file.Write([]byte(strings.Join(env, "\x00") + "\x00")); err != nil {
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		return "", err
+	}
+	return name, nil
+}
+
+func normalizeEnvironment(env []string) []string {
+	seen := make(map[string]bool, len(env))
+	out := make([]string, 0, len(env))
+	for i := len(env) - 1; i >= 0; i-- {
+		name, _, ok := strings.Cut(env[i], "=")
+		if !ok || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, env[i])
+	}
+	for left, right := 0, len(out)-1; left < right; left, right = left+1, right-1 {
+		out[left], out[right] = out[right], out[left]
+	}
+	return out
+}
+
+func bootstrapEnvironment() []string {
+	env := make([]string, 0, len(os.Environ())+1)
+	for _, item := range os.Environ() {
+		name, _, _ := strings.Cut(item, "=")
+		upper := strings.ToUpper(name)
+		if upper == "PATH" || strings.HasPrefix(upper, "LD_") || strings.HasPrefix(upper, "DYLD_") ||
+			upper == "GCONV_PATH" || upper == "GLIBC_TUNABLES" || upper == "LOCPATH" || upper == "NLSPATH" ||
+			upper == "BASH_ENV" || upper == "ENV" {
+			continue
+		}
+		env = append(env, item)
+	}
+	return append(env, "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+}
+
+func trustedExecutable(name, root, scratch string) (string, error) {
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return "", err
+	}
+	path, err = filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	path = resolvePath(path)
+	if withinPath(path, root) || withinPath(path, scratch) {
+		return "", fmt.Errorf("bootstrap executable is reviewer-controlled")
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		return "", fmt.Errorf("bootstrap executable is not executable")
+	}
+	return path, nil
+}
+
+func failedCommand(ctx context.Context, message string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", "printf '%s\\n' \"$1\" >&2; exit 126", "ycc-sandbox", message)
+	cmd.Env = bootstrapEnvironment()
+	return cmd
+}
+
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+func withinPath(path, root string) bool {
+	if path == root {
+		return true
+	}
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func validatePaths(root, scratch, workingDir string) (string, string, string, error) {
+	resolvedRoot := resolvePath(root)
+	resolvedScratch := resolvePath(scratch)
+	resolvedDir := resolvePath(workingDir)
+	for label, path := range map[string]string{"root": resolvedRoot, "scratch": resolvedScratch, "working directory": resolvedDir} {
+		info, err := os.Stat(path)
+		if err != nil || !info.IsDir() {
+			return "", "", "", fmt.Errorf("%s is not an existing directory", label)
+		}
+	}
+	if overlapsRoot(resolvedScratch, resolvedRoot) {
+		return "", "", "", fmt.Errorf("scratch overlaps workspace")
+	}
+	if !withinPath(resolvedDir, resolvedScratch) && !withinPath(resolvedDir, resolvedRoot) {
+		return "", "", "", fmt.Errorf("working directory is outside workspace and scratch")
+	}
+	return resolvedRoot, resolvedScratch, resolvedDir, nil
+}
+
+// overlapsRoot reports whether dir equals, is inside, or contains root, with
+// symlinks resolved on both sides.
+func overlapsRoot(dir, root string) bool {
+	d := resolvePath(dir)
+	r := resolvePath(root)
+	if d == r {
+		return true
+	}
+	if rel, err := filepath.Rel(r, d); err == nil && rel != ".." && !hasDotDotPrefix(rel) {
+		return true
+	}
+	if rel, err := filepath.Rel(d, r); err == nil && rel != ".." && !hasDotDotPrefix(rel) {
+		return true
+	}
+	return false
+}
+
+func resolvePath(p string) string {
+	p = filepath.Clean(p)
+	cur := p
+	var suffix string
+	for {
+		if resolved, err := filepath.EvalSymlinks(cur); err == nil {
+			if suffix == "" {
+				return resolved
+			}
+			return filepath.Join(resolved, suffix)
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return p
+		}
+		suffix = filepath.Join(filepath.Base(cur), suffix)
+		cur = parent
 	}
 }
 
-// shellSingleQuote wraps s in single quotes for safe embedding in a `sh -c`
-// string, escaping any embedded single quotes. Used only for our own literal
-// error text, never for the caller's script.
-func shellSingleQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+func hasDotDotPrefix(rel string) bool {
+	return len(rel) >= 3 && rel[0] == '.' && rel[1] == '.' && rel[2] == filepath.Separator
 }
 
 func plainCommand(ctx context.Context, script string) *exec.Cmd {
@@ -122,11 +352,11 @@ func plainCommand(ctx context.Context, script string) *exec.Cmd {
 // non-zero). Otherwise it returns immediately and normal startup proceeds.
 //
 // cmd/ycc must call this at the very top of main(), before any CLI parsing, and
-// test binaries that exercise the Landlock path must call it from TestMain.
+// test binaries that exercise re-exec sandbox paths must call it from TestMain.
 func MaybeHelper() {
 	if len(os.Args) >= 2 && os.Args[1] == HelperArg {
-		// helperMain applies the policy for os.Args[2] (root) and execs the
-		// remaining args (os.Args[3:] == "sh" "-c" script). It never returns.
+		// helperMain applies the policy for os.Args[2:4] (root, scratch) and
+		// execs the remaining command arguments. It never returns.
 		helperMain(os.Args[2:])
 	}
 }

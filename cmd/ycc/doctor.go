@@ -353,23 +353,23 @@ func daemonCheck(addr, token string) check {
 	}
 }
 
-// sandboxCheck reports the reviewer bash confinement mechanism. Landlock/bwrap
-// are ✓; None degrades to prompt-only enforcement (⚠) with a platform-aware
-// remedy.
+// sandboxCheck reports whether reviewer Bash has byte-and-mode confinement.
+// Unsupported hosts fail reviewer shell execution closed; Read/Search remain
+// available, so this must never describe the fallback as prompt-only safety.
 func sandboxCheck() check {
 	switch sandbox.Available() {
-	case sandbox.Landlock:
-		return check{status: statusOK, label: "sandbox", detail: "reviewer bash confined via Landlock"}
 	case sandbox.Bwrap:
-		return check{status: statusOK, label: "sandbox", detail: "reviewer bash confined via bubblewrap (bwrap)"}
+		return check{status: statusOK, label: "sandbox", detail: "reviewer bash confined via bubblewrap (bwrap) with private PID/proc isolation"}
+	case sandbox.MountNS:
+		return check{status: statusOK, label: "sandbox", detail: "reviewer bash confined via unprivileged mount/PID namespaces"}
 	default:
 		c := check{
 			status: statusWarn,
 			label:  "sandbox",
-			detail: "no sandbox mechanism; reviewer bash confinement is prompt-only",
+			detail: "reviewer bash disabled; no secure byte-and-mode filesystem confinement is available (Read/Search remain available)",
 		}
 		if runtime.GOOS == "linux" {
-			c.remedy = "install bubblewrap (bwrap) or run a Landlock-capable kernel (>= 5.13)"
+			c.remedy = "install bubblewrap (bwrap) or enable unprivileged user, mount, and PID namespaces"
 		} else {
 			c.detail += " (not supported on " + runtime.GOOS + ")"
 		}

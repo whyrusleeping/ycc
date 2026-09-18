@@ -244,7 +244,8 @@ type reviewerHandle struct {
 	model              string // logical model backing this reviewer
 	spec               AgentSpec
 	loop               *engine.Loop
-	round              int // current review round, including the initial review
+	workspace          *tools.Workspace // carries the current trusted review snapshot into tools
+	round              int              // current review round, including the initial review
 	contextMode        string
 	priorContextTokens int
 	newContextTokens   int
@@ -1186,12 +1187,11 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 			if len(specs) == 0 {
 				specs = d.reviewerSpecs()
 			}
-			// Reviewer Bash is sandboxed read-only where the host supports it; warn
-			// once per spawn when it isn't so operators know reviewer non-mutation is
-			// only prompt-enforced on this platform.
+			// Reviewer Bash requires byte-and-mode confinement. Warn once per spawn
+			// when shell verification is disabled; non-shell inspection remains available.
 			if sandbox.Available() == sandbox.None {
 				d.Emitter.Emit(event.Narration, map[string]any{
-					"msg": "reviewer bash sandbox unavailable on this platform; reviewer non-mutation is prompt-enforced only",
+					"msg": "reviewer bash unavailable on this platform because secure filesystem confinement is unavailable; Read and Search remain available",
 				})
 			}
 			hasDiff := len(preloadedDiff.History) > 0
@@ -1201,8 +1201,10 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 			for _, spec := range specs {
 				reg := tools.New()
 				actor := "reviewer:" + spec.label()
-				reg.Add(tools.Reviewer(&tools.Workspace{Root: d.Workspace, Env: append([]string(nil), d.Env...),
-					Ownership: d.Ownership, MutationToken: d.mutationToken(actor)})...)
+				ws := &tools.Workspace{Root: d.Workspace, Env: append([]string(nil), d.Env...),
+					ReviewSnapshot: preloadedDiff.SnapshotID, ReviewTree: preloadedDiff.Tree,
+					Ownership: d.Ownership, MutationToken: d.mutationToken(actor)}
+				reg.Add(tools.Reviewer(ws)...)
 				loop := d.newLoop(spec, inspectSys(reviewerSystemFocused(spec.Focus), d.Workspace), reg, actor)
 				loop.ContextLengthHandled = true
 				if hasDiff {
@@ -1212,7 +1214,7 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 					emitSyntheticReviewDiff(d.Emitter, spec, actor, preloadedDiff)
 				}
 				loop.Seed(reviewerPrompt(t, spec.Focus, hasDiff) + "\n\n" + compactReviewDiffEvidence(preloadedDiff) + "\n\n" + implementationEvidence)
-				d.reviewers = append(d.reviewers, &reviewerHandle{name: spec.label(), model: spec.Name, spec: spec, loop: loop, round: 1, contextMode: "fresh", evidence: preloadedDiff})
+				d.reviewers = append(d.reviewers, &reviewerHandle{name: spec.label(), model: spec.Name, spec: spec, loop: loop, workspace: ws, round: 1, contextMode: "fresh", evidence: preloadedDiff})
 			}
 			handles := d.reviewers
 			d.reviewJob = nil // cleared for a foreground run; set below for background
@@ -1305,10 +1307,13 @@ func reReview(d *Deps) *gollama.Tool {
 					h.rolloverReason = "automatic_pressure"
 				}
 				if rollover {
-					h.loop = freshReviewerLoop(d, h.spec, t, h.handoff, currentDiff)
+					h.loop, h.workspace = freshReviewerLoop(d, h.spec, t, h.handoff, currentDiff)
 					h.newContextTokens = h.loop.ContextTokensEstimate()
 					h.contextMode = "fresh"
 				} else {
+					if h.workspace != nil {
+						h.workspace.SetReviewIdentity(currentDiff.SnapshotID, currentDiff.Tree)
+					}
 					deltaEvidence := changedSinceReviewEvidence(d.Repo, h.evidence, currentDiff)
 					h.loop.Post(reReviewPrompt + "\n\n" + deltaEvidence + "\n\n" + currentEvidence)
 					h.contextMode = "retain"
@@ -1386,12 +1391,14 @@ func freshReviewerHandoff(d *Deps, handoff string) string {
 	return handoff + "\n\n" + evidence
 }
 
-func freshReviewerLoop(d *Deps, spec AgentSpec, t *docs.Task, handoff string, preloadedDiff reviewDiffBuild) *engine.Loop {
+func freshReviewerLoop(d *Deps, spec AgentSpec, t *docs.Task, handoff string, preloadedDiff reviewDiffBuild) (*engine.Loop, *tools.Workspace) {
 	hasDiff := len(preloadedDiff.History) > 0
 	reg := tools.New()
 	actor := "reviewer:" + spec.label()
-	reg.Add(tools.Reviewer(&tools.Workspace{Root: d.Workspace, Env: append([]string(nil), d.Env...),
-		Ownership: d.Ownership, MutationToken: d.mutationToken(actor)})...)
+	ws := &tools.Workspace{Root: d.Workspace, Env: append([]string(nil), d.Env...),
+		ReviewSnapshot: preloadedDiff.SnapshotID, ReviewTree: preloadedDiff.Tree,
+		Ownership: d.Ownership, MutationToken: d.mutationToken(actor)}
+	reg.Add(tools.Reviewer(ws)...)
 	loop := d.newLoop(spec, inspectSys(reviewerSystemFocused(spec.Focus), d.Workspace), reg, actor)
 	loop.ContextLengthHandled = true
 	if hasDiff {
@@ -1399,7 +1406,7 @@ func freshReviewerLoop(d *Deps, spec AgentSpec, t *docs.Task, handoff string, pr
 		emitSyntheticReviewDiff(d.Emitter, spec, actor, preloadedDiff)
 	}
 	loop.Seed(freshReReviewPrompt(t, spec.Focus, freshReviewerHandoff(d, handoff), hasDiff) + "\n\n" + compactReviewDiffEvidence(preloadedDiff))
-	return loop
+	return loop, ws
 }
 
 func askUser(d *Deps) *gollama.Tool {
@@ -1552,7 +1559,7 @@ func runReviewers(ctx context.Context, d *Deps, handles []*reviewerHandle, taskI
 						err = fmt.Errorf("refresh scoped review evidence: %w", currentDiff.Err)
 					} else {
 						oldTokens := h.loop.ContextTokensEstimate()
-						h.loop = freshReviewerLoop(d, h.spec, t, h.handoff, currentDiff)
+						h.loop, h.workspace = freshReviewerLoop(d, h.spec, t, h.handoff, currentDiff)
 						h.priorContextTokens = oldTokens
 						h.newContextTokens = h.loop.ContextTokensEstimate()
 						h.rolloverReason = "context_error_recovery"
@@ -1577,9 +1584,18 @@ func runReviewers(ctx context.Context, d *Deps, handles []*reviewerHandle, taskI
 			}
 			h.contextMode = mode
 			contextTokens := h.loop.ContextTokensEstimate()
+			verification := make([]string, 0, len(rv.Verification))
+			for _, item := range rv.Verification {
+				label := item.Classification
+				if item.ReceiptID != "" {
+					label += " [receipt " + item.ReceiptID + "]"
+				}
+				verification = append(verification, label+": "+item.Evidence)
+			}
 			reviewData := map[string]any{
 				"task": taskID, "model": h.name, "logical_model": h.model,
 				"verdict": rv.Verdict, "summary": rv.Summary, "findings": len(rv.Findings),
+				"snapshot_id": rv.SnapshotID, "verification": verification,
 				"context_mode": mode, "round": h.round, "context_tokens_est": contextTokens,
 			}
 			addRolloverFields(reviewData, h.rolloverReason, h.priorContextTokens, h.newContextTokens)
@@ -1713,10 +1729,18 @@ type finding struct {
 	Message  string `json:"message"`
 }
 
+type reviewVerification struct {
+	Classification string `json:"classification"`
+	Evidence       string `json:"evidence"`
+	ReceiptID      string `json:"receipt_id,omitempty"`
+}
+
 type review struct {
-	Verdict  string    `json:"verdict"`
-	Summary  string    `json:"summary"`
-	Findings []finding `json:"findings"`
+	Verdict      string               `json:"verdict"`
+	Summary      string               `json:"summary"`
+	Findings     []finding            `json:"findings"`
+	SnapshotID   string               `json:"snapshot_id"`
+	Verification []reviewVerification `json:"verification"`
 }
 
 type reviewResult struct {
@@ -1759,6 +1783,21 @@ func aggregateReviews(results []reviewResult) string {
 	fmt.Fprintf(&b, "REVIEW SUMMARY: %d/%d reviewers accept\n\n", accepts, len(results))
 	for _, r := range results {
 		fmt.Fprintf(&b, "--- %s: %s ---\n%s\n", r.label(), r.rv.Verdict, r.rv.Summary)
+		snapshot := r.rv.SnapshotID
+		if snapshot == "" {
+			snapshot = "unavailable"
+		}
+		fmt.Fprintf(&b, "  assigned review snapshot: %s\n", snapshot)
+		if len(r.rv.Verification) == 0 {
+			fmt.Fprintln(&b, "  verification: unavailable — no provenance reported")
+		}
+		for _, v := range r.rv.Verification {
+			receipt := ""
+			if v.ReceiptID != "" {
+				receipt = " [receipt " + v.ReceiptID + "]"
+			}
+			fmt.Fprintf(&b, "  verification: %s%s — %s\n", v.Classification, receipt, v.Evidence)
+		}
 		for _, f := range r.rv.Findings {
 			fmt.Fprintf(&b, "  - [%s] %s\n", f.Severity, f.Message)
 		}
@@ -1804,6 +1843,18 @@ func aggregateReviewsView(results []reviewResult) *tools.ResultView {
 		node := tools.ViewNode{Label: r.label(), Detail: r.rv.Verdict, Kind: kind}
 		if s := strings.TrimSpace(r.rv.Summary); s != "" {
 			node.Children = append(node.Children, tools.ViewNode{Label: oneLine(s), Kind: "muted"})
+		}
+		snapshot := r.rv.SnapshotID
+		if snapshot == "" {
+			snapshot = "unavailable"
+		}
+		node.Children = append(node.Children, tools.ViewNode{Label: "assigned review snapshot", Detail: snapshot, Kind: "muted"})
+		for _, verification := range r.rv.Verification {
+			detail := verification.Classification
+			if verification.ReceiptID != "" {
+				detail += " · " + verification.ReceiptID
+			}
+			node.Children = append(node.Children, tools.ViewNode{Label: oneLine(verification.Evidence), Detail: detail, Kind: "muted"})
 		}
 		for _, f := range r.rv.Findings {
 			fk := "muted"

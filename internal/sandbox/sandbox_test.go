@@ -42,9 +42,18 @@ func workspace(t *testing.T) (root, scratch string) {
 // TMPDIR set by workspace) to the sandbox helper.
 func run(t *testing.T, root, script string) ([]byte, error) {
 	t.Helper()
-	cmd, _ := Command(context.Background(), root, script)
+	scratch, err := os.MkdirTemp(filepath.Dir(root), "command-scratch-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(scratch)
+	return runWithScratch(t, root, scratch, script)
+}
+
+func runWithScratch(t *testing.T, root, scratch, script string) ([]byte, error) {
+	t.Helper()
+	cmd, _ := Command(context.Background(), root, scratch, root, "-", script, os.Environ())
 	cmd.Dir = root
-	cmd.Env = os.Environ()
 	return cmd.CombinedOutput()
 }
 
@@ -128,17 +137,27 @@ func TestSandboxAllowsGitDiff(t *testing.T) {
 	}
 }
 
-func TestSandboxAllowsTempWrite(t *testing.T) {
+func TestSandboxAllowsOnlyPrivateScratchWrite(t *testing.T) {
 	skipUnlessSandboxed(t)
 	root, scratch := workspace(t)
-	// A scratch file under os.TempDir() (== scratch here, on the write allowlist
-	// and outside the workspace) must be writable.
-	target := filepath.Join(scratch, "out.txt")
-	if out, err := run(t, root, "echo hi > "+target); err != nil {
-		t.Fatalf("write to temp file failed: %v (%s)", err, out)
+	private := filepath.Join(scratch, "private")
+	if err := os.Mkdir(private, 0o700); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(target); err != nil {
-		t.Fatalf("temp file not created: %v", err)
+	target := filepath.Join(private, "quota", "out.txt")
+	if out, err := runWithScratch(t, root, private, "echo hi > "+target+" && grep -q hi "+target); err != nil {
+		t.Fatalf("write to private scratch failed: %v (%s)", err, out)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("ephemeral private scratch unexpectedly survived: %v", err)
+	}
+
+	unrelated := filepath.Join(scratch, "unrelated.txt")
+	if _, err := runWithScratch(t, root, private, "echo no > "+unrelated); err == nil {
+		t.Fatal("write outside private scratch unexpectedly succeeded")
+	}
+	if _, err := os.Stat(unrelated); !os.IsNotExist(err) {
+		t.Fatalf("file created outside private scratch: %v", err)
 	}
 }
 
@@ -155,7 +174,7 @@ func TestLandlockBlocksSymlinkIntoWorkspace(t *testing.T) {
 	if err := os.Symlink(filepath.Join(root, "escape.txt"), link); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := run(t, root, "echo pwned > "+link); err == nil {
+	if _, err := runWithScratch(t, root, scratch, "echo pwned > "+link); err == nil {
 		t.Fatalf("expected write through symlink into workspace to fail")
 	}
 	if _, err := os.Stat(filepath.Join(root, "escape.txt")); !os.IsNotExist(err) {

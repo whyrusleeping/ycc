@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/whyrusleeping/gollama"
 )
@@ -25,8 +26,8 @@ func ReadOnly(ws *Workspace) []*gollama.Tool {
 
 // ReadOnlyInspect returns Read and Search plus a sandboxed shell for
 // general-purpose inspection agents. Unlike Inspect, shell commands cannot
-// mutate the workspace on hosts with a supported sandbox; unsupported hosts
-// visibly degrade to prompt-only read-only enforcement at the orchestrator boundary.
+// mutate the workspace; on hosts without byte-and-mode confinement the shell
+// fails closed while Read and Search remain available.
 func ReadOnlyInspect(ws *Workspace) []*gollama.Tool {
 	return []*gollama.Tool{readFile(ws), search(ws), sandboxedBash(ws), toolOutput(ws)}
 }
@@ -34,21 +35,54 @@ func ReadOnlyInspect(ws *Workspace) []*gollama.Tool {
 // Reviewer returns the tool set for a review subagent: Read, Search, a sandboxed
 // Bash (see internal/sandbox), and submit_review, a control tool that
 // ends the review with a structured verdict. Reviewers must not modify the change
-// under review: on supported hosts the sandboxed Bash mounts the workspace
-// read-only so mutation is hard-enforced; where no sandbox mechanism is available
-// it degrades to prompt-only enforcement (the orchestrator warns once per spawn).
+// under review: the sandboxed Bash mounts the workspace read-only so mutation is
+// hard-enforced, and fails closed where no qualifying mechanism is available.
 func Reviewer(ws *Workspace) []*gollama.Tool {
-	return []*gollama.Tool{readFile(ws), search(ws), sandboxedBash(ws), toolOutput(ws), submitReview()}
+	return []*gollama.Tool{readFile(ws), search(ws), sandboxedBash(ws), toolOutput(ws), submitReview(ws)}
 }
 
 // submitReview is a control tool. It serializes the reviewer's structured verdict
-// (verdict + summary + findings) into Control.Report as JSON for the coordinator
-// to parse, and stops the review loop.
-func submitReview() *gollama.Tool {
+// and verification provenance into Control.Report as JSON for the coordinator to
+// parse, and stops the review loop. The trusted snapshot identifier and execution
+// details come from the reviewer workspace rather than model-supplied arguments.
+func bindReviewVerification(ws *Workspace, snapshot, tree string, value any) any {
+	items, ok := value.([]any)
+	if !ok {
+		return value
+	}
+	for _, item := range items {
+		entry, ok := item.(map[string]any)
+		if !ok || entry["classification"] != "independently_rebuilt_and_executed" {
+			continue
+		}
+		id, _ := entry["receipt_id"].(string)
+		receipt, found := ws.reviewExecution(id, snapshot, tree)
+		if !found {
+			entry["classification"] = "unavailable"
+			entry["evidence"] = "no matching source-bound execution receipt exists for the assigned snapshot; claimed evidence: " + fmt.Sprint(entry["evidence"])
+			delete(entry, "receipt_id")
+			continue
+		}
+		// Replace free-form evidence with the trusted command receipt. This keeps a
+		// stale or unbound binary claim from borrowing an unrelated successful run;
+		// the coordinator sees exactly what command actually ran and how it exited.
+		entry["receipt_id"] = receipt.ID
+		entry["evidence"] = fmt.Sprintf("source-bound command %q on Git tree %s: %s", receipt.Command, receipt.Tree, receipt.Result)
+	}
+	return items
+}
+
+func submitReview(workspaces ...*Workspace) *gollama.Tool {
+	ws := &Workspace{}
+	if len(workspaces) > 0 && workspaces[0] != nil {
+		ws = workspaces[0]
+	}
 	return &gollama.Tool{
 		Name: "submit_review",
 		Description: "Submit your review verdict for the change. Call exactly once when done. " +
-			"verdict is 'accept' if the change satisfies the task and is correct, or 'revise' if it needs work.",
+			"verdict is 'accept' if the change satisfies the task and is correct, or 'revise' if it needs work. " +
+			"Classify verification truthfully: independently_rebuilt_and_executed requires the receipt_id returned by that exact source-bound Bash command (nonzero test results still count as executed); " +
+			"inspected_prior_evidence is for logs/reports you only read; unavailable is for a desired check that could not execute.",
 		Params: obj(map[string]any{
 			"verdict": map[string]any{"type": "string", "enum": []string{"accept", "revise"}, "description": "accept or revise"},
 			"summary": strProp("one-paragraph overall assessment"),
@@ -64,9 +98,39 @@ func submitReview() *gollama.Tool {
 					"required": []string{"severity", "message"},
 				},
 			},
+			"verification": map[string]any{
+				"type":        "array",
+				"description": "checks/evidence considered, each with truthful provenance and result or unavailability reason",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"classification": map[string]any{"type": "string", "enum": []string{"independently_rebuilt_and_executed", "inspected_prior_evidence", "unavailable"}},
+						"evidence":       map[string]any{"type": "string", "description": "command and result, inspected artifact, or reason unavailable"},
+						"receipt_id":     map[string]any{"type": "string", "description": "source-bound Bash receipt for independently executed evidence"},
+					},
+					"required": []string{"classification", "evidence"},
+				},
+			},
 		}, "verdict", "summary"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
-			raw, err := json.Marshal(params)
+			report, ok := params.(map[string]any)
+			if !ok {
+				return errResult("submit_review: invalid arguments"), nil
+			}
+			copy := make(map[string]any, len(report)+1)
+			for key, value := range report {
+				copy[key] = value
+			}
+			if _, ok := copy["verification"]; !ok {
+				copy["verification"] = []map[string]any{{
+					"classification": "unavailable",
+					"evidence":       "reviewer did not report verification provenance",
+				}}
+			}
+			snapshot, tree := ws.reviewIdentity()
+			copy["verification"] = bindReviewVerification(ws, snapshot, tree, copy["verification"])
+			copy["snapshot_id"] = snapshot
+			raw, err := json.Marshal(copy)
 			if err != nil {
 				return errResult("submit_review: %v", err), nil
 			}

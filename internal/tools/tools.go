@@ -300,6 +300,11 @@ type Workspace struct {
 	// Env contains extra KEY=VALUE entries appended to the inherited environment
 	// for foreground and background Bash commands.
 	Env []string
+	// ReviewSnapshot and ReviewTree identify the immutable changeset assigned to a
+	// read-only reviewer. Reviewer Bash exposes them to commands and review reports
+	// so independently executed checks cannot be confused with prior evidence.
+	ReviewSnapshot string
+	ReviewTree     string
 	// WriteRoots are absolute, trusted roots OUTSIDE the workspace that Write
 	// and Edit may also target (e.g. a sibling project the user wants the agent
 	// to modify). Configured via write_roots in ycc.toml. Containment against
@@ -327,6 +332,53 @@ type Workspace struct {
 	// initialized lazily and remains scoped to this Workspace/agent.
 	Artifacts  *ArtifactStore
 	artifactMu sync.Mutex
+
+	reviewMu       sync.Mutex
+	reviewReceipts map[string]reviewExecutionReceipt
+}
+
+type reviewExecutionReceipt struct {
+	ID       string
+	Snapshot string
+	Tree     string
+	Command  string
+	Result   string
+}
+
+// SetReviewIdentity atomically advances the trusted snapshot assigned to a reviewer.
+func (w *Workspace) SetReviewIdentity(snapshot, tree string) {
+	w.reviewMu.Lock()
+	defer w.reviewMu.Unlock()
+	w.ReviewSnapshot = snapshot
+	w.ReviewTree = tree
+}
+
+func (w *Workspace) reviewIdentity() (string, string) {
+	w.reviewMu.Lock()
+	defer w.reviewMu.Unlock()
+	return w.ReviewSnapshot, w.ReviewTree
+}
+
+func (w *Workspace) recordReviewExecution(receipt reviewExecutionReceipt) {
+	if receipt.ID == "" || receipt.Snapshot == "" || receipt.Tree == "" {
+		return
+	}
+	w.reviewMu.Lock()
+	defer w.reviewMu.Unlock()
+	if w.reviewReceipts == nil {
+		w.reviewReceipts = make(map[string]reviewExecutionReceipt)
+	}
+	w.reviewReceipts[receipt.ID] = receipt
+}
+
+func (w *Workspace) reviewExecution(id, snapshot, tree string) (reviewExecutionReceipt, bool) {
+	w.reviewMu.Lock()
+	defer w.reviewMu.Unlock()
+	receipt, ok := w.reviewReceipts[id]
+	if !ok || receipt.Snapshot != snapshot || receipt.Tree != tree {
+		return reviewExecutionReceipt{}, false
+	}
+	return receipt, true
 }
 
 func (w *Workspace) artifactStore() *ArtifactStore {

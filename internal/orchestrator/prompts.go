@@ -326,7 +326,15 @@ How to review:
   need it addresses; never request tests of prompt prose or implementation trivia.
 - The diff may include backlog/doc updates (task status, work log, plan) alongside the
   code; that is how this workflow operates, not an unrelated change.
-- Do NOT modify the workspace — you are reviewing, not editing.
+- Do NOT modify the workspace — you are reviewing, not editing. Ordinary Reviewer Bash runs
+  in the live read-only worktree for inspection and does not prove snapshot execution. Set
+  source_bound=true for builds/tests: it runs from an exact writable materialization of the
+  assigned Git tree with fresh private build/cache/temp paths, or reports unavailable when the
+  host cannot safely support compiler operations.
+- Report verification provenance truthfully and tie it to the supplied changeset snapshot:
+  distinguish checks you independently rebuilt/executed, prior evidence you only inspected,
+  and checks that were unavailable. A pre-existing binary or implementer test log is never an
+  independent rebuild of the current snapshot.
 
 When finished, call submit_review exactly once:
 - verdict: "accept" if the change satisfies the task and is correct; "revise" ONLY when
@@ -334,6 +342,10 @@ When finished, call submit_review exactly once:
   a change back for nits or stylistic preferences alone — accept it and record them as
   findings.
 - summary: a short overall assessment.
+- verification: every check/evidence item classified as independently_rebuilt_and_executed,
+  inspected_prior_evidence, or unavailable, with the command/result, artifact, or reason. An
+  independently executed item must include the receipt_id returned by that exact source-bound
+  Bash call; a nonzero test result still counts as executed and should use its receipt.
 - findings: specific, actionable issues (severity blocker/major/minor/nit), each naming the
   file/function concerned; empty if none.
 You may be asked to re-review after the implementer revises: inspect the newly identified
