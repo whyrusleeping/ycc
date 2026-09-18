@@ -94,7 +94,7 @@ Projects with normative design documents beyond `spec.md` declare them in the co
 
 ```toml
 spec_path = "spec.md"
-doc_globs = ["docs/design/*.md"]
+doc_globs = ["docs/*.md", "docs/design/*.md"]
 ```
 
 Keep runtime state ignored while making that one file committable with `.gitignore` rules such
@@ -155,8 +155,40 @@ automatically.
 | `EXA_API_KEY`       | the `web_search` / `fetch_page` tools (Exa) |
 | `YCC_TOKEN`         | bearer token for `--addr` / `ycc daemon` auth |
 
-## Tests
+## Contributor checks
+
+CI uses Go 1.26.8 on Linux and Xcode 16.4 on macOS. Run the corresponding local checks before
+submitting a change (the Swift checks require macOS):
 
 ```sh
-go test ./...
+# Go formatting, static checks, uncached tests, PTY TUI tests, race detector, and docs drift.
+test -z "$(git ls-files '*.go' | xargs gofmt -l)"
+go vet ./...
+go test -count=1 ./...
+go test -count=1 -v ./internal/e2e   # every TestE2E test must PASS, not SKIP
+go test -race -count=1 ./...
+go run ./cmd/ycc spec-check
+
+# Vulnerability scan (the Go patch version is part of the result).
+go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+govulncheck ./...
+
+# Protobuf reproducibility; the remote Swift plugins are pinned in buf.gen.swift.yaml.
+go install github.com/bufbuild/buf/cmd/buf@v1.71.0
+go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+go install connectrpc.com/connect/cmd/protoc-gen-connect-go@v1.20.0
+buf generate
+buf generate --template buf.gen.swift.yaml
+git diff --exit-code -- proto/ycc/v1 clients/ios/YccKit/Sources/YccProto
+test -z "$(git status --porcelain -- proto/ycc/v1 clients/ios/YccKit/Sources/YccProto)"
+
+# Swift package tests and generated app build (XcodeGen 2.44.1).
+swift test --package-path clients/ios/YccKit
+(cd clients/ios && xcodegen generate)
+xcodebuild -project clients/ios/Ycc.xcodeproj -scheme Ycc \
+  -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
 ```
+
+The test harnesses use local stubs and temporary credentials; these checks do not need provider
+API keys. Install the exact Buf, generator, govulncheck, and XcodeGen versions shown above to match
+CI.

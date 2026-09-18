@@ -85,7 +85,10 @@ func (m *Manager) runGitSyncPoller() {
 // refreshProjectGitRefs fetches each registered checkout serially and records
 // success/failure independently. Non-repositories are intentionally invisible.
 func (m *Manager) refreshProjectGitRefs() {
-	for _, p := range m.projects.List() {
+	m.gitSyncMu.RLock()
+	projects := m.projects
+	m.gitSyncMu.RUnlock()
+	for _, p := range projects.List() {
 		if !isGitWorkspace(p.Path) {
 			continue
 		}

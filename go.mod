@@ -18,7 +18,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.0.1
 	github.com/urfave/cli/v3 v3.10.1
 	github.com/whyrusleeping/gollama v0.0.0-20260904030004-b9fcec4f9c09
-	golang.org/x/image v0.25.0
+	golang.org/x/image v0.45.0
 	golang.org/x/net v0.56.0
 	golang.org/x/sys v0.47.0
 	google.golang.org/protobuf v1.36.11
@@ -71,11 +71,11 @@ require (
 	github.com/ugorji/go/codec v1.2.7 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	github.com/yuin/goldmark v1.7.13 // indirect
+	github.com/yuin/goldmark v1.7.17 // indirect
 	github.com/yuin/goldmark-emoji v1.0.6 // indirect
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/text v0.38.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	modernc.org/libc v1.75.6 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

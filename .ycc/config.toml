@@ -1,2 +1,2 @@
 spec_path = "spec.md"
-doc_globs = ["docs/design/*.md"]
+doc_globs = ["docs/*.md", "docs/design/*.md"]

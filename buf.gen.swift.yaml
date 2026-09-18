@@ -2,12 +2,12 @@ version: v2
 clean: true
 plugins:
   # swift-protobuf: message types
-  - remote: buf.build/apple/swift
+  - remote: buf.build/apple/swift:v1.38.1
     out: clients/ios/YccKit/Sources/YccProto
     opt:
       - Visibility=Public
   # connect-swift: SessionService client (async/await interface)
-  - remote: buf.build/connectrpc/swift
+  - remote: buf.build/connectrpc/swift:v1.2.3
     out: clients/ios/YccKit/Sources/YccProto
     opt:
       - Visibility=Public

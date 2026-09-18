@@ -883,6 +883,7 @@ func TestFailedOrCancelledIdleRolloverPreservesConcurrentInputForReopen(t *testi
 			go s.run()
 			waitStatus(t, s, event.StatusIdle)
 			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 			done := make(chan error, 1)
 			go func() { done <- s.Rollover(ctx) }()
 			<-started

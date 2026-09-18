@@ -520,14 +520,18 @@ func TestWorkstreamLateDirtyBaseRestoresReadyProjection(t *testing.T) {
 
 func TestRetryIntegrationNeedsAttentionTransitionsReadyAndEmits(t *testing.T) {
 	m, _ := newWorkstreamManager(t)
+	t.Cleanup(m.ReclaimAll)
 	m.reg = testRegistryWithIntegrationConfig(config.Integration{Mode: "gate"})
-	ws, s, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
-	if err != nil {
-		t.Fatal(err)
+	s := newStopSession(t)
+	m.mu.Lock()
+	m.sessions[s.ID] = s
+	m.mu.Unlock()
+	ws := workstream.Workstream{
+		ID: "ws_retry_attention", Project: "demo", SessionID: s.ID,
+		Status: workstream.StatusNeedsAttention, StatusReason: "verification failed",
 	}
-	changed, err := m.workstreams.Transition(ws.ID, workstream.StatusNeedsAttention, "verification failed", workstream.StatusActive)
-	if err != nil || !changed {
-		t.Fatalf("set needs_attention: changed=%v err=%v", changed, err)
+	if err := m.workstreams.Add(ws); err != nil {
+		t.Fatal(err)
 	}
 
 	got, err := m.RetryIntegration(ws.ID)

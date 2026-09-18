@@ -26,7 +26,7 @@ scripted LLM stub  ──HTTP (OpenAI /chat/completions)──▶  ycc daemon (i
                           └── screenshot() ──▶  snapshot.RenderScreen ──▶  PNG (optional)
 ```
 
-1. **Scripted LLM stub** (`llmstub_test.go`). An `httptest` server implementing
+1. **Scripted LLM stub** (`internal/e2e/llmstub_test.go`). An `httptest` server implementing
    `POST /chat/completions`. It is programmed with an ordered list of `scriptedTurn`s (each is
    assistant text and/or `tool_calls`) and honors both request modes: `stream:true` requests
    get `chat.completion.chunk` SSE; others get a plain `chat.completion` JSON body. When the
@@ -34,7 +34,7 @@ scripted LLM stub  ──HTTP (OpenAI /chat/completions)──▶  ycc daemon (i
    can't crash the run. Incoming request bodies are recorded for optional assertions
    (`stub.requestCount()`).
 
-2. **PTY driver** (`harness_test.go`). `TestMain` runs `go build ./cmd/ycc` once. `launch`
+2. **PTY driver** (`internal/e2e/harness_test.go`). `TestMain` runs `go build ./cmd/ycc` once. `launch`
    creates a temp workspace (git repo, `spec.md`, `backlog/`, a seeded file, and a workspace
    `ycc.toml` pointing at the stub), then spawns the binary with `creack/pty`. The environment
    is isolated (`HOME`/`XDG_CONFIG_HOME`/`XDG_CACHE_HOME` under a temp dir, `TERM=

@@ -1866,7 +1866,13 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 
 // SetProjects replaces the manager's project registry. Daemon construction is
 // responsible for registering its startup workspace in the replacement registry.
-func (m *Manager) SetProjects(p *project.Registry) { m.projects = p }
+func (m *Manager) SetProjects(p *project.Registry) {
+	// NewManager starts the git poller before daemon construction replaces the
+	// default registry, so synchronize the pointer handoff with that reader.
+	m.gitSyncMu.Lock()
+	m.projects = p
+	m.gitSyncMu.Unlock()
+}
 
 // SetNotifier installs the daemon-side push notifier. A nil notifier
 // (the default / unconfigured case) disables notifications; every session watcher

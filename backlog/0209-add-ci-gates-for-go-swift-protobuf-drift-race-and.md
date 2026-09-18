@@ -1,24 +1,27 @@
 ---
 id: "0209"
 title: Add CI gates for Go, Swift, protobuf drift, race, and spec checks
-status: proposed
+status: done
 priority: 2
 created: "2026-07-15"
-updated: "2026-08-08"
+updated: "2026-09-18"
 depends_on:
     - "0205"
     - "0206"
+    - "0301"
 spec_refs:
     - Build plan / milestones
     - Client UI (TUI)#Snapshot rendering for debugging (dev/test aid)
 ---
 
 ## Description
+
 The repository has extensive Go tests, a real PTY E2E suite, a Swift package/app, and committed generated protobuf clients, but no checked-in CI workflows. Cross-platform failures, generated-code drift, races, and incomplete docs checks can therefore reach master unnoticed.
 
 Add practical CI workflows with deterministic tool versions/caches. This depends on fixing the known E2E race and making the full docs set spec-checkable so the new gates begin green rather than institutionalizing exceptions.
 
 ## Acceptance criteria
+
 - [ ] Go CI runs formatting/check policy, `go vet ./...`, uncached `go test ./...`, and `go test -race ./...` in a PTY-capable Linux environment.
 - [ ] The E2E TUI tests execute rather than silently skipping in the primary Linux job.
 - [ ] Swift CI runs `swift test` for `clients/ios/YccKit`; an appropriate macOS job also validates the generated Xcode project/app build when feasible.
@@ -28,4 +31,8 @@ Add practical CI workflows with deterministic tool versions/caches. This depends
 - [ ] Workflows never require real provider credentials and do not expose secrets to pull requests.
 - [ ] README contributor instructions list the local equivalents of every required gate.
 
-## Work log
+## Outcome
+
+Added read-only pinned CI jobs for Go format/vet/uncached tests, mandatory PTY E2E execution, race tests, vulnerability scanning, complete docs spec-check, protobuf drift, Swift tests and generated iOS simulator build; documented local equivalents. Fixed concrete dependency/vet/race failures exposed by gates. Independent review accepted. Isolated Linux checks, race suite, all four E2E tests, pinned protobuf regeneration, govulncheck, actionlint and diff checks passed; spec-check resolved 399 references across 14 docs. Swift/macOS commands validated statically only; execution awaits CI. Preserved unrelated worktree changes.
+
+Commit: Add pinned CI gates for Go, Swift, protobuf, and docs
