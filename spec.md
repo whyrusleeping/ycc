@@ -130,7 +130,11 @@ history, then appends to the same log. Multimodal bytes are never embedded in ev
 pictures are retained as bounded, owner-only files beside the session log for authenticated client
 display; events carry opaque
 attachment references plus metadata. Model replay remains text-only because the retained payloads
-are presentation data rather than reconstructed provider history.
+are presentation data rather than reconstructed provider history. Every image entering model
+history — user pictures and file-tool reads alike — is downscaled at ingestion to at most 2000
+pixels per side (`internal/imagefit`): providers apply that strict per-image cap once a request
+carries many images, and since images accumulate in history, one oversize screenshot would
+otherwise poison every later request in the session.
 
 A persisted session reported as running without a matching in-memory session is treated as
 stopped after daemon restart. Optional GC settings can reclaim idle in-memory sessions and old
@@ -699,7 +703,9 @@ replacing its projection with the canonical saved response. Detailed command usa
 Durable events render as a transcript with model/user turns prominent and tool, reasoning,
 review, and system detail foldable. Question plumbing is coalesced into one exchange. Scrolling
 away from the live edge disables follow and exposes a jump-to-latest action; new events must not
-move the reader's viewport.
+move the reader's viewport. In the iOS indexed transcript, explicitly loaded full row detail is
+retained for the open session across snapshots, paging, and repeated updates of the same row
+version; a changed version or deletion invalidates it rather than reusing stale text.
 
 ### 18.1 Session input
 

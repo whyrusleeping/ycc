@@ -18,6 +18,7 @@ import (
 
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/event"
+	"github.com/whyrusleeping/ycc/internal/imagefit"
 	"github.com/whyrusleeping/ycc/internal/session"
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 )
@@ -47,6 +48,31 @@ func TestValidateInputImages(t *testing.T) {
 	decoded, err := base64.StdEncoding.DecodeString(images[0].Base64)
 	if err != nil || !bytes.Equal(decoded, data) {
 		t.Fatal("base64 payload did not round-trip")
+	}
+}
+
+func TestValidateInputImagesDownscalesOversizeDimensions(t *testing.T) {
+	// A 3x Retina phone screenshot exceeds Anthropic's strict 2000px many-image
+	// cap; the daemon must shrink it at ingestion rather than let it poison
+	// every later request in the session.
+	var out bytes.Buffer
+	if err := png.Encode(&out, image.NewRGBA(image.Rect(0, 0, 1179, 2556))); err != nil {
+		t.Fatal(err)
+	}
+	images, err := validateInputImages([]*v1.ImageAttachment{{Data: out.Bytes(), MediaType: "image/png", Filename: "shot.png"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(images[0].Base64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(decoded))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Width > imagefit.MaxEdge || cfg.Height > imagefit.MaxEdge || cfg.Height != imagefit.MaxEdge {
+		t.Fatalf("fitted picture is %dx%d, want long edge %d", cfg.Width, cfg.Height, imagefit.MaxEdge)
 	}
 }
 

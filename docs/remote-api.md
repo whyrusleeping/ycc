@@ -554,6 +554,9 @@ Prod a running or idle session with a user message (queued and delivered at the 
 safe checkpoint under steer-by-default). `images` may carry up to four inline pictures
 (`data` is standard base64 in JSON), each at most 5 MiB before base64 expansion. Supported
 media types are JPEG, PNG, GIF, and WebP; the daemon verifies the bytes match `mediaType`.
+Pictures wider or taller than 2000 pixels are downscaled to fit before they reach the model
+(JPEG stays JPEG; other formats are re-encoded as PNG), so the retained attachment and its
+`media_type` reflect the fitted picture, not the upload.
 Picture bytes are passed to the model but are not written to the event log — `user_input`
 retains filename/media-type metadata and an opaque id for authenticated retrieval from the
 session's separate attachment store. Pictures cannot answer an open `ask_user` gate.

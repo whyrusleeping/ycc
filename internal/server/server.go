@@ -26,6 +26,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/docs"
 	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
+	"github.com/whyrusleeping/ycc/internal/imagefit"
 	"github.com/whyrusleeping/ycc/internal/orchestrator"
 	"github.com/whyrusleeping/ycc/internal/secrets"
 	"github.com/whyrusleeping/ycc/internal/session"
@@ -607,8 +608,14 @@ func validateInputImages(attachments []*v1.ImageAttachment) ([]engine.Image, err
 		if detected != declared {
 			return nil, fmt.Errorf("picture content is %s, not %s", detected, declared)
 		}
+		// Bound pixel dimensions so accumulated history never trips the
+		// provider's strict many-image cap (see imagefit).
+		fitted, err := imagefit.Fit(image.Data, declared, imagefit.MaxEdge)
+		if err != nil {
+			return nil, fmt.Errorf("picture %q could not be decoded: %w", image.Filename, err)
+		}
 		images = append(images, engine.Image{
-			Base64: base64.StdEncoding.EncodeToString(image.Data), MediaType: declared,
+			Base64: base64.StdEncoding.EncodeToString(fitted.Data), MediaType: fitted.MediaType,
 			Filename: filepath.Base(image.Filename),
 		})
 	}

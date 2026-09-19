@@ -25,6 +25,7 @@ import (
 
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/event"
+	"github.com/whyrusleeping/ycc/internal/imagefit"
 	"github.com/whyrusleeping/ycc/internal/jobs"
 	"github.com/whyrusleeping/ycc/internal/sandbox"
 	"github.com/whyrusleeping/ycc/internal/workspacelease"
@@ -206,20 +207,27 @@ func readMedia(ctx context.Context, f *os.File, info os.FileInfo, fp, sourceRevi
 	if len(data) == 0 {
 		return okResult("(file is empty)\n" + revisionNote), true
 	}
-	b64 := base64.StdEncoding.EncodeToString(data)
 	if isPDF {
 		return &gollama.ToolResult{
 			Content: fmt.Sprintf("Read PDF %s (%d bytes); its pages are attached as a document.\n%s", fp, len(data), revisionNote),
 			Documents: []gollama.Document{{
-				Base64:    b64,
+				Base64:    base64.StdEncoding.EncodeToString(data),
 				MediaType: "application/pdf",
 				Title:     filepath.Base(f.Name()),
 			}},
 		}, true
 	}
+	// Bound pixel dimensions so accumulated history never trips the provider's
+	// strict many-image cap (see imagefit). Undecodable files pass through
+	// unchanged; the provider reports what it makes of them.
+	sizeNote := ""
+	if fitted, err := imagefit.Fit(data, mediaType, imagefit.MaxEdge); err == nil && fitted.Resized {
+		sizeNote = fmt.Sprintf(", downscaled to %dx%d for the model", fitted.Width, fitted.Height)
+		data, mediaType = fitted.Data, fitted.MediaType
+	}
 	return &gollama.ToolResult{
-		Content: fmt.Sprintf("Read image %s (%d bytes, %s); it is attached.\n%s", fp, len(data), mediaType, revisionNote),
-		Images:  []string{b64},
+		Content: fmt.Sprintf("Read image %s (%d bytes, %s%s); it is attached.\n%s", fp, len(data), mediaType, sizeNote, revisionNote),
+		Images:  []string{base64.StdEncoding.EncodeToString(data)},
 	}, true
 }
 
