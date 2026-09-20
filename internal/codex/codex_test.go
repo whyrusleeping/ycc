@@ -581,3 +581,77 @@ func TestParseStreamFallsBackToItemText(t *testing.T) {
 		t.Errorf("content = %q", resp.Choices[0].Message.Content)
 	}
 }
+
+// The engine passes a per-loop prompt-cache routing key through ExtraBody; the
+// codex request forwards it as prompt_cache_key and omits the field otherwise
+// (the backend rejects some unknown/empty parameters, cf. max_output_tokens).
+func TestBuildRequestPromptCacheKey(t *testing.T) {
+	base := gollama.RequestOptions{Model: "gpt-5.3-codex", Messages: []gollama.Message{{Role: "user", Content: "hi"}}}
+
+	without, err := json.Marshal(buildRequest(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(without), "prompt_cache_key") {
+		t.Fatalf("prompt_cache_key must be omitted when unset: %s", without)
+	}
+
+	keyed := base
+	keyed.ExtraBody = map[string]any{PromptCacheKeyField: "s_abc/agent_4"}
+	var body map[string]any
+	raw, err := json.Marshal(buildRequest(keyed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	if got := body["prompt_cache_key"]; got != "s_abc/agent_4" {
+		t.Fatalf("prompt_cache_key = %v, want s_abc/agent_4", got)
+	}
+}
+
+// The key rides the wire on a live-shaped turn, not just through buildRequest.
+func TestTurnStreamSendsPromptCacheKey(t *testing.T) {
+	var gotReq map[string]any
+	var gotHdr http.Header
+	srv := codexStub(t, &gotReq, &gotHdr)
+	defer srv.Close()
+
+	c := New(srv.URL, testTokens("tok-1", "acct-1"))
+	_, err := c.TurnCtx(context.Background(), gollama.RequestOptions{
+		Model:     "gpt-5.3-codex",
+		Messages:  []gollama.Message{{Role: "user", Content: "hi"}},
+		ExtraBody: map[string]any{PromptCacheKeyField: "s_abc/coordinator"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := gotReq["prompt_cache_key"]; got != "s_abc/coordinator" {
+		t.Fatalf("wire prompt_cache_key = %v", got)
+	}
+	if got := gotHdr.Get("session-id"); got != "s_abc/coordinator" {
+		t.Fatalf("session-id header = %q, want the cache key", got)
+	}
+}
+
+// Without a key neither the body field nor the affinity header is sent.
+func TestTurnStreamNoPromptCacheKeyByDefault(t *testing.T) {
+	var gotReq map[string]any
+	var gotHdr http.Header
+	srv := codexStub(t, &gotReq, &gotHdr)
+	defer srv.Close()
+
+	c := New(srv.URL, testTokens("tok-1", "acct-1"))
+	if _, err := c.TurnCtx(context.Background(), gollama.RequestOptions{
+		Model: "gpt-5.3-codex", Messages: []gollama.Message{{Role: "user", Content: "hi"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := gotReq["prompt_cache_key"]; present {
+		t.Fatalf("prompt_cache_key sent without a key: %v", gotReq["prompt_cache_key"])
+	}
+	if got := gotHdr.Get("session-id"); got != "" {
+		t.Fatalf("session-id header sent without a key: %q", got)
+	}
+}

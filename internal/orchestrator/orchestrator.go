@@ -127,6 +127,10 @@ type Deps struct {
 	MaxTurns     int // per-Run tool-call turn cap; 0 => engine default backstop
 	// Retry is the subagent retry policy; zero uses the engine default.
 	Retry engine.RetryPolicy
+	// PromptCacheScope prefixes each subagent loop's prompt-cache routing key
+	// ("<scope>/<actor>", see engine.Loop.PromptCacheKey); normally the session
+	// id. Empty lets every loop derive its own random key.
+	PromptCacheScope string
 	// ReviewTier resolves a tier name to reviewer agents or coordinator self-review.
 	// When nil, spawn_reviewers uses the configured reviewer fan-out.
 	ReviewTier func(name string) ReviewPlan
@@ -331,7 +335,12 @@ func CoordinatorTools(d *Deps, ws *tools.Workspace, direct bool) *tools.Registry
 }
 
 func (d *Deps) newLoop(spec AgentSpec, system string, reg *tools.Registry, actor string) *engine.Loop {
+	cacheKey := ""
+	if d.PromptCacheScope != "" {
+		cacheKey = d.PromptCacheScope + "/" + actor
+	}
 	return &engine.Loop{
+		PromptCacheKey:  cacheKey,
 		Client:          spec.NewClient(),
 		Model:           spec.Model,
 		ModelName:       spec.Name,

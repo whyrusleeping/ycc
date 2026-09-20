@@ -5,6 +5,8 @@ package engine
 
 import (
 	"context"
+	crand "crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -146,6 +148,17 @@ type Loop struct {
 	// MaxAttempts: 1 to disable retries explicitly.
 	Retry RetryPolicy
 
+	// PromptCacheKey stabilizes provider-side prompt-cache routing for this
+	// loop. OpenAI routes a request to a cache shard by hashing the prompt's
+	// initial prefix; a coordinator and its concurrent subagents share that
+	// prefix (near-identical instructions), so without a per-loop key their
+	// requests spill across shards and long contexts are re-billed uncached. The
+	// key is sent as `prompt_cache_key` on the openai backend only (Codex
+	// Responses and platform API); other backends ignore it. Owners should set
+	// a stable identity such as "<session>/<actor>"; empty derives a random key
+	// once per loop so every loop still routes consistently.
+	PromptCacheKey string
+
 	// retrySleep and retryRand are test seams for the retry backoff. retrySleep
 	// waits for the given delay or ctx cancellation, reporting false when the
 	// ctx won (the retry loop then stops). Nil ⇒ real timer / seeded rand.
@@ -163,6 +176,31 @@ type Loop struct {
 	// thinking/effort setting. It resets on SetBackend and
 	// SetThinking so a backend or level change may warn once more. Guarded by mu.
 	thinkingWarned bool
+	// promptCacheKey is the derived random fallback when PromptCacheKey is
+	// empty; generated once so the loop's requests keep routing together.
+	promptCacheKey string
+}
+
+// promptCacheKeyFor returns the prompt-cache routing key to send for a request
+// to backend, or "" when the backend has no such knob. Guarded by mu.
+func (l *Loop) promptCacheKeyFor(backend string) string {
+	if backend != "openai" {
+		return ""
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.PromptCacheKey != "" {
+		return l.PromptCacheKey
+	}
+	if l.promptCacheKey == "" {
+		var b [12]byte
+		if _, err := crand.Read(b[:]); err == nil {
+			l.promptCacheKey = "ycc-" + hex.EncodeToString(b[:])
+		} else {
+			l.promptCacheKey = fmt.Sprintf("ycc-%d-%d", time.Now().UnixNano(), rand.Int63())
+		}
+	}
+	return l.promptCacheKey
 }
 
 // steerCheckpoint consults the Steer hook (if any). It blocks while a pause is
@@ -909,6 +947,10 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		if l.MaxTok > 0 {
 			opts.Options = &gollama.Options{MaxTokens: l.MaxTok}
 		}
+		cacheKey := l.promptCacheKeyFor(ident.Backend)
+		if cacheKey != "" {
+			opts.ExtraBody = map[string]any{"prompt_cache_key": cacheKey}
+		}
 		requestEstimate := l.contextEstimateForOptions(opts, client, ident)
 
 		// This is the final continuation barrier before entering a backend API. The
@@ -1069,6 +1111,9 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		}
 		if measuredInput > 0 {
 			turnData["input_tokens_measured"] = measuredInput
+		}
+		if cacheKey != "" {
+			turnData["prompt_cache_key"] = cacheKey
 		}
 		l.Emitter.Emit(event.ModelTurn, turnData)
 		if err := l.durableEmitError(ctx); err != nil {

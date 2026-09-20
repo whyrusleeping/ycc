@@ -2606,6 +2606,7 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 		WorkImplementation: m.reg.WorkImplementation(),
 		Jobs:               jobs.NewRegistry(),
 		Ownership:          m.ownership,
+		PromptCacheScope:   id,
 	}
 	deps.CoordinatorToken = m.ownership.NewToken(fmt.Sprintf("session %s coordinator", id))
 	deps.MemorySource = func(kind docs.MemoryKind) docs.MemoryProvenance {
@@ -2678,6 +2679,7 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 			MaxTok: m.reg.MaxTokens(), MaxTurns: m.reg.MaxTurns(), Retry: m.reg.RetryPolicy(),
 			Thinking: th.Thinking, Effort: th.Effort, ThinkingDisplay: th.ThinkingDisplay,
 			ContextLengthHandled: true,
+			PromptCacheKey:       id + "/coordinator",
 		}
 		loop.Steer = s
 		// Mode transitions and Start always pass a non-empty seed; reopen passes

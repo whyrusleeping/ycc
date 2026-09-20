@@ -148,7 +148,16 @@ type request struct {
 	StreamOptions     *streamOpts    `json:"stream_options,omitempty"`
 	Reasoning         *reasoningOpts `json:"reasoning,omitempty"`
 	Include           []string       `json:"include,omitempty"`
+	// PromptCacheKey pins prompt-cache routing per loop (see
+	// engine.Loop.PromptCacheKey); the official Codex CLI sends its session id
+	// the same way. Carried in gollama.RequestOptions.ExtraBody because the
+	// transport-agnostic options have no dedicated field.
+	PromptCacheKey string `json:"prompt_cache_key,omitempty"`
 }
+
+// PromptCacheKeyField is the ExtraBody key the engine uses to pass a
+// prompt-cache routing key to OpenAI-family transports.
+const PromptCacheKeyField = "prompt_cache_key"
 
 // buildRequest translates gollama.RequestOptions into the codex request body.
 func buildRequest(opts gollama.RequestOptions) request {
@@ -161,6 +170,9 @@ func buildRequest(opts gollama.RequestOptions) request {
 		Store:             false,
 		Stream:            true,
 		Include:           []string{"reasoning.encrypted_content"},
+	}
+	if key, ok := opts.ExtraBody[PromptCacheKeyField].(string); ok && key != "" {
+		req.PromptCacheKey = key
 	}
 	// The backend rejects an empty instructions field.
 	if strings.TrimSpace(req.Instructions) == "" {
@@ -417,7 +429,8 @@ func (c *Client) TurnStreamCtx(ctx context.Context, opts gollama.RequestOptions,
 	if err != nil {
 		return nil, err
 	}
-	body, err := json.Marshal(buildRequest(opts))
+	creq := buildRequest(opts)
+	body, err := json.Marshal(creq)
 	if err != nil {
 		return nil, err
 	}
@@ -433,6 +446,12 @@ func (c *Client) TurnStreamCtx(ctx context.Context, opts gollama.RequestOptions,
 	}
 	req.Header.Set("originator", c.originator)
 	req.Header.Set("OpenAI-Beta", "responses=experimental")
+	// The ChatGPT backend derives prompt-cache affinity from the session-id
+	// header (the official Codex CLI sends its thread id as both this header and
+	// prompt_cache_key); mirror the loop's key so routing stays with one shard.
+	if creq.PromptCacheKey != "" {
+		req.Header.Set("session-id", creq.PromptCacheKey)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

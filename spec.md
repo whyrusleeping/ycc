@@ -620,7 +620,13 @@ needed, never included in RPC responses, and re-resolved per turn where provider
 can invalidate an earlier access token. OpenAI subscription inference uses its compatible Codex
 Responses transport rather than the platform API. The engine may enforce its configured output
 cap, but this transport must not send `max_output_tokens`: the ChatGPT Codex backend rejects that
-parameter. Subscription models are unpriced unless the user supplies rates.
+parameter. Every loop on the `openai` backend sends a stable per-loop prompt-cache routing key
+(`prompt_cache_key`; the Codex transport mirrors it as the `session-id` header the ChatGPT backend
+uses for cache affinity). Session-owned loops use `<session id>/<actor>` so a coordinator and its
+concurrent subagents route to distinct cache shards instead of competing for one; a loop without an
+assigned key derives a random one once. The key is recorded on `model_turn` and is never sent to
+other backends (strict openai-compatible servers reject unknown fields). Subscription models are
+unpriced unless the user supplies rates.
 
 Runtime settings changes persist to the active `ycc.toml` and affect the next model construction;
 role and thinking changes may also update a live session's next turn. A model may be temporarily
