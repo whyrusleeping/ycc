@@ -96,6 +96,14 @@ Background execution does not weaken the per-worktree single-writer invariant. R
 fan out. A mutating background agent is refused while another mutating job is live in the same tree.
 Parallel mutation uses workstreams, where each agent owns a separate linked worktree.
 
+The invariant is between execution scopes, not within one. A scope's own background shell keeps other
+scopes out until the process exits, but does not refuse that scope's foreground shell, file tools, or
+further background shells: an actor overlapping its own benchmark with edits is its own coordination
+responsibility. Refusing it only forced agents to serialize every background job behind `wait`, even
+for read-only shell inspection (which the shell guard cannot distinguish from mutation). A handed-off
+child is detached from its creator and refuses every scope until exit, preserving the handoff rule
+above and the creator's changeset attribution.
+
 ## Rejected alternatives
 
 - Concurrently dispatching every tool call from one model turn is unsafe for mutation and is not

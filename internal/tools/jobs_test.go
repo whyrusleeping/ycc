@@ -236,11 +236,19 @@ func TestBackgroundShellLeaseSurvivesKillUntilProcessExit(t *testing.T) {
 	if got := dispatch(t, second, "Write", `{"file_path":"blocked","content":"x"}`); !got.IsError || !strings.Contains(got.Content, "session one") {
 		t.Fatalf("cross-session Write was not refused with owner: %+v", got)
 	}
-	if got := dispatch(t, first, "Write", `{"file_path":"sibling","content":"x"}`); !got.IsError || !strings.Contains(got.Content, "background Bash") {
-		t.Fatalf("worker write overlapped its asynchronous child: %+v", got)
+	// The owning scope may overlap its own background work with foreground
+	// tools and further background children.
+	if got := dispatch(t, first, "Write", `{"file_path":"sibling","content":"x"}`); got.IsError {
+		t.Fatalf("own-scope Write refused during its asynchronous child: %+v", got)
 	}
-	if got := dispatch(t, first, "Bash", `{"command":"touch sibling-bg","run_in_background":true}`); !got.IsError {
-		t.Fatalf("second asynchronous child overlapped first: %+v", got)
+	if got := dispatch(t, first, "Bash", `{"command":"true"}`); got.IsError {
+		t.Fatalf("own-scope foreground Bash refused during its asynchronous child: %+v", got)
+	}
+	if got := dispatch(t, first, "Bash", `{"command":"touch sibling-bg","run_in_background":true}`); got.IsError {
+		t.Fatalf("own-scope second asynchronous child refused: %+v", got)
+	}
+	if got := dispatch(t, second, "Bash", `{"command":"true"}`); !got.IsError || !strings.Contains(got.Content, "background Bash") {
+		t.Fatalf("cross-session Bash was not refused with the running child: %+v", got)
 	}
 	dispatch(t, first, "kill_job", `{"job_id":"job_1"}`)
 	// The worker turn may unwind before its asynchronous process; releasing its
@@ -248,9 +256,6 @@ func TestBackgroundShellLeaseSurvivesKillUntilProcessExit(t *testing.T) {
 	lifetime.Release()
 	if got := dispatch(t, second, "Bash", `{"command":"touch too-early"}`); !got.IsError {
 		t.Fatalf("killed-but-not-exited shell released lease early: %+v", got)
-	}
-	if got := dispatch(t, first, "Write", `{"file_path":"same-token-too-early","content":"x"}`); !got.IsError {
-		t.Fatalf("kill status admitted parent before process exit: %+v", got)
 	}
 
 	deadline := time.Now().Add(3 * time.Second)

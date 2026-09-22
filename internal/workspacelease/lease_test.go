@@ -52,10 +52,11 @@ func TestCanonicalAliasAndScopedReentrancy(t *testing.T) {
 	lease.Release()
 }
 
-func TestAsyncChildBlocksParentReentryUntilRelease(t *testing.T) {
+func TestAsyncChildAdmitsOwnScopeAndBlocksOthersUntilRelease(t *testing.T) {
 	root := t.TempDir()
 	s := NewService()
 	token := s.NewToken("session one implementer")
+	other := s.NewToken("session two coordinator")
 	lifetime, err := s.Acquire(root, token)
 	if err != nil {
 		t.Fatal(err)
@@ -64,17 +65,60 @@ func TestAsyncChildBlocksParentReentryUntilRelease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lifetime.Release()
-	if _, err := s.Acquire(root, token); err == nil || !strings.Contains(err.Error(), "background Bash") {
-		t.Fatalf("parent reentry while child runs = %v", err)
+	// The owning scope may overlap its own background work.
+	sibling, err := s.Acquire(root, token)
+	if err != nil {
+		t.Fatalf("own-scope reentry while child runs = %v", err)
 	}
-	if _, err := s.AcquireChild(root, token, "second child"); err == nil {
-		t.Fatal("concurrent asynchronous child acquired the worktree")
+	sibling.Release()
+	second, err := s.AcquireChild(root, token, "session one implementer second background Bash")
+	if err != nil {
+		t.Fatalf("own-scope second child = %v", err)
+	}
+	// The scope unwinding must not release its children's retained ownership.
+	lifetime.Release()
+	if _, err := s.Acquire(root, other); err == nil || !strings.Contains(err.Error(), "implementer background Bash") {
+		t.Fatalf("foreign acquire while children run = %v", err)
+	}
+	if _, err := s.AcquireChild(root, other, "foreign child"); err == nil {
+		t.Fatal("foreign asynchronous child acquired the worktree")
 	}
 	child.Release()
+	child.Release() // idempotent: must not drop the second child's claim
+	if _, err := s.Acquire(root, other); err == nil || !strings.Contains(err.Error(), "second background Bash") {
+		t.Fatalf("foreign acquire while second child runs = %v", err)
+	}
+	second.Release()
+	lease, err := s.Acquire(root, other)
+	if err != nil {
+		t.Fatalf("foreign acquire after children exit: %v", err)
+	}
+	lease.Release()
+}
+
+func TestDetachedChildRefusesCreatingScope(t *testing.T) {
+	root := t.TempDir()
+	s := NewService()
+	token := s.NewToken("session one implementer")
+	child, err := s.AcquireChild(root, token, "session one implementer background Bash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	child.Detach()
+	if _, err := s.Acquire(root, token); err == nil || !strings.Contains(err.Error(), "background Bash") {
+		t.Fatalf("creating scope reentered a detached child's worktree: %v", err)
+	}
+	if _, err := s.AcquireChild(root, token, "another child"); err == nil {
+		t.Fatal("creating scope started a child beside a detached child")
+	}
+	if _, err := s.Acquire(root, s.NewToken("other")); err == nil {
+		t.Fatal("foreign scope acquired a detached child's worktree")
+	}
+	child.Release()
+	child.Detach() // no-op after release
 	lease, err := s.Acquire(root, token)
 	if err != nil {
-		t.Fatalf("parent acquire after child exit: %v", err)
+		t.Fatalf("acquire after detached child exit: %v", err)
 	}
 	lease.Release()
 }

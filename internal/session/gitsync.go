@@ -84,6 +84,11 @@ func (m *Manager) runGitSyncPoller() {
 
 // refreshProjectGitRefs fetches each registered checkout serially and records
 // success/failure independently. Non-repositories are intentionally invisible.
+//
+// Fetch deliberately does not take the worktree mutation lease: it writes only
+// repository objects and remote-tracking refs, never the working tree, index,
+// or local branches, and Git's own ref lockfiles arbitrate concurrent commits.
+// Leasing it made every agent in every project fail at random each cycle.
 func (m *Manager) refreshProjectGitRefs() {
 	m.gitSyncMu.RLock()
 	projects := m.projects
@@ -92,12 +97,7 @@ func (m *Manager) refreshProjectGitRefs() {
 		if !isGitWorkspace(p.Path) {
 			continue
 		}
-		lease, acquireErr := m.ownership.Acquire(p.Path, m.ownership.NewToken("daemon git fetch"))
-		if acquireErr != nil {
-			continue
-		}
 		err := (&git.Repo{Dir: p.Path}).Fetch()
-		lease.Release()
 		m.gitSyncMu.Lock()
 		state := m.gitSyncCache[p.Path]
 		if err != nil {

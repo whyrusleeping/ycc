@@ -1576,6 +1576,9 @@ func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration, le
 	if !ok {
 		return nil, ""
 	}
+	// A handed-off child no longer belongs to the creating scope: its later
+	// turns must not overlap it (that would taint their changeset attribution).
+	job.SetHandoffHook(lease.Detach)
 	artifactID := ws.artifactStore().reserve()
 	job.SetTerminationHint(fmt.Sprintf("[output artifact %s: capture finalizes after the process exits; retrieve ranges with tool_output; a not-ready response is temporary]", artifactID))
 	ws.Emitter.EmitAs(owner, event.JobStarted, map[string]any{
