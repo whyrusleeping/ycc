@@ -584,7 +584,8 @@ rebase/verify/fast-forward path. Unattended status never bypasses a required gat
 
 - session discovery, start/reopen, transcript/diff reads, event subscription, input, questions,
   interrupt/resume, and hard stop;
-- project registration and directory discovery;
+- project registration, directory discovery, and read-only project-confined file browsing
+  (`ListFiles`/`ReadFile`, resolved against a session's live worktree when given one);
 - model, role, reasoning, work-strategy, and review-tier settings;
 - backlog, plans, memory, usage, allowance, budgets, notifications, and work loops;
 - workstream spawn/list/preview/integrate/discard/retry.

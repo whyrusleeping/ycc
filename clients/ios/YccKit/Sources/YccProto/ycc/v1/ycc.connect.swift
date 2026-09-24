@@ -106,6 +106,14 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `listDir`(request: Ycc_V1_ListDirRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ListDirResponse>
 
+    /// ListFiles / ReadFile browse a project's files read-only, confined to the
+    /// project root or a session's live worktree.
+    @available(iOS 13, *)
+    func `listFiles`(request: Ycc_V1_ListFilesRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ListFilesResponse>
+
+    @available(iOS 13, *)
+    func `readFile`(request: Ycc_V1_ReadFileRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ReadFileResponse>
+
     /// Settings overlay: enumerate models and change per-role model
     /// assignment mid-flight.
     @available(iOS 13, *)
@@ -379,6 +387,16 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     }
 
     @available(iOS 13, *)
+    public func `listFiles`(request: Ycc_V1_ListFilesRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_ListFilesResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/ListFiles", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `readFile`(request: Ycc_V1_ReadFileRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_ReadFileResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/ReadFile", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
     public func `listModels`(request: Ycc_V1_ListModelsRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_ListModelsResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/ListModels", idempotencyLevel: .unknown, request: request, headers: headers)
     }
@@ -574,6 +592,8 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let removeProject = Connect.MethodSpec(name: "RemoveProject", service: "ycc.v1.SessionService", type: .unary)
             public static let renameProject = Connect.MethodSpec(name: "RenameProject", service: "ycc.v1.SessionService", type: .unary)
             public static let listDir = Connect.MethodSpec(name: "ListDir", service: "ycc.v1.SessionService", type: .unary)
+            public static let listFiles = Connect.MethodSpec(name: "ListFiles", service: "ycc.v1.SessionService", type: .unary)
+            public static let readFile = Connect.MethodSpec(name: "ReadFile", service: "ycc.v1.SessionService", type: .unary)
             public static let listModels = Connect.MethodSpec(name: "ListModels", service: "ycc.v1.SessionService", type: .unary)
             public static let setRoleConfig = Connect.MethodSpec(name: "SetRoleConfig", service: "ycc.v1.SessionService", type: .unary)
             public static let setThinking = Connect.MethodSpec(name: "SetThinking", service: "ycc.v1.SessionService", type: .unary)

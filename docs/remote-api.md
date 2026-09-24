@@ -205,6 +205,7 @@ JSON="Content-Type: application/json"
 | [`ListProjects`](#listprojects) | list registered projects (multi-project daemon) |
 | [`AddProject`](#addproject--listdir) / [`ListDir`](#addproject--listdir) | register a workspace / browse daemon-host directories |
 | [`RemoveProject` / `RenameProject`](#addproject--listdir) | deregister / rename a registered project |
+| [`ListFiles` / `ReadFile`](#listfiles--readfile) | read-only, project-confined file browsing |
 | [`DiscoverModels` / `TestModel`](#discovermodels--testmodel) | list provider models / run a small inference probe against an unsaved draft |
 | [`ListSessions`](#listsessions) | live sessions (optionally filtered by project) |
 | [`ListSessionHistory`](#listsessionhistory) | live + persisted sessions, most-recent first |
@@ -255,7 +256,8 @@ list.) With projects registered:
 derived from the directory basename when empty). `ListDir` supports the
 client-side add-project picker: it lists the **subdirectories** of a
 daemon-host path (directories only, never files or file contents; hidden dirs
-omitted), each annotated with `isGitRepo` (contains a `.git` entry) and
+omitted — file browsing *inside a project* is the separate, confined
+[`ListFiles` / `ReadFile`](#listfiles--readfile)), each annotated with `isGitRepo` (contains a `.git` entry) and
 `isRegistered` (already a registered project). An empty `path` resolves to the
 daemon user's home directory; `parent` supports "up" navigation (empty at the
 filesystem root). Paths must be absolute (`invalid_argument` otherwise;
@@ -298,6 +300,64 @@ Unknown name → `not_found`; collision with another project → `already_exists
 curl -sS -H "$AUTH" -H "$JSON" -d '{"name":"otherrepo","newName":"webapp"}' \
   $B/ycc.v1.SessionService/RenameProject
 ```
+
+### ListFiles / ReadFile
+
+Read-only browsing of a project's files, e.g. to follow file references in
+agent output. Both take `project` (empty allowed when exactly one project is
+registered), an optional `sessionId`, and a **root-relative** `path`
+(`"/"`-separated; empty = the root). The root is the registered project path,
+or — with `sessionId` — that session's workspace, so links from a workstream
+session open the worktree's copy (including files not yet on the base branch).
+When that worktree has since been reclaimed (merged/discarded), the project
+root is used and the response sets `rootFallback: true`. Every response echoes
+the absolute `root` it resolved against.
+
+Confinement: absolute paths and `..` escapes → `invalid_argument`; symlinks
+resolving outside the root and anything inside `.git/` → `permission_denied`;
+missing → `not_found`; `ListFiles` on a file or `ReadFile` on a directory or
+special file → `invalid_argument`. Listings omit dotfiles and dot-directories;
+an explicitly requested dotfile path (e.g. `.github/workflows/ci.yml`) can still
+be read. There are no write RPCs. Line suffixes agents put on references
+(`:42`, `#L42`) are for the client to strip before calling.
+
+`ListFiles` returns directories first, then names case-insensitively, each with
+`isDir` (symlinks followed), `size`, `mtime`, `isSymlink`, and `ignored`
+(matched by `.gitignore`; tracked files never are). Capped at 5000 entries
+(`truncated`).
+
+```
+curl -sS -H "$AUTH" -H "$JSON" -d '{"project":"ycc","path":"internal/projectfs"}' \
+  $B/ycc.v1.SessionService/ListFiles
+```
+
+```json
+{"root":"/home/me/code/ycc","path":"internal/projectfs",
+ "entries":[{"name":"projectfs.go","size":"10511","mtime":"2026-09-24T22:50:01.000Z"}]}
+```
+
+`ReadFile` returns `data` (base64 in JSON), the full on-disk `size`,
+`mediaType`, `isBinary`, `truncated`, and `mtime`. `maxBytes` defaults to
+1 MiB and is clamped to 8 MiB. Text over the cap returns a prefix cut at a
+line boundary with `truncated: true`. Images (PNG/JPEG/GIF/WebP/BMP/ICO,
+sniffed from content) return their bytes when within the cap; over-cap images
+and other binaries return metadata only.
+
+```
+curl -sS -H "$AUTH" -H "$JSON" -d '{"project":"ycc","path":"spec.md"}' \
+  $B/ycc.v1.SessionService/ReadFile
+```
+
+```json
+{"root":"/home/me/code/ycc","path":"spec.md","data":"IyB5Y2MK…","size":"48213",
+ "mediaType":"text/plain; charset=utf-8","mtime":"2026-09-24T20:11:09.000Z"}
+```
+
+Trust note: the bearer token already permits `StartSession`, i.e. arbitrary
+shell in any workspace, so project-confined reads do not expand the trust
+surface; the confinement keeps the API's intent legible and prevents accidental
+reach outside a project rather than acting as a security boundary against a
+token holder.
 
 ### DiscoverModels / TestModel
 

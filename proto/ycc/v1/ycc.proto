@@ -101,6 +101,53 @@ message ListDirResponse {
   repeated string suggestions = 4; // absolute paths (only when suggest=true)
 }
 
+// ListFiles / ReadFile — read-only project file browsing. Unlike ListDir these
+// are CONFINED to one root: the project checkout, or (with session_id) that
+// session's workspace such as a live workstream worktree. Paths are
+// root-relative ("/"-separated); absolute paths and `..` escapes are
+// InvalidArgument, symlinks resolving outside the root and `.git` internals
+// are PermissionDenied. Listings omit dotfiles; an explicitly requested
+// dotfile path can still be read. Nothing here writes. Line suffixes an agent
+// may put on a reference (`:12`, `#L12`) are the client's to strip.
+message FileEntry {
+  string name = 1;
+  bool is_dir = 2;      // follows symlinks
+  int64 size = 3;       // bytes; 0 for directories
+  string mtime = 4;     // RFC3339
+  bool is_symlink = 5;
+  bool ignored = 6;     // matched by .gitignore (tracked files never are)
+}
+message ListFilesRequest {
+  string project = 1;    // registered project; empty allowed only when exactly one exists
+  string session_id = 2; // optional: resolve against this session's workspace
+  string path = 3;       // root-relative directory; empty => the root
+}
+message ListFilesResponse {
+  string root = 1;                  // absolute root the path resolved against
+  string path = 2;                  // cleaned root-relative path; empty => the root
+  repeated FileEntry entries = 3;   // directories first, then names case-insensitively
+  bool truncated = 4;               // entry cap hit
+  bool root_fallback = 5;           // session's workspace is gone; showing the project root
+}
+message ReadFileRequest {
+  string project = 1;    // registered project; empty allowed only when exactly one exists
+  string session_id = 2; // optional: resolve against this session's workspace
+  string path = 3;       // root-relative file path
+  int64 max_bytes = 4;   // 0 => daemon default (1 MiB); clamped to 8 MiB
+}
+message ReadFileResponse {
+  string root = 1;
+  string path = 2;        // cleaned root-relative path
+  bytes data = 3;         // text (a line-bounded prefix when truncated) or image bytes;
+                          // empty for other binaries and for over-cap images
+  int64 size = 4;         // full on-disk size
+  string media_type = 5;  // "text/plain; charset=utf-8", "image/png", ...
+  bool is_binary = 6;
+  bool truncated = 7;
+  string mtime = 8;       // RFC3339
+  bool root_fallback = 9; // session's workspace is gone; read from the project root
+}
+
 message SubscribeRequest {
   string session_id = 1;
   int64 from_seq = 2; // replay events with seq > from_seq, then stream live
@@ -978,6 +1025,10 @@ service SessionService {
   // ListDir lists subdirectories of a daemon-host path (directories only) so
   // remote clients can browse to a workspace for AddProject.
   rpc ListDir(ListDirRequest) returns (ListDirResponse);
+  // ListFiles / ReadFile browse a project's files read-only, confined to the
+  // project root or a session's live worktree.
+  rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
+  rpc ReadFile(ReadFileRequest) returns (ReadFileResponse);
 
   // Settings overlay: enumerate models and change per-role model
   // assignment mid-flight.

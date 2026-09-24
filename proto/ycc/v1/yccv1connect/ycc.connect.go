@@ -103,6 +103,11 @@ const (
 	SessionServiceRenameProjectProcedure = "/ycc.v1.SessionService/RenameProject"
 	// SessionServiceListDirProcedure is the fully-qualified name of the SessionService's ListDir RPC.
 	SessionServiceListDirProcedure = "/ycc.v1.SessionService/ListDir"
+	// SessionServiceListFilesProcedure is the fully-qualified name of the SessionService's ListFiles
+	// RPC.
+	SessionServiceListFilesProcedure = "/ycc.v1.SessionService/ListFiles"
+	// SessionServiceReadFileProcedure is the fully-qualified name of the SessionService's ReadFile RPC.
+	SessionServiceReadFileProcedure = "/ycc.v1.SessionService/ReadFile"
 	// SessionServiceListModelsProcedure is the fully-qualified name of the SessionService's ListModels
 	// RPC.
 	SessionServiceListModelsProcedure = "/ycc.v1.SessionService/ListModels"
@@ -252,6 +257,10 @@ type SessionServiceClient interface {
 	// ListDir lists subdirectories of a daemon-host path (directories only) so
 	// remote clients can browse to a workspace for AddProject.
 	ListDir(context.Context, *connect.Request[v1.ListDirRequest]) (*connect.Response[v1.ListDirResponse], error)
+	// ListFiles / ReadFile browse a project's files read-only, confined to the
+	// project root or a session's live worktree.
+	ListFiles(context.Context, *connect.Request[v1.ListFilesRequest]) (*connect.Response[v1.ListFilesResponse], error)
+	ReadFile(context.Context, *connect.Request[v1.ReadFileRequest]) (*connect.Response[v1.ReadFileResponse], error)
 	// Settings overlay: enumerate models and change per-role model
 	// assignment mid-flight.
 	ListModels(context.Context, *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error)
@@ -482,6 +491,18 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			httpClient,
 			baseURL+SessionServiceListDirProcedure,
 			connect.WithSchema(sessionServiceMethods.ByName("ListDir")),
+			connect.WithClientOptions(opts...),
+		),
+		listFiles: connect.NewClient[v1.ListFilesRequest, v1.ListFilesResponse](
+			httpClient,
+			baseURL+SessionServiceListFilesProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("ListFiles")),
+			connect.WithClientOptions(opts...),
+		),
+		readFile: connect.NewClient[v1.ReadFileRequest, v1.ReadFileResponse](
+			httpClient,
+			baseURL+SessionServiceReadFileProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("ReadFile")),
 			connect.WithClientOptions(opts...),
 		),
 		listModels: connect.NewClient[v1.ListModelsRequest, v1.ListModelsResponse](
@@ -717,6 +738,8 @@ type sessionServiceClient struct {
 	removeProject         *connect.Client[v1.RemoveProjectRequest, v1.RemoveProjectResponse]
 	renameProject         *connect.Client[v1.RenameProjectRequest, v1.RenameProjectResponse]
 	listDir               *connect.Client[v1.ListDirRequest, v1.ListDirResponse]
+	listFiles             *connect.Client[v1.ListFilesRequest, v1.ListFilesResponse]
+	readFile              *connect.Client[v1.ReadFileRequest, v1.ReadFileResponse]
 	listModels            *connect.Client[v1.ListModelsRequest, v1.ListModelsResponse]
 	setRoleConfig         *connect.Client[v1.SetRoleConfigRequest, v1.SetRoleConfigResponse]
 	setThinking           *connect.Client[v1.SetThinkingRequest, v1.SetThinkingResponse]
@@ -871,6 +894,16 @@ func (c *sessionServiceClient) RenameProject(ctx context.Context, req *connect.R
 // ListDir calls ycc.v1.SessionService.ListDir.
 func (c *sessionServiceClient) ListDir(ctx context.Context, req *connect.Request[v1.ListDirRequest]) (*connect.Response[v1.ListDirResponse], error) {
 	return c.listDir.CallUnary(ctx, req)
+}
+
+// ListFiles calls ycc.v1.SessionService.ListFiles.
+func (c *sessionServiceClient) ListFiles(ctx context.Context, req *connect.Request[v1.ListFilesRequest]) (*connect.Response[v1.ListFilesResponse], error) {
+	return c.listFiles.CallUnary(ctx, req)
+}
+
+// ReadFile calls ycc.v1.SessionService.ReadFile.
+func (c *sessionServiceClient) ReadFile(ctx context.Context, req *connect.Request[v1.ReadFileRequest]) (*connect.Response[v1.ReadFileResponse], error) {
+	return c.readFile.CallUnary(ctx, req)
 }
 
 // ListModels calls ycc.v1.SessionService.ListModels.
@@ -1092,6 +1125,10 @@ type SessionServiceHandler interface {
 	// ListDir lists subdirectories of a daemon-host path (directories only) so
 	// remote clients can browse to a workspace for AddProject.
 	ListDir(context.Context, *connect.Request[v1.ListDirRequest]) (*connect.Response[v1.ListDirResponse], error)
+	// ListFiles / ReadFile browse a project's files read-only, confined to the
+	// project root or a session's live worktree.
+	ListFiles(context.Context, *connect.Request[v1.ListFilesRequest]) (*connect.Response[v1.ListFilesResponse], error)
+	ReadFile(context.Context, *connect.Request[v1.ReadFileRequest]) (*connect.Response[v1.ReadFileResponse], error)
 	// Settings overlay: enumerate models and change per-role model
 	// assignment mid-flight.
 	ListModels(context.Context, *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error)
@@ -1318,6 +1355,18 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		SessionServiceListDirProcedure,
 		svc.ListDir,
 		connect.WithSchema(sessionServiceMethods.ByName("ListDir")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceListFilesHandler := connect.NewUnaryHandler(
+		SessionServiceListFilesProcedure,
+		svc.ListFiles,
+		connect.WithSchema(sessionServiceMethods.ByName("ListFiles")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceReadFileHandler := connect.NewUnaryHandler(
+		SessionServiceReadFileProcedure,
+		svc.ReadFile,
+		connect.WithSchema(sessionServiceMethods.ByName("ReadFile")),
 		connect.WithHandlerOptions(opts...),
 	)
 	sessionServiceListModelsHandler := connect.NewUnaryHandler(
@@ -1574,6 +1623,10 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceRenameProjectHandler.ServeHTTP(w, r)
 		case SessionServiceListDirProcedure:
 			sessionServiceListDirHandler.ServeHTTP(w, r)
+		case SessionServiceListFilesProcedure:
+			sessionServiceListFilesHandler.ServeHTTP(w, r)
+		case SessionServiceReadFileProcedure:
+			sessionServiceReadFileHandler.ServeHTTP(w, r)
 		case SessionServiceListModelsProcedure:
 			sessionServiceListModelsHandler.ServeHTTP(w, r)
 		case SessionServiceSetRoleConfigProcedure:
@@ -1745,6 +1798,14 @@ func (UnimplementedSessionServiceHandler) RenameProject(context.Context, *connec
 
 func (UnimplementedSessionServiceHandler) ListDir(context.Context, *connect.Request[v1.ListDirRequest]) (*connect.Response[v1.ListDirResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ListDir is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) ListFiles(context.Context, *connect.Request[v1.ListFilesRequest]) (*connect.Response[v1.ListFilesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ListFiles is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) ReadFile(context.Context, *connect.Request[v1.ReadFileRequest]) (*connect.Response[v1.ReadFileResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ReadFile is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) ListModels(context.Context, *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error) {
