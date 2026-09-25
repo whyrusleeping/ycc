@@ -1,10 +1,10 @@
 ---
 id: "0373"
 title: Add shared event-contract fixtures for TUI, web, and iOS projections
-status: blocked
+status: todo
 priority: 2
 created: "2026-09-08"
-updated: "2026-09-10"
+updated: "2026-09-25"
 depends_on: []
 spec_refs:
     - §5.2 Event contract
@@ -25,3 +25,5 @@ Three client projections independently interpret event payloads and already disa
 ## Work log
 
 - Preflight: blocked from completing the required cross-client assertions in this workspace. Confirmed iOS `applyQuestionAsked`/`foldAnswer` ignore automatic provenance and always create a human pending gate; required semantic fixture coverage therefore needs the still-blocked 0369 correction, not tests that bless that defect. Projection and existing client tests contain unrelated baseline-dirty work, which the changeset guard forbids modifying. Resume in a clean isolated task session (coordinate 0369/0370/0372 contract work), or resolve existing owners' changes before a new baseline; no fixtures or implementation were added.
+- 2026-09-25: Unblocked. The dirty-baseline blocker is gone: the pre-existing staged/unstaged work was committed (5a0225b, 128d051) and the worktree is clean, so the changeset ownership guard no longer applies. No implementation happened while blocked; all acceptance criteria remain outstanding.
+  Note: still sequence after 0369 (the iOS projection ignores auto provenance), so fixtures do not bless that defect.

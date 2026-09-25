@@ -1,10 +1,10 @@
 ---
 id: "0372"
 title: Reconnect TUI subscriptions from the last durable event sequence
-status: blocked
+status: todo
 priority: 2
 created: "2026-09-08"
-updated: "2026-09-10"
+updated: "2026-09-25"
 depends_on: []
 spec_refs:
     - §12 RPC protocol
@@ -26,3 +26,4 @@ The TUI subscribes without FromSeq and does not automatically resubscribe after 
 ## Work log
 
 - Preflight: blocked in this workspace by pre-existing changes in `internal/tui/session.go`, `internal/tui/tui.go`, and related transcript/tests. The verified changeset ownership guard refuses editing baseline-dirty paths. No implementation attempted; start in an isolated clean task session or resolve the existing owners' changes before capturing a new baseline.
+- 2026-09-25: Unblocked. The dirty-baseline blocker is gone: the pre-existing staged/unstaged work was committed (5a0225b, 128d051) and the worktree is clean, so the changeset ownership guard no longer applies. No implementation happened while blocked; all acceptance criteria remain outstanding.

@@ -1,10 +1,10 @@
 ---
 id: "0370"
 title: Show pause-request acknowledgment and phase-appropriate session controls
-status: blocked
+status: todo
 priority: 2
 created: "2026-09-08"
-updated: "2026-09-10"
+updated: "2026-09-25"
 depends_on: []
 spec_refs:
     - §5.3 Transient events
@@ -25,3 +25,4 @@ Interrupt sets pauseReq but emits no immediate event; interrupted arrives only a
 ## Work log
 
 - Preflight: blocked in this workspace by pre-existing changes in `internal/session/session.go`, `internal/tui/session.go`, `clients/ios/App/SessionView.swift`, and web projection code. Verified `internal/git/changeset.go` refuses edits to baseline-dirty paths; no implementation attempted. Requires an isolated clean task session or resolution of the existing owners' changes before a new baseline. Preserve the existing work.
+- 2026-09-25: Unblocked. The dirty-baseline blocker is gone: the pre-existing staged/unstaged work was committed (5a0225b, 128d051) and the worktree is clean, so the changeset ownership guard no longer applies. No implementation happened while blocked; all acceptance criteria remain outstanding.

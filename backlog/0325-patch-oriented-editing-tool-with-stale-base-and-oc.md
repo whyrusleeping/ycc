@@ -1,10 +1,10 @@
 ---
 id: "0325"
 title: Transactional Patch tool with file revisions and occurrence selectors
-status: blocked
+status: todo
 priority: 3
 created: "2026-08-12"
-updated: "2026-09-10"
+updated: "2026-09-25"
 depends_on: []
 spec_refs:
     - §8 Tools and access policy
@@ -46,3 +46,4 @@ Implement a bounded, revision-bound single-file Patch tool alongside unchanged E
 
 - Preflight found `internal/tools` clean and recorded an implementation plan, but `spawn_implementer` failed before running any model or editing source: `establish changeset: task changes overlap paths that were already dirty at baseline acf21d93aae6510615f9e054d38fa0b7cff1a4d28dfbde8e170da71625991afa`, including this task's own pre-existing staged backlog file and the pre-existing staged backlog files 0370–0373 updated during selection. The guard covers task bookkeeping as well as source files: changing status or adding a plan to a baseline-dirty task prevents delegation even when implementation paths are clean. No code, tests, review, or commit occurred.
 - Blocked on repository/session isolation, not a Patch design decision. Resume in an isolated clean worktree/session containing the accepted task, or have the existing owners resolve their staged work before capturing a new baseline. Do not discard, absorb, or falsely commit that unrelated work; do not retry the same delegation in this baseline. Implement the retained plan and original criteria once isolation is available.
+- 2026-09-25: Unblocked. The dirty-baseline blocker is gone: the pre-existing staged/unstaged work was committed (5a0225b, 128d051) and the worktree is clean, so the changeset ownership guard no longer applies. No implementation happened while blocked; all acceptance criteria remain outstanding.

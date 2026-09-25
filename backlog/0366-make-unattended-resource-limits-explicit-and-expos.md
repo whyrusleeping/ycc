@@ -1,10 +1,10 @@
 ---
 id: "0366"
 title: Make unattended resource limits explicit and expose repeated-failure evidence
-status: blocked
+status: in_review
 priority: 2
 created: "2026-09-08"
-updated: "2026-09-10"
+updated: "2026-09-25"
 depends_on: []
 spec_refs:
     - §9.1 Unattended work loop
@@ -31,3 +31,4 @@ Expose the existing resource envelope (loop and session caps, explicitly unbound
 - 2026-09-10: Implementation is present but NOT reviewed or committed. Added resource-envelope capture/persistence and legacy-unknown handling, priced-only cost disclosure, bounded attempts/error-without-idle evidence, unfinished/actionable digest rows, RPC/protobuf projections, TUI/iOS displays, and regression coverage. No new default limits or attempt-count exit. Implementer reported `go test ./...` and targeted session race tests passing; coordinator confirmed `go test ./internal/session ./internal/server ./internal/tui` and `git diff --check`. Go/Swift protobufs regenerated; no Swift toolchain available. Existing buf lint Event-reuse findings remain.
 - Review/finalization is blocked by the session baseline ownership guard, not by a test failure: `spawn_reviewers` refuses overlap with pre-dirty workloop, persistence, server, TUI, proto/generated, spec, and remote-api paths (baseline `0a3b09d571da0dc6908a29358cfb6e2aa1bcd8fe55b8c56a513c3488b49c4e1a`). No exposed tool can move this session's baseline/workspace. Unblock with a clean isolated worktree/session and explicitly owned task patch; do not bypass the guard or commit all dirty files.
 - Handoff: unrelated staged index was confirmed byte-for-byte unchanged before this log update (SHA-256 `06dd8adbbc237619c3c4a7c751d604152d616b170bbe7c0450b30503ecefdd11`). All task code is the unstaged diff plus untracked `internal/session/workloop_resources_test.go`; initial partial task changes are included. Backups at `/tmp/ycc-0366-baseline/`: `index.diff` is unrelated staged baseline (also contains this task's original backlog entry), `tree.tar` initial working files, `unstaged.diff` initial partial task, `completed-task-over-index.diff` final task code, and a copy of the new test. Detailed verification/report is in `.ycc/sessions/s_33569fea07f3b4e7/events.jsonl`. Next: assemble task-only changes on HEAD in an isolated worktree, account for dependencies on staged continuation work (0344), regenerate rather than interdiff generated protos, verify candidate, independently review, then scoped commit. Acceptance remains unconfirmed until that review and isolated verification; preserve existing valid work.
+- 2026-09-25: Moved to in_review. The implementation described above landed on HEAD in the bulk commit 5a0225b (e.g. internal/session/workloop_resources_test.go) without the independent review. Remaining: review the committed code against the acceptance criteria, fix findings, and confirm `go test ./...`; iOS display changes need Mac verification.

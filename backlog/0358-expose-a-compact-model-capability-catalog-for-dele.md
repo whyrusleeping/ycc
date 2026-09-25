@@ -1,10 +1,10 @@
 ---
 id: "0358"
 title: Expose a compact model capability catalog for delegation decisions
-status: blocked
+status: todo
 priority: 3
 created: "2026-09-08"
-updated: "2026-09-10"
+updated: "2026-09-25"
 depends_on: []
 spec_refs:
     - §7.3 Subagents and asynchronous jobs
@@ -26,3 +26,4 @@ spawn_agent requires selecting a logical model but genericModelProp exposes only
 
 - Preflight: this task's backlog file was already staged as an addition at session entry. The current changeset ownership guard (`internal/git/changeset.go`) rejects edits to baseline-dirty paths, including required task bookkeeping, as independently evidenced by task 0325's failed delegation. Configuration and orchestrator source also contain unrelated uncommitted work. No implementation, tests, or review occurred.
 - Blocked on an isolated clean task worktree/session containing the accepted task, or existing owners resolving their changes before a new baseline is captured. Do not absorb or discard their staged/unstaged changes or retry delegation against this baseline. All original catalog criteria remain outstanding.
+- 2026-09-25: Unblocked. The dirty-baseline blocker is gone: the pre-existing staged/unstaged work was committed (5a0225b, 128d051) and the worktree is clean, so the changeset ownership guard no longer applies. No implementation happened while blocked; all acceptance criteria remain outstanding.

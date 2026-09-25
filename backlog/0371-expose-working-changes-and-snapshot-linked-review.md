@@ -1,10 +1,10 @@
 ---
 id: "0371"
 title: Expose working changes and snapshot-linked review verdicts across clients
-status: blocked
+status: todo
 priority: 2
 created: "2026-09-08"
-updated: "2026-09-10"
+updated: "2026-09-25"
 depends_on:
     - "0353"
 spec_refs:
@@ -27,3 +27,4 @@ iOS drops review verdict/findings from its review row and web uses generic syste
 ## Work log
 
 - Preflight: blocked in this workspace by pre-existing changes in the required protobuf, server, changeset, and client projection files. The verified changeset ownership guard refuses editing baseline-dirty paths. No implementation attempted; start in an isolated clean task session or resolve the existing owners' changes before capturing a new baseline.
+- 2026-09-25: Unblocked. The dirty-baseline blocker is gone: the pre-existing staged/unstaged work was committed (5a0225b, 128d051) and the worktree is clean, so the changeset ownership guard no longer applies. No implementation happened while blocked; all acceptance criteria remain outstanding.
