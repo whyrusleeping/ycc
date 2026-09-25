@@ -135,6 +135,63 @@ func (in *interaction) AskMany(ctx context.Context, questions []orchestrator.Que
 	}
 }
 
+// restore re-arms a question recorded by an earlier live instance of this
+// session (it was closed or the daemon restarted while ask_user waited) WITHOUT
+// emitting a new question_asked — the durable log already holds it. The gate is
+// installed synchronously so answers are accepted immediately; the returned
+// wait blocks for the answer and records question_answered exactly like
+// Ask/AskMany. A single question returns a one-element slice.
+func (in *interaction) restore(questions []orchestrator.Question, batch bool) func(context.Context) ([]string, error) {
+	if batch {
+		ch := make(chan []string, 1)
+		in.mu.Lock()
+		in.batchWaiting = ch
+		in.batchQuestions = questions
+		in.mu.Unlock()
+		return func(ctx context.Context) ([]string, error) {
+			defer func() {
+				in.mu.Lock()
+				if in.batchWaiting == ch {
+					in.batchWaiting = nil
+					in.batchQuestions = nil
+				}
+				in.mu.Unlock()
+			}()
+			select {
+			case answers := <-ch:
+				in.emitter.Emit(event.QuestionAnswered, map[string]any{"answers": answers})
+				return answers, nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+	}
+	ch := make(chan string, 1)
+	in.mu.Lock()
+	in.waiting = ch
+	if len(questions) > 0 {
+		in.options = questions[0].Options
+	}
+	in.mu.Unlock()
+	return func(ctx context.Context) ([]string, error) {
+		defer func() {
+			in.mu.Lock()
+			if in.waiting == ch {
+				in.waiting = nil
+				in.options = nil
+			}
+			in.mu.Unlock()
+		}()
+		select {
+		case ans := <-ch:
+			in.emitter.Emit(event.QuestionAnswered, map[string]any{"answer": ans})
+			return []string{ans}, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+}
+
 // Confirm asks a yes/no question for a high-impact, hard-to-reverse action. Unlike
 // Ask, it does NOT auto-answer in unattended execution: starting the work pipeline is
 // hard to reverse, so it always seeks a real human answer. When no human is

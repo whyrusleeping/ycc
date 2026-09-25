@@ -1468,18 +1468,7 @@ func askUser(d *Deps) *gollama.Tool {
 				if err != nil {
 					return tools.ErrResult("ask_user: %v", err), nil
 				}
-				var b strings.Builder
-				for i, q := range qs {
-					if i > 0 {
-						b.WriteString("\n\n")
-					}
-					a := ""
-					if i < len(ans) {
-						a = ans[i]
-					}
-					fmt.Fprintf(&b, "Q%d: %s\nA%d: %s", i+1, q.Prompt, i+1, a)
-				}
-				return tools.OkResult(b.String()), nil
+				return tools.OkResult(FormatAskManyAnswers(qs, ans)), nil
 			}
 
 			q, _ := tools.GetString(params, "question")
@@ -1494,6 +1483,25 @@ func askUser(d *Deps) *gollama.Tool {
 			return tools.OkResult(ans), nil
 		},
 	}
+}
+
+// FormatAskManyAnswers renders the ask_user tool result for a batch
+// (`questions` list) call: positional "Qn: prompt / An: answer" pairs. Shared
+// with session reopen, which answers a restored batch question after a daemon
+// restart and must hand the model the same result shape.
+func FormatAskManyAnswers(qs []Question, ans []string) string {
+	var b strings.Builder
+	for i, q := range qs {
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		a := ""
+		if i < len(ans) {
+			a = ans[i]
+		}
+		fmt.Fprintf(&b, "Q%d: %s\nA%d: %s", i+1, q.Prompt, i+1, a)
+	}
+	return b.String()
 }
 
 func commitTool(d *Deps) *gollama.Tool {

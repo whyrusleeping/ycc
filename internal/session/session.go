@@ -100,6 +100,10 @@ type Session struct {
 	// the first new input before continuing on the reconstructed history.
 	resumed bool
 
+	// resumeQuestion, set by Reopen, is a still-unanswered ask_user question the
+	// persisted log ended on; run() waits for its answer before anything else.
+	resumeQuestion *resumableQuestion
+
 	// messageCh is the single ordered queue of idle user input (text and any
 	// native attachments). One queue is what keeps serially accepted inputs in
 	// their accepted order when the run owner drains them.
@@ -1407,12 +1411,27 @@ func (s *Session) run() {
 		// carries a history reconstructed from the existing log, so do NOT emit a
 		// fresh SessionStarted / initial UserInput nor seed. Mark the reopen in the
 		// continuous log.
-		s.emitter.Emit(event.SessionReopened, map[string]any{})
+		reopened := map[string]any{}
+		if s.resumeQuestion != nil {
+			// Tell clients the question replayed just before this marker is still
+			// live (restored), not a stale gate to drop.
+			reopened["question_restored"] = true
+		}
+		s.emitter.Emit(event.SessionReopened, reopened)
 		if s.startupNotice != "" {
 			s.emitter.Emit(event.SessionNotice, map[string]any{"msg": s.startupNotice, "level": "warning"})
 		}
 		if s.ctx.Err() != nil {
 			return
+		}
+		// The log ended while ask_user waited for the user: wait for that answer
+		// first. It replaces the replay placeholder, so the history then owes a
+		// model response and falls through to the run loop below.
+		if rq := s.resumeQuestion; rq != nil {
+			s.resumeQuestion = nil
+			if !s.awaitRestoredQuestion(rq) {
+				return
+			}
 		}
 		// If the reconstructed history ends mid-turn — the model still owes a
 		// response to a user message or to tool results (e.g. the session was
@@ -2884,6 +2903,10 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 	}
 	loop.SetHistory(engine.ReplayHistory(events))
 	s.loop = loop
+	// A log that ended while the coordinator waited in ask_user restores that
+	// question as a live gate (armed before registration, so an answer RPC can
+	// never race the run goroutine's start).
+	s.restoreQuestion(findResumableQuestion(events), loop.History())
 	// Seed the spend-guard flags from the replayed log so a session that already
 	// crossed the warning/breach line does not re-fire or re-ask on reopen.
 	s.seedBudgetFromLog(events)

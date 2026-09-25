@@ -310,7 +310,12 @@ func (m *model) appendEvent(ev *v1.Event) {
 		// any dangling ask_user tool call with a synthetic result (engine replay),
 		// so a question_asked replayed just before this marker is stale — no
 		// answer can ever be delivered to it. Drop the picker/wizard and give the
-		// input box back, or the reopened session starts with dead input.
+		// input box back, or the reopened session starts with dead input. The
+		// exception is question_restored: the daemon re-armed that exact ask_user
+		// gate, so the picker stays answerable.
+		if dataField(ev, "question_restored") == "true" {
+			break
+		}
 		if m.pending != "" || m.picking || m.wizActive {
 			m.pending = ""
 			m.pendingSeq = 0

@@ -37,6 +37,12 @@ import (
 // backend originally produced them.
 var toolIDInvalid = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 
+// DanglingToolResult is the synthetic tool result ReplayHistory inserts for a
+// tool call that never recorded a result. Session reopen replaces it in place
+// when it restores a still-unanswered ask_user question and later receives the
+// user's real answer.
+const DanglingToolResult = "(no result recorded; session was reopened)"
+
 // ReplayHistory reconstructs the coordinator agent loop's conversation history
 // from a session's events, in order: user inputs, the coordinator's assistant
 // turns (with thinking blocks + tool calls), and tool results. Subagent activity
@@ -122,7 +128,7 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			history = append(history, gollama.Message{
 				Role:       "tool",
 				ToolCallID: call.ID,
-				Content:    "(no result recorded; session was reopened)",
+				Content:    DanglingToolResult,
 			})
 			answered[call.ID] = true
 			popPending(call.ID)

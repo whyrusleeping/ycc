@@ -239,6 +239,30 @@ func TestReopenClearsStaleWizard(t *testing.T) {
 	}
 }
 
+// When the daemon restored the question on reopen (question_restored), the
+// wizard stays up and answerable instead of being dropped as stale.
+func TestReopenKeepsRestoredWizard(t *testing.T) {
+	f := newFakeClient()
+	m := model{
+		client: f, ctx: context.Background(),
+		state: stateSession, status: "running", sessionID: "s1", follow: true,
+		input:    newSessionInput(),
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+	}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(model)
+
+	m.appendEvent(&v1.Event{
+		Seq: 1, Type: "question_asked", Actor: "coordinator",
+		DataJson: `{"questions":[{"question":"how?","options":["restore","leave"]}]}`,
+	})
+	m.appendEvent(&v1.Event{Seq: 2, Type: "session_reopened", Actor: "coordinator", DataJson: `{"question_restored":true}`})
+	if !m.wizActive || !m.picking || m.pending != "how?" {
+		t.Fatalf("restored question should stay answerable (active=%v picking=%v pending=%q)",
+			m.wizActive, m.picking, m.pending)
+	}
+}
+
 // In a multi-question wizard a number key selects the active question's option
 // and advances to the next question.
 func TestWizardNumberKeyAdvances(t *testing.T) {

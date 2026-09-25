@@ -652,9 +652,14 @@ curl -sS -H "$AUTH" -H "$JSON" \
   $B/ycc.v1.SessionService/AnswerQuestions
 ```
 
-Both return `{}` on success. Error cases (verified):
+Both return `{}` on success. If the one-element batch form is answered through
+`AnswerQuestion`, the option/text answers that single question; if a larger batch
+is answered that way, it answers the first question. A session that is not live
+(e.g. the daemon restarted while it waited in `ask_user`) is reopened when its log
+still ends on that unanswered question, which the reopened session restores, so
+the answer is delivered. Error cases (verified):
 
-- No question open →
+- No question open (live, or restorable from a persisted log) →
   `{"code":"failed_precondition","message":"session s_doc has no pending question"}`
 - Unknown session →
   `{"code":"not_found","message":"no such session"}`

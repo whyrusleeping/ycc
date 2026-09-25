@@ -742,11 +742,32 @@ func (s *Server) ResumeSession(_ context.Context, req *connect.Request[v1.Resume
 	}), nil
 }
 
+// sessionForAnswer resolves the session an answer RPC targets. A session that
+// is no longer live (e.g. the daemon restarted while it waited in ask_user) is
+// reopened when its persisted log still ends on that unanswered question, which
+// Reopen restores as a live gate — so the answer lands instead of failing with
+// "no such session". Anything else is not resumed as a side effect of answering.
+func (s *Server) sessionForAnswer(id string) (*session.Session, error) {
+	sess, err := s.mgr.ReopenForAnswer(id)
+	switch {
+	case err == nil:
+		return sess, nil
+	case errors.Is(err, session.ErrUnknownSession):
+		return nil, connect.NewError(connect.CodeNotFound, errNoSession)
+	case errors.Is(err, session.ErrNoPendingQuestion):
+		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+	case errors.Is(err, session.ErrDisabledModel):
+		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+	default:
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+}
+
 // AnswerQuestion responds to a question the coordinator asked via ask_user.
 func (s *Server) AnswerQuestion(_ context.Context, req *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error) {
-	sess, ok := s.mgr.Get(req.Msg.SessionId)
-	if !ok {
-		return nil, connect.NewError(connect.CodeNotFound, errNoSession)
+	sess, err := s.sessionForAnswer(req.Msg.SessionId)
+	if err != nil {
+		return nil, err
 	}
 	if err := rejectObviousCredential(req.Msg.Text); err != nil {
 		return nil, err
@@ -761,9 +782,9 @@ func (s *Server) AnswerQuestion(_ context.Context, req *connect.Request[v1.Answe
 // single ask_user call. Answers are positional: the i-th answer answers the
 // i-th question.
 func (s *Server) AnswerQuestions(_ context.Context, req *connect.Request[v1.AnswerQuestionsRequest]) (*connect.Response[v1.AnswerQuestionsResponse], error) {
-	sess, ok := s.mgr.Get(req.Msg.SessionId)
-	if !ok {
-		return nil, connect.NewError(connect.CodeNotFound, errNoSession)
+	sess, err := s.sessionForAnswer(req.Msg.SessionId)
+	if err != nil {
+		return nil, err
 	}
 	idxs := make([]int, len(req.Msg.Answers))
 	texts := make([]string, len(req.Msg.Answers))

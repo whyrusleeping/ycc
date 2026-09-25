@@ -775,7 +775,11 @@ identity, size, and modification time; cold or changed logs are read with a summ
 that validates the JSON while avoiding materialization of unrelated transcript payloads. The full
 event reader remains authoritative for replay. Reopening a session reconstructs model history and
 continues its existing event log. A persisted-only transcript is finite and read-only until the
-session is explicitly resumed.
+session is explicitly resumed. A human `ask_user` question survives the process that asked it: when
+the log ends while the coordinator waits on one, reopen restores that exact question as a live gate
+(marking `session_reopened` with `question_restored`) instead of handing the model a placeholder
+result, and the answer is recorded as usual before the model continues. Answering such a persisted
+question reopens the session; answer RPCs never resume a transcript with no restorable question.
 
 ### 18.7 Interrupt and steer
 
