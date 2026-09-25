@@ -9,11 +9,9 @@
 package usage
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -253,29 +251,10 @@ func Scan(workspace string) ([]Entry, error) {
 }
 
 func readEvents(path string) ([]event.Event, error) {
-	f, err := os.Open(path)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	var out []event.Event
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
-	for sc.Scan() {
-		line := sc.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-		var ev event.Event
-		if err := json.Unmarshal(line, &ev); err != nil {
-			return nil, fmt.Errorf("corrupt event log %s: %w", path, err)
-		}
-		out = append(out, ev)
-	}
-	return out, sc.Err()
+	// event.ReadLog shares the log's strict decoder and ignores an unterminated
+	// (never-committed) final record, so one session torn by a failed append
+	// cannot break the whole project's usage scan.
+	return event.ReadLog(path)
 }
 
 // Aggregate groups entries by the selected dimensions (default: task), filters

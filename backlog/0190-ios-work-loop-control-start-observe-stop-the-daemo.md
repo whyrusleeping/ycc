@@ -1,10 +1,10 @@
 ---
 id: "0190"
 title: 'iOS: work-loop control — start/observe/stop the daemon-side loop, digest view'
-status: in_review
+status: done
 priority: 4
 created: "2026-07-08"
-updated: "2026-08-06"
+updated: "2026-09-17"
 depends_on:
     - "0179"
     - "0183"

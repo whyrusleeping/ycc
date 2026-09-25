@@ -1,10 +1,10 @@
 ---
 id: "0328"
 title: 'iOS: edit backlog tasks from task detail'
-status: in_review
+status: done
 priority: 3
 created: "2026-08-13"
-updated: "2026-08-13"
+updated: "2026-09-17"
 depends_on: []
 spec_refs:
     - §6.2 Backlog

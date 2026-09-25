@@ -1,10 +1,10 @@
 ---
 id: "0308"
 title: “Some Projects couldnt be loaded” frequently shown on reopening the ios app
-status: in_review
+status: done
 priority: 3
 created: "2026-08-09"
-updated: "2026-08-09"
+updated: "2026-09-17"
 depends_on: []
 spec_refs: []
 ---

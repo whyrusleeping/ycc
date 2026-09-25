@@ -1033,6 +1033,81 @@ final class SessionProjectionTests: XCTestCase {
         }, "stale detail must not overwrite a newer tool result")
     }
 
+    func testLoadedReportSurvivesSnapshotsRepeatedUpsertsAndPaging() {
+        let preview = indexedRow(
+            id: "seq-4", position: 4, updated: 4,
+            events: [makeEvent(seq: 4, type: "session_idle", dataJson: #"{"report":"short preview"}"#)],
+            hasDetail: true)
+        let detail = indexedRow(
+            id: "seq-4", position: 4, updated: 4,
+            events: [makeEvent(seq: 4, type: "session_idle", dataJson: #"{"report":"complete report"}"#)])
+        var projection = SessionProjection()
+        projection.installIndexed(state: indexedState(4), rows: [preview])
+        projection.installIndexedDetail(detail)
+        let expanded = projection.durableRows
+        XCTAssertEqual(expanded.first?.kind, .finalReport(text: "complete report"))
+        XCTAssertEqual(expanded.first?.detailAvailable, false)
+
+        // Reconnect fetches a fresh bounded snapshot, not full row detail.
+        projection.installIndexed(state: indexedState(5), rows: [preview])
+        XCTAssertEqual(projection.durableRows, expanded)
+        projection.applyIndexed(state: indexedState(6), upserts: [preview], deletedIDs: [])
+        XCTAssertEqual(projection.durableRows, expanded)
+        projection.prependIndexed([preview], indexedThroughSeq: 6)
+        XCTAssertEqual(projection.durableRows, expanded)
+
+        // A report outside the new snapshot's recent page still remembers its
+        // loaded text when the user pages back to it in the same open session.
+        projection.installIndexed(state: indexedState(7), rows: [])
+        projection.prependIndexed([preview], indexedThroughSeq: 7)
+        XCTAssertEqual(projection.durableRows, expanded)
+
+        let recent = indexedRow(
+            id: "seq-8", position: 8, updated: 8,
+            events: [makeEvent(seq: 8, type: "model_turn", dataJson: #"{"text":"recent"}"#)])
+        projection.installIndexed(state: indexedState(8), rows: [recent])
+        projection.applyIndexed(state: indexedState(9), upserts: [preview], deletedIDs: [])
+        XCTAssertEqual(projection.durableRows.count, 1, "old upsert stays buffered until paged in")
+        projection.prependIndexed([preview], indexedThroughSeq: 9)
+        XCTAssertEqual(projection.durableRows.first, expanded.first)
+    }
+
+    func testLoadedDetailDoesNotMaskNewVersionsOrDeletions() {
+        let preview = indexedRow(
+            id: "seq-4", position: 4, updated: 4,
+            events: [makeEvent(seq: 4, type: "model_turn", dataJson: #"{"text":"preview"}"#)],
+            hasDetail: true)
+        let detail = indexedRow(
+            id: "seq-4", position: 4, updated: 4,
+            events: [makeEvent(seq: 4, type: "model_turn", dataJson: #"{"text":"full text"}"#)])
+        var newer = preview
+        newer.updatedSeq = 5
+        newer.events = [makeEvent(seq: 4, type: "model_turn", dataJson: #"{"text":"new preview"}"#)]
+
+        // Each server merge path must invalidate old detail for a changed row.
+        for path in 0..<3 {
+            var projection = SessionProjection()
+            projection.installIndexed(state: indexedState(4), rows: [preview])
+            projection.installIndexedDetail(detail)
+            switch path {
+            case 0: projection.installIndexed(state: indexedState(5), rows: [newer])
+            case 1: projection.applyIndexed(state: indexedState(5), upserts: [newer], deletedIDs: [])
+            default: projection.prependIndexed([newer], indexedThroughSeq: 5)
+            }
+            projection.installIndexedDetail(detail) // An old in-flight response.
+            XCTAssertEqual(projection.durableRows.first?.kind, .modelMessage(text: "new preview"))
+            XCTAssertEqual(projection.durableRows.first?.detailAvailable, true)
+        }
+
+        var projection = SessionProjection()
+        projection.installIndexed(state: indexedState(4), rows: [preview])
+        projection.installIndexedDetail(detail)
+        projection.applyIndexed(state: indexedState(5), upserts: [], deletedIDs: [preview.id])
+        projection.installIndexedDetail(detail)
+        projection.prependIndexed([preview], indexedThroughSeq: 4)
+        XCTAssertTrue(projection.durableRows.isEmpty)
+    }
+
     func testIndexedPendingQuestionDetailRestoresBoundedState() {
         var state = indexedState(4)
         state.pendingRowID = "seq-4"

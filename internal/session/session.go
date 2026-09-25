@@ -2815,7 +2815,15 @@ func firstLine(s string) string {
 // a session with no persisted log is ErrUnknownSession.
 func (m *Manager) Reopen(project, id string) (*Session, error) {
 	if s, ok := m.Get(id); ok {
-		return s, nil // already live — no-op
+		if s.logFailure() == nil {
+			return s, nil // already live — no-op
+		}
+		// The live instance fail-stopped because its event log could not be
+		// appended (e.g. the disk filled). It can never run again, so release it
+		// and replay a fresh instance from the durable log instead of requiring a
+		// daemon restart. If the disk is still full the new instance simply
+		// fail-stops again on its first append.
+		m.reclaimIfCurrent(s)
 	}
 	ws, err := m.resolveProjectWorkspace(project)
 	if err != nil {

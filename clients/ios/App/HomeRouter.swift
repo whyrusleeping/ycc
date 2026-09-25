@@ -71,6 +71,8 @@ extension HomeDestination {
         case .workstreams(let project): return "workstreams:\(project)"
         case .usage(let project): return "usage:\(project)"
         case .memory(let project): return "memory:\(project)"
+        case .file(let route):
+            return "file:\(route.project):\(route.sessionID):\(route.reference.path)"
         case .settings: return "settings"
         }
     }

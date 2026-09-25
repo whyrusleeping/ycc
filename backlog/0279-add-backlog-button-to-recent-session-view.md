@@ -1,10 +1,10 @@
 ---
 id: "0279"
 title: Add backlog button to recent session view
-status: in_review
+status: done
 priority: 3
 created: "2026-08-06"
-updated: "2026-08-09"
+updated: "2026-09-17"
 depends_on: []
 spec_refs: []
 ---

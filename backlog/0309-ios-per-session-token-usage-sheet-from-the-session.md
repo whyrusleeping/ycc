@@ -1,10 +1,10 @@
 ---
 id: "0309"
 title: 'iOS: per-session token usage sheet from the session screen'
-status: in_review
+status: done
 priority: 3
 created: "2026-08-09"
-updated: "2026-08-09"
+updated: "2026-09-17"
 depends_on: []
 spec_refs:
     - docs/design/ios-client.md#Usage

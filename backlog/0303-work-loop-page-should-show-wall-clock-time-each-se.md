@@ -1,10 +1,10 @@
 ---
 id: "0303"
 title: Work loop page should show wall clock time each session took
-status: in_review
+status: done
 priority: 3
 created: "2026-08-08"
-updated: "2026-08-09"
+updated: "2026-09-17"
 depends_on: []
 spec_refs: []
 ---

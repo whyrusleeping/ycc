@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -33,6 +34,89 @@ func installFaultFile(l *Log, writeErr, syncErr error) {
 	l.mu.Lock()
 	l.f = &faultLogFile{logFile: l.f, writeErr: writeErr, syncErr: syncErr}
 	l.mu.Unlock()
+}
+
+// partialWriteFile persists only the first half of each write before failing,
+// like a write(2) that runs out of disk space part-way through a record.
+type partialWriteFile struct {
+	logFile
+	truncateErr error
+}
+
+func (f *partialWriteFile) Write(p []byte) (int, error) {
+	n, _ := f.logFile.Write(p[:len(p)/2])
+	return n, syscall.ENOSPC
+}
+
+func (f *partialWriteFile) Truncate(size int64) error {
+	if f.truncateErr != nil {
+		return f.truncateErr
+	}
+	return f.logFile.Truncate(size)
+}
+
+func TestLogPartialWriteIsRolledBackAndReopenable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	l, err := OpenLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	emit(t, l, 1, SessionStarted)
+	_, committed := l.DurableBoundary()
+	l.mu.Lock()
+	l.f = &partialWriteFile{logFile: l.f}
+	l.mu.Unlock()
+
+	if failed := l.Record("agent", ToolResult, map[string]any{"result": strings.Repeat("x", 4096)}); failed.Seq != 0 {
+		t.Fatalf("failed Record seq = %d, want 0", failed.Seq)
+	}
+	if !errors.Is(l.Err(), syscall.ENOSPC) {
+		t.Fatalf("Err = %v, want ENOSPC", l.Err())
+	}
+	if info, err := os.Stat(path); err != nil || info.Size() != committed {
+		t.Fatalf("torn record not rolled back: size=%v err=%v, want %d", info, err, committed)
+	}
+	l2, err := OpenLog(path)
+	if err != nil {
+		t.Fatalf("reopen after ENOSPC: %v", err)
+	}
+	defer l2.Close()
+	emit(t, l2, 2, ToolResult)
+	if matches, _ := filepath.Glob(path + ".torn-*"); len(matches) != 0 {
+		t.Fatalf("rolled-back log needed torn-tail recovery: %v", matches)
+	}
+}
+
+func TestLogPartialWriteWithFailedRollbackRecoversOnReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	l, err := OpenLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	emit(t, l, 1, SessionStarted)
+	_, committed := l.DurableBoundary()
+	truncErr := errors.New("injected truncate failure")
+	l.mu.Lock()
+	l.f = &partialWriteFile{logFile: l.f, truncateErr: truncErr}
+	l.mu.Unlock()
+
+	if failed := l.Record("agent", ToolResult, map[string]any{"result": "lost"}); failed.Seq != 0 {
+		t.Fatalf("failed Record seq = %d, want 0", failed.Seq)
+	}
+	if !errors.Is(l.Err(), syscall.ENOSPC) || !strings.Contains(l.Err().Error(), "rollback") {
+		t.Fatalf("Err = %v, want ENOSPC with rollback failure noted", l.Err())
+	}
+	if info, err := os.Stat(path); err != nil || info.Size() <= committed {
+		t.Fatalf("test did not leave a torn tail: size=%v err=%v", info, err)
+	}
+	// The on-disk shape matches the real incident: reopen must discard the torn
+	// tail and continue from the last committed sequence.
+	l2, err := OpenLog(path)
+	if err != nil {
+		t.Fatalf("reopen with torn tail: %v", err)
+	}
+	defer l2.Close()
+	emit(t, l2, 2, ToolResult)
 }
 
 func receiveTerminalFailure(t *testing.T, ch <-chan Event) Event {
@@ -154,8 +238,8 @@ func TestLogSyncFailureIsNotReportedAsRecorded(t *testing.T) {
 	if durableSeq != 0 || durableOffset != 0 || len(l.Snapshot()) != 0 || tail != nil || cursor != 0 {
 		t.Fatalf("sync-failed event exposed: boundary=(%d,%d) Snapshot=%+v tail=%+v cursor=%d", durableSeq, durableOffset, l.Snapshot(), tail, cursor)
 	}
-	if info, err := os.Stat(path); err != nil || info.Size() == 0 {
-		t.Fatalf("test did not expose failed-sync bytes on disk: info=%v err=%v", info, err)
+	if info, err := os.Stat(path); err != nil || info.Size() != 0 {
+		t.Fatalf("failed-sync record was not rolled back from disk: info=%v err=%v", info, err)
 	}
 	if again := l.Record("agent", ToolCall, nil); again.Seq != 0 {
 		t.Fatalf("Record after sync failure seq = %d, want 0", again.Seq)

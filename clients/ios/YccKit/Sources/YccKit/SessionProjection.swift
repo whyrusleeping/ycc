@@ -147,6 +147,9 @@ public struct SessionProjection: Sendable, Equatable {
     private var indexedRowVersions: [String: Int64] = [:]
     private var indexedTombstoneVersions: [String: Int64] = [:]
     private var indexedPendingRows: [String: TranscriptRow] = [:]
+    /// Explicitly fetched detail belongs to this open session, not a particular
+    /// snapshot. Reuse it only when the server confirms the exact same version.
+    private var indexedLoadedDetails: [String: TranscriptRow] = [:]
     /// A truncated pending-question state needs detail even when its old row is
     /// outside the loaded page. Separate this from openQuestionRowID, which stays
     /// set after an optimistic answer solely to fold the authoritative answer row.
@@ -700,7 +703,11 @@ public struct SessionProjection: Sendable, Equatable {
         rows: [Ycc_V1_SessionPresentationRow]
     ) {
         applyIndexedState(state)
-        durableRows = rows.compactMap(Self.decodeIndexedRow)
+        var decoded: [TranscriptRow] = []
+        for encoded in rows {
+            if let row = decodeIndexedRowPreservingDetail(encoded) { decoded.append(row) }
+        }
+        durableRows = decoded
         indexedRowVersions = Dictionary(uniqueKeysWithValues: durableRows.map { ($0.id, $0.updatedSeq) })
         indexedTombstoneVersions.removeAll(keepingCapacity: true)
         indexedPendingRows.removeAll(keepingCapacity: true)
@@ -730,7 +737,7 @@ public struct SessionProjection: Sendable, Equatable {
                 candidate = pending
             } else if encoded.updatedSeq <= indexedThroughSeq,
                       encoded.updatedSeq >= known, encoded.updatedSeq > tombstone {
-                candidate = Self.decodeIndexedRow(encoded)
+                candidate = decodeIndexedRowPreservingDetail(encoded)
             }
             guard var row = candidate else { continue }
             indexedPendingRows.removeValue(forKey: row.id)
@@ -761,6 +768,7 @@ public struct SessionProjection: Sendable, Equatable {
                 indexedTombstoneVersions[id] = state.indexedThroughSeq
                 indexedRowVersions[id] = max(indexedRowVersions[id] ?? 0, state.indexedThroughSeq)
                 indexedPendingRows.removeValue(forKey: id)
+                indexedLoadedDetails.removeValue(forKey: id)
             }
             durableRows.removeAll { deleted.contains($0.id) }
         }
@@ -769,7 +777,7 @@ public struct SessionProjection: Sendable, Equatable {
             let known = indexedRowVersions[encoded.id] ?? 0
             let tombstone = indexedTombstoneVersions[encoded.id] ?? 0
             guard encoded.updatedSeq >= known, encoded.updatedSeq > tombstone,
-                  var row = Self.decodeIndexedRow(encoded) else { continue }
+                  var row = decodeIndexedRowPreservingDetail(encoded) else { continue }
             indexedRowVersions[row.id] = row.updatedSeq
             indexedTombstoneVersions.removeValue(forKey: row.id)
             row.actorEmoji = subagentEmoji(for: row.actor)
@@ -806,6 +814,7 @@ public struct SessionProjection: Sendable, Equatable {
             guard encoded.updatedSeq >= durableRows[index].updatedSeq else { return }
             row.detailAvailable = false
             row.actorEmoji = durableRows[index].actorEmoji
+            indexedLoadedDetails[row.id] = row
             indexedRowVersions[row.id] = row.updatedSeq
             durableRows[index] = row
         } else if !restoresPending {
@@ -874,6 +883,17 @@ public struct SessionProjection: Sendable, Equatable {
             openQuestionRowID = nil
             indexedPendingDetailRowID = nil
         }
+    }
+
+    private mutating func decodeIndexedRowPreservingDetail(
+        _ encoded: Ycc_V1_SessionPresentationRow
+    ) -> TranscriptRow? {
+        if let detail = indexedLoadedDetails[encoded.id] {
+            if detail.updatedSeq == encoded.updatedSeq { return detail }
+            // A new version must never inherit full text from the old version.
+            indexedLoadedDetails.removeValue(forKey: encoded.id)
+        }
+        return Self.decodeIndexedRow(encoded)
     }
 
     private static func decodeIndexedRow(_ encoded: Ycc_V1_SessionPresentationRow) -> TranscriptRow? {

@@ -1,10 +1,10 @@
 ---
 id: "0296"
 title: 'iOS: project memory viewer (GetMemory RPC + MemoryView)'
-status: in_review
+status: done
 priority: 3
 created: "2026-08-08"
-updated: "2026-08-08"
+updated: "2026-09-17"
 depends_on: []
 spec_refs:
     - 6.5 Project memory — agent-learned, advisory

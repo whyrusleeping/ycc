@@ -1,10 +1,10 @@
 ---
 id: "0254"
 title: 'TUI + iOS: integration states, retry, merge-all-ready, needs-attention notifications'
-status: in_review
+status: done
 priority: 3
 created: "2026-08-06"
-updated: "2026-08-09"
+updated: "2026-09-17"
 depends_on:
     - "0252"
 spec_refs:

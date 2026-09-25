@@ -1,10 +1,10 @@
 ---
 id: "0278"
 title: 'iOS: session composer sometimes keeps the sent text (autocorrect write-back)'
-status: in_review
+status: done
 priority: 2
 created: "2026-08-06"
-updated: "2026-08-06"
+updated: "2026-09-17"
 depends_on: []
 spec_refs: []
 ---

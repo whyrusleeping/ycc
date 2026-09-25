@@ -1,10 +1,10 @@
 ---
 id: "0380"
 title: Keep large iOS session loads responsive and bound initial transcript rendering
-status: in_review
+status: done
 priority: 1
 created: "2026-09-14"
-updated: "2026-09-14"
+updated: "2026-09-17"
 depends_on: []
 spec_refs: []
 ---

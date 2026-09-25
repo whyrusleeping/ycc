@@ -86,6 +86,43 @@ public final class YccClient: Sendable {
         }
     }
 
+    /// List a directory inside a project (read-only, project-confined).
+    /// `path` is root-relative (empty = the root); a non-empty `sessionID`
+    /// resolves against that session's live worktree when it still exists.
+    public func listFiles(project: String, sessionID: String, path: String) async throws -> Ycc_V1_ListFilesResponse {
+        var request = Ycc_V1_ListFilesRequest()
+        request.project = project
+        request.sessionID = sessionID
+        request.path = path
+        let response = await generated.listFiles(request: request)
+        switch response.result {
+        case .success(let message):
+            return message
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
+    /// Read one file inside a project (read-only, project-confined). Text over
+    /// `maxBytes` arrives truncated at a line boundary; non-image binaries carry
+    /// metadata only.
+    public func readFile(
+        project: String, sessionID: String, path: String, maxBytes: Int64
+    ) async throws -> Ycc_V1_ReadFileResponse {
+        var request = Ycc_V1_ReadFileRequest()
+        request.project = project
+        request.sessionID = sessionID
+        request.path = path
+        request.maxBytes = maxBytes
+        let response = await generated.readFile(request: request)
+        switch response.result {
+        case .success(let message):
+            return message
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
     /// Deregister a project from the daemon. This only removes the registry entry;
     /// it does not delete the workspace or any files on the daemon host.
     public func removeProject(name: String) async throws {

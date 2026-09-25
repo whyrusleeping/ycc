@@ -1,10 +1,10 @@
 ---
 id: "0305"
 title: 'iOS: render work-loop waiting state (resume time + wait kind)'
-status: in_review
+status: done
 priority: 3
 created: "2026-08-08"
-updated: "2026-08-08"
+updated: "2026-09-17"
 depends_on:
     - "0295"
 spec_refs: []

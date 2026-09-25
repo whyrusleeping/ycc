@@ -1,10 +1,10 @@
 ---
 id: "0345"
 title: Make iOS composer Return insert a newline instead of sending
-status: in_review
+status: done
 priority: 3
 created: "2026-09-08"
-updated: "2026-09-08"
+updated: "2026-09-17"
 depends_on: []
 spec_refs:
     - docs/design/ios-client.md

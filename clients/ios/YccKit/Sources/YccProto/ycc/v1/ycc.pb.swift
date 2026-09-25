@@ -463,10 +463,11 @@ public nonisolated struct Ycc_V1_ReadFileResponse: Sendable {
   /// cleaned root-relative path
   public var path: String = String()
 
-  /// text (a line-bounded prefix when truncated) or image bytes;
+  /// Text (a line-bounded prefix when truncated) or image bytes; empty for
+  /// other binaries and for over-cap images.
   public var data: Data = Data()
 
-  /// empty for other binaries and for over-cap images
+  /// full on-disk size
   public var size: Int64 = 0
 
   /// "text/plain; charset=utf-8", "image/png", ...

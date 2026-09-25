@@ -135,6 +135,68 @@ func TestAnswerResolvesPendingBatch(t *testing.T) {
 	}
 }
 
+// Regression: ask_user called with a ONE-element `questions` list is a pending
+// batch, but clients (iOS) render it as a single question and answer via
+// AnswerQuestion → AnswerOption. That used to fail with "no pending question";
+// it must resolve the batch, mapping the option index against the question's
+// options (or passing free text through).
+func TestAnswerOptionResolvesSingleQuestionBatch(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		idx  int
+		text string
+		want string
+	}{
+		{"option", 2, "", "stop"},
+		{"free text", -1, "do it later", "do it later"},
+		{"out of range index is free text", 7, "hmm", "hmm"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := newInteraction(false, discardEmitter())
+			qs := []orchestrator.Question{{Prompt: "how?", Options: []string{"restore", "leave", "stop"}}}
+			got := make(chan []string, 1)
+			go func() {
+				a, _ := in.AskMany(context.Background(), qs)
+				got <- a
+			}()
+			waitBatchPending(t, in)
+			if !in.AnswerOption(tc.idx, tc.text) {
+				t.Fatal("AnswerOption on a pending one-question batch should return true")
+			}
+			select {
+			case a := <-got:
+				if len(a) != 1 || a[0] != tc.want {
+					t.Fatalf("answers = %q, want [%q]", a, tc.want)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("AskMany did not return after AnswerOption")
+			}
+			if in.pending() || in.AnswerOption(0, "") {
+				t.Fatal("batch should be fully claimed")
+			}
+		})
+	}
+}
+
+// AnswerOption on a multi-question batch answers Q1 and marks the rest, like Answer.
+func TestAnswerOptionOnMultiBatchAnswersFirst(t *testing.T) {
+	in := newInteraction(false, discardEmitter())
+	qs := []orchestrator.Question{{Prompt: "db?", Options: []string{"postgres", "sqlite"}}, {Prompt: "name?"}}
+	got := make(chan []string, 1)
+	go func() {
+		a, _ := in.AskMany(context.Background(), qs)
+		got <- a
+	}()
+	waitBatchPending(t, in)
+	if !in.AnswerOption(1, "") {
+		t.Fatal("AnswerOption on a pending batch should return true")
+	}
+	a := <-got
+	if len(a) != 2 || a[0] != "sqlite" || a[1] != batchFreeTextMarker {
+		t.Fatalf("answers = %q", a)
+	}
+}
+
 // Session.SendInput arriving while a batch ask_user is pending must answer the
 // batch, not silently buffer the text into the idle queue (where the AskMany-blocked
 // loop would never drain it).

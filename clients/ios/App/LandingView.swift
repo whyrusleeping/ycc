@@ -348,6 +348,8 @@ struct LandingView: View {
                 self.destination(destination)
             }
         }
+        // Links inside a file viewer on this stack push the next file here.
+        .environment(\.fileNavigator, FileNavigator { router.path.append(.file($0)) })
     }
 
     /// The project-scoped destinations. Backlog earns its own glyph (it is the
@@ -393,6 +395,10 @@ struct LandingView: View {
                     NavigationLink(value: HomeDestination.memory(project: project)) {
                         Label("Memory", systemImage: "brain")
                     }
+                    NavigationLink(value: HomeDestination.file(FileRoute(
+                        project: project, reference: FileReference(path: "", isDirectory: true)))) {
+                        Label("Files", systemImage: "folder")
+                    }
                 }
                 if (model?.unreadCount ?? 0) > 0 {
                     if model?.selectedProject != nil { Divider() }
@@ -433,6 +439,8 @@ struct LandingView: View {
                 UsageView(initialProject: project)
             case let .memory(project):
                 MemoryView(client: client, project: project)
+            case let .file(route):
+                FileScreen(route: route)
             case .settings:
                 GlobalSettingsView(client: client)
             }

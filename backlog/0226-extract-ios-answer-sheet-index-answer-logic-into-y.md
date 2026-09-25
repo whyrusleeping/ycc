@@ -1,10 +1,10 @@
 ---
 id: "0226"
 title: Extract iOS answer-sheet index/answer logic into YccKit for test coverage
-status: proposed
+status: blocked
 priority: 3
 created: "2026-07-30"
-updated: "2026-07-30"
+updated: "2026-09-18"
 depends_on: []
 spec_refs: []
 ---
@@ -33,3 +33,5 @@ per-question selection/text, `allAnswered`, positional batch assembly) into a sm
 - [ ] `swift test` in YccKit passes
 
 ## Work log
+- Environment preflight: this workspace host is Linux (`uname -s`), `swift` is not on PATH, and YccKit's `KeychainStore.swift` imports Apple's `Security` framework. The required full YccKit `swift test` cannot be verified here by installing Linux Swift alone. `.github/workflows/ci.yml` defines a macOS Swift job, but the GitHub CLI is absent and no accessible remote verification path has been established in this session. No implementation was started.
+- Unblock with an accessible macOS Swift environment (or an authorized remote CI execution path) capable of running `swift test --package-path clients/ios/YccKit` against the implementation. Then resume the extraction and regression tests; all acceptance criteria remain outstanding.

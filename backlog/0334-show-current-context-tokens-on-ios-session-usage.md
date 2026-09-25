@@ -1,10 +1,10 @@
 ---
 id: "0334"
 title: Show current context tokens on iOS session usage
-status: in_review
+status: done
 priority: 1
 created: "2026-08-15"
-updated: "2026-08-15"
+updated: "2026-09-17"
 depends_on: []
 spec_refs:
     - spec.md#20.5 Surfaces

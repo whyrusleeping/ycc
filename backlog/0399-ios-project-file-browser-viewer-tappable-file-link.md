@@ -1,7 +1,7 @@
 ---
 id: "0399"
 title: 'iOS: project file browser/viewer + tappable file links in agent markdown'
-status: todo
+status: in_review
 priority: 2
 created: "2026-09-24"
 updated: "2026-09-24"
@@ -42,3 +42,17 @@ Update docs/design/ios-client.md (Navigation and interaction) with the files rou
 - Status goes to in_review until it's been used on a device (no Swift toolchain here).
 
 ## Work log
+
+- 2026-09-24: Implemented; awaiting on-device use (uncommitted).
+  - **YccKit:**
+    - `FileReference.swift`: `FileReference`/`FileRoute`/`FileLinkContext`. `classify(url:)` treats http(s)/mailto/ycc as external and everything else, including `foo.go:12` (which parses with URL scheme `foo.go`), as a path. It handles `#L12[-L20]` fragments and `:12`/`:12-20`/`:12:5` suffixes, percent-decoding, stripping known absolute roots, `..` normalization and escape rejection. `fromCodeSpan` is conservative (known extensions or well-known names, no whitespace, resolves from the root). Recognized code spans get a private `ycc-file:///` link URL so the base dir isn't applied twice.
+    - `SyntaxHighlighter.swift`: a line scanner with carried block-comment/multi-line-string state, 13 language families. It takes ~20 ms for the 130 KB session.go.
+    - `FileBrowserModel.swift`: `ProjectFileSource`, `FileBrowserModel`, and `FileViewerModel`. Highlighting runs detached. On invalid_argument, the viewer falls back to a listing, which handles links to directories without a trailing `/`. CRLF splitting accounts for `\r\n` being one Character.
+    - `YccClient.listFiles/readFile`, and tests in `FileBrowsingTests.swift`.
+  - **App:**
+    - `App/FileBrowsing.swift`: environment `fileLinkContext`/`fileNavigator`, the `.fileLinks(_:presentation:)` modifier (an `OpenURLAction` that uses a sheet from transcripts and pushes inside files), `FileSheet` (own typed stack), `FileScreen`, `FileBrowserView`, `FileViewerView` (raw/wrap toggles, copy path/contents, share, fallback and truncation notes), and the lazy `CodeTextView` (line gutter, target-line highlight and scroll).
+    - `MarkdownText` autolinks code-span paths when a context is set.
+    - `HomeDestination.file(FileRoute)`, a Files entry in the landing overflow, "Browse files" in the session overflow (session worktree), and link contexts on SessionView, TaskDetailView (base `backlog`) and MemoryView.
+  - **Docs:** ios-client.md Navigation section; plans/ios-client-smoke.md §6.
+  - **Verification:** the YccKit pieces (FileReference, SyntaxHighlighter, the models and the real YccError, plus the generated protos with a stub YccClient) compile and all 19 tests pass on Linux in a `swift:6.2-noble` Docker scratch harness (/tmp/ycchk). The SwiftUI App layer and the `AttributedString(markdown:)` code-span post-processing (Linux Foundation has no markdown parser) were NOT compiled here and need an Xcode build.
+  - `absoluteRoots` is not populated yet. Absolute-path links appeared in 0 of the sampled transcripts; wiring in the project path from ListProjects is a small follow-up if needed.

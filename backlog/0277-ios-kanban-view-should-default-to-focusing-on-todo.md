@@ -1,10 +1,10 @@
 ---
 id: "0277"
 title: Ios kanban view should default to focusing on todo column
-status: in_review
+status: done
 priority: 3
 created: "2026-08-06"
-updated: "2026-08-09"
+updated: "2026-09-17"
 depends_on: []
 spec_refs: []
 ---

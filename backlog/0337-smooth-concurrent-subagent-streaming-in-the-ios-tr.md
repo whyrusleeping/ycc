@@ -1,10 +1,10 @@
 ---
 id: "0337"
 title: Smooth concurrent subagent streaming in the iOS transcript
-status: in_review
+status: done
 priority: 2
 created: "2026-08-16"
-updated: "2026-08-16"
+updated: "2026-09-17"
 depends_on: []
 spec_refs:
     - Event log

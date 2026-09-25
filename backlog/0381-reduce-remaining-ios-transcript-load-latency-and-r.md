@@ -1,10 +1,10 @@
 ---
 id: "0381"
 title: Reduce remaining iOS transcript load latency and reliably open at latest
-status: in_review
+status: done
 priority: 1
 created: "2026-09-15"
-updated: "2026-09-15"
+updated: "2026-09-17"
 depends_on: []
 spec_refs: []
 ---

@@ -87,6 +87,68 @@ func TestReopenStopped(t *testing.T) {
 	}
 }
 
+// A live session that fail-stopped on an event-log append failure (e.g. a full
+// disk that left a torn record behind) is replaced by a fresh replay on Reopen
+// instead of being returned as the dead live instance until daemon restart.
+func TestReopenReplacesLogFailedLiveSession(t *testing.T) {
+	ws := t.TempDir()
+	if _, err := git.Open(ws); err != nil {
+		t.Fatal(err)
+	}
+	absWS, _ := filepath.Abs(ws)
+	id := "s_log_failed"
+	writeSession(t, ws, id, []event.Event{
+		{Seq: 1, TS: ts(1), Type: event.SessionStarted, Data: map[string]any{"mode": "work", "workspace": absWS}},
+		{Seq: 2, TS: ts(2), Actor: "user", Type: event.UserInput, Data: map[string]any{"text": "go"}},
+		{Seq: 3, TS: ts(3), Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{"text": "done"}},
+		{Seq: 4, TS: ts(4), Type: event.SessionIdle, Data: map[string]any{"report": "done"}},
+	})
+	m := NewManager(testRegistry(), ws)
+	first, err := m.Reopen("", id)
+	if err != nil {
+		t.Fatalf("Reopen: %v", err)
+	}
+	// Drive the real terminal-failure path, then leave a torn record on disk the
+	// way an ENOSPC write whose rollback also failed would.
+	if ev := first.Log().Record("coordinator", event.ModelTurn, map[string]any{"bad": func() {}}); ev.Seq != 0 {
+		t.Fatalf("failed Record seq = %d", ev.Seq)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for first.Status() != event.StatusError {
+		if time.Now().After(deadline) {
+			t.Fatalf("session did not fail-stop: status %q", first.Status())
+		}
+		time.Sleep(time.Millisecond)
+	}
+	logPath := filepath.Join(ws, ".ycc", "sessions", id, "events.jsonl")
+	f, err := os.OpenFile(logPath, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(`{"seq":99,"type":"tool_res`); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	second, err := m.Reopen("", id)
+	if err != nil {
+		t.Fatalf("Reopen of log-failed live session: %v", err)
+	}
+	defer second.Stop()
+	if second == first {
+		t.Fatal("Reopen returned the dead fail-stopped instance")
+	}
+	if got, ok := m.Get(id); !ok || got != second {
+		t.Fatal("replacement session not registered as live")
+	}
+	if err := second.Log().Err(); err != nil {
+		t.Fatalf("replacement log failed: %v", err)
+	}
+	if first.ctx.Err() == nil {
+		t.Fatal("fail-stopped instance was not reclaimed")
+	}
+}
+
 // (b) Reopen from an on-disk log registers a live session, restores its mode,
 // and reconstructs the loop history losslessly. No input is sent (no turn runs).
 func TestReopenFromDisk(t *testing.T) {

@@ -84,6 +84,24 @@ PhotosPicker content reaches the model without a text-only workaround.
 
 Pass condition: in-app taps, deep links, and notifications share one authenticated routing path.
 
+### 6. Project files and file links
+
+1. In a finished agent report that cites files, tap an inline-code path with a line
+   (`internal/…/x.go:42`) and a markdown link (`[FINDINGS](bench/…/FINDINGS.md)`). Confirm a sheet
+   opens with the file syntax-highlighted and scrolled to the highlighted line (or the markdown
+   rendered), and that the transcript keeps its scroll position after Done.
+2. In a rendered markdown file, follow a relative link (e.g. `../proto/…`) and confirm it pushes
+   inside the sheet. Toggle Show source and Wrap lines; copy the path.
+3. Open Files from the project overflow menu and browse a few folders: dotfiles are hidden,
+   gitignored entries are dimmed, and images preview inline.
+4. From a merged or discarded workstream's session, tap a file link and confirm the fallback
+   note ("worktree is gone … main checkout") appears; a missing file shows File not found.
+5. Tap a web link and a `ycc://` link in a transcript and confirm they still leave the app / route
+   as before.
+
+Pass condition: file references in agent output are one tap from their contents, and nothing
+offers editing.
+
 ## Release result
 
 Record device/simulator model, OS version, daemon commit, app commit, and any failed checklist

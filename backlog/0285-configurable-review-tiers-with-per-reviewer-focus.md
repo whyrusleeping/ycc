@@ -1,10 +1,10 @@
 ---
 id: "0285"
 title: Configurable review tiers with per-reviewer focus prompts and models
-status: in_review
+status: done
 priority: 2
 created: "2026-08-07"
-updated: "2026-08-07"
+updated: "2026-09-17"
 depends_on: []
 spec_refs:
     - 13.1 Review tiers

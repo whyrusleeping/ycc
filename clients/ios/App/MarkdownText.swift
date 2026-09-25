@@ -14,6 +14,10 @@ import YccKit
 struct MarkdownText: View {
     let text: String
 
+    /// Set by `.fileLinks(_:)`: path-like code spans become tappable file
+    /// links (and markdown links open the in-app viewer).
+    @Environment(\.fileLinkContext) private var fileLinkContext
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
@@ -21,9 +25,9 @@ struct MarkdownText: View {
                 case .code(let language, let code):
                     CodeBlock(language: language, code: code)
                 case .table(let table):
-                    TableBlock(table: table)
+                    TableBlock(table: table, fileLinks: fileLinkContext)
                 case .heading(let level, let md):
-                    Text(rendered(md))
+                    Text(rendered(md, fileLinks: fileLinkContext))
                         .font(headingFont(level))
                         .frame(maxWidth: .infinity, alignment: .leading)
                 case .quote(let md):
@@ -31,7 +35,7 @@ struct MarkdownText: View {
                         RoundedRectangle(cornerRadius: 1.5)
                             .fill(Color.secondary.opacity(0.4))
                             .frame(width: 3)
-                        Text(rendered(md))
+                        Text(rendered(md, fileLinks: fileLinkContext))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -39,7 +43,7 @@ struct MarkdownText: View {
                 case .rule:
                     Divider()
                 case .markdown(let md):
-                    Text(rendered(md))
+                    Text(rendered(md, fileLinks: fileLinkContext))
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
@@ -181,14 +185,31 @@ struct MarkdownText: View {
 
 /// Parse one block as inline markdown, preserving soft line breaks. Falls back
 /// to plain text if it doesn't parse. Shared by prose and table cells so inline
-/// syntax has identical behavior in both.
-private func rendered(_ markdown: String) -> AttributedString {
+/// syntax has identical behavior in both. With a file-link context, inline code
+/// spans that look like repo paths (`internal/a.go:12`) — how agents usually
+/// cite files — become links the `.fileLinks` handler opens in-app.
+private func rendered(_ markdown: String, fileLinks: FileLinkContext? = nil) -> AttributedString {
     var options = AttributedString.MarkdownParsingOptions()
     options.interpretedSyntax = .inlineOnlyPreservingWhitespace
-    if let attributed = try? AttributedString(markdown: markdown, options: options) {
-        return attributed
+    guard var attributed = try? AttributedString(markdown: markdown, options: options) else {
+        return AttributedString(markdown)
     }
-    return AttributedString(markdown)
+    if let fileLinks {
+        var links: [(Range<AttributedString.Index>, URL)] = []
+        for run in attributed.runs {
+            guard run.link == nil,
+                  let intent = run.inlinePresentationIntent, intent.contains(.code) else { continue }
+            let span = String(attributed[run.range].characters)
+            if let reference = FileReference.fromCodeSpan(span, context: fileLinks),
+               let url = reference.linkURL {
+                links.append((run.range, url))
+            }
+        }
+        for (range, url) in links {
+            attributed[range].link = url
+        }
+    }
+    return attributed
 }
 
 /// A pipe table rendered as a horizontally scrollable grid. Keeping the card
@@ -196,6 +217,7 @@ private func rendered(_ markdown: String) -> AttributedString {
 /// squeezing the surrounding transcript.
 private struct TableBlock: View {
     let table: MarkdownTable
+    let fileLinks: FileLinkContext?
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -226,7 +248,7 @@ private struct TableBlock: View {
 
     private func tableCell(_ value: String, column: Int, isHeader: Bool) -> some View {
         let font: Font = isHeader ? .subheadline.weight(.semibold) : .subheadline
-        return Text(rendered(value))
+        return Text(rendered(value, fileLinks: fileLinks))
             .font(font)
             .multilineTextAlignment(textAlignment(for: column))
             .textSelection(.enabled)

@@ -1,10 +1,10 @@
 ---
 id: "0194"
 title: 'iOS: Add-project flow with server-backed directory picker'
-status: in_review
+status: done
 priority: 3
 created: "2026-07-10"
-updated: "2026-08-08"
+updated: "2026-09-17"
 depends_on:
     - "0264"
     - "0193"

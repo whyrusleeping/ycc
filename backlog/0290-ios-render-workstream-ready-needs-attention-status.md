@@ -1,10 +1,10 @@
 ---
 id: "0290"
 title: 'iOS: render workstream ready / needs_attention statuses'
-status: in_review
+status: done
 priority: 3
 created: "2026-08-07"
-updated: "2026-08-08"
+updated: "2026-09-17"
 depends_on:
     - "0251"
 spec_refs:

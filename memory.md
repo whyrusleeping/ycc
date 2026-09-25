@@ -21,6 +21,8 @@
 - GetUsage with empty project + multiple projects returns the ALL-projects rollup (0287); iOS drawer's Usage row opens .usage(project: "").
 - 2026-09-04: key_env in ycc.toml must hold the NAME of an env var / secrets entry (resolved env-then-secrets in config.resolveKey), never the key itself; Fireworks model ids need the full accounts/fireworks/models/ prefix, and strict openai-compatible servers reject unknown body fields (gollama b9fcec4 sends nested 'options' to Ollama only).
 - 2026-09-15: connect-swift URLSessionHTTPClient delivers unary callbacks on the main delegate queue (verified 1.0.0/1.2.x); codec decoding runs inline there. RetryGuardHTTPClient now forwards unary completions off-main, while SessionViewModel separately detaches projection folding.
+- 2026-09-19: Anthropic caps images at 2000px/side once a request has >20 images (else 8000px); since images accumulate in history this bricks a session — internal/imagefit downscales at both ingestion points (server.validateInputImages, tools.readMedia).
+- 2026-09-20: ChatGPT Codex backend derives prompt-cache affinity from the `session-id` header (plus prompt_cache_key body); engine.Loop.PromptCacheKey (<session>/<actor>) feeds both via gollama ExtraBody, openai backend only — strict openai-compatible servers reject unknown fields (0396).
 
 ## Environment & tooling
 
@@ -30,6 +32,7 @@
 - `go test ./...` has known flaky tests (internal/session, internal/setup, internal/tools background-bash); verify against HEAD first.
 - The `commit` tool does `git add -A` — don't use it when unrelated work is in the tree (see selective-commit lesson).
 - Live-model checks feasible: ANTHROPIC_API_KEY set; codex.New("", openaiauth.AccessToken) uses ycc's ChatGPT OAuth login.
+- 2026-09-24 [measured observation] Pure (non-UI, non-Connect) YccKit Swift can be compiled and unit-tested here via Docker `swift:6.2-noble` (6.0 is too old for the generated `nonisolated struct` protos): a scratch SPM package with swift-protobuf, ycc.pb.swift, the pure sources and a stub YccClient; Linux Foundation lacks AttributedString(markdown:) and SwiftUI, so those still need Xcode. <!-- ycc-memory id=m-dlnxkskkot8v kind=observation session=s_3683d69c3144d4b3 event=442 actor=coordinator scope=workspace classified=model -->
 
 ## User preferences
 

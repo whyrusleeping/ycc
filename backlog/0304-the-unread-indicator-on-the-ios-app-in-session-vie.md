@@ -1,10 +1,10 @@
 ---
 id: "0304"
 title: The unread indicator on the ios app in session view feels a bit odd. It only shows one or two dots instead of one on each one thats actually unread
-status: in_review
+status: done
 priority: 3
 created: "2026-08-08"
-updated: "2026-08-09"
+updated: "2026-09-17"
 depends_on: []
 spec_refs: []
 ---

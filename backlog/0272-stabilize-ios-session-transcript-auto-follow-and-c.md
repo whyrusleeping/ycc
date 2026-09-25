@@ -1,10 +1,10 @@
 ---
 id: "0272"
 title: Stabilize iOS session transcript auto-follow and composer scrolling
-status: in_review
+status: done
 priority: 2
 created: "2026-07-16"
-updated: "2026-08-08"
+updated: "2026-09-17"
 depends_on: []
 spec_refs:
     - docs/design/ios-client.md#6. Screens & feature phases

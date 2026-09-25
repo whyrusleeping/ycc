@@ -104,7 +104,10 @@ struct TaskDetailView: View {
             }
             if !task.body.isEmpty {
                 Section("Details") {
+                    // Task bodies live in backlog/, so relative links (sibling
+                    // tasks) resolve there; code-span paths from the root.
                     MarkdownText(text: task.body)
+                        .fileLinks(FileLinkContext(project: project, baseDirectory: "backlog"))
                 }
             }
         }

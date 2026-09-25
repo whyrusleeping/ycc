@@ -60,6 +60,7 @@ struct MemoryView: View {
         List {
             Section {
                 MarkdownText(text: content)
+                    .fileLinks(FileLinkContext(project: project))
             } footer: {
                 if !path.isEmpty {
                     // Where the notes live on the daemon host, for anyone who

@@ -2,9 +2,11 @@ package event
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -48,6 +50,7 @@ type Log struct {
 type logFile interface {
 	Write([]byte) (int, error)
 	Sync() error
+	Truncate(size int64) error
 	Close() error
 }
 
@@ -79,7 +82,7 @@ func OpenLog(path string) (*Log, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	if err := requireTerminatedLog(path); err != nil {
+	if err := recoverTornTail(path); err != nil {
 		return nil, err
 	}
 	existing, err := readEvents(path)
@@ -110,12 +113,50 @@ func OpenLog(path string) (*Log, error) {
 
 // ReadLog reads and parses all persisted events from a session's events.jsonl at
 // path, reusing the strict line-by-line decoder. A missing file yields (nil, nil);
-// a corrupt line is a hard error. It backs the read-only transcript view.
+// a corrupt line is a hard error. An unterminated final record is a torn append
+// that was never committed (Record reports success only after the full
+// newline-terminated line is written and synced), so it is ignored rather than
+// treated as corruption. It backs the read-only transcript view.
 func ReadLog(path string) ([]Event, error) {
 	return readEvents(path)
 }
 
-func requireTerminatedLog(path string) error {
+// terminatedLength returns the length of the newline-terminated prefix of the
+// first size bytes of f: everything after the last '\n' is an uncommitted torn
+// tail. It scans backwards in bounded chunks so large logs are not re-read.
+func terminatedLength(f *os.File, size int64) (int64, error) {
+	const chunk = 64 * 1024
+	buf := make([]byte, chunk)
+	end := size
+	for end > 0 {
+		start := end - chunk
+		if start < 0 {
+			start = 0
+		}
+		b := buf[:end-start]
+		if n, err := f.ReadAt(b, start); n < len(b) {
+			if err == nil {
+				err = io.ErrUnexpectedEOF
+			}
+			return 0, err
+		}
+		if i := bytes.LastIndexByte(b, '\n'); i >= 0 {
+			return start + int64(i) + 1, nil
+		}
+		end = start
+	}
+	return 0, nil
+}
+
+// recoverTornTail repairs a log whose final record is unterminated — the
+// on-disk residue of an append that failed part-way (e.g. ENOSPC) and whose
+// rollback could not run (daemon crash, truncate failure, older binaries).
+// Such a record was never acknowledged as durable, so the log's committed
+// history is exactly its newline-terminated prefix. The torn bytes are first
+// preserved in an owner-only sidecar (events.jsonl.torn-<utc>) for forensics,
+// then the log is truncated back to that prefix so appends resume on a clean
+// record boundary. Any failure leaves the log unmodified and is returned.
+func recoverTornTail(path string) error {
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
 		return nil
@@ -128,17 +169,72 @@ func requireTerminatedLog(path string) error {
 	if err != nil {
 		return err
 	}
-	if info.Size() == 0 {
+	size := info.Size()
+	if size == 0 {
 		return nil
 	}
-	var last [1]byte
-	if _, err := f.ReadAt(last[:], info.Size()-1); err != nil {
+	keep, err := terminatedLength(f, size)
+	if err != nil {
+		return fmt.Errorf("scan event log %s: %w", path, err)
+	}
+	if keep == size {
+		return nil
+	}
+	torn := make([]byte, size-keep)
+	if n, err := f.ReadAt(torn, keep); n < len(torn) {
+		return fmt.Errorf("read torn tail of event log %s: %w", path, err)
+	}
+	sidecar := path + ".torn-" + time.Now().UTC().Format("20060102T150405.000000000Z")
+	if err := writeSynced(sidecar, torn); err != nil {
+		return fmt.Errorf("event log %s has an unterminated final record; preserving it before recovery failed: %w", path, err)
+	}
+	w, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		return fmt.Errorf("recover torn tail of event log %s: %w", path, err)
+	}
+	if err := w.Truncate(keep); err != nil {
+		w.Close()
+		return fmt.Errorf("recover torn tail of event log %s: %w", path, err)
+	}
+	if err := w.Sync(); err != nil {
+		w.Close()
+		return fmt.Errorf("recover torn tail of event log %s: %w", path, err)
+	}
+	if err := w.Close(); err != nil {
+		return fmt.Errorf("recover torn tail of event log %s: %w", path, err)
+	}
+	syncDir(filepath.Dir(path))
+	log.Printf("ycc: event log %s: discarded %d-byte unterminated final record (never committed); preserved in %s", path, len(torn), filepath.Base(sidecar))
+	return nil
+}
+
+// writeSynced creates path exclusively with owner-only permissions and durably
+// writes data to it.
+func writeSynced(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
 		return err
 	}
-	if last[0] != '\n' {
-		return fmt.Errorf("corrupt event log %s: unterminated final record", path)
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(path)
+		return err
 	}
-	return nil
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(path)
+		return err
+	}
+	return f.Close()
+}
+
+// syncDir best-effort fsyncs a directory so entry changes are durable. Not all
+// platforms support syncing directories; failures are ignored.
+func syncDir(dir string) {
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		_ = d.Close()
+	}
 }
 
 func readEvents(path string) ([]Event, error) {
@@ -150,8 +246,16 @@ func readEvents(path string) ([]Event, error) {
 		return nil, err
 	}
 	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	committed, err := terminatedLength(f, info.Size())
+	if err != nil {
+		return nil, fmt.Errorf("scan event log %s: %w", path, err)
+	}
 	var out []Event
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(io.LimitReader(f, committed))
 	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	for sc.Scan() {
 		line := sc.Bytes()
@@ -243,19 +347,24 @@ func (l *Log) Record(actor string, t Type, data map[string]any) Event {
 		return unstamped
 	}
 	line = append(line, '\n')
+	var appendErr error
 	if n, err := l.f.Write(line); err != nil {
-		cb, failure := l.failLocked(fmt.Errorf("event log persistence failed: append event: %w", err))
-		l.mu.Unlock()
-		invokeFailure(cb, failure)
-		return unstamped
+		appendErr = fmt.Errorf("append event: %w", err)
 	} else if n != len(line) {
-		cb, failure := l.failLocked(fmt.Errorf("event log persistence failed: append event: wrote %d of %d bytes: %w", n, len(line), io.ErrShortWrite))
-		l.mu.Unlock()
-		invokeFailure(cb, failure)
-		return unstamped
+		appendErr = fmt.Errorf("append event: wrote %d of %d bytes: %w", n, len(line), io.ErrShortWrite)
+	} else if err := l.f.Sync(); err != nil {
+		appendErr = fmt.Errorf("sync event log: %w", err)
 	}
-	if err := l.f.Sync(); err != nil {
-		cb, failure := l.failLocked(fmt.Errorf("event log persistence failed: sync event log: %w", err))
+	if appendErr != nil {
+		// A failed append (typically ENOSPC) can leave a partial, unterminated
+		// record on disk, and a failed sync leaves an unacknowledged one. Roll the
+		// file back to the durable boundary so disk matches what was committed and
+		// the session stays reopenable. Truncation needs no free space; if it
+		// still fails, OpenLog discards the torn tail on reopen.
+		if rbErr := l.rollbackLocked(); rbErr != nil {
+			appendErr = fmt.Errorf("%w (rollback to durable boundary also failed: %v)", appendErr, rbErr)
+		}
+		cb, failure := l.failLocked(fmt.Errorf("event log persistence failed: %w", appendErr))
 		l.mu.Unlock()
 		invokeFailure(cb, failure)
 		return unstamped
@@ -267,6 +376,15 @@ func (l *Log) Record(actor string, t Type, data map[string]any) Event {
 	l.cond.Broadcast()
 	l.mu.Unlock()
 	return ev
+}
+
+// rollbackLocked truncates the file back to the last committed byte offset,
+// removing any partial or unsynced record a failed append left behind.
+func (l *Log) rollbackLocked() error {
+	if err := l.f.Truncate(l.durableBytes); err != nil {
+		return err
+	}
+	return l.f.Sync()
 }
 
 // failLocked transitions the log into its terminal failed state and returns the

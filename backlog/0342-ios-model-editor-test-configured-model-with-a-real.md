@@ -1,10 +1,10 @@
 ---
 id: "0342"
 title: 'iOS model editor: test configured model with a real inference request'
-status: in_review
+status: done
 priority: 2
 created: "2026-09-04"
-updated: "2026-09-04"
+updated: "2026-09-17"
 depends_on: []
 spec_refs:
     - Models, credentials, and review tiers

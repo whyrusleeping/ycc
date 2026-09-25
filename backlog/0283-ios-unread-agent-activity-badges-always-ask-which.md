@@ -1,10 +1,10 @@
 ---
 id: "0283"
 title: 'iOS: unread agent activity badges + always ask which project a new chat starts in'
-status: in_review
+status: done
 priority: 2
 created: "2026-08-06"
-updated: "2026-08-06"
+updated: "2026-09-17"
 depends_on: []
 spec_refs:
     - docs/design/ios-client.md#Navigation shell — workspace drawer + recent-session feed

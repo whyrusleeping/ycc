@@ -19,6 +19,9 @@ enum HomeDestination: Hashable {
     case usage(project: String)
     /// The agents' project memory (memory.md), read-only.
     case memory(project: String)
+    /// A project file or folder (read-only browser/viewer), optionally
+    /// resolved against a session's worktree.
+    case file(FileRoute)
     case settings
 }
 

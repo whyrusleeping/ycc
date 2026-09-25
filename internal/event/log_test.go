@@ -125,38 +125,97 @@ func TestLogPersistAndReopen(t *testing.T) {
 	}
 }
 
-func TestOpenLogRejectsUnterminatedExistingRecordWithoutModification(t *testing.T) {
+func TestOpenLogRecoversTornFinalRecord(t *testing.T) {
+	const committed = `{"seq":1,"type":"session_started"}` + "\n" + `{"seq":2,"type":"model_turn"}` + "\n"
 	cases := []struct {
-		name     string
-		contents string
-		readable bool
+		name string
+		torn string
 	}{
-		{name: "valid JSON", contents: `{"seq":1,"type":"model_turn"}`, readable: true},
-		{name: "partial JSON", contents: `{"seq":`},
+		// A torn append can stop anywhere, including right before its newline,
+		// so even a syntactically complete unterminated record is uncommitted.
+		{name: "valid JSON", torn: `{"seq":3,"type":"model_turn"}`},
+		{name: "partial JSON", torn: `{"seq":3,"type":"tool_res`},
+		{name: "only torn record", torn: `{"seq":`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "events.jsonl")
-			if err := os.WriteFile(path, []byte(tc.contents), 0o600); err != nil {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "events.jsonl")
+			prefix := committed
+			if tc.name == "only torn record" {
+				prefix = ""
+			}
+			if err := os.WriteFile(path, []byte(prefix+tc.torn), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if events, err := ReadLog(path); tc.readable && (err != nil || len(events) != 1) {
-				t.Fatalf("read-only log behavior changed: events=%+v err=%v", events, err)
+			// Read-only consumers ignore the uncommitted tail without modifying it.
+			events, err := ReadLog(path)
+			if err != nil || len(events) != strings.Count(prefix, "\n") {
+				t.Fatalf("ReadLog = %+v, %v; want the %d committed events", events, err, strings.Count(prefix, "\n"))
 			}
-			if log, err := OpenLog(path); err == nil {
-				log.Close()
-				t.Fatal("OpenLog accepted an unterminated record")
-			} else if !strings.Contains(err.Error(), "unterminated final record") {
-				t.Fatalf("OpenLog error = %v", err)
+			if raw, _ := os.ReadFile(path); string(raw) != prefix+tc.torn {
+				t.Fatalf("ReadLog modified the log: %q", raw)
 			}
-			after, err := os.ReadFile(path)
+
+			l, err := OpenLog(path)
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("OpenLog on torn log: %v", err)
 			}
-			if string(after) != tc.contents {
-				t.Fatalf("failed reopen modified log: got %q, want %q", after, tc.contents)
+			want := strings.Count(prefix, "\n")
+			if l.LastSeq() != want || len(l.Snapshot()) != want {
+				t.Fatalf("after recovery LastSeq=%d events=%d, want %d", l.LastSeq(), len(l.Snapshot()), want)
+			}
+			if _, off := l.DurableBoundary(); off != int64(len(prefix)) {
+				t.Fatalf("durable offset = %d, want %d", off, len(prefix))
+			}
+			// Appends resume on a clean record boundary with the next sequence.
+			emit(t, l, want+1, ToolResult)
+			l.Close()
+			events, err = ReadLog(path)
+			if err != nil || len(events) != want+1 || events[want].Seq != want+1 {
+				t.Fatalf("reopened log = %+v, %v", events, err)
+			}
+
+			// The torn bytes are preserved, owner-only, beside the log.
+			matches, _ := filepath.Glob(path + ".torn-*")
+			if len(matches) != 1 {
+				t.Fatalf("torn sidecars = %v, want exactly one", matches)
+			}
+			if raw, err := os.ReadFile(matches[0]); err != nil || string(raw) != tc.torn {
+				t.Fatalf("sidecar = %q, %v; want %q", raw, err, tc.torn)
+			}
+			if runtime.GOOS != "windows" {
+				if info, err := os.Stat(matches[0]); err != nil || info.Mode().Perm()&0o077 != 0 {
+					t.Fatalf("sidecar mode = %v, %v", info, err)
+				}
 			}
 		})
+	}
+}
+
+func TestOpenLogLeavesTornLogUntouchedWhenPreservationFails(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs Unix directory permissions enforced for the current user")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	contents := `{"seq":1,"type":"session_started"}` + "\n" + `{"seq":2,`
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A read-only directory prevents creating the sidecar.
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(dir, 0o700)
+	if l, err := OpenLog(path); err == nil {
+		l.Close()
+		t.Fatal("OpenLog recovered without preserving the torn record")
+	} else if !strings.Contains(err.Error(), "unterminated final record") {
+		t.Fatalf("OpenLog error = %v", err)
+	}
+	if raw, _ := os.ReadFile(path); string(raw) != contents {
+		t.Fatalf("failed recovery modified log: %q", raw)
 	}
 }
 

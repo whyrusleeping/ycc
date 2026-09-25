@@ -1263,8 +1263,9 @@ type ReadFileResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Root  string                 `protobuf:"bytes,1,opt,name=root,proto3" json:"root,omitempty"`
 	Path  string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"` // cleaned root-relative path
-	Data  []byte                 `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"` // text (a line-bounded prefix when truncated) or image bytes;
-	// empty for other binaries and for over-cap images
+	// Text (a line-bounded prefix when truncated) or image bytes; empty for
+	// other binaries and for over-cap images.
+	Data          []byte `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
 	Size          int64  `protobuf:"varint,4,opt,name=size,proto3" json:"size,omitempty"`                           // full on-disk size
 	MediaType     string `protobuf:"bytes,5,opt,name=media_type,json=mediaType,proto3" json:"media_type,omitempty"` // "text/plain; charset=utf-8", "image/png", ...
 	IsBinary      bool   `protobuf:"varint,6,opt,name=is_binary,json=isBinary,proto3" json:"is_binary,omitempty"`

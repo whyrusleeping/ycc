@@ -1,10 +1,10 @@
 ---
 id: "0339"
 title: 'iOS Recent rows: show project name reliably, context length instead of total tokens'
-status: in_review
+status: done
 priority: 2
 created: "2026-08-16"
-updated: "2026-08-16"
+updated: "2026-09-17"
 depends_on: []
 spec_refs:
     - 20.5 Surfaces

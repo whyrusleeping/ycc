@@ -71,6 +71,18 @@ session, backlog → task) push; task dependency references are lateral hops tha
 screen in place, so a blocked task leads directly to each blocker without growing the stack when
 dependencies cross-link. A deep link identifies a project/session but never carries credentials.
 
+Project files are browsable read-only through the daemon's project-confined `ListFiles`/`ReadFile`
+(from the project overflow menu, or a session's menu for its own worktree). Text files render
+with line numbers and a small built-in syntax highlighter, markdown renders by default with a
+source toggle, and images preview inline. Agent output cites files as markdown links and, far more
+often, as inline-code paths (`internal/x.go:42`); both are tappable wherever a file-link context is
+installed (transcripts, task bodies, memory, rendered markdown files). Code spans are recognized
+conservatively (known extensions or well-known names, no whitespace) and resolve from the project
+root; explicit links resolve against the document's directory. A link from a transcript opens a
+sheet with its own navigation stack, so the transcript never loses its place; links inside a
+file push within whichever stack shows it. Links from a workstream session open that worktree's
+copy, with a visible note when the worktree has been reclaimed and the main checkout is shown.
+
 Transcript behavior follows the shared client contract in spec §18: durable rows, stable per-actor
 transient live tails for concurrent agents, no scroll jumps while reading history, structured
 question sheets, graceful interrupt/steer/resume, and confirmed hard stop. Within a session, each

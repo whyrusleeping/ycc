@@ -1,10 +1,10 @@
 ---
 id: "0288"
 title: 'iOS nav pass: route all pushes through one path-driven router with screen dedupe'
-status: in_review
+status: done
 priority: 3
 created: "2026-08-07"
-updated: "2026-08-07"
+updated: "2026-09-17"
 depends_on: []
 spec_refs: []
 ---

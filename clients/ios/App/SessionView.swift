@@ -106,6 +106,8 @@ struct SessionView: View {
     @State private var showSessionUsage = false
     /// A commit to drill into via the diff viewer (set by tapping a commit row).
     @State private var commitTarget: CommitDiffTarget?
+    /// Presents the file browser rooted at this session's workspace.
+    @State private var showFiles = false
 
     private let client: YccClient
     private let project: String
@@ -179,6 +181,15 @@ struct SessionView: View {
             DiffView(
                 title: "Commit \(target.shortSha)",
                 content: .commit(project: project, sha: target.sha))
+        }
+        // File links in agent markdown (and path-like code spans) open in a
+        // sheet, resolved against this session's workspace — a workstream's
+        // worktree while it exists — so the transcript keeps its place.
+        .fileLinks(FileLinkContext(project: project, sessionID: sessionID))
+        .sheet(isPresented: $showFiles) {
+            FileSheet(route: FileRoute(
+                project: project, sessionID: sessionID,
+                reference: FileReference(path: "", isDirectory: true)))
         }
         .safeAreaInset(edge: .bottom) { bottomChrome }
         // Manual keyboard avoidance (see KeyboardObserver): the automatic
@@ -908,6 +919,11 @@ struct SessionView: View {
                     router.open(.memory(project: project))
                 } label: {
                     Label("Memory", systemImage: "brain")
+                }
+                Button {
+                    showFiles = true
+                } label: {
+                    Label("Browse files", systemImage: "folder")
                 }
                 if model.mode == .live {
                     Divider()

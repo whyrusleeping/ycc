@@ -1,10 +1,10 @@
 ---
 id: "0297"
 title: Review-tier editing from iOS global settings (RPCs + UI)
-status: in_review
+status: done
 priority: 3
 created: "2026-08-08"
-updated: "2026-08-08"
+updated: "2026-09-17"
 depends_on: []
 spec_refs:
     - 13.1 Review tiers

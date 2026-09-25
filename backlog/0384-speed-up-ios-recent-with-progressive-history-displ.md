@@ -1,10 +1,10 @@
 ---
 id: "0384"
 title: Speed up iOS Recent with progressive history display and cheaper sorting
-status: in_review
+status: done
 priority: 2
 created: "2026-09-16"
-updated: "2026-09-16"
+updated: "2026-09-17"
 depends_on: []
 spec_refs: []
 ---

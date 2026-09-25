@@ -1,10 +1,10 @@
 ---
 id: "0330"
 title: Show sent pictures as thumbnails in the iOS session transcript
-status: in_review
+status: done
 priority: 3
 created: "2026-08-13"
-updated: "2026-08-13"
+updated: "2026-09-17"
 depends_on: []
 spec_refs:
     - 18.1 Session input

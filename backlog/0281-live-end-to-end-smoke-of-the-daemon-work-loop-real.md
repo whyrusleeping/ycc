@@ -1,10 +1,10 @@
 ---
 id: "0281"
 title: Live end-to-end smoke of the daemon work loop (real sessions) + plans/work-loop-smoke.md
-status: proposed
+status: blocked
 priority: 2
 created: "2026-08-06"
-updated: "2026-08-08"
+updated: "2026-09-17"
 depends_on: []
 spec_refs:
     - 9. Modes (the home menu)
@@ -12,7 +12,7 @@ spec_refs:
 ---
 
 ## Description
-The daemon-side work loop (task 0179) is well covered by unit tests, but every one of them substitutes the injectable `runSession` seam with a fake. The real path — `workLoop.realRunSession`: `Manager.Start(mode work, Unattended)` → poll `sess.Status()` until Idle/Error → snapshot + price the event log → `BudgetBreached` → `reclaim` — has never been exercised against a real model, nor has the whole flow been driven from a client (TUI or iOS).
+The daemon-side work loop (task 0179) has unit coverage, including tests that exercise `realRunSession` through a narrower `startSession` seam. The remaining verification gap is a documented client-driven, real-model end-to-end run covering session lifecycle, event-log accounting, budgets, reclaim, graceful stop and digest delivery; do not duplicate runner tests already present. Use a scratch workspace, explicit bounded spend/runtime, and an authorized notification destination. If credentials, budget or notification setup are unavailable, report the missing gate rather than substituting fake evidence.
 
 ## Scope
 - Write `plans/work-loop-smoke.md` (mirroring `plans/remote-access-smoke.md`): start a daemon on a scratch workspace with 2–3 small ready backlog tasks, start a loop via `StartWorkLoop`, observe `GetWorkLoop` advancing through sessions, gracefully `StopWorkLoop` mid-drain, and verify the end-of-batch digest + the ntfy `digest` push.
@@ -25,3 +25,4 @@ The daemon-side work loop (task 0179) is well covered by unit tests, but every o
 - Any defect found is fixed with a regression test; `go build ./... && go test ./...` green.
 
 ## Work log
+- 2026-09-17 preflight: global `~/.config/ycc/ycc.toml` has an empty `[notify]` section, project `.ycc/config.toml` has no notification destination, and no notification environment setting is present. The required authorized ntfy digest destination is unavailable; no live loop was started. Unblock by configuring/authorizing a notification destination for the bounded scratch smoke. This administrative update was deferred until after task 0284 finalization because the changeset ownership guard rejected modifying this already-dirty, unrelated task during that task's implementation.

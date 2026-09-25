@@ -138,8 +138,9 @@ message ReadFileRequest {
 message ReadFileResponse {
   string root = 1;
   string path = 2;        // cleaned root-relative path
-  bytes data = 3;         // text (a line-bounded prefix when truncated) or image bytes;
-                          // empty for other binaries and for over-cap images
+  // Text (a line-bounded prefix when truncated) or image bytes; empty for
+  // other binaries and for over-cap images.
+  bytes data = 3;
   int64 size = 4;         // full on-disk size
   string media_type = 5;  // "text/plain; charset=utf-8", "image/png", ...
   bool is_binary = 6;

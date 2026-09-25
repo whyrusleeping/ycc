@@ -1,10 +1,10 @@
 ---
 id: "0275"
 title: Surface workspace git sync status (ahead/behind/dirty) in the app
-status: in_review
+status: done
 priority: 3
 created: "2026-07-16"
-updated: "2026-08-09"
+updated: "2026-09-17"
 depends_on: []
 spec_refs:
     - Projects

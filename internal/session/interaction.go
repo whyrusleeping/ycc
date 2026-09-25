@@ -236,28 +236,42 @@ func (in *interaction) Answer(text string) bool {
 	in.options = nil
 	if ch == nil {
 		// No single question pending; fall back to a pending batch, if any.
-		bch := in.batchWaiting
-		qs := in.batchQuestions
-		if bch == nil {
-			in.mu.Unlock()
-			return false
-		}
-		in.batchWaiting = nil
-		in.batchQuestions = nil
-		in.mu.Unlock()
-		out := make([]string, len(qs))
-		for i := range out {
-			if i == 0 {
-				out[i] = text
-			} else {
-				out[i] = batchFreeTextMarker
-			}
-		}
-		bch <- out // buffered(1), single sender, single use: never blocks
-		return true
+		// in.mu is released by answerBatchFirstLocked.
+		return in.answerBatchFirstLocked(-1, text)
 	}
 	in.mu.Unlock()
 	ch <- text // buffered(1), single sender, single use: never blocks
+	return true
+}
+
+// answerBatchFirstLocked resolves a pending batch from a single-question style
+// answer: idx/text answer the FIRST question (idx resolved against its options
+// when in range) and every later slot gets batchFreeTextMarker. For the common
+// one-question batch (ask_user called with a one-element `questions` list) this
+// is an exact answer. Must be called with in.mu held; it always releases it.
+// Returns false when no batch is pending.
+func (in *interaction) answerBatchFirstLocked(idx int, text string) bool {
+	bch := in.batchWaiting
+	qs := in.batchQuestions
+	if bch == nil {
+		in.mu.Unlock()
+		return false
+	}
+	in.batchWaiting = nil
+	in.batchQuestions = nil
+	in.mu.Unlock()
+	out := make([]string, len(qs))
+	for i := range out {
+		if i == 0 {
+			out[i] = text
+			if idx >= 0 && idx < len(qs[0].Options) {
+				out[i] = qs[0].Options[idx]
+			}
+		} else {
+			out[i] = batchFreeTextMarker
+		}
+	}
+	bch <- out // buffered(1), single sender, single use: never blocks
 	return true
 }
 
@@ -265,13 +279,18 @@ func (in *interaction) Answer(text string) bool {
 // valid index into the pending options, that option's text is delivered;
 // otherwise text is delivered as free text. Returns true if a question was
 // pending and answered.
+//
+// If a batch is pending instead (ask_user with a `questions` list — clients such
+// as iOS present a one-element batch as a single question and answer it via
+// AnswerQuestion), idx/text answer the batch's first question; see
+// answerBatchFirstLocked.
 func (in *interaction) AnswerOption(idx int, text string) bool {
 	in.mu.Lock()
 	ch := in.waiting
 	opts := in.options
 	if ch == nil {
-		in.mu.Unlock()
-		return false
+		// in.mu is released by answerBatchFirstLocked.
+		return in.answerBatchFirstLocked(idx, text)
 	}
 	in.waiting = nil
 	in.options = nil

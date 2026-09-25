@@ -1,10 +1,10 @@
 ---
 id: "0341"
 title: 'iOS: hub-and-spoke navigation — cross-link jumps replace the stack'
-status: in_review
+status: done
 priority: 3
 created: "2026-08-17"
-updated: "2026-08-17"
+updated: "2026-09-17"
 depends_on: []
 spec_refs: []
 ---

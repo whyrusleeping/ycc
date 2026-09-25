@@ -1,10 +1,10 @@
 ---
 id: "0329"
 title: 'iOS: redesign session-history rows around task, mode, model, and token signal'
-status: in_review
+status: done
 priority: 3
 created: "2026-08-13"
-updated: "2026-08-13"
+updated: "2026-09-17"
 depends_on: []
 spec_refs:
     - docs/design/ios-client.md#Navigation and interaction

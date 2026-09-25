@@ -1,10 +1,10 @@
 ---
 id: "0338"
 title: 'iOS: assign plant emoji identities to subagents'
-status: in_review
+status: done
 priority: 3
 created: "2026-08-16"
-updated: "2026-08-16"
+updated: "2026-09-17"
 depends_on: []
 spec_refs:
     - docs/design/ios-client.md#Navigation and interaction

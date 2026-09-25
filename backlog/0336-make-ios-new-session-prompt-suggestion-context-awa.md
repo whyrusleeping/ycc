@@ -1,10 +1,10 @@
 ---
 id: "0336"
 title: Make iOS new-session prompt suggestion context-aware after onboarding
-status: in_review
+status: done
 priority: 2
 created: "2026-08-15"
-updated: "2026-08-15"
+updated: "2026-09-17"
 depends_on: []
 spec_refs: []
 ---

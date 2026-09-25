@@ -1,10 +1,10 @@
 ---
 id: "0331"
 title: Make task dependencies navigable from iOS task detail
-status: in_review
+status: done
 priority: 2
 created: "2026-08-14"
-updated: "2026-08-14"
+updated: "2026-09-17"
 depends_on: []
 spec_refs:
     - docs/design/ios-client.md#Navigation and interaction
