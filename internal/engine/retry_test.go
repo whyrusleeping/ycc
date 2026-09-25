@@ -344,6 +344,20 @@ func TestLoopRetryStreamRestartsSnapshots(t *testing.T) {
 	defer l.Close()
 
 	stop := collectDeltas(t, l)
+	retryEvents, cancelRetry := l.Subscribe(0)
+	partialSeen := make(chan struct{}, 1)
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		for ev := range retryEvents {
+			if ev.Type == event.Retry && ev.Data["partial"] == true {
+				select {
+				case partialSeen <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}()
 
 	inner := &scriptStreamTurner{attempts: []streamAttempt{
 		{snaps: []string{"a1"}, err: errors.New("timeout talking to API")}, // retryable
@@ -360,6 +374,14 @@ func TestLoopRetryStreamRestartsSnapshots(t *testing.T) {
 	if inner.streamCalls != 2 {
 		t.Fatalf("streamCalls = %d, want 2 (one retry)", inner.streamCalls)
 	}
+	select {
+	case <-partialSeen:
+	case <-time.After(time.Second):
+		cancelRetry()
+		t.Fatal("partial stream failure did not mark transient retry event")
+	}
+	cancelRetry()
+	<-drained
 
 	deltas := stop()
 	// Expect: "a1", clearing done delta (failed attempt), "b1", clearing done

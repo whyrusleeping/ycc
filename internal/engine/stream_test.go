@@ -337,9 +337,9 @@ func TestLoopStreamErrorClearsTail(t *testing.T) {
 	}
 }
 
-// When the recorder cannot broadcast (a plain non-Broadcaster recorder), a
-// streaming client transparently falls back to the non-streaming Turn path.
-func TestLoopStreamFallsBackWithoutBroadcaster(t *testing.T) {
+// Even without subscribers, streaming clients report partial output to the
+// retry policy; no transient snapshots are broadcast.
+func TestLoopStreamWithoutBroadcaster(t *testing.T) {
 	client := &scriptStreamTurner{
 		attempts: []streamAttempt{{
 			snaps: []string{"x"},
@@ -351,7 +351,7 @@ func TestLoopStreamFallsBackWithoutBroadcaster(t *testing.T) {
 	if _, err := loop.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if client.streamCalls != 0 || client.turnCalls != 1 {
-		t.Fatalf("streamCalls=%d turnCalls=%d, want Turn fallback", client.streamCalls, client.turnCalls)
+	if client.streamCalls != 1 || client.turnCalls != 0 {
+		t.Fatalf("streamCalls=%d turnCalls=%d, want tracked stream", client.streamCalls, client.turnCalls)
 	}
 }

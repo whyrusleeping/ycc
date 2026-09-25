@@ -23,6 +23,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/codex"
 	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
+	"github.com/whyrusleeping/ycc/internal/llmhttp"
 	"github.com/whyrusleeping/ycc/internal/openaiauth"
 	"github.com/whyrusleeping/ycc/internal/secrets"
 )
@@ -602,6 +603,8 @@ type Config struct {
 	// Retry configures automatic retry of transient LLM API failures. All fields
 	// default to 0 (unset), so an absent [retry] block keeps the engine default.
 	Retry Retry `toml:"retry,omitempty"`
+	// Transport bounds provider HTTP turns independently of session cancellation.
+	Transport Transport `toml:"transport,omitempty"`
 	// Work configures the work-mode implementation pipeline. An absent
 	// [work] block keeps the default "delegate" behaviour.
 	Work Work `toml:"work,omitempty"`
@@ -684,9 +687,17 @@ func (w Work) ResolvedImplementation() string {
 // entirely. BaseDelayMS is the first backoff step (milliseconds) and doubles
 // each attempt; MaxDelayMS caps it.
 type Retry struct {
-	MaxAttempts int `toml:"max_attempts,omitempty"`
-	BaseDelayMS int `toml:"base_delay_ms,omitempty"`
-	MaxDelayMS  int `toml:"max_delay_ms,omitempty"`
+	MaxAttempts        int `toml:"max_attempts,omitempty"`
+	BaseDelayMS        int `toml:"base_delay_ms,omitempty"`
+	MaxDelayMS         int `toml:"max_delay_ms,omitempty"`
+	PartialMaxAttempts int `toml:"partial_max_attempts,omitempty"`
+}
+
+// Transport settings are optional; nil keeps llmhttp defaults, explicit zero
+// disables the corresponding limit. Durations are seconds.
+type Transport struct {
+	StreamIdleSeconds   *int `toml:"stream_idle_seconds,omitempty"`
+	TotalTimeoutSeconds *int `toml:"total_timeout_seconds,omitempty"`
 }
 
 // GC configures the background session reaper. IntervalSeconds sets
@@ -947,8 +958,11 @@ func (c *Config) validate() error {
 	if c.Integration.AgentAttempts != nil && *c.Integration.AgentAttempts < 0 {
 		return fmt.Errorf("integration.agent_attempts must be non-negative")
 	}
-	if c.Retry.MaxAttempts < 0 || c.Retry.BaseDelayMS < 0 || c.Retry.MaxDelayMS < 0 {
-		return fmt.Errorf("retry: max_attempts, base_delay_ms, and max_delay_ms must be non-negative")
+	if c.Retry.MaxAttempts < 0 || c.Retry.BaseDelayMS < 0 || c.Retry.MaxDelayMS < 0 || c.Retry.PartialMaxAttempts < 0 {
+		return fmt.Errorf("retry: attempts and delays must be non-negative")
+	}
+	if (c.Transport.StreamIdleSeconds != nil && *c.Transport.StreamIdleSeconds < 0) || (c.Transport.TotalTimeoutSeconds != nil && *c.Transport.TotalTimeoutSeconds < 0) {
+		return fmt.Errorf("transport: stream_idle_seconds and total_timeout_seconds must be non-negative")
 	}
 	if c.Retry.BaseDelayMS > 0 && c.Retry.MaxDelayMS > 0 && c.Retry.MaxDelayMS < c.Retry.BaseDelayMS {
 		return fmt.Errorf("retry: max_delay_ms (%d) must be >= base_delay_ms (%d)", c.Retry.MaxDelayMS, c.Retry.BaseDelayMS)
@@ -1103,12 +1117,35 @@ func (r *Registry) RetryPolicy() engine.RetryPolicy {
 		// An explicit total-attempt budget is authoritative for every transient
 		// class, including 429s; the smaller 429 cap is a default-policy guardrail.
 		p.RateLimitMaxAttempts = 0
+		p.PartialMaxAttempts = 0
+	}
+	if r.cfg.Retry.PartialMaxAttempts > 0 {
+		p.PartialMaxAttempts = r.cfg.Retry.PartialMaxAttempts
 	}
 	if r.cfg.Retry.BaseDelayMS > 0 {
 		p.BaseDelay = time.Duration(r.cfg.Retry.BaseDelayMS) * time.Millisecond
 	}
 	if r.cfg.Retry.MaxDelayMS > 0 {
 		p.MaxDelay = time.Duration(r.cfg.Retry.MaxDelayMS) * time.Millisecond
+	}
+	return p
+}
+
+// TransportPolicy resolves optional seconds-based limits for newly built clients.
+func (r *Registry) TransportPolicy() llmhttp.Policy {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.transportPolicy()
+}
+
+// transportPolicy is called with the registry lock held by BuildContext.
+func (r *Registry) transportPolicy() llmhttp.Policy {
+	p := llmhttp.DefaultPolicy()
+	if n := r.cfg.Transport.StreamIdleSeconds; n != nil {
+		p.StreamIdle = time.Duration(*n) * time.Second
+	}
+	if n := r.cfg.Transport.TotalTimeoutSeconds; n != nil {
+		p.Total = time.Duration(*n) * time.Second
 	}
 	return p
 }
@@ -1747,7 +1784,9 @@ func (r *Registry) BuildContext(ctx context.Context, name string) (engine.Turner
 	if m.Disabled {
 		return nil, "", fmt.Errorf("%w %q", ErrModelDisabled, name)
 	}
+	httpClient := llmhttp.NewClient(r.transportPolicy())
 	c := gollama.NewClient(providerBaseURL(m.Backend, m.BaseURL))
+	c.SetHTTPClient(httpClient)
 	// Disable gollama's internal HTTP transport retry ring (429/503/529). Although
 	// it is context-aware, it is invisible to subscribers, and stacking it under
 	// the loop-level ring double-counts a persistent rate limit. Transient API
@@ -1808,7 +1847,9 @@ func (r *Registry) BuildContext(ctx context.Context, name string) (engine.Turner
 		// base_url pointing at the platform API (or left empty) is swapped
 		// for the codex backend; an explicit proxy/staging URL is honored.
 		if m.Auth == "oauth" {
-			return codex.New(codexBase(m.BaseURL), openaiauth.AccessToken), m.Model, nil
+			client := codex.New(codexBase(m.BaseURL), openaiauth.AccessToken)
+			client.SetHTTPClient(httpClient)
+			return client, m.Model, nil
 		}
 		if key != "" {
 			c.SetBearerToken(key)

@@ -1031,7 +1031,7 @@ max_attempts = 7
 		t.Fatalf("Retry.MaxAttempts = %d, want 7", c.Retry.MaxAttempts)
 	}
 	def := engine.DefaultRetryPolicy()
-	want := engine.RetryPolicy{MaxAttempts: 7, BaseDelay: def.BaseDelay, MaxDelay: def.MaxDelay}
+	want := engine.RetryPolicy{MaxAttempts: 7, BaseDelay: def.BaseDelay, MaxDelay: def.MaxDelay} // explicit max_attempts overrides default class caps
 	if p := NewRegistry(c).RetryPolicy(); p != want {
 		t.Fatalf("RetryPolicy() = %+v, want %+v (only max_attempts overlaid)", p, want)
 	}

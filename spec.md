@@ -271,7 +271,16 @@ tool calls, reasoning blocks, usage, stop reasons, and errors. The engine owns o
 provider-neutral history; provider libraries remain transports. Provider request builders forward
 engine limits only when the target accepts them; the Codex output-cap exception is in §13.
 Cancellation reaches retry backoff, token refresh, HTTP requests, and streaming reads so hard stop
-and daemon shutdown do not strand inference.
+and daemon shutdown do not strand inference. Provider HTTP clients built by the registry (gollama
+Anthropic/OpenAI/Ollama and the separate Codex Responses client) share a transport policy:
+SSE byte-read inactivity defaults to five minutes, counting heartbeat/ping frames as progress;
+a separate total-request backstop defaults to one hour. Non-SSE responses have only the total
+limit. Caller/session cancellation remains independent and is never classified as a provider
+stall. Every registry-built streaming provider requires a terminal event before a response
+succeeds: OpenAI-compatible/Ollama SSE needs `[DONE]` or a finish reason, Anthropic needs
+`message_stop`, and Codex needs `response.completed`/`response.incomplete`. EOF after partial
+output without that signal is a retryable failure, not success. Standalone provider clients
+built outside the registry retain their own transport defaults.
 
 Opaque provider state needed for stateless continuation is recorded with the model turn and
 replayed only to the same compatible backend. Non-compatible backends do not receive it.
@@ -296,9 +305,14 @@ pattern is unambiguous. Repair is recorded with the tool call and reported to th
 
 LLM failures share one taxonomy: rate limit, overload, server, timeout, network, auth, invalid
 request, context length, refusal, and unknown. Transient classes retry with bounded exponential
-backoff and live retry events; explicit retry configuration overrides defaults. A failed turn
-records exactly one durable `session_error` and parks with the unanswered turn intact. `Resume`
-can retry a parked retryable failure without injecting dummy input.
+backoff and live retry events; explicit retry configuration overrides defaults. The default
+retry ring permits eight total attempts (three for rate limits), but once a streaming attempt
+has emitted generated output (text, reasoning, or tool arguments, not heartbeats) its remaining
+budget is capped at two total attempts. Failed partial snapshots are cleared, never committed
+as a successful turn or replayed as tool side effects;
+transient retry events identify partial attempts. A failed turn records exactly one durable
+`session_error` and parks with the unanswered turn intact. `Resume` can retry a parked retryable
+failure without injecting dummy input.
 
 The coordinator can explicitly roll over its selected model context at a between-turn, full-tool-batch
 checkpoint. The replacement is a bounded, labeled evidence view preserving every durable user input
@@ -625,7 +639,11 @@ provider-shaped pixel/tile formulas, while undecodable or remote media use byte-
 model tokenizers, image detail/resizing, and document page processing can differ substantially.
 Roles select a coordinator, implementer, and reviewer models. Several logical
 models may share one endpoint/credential while selecting different model ids. Config is discovered workspace-first and otherwise from the user config directory; the
-active files are not merged.
+active files are not merged. Optional `[transport]` fields `stream_idle_seconds` and
+`total_timeout_seconds` override the respective registry defaults; omitted fields keep their
+default and explicit zero disables that limit. Values must be non-negative. `[retry]`
+`partial_max_attempts` overrides the default partial-output cap; zero means use `max_attempts`
+when an explicit total-attempt budget is configured (as for rate limits).
 
 API-key values resolve from the environment first and then the machine-local secrets store
 managed by `ycc token`; committed config stores only the key name. Anthropic and OpenAI also

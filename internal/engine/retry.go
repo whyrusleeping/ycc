@@ -31,6 +31,9 @@ type RetryPolicy struct {
 	// MaxAttempts so the default can retain a generous server/network budget
 	// without hammering a long-lived account allowance window.
 	RateLimitMaxAttempts int
+	// PartialMaxAttempts limits total attempts after any generated SSE output.
+	// Zero uses MaxAttempts for explicitly constructed policies.
+	PartialMaxAttempts int
 }
 
 // DefaultRateLimitMaxAttempts caps HTTP 429s under the default policy. Unlike
@@ -43,14 +46,16 @@ const DefaultRateLimitMaxAttempts = 3
 // retries) with exponential backoff from 500ms capped at 30s (worst-case ≈60s of
 // jittered backoff). Under this default only, rate limits stop after
 // DefaultRateLimitMaxAttempts total attempts; other transient failures retain
-// the full budget. This is the only retry ring — gollama's transport retry is
-// disabled by ycc.
+// the full budget. Once any attempt has streamed generated output the budget is
+// capped at two total attempts. This is the only retry ring — gollama's
+// transport retry is disabled by ycc.
 func DefaultRetryPolicy() RetryPolicy {
 	return RetryPolicy{
 		MaxAttempts:          8,
 		BaseDelay:            500 * time.Millisecond,
 		MaxDelay:             30 * time.Second,
 		RateLimitMaxAttempts: DefaultRateLimitMaxAttempts,
+		PartialMaxAttempts:   2,
 	}
 }
 

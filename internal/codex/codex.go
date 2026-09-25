@@ -80,6 +80,15 @@ func New(baseURL string, tokens TokenSource) *Client {
 	}
 }
 
+// SetHTTPClient replaces the Codex transport; nil restores New's standalone default.
+// Configure before issuing requests.
+func (c *Client) SetHTTPClient(hc *http.Client) {
+	if hc == nil {
+		hc = &http.Client{Timeout: 15 * time.Minute}
+	}
+	c.httpClient = hc
+}
+
 // ContextRequestShape identifies the Responses serializer to engine's optional
 // request-context estimator without introducing a package dependency.
 func (*Client) ContextRequestShape() string { return "codex-responses" }
@@ -627,8 +636,8 @@ func parseStream(r io.Reader, model string, onDelta func(string)) (*gollama.Resp
 	if err := scanner.Err(); err != nil {
 		return nil, 0, fmt.Errorf("codex: reading stream: %w", err)
 	}
-	if !completed && text.Len() == 0 && len(toolCalls) == 0 {
-		return nil, 0, fmt.Errorf("codex: stream ended without a completed response")
+	if !completed {
+		return nil, 0, fmt.Errorf("codex: stream ended before response completed: %w", io.ErrUnexpectedEOF)
 	}
 	if len(toolCalls) > 0 {
 		out.StopReason = "tool_calls"

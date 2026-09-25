@@ -8,12 +8,16 @@ package engine
 // parse the status code when present, fall back to transport-error detection.
 
 import (
+	"context"
 	"errors"
+	"io"
 	"net"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/whyrusleeping/ycc/internal/llmhttp"
 )
 
 // APIErrorKind is a coarse category for an LLM API call failure, recorded on
@@ -149,6 +153,12 @@ func ClassifyAPIError(err error) APIErrorInfo {
 	if err == nil {
 		return APIErrorInfo{}
 	}
+	if errors.Is(err, context.Canceled) {
+		return APIErrorInfo{Kind: KindUnknown}
+	}
+	if errors.Is(err, llmhttp.ErrStreamStalled) || errors.Is(err, llmhttp.ErrTotalTimeout) {
+		return APIErrorInfo{Kind: KindTimeout, Retryable: true}
+	}
 	msg := err.Error()
 	lower := strings.ToLower(msg)
 
@@ -199,6 +209,11 @@ func ClassifyAPIError(err error) APIErrorInfo {
 		}
 	}
 
+	// A truncated provider stream is transient, even when its EOF has no HTTP
+	// status and did not include a transport-level timeout.
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return APIErrorInfo{Kind: KindNetwork, Retryable: true}
+	}
 	// Transport/network failure detection.
 	var netErr net.Error
 	if errors.As(err, &netErr) {

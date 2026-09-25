@@ -18,6 +18,7 @@ import (
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/jobs"
+	"github.com/whyrusleeping/ycc/internal/llmhttp"
 	"github.com/whyrusleeping/ycc/internal/tools"
 )
 
@@ -731,33 +732,32 @@ func (l *Loop) appendToolResult(callID string, res *gollama.ToolResult) {
 // by design, so a coarse rate keeps the UI lively without flooding subscribers.
 const turnDeltaInterval = 100 * time.Millisecond
 
-// turnOnce executes a single model turn attempt against client. When client
-// implements StreamTurner AND the loop's emitter can broadcast, it streams the
-// turn and broadcasts transient turn_delta events (authoritative full `text`
-// snapshot plus optional append/base optimization hints) throttled to ~10/s,
-// then broadcasts a clearing delta ({"text": "", "done":
-// true}) on turn end — success OR error — so no stale live tail survives.
-// Otherwise it calls TurnCtx, emitting no deltas. The returned
-// response/error is identical in both paths; final model_turn emission is
-// handled by the caller.
-func (l *Loop) turnOnce(ctx context.Context, client Turner, opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
+// turnOnce executes one attempt and reports whether callbacks or provider SSE
+// delivered generated output. Streaming clients are observed even without a live
+// broadcaster so the retry cap remains effective; broadcasts, when available,
+// are throttled snapshots followed by a clearing delta on success or failure.
+// Non-streaming clients use TurnCtx. Final model_turn emission is the caller's job.
+func (l *Loop) turnOnce(ctx context.Context, client Turner, opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, bool, error) {
+	ctx, progress := llmhttp.WithProgress(ctx)
 	streamer, ok := client.(StreamTurner)
-	if !ok || l.Emitter == nil {
-		return client.TurnCtx(ctx, opts)
+	if !ok {
+		resp, err := client.TurnCtx(ctx, opts)
+		return resp, progress.Generated(), err
 	}
-	// Probe broadcast support once; if the recorder can't broadcast (e.g. a
-	// stdout/func recorder), fall back to a plain non-streaming turn so we don't
-	// pay the streaming callback cost for output nobody can see.
-	if !l.Emitter.CanBroadcast() {
-		return client.TurnCtx(ctx, opts)
-	}
+	broadcast := l.Emitter != nil && l.Emitter.CanBroadcast()
 
 	// onDelta is assumed to be invoked serially (see StreamTurner), so lastSent
 	// needs no synchronization; Broadcast itself is safe for concurrent use.
 	var lastSent time.Time
 	var lastText string
-	var sentAny bool
+	var sentAny, partial bool
 	onDelta := func(text string) {
+		if text != "" {
+			partial = true
+		}
+		if !broadcast {
+			return
+		}
 		now := time.Now()
 		if sentAny && now.Sub(lastSent) < turnDeltaInterval {
 			return
@@ -780,8 +780,11 @@ func (l *Loop) turnOnce(ctx context.Context, client Turner, opts gollama.Request
 	// subscribers to drop their tail row even if the turn failed before any
 	// model_turn is emitted. Sent unconditionally (once per ATTEMPT, so a failed
 	// attempt clears its partial tail before the retry restarts snapshots).
-	defer l.Emitter.Broadcast(event.TurnDelta, map[string]any{"text": "", "done": true})
-	return streamer.TurnStreamCtx(ctx, opts, onDelta)
+	if broadcast {
+		defer l.Emitter.Broadcast(event.TurnDelta, map[string]any{"text": "", "done": true})
+	}
+	resp, err := streamer.TurnStreamCtx(ctx, opts, onDelta)
+	return resp, partial || progress.Generated(), err
 }
 
 // runTurn executes one model turn, retrying transient API failures (as judged
@@ -810,8 +813,10 @@ func (l *Loop) runTurn(ctx context.Context, client Turner, opts gollama.RequestO
 	}
 
 	var lastErr error
+	var hadPartial bool
 	for attempt := 1; attempt <= policy.MaxAttempts; attempt++ {
-		resp, err := l.turnOnce(ctx, client, opts)
+		resp, partial, err := l.turnOnce(ctx, client, opts)
+		hadPartial = hadPartial || partial
 		if err == nil {
 			return resp, attempt, nil
 		}
@@ -821,12 +826,15 @@ func (l *Loop) runTurn(ctx context.Context, client Turner, opts gollama.RequestO
 		if info.Kind == KindRateLimit && policy.RateLimitMaxAttempts > 0 && maxAttempts > policy.RateLimitMaxAttempts {
 			maxAttempts = policy.RateLimitMaxAttempts
 		}
+		if hadPartial && policy.PartialMaxAttempts > 0 && maxAttempts > policy.PartialMaxAttempts {
+			maxAttempts = policy.PartialMaxAttempts
+		}
 		if !info.Retryable || attempt >= maxAttempts || ctx.Err() != nil {
 			return nil, attempt, err
 		}
 		delay := policy.backoff(attempt, l.retryRand)
-		logf("ycc: LLM API call failed (attempt %d/%d), retrying in %v: %v",
-			attempt, maxAttempts, delay, err)
+		logf("ycc: LLM API call failed (attempt %d/%d, partial=%t), retrying in %v: %v",
+			attempt, maxAttempts, partial, delay, err)
 		if l.Emitter != nil {
 			// Transient, non-persisted (like turn_delta): live subscribers show
 			// the retry wait; the durable log records nothing unless the turn
@@ -837,6 +845,7 @@ func (l *Loop) runTurn(ctx context.Context, client Turner, opts gollama.RequestO
 				"delay_ms":     delay.Milliseconds(),
 				"kind":         string(info.Kind),
 				"status":       info.Status,
+				"partial":      partial,
 				"msg":          err.Error(),
 			})
 		}

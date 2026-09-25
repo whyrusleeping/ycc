@@ -17,7 +17,7 @@ require (
 	github.com/muesli/reflow v0.3.0
 	github.com/pelletier/go-toml/v2 v2.0.1
 	github.com/urfave/cli/v3 v3.10.1
-	github.com/whyrusleeping/gollama v0.0.0-20260925172700-d36e7f4e6cd8
+	github.com/whyrusleeping/gollama v0.0.0-20260925205342-e19be633c69f
 	golang.org/x/image v0.45.0
 	golang.org/x/net v0.56.0
 	golang.org/x/sys v0.47.0
