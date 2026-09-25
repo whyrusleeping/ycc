@@ -25,7 +25,8 @@ import (
 	"github.com/whyrusleeping/ycc/internal/event"
 )
 
-const schemaVersion = 2
+// Rebuild older indexes: their summaries dropped auto and their state exposed auto questions as pending.
+const schemaVersion = 3
 
 // Bounds are deliberately below Connect's normal message limits. MaxBytes is a
 // budget for the complete encoded response, not merely the row payloads. The
@@ -146,7 +147,7 @@ CREATE TABLE IF NOT EXISTS updates (
  session_id TEXT NOT NULL, seq INTEGER NOT NULL, row_id TEXT NOT NULL, deleted INTEGER NOT NULL,
  PRIMARY KEY(session_id,seq,row_id)
 );
-PRAGMA user_version = 2;`)
+PRAGMA user_version = 3;`)
 	return err
 }
 
@@ -418,9 +419,13 @@ func applyEvent(ctx context.Context, tx *sql.Tx, sid string, st *State, ev event
 			}
 		}
 	case event.QuestionAsked:
-		st.Pending = questions(ev.Data)
-		st.PendingRowID = fmt.Sprintf("seq-%d", ev.Seq)
-		st.OpenQuestionRowID = st.PendingRowID
+		st.Pending = nil
+		st.PendingRowID = ""
+		st.OpenQuestionRowID = fmt.Sprintf("seq-%d", ev.Seq)
+		if ev.Data["auto"] != true {
+			st.Pending = questions(ev.Data)
+			st.PendingRowID = st.OpenQuestionRowID
+		}
 	case event.QuestionAnswered:
 		st.Pending = nil
 		st.PendingRowID = ""
@@ -589,7 +594,7 @@ ON CONFLICT(session_id,row_id) DO UPDATE SET updated_seq=excluded.updated_seq,su
 var presentationKeys = map[string]bool{
 	"text": true, "images": true, "queued": true, "seq": true, "name": true, "id": true,
 	"args": true, "result": true, "error": true, "question": true, "options": true,
-	"questions": true, "answer": true, "answers": true, "report": true, "mode": true,
+	"questions": true, "answer": true, "answers": true, "auto": true, "report": true, "mode": true,
 	"coordinator": true, "msg": true, "action": true, "retryable": true, "role": true,
 	"agent_id": true, "model": true, "summary": true, "sha": true, "message": true,
 	"decision": true, "task": true, "implementer": true, "reviewers": true, "to": true,
@@ -599,7 +604,7 @@ var presentationKeys = map[string]bool{
 
 func compactPresentationData(in map[string]any) map[string]any {
 	out := make(map[string]any)
-	for _, k := range []string{"id", "name", "text", "args", "result", "report", "question", "msg", "error", "status", "sha"} {
+	for _, k := range []string{"id", "name", "text", "args", "result", "report", "question", "auto", "msg", "error", "status", "sha"} {
 		v, ok := in[k]
 		if !ok {
 			continue
@@ -618,7 +623,7 @@ func compactPresentationData(in map[string]any) map[string]any {
 }
 
 func minimalPresentationData(ev event.Event) map[string]any {
-	keys := []string{"text", "id", "name", "args", "result", "error", "msg", "report", "question", "options", "questions", "answer", "answers", "queued", "status", "sha", "role", "agent_id", "model"}
+	keys := []string{"text", "id", "name", "args", "result", "error", "msg", "report", "question", "options", "questions", "answer", "answers", "auto", "queued", "status", "sha", "role", "agent_id", "model"}
 	out := make(map[string]any)
 	for _, key := range keys {
 		if value, ok := ev.Data[key]; ok {

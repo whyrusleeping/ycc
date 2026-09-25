@@ -132,6 +132,37 @@ func TestIndexIncrementalPagesEditsAndDetails(t *testing.T) {
 	}
 }
 
+func TestAutoQuestionDoesNotExposeGateAndFoldsAnswer(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "events.jsonl")
+	events := []event.Event{
+		ev(1, event.QuestionAsked, map[string]any{"question": "Proceed?", "auto": true}),
+	}
+	writeLog(t, logPath, events)
+	store, err := Open(filepath.Join(dir, "view.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	state, rows, _, err := store.View(ctx, "s", logPath, -1, -1, 10, DefaultBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Pending) != 0 || state.PendingRowID != "" || len(rows) != 1 || rows[0].Events[0].Data["auto"] != true {
+		t.Fatalf("ask state=%+v rows=%+v", state, rows)
+	}
+	events = append(events, ev(2, event.QuestionAnswered, map[string]any{"answer": "yes", "auto": true}))
+	writeLog(t, logPath, events)
+	state, rows, _, err = store.View(ctx, "s", logPath, -1, -1, 10, DefaultBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Pending) != 0 || state.PendingRowID != "" || len(rows) != 1 || rows[0].ID != "seq-1" || rows[0].UpdatedSeq != 2 || len(rows[0].Events) != 2 || rows[0].Events[1].Data["auto"] != true {
+		t.Fatalf("answer state=%+v rows=%+v", state, rows)
+	}
+}
+
 // TestMeasureLargeLog records cold-index and warm-page costs when a real log is
 // explicitly supplied. It is skipped in ordinary test runs.
 func TestMeasureLargeLog(t *testing.T) {

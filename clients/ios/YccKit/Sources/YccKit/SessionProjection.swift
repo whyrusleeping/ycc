@@ -49,6 +49,8 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
         case tool(name: String, status: ToolStatus, args: String, output: String)
         /// A pending or resolved `ask_user` question.
         case question(prompt: String, options: [String], answer: String?)
+        /// An unattended question and its automatic response, including every prompt in a batch.
+        case assumption(questions: [SessionProjection.Question], response: String?)
         /// A compact system/lifecycle row (session_started, commit_made, …), or
         /// a generic forward-compat fallback for unknown event types.
         case system(text: String)
@@ -173,6 +175,8 @@ public struct SessionProjection: Sendable, Equatable {
     /// the right row. Without it, an optimistic close orphaned the event and the
     /// transcript card kept reading "Waiting for an answer".
     private var openQuestionRowID: String?
+    /// Retain the full batch if an unflagged ask is later marked automatic by its answer.
+    private var openQuestions: [Question] = []
     /// The session's derived lifecycle phase, folded from lifecycle events.
     public private(set) var phase: Phase = .running
     /// The logical model driving the session's coordinator — "which model is
@@ -650,24 +654,28 @@ public struct SessionProjection: Sendable, Equatable {
         let questions = Self.allQuestions(data)
         let summary = Self.summaryQuestion(questions)
         let rowID = "seq-\(event.seq)"
+        let automatic = data["auto"] as? Bool == true
         appendDurable(
             event,
-            .question(prompt: summary.prompt, options: summary.options, answer: nil),
+            automatic ? .assumption(questions: questions, response: nil)
+                : .question(prompt: summary.prompt, options: summary.options, answer: nil),
             id: rowID
         )
-        pendingQuestion = PendingQuestion(
+        pendingQuestion = automatic ? nil : PendingQuestion(
             prompt: summary.prompt,
             options: summary.options,
             questions: questions,
             rowID: rowID
         )
         openQuestionRowID = rowID
+        openQuestions = questions
     }
 
     private mutating func applyQuestionAnswered(_ data: [String: Any]) {
-        foldAnswer(Self.answerText(data))
+        foldAnswer(Self.answerText(data), automatic: data["auto"] as? Bool == true)
         pendingQuestion = nil
         openQuestionRowID = nil
+        openQuestions = []
     }
 
     /// Close the pending-question gate optimistically, once the daemon has
@@ -685,13 +693,25 @@ public struct SessionProjection: Sendable, Equatable {
     /// Mark the open question row answered. An empty answer still resolves the
     /// row (the gate is closed either way) but never overwrites text already
     /// folded in, so an optimistic answer survives a payload we can't parse.
-    private mutating func foldAnswer(_ answer: String) {
+    private mutating func foldAnswer(_ answer: String, automatic: Bool = false) {
         guard let rowID = pendingQuestion?.rowID ?? openQuestionRowID,
-              let idx = durableRows.lastIndex(where: { $0.id == rowID }),
-              case let .question(prompt, options, existing) = durableRows[idx].kind
-        else { return }
-        let text = answer.isEmpty ? (existing ?? "") : answer
-        durableRows[idx].kind = .question(prompt: prompt, options: options, answer: text)
+              let idx = durableRows.lastIndex(where: { $0.id == rowID }) else { return }
+        switch durableRows[idx].kind {
+        case let .assumption(questions, existing):
+            let text = answer.isEmpty ? (existing ?? "") : answer
+            durableRows[idx].kind = .assumption(questions: questions, response: text)
+        case let .question(prompt, options, existing):
+            let text = answer.isEmpty ? (existing ?? "") : answer
+            if automatic {
+                let questions = openQuestions.isEmpty
+                    ? [Question(prompt: prompt, options: options)] : openQuestions
+                durableRows[idx].kind = .assumption(questions: questions, response: text)
+            } else {
+                durableRows[idx].kind = .question(prompt: prompt, options: options, answer: text)
+            }
+        default:
+            break
+        }
     }
 
     // MARK: - Indexed presentation
@@ -827,8 +847,13 @@ public struct SessionProjection: Sendable, Equatable {
         if let expanded = detailProjection.pendingQuestion {
             pendingQuestion = expanded
             openQuestionRowID = expanded.rowID
+            openQuestions = expanded.questions
             indexedPendingDetailRowID = nil
-        } else if encoded.events.contains(where: { $0.type == "question_answered" }) {
+        } else if encoded.events.contains(where: { $0.type == "question_answered" })
+                    || (detailProjection.durableRows.first.map {
+                        if case .assumption = $0.kind { return true }
+                        return false
+                    } ?? false) {
             pendingQuestion = nil
             openQuestionRowID = nil
             indexedPendingDetailRowID = nil
@@ -864,6 +889,7 @@ public struct SessionProjection: Sendable, Equatable {
         case "stopped": phase = .stopped
         default: phase = .running
         }
+        openQuestions = []
         if state.pendingQuestionsTruncated, !state.pendingRowID.isEmpty {
             // Do not expose an incomplete batch to AnswerQuestions. The view model
             // fetches this row's full detail, which restores all controls below.
@@ -873,6 +899,7 @@ public struct SessionProjection: Sendable, Equatable {
         } else if !state.pendingQuestions.isEmpty, !state.pendingRowID.isEmpty {
             let questions = state.pendingQuestions.map { Question(prompt: $0.prompt, options: $0.options) }
             let summary = Self.summaryQuestion(questions)
+            openQuestions = questions
             pendingQuestion = PendingQuestion(
                 prompt: summary.prompt, options: summary.options,
                 questions: questions, rowID: state.pendingRowID)

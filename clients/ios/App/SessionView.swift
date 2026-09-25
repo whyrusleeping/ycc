@@ -1053,6 +1053,11 @@ private struct TranscriptRowView: View, Equatable {
                 loadDetail: detailLoader)
         case .question(let prompt, let options, let answer):
             QuestionRowView(prompt: prompt, options: options, answer: answer)
+        case .assumption(let questions, let response):
+            VStack(alignment: .leading, spacing: 4) {
+                AssumptionRowView(questions: questions, response: response)
+                if row.detailAvailable { detailButton("Load full assumption") }
+            }
         case .system(let text):
             systemRow(text)
         case .commit(let text, let sha):
@@ -1571,6 +1576,35 @@ private struct QuestionRowView: View {
         .padding(10)
         .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.orange.opacity(0.3)))
+    }
+}
+
+/// Unattended handling is evidence in the transcript, never an interactive gate.
+private struct AssumptionRowView: View {
+    let questions: [SessionProjection.Question]
+    let response: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Unattended — system assumption", systemImage: "gearshape")
+                .font(.callout.weight(.medium))
+            ForEach(Array(questions.enumerated()), id: \.offset) { _, question in
+                Text(question.prompt).font(.callout)
+                ForEach(Array(question.options.enumerated()), id: \.offset) { _, option in
+                    Text("• \(option)").font(.caption)
+                }
+            }
+            if let response {
+                Text(response.isEmpty ? "Answered automatically" : "Answered automatically: \(response)")
+                    .font(.caption)
+            } else {
+                Text("Answering automatically…").font(.caption)
+            }
+        }
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color(.tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
     }
 }
 

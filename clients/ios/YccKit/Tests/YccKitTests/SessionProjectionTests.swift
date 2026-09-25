@@ -667,6 +667,60 @@ final class SessionProjectionTests: XCTestCase {
         XCTAssertEqual(questions, ["one", "two"])
     }
 
+    func testLiveAutomaticBatchNeverOpensGateAndPreservesEvidence() {
+        var projection = SessionProjection()
+        let ask = makeEvent(seq: 1, type: "question_asked", dataJson: #"{"auto":true,"questions":[{"question":"Which DB?","options":["pg","sqlite"]},{"question":"Deadline?","options":["today"]}]}"#)
+        let answer = makeEvent(seq: 2, type: "question_answered", dataJson: #"{"auto":true,"answers":["sqlite","today"]}"#)
+        projection.apply(ask)
+        XCTAssertNil(projection.pendingQuestion)
+        XCTAssertEqual(projection.durableRows.first?.id, "seq-1")
+        guard case .assumption(let questions, let response)? = projection.durableRows.first?.kind else {
+            return XCTFail("expected automatic assumption")
+        }
+        XCTAssertEqual(questions, [.init(prompt: "Which DB?", options: ["pg", "sqlite"]),
+                                   .init(prompt: "Deadline?", options: ["today"])])
+        XCTAssertNil(response)
+        projection.apply(answer)
+        XCTAssertNil(projection.pendingQuestion)
+        XCTAssertEqual(projection.durableRows.count, 1)
+        XCTAssertEqual(projection.durableRows.first?.kind, .assumption(questions: questions, response: "sqlite; today"))
+
+        var catchUp = SessionProjection()
+        catchUp.apply([ask, answer])
+        XCTAssertEqual(catchUp, projection)
+        projection.apply([ask, answer])
+        XCTAssertEqual(projection, catchUp, "overlapping replay must not duplicate the assumption")
+    }
+
+    func testMixedHumanAndAutomaticAnswersKeepAttribution() {
+        let events = [
+            makeEvent(seq: 1, type: "question_asked", dataJson: #"{"question":"Human?"}"#),
+            makeEvent(seq: 2, type: "question_answered", actor: "user", dataJson: #"{"answer":"from another client"}"#),
+            makeEvent(seq: 3, type: "question_asked", dataJson: #"{"question":"Automatic?","auto":true}"#),
+            makeEvent(seq: 4, type: "question_answered", dataJson: #"{"answer":"assumed","auto":true}"#),
+            makeEvent(seq: 5, type: "question_asked", dataJson: #"{"question":"Legacy?","auto":false}"#),
+        ]
+        var projection = SessionProjection()
+        projection.apply(events)
+        XCTAssertEqual(projection.durableRows[0].kind, .question(prompt: "Human?", options: [], answer: "from another client"))
+        XCTAssertEqual(projection.durableRows[1].kind, .assumption(questions: [.init(prompt: "Automatic?", options: [])], response: "assumed"))
+        XCTAssertEqual(projection.pendingQuestion?.prompt, "Legacy?")
+        projection.apply(makeEvent(seq: 6, type: "question_answered", dataJson: #"{"answer":"human"}"#))
+        XCTAssertEqual(projection.durableRows[2].kind, .question(prompt: "Legacy?", options: [], answer: "human"))
+        XCTAssertNil(projection.pendingQuestion)
+    }
+
+    func testAutoAnswerConvertsUnflaggedAskWithFullBatch() {
+        var projection = SessionProjection()
+        projection.apply(makeEvent(seq: 1, type: "question_asked", dataJson: #"{"questions":[{"question":"One?","options":["a"]},{"question":"Two?"}]}"#))
+        XCTAssertNotNil(projection.pendingQuestion)
+        projection.apply(makeEvent(seq: 2, type: "question_answered", dataJson: #"{"answers":["a","b"],"auto":true}"#))
+        XCTAssertNil(projection.pendingQuestion)
+        XCTAssertEqual(projection.durableRows.first?.kind, .assumption(questions: [
+            .init(prompt: "One?", options: ["a"]), .init(prompt: "Two?", options: [])
+        ], response: "a; b"))
+    }
+
     // MARK: - Final report
 
     func testSessionIdleCreatesMarkdownFinalReportAndCoalescesEchoedTurn() {
@@ -989,6 +1043,25 @@ final class SessionProjectionTests: XCTestCase {
         state.indexedThroughSeq = seq
         state.phase = phase
         return state
+    }
+
+    func testIndexedAutomaticQuestionInstallAndUpdateNeverRestoresGate() {
+        let ask = makeEvent(seq: 4, type: "question_asked", dataJson: #"{"question":"Proceed?","auto":true}"#)
+        let answer = makeEvent(seq: 5, type: "question_answered", dataJson: #"{"answer":"yes","auto":true}"#)
+        let waiting = indexedRow(id: "seq-4", position: 4, updated: 4, events: [ask], hasDetail: true)
+        let answered = indexedRow(id: "seq-4", position: 4, updated: 5, events: [ask, answer])
+        var projection = SessionProjection()
+        projection.installIndexed(state: indexedState(4), rows: [waiting])
+        XCTAssertNil(projection.pendingQuestion)
+        XCTAssertFalse(projection.needsIndexedPendingDetail(rowID: "seq-4"))
+        XCTAssertEqual(projection.durableRows.first?.kind, .assumption(questions: [.init(prompt: "Proceed?", options: [])], response: nil))
+        projection.installIndexedDetail(waiting)
+        XCTAssertNil(projection.pendingQuestion)
+        projection.applyIndexed(state: indexedState(5), upserts: [answered], deletedIDs: [])
+        XCTAssertEqual(projection.durableRows.first?.kind, .assumption(questions: [.init(prompt: "Proceed?", options: [])], response: "yes"))
+        projection.applyIndexed(state: indexedState(5), upserts: [answered], deletedIDs: [])
+        XCTAssertEqual(projection.durableRows.count, 1)
+        XCTAssertNil(projection.pendingQuestion)
     }
 
     func testIndexedPageAndDetailResponsesCannotRegressLiveVersions() {
