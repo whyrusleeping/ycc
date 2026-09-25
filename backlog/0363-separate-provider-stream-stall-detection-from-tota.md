@@ -1,10 +1,10 @@
 ---
 id: "0363"
 title: Separate provider stream-stall detection from total turn timeouts
-status: blocked
+status: todo
 priority: 2
 created: "2026-09-08"
-updated: "2026-09-09"
+updated: "2026-09-25"
 depends_on: []
 spec_refs:
     - §7.1 Provider boundary and history
@@ -37,3 +37,4 @@ Inspect provider construction, streaming parsers, and engine retry behavior. Add
 ## Work log
 - 2026-09-09 implementer report: BLOCKED — Task requires a supported gollama HTTP-client construction boundary: the pinned/upstream HEAD still hardcodes the private http.Client timeout, and ycc cannot override it without reflection/unsafe. The
 …[truncated]
+- 2026-09-25: Dependency blocker resolved. gollama d36e7f4 (pushed to origin/main; ycc go.mod bumped to v0.0.0-20260925172700-d36e7f4e6cd8) adds `(*Client).SetHTTPClient(*http.Client)` — ycc can now install a client without the fixed 300s total timeout (nil restores the default) and implement stream-inactivity detection on its side. No ycc behaviour changed yet; all acceptance criteria remain outstanding.
