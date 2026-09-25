@@ -284,7 +284,7 @@ func presentationState(st sessionview.State) *v1.SessionViewState {
 	out := &v1.SessionViewState{IndexedThroughSeq: st.IndexedThrough, LastEventTimestamp: truncatePresentationString(st.LastTimestamp, 128),
 		Phase: st.Phase, ErrorMessage: truncatePresentationString(st.ErrorMessage, 2048), ErrorRetryable: st.ErrorRetryable,
 		CoordinatorModel: truncatePresentationString(st.Coordinator, 256), ContextTokens: st.ContextTokens, HasContextTokens: st.HasContext,
-		RolloverAvailable: st.Rollover, PendingRowId: truncatePresentationString(st.PendingRowID, 256)}
+		RolloverAvailable: st.Rollover, PendingRowId: truncatePresentationString(st.PendingRowID, 256), PauseRequested: st.PauseRequested}
 	pending := st.Pending
 	if len(pending) > 8 {
 		out.PendingQuestionsTruncated = true

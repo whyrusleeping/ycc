@@ -846,6 +846,33 @@ final class SessionProjectionTests: XCTestCase {
 
     // MARK: - Phase folding
 
+    func testPauseAcknowledgementAndReconnect() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(seq: 1, type: "pause_requested", actor: "user"))
+        XCTAssertTrue(proj.pauseRequested)
+        XCTAssertEqual(proj.phase, .running)
+        proj.apply(makeEvent(seq: 2, type: "session_error"))
+        XCTAssertTrue(proj.pauseRequested)
+        proj.apply(makeEvent(seq: 3, type: "pause_cancelled", actor: "user")) // another client
+        XCTAssertFalse(proj.pauseRequested)
+        proj.apply(makeEvent(seq: 4, type: "pause_requested", actor: "user"))
+        proj.apply(makeEvent(seq: 5, type: "interrupted"))
+        XCTAssertFalse(proj.pauseRequested)
+        XCTAssertEqual(proj.phase, .paused)
+        proj.apply(makeEvent(seq: 6, type: "resumed"))
+        var state = indexedState(7)
+        state.pauseRequested = true
+        proj.installIndexed(state: state, rows: [])
+        XCTAssertTrue(proj.pauseRequested)
+        state.indexedThroughSeq = 8
+        state.pauseRequested = false
+        proj.installIndexed(state: state, rows: [])
+        XCTAssertFalse(proj.pauseRequested)
+        proj.apply(makeEvent(seq: 9, type: "pause_requested", actor: "user"))
+        proj.apply(makeEvent(seq: 10, type: "session_reopened", actor: "system"))
+        XCTAssertFalse(proj.pauseRequested)
+    }
+
     func testPhaseTransitions() {
         var proj = SessionProjection()
         proj.apply(makeEvent(seq: 1, type: "interrupted"))

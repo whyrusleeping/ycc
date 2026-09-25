@@ -324,7 +324,8 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// protocol; ctrl+x (0x18) is a distinct control byte delivered on
 			// every terminal (and unused by the textarea keymap), so it is the
 			// universal fallback.
-			if !m.paused {
+			// m.status is a free-text header label, so gate only on terminal labels.
+			if !m.paused && !m.pausePending && m.status != "idle" && m.status != "error" && m.status != "stopped" {
 				return m, m.interrupt()
 			}
 			return m, nil
@@ -552,6 +553,10 @@ func (m model) sessionView() string {
 	}
 	if m.paused {
 		help := m.footer(" ⏸ paused — type a correction + enter to steer · enter to resume · esc settings")
+		return top + "\n" + body + "\n" + m.inputRow() + "\n" + help
+	}
+	if m.pausePending {
+		help := m.footer(" pausing at next checkpoint… · esc settings → cancel pause")
 		return top + "\n" + body + "\n" + m.inputRow() + "\n" + help
 	}
 	rolloverHint := " · ctrl+k roll over context"

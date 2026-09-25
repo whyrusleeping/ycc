@@ -60,8 +60,13 @@ func (m model) statusBar() string {
 	case "idle", "waiting for your answer":
 		dot = pathStyle
 	}
+	label := m.status
+	if m.pausePending {
+		label = "pausing at next checkpoint…"
+		dot = recoStyle
+	}
 	glyph := dot.Render("●")
-	segs = append(segs, seg{glyph + " " + typeStyle.Render(m.status), 0})
+	segs = append(segs, seg{glyph + " " + typeStyle.Render(label), 0})
 
 	if m.mode != "" {
 		segs = append(segs, seg{dimStyle.Render("mode ") + typeStyle.Render(m.mode), 1})

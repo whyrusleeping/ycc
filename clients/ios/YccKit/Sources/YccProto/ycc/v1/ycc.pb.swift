@@ -1029,6 +1029,9 @@ public nonisolated struct Ycc_V1_SessionViewState: Sendable {
   /// True when bounded state contains only a prefix; fetch pending_row_id detail.
   public var pendingQuestionsTruncated: Bool = false
 
+  /// acknowledged request; interrupted alone means paused
+  public var pauseRequested: Bool = false
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -5201,7 +5204,7 @@ nonisolated extension Ycc_V1_SessionViewQuestion: SwiftProtobuf.Message, SwiftPr
 
 nonisolated extension Ycc_V1_SessionViewState: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SessionViewState"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}indexed_through_seq\0\u{3}last_event_timestamp\0\u{1}phase\0\u{3}error_message\0\u{3}error_retryable\0\u{3}coordinator_model\0\u{3}context_tokens\0\u{3}has_context_tokens\0\u{3}rollover_available\0\u{3}pending_questions\0\u{3}pending_row_id\0\u{3}pending_questions_truncated\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}indexed_through_seq\0\u{3}last_event_timestamp\0\u{1}phase\0\u{3}error_message\0\u{3}error_retryable\0\u{3}coordinator_model\0\u{3}context_tokens\0\u{3}has_context_tokens\0\u{3}rollover_available\0\u{3}pending_questions\0\u{3}pending_row_id\0\u{3}pending_questions_truncated\0\u{3}pause_requested\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -5221,6 +5224,7 @@ nonisolated extension Ycc_V1_SessionViewState: SwiftProtobuf.Message, SwiftProto
       case 10: try { try decoder.decodeRepeatedMessageField(value: &self.pendingQuestions) }()
       case 11: try { try decoder.decodeSingularStringField(value: &self.pendingRowID) }()
       case 12: try { try decoder.decodeSingularBoolField(value: &self.pendingQuestionsTruncated) }()
+      case 13: try { try decoder.decodeSingularBoolField(value: &self.pauseRequested) }()
       default: break
       }
     }
@@ -5263,6 +5267,9 @@ nonisolated extension Ycc_V1_SessionViewState: SwiftProtobuf.Message, SwiftProto
     if self.pendingQuestionsTruncated != false {
       try visitor.visitSingularBoolField(value: self.pendingQuestionsTruncated, fieldNumber: 12)
     }
+    if self.pauseRequested != false {
+      try visitor.visitSingularBoolField(value: self.pauseRequested, fieldNumber: 13)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -5279,6 +5286,7 @@ nonisolated extension Ycc_V1_SessionViewState: SwiftProtobuf.Message, SwiftProto
     if lhs.pendingQuestions != rhs.pendingQuestions {return false}
     if lhs.pendingRowID != rhs.pendingRowID {return false}
     if lhs.pendingQuestionsTruncated != rhs.pendingQuestionsTruncated {return false}
+    if lhs.pauseRequested != rhs.pauseRequested {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

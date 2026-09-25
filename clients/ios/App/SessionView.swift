@@ -334,29 +334,38 @@ struct SessionView: View {
 
     @ViewBuilder
     private var phaseBanner: some View {
-        switch model.phase {
-        case .paused:
+        if model.projection.pauseRequested {
             banner(
-                "Paused — send a steer or Resume",
-                systemImage: "pause.circle.fill",
+                "Pausing at next safe checkpoint…",
+                systemImage: "pause.circle",
                 tint: .orange,
-                action: ("Resume", { Task { await model.resumeSession() } })
+                action: ("Cancel pause", { Task { await model.resumeSession() } })
             )
-        case .idle:
-            banner("Session idle", systemImage: "moon.zzz.fill", tint: .secondary)
-        case .error(let message, let retryable):
-            let retryAction: (title: String, run: () -> Void)? =
-                retryable ? ("Retry", { Task { await model.retry() } }) : nil
-            banner(
-                message.isEmpty ? "Session error" : "Error: \(message)",
-                systemImage: "exclamationmark.triangle.fill",
-                tint: .red,
-                action: retryAction
-            )
-        case .stopped:
-            banner("Session stopped", systemImage: "stop.circle.fill", tint: .secondary)
-        case .running:
-            EmptyView()
+        } else {
+            switch model.phase {
+            case .paused:
+                banner(
+                    "Paused — send a steer or Resume",
+                    systemImage: "pause.circle.fill",
+                    tint: .orange,
+                    action: ("Resume", { Task { await model.resumeSession() } })
+                )
+            case .idle:
+                banner("Session idle", systemImage: "moon.zzz.fill", tint: .secondary)
+            case .error(let message, let retryable):
+                let retryAction: (title: String, run: () -> Void)? =
+                    retryable ? ("Retry", { Task { await model.retry() } }) : nil
+                banner(
+                    message.isEmpty ? "Session error" : "Error: \(message)",
+                    systemImage: "exclamationmark.triangle.fill",
+                    tint: .red,
+                    action: retryAction
+                )
+            case .stopped:
+                banner("Session stopped", systemImage: "stop.circle.fill", tint: .secondary)
+            case .running:
+                EmptyView()
+            }
         }
     }
 
@@ -386,6 +395,14 @@ struct SessionView: View {
     private var inputBar: some View {
         VStack(alignment: .leading, spacing: 6) {
             PictureStrip(pictures: $pictures)
+            if model.mode == .live && model.projection.phase == .running && !model.projection.pauseRequested {
+                Button {
+                    Task { await model.interrupt() }
+                } label: {
+                    Label("Interrupt at next checkpoint", systemImage: "pause.circle")
+                        .font(.caption)
+                }
+            }
             HStack(spacing: 8) {
                 PicturePickerButton(pictures: $pictures, isLoading: $loadingPictures) { message in
                     model.actionError = message
@@ -927,15 +944,19 @@ struct SessionView: View {
                 }
                 if model.mode == .live {
                     Divider()
-                    Button {
-                        Task { await model.interrupt() }
-                    } label: {
-                        Label("Interrupt", systemImage: "pause.circle")
+                    if model.projection.phase == .running && !model.projection.pauseRequested {
+                        Button {
+                            Task { await model.interrupt() }
+                        } label: {
+                            Label("Interrupt", systemImage: "pause.circle")
+                        }
                     }
-                    Button {
-                        Task { await model.resumeSession() }
-                    } label: {
-                        Label("Resume", systemImage: "play.circle")
+                    if model.projection.phase == .paused || model.projection.pauseRequested {
+                        Button {
+                            Task { await model.resumeSession() }
+                        } label: {
+                            Label(model.projection.pauseRequested ? "Cancel pause" : "Resume", systemImage: "play.circle")
+                        }
                     }
                     if model.projection.rolloverAvailable && model.projection.phase != .paused {
                         Button {

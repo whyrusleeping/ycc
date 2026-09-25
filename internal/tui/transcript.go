@@ -309,6 +309,7 @@ func (m *model) appendEvent(ev *v1.Event) {
 			}
 		}
 	case "session_reopened":
+		m.pausePending = false
 		// Reopen marker: the daemon reconstructed the model history and repaired
 		// any dangling ask_user tool call with a synthetic result (engine replay),
 		// so a question_asked replayed just before this marker is stale — no
@@ -342,12 +343,22 @@ func (m *model) appendEvent(ev *v1.Event) {
 		// pending retry note (the failure is now durable).
 		delete(m.liveTails, ev.Actor)
 		delete(m.retryNotes, ev.Actor)
+	case "pause_requested":
+		m.pausePending = true
+	case "pause_cancelled":
+		m.pausePending = false
 	case "interrupted":
+		m.pausePending = false
 		m.status = "paused"
 		m.paused = true
 	case "resumed":
+		m.pausePending = false
 		m.status = "running"
 		m.paused = false
+	case "session_stopped", "session_ended":
+		m.pausePending = false
+		m.paused = false
+		m.status = "stopped"
 	case "mode_changed":
 		m.mode = dataField(ev, "to")
 		m.status = "running"

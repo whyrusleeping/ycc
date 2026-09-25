@@ -246,6 +246,7 @@ type model struct {
 	pendingSeq          int64
 	status              string
 	paused              bool // session is paused-to-steer
+	pausePending        bool // request acknowledged, awaiting checkpoint
 	rolloverUnavailable bool // terminal compact overflow requires a coordinator model change
 
 	// live status-bar state: a running per-model token tally summed
@@ -1084,7 +1085,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.eventStart = nil
 		m.selected = -1
 		m.follow = m.prefs.Follow
-		m.pending, m.paused, m.picking = "", false, false
+		m.pending, m.paused, m.pausePending, m.picking = "", false, false, false
 		m.pickerOpts, m.pickerCursor = nil, 0
 		m.clearWizard()
 		m.clearSearch()

@@ -179,6 +179,8 @@ public struct SessionProjection: Sendable, Equatable {
     private var openQuestions: [Question] = []
     /// The session's derived lifecycle phase, folded from lifecycle events.
     public private(set) var phase: Phase = .running
+    /// Durable acknowledgement of a pause request, before the safe checkpoint.
+    public private(set) var pauseRequested = false
     /// The logical model driving the session's coordinator — "which model is
     /// doing the work". Folded from the log itself rather than from `ListModels`,
     /// which only reports the daemon's GLOBAL role defaults and therefore lies
@@ -581,7 +583,10 @@ public struct SessionProjection: Sendable, Equatable {
         guard !Self.isSubagentActor(actor) else { return }
 
         switch type {
+        case "pause_requested":
+            pauseRequested = true
         case "interrupted":
+            pauseRequested = false
             phase = .paused
         case "session_idle":
             phase = .idle
@@ -598,13 +603,17 @@ public struct SessionProjection: Sendable, Equatable {
             let retryable = (data["retryable"] as? Bool) ?? true
             phase = .error(msg, retryable: retryable)
         case "session_stopped", "session_ended":
+            pauseRequested = false
             phase = .stopped
+        case "pause_cancelled", "session_reopened":
+            pauseRequested = false
         case "role_config_changed":
             let nextCoordinator = (data["coordinator"] as? String) ?? ""
             if !nextCoordinator.isEmpty && nextCoordinator != coordinatorModel {
                 rolloverAvailable = true
             }
         case "resumed", "session_started":
+            pauseRequested = false
             phase = .running
         case "user_input", "user_input_delivered", "model_turn", "thinking",
              "tool_call", "tool_result", "question_asked":
@@ -882,6 +891,7 @@ public struct SessionProjection: Sendable, Equatable {
         coordinatorModel = state.coordinatorModel
         currentContextTokensEstimate = state.hasContextTokens_p ? Int(state.contextTokens) : nil
         rolloverAvailable = state.rolloverAvailable
+        pauseRequested = state.pauseRequested
         switch state.phase {
         case "paused": phase = .paused
         case "idle": phase = .idle
@@ -1078,6 +1088,10 @@ public struct SessionProjection: Sendable, Equatable {
             return "Session stopped"
         case "session_reopened":
             return "Session reopened"
+        case "pause_requested":
+            return "Pause requested"
+        case "pause_cancelled":
+            return "Pause cancelled"
         case "interrupted":
             return "Interrupted"
         case "resumed":

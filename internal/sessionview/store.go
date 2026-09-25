@@ -25,8 +25,8 @@ import (
 	"github.com/whyrusleeping/ycc/internal/event"
 )
 
-// Rebuild older indexes: their summaries dropped auto and their state exposed auto questions as pending.
-const schemaVersion = 3
+// Rebuild older indexes so durable pause requests appear in their state snapshots.
+const schemaVersion = 4
 
 // Bounds are deliberately below Connect's normal message limits. MaxBytes is a
 // budget for the complete encoded response, not merely the row payloads. The
@@ -56,6 +56,7 @@ type State struct {
 	ContextTokens  int64      `json:"context_tokens,omitempty"`
 	HasContext     bool       `json:"has_context"`
 	Rollover       bool       `json:"rollover"`
+	PauseRequested bool       `json:"pause_requested"`
 	Pending        []Question `json:"pending,omitempty"`
 	PendingRowID   string     `json:"pending_row_id,omitempty"`
 
@@ -374,6 +375,12 @@ func applyEvent(ctx context.Context, tx *sql.Tx, sid string, st *State, ev event
 	isSub := isSubagent(actor)
 	str := func(k string) string { v, _ := ev.Data[k].(string); return v }
 	if !isSub {
+		switch ev.Type {
+		case event.PauseRequested:
+			st.PauseRequested = true
+		case event.Interrupted, event.Resumed, event.PauseCancelled, event.SessionStopped, event.Type("session_ended"), event.SessionReopened:
+			st.PauseRequested = false
+		}
 		switch ev.Type {
 		case event.Interrupted:
 			st.Phase = "paused"

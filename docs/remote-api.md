@@ -973,7 +973,7 @@ Common `type` values (initial set; full table in spec §5.2):
 
 `session_started`, `model_turn`, `thinking`, `tool_call` / `tool_result`,
 `subagent_spawned` / `subagent_finished`, `question_asked` / `question_answered`,
-`interrupted` / `resumed`, `user_input` / `user_input_delivered`, `plan_proposed`,
+`pause_requested` / `pause_cancelled`, `interrupted` / `resumed`, `user_input` / `user_input_delivered`, `plan_proposed`,
 `review_submitted`, `decision_made`, `doc_updated`, `commit_made`,
 `context_view_changed`, `session_idle` / `session_error`, `session_stopped` /
 `session_reopened`, `log`, and the transient `turn_delta`.

@@ -235,7 +235,7 @@ func (m model) overlayActivate() (tea.Model, tea.Cmd) {
 		if m.sessionID == "" || m.state != stateSession {
 			return m, nil
 		}
-		if m.paused {
+		if m.paused || m.pausePending {
 			m.overlay = false
 			return m, m.resume()
 		}
@@ -413,6 +413,8 @@ func (m model) overlayView() string {
 		interruptVal = "(no active session)"
 	case m.paused:
 		interruptLabel, interruptVal = "resume agent", "continue from the pause"
+	case m.pausePending:
+		interruptLabel, interruptVal = "cancel pause", "resume before next checkpoint"
 	case m.status != "running":
 		interruptVal = "(agent is " + m.status + ")"
 	}

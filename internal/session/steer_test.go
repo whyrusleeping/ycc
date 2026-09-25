@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -84,6 +85,85 @@ func TestSteerPauseResume(t *testing.T) {
 	}
 	if rec.count(event.Resumed) != 1 {
 		t.Fatalf("resumed emitted %d times, want 1", rec.count(event.Resumed))
+	}
+}
+
+// A blocked turn/tool does not observe a pause until it reaches a checkpoint.
+// Duplicate requests and a request while already paused must not leave a stale
+// pause that re-interrupts the next checkpoint after Resume.
+func TestPauseRequestCheckpointLifecycle(t *testing.T) {
+	s, rec := newSteerSession()
+	toolDone := make(chan struct{})
+	checkpointDone := make(chan struct{})
+	go func() {
+		<-toolDone
+		_, _ = s.Checkpoint(context.Background())
+		close(checkpointDone)
+	}()
+	for i := 0; i < 2; i++ {
+		if err := s.Interrupt(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if rec.count(event.PauseRequested) != 1 || rec.count(event.Interrupted) != 0 {
+		t.Fatalf("while tool blocked: requests=%d interruptions=%d", rec.count(event.PauseRequested), rec.count(event.Interrupted))
+	}
+	close(toolDone)
+	waitStatus(t, s, event.StatusPaused)
+	if err := s.Interrupt(); err != nil {
+		t.Fatal(err)
+	}
+	if rec.count(event.PauseRequested) != 1 {
+		t.Fatal("pause while paused emitted another request")
+	}
+	if err := s.Resume(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-checkpointDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("resume did not release checkpoint")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := s.Checkpoint(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.count(event.Interrupted) != 1 || rec.count(event.Resumed) != 1 {
+		t.Fatalf("interruptions=%d resumptions=%d", rec.count(event.Interrupted), rec.count(event.Resumed))
+	}
+}
+
+func TestPauseRequestThenStop(t *testing.T) {
+	s, rec := newSteerSession()
+	log, err := event.OpenLog(filepath.Join(t.TempDir(), "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.log = log
+	_, s.cancel = context.WithCancel(context.Background())
+	if err := s.Interrupt(); err != nil {
+		t.Fatal(err)
+	}
+	s.Stop()
+	if rec.count(event.PauseRequested) != 1 || rec.count(event.SessionStopped) != 1 || rec.count(event.Interrupted) != 0 {
+		t.Fatalf("request=%d stopped=%d interrupted=%d", rec.count(event.PauseRequested), rec.count(event.SessionStopped), rec.count(event.Interrupted))
+	}
+}
+
+func TestCancelPauseBeforeCheckpoint(t *testing.T) {
+	s, rec := newSteerSession()
+	if err := s.Interrupt(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Resume(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Checkpoint(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if rec.count(event.PauseRequested) != 1 || rec.count(event.PauseCancelled) != 1 || rec.count(event.Interrupted) != 0 {
+		t.Fatalf("request=%d cancelled=%d interrupted=%d", rec.count(event.PauseRequested), rec.count(event.PauseCancelled), rec.count(event.Interrupted))
 	}
 }
 

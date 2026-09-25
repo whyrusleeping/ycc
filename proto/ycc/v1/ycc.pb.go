@@ -3100,6 +3100,7 @@ type SessionViewState struct {
 	PendingRowId       string                 `protobuf:"bytes,11,opt,name=pending_row_id,json=pendingRowId,proto3" json:"pending_row_id,omitempty"`
 	// True when bounded state contains only a prefix; fetch pending_row_id detail.
 	PendingQuestionsTruncated bool `protobuf:"varint,12,opt,name=pending_questions_truncated,json=pendingQuestionsTruncated,proto3" json:"pending_questions_truncated,omitempty"`
+	PauseRequested            bool `protobuf:"varint,13,opt,name=pause_requested,json=pauseRequested,proto3" json:"pause_requested,omitempty"` // acknowledged request; interrupted alone means paused
 	unknownFields             protoimpl.UnknownFields
 	sizeCache                 protoimpl.SizeCache
 }
@@ -3214,6 +3215,13 @@ func (x *SessionViewState) GetPendingRowId() string {
 func (x *SessionViewState) GetPendingQuestionsTruncated() bool {
 	if x != nil {
 		return x.PendingQuestionsTruncated
+	}
+	return false
+}
+
+func (x *SessionViewState) GetPauseRequested() bool {
+	if x != nil {
+		return x.PauseRequested
 	}
 	return false
 }
@@ -9432,7 +9440,7 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"has_detail\x18\x05 \x01(\bR\thasDetail\"G\n" +
 	"\x13SessionViewQuestion\x12\x16\n" +
 	"\x06prompt\x18\x01 \x01(\tR\x06prompt\x12\x18\n" +
-	"\aoptions\x18\x02 \x03(\tR\aoptions\"\xb9\x04\n" +
+	"\aoptions\x18\x02 \x03(\tR\aoptions\"\xe2\x04\n" +
 	"\x10SessionViewState\x12.\n" +
 	"\x13indexed_through_seq\x18\x01 \x01(\x03R\x11indexedThroughSeq\x120\n" +
 	"\x14last_event_timestamp\x18\x02 \x01(\tR\x12lastEventTimestamp\x12\x14\n" +
@@ -9446,7 +9454,8 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x11pending_questions\x18\n" +
 	" \x03(\v2\x1b.ycc.v1.SessionViewQuestionR\x10pendingQuestions\x12$\n" +
 	"\x0epending_row_id\x18\v \x01(\tR\fpendingRowId\x12>\n" +
-	"\x1bpending_questions_truncated\x18\f \x01(\bR\x19pendingQuestionsTruncated\"\x88\x01\n" +
+	"\x1bpending_questions_truncated\x18\f \x01(\bR\x19pendingQuestionsTruncated\x12'\n" +
+	"\x0fpause_requested\x18\r \x01(\bR\x0epauseRequested\"\x88\x01\n" +
 	"\x15GetSessionViewRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12\x1d\n" +
 	"\n" +

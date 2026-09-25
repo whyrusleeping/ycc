@@ -804,7 +804,7 @@ question reopens the session; answer RPCs never resume a transcript with no rest
 
 ### 18.7 Interrupt and steer
 
-Interrupt requests a graceful pause at a safe checkpoint; it does not cancel a tool mid-write.
+Interrupt durably acknowledges a `pause_requested` action immediately; it requests a graceful pause at a safe checkpoint and does not cancel a tool mid-write. `interrupted` alone confirms the pause. `pause_cancelled` (Resume before the checkpoint), `interrupted`, `resumed`, stop, and reopen clear the pending indication.
 While paused, input queues as steering and Resume drains it before the next model turn. Hard Stop
 terminates instead and requires destructive confirmation in interactive clients. Resume also
 retries a parked retryable model failure.

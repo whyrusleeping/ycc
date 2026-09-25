@@ -303,6 +303,35 @@ test("feedIngest: paused lifecycle gates context rollover", function () {
   assert.strictEqual(feed.paused, false);
 });
 
+test("feedIngest: durable pause request survives reconnect and clears on cancellation, checkpoint or reopen", function () {
+  var feed = w.makeFeed();
+  function add(type) {
+    w.feedIngest(feed, { seq: String(feed.cursor + 1), actor: "user", type: type, dataJson: "{}" });
+  }
+  add("pause_requested");
+  assert.strictEqual(feed.pausePending, true);
+  assert.strictEqual(feed.paused, false);
+  w.feedIngest(feed, { seq: "1", actor: "user", type: "pause_requested", dataJson: "{}" });
+  assert.strictEqual(feed.pausePending, true);
+  add("session_error");
+  assert.strictEqual(feed.pausePending, true);
+  add("pause_cancelled"); // another client's Resume
+  assert.strictEqual(feed.pausePending, false);
+  add("pause_requested");
+  add("interrupted");
+  assert.strictEqual(feed.pausePending, false);
+  assert.strictEqual(feed.paused, true);
+  add("resumed");
+  add("pause_requested");
+  add("session_reopened");
+  assert.strictEqual(feed.pausePending, false);
+  var replay = w.makeFeed();
+  ["pause_requested", "session_error", "pause_cancelled"].forEach(function (type, i) {
+    w.feedIngest(replay, { seq: String(i + 1), actor: "user", type: type, dataJson: "{}" });
+  });
+  assert.strictEqual(replay.pausePending, false);
+});
+
 test("feedIngest: terminal events clear the pending gate", function () {
   ["session_idle", "session_error", "session_stopped"].forEach(function (t, i) {
     var feed = w.makeFeed();

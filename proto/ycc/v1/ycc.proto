@@ -336,6 +336,7 @@ message SessionViewState {
   string pending_row_id = 11;
   // True when bounded state contains only a prefix; fetch pending_row_id detail.
   bool pending_questions_truncated = 12;
+  bool pause_requested = 13; // acknowledged request; interrupted alone means paused
 }
 message GetSessionViewRequest {
   string project = 1;

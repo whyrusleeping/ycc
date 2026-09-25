@@ -921,8 +921,17 @@ func (s *Session) Interrupt() error {
 		s.steerMu.Unlock()
 		return fmt.Errorf("coordinator context rollover is pending; wait for it to finish before pausing")
 	}
+	if s.paused || s.pauseReq {
+		s.steerMu.Unlock()
+		return nil
+	}
 	s.pauseReq = true
+	s.emitter.EmitAs("user", event.PauseRequested, map[string]any{})
+	err := s.logFailure()
 	s.steerMu.Unlock()
+	if err != nil {
+		return fmt.Errorf("session event log failed: %w", err)
+	}
 	return nil
 }
 
@@ -945,7 +954,14 @@ func (s *Session) Resume() error {
 		s.steerMu.Unlock()
 		return nil
 	}
-	s.pauseReq = false
+	if s.pauseReq {
+		s.pauseReq = false
+		s.emitter.EmitAs("user", event.PauseCancelled, map[string]any{})
+		if err := s.logFailure(); err != nil {
+			s.steerMu.Unlock()
+			return fmt.Errorf("session event log failed: %w", err)
+		}
+	}
 	running := s.running
 	s.steerMu.Unlock()
 	// Errored + not running ⇒ the run loop is blocked waiting for input. Signal a

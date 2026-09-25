@@ -137,7 +137,7 @@
   // seq folded), the per-actor live-tail snapshots, and the pending ask_user gate
   // (null when no question is open) that drives the answer sheet.
   function makeFeed() {
-    return { cursor: 0, tails: {}, pending: null, rolloverAvailable: true, paused: false, coordinatorModel: "" };
+    return { cursor: 0, tails: {}, pending: null, rolloverAvailable: true, paused: false, pausePending: false, running: true, coordinatorModel: "" };
   }
 
   // asStr coerces any value to a string ("" for null/undefined). A pure-section
@@ -248,10 +248,27 @@
       }
       feed.coordinatorModel = nextCoordinator;
     }
-    if (type === "interrupted") {
-      feed.paused = true;
-    } else if (type === "resumed" || type === "session_stopped" || type === "session_ended") {
-      feed.paused = false;
+    if (!actor || actor === "coordinator" || actor === "user" || actor === "system" || actor === "daemon") {
+      if (type === "pause_requested") {
+        feed.pausePending = true;
+      } else if (type === "interrupted" || type === "resumed" || type === "pause_cancelled" ||
+                 type === "session_stopped" || type === "session_ended" || type === "session_reopened") {
+        feed.pausePending = false;
+      }
+      if (type === "interrupted") {
+        feed.paused = true;
+        feed.running = false;
+      } else if (type === "resumed" || type === "session_started") {
+        feed.paused = false;
+        feed.running = true;
+      } else if (type === "session_stopped" || type === "session_ended") {
+        feed.paused = false;
+        feed.running = false;
+      } else if (type === "session_idle" || type === "session_error") {
+        feed.running = false;
+      } else if (type === "model_turn" || type === "tool_call" || type === "tool_result" || type === "thinking") {
+        if (!feed.paused) { feed.running = true; }
+      }
     }
 
     if (type === "question_asked") {
@@ -789,7 +806,7 @@
     }
     state.streaming = true;
     state.cleanEnd = false;
-    setStatus(state, "live");
+    setStatus(state, state.feed.pausePending ? "Pausing at next checkpoint…" : state.feed.paused ? "paused" : "live");
 
     var controller = null;
     try {
@@ -957,6 +974,13 @@
     send.type = "submit";
     bar.appendChild(input);
     bar.appendChild(send);
+    var pauseButton = el("button", "btn ghost", "Interrupt");
+    pauseButton.type = "button";
+    pauseButton.addEventListener("click", function () {
+      controlAction(state, state.feed.paused || state.feed.pausePending ? "Resume" : "Interrupt", "Control sent");
+    });
+    bar.appendChild(pauseButton);
+    state.pauseButton = pauseButton;
     app.appendChild(bar);
     state.inputEl = input;
     state.sendBtn = send;
@@ -1002,14 +1026,17 @@
       return;
     }
     var menu = el("div", "menu");
-    menu.appendChild(menuItem("Interrupt", function () {
-      closeMenu(state);
-      controlAction(state, "Interrupt", "Interrupt sent");
-    }));
-    menu.appendChild(menuItem("Resume", function () {
-      closeMenu(state);
-      controlAction(state, "Resume", "Resume sent");
-    }));
+    if (state.feed.running && !state.feed.paused && !state.feed.pausePending) {
+      menu.appendChild(menuItem("Interrupt", function () {
+        closeMenu(state);
+        controlAction(state, "Interrupt", "Pause requested");
+      }));
+    } else if (state.feed.paused || state.feed.pausePending) {
+      menu.appendChild(menuItem(state.feed.pausePending ? "Cancel pause" : "Resume", function () {
+        closeMenu(state);
+        controlAction(state, "Resume", "Resume sent");
+      }));
+    }
     if (state.feed.rolloverAvailable && !state.feed.paused) {
       menu.appendChild(menuItem("Rollover coordinator context", function () {
         closeMenu(state);
@@ -1337,6 +1364,15 @@
     // without a flash when an ask+answer replay in quick succession.
     if (state.live) {
       scheduleSheetSync(state);
+      if (state.pauseButton) {
+        state.pauseButton.style.display = state.feed.running || state.feed.paused || state.feed.pausePending ? "" : "none";
+        state.pauseButton.textContent = state.feed.pausePending ? "Cancel pause" : state.feed.paused ? "Resume" : "Interrupt";
+      }
+      if (state.feed.pausePending) {
+        setStatus(state, "Pausing at next checkpoint…");
+      } else if (action.kind === "append" && (ev.type === "interrupted" || ev.type === "resumed" || ev.type === "pause_cancelled")) {
+        setStatus(state, state.feed.paused ? "paused" : "live");
+      }
     }
   }
 

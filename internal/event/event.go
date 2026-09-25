@@ -94,12 +94,13 @@ const (
 	// Settings overlay: mid-session config changes recorded in the log.
 	RoleConfigChanged    Type = "role_config_changed"
 	ThinkingLevelChanged Type = "thinking_level_changed"
-	// Interrupt & steer: a running agent is gracefully paused
-	// at a safe checkpoint (Interrupted ⇒ status paused) and later continues on
-	// the same loop/conversation (Resumed ⇒ status running), optionally after a
-	// steered-in correction.
-	Interrupted Type = "interrupted"
-	Resumed     Type = "resumed"
+	// Interrupt & steer: PauseRequested acknowledges a requested pause immediately;
+	// PauseCancelled cancels it before the checkpoint. Interrupted alone confirms
+	// the safe-checkpoint pause; Resumed continues the same loop/conversation.
+	PauseRequested Type = "pause_requested"
+	PauseCancelled Type = "pause_cancelled"
+	Interrupted    Type = "interrupted"
+	Resumed        Type = "resumed"
 	// SessionReopened is an informational marker emitted when a persisted session
 	// is re-opened ("resume = replay"): its coordinator is
 	// re-instantiated on the EXISTING event log with history reconstructed from

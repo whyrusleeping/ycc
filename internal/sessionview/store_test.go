@@ -43,6 +43,40 @@ func ev(seq int, typ event.Type, data map[string]any) event.Event {
 	return event.Event{Seq: seq, TS: time.Unix(int64(seq), 0).UTC(), Actor: "coordinator", Type: typ, Data: data}
 }
 
+func TestPauseRequestReconcilesAcrossCatchUp(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	store, err := Open(filepath.Join(dir, "view.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	events := []event.Event{ev(1, event.PauseRequested, nil)}
+	check := func(want bool) {
+		t.Helper()
+		writeLog(t, path, events)
+		state, err := store.CatchUp(ctx, "s", path, -1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state.PauseRequested != want {
+			t.Fatalf("after %s: pause requested=%v, want %v", events[len(events)-1].Type, state.PauseRequested, want)
+		}
+	}
+	check(true)
+	for _, typ := range []event.Type{event.SessionError, event.SessionIdle} {
+		events = append(events, ev(len(events)+1, typ, nil))
+		check(true)
+	}
+	for _, clear := range []event.Type{event.PauseCancelled, event.Interrupted, event.Resumed, event.SessionStopped, event.SessionReopened} {
+		events = append(events, ev(len(events)+1, clear, nil))
+		check(false)
+		events = append(events, ev(len(events)+1, event.PauseRequested, nil))
+		check(true)
+	}
+}
+
 func TestIndexIncrementalPagesEditsAndDetails(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
