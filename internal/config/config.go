@@ -690,6 +690,8 @@ type Retry struct {
 	MaxAttempts        int `toml:"max_attempts,omitempty"`
 	BaseDelayMS        int `toml:"base_delay_ms,omitempty"`
 	MaxDelayMS         int `toml:"max_delay_ms,omitempty"`
+	MaxRetryAfterMS    int `toml:"max_retry_after_ms,omitempty"`
+	MaxTotalWaitMS     int `toml:"max_total_wait_ms,omitempty"`
 	PartialMaxAttempts int `toml:"partial_max_attempts,omitempty"`
 }
 
@@ -958,7 +960,7 @@ func (c *Config) validate() error {
 	if c.Integration.AgentAttempts != nil && *c.Integration.AgentAttempts < 0 {
 		return fmt.Errorf("integration.agent_attempts must be non-negative")
 	}
-	if c.Retry.MaxAttempts < 0 || c.Retry.BaseDelayMS < 0 || c.Retry.MaxDelayMS < 0 || c.Retry.PartialMaxAttempts < 0 {
+	if c.Retry.MaxAttempts < 0 || c.Retry.BaseDelayMS < 0 || c.Retry.MaxDelayMS < 0 || c.Retry.PartialMaxAttempts < 0 || c.Retry.MaxRetryAfterMS < 0 || c.Retry.MaxTotalWaitMS < 0 {
 		return fmt.Errorf("retry: attempts and delays must be non-negative")
 	}
 	if (c.Transport.StreamIdleSeconds != nil && *c.Transport.StreamIdleSeconds < 0) || (c.Transport.TotalTimeoutSeconds != nil && *c.Transport.TotalTimeoutSeconds < 0) {
@@ -1127,6 +1129,12 @@ func (r *Registry) RetryPolicy() engine.RetryPolicy {
 	}
 	if r.cfg.Retry.MaxDelayMS > 0 {
 		p.MaxDelay = time.Duration(r.cfg.Retry.MaxDelayMS) * time.Millisecond
+	}
+	if r.cfg.Retry.MaxRetryAfterMS > 0 {
+		p.MaxRetryAfter = time.Duration(r.cfg.Retry.MaxRetryAfterMS) * time.Millisecond
+	}
+	if r.cfg.Retry.MaxTotalWaitMS > 0 {
+		p.MaxTotalWait = time.Duration(r.cfg.Retry.MaxTotalWaitMS) * time.Millisecond
 	}
 	return p
 }

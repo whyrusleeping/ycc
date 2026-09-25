@@ -3,7 +3,10 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -102,6 +105,7 @@ func TestLoopRetryNonRetryableFailsImmediately(t *testing.T) {
 		{errors.New("API returned non-200 status code 403: forbidden"), KindAuth},
 		{errors.New("API returned non-200 status code 400: bad request"), KindInvalidRequest},
 		{errors.New("API returned non-200 status code 404: not found"), KindInvalidRequest},
+		{&gollama.APIError{StatusCode: 401, Body: `{"error":{"code":"invalid_api_key","message":"bad key"}}`}, KindAuth},
 	}
 	for _, c := range cases {
 		inner := &retryFakeTurner{errs: []error{c.err}}
@@ -133,6 +137,16 @@ func TestLoopRetryNonRetryableFailsImmediately(t *testing.T) {
 		if retryable, _ := errs[0].Data["retryable"].(bool); retryable {
 			t.Fatalf("session_error retryable = true, want false (for %v)", c.err)
 		}
+	}
+}
+
+func TestTypedContextFailureDoesNotRetry(t *testing.T) {
+	orig := &gollama.APIError{StatusCode: 400, Body: `{"error":{"code":"context_length_exceeded"}}`}
+	turner := &retryFakeTurner{errs: []error{orig}}
+	loop, _, slept := newRetryLoop(t, turner, DefaultRetryPolicy())
+	_, attempts, err := loop.runTurn(context.Background(), turner, gollama.RequestOptions{Model: "test"})
+	if !errors.Is(err, orig) || attempts != 1 || turner.calls != 1 || len(*slept) != 0 {
+		t.Fatalf("context failure: err=%v attempts=%d calls=%d sleeps=%v", err, attempts, turner.calls, *slept)
 	}
 }
 
@@ -244,8 +258,8 @@ func TestLoopRetryDisabled(t *testing.T) {
 // Cancelling the run ctx during a retry backoff stops the loop promptly with
 // the ctx error and does NOT record a session_error (a stopped session is not
 // an API failure).
-func TestLoopRetryCtxCancelDuringBackoff(t *testing.T) {
-	orig := errors.New("API returned non-200 status code 503: transient")
+func TestLoopRetryCtxCancelDuringProviderWait(t *testing.T) {
+	orig := &gollama.APIError{StatusCode: 503, Body: "transient", Header: http.Header{"Retry-After": []string{"2"}}}
 	inner := &retryFakeTurner{errs: []error{orig, orig, orig}}
 	ctx, cancel := context.WithCancel(context.Background())
 	rec := &captureRecorder{}
@@ -254,7 +268,10 @@ func TestLoopRetryCtxCancelDuringBackoff(t *testing.T) {
 	loop.Retry = RetryPolicy{MaxAttempts: 3, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond}
 	loop.retryLogf = func(string, ...any) {}
 	loop.retrySleep = func(c context.Context, d time.Duration) bool {
-		cancel() // the session is stopped mid-backoff
+		if d != 2*time.Second {
+			t.Errorf("provider wait = %v", d)
+		}
+		cancel() // the session is stopped mid-wait
 		return false
 	}
 	loop.Seed("go")
@@ -328,6 +345,95 @@ func TestLoopRetryBroadcastsTransientEvents(t *testing.T) {
 	for _, ev := range l.Snapshot() {
 		if ev.Type == event.Retry {
 			t.Fatal("retry event leaked into the persisted log")
+		}
+	}
+}
+
+func TestRetryProviderWaitAndBudgets(t *testing.T) {
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	providerErr := func(seconds string) error {
+		return &gollama.APIError{StatusCode: 429, Body: `{"error":{"code":"rate_limit_error","message":"slow down"}}`, Header: http.Header{"Retry-After": []string{seconds}, "X-Credential": []string{"secret123"}}}
+	}
+	policy := RetryPolicy{MaxAttempts: 4, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond, MaxRetryAfter: 5 * time.Second, MaxTotalWait: 3 * time.Second}
+	for _, tc := range []struct {
+		name   string
+		values []string
+		calls  int
+		waits  []time.Duration
+	}{
+		{"retry after", []string{"2"}, 2, []time.Duration{2 * time.Second}},
+		{"excessive", []string{"9"}, 1, nil},
+		{"total budget", []string{"2", "2"}, 2, []time.Duration{2 * time.Second}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := make([]error, len(tc.values))
+			for i, s := range tc.values {
+				errs[i] = providerErr(s)
+			}
+			turner := &retryFakeTurner{errs: errs}
+			loop, rec, slept := newRetryLoop(t, turner, policy)
+			loop.retryNow = func() time.Time { return now }
+			_, err := loop.Run(context.Background())
+			if tc.calls == 1 || tc.name == "total budget" {
+				if err == nil {
+					t.Fatal("expected terminal provider error")
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if turner.calls != tc.calls || len(*slept) != len(tc.waits) {
+				t.Fatalf("calls=%d slept=%v", turner.calls, *slept)
+			}
+			for i, want := range tc.waits {
+				if (*slept)[i] != want {
+					t.Fatalf("sleep %d=%v, want %v", i, (*slept)[i], want)
+				}
+			}
+			if tc.name == "excessive" {
+				ev := sessionErrors(rec)
+				if len(ev) != 1 || ev[0].Data["retry_after_ms"] != int64(9000) || ev[0].Data["retry_at"] != now.Add(9*time.Second).Format(time.RFC3339) || ev[0].Data["code"] != "rate_limit_error" {
+					t.Fatalf("session error: %+v", ev)
+				}
+			}
+		})
+	}
+}
+
+func TestRetryEventProviderMetadata(t *testing.T) {
+	log, err := event.OpenLog(filepath.Join(t.TempDir(), "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	ch, cancel := log.Subscribe(0)
+	defer cancel()
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	orig := &gollama.APIError{StatusCode: 503, Body: `{"error":{"code":"server_error","message":"retry please"}}`, Header: http.Header{"Retry-After": []string{"2"}, "X-Credential": []string{"secret123"}}}
+	turner := &retryFakeTurner{errs: []error{orig}}
+	loop := newLoopWithRec(t, turner, log)
+	loop.Retry = RetryPolicy{MaxAttempts: 2, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond}
+	loop.retryNow = func() time.Time { return now }
+	loop.retrySleep = func(context.Context, time.Duration) bool { return true }
+	loop.retryLogf = func(string, ...any) {}
+	loop.Seed("go")
+	if _, err := loop.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		select {
+		case ev := <-ch:
+			if ev.Type != event.Retry {
+				continue
+			}
+			if ev.Data["next_attempt_at"] != now.Add(2*time.Second).Format(time.RFC3339Nano) || ev.Data["reason"] != "retry_after" || ev.Data["retry_after_ms"] != int64(2000) || ev.Data["code"] != "server_error" || ev.Data["msg"] != "retry please" {
+				t.Fatalf("retry: %+v", ev.Data)
+			}
+			if strings.Contains(fmt.Sprint(ev.Data), "secret123") {
+				t.Fatalf("leaked header: %+v", ev.Data)
+			}
+			return
+		case <-time.After(time.Second):
+			t.Fatal("no retry event")
 		}
 	}
 }

@@ -3,20 +3,23 @@ package engine
 // This file centralizes classification of LLM API call failures so that retry
 // decisions (retry.go), context-window detection (context.go), and the
 // structured session_error events the loop emits (loop.go) all agree on what an
-// error IS. gollama surfaces HTTP failures as plain strings ("API returned
-// non-200 status code NNN: <body>"), so classification is necessarily textual:
-// parse the status code when present, fall back to transport-error detection.
+// error IS. Structured provider status/code takes precedence; textual signatures
+// remain for legacy transports and untyped in-stream failures.
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/llmhttp"
 )
 
@@ -60,9 +63,116 @@ type APIErrorInfo struct {
 	// Status is the HTTP status code when one could be parsed from the error,
 	// else 0 (transport failures have no status).
 	Status int
-	// Retryable reports whether the failure is transient — worth retrying with
-	// backoff — as opposed to a permanent error that will repeat identically.
-	Retryable bool
+	// Retryable reports whether the failure is transient.
+	Retryable     bool
+	Code          string        // provider code/type, when available
+	Message       string        // bounded, single-line diagnostic; never response headers
+	RetryAfter    time.Duration // provider-requested minimum wait relative to classification time
+	HasRetryAfter bool
+}
+
+// providerErrorMetadata is implemented by in-stream errors without coupling
+// the backend transport to the engine (the engine itself imports that backend).
+type providerErrorMetadata interface {
+	ProviderErrorCode() string
+	ProviderErrorMessage() string
+}
+
+// safeDiagnostic bounds diagnostics before they reach live or durable events.
+func safeDiagnostic(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	r := []rune(s)
+	if len(r) > 300 {
+		s = string(r[:300]) + "…"
+	}
+	return s
+}
+
+func boundedErrorText(s string) string {
+	r := []rune(s)
+	if len(r) > 2000 {
+		return string(r[:2000]) + "…"
+	}
+	return s
+}
+
+func providerBody(body string) (code, message string) {
+	var raw struct {
+		Code, Type, Message string
+		Error               *struct{ Code, Type, Message string }
+	}
+	if json.Unmarshal([]byte(body), &raw) == nil {
+		if raw.Error != nil {
+			code, message = raw.Error.Code, raw.Error.Message
+			if code == "" {
+				code = raw.Error.Type
+			}
+		} else {
+			code, message = raw.Code, raw.Message
+			if code == "" && raw.Type != "error" {
+				code = raw.Type
+			}
+		}
+	}
+	if message == "" {
+		message = body
+	}
+	return safeDiagnostic(code), safeDiagnostic(message)
+}
+
+func statusKind(code int, body string) APIErrorInfo {
+	if code >= 400 && code < 500 && code != 429 && hasContextSignature(strings.ToLower(body)) {
+		return APIErrorInfo{Kind: KindContextLength, Status: code}
+	}
+	switch {
+	case code == 429:
+		return APIErrorInfo{Kind: KindRateLimit, Status: code, Retryable: true}
+	case code == 503 || code == 529:
+		return APIErrorInfo{Kind: KindOverloaded, Status: code, Retryable: true}
+	case code == 408:
+		return APIErrorInfo{Kind: KindTimeout, Status: code, Retryable: true}
+	case code >= 500 && code <= 599:
+		return APIErrorInfo{Kind: KindServer, Status: code, Retryable: true}
+	case code == 401 || code == 403:
+		return APIErrorInfo{Kind: KindAuth, Status: code}
+	case code >= 400 && code <= 499:
+		return APIErrorInfo{Kind: KindInvalidRequest, Status: code}
+	default:
+		return APIErrorInfo{Kind: KindUnknown, Status: code}
+	}
+}
+
+// anthropicResetWait only uses exhausted buckets. Multiple exhausted limits
+// must all reset before another attempt is useful, hence the latest timestamp.
+func anthropicResetWait(h http.Header, now time.Time) (time.Duration, bool) {
+	var latest time.Time
+	for _, bucket := range []string{"requests", "tokens", "input-tokens", "output-tokens"} {
+		prefix := "anthropic-ratelimit-" + bucket + "-"
+		if strings.TrimSpace(h.Get(prefix+"remaining")) != "0" {
+			continue
+		}
+		reset, err := time.Parse(time.RFC3339, strings.TrimSpace(h.Get(prefix+"reset")))
+		if err == nil && (latest.IsZero() || reset.After(latest)) {
+			latest = reset
+		}
+	}
+	if latest.IsZero() {
+		return 0, false
+	}
+	d := latest.Sub(now)
+	if d < 0 {
+		d = 0
+	}
+	return d, true
+}
+
+func hasContextSignature(lower string) bool {
+	for _, sig := range contextLengthSignatures {
+		if strings.Contains(lower, sig) {
+			return true
+		}
+	}
+	return false
 }
 
 // statusCodeRe extracts the status from gollama's error strings:
@@ -149,10 +259,18 @@ var providerOverloadedSignatures = []string{
 // ClassifyAPIError classifies an LLM API call failure. nil returns the zero
 // APIErrorInfo (Kind ""). See the APIErrorKind constants for the taxonomy; the
 // Retryable field is what the loop's retry policy keys on.
-func ClassifyAPIError(err error) APIErrorInfo {
+func ClassifyAPIError(err error) APIErrorInfo { return ClassifyAPIErrorAt(err, time.Now()) }
+
+// ClassifyAPIErrorAt classifies with an injected clock for HTTP-date guidance.
+func ClassifyAPIErrorAt(err error, now time.Time) (result APIErrorInfo) {
 	if err == nil {
 		return APIErrorInfo{}
 	}
+	defer func() {
+		if result.Message == "" {
+			result.Message = safeDiagnostic(err.Error())
+		}
+	}()
 	if errors.Is(err, context.Canceled) {
 		return APIErrorInfo{Kind: KindUnknown}
 	}
@@ -161,32 +279,52 @@ func ClassifyAPIError(err error) APIErrorInfo {
 	}
 	msg := err.Error()
 	lower := strings.ToLower(msg)
-
-	// Context-window exceeded is checked FIRST: it arrives as a 400, but it has
-	// its own kind (and its own user-facing handling in loop.go).
-	for _, sig := range contextLengthSignatures {
-		if strings.Contains(lower, sig) {
-			return APIErrorInfo{Kind: KindContextLength, Status: parseStatus(msg), Retryable: false}
+	if ae, ok := gollama.AsAPIError(err); ok {
+		info := statusKind(ae.StatusCode, ae.Body)
+		info.Code, info.Message = providerBody(ae.Body)
+		if d, ok := ae.RetryAfter(now); ok {
+			info.RetryAfter, info.HasRetryAfter = d, true
+		} else if ms := strings.TrimSpace(ae.Header.Get("retry-after-ms")); ms != "" {
+			if n, err := strconv.ParseInt(ms, 10, 64); err == nil && n >= 0 && n <= int64((1<<63-1)/int64(time.Millisecond)) {
+				info.RetryAfter, info.HasRetryAfter = time.Duration(n)*time.Millisecond, true
+			}
 		}
+		// Anthropic reset timestamps are a fallback only when neither retry
+		// header supplied valid guidance on a rate-limited response.
+		if !info.HasRetryAfter && ae.StatusCode == 429 {
+			info.RetryAfter, info.HasRetryAfter = anthropicResetWait(ae.Header, now)
+		}
+		return info
 	}
-
-	if code := parseStatus(msg); code != 0 {
-		switch {
-		case code == 429:
-			return APIErrorInfo{Kind: KindRateLimit, Status: code, Retryable: true}
-		case code == 503 || code == 529:
-			return APIErrorInfo{Kind: KindOverloaded, Status: code, Retryable: true}
-		case code == 408:
-			return APIErrorInfo{Kind: KindTimeout, Status: code, Retryable: true}
-		case code >= 500 && code <= 599:
-			return APIErrorInfo{Kind: KindServer, Status: code, Retryable: true}
-		case code == 401 || code == 403:
-			return APIErrorInfo{Kind: KindAuth, Status: code, Retryable: false}
-		case code >= 400 && code <= 499:
-			return APIErrorInfo{Kind: KindInvalidRequest, Status: code, Retryable: false}
-		default:
-			return APIErrorInfo{Kind: KindUnknown, Status: code, Retryable: false}
+	var pe providerErrorMetadata
+	if errors.As(err, &pe) {
+		info := APIErrorInfo{Code: safeDiagnostic(pe.ProviderErrorCode()), Message: safeDiagnostic(pe.ProviderErrorMessage())}
+		if info.Message == "" {
+			info.Message = safeDiagnostic(msg)
 		}
+		switch strings.ToLower(pe.ProviderErrorCode()) {
+		case "usage_limit_reached", "rate_limit_error", "rate_limit_exceeded":
+			info.Kind, info.Retryable = KindRateLimit, true
+		case "server_is_overloaded", "overloaded_error":
+			info.Kind, info.Retryable = KindOverloaded, true
+		case "server_error", "internal_error", "api_error":
+			info.Kind, info.Retryable = KindServer, true
+		case "context_length_exceeded":
+			info.Kind = KindContextLength
+		}
+		if info.Kind != "" {
+			return info
+		}
+		defer func() { result.Code, result.Message = info.Code, info.Message }()
+	}
+	// Legacy transports still return untyped error strings.
+	if hasContextSignature(lower) {
+		return APIErrorInfo{Kind: KindContextLength, Status: parseStatus(msg), Message: safeDiagnostic(msg)}
+	}
+	if code := parseStatus(msg); code != 0 {
+		info := statusKind(code, msg)
+		info.Message = safeDiagnostic(msg)
+		return info
 	}
 
 	// No HTTP status. A provider may still report a rate limit, overload, or

@@ -160,10 +160,10 @@ type Loop struct {
 	// once per loop so every loop still routes consistently.
 	PromptCacheKey string
 
-	// retrySleep and retryRand are test seams for the retry backoff. retrySleep
-	// waits for the given delay or ctx cancellation, reporting false when the
-	// ctx won (the retry loop then stops). Nil ⇒ real timer / seeded rand.
+	// Retry test seams: sleep reports false on cancellation; nil uses the real
+	// timer, clock, or seeded random source.
 	retrySleep func(ctx context.Context, d time.Duration) bool
+	retryNow   func() time.Time
 	retryRand  *rand.Rand
 	retryLogf  func(string, ...any)
 
@@ -800,6 +800,16 @@ func (l *Loop) runTurn(ctx context.Context, client Turner, opts gollama.RequestO
 	if policy.MaxAttempts == 0 {
 		policy = DefaultRetryPolicy()
 	}
+	if policy.MaxRetryAfter == 0 {
+		policy.MaxRetryAfter = defaultMaxRetryAfter
+	}
+	if policy.MaxTotalWait == 0 {
+		policy.MaxTotalWait = defaultMaxTotalWait
+	}
+	now := l.retryNow
+	if now == nil {
+		now = time.Now
+	}
 	sleep := l.retrySleep
 	if sleep == nil {
 		sleep = sleepCtx
@@ -814,6 +824,7 @@ func (l *Loop) runTurn(ctx context.Context, client Turner, opts gollama.RequestO
 
 	var lastErr error
 	var hadPartial bool
+	var waited time.Duration
 	for attempt := 1; attempt <= policy.MaxAttempts; attempt++ {
 		resp, partial, err := l.turnOnce(ctx, client, opts)
 		hadPartial = hadPartial || partial
@@ -821,7 +832,8 @@ func (l *Loop) runTurn(ctx context.Context, client Turner, opts gollama.RequestO
 			return resp, attempt, nil
 		}
 		lastErr = err
-		info := ClassifyAPIError(err)
+		attemptNow := now()
+		info := ClassifyAPIErrorAt(err, attemptNow)
 		maxAttempts := policy.MaxAttempts
 		if info.Kind == KindRateLimit && policy.RateLimitMaxAttempts > 0 && maxAttempts > policy.RateLimitMaxAttempts {
 			maxAttempts = policy.RateLimitMaxAttempts
@@ -833,25 +845,41 @@ func (l *Loop) runTurn(ctx context.Context, client Turner, opts gollama.RequestO
 			return nil, attempt, err
 		}
 		delay := policy.backoff(attempt, l.retryRand)
-		logf("ycc: LLM API call failed (attempt %d/%d, partial=%t), retrying in %v: %v",
-			attempt, maxAttempts, partial, delay, err)
+		reason := "backoff"
+		if info.HasRetryAfter {
+			if info.RetryAfter > policy.MaxRetryAfter {
+				return nil, attempt, err
+			}
+			reason = "retry_after"
+			if info.RetryAfter > delay {
+				delay = info.RetryAfter
+			}
+		}
+		if delay > policy.MaxTotalWait-waited {
+			return nil, attempt, err
+		}
+		logf("ycc: LLM API call failed (attempt %d/%d, partial=%t), retrying in %v: %s",
+			attempt, maxAttempts, partial, delay, info.Message)
 		if l.Emitter != nil {
-			// Transient, non-persisted (like turn_delta): live subscribers show
-			// the retry wait; the durable log records nothing unless the turn
-			// ultimately fails (which emits a session_error).
-			l.Emitter.Broadcast(event.Retry, map[string]any{
-				"attempt":      attempt,
-				"max_attempts": maxAttempts,
-				"delay_ms":     delay.Milliseconds(),
-				"kind":         string(info.Kind),
-				"status":       info.Status,
-				"partial":      partial,
-				"msg":          err.Error(),
-			})
+			// Transient, non-persisted; the durable log records only terminal errors.
+			data := map[string]any{
+				"attempt": attempt, "max_attempts": maxAttempts,
+				"delay_ms": delay.Milliseconds(), "kind": string(info.Kind),
+				"status": info.Status, "partial": partial, "msg": info.Message,
+				"next_attempt_at": attemptNow.Add(delay).UTC().Format(time.RFC3339Nano), "reason": reason,
+			}
+			if info.Code != "" {
+				data["code"] = info.Code
+			}
+			if info.HasRetryAfter {
+				data["retry_after_ms"] = info.RetryAfter.Milliseconds()
+			}
+			l.Emitter.Broadcast(event.Retry, data)
 		}
 		if !sleep(ctx, delay) {
 			return nil, attempt, ctx.Err()
 		}
+		waited += delay
 	}
 	return nil, policy.MaxAttempts, lastErr
 }
@@ -983,9 +1011,14 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			// vs invalid request — without re-parsing provider bodies. The
 			// returned TurnError marks the failure as already recorded; callers
 			// (Session.run) must not emit a duplicate.
-			info := ClassifyAPIError(err)
+			now := time.Now
+			if l.retryNow != nil {
+				now = l.retryNow
+			}
+			classifiedAt := now()
+			info := ClassifyAPIErrorAt(err, classifiedAt)
 			data := map[string]any{
-				"msg":         err.Error(),
+				"msg":         boundedErrorText(err.Error()),
 				"kind":        string(info.Kind),
 				"retryable":   info.Retryable,
 				"attempts":    attempts,
@@ -994,6 +1027,13 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			}
 			if info.Status != 0 {
 				data["status"] = info.Status
+			}
+			if info.Code != "" {
+				data["code"] = info.Code
+			}
+			if info.HasRetryAfter {
+				data["retry_after_ms"] = info.RetryAfter.Milliseconds()
+				data["retry_at"] = classifiedAt.Add(info.RetryAfter).UTC().Format(time.RFC3339)
 			}
 			if info.Kind == KindContextLength {
 				// Surface a clear message instead of the raw provider 400. A

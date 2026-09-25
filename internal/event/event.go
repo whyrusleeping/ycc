@@ -144,7 +144,8 @@ const (
 	// only ever emitted via Log.Broadcast (Transient=true, Seq=0), never
 	// persisted — so live UIs can show the wait while the durable log stays
 	// quiet unless the turn ultimately fails (which records a session_error).
-	// Data: { attempt, max_attempts, delay_ms, kind, status, msg }.
+	// Data: { attempt, max_attempts, delay_ms, next_attempt_at, reason,
+	// kind, status, partial, msg, code?, retry_after_ms? }.
 	Retry Type = "retry"
 	// Budget spend guard. BudgetWarning marks a session
 	// crossing ~80% of a configured cost/token cap (data: { tokens, token_cap,

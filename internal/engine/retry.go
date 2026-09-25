@@ -26,6 +26,11 @@ type RetryPolicy struct {
 	MaxAttempts int
 	BaseDelay   time.Duration
 	MaxDelay    time.Duration
+	// Zero uses the package defaults (5m per provider wait, 10m total sleep).
+	// Guidance above MaxRetryAfter stops retries rather than scheduling an
+	// earlier-than-requested attempt.
+	MaxRetryAfter time.Duration
+	MaxTotalWait  time.Duration
 	// RateLimitMaxAttempts optionally applies a smaller total-attempt cap to
 	// HTTP 429 failures. Zero means use MaxAttempts. It is separate from
 	// MaxAttempts so the default can retain a generous server/network budget
@@ -42,6 +47,11 @@ type RetryPolicy struct {
 // max_attempts remains authoritative for users who need a different budget.
 const DefaultRateLimitMaxAttempts = 3
 
+const (
+	defaultMaxRetryAfter = 5 * time.Minute
+	defaultMaxTotalWait  = 10 * time.Minute
+)
+
 // DefaultRetryPolicy returns a sensible policy: eight total attempts (seven
 // retries) with exponential backoff from 500ms capped at 30s (worst-case ≈60s of
 // jittered backoff). Under this default only, rate limits stop after
@@ -54,6 +64,8 @@ func DefaultRetryPolicy() RetryPolicy {
 		MaxAttempts:          8,
 		BaseDelay:            500 * time.Millisecond,
 		MaxDelay:             30 * time.Second,
+		MaxRetryAfter:        defaultMaxRetryAfter,
+		MaxTotalWait:         defaultMaxTotalWait,
 		RateLimitMaxAttempts: DefaultRateLimitMaxAttempts,
 		PartialMaxAttempts:   2,
 	}

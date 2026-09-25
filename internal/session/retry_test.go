@@ -39,7 +39,7 @@ func TestRetryPolicyPlumbedToSession(t *testing.T) {
 		t.Fatalf("newSession: %v", err)
 	}
 
-	want := engine.RetryPolicy{MaxAttempts: 1, BaseDelay: 100 * time.Millisecond, MaxDelay: 5 * time.Second}
+	want := engine.RetryPolicy{MaxAttempts: 1, BaseDelay: 100 * time.Millisecond, MaxDelay: 5 * time.Second, MaxRetryAfter: 5 * time.Minute, MaxTotalWait: 10 * time.Minute}
 	if s.deps.Retry != want {
 		t.Fatalf("deps.Retry = %+v, want %+v", s.deps.Retry, want)
 	}

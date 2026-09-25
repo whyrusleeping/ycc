@@ -996,8 +996,8 @@ func TestNotifyValidation(t *testing.T) {
 
 func TestRetryPolicy(t *testing.T) {
 	cfg := baseRegistry().cfg
-	cfg.Retry = Retry{MaxAttempts: 5, BaseDelayMS: 250, MaxDelayMS: 10_000}
-	want := engine.RetryPolicy{MaxAttempts: 5, BaseDelay: 250 * time.Millisecond, MaxDelay: 10 * time.Second}
+	cfg.Retry = Retry{MaxAttempts: 5, BaseDelayMS: 250, MaxDelayMS: 10_000, MaxRetryAfterMS: 2000, MaxTotalWaitMS: 4000}
+	want := engine.RetryPolicy{MaxAttempts: 5, BaseDelay: 250 * time.Millisecond, MaxDelay: 10 * time.Second, MaxRetryAfter: 2 * time.Second, MaxTotalWait: 4 * time.Second}
 	if got := NewRegistry(cfg).RetryPolicy(); got != want {
 		t.Fatalf("RetryPolicy() = %+v, want %+v", got, want)
 	}
@@ -1031,7 +1031,7 @@ max_attempts = 7
 		t.Fatalf("Retry.MaxAttempts = %d, want 7", c.Retry.MaxAttempts)
 	}
 	def := engine.DefaultRetryPolicy()
-	want := engine.RetryPolicy{MaxAttempts: 7, BaseDelay: def.BaseDelay, MaxDelay: def.MaxDelay} // explicit max_attempts overrides default class caps
+	want := engine.RetryPolicy{MaxAttempts: 7, BaseDelay: def.BaseDelay, MaxDelay: def.MaxDelay, MaxRetryAfter: def.MaxRetryAfter, MaxTotalWait: def.MaxTotalWait} // explicit max_attempts overrides default class caps
 	if p := NewRegistry(c).RetryPolicy(); p != want {
 		t.Fatalf("RetryPolicy() = %+v, want %+v (only max_attempts overlaid)", p, want)
 	}
@@ -1067,6 +1067,13 @@ func TestRetryValidation(t *testing.T) {
 	negDelay.Retry = Retry{BaseDelayMS: -5}
 	if err := negDelay.validate(); err == nil {
 		t.Fatal("validate with negative base_delay_ms succeeded, want error")
+	}
+	for _, retry := range []Retry{{MaxRetryAfterMS: -1}, {MaxTotalWaitMS: -1}} {
+		cfg := base()
+		cfg.Retry = retry
+		if err := cfg.validate(); err == nil {
+			t.Fatalf("accepted negative retry budget %+v", retry)
+		}
 	}
 	inverted := base()
 	inverted.Retry = Retry{BaseDelayMS: 1000, MaxDelayMS: 500}

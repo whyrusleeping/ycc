@@ -15,9 +15,8 @@
 //   - required headers: Authorization bearer, chatgpt-account-id,
 //     originator, OpenAI-Beta: responses=experimental
 //
-// Errors are formatted "API returned non-200 status code NNN: body" to match
-// gollama's error strings, so engine.ClassifyAPIError (and with it retry and
-// session_error classification) works unchanged.
+// HTTP errors preserve status, body, and response headers via gollama.APIError;
+// stream failures preserve provider codes while retaining legacy error text.
 package codex
 
 import (
@@ -469,9 +468,7 @@ func (c *Client) TurnStreamCtx(ctx context.Context, opts gollama.RequestOptions,
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		// Format matches gollama's http.go so engine.ClassifyAPIError parses
-		// the status ("status code (\d+)") identically across backends.
-		return nil, fmt.Errorf("API returned non-200 status code %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+		return nil, &gollama.APIError{StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data)), Header: resp.Header.Clone()}
 	}
 	result, reasoningTokens, err := parseStream(resp.Body, opts.Model, onDelta)
 	if err == nil {
@@ -624,13 +621,21 @@ func parseStream(r io.Reader, model string, onDelta func(string)) (*gollama.Resp
 				out.StopReason = "length"
 			}
 		case "response.failed":
-			msg := "response failed"
+			msg, code, message := "response failed", "", ""
 			if ev.Response != nil && ev.Response.Error != nil {
-				msg = errorText(ev.Response.Error.Code, "", ev.Response.Error.Message, msg)
+				code, message = ev.Response.Error.Code, ev.Response.Error.Message
+				msg = errorText(code, "", message, msg)
 			}
-			return nil, 0, fmt.Errorf("codex: %s", msg)
+			return nil, 0, &StreamError{Code: code, Message: message, Text: "codex: " + msg}
 		case "error":
-			return nil, 0, fmt.Errorf("codex: stream error: %s", streamErrorText(ev, data))
+			code, message := "", ""
+			if ev.Error != nil {
+				code, message = ev.Error.Code, ev.Error.Message
+				if code == "" {
+					code = ev.Error.Type
+				}
+			}
+			return nil, 0, &StreamError{Code: code, Message: message, Text: "codex: stream error: " + streamErrorText(ev, data)}
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -667,6 +672,14 @@ func parseStream(r io.Reader, model string, onDelta func(string)) (*gollama.Resp
 	}}
 	return out, reasoningTokens, nil
 }
+
+// StreamError preserves in-stream provider metadata while Error retains the
+// original display string. The engine recognizes its provider metadata methods.
+type StreamError struct{ Code, Message, Text string }
+
+func (e *StreamError) Error() string                { return e.Text }
+func (e *StreamError) ProviderErrorCode() string    { return e.Code }
+func (e *StreamError) ProviderErrorMessage() string { return e.Message }
 
 // streamErrorText renders a stream-level `error` frame. Such a frame arrives
 // over an HTTP 200 stream, so there is no status code for

@@ -305,9 +305,12 @@ pattern is unambiguous. Repair is recorded with the tool call and reported to th
 
 LLM failures share one taxonomy: rate limit, overload, server, timeout, network, auth, invalid
 request, context length, refusal, and unknown. Transient classes retry with bounded exponential
-backoff and live retry events; explicit retry configuration overrides defaults. The default
-retry ring permits eight total attempts (three for rate limits), but once a streaming attempt
-has emitted generated output (text, reasoning, or tool arguments, not heartbeats) its remaining
+backoff and live retry events; explicit retry configuration overrides defaults. Structured
+provider status/code take precedence over legacy string classification. Retries honor provider
+Retry-After guidance (falling back to exhausted Anthropic rate-limit reset times on 429) within
+bounded per-wait and total wait budgets, failing fast when the requested wait exceeds the bound.
+The default retry ring permits eight total attempts (three for rate limits), but once a
+streaming attempt has emitted generated output (text, reasoning, or tool arguments, not heartbeats) its remaining
 budget is capped at two total attempts. Failed partial snapshots are cleared, never committed
 as a successful turn or replayed as tool side effects;
 transient retry events identify partial attempts. A failed turn records exactly one durable

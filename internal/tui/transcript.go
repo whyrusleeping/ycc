@@ -107,6 +107,9 @@ func retryNoteText(ev *v1.Event) string {
 			note += " in " + (time.Duration(v) * time.Millisecond).Round(100*time.Millisecond).String()
 		}
 	}
+	if dataField(ev, "reason") == "retry_after" {
+		note += " (provider requested)"
+	}
 	if a, max := dataField(ev, "attempt"), dataField(ev, "max_attempts"); a != "" && max != "" {
 		note += fmt.Sprintf(" — attempt %s/%s", a, max)
 	}

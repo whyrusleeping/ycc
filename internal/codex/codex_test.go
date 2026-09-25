@@ -429,6 +429,7 @@ func TestTurnContextCancellationTearsDownHTTP(t *testing.T) {
 
 func TestTurnHTTPErrorMatchesClassifier(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "3")
 		http.Error(w, `{"detail":"rate limited"}`, http.StatusTooManyRequests)
 	}))
 	defer srv.Close()
@@ -436,6 +437,10 @@ func TestTurnHTTPErrorMatchesClassifier(t *testing.T) {
 	_, err := c.TurnCtx(context.Background(), gollama.RequestOptions{Model: "m", Messages: []gollama.Message{{Role: "user", Content: "x"}}})
 	if err == nil || !strings.Contains(err.Error(), "status code 429") {
 		t.Fatalf("want gollama-shaped status error, got %v", err)
+	}
+	ae, ok := gollama.AsAPIError(err)
+	if !ok || ae.StatusCode != 429 || ae.Header.Get("Retry-After") != "3" || strings.TrimSpace(ae.Body) != `{"detail":"rate limited"}` {
+		t.Fatalf("missing typed HTTP metadata: %+v", ae)
 	}
 }
 
@@ -449,8 +454,9 @@ func TestTurnResponseFailed(t *testing.T) {
 	defer srv.Close()
 	c := New(srv.URL, testTokens("t", "a"))
 	_, err := c.TurnCtx(context.Background(), gollama.RequestOptions{Model: "m", Messages: []gollama.Message{{Role: "user", Content: "x"}}})
-	if err == nil || !strings.Contains(err.Error(), "boom") {
-		t.Fatalf("want response.failed error, got %v", err)
+	var streamErr *StreamError
+	if !errors.As(err, &streamErr) || streamErr.Code != "server_error" || streamErr.Message != "boom" || err.Error() != "codex: server_error: boom" {
+		t.Fatalf("want typed response.failed error with legacy text, got %v", err)
 	}
 }
 
@@ -477,8 +483,12 @@ func TestTurnStreamErrorIsClassifiedRetryable(t *testing.T) {
 	if !strings.Contains(err.Error(), "server_error") || !strings.Contains(err.Error(), "request ID abc123") {
 		t.Fatalf("error must carry the provider code and message, got %v", err)
 	}
+	var streamErr *StreamError
+	if !errors.As(err, &streamErr) || streamErr.Code != "server_error" {
+		t.Fatalf("missing stream code: %v", err)
+	}
 	info := engine.ClassifyAPIError(err)
-	if info.Kind != engine.KindServer || !info.Retryable {
+	if info.Kind != engine.KindServer || info.Code != "server_error" || !info.Retryable {
 		t.Fatalf("ClassifyAPIError = %+v, want kind=%s retryable=true", info, engine.KindServer)
 	}
 }
