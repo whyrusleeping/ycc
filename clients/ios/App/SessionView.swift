@@ -62,6 +62,8 @@ struct SessionView: View {
         /// measured geometrically: rows live in an eager VStack, so
         /// onAppear/onDisappear describes mounting, not viewport visibility.
         var latestVisible = true
+        /// Bottom geometry observed after initial replay (nil until laid out).
+        var initialBottomY: CGFloat?
         /// Current transcript viewport height. Keyboard and multiline-composer
         /// changes resize this even when the row data itself does not change.
         var viewportHeight: CGFloat = 0
@@ -572,6 +574,15 @@ struct SessionView: View {
             let dragging = isDraggingTranscript && dragAge < Self.dragActivityStalePeriod
             let isLatestVisible = bottomY <= measured.viewportHeight + tolerance
             measured.latestVisible = isLatestVisible
+            if model.hasCompletedInitialReplay, bottomY < .greatestFiniteMagnitude {
+                measured.initialBottomY = bottomY
+            }
+            // The first successful pin is not a display milestone until geometry
+            // reports its bottom marker inside the viewport.
+            if model.hasCompletedInitialReplay, didRunInitialPin,
+               measured.initialBottomY != nil, measured.viewportHeight > 0, isLatestVisible {
+                model.noteFirstDisplay()
+            }
             if isLatestVisible {
                 // Preserve that the user reached the live edge even if streaming
                 // growth moves it away before drag reconciliation goes quiet.
@@ -779,6 +790,13 @@ struct SessionView: View {
             transaction.disablesAnimations = true
             withTransaction(transaction) {
                 proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+            }
+            // Short transcripts may already have been visibly laid out before
+            // the pin; scrolling them doesn't necessarily change the preference.
+            if let bottomY = measured.initialBottomY,
+               measured.viewportHeight > 0,
+               bottomY <= measured.viewportHeight + 8 {
+                model.noteFirstDisplay()
             }
         }
     }

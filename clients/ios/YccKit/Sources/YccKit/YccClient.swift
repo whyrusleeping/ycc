@@ -11,12 +11,14 @@ import YccProto
 public final class YccClient: Sendable {
     /// The underlying generated service client, for RPCs not yet wrapped here.
     public let generated: Ycc_V1_SessionServiceClient
+    public let latency: LatencyDiagnostics
 
     /// - Parameters:
     ///   - baseURL: The daemon base URL, e.g. `http://myhost:8790` (a tailnet
     ///     `http://` address is expected; see the ATS note in project.yml).
     ///   - token: The bearer token; attached to every request.
-    public init(baseURL: URL, token: String) {
+    public init(baseURL: URL, token: String, latency: LatencyDiagnostics = .shared) {
+        self.latency = latency
         // `host` is the scheme+authority the generated paths are appended to.
         // Strip any trailing slash so path joining stays clean.
         var host = baseURL.absoluteString
@@ -27,7 +29,7 @@ public final class YccClient: Sendable {
             host: host,
             networkProtocol: .connect,
             codec: ProtoCodec(),
-            interceptors: [AuthInterceptor.factory(token: token)]
+            interceptors: [AuthInterceptor.factory(token: token), LatencyInterceptor.factory(diagnostics: latency)]
         )
         // RetryGuardHTTPClient prevents a CFNetwork abort when a streaming
         // RPC's request is retransmitted (its body stream is one-shot).
@@ -217,7 +219,10 @@ public final class YccClient: Sendable {
         request.sessionID = sessionId
         request.maxRows = 200
         request.maxBytes = 393_216
+        let span = latency.begin("transcript.fetch")
         let response = await generated.getSessionView(request: request)
+        span.end(events: response.message?.rows.reduce(0) { $0 + $1.events.count } ?? 0,
+                 rows: response.message?.rows.count ?? 0)
         switch response.result {
         case .success(let message): return message
         case .failure(let error): throw Self.mapSessionTransport(error)
@@ -233,7 +238,10 @@ public final class YccClient: Sendable {
         request.cursor = cursor
         request.maxRows = 200
         request.maxBytes = 393_216
+        let span = latency.begin("transcript.fetch")
         let response = await generated.getSessionViewPage(request: request)
+        span.end(events: response.message?.rows.reduce(0) { $0 + $1.events.count } ?? 0,
+                 rows: response.message?.rows.count ?? 0)
         switch response.result {
         case .success(let message): return message
         case .failure(let error): throw Self.mapSessionTransport(error)
@@ -290,7 +298,9 @@ public final class YccClient: Sendable {
         request.project = project
         request.sessionID = sessionId
         request.omitProviderState = true
+        let span = latency.begin("transcript.fetch")
         let response = await generated.getSessionTranscript(request: request)
+        span.end(events: response.message?.events.count ?? 0)
         switch response.result {
         case .success(let message):
             return message.events

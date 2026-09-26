@@ -312,8 +312,12 @@ public final class SessionListModel {
     }
 
     private func performRefresh() async {
+        let loadSpan = LatencyDiagnostics.shared.begin("home.load")
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            isLoading = false
+            loadSpan.end(rows: allSessions.count)
+        }
         unauthorized = false
         do {
             let source = source
@@ -391,24 +395,32 @@ public final class SessionListModel {
         await withTaskGroup(of: HistoryUpdate.self) { group in
             for project in targets {
                 group.addTask {
+                    let span = LatencyDiagnostics.shared.begin("home.history")
                     do {
                         let history = try await Self.retrying(delays: retryDelays) {
                             try await source.listSessionHistory(project: project)
                         }
+                        span.end(rows: history.count)
                         return .history(HistoryLoad(project: project, sessions: history, hasHistory: true))
                     } catch YccError.unauthorized {
+                        span.end()
                         return .history(HistoryLoad(project: project, unauthorized: true))
                     } catch {
+                        span.end()
                         return .history(HistoryLoad(
                             project: project,
                             error: (error as? YccError)?.displayMessage ?? error.localizedDescription))
                     }
                 }
                 group.addTask {
+                    let span = LatencyDiagnostics.shared.begin("home.workloop")
                     do {
                         let loop = try await source.workLoop(project: project)
-                        return .loop(project: project, ids: Self.loopSessionIDs(from: loop))
+                        let ids = Self.loopSessionIDs(from: loop)
+                        span.end(rows: ids.count)
+                        return .loop(project: project, ids: ids)
                     } catch {
+                        span.end()
                         return .loop(project: project, ids: nil)
                     }
                 }

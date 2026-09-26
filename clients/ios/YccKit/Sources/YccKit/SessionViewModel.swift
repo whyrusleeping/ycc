@@ -102,8 +102,10 @@ public final class SessionViewModel {
                 let page = try await self.source.getSessionViewPage(
                     project: self.project, sessionId: self.sessionID, cursor: cursor)
                 guard cursor == self.earlierCursor else { return }
+                let replaySpan = LatencyDiagnostics.shared.begin("transcript.replay")
                 self.projection.prependIndexed(
                     page.rows, indexedThroughSeq: page.indexedThroughSeq)
+                replaySpan.end(events: page.rows.reduce(0) { $0 + $1.events.count }, rows: page.rows.count)
                 self.earlierCursor = page.earlierCursor
                 self.earlierRowCount = page.earlierCursor.isEmpty ? 0 : 1
                 self.transcriptRevision &+= 1
@@ -145,6 +147,13 @@ public final class SessionViewModel {
     private let backoff: BackoffPolicy
     private let sleep: @Sendable (UInt64) async throws -> Void
     private var streamTask: Task<Void, Never>?
+    @ObservationIgnored private var firstDisplaySpan: LatencyDiagnostics.Span?
+
+    /// Called after the initial transcript hierarchy has reached a layout pass.
+    public func noteFirstDisplay() {
+        firstDisplaySpan?.end(rows: visibleDurableRows.count)
+        firstDisplaySpan = nil
+    }
     private var streamGeneration: UInt64 = 0
     /// Streamed updates waiting for the next publish. Each arrives as its own
     /// main-actor job, and SwiftUI runs a separate update for every observable
@@ -203,6 +212,9 @@ public final class SessionViewModel {
     /// Begin loading. Idempotent: a second call while already running is ignored.
     public func start() {
         guard streamTask == nil, !unauthorized else { return }
+        if !hasCompletedInitialReplay, firstDisplaySpan == nil {
+            firstDisplaySpan = LatencyDiagnostics.shared.begin("transcript.firstDisplay")
+        }
         if source.supportsIndexedSessionView {
             if mode == .live { isAwaitingAgentActivity = true }
             startIndexedLoop(stream: mode == .live)
@@ -256,7 +268,10 @@ public final class SessionViewModel {
                     let snapshot = try await self.source.getSessionView(
                         project: self.project, sessionId: self.sessionID)
                     guard self.isCurrent(generation), !Task.isCancelled else { return }
+                    let replaySpan = LatencyDiagnostics.shared.begin("transcript.replay")
                     self.projection.installIndexed(state: snapshot.state, rows: snapshot.rows)
+                    replaySpan.end(events: snapshot.rows.reduce(0) { $0 + $1.events.count },
+                                   rows: snapshot.rows.count)
                     self.earlierCursor = snapshot.earlierCursor
                     self.earlierRowCount = snapshot.earlierCursor.isEmpty ? 0 : 1
                     self.hasCompletedInitialReplay = true
@@ -790,7 +805,9 @@ public final class SessionViewModel {
             let revision = transcriptRevision
             let isInitialReplay = projection.lastPersistedSeq == 0
             let worker = Task.detached(priority: .userInitiated) { [initial = projection] in
+                let span = LatencyDiagnostics.shared.begin("transcript.replay")
                 var folded = initial
+                defer { span.end(events: events.count, rows: folded.durableRows.count) }
                 var hasAgentActivity = false
                 for (index, event) in events.enumerated() {
                     if index % 64 == 0 { try Task.checkCancellation() }

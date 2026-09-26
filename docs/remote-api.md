@@ -53,6 +53,20 @@ Connect error JSON body, on unary *and* streaming RPCs alike:
 {"code":"unauthenticated","message":"invalid or missing bearer token"}
 ```
 
+### Latency diagnostics
+
+`GET /debug/latency` accepts the same bearer token as RPCs (HTTP 401 otherwise;
+when daemon auth is disabled on loopback, it is disabled here too). The response
+contains the most recent 512 RPC timings and per-procedure unary/stream
+aggregates (count, p50/p95/max, errors). Unary replies include
+`Server-Timing: app;dur=<milliseconds>` for daemon handler time. Send an optional
+`Ycc-Request-Id` header (up to 64 ASCII letters, digits, dots, underscores or
+hyphens) to correlate the echoed unary header with a diagnostics entry. Streams
+record lifetime, time to first sent message and message count **separately**
+from unary request latency. Requests denied by auth are not recorded. This
+in-memory ring contains no payloads, credentials or arbitrary headers and
+resets when the daemon restarts.
+
 ### Starting the daemon for remote access
 
 Run the persistent daemon on the workspace machine, bound to a reachable address,

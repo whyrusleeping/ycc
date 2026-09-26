@@ -123,11 +123,13 @@ func buildHandler(o Options) (http.Handler, *session.Manager, error) {
 	srv := server.New(mgr)
 
 	mux := http.NewServeMux()
+	latency := server.NewLatencyRecorder()
 	path, handler := yccv1connect.NewSessionServiceHandler(
 		srv,
-		connect.WithInterceptors(server.NewAuthInterceptor(o.Token)),
+		connect.WithInterceptors(server.NewAuthInterceptor(o.Token), latency),
 	)
 	mux.Handle(path, handler)
+	mux.Handle("GET /debug/latency", latency.LatencyHandler(o.Token))
 	// Optionally serve the embedded web client at "/". http.ServeMux
 	// longest-prefix routing keeps RPC traffic on the Connect handler's
 	// "/ycc.v1.SessionService/" prefix; everything else falls to the asset

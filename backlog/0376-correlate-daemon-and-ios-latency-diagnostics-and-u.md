@@ -1,16 +1,17 @@
 ---
 id: "0376"
 title: Correlate daemon and iOS latency diagnostics and unblock partial home-list display
-status: todo
+status: done
 priority: 2
 created: "2026-09-09"
-updated: "2026-09-25"
+updated: "2026-09-26"
 depends_on:
     - "0343"
 spec_refs: []
 ---
 
 ## Description
+
 Split from accepted task 0343. Complete the cross-stack latency instrumentation and home-list display portion; daemon summary caching is handled by 0343.
 
 Acceptance criteria:
@@ -20,11 +21,8 @@ Acceptance criteria:
 - Apply useful session-history results without waiting for supplemental work-loop snapshots or all other project loads; preserve live status, unread, routing, and refresh correctness.
 - Targeted Go/Swift coverage as appropriate. On-device Instruments verification requires the user's Mac (no Swift toolchain here).
 
-## Acceptance criteria
+## Outcome
 
-## Work log
+Daemon: bounded (512) LatencyRecorder interceptor inside auth records unary duration/outcome and, separately, stream lifetime/first-send/messages; sanitized Ycc-Request-Id echo, Server-Timing on unary; authenticated GET /debug/latency with aggregates; no payloads/credentials. iOS: bounded LatencyDiagnostics, LatencyInterceptor (request id, round trip, server duration, stream lifetime), OSSignposter spans for home load/history/workloop and transcript fetch/decode/replay/firstDisplay with counts. 0384 progressive home list intact. Loopback benchmark in work log (ListSessionHistory 100 logs/120k events: 6.3ms loopback / 4.1ms daemon). Go checks and pure Swift Docker tests pass; full Swift build and on-device Instruments need the user's Mac.
 
-- Progressive home-list publication is implemented in 0384, including preservation of routing, unread baselines and cached rows/badges on failed requests. Broader correlated diagnostics and device timing in this task remain outstanding.
-
-- Preflight: blocked in this workspace by unrelated changes in the required daemon server and iOS `YccClient`, transcript source, and view-model paths. The verified changeset ownership guard refuses editing baseline-dirty paths. No implementation attempted; requires an isolated clean task session or resolution of existing owners' changes before a new baseline. Mac runtime measurement remains an explicit external verification requirement.
-- 2026-09-25: Unblocked. The dirty-baseline blocker is gone: the pre-existing staged/unstaged work was committed (5a0225b, 128d051) and the worktree is clean, so the changeset ownership guard no longer applies. No implementation happened while blocked; all acceptance criteria remain outstanding.
+Commit: server+ios: correlated latency diagnostics — daemon RPC/stream recorder with Server-Timing and request-id echo, authenticated /debug/latency; iOS LatencyInterceptor, bounded store, home/transcript stage spans and signposts (0376)
