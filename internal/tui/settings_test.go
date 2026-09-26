@@ -33,6 +33,39 @@ func TestCycleThinkLevels(t *testing.T) {
 	}
 }
 
+func TestOverlayBackHomeCancelsSubscriptionAndStaleReconnect(t *testing.T) {
+	for _, armed := range []bool{false, true} {
+		m := initialModel(context.Background(), newFakeClient(), t_tempWorkspace, false)
+		m.state, m.sessionID, m.overlay, m.ovCursor = stateSession, "s", true, ovBackHome
+		m.conn, m.reconnectAttempt = connRetrying, 3
+		m.loopArmed, m.loopArmStop = armed, armed
+		m.sessionCtx, m.sessionCancel = context.WithCancel(m.ctx)
+		subCtx, subCancel := context.WithCancel(m.sessionCtx)
+		m.subCancel = subCancel
+		m.sub = &subscription{events: make(chan *v1.Event, 1)}
+		oldGen := m.subGen
+
+		updated, _ := m.Update(keyMsg("enter"))
+		m = updated.(model)
+		if m.state != stateMenu || m.overlay || m.conn != connLive || m.reconnectAttempt != 0 || m.loopArmed || m.loopArmStop {
+			t.Fatalf("back home (armed=%v): state=%v conn=%v attempts=%d loopArmed=%v", armed, m.state, m.conn, m.reconnectAttempt, m.loopArmed)
+		}
+		if m.sessionCtx != nil || m.sub != nil || subCtx.Err() == nil || m.subGen == oldGen {
+			t.Fatalf("back home (armed=%v) left subscription alive", armed)
+		}
+		for _, msg := range []tea.Msg{
+			reconnectTickMsg{sessionID: "s", gen: oldGen},
+			streamEndMsg{sessionID: "s", gen: oldGen, err: context.DeadlineExceeded},
+		} {
+			updated, cmd := m.Update(msg)
+			m = updated.(model)
+			if cmd != nil || m.state != stateMenu || m.conn != connLive || m.sub != nil {
+				t.Fatalf("stale %T revived back-home subscription", msg)
+			}
+		}
+	}
+}
+
 func TestFetchModelsScopesLiveSession(t *testing.T) {
 	f := newFakeClient()
 	m := initialModel(context.Background(), f, t_tempWorkspace, false)

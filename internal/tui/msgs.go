@@ -140,12 +140,31 @@ type evMsg struct{ ev *v1.Event }
 type sessionEvMsg struct {
 	ev        *v1.Event
 	sessionID string
+	gen       int
 }
 
 type streamClosedMsg struct{ sessionID string }
 
+type streamEndMsg struct {
+	sessionID string
+	gen       int
+	err       error
+}
+
 type subscriptionErrMsg struct {
 	sessionID string
+	gen       int
+	err       error
+}
+
+type reconnectTickMsg struct {
+	sessionID string
+	gen       int
+}
+
+type recoveredSessionMsg struct {
+	sessionID string
+	gen       int
 	err       error
 }
 

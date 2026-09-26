@@ -116,10 +116,7 @@ func (m *model) selectProject(p *v1.ProjectInfo) tea.Cmd {
 	if p == nil {
 		return nil
 	}
-	if m.sessionCancel != nil {
-		m.sessionCancel()
-		m.sessionCancel, m.sessionCtx = nil, nil
-	}
+	m.cancelSubscription()
 	m.sessionID = ""
 	m.project, m.workspace = p.Name, p.Path
 	m.state, m.projectMode = stateMenu, projectPickerList

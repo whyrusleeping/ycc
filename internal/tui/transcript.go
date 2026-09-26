@@ -147,6 +147,26 @@ func sessionErrorHead(ev *v1.Event) string {
 	return head
 }
 
+// applyLiveEvent is the sole subscription reducer. Durable replay can overlap a
+// delivered event after a flap; only newly applied events update the cursor or notify.
+func (m *model) applyLiveEvent(ev *v1.Event) {
+	if ev == nil {
+		return
+	}
+	if ev.Transient {
+		m.applyTransient(ev)
+		return
+	}
+	if ev.Seq > 0 && ev.Seq <= m.lastSeq {
+		return
+	}
+	m.appendEvent(ev)
+	if ev.Seq > m.lastSeq {
+		m.lastSeq = ev.Seq
+	}
+	m.maybeNotify(ev)
+}
+
 func (m *model) appendEvent(ev *v1.Event) {
 	m.evs = append(m.evs, ev)
 	n := len(m.evs) - 1

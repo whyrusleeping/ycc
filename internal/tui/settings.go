@@ -245,7 +245,14 @@ func (m model) overlayActivate() (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case ovBackHome:
-		// Explicit, intentional exit from the session.
+		// Detaching from an attended session ends its subscription, not the
+		// daemon's work. Disarm a deferred loop: without the stream we cannot
+		// safely wait for the old session to close before starting it.
+		if m.state == stateSession {
+			m.cancelSubscription()
+			m.loopArmed, m.loopArmStop = false, false
+			m.conn, m.reconnectAttempt = connLive, 0
+		}
 		m.overlay = false
 		m.state = stateMenu
 		return m, m.refreshMenu()

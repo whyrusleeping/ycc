@@ -997,6 +997,13 @@ used or could not safely preserve authority, so another rollover must not be off
    `fromSeq: <last-persisted-seq>`. The server replays only `seq > fromSeq`, then
    tails live — no gap, no duplication.
 
+The TUI automatically retries dropped subscriptions with bounded backoff. It
+requests replay from the sequence before its last applied durable event, so an idle
+stream can confirm reconnection by replaying that event; the duplicate is ignored. Authentication
+and missing-session errors require manual recovery (`ctrl+y` in the session view);
+transient actor tails are discarded on disconnect, while the draft and transcript
+remain available.
+
 ### Transient events (must be tolerated)
 
 Some events are ephemeral UI hints, not durable facts. A transient event:

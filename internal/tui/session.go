@@ -2,6 +2,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -43,35 +44,148 @@ func (m model) reopenSession(id string) tea.Cmd {
 	}
 }
 
-func (m model) subscribe() tea.Cmd {
-	ctx := m.sessionCtx
-	if ctx == nil {
-		ctx = m.ctx
+// subscription owns a single stream's bounded buffer. Only the reader accesses err,
+// after events closes; close establishes the happens-before edge for the final error.
+type subscription struct {
+	events   chan *v1.Event
+	err      error
+	openedAt time.Time // set after Subscribe succeeds; read on the Bubble Tea loop
+	received bool      // at least one event from this stream was applied
+}
+
+func (m *model) startSubscription() tea.Cmd {
+	if m.subCancel != nil {
+		m.subCancel()
 	}
-	id, events := m.sessionID, m.events
+	parent := m.sessionCtx
+	if parent == nil {
+		parent = m.ctx
+	}
+	ctx, cancel := context.WithCancel(parent)
+	m.subCancel = cancel
+	m.subGen++
+	m.sub = &subscription{events: make(chan *v1.Event, 256)}
+	m.events = m.sub.events
+	// Replaying the last durable event proves a reattached but idle stream is
+	// alive. applyLiveEvent deduplicates this one-event overlap.
+	fromSeq := m.lastSeq
+	if fromSeq > 0 {
+		fromSeq--
+	}
+	return m.subscribe(ctx, m.sub, m.subGen, fromSeq)
+}
+
+func (m model) subscribe(ctx context.Context, sub *subscription, gen int, fromSeq int64) tea.Cmd {
+	id := m.sessionID
 	return func() tea.Msg {
-		stream, err := m.client.Subscribe(ctx, connect.NewRequest(&v1.SubscribeRequest{SessionId: id}))
+		stream, err := m.client.Subscribe(ctx, connect.NewRequest(&v1.SubscribeRequest{SessionId: id, FromSeq: fromSeq}))
 		if err != nil {
-			return subscriptionErrMsg{sessionID: id, err: err}
+			return subscriptionErrMsg{sessionID: id, gen: gen, err: err}
 		}
+		sub.openedAt = time.Now()
 		go func() {
+			defer close(sub.events)
+			defer stream.Close()
 			for stream.Receive() {
-				events <- stream.Msg()
+				select {
+				case sub.events <- stream.Msg():
+				case <-ctx.Done():
+					return
+				}
 			}
-			close(events)
+			sub.err = stream.Err()
 		}()
-		return waitEvent(events, id)()
+		return waitEvent(sub, id, gen)()
 	}
 }
 
-func waitEvent(ch chan *v1.Event, sessionID string) tea.Cmd {
+func waitEvent(sub *subscription, sessionID string, gen int) tea.Cmd {
 	return func() tea.Msg {
-		ev, ok := <-ch
+		ev, ok := <-sub.events
 		if !ok {
-			return streamClosedMsg{sessionID: sessionID}
+			return streamEndMsg{sessionID: sessionID, gen: gen, err: sub.err}
 		}
-		return sessionEvMsg{ev: ev, sessionID: sessionID}
+		return sessionEvMsg{ev: ev, sessionID: sessionID, gen: gen}
 	}
+}
+
+// reconnectDelay is replaceable in tests without waiting for wall-clock retries.
+var reconnectDelay = func(attempt int) time.Duration {
+	d := 500 * time.Millisecond
+	for i := 1; i < attempt && d < 30*time.Second; i++ {
+		d *= 2
+	}
+	if d > 30*time.Second {
+		return 30 * time.Second
+	}
+	return d
+}
+
+const maxReconnectAttempts = 10
+
+// A subscription that delivered an event and stayed open this long counts as a
+// separate healthy interval, not part of a rapid consecutive-flap sequence.
+var healthySubscriptionDuration = 30 * time.Second
+
+func (m *model) subscriptionFailed(err error) tea.Cmd {
+	if m.sessionCtx != nil && m.sessionCtx.Err() != nil {
+		return nil
+	}
+	m.liveTails, m.retryNotes = map[string]string{}, map[string]string{}
+	m.rebuild()
+	switch connect.CodeOf(err) {
+	case connect.CodeUnauthenticated, connect.CodePermissionDenied:
+		m.conn = connAuth
+	case connect.CodeNotFound:
+		m.conn = connNotFound
+	case connect.CodeInvalidArgument, connect.CodeFailedPrecondition, connect.CodeUnimplemented:
+		m.conn = connTerminal
+	default:
+		if m.sub != nil && m.sub.received && time.Since(m.sub.openedAt) >= healthySubscriptionDuration {
+			m.reconnectAttempt = 0
+		}
+		m.reconnectAttempt++
+		if m.reconnectAttempt >= maxReconnectAttempts {
+			m.conn = connLost
+			return nil
+		}
+		m.conn = connRetrying
+		delay := reconnectDelay(m.reconnectAttempt)
+		m.reconnectDue = time.Now().Add(delay)
+		id, gen, ctx := m.sessionID, m.subGen, m.sessionCtx
+		return func() tea.Msg {
+			timer := time.NewTimer(delay)
+			defer timer.Stop()
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-timer.C:
+				return reconnectTickMsg{sessionID: id, gen: gen}
+			}
+		}
+	}
+	return nil
+}
+
+func (m model) recoverSession() tea.Cmd {
+	id, gen := m.sessionID, m.subGen
+	return func() tea.Msg {
+		_, err := m.client.ResumeSession(m.sessionCtx, connect.NewRequest(&v1.ResumeSessionRequest{
+			Project: m.project, SessionId: id,
+		}))
+		return recoveredSessionMsg{sessionID: id, gen: gen, err: err}
+	}
+}
+
+func (m *model) cancelSubscription() {
+	m.subGen++
+	if m.subCancel != nil {
+		m.subCancel()
+	}
+	if m.sessionCancel != nil {
+		m.sessionCancel()
+	}
+	m.subCancel, m.sessionCancel, m.sessionCtx, m.sub = nil, nil, nil, nil
 }
 
 func (m model) sendInput(text string) tea.Cmd {
@@ -173,6 +287,17 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if msg.String() == "ctrl+y" && (m.conn == connLost || m.conn == connAuth || m.conn == connNotFound || m.conn == connTerminal) {
+			m.reconnectAttempt = 0
+			m.reconnectDue = time.Time{}
+			if m.conn == connNotFound {
+				m.subGen++ // invalidate stale stream messages during the reopen RPC
+				m.conn = connRetrying
+				return m, m.recoverSession()
+			}
+			m.conn = connRetrying
+			return m, m.startSubscription()
+		}
 		// While the transcript search bar owns input, keystrokes edit
 		// the query and incrementally re-jump the selection to the nearest match.
 		// It is entered by `/` below (only when the input textarea is empty) and
@@ -369,6 +494,7 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.clearWizard()
 				m.clearSearch()
 				m.selected = -1
+				m.cancelSubscription()
 				m.sessionID = ""
 				m.status = ""
 				m.state = stateMenu

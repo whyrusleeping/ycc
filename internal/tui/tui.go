@@ -38,6 +38,17 @@ const headerHeight = 1 // the session status bar occupies the first row
 
 const maxInputRows = 6 // session input grows up to this many rows, then scrolls
 
+type connectionState int
+
+const (
+	connLive connectionState = iota
+	connRetrying
+	connLost
+	connAuth
+	connNotFound
+	connTerminal
+)
+
 // quitGuardWindow is how long the first ctrl+c stays "armed": a second ctrl+c
 // within this window quits, otherwise the guard disarms silently.
 const quitGuardWindow = 2 * time.Second
@@ -164,11 +175,18 @@ type model struct {
 	helpOpen   bool
 	helpScroll int
 
-	sessionID     string
-	mode          string
-	events        chan *v1.Event
-	sessionCtx    context.Context
-	sessionCancel context.CancelFunc // cancels only this client's subscription; daemon work continues
+	sessionID        string
+	mode             string
+	events           chan *v1.Event
+	sub              *subscription
+	subCancel        context.CancelFunc // cancels a replaced stream without detaching the session
+	subGen           int
+	lastSeq          int64 // highest applied durable event in this live session
+	conn             connectionState
+	reconnectAttempt int
+	reconnectDue     time.Time
+	sessionCtx       context.Context
+	sessionCancel    context.CancelFunc // cancels only this client's subscription; daemon work continues
 
 	evs       []*v1.Event
 	expanded  map[int]bool   // seq -> manually expanded
@@ -608,6 +626,7 @@ func (m *model) quitGuardActive() bool {
 // press within quitGuardWindow quits. When no work is at risk it quits at once
 func (m model) confirmQuit() (tea.Model, tea.Cmd) {
 	if !m.quitGuardActive() || m.quitArmed {
+		m.cancelSubscription()
 		return m, tea.Quit
 	}
 	m.quitArmed = true
@@ -686,6 +705,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if key, ok := msg.(tea.KeyMsg); ok {
 			switch key.String() {
 			case "ctrl+c", "q":
+				m.cancelSubscription()
 				return m, tea.Quit
 			case "r":
 				m.err = nil
@@ -932,10 +952,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.rpcOK()
 		if m.project == msg.name {
-			if m.sessionCancel != nil {
-				m.sessionCancel()
-			}
-			m.sessionCancel, m.sessionCtx = nil, nil
+			m.cancelSubscription()
 			m.sessionID, m.project, m.workspace = "", "", ""
 			m.resetProjectProjection()
 		}
@@ -1056,10 +1073,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case subscriptionErrMsg:
-		if msg.sessionID != m.sessionID {
+		if msg.sessionID != m.sessionID || msg.gen != m.subGen {
 			return m, nil
 		}
-		return m, m.flash(msg.err)
+		return m, m.subscriptionFailed(msg.err)
+	case streamEndMsg:
+		if msg.sessionID != m.sessionID || msg.gen != m.subGen {
+			return m, nil
+		}
+		if m.sessionCtx != nil && m.sessionCtx.Err() != nil {
+			return m, nil
+		}
+		if msg.err != nil {
+			return m, m.subscriptionFailed(msg.err)
+		}
+		m.conn = connLive
+		return m.Update(streamClosedMsg{sessionID: msg.sessionID})
+	case reconnectTickMsg:
+		if msg.sessionID != m.sessionID || msg.gen != m.subGen || m.conn != connRetrying {
+			return m, nil
+		}
+		return m, m.startSubscription()
+	case recoveredSessionMsg:
+		if msg.sessionID != m.sessionID || msg.gen != m.subGen {
+			return m, nil
+		}
+		if msg.err != nil {
+			return m, m.subscriptionFailed(msg.err)
+		}
+		m.rpcOK()
+		return m, m.startSubscription()
 	case errMsg:
 		return m, m.flash(msg.err)
 	case flashClearMsg:
@@ -1091,13 +1134,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clearSearch()
 		// Cancel only the prior client subscription. ResumeSession/StartSession state
 		// is daemon-owned, so detaching never stops work that should survive this TUI.
-		if m.sessionCancel != nil {
-			m.sessionCancel()
-		}
+		m.cancelSubscription()
 		m.sessionCtx, m.sessionCancel = context.WithCancel(m.ctx)
-		// Allocate a fresh event channel for this session. The subscribe goroutine
-		// closes its channel when the stream ends; a new session must not reuse it.
-		m.events = make(chan *v1.Event, 256)
+		m.lastSeq, m.conn, m.reconnectAttempt = 0, connLive, 0
 		m.sessionID, m.mode, m.state, m.status = msg.id, msg.mode, stateSession, "running"
 		// Reset the running usage tally and start the elapsed clock for the new (or
 		// reopened) session — usage accumulates only over the current view.
@@ -1118,7 +1157,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		fc := m.input.Focus()
 		m.relayout()
 		spin := m.spinnerCmd() // arm the activity spinner (mutates m.spinning) before returning m
-		return m, tea.Batch(m.subscribe(), fc, spin)
+		return m, tea.Batch(m.startSubscription(), fc, spin)
 	case streamClosedMsg:
 		// A canceled subscription from a session we detached while switching
 		// projects must not overwrite the new project's status.
@@ -1212,6 +1251,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.loopDigest = digestFromWorkLoop(msg.info)
 			if msg.initiated || wasLooping {
+				if m.state == stateSession {
+					m.cancelSubscription()
+					m.conn, m.reconnectAttempt = connLive, 0
+				}
 				m.digest, m.digestCursor = true, 0
 				m.state, m.status = stateMenu, msg.info.Outcome
 				return m, m.refreshMenu()
@@ -1230,25 +1273,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.fetchWorkLoop()
 	case sessionEvMsg:
-		// Events from a subscription canceled during a project switch may already be
-		// queued in Bubble Tea. Ignore them rather than mixing projects or spawning a
-		// second wait chain on the new session's channel.
-		if msg.sessionID != m.sessionID {
+		// A late event from an older subscription cannot drain or re-arm the new one.
+		if msg.sessionID != m.sessionID || msg.gen != m.subGen {
 			return m, nil
 		}
-		return m.Update(evMsg{ev: msg.ev})
+		if m.sub != nil {
+			m.sub.received = true
+		}
+		priorSeq := m.lastSeq
+		updated, cmd := m.Update(evMsg{ev: msg.ev})
+		m = updated.(model)
+		// The drain may have applied newer events even when the first event was
+		// duplicate replay. Only real progress resets the consecutive-failure cap.
+		if m.lastSeq > priorSeq || msg.ev != nil && msg.ev.Transient {
+			m.reconnectAttempt = 0
+		}
+		m.conn = connLive
+		return m, cmd
 	case evMsg:
 		m.markConnected()
-		// Transient events (Seq=0, broadcast-only, e.g. turn_delta) are ephemeral
-		// UI hints that are never persisted and carry no sequence number. Route them
-		// into live tail state (applyTransient) but NEVER through appendEvent /
-		// maybeNotify, so they can't enter the reducers, replay, or seq tracking
-		if msg.ev != nil && msg.ev.Transient {
-			m.applyTransient(msg.ev)
-		} else {
-			m.appendEvent(msg.ev)
-			m.maybeNotify(msg.ev)
-		}
+		m.applyLiveEvent(msg.ev)
 		// Coalesce a burst into one rebuild. On reopen the daemon replays the whole
 		// persisted log (N events) which arrive buffered in m.events essentially at
 		// once; draining them here and rebuilding a single time keeps reload O(N)
@@ -1264,12 +1308,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					closed = true
 					break drain
 				}
-				if ev != nil && ev.Transient {
-					m.applyTransient(ev) // live tail only; never persisted (see above)
-					continue
-				}
-				m.appendEvent(ev)
-				m.maybeNotify(ev)
+				m.applyLiveEvent(ev)
 			default:
 				break drain
 			}
@@ -1282,15 +1321,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.rebuild()
 		spin := m.spinnerCmd() // mutates m.spinning; evaluate before returning m
 		if closed {
-			id := m.sessionID
-			return m, func() tea.Msg { return streamClosedMsg{sessionID: id} }
+			id, gen := m.sessionID, m.subGen
+			var err error
+			if m.sub != nil {
+				err = m.sub.err
+			}
+			return m, func() tea.Msg { return streamEndMsg{sessionID: id, gen: gen, err: err} }
 		}
 		if m.loopArmed && !m.loopArmStop && m.status == "idle" {
 			m.loopArmStop = true
 			m.status = "loop armed: ending current session…"
-			return m, tea.Batch(m.stopSession(), waitEvent(m.events, m.sessionID), spin)
+			return m, tea.Batch(m.stopSession(), waitEvent(m.sub, m.sessionID, m.subGen), spin)
 		}
-		return m, tea.Batch(waitEvent(m.events, m.sessionID), spin)
+		if m.sub == nil { // direct reducer injections in tests have no subscription
+			return m, spin
+		}
+		return m, tea.Batch(waitEvent(m.sub, m.sessionID, m.subGen), spin)
 	case backlogMsg:
 		if msg.projectSeq != 0 && msg.projectSeq != m.projectSeq {
 			return m, nil

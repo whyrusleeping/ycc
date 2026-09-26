@@ -45,6 +45,24 @@ func (m model) statusBar() string {
 	if m.flashNote != "" {
 		segs = append(segs, seg{successStyle.Render(m.flashNote), -1})
 	}
+	// Subscription health is independent of the daemon's session status: a
+	// disconnected client must not change the meaning of idle/paused/finished.
+	switch m.conn {
+	case connRetrying:
+		label := fmt.Sprintf("⟳ reconnecting (attempt %d)", m.reconnectAttempt)
+		if remaining := time.Until(m.reconnectDue); remaining > 0 {
+			label += fmt.Sprintf(" — next in %s", remaining.Round(time.Second))
+		}
+		segs = append(segs, seg{recoStyle.Render(label), -1})
+	case connLost:
+		segs = append(segs, seg{errStyle.Render("✖ disconnected — ctrl+y retry"), -1})
+	case connAuth:
+		segs = append(segs, seg{errStyle.Render("✖ subscription auth failed — ctrl+y retry"), -1})
+	case connNotFound:
+		segs = append(segs, seg{errStyle.Render("✖ session no longer live — ctrl+y reopen"), -1})
+	case connTerminal:
+		segs = append(segs, seg{errStyle.Render("✖ subscription rejected — ctrl+y retry"), -1})
+	}
 	// status: a state-colored dot. The header always shows the static dot; the
 	// activity spinner now lives next to the input box at the bottom of the
 	// session view (see inputRow). The static dot covers
