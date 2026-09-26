@@ -78,6 +78,54 @@ private final class IndexedPendingSource: SessionTranscriptSource, @unchecked Se
     }
 }
 
+private final class IndexedPageSource: SessionTranscriptSource, @unchecked Sendable {
+    let view: Ycc_V1_GetSessionViewResponse
+    let page: Ycc_V1_GetSessionViewPageResponse
+    var holdPage = false
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Ycc_V1_GetSessionViewPageResponse, Never>?
+    private var _pageRequests = 0
+    var pageRequests: Int { lock.lock(); defer { lock.unlock() }; return _pageRequests }
+
+    init(view: Ycc_V1_GetSessionViewResponse, page: Ycc_V1_GetSessionViewPageResponse) {
+        self.view = view
+        self.page = page
+    }
+    var supportsIndexedSessionView: Bool { true }
+    func getSessionView(project: String, sessionId: String) async throws -> Ycc_V1_GetSessionViewResponse { view }
+    func getSessionViewPage(project: String, sessionId: String, cursor: String) async throws -> Ycc_V1_GetSessionViewPageResponse {
+        guard holdPage else {
+            recordPageRequest()
+            return page
+        }
+        return await withCheckedContinuation { continuation in
+            lock.lock()
+            self.continuation = continuation
+            _pageRequests += 1
+            lock.unlock()
+        }
+    }
+    private func recordPageRequest() {
+        lock.lock()
+        _pageRequests += 1
+        lock.unlock()
+    }
+    func releasePage() {
+        lock.lock()
+        let pending = continuation
+        continuation = nil
+        lock.unlock()
+        pending?.resume(returning: page)
+    }
+    func getSessionTranscript(project: String, sessionId: String) async throws -> [Ycc_V1_Event] { [] }
+    func getSessionAttachment(project: String, sessionId: String, attachmentId: String) async throws -> MessageImage {
+        throw YccError.notFound(message: "attachment not found")
+    }
+    func subscribe(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_Event, Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
+}
+
 /// Holds its first transcript request even after task cancellation, allowing a
 /// stale completion to race a replacement live subscription deterministically.
 private final class SuspendedTranscriptSource: SessionTranscriptSource, @unchecked Sendable {
@@ -278,6 +326,67 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertEqual(source.detailRequests, ["seq-4"])
         XCTAssertEqual(vm.pendingQuestion?.questions.map(\.prompt), ["first", "second"])
         XCTAssertTrue(vm.durableRows.isEmpty, "state-only detail must not inject an out-of-page row")
+    }
+
+    private func indexedPageFixture() -> (Ycc_V1_GetSessionViewResponse, Ycc_V1_GetSessionViewPageResponse) {
+        var view = Ycc_V1_GetSessionViewResponse()
+        view.state.indexedThroughSeq = 20
+        view.state.lastEventTimestamp = "2026-09-01T12:00:00Z"
+        view.state.pendingRowID = "seq-10"
+        var question = Ycc_V1_SessionViewQuestion()
+        question.prompt = "Proceed?"
+        view.state.pendingQuestions = [question]
+        view.earlierCursor = "older"
+        var recent = Ycc_V1_SessionPresentationRow()
+        recent.id = "seq-10"
+        recent.positionSeq = 10
+        recent.updatedSeq = 10
+        recent.events = [event(10, "question_asked", #"{"question":"Proceed?"}"#)]
+        view.rows = [recent]
+
+        var page = Ycc_V1_GetSessionViewPageResponse()
+        page.indexedThroughSeq = 20
+        var old = Ycc_V1_SessionPresentationRow()
+        old.id = "seq-2"
+        old.positionSeq = 2
+        old.updatedSeq = 2
+        old.events = [event(2, "model_turn", #"{"text":"earlier"}"#)]
+        page.rows = [old]
+        return (view, page)
+    }
+
+    func testIndexedPagePublishesOrderedRowsWithoutLosingQuestionOrUnreadWatermark() async {
+        let (view, page) = indexedPageFixture()
+        let source = IndexedPageSource(view: view, page: page)
+        let vm = SessionViewModel(source: source, sessionID: "paged", mode: .persisted)
+        vm.start()
+        await waitUntil { vm.state == .finished }
+        XCTAssertEqual(vm.durableRows.map(\.id), ["seq-10"])
+        XCTAssertEqual(vm.pendingQuestion?.prompt, "Proceed?")
+        XCTAssertEqual(vm.lastEventTimestamp, view.state.lastEventTimestamp)
+        XCTAssertEqual(vm.projection.lastPersistedSeq, 20)
+        vm.loadEarlierRows()
+        await waitUntil { vm.durableRows.count == 2 }
+        XCTAssertEqual(vm.durableRows.map(\.id), ["seq-2", "seq-10"])
+        XCTAssertEqual(vm.pendingQuestion?.prompt, "Proceed?")
+        XCTAssertEqual(vm.lastEventTimestamp, view.state.lastEventTimestamp)
+        XCTAssertEqual(vm.projection.lastPersistedSeq, 20)
+    }
+
+    func testIndexedPageResponseFromStoppedGenerationCannotPrepend() async {
+        let (view, page) = indexedPageFixture()
+        let source = IndexedPageSource(view: view, page: page)
+        source.holdPage = true
+        let vm = SessionViewModel(source: source, sessionID: "paged", mode: .persisted)
+        vm.start()
+        await waitUntil { vm.state == .finished }
+        vm.loadEarlierRows()
+        await waitUntil { source.pageRequests == 1 }
+        vm.stop()
+        source.releasePage()
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(vm.durableRows.map(\.id), ["seq-10"])
+        XCTAssertEqual(vm.projection.lastPersistedSeq, 20)
     }
 
     func testInitialReplayReadinessWaitsForInstalledHistory() async {

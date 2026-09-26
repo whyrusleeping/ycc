@@ -95,21 +95,25 @@ public final class SessionViewModel {
         guard !earlierCursor.isEmpty, !loadingEarlier else { return }
         loadingEarlier = true
         let cursor = earlierCursor
+        let generation = streamGeneration
         Task { [weak self] in
             guard let self else { return }
             defer { self.loadingEarlier = false }
             do {
                 let page = try await self.source.getSessionViewPage(
                     project: self.project, sessionId: self.sessionID, cursor: cursor)
-                guard cursor == self.earlierCursor else { return }
+                guard cursor == self.earlierCursor, generation == self.streamGeneration else { return }
                 let replaySpan = LatencyDiagnostics.shared.begin("transcript.replay")
+                defer { replaySpan.end(events: page.rows.reduce(0) { $0 + $1.events.count }, rows: page.rows.count) }
+                let decoded = try await Self.decodeIndexedRows(page.rows)
+                guard cursor == self.earlierCursor, generation == self.streamGeneration else { return }
                 self.projection.prependIndexed(
-                    page.rows, indexedThroughSeq: page.indexedThroughSeq)
-                replaySpan.end(events: page.rows.reduce(0) { $0 + $1.events.count }, rows: page.rows.count)
+                    page.rows, indexedThroughSeq: page.indexedThroughSeq, decoded: decoded)
                 self.earlierCursor = page.earlierCursor
                 self.earlierRowCount = page.earlierCursor.isEmpty ? 0 : 1
                 self.transcriptRevision &+= 1
             } catch {
+                guard generation == self.streamGeneration, !Task.isCancelled else { return }
                 self.actionError = Self.actionMessage("load earlier", error)
             }
         }
@@ -265,13 +269,22 @@ public final class SessionViewModel {
             while self.isCurrent(generation), !Task.isCancelled {
                 self.state = self.hasCompletedInitialReplay ? .reconnecting : .loading
                 do {
+                    let revision = self.transcriptRevision
                     let snapshot = try await self.source.getSessionView(
                         project: self.project, sessionId: self.sessionID)
                     guard self.isCurrent(generation), !Task.isCancelled else { return }
-                    let replaySpan = LatencyDiagnostics.shared.begin("transcript.replay")
-                    self.projection.installIndexed(state: snapshot.state, rows: snapshot.rows)
-                    replaySpan.end(events: snapshot.rows.reduce(0) { $0 + $1.events.count },
-                                   rows: snapshot.rows.count)
+                    guard self.transcriptRevision == revision else { continue }
+                    do {
+                        let replaySpan = LatencyDiagnostics.shared.begin("transcript.replay")
+                        defer { replaySpan.end(events: snapshot.rows.reduce(0) { $0 + $1.events.count },
+                                               rows: snapshot.rows.count) }
+                        let decoded = try await Self.decodeIndexedRows(snapshot.rows)
+                        guard self.isCurrent(generation), !Task.isCancelled else { return }
+                        // A page/detail/answer installed while decoding must not be
+                        // overwritten by an older snapshot; fetch a fresh one.
+                        guard self.transcriptRevision == revision else { continue }
+                        self.projection.installIndexed(state: snapshot.state, rows: snapshot.rows, decoded: decoded)
+                    }
                     self.earlierCursor = snapshot.earlierCursor
                     self.earlierRowCount = snapshot.earlierCursor.isEmpty ? 0 : 1
                     self.hasCompletedInitialReplay = true
@@ -789,6 +802,21 @@ public final class SessionViewModel {
         // full detail; `loadDetail` de-duplicates in-flight requests.
         for rowID in truncatedPendingRowIDs {
             Task { [weak self] in await self?.loadDetail(rowID: rowID) }
+        }
+    }
+
+    /// Decode indexed payloads without blocking MainActor layout or stream handling.
+    /// The caller reconciles detail, versions and the current cursor after the await.
+    private static func decodeIndexedRows(
+        _ rows: [Ycc_V1_SessionPresentationRow]
+    ) async throws -> [TranscriptRow?] {
+        let worker = Task.detached(priority: .userInitiated) {
+            try SessionProjection.decodeIndexedRows(rows)
+        }
+        return try await withTaskCancellationHandler {
+            try await worker.value
+        } onCancel: {
+            worker.cancel()
         }
     }
 

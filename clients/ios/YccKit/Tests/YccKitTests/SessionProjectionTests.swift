@@ -1146,7 +1146,7 @@ final class SessionProjectionTests: XCTestCase {
         }, "stale detail must not overwrite a newer tool result")
     }
 
-    func testLoadedReportSurvivesSnapshotsRepeatedUpsertsAndPaging() {
+    func testLoadedReportSurvivesSnapshotsRepeatedUpsertsAndPaging() throws {
         let preview = indexedRow(
             id: "seq-4", position: 4, updated: 4,
             events: [makeEvent(seq: 4, type: "session_idle", dataJson: #"{"report":"short preview"}"#)],
@@ -1162,11 +1162,15 @@ final class SessionProjectionTests: XCTestCase {
         XCTAssertEqual(expanded.first?.detailAvailable, false)
 
         // Reconnect fetches a fresh bounded snapshot, not full row detail.
-        projection.installIndexed(state: indexedState(5), rows: [preview])
+        projection.installIndexed(
+            state: indexedState(5), rows: [preview],
+            decoded: try SessionProjection.decodeIndexedRows([preview]))
         XCTAssertEqual(projection.durableRows, expanded)
         projection.applyIndexed(state: indexedState(6), upserts: [preview], deletedIDs: [])
         XCTAssertEqual(projection.durableRows, expanded)
-        projection.prependIndexed([preview], indexedThroughSeq: 6)
+        projection.prependIndexed(
+            [preview], indexedThroughSeq: 6,
+            decoded: try SessionProjection.decodeIndexedRows([preview]))
         XCTAssertEqual(projection.durableRows, expanded)
 
         // A report outside the new snapshot's recent page still remembers its
@@ -1185,7 +1189,7 @@ final class SessionProjectionTests: XCTestCase {
         XCTAssertEqual(projection.durableRows.first, expanded.first)
     }
 
-    func testLoadedDetailDoesNotMaskNewVersionsOrDeletions() {
+    func testLoadedDetailDoesNotMaskNewVersionsOrDeletions() throws {
         let preview = indexedRow(
             id: "seq-4", position: 4, updated: 4,
             events: [makeEvent(seq: 4, type: "model_turn", dataJson: #"{"text":"preview"}"#)],
@@ -1203,9 +1207,13 @@ final class SessionProjectionTests: XCTestCase {
             projection.installIndexed(state: indexedState(4), rows: [preview])
             projection.installIndexedDetail(detail)
             switch path {
-            case 0: projection.installIndexed(state: indexedState(5), rows: [newer])
+            case 0: projection.installIndexed(
+                state: indexedState(5), rows: [newer],
+                decoded: try SessionProjection.decodeIndexedRows([newer]))
             case 1: projection.applyIndexed(state: indexedState(5), upserts: [newer], deletedIDs: [])
-            default: projection.prependIndexed([newer], indexedThroughSeq: 5)
+            default: projection.prependIndexed(
+                [newer], indexedThroughSeq: 5,
+                decoded: try SessionProjection.decodeIndexedRows([newer]))
             }
             projection.installIndexedDetail(detail) // An old in-flight response.
             XCTAssertEqual(projection.durableRows.first?.kind, .modelMessage(text: "new preview"))

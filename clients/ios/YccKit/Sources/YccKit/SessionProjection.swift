@@ -754,12 +754,31 @@ public struct SessionProjection: Sendable, Equatable {
         state: Ycc_V1_SessionViewState,
         rows: [Ycc_V1_SessionPresentationRow]
     ) {
-        applyIndexedState(state)
-        var decoded: [TranscriptRow] = []
-        for encoded in rows {
-            if let row = decodeIndexedRowPreservingDetail(encoded) { decoded.append(row) }
+        installIndexed(state: state, rows: rows, decoded: rows.map(Self.decodeIndexedRow))
+    }
+
+    /// Decoding is pure and can run off the UI executor. Detail/version state is
+    /// reconciled only when the decoded snapshot is installed on the main actor.
+    static func decodeIndexedRows(_ rows: [Ycc_V1_SessionPresentationRow]) throws -> [TranscriptRow?] {
+        var decoded: [TranscriptRow?] = []
+        decoded.reserveCapacity(rows.count)
+        for (index, encoded) in rows.enumerated() {
+            if index.isMultiple(of: 16) { try Task.checkCancellation() }
+            decoded.append(decodeIndexedRow(encoded))
         }
-        durableRows = decoded
+        try Task.checkCancellation()
+        return decoded
+    }
+
+    mutating func installIndexed(
+        state: Ycc_V1_SessionViewState,
+        rows: [Ycc_V1_SessionPresentationRow],
+        decoded: [TranscriptRow?]
+    ) {
+        applyIndexedState(state)
+        durableRows = zip(rows, decoded).compactMap { encoded, row in
+            decodeIndexedRowPreservingDetail(encoded, decoded: row)
+        }
         indexedRowVersions = Dictionary(uniqueKeysWithValues: durableRows.map { ($0.id, $0.updatedSeq) })
         indexedTombstoneVersions.removeAll(keepingCapacity: true)
         indexedPendingRows.removeAll(keepingCapacity: true)
@@ -776,8 +795,15 @@ public struct SessionProjection: Sendable, Equatable {
     public mutating func prependIndexed(
         _ rows: [Ycc_V1_SessionPresentationRow], indexedThroughSeq: Int64
     ) {
-        var decoded: [TranscriptRow] = []
-        for encoded in rows {
+        prependIndexed(rows, indexedThroughSeq: indexedThroughSeq, decoded: rows.map(Self.decodeIndexedRow))
+    }
+
+    mutating func prependIndexed(
+        _ rows: [Ycc_V1_SessionPresentationRow], indexedThroughSeq: Int64,
+        decoded: [TranscriptRow?]
+    ) {
+        var prepended: [TranscriptRow] = []
+        for (encoded, decodedRow) in zip(rows, decoded) {
             let known = indexedRowVersions[encoded.id] ?? 0
             let tombstone = indexedTombstoneVersions[encoded.id] ?? 0
             var candidate: TranscriptRow?
@@ -789,7 +815,7 @@ public struct SessionProjection: Sendable, Equatable {
                 candidate = pending
             } else if encoded.updatedSeq <= indexedThroughSeq,
                       encoded.updatedSeq >= known, encoded.updatedSeq > tombstone {
-                candidate = decodeIndexedRowPreservingDetail(encoded)
+                candidate = decodeIndexedRowPreservingDetail(encoded, decoded: decodedRow)
             }
             guard var row = candidate else { continue }
             indexedPendingRows.removeValue(forKey: row.id)
@@ -798,10 +824,10 @@ public struct SessionProjection: Sendable, Equatable {
             if let index = durableRows.firstIndex(where: { $0.id == row.id }) {
                 durableRows[index] = row
             } else {
-                decoded.append(row)
+                prepended.append(row)
             }
         }
-        durableRows.insert(contentsOf: decoded, at: 0)
+        durableRows.insert(contentsOf: prepended, at: 0)
     }
 
     /// Apply one coalesced, gap-free indexed update. The daemon guarantees that
@@ -946,14 +972,14 @@ public struct SessionProjection: Sendable, Equatable {
     }
 
     private mutating func decodeIndexedRowPreservingDetail(
-        _ encoded: Ycc_V1_SessionPresentationRow
+        _ encoded: Ycc_V1_SessionPresentationRow, decoded: TranscriptRow? = nil
     ) -> TranscriptRow? {
         if let detail = indexedLoadedDetails[encoded.id] {
             if detail.updatedSeq == encoded.updatedSeq { return detail }
             // A new version must never inherit full text from the old version.
             indexedLoadedDetails.removeValue(forKey: encoded.id)
         }
-        return Self.decodeIndexedRow(encoded)
+        return decoded ?? Self.decodeIndexedRow(encoded)
     }
 
     private static func decodeIndexedRow(_ encoded: Ycc_V1_SessionPresentationRow) -> TranscriptRow? {

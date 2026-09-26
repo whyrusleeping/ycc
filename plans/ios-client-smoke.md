@@ -41,6 +41,17 @@ Keychain-backed state, and invalid credentials never leave the app looking conne
 
 Pass condition: app lifecycle and network interruption preserve the persisted sequence boundary.
 
+For long-conversation performance verification on the user's Mac, open a session with thousands of
+logged events on a device under Instruments (Points of Interest + Time Profiler and SwiftUI view
+updates). Capture `ycc`/`latency` signposts for `transcript.fetch`, `transcript.decode`,
+`transcript.replay`, and `transcript.firstDisplay` with event/row counts, and record first-display,
+MainActor CPU, frame hitches and memory before/after the change on the same session/device.
+Scroll back and Load earlier repeatedly while a second client streams; check the viewport anchor,
+no blank transcript or dropped/duplicated rows, jump-to-latest, pending question controls (including
+an old question outside the page), and the unread badge after leaving and reopening the session.
+Record device, iOS/app/daemon versions, session row/event counts and the Instruments trace location.
+Linux reducer timings are not a substitute for this device/rendering check.
+
 ### 3. Cross-client questions and controls
 
 1. Answer one option question and one free-text or batched question from the app.
