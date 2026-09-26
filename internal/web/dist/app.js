@@ -291,6 +291,20 @@
     return { kind: "append", ev: ev, clearedTail: clearedTail };
   }
 
+  function reviewHeading(d) {
+    var verdict = strOf(d.verdict) || "unknown";
+    var reviewer = strOf(d.reviewer) || strOf(d.model) || "reviewer";
+    var model = strOf(d.logical_model);
+    var counts = d.findings_by_severity || {};
+    var severity = Object.keys(counts).sort().map(function (level) { return level + ":" + counts[level]; }).join(", ");
+    var snapshot = strOf(d.reviewed_snapshot_id);
+    return reviewer + (model && model !== reviewer ? " (" + model + ")" : "") +
+      (d.round ? " · round " + d.round : "") + " — " + verdict.toUpperCase() +
+      (d.findings !== undefined ? " · " + d.findings + " findings" : "") +
+      (severity ? " (" + severity + ")" : "") +
+      (snapshot ? " · reviewed snapshot " + snapshot.slice(0, 12) + " only" : "");
+  }
+
   // ----------------------------------------------------------------------------
   // Export pure helpers for the Node test.
   // ----------------------------------------------------------------------------
@@ -305,7 +319,8 @@
       makeFeed: makeFeed,
       feedIngest: feedIngest,
       pendingFromAsk: pendingFromAsk,
-      buildAnswerBody: buildAnswerBody
+      buildAnswerBody: buildAnswerBody,
+      reviewHeading: reviewHeading
     };
   }
 
@@ -672,6 +687,22 @@
     header.appendChild(back);
     var titleText = meta ? (strOf(meta.title) || id) : id;
     header.appendChild(el("span", "title", titleText));
+    var changesButton = el("button", "btn ghost", "Working changes");
+    changesButton.type = "button";
+    changesButton.addEventListener("click", function () {
+      changesButton.disabled = true;
+      rpc("GetWorkingChanges", {project: currentProject, sessionId: id}).then(function (result) {
+        if (!sessionState || sessionState.sessionId !== id) { return; }
+        var notice = strOf(result.scope) + " · current snapshot " + strOf(result.snapshotId).slice(0, 12) + " · " + String(Number(result.excludedDirtyPaths || 0)) +
+          " unrelated dirty paths excluded" + (result.truncated ? " · truncated" : "");
+        sessionState.rowsEl.appendChild(foldRow("Working changes", notice + "\n" + strOf(result.diff), "review"));
+      }).catch(function (err) {
+        if (sessionState && sessionState.sessionId === id) {
+          sessionState.rowsEl.appendChild(systemRow("Working changes error", strOf(err.message || err)));
+        }
+      }).finally(function () { changesButton.disabled = false; });
+    });
+    header.appendChild(changesButton);
     var statusEl = el("span", "conn muted", "");
     header.appendChild(statusEl);
     app.appendChild(header);
@@ -1466,6 +1497,32 @@
         return banner("done", firstStr(d, ["report", "text"]), "idle");
       case "session_error":
         return banner("error", firstStr(d, ["msg", "text"]), "error");
+      case "review_submitted": {
+        var verdict = strOf(d.verdict) || "unknown";
+        var snapshot = strOf(d.reviewed_snapshot_id);
+        var node = foldRow(reviewHeading(d), strOf(d.summary), "review " + verdict.toLowerCase());
+        var badge = el("span", "tag review-verdict " + verdict.toLowerCase(), verdict.toUpperCase());
+        (node.querySelector("summary") || node).appendChild(badge);
+        if (sessionState) {
+          var button = el("button", "", "View working changes");
+          button.type = "button";
+          button.addEventListener("click", function () {
+            button.disabled = true;
+            rpc("GetWorkingChanges", {project: currentProject, sessionId: sessionState.sessionId,
+              taskId: strOf(d.task), knownSnapshotId: snapshot}).then(function (result) {
+              var notice = (result.changedSinceKnown ? "Changed since review · " : "") + strOf(result.scope) +
+                " · current snapshot " + strOf(result.snapshotId).slice(0, 12) +
+                " · " + String(Number(result.excludedDirtyPaths || 0)) + " unrelated dirty paths excluded" +
+                (result.truncated ? " · truncated" : "");
+              node.appendChild(el("pre", "", notice + "\n" + strOf(result.diff)));
+            }).catch(function (err) {
+              node.appendChild(el("div", "error", strOf(err.message || err)));
+            }).finally(function () { button.disabled = false; });
+          });
+          node.appendChild(button);
+        }
+        return node;
+      }
       case "user_input_delivered":
         return null; // plumbing
       default:

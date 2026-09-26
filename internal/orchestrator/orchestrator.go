@@ -1580,6 +1580,7 @@ func runReviewers(ctx context.Context, d *Deps, handles []*reviewerHandle, taskI
 					} else {
 						oldTokens := h.loop.ContextTokensEstimate()
 						h.loop, h.workspace = freshReviewerLoop(d, h.spec, t, h.handoff, currentDiff)
+						h.evidence = currentDiff
 						h.priorContextTokens = oldTokens
 						h.newContextTokens = h.loop.ContextTokensEstimate()
 						h.rolloverReason = "context_error_recovery"
@@ -1612,10 +1613,28 @@ func runReviewers(ctx context.Context, d *Deps, handles []*reviewerHandle, taskI
 				}
 				verification = append(verification, label+": "+item.Evidence)
 			}
+			severity := make(map[string]int)
+			items := make([]finding, 0, min(len(rv.Findings), 10))
+			for _, f := range rv.Findings {
+				level := strings.ToLower(strings.TrimSpace(f.Severity))
+				if level == "" {
+					level = "unknown"
+				}
+				severity[level]++
+				if len(items) < 10 {
+					msg := []rune(f.Message)
+					if len(msg) > 300 {
+						msg = msg[:300]
+					}
+					items = append(items, finding{Severity: level, Message: string(msg)})
+				}
+			}
 			reviewData := map[string]any{
-				"task": taskID, "model": h.name, "logical_model": h.model,
+				"task": taskID, "model": h.name, "logical_model": h.model, "reviewer": h.name,
 				"verdict": rv.Verdict, "summary": rv.Summary, "findings": len(rv.Findings),
-				"snapshot_id": rv.SnapshotID, "verification": verification,
+				"findings_by_severity": severity, "finding_items": items,
+				"snapshot_id": rv.SnapshotID, "reviewed_snapshot_id": h.evidence.SnapshotID,
+				"reviewed_baseline_id": h.evidence.BaselineID, "verification": verification,
 				"context_mode": mode, "round": h.round, "context_tokens_est": contextTokens,
 			}
 			addRolloverFields(reviewData, h.rolloverReason, h.priorContextTokens, h.newContextTokens)

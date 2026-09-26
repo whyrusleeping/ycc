@@ -303,6 +303,10 @@ body {
   font-size: 0.68rem;
 }
 .tag.queued { color: var(--needs); border-color: var(--needs); }
+.review-verdict { margin-left: 0.5rem; }
+.review-verdict.accept, .review-verdict.approve { color: var(--ok); border-color: var(--ok); }
+.review-verdict.revise { color: var(--needs); border-color: var(--needs); }
+.review-verdict.reject { color: var(--error); border-color: var(--error); }
 
 .bubble {
   padding: 0.55rem 0.75rem;

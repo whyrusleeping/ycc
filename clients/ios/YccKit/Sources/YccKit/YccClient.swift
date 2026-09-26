@@ -919,6 +919,22 @@ public final class YccClient: Sendable {
         }
     }
 
+    /// Inspect the current session-scoped uncommitted tree without staging files.
+    public func getWorkingChanges(
+        project: String = "", session: String, task: String = "", knownSnapshot: String = ""
+    ) async throws -> Ycc_V1_GetWorkingChangesResponse {
+        var request = Ycc_V1_GetWorkingChangesRequest()
+        request.project = project
+        request.sessionID = session
+        request.taskID = task
+        request.knownSnapshotID = knownSnapshot
+        let response = await generated.getWorkingChanges(request: request)
+        switch response.result {
+        case .success(let message): return message
+        case .failure(let error): throw Self.map(error)
+        }
+    }
+
     /// Discard a unary response's payload, mapping any failure to ``YccError``.
     private func unary<M>(_ response: ResponseMessage<M>) throws {
         if case .failure(let error) = response.result {

@@ -55,6 +55,9 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     func `getCommitDiff`(request: Ycc_V1_GetCommitDiffRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetCommitDiffResponse>
 
     @available(iOS 13, *)
+    func `getWorkingChanges`(request: Ycc_V1_GetWorkingChangesRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetWorkingChangesResponse>
+
+    @available(iOS 13, *)
     func `subscribe`(headers: Connect.Headers) -> any Connect.ServerOnlyAsyncStreamInterface<Ycc_V1_SubscribeRequest, Ycc_V1_Event>
 
     @available(iOS 13, *)
@@ -322,6 +325,11 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     }
 
     @available(iOS 13, *)
+    public func `getWorkingChanges`(request: Ycc_V1_GetWorkingChangesRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_GetWorkingChangesResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/GetWorkingChanges", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
     public func `subscribe`(headers: Connect.Headers = [:]) -> any Connect.ServerOnlyAsyncStreamInterface<Ycc_V1_SubscribeRequest, Ycc_V1_Event> {
         return self.client.serverOnlyStream(path: "/ycc.v1.SessionService/Subscribe", headers: headers)
     }
@@ -579,6 +587,7 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let subscribeSessionView = Connect.MethodSpec(name: "SubscribeSessionView", service: "ycc.v1.SessionService", type: .serverStream)
             public static let getSessionAttachment = Connect.MethodSpec(name: "GetSessionAttachment", service: "ycc.v1.SessionService", type: .unary)
             public static let getCommitDiff = Connect.MethodSpec(name: "GetCommitDiff", service: "ycc.v1.SessionService", type: .unary)
+            public static let getWorkingChanges = Connect.MethodSpec(name: "GetWorkingChanges", service: "ycc.v1.SessionService", type: .unary)
             public static let subscribe = Connect.MethodSpec(name: "Subscribe", service: "ycc.v1.SessionService", type: .serverStream)
             public static let sendInput = Connect.MethodSpec(name: "SendInput", service: "ycc.v1.SessionService", type: .unary)
             public static let answerQuestion = Connect.MethodSpec(name: "AnswerQuestion", service: "ycc.v1.SessionService", type: .unary)

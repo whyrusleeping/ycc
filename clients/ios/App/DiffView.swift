@@ -16,6 +16,7 @@ struct DiffView: View {
     enum Content {
         /// Fetch `GetCommitDiff(project, sha)`.
         case commit(project: String, sha: String)
+        case workingChanges(project: String, session: String, task: String, knownSnapshot: String)
         /// A diff string already loaded (e.g. a merge preview).
         case inline(diff: String, truncated: Bool)
     }
@@ -26,6 +27,14 @@ struct DiffView: View {
     @State private var lines: [DiffFormatter.Line] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
+    @State private var scopeNotice: String?
+
+    private var emptyDescription: String {
+        if case .workingChanges = content {
+            return "No uncommitted changes in this session's scope."
+        }
+        return "This commit has no textual changes."
+    }
 
     var body: some View {
         Group {
@@ -40,9 +49,15 @@ struct DiffView: View {
                 ContentUnavailableView(
                     "Empty diff",
                     systemImage: "doc.plaintext",
-                    description: Text("This commit has no textual changes."))
+                    description: Text(emptyDescription))
             } else {
                 diffList
+            }
+        }
+        .safeAreaInset(edge: .top) {
+            if let scopeNotice {
+                Text(scopeNotice).font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(8)
             }
         }
         .navigationTitle(title)
@@ -68,6 +83,22 @@ struct DiffView: View {
             lines = DiffFormatter.parse(diff, truncated: truncated)
         case .commit(let project, let sha):
             await loadCommit(project: project, sha: sha)
+        case .workingChanges(let project, let session, let task, let knownSnapshot):
+            guard let client = app.client else { return }
+            isLoading = true
+            defer { isLoading = false }
+            do {
+                let result = try await client.getWorkingChanges(
+                    project: project, session: session, task: task, knownSnapshot: knownSnapshot)
+                scopeNotice = "\(result.changedSinceKnown ? "Changed since review · " : "")\(result.scope) · current snapshot \(String(result.snapshotID.prefix(12))) · \(result.excludedDirtyPaths) unrelated dirty paths excluded\(result.truncated ? " · truncated" : "")"
+                lines = DiffFormatter.parse(result.diff, truncated: result.truncated)
+            } catch YccError.unauthorized {
+                app.handleUnauthorized()
+            } catch let error as YccError {
+                errorMessage = error.displayMessage
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 

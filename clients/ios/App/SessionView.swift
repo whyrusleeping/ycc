@@ -106,6 +106,7 @@ struct SessionView: View {
     @State private var showSessionUsage = false
     /// A commit to drill into via the diff viewer (set by tapping a commit row).
     @State private var commitTarget: CommitDiffTarget?
+    @State private var workingChangesTarget: WorkingChangesTarget?
     /// Presents the file browser rooted at this session's workspace.
     @State private var showFiles = false
 
@@ -181,6 +182,11 @@ struct SessionView: View {
             DiffView(
                 title: "Commit \(target.shortSha)",
                 content: .commit(project: project, sha: target.sha))
+        }
+        .navigationDestination(item: $workingChangesTarget) { target in
+            DiffView(title: "Working changes", content: .workingChanges(
+                project: project, session: sessionID, task: target.task,
+                knownSnapshot: target.snapshot))
         }
         // File links in agent markdown (and path-like code spans) open in a
         // sheet, resolved against this session's workspace — a workstream's
@@ -495,6 +501,9 @@ struct SessionView: View {
                         row: row,
                         onOpenCommit: { sha in
                             commitTarget = CommitDiffTarget(sha: sha)
+                        },
+                        onOpenReview: { task, snapshot in
+                            workingChangesTarget = WorkingChangesTarget(task: task, snapshot: snapshot)
                         },
                         loadDetail: { rowID in await model.loadDetail(rowID: rowID) },
                         loadPicture: { attachmentID in
@@ -938,6 +947,11 @@ struct SessionView: View {
                     Label("Memory", systemImage: "brain")
                 }
                 Button {
+                    workingChangesTarget = WorkingChangesTarget(task: "", snapshot: "")
+                } label: {
+                    Label("View working changes", systemImage: "doc.text.magnifyingglass")
+                }
+                Button {
                     showFiles = true
                 } label: {
                     Label("Browse files", systemImage: "folder")
@@ -1009,6 +1023,7 @@ private struct TranscriptRowView: View, Equatable {
     var model: String = ""
     /// Called with the commit sha when a `commit_made` row is tapped.
     var onOpenCommit: (String) -> Void = { _ in }
+    var onOpenReview: (String, String) -> Void = { _, _ in }
     /// Fetches a large abbreviated row only when its disclosure is opened.
     var loadDetail: @MainActor (String) async -> Void = { _ in }
     /// Lazily retrieves a retained user picture. Returning nil renders the
@@ -1081,6 +1096,12 @@ private struct TranscriptRowView: View, Equatable {
             }
         case .system(let text):
             systemRow(text)
+        case .review(let text, let task, let snapshot):
+            VStack(alignment: .leading) {
+                systemRow(text)
+                Button("View working changes") { onOpenReview(task, snapshot) }
+                    .font(.caption)
+            }
         case .commit(let text, let sha):
             commitRow(text, sha: sha)
         case .liveTail(let text):
@@ -1844,6 +1865,12 @@ private struct QuestionSheet: View {
             dismiss()
         }
     }
+}
+
+private struct WorkingChangesTarget: Hashable, Identifiable {
+    let task: String
+    let snapshot: String
+    var id: String { task + ":" + snapshot }
 }
 
 /// A commit to drill into via the diff viewer, from a tapped `commit_made` row.

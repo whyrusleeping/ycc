@@ -4,6 +4,7 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -288,7 +289,10 @@ func (m *model) renderBody(ev *v1.Event) string {
 		// it through glamour would strip the ANSI, so only the summary is markdown-
 		// rendered, indented below the header. Both share the "  " body indent.
 		verdict := dataField(ev, "verdict")
-		head := dataField(ev, "model") + " — " + verdictStyle(verdict).Render(strings.ToUpper(verdict))
+		if verdict == "" {
+			verdict = "unknown"
+		}
+		head := reviewHeading(ev, verdict)
 		summary := strings.TrimSpace(dataField(ev, "summary"))
 		body := head
 		if summary != "" {
@@ -417,7 +421,10 @@ func detailLine(ev *v1.Event) string {
 		return oneLine(dataField(ev, "text"), 120)
 	case "review_submitted":
 		verdict := dataField(ev, "verdict")
-		return fmt.Sprintf("%s: %s — %s", dataField(ev, "model"), verdictStyle(verdict).Render(verdict), oneLine(dataField(ev, "summary"), 80))
+		if verdict == "" {
+			verdict = "unknown"
+		}
+		return reviewHeading(ev, verdict) + " — " + oneLine(dataField(ev, "summary"), 80)
 	case "commit_made":
 		return dataField(ev, "sha") + " " + oneLine(dataField(ev, "message"), 80)
 	case "doc_updated":
@@ -539,6 +546,46 @@ func eventUsage(ev *v1.Event) (event.Usage, string) {
 		CacheWrite: num("cache_write"),
 		Total:      num("total"),
 	}, name
+}
+
+func reviewHeading(ev *v1.Event, verdict string) string {
+	who := dataField(ev, "reviewer")
+	if who == "" {
+		who = dataField(ev, "model")
+	}
+	if who == "" {
+		who = "reviewer"
+	}
+	if model := dataField(ev, "logical_model"); model != "" && model != who {
+		who += " (" + model + ")"
+	}
+	if round := dataField(ev, "round"); round != "" {
+		who += " round " + round
+	}
+	who += " — " + verdictStyle(verdict).Render(strings.ToUpper(verdict))
+	if count := dataField(ev, "findings"); count != "" {
+		who += " · " + count + " findings"
+	}
+	var data struct {
+		Severity map[string]int `json:"findings_by_severity"`
+	}
+	if json.Unmarshal([]byte(ev.DataJson), &data) == nil && len(data.Severity) > 0 {
+		keys := make([]string, 0, len(data.Severity))
+		for key := range data.Severity {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			who += fmt.Sprintf(" · %s:%d", key, data.Severity[key])
+		}
+	}
+	if snapshot := dataField(ev, "reviewed_snapshot_id"); snapshot != "" {
+		if len(snapshot) > 12 {
+			snapshot = snapshot[:12]
+		}
+		who += " · reviewed snapshot " + snapshot + " only (ctrl+g: current changes)"
+	}
+	return who
 }
 
 func dataField(ev *v1.Event, key string) string {

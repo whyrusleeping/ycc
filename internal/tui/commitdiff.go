@@ -13,6 +13,58 @@ import (
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 )
 
+// openWorkingChanges uses the diff overlay but requests the current session scope.
+// The request carries the reviewed identity only as a comparison, never as a
+// claim that a newer tree has already been reviewed.
+func (m *model) openWorkingChanges() tea.Cmd {
+	var task, reviewed string
+	start := len(m.evs) - 1
+	selectedReview := m.selected >= 0 && m.selected < len(m.evs) && m.evs[m.selected].Type == "review_submitted"
+	if selectedReview {
+		start = m.selected
+	}
+	foundReview := false
+	for i := start; i >= 0; i-- {
+		ev := m.evs[i]
+		if ev.Type == "review_submitted" && !foundReview && task == "" {
+			task, reviewed = dataField(ev, "task"), dataField(ev, "reviewed_snapshot_id")
+			foundReview = true
+			if task != "" {
+				break
+			}
+		}
+		if ev.Type == "task_focus" && task == "" {
+			task = dataField(ev, "task")
+			break
+		}
+	}
+	key := "working:" + task + ":" + reviewed
+	m.closeCommitDiff()
+	m.cdiffOpen, m.cdiffLoading = true, true
+	m.cdiffSha, m.cdiffMsgTxt = key, "Current uncommitted changes"
+	return func() tea.Msg {
+		resp, err := m.client.GetWorkingChanges(m.ctx, connect.NewRequest(&v1.GetWorkingChangesRequest{
+			Project: m.project, SessionId: m.sessionID, TaskId: task, KnownSnapshotId: reviewed,
+		}))
+		if err != nil {
+			return commitDiffMsg{sha: key, err: err}
+		}
+		r := resp.Msg
+		snapshot := r.SnapshotId
+		if len(snapshot) > 12 {
+			snapshot = snapshot[:12]
+		}
+		notice := r.Scope + " · current snapshot " + snapshot + fmt.Sprintf(" · %d unrelated dirty paths excluded", r.ExcludedDirtyPaths)
+		if r.ChangedSinceKnown {
+			notice = "CHANGED SINCE REVIEW · " + notice
+		}
+		if r.Truncated {
+			notice += " · truncated (diff or path list)"
+		}
+		return commitDiffMsg{sha: key, diff: notice + "\n\n" + r.Diff, truncated: r.Truncated}
+	}
+}
+
 // fetchCommitDiff loads a commit's `git show` diff for the commit-diff overlay
 // The result carries the sha so the handler can drop a reply that
 // arrives after the overlay closed or moved to a different commit.
@@ -155,7 +207,11 @@ func (m *model) cdiffContent() string {
 		}
 	}
 	if m.cdiffTruncated {
-		write("\n" + dimStyle.Render("… diff truncated (showing first ~1 MiB — use a shell for the full diff)"))
+		notice := "… diff truncated (showing first ~1 MiB — use a shell for the full diff)"
+		if strings.HasPrefix(m.cdiffSha, "working:") {
+			notice = "… working changes truncated (diff or path list)"
+		}
+		write("\n" + dimStyle.Render(notice))
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
@@ -256,7 +312,11 @@ func (m model) updateCommitDiff(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // commitDiffView renders the full-screen commit-diff overlay.
 func (m model) commitDiffView() string {
-	top := m.titleBar(" commit " + shortSHA(m.cdiffSha) + " ")
+	title := " commit " + shortSHA(m.cdiffSha) + " "
+	if strings.HasPrefix(m.cdiffSha, "working:") {
+		title = " working changes "
+	}
+	top := m.titleBar(title)
 	sub := "  "
 	if m.cdiffMsgTxt != "" {
 		sub = "  " + dimStyle.Render(oneLine(m.cdiffMsgTxt, m.w-4))

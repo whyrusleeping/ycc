@@ -301,6 +301,10 @@ func (f *fakeClient) GetSessionTranscript(_ context.Context, req *connect.Reques
 	return connect.NewResponse(&v1.GetSessionTranscriptResponse{Events: f.transcript}), nil
 }
 
+func (f *fakeClient) GetWorkingChanges(_ context.Context, _ *connect.Request[v1.GetWorkingChangesRequest]) (*connect.Response[v1.GetWorkingChangesResponse], error) {
+	return connect.NewResponse(&v1.GetWorkingChangesResponse{Diff: f.commitDiff}), nil
+}
+
 // GetCommitDiff backs the commit-diff drill-in overlay (task 0140): it records
 // the requested sha and returns the canned diff (or a canned error).
 func (f *fakeClient) GetCommitDiff(_ context.Context, req *connect.Request[v1.GetCommitDiffRequest]) (*connect.Response[v1.GetCommitDiffResponse], error) {

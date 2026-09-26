@@ -66,6 +66,9 @@ const (
 	// SessionServiceGetCommitDiffProcedure is the fully-qualified name of the SessionService's
 	// GetCommitDiff RPC.
 	SessionServiceGetCommitDiffProcedure = "/ycc.v1.SessionService/GetCommitDiff"
+	// SessionServiceGetWorkingChangesProcedure is the fully-qualified name of the SessionService's
+	// GetWorkingChanges RPC.
+	SessionServiceGetWorkingChangesProcedure = "/ycc.v1.SessionService/GetWorkingChanges"
 	// SessionServiceSubscribeProcedure is the fully-qualified name of the SessionService's Subscribe
 	// RPC.
 	SessionServiceSubscribeProcedure = "/ycc.v1.SessionService/Subscribe"
@@ -231,6 +234,7 @@ type SessionServiceClient interface {
 	// GetCommitDiff returns a commit's `git show` diff so the transcript can drill
 	// into what an agent committed from a commit_made row.
 	GetCommitDiff(context.Context, *connect.Request[v1.GetCommitDiffRequest]) (*connect.Response[v1.GetCommitDiffResponse], error)
+	GetWorkingChanges(context.Context, *connect.Request[v1.GetWorkingChangesRequest]) (*connect.Response[v1.GetWorkingChangesResponse], error)
 	Subscribe(context.Context, *connect.Request[v1.SubscribeRequest]) (*connect.ServerStreamForClient[v1.Event], error)
 	SendInput(context.Context, *connect.Request[v1.SendInputRequest]) (*connect.Response[v1.SendInputResponse], error)
 	AnswerQuestion(context.Context, *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error)
@@ -413,6 +417,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			httpClient,
 			baseURL+SessionServiceGetCommitDiffProcedure,
 			connect.WithSchema(sessionServiceMethods.ByName("GetCommitDiff")),
+			connect.WithClientOptions(opts...),
+		),
+		getWorkingChanges: connect.NewClient[v1.GetWorkingChangesRequest, v1.GetWorkingChangesResponse](
+			httpClient,
+			baseURL+SessionServiceGetWorkingChangesProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("GetWorkingChanges")),
 			connect.WithClientOptions(opts...),
 		),
 		subscribe: connect.NewClient[v1.SubscribeRequest, v1.Event](
@@ -725,6 +735,7 @@ type sessionServiceClient struct {
 	subscribeSessionView  *connect.Client[v1.SubscribeSessionViewRequest, v1.SessionViewUpdate]
 	getSessionAttachment  *connect.Client[v1.GetSessionAttachmentRequest, v1.GetSessionAttachmentResponse]
 	getCommitDiff         *connect.Client[v1.GetCommitDiffRequest, v1.GetCommitDiffResponse]
+	getWorkingChanges     *connect.Client[v1.GetWorkingChangesRequest, v1.GetWorkingChangesResponse]
 	subscribe             *connect.Client[v1.SubscribeRequest, v1.Event]
 	sendInput             *connect.Client[v1.SendInputRequest, v1.SendInputResponse]
 	answerQuestion        *connect.Client[v1.AnswerQuestionRequest, v1.AnswerQuestionResponse]
@@ -829,6 +840,11 @@ func (c *sessionServiceClient) GetSessionAttachment(ctx context.Context, req *co
 // GetCommitDiff calls ycc.v1.SessionService.GetCommitDiff.
 func (c *sessionServiceClient) GetCommitDiff(ctx context.Context, req *connect.Request[v1.GetCommitDiffRequest]) (*connect.Response[v1.GetCommitDiffResponse], error) {
 	return c.getCommitDiff.CallUnary(ctx, req)
+}
+
+// GetWorkingChanges calls ycc.v1.SessionService.GetWorkingChanges.
+func (c *sessionServiceClient) GetWorkingChanges(ctx context.Context, req *connect.Request[v1.GetWorkingChangesRequest]) (*connect.Response[v1.GetWorkingChangesResponse], error) {
+	return c.getWorkingChanges.CallUnary(ctx, req)
 }
 
 // Subscribe calls ycc.v1.SessionService.Subscribe.
@@ -1099,6 +1115,7 @@ type SessionServiceHandler interface {
 	// GetCommitDiff returns a commit's `git show` diff so the transcript can drill
 	// into what an agent committed from a commit_made row.
 	GetCommitDiff(context.Context, *connect.Request[v1.GetCommitDiffRequest]) (*connect.Response[v1.GetCommitDiffResponse], error)
+	GetWorkingChanges(context.Context, *connect.Request[v1.GetWorkingChangesRequest]) (*connect.Response[v1.GetWorkingChangesResponse], error)
 	Subscribe(context.Context, *connect.Request[v1.SubscribeRequest], *connect.ServerStream[v1.Event]) error
 	SendInput(context.Context, *connect.Request[v1.SendInputRequest]) (*connect.Response[v1.SendInputResponse], error)
 	AnswerQuestion(context.Context, *connect.Request[v1.AnswerQuestionRequest]) (*connect.Response[v1.AnswerQuestionResponse], error)
@@ -1277,6 +1294,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		SessionServiceGetCommitDiffProcedure,
 		svc.GetCommitDiff,
 		connect.WithSchema(sessionServiceMethods.ByName("GetCommitDiff")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceGetWorkingChangesHandler := connect.NewUnaryHandler(
+		SessionServiceGetWorkingChangesProcedure,
+		svc.GetWorkingChanges,
+		connect.WithSchema(sessionServiceMethods.ByName("GetWorkingChanges")),
 		connect.WithHandlerOptions(opts...),
 	)
 	sessionServiceSubscribeHandler := connect.NewServerStreamHandler(
@@ -1597,6 +1620,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceGetSessionAttachmentHandler.ServeHTTP(w, r)
 		case SessionServiceGetCommitDiffProcedure:
 			sessionServiceGetCommitDiffHandler.ServeHTTP(w, r)
+		case SessionServiceGetWorkingChangesProcedure:
+			sessionServiceGetWorkingChangesHandler.ServeHTTP(w, r)
 		case SessionServiceSubscribeProcedure:
 			sessionServiceSubscribeHandler.ServeHTTP(w, r)
 		case SessionServiceSendInputProcedure:
@@ -1746,6 +1771,10 @@ func (UnimplementedSessionServiceHandler) GetSessionAttachment(context.Context, 
 
 func (UnimplementedSessionServiceHandler) GetCommitDiff(context.Context, *connect.Request[v1.GetCommitDiffRequest]) (*connect.Response[v1.GetCommitDiffResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetCommitDiff is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) GetWorkingChanges(context.Context, *connect.Request[v1.GetWorkingChangesRequest]) (*connect.Response[v1.GetWorkingChangesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetWorkingChanges is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) Subscribe(context.Context, *connect.Request[v1.SubscribeRequest], *connect.ServerStream[v1.Event]) error {

@@ -392,6 +392,8 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, tea.Batch(tea.SetClipboard(text), m.noteFlash("copied ✓"))
 			}
+		case "ctrl+g":
+			return m, m.openWorkingChanges()
 		case "/":
 			// Enter transcript search. Gated on empty input so a bare
 			// "/" still types into the textarea mid-compose; falls through otherwise.

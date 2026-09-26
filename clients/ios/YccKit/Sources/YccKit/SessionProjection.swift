@@ -58,6 +58,8 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
         /// the view can drill into `GetCommitDiff` on tap. `sha` may be empty
         /// when the event carried none (then it renders as a plain system row).
         case commit(text: String, sha: String)
+        /// Verdict and exact reviewed snapshot, with a read-only inspection action.
+        case review(text: String, task: String, reviewedSnapshot: String)
         /// The transient live tail: the in-progress model turn text streamed via
         /// `turn_delta`. Never persisted; replaced on each delta.
         case liveTail(text: String)
@@ -354,7 +356,14 @@ public struct SessionProjection: Sendable, Equatable {
                 text = Self.subagentSystemSummary(type: event.type, data: data)
             }
             if let text {
-                appendDurable(event, .system(text: text), actor: relatedActor)
+                if event.type == "review_submitted" {
+                    appendDurable(event, .review(text: text,
+                        task: (data["task"] as? String) ?? "",
+                        reviewedSnapshot: (data["reviewed_snapshot_id"] as? String) ?? ""),
+                        actor: relatedActor)
+                } else {
+                    appendDurable(event, .system(text: text), actor: relatedActor)
+                }
             }
 
         case "session_error":
@@ -501,11 +510,25 @@ public struct SessionProjection: Sendable, Equatable {
             let error = (data["error"] as? String) ?? ""
             return error.isEmpty ? "Finished" : "Failed: \(firstLine(error))"
         case "review_submitted":
-            let summary = firstLine((data["summary"] as? String) ?? "")
-            return summary.isEmpty ? "Review submitted" : "Review submitted: \(summary)"
+            return reviewSummary(data)
         default:
             return nil
         }
+    }
+
+    private static func reviewSummary(_ data: [String: Any]) -> String {
+        let reviewer = (data["reviewer"] as? String) ?? (data["model"] as? String) ?? "reviewer"
+        let model = (data["logical_model"] as? String) ?? ""
+        let verdict = ((data["verdict"] as? String) ?? "unknown").uppercased()
+        let round = integerField(data, "round").map { " round \($0)" } ?? ""
+        let findings = integerField(data, "findings").map { " · \($0) findings" } ?? ""
+        let severities = (data["findings_by_severity"] as? [String: Int]) ?? [:]
+        let counts = severities.keys.sorted().map { "\($0):\(severities[$0] ?? 0)" }.joined(separator: ", ")
+        let snapshot = (data["reviewed_snapshot_id"] as? String) ?? ""
+        let scope = snapshot.isEmpty ? "" : " · reviewed snapshot \(String(snapshot.prefix(12))) only"
+        let summary = firstLine((data["summary"] as? String) ?? "")
+        let label = "\(reviewer)\(model.isEmpty || model == reviewer ? "" : " (\(model))")\(round) — \(verdict)\(findings)\(counts.isEmpty ? "" : " (\(counts))")\(scope)"
+        return summary.isEmpty ? label : "\(label): \(summary)"
     }
 
     private static func liveTailRowID(for actor: String) -> String {
@@ -1124,10 +1147,7 @@ public struct SessionProjection: Sendable, Equatable {
         case "plan_proposed":
             return "Plan proposed"
         case "review_submitted":
-            let model = s("model")
-            let summary = firstLine(s("summary"))
-            let who = model.isEmpty ? "Review submitted" : "Review (\(model))"
-            return summary.isEmpty ? who : "\(who): \(summary)"
+            return reviewSummary(data)
         case "review_tier_selected":
             let tier = s("tier")
             return tier.isEmpty ? "Review tier selected" : "Review tier: \(tier)"

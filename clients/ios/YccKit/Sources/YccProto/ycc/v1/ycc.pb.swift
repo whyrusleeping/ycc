@@ -3250,6 +3250,71 @@ public nonisolated struct Ycc_V1_TestModelResponse: Sendable {
   public init() {}
 }
 
+/// Read-only scoped snapshot of a session's current uncommitted changes.
+public nonisolated struct Ycc_V1_GetWorkingChangesRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var project: String = String()
+
+  public var sessionID: String = String()
+
+  /// optional backlog document to adopt
+  public var taskID: String = String()
+
+  /// optional reviewed snapshot for comparison
+  public var knownSnapshotID: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_GetWorkingChangesResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var snapshotID: String = String()
+
+  public var baselineID: String = String()
+
+  public var baseCommit: String = String()
+
+  public var tree: String = String()
+
+  /// first 200 paths
+  public var paths: [String] = []
+
+  public var pathsTotal: Int32 = 0
+
+  public var excludedDirtyPaths: Int32 = 0
+
+  public var additions: Int64 = 0
+
+  public var deletions: Int64 = 0
+
+  /// line-bounded prefix, at most 1 MiB
+  public var diff: String = String()
+
+  public var diffBytes: Int64 = 0
+
+  public var diffSha256: String = String()
+
+  /// either paths or diff truncated
+  public var truncated: Bool = false
+
+  public var scope: String = String()
+
+  /// meaningful when known_snapshot_id is set
+  public var changedSinceKnown: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate nonisolated let _protobuf_package = "ycc.v1"
@@ -9312,6 +9377,151 @@ nonisolated extension Ycc_V1_TestModelResponse: SwiftProtobuf.Message, SwiftProt
     if lhs.durationMs != rhs.durationMs {return false}
     if lhs.errorKind != rhs.errorKind {return false}
     if lhs.status != rhs.status {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_GetWorkingChangesRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetWorkingChangesRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{3}session_id\0\u{3}task_id\0\u{3}known_snapshot_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.taskID) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.knownSnapshotID) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.project.isEmpty {
+      try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
+    }
+    if !self.sessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 2)
+    }
+    if !self.taskID.isEmpty {
+      try visitor.visitSingularStringField(value: self.taskID, fieldNumber: 3)
+    }
+    if !self.knownSnapshotID.isEmpty {
+      try visitor.visitSingularStringField(value: self.knownSnapshotID, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_GetWorkingChangesRequest, rhs: Ycc_V1_GetWorkingChangesRequest) -> Bool {
+    if lhs.project != rhs.project {return false}
+    if lhs.sessionID != rhs.sessionID {return false}
+    if lhs.taskID != rhs.taskID {return false}
+    if lhs.knownSnapshotID != rhs.knownSnapshotID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_GetWorkingChangesResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetWorkingChangesResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}snapshot_id\0\u{3}baseline_id\0\u{3}base_commit\0\u{1}tree\0\u{1}paths\0\u{3}paths_total\0\u{3}excluded_dirty_paths\0\u{1}additions\0\u{1}deletions\0\u{1}diff\0\u{3}diff_bytes\0\u{3}diff_sha256\0\u{1}truncated\0\u{1}scope\0\u{3}changed_since_known\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.snapshotID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.baselineID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.baseCommit) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.tree) }()
+      case 5: try { try decoder.decodeRepeatedStringField(value: &self.paths) }()
+      case 6: try { try decoder.decodeSingularInt32Field(value: &self.pathsTotal) }()
+      case 7: try { try decoder.decodeSingularInt32Field(value: &self.excludedDirtyPaths) }()
+      case 8: try { try decoder.decodeSingularInt64Field(value: &self.additions) }()
+      case 9: try { try decoder.decodeSingularInt64Field(value: &self.deletions) }()
+      case 10: try { try decoder.decodeSingularStringField(value: &self.diff) }()
+      case 11: try { try decoder.decodeSingularInt64Field(value: &self.diffBytes) }()
+      case 12: try { try decoder.decodeSingularStringField(value: &self.diffSha256) }()
+      case 13: try { try decoder.decodeSingularBoolField(value: &self.truncated) }()
+      case 14: try { try decoder.decodeSingularStringField(value: &self.scope) }()
+      case 15: try { try decoder.decodeSingularBoolField(value: &self.changedSinceKnown) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.snapshotID.isEmpty {
+      try visitor.visitSingularStringField(value: self.snapshotID, fieldNumber: 1)
+    }
+    if !self.baselineID.isEmpty {
+      try visitor.visitSingularStringField(value: self.baselineID, fieldNumber: 2)
+    }
+    if !self.baseCommit.isEmpty {
+      try visitor.visitSingularStringField(value: self.baseCommit, fieldNumber: 3)
+    }
+    if !self.tree.isEmpty {
+      try visitor.visitSingularStringField(value: self.tree, fieldNumber: 4)
+    }
+    if !self.paths.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.paths, fieldNumber: 5)
+    }
+    if self.pathsTotal != 0 {
+      try visitor.visitSingularInt32Field(value: self.pathsTotal, fieldNumber: 6)
+    }
+    if self.excludedDirtyPaths != 0 {
+      try visitor.visitSingularInt32Field(value: self.excludedDirtyPaths, fieldNumber: 7)
+    }
+    if self.additions != 0 {
+      try visitor.visitSingularInt64Field(value: self.additions, fieldNumber: 8)
+    }
+    if self.deletions != 0 {
+      try visitor.visitSingularInt64Field(value: self.deletions, fieldNumber: 9)
+    }
+    if !self.diff.isEmpty {
+      try visitor.visitSingularStringField(value: self.diff, fieldNumber: 10)
+    }
+    if self.diffBytes != 0 {
+      try visitor.visitSingularInt64Field(value: self.diffBytes, fieldNumber: 11)
+    }
+    if !self.diffSha256.isEmpty {
+      try visitor.visitSingularStringField(value: self.diffSha256, fieldNumber: 12)
+    }
+    if self.truncated != false {
+      try visitor.visitSingularBoolField(value: self.truncated, fieldNumber: 13)
+    }
+    if !self.scope.isEmpty {
+      try visitor.visitSingularStringField(value: self.scope, fieldNumber: 14)
+    }
+    if self.changedSinceKnown != false {
+      try visitor.visitSingularBoolField(value: self.changedSinceKnown, fieldNumber: 15)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_GetWorkingChangesResponse, rhs: Ycc_V1_GetWorkingChangesResponse) -> Bool {
+    if lhs.snapshotID != rhs.snapshotID {return false}
+    if lhs.baselineID != rhs.baselineID {return false}
+    if lhs.baseCommit != rhs.baseCommit {return false}
+    if lhs.tree != rhs.tree {return false}
+    if lhs.paths != rhs.paths {return false}
+    if lhs.pathsTotal != rhs.pathsTotal {return false}
+    if lhs.excludedDirtyPaths != rhs.excludedDirtyPaths {return false}
+    if lhs.additions != rhs.additions {return false}
+    if lhs.deletions != rhs.deletions {return false}
+    if lhs.diff != rhs.diff {return false}
+    if lhs.diffBytes != rhs.diffBytes {return false}
+    if lhs.diffSha256 != rhs.diffSha256 {return false}
+    if lhs.truncated != rhs.truncated {return false}
+    if lhs.scope != rhs.scope {return false}
+    if lhs.changedSinceKnown != rhs.changedSinceKnown {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

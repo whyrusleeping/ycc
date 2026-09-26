@@ -337,16 +337,29 @@ final class SessionProjectionTests: XCTestCase {
         XCTAssertEqual(proj.durableRows.map(\.actor), Array(repeating: actor, count: 4))
         XCTAssertEqual(proj.durableRows.map(\.actorEmoji), Array(repeating: emoji, count: 4))
         guard case .system(let spawned) = proj.durableRows[0].kind,
-              case .system(let review) = proj.durableRows[2].kind,
+              case .review(let review, _, let reviewedSnapshot) = proj.durableRows[2].kind,
               case .system(let finished) = proj.durableRows[3].kind else {
             return XCTFail("expected lifecycle rows")
         }
         XCTAssertEqual(spawned, "Spawned")
-        XCTAssertEqual(review, "Review submitted: Looks good")
+        XCTAssertEqual(reviewedSnapshot, "")
+        XCTAssertTrue(review.contains("UNKNOWN"))
+        XCTAssertTrue(review.contains("Looks good"))
         XCTAssertEqual(finished, "Finished")
-        let lifecycleText = [spawned, review, finished].joined(separator: " ").lowercased()
-        XCTAssertFalse(lifecycleText.contains("reviewer"))
-        XCTAssertFalse(lifecycleText.contains("opus"))
+    }
+
+    func testReviewVerdictCarriesReviewedSnapshotAndSeverity() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(seq: 1, type: "review_submitted", actor: "coordinator",
+            dataJson: #"{"reviewer":"sol","logical_model":"gpt","verdict":"revise","round":2,"findings":2,"findings_by_severity":{"high":1,"low":1},"summary":"Fix edge case","task":"0371","reviewed_snapshot_id":"abcdef1234567890"}"#))
+        guard case .review(let text, let task, let snapshot)? = proj.durableRows.first?.kind else {
+            return XCTFail("expected review row")
+        }
+        XCTAssertEqual(task, "0371")
+        XCTAssertEqual(snapshot, "abcdef1234567890")
+        for fragment in ["REVISE", "sol", "gpt", "round 2", "high:1", "low:1", "abcdef123456", "Fix edge case"] {
+            XCTAssertTrue(text.contains(fragment), "missing \(fragment): \(text)")
+        }
     }
 
     func testCoordinatorUserAndSystemActorsDoNotReceivePlants() {

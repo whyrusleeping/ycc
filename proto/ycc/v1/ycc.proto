@@ -975,6 +975,31 @@ message TestModelResponse {
   int32 status = 5;      // provider HTTP status when available
 }
 
+// Read-only scoped snapshot of a session's current uncommitted changes.
+message GetWorkingChangesRequest {
+  string project = 1;
+  string session_id = 2;
+  string task_id = 3; // optional backlog document to adopt
+  string known_snapshot_id = 4; // optional reviewed snapshot for comparison
+}
+message GetWorkingChangesResponse {
+  string snapshot_id = 1;
+  string baseline_id = 2;
+  string base_commit = 3;
+  string tree = 4;
+  repeated string paths = 5; // first 200 paths
+  int32 paths_total = 6;
+  int32 excluded_dirty_paths = 7;
+  int64 additions = 8;
+  int64 deletions = 9;
+  string diff = 10; // line-bounded prefix, at most 1 MiB
+  int64 diff_bytes = 11;
+  string diff_sha256 = 12;
+  bool truncated = 13; // either paths or diff truncated
+  string scope = 14;
+  bool changed_since_known = 15; // meaningful when known_snapshot_id is set
+}
+
 service SessionService {
   rpc ListModes(ListModesRequest) returns (ListModesResponse);
   rpc StartSession(StartSessionRequest) returns (StartSessionResponse);
@@ -997,6 +1022,7 @@ service SessionService {
   // GetCommitDiff returns a commit's `git show` diff so the transcript can drill
   // into what an agent committed from a commit_made row.
   rpc GetCommitDiff(GetCommitDiffRequest) returns (GetCommitDiffResponse);
+  rpc GetWorkingChanges(GetWorkingChangesRequest) returns (GetWorkingChangesResponse);
   rpc Subscribe(SubscribeRequest) returns (stream Event);
   rpc SendInput(SendInputRequest) returns (SendInputResponse);
   rpc AnswerQuestion(AnswerQuestionRequest) returns (AnswerQuestionResponse);

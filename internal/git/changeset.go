@@ -43,12 +43,13 @@ const (
 // Changeset is the current task-owned work relative to a Baseline. Paths is an
 // explicit, sorted scope and Diff is the exact patch represented by ID.
 type Changeset struct {
-	ID         string
-	BaselineID string
-	BaseCommit string
-	Tree       string
-	Paths      []string
-	Diff       string
+	ID                 string
+	BaselineID         string
+	BaseCommit         string
+	Tree               string
+	Paths              []string
+	Diff               string
+	ExcludedDirtyPaths int
 
 	baseline *Baseline
 	adopted  []string // canonical repo-relative files, retained for commit revalidation
@@ -190,6 +191,15 @@ func (r *Repo) PersistBaseline(sessionID string, b *Baseline) error {
 // substitutes current repository state when the durable record is absent or
 // invalid: callers must refuse scoped review and commit in that case.
 func (r *Repo) LoadBaseline(sessionID string) (*Baseline, error) {
+	return r.loadBaseline(sessionID, true)
+}
+
+// LoadBaselineReadOnly validates the persisted baseline without refreshing refs.
+func (r *Repo) LoadBaselineReadOnly(sessionID string) (*Baseline, error) {
+	return r.loadBaseline(sessionID, false)
+}
+
+func (r *Repo) loadBaseline(sessionID string, retain bool) (*Baseline, error) {
 	path, err := r.sessionBaselinePath(sessionID)
 	if err != nil {
 		return nil, err
@@ -230,8 +240,10 @@ func (r *Repo) LoadBaseline(sessionID string) (*Baseline, error) {
 	if record.ID != b.ID {
 		return nil, fmt.Errorf("persisted baseline identity mismatch: record %q, computed %q", record.ID, b.ID)
 	}
-	if err := r.withSnapshotLock(func(_ string) error { return r.retainBaseline(b) }); err != nil {
-		return nil, fmt.Errorf("retain restored baseline %s: %w", b.ID, err)
+	if retain {
+		if err := r.withSnapshotLock(func(_ string) error { return r.retainBaseline(b) }); err != nil {
+			return nil, fmt.Errorf("retain restored baseline %s: %w", b.ID, err)
+		}
 	}
 	return b, nil
 }
@@ -291,6 +303,28 @@ func (r *Repo) Changes(b *Baseline) (*Changeset, error) {
 // worktree content. Paths are absolute or relative to Repo.Dir, not pathspecs.
 // All other dirty baseline paths retain the strict Changes ownership checks.
 func (r *Repo) ChangesIncluding(b *Baseline, paths ...string) (*Changeset, error) {
+	adopted, err := r.canonicalAdoptedPaths(paths)
+	if err != nil {
+		return nil, err
+	}
+	return r.changesIncluding(b, adopted)
+}
+
+// InspectChanges computes the same scoped snapshot without retaining records or refs.
+// The excluded count includes baseline-dirty files not adopted into this scope.
+func (r *Repo) InspectChanges(b *Baseline, paths ...string) (*Changeset, int, error) {
+	adopted, err := r.canonicalAdoptedPaths(paths)
+	if err != nil {
+		return nil, 0, err
+	}
+	c, err := r.inspectIncluding(b, adopted, false)
+	if err != nil {
+		return nil, 0, err
+	}
+	return c, c.ExcludedDirtyPaths, nil
+}
+
+func (r *Repo) canonicalAdoptedPaths(paths []string) ([]string, error) {
 	root, err := r.run("rev-parse", "--show-toplevel")
 	if err != nil {
 		return nil, err
@@ -315,10 +349,14 @@ func (r *Repo) ChangesIncluding(b *Baseline, paths ...string) (*Changeset, error
 		adopted = append(adopted, path)
 	}
 	sort.Strings(adopted)
-	return r.changesIncluding(b, adopted)
+	return adopted, nil
 }
 
 func (r *Repo) changesIncluding(b *Baseline, adopted []string) (*Changeset, error) {
+	return r.inspectIncluding(b, adopted, true)
+}
+
+func (r *Repo) inspectIncluding(b *Baseline, adopted []string, persist bool) (*Changeset, error) {
 	if b == nil {
 		return nil, fmt.Errorf("changeset baseline is required; capture it before task mutation")
 	}
@@ -394,6 +432,12 @@ func (r *Repo) changesIncluding(b *Baseline, adopted []string) (*Changeset, erro
 		return nil, err
 	}
 	paths := make([]string, 0, len(currentPaths))
+	excluded := 0
+	for path := range b.dirtyPaths {
+		if !owned[path] {
+			excluded++
+		}
+	}
 	for path := range currentPaths {
 		if _, preexisting := b.dirtyPaths[path]; !preexisting || owned[path] {
 			paths = append(paths, path)
@@ -412,12 +456,14 @@ func (r *Repo) changesIncluding(b *Baseline, adopted []string) (*Changeset, erro
 	if len(adopted) > 0 {
 		id = snapshotID(id, strings.Join(adopted, "\x00"))
 	}
-	if err := r.saveChangesetRecord(changesetRecord{
-		Version: changesetRecordVersion, ID: id, BaselineID: b.ID, Tree: tree,
-	}); err != nil {
-		return nil, fmt.Errorf("retain changeset snapshot %s: %w", id, err)
+	if persist {
+		if err := r.saveChangesetRecord(changesetRecord{
+			Version: changesetRecordVersion, ID: id, BaselineID: b.ID, Tree: tree,
+		}); err != nil {
+			return nil, fmt.Errorf("retain changeset snapshot %s: %w", id, err)
+		}
 	}
-	return &Changeset{ID: id, BaselineID: b.ID, BaseCommit: head, Tree: tree, Paths: paths, Diff: diff, baseline: b, adopted: append([]string(nil), adopted...)}, nil
+	return &Changeset{ID: id, BaselineID: b.ID, BaseCommit: head, Tree: tree, Paths: paths, Diff: diff, ExcludedDirtyPaths: excluded, baseline: b, adopted: append([]string(nil), adopted...)}, nil
 }
 
 // Commit commits exactly the immutable scoped snapshot. It refuses if the

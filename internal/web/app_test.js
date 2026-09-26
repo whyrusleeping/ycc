@@ -10,6 +10,19 @@ var assert = require("assert");
 var w = require("./dist/app.js");
 
 var failures = 0;
+testReviewRows();
+function testReviewRows() {
+  test("review verdict and snapshot scope (including legacy events)", function () {
+    var reviewed = w.reviewHeading({reviewer:"sol",logical_model:"gpt",verdict:"revise",round:2,
+      findings:2,findings_by_severity:{high:1,low:1},reviewed_snapshot_id:"abcdef1234567890"});
+    ["REVISE", "sol", "gpt", "round 2", "high:1", "low:1", "abcdef123456", "only"].forEach(function (fragment) {
+      assert.ok(reviewed.indexOf(fragment) >= 0, fragment);
+    });
+    var legacy = w.reviewHeading({model:"claude",summary:"okay"});
+    assert.ok(legacy.indexOf("UNKNOWN") >= 0);
+    assert.ok(legacy.indexOf("reviewed snapshot") < 0);
+  });
+}
 function test(name, fn) {
   try {
     fn();
