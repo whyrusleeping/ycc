@@ -3,7 +3,6 @@ package session
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -73,7 +72,9 @@ func TestDaemonBacklogReadDefersDuplicateRepairWhileOwned(t *testing.T) {
 	}
 }
 
-func TestNewSessionAcquiresBeforeGitInitialization(t *testing.T) {
+// Session startup takes no worktree lease: another scope mid-write (e.g. a
+// subagent running its tools) must never prevent a new session from starting.
+func TestNewSessionStartsWhileAnotherScopeHoldsLease(t *testing.T) {
 	workspace := t.TempDir()
 	m := NewManager(testRegistry(), workspace)
 	lease, err := m.ownership.Acquire(workspace, m.ownership.NewToken("existing session implementer"))
@@ -87,16 +88,11 @@ func TestNewSessionAcquiresBeforeGitInitialization(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer log.Close()
-	_, err = m.newSession(workspace, "contender", "chat", false, "hi", log, false, "")
-	if err == nil || !strings.Contains(err.Error(), "existing session implementer") {
-		t.Fatalf("newSession ownership conflict = %v", err)
+	s, err := m.newSession(workspace, "contender", "chat", false, "hi", log, false, "")
+	if err != nil {
+		t.Fatalf("newSession refused while another scope held the lease: %v", err)
 	}
-	for _, want := range []string{"wait", "stop", "workstream"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("newSession conflict %q missing %q", err, want)
-		}
-	}
-	if _, statErr := os.Stat(filepath.Join(workspace, ".git")); !os.IsNotExist(statErr) {
-		t.Fatalf("git workspace mutated before ownership acquisition: %v", statErr)
+	if s == nil {
+		t.Fatal("newSession returned no session")
 	}
 }

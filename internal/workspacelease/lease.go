@@ -21,45 +21,6 @@ type Service struct {
 type entry struct {
 	token *Token
 	refs  int
-	// children holds live asynchronous child claims, keyed by claim id.
-	// Children keep the entry alive (and foreign tokens out) after the owning
-	// scope releases its own claims, until the child actually exits.
-	children map[uint64]*child
-}
-
-type child struct {
-	owner string
-	// detached children no longer belong to their creating scope (for
-	// example a job handed off to a parent), so they refuse that scope too.
-	detached bool
-}
-
-// conflictOwner describes who holds e for a refused foreign acquisition. A
-// live child is more actionable than its scope because it names the running
-// process the caller must wait for or stop.
-func (e *entry) conflictOwner() string {
-	if owner, ok := e.earliestChild(false); ok {
-		return owner
-	}
-	return e.token.Owner()
-}
-
-// earliestChild returns the owner of the earliest-created live child,
-// restricted to detached children when detachedOnly is set.
-func (e *entry) earliestChild(detachedOnly bool) (string, bool) {
-	var (
-		first uint64
-		owner string
-	)
-	for id, c := range e.children {
-		if detachedOnly && !c.detached {
-			continue
-		}
-		if first == 0 || id < first {
-			first, owner = id, c.owner
-		}
-	}
-	return owner, first != 0
 }
 
 // Token identifies one execution scope. Reuse the same token only for commands
@@ -75,7 +36,6 @@ type Lease struct {
 	service *Service
 	key     string
 	token   *Token
-	childID uint64
 	once    sync.Once
 }
 
@@ -108,7 +68,7 @@ func (t *Token) Owner() string {
 }
 
 // Acquire atomically claims root for token. Calls using the same token are
-// reentrant, allowing a delegated worker to run its own file and shell tools.
+// reentrant, allowing a delegated worker to run its own file tools.
 func (s *Service) Acquire(root string, token *Token) (*Lease, error) {
 	if s == nil || token == nil || token.service != s {
 		return nil, fmt.Errorf("workspace mutation ownership is not configured")
@@ -118,24 +78,6 @@ func (s *Service) Acquire(root string, token *Token) (*Lease, error) {
 		return nil, err
 	}
 	return s.acquireKey(key, token)
-}
-
-// AcquireChild retains ownership for one asynchronous child. The claim survives
-// release of token's other claims until actual process exit, so no other scope
-// can mutate the worktree while the child runs, even after a kill request. The
-// owning scope itself may keep acquiring (reentrantly) and may start further
-// children: overlapping an execution scope's own background work is that
-// scope's coordination responsibility, not a cross-actor write conflict.
-// Detach withdraws that same-scope admission when the child changes hands.
-func (s *Service) AcquireChild(root string, token *Token, owner string) (*Lease, error) {
-	if s == nil || token == nil || token.service != s {
-		return nil, fmt.Errorf("workspace mutation ownership is not configured")
-	}
-	key, err := Canonical(root)
-	if err != nil {
-		return nil, err
-	}
-	return s.acquireChildKey(key, token, owner)
 }
 
 // AcquirePath claims the worktree containing path. The longest existing parent
@@ -158,60 +100,13 @@ func (s *Service) acquireKey(key string, token *Token) (*Lease, error) {
 	defer s.mu.Unlock()
 	if current := s.owners[key]; current != nil {
 		if current.token != token {
-			return nil, &Conflict{Owner: current.conflictOwner()}
-		}
-		if owner, detached := current.earliestChild(true); detached {
-			return nil, &Conflict{Owner: owner}
+			return nil, &Conflict{Owner: current.token.Owner()}
 		}
 		current.refs++
 	} else {
 		s.owners[key] = &entry{token: token, refs: 1}
 	}
 	return &Lease{service: s, key: key, token: token}, nil
-}
-
-func (s *Service) acquireChildKey(key string, token *Token, owner string) (*Lease, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	current := s.owners[key]
-	if current != nil && current.token != token {
-		return nil, &Conflict{Owner: current.conflictOwner()}
-	}
-	if current != nil {
-		if detachedOwner, detached := current.earliestChild(true); detached {
-			return nil, &Conflict{Owner: detachedOwner}
-		}
-	}
-	if current == nil {
-		current = &entry{token: token}
-		s.owners[key] = current
-	}
-	if current.children == nil {
-		current.children = make(map[uint64]*child)
-	}
-	childID := s.next.Add(1)
-	current.refs++
-	current.children[childID] = &child{owner: owner}
-	return &Lease{service: s, key: key, token: token, childID: childID}, nil
-}
-
-// Detach marks a live child claim as no longer belonging to its creating
-// scope, e.g. when its job is handed off to a parent. Until the child exits it
-// then refuses every acquisition on the worktree, including by the creating
-// scope's token. It is a no-op for non-child or released leases.
-func (l *Lease) Detach() {
-	if l == nil || l.service == nil || l.childID == 0 {
-		return
-	}
-	l.service.mu.Lock()
-	defer l.service.mu.Unlock()
-	current := l.service.owners[l.key]
-	if current == nil || current.token != l.token {
-		return
-	}
-	if c := current.children[l.childID]; c != nil {
-		c.detached = true
-	}
 }
 
 // Release drops this retained claim.
@@ -225,9 +120,6 @@ func (l *Lease) Release() {
 		current := l.service.owners[l.key]
 		if current == nil || current.token != l.token {
 			return
-		}
-		if l.childID != 0 {
-			delete(current.children, l.childID)
 		}
 		current.refs--
 		if current.refs == 0 {

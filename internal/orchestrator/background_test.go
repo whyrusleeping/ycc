@@ -523,8 +523,8 @@ func TestSpawnImplementerBackgroundWaitConsumes(t *testing.T) {
 
 // The single-writer guard: while a background implementer job is live, a second
 // background spawn, a foreground spawn, and send_to_implementer are all refused;
-// the refusals point at workstreams. A live mutating background bash job also
-// refuses a background implementer, while a non-mutating job does not.
+// the refusals point at workstreams. Any other live mutating job also refuses a
+// background implementer, while a non-mutating job (e.g. background Bash) does not.
 func TestSpawnImplementerSingleWriterGuard(t *testing.T) {
 	rec := &syncRec{}
 	blocker := newBlockingTurner(call("finish", `{"report":"eventually"}`))
@@ -786,16 +786,13 @@ func TestImplementerExplicitWatcherHandoffToParent(t *testing.T) {
 		t.Fatalf("durable handoff event missing: %+v", ev)
 	}
 
-	res, _ = sendToImplementer(d).Call(context.Background(), map[string]any{"task_id": "0001", "instructions": "too early"})
-	if !res.IsError || !strings.Contains(res.Content, "background Bash") {
-		t.Fatalf("mutating follow-up started while handed-off watcher ran: %+v", res)
+	// A handed-off shell watcher is not a writer: the follow-up need not wait for it.
+	res, _ = sendToImplementer(d).Call(context.Background(), map[string]any{"task_id": "0001", "instructions": "continue now"})
+	if res.IsError || !strings.Contains(res.Content, "follow-up after watcher") {
+		t.Fatalf("follow-up beside handed-off watcher failed: %+v", res)
 	}
 	job.Kill()
 	job.WaitExecution()
-	res, _ = sendToImplementer(d).Call(context.Background(), map[string]any{"task_id": "0001", "instructions": "continue now"})
-	if res.IsError || !strings.Contains(res.Content, "follow-up after watcher") {
-		t.Fatalf("follow-up after watcher stopped failed: %+v", res)
-	}
 	// Handoff completion belongs to the parent and remains exactly-once for
 	// automatic delivery while repeatable evidence stays on the job.
 	reports := d.Jobs.DrainFinished("coordinator")
@@ -810,19 +807,19 @@ func TestImplementerExplicitWatcherHandoffToParent(t *testing.T) {
 	}
 }
 
-// A live mutating background bash job (as startBackgroundBash registers) refuses a
-// background implementer; a live non-mutating job does not.
-func TestSpawnImplementerBackgroundRefusedByBashJob(t *testing.T) {
+// A live mutating job refuses a background implementer. (Background Bash is not
+// registered as mutating; synthetic/restored work can be.)
+func TestSpawnImplementerBackgroundRefusedByMutatingJob(t *testing.T) {
 	rec := &syncRec{}
 	impl := &scripted{resp: []*gollama.ResponseMessageGenerate{call("finish", `{"report":"ok"}`)}}
 	d, _ := bgDeps(t, rec, impl, nil)
 	defer d.Jobs.KillAll()
 
-	// A live mutating bash job blocks a background implementer.
-	d.Jobs.StartMutating("bash", "go test ./...", "coordinator")
+	// A live mutating job blocks a background implementer.
+	d.Jobs.StartMutating("agent", "restored implementer", "coordinator")
 	res, _ := spawnImplementer(d).Call(context.Background(), map[string]any{"task_id": "0001", "plan": "go", "background": true})
 	if !res.IsError || !strings.Contains(res.Content, "workstream") {
-		t.Fatalf("background implementer should be refused while a mutating bash job is live, got: %q", res.Content)
+		t.Fatalf("background implementer should be refused while a mutating job is live, got: %q", res.Content)
 	}
 }
 

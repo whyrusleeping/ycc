@@ -2557,15 +2557,10 @@ func (m *Manager) ReconcileWorkstreams() error {
 func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt string, log *event.Log, resumed bool, coordOverride string) (*Session, error) {
 	emitter := event.NewEmitter(log, "coordinator")
 	inter := newInteraction(unattended, emitter)
-	var startupLease *workspacelease.Lease
-	if !resumed {
-		var acquireErr error
-		startupLease, acquireErr = m.ownership.Acquire(absWS, m.ownership.NewToken(fmt.Sprintf("session %s startup", id)))
-		if acquireErr != nil {
-			return nil, fmt.Errorf("prepare workspace: %w", acquireErr)
-		}
-		defer startupLease.Release()
-	}
+	// Session startup deliberately takes no worktree lease: git.Open only
+	// captures a baseline snapshot (and initializes a missing repository), and
+	// refusing a new session because another scope is mid-write is far more
+	// disruptive than the rare race it would prevent.
 	var repo *git.Repo
 	var err error
 	if resumed {

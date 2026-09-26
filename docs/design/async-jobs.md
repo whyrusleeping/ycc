@@ -96,13 +96,14 @@ Background execution does not weaken the per-worktree single-writer invariant. R
 fan out. A mutating background agent is refused while another mutating job is live in the same tree.
 Parallel mutation uses workstreams, where each agent owns a separate linked worktree.
 
-The invariant is between execution scopes, not within one. A scope's own background shell keeps other
-scopes out until the process exits, but does not refuse that scope's foreground shell, file tools, or
-further background shells: an actor overlapping its own benchmark with edits is its own coordination
-responsibility. Refusing it only forced agents to serialize every background job behind `wait`, even
-for read-only shell inspection (which the shell guard cannot distinguish from mutation). A handed-off
-child is detached from its creator and refuses every scope until exit, preserving the handoff rule
-above and the creator's changeset attribution.
+The invariant is between execution scopes, not within one, and it is best-effort. Shell commands —
+foreground or background, including handed-off watchers — take no worktree lease and are not counted
+as mutating jobs. Most shell work is reads, builds, and tests that the guard cannot distinguish from
+mutation; leasing it serialized every session and agent behind whoever was running `go test` (even
+blocking new sessions from starting), which cost far more than the rare clobber it prevented. The
+lease therefore covers file tools, mutating agent lifetimes, backlog writes, and commits only; a
+shell that does write races like any other unleased writer, and changeset attribution for work
+overlapping a live shell is correspondingly approximate.
 
 ## Rejected alternatives
 

@@ -418,16 +418,14 @@ Explicitly mutating generic agents use worker tools and always participate in si
 Generic agent handles are live session state and are not reconstructed after daemon restart.
 
 A daemon-wide lease keyed by the canonical, symlink-resolved worktree permits only one mutating
-execution scope across sessions. Direct coordinator operations, delegated agents, file tools, shell
-commands, backlog/document writes, and Git commits participate. A delegated worker reuses only its
-own scoped token for synchronous commands. A background child takes a child claim that keeps every
-other scope out until actual exit, including after cancellation, a kill request, or release of the
-creating scope's own claims. The creating scope itself stays admitted: it may keep using file tools,
-foreground shell, and further background children while its own jobs run, since overlapping one's own
-background work is not a cross-actor conflict. A child handed off to a parent is detached and then
-refuses its creating scope too, so a later delegated turn cannot overlap it. The periodic remote-ref
-fetch does not lease the worktree; it writes only objects and remote-tracking refs. Refusals identify
-the owner and direct callers to
+execution scope across sessions. Direct coordinator operations, mutating delegated agents (for their
+lifetime), file tools, backlog/document writes, and Git commits participate. A delegated worker reuses
+only its own scoped token for synchronous operations. The lease is deliberately best-effort
+coordination rather than strict exclusion: shell commands (foreground or background) take no lease
+and are not counted as mutating jobs, so a long build, test, or watcher never blocks another session
+or agent, and shells run even while another scope holds the lease. Session startup likewise takes no
+lease. The periodic remote-ref fetch does not lease the worktree; it writes only objects and
+remote-tracking refs. Refusals identify the owner and direct callers to
 wait, stop it, or use a separate workstream. Read-only work can fan out, and distinct worktrees can
 mutate independently. Backlog reads remain available while another scope owns the tree: the exceptional
 duplicate-ID self-repair acquires a lease only after detecting duplicates and defers repair when owned.
@@ -502,7 +500,7 @@ and backend degradation prevent accidental unbounded embedding.
 Reviewers receive read and shell inspection but no mutation tools. On supported Linux hosts their
 shell is filesystem-write-restricted with Landlock or bubblewrap; inability to establish an
 available sandbox fails closed. Hosts without either mechanism visibly degrade to prompt-only
-read-only enforcement and their shell calls participate in mutation leasing. The lease is an
+read-only enforcement. The lease is an
 execution-coordination mechanism, not a security sandbox: unrestricted shell commands can access
 paths outside the leased worktree, spawn detached processes, or otherwise bypass filesystem policy.
 

@@ -390,13 +390,6 @@ func (w *Workspace) artifactStore() *ArtifactStore {
 	return w.Artifacts
 }
 
-func (w *Workspace) acquireMutation() (*workspacelease.Lease, error) {
-	if w.Ownership == nil {
-		return nil, nil
-	}
-	return w.Ownership.Acquire(w.Root, w.MutationToken)
-}
-
 func (w *Workspace) acquirePathMutation(path string) (*workspacelease.Lease, error) {
 	if w.Ownership == nil {
 		return nil, nil
@@ -411,13 +404,6 @@ func (w *Workspace) acquirePathMutation(path string) (*workspacelease.Lease, err
 		}
 	}
 	return w.Ownership.AcquirePath(path, fallback, w.MutationToken)
-}
-
-func (w *Workspace) acquireChildMutation(owner string) (*workspacelease.Lease, error) {
-	if w.Ownership == nil {
-		return nil, nil
-	}
-	return w.Ownership.AcquireChild(w.Root, w.MutationToken, owner)
 }
 
 // resolve cleans a user-supplied path and confines it to the writable roots, for

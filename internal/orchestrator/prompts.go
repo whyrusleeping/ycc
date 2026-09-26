@@ -182,7 +182,7 @@ say briefly where things stand and then wait on it — do not end the turn just 
 way, and never kill or abandon live jobs to "finish". Ending a turn with jobs still running is
 not final: their reports wake you automatically when they complete. One MUTATING job per tree: a
 background implementer is refused while another
-implementer or a mutating background bash job is live here — route truly parallel mutating work
+implementer or mutating agent is live here — background Bash never blocks this — route truly parallel mutating work
 through a separate workstream (spec §14.1). Reviewers are read-only and run freely in parallel.`
 
 // coordinatorDirectSystem lets the coordinator implement without a worker agent.

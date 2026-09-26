@@ -28,7 +28,6 @@ import (
 	"github.com/whyrusleeping/ycc/internal/imagefit"
 	"github.com/whyrusleeping/ycc/internal/jobs"
 	"github.com/whyrusleeping/ycc/internal/sandbox"
-	"github.com/whyrusleeping/ycc/internal/workspacelease"
 )
 
 const (
@@ -1386,13 +1385,8 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 				}
 				timeout = time.Duration(timeoutSeconds) * time.Second
 			}
-			lease, err := ws.acquireChildMutation(fmt.Sprintf("%s background Bash %q", ws.MutationToken.Owner(), cmdStr))
-			if err != nil {
-				return errResult("bash: %v", err), nil
-			}
-			job, artifactID := startBackgroundBash(ws, cmdStr, timeout, lease)
+			job, artifactID := startBackgroundBash(ws, cmdStr, timeout)
 			if job == nil {
-				lease.Release()
 				return errResult("bash: session is shutting down; background job was not started"), nil
 			}
 			artifactNote := fmt.Sprintf(" Output capture %s is stable but not ready until the process exits; then retrieve ranges with tool_output.", artifactID)
@@ -1413,16 +1407,9 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 			}
 			timeout = time.Duration(timeoutSeconds) * time.Second
 		}
-		var lease *workspacelease.Lease
-		// Reviewer Bash is genuinely read-only only when the OS sandbox is available.
-		if !sandboxed || sandbox.Available() == sandbox.None {
-			var err error
-			lease, err = ws.acquireMutation()
-			if err != nil {
-				return errResult("bash: %v", err), nil
-			}
-			defer lease.Release()
-		}
+		// Shell commands deliberately do not take the worktree mutation lease:
+		// most are reads/builds/tests, and serializing every command across
+		// sessions and agents costs far more than the rare clobber it prevents.
 		cctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		var (
@@ -1566,19 +1553,15 @@ func bgAutoDelivered(ws *Workspace) bool {
 // until kill_job or session end. A goroutine waits for exit and, if it is the one
 // that finalized the job (i.e. the job was not killed first), emits job_finished
 // exactly once.
-func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration, lease *workspacelease.Lease) (*jobs.Job, string) {
+func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration) (*jobs.Job, string) {
 	owner := ws.Emitter.Actor()
-	// Unsandboxed background bash may write to the worktree, so it counts as a
-	// mutating job for the single-writer guard: a background
-	// implementer is refused while one is live. Conservative — a read-only
-	// command is still marked mutating — but safe.
-	job, ok := ws.Jobs.TryStartMutatingTracked("bash", cmdStr, owner)
+	// Background shells are not treated as writers: like foreground Bash they
+	// take no worktree lease and do not trip the mutating-job guard, so a long
+	// build/test/watcher never blocks other sessions or agents.
+	job, ok := ws.Jobs.TryStartTracked("bash", cmdStr, owner)
 	if !ok {
 		return nil, ""
 	}
-	// A handed-off child no longer belongs to the creating scope: its later
-	// turns must not overlap it (that would taint their changeset attribution).
-	job.SetHandoffHook(lease.Detach)
 	artifactID := ws.artifactStore().reserve()
 	job.SetTerminationHint(fmt.Sprintf("[output artifact %s: capture finalizes after the process exits; retrieve ranges with tool_output; a not-ready response is temporary]", artifactID))
 	ws.Emitter.EmitAs(owner, event.JobStarted, map[string]any{
@@ -1609,7 +1592,6 @@ func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration, le
 
 	if err := cmd.Start(); err != nil {
 		cancelTimeout()
-		lease.Release()
 		result := "exit: failed to start: " + err.Error()
 		_, artifact := commandResultForArtifact(ws.artifactStore(), capture, artifactID)
 		result += fmt.Sprintf("\n[output artifact %s: %d bytes/%d lines, sha256 %s]", artifact.id, artifact.bytes, artifact.lines, artifact.digest)
@@ -1622,7 +1604,6 @@ func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration, le
 	go func() {
 		defer job.ExecutionComplete()
 		defer cancelTimeout()
-		defer lease.Release()
 		err := cmd.Wait()
 		status := jobs.Done
 		exitInfo := "exit 0"

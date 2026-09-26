@@ -129,7 +129,6 @@ type Job struct {
 	buf             []byte
 	result          string // retained final report
 	terminationHint string // retrieval/readiness detail included if killed
-	onHandoff       func() // runner hook fired once when ownership transfers
 	notified        bool   // exactly-once automatic notification claim
 	execStopped     bool   // tracked execution has actually stopped
 	signalled       bool   // registry completion signal already fired
@@ -347,22 +346,8 @@ func (j *Job) Handoff(parent, purpose string) (Handoff, bool) {
 	j.purpose = purpose
 	j.delivery = ParentCheckpointDelivery
 	handoff := Handoff{ID: j.id, Purpose: purpose, Owner: parent, Delivery: j.delivery, Mutates: j.mutates}
-	hook := j.onHandoff
-	j.onHandoff = nil
 	j.mu.Unlock()
-	if hook != nil {
-		hook()
-	}
 	return handoff, true
-}
-
-// SetHandoffHook registers a runner callback fired once, after the job's
-// ownership transfers to a parent. Background shells use it to detach their
-// mutation claim from the creating scope, which no longer owns the process.
-func (j *Job) SetHandoffHook(hook func()) {
-	j.mu.Lock()
-	j.onHandoff = hook
-	j.mu.Unlock()
 }
 
 // SetTerminationHint records bounded completion/retrieval guidance that should
