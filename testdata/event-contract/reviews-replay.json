@@ -1,0 +1,141 @@
+{
+  "version": 1,
+  "name": "reviews-replay",
+  "description": "Review outcomes, legacy verdict, unknown event, and overlapping replay.",
+  "steps": [
+    {
+      "event": {
+        "seq": 1,
+        "actor": "user",
+        "type": "user_input",
+        "data": {
+          "text": "Review this"
+        }
+      }
+    },
+    {
+      "event": {
+        "seq": 2,
+        "actor": "coordinator",
+        "type": "review_submitted",
+        "data": {
+          "reviewer": "alpha",
+          "verdict": "accept"
+        }
+      }
+    },
+    {
+      "event": {
+        "seq": 3,
+        "actor": "coordinator",
+        "type": "review_submitted",
+        "data": {
+          "reviewer": "beta",
+          "verdict": "revise"
+        }
+      }
+    },
+    {
+      "event": {
+        "seq": 4,
+        "actor": "coordinator",
+        "type": "review_submitted",
+        "data": {
+          "reviewer": "legacy"
+        }
+      }
+    },
+    {
+      "event": {
+        "seq": 5,
+        "actor": "system",
+        "type": "legacy_future_hint",
+        "data": {
+          "text": "ignored"
+        }
+      }
+    },
+    {
+      "expect": {
+        "cursor": 5,
+        "phase": "running",
+        "inputs": [
+          {
+            "seq": 1,
+            "text": "Review this",
+            "delivery": "delivered"
+          }
+        ],
+        "reviews": [
+          {
+            "seq": 2,
+            "verdict": "accept"
+          },
+          {
+            "seq": 3,
+            "verdict": "revise"
+          },
+          {
+            "seq": 4,
+            "verdict": "unknown"
+          }
+        ]
+      }
+    },
+    {
+      "reconnect": {}
+    },
+    {
+      "event": {
+        "seq": 3,
+        "actor": "coordinator",
+        "type": "review_submitted",
+        "data": {
+          "verdict": "revise"
+        }
+      }
+    },
+    {
+      "event": {
+        "seq": 4,
+        "actor": "coordinator",
+        "type": "review_submitted",
+        "data": {}
+      }
+    },
+    {
+      "event": {
+        "seq": 5,
+        "actor": "system",
+        "type": "legacy_future_hint",
+        "data": {}
+      }
+    },
+    {
+      "expect": {
+        "cursor": 5,
+        "inputs": [
+          {
+            "seq": 1,
+            "text": "Review this",
+            "delivery": "delivered"
+          }
+        ],
+        "reviews": [
+          {
+            "seq": 2,
+            "verdict": "accept"
+          },
+          {
+            "seq": 3,
+            "verdict": "revise"
+          },
+          {
+            "seq": 4,
+            "verdict": "unknown"
+          }
+        ]
+      }
+    }
+  ]
+}

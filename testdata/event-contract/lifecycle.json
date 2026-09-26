@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "name": "lifecycle",
+  "description": "Idle, error, recovery, and terminal state are distinct durable facts.",
+  "steps": [
+    {
+      "event": {
+        "seq": 1,
+        "actor": "coordinator",
+        "type": "session_started",
+        "data": {}
+      }
+    },
+    {
+      "event": {
+        "seq": 2,
+        "actor": "coordinator",
+        "type": "session_idle",
+        "data": {
+          "report": "Synthetic completion"
+        }
+      }
+    },
+    {
+      "expect": {
+        "cursor": 2,
+        "phase": "idle",
+        "pause_requested": false
+      }
+    },
+    {
+      "event": {
+        "seq": 3,
+        "actor": "coordinator",
+        "type": "session_error",
+        "data": {
+          "msg": "Synthetic failure"
+        }
+      }
+    },
+    {
+      "expect": {
+        "cursor": 3,
+        "phase": "error"
+      }
+    },
+    {
+      "event": {
+        "seq": 4,
+        "actor": "coordinator",
+        "type": "resumed",
+        "data": {}
+      }
+    },
+    {
+      "expect": {
+        "phase": "running"
+      }
+    },
+    {
+      "event": {
+        "seq": 5,
+        "actor": "coordinator",
+        "type": "session_stopped",
+        "data": {}
+      }
+    },
+    {
+      "expect": {
+        "cursor": 5,
+        "phase": "stopped"
+      }
+    }
+  ]
+}

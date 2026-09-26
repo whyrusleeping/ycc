@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "name": "tails-reconnect",
+  "description": "Concurrent actor snapshot tails, durable actor-scoped retirement, and reconnect reset.",
+  "steps": [
+    {
+      "event": {
+        "seq": 0,
+        "actor": "implementer",
+        "type": "turn_delta",
+        "transient": true,
+        "data": {
+          "text": "draft"
+        }
+      }
+    },
+    {
+      "event": {
+        "seq": 0,
+        "actor": "reviewer",
+        "type": "turn_delta",
+        "transient": true,
+        "data": {
+          "text": "checking"
+        }
+      }
+    },
+    {
+      "expect": {
+        "cursor": 0,
+        "tails": {
+          "implementer": "draft",
+          "reviewer": "checking"
+        }
+      }
+    },
+    {
+      "event": {
+        "seq": 1,
+        "actor": "implementer",
+        "type": "model_turn",
+        "data": {
+          "text": "done"
+        }
+      }
+    },
+    {
+      "expect": {
+        "cursor": 1,
+        "tails": {
+          "reviewer": "checking"
+        }
+      }
+    },
+    {
+      "event": {
+        "seq": 0,
+        "actor": "reviewer",
+        "type": "turn_delta",
+        "transient": true,
+        "data": {
+          "text": "checking more"
+        }
+      }
+    },
+    {
+      "expect": {
+        "cursor": 1,
+        "tails": {
+          "reviewer": "checking more"
+        }
+      }
+    },
+    {
+      "reconnect": {}
+    },
+    {
+      "expect": {
+        "cursor": 1,
+        "tails": {}
+      }
+    },
+    {
+      "event": {
+        "seq": 1,
+        "actor": "implementer",
+        "type": "model_turn",
+        "data": {
+          "text": "done"
+        }
+      }
+    },
+    {
+      "expect": {
+        "cursor": 1,
+        "tails": {}
+      }
+    }
+  ]
+}

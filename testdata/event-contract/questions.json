@@ -1,0 +1,208 @@
+{
+  "version": 1,
+  "name": "questions",
+  "description": "Automatic single and batch assumptions; another client resolves a human gate.",
+  "steps": [
+    {
+      "event": {
+        "seq": 1,
+        "actor": "coordinator",
+        "type": "question_asked",
+        "data": {
+          "question": "Default?",
+          "options": [
+            "Yes"
+          ],
+          "auto": true
+        }
+      }
+    },
+    {
+      "expect": {
+        "cursor": 1,
+        "pending_question": null
+      }
+    },
+    {
+      "event": {
+        "seq": 2,
+        "actor": "coordinator",
+        "type": "question_answered",
+        "data": {
+          "answer": "Yes",
+          "auto": true
+        }
+      }
+    },
+    {
+      "event": {
+        "seq": 3,
+        "actor": "coordinator",
+        "type": "question_asked",
+        "data": {
+          "questions": [
+            {
+              "question": "Scope?",
+              "options": [
+                "Small",
+                "Large"
+              ]
+            },
+            {
+              "question": "Format?"
+            }
+          ],
+          "auto": true
+        }
+      }
+    },
+    {
+      "expect": {
+        "pending_question": null
+      }
+    },
+    {
+      "event": {
+        "seq": 4,
+        "actor": "coordinator",
+        "type": "question_answered",
+        "data": {
+          "answers": [
+            "Small",
+            "Plain"
+          ],
+          "auto": true
+        }
+      }
+    },
+    {
+      "expect": {
+        "answers": [
+          {
+            "question_seq": 1,
+            "provenance": "automatic"
+          },
+          {
+            "question_seq": 3,
+            "provenance": "automatic"
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "seq": 5,
+        "actor": "coordinator",
+        "type": "question_asked",
+        "data": {
+          "questions": [
+            {
+              "question": "Ship?",
+              "options": [
+                "Yes",
+                "No"
+              ]
+            },
+            {
+              "question": "When?",
+              "options": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "expect": {
+        "pending_question": {
+          "prompts": [
+            "Ship?",
+            "When?"
+          ],
+          "options": [
+            [
+              "Yes",
+              "No"
+            ],
+            []
+          ]
+        }
+      }
+    },
+    {
+      "event": {
+        "seq": 6,
+        "actor": "coordinator",
+        "type": "question_answered",
+        "data": {
+          "answers": [
+            "Yes",
+            "Now"
+          ]
+        }
+      }
+    },
+    {
+      "expect": {
+        "cursor": 6,
+        "pending_question": null,
+        "answers": [
+          {
+            "question_seq": 1,
+            "provenance": "automatic"
+          },
+          {
+            "question_seq": 3,
+            "provenance": "automatic"
+          },
+          {
+            "question_seq": 5,
+            "provenance": "human"
+          }
+        ]
+      }
+    },
+    {
+      "reconnect": {}
+    },
+    {
+      "event": {
+        "seq": 5,
+        "actor": "coordinator",
+        "type": "question_asked",
+        "data": {
+          "question": "Ship?"
+        }
+      }
+    },
+    {
+      "event": {
+        "seq": 6,
+        "actor": "coordinator",
+        "type": "question_answered",
+        "data": {
+          "answer": "Yes"
+        }
+      }
+    },
+    {
+      "expect": {
+        "cursor": 6,
+        "pending_question": null,
+        "answers": [
+          {
+            "question_seq": 1,
+            "provenance": "automatic"
+          },
+          {
+            "question_seq": 3,
+            "provenance": "automatic"
+          },
+          {
+            "question_seq": 5,
+            "provenance": "human"
+          }
+        ]
+      }
+    }
+  ]
+}

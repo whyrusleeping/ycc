@@ -283,6 +283,10 @@ func (m *model) appendEvent(ev *v1.Event) {
 				break
 			}
 		}
+		// Unattended asks are recorded but have no human-actionable gate.
+		if dataField(ev, "auto") == "true" {
+			break
+		}
 		if qs := dataQuestions(ev); len(qs) > 0 {
 			// Multi-question form: start the questionnaire wizard.
 			m.startWizard(qs, ev.Seq)

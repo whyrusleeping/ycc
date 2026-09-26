@@ -7,6 +7,8 @@
 "use strict";
 
 var assert = require("assert");
+var fs = require("fs");
+var path = require("path");
 var w = require("./dist/app.js");
 
 var failures = 0;
@@ -316,6 +318,24 @@ test("feedIngest: paused lifecycle gates context rollover", function () {
   assert.strictEqual(feed.paused, false);
 });
 
+test("feedIngest: idle input wakes the feed, but a queued steer stays paused", function () {
+  var feed = w.makeFeed();
+  function add(seq, type, data) {
+    w.feedIngest(feed, { seq: String(seq), actor: "user", type: type, dataJson: JSON.stringify(data || {}) });
+  }
+  add(1, "session_idle");
+  assert.strictEqual(feed.phase, "idle");
+  assert.strictEqual(feed.running, false);
+  add(2, "user_input", { text: "continue" });
+  assert.strictEqual(feed.phase, "running");
+  assert.strictEqual(feed.running, true);
+  add(3, "interrupted");
+  add(4, "user_input", { text: "queue this", queued: true });
+  assert.strictEqual(feed.phase, "paused");
+  assert.strictEqual(feed.paused, true);
+  assert.strictEqual(feed.running, false);
+});
+
 test("feedIngest: durable pause request survives reconnect and clears on cancellation, checkpoint or reopen", function () {
   var feed = w.makeFeed();
   function add(type) {
@@ -404,6 +424,52 @@ test("buildAnswerBody: batch pads missing answers to question count", function (
   var body = w.buildAnswerBody(pending, [{ optionIndex: -1, text: "only one" }]);
   assert.strictEqual(body.answers.length, 2);
   assert.deepStrictEqual(body.answers[1], { optionIndex: -1, text: "" });
+});
+
+// Shared synthetic event contract: assert reducer facts, not DOM layout.
+var contractDir = path.resolve(__dirname, "../../testdata/event-contract");
+fs.readdirSync(contractDir).filter(function (name) { return /\.json$/.test(name); }).forEach(function (name) {
+  test("event contract: " + name, function () {
+    var fixture = JSON.parse(fs.readFileSync(path.join(contractDir, name), "utf8"));
+    assert.strictEqual(fixture.version, 1);
+    var feed = w.makeFeed();
+    var events = [];
+    fixture.steps.forEach(function (step, index) {
+      if (step.event) {
+        var ev = Object.assign({}, step.event, { seq: String(step.event.seq), dataJson: JSON.stringify(step.event.data || {}) });
+        var action = w.feedIngest(feed, ev);
+        if (action.kind === "append") { events.push(ev); }
+      } else if (step.reconnect) {
+        w.feedReconnect(feed);
+      } else if (step.expect) {
+        var inputs = [], answers = [], reviews = [];
+        events.forEach(function (ev, i) {
+          var d = w.parseData(ev);
+          if (ev.type === "user_input") {
+            inputs.push({ seq: w.parseSeq(ev.seq), text: d.text || "", delivery: !d.queued || feed.delivered[ev.seq] ? "delivered" : "queued" });
+          } else if (ev.type === "question_answered") {
+            var questionSeq = 0;
+            for (var j = i - 1; j >= 0; j--) {
+              if (events[j].actor === ev.actor && events[j].type === "question_asked") { questionSeq = w.parseSeq(events[j].seq); break; }
+            }
+            answers.push({ question_seq: questionSeq, provenance: d.auto === true ? "automatic" : "human" });
+          } else if (ev.type === "review_submitted") {
+            reviews.push({ seq: w.parseSeq(ev.seq), verdict: d.verdict === "accept" || d.verdict === "revise" ? d.verdict : "unknown" });
+          }
+        });
+        var pending = feed.pending && {
+          prompts: feed.pending.questions.map(function (q) { return q.prompt; }),
+          options: feed.pending.questions.map(function (q) { return q.options; })
+        };
+        var facts = { phase: feed.phase, pause_requested: feed.pausePending, cursor: feed.cursor,
+          pending_question: pending, inputs: inputs, answers: answers, reviews: reviews, tails: feed.tails };
+        Object.keys(step.expect).forEach(function (key) {
+          assert.ok(Object.prototype.hasOwnProperty.call(facts, key), "unknown fact " + key);
+          assert.deepStrictEqual(facts[key], step.expect[key], fixture.name + " step " + index + " " + key);
+        });
+      } else { throw new Error("empty contract step " + index); }
+    });
+  });
 });
 
 if (failures > 0) {

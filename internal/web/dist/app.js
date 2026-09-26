@@ -137,12 +137,15 @@
   // seq folded), the per-actor live-tail snapshots, and the pending ask_user gate
   // (null when no question is open) that drives the answer sheet.
   function makeFeed() {
-    return { cursor: 0, tails: {}, pending: null, rolloverAvailable: true, paused: false, pausePending: false, running: true, coordinatorModel: "" };
+    return { cursor: 0, tails: {}, pending: null, delivered: {}, rolloverAvailable: true, paused: false, pausePending: false, running: true, phase: "running", coordinatorModel: "" };
   }
 
-  // asStr coerces any value to a string ("" for null/undefined). A pure-section
-  // twin of the DOM helper strOf so pendingFromAsk can normalize prompts/options
-  // without reaching into the browser half.
+  // Re-subscribing drops transient snapshots but retains the durable cursor/gate.
+  function feedReconnect(feed) {
+    feed.tails = {};
+  }
+
+  // Pure-section twin of the DOM helper strOf for question normalization.
   function asStr(v) {
     if (v === undefined || v === null) {
       return "";
@@ -256,24 +259,36 @@
         feed.pausePending = false;
       }
       if (type === "interrupted") {
+        feed.phase = "paused";
         feed.paused = true;
         feed.running = false;
       } else if (type === "resumed" || type === "session_started") {
+        feed.phase = "running";
         feed.paused = false;
         feed.running = true;
       } else if (type === "session_stopped" || type === "session_ended") {
+        feed.phase = "stopped";
         feed.paused = false;
         feed.running = false;
       } else if (type === "session_idle" || type === "session_error") {
+        feed.phase = type === "session_idle" ? "idle" : "error";
+        feed.paused = false;
         feed.running = false;
-      } else if (type === "model_turn" || type === "tool_call" || type === "tool_result" || type === "thinking") {
-        if (!feed.paused) { feed.running = true; }
+      } else if (type === "model_turn" || type === "tool_call" || type === "tool_result" || type === "thinking" || type === "user_input" || type === "user_input_delivered") {
+        if (!feed.paused) {
+          feed.phase = "running";
+          feed.running = true;
+        }
       }
     }
 
+    if (type === "user_input_delivered") {
+      var inputSeq = parseSeq(durableData.seq);
+      if (inputSeq) { feed.delivered[inputSeq] = true; }
+    }
     if (type === "question_asked") {
       var pend = pendingFromAsk(ev, seq);
-      if (pend) {
+      if (pend && !pend.auto) {
         feed.pending = pend;
       }
     } else if (type === "question_answered" || type === "session_idle" ||
@@ -317,6 +332,7 @@
       parseData: parseData,
       parseSeq: parseSeq,
       makeFeed: makeFeed,
+      feedReconnect: feedReconnect,
       feedIngest: feedIngest,
       pendingFromAsk: pendingFromAsk,
       buildAnswerBody: buildAnswerBody,
@@ -726,6 +742,7 @@
       headerEl: header,
       statusEl: statusEl,
       tailEls: {},
+      inputRows: {},
       open: true,
       live: false,
       streaming: false,
@@ -930,6 +947,8 @@
     var wait = state.backoff || 1000;
     state.backoff = Math.min(wait * 2, 5000);
     setStatus(state, "reconnecting…");
+    Object.keys(state.feed.tails).forEach(function (actor) { removeTail(state, actor); });
+    feedReconnect(state.feed);
     if (state.reconnectTimer) {
       clearTimeout(state.reconnectTimer);
     }
@@ -1378,6 +1397,14 @@
         var node = renderEventNode(ev);
         if (node) {
           appendRow(state, node);
+          if (ev.type === "user_input") { state.inputRows[parseSeq(ev.seq)] = node; }
+        }
+        if (ev.type === "user_input_delivered") {
+          var inputRow = state.inputRows[parseSeq(parseData(ev).seq)];
+          if (inputRow) {
+            var queuedTag = inputRow.querySelector(".tag.queued");
+            if (queuedTag) { queuedTag.parentNode.removeChild(queuedTag); }
+          }
         }
         break;
       case "tail":
@@ -1577,12 +1604,12 @@
     return b;
   }
 
-  // questionNode renders an ask_user gate as a read-only "needs answer" block:
-  // the question(s) and any options as a static list. Answering lands in a later
-  // task.
+  // questionNode shows human questions as actionable and unattended asks as
+  // assumptions; both retain their questions and options in the transcript.
   function questionNode(d) {
-    var wrap = el("div", "banner needs-answer");
-    wrap.appendChild(el("span", "banner-label", "needs answer"));
+    var automatic = d.auto === true;
+    var wrap = el("div", automatic ? "banner unattended-assumption" : "banner needs-answer");
+    wrap.appendChild(el("span", "banner-label", automatic ? "unattended assumption" : "needs answer"));
 
     var qs = [];
     if (d.questions && d.questions.length) {

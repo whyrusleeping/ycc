@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "name": "paused-steer",
+  "description": "Pause acknowledgement, queued steer, and delivery after resume.",
+  "steps": [
+    {
+      "event": {
+        "seq": 1,
+        "actor": "coordinator",
+        "type": "session_started",
+        "data": {}
+      }
+    },
+    {
+      "event": {
+        "seq": 2,
+        "actor": "user",
+        "type": "pause_requested",
+        "data": {}
+      }
+    },
+    {
+      "expect": {
+        "phase": "running",
+        "pause_requested": true,
+        "cursor": 2
+      }
+    },
+    {
+      "event": {
+        "seq": 3,
+        "actor": "coordinator",
+        "type": "interrupted",
+        "data": {}
+      }
+    },
+    {
+      "event": {
+        "seq": 4,
+        "actor": "user",
+        "type": "user_input",
+        "data": {
+          "text": "Try the smaller change",
+          "queued": true
+        }
+      }
+    },
+    {
+      "expect": {
+        "phase": "paused",
+        "pause_requested": false,
+        "cursor": 4,
+        "inputs": [
+          {
+            "seq": 4,
+            "text": "Try the smaller change",
+            "delivery": "queued"
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "seq": 5,
+        "actor": "coordinator",
+        "type": "resumed",
+        "data": {}
+      }
+    },
+    {
+      "expect": {
+        "phase": "running",
+        "inputs": [
+          {
+            "seq": 4,
+            "text": "Try the smaller change",
+            "delivery": "queued"
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "seq": 6,
+        "actor": "user",
+        "type": "user_input_delivered",
+        "data": {
+          "seq": 4
+        }
+      }
+    },
+    {
+      "expect": {
+        "cursor": 6,
+        "inputs": [
+          {
+            "seq": 4,
+            "text": "Try the smaller change",
+            "delivery": "delivered"
+          }
+        ]
+      }
+    }
+  ]
+}

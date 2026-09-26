@@ -27,14 +27,20 @@ import (
 // backed by a manager rooted at a temp workspace, returning the client and manager.
 func newSubscribeServer(t *testing.T) (yccv1connect.SessionServiceClient, *session.Manager, string) {
 	t.Helper()
-	reg := config.NewRegistry(&config.Config{
-		Models: map[string]config.Model{"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"}},
-		Roles:  config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
-	})
 	ws := t.TempDir()
 	if _, err := git.Open(ws); err != nil {
 		t.Fatal(err)
 	}
+	client, mgr := newSubscribeServerAt(t, ws)
+	return client, mgr, ws
+}
+
+func newSubscribeServerAt(t *testing.T, ws string) (yccv1connect.SessionServiceClient, *session.Manager) {
+	t.Helper()
+	reg := config.NewRegistry(&config.Config{
+		Models: map[string]config.Model{"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"}},
+		Roles:  config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
+	})
 	mgr := session.NewManager(reg, ws)
 
 	path, handler := yccv1connect.NewSessionServiceHandler(server.New(mgr))
@@ -50,7 +56,7 @@ func newSubscribeServer(t *testing.T) (yccv1connect.SessionServiceClient, *sessi
 		},
 	}}
 	client := yccv1connect.NewSessionServiceClient(httpClient, srv.URL)
-	return client, mgr, ws
+	return client, mgr
 }
 
 // A transient event broadcast on a session's log is carried unchanged over the
