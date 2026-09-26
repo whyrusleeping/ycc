@@ -170,6 +170,27 @@ func TestIndexedSessionViewPagesAndDetail(t *testing.T) {
 	if len(page.Msg.Rows) != 3 || page.Msg.Rows[len(page.Msg.Rows)-1].PositionSeq >= first.Msg.Rows[0].PositionSeq {
 		t.Fatalf("unstable earlier page: %+v", page.Msg.Rows)
 	}
+	seen := make(map[string]bool)
+	for _, row := range first.Msg.Rows {
+		seen[row.Id] = true
+	}
+	cursor := first.Msg.EarlierCursor
+	for cursor != "" {
+		older, err := client.GetSessionViewPage(context.Background(), connect.NewRequest(&v1.GetSessionViewPageRequest{SessionId: "s_view", Cursor: cursor, MaxRows: 3, MaxBytes: 64 << 10}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, row := range older.Msg.Rows {
+			if seen[row.Id] {
+				t.Fatalf("duplicate row across page boundary: %s", row.Id)
+			}
+			seen[row.Id] = true
+		}
+		cursor = older.Msg.EarlierCursor
+	}
+	if len(seen) != 9 {
+		t.Fatalf("missing indexed rows: %v", seen)
+	}
 }
 
 // Set YCC_BENCH_TRANSCRIPT to a local events.jsonl to measure actual encoded

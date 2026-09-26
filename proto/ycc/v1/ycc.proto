@@ -262,6 +262,10 @@ message ListSessionsResponse { repeated SessionInfo sessions = 1; }
 
 message ListSessionHistoryRequest {
   string project = 1; // registered project; empty allowed only when exactly one exists
+  // Zero returns the legacy unbounded list. Positive limits are capped at 500.
+  int32 limit = 2;
+  // Opaque next_cursor from a prior bounded page. Invalid cursors are rejected.
+  string cursor = 3;
 }
 message SessionSummary {
   string session_id = 1;
@@ -291,7 +295,17 @@ message SessionSummary {
   // predates the telemetry (or no turn completed yet).
   int64 context_tokens = 15;
 }
-message ListSessionHistoryResponse { repeated SessionSummary sessions = 1; }
+// Sessions are ordered by the serialized millisecond-precision last_activity
+// descending, started_at descending, then id ascending. The keyset cursor
+// resumes strictly after the last page row; rows
+// that move ahead of it require refreshing the first page. Merge by session_id.
+message ListSessionHistoryResponse {
+  repeated SessionSummary sessions = 1;
+  string next_cursor = 2; // empty when there are no older rows
+  // First bounded page only: live rows outside sessions, for discovery even
+  // when they are older than the page. Copies inside sessions are not repeated.
+  repeated SessionSummary pinned = 3;
+}
 
 // GetSessionTranscript returns the full event log for a session — live or
 // persisted on disk — so the session browser can render a read-only replayed

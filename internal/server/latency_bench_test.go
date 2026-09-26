@@ -78,6 +78,13 @@ func BenchmarkLatencyLargeHistory(b *testing.B) {
 			}
 			return r.Header(), nil
 		}},
+		{"ListSessionHistory_limit50_100logs_120kEvents", func(c yccv1connect.SessionServiceClient) (http.Header, error) {
+			r, e := c.ListSessionHistory(ctx, connect.NewRequest(&v1.ListSessionHistoryRequest{Limit: 50}))
+			if e != nil {
+				return nil, e
+			}
+			return r.Header(), nil
+		}},
 		{"GetSessionView_20kEvents", func(c yccv1connect.SessionServiceClient) (http.Header, error) {
 			r, e := c.GetSessionView(ctx, connect.NewRequest(&v1.GetSessionViewRequest{SessionId: "s_large", MaxRows: 200, MaxBytes: 393216}))
 			if e != nil {

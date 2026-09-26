@@ -2,7 +2,9 @@ package session
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -496,15 +498,88 @@ func (m *Manager) ListSessionHistory(project string) ([]SessionSummary, error) {
 		}
 	}
 
-	sort.SliceStable(summaries, func(i, j int) bool {
-		a, b := summaries[i], summaries[j]
-		if !a.LastActivity.Equal(b.LastActivity) {
-			return a.LastActivity.After(b.LastActivity)
-		}
-		if !a.StartedAt.Equal(b.StartedAt) {
-			return a.StartedAt.After(b.StartedAt)
-		}
-		return a.ID < b.ID
+	sort.Slice(summaries, func(i, j int) bool {
+		return historyBefore(summaries[i], summaries[j])
 	})
 	return summaries, nil
 }
+
+// ErrInvalidHistoryCursor indicates an invalid or unusable history keyset.
+var ErrInvalidHistoryCursor = errors.New("invalid session history cursor")
+
+// ListSessionHistoryPage applies a keyset after the live overlay and sort. A
+// refreshed first page discovers rows whose activity moved ahead of the cursor.
+// Pinned contains live rows outside the first bounded page only.
+func (m *Manager) ListSessionHistoryPage(project string, limit int, cursor string) (page, pinned []SessionSummary, next string, err error) {
+	if limit < 0 || (limit == 0 && cursor != "") {
+		return nil, nil, "", ErrInvalidHistoryCursor
+	}
+	var key SessionSummary
+	if cursor != "" {
+		var raw []string
+		data, decodeErr := base64.RawURLEncoding.DecodeString(cursor)
+		if decodeErr != nil || json.Unmarshal(data, &raw) != nil || len(raw) != 3 || raw[2] == "" {
+			return nil, nil, "", ErrInvalidHistoryCursor
+		}
+		key.LastActivity, err = time.Parse(time.RFC3339Nano, raw[0])
+		if err != nil {
+			return nil, nil, "", ErrInvalidHistoryCursor
+		}
+		key.StartedAt, err = time.Parse(time.RFC3339Nano, raw[1])
+		if err != nil {
+			return nil, nil, "", ErrInvalidHistoryCursor
+		}
+		key.ID = raw[2]
+	}
+	all, err := m.ListSessionHistory(project)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	if limit == 0 {
+		return all, nil, "", nil
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	start := 0
+	if cursor != "" {
+		start = sort.Search(len(all), func(i int) bool { return historyAfter(all[i], key) })
+	}
+	end := start + limit
+	if end > len(all) {
+		end = len(all)
+	}
+	page = all[start:end]
+	if end < len(all) {
+		last := page[len(page)-1]
+		data, _ := json.Marshal([]string{
+			last.LastActivity.Truncate(time.Millisecond).Format("2006-01-02T15:04:05.000Z07:00"),
+			last.StartedAt.Truncate(time.Millisecond).Format("2006-01-02T15:04:05.000Z07:00"), last.ID,
+		})
+		next = base64.RawURLEncoding.EncodeToString(data)
+	}
+	if cursor == "" {
+		for _, row := range all[end:] {
+			if row.Live {
+				pinned = append(pinned, row)
+			}
+		}
+	}
+	return page, pinned, next, nil
+}
+
+// historyBefore matches the millisecond-precision timestamps sent to clients.
+// Sub-millisecond differences must not shift a row across a client's frontier.
+func historyBefore(a, b SessionSummary) bool {
+	activityA, activityB := a.LastActivity.Truncate(time.Millisecond), b.LastActivity.Truncate(time.Millisecond)
+	if !activityA.Equal(activityB) {
+		return activityA.After(activityB)
+	}
+	startA, startB := a.StartedAt.Truncate(time.Millisecond), b.StartedAt.Truncate(time.Millisecond)
+	if !startA.Equal(startB) {
+		return startA.After(startB)
+	}
+	return a.ID < b.ID
+}
+
+func historyAfter(row, key SessionSummary) bool { return historyBefore(key, row) }

@@ -460,6 +460,20 @@ coordinator model turn (how full the session's active context is; subagent turns
 ignored, and it is omitted/zero for logs without the telemetry).
 Omitted fields (`toolCalls`, `focusTasks`, `waitingInput` here) are zero/empty.
 
+For a bounded feed, send `{"project":"work","limit":50}` and then pass the
+returned `nextCursor` as `cursor` on subsequent requests. Positive limits are
+clamped to 500; zero (the default) preserves the full, unbounded legacy list.
+Rows sort by the serialized millisecond-precision `lastActivity` descending,
+`startedAt` descending, then `sessionId` ascending; sub-millisecond differences
+are ties. `nextCursor` is empty when there are no older rows. It is an opaque
+keyset: pages resume strictly after the last returned row, so new sessions do
+not duplicate rows mid-walk; if a row's activity moves ahead of the cursor,
+refresh the first page to pick it up. Malformed cursors return `invalid_argument`.
+The first bounded page also returns `pinned`: every live row not in `sessions`,
+including waiting questions and active-task sessions beyond the page. Subsequent
+pages do not repeat pinned rows; merge by `sessionId`, preferring the latest
+copy, and retain pinned rows outside the recency frontier.
+
 ### GetSessionTranscript
 
 The full event log for a session — live or persisted — for a read-only replayed

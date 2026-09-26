@@ -195,20 +195,19 @@ func (s *Server) ListSessions(_ context.Context, req *connect.Request[v1.ListSes
 // on-disk logs), most-recent first. Unlike ListSessions it includes
 // sessions that are no longer live in memory.
 func (s *Server) ListSessionHistory(_ context.Context, req *connect.Request[v1.ListSessionHistoryRequest]) (*connect.Response[v1.ListSessionHistoryResponse], error) {
-	sums, err := s.mgr.ListSessionHistory(req.Msg.Project)
+	sums, pinned, next, err := s.mgr.ListSessionHistoryPage(req.Msg.Project, int(req.Msg.Limit), req.Msg.Cursor)
 	if err != nil {
-		if errors.Is(err, session.ErrUnknownProject) {
+		if errors.Is(err, session.ErrUnknownProject) || errors.Is(err, session.ErrInvalidHistoryCursor) {
 			return nil, connect.NewError(connect.CodeInvalidArgument, err)
 		}
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	var out []*v1.SessionSummary
-	for _, su := range sums {
+	convert := func(su session.SessionSummary) *v1.SessionSummary {
 		models := make([]*v1.SessionModelUsage, 0, len(su.ModelUsage))
 		for _, usage := range su.ModelUsage {
 			models = append(models, &v1.SessionModelUsage{Model: usage.Model, Tokens: usage.Tokens})
 		}
-		out = append(out, &v1.SessionSummary{
+		return &v1.SessionSummary{
 			SessionId:     su.ID,
 			Mode:          su.Mode,
 			Status:        string(su.Status),
@@ -224,9 +223,17 @@ func (s *Server) ListSessionHistory(_ context.Context, req *connect.Request[v1.L
 			ModelUsage:    models,
 			TotalTokens:   su.TotalTokens,
 			ContextTokens: su.ContextTokens,
-		})
+		}
 	}
-	return connect.NewResponse(&v1.ListSessionHistoryResponse{Sessions: out}), nil
+	out := make([]*v1.SessionSummary, 0, len(sums))
+	for _, row := range sums {
+		out = append(out, convert(row))
+	}
+	live := make([]*v1.SessionSummary, 0, len(pinned))
+	for _, row := range pinned {
+		live = append(live, convert(row))
+	}
+	return connect.NewResponse(&v1.ListSessionHistoryResponse{Sessions: out, Pinned: live, NextCursor: next}), nil
 }
 
 // GetSessionTranscript returns a session's full event log (live or persisted on

@@ -36,10 +36,10 @@ private final class MockTaskDetailSource: TaskDetailSource, @unchecked Sendable 
         return detail
     }
 
-    func listSessionHistory(project: String) async throws -> [Ycc_V1_SessionSummary] {
+    func listSessionHistory(project: String, limit: Int32, cursor: String) async throws -> SessionHistoryPage {
         historyProjects.append(project)
         if let historyError { throw historyError }
-        return sessions
+        return SessionHistoryPage(sessions: sessions, pinned: [], nextCursor: "")
     }
 
     func updateTaskStatus(project: String, id: String, status: String) async throws -> Ycc_V1_TaskDetail {

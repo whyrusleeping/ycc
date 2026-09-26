@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
 	"strings"
@@ -156,6 +157,24 @@ func TestIndexIncrementalPagesEditsAndDetails(t *testing.T) {
 	}
 	if state.IndexedThrough != 8 || len(state.Pending) != 0 {
 		t.Fatalf("state=%+v", state)
+	}
+	// The snapshot's indexedThrough cursor is exclusive for a subscription:
+	// events appended during or after paging must reappear as upserts, while
+	// the snapshot's last event itself must not be replayed.
+	streamState, changed, deleted, err := store.ChangesSince(ctx, "s1", logPath, 8, -1, 5)
+	if err != nil || streamState.IndexedThrough != 8 || len(deleted) != 0 {
+		t.Fatalf("overlap handoff: state=%+v deleted=%v err=%v", streamState, deleted, err)
+	}
+	got := make(map[string]int64)
+	for _, row := range changed {
+		got[row.ID] = row.UpdatedSeq
+	}
+	if !reflect.DeepEqual(got, map[string]int64{"tool-old": 6, "seq-5": 7, "seq-8": 8}) {
+		t.Fatalf("missing or duplicated handoff changes: %v", got)
+	}
+	_, changed, deleted, err = store.ChangesSince(ctx, "s1", logPath, 8, -1, streamState.IndexedThrough)
+	if err != nil || len(changed) != 0 || len(deleted) != 0 {
+		t.Fatalf("duplicate after subscription cursor: %+v %v %v", changed, deleted, err)
 	}
 	tool, err := store.Detail(ctx, "s1", "tool-old")
 	if err != nil {

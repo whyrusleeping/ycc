@@ -6,9 +6,21 @@ import YccProto
 /// protocol lets the sorting / sectioning / filtering logic be unit-tested
 /// headlessly with an in-memory mock — no network, no simulator. ``YccClient``
 /// is the production conformer.
+public struct SessionHistoryPage: Sendable {
+    public let sessions: [Ycc_V1_SessionSummary]
+    public let pinned: [Ycc_V1_SessionSummary]
+    public let nextCursor: String
+
+    public init(sessions: [Ycc_V1_SessionSummary], pinned: [Ycc_V1_SessionSummary], nextCursor: String) {
+        self.sessions = sessions
+        self.pinned = pinned
+        self.nextCursor = nextCursor
+    }
+}
+
 public protocol SessionListSource: Sendable {
-    /// List session history for a named project.
-    func listSessionHistory(project: String) async throws -> [Ycc_V1_SessionSummary]
+    /// List one keyset page of history for a named project.
+    func listSessionHistory(project: String, limit: Int32, cursor: String) async throws -> SessionHistoryPage
     /// List the daemon's registered projects (drives the project filter).
     func listProjects() async throws -> [Ycc_V1_ProjectInfo]
     /// Deregister a project. Workspace files remain untouched.
@@ -34,6 +46,8 @@ extension YccClient: SessionListSource {
 private struct HistoryLoad: Sendable {
     let project: String
     var sessions: [Ycc_V1_SessionSummary] = []
+    var pinned: [Ycc_V1_SessionSummary] = []
+    var nextCursor = ""
     var loopSessionIDs: Set<String> = []
     var error: String?
     var unauthorized = false
@@ -114,15 +128,16 @@ public struct SessionSection: Identifiable, Sendable {
 @MainActor
 @Observable
 public final class SessionListModel {
-    /// Every session loaded across the daemon, most-recent-first. ``sessions``
-    /// is the ``selectedProject``-filtered view of this; the drawer's badges and
-    /// deep-link resolution read the unfiltered set.
+    /// Globally ordered visible sessions, plus pinned live rows. Rows below
+    /// the newest truncated project's oldest page row are held back until all
+    /// projects have paged past them. ``sessions`` shows the selected project's
+    /// loaded pages without that aggregate frontier.
     public private(set) var allSessions: [Ycc_V1_SessionSummary] = []
     /// Registered projects; drives the workspace drawer.
     public private(set) var projects: [Ycc_V1_ProjectInfo] = []
     /// The selected project filter. `nil` is the daemon-wide recent-session feed;
-    /// a value is a registered project name. Filtering is client-side over the
-    /// aggregate load, so changing it needs no refresh and no network round-trip.
+    /// a value is a registered project name. Scope changes use loaded pages
+    /// locally, without a network round-trip.
     public var selectedProject: String?
 
     public private(set) var isLoading = false
@@ -163,7 +178,11 @@ public final class SessionListModel {
     /// The sessions to display: everything, or just the selected project's.
     public var sessions: [Ycc_V1_SessionSummary] {
         guard let selectedProject else { return allSessions }
-        return allSessions.filter { sessionProjects[$0.sessionID] == selectedProject }
+        guard let load = historyLoads[selectedProject] else { return [] }
+        var rows = load.sessions
+        let seen = Set(rows.map(\.sessionID))
+        rows.append(contentsOf: load.pinned.filter { !seen.contains($0.sessionID) })
+        return Self.sortedByRecency(rows)
     }
 
     /// The filter is meaningful when projects exist (alongside All projects).
@@ -190,8 +209,8 @@ public final class SessionListModel {
         return Self.sectionsFromSorted(visible)
     }
 
-    /// Maps each loaded session id to the project argument required by transcript
-    /// and resume RPCs. Aggregate rows therefore remain routable after histories
+    /// Maps each aggregate-visible session id to the project argument required by
+    /// transcript and resume RPCs. Rows remain routable after histories
     /// from several projects are merged.
     public private(set) var sessionProjects: [String: String] = [:]
 
@@ -247,6 +266,58 @@ public final class SessionListModel {
     /// Project names that produced a successful history load, so a project with
     /// no sessions still reports (empty) activity rather than being absent.
     private var loadedProjects: [String] = []
+    private var historyLoads: [String: HistoryLoad] = [:]
+    @ObservationIgnored private var refreshGeneration = 0
+    public private(set) var isLoadingMoreHistory = false
+
+    public var hasMoreHistory: Bool {
+        historyLoads.contains { project, load in
+            !load.nextCursor.isEmpty && (selectedProject == nil || selectedProject == project)
+        }
+    }
+
+    /// Fetch one older page per truncated project. Cursor pages merge by ID, so
+    /// a live row already supplied as pinned cannot appear twice.
+    public func loadMoreHistory() async {
+        guard !isLoadingMoreHistory && !isLoading else { return }
+        let targets = loadedProjects.filter {
+            (selectedProject == nil || selectedProject == $0) && !(historyLoads[$0]?.nextCursor ?? "").isEmpty
+        }
+        guard !targets.isEmpty else { return }
+        isLoadingMoreHistory = true
+        defer { isLoadingMoreHistory = false }
+        var failures: [String] = []
+        for project in targets {
+            guard let cursor = historyLoads[project]?.nextCursor, !cursor.isEmpty else { continue }
+            let generation = refreshGeneration
+            do {
+                let page = try await source.listSessionHistory(project: project, limit: 50, cursor: cursor)
+                guard generation == refreshGeneration, let current = historyLoads[project] else { return }
+                var load = current
+                for row in page.sessions {
+                    if let index = load.sessions.firstIndex(where: { $0.sessionID == row.sessionID }) {
+                        load.sessions[index] = row
+                    } else {
+                        load.sessions.append(row)
+                    }
+                }
+                load.nextCursor = page.nextCursor
+                historyLoads[project] = load
+            } catch YccError.unauthorized {
+                guard generation == refreshGeneration else { return }
+                unauthorized = true
+                return
+            } catch {
+                guard generation == refreshGeneration else { return }
+                failures.append(project)
+            }
+        }
+        apply(loads: loadedProjects.compactMap { historyLoads[$0] })
+        if !failures.isEmpty {
+            partialWarning = "Couldn’t load older sessions for \(failures.joined(separator: ", "))."
+        }
+        readMarks.noteSeen(historyLoads.values.flatMap { $0.sessions + $0.pinned })
+    }
 
     /// Daemon-wide live-activity counts, for the drawer's "Recent sessions" row.
     public var totalActivity: ProjectActivity {
@@ -273,6 +344,14 @@ public final class SessionListModel {
               allSessions[index].waitingInput
         else { return }
         allSessions[index].waitingInput = false
+        for project in historyLoads.keys {
+            if let i = historyLoads[project]?.sessions.firstIndex(where: { $0.sessionID == sessionID }) {
+                historyLoads[project]?.sessions[i].waitingInput = false
+            }
+            if let i = historyLoads[project]?.pinned.firstIndex(where: { $0.sessionID == sessionID }) {
+                historyLoads[project]?.pinned[i].waitingInput = false
+            }
+        }
     }
 
     /// (Re)load the project list and every project's history. The aggregate feed
@@ -287,6 +366,7 @@ public final class SessionListModel {
             return
         }
 
+        refreshGeneration += 1
         let task = Task { await performRefresh() }
         refreshTask = task
         await task.value
@@ -386,7 +466,9 @@ public final class SessionListModel {
             let ids = Set(loopSessionIDs.filter { sessionProjects[$0] == project })
             byProject[project] = HistoryLoad(
                 project: project,
-                sessions: allSessions.filter { sessionProjects[$0.sessionID] == project },
+                sessions: historyLoads[project]?.sessions ?? [],
+                pinned: historyLoads[project]?.pinned ?? [],
+                nextCursor: historyLoads[project]?.nextCursor ?? "",
                 loopSessionIDs: ids,
                 hasHistory: loadedProjects.contains(project))
         }
@@ -398,10 +480,11 @@ public final class SessionListModel {
                     let span = LatencyDiagnostics.shared.begin("home.history")
                     do {
                         let history = try await Self.retrying(delays: retryDelays) {
-                            try await source.listSessionHistory(project: project)
+                            try await source.listSessionHistory(project: project, limit: 50, cursor: "")
                         }
-                        span.end(rows: history.count)
-                        return .history(HistoryLoad(project: project, sessions: history, hasHistory: true))
+                        span.end(rows: history.sessions.count)
+                        return .history(HistoryLoad(project: project, sessions: history.sessions,
+                            pinned: history.pinned, nextCursor: history.nextCursor, hasHistory: true))
                     } catch YccError.unauthorized {
                         span.end()
                         return .history(HistoryLoad(project: project, unauthorized: true))
@@ -438,6 +521,8 @@ public final class SessionListModel {
                     load.loopSessionIDs = previous?.loopSessionIDs ?? []
                     if load.error != nil {
                         load.sessions = previous?.sessions ?? []
+                        load.pinned = previous?.pinned ?? []
+                        load.nextCursor = previous?.nextCursor ?? ""
                         load.hasHistory = previous?.hasHistory ?? false
                     }
                     byProject[load.project] = load
@@ -449,7 +534,7 @@ public final class SessionListModel {
                         // One aggregate baseline per refresh: advancing the shared
                         // watermark for partial results would make unread status
                         // depend on which project happened to finish first.
-                        readMarks.noteSeen(allSessions)
+                        readMarks.noteSeen(historyLoads.values.flatMap { $0.sessions + $0.pinned })
                         isLoading = false
                     }
                 case let .loop(project, ids):
@@ -473,9 +558,22 @@ public final class SessionListModel {
         var routes: [String: String] = [:]
         var seenSessionIDs = Set<String>()
         var succeeded: [String] = []
+        historyLoads = Dictionary(uniqueKeysWithValues: loads.map { ($0.project, $0) })
+        // A globally sorted feed cannot show a row below a truncated project's
+        // oldest loaded row: that project may have intervening unseen rows.
+        let frontiers = loads.filter { $0.hasHistory && !$0.nextCursor.isEmpty }
+            .compactMap { Self.sortedByRecency($0.sessions).last }
+        let frontier = Self.sortedByRecency(frontiers).first
         for load in loads where load.hasHistory {
             succeeded.append(load.project)
-            for session in load.sessions where seenSessionIDs.insert(session.sessionID).inserted {
+            for session in load.sessions {
+                if let frontier, Self.precedes(frontier, session) { continue }
+                if seenSessionIDs.insert(session.sessionID).inserted {
+                    merged.append(session)
+                    routes[session.sessionID] = load.project
+                }
+            }
+            for session in load.pinned where seenSessionIDs.insert(session.sessionID).inserted {
                 merged.append(session)
                 routes[session.sessionID] = load.project
             }
@@ -592,7 +690,7 @@ public final class SessionListModel {
     /// Group + sort sessions: needs-answer rows (live && waitingInput) pinned to
     /// a top section, the remainder most-recent-first. Both sections are sorted
     /// by `lastActivity` (RFC3339) descending, falling back to `startedAt` then
-    /// a stable original order when timestamps are missing/unparseable.
+    /// session ID ascending for ties (matching the daemon's cursor order).
     public static func sections(from sessions: [Ycc_V1_SessionSummary]) -> [SessionSection] {
         sectionsFromSorted(sortedByRecency(sessions))
     }
@@ -627,21 +725,27 @@ public final class SessionListModel {
         return out
     }
 
-    /// Most-recent-first by `lastActivity` (fallback `startedAt`). Uses a stable
-    /// sort so equal / unparseable timestamps keep their original relative order.
+    /// Match the daemon's keyset ordering, including timestamp ties.
+    static func precedes(_ a: Ycc_V1_SessionSummary, _ b: Ycc_V1_SessionSummary) -> Bool {
+        let activityA = recencyDate(a) ?? .distantPast
+        let activityB = recencyDate(b) ?? .distantPast
+        if activityA != activityB { return activityA > activityB }
+        let startA = parseTimestamp(a.startedAt) ?? .distantPast
+        let startB = parseTimestamp(b.startedAt) ?? .distantPast
+        if startA != startB { return startA > startB }
+        return a.sessionID < b.sessionID
+    }
+
     static func sortedByRecency(_ sessions: [Ycc_V1_SessionSummary]) -> [Ycc_V1_SessionSummary] {
-        // ISO8601 parsing is far more expensive than comparing Dates. Decorate
-        // once per row rather than parsing both sides of every sort comparison.
-        sessions.enumerated().map { (index: $0.offset, session: $0.element, date: recencyDate($0.element)) }
-            .sorted { lhs, rhs in
-                switch (lhs.date, rhs.date) {
-                case let (x?, y?) where x != y: return x > y
-                case (_?, nil): return true
-                case (nil, _?): return false
-                default: return lhs.index < rhs.index
-                }
-            }
-            .map(\.session)
+        // Date parsing is much costlier than comparison; parse once per row.
+        sessions.map { row in
+            (row: row, activity: recencyDate(row) ?? .distantPast,
+                start: parseTimestamp(row.startedAt) ?? .distantPast)
+        }.sorted { a, b in
+            if a.activity != b.activity { return a.activity > b.activity }
+            if a.start != b.start { return a.start > b.start }
+            return a.row.sessionID < b.row.sessionID
+        }.map(\.row)
     }
 
     /// The date to sort a session by: `lastActivity`, falling back to

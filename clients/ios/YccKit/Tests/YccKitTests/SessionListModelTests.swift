@@ -25,6 +25,7 @@ private actor ListLoadGate {
 private final class MockListSource: SessionListSource, @unchecked Sendable {
     var sessions: [Ycc_V1_SessionSummary] = []
     var sessionsByProject: [String: [Ycc_V1_SessionSummary]] = [:]
+    var pagesByProject: [String: [String: SessionHistoryPage]] = [:]
     var projects: [Ycc_V1_ProjectInfo] = []
     var historyError: Error?
     var historyErrorsByProject: [String: Error] = [:]
@@ -33,6 +34,13 @@ private final class MockListSource: SessionListSource, @unchecked Sendable {
     var projectFailuresRemaining = 0
     var historyDelayNanoseconds: UInt64 = 0
     var historyGates: [String: ListLoadGate] = [:]
+    var historyPageGates: [String: [String: ListLoadGate]] = [:]
+    private var requestedHistoryPages: [String] = []
+    func didRequestHistoryPage(_ cursor: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return requestedHistoryPages.contains(cursor)
+    }
     var loopGates: [String: ListLoadGate] = [:]
     var removeError: Error?
     var renameError: Error?
@@ -44,18 +52,20 @@ private final class MockListSource: SessionListSource, @unchecked Sendable {
     private(set) var renamedProjects: [(from: String, to: String)] = []
     private let lock = NSLock()
 
-    func listSessionHistory(project: String) async throws -> [Ycc_V1_SessionSummary] {
+    func listSessionHistory(project: String, limit: Int32, cursor: String) async throws -> SessionHistoryPage {
         lock.lock()
         requestedProjects.append(project)
+        requestedHistoryPages.append(cursor)
         let shouldFailTransiently = (historyFailuresRemainingByProject[project] ?? 0) > 0
         if shouldFailTransiently {
             historyFailuresRemainingByProject[project, default: 0] -= 1
         }
         let projectError = historyErrorsByProject[project]
         let generalError = historyError
-        let response = sessionsByProject[project] ?? sessions
+        let response = pagesByProject[project]?[cursor] ?? SessionHistoryPage(
+            sessions: sessionsByProject[project] ?? sessions, pinned: [], nextCursor: "")
         let delay = historyDelayNanoseconds
-        let gate = historyGates[project]
+        let gate = historyPageGates[project]?[cursor] ?? historyGates[project]
         lock.unlock()
 
         await gate?.wait()
@@ -162,6 +172,93 @@ final class SessionListModelTests: XCTestCase {
         p.name = name
         p.path = path ?? "/tmp/\(name)"
         return p
+    }
+
+    func testPagedAggregateFrontierAndPinnedLiveRows() async {
+        let source = MockListSource()
+        source.projects = [project("a"), project("b")]
+        func row(_ id: String, _ seconds: Int, live: Bool = false) -> Ycc_V1_SessionSummary {
+            session(id: id, startedAt: "2026-01-01T00:00:00Z",
+                lastActivity: String(format: "2026-01-01T00:00:%02dZ", seconds), live: live)
+        }
+        var updatedLive = row("live", 1, live: true)
+        updatedLive.title = "newer copy"
+        source.pagesByProject = [
+            "a": [
+                "": SessionHistoryPage(sessions: [row("a10", 10), row("a8", 8)],
+                    pinned: [row("live", 1, live: true)], nextCursor: "a1"),
+                "a1": SessionHistoryPage(sessions: [row("a6", 6), updatedLive],
+                    pinned: [], nextCursor: "")],
+            "b": [
+                "": SessionHistoryPage(sessions: [row("b9", 9), row("b7", 7)],
+                    pinned: [], nextCursor: "b1"),
+                "b1": SessionHistoryPage(sessions: [row("b5", 5)], pinned: [], nextCursor: "")],
+        ]
+        let model = SessionListModel(source: source, retryDelays: [])
+        await model.refresh()
+        XCTAssertEqual(model.allSessions.map(\.sessionID), ["a10", "b9", "a8", "live"])
+        XCTAssertTrue(model.hasMoreHistory)
+        XCTAssertEqual(model.project(for: model.allSessions.last!), "a")
+        model.selectedProject = "b"
+        XCTAssertEqual(model.sessions.map(\.sessionID), ["b9", "b7"])
+        model.selectedProject = nil
+        await model.loadMoreHistory()
+        XCTAssertEqual(model.allSessions.map(\.sessionID), ["a10", "b9", "a8", "b7", "a6", "b5", "live"])
+        XCTAssertFalse(model.hasMoreHistory)
+        XCTAssertEqual(model.allSessions.filter { $0.sessionID == "live" }.count, 1)
+        XCTAssertEqual(model.allSessions.last?.title, "newer copy")
+    }
+
+    func testAggregateFrontierUsesMillisecondWireTimestampsAndIDTies() async {
+        let source = MockListSource()
+        source.projects = [project("a"), project("b")]
+        let started = "2026-01-01T00:00:00.456Z"
+        let sameMS = "2026-01-01T00:00:10.123Z"
+        let parsed = SessionListModel.parseTimestamp(sameMS)
+        XCTAssertNotNil(parsed)
+        XCTAssertEqual(parsed!.timeIntervalSince1970, 1_767_225_610.123, accuracy: 0.000_001)
+        XCTAssertEqual(SessionListModel.recencyDate(session(id: "x", lastActivity: sameMS)), parsed)
+        source.pagesByProject = [
+            "a": ["": SessionHistoryPage(sessions: [
+                session(id: "head", startedAt: started, lastActivity: "2026-01-01T00:00:10.124Z"),
+                session(id: "b", startedAt: started, lastActivity: sameMS)],
+                pinned: [], nextCursor: "older")],
+            "b": ["": SessionHistoryPage(sessions: [
+                session(id: "a", startedAt: started, lastActivity: sameMS),
+                session(id: "c", startedAt: started, lastActivity: sameMS)],
+                pinned: [], nextCursor: "")],
+        ]
+        let model = SessionListModel(source: source, retryDelays: [])
+        await model.refresh()
+        XCTAssertEqual(model.allSessions.map(\.sessionID), ["head", "a", "b"])
+        XCTAssertTrue(model.hasMoreHistory)
+    }
+
+    func testRefreshDuringOlderPageDiscardsStaleResult() async {
+        let source = MockListSource()
+        source.projects = [project("one")]
+        let old = session(id: "old", lastActivity: "2026-01-01T00:00:02.000Z")
+        let fresh = session(id: "fresh", status: "running", lastActivity: "2026-01-01T00:00:03.000Z",
+            live: true, waitingInput: true)
+        source.pagesByProject["one"] = [
+            "": SessionHistoryPage(sessions: [old], pinned: [], nextCursor: "old-cursor"),
+            "old-cursor": SessionHistoryPage(sessions: [session(id: "stale")], pinned: [], nextCursor: ""),
+        ]
+        let model = SessionListModel(source: source, retryDelays: [])
+        await model.refresh()
+        let gate = ListLoadGate()
+        source.historyPageGates["one"] = ["old-cursor": gate]
+        let older = Task { await model.loadMoreHistory() }
+        await eventually { source.didRequestHistoryPage("old-cursor") }
+        source.pagesByProject["one"]?[""] = SessionHistoryPage(
+            sessions: [fresh], pinned: [], nextCursor: "fresh-cursor")
+        await model.refresh() // finishes while the older page is still suspended
+        await gate.open()
+        await older.value
+        XCTAssertEqual(model.allSessions.map(\.sessionID), ["fresh"])
+        XCTAssertTrue(model.allSessions[0].waitingInput)
+        XCTAssertTrue(model.allSessions[0].live)
+        XCTAssertTrue(model.hasMoreHistory)
     }
 
     // MARK: - Row presentation
@@ -541,7 +638,7 @@ final class SessionListModelTests: XCTestCase {
 
         await slowHistory.open()
         await eventually { !model.isLoading }
-        // Equal dates preserve registry order, not completion order.
+        // Equal dates use session ID, not asynchronous completion order.
         XCTAssertEqual(model.allSessions.map(\.sessionID), ["one", "two"])
         await slowLoop.open()
         await refresh.value

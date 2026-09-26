@@ -10,7 +10,7 @@ public protocol TaskDetailSource: Sendable {
     func getTask(project: String, id: String) async throws -> Ycc_V1_TaskDetail
     /// List session-history rows so an in-progress task can link to the live
     /// session currently focused on it.
-    func listSessionHistory(project: String) async throws -> [Ycc_V1_SessionSummary]
+    func listSessionHistory(project: String, limit: Int32, cursor: String) async throws -> SessionHistoryPage
     /// Change a task's status; returns the refreshed detail.
     func updateTaskStatus(project: String, id: String, status: String) async throws -> Ycc_V1_TaskDetail
     /// Replace the task fields exposed by the detail editor.
@@ -85,8 +85,8 @@ public final class TaskDetailModel {
                 // Session discovery is an enhancement to task detail, not a
                 // reason to hide the task if history is temporarily unavailable.
                 do {
-                    let history = try await source.listSessionHistory(project: project)
-                    activeSessions = Self.activeSessions(for: taskID, in: history)
+                    let history = try await source.listSessionHistory(project: project, limit: 50, cursor: "")
+                    activeSessions = Self.activeSessions(for: taskID, in: history.sessions + history.pinned)
                 } catch YccError.unauthorized {
                     throw YccError.unauthorized
                 } catch {

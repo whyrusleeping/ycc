@@ -852,6 +852,12 @@ public nonisolated struct Ycc_V1_ListSessionHistoryRequest: Sendable {
   /// registered project; empty allowed only when exactly one exists
   public var project: String = String()
 
+  /// Zero returns the legacy unbounded list. Positive limits are capped at 500.
+  public var limit: Int32 = 0
+
+  /// Opaque next_cursor from a prior bounded page. Invalid cursors are rejected.
+  public var cursor: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -912,12 +918,23 @@ public nonisolated struct Ycc_V1_SessionSummary: Sendable {
   public init() {}
 }
 
+/// Sessions are ordered by the serialized millisecond-precision last_activity
+/// descending, started_at descending, then id ascending. The keyset cursor
+/// resumes strictly after the last page row; rows
+/// that move ahead of it require refreshing the first page. Merge by session_id.
 public nonisolated struct Ycc_V1_ListSessionHistoryResponse: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
   public var sessions: [Ycc_V1_SessionSummary] = []
+
+  /// empty when there are no older rows
+  public var nextCursor: String = String()
+
+  /// First bounded page only: live rows outside sessions, for discovery even
+  /// when they are older than the page. Copies inside sessions are not repeated.
+  public var pinned: [Ycc_V1_SessionSummary] = []
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -4954,7 +4971,7 @@ nonisolated extension Ycc_V1_ListSessionsResponse: SwiftProtobuf.Message, SwiftP
 
 nonisolated extension Ycc_V1_ListSessionHistoryRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ListSessionHistoryRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{1}limit\0\u{1}cursor\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -4963,6 +4980,8 @@ nonisolated extension Ycc_V1_ListSessionHistoryRequest: SwiftProtobuf.Message, S
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      case 2: try { try decoder.decodeSingularInt32Field(value: &self.limit) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.cursor) }()
       default: break
       }
     }
@@ -4972,11 +4991,19 @@ nonisolated extension Ycc_V1_ListSessionHistoryRequest: SwiftProtobuf.Message, S
     if !self.project.isEmpty {
       try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
     }
+    if self.limit != 0 {
+      try visitor.visitSingularInt32Field(value: self.limit, fieldNumber: 2)
+    }
+    if !self.cursor.isEmpty {
+      try visitor.visitSingularStringField(value: self.cursor, fieldNumber: 3)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Ycc_V1_ListSessionHistoryRequest, rhs: Ycc_V1_ListSessionHistoryRequest) -> Bool {
     if lhs.project != rhs.project {return false}
+    if lhs.limit != rhs.limit {return false}
+    if lhs.cursor != rhs.cursor {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -5084,7 +5111,7 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
 
 nonisolated extension Ycc_V1_ListSessionHistoryResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ListSessionHistoryResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}sessions\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}sessions\0\u{3}next_cursor\0\u{1}pinned\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -5093,6 +5120,8 @@ nonisolated extension Ycc_V1_ListSessionHistoryResponse: SwiftProtobuf.Message, 
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeRepeatedMessageField(value: &self.sessions) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.nextCursor) }()
+      case 3: try { try decoder.decodeRepeatedMessageField(value: &self.pinned) }()
       default: break
       }
     }
@@ -5102,11 +5131,19 @@ nonisolated extension Ycc_V1_ListSessionHistoryResponse: SwiftProtobuf.Message, 
     if !self.sessions.isEmpty {
       try visitor.visitRepeatedMessageField(value: self.sessions, fieldNumber: 1)
     }
+    if !self.nextCursor.isEmpty {
+      try visitor.visitSingularStringField(value: self.nextCursor, fieldNumber: 2)
+    }
+    if !self.pinned.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.pinned, fieldNumber: 3)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Ycc_V1_ListSessionHistoryResponse, rhs: Ycc_V1_ListSessionHistoryResponse) -> Bool {
     if lhs.sessions != rhs.sessions {return false}
+    if lhs.nextCursor != rhs.nextCursor {return false}
+    if lhs.pinned != rhs.pinned {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -637,6 +637,17 @@ struct LandingView: View {
                     }
                 }
             }
+            if model.hasMoreHistory {
+                Button {
+                    Task { await model.loadMoreHistory() }
+                } label: {
+                    HStack {
+                        Text("Load older sessions")
+                        if model.isLoadingMoreHistory { ProgressView() }
+                    }
+                }
+                .disabled(model.isLoadingMoreHistory)
+            }
         }
         .listStyle(.insetGrouped)
         .refreshable { await model.refresh() }

@@ -165,6 +165,21 @@ public final class YccClient: Sendable {
         }
     }
 
+    /// Bounded history page; `pinned` contains live rows outside the first page.
+    public func listSessionHistory(project: String, limit: Int32, cursor: String = "") async throws -> SessionHistoryPage {
+        var request = Ycc_V1_ListSessionHistoryRequest()
+        request.project = project
+        request.limit = limit
+        request.cursor = cursor
+        let response = await generated.listSessionHistory(request: request)
+        switch response.result {
+        case .success(let message):
+            return SessionHistoryPage(sessions: message.sessions, pinned: message.pinned, nextCursor: message.nextCursor)
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
     // MARK: - Work loop
 
     /// Start the daemon-owned unattended backlog drain for a project. The loop
