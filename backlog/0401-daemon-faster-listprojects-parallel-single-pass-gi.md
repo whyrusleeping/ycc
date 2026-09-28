@@ -1,7 +1,7 @@
 ---
 id: "0401"
 title: 'Daemon: faster ListProjects (parallel single-pass git status) + SubscribeSessionView heartbeat'
-status: in_progress
+status: done
 priority: 1
 created: "2026-09-28"
 updated: "2026-09-28"
