@@ -182,7 +182,7 @@ func TestGenericAgentBackgroundModelAndFollowup(t *testing.T) {
 		}
 		return AgentSpec{Name: name, Model: "provider-model", Backend: "test", NewClient: func() engine.Turner { return turner }}, nil
 	}
-	d.AgentModels = func() []string { return []string{"chosen", "other"} }
+	d.AgentModels = func() []ModelCatalogEntry { return []ModelCatalogEntry{{Name: "chosen"}, {Name: "other"}} }
 
 	res, err := spawnAgent(d).Call(context.Background(), map[string]any{"model": "chosen", "prompt": "inspect alpha"})
 	if err != nil || res.IsError || !strings.Contains(res.Content, "agent_1") || !strings.Contains(res.Content, "job_1") {

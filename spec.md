@@ -632,7 +632,11 @@ opening attachments are rejected before the session/log is created.
 
 A TOML config maps logical model names to backend, endpoint, model id, auth, reasoning, optional
 pricing, optional `context_window` and `context_safe_fraction`, and an enabled/disabled availability
-flag. The context window is an input-request capacity distinct from the global per-turn output cap;
+flag. Optional `notes` provide operator suitability advice and `modalities` list operator-supplied
+input modalities; absent modalities remain unknown. `spawn_agent` exposes enabled logical names
+and a bounded capability catalog in its model parameter metadata, without credential or endpoint
+configuration; spawn-time validation still uses the live registry.
+The context window is an input-request capacity distinct from the global per-turn output cap;
 the safe fraction defaults to 0.8, and known Claude/OpenAI model families have built-in windows when
 none is configured. Unknown models report unknown capacity rather than deriving it from the output
 cap. Context telemetry and subagent pressure hints share one visibly approximate next-request

@@ -1295,6 +1295,27 @@ func (t failedTurner) TurnCtx(context.Context, gollama.RequestOptions) (*gollama
 	return nil, t.err
 }
 
+// agentModels snapshots enabled configuration for spawn_agent's tool schema.
+// The resolved agent spec is still checked against the live registry at spawn.
+func (s *Session) agentModels() []orchestrator.ModelCatalogEntry {
+	infos := s.reg.Models()
+	entries := make([]orchestrator.ModelCatalogEntry, 0, len(infos))
+	for _, info := range infos {
+		if info.Disabled {
+			continue
+		}
+		th := s.thinkingFor(info.Name)
+		entries = append(entries, orchestrator.ModelCatalogEntry{
+			Name: info.Name, Backend: info.Backend, Model: info.Model, Auth: info.Auth,
+			Notes: info.Notes, Modalities: info.Modalities, ContextWindow: info.ContextWindow,
+			Thinking: th.Thinking, Effort: th.Effort, Priced: info.Pricing.Configured,
+			PriceInput: info.Pricing.Input, PriceOutput: info.Pricing.Output,
+			PriceInputKnown: info.PriceInputKnown, PriceOutputKnown: info.PriceOutputKnown,
+		})
+	}
+	return entries
+}
+
 // agentSpec builds an orchestrator.AgentSpec for a logical model name.
 func (s *Session) agentSpec(name string) (orchestrator.AgentSpec, error) {
 	_, model, err := s.reg.Build(name)
@@ -2674,20 +2695,11 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 		s.setStatus(event.StatusError)
 		s.cancel()
 	})
-	// Generic chat subagents may select any configured logical model. Resolve at
-	// spawn time so live per-model thinking overrides and refreshed credentials are
-	// honored, and expose the current sorted names in the tool schema.
+	// Generic chat subagents resolve at spawn time so live per-model overrides
+	// and refreshed credentials are honored. Tool metadata is a bounded snapshot
+	// of enabled models at loop construction; spawn validation remains live.
 	deps.ResolveAgent = s.agentSpec
-	deps.AgentModels = func() []string {
-		infos := m.reg.Models()
-		names := make([]string, 0, len(infos))
-		for _, info := range infos {
-			if !info.Disabled {
-				names = append(names, info.Name)
-			}
-		}
-		return names
-	}
+	deps.AgentModels = s.agentModels
 
 	// buildLoop assembles the agent loop for a mode; reused on mode transitions.
 	// It reads the session's current coordinator assignment so a mid-session

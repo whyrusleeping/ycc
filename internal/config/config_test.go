@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -246,6 +247,7 @@ func TestSaveRoundTrip(t *testing.T) {
 				Backend: "anthropic", BaseURL: "https://api.anthropic.com",
 				Model: "claude-opus-4-8", KeyEnv: "ANTHROPIC_API_KEY",
 				Effort: "max", ThinkingDisplay: "summarized",
+				Notes: "Useful for complex tasks", Modalities: []string{"text", "image"},
 				ContextWindow: 1_000_000, ContextSafeFraction: .75,
 				PriceInput: fp(3), PriceOutput: fp(15), PriceCacheRead: fp(0.3), PriceCacheWrite: fp(3.75),
 			},
@@ -300,6 +302,28 @@ func TestSaveRoundTrip(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, orig) {
 		t.Fatalf("round-trip mismatch:\n got=%+v\nwant=%+v", got, orig)
+	}
+}
+
+func TestModelCatalogInfoExcludesConnectionSecrets(t *testing.T) {
+	cfg := &Config{Models: map[string]Model{
+		"alias-a": {Backend: "openai", Model: "custom-model", BaseURL: "https://host.invalid/?token=endpoint-secret", KeyEnv: "SECRET_KEY_REF", Notes: "Good at tests", Modalities: []string{"text"}, ContextWindow: 12345, PriceInput: fp(2)},
+		"alias-b": {Backend: "openai", Model: "custom-model", Thinking: "off"},
+		"paused":  {Backend: "ollama", Model: "local", Disabled: true},
+	}}
+	infos := NewRegistry(cfg).Models()
+	if len(infos) != 3 || infos[0].Name != "alias-a" || infos[1].Name != "alias-b" || !infos[2].Disabled {
+		t.Fatalf("unexpected models: %+v", infos)
+	}
+	if strings.Contains(fmt.Sprintf("%+v", infos), "endpoint-secret") || strings.Contains(fmt.Sprintf("%+v", infos), "SECRET_KEY_REF") {
+		t.Fatalf("catalog info leaked connection details: %+v", infos)
+	}
+	a := infos[0]
+	if a.Model != "custom-model" || a.Notes != "Good at tests" || !reflect.DeepEqual(a.Modalities, []string{"text"}) || a.ContextWindow != 12345 || a.Thinking != "adaptive" || a.Effort != "high" || !a.PriceInputKnown || a.PriceOutputKnown {
+		t.Fatalf("incorrect catalog info: %+v", a)
+	}
+	if infos[1].ContextWindow != 0 || infos[1].Pricing.Configured || infos[1].Thinking != "" || len(infos[1].Modalities) != 0 {
+		t.Fatalf("unknown/off metadata was inferred: %+v", infos[1])
 	}
 }
 

@@ -80,7 +80,7 @@ func TestPresetsOpenPM(t *testing.T) {
 
 func TestBuildModeToolsets(t *testing.T) {
 	d := depsFor(t)
-	d.AgentModels = func() []string { return []string{"fast", "smart"} }
+	d.AgentModels = func() []ModelCatalogEntry { return []ModelCatalogEntry{{Name: "fast"}, {Name: "smart"}} }
 	d.ResolveAgent = func(string) (AgentSpec, error) { return AgentSpec{}, nil }
 	// pm exposes planning/docs/backlog tools and switch_to_work, but NO
 	// implementation tools (no spawn_implementer / commit).

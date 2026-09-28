@@ -733,6 +733,7 @@ func TestModelBackendRPCs(t *testing.T) {
 	// form; editing through the RPC must preserve them too.
 	configured, _ := reg.GetModel("gpt")
 	configured.ContextWindow, configured.ContextSafeFraction = 123456, .7
+	configured.Notes, configured.Modalities = "Good for planning", []string{"text", "image"}
 	if err := reg.UpsertModel("gpt", configured, false); err != nil {
 		t.Fatal(err)
 	}
@@ -748,8 +749,8 @@ func TestModelBackendRPCs(t *testing.T) {
 	if err != nil || !got.Msg.Model.GetDisabled() || got.Msg.Model.Model != "gpt-4.1" {
 		t.Fatalf("legacy upsert did not preserve disabled state: model=%+v err=%v", got.Msg.GetModel(), err)
 	}
-	if current, _ := reg.GetModel("gpt"); current.ContextWindow != 123456 || current.ContextSafeFraction != .7 {
-		t.Fatalf("model edit discarded context budget: %+v", current)
+	if current, _ := reg.GetModel("gpt"); current.ContextWindow != 123456 || current.ContextSafeFraction != .7 || current.Notes != "Good for planning" || !reflect.DeepEqual(current.Modalities, []string{"text", "image"}) {
+		t.Fatalf("model edit discarded TOML-only capabilities: %+v", current)
 	}
 
 	// Removing a role-referenced model is rejected.

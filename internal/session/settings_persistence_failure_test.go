@@ -1,6 +1,7 @@
 package session
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -41,7 +42,7 @@ func TestSetThinkingFailureDoesNotPersistDefault(t *testing.T) {
 		t.Fatalf("SetThinking error = %v, want terminal log error", err)
 	}
 	after, ok := s.reg.GetModel("a")
-	if !ok || after != before {
+	if !ok || !reflect.DeepEqual(after, before) {
 		t.Fatalf("persisted model thinking changed after log failure: before=%+v after=%+v", before, after)
 	}
 }

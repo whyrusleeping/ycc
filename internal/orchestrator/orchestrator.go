@@ -137,8 +137,8 @@ type Deps struct {
 	// ResolveAgent resolves any configured logical model for a generic chat
 	// subagent. It is session-owned so live thinking overrides are honored.
 	ResolveAgent func(name string) (AgentSpec, error)
-	// AgentModels lists configured logical model names for the generic spawn tool.
-	AgentModels func() []string
+	// AgentModels describes enabled logical models for the generic spawn tool.
+	AgentModels func() []ModelCatalogEntry
 	// ReviewTiers lists the review tiers available in this project so the
 	// spawn_reviewers tool description can name them (custom tiers included).
 	// Nil-safe: when unset the description falls back to the built-in blurb.

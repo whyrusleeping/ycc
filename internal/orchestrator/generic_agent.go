@@ -27,14 +27,99 @@ state blockers or missing decisions in your report.`
 
 func genericReadOnlyEnforced() bool { return sandbox.Available() != sandbox.None }
 
+// ModelCatalogEntry contains only the public, delegation-relevant parts of a
+// logical model's configuration. Endpoint and credential details never enter it.
+type ModelCatalogEntry struct {
+	Name, Backend, Model, Auth, Notes string
+	Modalities                        []string
+	ContextWindow                     int
+	Thinking, Effort                  string
+	Priced                            bool
+	PriceInput, PriceOutput           float64
+	PriceInputKnown, PriceOutputKnown bool
+}
+
+func compactField(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+func catalogLine(m ModelCatalogEntry) string {
+	identity := compactField(m.Backend) + "/" + compactField(m.Model)
+	if m.Auth == "oauth" {
+		identity += " (subscription)"
+	}
+	ctx := "ctx unknown"
+	if m.ContextWindow > 0 {
+		ctx = fmt.Sprintf("ctx %d", m.ContextWindow)
+	}
+	reasoning := "off"
+	if m.Thinking != "" {
+		reasoning = compactField(m.Thinking) + "/" + compactField(m.Effort)
+	}
+	price := "price unknown"
+	if m.Priced {
+		in, out := "unknown", "unknown"
+		if m.PriceInputKnown {
+			in = fmt.Sprintf("$%g", m.PriceInput)
+		}
+		if m.PriceOutputKnown {
+			out = fmt.Sprintf("$%g", m.PriceOutput)
+		}
+		price = in + "/" + out + " per Mtok in/out"
+	}
+	modalities := "modalities unknown"
+	if len(m.Modalities) > 0 {
+		parts := make([]string, len(m.Modalities))
+		for i, v := range m.Modalities {
+			parts[i] = compactField(v)
+		}
+		modalities = "modalities " + strings.Join(parts, ",")
+	}
+	line := fmt.Sprintf("%s: %s; %s; reasoning %s; %s; %s", compactField(m.Name), identity, ctx, reasoning, price, modalities)
+	if note := []rune(compactField(m.Notes)); len(note) > 0 {
+		if len(note) > 160 {
+			note = append(note[:159], '…')
+		}
+		line += "; operator note: " + fmt.Sprintf("%q", string(note))
+	}
+	return line
+}
+
 func genericModelProp(d *Deps) map[string]any {
 	p := tools.StrProp("configured logical model to use for this agent")
-	if d.AgentModels != nil {
-		if names := d.AgentModels(); len(names) > 0 {
-			p["enum"] = names
-			p["description"] = "configured logical model to use; one of: " + strings.Join(names, ", ")
-		}
+	if d.AgentModels == nil {
+		return p
 	}
+	models := d.AgentModels()
+	if len(models) == 0 {
+		p["description"] = "No enabled logical models at tool creation; spawn validation uses the live registry."
+		return p
+	}
+	names := make([]string, len(models))
+	for i, m := range models {
+		names[i] = m.Name
+	}
+	p["enum"] = names
+	const maxDescription = 2500
+	const maxDetails = 16
+	const header = "Enabled models at tool creation (spawn validation is live; operator notes are advice):"
+	var b strings.Builder
+	b.WriteString(header)
+	shown := 0
+	for _, m := range models {
+		if shown == maxDetails {
+			break
+		}
+		line := "\n" + catalogLine(m)
+		// Reserve space for the overflow indicator, even if names/notes are long.
+		if b.Len()+len(line)+80 > maxDescription {
+			break
+		}
+		b.WriteString(line)
+		shown++
+	}
+	if omitted := len(models) - shown; omitted > 0 {
+		fmt.Fprintf(&b, "\n+%d more (details omitted; names in enum)", omitted)
+	}
+	p["description"] = b.String()
 	return p
 }
 

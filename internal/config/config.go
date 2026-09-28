@@ -38,6 +38,10 @@ type Model struct {
 	BaseURL string `toml:"base_url"`
 	Model   string `toml:"model"`
 	KeyEnv  string `toml:"key_env"`
+	// Operator-supplied suitability advice and supported input modalities. Unset
+	// modalities are unknown, not inferred from the backend or model id.
+	Notes      string   `toml:"notes,omitempty"`
+	Modalities []string `toml:"modalities,omitempty"`
 
 	// Disabled keeps a backend configured while making it unavailable for new
 	// inference. The negative flag preserves the enabled-by-default behaviour of
@@ -1408,12 +1412,19 @@ func (r *Registry) ModelThinkingLevel(name string) string {
 }
 
 type ModelInfo struct {
-	Name     string
-	Backend  string
-	Model    string
-	Auth     string
-	Disabled bool
-	Pricing  Pricing // resolved per-model pricing; Configured=false ⇒ unpriced
+	Name          string
+	Backend       string
+	Model         string
+	Auth          string
+	Disabled      bool
+	Notes         string
+	Modalities    []string
+	ContextWindow int
+	Thinking      string
+	Effort        string
+	Pricing       Pricing // resolved per-model pricing; Configured=false ⇒ unpriced
+	// Partial explicit pricing leaves unset classes unknown (not free).
+	PriceInputKnown, PriceOutputKnown bool
 }
 
 // GetModel returns a copy of the model record stored under name (for editing in
@@ -1737,7 +1748,19 @@ func (r *Registry) Models() []ModelInfo {
 	out := make([]ModelInfo, 0, len(names))
 	for _, name := range names {
 		m := r.cfg.Models[name]
-		out = append(out, ModelInfo{Name: name, Backend: m.Backend, Model: m.Model, Auth: m.Auth, Disabled: m.Disabled, Pricing: m.EffectivePricing()})
+		window, _ := m.ContextBudget()
+		th := m.ResolveThinking()
+		p := m.EffectivePricing()
+		inputKnown, outputKnown := p.Configured, p.Configured
+		if m.Pricing().Configured {
+			inputKnown, outputKnown = m.PriceInput != nil, m.PriceOutput != nil
+		}
+		out = append(out, ModelInfo{
+			Name: name, Backend: m.Backend, Model: m.Model, Auth: m.Auth, Disabled: m.Disabled,
+			Notes: m.Notes, Modalities: append([]string(nil), m.Modalities...), ContextWindow: window,
+			Thinking: th.Thinking, Effort: th.Effort, Pricing: p,
+			PriceInputKnown: inputKnown, PriceOutputKnown: outputKnown,
+		})
 	}
 	return out
 }

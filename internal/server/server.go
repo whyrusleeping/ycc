@@ -936,11 +936,13 @@ func (s *Server) UpsertModel(_ context.Context, req *connect.Request[v1.UpsertMo
 	}
 	model := modelConfigToConfig(mc)
 	if current, ok := s.mgr.GetModel(mc.Name); ok {
-		// Context budgets are currently a TOML-level model capability rather than
-		// an interactive connection-form field. Preserve them when that form edits
+		// Context budgets and operator capabilities are TOML-level model fields,
+		// not interactive connection-form fields. Preserve them when that form edits
 		// another part of the model record.
 		model.ContextWindow = current.ContextWindow
 		model.ContextSafeFraction = current.ContextSafeFraction
+		model.Notes = current.Notes
+		model.Modalities = current.Modalities
 		if mc.Disabled == nil {
 			// Older clients do not know the availability field. Preserve an existing
 			// disabled state when they edit another part of the full model record.
