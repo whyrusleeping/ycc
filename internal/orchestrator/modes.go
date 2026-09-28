@@ -82,8 +82,8 @@ func BuildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 	switch mode {
 	case "chat":
 		reg.Add(tools.Editing(ws)...)
-		reg.Add(listBacklog(d), getTask(d), coordinatorMutation(d, createTask(d)), coordinatorMutation(d, updateTask(d)),
-			askUser(d), coordinatorMutation(d, remember(d)), spawnAgent(d), sendToAgent(d))
+		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d),
+			askUser(d), remember(d), spawnAgent(d), sendToAgent(d))
 		return reg, sys(chatModeSystem, unattended, d.Workspace)
 	case "pm":
 		// pm maintains the project's design docs (plain files) so it keeps
@@ -91,8 +91,8 @@ func BuildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 		// prompt enforces a soft "no code edits" boundary (hard enforcement is
 		// future work).
 		reg.Add(tools.Editing(ws)...)
-		reg.Add(listBacklog(d), getTask(d), coordinatorMutation(d, createTask(d)), coordinatorMutation(d, updateTask(d)),
-			coordinatorMutation(d, proposePlan(d)), switchToWork(d), askUser(d), coordinatorMutation(d, remember(d)), tools.Finish())
+		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d),
+			coordinatorMutation(d, proposePlan(d)), switchToWork(d), askUser(d), remember(d), tools.Finish())
 		return reg, sys(pmModeSystem, unattended, d.Workspace)
 	case "integrate":
 		// Integration recovery is deliberately scoped to the linked worktree and

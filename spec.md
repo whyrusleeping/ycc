@@ -419,7 +419,7 @@ Generic agent handles are live session state and are not reconstructed after dae
 
 A daemon-wide lease keyed by the canonical, symlink-resolved worktree permits only one mutating
 execution scope across sessions. Direct coordinator operations, mutating delegated agents (for their
-lifetime), file tools, backlog/document writes, and Git commits participate. A delegated worker reuses
+lifetime), file tools, plan writes, and Git commits participate. A delegated worker reuses
 only its own scoped token for synchronous operations. The lease is deliberately best-effort
 coordination rather than strict exclusion: shell commands (foreground or background) take no lease
 and are not counted as mutating jobs, so a long build, test, or watcher never blocks another session
@@ -429,6 +429,10 @@ remote-tracking refs. Refusals identify the owner and direct callers to
 wait, stop it, or use a separate workstream. Read-only work can fan out, and distinct worktrees can
 mutate independently. Backlog reads remain available while another scope owns the tree: the exceptional
 duplicate-ID self-repair acquires a lease only after detecting duplicates and defers repair when owned.
+Structured backlog and memory writes (task create/update from any client or the coordinator, quick-add
+capture, `remember`) take no lease either: they are atomic writes serialized by the docs store's own
+lock, and the user must always be able to groom the backlog — e.g. promote proposed → todo — while a
+session or agent is working. Safeguards must not block cheap, safe user bookkeeping.
 `docs/design/async-jobs.md` explains the single-delivery and single-writer
 rationale.
 

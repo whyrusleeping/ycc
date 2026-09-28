@@ -3444,25 +3444,12 @@ func (m *Manager) Backlog(project string) (*docs.Store, error) {
 	return m.backlogStore(absWS), nil
 }
 
-// WithBacklogMutation runs fn while holding this daemon's mutation lease for the
-// project's canonical worktree. RPC mutation entry points use it instead of
-// relying only on docs.Store's process-local file lock.
-func (m *Manager) WithBacklogMutation(project, owner string, fn func(*docs.Store) error) error {
-	ws, err := m.resolveProjectWorkspace(project)
-	if err != nil {
-		return err
-	}
-	absWS, err := filepath.Abs(ws)
-	if err != nil {
-		return fmt.Errorf("resolve workspace: %w", err)
-	}
-	lease, err := m.ownership.Acquire(absWS, m.ownership.NewToken(owner))
-	if err != nil {
-		return err
-	}
-	defer lease.Release()
-	return fn(m.backlogStore(absWS))
-}
+// Ownership exposes the daemon-wide worktree execution-lease service (used by
+// tests and diagnostics to observe or simulate a busy worktree). Structured
+// backlog/memory writes intentionally do not acquire it: they are atomic,
+// serialized by the docs.Store directory lock, and must stay available to the
+// user while a session or agent is working.
+func (m *Manager) Ownership() *workspacelease.Service { return m.ownership }
 
 // CaptureBacklogItem runs the lightweight, off-stream "quick-add backlog item"
 // capture agent for a project: it turns a natural-language

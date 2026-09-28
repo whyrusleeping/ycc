@@ -101,9 +101,13 @@ foreground or background, including handed-off watchers — take no worktree lea
 as mutating jobs. Most shell work is reads, builds, and tests that the guard cannot distinguish from
 mutation; leasing it serialized every session and agent behind whoever was running `go test` (even
 blocking new sessions from starting), which cost far more than the rare clobber it prevented. The
-lease therefore covers file tools, mutating agent lifetimes, backlog writes, and commits only; a
+lease therefore covers file tools, mutating agent lifetimes, plan writes, and commits only; a
 shell that does write races like any other unleased writer, and changeset attribution for work
-overlapping a live shell is correspondingly approximate.
+overlapping a live shell is correspondingly approximate. Structured backlog/memory writes are also
+unleased for the same reason: leasing them made it impossible to promote a proposed task while any
+session was running. They are atomic and serialized by the docs store lock; the residual risk is a
+concurrent raw Edit of the same task file losing one side (last writer wins), and a user's backlog
+edit made mid-session may land in that session's next commit.
 
 ## Rejected alternatives
 

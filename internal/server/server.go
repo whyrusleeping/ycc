@@ -1256,10 +1256,13 @@ func (s *Server) GetTask(_ context.Context, req *connect.Request[v1.GetTaskReque
 // UpdateTask changes a backlog task's editable frontmatter or Markdown body.
 // Unset fields are left untouched;
 // a request with NO mutation fields set is a valid "refresh" that re-reads the
-// task file (used after hand-edits in $EDITOR). The manager wraps the Store
-// update in the same daemon-wide worktree lease used by sessions and agents.
+// task file (used after hand-edits in $EDITOR). Backlog edits deliberately do
+// NOT take the worktree execution lease: they are small atomic writes
+// serialized by the docs.Store directory lock, and the user must be able to
+// groom the backlog (e.g. promote proposed → todo) while a session is working.
 func (s *Server) UpdateTask(_ context.Context, req *connect.Request[v1.UpdateTaskRequest]) (*connect.Response[v1.UpdateTaskResponse], error) {
-	if _, err := s.mgr.Backlog(req.Msg.Project); err != nil {
+	store, err := s.mgr.Backlog(req.Msg.Project)
+	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	m := req.Msg
@@ -1295,40 +1298,30 @@ func (s *Server) UpdateTask(_ context.Context, req *connect.Request[v1.UpdateTas
 		}
 	}
 	specRefs := cleanTaskStrings(m.SpecRefs)
-	var t *docs.Task
-	var tasks []*docs.Task
-	var mutationErr, listErr error
-	if err := s.mgr.WithBacklogMutation(m.Project, "task update RPC", func(store *docs.Store) error {
-		t, mutationErr = store.Update(m.Id, func(t *docs.Task) {
-			if m.Status != nil {
-				t.Status = docs.Status(m.GetStatus())
-			}
-			if m.Priority != nil {
-				t.Priority = int(m.GetPriority())
-			}
-			if m.Title != nil {
-				t.Title = strings.TrimSpace(m.GetTitle())
-			}
-			if m.Body != nil {
-				t.Body = m.GetBody()
-			}
-			if m.GetReplaceDependsOn() {
-				t.DependsOn = dependsOn
-			}
-			if m.GetReplaceSpecRefs() {
-				t.SpecRefs = specRefs
-			}
-		})
-		if mutationErr == nil {
-			tasks, listErr = store.ListMetadata()
+	t, err := store.Update(m.Id, func(t *docs.Task) {
+		if m.Status != nil {
+			t.Status = docs.Status(m.GetStatus())
 		}
-		return nil
-	}); err != nil {
-		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("update task: %w", err))
+		if m.Priority != nil {
+			t.Priority = int(m.GetPriority())
+		}
+		if m.Title != nil {
+			t.Title = strings.TrimSpace(m.GetTitle())
+		}
+		if m.Body != nil {
+			t.Body = m.GetBody()
+		}
+		if m.GetReplaceDependsOn() {
+			t.DependsOn = dependsOn
+		}
+		if m.GetReplaceSpecRefs() {
+			t.SpecRefs = specRefs
+		}
+	})
+	if err != nil {
+		return nil, connect.NewError(connect.CodeNotFound, err)
 	}
-	if mutationErr != nil {
-		return nil, connect.NewError(connect.CodeNotFound, mutationErr)
-	}
+	tasks, listErr := store.ListMetadata()
 	if listErr != nil {
 		return nil, connect.NewError(connect.CodeInternal, listErr)
 	}
@@ -1361,10 +1354,12 @@ func cleanTaskStrings(values []string) []string {
 
 // CreateTask adds a new task to the backlog. It composes the same
 // canonical scaffold as the capture agent (docs.TaskBody) and assigns the next
-// id via the docs Store under the daemon-wide worktree mutation lease. Used by
+// id via the docs Store (serialized by its directory lock; like UpdateTask it
+// does not wait on the worktree execution lease). Used by
 // `ycc task add` when a daemon is available.
 func (s *Server) CreateTask(_ context.Context, req *connect.Request[v1.CreateTaskRequest]) (*connect.Response[v1.CreateTaskResponse], error) {
-	if _, err := s.mgr.Backlog(req.Msg.Project); err != nil {
+	store, err := s.mgr.Backlog(req.Msg.Project)
+	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	m := req.Msg
@@ -1377,21 +1372,11 @@ func (s *Server) CreateTask(_ context.Context, req *connect.Request[v1.CreateTas
 	} else if prio < 1 || prio > 5 {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("priority %d out of range (1..5)", prio))
 	}
-	var t *docs.Task
-	var tasks []*docs.Task
-	var mutationErr, listErr error
-	if err := s.mgr.WithBacklogMutation(m.Project, "task creation RPC", func(store *docs.Store) error {
-		t, mutationErr = store.Create(strings.TrimSpace(m.Title), docs.TaskBody(m.Body), prio, m.DependsOn, m.SpecRefs)
-		if mutationErr == nil {
-			tasks, listErr = store.ListMetadata()
-		}
-		return nil
-	}); err != nil {
-		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("create task: %w", err))
+	t, err := store.Create(strings.TrimSpace(m.Title), docs.TaskBody(m.Body), prio, m.DependsOn, m.SpecRefs)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	if mutationErr != nil {
-		return nil, connect.NewError(connect.CodeInternal, mutationErr)
-	}
+	tasks, listErr := store.ListMetadata()
 	if listErr != nil {
 		return nil, connect.NewError(connect.CodeInternal, listErr)
 	}

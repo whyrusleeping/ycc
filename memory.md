@@ -44,6 +44,7 @@
 - iOS client: in-repo clients/ios (XcodeGen + YccKit SPM, iPhone-only iOS 17+, committed protos), ntfy + ycc:// deep links, work loop daemon-side.
 - iOS `in_review` means "implemented, awaiting on-device use" — sweep during backlog audits; such work may sit UNCOMMITTED across sessions.
 - iOS project rename/removal live only in drawer rows' long-press context menu — intentional.
+- 2026-09-28 [user-stated guidance] Design safeguards with UX in mind: locks/leases must never block cheap, safe user actions (e.g. promoting a proposed task while a session runs) — backlog/memory writes rely on the docs.Store lock, not the worktree execution lease. <!-- ycc-memory id=m-dlr1joy29rb1 kind=user_guidance session=s_fbe8d137885a0645 event=2 actor=user scope=workspace classified=model -->
 
 ## Lessons learned
 

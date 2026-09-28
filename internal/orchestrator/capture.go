@@ -136,7 +136,9 @@ func RunCapture(ctx context.Context, cd CaptureDeps, rec event.Recorder, descrip
 
 	reg := tools.New()
 	reg.Add(tools.ReadOnly(ws)...)
-	reg.Add(listBacklog(d), getTask(d), coordinatorMutation(d, captureCreateTask(d)), captureClarify())
+	// Quick-add must work while a session is busy in this worktree, so task
+	// creation relies on the docs.Store lock rather than the execution lease.
+	reg.Add(listBacklog(d), getTask(d), captureCreateTask(d), captureClarify())
 
 	loop := &engine.Loop{
 		Client:    cd.Client,

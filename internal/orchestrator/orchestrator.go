@@ -329,8 +329,12 @@ func CoordinatorTools(d *Deps, ws *tools.Workspace, direct bool) *tools.Registry
 	if !direct {
 		reg.Add(spawnImplementer(d), sendToImplementer(d))
 	}
-	reg.Add(askUser(d), coordinatorMutation(d, commitTool(d)), coordinatorMutation(d, updateTask(d)),
-		coordinatorMutation(d, createTask(d)), coordinatorMutation(d, remember(d)), tools.Finish())
+	// Backlog and memory tools are structured, atomic docs.Store writes
+	// serialized by the store's directory lock; they deliberately skip the
+	// worktree execution lease so bookkeeping never fails just because a
+	// background implementer/agent (or another session) is mid-run.
+	reg.Add(askUser(d), coordinatorMutation(d, commitTool(d)), updateTask(d),
+		createTask(d), remember(d), tools.Finish())
 	return reg
 }
 
