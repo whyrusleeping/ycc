@@ -44,11 +44,22 @@ type Server struct {
 	subUsage   *subusage.Service
 	viewMu     sync.Mutex
 	viewStores map[string]*sessionview.Store
+	// viewKeepalive is how long a SubscribeSessionView stream may stay silent
+	// before an empty SessionViewUpdate is sent (see sessionViewKeepalive).
+	viewKeepalive time.Duration
 }
+
+// sessionViewKeepalive bounds silence on SubscribeSessionView. Quiet sessions
+// (idle, waiting on a question) otherwise send nothing, and mobile clients'
+// transport idle timers (iOS URLSession's per-task inactivity timeout, proxy /
+// NAT idle reaping on tunnelled links) then kill the stream, forcing a
+// reconnect plus a full snapshot re-download. An update with neither state nor
+// transient event is a no-op for clients.
+const sessionViewKeepalive = 20 * time.Second
 
 // New returns a Server backed by mgr.
 func New(mgr *session.Manager) *Server {
-	return &Server{mgr: mgr, subUsage: subusage.NewService(nil), viewStores: make(map[string]*sessionview.Store)}
+	return &Server{mgr: mgr, subUsage: subusage.NewService(nil), viewStores: make(map[string]*sessionview.Store), viewKeepalive: sessionViewKeepalive}
 }
 
 // ListModes returns the selectable session modes and opening-prompt presets for
@@ -108,26 +119,43 @@ func (s *Server) StartSession(_ context.Context, req *connect.Request[v1.StartSe
 }
 
 // ListProjects returns the registered projects (name + path) for the picker.
+// Each project's local git status and onboarding check shell out / hit disk,
+// so they run concurrently (bounded) rather than serially: clients call this
+// on every return to their home screen.
 func (s *Server) ListProjects(_ context.Context, _ *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error) {
-	var projs []*v1.ProjectInfo
-	for _, p := range s.mgr.Projects() {
-		info := &v1.ProjectInfo{
-			Name: p.Name, Path: p.Path,
-			NeedsOnboarding: proto.Bool(docs.NeedsOnboarding(p.Path)),
-		}
-		if status := s.mgr.ProjectGitStatus(p.Path); status != nil {
-			info.Git = &v1.GitStatus{
-				Branch: status.Branch, HasUpstream: status.HasUpstream,
-				Ahead: int32(status.Ahead), Behind: int32(status.Behind), Dirty: status.Dirty,
-				LastFetchUnix: status.LastFetch.Unix(), FetchError: status.FetchError,
-			}
-			if status.LastFetch.IsZero() {
-				info.Git.LastFetchUnix = 0
-			}
-		}
-		projs = append(projs, info)
+	projects := s.mgr.Projects()
+	projs := make([]*v1.ProjectInfo, len(projects))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 8)
+	for i, p := range projects {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			projs[i] = s.projectInfo(p.Name, p.Path)
+		}()
 	}
+	wg.Wait()
 	return connect.NewResponse(&v1.ListProjectsResponse{Projects: projs}), nil
+}
+
+func (s *Server) projectInfo(name, path string) *v1.ProjectInfo {
+	info := &v1.ProjectInfo{
+		Name: name, Path: path,
+		NeedsOnboarding: proto.Bool(docs.NeedsOnboarding(path)),
+	}
+	if status := s.mgr.ProjectGitStatus(path); status != nil {
+		info.Git = &v1.GitStatus{
+			Branch: status.Branch, HasUpstream: status.HasUpstream,
+			Ahead: int32(status.Ahead), Behind: int32(status.Behind), Dirty: status.Dirty,
+			LastFetchUnix: status.LastFetch.Unix(), FetchError: status.FetchError,
+		}
+		if status.LastFetch.IsZero() {
+			info.Git.LastFetchUnix = 0
+		}
+	}
+	return info
 }
 
 // AddProject registers a workspace under an optional name.
@@ -466,11 +494,21 @@ func (s *Server) SubscribeSessionView(ctx context.Context, req *connect.Request[
 	ch, cancel := sess.Log().Subscribe(int(req.Msg.FromSeq))
 	defer cancel()
 	delivered := req.Msg.FromSeq
+	keepalive := time.NewTimer(s.viewKeepalive)
+	defer keepalive.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-keepalive.C:
+			if err := stream.Send(&v1.SessionViewUpdate{}); err != nil {
+				return err
+			}
+			keepalive.Reset(s.viewKeepalive)
 		case ev, open := <-ch:
+			// Any traffic defers the next keepalive. Go 1.23+ timers make
+			// Reset safe without draining.
+			keepalive.Reset(s.viewKeepalive)
 			if !open {
 				return nil
 			}

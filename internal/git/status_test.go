@@ -88,3 +88,27 @@ func TestStatusAheadBehind(t *testing.T) {
 		t.Fatalf("after remote advance = %+v, want ahead 1 behind 1", s)
 	}
 }
+
+// TestParseStatusV2 covers the porcelain v2 header shapes Status relies on:
+// detached HEAD, a configured-but-gone upstream (no branch.ab), and entries of
+// every kind marking the tree dirty.
+func TestParseStatusV2(t *testing.T) {
+	cases := []struct {
+		name string
+		out  string
+		want SyncStatus
+	}{
+		{"clean tracking", "# branch.oid abc\n# branch.head main\n# branch.upstream origin/main\n# branch.ab +2 -3\n",
+			SyncStatus{Branch: "main", HasUpstream: true, Ahead: 2, Behind: 3}},
+		{"detached", "# branch.oid abc\n# branch.head (detached)\n", SyncStatus{}},
+		{"gone upstream", "# branch.oid abc\n# branch.head feat\n# branch.upstream origin/feat\n",
+			SyncStatus{Branch: "feat"}},
+		{"untracked", "# branch.oid abc\n# branch.head main\n? new.txt\n", SyncStatus{Branch: "main", Dirty: true}},
+		{"modified", "# branch.head main\n1 .M N... 100644 100644 100644 a b f.go\n", SyncStatus{Branch: "main", Dirty: true}},
+	}
+	for _, c := range cases {
+		if got := parseStatusV2(c.out); got != c.want {
+			t.Errorf("%s: got %+v, want %+v", c.name, got, c.want)
+		}
+	}
+}

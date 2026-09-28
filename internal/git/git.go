@@ -176,30 +176,49 @@ type SyncStatus struct {
 
 // Status returns a cheap, local SyncStatus (see the type doc). Ahead/Behind are
 // zero when there is no upstream tracking branch (HasUpstream false).
+//
+// It is a single `git status --porcelain=v2 --branch` process: the branch
+// headers carry the branch name, upstream and ahead/behind counts, and any
+// entry line means staged, unstaged, or untracked changes. The command runs
+// with --no-optional-locks so this frequently polled, read-only snapshot
+// never contends for index.lock with a concurrent agent commit. A missing or
+// gone upstream (no `branch.ab` header) is a normal state and reports
+// HasUpstream=false; git failures are swallowed into the zero value.
 func (r *Repo) Status() (SyncStatus, error) {
+	out, err := r.run("--no-optional-locks", "status", "--porcelain=v2", "--branch")
+	if err != nil {
+		return SyncStatus{}, nil
+	}
+	return parseStatusV2(out), nil
+}
+
+// parseStatusV2 interprets `git status --porcelain=v2 --branch` output.
+func parseStatusV2(out string) SyncStatus {
 	var s SyncStatus
-	// Current branch (empty/"HEAD" when detached).
-	if out, err := r.run("rev-parse", "--abbrev-ref", "HEAD"); err == nil {
-		if b := strings.TrimSpace(out); b != "HEAD" {
-			s.Branch = b
+	for _, line := range strings.Split(out, "\n") {
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "# ") {
+			s.Dirty = true
+			continue
+		}
+		key, value, _ := strings.Cut(strings.TrimPrefix(line, "# "), " ")
+		switch key {
+		case "branch.head":
+			if value != "(detached)" {
+				s.Branch = value
+			}
+		case "branch.ab":
+			// "+<ahead> -<behind>"
+			var ahead, behind int
+			if n, _ := fmt.Sscanf(value, "+%d -%d", &ahead, &behind); n == 2 {
+				s.HasUpstream = true
+				s.Ahead, s.Behind = ahead, behind
+			}
 		}
 	}
-	// Dirty check — porcelain lists staged, unstaged, and untracked changes.
-	if out, err := r.run("status", "--porcelain"); err == nil {
-		s.Dirty = strings.TrimSpace(out) != ""
-	}
-	// Ahead/behind vs. upstream. `git rev-list --count --left-right @{u}...HEAD`
-	// prints "<behind>\t<ahead>". A missing upstream is a normal, non-fatal
-	// state (detached HEAD, no tracking branch), so we swallow the error.
-	if out, err := r.run("rev-list", "--count", "--left-right", "@{upstream}...HEAD"); err == nil {
-		fields := strings.Fields(strings.TrimSpace(out))
-		if len(fields) == 2 {
-			s.HasUpstream = true
-			fmt.Sscanf(fields[0], "%d", &s.Behind)
-			fmt.Sscanf(fields[1], "%d", &s.Ahead)
-		}
-	}
-	return s, nil
+	return s
 }
 
 // Fetch updates remote-tracking refs from the branch's upstream remote (or
