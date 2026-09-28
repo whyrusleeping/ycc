@@ -113,6 +113,28 @@ Pass condition: in-app taps, deep links, and notifications share one authenticat
 Pass condition: file references in agent output are one tap from their contents, and nothing
 offers editing.
 
+### 7. Fast session open (0404)
+
+Use a long live session over the real (cellular/ngrok) link, with Instruments attached for step 5.
+
+1. Open a session, go back, and reopen it within five minutes: the transcript appears instantly
+   (no spinner, no "loading…"), the title shows live, and new agent output keeps streaming. In
+   `/debug/latency` the reopen shows a SubscribeSessionView but no GetSessionView.
+2. Leave a session (live, then separately a persisted one); from another client make it ask a
+   question (re-open the persisted one first). Reopen from the list and from the ntfy tap: the
+   question banner/sheet appears, and the persisted one switches to live.
+3. Tap a commit row (and View working changes) to push a diff, wait, then go Back: the stream
+   stayed live (new output arrived meanwhile, no reload/scroll jump).
+4. Scroll up and tap Load earlier once shortly after opening (prefetched page, instant) and again
+   (fetched page): the row you were looking at stays in place both times.
+5. While a turn streams, record SwiftUI view body counts: the session toolbar/banners/menus and the
+   durable rows are not re-evaluated per streamed snapshot (only the live tail section is).
+6. Switch server profile (or disconnect/reconnect) and reopen a previously viewed session: it
+   loads fresh from the new server; nothing from the old one is shown or keeps streaming.
+
+Pass condition: reopening is instant and resumes streaming, questions raised while away are
+always visible, and pushed views/paging never lose the stream or the scroll position.
+
 ## Release result
 
 Record device/simulator model, OS version, daemon commit, app commit, and any failed checklist
