@@ -25,6 +25,54 @@ public final class LatencyDiagnostics: @unchecked Sendable {
         public let rows: Int
     }
 
+    /// Connection-level facts for one request, from `URLSessionTaskMetrics`:
+    /// which HTTP version was negotiated, whether a pooled connection was
+    /// reused, and where the time went. Lets a device confirm HTTP/2 + reuse
+    /// over a remote tunnel.
+    public struct Transport: Sendable {
+        public let procedure: String
+        public let requestID: String
+        /// ALPN protocol, e.g. `h2`, `http/1.1`, `h3`; empty when unknown.
+        public let networkProtocol: String
+        public let reusedConnection: Bool
+        public let dnsMS: Double?
+        /// TCP connect through TLS completion (nil on a reused connection).
+        public let connectMS: Double?
+        public let tlsMS: Double?
+        /// Request start → first response byte (network + server time).
+        public let requestToResponseMS: Double?
+        /// First → last response byte.
+        public let responseTransferMS: Double?
+        /// Whole task duration as measured by URLSession.
+        public let taskMS: Double
+
+        public init(procedure: String, requestID: String, networkProtocol: String,
+                    reusedConnection: Bool, dnsMS: Double?, connectMS: Double?, tlsMS: Double?,
+                    requestToResponseMS: Double?, responseTransferMS: Double?, taskMS: Double) {
+            self.procedure = procedure
+            self.requestID = requestID
+            self.networkProtocol = networkProtocol
+            self.reusedConnection = reusedConnection
+            self.dnsMS = dnsMS
+            self.connectMS = connectMS
+            self.tlsMS = tlsMS
+            self.requestToResponseMS = requestToResponseMS
+            self.responseTransferMS = responseTransferMS
+            self.taskMS = taskMS
+        }
+    }
+
+    /// Aggregate transport facts: counts per negotiated protocol and how often
+    /// a pooled connection was reused versus freshly established.
+    public struct TransportSummary: Sendable, Equatable {
+        public let count: Int
+        public let protocols: [String: Int]
+        public let reused: Int
+        public let newConnections: Int
+        /// Median connect (TCP+TLS) time over requests that opened a connection.
+        public let p50ConnectMS: Double?
+    }
+
     public struct Summary: Sendable {
         public let count: Int
         public let p50MS: Double
@@ -37,6 +85,7 @@ public final class LatencyDiagnostics: @unchecked Sendable {
     private let capacity: Int
     private var requests: [Request] = []
     private var stages: [Stage] = []
+    private var transports: [Transport] = []
 
     public init(capacity: Int = 256) {
         self.capacity = max(1, capacity)
@@ -54,6 +103,36 @@ public final class LatencyDiagnostics: @unchecked Sendable {
         defer { lock.unlock() }
         stages.append(stage)
         if stages.count > capacity { stages.removeFirst() }
+    }
+
+    public func record(_ transport: Transport) {
+        lock.lock()
+        defer { lock.unlock() }
+        transports.append(transport)
+        if transports.count > capacity { transports.removeFirst() }
+    }
+
+    public func transportSnapshot() -> [Transport] {
+        lock.lock()
+        defer { lock.unlock() }
+        return transports
+    }
+
+    public func transportSummary() -> TransportSummary {
+        let data = transportSnapshot()
+        var protocols: [String: Int] = [:]
+        var reused = 0
+        var connects: [Double] = []
+        for transport in data {
+            protocols[transport.networkProtocol.isEmpty ? "unknown" : transport.networkProtocol, default: 0] += 1
+            if transport.reusedConnection { reused += 1 }
+            if let connect = transport.connectMS { connects.append(connect) }
+        }
+        connects.sort()
+        return TransportSummary(
+            count: data.count, protocols: protocols, reused: reused,
+            newConnections: data.count - reused,
+            p50ConnectMS: connects.isEmpty ? nil : connects[(connects.count * 50 + 99) / 100 - 1])
     }
 
     public func snapshot() -> (requests: [Request], stages: [Stage]) {

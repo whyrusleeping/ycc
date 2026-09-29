@@ -30,6 +30,10 @@ public final class SessionReadStore {
     private var marks: [String: String] = [:]
     /// RFC3339 timestamp of the newest session activity ever shown in a list.
     private var watermark: String?
+    /// Bumped whenever any mark (or the watermark) changes. Observers that cache
+    /// unread-derived state — the drawer's per-project badges — key their cache
+    /// on this instead of re-evaluating every row on every render.
+    public private(set) var revision = 0
 
     /// Backing store, or `nil` for a memory-only store (tests, previews, and any
     /// model constructed without the app's shared store).
@@ -199,6 +203,7 @@ public final class SessionReadStore {
     // MARK: - Persistence
 
     private func persist() {
+        revision &+= 1
         evictIfNeeded()
         defaults?.set(marks, forKey: key)
         if let watermark {

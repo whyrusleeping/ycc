@@ -10,8 +10,37 @@ import YccProto
 /// outer JSON document around the transcript's per-event JSON payloads.
 public final class YccClient: Sendable {
     /// The underlying generated service client, for RPCs not yet wrapped here.
+    /// Calls through it carry the bounded ``unaryTimeout`` deadline.
     public let generated: Ycc_V1_SessionServiceClient
+    /// The same service with the longer ``bulkTimeout`` deadline, for unary
+    /// RPCs that legitimately run long: large transcript/file payloads over a
+    /// slow link, uploads with pictures, and daemon-side mutations (merges,
+    /// session start/stop/resume/rollover, answers that reopen a persisted
+    /// session, model probes) that must not be cut short.
+    public let generatedBulk: Ycc_V1_SessionServiceClient
+    /// The same service with no deadline, for long-lived server streams.
+    public let generatedStreaming: Ycc_V1_SessionServiceClient
     public let latency: LatencyDiagnostics
+
+    /// Deadline for ordinary unary calls. Without one, a request stuck on a
+    /// dead pooled connection would only fail after URLSession's (now long)
+    /// idle timeout. Also sent to the daemon as Connect-Timeout-Ms.
+    public static let unaryTimeout: TimeInterval = 20
+    /// Deadline for ``generatedBulk`` calls.
+    public static let bulkTimeout: TimeInterval = 120
+    /// URLSession's per-request idle timer (time allowed between data
+    /// packets). The 60 s default killed quiet SubscribeSessionView streams
+    /// every minute, forcing a reconnect and a full GetSessionView re-download;
+    /// unary calls are bounded by their Connect deadlines instead.
+    static let requestIdleTimeout: TimeInterval = 3_600
+    /// Upper bound on any single task, streams included (they reconnect).
+    static let resourceTimeout: TimeInterval = 24 * 3_600
+    /// A live stream is considered dead after this long without any message
+    /// and is failed as a transient error so the caller reconnects. The daemon
+    /// sends a keepalive after ~20 s of silence, so 65 s means ~3 missed
+    /// keepalives; against a daemon without keepalives this degrades to the old
+    /// URLSession 60 s idle-timeout reconnect on quiet sessions.
+    static let streamStallTimeout: TimeInterval = 65
 
     /// - Parameters:
     ///   - baseURL: The daemon base URL, e.g. `http://myhost:8790` (a tailnet
@@ -25,19 +54,37 @@ public final class YccClient: Sendable {
         while host.hasSuffix("/") {
             host.removeLast()
         }
-        let config = ProtocolClientConfig(
-            host: host,
-            networkProtocol: .connect,
-            codec: ProtoCodec(),
-            interceptors: [AuthInterceptor.factory(token: token), LatencyInterceptor.factory(diagnostics: latency)]
-        )
+        let interceptors = [
+            AuthInterceptor.factory(token: token),
+            LatencyInterceptor.factory(diagnostics: latency),
+        ]
+        // One HTTP client (one URLSession, one connection pool) shared by every
+        // protocol client, so unary calls and streams reuse the same HTTP/2
+        // connection instead of each paying a TCP+TLS handshake.
         // RetryGuardHTTPClient prevents a CFNetwork abort when a streaming
         // RPC's request is retransmitted (its body stream is one-shot).
-        let protocolClient = ProtocolClient(
-            httpClient: RetryGuardHTTPClient(),
-            config: config
-        )
-        self.generated = Ycc_V1_SessionServiceClient(client: protocolClient)
+        let httpClient = RetryGuardHTTPClient(configuration: Self.sessionConfiguration())
+        func service(timeout: TimeInterval?) -> Ycc_V1_SessionServiceClient {
+            let config = ProtocolClientConfig(
+                host: host,
+                networkProtocol: .connect,
+                codec: ProtoCodec(),
+                timeout: timeout,
+                interceptors: interceptors
+            )
+            return Ycc_V1_SessionServiceClient(
+                client: ProtocolClient(httpClient: httpClient, config: config))
+        }
+        self.generated = service(timeout: Self.unaryTimeout)
+        self.generatedBulk = service(timeout: Self.bulkTimeout)
+        self.generatedStreaming = service(timeout: nil)
+    }
+
+    static func sessionConfiguration() -> URLSessionConfiguration {
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = requestIdleTimeout
+        configuration.timeoutIntervalForResource = resourceTimeout
+        return configuration
     }
 
     /// Lists the daemon's registered projects. Used by the connect screen to
@@ -116,7 +163,7 @@ public final class YccClient: Sendable {
         request.sessionID = sessionID
         request.path = path
         request.maxBytes = maxBytes
-        let response = await generated.readFile(request: request)
+        let response = await generatedBulk.readFile(request: request)
         switch response.result {
         case .success(let message):
             return message
@@ -187,7 +234,7 @@ public final class YccClient: Sendable {
     public func startWorkLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo {
         var request = Ycc_V1_StartWorkLoopRequest()
         request.project = project
-        let response = await generated.startWorkLoop(request: request)
+        let response = await generatedBulk.startWorkLoop(request: request)
         switch response.result {
         case .success(let message):
             return message.loop
@@ -201,7 +248,7 @@ public final class YccClient: Sendable {
     public func stopWorkLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo? {
         var request = Ycc_V1_StopWorkLoopRequest()
         request.project = project
-        let response = await generated.stopWorkLoop(request: request)
+        let response = await generatedBulk.stopWorkLoop(request: request)
         switch response.result {
         case .success(let message):
             return message.hasLoop ? message.loop : nil
@@ -226,16 +273,47 @@ public final class YccClient: Sendable {
 
     public var supportsIndexedSessionView: Bool { true }
 
-    public func getSessionView(
-        project: String = "", sessionId: String
-    ) async throws -> Ycc_V1_GetSessionViewResponse {
+    /// Rows in the first transcript page of a session open. Every row in it is
+    /// downloaded over a slow link, decoded, and eagerly laid out before the
+    /// transcript appears, so it is sized for about a screenful of recent
+    /// history rather than a deep backlog; older rows come from
+    /// ``getSessionViewPage(project:sessionId:cursor:)`` ("Load earlier",
+    /// prefetched in the background once the first page is showing).
+    public static let initialViewRows: Int32 = 50
+    /// Byte cap for the first page, proportional to ``earlierPageBytes`` per row.
+    public static let initialViewBytes: Int32 = 98_304
+    /// Rows per earlier page (user-initiated, so a deeper page is worth it).
+    public static let earlierPageRows: Int32 = 200
+    public static let earlierPageBytes: Int32 = 393_216
+
+    static func sessionViewRequest(project: String, sessionId: String) -> Ycc_V1_GetSessionViewRequest {
         var request = Ycc_V1_GetSessionViewRequest()
         request.project = project
         request.sessionID = sessionId
-        request.maxRows = 200
-        request.maxBytes = 393_216
+        request.maxRows = initialViewRows
+        request.maxBytes = initialViewBytes
+        return request
+    }
+
+    static func sessionViewPageRequest(
+        project: String, sessionId: String, cursor: String,
+        maxRows: Int32 = YccClient.earlierPageRows, maxBytes: Int32 = YccClient.earlierPageBytes
+    ) -> Ycc_V1_GetSessionViewPageRequest {
+        var request = Ycc_V1_GetSessionViewPageRequest()
+        request.project = project
+        request.sessionID = sessionId
+        request.cursor = cursor
+        request.maxRows = maxRows
+        request.maxBytes = maxBytes
+        return request
+    }
+
+    public func getSessionView(
+        project: String = "", sessionId: String
+    ) async throws -> Ycc_V1_GetSessionViewResponse {
+        let request = Self.sessionViewRequest(project: project, sessionId: sessionId)
         let span = latency.begin("transcript.fetch")
-        let response = await generated.getSessionView(request: request)
+        let response = await generatedBulk.getSessionView(request: request)
         span.end(events: response.message?.rows.reduce(0) { $0 + $1.events.count } ?? 0,
                  rows: response.message?.rows.count ?? 0)
         switch response.result {
@@ -247,14 +325,19 @@ public final class YccClient: Sendable {
     public func getSessionViewPage(
         project: String = "", sessionId: String, cursor: String
     ) async throws -> Ycc_V1_GetSessionViewPageResponse {
-        var request = Ycc_V1_GetSessionViewPageRequest()
-        request.project = project
-        request.sessionID = sessionId
-        request.cursor = cursor
-        request.maxRows = 200
-        request.maxBytes = 393_216
+        try await getSessionViewPage(
+            project: project, sessionId: sessionId, cursor: cursor,
+            maxRows: Self.earlierPageRows, maxBytes: Self.earlierPageBytes)
+    }
+
+    public func getSessionViewPage(
+        project: String = "", sessionId: String, cursor: String, maxRows: Int32, maxBytes: Int32
+    ) async throws -> Ycc_V1_GetSessionViewPageResponse {
+        let request = Self.sessionViewPageRequest(
+            project: project, sessionId: sessionId, cursor: cursor,
+            maxRows: maxRows, maxBytes: maxBytes)
         let span = latency.begin("transcript.fetch")
-        let response = await generated.getSessionViewPage(request: request)
+        let response = await generatedBulk.getSessionViewPage(request: request)
         span.end(events: response.message?.rows.reduce(0) { $0 + $1.events.count } ?? 0,
                  rows: response.message?.rows.count ?? 0)
         switch response.result {
@@ -270,7 +353,7 @@ public final class YccClient: Sendable {
         request.project = project
         request.sessionID = sessionId
         request.rowID = rowId
-        let response = await generated.getSessionViewDetail(request: request)
+        let response = await generatedBulk.getSessionViewDetail(request: request)
         switch response.result {
         case .success(let message): return message.row
         case .failure(let error): throw Self.mapSessionTransport(error)
@@ -280,8 +363,9 @@ public final class YccClient: Sendable {
     public func subscribeSessionView(
         sessionId: String, fromSeq: Int64
     ) -> AsyncThrowingStream<Ycc_V1_SessionViewUpdate, Error> {
-        let stream = generated.subscribeSessionView()
+        let stream = generatedStreaming.subscribeSessionView()
         return AsyncThrowingStream { continuation in
+            let liveness = StreamLiveness()
             let task = Task {
                 var request = Ycc_V1_SubscribeSessionViewRequest()
                 request.sessionID = sessionId
@@ -291,7 +375,9 @@ public final class YccClient: Sendable {
                 for await result in stream.results() {
                     switch result {
                     case .headers: continue
-                    case .message(let update): continuation.yield(update)
+                    case .message(let update):
+                        liveness.touch()
+                        continuation.yield(update)
                     case .complete(_, let error, _):
                         if let error { continuation.finish(throwing: Self.mapSessionTransport(error)) }
                         else { continuation.finish() }
@@ -300,7 +386,12 @@ public final class YccClient: Sendable {
                 }
                 continuation.finish()
             }
-            continuation.onTermination = { _ in task.cancel(); stream.cancel() }
+            let watchdog = Self.stallWatchdog(liveness: liveness, continuation: continuation)
+            continuation.onTermination = { _ in
+                task.cancel()
+                watchdog.cancel()
+                stream.cancel()
+            }
         }
     }
 
@@ -314,7 +405,7 @@ public final class YccClient: Sendable {
         request.sessionID = sessionId
         request.omitProviderState = true
         let span = latency.begin("transcript.fetch")
-        let response = await generated.getSessionTranscript(request: request)
+        let response = await generatedBulk.getSessionTranscript(request: request)
         span.end(events: response.message?.events.count ?? 0)
         switch response.result {
         case .success(let message):
@@ -333,7 +424,7 @@ public final class YccClient: Sendable {
         request.project = project
         request.sessionID = sessionId
         request.attachmentID = attachmentId
-        let response = await generated.getSessionAttachment(request: request)
+        let response = await generatedBulk.getSessionAttachment(request: request)
         switch response.result {
         case .success(let message):
             return MessageImage(data: message.data, mediaType: message.mediaType)
@@ -354,8 +445,9 @@ public final class YccClient: Sendable {
     public func subscribe(
         sessionId: String, fromSeq: Int64
     ) -> AsyncThrowingStream<Ycc_V1_Event, Error> {
-        let stream = generated.subscribe()
+        let stream = generatedStreaming.subscribe()
         return AsyncThrowingStream { continuation in
+            let liveness = StreamLiveness()
             let task = Task {
                 var request = Ycc_V1_SubscribeRequest()
                 request.sessionID = sessionId
@@ -371,6 +463,7 @@ public final class YccClient: Sendable {
                     case .headers:
                         continue
                     case .message(let event):
+                        liveness.touch()
                         continuation.yield(event)
                     case .complete(_, let error, _):
                         if let error {
@@ -383,8 +476,14 @@ public final class YccClient: Sendable {
                 }
                 continuation.finish()
             }
+            // The legacy Event stream gets no daemon keepalives, so a quiet
+            // session reconnects after ~65 s — the same as the old URLSession
+            // 60 s idle timeout — rather than hanging on a dead connection
+            // until the new 3600 s one.
+            let watchdog = Self.stallWatchdog(liveness: liveness, continuation: continuation)
             continuation.onTermination = { _ in
                 task.cancel()
+                watchdog.cancel()
                 stream.cancel()
             }
         }
@@ -425,7 +524,7 @@ public final class YccClient: Sendable {
         // THIS session only (the persisted role defaults are untouched).
         request.coordinatorModel = coordinatorModel
         request.images = images.map(Self.attachment)
-        let response = await generated.startSession(request: request)
+        let response = await generatedBulk.startSession(request: request)
         switch response.result {
         case .success(let message):
             return message.sessionID
@@ -442,7 +541,7 @@ public final class YccClient: Sendable {
         var request = Ycc_V1_ResumeSessionRequest()
         request.project = project
         request.sessionID = sessionId
-        let response = await generated.resumeSession(request: request)
+        let response = await generatedBulk.resumeSession(request: request)
         switch response.result {
         case .success(let message):
             return message.sessionID
@@ -469,7 +568,7 @@ public final class YccClient: Sendable {
         request.sessionID = sessionId
         request.text = text
         request.images = images.map(Self.attachment)
-        try unary(await generated.sendInput(request: request))
+        try unary(await generatedBulk.sendInput(request: request))
     }
 
     /// Wire form of one picture attachment (shared by `SendInput` and
@@ -490,7 +589,7 @@ public final class YccClient: Sendable {
         request.sessionID = sessionId
         request.text = text
         request.optionIndex = Int32(optionIndex)
-        try unary(await generated.answerQuestion(request: request))
+        try unary(await generatedBulk.answerQuestion(request: request))
     }
 
     /// Answer a batch `ask_user` positionally (`AnswerQuestions`): `answers[i]`
@@ -507,7 +606,7 @@ public final class YccClient: Sendable {
             a.optionIndex = Int32($0.optionIndex)
             return a
         }
-        try unary(await generated.answerQuestions(request: request))
+        try unary(await generatedBulk.answerQuestions(request: request))
     }
 
     /// Gracefully pause a running session to steer it (`Interrupt`).
@@ -521,7 +620,7 @@ public final class YccClient: Sendable {
     public func resume(sessionId: String) async throws {
         var request = Ycc_V1_ResumeRequest()
         request.sessionID = sessionId
-        try unary(await generated.resume(request: request))
+        try unary(await generatedBulk.resume(request: request))
     }
 
     /// Select a compact, durable coordinator context at the next safe checkpoint.
@@ -529,14 +628,14 @@ public final class YccClient: Sendable {
         var request = Ycc_V1_ResumeRequest()
         request.sessionID = sessionId
         request.rollover = true
-        try unary(await generated.resume(request: request))
+        try unary(await generatedBulk.resume(request: request))
     }
 
     /// Hard-terminate a session (`StopSession`) — no resume.
     public func stopSession(sessionId: String) async throws {
         var request = Ycc_V1_StopSessionRequest()
         request.sessionID = sessionId
-        try unary(await generated.stopSession(request: request))
+        try unary(await generatedBulk.stopSession(request: request))
     }
 
     // MARK: - Backlog browser
@@ -671,7 +770,7 @@ public final class YccClient: Sendable {
         request.groupBy = groupBy
         request.since = since
         request.until = until
-        let response = await generated.getUsage(request: request)
+        let response = await generatedBulk.getUsage(request: request)
         switch response.result {
         case .success(let message):
             return (message.rows, message.total, message.workspace)
@@ -685,7 +784,7 @@ public final class YccClient: Sendable {
     public func getSubscriptionUsage(refresh: Bool = true) async throws -> [Ycc_V1_SubscriptionUsageAccount] {
         var request = Ycc_V1_GetSubscriptionUsageRequest()
         request.refresh = refresh
-        let response = await generated.getSubscriptionUsage(request: request)
+        let response = await generatedBulk.getSubscriptionUsage(request: request)
         switch response.result {
         case .success(let message):
             return message.accounts
@@ -792,7 +891,7 @@ public final class YccClient: Sendable {
         request.backend = backend
         request.baseURL = baseURL
         request.keyEnv = keyEnv
-        let response = await generated.discoverModels(request: request)
+        let response = await generatedBulk.discoverModels(request: request)
         switch response.result {
         case .success(let message): return message
         case .failure(let error): throw Self.map(error)
@@ -805,7 +904,7 @@ public final class YccClient: Sendable {
     public func testModel(_ model: Ycc_V1_ModelConfig) async throws -> Ycc_V1_TestModelResponse {
         var request = Ycc_V1_TestModelRequest()
         request.model = model
-        let response = await generated.testModel(request: request)
+        let response = await generatedBulk.testModel(request: request)
         switch response.result {
         case .success(let message): return message
         case .failure(let error): throw Self.map(error)
@@ -874,7 +973,7 @@ public final class YccClient: Sendable {
     ) async throws -> (clean: Bool, conflicts: [String], diff: String) {
         var request = Ycc_V1_PreviewMergeRequest()
         request.workstreamID = workstreamId
-        let response = await generated.previewMerge(request: request)
+        let response = await generatedBulk.previewMerge(request: request)
         switch response.result {
         case .success(let message):
             return (message.clean, message.conflicts, message.diff)
@@ -894,7 +993,7 @@ public final class YccClient: Sendable {
         var request = Ycc_V1_MergeWorkstreamRequest()
         request.workstreamID = workstreamId
         request.accept = accept
-        let response = await generated.mergeWorkstream(request: request)
+        let response = await generatedBulk.mergeWorkstream(request: request)
         switch response.result {
         case .success(let message):
             return (message.merged, message.commit, message.needsAccept, message.diff, message.conflicts)
@@ -909,14 +1008,14 @@ public final class YccClient: Sendable {
     public func discardWorkstream(workstreamId: String) async throws {
         var request = Ycc_V1_DiscardWorkstreamRequest()
         request.workstreamID = workstreamId
-        try unary(await generated.discardWorkstream(request: request))
+        try unary(await generatedBulk.discardWorkstream(request: request))
     }
 
     /// Re-queue a ready or needs-attention workstream for automatic integration.
     public func retryIntegration(workstreamId: String) async throws -> Ycc_V1_WorkstreamInfo {
         var request = Ycc_V1_RetryIntegrationRequest()
         request.workstreamID = workstreamId
-        let response = await generated.retryIntegration(request: request)
+        let response = await generatedBulk.retryIntegration(request: request)
         switch response.result {
         case .success(let message):
             return message.workstream
@@ -935,7 +1034,7 @@ public final class YccClient: Sendable {
         var request = Ycc_V1_GetCommitDiffRequest()
         request.project = project
         request.sha = sha
-        let response = await generated.getCommitDiff(request: request)
+        let response = await generatedBulk.getCommitDiff(request: request)
         switch response.result {
         case .success(let message):
             return (message.diff, message.truncated)
@@ -953,10 +1052,30 @@ public final class YccClient: Sendable {
         request.sessionID = session
         request.taskID = task
         request.knownSnapshotID = knownSnapshot
-        let response = await generated.getWorkingChanges(request: request)
+        let response = await generatedBulk.getWorkingChanges(request: request)
         switch response.result {
         case .success(let message): return message
         case .failure(let error): throw Self.map(error)
+        }
+    }
+
+    /// With a long URLSession idle timeout a silently dead connection would
+    /// otherwise look like a quiet stream: after ``streamStallTimeout`` without
+    /// any message (keepalives included), fail the stream as transient so the
+    /// caller reconnects on a fresh connection.
+    private static func stallWatchdog<Element>(
+        liveness: StreamLiveness,
+        continuation: AsyncThrowingStream<Element, Error>.Continuation
+    ) -> Task<Void, Never> {
+        Task {
+            let stall = streamStallTimeout
+            while !Task.isCancelled {
+                do { try await Task.sleep(nanoseconds: 10_000_000_000) } catch { return }
+                if liveness.isStalled(after: stall) {
+                    continuation.finish(throwing: YccError.rpc(message: "live stream stalled"))
+                    return
+                }
+            }
         }
     }
 
@@ -1016,5 +1135,32 @@ public final class YccClient: Sendable {
 
     private static func sessionTransportMessage(_ error: ConnectError) -> String {
         error.message ?? "request failed (\(error.code))"
+    }
+}
+
+/// Tracks when a server stream last delivered a message (armed from stream
+/// start), so a silently dead connection can be detected.
+final class StreamLiveness: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lastMessage: TimeInterval
+    private let now: @Sendable () -> TimeInterval
+
+    init(now: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.now = now
+        self.lastMessage = now()
+    }
+
+    func touch() {
+        let time = now()
+        lock.lock()
+        lastMessage = time
+        lock.unlock()
+    }
+
+    func isStalled(after timeout: TimeInterval) -> Bool {
+        let time = now()
+        lock.lock()
+        defer { lock.unlock() }
+        return time - lastMessage > timeout
     }
 }

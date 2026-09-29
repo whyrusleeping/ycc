@@ -722,6 +722,38 @@ public struct SessionProjection: Sendable, Equatable {
         indexedPendingDetailRowID = nil
     }
 
+    /// Whether the daemon has an `ask_user` gate waiting — including a batch
+    /// whose full detail is still loading. Text-only input sent now is consumed
+    /// as the answer rather than recorded as a user message.
+    public var awaitsAnswer: Bool {
+        pendingQuestion != nil || indexedPendingDetailRowID != nil
+    }
+
+    /// Whether the daemon still considers the question on row `rowID` open —
+    /// true after an optimistic ``resolvePendingQuestion(answer:)`` until the
+    /// authoritative answer (or a state without the question) is folded.
+    public func isQuestionOpen(rowID: String) -> Bool {
+        openQuestionRowID == rowID
+    }
+
+    /// Undo an optimistic ``resolvePendingQuestion(answer:)`` after the answer
+    /// RPC failed: re-open the gate and clear the row's local answer. Only
+    /// applies while the daemon still considers that question open — if the
+    /// authoritative `question_answered` event (or a state without the question)
+    /// arrived meanwhile, the durable truth wins and nothing is restored.
+    /// Returns whether the gate was re-opened.
+    @discardableResult
+    public mutating func restorePendingQuestion(_ question: PendingQuestion) -> Bool {
+        guard pendingQuestion == nil, openQuestionRowID == question.rowID else { return false }
+        pendingQuestion = question
+        openQuestions = question.questions
+        if let idx = durableRows.lastIndex(where: { $0.id == question.rowID }),
+           case let .question(prompt, options, _) = durableRows[idx].kind {
+            durableRows[idx].kind = .question(prompt: prompt, options: options, answer: nil)
+        }
+        return true
+    }
+
     /// Mark the open question row answered. An empty answer still resolves the
     /// row (the gate is closed either way) but never overwrites text already
     /// folded in, so an optimistic answer survives a payload we can't parse.

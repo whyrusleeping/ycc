@@ -20,8 +20,14 @@ struct TaskDetailView: View {
     private let taskTitle: String
     private let project: String
 
-    init(client: YccClient, project: String, taskID: String, taskTitle: String) {
-        _model = State(initialValue: TaskDetailModel(source: client, project: project, taskID: taskID))
+    /// `cache` lets the screen render at once from the cached detail or the
+    /// backlog row the user tapped, while `GetTask` loads in the background.
+    init(
+        client: YccClient, project: String, taskID: String, taskTitle: String,
+        cache: AppDataCache? = nil
+    ) {
+        _model = State(initialValue: TaskDetailModel(
+            source: client, project: project, taskID: taskID, cache: cache))
         self.taskID = taskID
         self.taskTitle = taskTitle
         self.project = project
@@ -53,7 +59,7 @@ struct TaskDetailView: View {
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button("Edit") { model.beginEditing() }
-                    .disabled(model.task == nil || model.isUpdating)
+                    .disabled(!model.canEdit)
                 statusMenu
             }
         }
@@ -102,7 +108,12 @@ struct TaskDetailView: View {
                         .font(.callout)
                 }
             }
-            if !task.body.isEmpty {
+            if model.isPlaceholder {
+                // Header fields came from the backlog row; the body is loading.
+                Section("Details") {
+                    HStack { Spacer(); ProgressView(); Spacer() }
+                }
+            } else if !task.body.isEmpty {
                 Section("Details") {
                     // Task bodies live in backlog/, so relative links (sibling
                     // tasks) resolve there; code-span paths from the root.
@@ -278,7 +289,9 @@ struct TaskDetailView: View {
     /// Start a work session focused on this task, then navigate into its live
     /// stream (reuses the ``LandingView`` start-and-push pattern).
     private func startWork(_ task: Ycc_V1_TaskDetail) {
-        guard let client = app.client else { return }
+        // StartSession must return the new id before we can navigate; the
+        // button shows progress at once and a second tap is ignored.
+        guard !isStarting, let client = app.client else { return }
         let titleText = task.title.isEmpty ? "" : ": \(task.title)"
         let prompt = "Work on task \(task.id)\(titleText)."
         isStarting = true

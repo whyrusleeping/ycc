@@ -271,7 +271,7 @@ struct BacklogView: View {
                             taskID: task.id,
                             title: task.title)
                         ) {
-                            BacklogRow(task: task, isUpdating: model.updatingTaskID == task.id)
+                            BacklogRow(task: task, isUpdating: model.isUpdating(task.id))
                         }
                         .contextMenu {
                             statusMenu(model, task: task)
@@ -366,11 +366,12 @@ struct BacklogView: View {
             return
         }
         if loopModel?.project != project {
-            loopModel = WorkLoopModel(source: client, project: project)
+            loopModel = WorkLoopModel(source: client, project: project, cache: app.dataCache)
         }
         guard let activeLoopModel = loopModel else { return }
 
-        await activeLoopModel.refresh()
+        // A restart right after Start/Stop already has the action's snapshot.
+        await activeLoopModel.refreshIfStale()
         recordLoopSnapshot(
             activeLoopModel,
             backlogModel: backlogModel,
@@ -421,7 +422,10 @@ struct BacklogView: View {
     private func ensureLoaded() async {
         if model == nil {
             guard let client = app.client else { return }
-            let backlogModel = BacklogModel(source: client, selectedProject: initialProject)
+            // Seeded from the app cache: a revisit renders the last backlog at
+            // once and revalidates below.
+            let backlogModel = BacklogModel(
+                source: client, selectedProject: initialProject, cache: app.dataCache)
             backlogModel.sort = backlogSort
             model = backlogModel
         }
@@ -446,7 +450,8 @@ func statusMenu(_ model: BacklogModel, task: Ycc_V1_BacklogTaskSummary) -> some 
                     Text(status.title)
                 }
             }
-            .disabled(status == current || model.updatingTaskID != nil)
+            // Only this row's change is serialized; other rows stay editable.
+            .disabled(status == current || model.isUpdating(task.id))
         }
     }
 }
@@ -543,7 +548,7 @@ private struct BacklogLane: View {
             BacklogCard(
                 model: model,
                 task: task,
-                isUpdating: model.updatingTaskID == task.id)
+                isUpdating: model.isUpdating(task.id))
         }
         .buttonStyle(.plain)
         .contextMenu { statusMenu(model, task: task) }
@@ -641,7 +646,7 @@ private struct BacklogCard: View {
                 .padding(4)
                 .contentShape(Rectangle())
         }
-        .disabled(model.updatingTaskID != nil)
+        .disabled(model.isUpdating(task.id))
         .accessibilityLabel("Move task \(task.id)")
     }
 }

@@ -187,18 +187,31 @@ public final class ReviewTiersModel {
         self.source = source
     }
 
+    /// Bumped per load: only the newest overlapping load may publish.
+    private var loadGeneration: UInt64 = 0
+
     public func load() async {
+        loadGeneration &+= 1
+        let generation = loadGeneration
         isLoading = true
-        defer { isLoading = false }
+        defer { if generation == loadGeneration { isLoading = false } }
         do {
-            let response = try await source.listReviewTiers()
-            let models = try await source.listModels()
+            // Independent reads: issue both at once (one round trip, not two).
+            let source = source
+            async let pendingTiers = source.listReviewTiers()
+            async let pendingModels = source.listModels()
+            let response = try await pendingTiers
+            let models = try await pendingModels
+            guard generation == loadGeneration else { return }
             tiers = response.tiers
             defaultTier = response.defaultTier
             modelNames = models.models.filter { !$0.disabled }.map(\.name)
                 .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
             errorMessage = nil
-        } catch { handle(error) }
+        } catch {
+            guard generation == loadGeneration else { return }
+            handle(error)
+        }
     }
 
     /// Set `reviews.default`. On failure the previous default is restored.
@@ -213,28 +226,40 @@ public final class ReviewTiersModel {
         }
     }
 
-    /// Save a draft (upsert) and reload so derived flags/ordering reflect the
-    /// daemon's view. Returns true on success so the editor can dismiss.
+    /// Save a draft (upsert). Returns true as soon as the daemon accepts it so
+    /// the editor can dismiss after one round trip; the list then reloads in
+    /// the background so derived flags/ordering reflect the daemon's view.
     public func save(_ draft: ReviewTierDraft) async -> Bool {
         var ok = false
         await apply {
             try await self.source.upsertReviewTier(draft.toProto())
             ok = true
         } onFailure: {}
-        if ok { await load() }
+        if ok { scheduleReload() }
         return ok
     }
 
     /// Remove a configured tier entry (a built-in reverts to built-in
-    /// behaviour). Returns true on success.
+    /// behaviour). Returns true on success; the list reloads in the background.
     public func remove(name: String) async -> Bool {
         var ok = false
         await apply {
             try await self.source.removeReviewTier(name: name)
             ok = true
         } onFailure: {}
-        if ok { await load() }
+        if ok { scheduleReload() }
         return ok
+    }
+
+    /// The background reload started after a successful mutation.
+    @ObservationIgnored private(set) var reloadTask: Task<Void, Never>?
+
+    private func scheduleReload() {
+        // `load()` publishes only its newest generation, so overlapping
+        // reloads cannot land out of order.
+        reloadTask = Task { @MainActor [weak self] in
+            await self?.load()
+        }
     }
 
     /// Whether the tier row should offer removal: only tiers with a configured

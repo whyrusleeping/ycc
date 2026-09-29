@@ -64,4 +64,60 @@ final class LatencyDiagnosticsTests: XCTestCase {
             XCTAssertEqual(request.headers[LatencyInterceptor.headerName]?.first?.count, 16)
         }
     }
+
+    func testTransportRecordsAreBoundedAndSummarized() {
+        let store = LatencyDiagnostics(capacity: 3)
+        func transport(_ id: String, _ proto: String, reused: Bool, connect: Double?) -> LatencyDiagnostics.Transport {
+            .init(procedure: "/ycc.v1.SessionService/ListProjects", requestID: id, networkProtocol: proto,
+                  reusedConnection: reused, dnsMS: nil, connectMS: connect, tlsMS: nil,
+                  requestToResponseMS: 180, responseTransferMS: 2, taskMS: 190)
+        }
+        store.record(transport("dropped", "http/1.1", reused: false, connect: 900))
+        store.record(transport("a", "h2", reused: false, connect: 250))
+        store.record(transport("b", "h2", reused: true, connect: nil))
+        store.record(transport("c", "", reused: true, connect: nil))
+        XCTAssertEqual(store.transportSnapshot().map(\.requestID), ["a", "b", "c"])
+        let summary = store.transportSummary()
+        XCTAssertEqual(summary.count, 3)
+        XCTAssertEqual(summary.protocols, ["h2": 2, "unknown": 1])
+        XCTAssertEqual(summary.reused, 2)
+        XCTAssertEqual(summary.newConnections, 1)
+        XCTAssertEqual(summary.p50ConnectMS, 250)
+        XCTAssertNil(LatencyDiagnostics().transportSummary().p50ConnectMS)
+    }
+
+    func testStreamLivenessIsArmedFromStreamStart() {
+        let clock = LivenessClock()
+        clock.now = 100
+        let liveness = StreamLiveness(now: { clock.now })
+        clock.now = 165
+        XCTAssertFalse(liveness.isStalled(after: 65))
+        clock.now = 166
+        XCTAssertTrue(liveness.isStalled(after: 65),
+            "a stream that never delivers anything (busy session, dead connection) is stalled")
+        liveness.touch()
+        XCTAssertFalse(liveness.isStalled(after: 65))
+        clock.now = 230
+        XCTAssertFalse(liveness.isStalled(after: 65))
+        clock.now = 232
+        XCTAssertTrue(liveness.isStalled(after: 65))
+    }
+
+    func testClientTimeoutsKeepQuietStreamsAliveButBoundUnaryCalls() {
+        let configuration = YccClient.sessionConfiguration()
+        XCTAssertGreaterThanOrEqual(configuration.timeoutIntervalForRequest, 3_600)
+        XCTAssertGreaterThan(configuration.timeoutIntervalForResource, configuration.timeoutIntervalForRequest)
+        XCTAssertLessThanOrEqual(YccClient.unaryTimeout, 30)
+        XCTAssertGreaterThan(YccClient.bulkTimeout, YccClient.unaryTimeout)
+        XCTAssertGreaterThan(YccClient.streamStallTimeout, 3 * 20, "tolerates missing up to ~3 keepalives")
+    }
+}
+
+private final class LivenessClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: TimeInterval = 0
+    var now: TimeInterval {
+        get { lock.lock(); defer { lock.unlock() }; return value }
+        set { lock.lock(); value = newValue; lock.unlock() }
+    }
 }

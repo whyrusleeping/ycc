@@ -41,10 +41,13 @@ struct NewSessionView: View {
     init(
         client: YccClient,
         initialProject: String? = nil,
+        cache: AppDataCache? = nil,
         onStarted: @escaping (String, String) -> Void
     ) {
+        // A cached catalog/project list renders the composer without a
+        // spinner; load() still revalidates in the background.
         _model = State(initialValue: NewSessionModel(
-            source: client, initialProject: initialProject))
+            source: client, initialProject: initialProject, cache: cache))
         self.onStarted = onStarted
     }
 
@@ -72,8 +75,10 @@ struct NewSessionView: View {
             .ignoresSafeArea(.keyboard, edges: .bottom)
         }
         .task {
-            await model.load()
+            // Focus first: typing never waits on the catalog round trip (the
+            // composer field defers focus until it is in a window).
             composerFocused = true
+            await model.load()
         }
         .sheet(isPresented: $showAddProject) {
             if let client = app.client {
@@ -81,7 +86,7 @@ struct NewSessionView: View {
                     Task {
                         // Reload so the chip lists the new project, then select
                         // it — the likely reason the user added it here.
-                        await model.load()
+                        await model.load(refreshProjects: true)
                         model.selectedProject = project.name
                     }
                 }

@@ -127,11 +127,52 @@ public final class UsageModel {
     /// this to route back to the connect screen via `AppModel.handleUnauthorized`.
     public private(set) var unauthorized = false
 
-    private let source: UsageSource
+    /// What a revisited usage screen shows before its revalidation lands: the
+    /// last rows/total/budget plus the query that produced them (so the pickers
+    /// reopen on the same grouping and date filter).
+    struct Snapshot {
+        var rows: [Ycc_V1_UsageRow]
+        var total: Ycc_V1_UsageRow?
+        var workspace: String
+        var budget: Ycc_V1_GetBudgetResponse?
+        var grouping: UsageGrouping
+        var filterByDate: Bool
+        var since: Date
+        var until: Date
+    }
 
-    public init(source: UsageSource, selectedProject: String = "") {
+    private let source: UsageSource
+    private let cache: AppDataCache?
+    private let cacheGeneration: UInt64
+    private var activeLoads = 0
+    /// Bumped per usage request; only the newest request may publish, so an
+    /// overlapping grouping/date change can never be overwritten by an older,
+    /// slower response.
+    private var usageGeneration: UInt64 = 0
+    @ObservationIgnored private var usageTask: Task<Void, Never>?
+
+    public init(source: UsageSource, selectedProject: String = "", cache: AppDataCache? = nil) {
         self.source = source
+        self.cache = cache
+        self.cacheGeneration = cache?.generation ?? 0
         self.selectedProject = selectedProject
+        if let cachedProjects = cache?.projects { projects = cachedProjects }
+        if let accounts = cache?.value(.subscriptionUsage, as: [Ycc_V1_SubscriptionUsageAccount].self) {
+            subscriptionAccounts = accounts
+        }
+        if let snapshot = cache?.value(.usage(selectedProject), as: Snapshot.self) {
+            rows = snapshot.rows
+            total = snapshot.total
+            workspace = snapshot.workspace
+            budget = snapshot.budget
+            grouping = snapshot.grouping
+            filterByDate = snapshot.filterByDate
+            since = snapshot.since
+            until = snapshot.until
+            rowsQuery = RowsQuery(
+                project: selectedProject, grouping: snapshot.grouping,
+                filterByDate: snapshot.filterByDate, since: snapshot.since, until: snapshot.until)
+        }
     }
 
     /// The project picker is useful only when there is a real choice.
@@ -140,47 +181,165 @@ public final class UsageModel {
     /// Whether the last successful load produced any usage rows.
     public var hasUsage: Bool { !rows.isEmpty }
 
-    /// (Re)load the usage breakdown, budget caps, and project list for the
-    /// selected project / grouping / date filter. Unauthorized bubbles up via
-    /// ``unauthorized`` for the view to handle.
+    /// Screen appearance: revalidate usage and budget (and projects only when
+    /// no app-level list is cached). The provider-side subscription allowance
+    /// is force-refreshed only on the first load of this connection; later
+    /// visits reuse the cached accounts until the user pulls to refresh.
+    public func load() async {
+        let hasSubscriptionSnapshot =
+            cache?.value(.subscriptionUsage, as: [Ycc_V1_SubscriptionUsageAccount].self) != nil
+        await loadAll(refreshSubscription: !hasSubscriptionSnapshot)
+    }
+
+    /// Explicit (pull-to-)refresh: reload usage, budget, and — force-refreshed
+    /// from the provider — the subscription allowance. Unauthorized bubbles up
+    /// via ``unauthorized`` for the view to handle.
     public func refresh() async {
-        isLoading = true
-        defer { isLoading = false }
+        await loadAll(refreshSubscription: true)
+    }
+
+    /// A grouping / date-filter / project change: reload only the usage rows.
+    /// Budget and subscription allowance do not depend on these filters. A
+    /// newer call cancels and supersedes any usage request still in flight.
+    public func reloadUsage() async {
+        usageTask?.cancel()
+        usageGeneration &+= 1
+        let generation = usageGeneration
+        let project = selectedProject
+        let grouping = grouping
         let (sinceValue, untilValue) = dateFilter
-        do {
-            async let usage = source.getUsage(
-                project: selectedProject,
-                groupBy: [grouping.wireValue],
-                since: sinceValue,
-                until: untilValue)
-            async let budgetCaps = source.getBudget()
-            async let projectList = source.listProjects()
-            let ((loadedRows, loadedTotal, loadedWorkspace), loadedBudget, loadedProjects)
-                = try await (usage, budgetCaps, projectList)
-            rows = loadedRows
-            total = loadedTotal
-            workspace = loadedWorkspace
-            budget = loadedBudget
-            projects = loadedProjects
-            errorMessage = nil
-            // Provider allowance is informational and served best-effort. A
-            // telemetry failure must not hide local token usage or budget data.
+        let query = (filterByDate, since, until)
+        let source = source
+        let task = Task { @MainActor [weak self] in
             do {
-                subscriptionAccounts = try await source.getSubscriptionUsage(refresh: true)
-            } catch YccError.unauthorized {
-                unauthorized = true
+                let result = try await source.getUsage(
+                    project: project,
+                    groupBy: [grouping.wireValue],
+                    since: sinceValue,
+                    until: untilValue)
+                guard let self, generation == self.usageGeneration, !Task.isCancelled else { return }
+                self.rows = result.rows
+                self.total = result.total
+                self.workspace = result.workspace
+                self.errorMessage = nil
+                self.rowsQuery = RowsQuery(
+                    project: project, grouping: grouping,
+                    filterByDate: query.0, since: query.1, until: query.2)
+                self.storeCache()
             } catch {
-                // Preserve the last known account snapshot, if any.
+                guard let self, generation == self.usageGeneration, !Task.isCancelled,
+                      !(error is CancellationError) else { return }
+                self.handleLoad(error)
             }
-        } catch YccError.unauthorized {
+        }
+        usageTask = task
+        beginLoad()
+        await task.value
+        endLoad()
+        if generation == usageGeneration { usageTask = nil }
+    }
+
+    private func loadAll(refreshSubscription: Bool) async {
+        beginLoad()
+        defer { endLoad() }
+        let source = source
+        let fetchProjects = cache?.projects == nil
+        if let cachedProjects = cache?.projects, cachedProjects != projects {
+            projects = cachedProjects
+        }
+        async let budgetCaps: Result<Ycc_V1_GetBudgetResponse, Error> = Self.capture {
+            try await source.getBudget()
+        }
+        async let projectList: Result<[Ycc_V1_ProjectInfo]?, Error> = Self.capture {
+            guard fetchProjects else { return nil }
+            return try await source.listProjects()
+        }
+        async let accounts: Result<[Ycc_V1_SubscriptionUsageAccount]?, Error> = Self.capture {
+            guard refreshSubscription else { return nil }
+            return try await source.getSubscriptionUsage(refresh: true)
+        }
+        await reloadUsage()
+        switch await budgetCaps {
+        case .success(let loaded):
+            budget = loaded
+            // Stored under the query that produced the *rows* (a project switch
+            // mid-load must not file one project's rows under another).
+            storeCache()
+        case .failure(let error):
+            if errorMessage == nil || unauthorizedError(error) { handleLoad(error) }
+        }
+        switch await projectList {
+        case .success(let loaded?):
+            projects = loaded
+            cache?.updateProjects(loaded, ifGeneration: cacheGeneration)
+        case .success(nil):
+            break
+        case .failure(let error):
+            if unauthorizedError(error) { unauthorized = true }
+        }
+        // Provider allowance is informational and served best-effort. A
+        // telemetry failure must not hide local token usage or budget data.
+        switch await accounts {
+        case .success(let loaded?):
+            subscriptionAccounts = loaded
+            cache?.store(loaded, for: .subscriptionUsage, ifGeneration: cacheGeneration)
+        case .success(nil):
+            break
+        case .failure(let error):
+            if unauthorizedError(error) { unauthorized = true }
+            // Otherwise preserve the last known account snapshot, if any.
+        }
+    }
+
+    nonisolated private static func capture<T>(
+        _ body: @Sendable () async throws -> T
+    ) async -> Result<T, Error> {
+        do { return .success(try await body()) } catch { return .failure(error) }
+    }
+
+    private func unauthorizedError(_ error: Error) -> Bool {
+        if case YccError.unauthorized = error { return true }
+        return false
+    }
+
+    private func beginLoad() {
+        activeLoads += 1
+        isLoading = true
+    }
+
+    private func endLoad() {
+        activeLoads -= 1
+        isLoading = activeLoads > 0
+    }
+
+    /// The query that produced the currently displayed ``rows``.
+    private struct RowsQuery {
+        var project: String
+        var grouping: UsageGrouping
+        var filterByDate: Bool
+        var since: Date
+        var until: Date
+    }
+
+    private var rowsQuery: RowsQuery?
+
+    private func storeCache() {
+        guard let query = rowsQuery else { return }
+        let snapshot = Snapshot(
+            rows: rows, total: total, workspace: workspace, budget: budget,
+            grouping: query.grouping, filterByDate: query.filterByDate,
+            since: query.since, until: query.until)
+        cache?.store(snapshot, for: .usage(query.project), ifGeneration: cacheGeneration)
+    }
+
+    private func handleLoad(_ error: Error) {
+        switch error {
+        case YccError.unauthorized:
             unauthorized = true
-        } catch let YccError.rpc(message) {
+        case let YccError.rpc(message), let YccError.notFound(message),
+             let YccError.failedPrecondition(message):
             errorMessage = message
-        } catch let YccError.notFound(message) {
-            errorMessage = message
-        } catch let YccError.failedPrecondition(message) {
-            errorMessage = message
-        } catch {
+        default:
             errorMessage = error.localizedDescription
         }
     }

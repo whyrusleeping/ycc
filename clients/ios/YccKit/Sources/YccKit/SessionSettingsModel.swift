@@ -243,6 +243,41 @@ public final class SessionSettingsModel {
         }
     }
 
+    // MARK: - User picks
+    //
+    // The view binds its pickers through these instead of observing value
+    // changes: ``load()`` and ``selectThinkingRole(_:)`` seed the same
+    // properties programmatically, and an `onChange` observer cannot tell a
+    // seed from a user pick — it used to fire a spurious `SetThinking` (the
+    // `all` scope then unified divergent role levels) and a redundant
+    // `SetRoleConfig` every time the sheet opened. Each method updates the
+    // picker synchronously and returns the apply task (nil when nothing
+    // changed).
+
+    /// The user picked a thinking level for the current scope.
+    @discardableResult
+    public func chooseThinkingLevel(_ level: ThinkingLevel) -> Task<Void, Never>? {
+        guard level != thinkingLevel else { return nil }
+        thinkingLevel = level
+        return Task { @MainActor [weak self] in await self?.applyThinking() }
+    }
+
+    /// The user picked a coordinator model.
+    @discardableResult
+    public func chooseCoordinator(_ name: String) -> Task<Void, Never>? {
+        guard name != coordinator else { return nil }
+        coordinator = name
+        return Task { @MainActor [weak self] in await self?.applyRoleConfig() }
+    }
+
+    /// The user picked an implementer model.
+    @discardableResult
+    public func chooseImplementer(_ name: String) -> Task<Void, Never>? {
+        guard name != implementer else { return nil }
+        implementer = name
+        return Task { @MainActor [weak self] in await self?.applyRoleConfig() }
+    }
+
     /// Whether a reviewer is currently selected (for the multi-select UI).
     public func isReviewerSelected(_ name: String) -> Bool {
         reviewers.contains(name)

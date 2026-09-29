@@ -34,7 +34,11 @@ private final class MockWorkstreamsSource: WorkstreamsSource, @unchecked Sendabl
         return workstreams
     }
 
-    func listProjects() async throws -> [Ycc_V1_ProjectInfo] { projects }
+    private(set) var listProjectsCount = 0
+    func listProjects() async throws -> [Ycc_V1_ProjectInfo] {
+        listProjectsCount += 1
+        return projects
+    }
 
     func previewMerge(workstreamId: String) async throws
         -> (clean: Bool, conflicts: [String], diff: String)
@@ -205,8 +209,27 @@ final class WorkstreamsModelTests: XCTestCase {
         let second = await model.merge(workstream(id: "ws_x"), accept: true)
         XCTAssertEqual(second, .merged(commit: "deadbeef"))
         XCTAssertEqual(source.lastMergeArgs?.accept, true)
-        // Merged refreshes the list.
+        // Merged revalidates the list in the background.
+        await model.backgroundRefreshTask?.value
         XCTAssertGreaterThanOrEqual(source.listCount, 1)
+    }
+
+    func testMergedRowFlipsImmediatelyWithoutWaitingForTheList() async {
+        let source = MockWorkstreamsSource()
+        source.workstreams = [workstream(id: "ws_x", status: "ready")]
+        let model = WorkstreamsModel(source: source)
+        await model.refresh()
+        let before = source.listCount
+        source.mergeResult = (true, "deadbeef", false, "", [])
+
+        let outcome = await model.merge(workstream(id: "ws_x"), accept: true)
+
+        XCTAssertEqual(outcome, .merged(commit: "deadbeef"))
+        XCTAssertNil(model.busyWorkstreamID, "the row is released after the merge RPC alone")
+        XCTAssertEqual(model.workstreams.first?.status, "merged")
+        XCTAssertEqual(source.listCount, before, "no list reload is awaited")
+        await model.backgroundRefreshTask?.value
+        XCTAssertEqual(source.listCount, before + 1)
     }
 
     func testMergeConflictSurfacesPaths() async {
@@ -247,6 +270,9 @@ final class WorkstreamsModelTests: XCTestCase {
         let ok = await model.discard(workstream(id: "ws_x"))
         XCTAssertTrue(ok)
         XCTAssertEqual(source.lastDiscardId, "ws_x")
+        XCTAssertEqual(model.workstreams.first?.status, "discarded", "applied from the confirmation")
+        XCTAssertEqual(source.listCount, countBefore, "the reload is not awaited")
+        await model.backgroundRefreshTask?.value
         XCTAssertGreaterThan(source.listCount, countBefore)
     }
 
@@ -271,8 +297,46 @@ final class WorkstreamsModelTests: XCTestCase {
         let retried = await model.retry(source.workstreams[0])
         XCTAssertTrue(retried)
         XCTAssertEqual(source.lastRetryId, "ws_attention")
-        XCTAssertGreaterThan(source.listCount, before)
         XCTAssertNil(model.actionError)
+        await model.backgroundRefreshTask?.value
+        XCTAssertGreaterThan(source.listCount, before)
+    }
+
+    func testRetryAppliesReturnedRowImmediately() async {
+        let source = MockWorkstreamsSource()
+        source.workstreams = [workstream(id: "ws_attention", status: "needs_attention")]
+        let model = WorkstreamsModel(source: source)
+        await model.refresh()
+        // The daemon answers with the re-queued row.
+        source.workstreams = [workstream(id: "ws_attention", status: "ready", integrationState: "queued")]
+
+        _ = await model.retry(model.workstreams[0])
+
+        XCTAssertEqual(model.workstreams.first?.status, "ready")
+        XCTAssertEqual(model.workstreams.first?.integrationState, "queued")
+    }
+
+    func testCachedRowsRenderImmediatelyAndRevalidate() async {
+        let cache = AppDataCache()
+        var project = Ycc_V1_ProjectInfo()
+        project.name = "proj"
+        cache.updateProjects([project, Ycc_V1_ProjectInfo()])
+        let source = MockWorkstreamsSource()
+        source.workstreams = [workstream(id: "ws_1")]
+        let first = WorkstreamsModel(source: source, selectedProject: "proj", cache: cache)
+        await first.refresh()
+        XCTAssertEqual(source.listProjectsCount, 0, "projects come from the app-level cache")
+
+        source.workstreams = [workstream(id: "ws_1"), workstream(id: "ws_2")]
+        let revisit = WorkstreamsModel(source: source, selectedProject: "proj", cache: cache)
+        XCTAssertEqual(revisit.workstreams.map(\.id), ["ws_1"], "last rows render before any RPC")
+        XCTAssertEqual(revisit.projects.count, 2)
+        await revisit.refresh()
+        XCTAssertEqual(revisit.workstreams.map(\.id), ["ws_1", "ws_2"])
+
+        cache.clear()
+        let afterSwitch = WorkstreamsModel(source: source, selectedProject: "proj", cache: cache)
+        XCTAssertTrue(afterSwitch.workstreams.isEmpty, "a connection switch forgets cached rows")
     }
 
     func testMergeAllReadyOnlyMergesGateEligibleRows() async {

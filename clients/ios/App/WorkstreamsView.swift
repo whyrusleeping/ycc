@@ -332,7 +332,8 @@ struct WorkstreamsView: View {
     private func ensureLoaded() async {
         if model == nil {
             guard let client = app.client else { return }
-            model = WorkstreamsModel(source: client, selectedProject: initialProject)
+            model = WorkstreamsModel(
+                source: client, selectedProject: initialProject, cache: app.dataCache)
         }
         await model?.refresh()
     }

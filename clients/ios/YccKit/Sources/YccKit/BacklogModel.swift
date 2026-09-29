@@ -137,12 +137,18 @@ public struct BacklogSection: Identifiable, Sendable {
     public var title: String { status.title }
 }
 
-/// Drives the backlog browser: loads ``ListBacklog`` and ``ListProjects``, holds
-/// the selected
-/// project filter, groups tasks into ordered status sections, and handles
-/// quick-capture (`CreateTask`). The data source is injected (``BacklogSource``)
-/// so the sectioning / validation logic is testable headlessly. `@MainActor`
-/// because it publishes observable UI state.
+/// Drives the backlog browser: loads ``ListBacklog`` (plus ``ListProjects``
+/// only when no app-level project list is cached), holds the selected project
+/// filter, groups tasks into ordered status sections, and handles quick-capture
+/// (`CreateTask`) and in-place status changes. The data source is injected
+/// (``BacklogSource``) so the sectioning / validation logic is testable
+/// headlessly. `@MainActor` because it publishes observable UI state.
+///
+/// Remote-link behaviour: the model seeds itself from ``AppDataCache`` so a
+/// revisited backlog renders instantly while it revalidates; status changes are
+/// applied optimistically (rolled back with an error on failure) and followed
+/// by a background, backlog-only refresh; a captured task is inserted from the
+/// `CreateTask` response rather than waiting for a reload.
 @MainActor
 @Observable
 public final class BacklogModel {
@@ -167,17 +173,43 @@ public final class BacklogModel {
     /// A quick-capture failure message, surfaced inline in the capture sheet.
     public private(set) var createError: String?
 
-    /// The id of the task whose status change is in flight (one at a time); the
-    /// view shows a per-row spinner and disables further changes while set.
-    public private(set) var updatingTaskID: String?
+    /// Tasks whose status change is in flight. Each row's own menu is disabled
+    /// meanwhile; other rows stay fully interactive.
+    public private(set) var updatingTaskIDs: Set<String> = []
     /// A status-change failure message, surfaced as an alert over the list.
     public var updateError: String?
 
-    private let source: BacklogSource
+    /// Whether `taskID` has a status change in flight.
+    public func isUpdating(_ taskID: String) -> Bool { updatingTaskIDs.contains(taskID) }
 
-    public init(source: BacklogSource, selectedProject: String = "") {
+    /// Compatibility: some task with a status change in flight, if any.
+    public var updatingTaskID: String? { updatingTaskIDs.first }
+
+    private let source: BacklogSource
+    private let cache: AppDataCache?
+    private let cacheGeneration: UInt64
+    /// The project whose backlog ``tasks`` currently shows.
+    private var loadedProject: String?
+    /// Optimistic statuses of in-flight updates, re-applied over any list that
+    /// lands while they are outstanding so a refresh cannot flicker them back.
+    private var optimisticStatuses: [String: String] = [:]
+    private var activeLoads = 0
+    private var backgroundRefreshPending = false
+    /// The coalesced backlog-only revalidation started after a mutation.
+    @ObservationIgnored private(set) var backgroundRefreshTask: Task<Void, Never>?
+
+    public init(source: BacklogSource, selectedProject: String = "", cache: AppDataCache? = nil) {
         self.source = source
+        self.cache = cache
+        self.cacheGeneration = cache?.generation ?? 0
         self.selectedProject = selectedProject
+        if let cachedProjects = cache?.projects {
+            projects = cachedProjects
+            if self.selectedProject.isEmpty, cachedProjects.count == 1 {
+                self.selectedProject = cachedProjects[0].name
+            }
+        }
+        seedFromCache(for: self.selectedProject)
     }
 
     /// The project picker is useful only when there is a real choice.
@@ -189,28 +221,63 @@ public final class BacklogModel {
     /// Tasks grouped into board lanes, in workflow order.
     public var board: [BacklogSection] { Self.board(from: tasks, sort: sort) }
 
-    /// (Re)load the backlog for the selected project and the project list.
-    /// Unauthorized bubbles up via ``unauthorized`` for the view to handle.
+    /// (Re)load the backlog for the selected project. The project list comes
+    /// from the app-level cache when available; otherwise it is fetched
+    /// concurrently but never delays the backlog itself. A load superseded by a
+    /// project switch is discarded. Unauthorized bubbles up via
+    /// ``unauthorized`` for the view to handle.
     public func refresh() async {
+        let project = selectedProject
+        if project != loadedProject { seedFromCache(for: project) }
+        if let cachedProjects = cache?.projects, cachedProjects != projects {
+            projects = cachedProjects
+        }
+        let fetchProjects = cache?.projects == nil
+        activeLoads += 1
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            activeLoads -= 1
+            isLoading = activeLoads > 0
+        }
+        async let projectList = Self.projects(from: source, fetch: fetchProjects)
         do {
-            async let backlog = source.listBacklog(project: selectedProject)
-            async let projectList = source.listProjects()
-            let (loaded, loadedProjects) = try await (backlog, projectList)
-            tasks = loaded
-            projects = loadedProjects
-            if selectedProject.isEmpty, loadedProjects.count == 1 {
-                selectedProject = loadedProjects[0].name
+            let loaded = try await source.listBacklog(project: project)
+            if project == selectedProject {
+                apply(loaded, project: project)
+                errorMessage = nil
             }
-            errorMessage = nil
         } catch YccError.unauthorized {
             unauthorized = true
         } catch let YccError.rpc(message) {
             errorMessage = message
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = (error as? YccError)?.displayMessage ?? error.localizedDescription
         }
+        guard fetchProjects else { return }
+        do {
+            if let loadedProjects = try await projectList {
+                projects = loadedProjects
+                cache?.updateProjects(loadedProjects, ifGeneration: cacheGeneration)
+                if selectedProject.isEmpty, loadedProjects.count == 1 {
+                    // A sole project: adopt it without refetching — the empty
+                    // project request already resolved to it.
+                    selectedProject = loadedProjects[0].name
+                    if loadedProject == "" { loadedProject = selectedProject }
+                    storeCache()
+                }
+            }
+        } catch YccError.unauthorized {
+            unauthorized = true
+        } catch {
+            // The project list only drives the filter menu; keep the backlog.
+        }
+    }
+
+    nonisolated private static func projects(
+        from source: BacklogSource, fetch: Bool
+    ) async throws -> [Ycc_V1_ProjectInfo]? {
+        guard fetch else { return nil }
+        return try await source.listProjects()
     }
 
     /// Whether a quick-capture create is allowed: a non-blank title and no create
@@ -220,22 +287,30 @@ public final class BacklogModel {
     }
 
     /// Quick-capture: create a task from a title, markdown body, and P1–P5
-    /// priority, then refresh the list so the new row appears. Returns `true` on
-    /// success. On failure sets ``createError`` / ``unauthorized`` and returns
-    /// `false`. Invalid input is rejected client-side without a round-trip.
+    /// priority. The created task is inserted from the response straight away
+    /// (the sheet can dismiss after one round trip) and the list revalidates in
+    /// the background. Returns `true` on success. On failure sets
+    /// ``createError`` / ``unauthorized`` and returns `false`. Invalid input is
+    /// rejected client-side without a round-trip.
     public func create(title: String, body: String, priority: Int = 3) async -> Bool {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty, (1...5).contains(priority), !isCreating else { return false }
         isCreating = true
         defer { isCreating = false }
+        let project = selectedProject
         do {
-            _ = try await source.createTask(
-                project: selectedProject,
+            let detail = try await source.createTask(
+                project: project,
                 title: trimmedTitle,
                 body: body.trimmingCharacters(in: .whitespacesAndNewlines),
                 priority: priority)
             createError = nil
-            await refresh()
+            if project == selectedProject, !detail.id.isEmpty,
+               !tasks.contains(where: { $0.id == detail.id }) {
+                tasks.append(Self.summary(from: detail))
+                storeCache()
+            }
+            scheduleBackgroundRefresh()
             return true
         } catch YccError.unauthorized {
             unauthorized = true
@@ -259,49 +334,142 @@ public final class BacklogModel {
     public func clearCreateError() { createError = nil }
 
     /// Change a task's status straight from the list (`UpdateTask` with only the
-    /// status field set). The changed row is patched in place immediately (so it
-    /// moves to its new section), then the list refreshes — a status change can
-    /// flip other rows' ready/blocked flags when a dependency completes. A no-op
-    /// (returning `true`) when the status is unchanged. On failure sets
-    /// ``updateError`` / ``unauthorized`` and returns `false`.
+    /// status field set). The row moves to its new section immediately; the
+    /// response then patches it with the daemon's canonical fields and a
+    /// background backlog-only refresh picks up knock-on changes (a completed
+    /// dependency flips other rows' ready/blocked flags). A no-op (returning
+    /// `true`) when the status is unchanged; a second change to the same row
+    /// while one is in flight is rejected. On failure the row reverts and
+    /// ``updateError`` / ``unauthorized`` is set.
     @discardableResult
     public func setStatus(taskID: String, to newStatus: TaskStatus) async -> Bool {
-        guard newStatus != .unknown, updatingTaskID == nil else { return false }
-        if let current = tasks.first(where: { $0.id == taskID }),
-            TaskStatus(status: current.status) == newStatus {
+        guard newStatus != .unknown, !updatingTaskIDs.contains(taskID) else { return false }
+        let project = selectedProject
+        let index = tasks.firstIndex(where: { $0.id == taskID })
+        if let index, TaskStatus(status: tasks[index].status) == newStatus {
             return true
         }
-        updatingTaskID = taskID
-        defer { updatingTaskID = nil }
+        let previousStatus = index.map { tasks[$0].status }
+        if let index { tasks[index].status = newStatus.rawValue }
+        optimisticStatuses[taskID] = newStatus.rawValue
+        updatingTaskIDs.insert(taskID)
+        storeCache()
         do {
             let detail = try await source.updateTaskStatus(
-                project: selectedProject, id: taskID, status: newStatus.rawValue)
-            if let index = tasks.firstIndex(where: { $0.id == taskID }) {
-                tasks[index].status = detail.status
-                tasks[index].title = detail.title
-                tasks[index].priority = detail.priority
-                tasks[index].ready = detail.ready
-                tasks[index].blockedBy = detail.blockedBy
+                project: project, id: taskID, status: newStatus.rawValue)
+            updatingTaskIDs.remove(taskID)
+            optimisticStatuses.removeValue(forKey: taskID)
+            if project == selectedProject,
+               let current = tasks.firstIndex(where: { $0.id == taskID }) {
+                tasks[current].status = detail.status
+                tasks[current].title = detail.title
+                tasks[current].priority = detail.priority
+                tasks[current].ready = detail.ready
+                tasks[current].blockedBy = detail.blockedBy
+                storeCache()
             }
             updateError = nil
-            await refresh()
+            scheduleBackgroundRefresh()
             return true
-        } catch YccError.unauthorized {
-            unauthorized = true
-            return false
-        } catch let YccError.rpc(message) {
-            updateError = message
-            return false
-        } catch let YccError.notFound(message) {
-            updateError = message
-            return false
-        } catch let YccError.failedPrecondition(message) {
-            updateError = message
-            return false
         } catch {
-            updateError = error.localizedDescription
+            updatingTaskIDs.remove(taskID)
+            optimisticStatuses.removeValue(forKey: taskID)
+            if project == selectedProject {
+                if let previousStatus,
+                   let current = tasks.firstIndex(where: { $0.id == taskID }),
+                   tasks[current].status == newStatus.rawValue {
+                    tasks[current].status = previousStatus
+                }
+                storeCache()
+            } else {
+                // The optimistic value may have been cached for the project the
+                // user has since left; drop it rather than persist a lie.
+                cache?.removeValue(for: .backlog(project))
+            }
+            switch error {
+            case YccError.unauthorized:
+                unauthorized = true
+            case let YccError.rpc(message), let YccError.notFound(message),
+                 let YccError.failedPrecondition(message):
+                updateError = message
+            default:
+                updateError = error.localizedDescription
+            }
             return false
         }
+    }
+
+    // MARK: - Cache & background revalidation
+
+    private func seedFromCache(for project: String) {
+        guard let cached = cache?.value(.backlog(project), as: [Ycc_V1_BacklogTaskSummary].self) else {
+            return
+        }
+        tasks = cached
+        loadedProject = project
+    }
+
+    private func storeCache() {
+        guard let loadedProject else { return }
+        cache?.store(tasks, for: .backlog(loadedProject), ifGeneration: cacheGeneration)
+    }
+
+    /// Install a freshly loaded list, keeping in-flight optimistic statuses.
+    private func apply(_ loaded: [Ycc_V1_BacklogTaskSummary], project: String) {
+        var merged = loaded
+        if !optimisticStatuses.isEmpty {
+            for index in merged.indices {
+                if let status = optimisticStatuses[merged[index].id] {
+                    merged[index].status = status
+                }
+            }
+        }
+        if merged != tasks { tasks = merged }
+        loadedProject = project
+        storeCache()
+    }
+
+    /// Coalesce post-mutation revalidations: at most one backlog-only reload is
+    /// in flight, and requests made meanwhile trigger exactly one more.
+    private func scheduleBackgroundRefresh() {
+        backgroundRefreshPending = true
+        guard backgroundRefreshTask == nil else { return }
+        backgroundRefreshTask = Task { @MainActor [weak self] in
+            while true {
+                guard let self, self.backgroundRefreshPending else { break }
+                self.backgroundRefreshPending = false
+                await self.revalidateBacklog()
+            }
+            self?.backgroundRefreshTask = nil
+        }
+    }
+
+    private func revalidateBacklog() async {
+        let project = selectedProject
+        do {
+            let loaded = try await source.listBacklog(project: project)
+            guard project == selectedProject else { return }
+            apply(loaded, project: project)
+            errorMessage = nil
+        } catch YccError.unauthorized {
+            unauthorized = true
+        } catch {
+            // Background revalidation is best-effort; the list keeps the
+            // mutation's response and the next refresh retries.
+        }
+    }
+
+    /// The list row for a created/updated task detail.
+    static func summary(from detail: Ycc_V1_TaskDetail) -> Ycc_V1_BacklogTaskSummary {
+        var summary = Ycc_V1_BacklogTaskSummary()
+        summary.id = detail.id
+        summary.title = detail.title
+        summary.status = detail.status
+        summary.priority = detail.priority
+        summary.dependsOn = detail.dependsOn
+        summary.ready = detail.ready
+        summary.blockedBy = detail.blockedBy
+        return summary
     }
 
     // MARK: - Pure logic (unit-tested)

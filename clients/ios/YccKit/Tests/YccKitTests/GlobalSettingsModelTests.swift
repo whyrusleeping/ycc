@@ -231,6 +231,9 @@ final class GlobalSettingsModelTests: XCTestCase {
 
         XCTAssertTrue(model.isTestingModel)
         await model.testModel(Ycc_V1_ModelConfig())
+        // The first probe reaches the (off-main) fake asynchronously; wait for
+        // it rather than racing it, then confirm the overlap never did.
+        await eventually { source.testCallCount >= 1 }
         XCTAssertEqual(source.testCallCount, 1)
 
         // Editing/dismissing the form invalidates the request. Its eventual

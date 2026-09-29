@@ -65,22 +65,25 @@ struct UsageView: View {
                 }
             }
             .pickerStyle(.menu)
+            // Filter changes reload only the usage rows (budget and the
+            // provider allowance do not depend on them); a newer change
+            // supersedes one still in flight.
             .onChange(of: model.grouping) { _, _ in
-                Task { await model.refresh() }
+                Task { await model.reloadUsage() }
             }
 
             Toggle("Filter by date", isOn: $model.filterByDate)
                 .onChange(of: model.filterByDate) { _, _ in
-                    Task { await model.refresh() }
+                    Task { await model.reloadUsage() }
                 }
             if model.filterByDate {
                 DatePicker("Since", selection: $model.since, displayedComponents: .date)
                     .onChange(of: model.since) { _, _ in
-                        Task { await model.refresh() }
+                        Task { await model.reloadUsage() }
                     }
                 DatePicker("Until", selection: $model.until, displayedComponents: .date)
                     .onChange(of: model.until) { _, _ in
-                        Task { await model.refresh() }
+                        Task { await model.reloadUsage() }
                     }
             }
         }
@@ -225,16 +228,19 @@ struct UsageView: View {
                 systemImage: "line.3.horizontal.decrease.circle")
         }
         .onChange(of: model.selectedProject) { _, _ in
-            Task { await model.refresh() }
+            Task { await model.reloadUsage() }
         }
     }
 
     private func ensureLoaded() async {
         if model == nil {
             guard let client = app.client else { return }
-            model = UsageModel(source: client, selectedProject: initialProject)
+            model = UsageModel(
+                source: client, selectedProject: initialProject, cache: app.dataCache)
         }
-        await model?.refresh()
+        // Appearance revalidates; the provider allowance is force-refreshed
+        // only on the first load (pull-to-refresh forces it explicitly).
+        await model?.load()
     }
 }
 

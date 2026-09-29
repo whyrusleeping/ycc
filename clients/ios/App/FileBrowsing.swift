@@ -250,10 +250,18 @@ private struct FileEntryRow: View {
 
     static func parseDate(_ value: String) -> Date? {
         guard !value.isEmpty else { return nil }
-        let withFraction = ISO8601DateFormatter()
-        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return withFraction.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+        return isoWithFraction.date(from: value) ?? isoPlain.date(from: value)
     }
+
+    // Formatter construction is expensive and this runs per row per render;
+    // ISO8601DateFormatter is thread-safe, so share two instances.
+    private static let isoWithFraction: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let isoPlain = ISO8601DateFormatter()
 }
 
 /// Shown when a session's worktree has been reclaimed and the daemon fell

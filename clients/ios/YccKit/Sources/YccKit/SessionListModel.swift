@@ -43,7 +43,7 @@ extension YccClient: SessionListSource {
     }
 }
 
-private struct HistoryLoad: Sendable {
+private struct HistoryLoad: Sendable, Equatable {
     let project: String
     var sessions: [Ycc_V1_SessionSummary] = []
     var pinned: [Ycc_V1_SessionSummary] = []
@@ -58,6 +58,32 @@ private enum HistoryUpdate: Sendable {
     case history(HistoryLoad)
     // nil means the supplemental request failed; an empty set clears badges.
     case loop(project: String, ids: Set<String>?)
+    /// ListProjects (run concurrently with the cached-project fan-out) resolved.
+    case projects([Ycc_V1_ProjectInfo])
+    /// ListProjects failed; `nil` message means unauthorized.
+    case projectsFailed(message: String?)
+    /// The partial-publication valve fired: a slow project has held the
+    /// single end-of-refresh publication back long enough.
+    case publishPartial
+}
+
+/// Rows derived from the loaded pages for the current scope, cached until the
+/// data or the selected project changes so UI reads never re-sort.
+private struct ScopedRows {
+    let revision: Int
+    let project: String?
+    let sessions: [Ycc_V1_SessionSummary]
+    let sections: [SessionSection]
+}
+
+/// Drawer activity derived from the loaded rows and the read marks, cached
+/// until either changes (the drawer is always mounted, so it is read on every
+/// model change).
+private struct ActivitySnapshot {
+    let revision: Int
+    let marksRevision: Int
+    let byProject: [String: ProjectActivity]
+    let total: ProjectActivity
 }
 
 /// The canonical status of a session, parsed from the daemon's free-form
@@ -135,6 +161,9 @@ public final class SessionListModel {
     public private(set) var allSessions: [Ycc_V1_SessionSummary] = []
     /// Registered projects; drives the workspace drawer.
     public private(set) var projects: [Ycc_V1_ProjectInfo] = []
+    /// Whether ``projects`` reflects a successful `ListProjects` (rather than
+    /// the empty initial value), so it can be shared app-wide as authoritative.
+    public private(set) var hasLoadedProjects = false
     /// The selected project filter. `nil` is the daemon-wide recent-session feed;
     /// a value is a registered project name. Scope changes use loaded pages
     /// locally, without a network round-trip.
@@ -163,26 +192,79 @@ public final class SessionListModel {
     /// neither reads nor writes the user's real marks.
     @ObservationIgnored public let readMarks: SessionReadStore
 
+    /// Monotonic clock (seconds) used by the passive-refresh throttle. The
+    /// default keeps counting while the device sleeps (unlike `systemUptime`),
+    /// so a phone unlocked an hour later is never mistaken for "just refreshed".
+    @ObservationIgnored private let clock: @Sendable () -> TimeInterval
+    /// Passive refreshes (return to root, foregrounding, re-appearance) are
+    /// skipped when a successful refresh completed less than this long ago.
+    @ObservationIgnored private let staleAfter: TimeInterval
+    /// A refresh publishes its merged result once, when every project has
+    /// answered. If some project is still outstanding after this long, publish
+    /// what has arrived and continue progressively so one slow project cannot
+    /// hold the whole list back. `nil` disables the valve.
+    @ObservationIgnored private let partialPublishDelay: TimeInterval?
+    @ObservationIgnored private var lastSuccessfulRefresh: TimeInterval?
+    /// How many times loaded pages were merged and published (diagnostics/tests).
+    @ObservationIgnored private(set) var publicationCount = 0
+
     public init(
         source: SessionListSource,
         selectedProject: String? = nil,
         readMarks: SessionReadStore? = nil,
-        retryDelays: [TimeInterval] = [0.4, 1.2]
+        retryDelays: [TimeInterval] = [0.4, 1.2],
+        staleAfter: TimeInterval = 10,
+        partialPublishDelay: TimeInterval? = 1.5,
+        clock: @escaping @Sendable () -> TimeInterval = { SessionListModel.continuousSeconds() }
     ) {
         self.source = source
         self.selectedProject = selectedProject
         self.readMarks = readMarks ?? .ephemeral()
         self.retryDelays = retryDelays
+        self.staleAfter = staleAfter
+        self.partialPublishDelay = partialPublishDelay
+        self.clock = clock
     }
 
+    /// Bumped whenever the loaded rows, routing or per-project pages change.
+    /// Derived views (``sessions``, ``sections``, drawer activity) key their
+    /// caches on it, so reads between changes cost a comparison, not a sort.
+    private(set) var dataRevision = 0
+    @ObservationIgnored private var scopedCache: ScopedRows?
+    @ObservationIgnored private var activityCache: ActivitySnapshot?
+
     /// The sessions to display: everything, or just the selected project's.
-    public var sessions: [Ycc_V1_SessionSummary] {
-        guard let selectedProject else { return allSessions }
-        guard let load = historyLoads[selectedProject] else { return [] }
-        var rows = load.sessions
-        let seen = Set(rows.map(\.sessionID))
-        rows.append(contentsOf: load.pinned.filter { !seen.contains($0.sessionID) })
-        return Self.sortedByRecency(rows)
+    public var sessions: [Ycc_V1_SessionSummary] { scopedRows.sessions }
+
+    private var scopedRows: ScopedRows {
+        // Reading both keys registers the observation dependencies even when
+        // the cached value is returned.
+        let revision = dataRevision
+        let project = selectedProject
+        if let cached = scopedCache, cached.revision == revision, cached.project == project {
+            return cached
+        }
+        let rows: [Ycc_V1_SessionSummary]
+        let sections: [SessionSection]
+        if let project {
+            if let load = historyLoads[project] {
+                var scoped = load.sessions
+                let seen = Set(scoped.map(\.sessionID))
+                scoped.append(contentsOf: load.pinned.filter { !seen.contains($0.sessionID) })
+                rows = Self.sortedByRecency(scoped)
+            } else {
+                rows = []
+            }
+            // A scoped project view keeps the needs-answer pinning.
+            sections = Self.sectionsFromSorted(rows)
+        } else {
+            // The aggregate is already sorted on ingestion.
+            rows = allSessions
+            sections = rows.isEmpty ? [] : [SessionSection(kind: .all, title: nil, sessions: rows)]
+        }
+        let value = ScopedRows(revision: revision, project: project, sessions: rows, sections: sections)
+        scopedCache = value
+        return value
     }
 
     /// The filter is meaningful when projects exist (alongside All projects).
@@ -198,16 +280,7 @@ public final class SessionListModel {
 
     /// The daemon-wide home feed is one globally recency-sorted list. A scoped
     /// project view retains the phone-focused needs-answer pinning behavior.
-    public var sections: [SessionSection] {
-        // The aggregate is already sorted on ingestion; filtering and stable
-        // partitioning preserve that order without reparsing dates on UI reads.
-        let visible = sessions
-        guard selectedProject != nil else {
-            return visible.isEmpty ? [] : [SessionSection(
-                kind: .all, title: nil, sessions: visible)]
-        }
-        return Self.sectionsFromSorted(visible)
-    }
+    public var sections: [SessionSection] { scopedRows.sections }
 
     /// Maps each aggregate-visible session id to the project argument required by
     /// transcript and resume RPCs. Rows remain routable after histories
@@ -247,20 +320,39 @@ public final class SessionListModel {
         readMarks.markAllRead(sessions)
     }
 
-    /// Live-activity counts per project name, for the drawer's badges. Computed
-    /// from the loaded rows rather than cached at load time, so a local
-    /// correction like ``markAnswered(sessionID:)`` is reflected immediately.
-    public var activityByProject: [String: ProjectActivity] {
+    /// Live-activity counts per project name, for the drawer's badges. Derived
+    /// from the loaded rows and cached until they or the read marks change, so
+    /// a local correction like ``markAnswered(sessionID:)`` or a mark-read is
+    /// reflected immediately while ordinary renders do no per-row work.
+    public var activityByProject: [String: ProjectActivity] { activitySnapshot.byProject }
+
+    private var activitySnapshot: ActivitySnapshot {
+        let revision = dataRevision
+        let marksRevision = readMarks.revision
+        if let cached = activityCache, cached.revision == revision, cached.marksRevision == marksRevision {
+            return cached
+        }
         var counts: [String: ProjectActivity] = [:]
+        var total = ProjectActivity()
         for project in loadedProjects { counts[project] = ProjectActivity() }
         for session in allSessions {
+            var own = ProjectActivity()
+            Self.accumulate(session, into: &own)
+            if readMarks.isUnread(session) { own.unread += 1 }
+            total.active += own.active
+            total.needsAnswer += own.needsAnswer
+            total.unread += own.unread
             guard let project = sessionProjects[session.sessionID] else { continue }
             var activity = counts[project] ?? ProjectActivity()
-            Self.accumulate(session, into: &activity)
-            if readMarks.isUnread(session) { activity.unread += 1 }
+            activity.active += own.active
+            activity.needsAnswer += own.needsAnswer
+            activity.unread += own.unread
             counts[project] = activity
         }
-        return counts
+        let value = ActivitySnapshot(
+            revision: revision, marksRevision: marksRevision, byProject: counts, total: total)
+        activityCache = value
+        return value
     }
 
     /// Project names that produced a successful history load, so a project with
@@ -276,24 +368,48 @@ public final class SessionListModel {
         }
     }
 
-    /// Fetch one older page per truncated project. Cursor pages merge by ID, so
-    /// a live row already supplied as pinned cannot appear twice.
+    /// Fetch one older page per truncated project, concurrently. Cursor pages
+    /// merge by ID, so a live row already supplied as pinned cannot appear twice.
     public func loadMoreHistory() async {
         guard !isLoadingMoreHistory && !isLoading else { return }
-        let targets = loadedProjects.filter {
-            (selectedProject == nil || selectedProject == $0) && !(historyLoads[$0]?.nextCursor ?? "").isEmpty
+        let requests: [(project: String, cursor: String)] = loadedProjects.compactMap { project in
+            guard selectedProject == nil || selectedProject == project,
+                  let cursor = historyLoads[project]?.nextCursor, !cursor.isEmpty
+            else { return nil }
+            return (project, cursor)
         }
-        guard !targets.isEmpty else { return }
+        guard !requests.isEmpty else { return }
         isLoadingMoreHistory = true
         defer { isLoadingMoreHistory = false }
+        let generation = refreshGeneration
+        let source = source
+        let pages = await withTaskGroup(
+            of: (String, Result<SessionHistoryPage, Error>).self
+        ) { group -> [String: Result<SessionHistoryPage, Error>] in
+            for request in requests {
+                group.addTask {
+                    do {
+                        let page = try await source.listSessionHistory(
+                            project: request.project, limit: 50, cursor: request.cursor)
+                        return (request.project, .success(page))
+                    } catch {
+                        return (request.project, .failure(error))
+                    }
+                }
+            }
+            var results: [String: Result<SessionHistoryPage, Error>] = [:]
+            for await (project, result) in group { results[project] = result }
+            return results
+        }
+        // A refresh that finished meanwhile owns newer first pages; an older
+        // cursor page must not be merged into them.
+        guard generation == refreshGeneration else { return }
+        var loads = historyLoads
         var failures: [String] = []
-        for project in targets {
-            guard let cursor = historyLoads[project]?.nextCursor, !cursor.isEmpty else { continue }
-            let generation = refreshGeneration
-            do {
-                let page = try await source.listSessionHistory(project: project, limit: 50, cursor: cursor)
-                guard generation == refreshGeneration, let current = historyLoads[project] else { return }
-                var load = current
+        for request in requests {
+            switch pages[request.project] {
+            case .success(let page)?:
+                guard var load = loads[request.project] else { continue }
                 for row in page.sessions {
                     if let index = load.sessions.firstIndex(where: { $0.sessionID == row.sessionID }) {
                         load.sessions[index] = row
@@ -302,17 +418,17 @@ public final class SessionListModel {
                     }
                 }
                 load.nextCursor = page.nextCursor
-                historyLoads[project] = load
-            } catch YccError.unauthorized {
-                guard generation == refreshGeneration else { return }
+                loads[request.project] = load
+            case .failure(YccError.unauthorized)?:
                 unauthorized = true
                 return
-            } catch {
-                guard generation == refreshGeneration else { return }
-                failures.append(project)
+            case .failure?:
+                failures.append(request.project)
+            case nil:
+                continue
             }
         }
-        apply(loads: loadedProjects.compactMap { historyLoads[$0] })
+        apply(loads: loadedProjects.compactMap { loads[$0] })
         if !failures.isEmpty {
             partialWarning = "Couldn’t load older sessions for \(failures.joined(separator: ", "))."
         }
@@ -320,16 +436,11 @@ public final class SessionListModel {
     }
 
     /// Daemon-wide live-activity counts, for the drawer's "Recent sessions" row.
-    public var totalActivity: ProjectActivity {
-        allSessions.reduce(into: ProjectActivity()) { total, session in
-            Self.accumulate(session, into: &total)
-            if readMarks.isUnread(session) { total.unread += 1 }
-        }
-    }
+    public var totalActivity: ProjectActivity { activitySnapshot.total }
 
     /// Activity for one project (zero when it has none).
     public func activity(forProject name: String) -> ProjectActivity {
-        activityByProject[name] ?? ProjectActivity()
+        activitySnapshot.byProject[name] ?? ProjectActivity()
     }
 
     /// Locally clear a session's "waiting for an answer" flag.
@@ -344,6 +455,7 @@ public final class SessionListModel {
               allSessions[index].waitingInput
         else { return }
         allSessions[index].waitingInput = false
+        dataRevision &+= 1
         for project in historyLoads.keys {
             if let i = historyLoads[project]?.sessions.firstIndex(where: { $0.sessionID == sessionID }) {
                 historyLoads[project]?.sessions[i].waitingInput = false
@@ -360,10 +472,19 @@ public final class SessionListModel {
     /// so the drawer's badges stay accurate no matter which project is selected.
     /// Concurrent callers await the same load rather than issuing overlapping
     /// foreground POST bursts.
-    public func refresh() async {
+    ///
+    /// `force: false` is for passive triggers (returning to the list,
+    /// foregrounding): it is skipped when a successful refresh completed within
+    /// the last ``staleAfter`` seconds. Pull-to-refresh and post-mutation
+    /// reloads use the default forced refresh.
+    public func refresh(force: Bool = true) async {
         if let refreshTask {
             await refreshTask.value
             return
+        }
+        if !force, let lastSuccessfulRefresh {
+            let elapsed = clock() - lastSuccessfulRefresh
+            if elapsed >= 0 && elapsed < staleAfter { return }
         }
 
         refreshGeneration += 1
@@ -371,6 +492,19 @@ public final class SessionListModel {
         refreshTask = task
         await task.value
         refreshTask = nil
+    }
+
+    nonisolated private static let clockOrigin = ContinuousClock.now
+
+    /// Seconds on a clock that includes time the device spent asleep.
+    public nonisolated static func continuousSeconds() -> TimeInterval {
+        let components = clockOrigin.duration(to: ContinuousClock.now).components
+        return TimeInterval(components.seconds) + TimeInterval(components.attoseconds) / 1e18
+    }
+
+    /// A throttled ``refresh(force:)`` for passive triggers.
+    public func refreshIfStale() async {
+        await refresh(force: false)
     }
 
     /// Refresh only the lightweight project rows used by the visible drawer.
@@ -382,7 +516,8 @@ public final class SessionListModel {
         do {
             let loaded = try await source.listProjects()
             guard !Task.isCancelled else { return }
-            projects = loaded
+            hasLoadedProjects = true
+            if loaded != projects { projects = loaded }
         } catch YccError.unauthorized {
             unauthorized = true
         } catch {
@@ -399,29 +534,8 @@ public final class SessionListModel {
             loadSpan.end(rows: allSessions.count)
         }
         unauthorized = false
-        do {
-            let source = source
-            let retryDelays = retryDelays
-            let loadedProjects = try await Self.retrying(delays: retryDelays) {
-                try await source.listProjects()
-            }
-            projects = loadedProjects
-
-            guard !loadedProjects.isEmpty else {
-                // A daemon that reports no registered project can still own a
-                // session log for its startup workspace; query it by the selected
-                // name (an empty name resolves server-side).
-                await refreshHistories(targets: [selectedProject ?? ""])
-                return
-            }
-
-            await refreshAcrossProjects(loadedProjects)
-        } catch YccError.unauthorized {
-            unauthorized = true
-        } catch let YccError.rpc(message) {
-            errorMessage = message
-        } catch {
-            errorMessage = error.localizedDescription
+        if await refreshHistories(cachedProjects: projects) {
+            lastSuccessfulRefresh = clock()
         }
     }
 
@@ -445,23 +559,98 @@ public final class SessionListModel {
         return base == "/" ? "" : base
     }
 
-    private func refreshAcrossProjects(_ loadedProjects: [Ycc_V1_ProjectInfo]) async {
-        // Project aliases that point at the same workspace would return the same
-        // event logs. Keep the first registration for a stable display/routing name.
+    /// The history queries a project list implies. Project aliases that point at
+    /// the same workspace would return the same event logs, so keep the first
+    /// registration for a stable display/routing name. A daemon that reports no
+    /// registered project can still own a session log for its startup
+    /// workspace; query it by `fallback` (an empty name resolves server-side).
+    private static func historyTargets(
+        for projects: [Ycc_V1_ProjectInfo], fallback: String
+    ) -> [String] {
+        guard !projects.isEmpty else { return [fallback] }
         var seenPaths = Set<String>()
-        let targets: [String] = loadedProjects.compactMap { project in
+        return projects.compactMap { project in
             let path = project.path.trimmingCharacters(in: .whitespacesAndNewlines)
             let identity = path.isEmpty ? "name:\(project.name)" : "path:\(path)"
             return seenPaths.insert(identity).inserted ? project.name : nil
         }
-        await refreshHistories(targets: targets)
     }
 
-    private func refreshHistories(targets: [String]) async {
+    /// Start one project's history page and its supplemental work-loop query.
+    nonisolated private static func addFetches(
+        for project: String,
+        source: SessionListSource,
+        retryDelays: [TimeInterval],
+        to group: inout TaskGroup<HistoryUpdate>
+    ) {
+        group.addTask {
+            let span = LatencyDiagnostics.shared.begin("home.history")
+            do {
+                let history = try await Self.retrying(delays: retryDelays) {
+                    try await source.listSessionHistory(project: project, limit: 50, cursor: "")
+                }
+                span.end(rows: history.sessions.count)
+                return .history(HistoryLoad(project: project, sessions: history.sessions,
+                    pinned: history.pinned, nextCursor: history.nextCursor, hasHistory: true))
+            } catch YccError.unauthorized {
+                span.end()
+                return .history(HistoryLoad(project: project, unauthorized: true))
+            } catch {
+                span.end()
+                return .history(HistoryLoad(
+                    project: project,
+                    error: (error as? YccError)?.displayMessage ?? error.localizedDescription))
+            }
+        }
+        group.addTask {
+            let span = LatencyDiagnostics.shared.begin("home.workloop")
+            do {
+                let loop = try await source.workLoop(project: project)
+                let ids = Self.loopSessionIDs(from: loop)
+                span.end(rows: ids.count)
+                return .loop(project: project, ids: ids)
+            } catch {
+                span.end()
+                return .loop(project: project, ids: nil)
+            }
+        }
+    }
+
+    /// One refresh round. With a cached project list the per-project history
+    /// and work-loop queries start immediately, concurrently with ListProjects
+    /// (one round trip instead of two); when ListProjects answers, newly
+    /// registered projects are fetched and removed ones dropped. On first load
+    /// there is nothing cached, so the fan-out waits for ListProjects.
+    ///
+    /// The merged result is published once, when every project has answered —
+    /// not once per project — unless the partial-publication valve fires first.
+    /// Returns whether the refresh succeeded (for the passive-refresh throttle).
+    private func refreshHistories(cachedProjects: [Ycc_V1_ProjectInfo]) async -> Bool {
         let source = source
         let retryDelays = retryDelays
+        let fallback = selectedProject ?? ""
+        var targets = cachedProjects.isEmpty
+            ? [] : Self.historyTargets(for: cachedProjects, fallback: fallback)
         var byProject: [String: HistoryLoad] = [:]
-        for project in targets {
+        var pendingHistories = Set<String>()
+        var projectsResolved = false
+        var projectsError: String?
+        var progressive = false
+        var receivedHistory = false
+        var finished = false
+        var succeeded = false
+        let partialDelay = partialPublishDelay
+        let valve: Task<Void, Never>? = partialDelay.map { delay in
+            Task {
+                let nanoseconds = UInt64(max(0, min(delay, 3_600)) * 1_000_000_000)
+                try? await Task<Never, Never>.sleep(nanoseconds: nanoseconds)
+            }
+        }
+        defer { valve?.cancel() }
+
+        // Seed each target with its pre-refresh snapshot, so a pending or failed
+        // project keeps its rows (and routing) in every publication.
+        func seed(_ project: String) {
             // Keep existing badges until their supplemental request completes.
             let ids = Set(loopSessionIDs.filter { sessionProjects[$0] == project })
             byProject[project] = HistoryLoad(
@@ -471,49 +660,102 @@ public final class SessionListModel {
                 nextCursor: historyLoads[project]?.nextCursor ?? "",
                 loopSessionIDs: ids,
                 hasHistory: loadedProjects.contains(project))
+            pendingHistories.insert(project)
         }
-        var pendingHistories = targets.count
+
+        // Apply in registry order, not completion order: duplicate IDs and
+        // equal timestamps must converge to the same result.
+        func publish() {
+            apply(loads: targets.compactMap { byProject[$0] })
+        }
+
+        func finishIfComplete() {
+            guard !finished, projectsResolved, pendingHistories.isEmpty else { return }
+            finished = true
+            valve?.cancel()
+            if !targets.isEmpty {
+                publish()
+                // One aggregate baseline per refresh: advancing the shared
+                // watermark for partial results would make unread status
+                // depend on which project happened to finish first.
+                readMarks.noteSeen(historyLoads.values.flatMap { $0.sessions + $0.pinned })
+            }
+            if let projectsError {
+                // The project list itself failed: report it (histories for the
+                // cached projects above are still shown).
+                errorMessage = projectsError
+            } else {
+                succeeded = errorMessage == nil
+            }
+            isLoading = false
+        }
+
+        func stop() {
+            unauthorized = true
+            valve?.cancel()
+        }
 
         await withTaskGroup(of: HistoryUpdate.self) { group in
-            for project in targets {
-                group.addTask {
-                    let span = LatencyDiagnostics.shared.begin("home.history")
-                    do {
-                        let history = try await Self.retrying(delays: retryDelays) {
-                            try await source.listSessionHistory(project: project, limit: 50, cursor: "")
-                        }
-                        span.end(rows: history.sessions.count)
-                        return .history(HistoryLoad(project: project, sessions: history.sessions,
-                            pinned: history.pinned, nextCursor: history.nextCursor, hasHistory: true))
-                    } catch YccError.unauthorized {
-                        span.end()
-                        return .history(HistoryLoad(project: project, unauthorized: true))
-                    } catch {
-                        span.end()
-                        return .history(HistoryLoad(
-                            project: project,
-                            error: (error as? YccError)?.displayMessage ?? error.localizedDescription))
-                    }
-                }
-                group.addTask {
-                    let span = LatencyDiagnostics.shared.begin("home.workloop")
-                    do {
-                        let loop = try await source.workLoop(project: project)
-                        let ids = Self.loopSessionIDs(from: loop)
-                        span.end(rows: ids.count)
-                        return .loop(project: project, ids: ids)
-                    } catch {
-                        span.end()
-                        return .loop(project: project, ids: nil)
-                    }
+            group.addTask {
+                do {
+                    return .projects(try await Self.retrying(delays: retryDelays) {
+                        try await source.listProjects()
+                    })
+                } catch YccError.unauthorized {
+                    return .projectsFailed(message: nil)
+                } catch let YccError.rpc(message) {
+                    return .projectsFailed(message: message)
+                } catch {
+                    return .projectsFailed(message: error.localizedDescription)
                 }
             }
+            if let valve {
+                group.addTask {
+                    await valve.value
+                    return .publishPartial
+                }
+            }
+            for project in targets {
+                seed(project)
+                Self.addFetches(for: project, source: source, retryDelays: retryDelays, to: &group)
+            }
+
             for await update in group {
                 guard !unauthorized else { continue }
                 switch update {
+                case .projects(let loaded):
+                    hasLoadedProjects = true
+                    if loaded != projects { projects = loaded }
+                    let resolved = Self.historyTargets(for: loaded, fallback: fallback)
+                    let known = Set(targets)
+                    // Projects removed meanwhile: drop them; their in-flight
+                    // results are ignored when they arrive.
+                    let kept = Set(resolved)
+                    for project in targets where !kept.contains(project) {
+                        byProject.removeValue(forKey: project)
+                        pendingHistories.remove(project)
+                    }
+                    targets = resolved
+                    for project in resolved where !known.contains(project) {
+                        seed(project)
+                        Self.addFetches(for: project, source: source, retryDelays: retryDelays, to: &group)
+                    }
+                    projectsResolved = true
+                    finishIfComplete()
+                    if !finished, progressive { publish() }
+                case .projectsFailed(let message):
+                    guard let message else {
+                        stop()
+                        group.cancelAll()
+                        continue
+                    }
+                    projectsError = message
+                    projectsResolved = true
+                    finishIfComplete()
                 case .history(var load):
+                    guard pendingHistories.contains(load.project) else { continue }
                     if load.unauthorized {
-                        unauthorized = true
+                        stop()
                         group.cancelAll()
                         continue
                     }
@@ -526,39 +768,43 @@ public final class SessionListModel {
                         load.hasHistory = previous?.hasHistory ?? false
                     }
                     byProject[load.project] = load
-                    pendingHistories -= 1
-                    // Apply in registry order, not completion order: duplicate IDs
-                    // and equal timestamps must converge to the same result.
-                    apply(loads: targets.compactMap { byProject[$0] })
-                    if pendingHistories == 0 {
-                        // One aggregate baseline per refresh: advancing the shared
-                        // watermark for partial results would make unread status
-                        // depend on which project happened to finish first.
-                        readMarks.noteSeen(historyLoads.values.flatMap { $0.sessions + $0.pinned })
-                        isLoading = false
-                    }
+                    pendingHistories.remove(load.project)
+                    receivedHistory = true
+                    finishIfComplete()
+                    if !finished, progressive { publish() }
                 case let .loop(project, ids):
-                    guard let ids else { continue }
+                    guard let ids, byProject[project] != nil else { continue }
                     byProject[project]?.loopSessionIDs = ids
-                    // Badge arrival must not re-sort/re-baseline the histories.
-                    loopSessionIDs = byProject.values.reduce(into: Set<String>()) { result, load in
-                        result.formUnion(load.loopSessionIDs)
+                    // Before the publication the badges ride along with it;
+                    // afterwards a late badge must not re-sort/re-baseline.
+                    guard finished || progressive else { continue }
+                    let merged = targets.reduce(into: Set<String>()) { result, project in
+                        result.formUnion(byProject[project]?.loopSessionIDs ?? [])
                     }
+                    if merged != loopSessionIDs { loopSessionIDs = merged }
+                case .publishPartial:
+                    guard !finished, !progressive else { continue }
+                    progressive = true
+                    if receivedHistory { publish() }
                 }
             }
         }
+        return succeeded && !unauthorized
     }
 
     /// Merge per-project history loads into the aggregate feed, its routing
     /// table, the drawer's activity counts, and the error/partial-warning state.
+    /// Unchanged values are not reassigned, so an idempotent refresh (nothing
+    /// new on the daemon) does not invalidate or re-render the list.
     private func apply(loads: [HistoryLoad]) {
+        publicationCount += 1
         // Pending/failed projects carry their pre-refresh snapshot in loads,
         // independent of any temporary deduplication during partial publication.
         var merged: [Ycc_V1_SessionSummary] = []
         var routes: [String: String] = [:]
         var seenSessionIDs = Set<String>()
         var succeeded: [String] = []
-        historyLoads = Dictionary(uniqueKeysWithValues: loads.map { ($0.project, $0) })
+        let newLoads = Dictionary(loads.map { ($0.project, $0) }, uniquingKeysWith: { _, last in last })
         // A globally sorted feed cannot show a row below a truncated project's
         // oldest loaded row: that project may have intervening unseen rows.
         let frontiers = loads.filter { $0.hasHistory && !$0.nextCursor.isEmpty }
@@ -578,25 +824,34 @@ public final class SessionListModel {
                 routes[session.sessionID] = load.project
             }
         }
-        allSessions = Self.sortedByRecency(merged)
-        sessionProjects = routes
-        loopSessionIDs = loads.reduce(into: Set<String>()) { ids, load in
+        let sorted = Self.sortedByRecency(merged)
+        var changed = false
+        if newLoads != historyLoads { historyLoads = newLoads; changed = true }
+        if sorted != allSessions { allSessions = sorted; changed = true }
+        if routes != sessionProjects { sessionProjects = routes; changed = true }
+        if succeeded != loadedProjects { loadedProjects = succeeded; changed = true }
+        if changed { dataRevision &+= 1 }
+        let loopIDs = loads.reduce(into: Set<String>()) { ids, load in
             ids.formUnion(load.loopSessionIDs)
         }
-        loadedProjects = succeeded
+        if loopIDs != loopSessionIDs { loopSessionIDs = loopIDs }
 
         let failed = loads.filter { $0.error != nil }
+        let warning: String?
+        let error: String?
         if failed.isEmpty {
-            partialWarning = nil
-            errorMessage = nil
+            warning = nil
+            error = nil
         } else if failed.count < loads.count {
             let names = failed.map(\.project)
-            partialWarning = "Some projects couldn’t be loaded: \(names.joined(separator: ", "))."
-            errorMessage = nil
+            warning = "Some projects couldn’t be loaded: \(names.joined(separator: ", "))."
+            error = nil
         } else {
-            partialWarning = nil
-            errorMessage = failed.first?.error ?? "Couldn’t load sessions."
+            warning = nil
+            error = failed.first?.error ?? "Couldn’t load sessions."
         }
+        if warning != partialWarning { partialWarning = warning }
+        if error != errorMessage { errorMessage = error }
     }
 
     /// Retry short-lived foreground connection failures. Authorization failures
@@ -757,10 +1012,19 @@ public final class SessionListModel {
     /// Parse an RFC3339 / ISO8601 timestamp. Daemon timestamps may carry
     /// fractional seconds and a numeric offset, so try with fractional seconds
     /// first, then without. Empty / unparseable input returns `nil`.
+    ///
+    /// Results are memoized: the same daemon stamps are parsed over and over
+    /// (sorting, frontier checks, unread comparisons against read marks), and
+    /// ISO-8601 parsing dominates those paths. The cache is bounded and
+    /// thread-safe.
     static func parseTimestamp(_ value: String) -> Date? {
         if value.isEmpty { return nil }
-        return isoWithFraction.date(from: value) ?? isoPlain.date(from: value)
+        return timestampCache.value(for: value) { text in
+            isoWithFraction.date(from: text) ?? isoPlain.date(from: text)
+        }
     }
+
+    private static let timestampCache = MemoCache<Date?>(limit: 4_096)
 
     private static let isoWithFraction: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
@@ -815,13 +1079,12 @@ public final class SessionListModel {
             }
         }
         for id in taskIDs {
-            let escaped = NSRegularExpression.escapedPattern(for: id)
-            let patterns = [
-                #"(?i)^work\s+on\s+task\s+"# + escaped + #"\s*[:\-–—]\s*"#,
-                #"^"# + escaped + #"\s*[:\-–—]\s*"#,
-            ]
-            for pattern in patterns {
-                guard let expression = try? NSRegularExpression(pattern: pattern) else { continue }
+            // Both patterns are anchored at the start; skip the regex entirely
+            // for the (common) titles that cannot match.
+            guard title.hasPrefix(id)
+                || title.prefix(4).caseInsensitiveCompare("work") == .orderedSame
+            else { continue }
+            for expression in taskPrefixExpressions(for: id) {
                 let range = NSRange(title.startIndex..<title.endIndex, in: title)
                 if expression.firstMatch(in: title, range: range) != nil {
                     title = expression.stringByReplacingMatches(
@@ -837,6 +1100,22 @@ public final class SessionListModel {
         let base = mode.isEmpty ? "session" : mode
         return shortID.isEmpty ? base : "\(base) · \(shortID)"
     }
+
+    /// Compiled task-boilerplate expressions per task id, cached because
+    /// ``displayTitle(for:)`` runs for every row on every list render.
+    private static func taskPrefixExpressions(for id: String) -> [NSRegularExpression] {
+        let expressions = taskPrefixCache.value(for: id) { id -> [NSRegularExpression]? in
+            let escaped = NSRegularExpression.escapedPattern(for: id)
+            let patterns = [
+                #"(?i)^work\s+on\s+task\s+"# + escaped + #"\s*[:\-–—]\s*"#,
+                #"^"# + escaped + #"\s*[:\-–—]\s*"#,
+            ]
+            return patterns.compactMap { try? NSRegularExpression(pattern: $0) }
+        }
+        return expressions ?? []
+    }
+
+    private static let taskPrefixCache = MemoCache<[NSRegularExpression]?>(limit: 512)
 
     /// Compact, deterministic logical-model signal. Although the daemon sends
     /// usage in this order, sort here too so cached/older servers cannot produce
@@ -916,4 +1195,30 @@ public final class SessionListModel {
         return items
     }
 
+}
+
+/// A small thread-safe memo table for pure, string-keyed derivations (parsed
+/// timestamps, compiled regexes). Cleared wholesale when it reaches `limit`,
+/// which keeps it bounded without per-entry bookkeeping.
+final class MemoCache<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [String: Value] = [:]
+    private let limit: Int
+
+    init(limit: Int) { self.limit = max(1, limit) }
+
+    func value(for key: String, compute: (String) -> Value) -> Value {
+        lock.lock()
+        if let cached = storage[key] {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+        let computed = compute(key)
+        lock.lock()
+        if storage.count >= limit { storage.removeAll(keepingCapacity: true) }
+        storage[key] = computed
+        lock.unlock()
+        return computed
+    }
 }

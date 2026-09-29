@@ -96,12 +96,49 @@ private func session(
 final class TaskDetailModelTests: XCTestCase {
     func testLoadPopulatesTaskAndStatus() async {
         let source = MockTaskDetailSource(detail: detail("0010", status: "proposed"))
+        // A focused live session exists, but the task is not in progress: the
+        // speculative history lookup's result must be discarded.
+        source.sessions = [session("live")]
         let model = TaskDetailModel(source: source, taskID: "0010")
         await model.load()
         XCTAssertEqual(model.task?.id, "0010")
         XCTAssertEqual(model.status, .proposed)
         XCTAssertNil(model.errorMessage)
-        XCTAssertTrue(source.historyProjects.isEmpty)
+        XCTAssertTrue(model.activeSessions.isEmpty)
+    }
+
+    func testReloadOfKnownNotInProgressTaskSkipsHistory() async {
+        let source = MockTaskDetailSource(detail: detail("0010", status: "done"))
+        let model = TaskDetailModel(source: source, project: "proj", taskID: "0010")
+        await model.load()
+        let firstLoadRequests = source.historyProjects.count
+        XCTAssertLessThanOrEqual(firstLoadRequests, 1)
+
+        await model.load()
+        XCTAssertEqual(source.historyProjects.count, firstLoadRequests, "no speculation once known not in progress")
+
+        // It became in progress daemon-side: the reload finds its session.
+        source.detail = detail("0010", status: "in_progress")
+        source.sessions = [session("active")]
+        await model.load()
+        XCTAssertEqual(model.activeSessions.map(\.sessionID), ["active"])
+    }
+
+    func testSpeculativeHistoryUnauthorizedIgnoredWhenNotInProgress() async {
+        let source = MockTaskDetailSource(detail: detail("0010", status: "todo"))
+        source.historyError = YccError.unauthorized
+        let model = TaskDetailModel(source: source, taskID: "0010")
+        await model.load()
+        XCTAssertFalse(model.unauthorized)
+        XCTAssertEqual(model.task?.id, "0010")
+    }
+
+    func testInProgressHistoryUnauthorizedSurfaces() async {
+        let source = MockTaskDetailSource(detail: detail("0010", status: "in_progress"))
+        source.historyError = YccError.unauthorized
+        let model = TaskDetailModel(source: source, taskID: "0010")
+        await model.load()
+        XCTAssertTrue(model.unauthorized)
     }
 
     func testLoadFindsOnlyLiveRunningOrPausedFocusedSessionsNewestFirst() async {

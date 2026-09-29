@@ -344,9 +344,11 @@ struct WorkLoopView: View {
     private func loadAndPoll() async {
         if model == nil {
             guard let client = app.client else { return }
-            model = WorkLoopModel(source: client, project: project)
+            model = WorkLoopModel(source: client, project: project, cache: app.dataCache)
         }
-        await model?.refresh()
+        // This task restarts whenever Start/Stop flips `shouldPoll`; their
+        // responses already carry the new state, so skip the duplicate load.
+        await model?.refreshIfStale()
         while !Task.isCancelled, model?.shouldPoll == true {
             do {
                 try await Task.sleep(nanoseconds: 5_000_000_000)

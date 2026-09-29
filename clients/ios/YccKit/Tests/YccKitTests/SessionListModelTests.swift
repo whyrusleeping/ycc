@@ -42,11 +42,22 @@ private final class MockListSource: SessionListSource, @unchecked Sendable {
         return requestedHistoryPages.contains(cursor)
     }
     var loopGates: [String: ListLoadGate] = [:]
+    var projectsGate: ListLoadGate?
     var removeError: Error?
     var renameError: Error?
     var loopsByProject: [String: Ycc_V1_WorkLoopInfo] = [:]
     var loopErrorsByProject: [String: Error] = [:]
     private(set) var requestedProjects: [String] = []
+    func requested(_ project: String) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return requestedProjects.filter { $0 == project }.count
+    }
+    func setProjects(_ value: [Ycc_V1_ProjectInfo]) {
+        lock.lock()
+        projects = value
+        lock.unlock()
+    }
     private(set) var listProjectsRequestCount = 0
     private(set) var removedProjects: [String] = []
     private(set) var renamedProjects: [(from: String, to: String)] = []
@@ -83,8 +94,10 @@ private final class MockListSource: SessionListSource, @unchecked Sendable {
         if shouldFailTransiently { projectFailuresRemaining -= 1 }
         let error = projectsError
         let response = projects
+        let gate = projectsGate
         lock.unlock()
 
+        await gate?.wait()
         if shouldFailTransiently { throw YccError.rpc(message: "transient project failure") }
         if let error { throw error }
         return response
@@ -481,6 +494,22 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertEqual(Set(source.requestedProjects), Set(["one", "two"]))
     }
 
+    func testEmptyProjectListStillCountsAsLoaded() async {
+        let source = MockListSource()
+        let model = SessionListModel(source: source, retryDelays: [])
+        XCTAssertFalse(model.hasLoadedProjects, "the initial empty list is not authoritative")
+
+        await model.refresh()
+        XCTAssertTrue(model.hasLoadedProjects, "an empty ListProjects is still a real answer")
+        XCTAssertTrue(model.projects.isEmpty)
+
+        let failing = MockListSource()
+        failing.projectsError = YccError.rpc(message: "offline")
+        let unloaded = SessionListModel(source: failing, retryDelays: [])
+        await unloaded.refreshProjects()
+        XCTAssertFalse(unloaded.hasLoadedProjects)
+    }
+
     func testRefreshProjectsUpdatesGitSnapshotWithoutReloadingHistory() async {
         let source = MockListSource()
         var stale = project("one")
@@ -626,7 +655,9 @@ final class SessionListModelTests: XCTestCase {
         var loop = Ycc_V1_WorkLoopInfo()
         loop.currentSessionID = "two"
         source.loopsByProject["two"] = loop
-        let model = SessionListModel(source: source, retryDelays: [])
+        // An immediate partial-publication valve: a slow project must not hold
+        // back projects that already answered.
+        let model = SessionListModel(source: source, retryDelays: [], partialPublishDelay: 0)
         let refresh = Task { await model.refresh() }
 
         await eventually { model.allSessions.map(\.sessionID) == ["two"] }
@@ -648,13 +679,16 @@ final class SessionListModelTests: XCTestCase {
     func testProgressiveRefreshRetainsPendingAndFailedProjectRows() async {
         let source = MockListSource()
         source.projects = [project("one"), project("two")]
-        source.sessionsByProject = ["one": [session(id: "old")], "two": [session(id: "cached")]]
-        let model = SessionListModel(source: source, retryDelays: [])
+        source.sessionsByProject = [
+            "one": [session(id: "old", lastActivity: "2026-07-08T08:00:00Z")],
+            "two": [session(id: "cached", lastActivity: "2026-07-08T09:00:00Z")],
+        ]
+        let model = SessionListModel(source: source, retryDelays: [], partialPublishDelay: 0)
         await model.refresh()
         let slowHistory = ListLoadGate()
         source.historyGates["two"] = slowHistory
         source.historyErrorsByProject["two"] = YccError.rpc(message: "offline")
-        source.sessionsByProject["one"] = [session(id: "fresh")]
+        source.sessionsByProject["one"] = [session(id: "fresh", lastActivity: "2026-07-08T10:00:00Z")]
         let refresh = Task { await model.refresh() }
 
         await eventually { model.allSessions.contains { $0.sessionID == "fresh" } }
@@ -676,7 +710,7 @@ final class SessionListModelTests: XCTestCase {
         ]
         let slowHistory = ListLoadGate()
         source.historyGates["one"] = slowHistory
-        let model = SessionListModel(source: source, retryDelays: [])
+        let model = SessionListModel(source: source, retryDelays: [], partialPublishDelay: 0)
         let refresh = Task { await model.refresh() }
         await eventually { model.sessionProjects["same"] == "two" }
         await slowHistory.open()
@@ -703,7 +737,8 @@ final class SessionListModelTests: XCTestCase {
                 ]
                 let gate = ListLoadGate()
                 source.historyGates[reverseOrder ? "one" : "two"] = gate
-                let model = SessionListModel(source: source, readMarks: marks, retryDelays: [])
+                let model = SessionListModel(
+                    source: source, readMarks: marks, retryDelays: [], partialPublishDelay: 0)
                 let refresh = Task { await model.refresh() }
                 await eventually { model.allSessions.count == 1 }
                 await gate.open()
@@ -1155,5 +1190,273 @@ final class SessionListModelTests: XCTestCase {
         readMarks.markRead(sessionID: "a", through: "2026-08-06T10:30:00Z")
 
         XCTAssertFalse(model.isUnread(model.sessions[0]))
+    }
+
+    // MARK: - Refresh cost on a remote link (0402)
+
+    func testPassiveRefreshIsThrottledAfterASuccessfulRefresh() async {
+        let source = MockListSource()
+        source.projects = [project("one")]
+        source.sessionsByProject["one"] = [session(id: "a")]
+        let clock = TestClock()
+        let model = SessionListModel(
+            source: source, retryDelays: [], staleAfter: 10, clock: { clock.now })
+
+        await model.refreshIfStale() // never refreshed: loads
+        XCTAssertEqual(source.listProjectsRequestCount, 1)
+
+        clock.now = 5
+        await model.refreshIfStale() // fresh: skipped
+        XCTAssertEqual(source.listProjectsRequestCount, 1)
+        XCTAssertEqual(source.requested("one"), 1)
+
+        await model.refresh() // explicit (pull-to-refresh / post-mutation): forced
+        XCTAssertEqual(source.listProjectsRequestCount, 2)
+
+        clock.now = 14 // 9 s after the forced refresh
+        await model.refreshIfStale()
+        XCTAssertEqual(source.listProjectsRequestCount, 2)
+
+        clock.now = 16
+        await model.refreshIfStale()
+        XCTAssertEqual(source.listProjectsRequestCount, 3)
+    }
+
+    func testFailedRefreshDoesNotThrottleTheNextPassiveRefresh() async {
+        let source = MockListSource()
+        source.projects = [project("one")]
+        source.historyErrorsByProject["one"] = YccError.rpc(message: "offline")
+        let clock = TestClock()
+        let model = SessionListModel(source: source, retryDelays: [], clock: { clock.now })
+
+        await model.refreshIfStale()
+        XCTAssertEqual(model.errorMessage, "offline")
+        clock.now = 1
+        source.historyErrorsByProject = [:]
+        source.sessionsByProject["one"] = [session(id: "back")]
+        await model.refreshIfStale()
+
+        XCTAssertEqual(source.listProjectsRequestCount, 2)
+        XCTAssertEqual(model.sessions.map(\.sessionID), ["back"])
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testRefreshPublishesOnceWhenEveryProjectHasAnswered() async {
+        let source = MockListSource()
+        source.projects = [project("one"), project("two"), project("three")]
+        source.sessionsByProject = [
+            "one": [session(id: "1", lastActivity: "2026-07-08T08:00:00Z")],
+            "two": [session(id: "2", lastActivity: "2026-07-08T09:00:00Z")],
+            "three": [session(id: "3", lastActivity: "2026-07-08T10:00:00Z")],
+        ]
+        let slow = ListLoadGate()
+        source.historyGates["three"] = slow
+        let model = SessionListModel(source: source, retryDelays: [], partialPublishDelay: nil)
+        let refresh = Task { await model.refresh() }
+
+        await eventually { source.requestedProjects.count == 3 }
+        try? await Task.sleep(nanoseconds: 50_000_000) // let "one"/"two" land
+        XCTAssertEqual(model.publicationCount, 0, "no per-project publication")
+        XCTAssertTrue(model.allSessions.isEmpty)
+        XCTAssertTrue(model.isLoading)
+
+        await slow.open()
+        await refresh.value
+        XCTAssertEqual(model.publicationCount, 1)
+        XCTAssertEqual(model.allSessions.map(\.sessionID), ["3", "2", "1"])
+        XCTAssertFalse(model.isLoading)
+
+        // A cached-project refresh is also a single publication.
+        await model.refresh()
+        XCTAssertEqual(model.publicationCount, 2)
+    }
+
+    func testPartialPublicationValveReleasesRowsBehindASlowProject() async {
+        let source = MockListSource()
+        source.projects = [project("fast"), project("slow")]
+        source.sessionsByProject = ["fast": [session(id: "f")], "slow": [session(id: "s")]]
+        let slow = ListLoadGate()
+        source.historyGates["slow"] = slow
+        let model = SessionListModel(source: source, retryDelays: [], partialPublishDelay: 0.05)
+        let refresh = Task { await model.refresh() }
+
+        await eventually { model.allSessions.map(\.sessionID) == ["f"] }
+        XCTAssertTrue(model.isLoading)
+        await slow.open()
+        await refresh.value
+        XCTAssertEqual(Set(model.allSessions.map(\.sessionID)), ["f", "s"])
+    }
+
+    func testCachedProjectsFanOutConcurrentlyWithListProjects() async {
+        let source = MockListSource()
+        source.projects = [project("one"), project("two")]
+        source.sessionsByProject = [
+            "one": [session(id: "one-row")],
+            "two": [session(id: "two-row")],
+            "three": [session(id: "three-row")],
+        ]
+        let model = SessionListModel(source: source, retryDelays: [], partialPublishDelay: nil)
+        await model.refresh() // first load: no cache, ListProjects first
+        XCTAssertEqual(source.requested("one"), 1)
+
+        // Hold ListProjects: the history fan-out for the cached projects must
+        // not wait for it (one round trip, not two).
+        let projectsGate = ListLoadGate()
+        source.projectsGate = projectsGate
+        // The project set changes daemon-side meanwhile: "one" removed,
+        // "three" registered.
+        source.setProjects([project("two"), project("three")])
+        let refresh = Task { await model.refresh() }
+        await eventually { source.requested("one") == 2 && source.requested("two") == 2 }
+        XCTAssertEqual(source.requested("three"), 0)
+        XCTAssertEqual(model.publicationCount, 1, "nothing published before ListProjects answers")
+
+        await projectsGate.open()
+        await refresh.value
+
+        XCTAssertEqual(source.requested("three"), 1, "a newly registered project is fetched")
+        XCTAssertEqual(model.projects.map(\.name), ["two", "three"])
+        XCTAssertEqual(Set(model.allSessions.map(\.sessionID)), ["two-row", "three-row"],
+            "a removed project's rows are dropped")
+        XCTAssertNil(model.sessionProjects["one-row"])
+        XCTAssertEqual(model.sessionProjects["three-row"], "three")
+        XCTAssertNil(model.activityByProject["one"])
+        XCTAssertNotNil(model.activityByProject["three"])
+        XCTAssertEqual(model.publicationCount, 2, "one publication for the whole refresh")
+    }
+
+    func testListProjectsFailureKeepsCachedProjectHistoriesAndReportsError() async {
+        let source = MockListSource()
+        source.projects = [project("one")]
+        source.sessionsByProject["one"] = [session(id: "old")]
+        let model = SessionListModel(source: source, retryDelays: [])
+        await model.refresh()
+
+        source.projectsError = YccError.rpc(message: "registry unavailable")
+        source.sessionsByProject["one"] = [session(id: "new")]
+        await model.refresh()
+
+        XCTAssertEqual(model.sessions.map(\.sessionID), ["new"])
+        XCTAssertEqual(model.projects.map(\.name), ["one"])
+        XCTAssertEqual(model.errorMessage, "registry unavailable")
+    }
+
+    func testIdempotentRefreshDoesNotInvalidateDerivedRows() async {
+        let source = MockListSource()
+        source.projects = [project("one")]
+        source.sessionsByProject["one"] = [session(id: "a", lastActivity: "2026-07-08T08:00:00Z")]
+        let model = SessionListModel(source: source, retryDelays: [])
+        await model.refresh()
+        let revision = model.dataRevision
+        await model.refresh()
+        XCTAssertEqual(model.dataRevision, revision, "unchanged rows must not re-render the list")
+        source.sessionsByProject["one"] = [session(id: "a", lastActivity: "2026-07-08T09:00:00Z")]
+        await model.refresh()
+        XCTAssertNotEqual(model.dataRevision, revision)
+    }
+
+    func testLoadMoreHistoryPagesProjectsConcurrently() async {
+        let source = MockListSource()
+        source.projects = [project("a"), project("b")]
+        source.pagesByProject = [
+            "a": ["": SessionHistoryPage(sessions: [session(id: "a1")], pinned: [], nextCursor: "a-next"),
+                  "a-next": SessionHistoryPage(sessions: [session(id: "a2")], pinned: [], nextCursor: "")],
+            "b": ["": SessionHistoryPage(sessions: [session(id: "b1")], pinned: [], nextCursor: "b-next"),
+                  "b-next": SessionHistoryPage(sessions: [session(id: "b2")], pinned: [], nextCursor: "")],
+        ]
+        let model = SessionListModel(source: source, retryDelays: [])
+        await model.refresh()
+        let gate = ListLoadGate()
+        source.historyPageGates["a"] = ["a-next": gate]
+        let more = Task { await model.loadMoreHistory() }
+        // b's page is requested while a's is still outstanding.
+        await eventually { source.didRequestHistoryPage("a-next") && source.didRequestHistoryPage("b-next") }
+        await gate.open()
+        await more.value
+        XCTAssertEqual(Set(model.allSessions.map(\.sessionID)), ["a1", "a2", "b1", "b2"])
+        XCTAssertFalse(model.hasMoreHistory)
+    }
+
+    func testCachedActivityInvalidatesOnEveryKindOfMarkRead() async {
+        let source = MockListSource()
+        source.projects = [project("one")]
+        source.sessionsByProject = ["one": [
+            session(id: "a", lastActivity: "2026-08-06T10:00:00Z"),
+            session(id: "b", lastActivity: "2026-08-06T10:00:00Z"),
+            session(id: "c", lastActivity: "2026-08-06T10:00:00Z"),
+        ]]
+        let readMarks = makeReadStore()
+        let model = SessionListModel(source: source, readMarks: readMarks)
+        await model.refresh()
+        source.sessionsByProject = ["one": [
+            session(id: "a", lastActivity: "2026-08-06T11:00:00Z"),
+            session(id: "b", lastActivity: "2026-08-06T11:00:00Z"),
+            session(id: "c", lastActivity: "2026-08-06T11:00:00Z"),
+        ]]
+        await model.refresh()
+        // Prime the caches.
+        XCTAssertEqual(model.activity(forProject: "one").unread, 3)
+        XCTAssertEqual(model.totalActivity.unread, 3)
+
+        // Through the model (row swipe).
+        model.markRead(model.sessions.first { $0.sessionID == "a" }!)
+        XCTAssertEqual(model.activity(forProject: "one").unread, 2)
+        XCTAssertEqual(model.totalActivity.unread, 2)
+        XCTAssertEqual(model.activityByProject["one"]?.unread, 2)
+
+        // Directly on the shared store (the session view marking on exit).
+        readMarks.markRead(sessionID: "b", through: "2026-08-06T11:00:00Z")
+        XCTAssertEqual(model.activity(forProject: "one").unread, 1)
+        XCTAssertEqual(model.totalActivity.unread, 1)
+        XCTAssertEqual(model.unreadCount, 1)
+
+        // A no-op mark does not change anything.
+        let revision = readMarks.revision
+        readMarks.markRead(sessionID: "b", through: "2026-08-06T11:00:00Z")
+        XCTAssertEqual(readMarks.revision, revision)
+
+        model.markAllRead()
+        XCTAssertEqual(model.totalActivity.unread, 0)
+    }
+
+    func testScopedSessionsAreCachedUntilDataOrScopeChanges() async {
+        let source = MockListSource()
+        source.projects = [project("one"), project("two")]
+        source.sessionsByProject = [
+            "one": [session(id: "old", lastActivity: "2026-07-08T08:00:00Z"),
+                    session(id: "new", lastActivity: "2026-07-08T12:00:00Z", live: true, waitingInput: true)],
+            "two": [session(id: "other", lastActivity: "2026-07-08T10:00:00Z")],
+        ]
+        let model = SessionListModel(source: source)
+        await model.refresh()
+        model.selectedProject = "one"
+        XCTAssertEqual(model.sessions.map(\.sessionID), ["new", "old"])
+        XCTAssertEqual(model.sections.map(\.kind), [.needsAnswer, .all])
+        model.markAnswered(sessionID: "new")
+        XCTAssertEqual(model.sections.map(\.kind), [.all], "a local correction invalidates the cache")
+        model.selectedProject = nil
+        XCTAssertEqual(model.sessions.map(\.sessionID), ["new", "other", "old"])
+        XCTAssertEqual(model.sections.count, 1)
+    }
+
+    func testDisplayTitleCachedExpressionsStayCorrectAcrossCalls() {
+        for _ in 0..<3 {
+            let upper = session(id: "u", title: "WORK ON TASK 0402: Perf", focusTasks: ["0402"])
+            XCTAssertEqual(SessionListModel.displayTitle(for: upper), "Perf")
+            let colon = session(id: "c", title: "0402: Perf", focusTasks: ["0402"])
+            XCTAssertEqual(SessionListModel.displayTitle(for: colon), "Perf")
+            let plain = session(id: "p", title: "Perf 0402", focusTasks: ["0402"])
+            XCTAssertEqual(SessionListModel.displayTitle(for: plain), "Perf 0402")
+        }
+    }
+}
+
+/// A manually advanced clock for the refresh throttle.
+private final class TestClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: TimeInterval = 0
+    var now: TimeInterval {
+        get { lock.lock(); defer { lock.unlock() }; return value }
+        set { lock.lock(); value = newValue; lock.unlock() }
     }
 }

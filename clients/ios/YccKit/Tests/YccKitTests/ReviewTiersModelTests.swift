@@ -94,6 +94,8 @@ final class ReviewTiersModelTests: XCTestCase {
         XCTAssertTrue(ok)
         XCTAssertEqual(source.upserted?.name, "deep")
         XCTAssertEqual(source.upserted?.reviewers.first?.thinking, "max")
+        // The editor may dismiss on the upsert alone; the list reloads behind it.
+        await model.reloadTask?.value
         XCTAssertTrue(model.tiers.contains { $0.name == "deep" && $0.configured })
     }
 
@@ -134,6 +136,7 @@ final class ReviewTiersModelTests: XCTestCase {
         let ok = await model.remove(name: "deep")
         XCTAssertTrue(ok)
         XCTAssertEqual(source.removed, "deep")
+        await model.reloadTask?.value
         XCTAssertFalse(model.tiers.contains { $0.name == "deep" })
     }
 

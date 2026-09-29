@@ -78,10 +78,46 @@ public final class WorkLoopModel {
     public private(set) var unauthorized = false
 
     private let source: WorkLoopSource
+    private let cache: AppDataCache?
+    private let cacheGeneration: UInt64
+    private let now: () -> Date
+    /// When the current snapshot was last confirmed by the daemon (a load or an
+    /// action response). A cache-seeded snapshot is unconfirmed (nil).
+    private var confirmedAt: Date?
 
-    public init(source: WorkLoopSource, project: String) {
+    /// The last snapshot a loop screen saw for a project. Wrapped so a cached
+    /// "no loop yet" is distinguishable from "never loaded".
+    struct Snapshot {
+        var loop: Ycc_V1_WorkLoopInfo?
+    }
+
+    public init(
+        source: WorkLoopSource, project: String, cache: AppDataCache? = nil,
+        now: @escaping () -> Date = Date.init
+    ) {
         self.source = source
         self.project = project
+        self.cache = cache
+        self.cacheGeneration = cache?.generation ?? 0
+        self.now = now
+        if let snapshot = cache?.value(.workLoop(project), as: Snapshot.self) {
+            loop = snapshot.loop
+            state = Self.state(for: snapshot.loop)
+        }
+    }
+
+    /// Whether a daemon-confirmed snapshot is younger than `maxAge`.
+    public func isFresh(maxAge: TimeInterval) -> Bool {
+        guard let confirmedAt else { return false }
+        return now().timeIntervalSince(confirmedAt) < maxAge
+    }
+
+    /// Refresh unless the snapshot was confirmed within `maxAge` — e.g. a Start
+    /// or Stop response that already carried the new state. Avoids a redundant
+    /// `GetWorkLoop` when polling restarts right after an action.
+    public func refreshIfStale(maxAge: TimeInterval = 2) async {
+        guard !isFresh(maxAge: maxAge) else { return }
+        await refresh()
     }
 
     public var hasDigest: Bool {
@@ -143,8 +179,11 @@ public final class WorkLoopModel {
     }
 
     private func apply(_ snapshot: Ycc_V1_WorkLoopInfo?) {
-        loop = snapshot
-        state = Self.state(for: snapshot)
+        if loop != snapshot { loop = snapshot }
+        let next = Self.state(for: snapshot)
+        if state != next { state = next }
+        confirmedAt = now()
+        cache?.store(Snapshot(loop: snapshot), for: .workLoop(project), ifGeneration: cacheGeneration)
     }
 
     private func handleAction(_ error: Error) {

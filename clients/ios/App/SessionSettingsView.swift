@@ -61,8 +61,7 @@ struct SessionSettingsView: View {
     // MARK: - Thinking
 
     private var thinkingSection: some View {
-        @Bindable var model = model
-        return Section {
+        Section {
             Picker("Scope", selection: Binding(
                 get: { model.thinkingRole },
                 set: { model.selectThinkingRole($0) }
@@ -71,13 +70,16 @@ struct SessionSettingsView: View {
                     Text(role.title).tag(role)
                 }
             }
-            Picker("Level", selection: $model.thinkingLevel) {
+            // Bound through the user-pick method, not `onChange`: load() and a
+            // scope change seed this value, and observing it used to send a
+            // spurious SetThinking (unifying divergent role levels).
+            Picker("Level", selection: Binding(
+                get: { model.thinkingLevel },
+                set: { _ = model.chooseThinkingLevel($0) }
+            )) {
                 ForEach(ThinkingLevel.allCases) { level in
                     Text(level.title).tag(level)
                 }
-            }
-            .onChange(of: model.thinkingLevel) { _, _ in
-                Task { await model.applyThinking() }
             }
         } header: {
             Text("Thinking")
@@ -102,27 +104,28 @@ struct SessionSettingsView: View {
     }
 
     private var rolesSection: some View {
-        @Bindable var model = model
-        return Section {
+        Section {
             if model.models.isEmpty {
                 Text(model.isLoading ? "Loading models…" : "No models configured")
                     .foregroundStyle(.secondary)
             } else {
-                Picker("Coordinator", selection: $model.coordinator) {
+                // Same reason: load() seeds these, which used to fire a
+                // redundant SetRoleConfig on every open of this sheet.
+                Picker("Coordinator", selection: Binding(
+                    get: { model.coordinator },
+                    set: { _ = model.chooseCoordinator($0) }
+                )) {
                     ForEach(roleModels(including: [model.coordinator]), id: \.name) { info in
                         modelChoice(info).tag(info.name)
                     }
                 }
-                .onChange(of: model.coordinator) { _, _ in
-                    Task { await model.applyRoleConfig() }
-                }
-                Picker("Implementer", selection: $model.implementer) {
+                Picker("Implementer", selection: Binding(
+                    get: { model.implementer },
+                    set: { _ = model.chooseImplementer($0) }
+                )) {
                     ForEach(roleModels(including: [model.implementer]), id: \.name) { info in
                         modelChoice(info).tag(info.name)
                     }
-                }
-                .onChange(of: model.implementer) { _, _ in
-                    Task { await model.applyRoleConfig() }
                 }
                 reviewersPicker
             }

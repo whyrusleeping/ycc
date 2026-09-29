@@ -24,6 +24,11 @@ public protocol SessionTranscriptSource: Sendable {
     var supportsIndexedSessionView: Bool { get }
     func getSessionView(project: String, sessionId: String) async throws -> Ycc_V1_GetSessionViewResponse
     func getSessionViewPage(project: String, sessionId: String, cursor: String) async throws -> Ycc_V1_GetSessionViewPageResponse
+    /// An earlier page with explicit bounds (the background prefetch asks for
+    /// a first-page-sized one). Defaults to the unbounded-by-caller variant.
+    func getSessionViewPage(
+        project: String, sessionId: String, cursor: String, maxRows: Int32, maxBytes: Int32
+    ) async throws -> Ycc_V1_GetSessionViewPageResponse
     func getSessionViewDetail(project: String, sessionId: String, rowId: String) async throws -> Ycc_V1_SessionPresentationRow
     func subscribeSessionView(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_SessionViewUpdate, Error>
 
@@ -44,6 +49,11 @@ public extension SessionTranscriptSource {
     }
     func getSessionViewPage(project: String, sessionId: String, cursor: String) async throws -> Ycc_V1_GetSessionViewPageResponse {
         throw YccError.rpc(message: "indexed session view unavailable")
+    }
+    func getSessionViewPage(
+        project: String, sessionId: String, cursor: String, maxRows: Int32, maxBytes: Int32
+    ) async throws -> Ycc_V1_GetSessionViewPageResponse {
+        try await getSessionViewPage(project: project, sessionId: sessionId, cursor: cursor)
     }
     func getSessionViewDetail(project: String, sessionId: String, rowId: String) async throws -> Ycc_V1_SessionPresentationRow {
         throw YccError.rpc(message: "indexed session detail unavailable")

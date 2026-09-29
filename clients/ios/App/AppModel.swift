@@ -17,6 +17,14 @@ final class AppModel {
     /// session view share one set of marks.
     let readMarks = SessionReadStore()
 
+    /// Per-connection, in-memory warm start for screens the home router
+    /// rebuilds on every visit (backlog, workstreams, work loop, usage, task
+    /// detail, the new-session catalog), the shared project list, and the
+    /// recently viewed session models (``AppDataCache/sessionModels``). Cleared
+    /// on every server/credential change so one daemon's data never shows for
+    /// another — clearing also stops every cached session stream.
+    let dataCache = AppDataCache()
+
     /// The authenticated client for the active server, or `nil` when
     /// disconnected (which shows the connect screen).
     private(set) var client: YccClient?
@@ -50,6 +58,9 @@ final class AppModel {
 
     init(store: ConnectionStore = ConnectionStore()) {
         self.store = store
+        // Transcript decode tasks pre-render inline markdown off the main
+        // actor into MarkdownText's cache (task 0404).
+        InlineMarkdownCache.registerWarmup()
         // Restore a previously-authenticated session on launch.
         if let profile = store.activeProfile, let token = store.activeToken {
             client = YccClient(baseURL: profile.baseURL, token: token)
@@ -61,18 +72,21 @@ final class AppModel {
     /// Persist a validated profile + token and mark the session authenticated.
     func connect(name: String, baseURL: URL, token: String) throws {
         let profile = try store.saveProfile(name: name, baseURL: baseURL, token: token)
+        dataCache.clear()
         client = YccClient(baseURL: profile.baseURL, token: token)
     }
 
     /// Disconnect and return to the connect screen, keeping the saved profile.
     func disconnect() {
         store.clearActive()
+        dataCache.clear()
         client = nil
     }
 
     /// Called when any RPC fails with ``YccError/unauthorized`` mid-session:
     /// drop the client so the UI returns to the connect screen.
     func handleUnauthorized() {
+        dataCache.clear()
         client = nil
         store.clearActive()
     }
@@ -103,6 +117,7 @@ final class AppModel {
             return false
         }
         store.selectProfile(profile.id)
+        dataCache.clear()
         client = YccClient(baseURL: profile.baseURL, token: token)
         return true
     }

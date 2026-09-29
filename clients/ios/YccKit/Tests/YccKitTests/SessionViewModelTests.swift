@@ -241,6 +241,40 @@ private final class MockActionSource: SessionActionSource, SessionTranscriptSour
     }
 }
 
+/// An indexed live source whose SubscribeSessionView stream the test drives.
+private final class KeepaliveStreamSource: SessionTranscriptSource, @unchecked Sendable {
+    let view: Ycc_V1_GetSessionViewResponse
+    private let lock = NSLock()
+    private var continuation: AsyncThrowingStream<Ycc_V1_SessionViewUpdate, Error>.Continuation?
+
+    init(view: Ycc_V1_GetSessionViewResponse) { self.view = view }
+
+    var isSubscribed: Bool { lock.lock(); defer { lock.unlock() }; return continuation != nil }
+    func send(_ update: Ycc_V1_SessionViewUpdate) {
+        lock.lock()
+        let continuation = continuation
+        lock.unlock()
+        continuation?.yield(update)
+    }
+
+    var supportsIndexedSessionView: Bool { true }
+    func getSessionView(project: String, sessionId: String) async throws -> Ycc_V1_GetSessionViewResponse { view }
+    func subscribeSessionView(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_SessionViewUpdate, Error> {
+        AsyncThrowingStream { continuation in
+            lock.lock()
+            self.continuation = continuation
+            lock.unlock()
+        }
+    }
+    func getSessionTranscript(project: String, sessionId: String) async throws -> [Ycc_V1_Event] { [] }
+    func getSessionAttachment(project: String, sessionId: String, attachmentId: String) async throws -> MessageImage {
+        throw YccError.notFound(message: "attachment not found")
+    }
+    func subscribe(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_Event, Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
+}
+
 private actor DelayRecorder {
     private var values: [UInt64] = []
     func record(_ value: UInt64) { values.append(value) }
@@ -1169,5 +1203,48 @@ final class SessionViewModelTests: XCTestCase {
         await vm.retry()
         XCTAssertEqual(actions.calls.map(\.kind), ["resume"])
         XCTAssertNil(vm.actionError)
+    }
+
+    func testKeepaliveUpdatesAreIgnoredWithoutRepublishing() async {
+        var view = Ycc_V1_GetSessionViewResponse()
+        view.state.indexedThroughSeq = 3
+        view.state.phase = "running"
+        var row = Ycc_V1_SessionPresentationRow()
+        row.id = "seq-2"
+        row.positionSeq = 2
+        row.updatedSeq = 2
+        row.events = [event(2, "model_turn", #"{"text":"hello"}"#)]
+        view.rows = [row]
+        let source = KeepaliveStreamSource(view: view)
+        let vm = SessionViewModel(source: source, sessionID: "quiet", mode: .live, publishInterval: 0)
+        vm.start()
+        await waitUntil { source.isSubscribed && vm.state == .streaming }
+        XCTAssertEqual(vm.state, .streaming)
+        let revision = vm.transcriptRevision
+        XCTAssertEqual(vm.durableRows.map(\.id), ["seq-2"])
+
+        let keepalive = Ycc_V1_SessionViewUpdate()
+        XCTAssertTrue(keepalive.isKeepalive)
+        for _ in 0..<5 { source.send(keepalive) }
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(vm.transcriptRevision, revision, "keepalives must not re-render the transcript")
+        XCTAssertEqual(vm.state, .streaming)
+
+        var update = Ycc_V1_SessionViewUpdate()
+        update.seq = 4
+        update.state = view.state
+        update.state.indexedThroughSeq = 4
+        var next = Ycc_V1_SessionPresentationRow()
+        next.id = "seq-4"
+        next.positionSeq = 4
+        next.updatedSeq = 4
+        next.events = [event(4, "model_turn", #"{"text":"more"}"#)]
+        update.upsertedRows = [next]
+        XCTAssertFalse(update.isKeepalive)
+        source.send(update)
+        await waitUntil { vm.transcriptRevision != revision }
+        XCTAssertEqual(vm.transcriptRevision, revision &+ 1)
+        XCTAssertEqual(vm.durableRows.map(\.id), ["seq-2", "seq-4"])
+        vm.stop()
     }
 }

@@ -133,27 +133,62 @@ public final class GlobalSettingsModel {
     private var committedImplementer = ""
     private var committedReviewers: [String] = []
 
-    public init(source: GlobalSettingsSource) {
+    private let cache: AppDataCache?
+    private let cacheGeneration: UInt64
+
+    /// A cached registry (from an earlier visit on this connection) renders the
+    /// settings screen at once; ``load()`` revalidates it.
+    public init(source: GlobalSettingsSource, cache: AppDataCache? = nil) {
         self.source = source
+        self.cache = cache
+        self.cacheGeneration = cache?.generation ?? 0
+        if let cached = cache?.value(.globalModels, as: Ycc_V1_ListModelsResponse.self) {
+            apply(cached)
+        }
     }
 
+    /// Bumped per load: only the newest overlapping load (e.g. a background
+    /// reload after a save racing pull-to-refresh) may publish.
+    private var loadGeneration: UInt64 = 0
+
     public func load() async {
+        loadGeneration &+= 1
+        let generation = loadGeneration
         isLoading = true
-        defer { isLoading = false }
+        defer { if generation == loadGeneration { isLoading = false } }
         do {
             let response = try await source.listModels()
-            models = response.models.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            guard generation == loadGeneration else { return }
+            apply(response)
+            cache?.store(response, for: .globalModels, ifGeneration: cacheGeneration)
+            errorMessage = nil
+        } catch {
+            guard generation == loadGeneration else { return }
+            handle(error)
+        }
+    }
+
+    private func apply(_ response: Ycc_V1_ListModelsResponse) {
+        models = response.models.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        // A (background) reload must not clobber a change still in flight;
+        // that change's own completion reconciles it.
+        if !isApplying {
             coordinator = response.coordinator
             implementer = response.implementer
             reviewers = response.reviewers
             committedCoordinator = coordinator
             committedImplementer = implementer
             committedReviewers = reviewers
+        }
+        if !isApplyingThinking(.coordinator) {
             coordinatorThinking = .parse(response.coordinatorThinking)
+        }
+        if !isApplyingThinking(.implementer) {
             implementerThinking = .parse(response.implementerThinking)
+        }
+        if !isApplyingThinking(.reviewers) {
             reviewersThinking = .parse(response.reviewersThinking)
-            errorMessage = nil
-        } catch { handle(error) }
+        }
     }
 
     public func applyRoles() async {
@@ -174,6 +209,25 @@ public final class GlobalSettingsModel {
             reviewers = committedReviewers
             handle(error)
         }
+    }
+
+    /// The user picked a coordinator: update the picker at once and persist it.
+    /// Views bind through this (not `onChange`), because ``load()`` seeds the
+    /// same property and an observer cannot tell a seed from a pick — every
+    /// settings visit used to send a redundant `SetRoleConfig`.
+    @discardableResult
+    public func chooseCoordinator(_ name: String) -> Task<Void, Never>? {
+        guard name != coordinator, !isApplying else { return nil }
+        coordinator = name
+        return Task { @MainActor [weak self] in await self?.applyRoles() }
+    }
+
+    /// The user picked an implementer (see ``chooseCoordinator(_:)``).
+    @discardableResult
+    public func chooseImplementer(_ name: String) -> Task<Void, Never>? {
+        guard name != implementer, !isApplying else { return nil }
+        implementer = name
+        return Task { @MainActor [weak self] in await self?.applyRoles() }
     }
 
     public func isReviewerSelected(_ name: String) -> Bool { reviewers.contains(name) }
@@ -202,23 +256,53 @@ public final class GlobalSettingsModel {
         }
     }
 
+    /// Roles whose thinking change is in flight. Only those pickers are
+    /// disabled; the rest of the form stays interactive.
+    public private(set) var applyingThinkingRoles: Set<ThinkingRole> = []
+
+    /// Whether the picker for `role` has a thinking change in flight (an
+    /// `all`-scope change busies every role, and vice versa).
+    public func isApplyingThinking(_ role: ThinkingRole) -> Bool {
+        if applyingThinkingRoles.contains(role) || applyingThinkingRoles.contains(.all) { return true }
+        return role == .all && !applyingThinkingRoles.isEmpty
+    }
+
+    /// Change a role's default thinking level. The picker shows the new level
+    /// immediately; `SetThinking` confirms it in the background and a failure
+    /// reverts the picker (only if nothing newer replaced it) with an error.
     public func setThinking(_ level: ThinkingLevel, for role: ThinkingRole) async {
-        guard !isApplying else { return }
-        isApplying = true
-        defer { isApplying = false }
+        guard !isApplyingThinking(role) else { return }
+        let previous = (coordinatorThinking, implementerThinking, reviewersThinking)
+        applyThinkingLocally(level, for: role)
+        applyingThinkingRoles.insert(role)
+        defer { applyingThinkingRoles.remove(role) }
         do {
             try await source.setThinking(sessionId: "", level: level.wireValue, role: role.wireValue)
-            switch role {
-            case .all:
-                coordinatorThinking = level
-                implementerThinking = level
-                reviewersThinking = level
-            case .coordinator: coordinatorThinking = level
-            case .implementer: implementerThinking = level
-            case .reviewers: reviewersThinking = level
-            }
             errorMessage = nil
-        } catch { handle(error) }
+        } catch {
+            if (role == .all || role == .coordinator), coordinatorThinking == level {
+                coordinatorThinking = previous.0
+            }
+            if (role == .all || role == .implementer), implementerThinking == level {
+                implementerThinking = previous.1
+            }
+            if (role == .all || role == .reviewers), reviewersThinking == level {
+                reviewersThinking = previous.2
+            }
+            handle(error)
+        }
+    }
+
+    private func applyThinkingLocally(_ level: ThinkingLevel, for role: ThinkingRole) {
+        switch role {
+        case .all:
+            coordinatorThinking = level
+            implementerThinking = level
+            reviewersThinking = level
+        case .coordinator: coordinatorThinking = level
+        case .implementer: implementerThinking = level
+        case .reviewers: reviewersThinking = level
+        }
     }
 
     public func getModelConfig(name: String) async -> Ycc_V1_ModelConfig? {
@@ -231,6 +315,9 @@ public final class GlobalSettingsModel {
         }
     }
 
+    /// Upsert a model. Returns as soon as the daemon accepts it (so the editor
+    /// can dismiss after one round trip); the registry list reloads in the
+    /// background.
     public func saveModel(_ config: Ycc_V1_ModelConfig) async -> Bool {
         guard !isApplying else { return false }
         isApplying = true
@@ -238,7 +325,7 @@ public final class GlobalSettingsModel {
         do {
             try await source.upsertModel(config)
             errorMessage = nil
-            await load()
+            scheduleReload()
             return true
         } catch {
             handle(error)
@@ -246,6 +333,8 @@ public final class GlobalSettingsModel {
         }
     }
 
+    /// Remove a model. The row disappears once the daemon confirms; the
+    /// registry list reloads in the background.
     public func removeModel(name: String) async -> Bool {
         guard !isApplying else { return false }
         isApplying = true
@@ -253,11 +342,23 @@ public final class GlobalSettingsModel {
         do {
             try await source.removeModel(name: name)
             errorMessage = nil
-            await load()
+            models.removeAll { $0.name == name }
+            scheduleReload()
             return true
         } catch {
             handle(error)
             return false
+        }
+    }
+
+    /// The background registry reload started after a model mutation.
+    @ObservationIgnored private(set) var reloadTask: Task<Void, Never>?
+
+    private func scheduleReload() {
+        // A superseded reload is harmless: `load()` publishes only its newest
+        // generation, so an older response can never overwrite a newer one.
+        reloadTask = Task { @MainActor [weak self] in
+            await self?.load()
         }
     }
 

@@ -100,6 +100,10 @@ struct SessionView: View {
     /// swipe-dismiss can hide it while the pending gate persists — reopen via the
     /// banner).
     @State private var showQuestionSheet = false
+    /// The question the sheet last showed. Answering closes the gate
+    /// optimistically while the sheet is still animating away; keep rendering
+    /// the question until it is gone instead of flashing an empty sheet.
+    @State private var sheetQuestion: SessionProjection.PendingQuestion?
     /// Whether the destructive stop confirmation is shown.
     @State private var showStopConfirm = false
     /// Whether the per-session settings sheet is shown.
@@ -111,8 +115,17 @@ struct SessionView: View {
     @State private var workingChangesTarget: WorkingChangesTarget?
     /// Presents the file browser rooted at this session's workspace.
     @State private var showFiles = false
+    /// This screen's claim on the (possibly cached) model: the model streams
+    /// while some screen presents it and parks when the last one really
+    /// leaves. Created on first appearance, never in `init` (which SwiftUI
+    /// may run and discard many times).
+    @State private var presentation: SessionPresentation?
 
     private let client: YccClient
+    /// The app's session-model cache (nil: never cached).
+    private let models: SessionModelCache?
+    /// Whether the navigation source listed the session as live (a hint).
+    private let listedLive: Bool
     private let project: String
     private let sessionID: String
     /// The display name carried in from the list, so the pushed screen is
@@ -122,13 +135,28 @@ struct SessionView: View {
     private static let transcriptCoordinateSpace = "transcript-scroll"
     private static let dragQuietPeriod: TimeInterval = 0.35
     private static let dragActivityStalePeriod: TimeInterval = 1.0
-    init(client: YccClient, project: String = "", sessionID: String, live: Bool, title: String = "") {
+    init(
+        client: YccClient, project: String = "", sessionID: String, live: Bool, title: String = "",
+        models: SessionModelCache? = nil
+    ) {
         self.client = client
         self.project = project
         self.sessionID = sessionID
-        _model = State(initialValue: SessionViewModel(
-            source: client, project: project, sessionID: sessionID,
-            mode: live ? .live : .persisted))
+        let make = {
+            SessionViewModel(
+                source: client, project: project, sessionID: sessionID,
+                mode: live ? .live : .persisted,
+                prefetchEarlierPage: true)
+        }
+        // A recently viewed session comes back from the app-level cache with
+        // its transcript already folded; `present` resumes its stream from the
+        // cached cursor. This init may run on every parent update, so it only
+        // looks up (no recency bump, eviction or mode change); `onAppear`
+        // registers the instance @State actually kept with the cache.
+        self.models = models
+        self.listedLive = live
+        let cached = models?.lookup(project: project, sessionID: sessionID, owner: client)
+        _model = State(initialValue: cached ?? make())
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         self.title = trimmed.isEmpty
             ? (live ? "Live session" : "Session")
@@ -154,11 +182,9 @@ struct SessionView: View {
                 }
             }
             .animation(.default, value: isFollowingLatest)
-            // A scalar revision avoids deep equality checks over every transcript
-            // row (including the growing live-tail string) for each streamed delta.
-            .onChange(of: model.transcriptRevision, initial: true) { _, _ in
-                requestScrollToLatest(proxy: proxy)
-            }
+            // The transcript-revision follow trigger lives inside the
+            // transcript (TranscriptRevisionObserver) so the 25 ms stream
+            // publishes it tracks never invalidate this body.
             .onChange(of: composerFocused) { _, _ in
                 requestScrollToLatest(proxy: proxy)
             }
@@ -170,6 +196,18 @@ struct SessionView: View {
                 guard !Task.isCancelled, isBrowsingEarlier,
                       historyAnchor == anchor else { return }
                 proxy.scrollTo(anchor, anchor: .top)
+            }
+            // A fetched (not prefetched) earlier page lands after the anchor
+            // restoration above already ran; restore it again once the rows
+            // are actually installed. A drag or Jump to latest clears the
+            // anchor first, so this never fights the user.
+            .onChange(of: model.earlierPageRevision) { _, _ in
+                guard let anchor = historyAnchor, isBrowsingEarlier else { return }
+                Task { @MainActor in
+                    await Task.yield()
+                    guard isBrowsingEarlier, historyAnchor == anchor else { return }
+                    proxy.scrollTo(anchor, anchor: .top)
+                }
             }
         }
         .navigationTitle(title)
@@ -218,17 +256,22 @@ struct SessionView: View {
                 currentContextTokensEstimate: model.currentContextTokensEstimate)
         }
         .sheet(isPresented: $showQuestionSheet) {
-            if let pending = model.pendingQuestion {
+            if let pending = model.pendingQuestion ?? sheetQuestion {
                 QuestionSheet(
                     pending: pending,
                     onAnswerSingle: { optionIndex, text in
-                        if optionIndex >= 0 { await model.answer(optionIndex: optionIndex) }
-                        else { await model.answer(text: text) }
-                        noteAnswered()
+                        // The view model closes the gate before the round trip
+                        // and restores it (with an alert) if the answer fails.
+                        let accepted: Bool
+                        if optionIndex >= 0 {
+                            accepted = await model.answer(optionIndex: optionIndex)
+                        } else {
+                            accepted = await model.answer(text: text)
+                        }
+                        if accepted { noteAnswered() }
                     },
                     onAnswerBatch: { answers in
-                        await model.answerBatch(answers)
-                        noteAnswered()
+                        if await model.answerBatch(answers) { noteAnswered() }
                     }
                 )
                 // Tie the sheet's identity to the gate: if `pendingQuestion`
@@ -243,8 +286,25 @@ struct SessionView: View {
         // Present/dismiss the sheet as the pending gate opens and clears — the
         // event stream is the source of truth (answering here or elsewhere emits
         // `question_answered`, which clears `pendingQuestion`).
-        .onChange(of: model.pendingQuestion?.rowID) { _, rowID in
-            showQuestionSheet = (rowID != nil)
+        // `initial` also presents a question already pending when a cached
+        // session is re-opened (its value never changes, so no edge fires).
+        // That first call arrives mid-push, so it waits for the navigation
+        // transition to settle; the banner and transcript row show the
+        // question meanwhile.
+        .onChange(of: model.pendingQuestion?.rowID, initial: true) { oldRowID, rowID in
+            if let question = model.pendingQuestion { sheetQuestion = question }
+            // A question restored after a failed answer waits behind the banner
+            // rather than re-presenting the sheet over the error alert.
+            let show = rowID != nil && rowID != model.rolledBackQuestionRowID
+            guard show, oldRowID == rowID else {
+                showQuestionSheet = show
+                return
+            }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 450_000_000)
+                guard model.pendingQuestion?.rowID == rowID, !showQuestionSheet else { return }
+                showQuestionSheet = true
+            }
         }
         .onChange(of: model.unauthorized) { _, isUnauthorized in
             if isUnauthorized { app.handleUnauthorized() }
@@ -273,7 +333,19 @@ struct SessionView: View {
         } message: {
             Text("This hard-terminates the agent — there is no resume.")
         }
-        .task { model.start() }
+        .onAppear {
+            // Before `present` (in .task): make this @State instance the cached
+            // one, bump recency, and let a parked persisted model adopt live.
+            models?.activate(
+                model, project: project, sessionID: sessionID, live: listedLive, owner: client)
+            if presentation == nil { presentation = SessionPresentation(model: model) }
+            presentation?.begin()
+        }
+        // A Resume from the session list navigates straight here and lets the
+        // view model re-open the session concurrently with the history load.
+        // `present` resumes a cached model from its cursor and is a no-op when
+        // returning (e.g. from a diff) to a model that is still streaming.
+        .task { model.present(reopen: app.dataCache.consumeReopenRequest(sessionID: sessionID)) }
         .onDisappear {
             // Leaving the transcript is the moment the user has "read" it: record
             // the newest event they were shown, so later agent activity — a turn
@@ -282,7 +354,12 @@ struct SessionView: View {
             markRead()
             historyAnchor = nil
             invalidateScrollRequests()
-            model.stop()
+            // A diff pushed on top of the transcript is not leaving the
+            // session: keep streaming so Back is instant. Sheets never fire
+            // onDisappear. If the stack is later replaced underneath, dropping
+            // `presentation` with this view parks the model instead.
+            guard commitTarget == nil, workingChangesTarget == nil else { return }
+            presentation?.end()
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
@@ -309,6 +386,12 @@ struct SessionView: View {
             if model.mode == .live {
                 pendingQuestionBanner
                 phaseBanner
+            } else if model.isReopening {
+                banner(
+                    "Resuming session…",
+                    systemImage: "arrow.clockwise.circle",
+                    tint: .secondary
+                )
             } else {
                 banner(
                     "Reopen this session to continue the conversation",
@@ -340,23 +423,31 @@ struct SessionView: View {
         }
     }
 
+    /// Chrome follows the view model's *display* state: the durable phase,
+    /// overridden while a control the user just triggered awaits its echo, so
+    /// banners react on tap. Controls are disabled while a control RPC is in
+    /// flight (no double submits).
     @ViewBuilder
     private var phaseBanner: some View {
-        if model.projection.pauseRequested {
+        if model.isStopPending {
+            banner("Stopping…", systemImage: "stop.circle", tint: .secondary)
+        } else if model.displayPauseRequested {
             banner(
                 "Pausing at next safe checkpoint…",
                 systemImage: "pause.circle",
                 tint: .orange,
-                action: ("Cancel pause", { Task { await model.resumeSession() } })
+                action: ("Cancel pause", { Task { await model.resumeSession() } }),
+                actionDisabled: model.isControlInFlight
             )
         } else {
-            switch model.phase {
+            switch model.displayPhase {
             case .paused:
                 banner(
                     "Paused — send a steer or Resume",
                     systemImage: "pause.circle.fill",
                     tint: .orange,
-                    action: ("Resume", { Task { await model.resumeSession() } })
+                    action: ("Resume", { Task { await model.resumeSession() } }),
+                    actionDisabled: model.isControlInFlight
                 )
             case .idle:
                 banner("Session idle", systemImage: "moon.zzz.fill", tint: .secondary)
@@ -367,7 +458,8 @@ struct SessionView: View {
                     message.isEmpty ? "Session error" : "Error: \(message)",
                     systemImage: "exclamationmark.triangle.fill",
                     tint: .red,
-                    action: retryAction
+                    action: retryAction,
+                    actionDisabled: model.isControlInFlight
                 )
             case .stopped:
                 banner("Session stopped", systemImage: "stop.circle.fill", tint: .secondary)
@@ -381,7 +473,8 @@ struct SessionView: View {
         _ text: String,
         systemImage: String,
         tint: Color,
-        action: (title: String, run: () -> Void)? = nil
+        action: (title: String, run: () -> Void)? = nil,
+        actionDisabled: Bool = false
     ) -> some View {
         HStack(spacing: 8) {
             Image(systemName: systemImage).foregroundStyle(tint)
@@ -392,6 +485,7 @@ struct SessionView: View {
                     .font(.caption.weight(.semibold))
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .disabled(actionDisabled)
             }
         }
         .padding(.horizontal, 12)
@@ -403,13 +497,15 @@ struct SessionView: View {
     private var inputBar: some View {
         VStack(alignment: .leading, spacing: 6) {
             PictureStrip(pictures: $pictures)
-            if model.mode == .live && model.projection.phase == .running && !model.projection.pauseRequested {
+            if model.mode == .live && model.displayPhase == .running
+                && !model.displayPauseRequested && !model.isStopPending {
                 Button {
                     Task { await model.interrupt() }
                 } label: {
                     Label("Interrupt at next checkpoint", systemImage: "pause.circle")
                         .font(.caption)
                 }
+                .disabled(model.isControlInFlight)
             }
             HStack(spacing: 8) {
                 PicturePickerButton(pictures: $pictures, isLoading: $loadingPictures) { message in
@@ -465,6 +561,21 @@ struct SessionView: View {
         Task { await model.send(text: text, images: images) }
     }
 
+    /// Take a failed provisional message — text and pictures — back into the
+    /// composer for editing.
+    private func restoreFailedMessage(_ id: String) {
+        guard let message = model.discardFailedSend(id: id) else { return }
+        let current = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        draft = current.isEmpty ? message.text : message.text + "\n\n" + draft
+        let restored = message.images.compactMap { image in
+            UIImage(data: image.data).map { DraftPicture(image: image, preview: $0) }
+        }
+        if !restored.isEmpty {
+            pictures = Array((restored + pictures).prefix(PictureComposer.maxPictures))
+        }
+        composerFocused = true
+    }
+
     /// Tell the rest of the app this session's question is dealt with, so the
     /// inbox and drawer badges stop nagging before the next list refresh.
     /// Harmless if the answer failed — the next refresh restores the truth.
@@ -482,57 +593,35 @@ struct SessionView: View {
             // empty transcript until a manual scroll forces another layout pass.
             // Bound the initial eager layout to a recent page. Even collapsed
             // tool rows are expensive when a session contains thousands of them.
+            //
+            // Hot state is read only inside the child views below, each of
+            // which observes just its own slice of the model (durable rows vs
+            // streaming tails vs the revision token). A streamed snapshot then
+            // re-evaluates the tail section alone — not this screen's toolbar,
+            // banners and menus, nor the durable ForEach.
             VStack(alignment: .leading, spacing: 10) {
-                if model.durableRows.isEmpty, model.liveTails.isEmpty, model.state == .loading {
-                    ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
-                }
-                // Keep immutable history separate from rapidly-changing tails.
-                // Building one combined array every 100ms made SwiftUI diff the
-                // entire transcript for every snapshot.
-                if model.earlierRowCount > 0 {
-                    Button {
-                        loadEarlierRows()
-                    } label: {
-                        Label("Load earlier", systemImage: "arrow.up")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                }
-                ForEach(model.visibleDurableRows) { row in
-                    TranscriptRowView(
-                        row: row,
-                        onOpenCommit: { sha in
-                            commitTarget = CommitDiffTarget(sha: sha)
-                        },
-                        onOpenReview: { task, snapshot in
-                            workingChangesTarget = WorkingChangesTarget(task: task, snapshot: snapshot)
-                        },
-                        loadDetail: { rowID in await model.loadDetail(rowID: rowID) },
-                        loadPicture: { attachmentID in
-                            guard !attachmentID.isEmpty,
-                                  let image = try? await client.getSessionAttachment(
-                                    project: project,
-                                    sessionId: sessionID,
-                                    attachmentId: attachmentID
-                                  ) else { return nil }
-                            return image.data
-                        }
-                    )
-                    .equatable()
-                    .id(row.id)
-                }
-                ForEach(model.liveTails) { liveTail in
-                    // Each actor owns a stable subtree. Equatable rendering lets
-                    // one subagent append without re-running the unchanged tails;
-                    // the changed row still receives every snapshot for TextKit.
-                    TranscriptRowView(row: liveTail, model: model.coordinatorModel)
-                        .equatable()
-                        .id(liveTail.id)
-                }
-                if model.liveTails.isEmpty, model.isAwaitingAgentActivity {
-                    workingRow
-                        .id("agent-working")
-                }
+                TranscriptLoadingIndicator(model: model)
+                DurableTranscriptRows(
+                    model: model,
+                    onLoadEarlier: { loadEarlierRows() },
+                    onOpenCommit: { sha in
+                        commitTarget = CommitDiffTarget(sha: sha)
+                    },
+                    onOpenReview: { task, snapshot in
+                        workingChangesTarget = WorkingChangesTarget(task: task, snapshot: snapshot)
+                    },
+                    loadPicture: { [client, project, sessionID] attachmentID in
+                        guard !attachmentID.isEmpty,
+                              let image = try? await client.getSessionAttachment(
+                                project: project,
+                                sessionId: sessionID,
+                                attachmentId: attachmentID
+                              ) else { return nil }
+                        return image.data
+                    },
+                    onEditFailedMessage: { id in restoreFailedMessage(id) }
+                )
+                LiveTranscriptTail(model: model)
                 // A small marker row tells us geometrically when the latest
                 // content is visible. With this eager VStack the marker remains
                 // mounted while offscreen, so lifecycle callbacks cannot answer
@@ -546,6 +635,12 @@ struct SessionView: View {
                                 key: TranscriptBottomPreferenceKey.self,
                                 value: geometry.frame(
                                     in: .named(Self.transcriptCoordinateSpace)).maxY)
+                        }
+                    }
+                    // A background, not a sibling, so it takes no stack slot.
+                    .background {
+                        TranscriptRevisionObserver(model: model) {
+                            requestScrollToLatest(proxy: proxy)
                         }
                     }
             }
@@ -713,31 +808,6 @@ struct SessionView: View {
         // the live tail grows even while the user is reading scrollback. Initial
         // and subsequent live-edge positioning are both handled explicitly by
         // `requestScrollToLatest` while follow mode is enabled.
-    }
-
-    /// Immediate acknowledgement after StartSession/SendInput, shown until the
-    /// event stream produces the first meaningful piece of agent activity. Names
-    /// the model when the log has told us which one is working.
-    private var workingRow: some View {
-        HStack(spacing: 10) {
-            ProgressView()
-                .controlSize(.small)
-            Text(workingLabel)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(workingLabel)
-    }
-
-    private var workingLabel: String {
-        model.coordinatorModel.isEmpty
-            ? "Agent is working…"
-            : "\(model.coordinatorModel) is working…"
     }
 
     private func loadEarlierRows() {
@@ -976,39 +1046,165 @@ struct SessionView: View {
                 }
                 if model.mode == .live {
                     Divider()
-                    if model.projection.phase == .running && !model.projection.pauseRequested {
+                    if model.displayPhase == .running && !model.displayPauseRequested {
                         Button {
                             Task { await model.interrupt() }
                         } label: {
                             Label("Interrupt", systemImage: "pause.circle")
                         }
+                        .disabled(model.isControlInFlight || model.isStopPending)
                     }
-                    if model.projection.phase == .paused || model.projection.pauseRequested {
+                    if model.displayPhase == .paused || model.displayPauseRequested {
                         Button {
                             Task { await model.resumeSession() }
                         } label: {
-                            Label(model.projection.pauseRequested ? "Cancel pause" : "Resume", systemImage: "play.circle")
+                            Label(model.displayPauseRequested ? "Cancel pause" : "Resume", systemImage: "play.circle")
                         }
+                        .disabled(model.isControlInFlight || model.isStopPending)
                     }
-                    if model.projection.rolloverAvailable && model.projection.phase != .paused {
+                    if model.rolloverAvailable && model.displayPhase != .paused {
                         Button {
                             Task { await model.rolloverContext() }
                         } label: {
                             Label("Rollover coordinator context", systemImage: "arrow.triangle.2.circlepath.circle")
                         }
-                        .disabled(model.pendingQuestion != nil)
+                        .disabled(model.pendingQuestion != nil || model.isControlInFlight || model.isStopPending)
                     }
                     Divider()
                     Button(role: .destructive) {
                         showStopConfirm = true
                     } label: {
-                        Label("Stop…", systemImage: "stop.circle")
+                        Label(model.isStopPending ? "Stopping…" : "Stop…", systemImage: "stop.circle")
                     }
+                    .disabled(model.isControlInFlight || model.isStopPending)
                 }
             } label: {
                 Label("Session actions", systemImage: "ellipsis.circle")
             }
         }
+    }
+}
+
+/// The first-load spinner. Its own tiny view so the hot values it checks
+/// (rows, tails, state) invalidate only this.
+private struct TranscriptLoadingIndicator: View {
+    let model: SessionViewModel
+
+    var body: some View {
+        if model.durableRows.isEmpty, model.liveTails.isEmpty, model.state == .loading {
+            ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
+        }
+    }
+}
+
+/// "Load earlier", the durable transcript rows, and this client's unechoed
+/// messages. Observes durable-row state only, so streaming live tails never
+/// re-diff this ForEach (each row is also `.equatable()`, so a real change
+/// re-renders only the rows that changed).
+private struct DurableTranscriptRows: View {
+    let model: SessionViewModel
+    let onLoadEarlier: () -> Void
+    let onOpenCommit: (String) -> Void
+    let onOpenReview: (String, String) -> Void
+    let loadPicture: @Sendable (String) async -> Data?
+    let onEditFailedMessage: (String) -> Void
+
+    var body: some View {
+        // Keep immutable history separate from rapidly-changing tails.
+        // Building one combined array every 100ms made SwiftUI diff the
+        // entire transcript for every snapshot.
+        if model.earlierRowCount > 0 {
+            Button {
+                onLoadEarlier()
+            } label: {
+                Label("Load earlier", systemImage: "arrow.up")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+        }
+        ForEach(model.visibleDurableRows) { row in
+            TranscriptRowView(
+                row: row,
+                onOpenCommit: onOpenCommit,
+                onOpenReview: onOpenReview,
+                loadDetail: { rowID in await model.loadDetail(rowID: rowID) },
+                loadPicture: loadPicture
+            )
+            .equatable()
+            .id(row.id)
+        }
+        // Messages sent from this client that the log has not echoed
+        // yet: shown at once, retired by the durable user_input row.
+        ForEach(model.pendingUserMessages) { message in
+            PendingUserMessageRow(
+                message: message,
+                onRetry: { Task { await model.retrySend(id: message.id) } },
+                onEdit: { onEditFailedMessage(message.id) })
+                .id(message.id)
+        }
+    }
+}
+
+/// Each streaming actor's live tail plus the "working" acknowledgement — the
+/// only transcript section a 25 ms streamed snapshot re-evaluates.
+private struct LiveTranscriptTail: View {
+    let model: SessionViewModel
+
+    var body: some View {
+        ForEach(model.liveTails) { liveTail in
+            // Each actor owns a stable subtree. Equatable rendering lets
+            // one subagent append without re-running the unchanged tails;
+            // the changed row still receives every snapshot for TextKit.
+            TranscriptRowView(row: liveTail, model: model.coordinatorModel)
+                .equatable()
+                .id(liveTail.id)
+        }
+        if model.liveTails.isEmpty, model.isAwaitingAgentActivity {
+            TranscriptWorkingRow(modelName: model.coordinatorModel)
+                .id("agent-working")
+        }
+    }
+}
+
+/// Immediate acknowledgement after StartSession/SendInput, shown until the
+/// event stream produces the first meaningful piece of agent activity. Names
+/// the model when the log has told us which one is working.
+private struct TranscriptWorkingRow: View {
+    let modelName: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.small)
+            Text(label)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(label)
+    }
+
+    private var label: String {
+        modelName.isEmpty ? "Agent is working…" : "\(modelName) is working…"
+    }
+}
+
+/// Forwards every transcript revision (a scalar token, cheaper than comparing
+/// rows) to the screen's follow-latest scroll request, from inside the
+/// transcript so the screen body itself does not observe the token.
+private struct TranscriptRevisionObserver: View {
+    let model: SessionViewModel
+    let onChange: () -> Void
+
+    var body: some View {
+        Color.clear
+            .onChange(of: model.transcriptRevision, initial: true) { _, _ in
+                onChange()
+            }
     }
 }
 
@@ -1528,10 +1724,24 @@ private struct ToolRowView: View {
     let args: String
     let output: String
     var loadDetail: (@MainActor () async -> Void)?
+    /// The argument summary. Parsing `args` JSON is the expensive part of a
+    /// collapsed tool row, and `body` read it twice (label + accessibility);
+    /// compute it once per row value instead.
+    private let preview: String
 
     @State private var expanded = false
 
-    private var preview: String { ToolPreview.summary(tool: name, args: args) }
+    init(
+        name: String, status: TranscriptRow.ToolStatus, args: String, output: String,
+        loadDetail: (@MainActor () async -> Void)? = nil
+    ) {
+        self.name = name
+        self.status = status
+        self.args = args
+        self.output = output
+        self.loadDetail = loadDetail
+        self.preview = ToolPreview.summary(tool: name, args: args)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1682,6 +1892,10 @@ private struct QuestionSheet: View {
     let onAnswerBatch: @MainActor ([(text: String, optionIndex: Int)]) async -> Void
 
     @Environment(\.dismiss) private var dismiss
+    /// Set on the first submit: the sheet dismisses at once and the answer is
+    /// sent in the background, so a second tap before the dismissal finishes
+    /// must not send again.
+    @State private var submitted = false
     /// Per-question free-text drafts.
     @State private var texts: [String]
     /// Per-question selected option index (-1 = none).
@@ -1792,10 +2006,7 @@ private struct QuestionSheet: View {
                 advance(from: index, proxy: proxy)
             } else {
                 // Single question: an option tap answers immediately.
-                Task {
-                    await onAnswerSingle(optIdx, "")
-                    dismiss()
-                }
+                submitSingle(optionIndex: optIdx, text: "")
             }
         } label: {
             HStack(spacing: 10) {
@@ -1854,10 +2065,7 @@ private struct QuestionSheet: View {
     /// For a single question, provide an inline send action for free text.
     private var singleSendSection: some View {
         Button("Send") {
-            Task {
-                await onAnswerSingle(-1, text(at: 0))
-                dismiss()
-            }
+            submitSingle(optionIndex: -1, text: text(at: 0))
         }
         .disabled(text(at: 0).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
@@ -1878,10 +2086,19 @@ private struct QuestionSheet: View {
             if sel >= 0 { return (text: "", optionIndex: sel) }
             return (text: text(at: i), optionIndex: -1)
         }
-        Task {
-            await onAnswerBatch(answers)
-            dismiss()
-        }
+        guard !submitted else { return }
+        submitted = true
+        dismiss()
+        Task { await onAnswerBatch(answers) }
+    }
+
+    /// Dismiss immediately and answer in the background; the view model closes
+    /// the gate optimistically and restores it with an alert on failure.
+    private func submitSingle(optionIndex: Int, text: String) {
+        guard !submitted else { return }
+        submitted = true
+        dismiss()
+        Task { await onAnswerSingle(optionIndex, text) }
     }
 }
 
@@ -1898,4 +2115,67 @@ private struct CommitDiffTarget: Identifiable, Hashable {
     var id: String { sha }
     /// A short display sha for the nav title (first 8 chars).
     var shortSha: String { String(sha.prefix(8)) }
+}
+
+/// A message this client submitted that the durable log has not echoed yet.
+/// Rendered like a user bubble (dimmed) with its delivery state; a failed send
+/// offers Retry, or Edit to take the text back into the composer.
+private struct PendingUserMessageRow: View {
+    let message: SessionViewModel.PendingUserMessage
+    let onRetry: () -> Void
+    let onEdit: () -> Void
+
+    var body: some View {
+        HStack {
+            Spacer(minLength: 40)
+            VStack(alignment: .trailing, spacing: 6) {
+                if !message.images.isEmpty {
+                    Label(
+                        message.images.count == 1 ? "1 picture" : "\(message.images.count) pictures",
+                        systemImage: "photo")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if !message.text.isEmpty {
+                    Text(message.text)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(
+                            Color.accentColor.opacity(message.isFailed ? 0.35 : 0.6),
+                            in: RoundedRectangle(cornerRadius: 14))
+                        .foregroundStyle(.white)
+                }
+                statusLine
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var statusLine: some View {
+        switch message.status {
+        case .sending:
+            Label("Sending…", systemImage: "arrow.up.circle")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        case .sent:
+            Label("Sent", systemImage: "checkmark")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        case .failed(let reason):
+            VStack(alignment: .trailing, spacing: 4) {
+                Label("Not sent: \(reason)", systemImage: "exclamationmark.circle")
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .multilineTextAlignment(.trailing)
+                HStack(spacing: 8) {
+                    Button("Edit", action: onEdit)
+                        .buttonStyle(.bordered)
+                    Button("Retry", action: onRetry)
+                        .buttonStyle(.borderedProminent)
+                }
+                .font(.caption.weight(.semibold))
+                .controlSize(.small)
+            }
+        }
+    }
 }

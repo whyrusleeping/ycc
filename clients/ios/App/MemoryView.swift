@@ -74,6 +74,14 @@ struct MemoryView: View {
     }
 
     private func load() async {
+        // A revisit renders the last copy from the app cache at once; the fetch
+        // below revalidates it.
+        let cache = app.dataCache
+        let generation = cache.generation
+        if content == nil, let cached = cache.value(.memory(project), as: [String].self), cached.count == 2 {
+            content = cached[0]
+            path = cached[1]
+        }
         // Keep stale content on screen during a pull-to-refresh; only the very
         // first load shows the spinner (the `content == nil` branch of `body`).
         do {
@@ -81,6 +89,7 @@ struct MemoryView: View {
             content = response.content
             path = response.path
             errorMessage = nil
+            cache.store([response.content, response.path], for: .memory(project), ifGeneration: generation)
         } catch YccError.unauthorized {
             app.handleUnauthorized()
         } catch {

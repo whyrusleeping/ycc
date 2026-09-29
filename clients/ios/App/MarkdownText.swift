@@ -11,6 +11,13 @@ import YccKit
 /// as inline markdown (bold, italic, `code`, links) with soft line breaks
 /// preserved. Used for
 /// agent message bubbles in the session transcript and for backlog task bodies.
+///
+/// Parsing is cached: block splitting via YccKit's ``MarkdownBlockCache`` and
+/// inline `AttributedString`s via ``InlineMarkdownCache``. Both are filled off
+/// the main actor for transcript rows by the session's decode task
+/// (``TranscriptRenderWarmup``), so `body` normally only looks results up;
+/// before, every evaluation of every bubble re-split its text and re-ran
+/// `AttributedString(markdown:)` for each block on the main actor.
 struct MarkdownText: View {
     let text: String
 
@@ -20,7 +27,7 @@ struct MarkdownText: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+            ForEach(Array(MarkdownBlockCache.blocks(for: text).enumerated()), id: \.offset) { _, block in
                 switch block {
                 case .code(let language, let code):
                     CodeBlock(language: language, code: code)
@@ -51,118 +58,6 @@ struct MarkdownText: View {
         .padding(.vertical, 2)
     }
 
-    private enum Block {
-        case markdown(String)
-        case heading(Int, String)
-        case quote(String)
-        case code(language: String, code: String)
-        case table(MarkdownTable)
-        case rule
-    }
-
-    /// Split the text into fenced code blocks, tables, headings, quotes, rules,
-    /// and paragraph groups (blank-line separated). List markers are normalised
-    /// to bullets so `- item` reads as `• item` (the inline parser would
-    /// otherwise show the raw dash).
-    private var blocks: [Block] {
-        var result: [Block] = []
-        var paragraph: [String] = []
-        var quote: [String] = []
-        var code: [String] = []
-        var codeLanguage = ""
-        var inCode = false
-
-        func flushParagraph() {
-            let joined = paragraph.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-            if !joined.isEmpty { result.append(.markdown(joined)) }
-            paragraph.removeAll()
-        }
-
-        func flushQuote() {
-            let joined = quote.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-            if !joined.isEmpty { result.append(.quote(joined)) }
-            quote.removeAll()
-        }
-
-        func flushProse() {
-            flushQuote()
-            flushParagraph()
-        }
-
-        let lines = text.components(separatedBy: "\n")
-        var index = 0
-        while index < lines.count {
-            let line = lines[index]
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
-                if inCode {
-                    result.append(.code(language: codeLanguage, code: code.joined(separator: "\n")))
-                    code.removeAll()
-                    codeLanguage = ""
-                    inCode = false
-                } else {
-                    flushProse()
-                    // ```swift → a language label on the block's header.
-                    codeLanguage = String(trimmed.dropFirst(3))
-                        .trimmingCharacters(in: .whitespaces)
-                    inCode = true
-                }
-                index += 1
-                continue
-            }
-            if inCode {
-                code.append(line)
-                index += 1
-                continue
-            }
-            if !trimmed.isEmpty,
-               let parsed = MarkdownTable.parse(lines: lines, startIndex: index) {
-                flushProse()
-                result.append(.table(parsed.table))
-                index += parsed.consumedLineCount
-                continue
-            }
-            if trimmed.isEmpty {
-                flushProse()
-            } else if isRule(trimmed) {
-                flushProse()
-                result.append(.rule)
-            } else if let heading = headingParts(trimmed) {
-                flushProse()
-                result.append(.heading(heading.level, heading.text))
-            } else if trimmed.hasPrefix(">") {
-                flushParagraph()
-                quote.append(String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces))
-            } else {
-                flushQuote()
-                paragraph.append(bulleted(line))
-            }
-            index += 1
-        }
-        if inCode, !code.isEmpty {
-            result.append(.code(language: codeLanguage, code: code.joined(separator: "\n")))
-        }
-        flushProse()
-        return result
-    }
-
-    /// `---`, `***` or `___` on their own line (three or more of one marker).
-    private func isRule(_ line: String) -> Bool {
-        for marker: Character in ["-", "*", "_"] {
-            if line.count >= 3, line.allSatisfy({ $0 == marker }) { return true }
-        }
-        return false
-    }
-
-    /// `# Title` → (1, "Title"); up to `######`. Returns nil for non-headings.
-    private func headingParts(_ line: String) -> (level: Int, text: String)? {
-        let hashes = line.prefix(while: { $0 == "#" })
-        guard (1...6).contains(hashes.count) else { return nil }
-        let rest = line.dropFirst(hashes.count)
-        guard rest.first == " " else { return nil }
-        return (hashes.count, rest.trimmingCharacters(in: .whitespaces))
-    }
-
     private func headingFont(_ level: Int) -> Font {
         switch level {
         case 1: return .title3.bold()
@@ -170,31 +65,50 @@ struct MarkdownText: View {
         default: return .subheadline.weight(.semibold)
         }
     }
+}
 
-    /// Replace a leading `- ` / `* ` / `+ ` list marker with a bullet, keeping
-    /// indentation so nested lists still read as nested.
-    private func bulleted(_ line: String) -> String {
-        let indent = line.prefix(while: { $0 == " " || $0 == "\t" })
-        let rest = line.dropFirst(indent.count)
-        for marker in ["- ", "* ", "+ "] where rest.hasPrefix(marker) {
-            return indent + "•  " + rest.dropFirst(marker.count)
+/// Bounded, thread-safe memo tables for inline markdown. `parsed` is keyed by
+/// source text alone, so it can be filled from any thread (the transcript
+/// decode task, via ``registerWarmup()``); `linked` adds a file-link context's
+/// code-span links on top and is filled on first render.
+enum InlineMarkdownCache {
+    struct LinkedKey: Hashable, Sendable {
+        let markdown: String
+        let context: FileLinkContext
+    }
+
+    static let parsed = BoundedCache<String, AttributedString>(capacity: 4_096)
+    static let linked = BoundedCache<LinkedKey, AttributedString>(capacity: 4_096)
+
+    /// Parse one block as inline markdown, preserving soft line breaks. Falls
+    /// back to plain text if it doesn't parse.
+    static func parse(_ markdown: String) -> AttributedString {
+        parsed.value(for: markdown) {
+            var options = AttributedString.MarkdownParsingOptions()
+            options.interpretedSyntax = .inlineOnlyPreservingWhitespace
+            return (try? AttributedString(markdown: markdown, options: options))
+                ?? AttributedString(markdown)
         }
-        return line
+    }
+
+    /// Let transcript decoding pre-parse inline markdown off the main actor.
+    /// Idempotent; call once at launch.
+    static func registerWarmup() {
+        TranscriptRenderWarmup.setInlineRenderer { markdown in
+            _ = InlineMarkdownCache.parse(markdown)
+        }
     }
 }
 
-/// Parse one block as inline markdown, preserving soft line breaks. Falls back
-/// to plain text if it doesn't parse. Shared by prose and table cells so inline
+/// Inline markdown for one block, shared by prose and table cells so inline
 /// syntax has identical behavior in both. With a file-link context, inline code
 /// spans that look like repo paths (`internal/a.go:12`) — how agents usually
 /// cite files — become links the `.fileLinks` handler opens in-app.
 private func rendered(_ markdown: String, fileLinks: FileLinkContext? = nil) -> AttributedString {
-    var options = AttributedString.MarkdownParsingOptions()
-    options.interpretedSyntax = .inlineOnlyPreservingWhitespace
-    guard var attributed = try? AttributedString(markdown: markdown, options: options) else {
-        return AttributedString(markdown)
-    }
-    if let fileLinks {
+    guard let fileLinks else { return InlineMarkdownCache.parse(markdown) }
+    let key = InlineMarkdownCache.LinkedKey(markdown: markdown, context: fileLinks)
+    return InlineMarkdownCache.linked.value(for: key) {
+        var attributed = InlineMarkdownCache.parse(markdown)
         var links: [(Range<AttributedString.Index>, URL)] = []
         for run in attributed.runs {
             guard run.link == nil,
@@ -208,8 +122,8 @@ private func rendered(_ markdown: String, fileLinks: FileLinkContext? = nil) -> 
         for (range, url) in links {
             attributed[range].link = url
         }
+        return attributed
     }
-    return attributed
 }
 
 /// A pipe table rendered as a horizontally scrollable grid. Keeping the card

@@ -44,8 +44,74 @@ public final class SessionViewModel {
     /// successful `ResumeSession`.
     public private(set) var mode: Mode
 
-    /// The folded projection. Views render ``rows``.
-    public private(set) var projection = SessionProjection()
+    /// The folded projection — the source of truth for everything below.
+    ///
+    /// Deliberately *not* observed. It changes on every streamed publish (live
+    /// tails every 25 ms), and a SwiftUI body that read any projection-derived
+    /// value used to be invalidated by all of them — toolbar, banners, menus,
+    /// sheets and the whole durable transcript. Views instead observe the
+    /// separately stored mirrors ``durableRows``, ``liveTails`` (hot) and
+    /// ``chrome`` (cold), which are written only when their own value changes.
+    @ObservationIgnored public private(set) var projection = SessionProjection() {
+        didSet { publishProjection() }
+    }
+
+    /// Projection-derived values the session chrome (title, banners, menus,
+    /// answer sheet) renders. Replaced only when one of them changes, so
+    /// streamed transcript updates do not re-evaluate chrome observers.
+    public struct Chrome: Equatable, Sendable {
+        public var phase: SessionProjection.Phase = .running
+        public var pauseRequested = false
+        public var pendingQuestion: SessionProjection.PendingQuestion?
+        public var coordinatorModel = ""
+        public var currentContextTokensEstimate: Int?
+        public var rolloverAvailable = true
+
+        public init() {}
+
+        init(_ projection: SessionProjection) {
+            phase = projection.phase
+            pauseRequested = projection.pauseRequested
+            pendingQuestion = projection.pendingQuestion
+            coordinatorModel = projection.coordinatorModel
+            currentContextTokensEstimate = projection.currentContextTokensEstimate
+            rolloverAvailable = projection.rolloverAvailable
+        }
+    }
+
+    /// Cold, chrome-facing projection state (see ``Chrome``).
+    public private(set) var chrome = Chrome()
+    /// Durable rows (hot: changes as rows land). Mirrors
+    /// `projection.durableRows`; unchanged by live-tail-only publishes.
+    public private(set) var durableRows: [TranscriptRow] = []
+    /// Stable transient rows for every actor currently streaming (hot: changes
+    /// on every streamed snapshot). Rendered separately so one subagent's
+    /// snapshots do not invalidate another's text or the durable rows.
+    public private(set) var liveTails: [TranscriptRow] = []
+
+    /// Refresh the observed mirrors after any projection mutation. Array
+    /// storage identity is the change test: an untouched array still shares
+    /// the mirror's buffer, and any mutation copies it (the mirror holds a
+    /// second reference), so no element-wise comparison is needed.
+    private func publishProjection() {
+        if !Self.sharesStorage(durableRows, projection.durableRows) {
+            durableRows = projection.durableRows
+        }
+        if !Self.sharesStorage(liveTails, projection.liveTails) {
+            liveTails = projection.liveTails
+        }
+        let next = Chrome(projection)
+        if next != chrome { chrome = next }
+    }
+
+    private static func sharesStorage(_ lhs: [TranscriptRow], _ rhs: [TranscriptRow]) -> Bool {
+        guard lhs.count == rhs.count else { return false }
+        if lhs.isEmpty { return true }
+        return lhs.withUnsafeBufferPointer { left in
+            rhs.withUnsafeBufferPointer { right in left.baseAddress == right.baseAddress }
+        }
+    }
+
     public private(set) var state: ConnectionState = .idle
     /// One-shot lifecycle edge for installing the real transcript hierarchy and
     /// positioning it after replay. Unlike state/row count, this never resets on
@@ -70,22 +136,175 @@ public final class SessionViewModel {
     /// — never a crash.
     public var actionError: String?
 
+    // MARK: Optimistic interaction state
+    //
+    // Every round trip to the daemon costs ~150–300 ms over the phone's tunnel,
+    // so interactive actions update the UI first and reconcile afterwards. The
+    // durable event stream stays the source of truth: optimistic state only
+    // bridges the gap until the stream echoes the change, and every failure
+    // rolls it back with a visible error.
+
+    /// A message typed into this client that the durable log has not yet
+    /// echoed as a `user_input` row. Rendered as a provisional bubble so the
+    /// transcript responds the instant the user taps send, including while a
+    /// persisted session is still being re-opened.
+    public struct PendingUserMessage: Identifiable, Equatable, Sendable {
+        public enum Status: Equatable, Sendable {
+            /// The send (and any required re-open) is in flight.
+            case sending
+            /// The daemon accepted it; waiting for the durable echo.
+            case sent
+            /// The send failed with this message; offer retry/discard.
+            case failed(String)
+        }
+
+        public let id: String
+        public let text: String
+        public let images: [MessageImage]
+        public internal(set) var status: Status
+        /// Durable cursor when (re)submitted: only a newer user row can be the
+        /// echo, so an identical older message never retires this bubble. Nil
+        /// while no history has been installed yet (a freshly opened session
+        /// reads cursor 0); settled to the first installed snapshot's cursor —
+        /// that snapshot was requested before this send — and never matched
+        /// before then.
+        var baselineSeq: Int64?
+
+        public var isFailed: Bool {
+            if case .failed = status { return true }
+            return false
+        }
+    }
+
+    /// Locally submitted messages awaiting their durable echo, oldest first.
+    public private(set) var pendingUserMessages: [PendingUserMessage] = []
+    private var localMessageCounter: UInt64 = 0
+
+    /// A session control the user just triggered. While the RPC is in flight
+    /// (`acknowledged == false`) every session control is disabled, preventing
+    /// double submits; after the daemon accepts it the pending state keeps the
+    /// chrome showing the expected outcome until the durable event (e.g.
+    /// `pause_requested`, `resumed`, `session_stopped`) arrives, a fallback
+    /// timeout passes, or another control replaces it.
+    public struct PendingControl: Equatable, Sendable {
+        public enum Kind: Equatable, Sendable {
+            case pause
+            case resume
+            case retry
+            case stop
+            case rollover
+        }
+
+        public let kind: Kind
+        /// The daemon accepted the request; only the durable echo is pending.
+        public internal(set) var acknowledged: Bool
+        let token: UInt64
+    }
+
+    public private(set) var pendingControl: PendingControl?
+    private var controlToken: UInt64 = 0
+    private let controlAckTimeout: UInt64
+    /// How long an accepted (`.sent`) bubble may wait for its durable echo
+    /// before it is dropped — a bounded fallback so it can never linger.
+    private let sentEchoTimeout: UInt64
+
+    /// True while a session-control RPC is outstanding; views disable every
+    /// control (interrupt/resume/retry/rollover/stop) meanwhile.
+    public var isControlInFlight: Bool {
+        guard let pendingControl else { return false }
+        return !pendingControl.acknowledged
+    }
+
+    /// The pause-request flag the chrome should show: the durable flag,
+    /// overridden while a pause or resume the user just requested is pending.
+    public var displayPauseRequested: Bool {
+        switch pendingControl?.kind {
+        case .pause?: return chrome.phase == .running
+        case .resume?: return false
+        default: return chrome.pauseRequested
+        }
+    }
+
+    /// The lifecycle phase the chrome should show: the durable phase, except
+    /// that a pending Resume of a paused session / Retry of an errored session
+    /// already reads as running so its banner disappears on tap. Reverts on
+    /// failure or once the fallback timeout passes without a durable echo.
+    public var displayPhase: SessionProjection.Phase {
+        switch pendingControl?.kind {
+        case .resume? where chrome.phase == .paused:
+            return .running
+        case .retry?:
+            if case .error = chrome.phase { return .running }
+            return chrome.phase
+        default:
+            return chrome.phase
+        }
+    }
+
+    /// Whether a stop the user requested is awaiting its durable echo.
+    public var isStopPending: Bool { pendingControl?.kind == .stop && chrome.phase != .stopped }
+
+    private struct OptimisticAnswer {
+        let question: SessionProjection.PendingQuestion
+        let answer: String
+        /// The daemon accepted the answer; kept only to suppress a stale state
+        /// snapshot from re-opening the gate until the durable answer lands.
+        var confirmed: Bool
+    }
+
+    /// The answer this client submitted optimistically (gate already closed).
+    private var optimisticAnswer: OptimisticAnswer?
+    /// An answer RPC is in flight: further submissions are dropped, so a
+    /// double tap cannot send twice (and trip `failed_precondition`).
+    public private(set) var isSubmittingAnswer = false
+    /// The question row whose optimistic answer was rolled back after a
+    /// failure. The view uses it to show the "question waiting" banner rather
+    /// than immediately re-presenting the sheet on top of the error alert.
+    public private(set) var rolledBackQuestionRowID: String?
+
+    /// In-flight `ResumeSession` shared by every caller (a send racing the
+    /// open-time reopen must not issue a second ResumeSession).
+    @ObservationIgnored private var reopenTask: Task<Bool, Never>?
+    /// True while a persisted session is being re-opened for interaction.
+    public private(set) var isReopening = false
+
     /// Ordered rows to render (durable rows + transient per-actor live tails).
-    public var rows: [TranscriptRow] { projection.rows }
-    /// Durable rows exposed separately so live-tail updates do not have to
-    /// allocate and diff a fresh combined array in SwiftUI.
-    public var durableRows: [TranscriptRow] { projection.durableRows }
+    public var rows: [TranscriptRow] { durableRows + liveTails }
     /// Only the recent page is mounted initially; all rows remain in the reducer
     /// for tool pairing, pending questions, and the reconnect cursor. Keep the
     /// start fixed as live rows arrive so reading scrollback does not remove rows.
     public private(set) var earlierRowCount = 0
     public var visibleDurableRows: ArraySlice<TranscriptRow> {
-        projection.durableRows.dropFirst(source.supportsIndexedSessionView ? 0 : earlierRowCount)
+        durableRows.dropFirst(source.supportsIndexedSessionView ? 0 : earlierRowCount)
     }
+    /// Bumped whenever an earlier page is prepended, so the view can restore
+    /// its "Load earlier" scroll anchor once the rows are actually installed
+    /// (a fetched page lands asynchronously, after the anchor request).
+    public private(set) var earlierPageRevision: UInt64 = 0
     private static let transcriptPageSize = 200
-    private var earlierCursor = ""
-    private var loadingEarlier = false
-    private var loadingDetailIDs: Set<String> = []
+    @ObservationIgnored private var earlierCursor = ""
+    @ObservationIgnored private var loadingEarlier = false
+    @ObservationIgnored private var loadingDetailIDs: Set<String> = []
+
+    /// One earlier page fetched and decoded in the background after the
+    /// first display, so "Load earlier" installs it with no round trip. Valid
+    /// only for the snapshot install and cursor it was fetched against.
+    private struct PrefetchedPage {
+        let cursor: String
+        let epoch: UInt64
+        let page: Ycc_V1_GetSessionViewPageResponse
+        let decoded: [TranscriptRow?]
+    }
+    @ObservationIgnored private var prefetchedEarlier: PrefetchedPage?
+    @ObservationIgnored private var prefetchTask: Task<Void, Never>?
+    @ObservationIgnored private var prefetchToken: UInt64 = 0
+    /// Bumped by every snapshot install (which resets row versions); an
+    /// earlier page captured against an older install must not be merged.
+    @ObservationIgnored private var snapshotEpoch: UInt64 = 0
+    private let prefetchesEarlierPage: Bool
+    private let earlierPrefetchDelay: UInt64
+    /// Whether a background-fetched earlier page is waiting (tests/diagnostics).
+    var hasPrefetchedEarlierPage: Bool { prefetchedEarlier != nil }
 
     public func loadEarlierRows() {
         guard source.supportsIndexedSessionView else {
@@ -93,6 +312,15 @@ public final class SessionViewModel {
             return
         }
         guard !earlierCursor.isEmpty, !loadingEarlier else { return }
+        if let prefetched = prefetchedEarlier {
+            prefetchedEarlier = nil
+            if prefetched.cursor == earlierCursor, prefetched.epoch == snapshotEpoch {
+                // Installed synchronously, inside the caller's transaction, so
+                // the view's scroll anchor sees the expanded hierarchy.
+                installEarlierPage(prefetched.page, decoded: prefetched.decoded)
+                return
+            }
+        }
         loadingEarlier = true
         let cursor = earlierCursor
         let generation = streamGeneration
@@ -107,50 +335,99 @@ public final class SessionViewModel {
                 defer { replaySpan.end(events: page.rows.reduce(0) { $0 + $1.events.count }, rows: page.rows.count) }
                 let decoded = try await Self.decodeIndexedRows(page.rows)
                 guard cursor == self.earlierCursor, generation == self.streamGeneration else { return }
-                self.projection.prependIndexed(
-                    page.rows, indexedThroughSeq: page.indexedThroughSeq, decoded: decoded)
-                self.earlierCursor = page.earlierCursor
-                self.earlierRowCount = page.earlierCursor.isEmpty ? 0 : 1
-                self.transcriptRevision &+= 1
+                self.installEarlierPage(page, decoded: decoded)
             } catch {
                 guard generation == self.streamGeneration, !Task.isCancelled else { return }
                 self.actionError = Self.actionMessage("load earlier", error)
             }
         }
     }
-    /// Stable transient rows for every actor currently streaming, rendered
-    /// separately so one subagent's snapshots do not invalidate another's text.
-    public var liveTails: [TranscriptRow] { projection.liveTails }
+
+    private func installEarlierPage(_ page: Ycc_V1_GetSessionViewPageResponse, decoded: [TranscriptRow?]) {
+        projection.prependIndexed(
+            page.rows, indexedThroughSeq: page.indexedThroughSeq, decoded: decoded)
+        earlierCursor = page.earlierCursor
+        earlierRowCount = page.earlierCursor.isEmpty ? 0 : 1
+        earlierPageRevision &+= 1
+        transcriptRevision &+= 1
+    }
+
+    /// Fetch and decode the next earlier page in the background, holding it
+    /// for ``loadEarlierRows()`` instead of installing it: an automatic prepend
+    /// above an eager VStack would move whatever the user is reading.
+    private func prefetchEarlierPage() {
+        guard prefetchesEarlierPage, source.supportsIndexedSessionView,
+              !earlierCursor.isEmpty, prefetchTask == nil, prefetchedEarlier == nil else { return }
+        let cursor = earlierCursor
+        let epoch = snapshotEpoch
+        let delay = earlierPrefetchDelay
+        let sleep = self.sleep
+        prefetchToken &+= 1
+        let token = prefetchToken
+        prefetchTask = Task { [weak self] in
+            defer {
+                if let self, self.prefetchToken == token { self.prefetchTask = nil }
+            }
+            do {
+                // Let the first page lay out and the stream open first.
+                if delay > 0 { try await sleep(delay) }
+                guard let self, cursor == self.earlierCursor, epoch == self.snapshotEpoch,
+                      !Task.isCancelled else { return }
+                // First-page sized: a glance should not cost a deep page over
+                // a cellular tunnel. Later Load earlier pages are full-size.
+                let page = try await self.source.getSessionViewPage(
+                    project: self.project, sessionId: self.sessionID, cursor: cursor,
+                    maxRows: YccClient.initialViewRows, maxBytes: YccClient.initialViewBytes)
+                let decoded = try await Self.decodeIndexedRows(page.rows, priority: .utility)
+                guard cursor == self.earlierCursor, epoch == self.snapshotEpoch,
+                      !Task.isCancelled else { return }
+                self.prefetchedEarlier = PrefetchedPage(
+                    cursor: cursor, epoch: epoch, page: page, decoded: decoded)
+            } catch {
+                // Silent: an explicit Load earlier fetches (and reports) normally.
+            }
+        }
+    }
+
+    private func cancelEarlierPrefetch() {
+        prefetchTask?.cancel()
+        prefetchTask = nil
+        prefetchToken &+= 1
+    }
+
     /// Compatibility accessor for single-stream consumers.
-    public var liveTail: TranscriptRow? { projection.liveTail }
+    public var liveTail: TranscriptRow? { liveTails.last }
     /// A cheap monotonic change token for transcript layout/scroll following.
     /// Observing `rows` directly makes SwiftUI equality-compare every row and the
     /// complete, ever-growing live-tail string on every snapshot.
     public private(set) var transcriptRevision: UInt64 = 0
     /// The open `ask_user` question, if any.
-    public var pendingQuestion: SessionProjection.PendingQuestion? { projection.pendingQuestion }
+    public var pendingQuestion: SessionProjection.PendingQuestion? { chrome.pendingQuestion }
     /// The session's derived lifecycle phase (running/paused/idle/error/stopped).
-    public var phase: SessionProjection.Phase { projection.phase }
+    public var phase: SessionProjection.Phase { chrome.phase }
     /// Daemon timestamp of the newest durable event this view has folded — the
     /// "seen up to here" watermark the unread tracker records when the user
-    /// leaves the session (``SessionReadStore``).
+    /// leaves the session (``SessionReadStore``). Read at that moment, not
+    /// rendered, so it is intentionally not observed.
     public var lastEventTimestamp: String { projection.lastEventTimestamp }
     /// The logical model driving this session's coordinator, folded from the log
     /// (`session_started` / `role_config_changed` / coordinator `model_turn`).
     /// Empty until an event names it. Chrome uses this to answer "which model is
     /// doing the work" — `ListModels` cannot, since it reports only the daemon's
     /// global role defaults.
-    public var coordinatorModel: String { projection.coordinatorModel }
+    public var coordinatorModel: String { chrome.coordinatorModel }
     /// Approximate prompt size at the coordinator's latest completed model turn,
     /// kept separate from cumulative session usage.
     public var currentContextTokensEstimate: Int? {
-        projection.currentContextTokensEstimate
+        chrome.currentContextTokensEstimate
     }
+    /// Whether the daemon still offers a context rollover (menu chrome).
+    public var rolloverAvailable: Bool { chrome.rolloverAvailable }
     private let source: SessionTranscriptSource
     private let actions: SessionActionSource?
     private let backoff: BackoffPolicy
     private let sleep: @Sendable (UInt64) async throws -> Void
-    private var streamTask: Task<Void, Never>?
+    @ObservationIgnored private var streamTask: Task<Void, Never>?
     @ObservationIgnored private var firstDisplaySpan: LatencyDiagnostics.Span?
 
     /// Called after the initial transcript hierarchy has reached a layout pass.
@@ -158,7 +435,7 @@ public final class SessionViewModel {
         firstDisplaySpan?.end(rows: visibleDurableRows.count)
         firstDisplaySpan = nil
     }
-    private var streamGeneration: UInt64 = 0
+    @ObservationIgnored private var streamGeneration: UInt64 = 0
     /// Streamed updates waiting for the next publish. Each arrives as its own
     /// main-actor job, and SwiftUI runs a separate update for every observable
     /// mutation made from a distinct job. Several updates in one frame re-fire
@@ -170,12 +447,34 @@ public final class SessionViewModel {
         case event(Ycc_V1_Event)
         case indexed(Ycc_V1_SessionViewUpdate)
     }
-    private var pendingUpdates: [PendingUpdate] = []
-    private var publishTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingUpdates: [PendingUpdate] = []
+    @ObservationIgnored private var publishTask: Task<Void, Never>?
     private let publishInterval: UInt64
     /// Longer than one frame at 60Hz so two consecutive publishes can never land
     /// in the same frame, yet well under the daemon's 100ms snapshot cadence.
     public nonisolated static let defaultPublishInterval: UInt64 = 25_000_000
+
+    // MARK: Cached-model lifetime (task 0404)
+
+    /// When a parked model is shown again within this many seconds, its live
+    /// stream resumes straight from the cached cursor (no snapshot request):
+    /// SubscribeSessionView replays every row change after `fromSeq`, gap-free.
+    /// After longer, the resume first revalidates with one bounded snapshot —
+    /// kept as-is when nothing changed — rather than streaming an unbounded
+    /// catch-up of every row changed while away into the eager transcript.
+    public nonisolated static let defaultResumeWindow: TimeInterval = 300
+    private let resumeWindow: TimeInterval
+    private let clock: @Sendable () -> TimeInterval
+    /// Monotonic time the model was parked; nil while presented or never shown.
+    @ObservationIgnored private var parkedAt: TimeInterval?
+    @ObservationIgnored private var hasStarted = false
+    @ObservationIgnored private var presentationTokens: Set<UInt64> = []
+    @ObservationIgnored private var nextPresentationToken: UInt64 = 0
+
+    /// Parked: stopped because no screen presents it, projection retained.
+    public var isParked: Bool { parkedAt != nil }
+    /// Whether some screen currently holds a ``SessionPresentation``.
+    public var isPresented: Bool { !presentationTokens.isEmpty }
 
     /// Reconnect backoff bounds (nanoseconds). Small by default; overridable in
     /// tests to keep them fast.
@@ -196,12 +495,24 @@ public final class SessionViewModel {
         mode: Mode,
         backoff: BackoffPolicy = BackoffPolicy(),
         publishInterval: UInt64 = SessionViewModel.defaultPublishInterval,
+        controlAckTimeout: UInt64 = 8_000_000_000,
+        sentEchoTimeout: UInt64 = 15_000_000_000,
+        prefetchEarlierPage: Bool = false,
+        earlierPrefetchDelay: UInt64 = 400_000_000,
+        resumeWindow: TimeInterval = SessionViewModel.defaultResumeWindow,
+        clock: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
         sleep: @escaping @Sendable (UInt64) async throws -> Void = {
             try await Task.sleep(nanoseconds: $0)
         }
     ) {
         self.source = source
         self.publishInterval = publishInterval
+        self.controlAckTimeout = controlAckTimeout
+        self.sentEchoTimeout = sentEchoTimeout
+        self.prefetchesEarlierPage = prefetchEarlierPage
+        self.earlierPrefetchDelay = earlierPrefetchDelay
+        self.resumeWindow = resumeWindow
+        self.clock = clock
         // Auto-wire the action surface from the same object when it conforms to
         // both (YccClient does), so callers need only pass `source`.
         self.actions = actions ?? (source as? SessionActionSource)
@@ -214,7 +525,48 @@ public final class SessionViewModel {
     }
 
     /// Begin loading. Idempotent: a second call while already running is ignored.
-    public func start() {
+    ///
+    /// `reopen` re-opens a persisted session (`ResumeSession`) *concurrently*
+    /// with the first transcript load, so a Resume from the session list can
+    /// navigate immediately: history paints from the read-only snapshot while
+    /// the daemon re-instantiates the session, then the view promotes itself to
+    /// the live stream. A reopen failure keeps the history and surfaces
+    /// ``actionError``.
+    ///
+    /// A ``park()``ed model resumes instead of reloading: its cached
+    /// transcript stays on screen and the live stream continues from the
+    /// cached cursor (see ``defaultResumeWindow``).
+    public func start(reopen: Bool = false) {
+        stoppedByOwner = false
+        hasStarted = true
+        if let parkedAt {
+            self.parkedAt = nil
+            resumeParked(since: parkedAt)
+        } else {
+            startLoading()
+        }
+        if reopen, mode == .persisted, !unauthorized {
+            Task { [weak self] in await self?.reopenForInteraction() }
+        }
+    }
+
+    /// What a session screen calls every time it appears. Like
+    /// ``start(reopen:)``, except that re-appearing over a persisted transcript
+    /// that is already complete (e.g. back from a pushed diff) fetches
+    /// nothing: a persisted log cannot change without being re-opened.
+    public func present(reopen: Bool = false) {
+        if hasStarted, parkedAt == nil, mode == .persisted,
+           hasCompletedInitialReplay, streamTask == nil, state == .finished {
+            stoppedByOwner = false
+            if reopen, !unauthorized {
+                Task { [weak self] in await self?.reopenForInteraction() }
+            }
+            return
+        }
+        start(reopen: reopen)
+    }
+
+    private func startLoading() {
         guard streamTask == nil, !unauthorized else { return }
         if !hasCompletedInitialReplay, firstDisplaySpan == nil {
             firstDisplaySpan = LatencyDiagnostics.shared.begin("transcript.firstDisplay")
@@ -237,8 +589,91 @@ public final class SessionViewModel {
         }
     }
 
+    /// Resume a parked model that is being shown again. Nothing is refetched
+    /// for a recently parked transcript: a live one subscribes from its cursor
+    /// (the daemon replays every row change after it), a persisted one is
+    /// complete. After ``defaultResumeWindow`` one snapshot revalidates it,
+    /// replacing the cached rows only if the log moved on.
+    private func resumeParked(since parkedAt: TimeInterval) {
+        guard streamTask == nil, !unauthorized else { return }
+        guard hasCompletedInitialReplay, source.supportsIndexedSessionView else {
+            // Never finished loading (or a legacy source, whose live loop
+            // already subscribes from the cursor): the normal path.
+            startLoading()
+            return
+        }
+        let recent = clock() - parkedAt <= resumeWindow
+        switch mode {
+        case .live:
+            // Set synchronously so the chrome never shows a parked `.idle`
+            // between the tap and the stream task's first step.
+            state = recent ? .streaming : .reconnecting
+            startIndexedLoop(stream: true, subscribeFromInstalled: recent, revalidate: !recent)
+        case .persisted:
+            // Always revalidate silently: the caller's `live` flag is often a
+            // stale listing (deep links, throttled Recent rows), and another
+            // client may have re-opened the session and asked a question. An
+            // unchanged snapshot keeps the rows/scroll; a moved-on or
+            // questioning one is probed for a live stream.
+            startIndexedLoop(stream: false, revalidate: true, probeLive: true)
+        }
+    }
+
     /// Stop any open stream. Safe to call repeatedly.
     public func stop() {
+        stoppedByOwner = true
+        halt()
+        cancelEarlierPrefetch()
+    }
+
+    /// Stop streaming because no screen shows this model any more, keeping the
+    /// projection, cursor, loaded pages and optimistic state for an instant
+    /// re-open (``start(reopen:)`` resumes). Idempotent; a model that was never
+    /// started has nothing to park.
+    public func park() {
+        guard hasStarted, parkedAt == nil else { return }
+        stop()
+        parkedAt = clock()
+        // Frozen stream output would otherwise greet the next open; the live
+        // stream re-sends each actor's full snapshot with its next delta.
+        if !projection.liveTails.isEmpty {
+            projection.clearLiveTails()
+            transcriptRevision &+= 1
+        }
+        switch state {
+        case .streaming, .reconnecting, .loading: state = .idle
+        default: break
+        }
+    }
+
+    /// A parked, persisted model whose session the list now shows as live
+    /// (re-opened elsewhere, or by a Resume that raced this screen) streams
+    /// when resumed. Only while parked: a presented model's mode is owned by
+    /// its own stream/reopen, and a stale listing must not flip it.
+    public func adoptListedLive() {
+        guard parkedAt != nil, mode == .persisted, !unauthorized else { return }
+        mode = .live
+    }
+
+    /// See ``SessionPresentation``.
+    func beginPresentation() -> UInt64 {
+        nextPresentationToken &+= 1
+        presentationTokens.insert(nextPresentationToken)
+        return nextPresentationToken
+    }
+
+    /// See ``SessionPresentation``. The last presentation ending parks the model.
+    func endPresentation(_ token: UInt64) {
+        guard presentationTokens.remove(token) != nil, presentationTokens.isEmpty else { return }
+        park()
+    }
+
+    /// The view that owns this model has stopped it (it disappeared). A reopen
+    /// that completes afterwards must not start a stream nobody will stop; the
+    /// next ``start(reopen:)`` streams the now-live session.
+    @ObservationIgnored private var stoppedByOwner = false
+
+    private func halt() {
         streamGeneration &+= 1
         let activeTask = streamTask
         streamTask = nil
@@ -249,64 +684,138 @@ public final class SessionViewModel {
     }
 
     /// Re-establish the live stream from the last persisted seq — call on app
-    /// foregrounding (`scenePhase` → `.active`). No-op for persisted sessions.
+    /// foregrounding (`scenePhase` → `.active`). No-op for persisted sessions
+    /// and for parked models (no screen shows them; they resume when shown).
     public func reconnect() {
-        guard mode == .live, !unauthorized else { return }
-        stop()
+        guard mode == .live, !unauthorized, parkedAt == nil else { return }
+        stoppedByOwner = false
+        halt()
         if source.supportsIndexedSessionView { startIndexedLoop(stream: true) }
         else { startLiveLoop() }
     }
 
     // MARK: - Indexed presentation
 
-    private func startIndexedLoop(stream: Bool) {
+    /// `subscribeFromInstalled` skips the first snapshot and subscribes from
+    /// the already-installed cursor (the daemon replays every change after it),
+    /// e.g. right after a persisted session was re-opened or when a cached
+    /// model is shown again. Later reconnects always take a fresh snapshot.
+    ///
+    /// `revalidate` marks the first snapshot as a check of an already
+    /// displayed (cached) transcript: it is fetched without a loading state and
+    /// discarded when its cursor equals the installed one, which keeps any
+    /// loaded earlier pages and the user's scroll position.
+    ///
+    /// `probeLive` (a parked persisted model being shown again): when the
+    /// revalidating snapshot shows the log moved on or a question pending, the
+    /// session was re-opened elsewhere, so subscribe as live; a not-found
+    /// answer puts it back to persisted.
+    private func startIndexedLoop(
+        stream: Bool, subscribeFromInstalled: Bool = false, revalidate: Bool = false,
+        probeLive: Bool = false
+    ) {
         streamGeneration &+= 1
         let generation = streamGeneration
         streamTask = Task { [weak self] in
             guard let self else { return }
             defer { self.clearStreamTask(generation: generation) }
             var delay = self.backoff.initial
+            var skipSnapshot = subscribeFromInstalled
+            var revalidating = revalidate
+            var streaming = stream
+            // The current subscription was opened from a cached cursor without
+            // a snapshot, so a not-found must still catch the transcript up.
+            var subscribedWithoutSnapshot = false
+            var probingLive = probeLive
             while self.isCurrent(generation), !Task.isCancelled {
-                self.state = self.hasCompletedInitialReplay ? .reconnecting : .loading
+                if !skipSnapshot, !revalidating {
+                    self.state = self.hasCompletedInitialReplay ? .reconnecting : .loading
+                }
                 do {
-                    let revision = self.transcriptRevision
-                    let snapshot = try await self.source.getSessionView(
-                        project: self.project, sessionId: self.sessionID)
-                    guard self.isCurrent(generation), !Task.isCancelled else { return }
-                    guard self.transcriptRevision == revision else { continue }
-                    do {
-                        let replaySpan = LatencyDiagnostics.shared.begin("transcript.replay")
-                        defer { replaySpan.end(events: snapshot.rows.reduce(0) { $0 + $1.events.count },
-                                               rows: snapshot.rows.count) }
-                        let decoded = try await Self.decodeIndexedRows(snapshot.rows)
+                    if skipSnapshot {
+                        skipSnapshot = false
+                        subscribedWithoutSnapshot = true
+                    } else {
+                        subscribedWithoutSnapshot = false
+                        let revision = self.transcriptRevision
+                        let snapshot = try await self.source.getSessionView(
+                            project: self.project, sessionId: self.sessionID)
                         guard self.isCurrent(generation), !Task.isCancelled else { return }
-                        // A page/detail/answer installed while decoding must not be
-                        // overwritten by an older snapshot; fetch a fresh one.
                         guard self.transcriptRevision == revision else { continue }
-                        self.projection.installIndexed(state: snapshot.state, rows: snapshot.rows, decoded: decoded)
+                        let unchanged = revalidating && self.hasCompletedInitialReplay
+                            && snapshot.state.indexedThroughSeq == self.projection.lastPersistedSeq
+                        revalidating = false
+                        if probingLive {
+                            probingLive = false
+                            let questionPending = !snapshot.state.pendingRowID.isEmpty
+                            if self.mode == .persisted, !self.stoppedByOwner, !unchanged || questionPending {
+                                self.mode = .live
+                                streaming = true
+                            }
+                        }
+                        if !unchanged {
+                            let initialInstall = !self.hasCompletedInitialReplay
+                            do {
+                                let replaySpan = LatencyDiagnostics.shared.begin("transcript.replay")
+                                defer { replaySpan.end(events: snapshot.rows.reduce(0) { $0 + $1.events.count },
+                                                       rows: snapshot.rows.count) }
+                                let decoded = try await Self.decodeIndexedRows(snapshot.rows)
+                                guard self.isCurrent(generation), !Task.isCancelled else { return }
+                                // A page/detail/answer installed while decoding must not be
+                                // overwritten by an older snapshot; fetch a fresh one.
+                                guard self.transcriptRevision == revision else { continue }
+                                self.projection.installIndexed(state: snapshot.state, rows: snapshot.rows, decoded: decoded)
+                            }
+                            self.snapshotEpoch &+= 1
+                            self.prefetchedEarlier = nil
+                            self.cancelEarlierPrefetch()
+                            self.earlierCursor = snapshot.earlierCursor
+                            self.earlierRowCount = snapshot.earlierCursor.isEmpty ? 0 : 1
+                            self.hasCompletedInitialReplay = true
+                            self.reconcileOptimisticState()
+                            self.transcriptRevision &+= 1
+                            if snapshot.state.pendingQuestionsTruncated,
+                               !snapshot.state.pendingRowID.isEmpty {
+                                let rowID = snapshot.state.pendingRowID
+                                Task { [weak self] in await self?.loadDetail(rowID: rowID) }
+                            }
+                            if self.isAwaitingAgentActivity,
+                               snapshot.rows.contains(where: { row in
+                                   row.events.contains(where: Self.isAgentActivity)
+                               }) { self.isAwaitingAgentActivity = false }
+                            // Once per open: foreground reconnects re-snapshot
+                            // too, and must not re-download history each time.
+                            if initialInstall { self.prefetchEarlierPage() }
+                        }
                     }
-                    self.earlierCursor = snapshot.earlierCursor
-                    self.earlierRowCount = snapshot.earlierCursor.isEmpty ? 0 : 1
-                    self.hasCompletedInitialReplay = true
-                    self.transcriptRevision &+= 1
-                    if snapshot.state.pendingQuestionsTruncated,
-                       !snapshot.state.pendingRowID.isEmpty {
-                        let rowID = snapshot.state.pendingRowID
-                        Task { [weak self] in await self?.loadDetail(rowID: rowID) }
+                    // A persisted load that finishes after the session was
+                    // re-opened streams from its own snapshot instead of being
+                    // cancelled and refetched.
+                    guard streaming || (self.mode == .live && !self.stoppedByOwner) else {
+                        self.state = .finished
+                        return
                     }
-                    if self.isAwaitingAgentActivity,
-                       snapshot.rows.contains(where: { row in
-                           row.events.contains(where: Self.isAgentActivity)
-                       }) { self.isAwaitingAgentActivity = false }
-                    guard stream else { self.state = .finished; return }
                     self.state = .streaming
                     let updates = self.source.subscribeSessionView(
                         sessionId: self.sessionID,
                         fromSeq: self.projection.lastPersistedSeq)
+                    // The daemon folds everything changed since a cached cursor
+                    // into the first state update; an active session can have
+                    // produced hundreds of rows while the screen was away.
+                    var checkCatchUp = subscribedWithoutSnapshot
                     for try await update in updates {
                         guard self.isCurrent(generation), !Task.isCancelled else { return }
-                        self.enqueue(.indexed(update))
                         delay = self.backoff.initial
+                        // Idle-stream keepalives carry nothing to fold; enqueuing
+                        // them would bump transcriptRevision and re-render.
+                        guard !update.isKeepalive else { continue }
+                        if checkCatchUp, update.hasState {
+                            checkCatchUp = false
+                            if update.upsertedRows.count > Self.maxCursorCatchUpRows {
+                                throw CursorCatchUpTooLarge()
+                            }
+                        }
+                        self.enqueue(.indexed(update))
                     }
                     guard self.isCurrent(generation), !Task.isCancelled else { return }
                     self.publishPendingUpdates()
@@ -316,15 +825,39 @@ public final class SessionViewModel {
                 } catch {
                     guard self.isCurrent(generation), !Task.isCancelled else { return }
                     self.publishPendingUpdates()
+                    if error is CursorCatchUpTooLarge {
+                        // Too much to append to the eager transcript: take the
+                        // bounded first page instead (the stream just ended).
+                        subscribedWithoutSnapshot = false
+                        revalidating = true
+                        self.state = .reconnecting
+                        continue
+                    }
                     switch Self.classify(error) {
                     case .transient:
                         self.state = .reconnecting
+                        // A drop of a cursor-only resume keeps the cached
+                        // transcript (and loaded pages) unless the log moved.
+                        if subscribedWithoutSnapshot, self.hasCompletedInitialReplay {
+                            revalidating = true
+                        }
                         do { try await self.sleep(delay) } catch { return }
                         delay = min(delay * 2, self.backoff.maximum)
                     case .cancelled: self.clearTransientPresentation(); self.state = .idle; return
                     case .unauthorized: self.failUnauthorized(); return
+                    case .missing where subscribedWithoutSnapshot && self.hasCompletedInitialReplay:
+                        // The daemon no longer holds the session (it ended while
+                        // this cached view was away). Its log may have grown past
+                        // the cached cursor: revalidate once as persisted.
+                        subscribedWithoutSnapshot = false
+                        self.mode = .persisted
+                        streaming = false
+                        revalidating = true
+                        self.clearTransientPresentation()
+                        self.state = .idle
+                        continue
                     case .missing:
-                        if stream { self.mode = .persisted }
+                        if streaming || self.mode == .live { self.mode = .persisted }
                         self.clearTransientPresentation(); self.state = .finished; return
                     case .terminal:
                         self.clearTransientPresentation(); self.state = .failed(Self.message(error)); return
@@ -333,6 +866,12 @@ public final class SessionViewModel {
             }
         }
     }
+
+    /// A cursor resume whose catch-up update upserts more rows than this is
+    /// discarded for a revalidating first-page snapshot (``YccClient``'s
+    /// ``YccClient/initialViewRows``-sized), keeping the eager layout bounded.
+    public nonisolated static let maxCursorCatchUpRows = 60
+    private struct CursorCatchUpTooLarge: Error {}
 
     /// Fetch and install a complete abbreviated row when a disclosure is opened.
     public func loadDetail(rowID: String) async {
@@ -347,6 +886,7 @@ public final class SessionViewModel {
             let row = try await source.getSessionViewDetail(
                 project: project, sessionId: sessionID, rowId: rowID)
             projection.installIndexedDetail(row)
+            reconcileOptimisticState()
             transcriptRevision &+= 1
         } catch {
             actionError = Self.actionMessage("load detail", error)
@@ -536,6 +1076,11 @@ public final class SessionViewModel {
 
     private func clearTransientPresentation() {
         var changed = false
+        // The stream ended (finished/missing/failed): nothing will echo an
+        // accepted bubble now. Its durable row appears on the next load.
+        let accepted = pendingUserMessages.count
+        pendingUserMessages.removeAll { $0.status == .sent }
+        if pendingUserMessages.count != accepted { changed = true }
         if !projection.liveTails.isEmpty {
             projection.clearLiveTails()
             changed = true
@@ -557,15 +1102,101 @@ public final class SessionViewModel {
     // MARK: - Interactive actions
 
     /// Send user input and optional picture attachments to the session
-    /// (`SendInput`). A persisted transcript is first re-opened on its existing
-    /// event log, then promoted to a live tail; otherwise `SendInput` would target
-    /// a session the daemon no longer has in memory. The event stream remains the
-    /// source of truth — no optimistic row is inserted.
+    /// (`SendInput`). The message appears at once as a provisional bubble
+    /// (``pendingUserMessages``) that the durable `user_input` echo retires; a
+    /// failure marks it failed (retry/discard) and surfaces ``actionError``.
+    ///
+    /// A persisted transcript is first re-opened on its existing event log, then
+    /// promoted to a live tail — the daemon cannot accept input for a session it
+    /// no longer has in memory, so ResumeSession → SendInput stays sequential,
+    /// but the UI never waits on it.
+    ///
+    /// Daemon semantics (`Session.SendInputMessage`): text-only input while an
+    /// `ask_user` gate is pending — a single question or a batch — *answers* it
+    /// (`question_answered`, no `user_input` echo). Such a send therefore gets
+    /// no bubble; it is an optimistic answer (gate closes at once, restored on
+    /// failure). Pictures while a question is pending are rejected by the
+    /// daemon, so they take the normal path and fail visibly.
     public func send(text: String, images: [MessageImage] = []) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !images.isEmpty else { return }
+        if images.isEmpty, projection.awaitsAnswer {
+            await answerWithMessage(trimmed)
+            return
+        }
+        localMessageCounter &+= 1
+        let message = PendingUserMessage(
+            id: "local-\(localMessageCounter)", text: trimmed, images: images,
+            status: .sending, baselineSeq: currentEchoBaseline)
+        pendingUserMessages.append(message)
+        transcriptRevision &+= 1
+        await deliver(messageID: message.id)
+    }
+
+    /// Re-send a message whose earlier send failed (as an answer if a question
+    /// is now pending and the message is text-only).
+    public func retrySend(id: String) async {
+        guard let index = pendingUserMessages.firstIndex(where: { $0.id == id }),
+              pendingUserMessages[index].isFailed else { return }
+        if pendingUserMessages[index].images.isEmpty, projection.awaitsAnswer {
+            let message = pendingUserMessages.remove(at: index)
+            transcriptRevision &+= 1
+            await answerWithMessage(message.text)
+            return
+        }
+        pendingUserMessages[index].status = .sending
+        pendingUserMessages[index].baselineSeq = currentEchoBaseline
+        transcriptRevision &+= 1
+        await deliver(messageID: id)
+    }
+
+    /// The echo cursor for a message submitted now; nil until history is
+    /// installed (see ``PendingUserMessage/baselineSeq``).
+    private var currentEchoBaseline: Int64? {
+        hasCompletedInitialReplay ? projection.lastPersistedSeq : nil
+    }
+
+    /// Send text the daemon will consume as the answer to the pending question.
+    /// On failure the typed text is kept as a failed bubble (Retry/Edit), since
+    /// the composer was already cleared.
+    private func answerWithMessage(_ text: String) async {
+        let body: (SessionActionSource) async throws -> Void = { actions in
+            try await actions.sendInput(sessionId: self.sessionID, text: text, images: [])
+        }
+        let accepted: Bool
+        if projection.pendingQuestion != nil {
+            accepted = await submitAnswer(local: text, label: "send", body)
+        } else {
+            // A truncated batch whose detail is still loading: nothing local to
+            // close; the stream's state resolves the gate.
+            accepted = await perform("send", body)
+        }
+        guard !accepted, !unauthorized else { return }
+        localMessageCounter &+= 1
+        pendingUserMessages.append(PendingUserMessage(
+            id: "local-\(localMessageCounter)", text: text, images: [],
+            status: .failed(actionError ?? "send failed"), baselineSeq: currentEchoBaseline))
+        transcriptRevision &+= 1
+    }
+
+    /// Drop a failed provisional message, returning it so the view can put its
+    /// text back into the composer. Only failed messages can be discarded.
+    @discardableResult
+    public func discardFailedSend(id: String) -> PendingUserMessage? {
+        guard let index = pendingUserMessages.firstIndex(where: { $0.id == id }),
+              pendingUserMessages[index].isFailed else { return nil }
+        let removed = pendingUserMessages.remove(at: index)
+        transcriptRevision &+= 1
+        return removed
+    }
+
+    private func deliver(messageID: String) async {
+        guard let message = pendingUserMessages.first(where: { $0.id == messageID }) else { return }
         if mode == .persisted {
-            guard await reopenForInteraction() else { return }
+            guard await reopenForInteraction() else {
+                markSend(messageID, .failed(actionError ?? "resume failed"))
+                return
+            }
         }
         let startedAwaitingActivity = phase != .paused && !isAwaitingAgentActivity
         if startedAwaitingActivity {
@@ -574,68 +1205,212 @@ public final class SessionViewModel {
         }
         let succeeded = await perform("send") { actions in
             try await actions.sendInput(
-                sessionId: self.sessionID, text: trimmed, images: images)
+                sessionId: self.sessionID, text: message.text, images: message.images)
         }
-        if !succeeded, startedAwaitingActivity, isAwaitingAgentActivity {
-            isAwaitingAgentActivity = false
-            transcriptRevision &+= 1
+        if succeeded {
+            markSend(messageID, .sent)
+        } else {
+            markSend(messageID, .failed(actionError ?? "send failed"))
+            if startedAwaitingActivity, isAwaitingAgentActivity {
+                isAwaitingAgentActivity = false
+                transcriptRevision &+= 1
+            }
         }
+    }
+
+    private func markSend(_ id: String, _ status: PendingUserMessage.Status) {
+        guard let index = pendingUserMessages.firstIndex(where: { $0.id == id }),
+              pendingUserMessages[index].status != status else { return }
+        pendingUserMessages[index].status = status
+        transcriptRevision &+= 1
+        guard status == .sent else { return }
+        // Bounded fallback: an accepted message whose echo never arrives (the
+        // daemon consumed it differently, or the stream is gone) is dropped
+        // rather than lingering as a duplicate; its durable row, if any,
+        // appears with the next load.
+        let timeout = sentEchoTimeout
+        let sleep = self.sleep
+        Task { @MainActor [weak self] in
+            do { try await sleep(timeout) } catch { return }
+            guard let self,
+                  let current = self.pendingUserMessages.firstIndex(where: { $0.id == id }),
+                  self.pendingUserMessages[current].status == .sent else { return }
+            self.pendingUserMessages.remove(at: current)
+            self.transcriptRevision &+= 1
+        }
+    }
+
+    /// Retire provisional bubbles whose durable `user_input` row has arrived.
+    /// Each durable row retires at most one bubble, oldest first, and only a
+    /// row newer than the bubble's submission cursor can match.
+    private func retireEchoedUserMessages() {
+        guard !pendingUserMessages.isEmpty else { return }
+        // Every call site follows an install: messages sent before any history
+        // existed adopt this first installed cursor (their snapshot was
+        // requested before the send), so older identical rows never match.
+        for index in pendingUserMessages.indices where pendingUserMessages[index].baselineSeq == nil {
+            pendingUserMessages[index].baselineSeq = projection.lastPersistedSeq
+        }
+        let floor = pendingUserMessages.compactMap(\.baselineSeq).min() ?? 0
+        var candidates: [TranscriptRow] = []
+        for row in projection.durableRows.reversed() {
+            guard row.seq > floor else { break }
+            if case .userMessage = row.kind { candidates.append(row) }
+        }
+        guard !candidates.isEmpty else { return }
+        candidates.reverse()
+        var claimed = Set<String>()
+        pendingUserMessages.removeAll { message in
+            guard let echo = candidates.first(where: { row in
+                !claimed.contains(row.id) && row.seq > (message.baselineSeq ?? .max)
+                    && Self.isEcho(row, of: message)
+            }) else { return false }
+            claimed.insert(echo.id)
+            return true
+        }
+    }
+
+    private static func isEcho(_ row: TranscriptRow, of message: PendingUserMessage) -> Bool {
+        guard case let .userMessage(text, pictures) = row.kind else { return false }
+        let echoed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard echoed == message.text else { return false }
+        return message.images.isEmpty || !pictures.isEmpty
     }
 
     /// Resume a persisted session via `ResumeSession` and switch this model from
     /// one-shot replay to streaming the existing log. Returns false when reopen
     /// failed, in which case ``actionError`` already carries the user-facing
-    /// reason and the caller must not attempt its follow-up action.
+    /// reason and the caller must not attempt its follow-up action. Concurrent
+    /// callers share one in-flight ResumeSession.
     @discardableResult
     public func reopenForInteraction() async -> Bool {
         guard mode == .persisted else { return true }
+        if let reopenTask { return await reopenTask.value }
         guard let actions else {
             actionError = "resume unavailable"
             return false
         }
-        do {
-            try await actions.reopenSession(project: project, sessionId: sessionID)
-            mode = .live
-            reconnect()
-            return true
-        } catch {
-            if Self.classify(error) == .unauthorized {
-                failUnauthorized()
-            } else {
-                actionError = Self.actionMessage("resume", error)
+        isReopening = true
+        let task = Task { @MainActor [weak self] () -> Bool in
+            guard let self else { return false }
+            do {
+                try await actions.reopenSession(project: self.project, sessionId: self.sessionID)
+                self.promoteToLive()
+                return true
+            } catch {
+                if Self.classify(error) == .unauthorized {
+                    self.failUnauthorized()
+                } else {
+                    self.actionError = Self.actionMessage("resume", error)
+                }
+                return false
             }
-            return false
+        }
+        reopenTask = task
+        let reopened = await task.value
+        if reopenTask == task {
+            reopenTask = nil
+            isReopening = false
+        }
+        return reopened
+    }
+
+    /// Switch a just re-opened session to streaming without redoing work (the
+    /// indexed path every real client uses): a persisted snapshot still in
+    /// flight subscribes from itself when it lands; an installed snapshot
+    /// subscribes from its cursor (the daemon replays every change after it)
+    /// instead of being refetched.
+    private func promoteToLive() {
+        mode = .live
+        guard !stoppedByOwner, !unauthorized else { return }
+        guard source.supportsIndexedSessionView else {
+            // Legacy/test full-transcript sources: restart as a live tail
+            // (startLiveLoop only refetches when no cursor exists yet).
+            reconnect()
+            return
+        }
+        // A persisted snapshot still in flight subscribes from itself when it
+        // lands (the loop checks `mode`), so nothing to do here.
+        guard streamTask == nil else { return }
+        if hasCompletedInitialReplay {
+            halt()
+            startIndexedLoop(stream: true, subscribeFromInstalled: true)
+        } else {
+            reconnect()
         }
     }
 
     /// Answer the pending single question by selecting a suggested option.
-    public func answer(optionIndex: Int) async {
+    /// Returns whether the daemon accepted the answer.
+    @discardableResult
+    public func answer(optionIndex: Int) async -> Bool {
         let local = localAnswer(optionIndex: optionIndex, text: "")
-        let succeeded = await perform("answer") { actions in
+        return await submitAnswer(local: local, label: "answer") { actions in
             try await actions.answerQuestion(
                 sessionId: self.sessionID, text: "", optionIndex: optionIndex)
         }
-        if succeeded { clearAnsweredGate(answer: local) }
     }
 
     /// Answer the pending single question with free text.
-    public func answer(text: String) async {
-        let succeeded = await perform("answer") { actions in
+    @discardableResult
+    public func answer(text: String) async -> Bool {
+        await submitAnswer(local: text, label: "answer") { actions in
             try await actions.answerQuestion(
                 sessionId: self.sessionID, text: text, optionIndex: -1)
         }
-        if succeeded { clearAnsweredGate(answer: text) }
     }
 
     /// Answer a batch of questions positionally (`AnswerQuestions`). Each entry
     /// is `(text, optionIndex)`: `optionIndex >= 0` picks an option, `-1` sends
     /// the text.
-    public func answerBatch(_ answers: [(text: String, optionIndex: Int)]) async {
+    @discardableResult
+    public func answerBatch(_ answers: [(text: String, optionIndex: Int)]) async -> Bool {
         let local = localBatchAnswer(answers)
-        let succeeded = await perform("answer") { actions in
+        return await submitAnswer(local: local, label: "answer") { actions in
             try await actions.answerQuestions(sessionId: self.sessionID, answers: answers)
         }
-        if succeeded { clearAnsweredGate(answer: local) }
+    }
+
+    /// Close the gate optimistically *before* the round trip, then confirm or
+    /// roll back. While one answer is in flight any further submission is
+    /// dropped (returns false), so a double tap cannot send twice. On failure
+    /// the question is restored — unless the durable log has meanwhile closed
+    /// it — and ``actionError`` explains why.
+    private func submitAnswer(
+        local: String,
+        label: String,
+        _ body: @escaping (SessionActionSource) async throws -> Void
+    ) async -> Bool {
+        guard !isSubmittingAnswer else { return false }
+        isSubmittingAnswer = true
+        defer { isSubmittingAnswer = false }
+        let question = projection.pendingQuestion
+        if let question {
+            optimisticAnswer = OptimisticAnswer(question: question, answer: local, confirmed: false)
+            rolledBackQuestionRowID = nil
+            clearAnsweredGate(answer: local)
+        }
+        let failure = await attempt(label, body)
+        let succeeded = failure == nil
+        guard let question else { return succeeded }
+        if succeeded {
+            if optimisticAnswer?.question.rowID == question.rowID {
+                optimisticAnswer?.confirmed = true
+            }
+            reconcileOptimisticAnswer()
+        } else {
+            if optimisticAnswer?.question.rowID == question.rowID { optimisticAnswer = nil }
+            if let failure, Self.isAlreadyAnswered(failure) {
+                // The daemon has no pending question (answered elsewhere):
+                // restoring would show a phantom gate. Keep it closed and let a
+                // fresh snapshot / the stream decide.
+                if mode == .live, !stoppedByOwner { reconnect() }
+            } else if projection.restorePendingQuestion(question) {
+                rolledBackQuestionRowID = question.rowID
+                transcriptRevision &+= 1
+            }
+        }
+        return succeeded
     }
 
     /// Resolve what this client just answered, the way the daemon will: an
@@ -661,12 +1436,10 @@ public final class SessionViewModel {
         }.joined(separator: "; ")
     }
 
-    /// Drop the pending-question gate as soon as the daemon accepts an answer,
-    /// rather than waiting for the `question_answered` event to make the return
-    /// trip. Without this the banner keeps asking the user to answer a question
-    /// they just answered for as long as the stream takes to catch up (and
-    /// indefinitely if it is mid-reconnect), and the transcript card keeps
-    /// reading "Waiting for an answer". The event remains authoritative — it
+    /// Drop the pending-question gate the moment the user answers, rather than
+    /// waiting for the round trip and then the `question_answered` event.
+    /// Without this the sheet and banner keep asking the user to answer a
+    /// question they just answered. The event remains authoritative — it
     /// overwrites the row with the daemon's canonical answer text when it
     /// arrives, and a re-asked question re-opens the gate normally.
     private func clearAnsweredGate(answer: String) {
@@ -675,16 +1448,35 @@ public final class SessionViewModel {
         transcriptRevision &+= 1
     }
 
+    /// Keep an optimistically answered question closed if a stale state
+    /// snapshot (produced before the daemon processed the answer) re-lists it,
+    /// and forget the optimistic answer once the durable log has closed it.
+    private func reconcileOptimisticAnswer() {
+        guard let pending = optimisticAnswer else { return }
+        let rowID = pending.question.rowID
+        if projection.pendingQuestion?.rowID == rowID {
+            projection.resolvePendingQuestion(answer: pending.answer)
+        } else if pending.confirmed, !projection.isQuestionOpen(rowID: rowID) {
+            optimisticAnswer = nil
+        }
+    }
+
+    private func reconcileOptimisticState() {
+        reconcileOptimisticAnswer()
+        reconcilePendingControl()
+        retireEchoedUserMessages()
+    }
+
     /// Gracefully pause the session to steer it (`Interrupt`).
     public func interrupt() async {
-        await perform("interrupt") { actions in
+        await runControl(.pause, label: "interrupt") { actions in
             try await actions.interrupt(sessionId: self.sessionID)
         }
     }
 
-    /// Continue a paused session (`Resume`).
+    /// Continue a paused session, or cancel a requested pause (`Resume`).
     public func resumeSession() async {
-        await perform("resume") { actions in
+        await runControl(.resume, label: "resume") { actions in
             try await actions.resume(sessionId: self.sessionID)
         }
     }
@@ -692,7 +1484,7 @@ public final class SessionViewModel {
     /// Durably compact the coordinator context at a safe checkpoint. The daemon
     /// rejects this without changing history when authority cannot fit safely.
     public func rolloverContext() async {
-        await perform("context rollover") { actions in
+        await runControl(.rollover, label: "context rollover") { actions in
             try await actions.rolloverContext(sessionId: self.sessionID)
         }
     }
@@ -703,15 +1495,72 @@ public final class SessionViewModel {
     /// existing history with no injected user message — so the user no longer has
     /// to "retry" by sending a throwaway message.
     public func retry() async {
-        await perform("retry") { actions in
+        await runControl(.retry, label: "retry") { actions in
             try await actions.resume(sessionId: self.sessionID)
         }
     }
 
     /// Hard-terminate the session (`StopSession`).
     public func stopSession() async {
-        await perform("stop") { actions in
+        await runControl(.stop, label: "stop") { actions in
             try await actions.stopSession(sessionId: self.sessionID)
+        }
+    }
+
+    /// Run a session control with local pending state: controls are disabled
+    /// while the RPC is outstanding, the chrome shows the expected outcome
+    /// until the durable echo arrives, and a failure reverts immediately.
+    private func runControl(
+        _ kind: PendingControl.Kind,
+        label: String,
+        _ body: @escaping (SessionActionSource) async throws -> Void
+    ) async {
+        guard !isControlInFlight else { return }
+        controlToken &+= 1
+        let token = controlToken
+        pendingControl = PendingControl(kind: kind, acknowledged: false, token: token)
+        let succeeded = await perform(label, body)
+        guard pendingControl?.token == token else { return }
+        guard succeeded else {
+            pendingControl = nil
+            return
+        }
+        pendingControl?.acknowledged = true
+        reconcilePendingControl()
+        guard pendingControl?.token == token else { return }
+        // Never let a missing echo (e.g. a dropped stream) wedge the chrome in
+        // an optimistic state: fall back to durable truth after a while.
+        let timeout = controlAckTimeout
+        let sleep = self.sleep
+        Task { @MainActor [weak self] in
+            do { try await sleep(timeout) } catch { return }
+            guard let self, self.pendingControl?.token == token else { return }
+            self.pendingControl = nil
+        }
+    }
+
+    /// Retire an acknowledged pending control once durable state reflects it.
+    private func reconcilePendingControl() {
+        guard let pending = pendingControl, pending.acknowledged,
+              Self.isSatisfied(pending.kind, by: projection) else { return }
+        pendingControl = nil
+    }
+
+    private static func isSatisfied(
+        _ kind: PendingControl.Kind, by projection: SessionProjection
+    ) -> Bool {
+        switch kind {
+        case .pause:
+            return projection.pauseRequested || projection.phase != .running
+        case .resume:
+            return !projection.pauseRequested && projection.phase != .paused
+        case .retry:
+            if case .error = projection.phase { return false }
+            return true
+        case .stop:
+            return projection.phase == .stopped
+        case .rollover:
+            return true
         }
     }
 
@@ -724,21 +1573,41 @@ public final class SessionViewModel {
         _ label: String,
         _ body: @escaping (SessionActionSource) async throws -> Void
     ) async -> Bool {
+        await attempt(label, body) == nil
+    }
+
+    private struct ActionUnavailable: Error {}
+
+    /// ``perform(_:_:)`` returning the failure (nil on success).
+    private func attempt(
+        _ label: String,
+        _ body: @escaping (SessionActionSource) async throws -> Void
+    ) async -> Error? {
         guard let actions else {
             actionError = "\(label) unavailable"
-            return false
+            return ActionUnavailable()
         }
         do {
             try await body(actions)
-            return true
+            return nil
         } catch {
             if Self.classify(error) == .unauthorized {
                 failUnauthorized()
             } else {
                 actionError = Self.actionMessage(label, error)
             }
-            return false
+            return error
         }
+    }
+
+    /// `AnswerQuestion(s)` reports an already-resolved gate as
+    /// failed_precondition "no pending question" (`ErrNoPendingQuestion` /
+    /// "session … has no pending question"). Other failed_preconditions — e.g.
+    /// "model is disabled" when re-opening for the answer — leave the question
+    /// pending, so they still roll back.
+    static func isAlreadyAnswered(_ error: Error) -> Bool {
+        guard case let YccError.failedPrecondition(message)? = error as? YccError else { return false }
+        return message.lowercased().contains("no pending question")
     }
 
     /// Queue a streamed update and schedule one publish for the whole burst. The
@@ -794,6 +1663,7 @@ public final class SessionViewModel {
                 break
             }
         }
+        reconcileOptimisticState()
         transcriptRevision &+= 1
         if isAwaitingAgentActivity, sawAgentActivity {
             isAwaitingAgentActivity = false
@@ -807,11 +1677,21 @@ public final class SessionViewModel {
 
     /// Decode indexed payloads without blocking MainActor layout or stream handling.
     /// The caller reconciles detail, versions and the current cursor after the await.
+    ///
+    /// The same background task pre-renders the rows' markdown
+    /// (``TranscriptRenderWarmup``): block splitting always, attributed inline
+    /// text when the app registered a renderer. The eager transcript then lays
+    /// out every bubble from cache instead of parsing inside SwiftUI `body` on
+    /// the main actor.
     private static func decodeIndexedRows(
-        _ rows: [Ycc_V1_SessionPresentationRow]
+        _ rows: [Ycc_V1_SessionPresentationRow],
+        priority: TaskPriority = .userInitiated
     ) async throws -> [TranscriptRow?] {
-        let worker = Task.detached(priority: .userInitiated) {
-            try SessionProjection.decodeIndexedRows(rows)
+        let worker = Task.detached(priority: priority) {
+            let decoded = try SessionProjection.decodeIndexedRows(rows)
+            TranscriptRenderWarmup.warm(decoded)
+            try Task.checkCancellation()
+            return decoded
         }
         return try await withTaskCancellationHandler {
             try await worker.value
@@ -856,6 +1736,7 @@ public final class SessionViewModel {
             // folding. Rebase rather than overwrite that newer local state.
             guard transcriptRevision == revision else { continue }
             projection = folded
+            reconcileOptimisticState()
             if isInitialReplay {
                 earlierRowCount = max(0, folded.durableRows.count - Self.transcriptPageSize)
             }
@@ -942,4 +1823,11 @@ public final class SessionViewModel {
         }
         return error.localizedDescription
     }
+}
+
+public extension Ycc_V1_SessionViewUpdate {
+    /// The daemon sends an empty update every ~20 s on an otherwise quiet
+    /// SubscribeSessionView stream so intermediaries (and URLSession) see
+    /// traffic. It carries neither state nor a transient event: nothing to fold.
+    var isKeepalive: Bool { !hasState && !hasTransientEvent }
 }

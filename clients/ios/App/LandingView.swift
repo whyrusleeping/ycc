@@ -17,6 +17,9 @@ struct LandingView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var model: SessionListModel?
+    /// The app cache generation the session list model was created under; its
+    /// project list must never repopulate a cache cleared by a server switch.
+    @State private var modelCacheGeneration: UInt64 = 0
     /// The navigation router. Path-driven so the drawer can open a destination
     /// over whatever is currently on screen, and shared through the environment
     /// so cross-links between screens replace the stack instead of piling onto
@@ -37,8 +40,6 @@ struct LandingView: View {
     /// The unscoped Recent Sessions feed has no project of its own, so this is
     /// the choice the new-chat chooser offers first (it never picks silently).
     @AppStorage("ycc.lastViewedProject") private var lastViewedProject = ""
-    /// A resume failure message to surface as an alert.
-    @State private var resumeError: String?
     /// A deep-link routing failure (unknown/stale session or project) to surface
     /// as an alert — a graceful landing instead of navigating into a dead view.
     @State private var deepLinkError: String?
@@ -59,7 +60,25 @@ struct LandingView: View {
     // chain of this length makes the type checker give up ("unable to
     // type-check this expression in reasonable time").
     var body: some View {
-        observers(presentations(shell))
+        observers(presentations(cacheFeeds(shell)))
+    }
+
+    /// Publish the session list's project registry to the app-level cache so
+    /// the backlog / workstreams / usage / composer screens never have to gate
+    /// their first paint on their own `ListProjects` round trip.
+    private func cacheFeeds(_ content: some View) -> some View {
+        content
+        .onChange(of: model?.projects, initial: true) { _, _ in publishProjects() }
+        // A first load that returns no projects leaves `projects` unchanged;
+        // the loaded flag still makes the (empty) list authoritative.
+        .onChange(of: model?.hasLoadedProjects) { _, _ in publishProjects() }
+    }
+
+    private func publishProjects() {
+        // The initial empty list means "not loaded yet", not "no projects".
+        guard let model, model.hasLoadedProjects else { return }
+        // Only the connection this list model was built for may feed the cache.
+        app.dataCache.updateProjects(model.projects, ifGeneration: modelCacheGeneration)
     }
 
     private var shell: some View {
@@ -112,7 +131,8 @@ struct LandingView: View {
                 // at; the chip inside it can still move the session elsewhere.
                 NewSessionView(
                     client: client,
-                    initialProject: request.project
+                    initialProject: request.project,
+                    cache: app.dataCache
                 ) { sessionID, project in
                     newSessionRequest = nil
                     // Follow the session's project so the list shows it when
@@ -188,17 +208,6 @@ struct LandingView: View {
             Text(message)
         }
         .alert(
-            "Couldn’t resume",
-            isPresented: Binding(
-                get: { resumeError != nil },
-                set: { if !$0 { resumeError = nil } }),
-            presenting: resumeError
-        ) { _ in
-            Button("OK", role: .cancel) { resumeError = nil }
-        } message: { message in
-            Text(message)
-        }
-        .alert(
             "Couldn’t open link",
             isPresented: Binding(
                 get: { deepLinkError != nil },
@@ -233,8 +242,11 @@ struct LandingView: View {
                 await model?.refreshProjects()
             }
         }
+        // Passive triggers are throttled: a refresh that succeeded within the
+        // last few seconds is fresh enough (each costs round trips on a
+        // remote link). Pull-to-refresh and post-mutation reloads stay forced.
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await model?.refresh() } }
+            if phase == .active { Task { await model?.refreshIfStale() } }
         }
         .onChange(of: app.pendingDeepLink) { _, link in
             if link != nil { Task { await consumePendingDeepLink() } }
@@ -250,7 +262,7 @@ struct LandingView: View {
         // Returning to the inbox is a strong signal that its rows are stale:
         // the agent has usually moved on while the user was inside a session.
         .onChange(of: router.path.isEmpty) { _, isAtRoot in
-            if isAtRoot { Task { await model?.refresh() } }
+            if isAtRoot { Task { await model?.refreshIfStale() } }
         }
         .onChange(of: model?.unauthorized ?? false) { _, isUnauthorized in
             if isUnauthorized { app.handleUnauthorized() }
@@ -424,11 +436,13 @@ struct LandingView: View {
             case let .session(id, project, live, title):
                 SessionView(
                     client: client, project: project, sessionID: id,
-                    live: live, title: title)
+                    live: live, title: title,
+                    models: app.dataCache.sessionModels)
             case let .taskDetail(project, taskID, title):
                 TaskDetailView(
                     client: client, project: project,
-                    taskID: taskID, taskTitle: title)
+                    taskID: taskID, taskTitle: title,
+                    cache: app.dataCache)
             case let .backlog(project):
                 BacklogView(initialProject: project)
             case let .workLoop(project):
@@ -442,7 +456,7 @@ struct LandingView: View {
             case let .file(route):
                 FileScreen(route: route)
             case .settings:
-                GlobalSettingsView(client: client)
+                GlobalSettingsView(client: client, cache: app.dataCache)
             }
         }
     }
@@ -483,30 +497,18 @@ struct LandingView: View {
         return [lastViewedProject] + choices.filter { $0 != lastViewedProject }
     }
 
-    /// Re-open a persisted session on its existing log, then navigate into the
-    /// live view. Idempotent server-side if the session is already live.
+    /// Re-open a persisted session on its existing log. Navigates immediately:
+    /// the session view paints the read-only history while `ResumeSession`
+    /// runs concurrently, then promotes itself to the live stream (a failure
+    /// surfaces in that view and keeps the history). Idempotent server-side if
+    /// the session is already live.
     private func resume(_ session: Ycc_V1_SessionSummary) {
-        guard let client = app.client else { return }
+        guard app.client != nil else { return }
         let project = model?.project(for: session) ?? ""
-        Task {
-            do {
-                let sessionID = try await client.resumeSession(
-                    project: project, sessionId: session.sessionID)
-                router.open(.session(
-                    id: sessionID, project: project, live: true,
-                    title: SessionListModel.displayTitle(for: session)))
-            } catch YccError.unauthorized {
-                app.handleUnauthorized()
-            } catch let YccError.rpc(message) {
-                resumeError = message
-            } catch let YccError.notFound(message) {
-                resumeError = message
-            } catch let YccError.failedPrecondition(message) {
-                resumeError = message
-            } catch {
-                resumeError = error.localizedDescription
-            }
-        }
+        app.dataCache.requestReopen(sessionID: session.sessionID)
+        router.open(.session(
+            id: session.sessionID, project: project, live: false,
+            title: SessionListModel.displayTitle(for: session)))
     }
 
     // MARK: - Session list
@@ -685,9 +687,12 @@ struct LandingView: View {
     private func ensureLoaded() async {
         if model == nil {
             guard let client = app.client else { return }
+            modelCacheGeneration = app.dataCache.generation
             model = SessionListModel(source: client, readMarks: app.readMarks)
         }
-        await model?.refresh()
+        // A new model has never refreshed, so this always loads it; a
+        // re-appearing landing view reuses a fresh list.
+        await model?.refreshIfStale()
     }
 
     // MARK: - Deep links

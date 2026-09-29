@@ -151,10 +151,26 @@ public final class WorkstreamsModel {
     public var actionError: String?
 
     private let source: WorkstreamsSource
+    private let cache: AppDataCache?
+    private let cacheGeneration: UInt64
+    /// The project filter whose rows ``workstreams`` currently shows.
+    private var loadedProject: String?
+    private var activeLoads = 0
+    private var backgroundRefreshPending = false
+    /// The coalesced list revalidation started after a mutation.
+    @ObservationIgnored private(set) var backgroundRefreshTask: Task<Void, Never>?
 
-    public init(source: WorkstreamsSource, selectedProject: String = "") {
+    /// Seeds from `cache` (last rows for the project + the app-level project
+    /// list) so a revisited screen renders immediately while it revalidates.
+    public init(source: WorkstreamsSource, selectedProject: String = "", cache: AppDataCache? = nil) {
         self.source = source
+        self.cache = cache
+        self.cacheGeneration = cache?.generation ?? 0
         self.selectedProject = selectedProject
+        if let cachedProjects = cache?.projects {
+            projects = cachedProjects
+        }
+        seedFromCache(for: selectedProject)
     }
 
     /// The project picker is useful only when there is a real choice.
@@ -169,32 +185,54 @@ public final class WorkstreamsModel {
         workstreams.filter(Self.isGateEligible)
     }
 
-    /// (Re)load the workstreams for the selected project and the project list.
-    /// Unauthorized bubbles up via ``unauthorized`` for the view to handle.
+    /// (Re)load the workstreams for the selected project. The project list
+    /// comes from the app-level cache when available; otherwise it is fetched
+    /// concurrently without delaying the rows. Unauthorized bubbles up via
+    /// ``unauthorized`` for the view to handle.
     public func refresh() async {
+        let project = selectedProject
+        if project != loadedProject { seedFromCache(for: project) }
+        if let cachedProjects = cache?.projects, cachedProjects != projects {
+            projects = cachedProjects
+        }
+        let fetchProjects = cache?.projects == nil
+        activeLoads += 1
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            activeLoads -= 1
+            isLoading = activeLoads > 0
+        }
+        async let projectList = Self.projects(from: source, fetch: fetchProjects)
         do {
-            async let list = source.listWorkstreams(project: selectedProject)
-            async let projectList = source.listProjects()
-            let (loaded, loadedProjects) = try await (list, projectList)
-            workstreams = loaded
-            projects = loadedProjects
-            if selectedProject.isEmpty, loadedProjects.count == 1 {
-                selectedProject = loadedProjects[0].name
+            let loaded = try await source.listWorkstreams(project: project)
+            if project == selectedProject {
+                apply(loaded, project: project)
+                errorMessage = nil
             }
-            errorMessage = nil
+        } catch {
+            handleLoad(error)
+        }
+        guard fetchProjects else { return }
+        do {
+            if let loadedProjects = try await projectList {
+                projects = loadedProjects
+                cache?.updateProjects(loadedProjects, ifGeneration: cacheGeneration)
+                if selectedProject.isEmpty, loadedProjects.count == 1 {
+                    selectedProject = loadedProjects[0].name
+                }
+            }
         } catch YccError.unauthorized {
             unauthorized = true
-        } catch let YccError.rpc(message) {
-            errorMessage = message
-        } catch let YccError.notFound(message) {
-            errorMessage = message
-        } catch let YccError.failedPrecondition(message) {
-            errorMessage = message
         } catch {
-            errorMessage = error.localizedDescription
+            // The project list only drives the filter menu; keep the rows.
         }
+    }
+
+    nonisolated private static func projects(
+        from source: WorkstreamsSource, fetch: Bool
+    ) async throws -> [Ycc_V1_ProjectInfo]? {
+        guard fetch else { return nil }
+        return try await source.listProjects()
     }
 
     /// Trial-merge a workstream WITHOUT mutating anything (`PreviewMerge`).
@@ -218,8 +256,9 @@ public final class WorkstreamsModel {
     /// Merge a workstream honouring the accept gate (`MergeWorkstream`). Pass
     /// `accept: false` for the first pass (a clean review-gated merge returns
     /// ``MergeOutcome/needsAccept(diff:)`` without mutating); re-call with
-    /// `accept: true` after the user reviews the diff. On ``MergeOutcome/merged``
-    /// the list is refreshed so the row's status updates. Returns `nil` on
+    /// `accept: true` after the user reviews the diff. On
+    /// ``MergeOutcome/merged`` the row is marked merged from the response at
+    /// once and the list revalidates in the background. Returns `nil` on
     /// failure.
     public func merge(_ workstream: Ycc_V1_WorkstreamInfo, accept: Bool) async -> MergeOutcome? {
         guard busyWorkstreamID == nil else { return nil }
@@ -229,7 +268,11 @@ public final class WorkstreamsModel {
             let result = try await source.mergeWorkstream(workstreamId: workstream.id, accept: accept)
             actionError = nil
             if result.merged {
-                await refreshAfterAction()
+                patch(workstream.id) { row in
+                    row.status = WorkstreamStatus.merged.rawValue
+                    row.integrationState = ""
+                }
+                scheduleBackgroundRefresh()
                 return .merged(commit: result.commit)
             }
             if result.needsAccept {
@@ -242,9 +285,9 @@ public final class WorkstreamsModel {
         }
     }
 
-    /// Discard a workstream (`DiscardWorkstream`), then refresh so the row's
-    /// status flips to discarded / it drops from the list. Returns `true` on
-    /// success.
+    /// Discard a workstream (`DiscardWorkstream`). The row flips to discarded as
+    /// soon as the daemon confirms, then the list revalidates in the background
+    /// (which may drop it). Returns `true` on success.
     @discardableResult
     public func discard(_ workstream: Ycc_V1_WorkstreamInfo) async -> Bool {
         guard busyWorkstreamID == nil else { return false }
@@ -253,7 +296,11 @@ public final class WorkstreamsModel {
         do {
             try await source.discardWorkstream(workstreamId: workstream.id)
             actionError = nil
-            await refreshAfterAction()
+            patch(workstream.id) { row in
+                row.status = WorkstreamStatus.discarded.rawValue
+                row.integrationState = ""
+            }
+            scheduleBackgroundRefresh()
             return true
         } catch {
             handle(error)
@@ -261,17 +308,22 @@ public final class WorkstreamsModel {
         }
     }
 
-    /// Re-queue a ready or needs-attention workstream, then refresh its live queue
-    /// projection. The daemon treats retries of an already-queued row idempotently.
+    /// Re-queue a ready or needs-attention workstream. The returned row (its new
+    /// queue state) replaces the old one immediately; the list revalidates in
+    /// the background. The daemon treats retries of an already-queued row
+    /// idempotently.
     @discardableResult
     public func retry(_ workstream: Ycc_V1_WorkstreamInfo) async -> Bool {
         guard busyWorkstreamID == nil else { return false }
         busyWorkstreamID = workstream.id
         defer { busyWorkstreamID = nil }
         do {
-            _ = try await source.retryIntegration(workstreamId: workstream.id)
+            let updated = try await source.retryIntegration(workstreamId: workstream.id)
             actionError = nil
-            await refreshAfterAction()
+            if !updated.id.isEmpty {
+                patch(workstream.id) { $0 = updated }
+            }
+            scheduleBackgroundRefresh()
             return true
         } catch {
             handle(error)
@@ -298,6 +350,10 @@ public final class WorkstreamsModel {
                 let result = try await source.mergeWorkstream(workstreamId: workstream.id, accept: true)
                 if result.merged {
                     mergedCount += 1
+                    patch(workstream.id) { row in
+                        row.status = WorkstreamStatus.merged.rawValue
+                        row.integrationState = ""
+                    }
                     continue
                 }
                 if !result.conflicts.isEmpty {
@@ -317,21 +373,76 @@ public final class WorkstreamsModel {
                 break
             }
         }
-        await refreshAfterAction()
+        scheduleBackgroundRefresh()
         return MergeAllReadySummary(mergedCount: mergedCount, firstError: firstError)
     }
 
-    /// Refresh the list after a mutating action without toggling the row's busy
-    /// flag off first (it is cleared by the caller's `defer`). Errors here are
-    /// swallowed to the list-level `errorMessage`, not the action alert.
-    private func refreshAfterAction() async {
+    // MARK: - Cache & background revalidation
+
+    private func seedFromCache(for project: String) {
+        guard let cached = cache?.value(.workstreams(project), as: [Ycc_V1_WorkstreamInfo].self) else {
+            return
+        }
+        workstreams = cached
+        loadedProject = project
+    }
+
+    private func storeCache() {
+        guard let loadedProject else { return }
+        cache?.store(workstreams, for: .workstreams(loadedProject), ifGeneration: cacheGeneration)
+    }
+
+    private func apply(_ loaded: [Ycc_V1_WorkstreamInfo], project: String) {
+        if loaded != workstreams { workstreams = loaded }
+        loadedProject = project
+        storeCache()
+    }
+
+    /// Apply a confirmed mutation to one row in place.
+    private func patch(_ id: String, _ change: (inout Ycc_V1_WorkstreamInfo) -> Void) {
+        guard let index = workstreams.firstIndex(where: { $0.id == id }) else { return }
+        change(&workstreams[index])
+        storeCache()
+    }
+
+    /// Coalesce post-action revalidations (one in flight, at most one queued).
+    /// Errors land on the list-level `errorMessage`, never the action alert.
+    private func scheduleBackgroundRefresh() {
+        backgroundRefreshPending = true
+        guard backgroundRefreshTask == nil else { return }
+        backgroundRefreshTask = Task { @MainActor [weak self] in
+            while true {
+                guard let self, self.backgroundRefreshPending else { break }
+                self.backgroundRefreshPending = false
+                await self.revalidate()
+            }
+            self?.backgroundRefreshTask = nil
+        }
+    }
+
+    private func revalidate() async {
+        let project = selectedProject
         do {
-            workstreams = try await source.listWorkstreams(project: selectedProject)
+            let loaded = try await source.listWorkstreams(project: project)
+            guard project == selectedProject else { return }
+            apply(loaded, project: project)
             errorMessage = nil
         } catch YccError.unauthorized {
             unauthorized = true
         } catch {
             errorMessage = (error as? YccError)?.displayMessage ?? error.localizedDescription
+        }
+    }
+
+    private func handleLoad(_ error: Error) {
+        switch error {
+        case YccError.unauthorized:
+            unauthorized = true
+        case let YccError.rpc(message), let YccError.notFound(message),
+             let YccError.failedPrecondition(message):
+            errorMessage = message
+        default:
+            errorMessage = error.localizedDescription
         }
     }
 

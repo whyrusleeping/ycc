@@ -1,6 +1,9 @@
 import Connect
 import Foundation
 import YccProto
+#if canImport(os)
+import os
+#endif
 
 /// Per-request interceptor. Records only the fixed RPC path, timing and status;
 /// the UUID-derived ID can be matched with the daemon's /debug/latency entries.
@@ -122,6 +125,56 @@ final class LatencyInterceptor: UnaryInterceptor, StreamInterceptor, @unchecked 
         case .headers: break
         }
         proceed(result)
+    }
+
+    /// URLSession's per-task metrics (unary and streams alike). Records the
+    /// negotiated protocol, connection reuse and connect/TLS/TTFB timings in
+    /// the bounded store, and logs one debug-level line so a device attached to Console
+    /// (with debug messages shown) can confirm `h2` + reuse without a debugger.
+    @Sendable
+    func handleResponseMetrics(
+        _ metrics: HTTPMetrics, proceed: @escaping @Sendable (HTTPMetrics) -> Void
+    ) {
+        if let taskMetrics = metrics.taskMetrics {
+            lock.lock()
+            let path = procedure
+            lock.unlock()
+            let transport = Self.transport(from: taskMetrics, procedure: path, requestID: id)
+            diagnostics.record(transport)
+            #if canImport(os)
+            let connect = transport.connectMS ?? -1
+            let ttfb = transport.requestToResponseMS ?? -1
+            Self.logger.debug("\(transport.procedure, privacy: .public) \(transport.networkProtocol, privacy: .public) reused=\(transport.reusedConnection, privacy: .public) connect=\(connect, format: .fixed(precision: 0), privacy: .public)ms ttfb=\(ttfb, format: .fixed(precision: 0), privacy: .public)ms")
+            #endif
+        }
+        proceed(metrics)
+    }
+
+    #if canImport(os)
+    private static let logger = Logger(subsystem: "ycc", category: "transport")
+    #endif
+
+    static func transport(
+        from metrics: URLSessionTaskMetrics, procedure: String, requestID: String
+    ) -> LatencyDiagnostics.Transport {
+        func ms(_ start: Date?, _ end: Date?) -> Double? {
+            guard let start, let end else { return nil }
+            return max(0, end.timeIntervalSince(start) * 1000)
+        }
+        // The last transaction is the one that produced the response (earlier
+        // ones are redirects or retried attempts).
+        let transaction = metrics.transactionMetrics.last
+        return LatencyDiagnostics.Transport(
+            procedure: procedure,
+            requestID: requestID,
+            networkProtocol: transaction?.networkProtocolName ?? "",
+            reusedConnection: transaction?.isReusedConnection ?? false,
+            dnsMS: ms(transaction?.domainLookupStartDate, transaction?.domainLookupEndDate),
+            connectMS: ms(transaction?.connectStartDate, transaction?.connectEndDate),
+            tlsMS: ms(transaction?.secureConnectionStartDate, transaction?.secureConnectionEndDate),
+            requestToResponseMS: ms(transaction?.requestStartDate, transaction?.responseStartDate),
+            responseTransferMS: ms(transaction?.responseStartDate, transaction?.responseEndDate),
+            taskMS: metrics.taskInterval.duration * 1000)
     }
 
     static func header(_ headers: Headers, _ name: String) -> String? {

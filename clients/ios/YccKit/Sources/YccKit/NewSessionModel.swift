@@ -106,20 +106,41 @@ public final class NewSessionModel {
 
     private let source: NewSessionSource
     private let defaults: SessionDefaultsStore
+    private let cache: AppDataCache?
+    private let cacheGeneration: UInt64
+
+    /// The daemon-wide composer catalog cached app-wide, so reopening the
+    /// composer renders its pickers and suggestions without a spinner.
+    struct Catalog {
+        var modes: [Ycc_V1_Mode]
+        var presets: [Ycc_V1_Preset]
+        var models: Ycc_V1_ListModelsResponse?
+    }
 
     /// - Parameter initialProject: when non-nil, the named project to preselect.
     ///   It takes precedence over the remembered last-used project so a new
     ///   session lands in the workspace the user is looking at.
+    /// - Parameter cache: app-level cache; a cached catalog and project list
+    ///   seed the composer immediately while ``load()`` revalidates.
     public init(
         source: NewSessionSource,
         defaults: SessionDefaultsStore = UserDefaultsSessionDefaults(),
-        initialProject: String? = nil
+        initialProject: String? = nil,
+        cache: AppDataCache? = nil
     ) {
         self.source = source
         self.defaults = defaults
+        self.cache = cache
+        self.cacheGeneration = cache?.generation ?? 0
         // Recall last-used selections up front so the pickers open on them.
         self.selectedMode = defaults.lastMode ?? ""
         self.selectedProject = initialProject ?? defaults.lastProject ?? ""
+        if let catalog = cache?.value(.newSessionCatalog, as: Catalog.self) {
+            apply(catalog)
+        }
+        if let cachedProjects = cache?.projects {
+            apply(projects: cachedProjects)
+        }
     }
 
     /// The picker is useful only when there is a real choice.
@@ -176,49 +197,32 @@ public final class NewSessionModel {
         modes.first { $0.name == selectedMode }?.description_p.nilIfEmpty
     }
 
-    /// Load modes + projects (+ the optional model list). Falls back to the first
-    /// available mode when no remembered mode is still valid, so the picker is
-    /// never empty. Unauthorized bubbles up via ``unauthorized`` for the view to
-    /// handle.
-    public func load() async {
+    /// Load modes + the optional model list, plus projects when no app-level
+    /// project list is cached. Falls back to the first available mode when no
+    /// remembered mode is still valid, so the picker is never empty.
+    /// Unauthorized bubbles up via ``unauthorized`` for the view to handle.
+    /// `refreshProjects` forces `ListProjects` (e.g. right after the user
+    /// registered a new project from the composer).
+    public func load(refreshProjects: Bool = false) async {
         isLoading = true
         defer { isLoading = false }
+        let source = source
+        let cachedProjects = refreshProjects ? nil : cache?.projects
         do {
             async let modesCall = source.listModes()
-            async let projectList = source.listProjects()
+            async let projectList = Self.projects(from: source, cached: cachedProjects)
             async let modelList = source.listModels()
             let ((loadedModes, loadedPresets), loadedProjects) = try await (modesCall, projectList)
             // The model picker is a convenience: a daemon that fails ListModels
             // must not block starting a session, so its failure is tolerated and
             // simply leaves the chip hidden.
             let loadedModels = try? await modelList
-            modes = loadedModes
-            presets = loadedPresets
-            projects = loadedProjects
-            let listedModels = loadedModels?.models ?? []
-            models = listedModels.filter { !$0.disabled }
-            defaultModel = loadedModels?.coordinator ?? ""
-            defaultModelDisabled = listedModels.contains {
-                $0.name == defaultModel && $0.disabled
-            }
-            // Never keep an override pointing at a model that is no longer
-            // configured — fall back to the daemon's default.
-            if !selectedModel.isEmpty, !models.contains(where: { $0.name == selectedModel }) {
-                selectedModel = ""
-            }
-            // Keep a valid mode selected: honour the remembered one if it still
-            // exists, otherwise default to the first mode.
-            if selectedMode.isEmpty || !loadedModes.contains(where: { $0.name == selectedMode }) {
-                selectedMode = loadedModes.first?.name ?? ""
-            }
-            // Drop a remembered project that no longer exists, then select the
-            // sole project automatically. Never manufacture a "Default" choice.
-            if !selectedProject.isEmpty,
-               !loadedProjects.contains(where: { $0.name == selectedProject }) {
-                selectedProject = ""
-            }
-            if selectedProject.isEmpty, loadedProjects.count == 1 {
-                selectedProject = loadedProjects[0].name
+            let catalog = Catalog(modes: loadedModes, presets: loadedPresets, models: loadedModels)
+            apply(catalog)
+            apply(projects: loadedProjects)
+            cache?.store(catalog, for: .newSessionCatalog, ifGeneration: cacheGeneration)
+            if cachedProjects == nil {
+                cache?.updateProjects(loadedProjects, ifGeneration: cacheGeneration)
             }
             errorMessage = nil
         } catch YccError.unauthorized {
@@ -227,6 +231,47 @@ public final class NewSessionModel {
             errorMessage = message
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    nonisolated private static func projects(
+        from source: NewSessionSource, cached: [Ycc_V1_ProjectInfo]?
+    ) async throws -> [Ycc_V1_ProjectInfo] {
+        if let cached { return cached }
+        return try await source.listProjects()
+    }
+
+    private func apply(_ catalog: Catalog) {
+        modes = catalog.modes
+        presets = catalog.presets
+        let listedModels = catalog.models?.models ?? []
+        models = listedModels.filter { !$0.disabled }
+        defaultModel = catalog.models?.coordinator ?? ""
+        defaultModelDisabled = listedModels.contains {
+            $0.name == defaultModel && $0.disabled
+        }
+        // Never keep an override pointing at a model that is no longer
+        // configured — fall back to the daemon's default.
+        if !selectedModel.isEmpty, !models.contains(where: { $0.name == selectedModel }) {
+            selectedModel = ""
+        }
+        // Keep a valid mode selected: honour the remembered one if it still
+        // exists, otherwise default to the first mode.
+        if selectedMode.isEmpty || !catalog.modes.contains(where: { $0.name == selectedMode }) {
+            selectedMode = catalog.modes.first?.name ?? ""
+        }
+    }
+
+    private func apply(projects loadedProjects: [Ycc_V1_ProjectInfo]) {
+        projects = loadedProjects
+        // Drop a remembered project that no longer exists, then select the
+        // sole project automatically. Never manufacture a "Default" choice.
+        if !selectedProject.isEmpty,
+           !loadedProjects.contains(where: { $0.name == selectedProject }) {
+            selectedProject = ""
+        }
+        if selectedProject.isEmpty, loadedProjects.count == 1 {
+            selectedProject = loadedProjects[0].name
         }
     }
 

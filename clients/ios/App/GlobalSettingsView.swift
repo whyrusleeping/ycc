@@ -12,9 +12,10 @@ struct GlobalSettingsView: View {
     @State private var pendingRemoval: String?
     private let client: YccClient
 
-    init(client: YccClient) {
+    init(client: YccClient, cache: AppDataCache? = nil) {
         self.client = client
-        _model = State(initialValue: GlobalSettingsModel(source: client))
+        // A revisit renders the cached registry at once and revalidates.
+        _model = State(initialValue: GlobalSettingsModel(source: client, cache: cache))
     }
 
     var body: some View {
@@ -79,25 +80,30 @@ struct GlobalSettingsView: View {
     }
 
     private var rolesSection: some View {
-        @Bindable var model = model
-        return Section {
+        Section {
             if model.enabledModels.isEmpty {
                 Text("Enable a model below before assigning roles.")
                     .foregroundStyle(.secondary)
             } else {
-                Picker("Coordinator", selection: $model.coordinator) {
+                // Bound through user-pick methods rather than `onChange`: load()
+                // seeds these values, and an observer would re-send them.
+                Picker("Coordinator", selection: Binding(
+                    get: { model.coordinator },
+                    set: { _ = model.chooseCoordinator($0) }
+                )) {
                     ForEach(roleModels(including: [model.coordinator]), id: \.name) { info in
                         modelChoice(info).tag(info.name)
                     }
                 }
-                .onChange(of: model.coordinator) { _, _ in Task { await model.applyRoles() } }
 
-                Picker("Implementer", selection: $model.implementer) {
+                Picker("Implementer", selection: Binding(
+                    get: { model.implementer },
+                    set: { _ = model.chooseImplementer($0) }
+                )) {
                     ForEach(roleModels(including: [model.implementer]), id: \.name) { info in
                         modelChoice(info).tag(info.name)
                     }
                 }
-                .onChange(of: model.implementer) { _, _ in Task { await model.applyRoles() } }
 
                 DisclosureGroup("Reviewers (\(model.reviewers.count))") {
                     ForEach(roleModels(including: model.reviewers), id: \.name) { info in
@@ -126,18 +132,23 @@ struct GlobalSettingsView: View {
 
     private var thinkingSection: some View {
         Section {
+            // Optimistic: the picker shows the new level at once; only the
+            // control whose change is in flight is disabled.
             ThinkingLevelRow(
                 title: "Coordinator",
                 selection: model.coordinatorThinking,
                 onSelect: { level in Task { await model.setThinking(level, for: .coordinator) } })
+                .disabled(model.isApplyingThinking(.coordinator))
             ThinkingLevelRow(
                 title: "Implementer",
                 selection: model.implementerThinking,
                 onSelect: { level in Task { await model.setThinking(level, for: .implementer) } })
+                .disabled(model.isApplyingThinking(.implementer))
             ThinkingLevelRow(
                 title: "Reviewers",
                 selection: model.reviewersThinking,
                 onSelect: { level in Task { await model.setThinking(level, for: .reviewers) } })
+                .disabled(model.isApplyingThinking(.reviewers))
         } header: {
             Text("Default thinking")
         } footer: {
