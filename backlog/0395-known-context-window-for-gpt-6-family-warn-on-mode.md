@@ -1,13 +1,15 @@
 ---
 id: "0395"
 title: Known context window for gpt-6 family + warn on models with unknown window
-status: proposed
+status: done
 priority: 3
 created: "2026-09-20"
-updated: "2026-09-20"
+updated: "2026-09-29"
 depends_on: []
 spec_refs: []
 ---
+
+## Description
 
 ## Description
 ## Problem
@@ -24,4 +26,8 @@ spec_refs: []
 
 ## Acceptance criteria
 
-## Work log
+## Outcome
+
+knownContextWindow maps openai gpt-6* to a conservative 400000 (published window unconfirmed; context_window overrides). `ycc doctor` emits a warn-only "context window (<name>)" check, with a context_window remedy, for configured models whose effective window is 0. Tests cover gpt-6/gpt-6-astra budgets, openai-compatible staying unknown, and the doctor check's filtering and ordering. go test ./internal/config ./cmd/ycc passes.
+
+Commit: config: 400K context window for gpt-6 family; doctor warns on unknown-window models (0395)

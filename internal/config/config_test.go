@@ -64,10 +64,17 @@ func TestModelContextBudget(t *testing.T) {
 	if window, fraction := known.ContextBudget(); window != 200000 || fraction != DefaultContextSafeFraction {
 		t.Fatalf("known context budget = (%d, %v)", window, fraction)
 	}
+	for _, model := range []string{"gpt-6", "gpt-6-astra"} {
+		m := Model{Backend: "openai", Model: model}
+		if window, fraction := m.ContextBudget(); window != 400000 || fraction != DefaultContextSafeFraction {
+			t.Fatalf("%s context budget = (%d, %v), want (400000, %v)", model, window, fraction, DefaultContextSafeFraction)
+		}
+	}
 	for _, unknown := range []Model{
 		{Backend: "anthropic", Model: "proxy/claude-opus-4-6"},
 		{Backend: "openai", Model: "vendor-gpt-5-clone"},
 		{Backend: "openai-compatible", Model: "gpt-5"},
+		{Backend: "openai-compatible", Model: "gpt-6-astra"},
 	} {
 		if window, _ := unknown.ContextBudget(); window != 0 {
 			t.Fatalf("unknown compatible model %+v got built-in context window %d", unknown, window)

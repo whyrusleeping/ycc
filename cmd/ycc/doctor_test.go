@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/whyrusleeping/ycc/internal/config"
 )
 
 // isolateEnv points the secrets store and user-config discovery at a hermetic
@@ -35,6 +37,35 @@ coordinator = "claude"
 implementer = "claude"
 reviewers = ["claude"]
 `
+
+func TestModelContextWindowChecks(t *testing.T) {
+	if checks := modelContextWindowChecks(nil); len(checks) != 0 {
+		t.Fatalf("fallback should not warn about context window: %+v", checks)
+	}
+	cfg := &config.Config{Models: map[string]config.Model{
+		"z-unknown":  {Backend: "ollama", Model: "custom"},
+		"a-unknown":  {Backend: "openai-compatible", Model: "gpt-6-astra"},
+		"claude":     {Backend: "anthropic", Model: "claude-opus-4-8"},
+		"astra":      {Backend: "openai", Model: "gpt-6-astra"},
+		"configured": {Backend: "ollama", Model: "custom", ContextWindow: 32000},
+	}}
+	checks := modelContextWindowChecks(cfg)
+	if len(checks) != 2 {
+		t.Fatalf("expected only unknown-window models to warn, got %+v", checks)
+	}
+	for i, name := range []string{"a-unknown", "z-unknown"} {
+		c := checks[i]
+		if c.status != statusWarn || c.label != "context window ("+name+")" {
+			t.Errorf("expected sorted warn-only check for %s, got %+v", name, c)
+		}
+		if !strings.Contains(c.detail, cfg.Models[name].Model) || !strings.Contains(c.detail, "context-pressure rollover is disabled") {
+			t.Errorf("warning should identify model and disabled rollover: %+v", c)
+		}
+		if !strings.Contains(c.remedy, "context_window = <tokens>") || !strings.Contains(c.remedy, "[models."+name+"]") || !strings.Contains(c.remedy, "ycc.toml") {
+			t.Errorf("warning should point to the model's context_window config: %+v", c)
+		}
+	}
+}
 
 // A valid config whose model key is present in the env resolves cleanly: no hard
 // failure and the line reports resolution from env.

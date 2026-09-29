@@ -245,9 +245,9 @@ const DefaultMaxTokens = 32000
 const DefaultContextSafeFraction = 0.80
 
 // ContextBudget returns the effective input context window and safe fraction.
-// Explicit configuration wins; conservative built-ins cover model families whose
-// providers publish a stable window. An unknown model with no configured window
-// returns window=0, disabling pressure-based rollover while retaining error recovery.
+// Explicit configuration wins; conservative built-ins cover known model families.
+// An unknown model with no configured window returns window=0, disabling
+// pressure-based rollover while retaining error recovery.
 func (m Model) ContextBudget() (window int, safeFraction float64) {
 	window = m.ContextWindow
 	if window == 0 {
@@ -270,7 +270,9 @@ func knownContextWindow(backend, model string) int {
 		}
 	case "openai":
 		switch {
-		case knownModelPrefix(model, "gpt-5"):
+		case knownModelPrefix(model, "gpt-5"), knownModelPrefix(model, "gpt-6"):
+			// GPT-6's published window is unconfirmed and may be larger; use a
+			// conservative budget. context_window in ycc.toml overrides this.
 			return 400000
 		case knownModelPrefix(model, "o1"), knownModelPrefix(model, "o3"), knownModelPrefix(model, "o4"):
 			return 200000

@@ -132,6 +132,9 @@ func runDoctor(workspace, configPath, addr, token string, out io.Writer) (hardFa
 	for _, c := range modelKeyChecks(cfg) {
 		add(c)
 	}
+	for _, c := range modelContextWindowChecks(cfg) {
+		add(c)
+	}
 	for _, c := range credentialHygieneChecks(ws) {
 		add(c)
 	}
@@ -292,6 +295,32 @@ func modelKeyChecks(cfg *config.Config) []check {
 			continue
 		}
 		out = append(out, keyCheck("model key ("+name+")", m.KeyEnv))
+	}
+	return out
+}
+
+// modelContextWindowChecks warns when context-pressure rollover is disabled by
+// an unknown model window. Known or explicitly configured windows stay quiet.
+func modelContextWindowChecks(cfg *config.Config) []check {
+	if cfg == nil {
+		return nil
+	}
+	names := make([]string, 0, len(cfg.Models))
+	for name := range cfg.Models {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var out []check
+	for _, name := range names {
+		m := cfg.Models[name]
+		if window, _ := m.ContextBudget(); window == 0 {
+			out = append(out, check{
+				status: statusWarn,
+				label:  "context window (" + name + ")",
+				detail: fmt.Sprintf("context window for %s is unknown; context-pressure rollover is disabled", m.Model),
+				remedy: fmt.Sprintf("set context_window = <tokens> under [models.%s] in ycc.toml", name),
+			})
+		}
 	}
 	return out
 }
