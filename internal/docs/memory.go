@@ -12,18 +12,20 @@ import (
 	"time"
 )
 
-// memorySoftBudget is the active prompt-memory size (bytes) beyond which
-// memory.md is considered due for grooming. Superseded audit records remain on
-// disk but are excluded from this budget because they are not injected. Crossing
-// the soft budget does not block a write; AppendMemoryEntry records the note and
-// returns an escalating nudge to groom.
-const memorySoftBudget = 4096
+// MemorySoftBudget is the active prompt-memory size (bytes) beyond which
+// memory.md is considered due for grooming. Superseded and retired audit records
+// remain on disk but are excluded from this budget because they are not
+// injected. Crossing the soft budget does not block a write; the daemon uses it
+// as the trigger for automatic grooming.
+const MemorySoftBudget = 4096
 
-// memoryHardBudget is the active prompt-memory ceiling (bytes). Once active
-// memory is already at/over this size, ordinary growth is refused. A correction
-// or consolidation that reduces active memory remains permitted so an oversized
-// store can recover without deleting its immutable audit records.
-const memoryHardBudget = 12288
+// MemoryHardBudget is the active prompt-memory backstop (bytes). A write that
+// would leave active memory above it is refused unless it reduces active memory
+// (a consolidating supersession). It matches the prompt-injection cap so every
+// accepted note is actually delivered to agents. Automatic grooming is expected
+// to keep memory far below it; the refusal exists for when grooming is
+// disabled or failing.
+const MemoryHardBudget = 16384
 
 // memoryEntryHint is the soft per-entry length (bytes) over which AppendMemory
 // nudges toward a terser note. Long, prose-y entries burn the budget fast; the
@@ -49,6 +51,10 @@ var memoryCategories = map[string]string{
 	"lesson":      "## Lessons learned",
 }
 
+// memoryRetiredSection holds retraction records. They are audit-only: prompt
+// rendering never includes them.
+const memoryRetiredSection = "## Retired notes (audit only)"
+
 // MemoryKind records a note's claimed evidence/authority class. The recording
 // model chooses the classification; provenance is attached independently by the
 // runtime and lets a later reader verify that classification against evidence.
@@ -59,13 +65,28 @@ const (
 	MemoryObservation    MemoryKind = "observation"
 	MemoryInference      MemoryKind = "inference"
 	MemoryProposedPolicy MemoryKind = "proposed_policy"
+	// MemoryRetraction marks an audit record that retires earlier notes without
+	// a replacement. It is written only by RetireMemory, is never a remember
+	// kind, and never renders into prompts.
+	MemoryRetraction MemoryKind = "retraction"
 )
 
+// memoryKindLabels are the human-readable labels written into memory.md.
 var memoryKindLabels = map[MemoryKind]string{
 	MemoryUserGuidance:   "user-stated guidance",
 	MemoryObservation:    "measured observation",
 	MemoryInference:      "model inference",
 	MemoryProposedPolicy: "proposed policy",
+}
+
+// memoryKindTags are the compact kind tags used in prompt rendering. The
+// "model-classified, not verified authority" caveat is stated once in the prompt
+// header rather than repeated on every line.
+var memoryKindTags = map[MemoryKind]string{
+	MemoryUserGuidance:   "user-stated",
+	MemoryObservation:    "observation",
+	MemoryInference:      "inference",
+	MemoryProposedPolicy: "proposed-policy",
 }
 
 // MemoryProvenance is runtime-selected candidate evidence for a memory write.
@@ -116,15 +137,92 @@ func (s *Store) IsMemory(absPath string) bool {
 	return absPath == s.MemoryPath()
 }
 
+// MemoryStatus summarizes active prompt memory against its budgets.
+type MemoryStatus struct {
+	ActiveBytes int // size of the prompt rendering of active notes
+	ActiveNotes int // number of active notes
+	SoftBudget  int
+	HardBudget  int
+}
+
+// OverSoftBudget reports whether active memory is due for grooming.
+func (st MemoryStatus) OverSoftBudget() bool { return st.ActiveBytes >= st.SoftBudget }
+
+// MemoryStatusOf measures a memory.md body.
+func MemoryStatusOf(body string) MemoryStatus {
+	parsed := parseMemory(body)
+	return MemoryStatus{
+		ActiveBytes: len(RenderMemoryForPrompt(body)),
+		ActiveNotes: len(parsed.active()),
+		SoftBudget:  MemorySoftBudget,
+		HardBudget:  MemoryHardBudget,
+	}
+}
+
+// MemoryStatus measures the project's memory.md. A missing file is empty.
+func (s *Store) MemoryStatus() (MemoryStatus, error) {
+	body, err := s.ReadMemory()
+	if err != nil {
+		return MemoryStatus{}, err
+	}
+	return MemoryStatusOf(body), nil
+}
+
 // MemoryWrite reports the outcome of an AppendMemory call so the caller can
 // surface an advisory nudge to the model. The note is always recorded on
-// success; Advice is a human-readable grooming/terseness hint, or "" when
-// nothing is worth flagging.
+// success.
 type MemoryWrite struct {
 	Size   int        // total bytes of memory.md after the append
-	Advice string     // grooming / terseness nudge to surface, or ""
+	Advice string     // all advice combined (Notes then BudgetAdvice), or ""
 	ID     string     // stable identifier used by a later correction
 	Kind   MemoryKind // classification actually recorded (possibly downgraded)
+	// Active is the active prompt-memory size after the write; OverSoft reports
+	// whether it is at/over the soft budget.
+	Active   int
+	OverSoft bool
+	// Notes are non-budget remarks (classification downgrade, terseness).
+	Notes []string
+	// BudgetAdvice describes the active size against the budgets, or "".
+	BudgetAdvice string
+}
+
+// MemoryNoteSize identifies one active note and its rendered prompt cost.
+type MemoryNoteSize struct {
+	ID      string
+	Bytes   int
+	Preview string
+}
+
+// MemoryBudgetError is returned when a write would leave active prompt memory
+// above the hard backstop without reducing it. It carries enough detail for the
+// model to act: how much to free and which notes cost the most.
+type MemoryBudgetError struct {
+	Active  int // active bytes before the write
+	After   int // active bytes the write would produce
+	Ceiling int
+	Largest []MemoryNoteSize
+}
+
+// NeedToFree is how many active bytes must be freed before the refused write fits.
+func (e *MemoryBudgetError) NeedToFree() int { return e.After - e.Ceiling }
+
+func (e *MemoryBudgetError) Error() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "active prompt memory is %d bytes and this write would make it %d, over the %d-byte ceiling — "+
+		"consolidate first by freeing at least %d bytes: retire obsolete notes with forget (always allowed), or record one "+
+		"shorter note whose supersedes lists several related notes (a replacement is accepted only when it shrinks active "+
+		"memory in total; typed audit records are kept, never delete them by hand)",
+		e.Active, e.After, e.Ceiling, e.NeedToFree())
+	if len(e.Largest) > 0 {
+		b.WriteString(". Largest active notes: ")
+		for i, n := range e.Largest {
+			if i > 0 {
+				b.WriteString("; ")
+			}
+			fmt.Fprintf(&b, "%s (%d B) %q", n.ID, n.Bytes, n.Preview)
+		}
+	}
+	return b.String()
 }
 
 // AppendMemory records a conservatively classified note without session
@@ -173,38 +271,18 @@ func (s *Store) AppendMemoryEntry(in MemoryEntry) (MemoryWrite, error) {
 		}
 	}
 
-	p := in.Provenance
-	if p.Scope == "" {
-		p.Scope = "workspace"
-	}
-	when := p.EventTime
-	if when.IsZero() {
-		when = time.Now()
-	}
+	p := normalizeProvenance(in.Provenance)
 	// A user-guidance label without a durable user event would launder a model
 	// assertion into user authority. Fall back to inference when evidence is absent.
-	advice := ""
+	var notes []string
 	if in.Kind == MemoryUserGuidance && (p.EventSeq == 0 || p.Actor != "user") {
 		in.Kind = MemoryInference
 		label = memoryKindLabels[in.Kind]
-		advice = "user guidance lacked a durable user event, so it was recorded conservatively as model inference"
+		notes = append(notes, "user guidance lacked a durable user event, so it was recorded conservatively as model inference")
 	}
 
-	id := newMemoryID(when, parsed.ids)
-	meta := []string{
-		"id=" + escapeMemoryMeta(id),
-		"kind=" + escapeMemoryMeta(string(in.Kind)),
-		"session=" + escapeMemoryMeta(p.SessionID),
-		"event=" + strconv.Itoa(p.EventSeq),
-		"actor=" + escapeMemoryMeta(p.Actor),
-		"scope=" + escapeMemoryMeta(p.Scope),
-		"classified=model",
-	}
-	if len(supersedes) > 0 {
-		meta = append(meta, "supersedes="+escapeMemoryMeta(strings.Join(supersedes, ",")))
-	}
-	entry := fmt.Sprintf("- %s [%s] %s <!-- ycc-memory %s -->",
-		when.Format("2006-01-02"), label, note, strings.Join(meta, " "))
+	id := newMemoryID(p.EventTime, parsed.ids)
+	entry := formatMemoryRecord(p, id, label, note, in.Kind, supersedes)
 
 	body := string(existing)
 	if strings.TrimSpace(body) == "" {
@@ -216,20 +294,121 @@ func (s *Store) AppendMemoryEntry(in MemoryEntry) (MemoryWrite, error) {
 	}
 	activeBefore := len(RenderMemoryForPrompt(string(existing)))
 	activeAfter := len(RenderMemoryForPrompt(body))
-	if activeBefore >= memoryHardBudget && activeAfter >= activeBefore {
-		return MemoryWrite{}, fmt.Errorf("active prompt memory is over the hard ceiling (%d bytes ≥ %d) — consolidate first: "+
-			"record a shorter replacement that supersedes active notes, without deleting typed audit records", activeBefore, memoryHardBudget)
+	if activeAfter > MemoryHardBudget && activeAfter >= activeBefore {
+		return MemoryWrite{}, &MemoryBudgetError{
+			Active: activeBefore, After: activeAfter, Ceiling: MemoryHardBudget,
+			Largest: largestActiveNotes(parsed, 5),
+		}
 	}
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		return MemoryWrite{}, err
 	}
-	budgetAdvice := memoryAdvice(activeAfter, len(note))
-	if advice != "" && budgetAdvice != "" {
-		advice += "; " + budgetAdvice
-	} else if advice == "" {
-		advice = budgetAdvice
+	if len(note) > memoryEntryHint {
+		notes = append(notes, fmt.Sprintf("that entry was long (%d chars) — memory entries are cheapest when terse (aim for ≤%d chars)", len(note), memoryEntryHint))
 	}
-	return MemoryWrite{Size: len(body), Advice: advice, ID: id, Kind: in.Kind}, nil
+	budget := memoryBudgetAdvice(activeAfter)
+	advice := append(append([]string(nil), notes...), budget)
+	return MemoryWrite{
+		Size: len(body), Advice: joinNonEmpty(advice, "; "), ID: id, Kind: in.Kind,
+		Active: activeAfter, OverSoft: activeAfter >= MemorySoftBudget,
+		Notes: notes, BudgetAdvice: budget,
+	}, nil
+}
+
+// MemoryRetire reports the outcome of RetireMemory.
+type MemoryRetire struct {
+	ID              string   // id of the retraction audit record
+	Retired         []string // ids that were active and are now retired
+	AlreadyInactive []string // requested ids that were already superseded/retired
+	ActiveBefore    int
+	ActiveAfter     int
+}
+
+// RetireMemory retires active notes without recording a replacement. It appends
+// an audit-only retraction record that supersedes ids; the retired records stay
+// in memory.md but leave future prompts. It only shrinks active memory, so it is
+// never refused by the budget. Unknown ids are an error; ids that are already
+// inactive are reported rather than rejected, unless nothing would change.
+func (s *Store) RetireMemory(ids []string, reason string, prov MemoryProvenance) (MemoryRetire, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	ids = uniqueStrings(ids)
+	if len(ids) == 0 {
+		return MemoryRetire{}, fmt.Errorf("at least one memory id is required")
+	}
+	path := s.MemoryPath()
+	existing, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return MemoryRetire{}, err
+	}
+	parsed := parseMemory(string(existing))
+	activeIDs := make(map[string]struct{})
+	for _, e := range parsed.active() {
+		activeIDs[e.id] = struct{}{}
+	}
+	var retired, inactive []string
+	for _, id := range ids {
+		if _, found := parsed.ids[id]; !found {
+			return MemoryRetire{}, fmt.Errorf("cannot retire unknown memory id %q", id)
+		}
+		if _, active := activeIDs[id]; active {
+			retired = append(retired, id)
+		} else {
+			inactive = append(inactive, id)
+		}
+	}
+	if len(retired) == 0 {
+		return MemoryRetire{}, fmt.Errorf("nothing to retire: %s already inactive (superseded or retired)", strings.Join(inactive, ", "))
+	}
+	reason = strings.TrimSpace(strings.ReplaceAll(reason, "\n", " "))
+	if reason == "" {
+		reason = "obsolete"
+	}
+	p := normalizeProvenance(prov)
+	id := newMemoryID(p.EventTime, parsed.ids)
+	entry := formatMemoryRecord(p, id, "retired", reason, MemoryRetraction, retired)
+
+	body := string(existing)
+	body = appendMemoryEntry(body, memoryRetiredSection, entry)
+	if !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		return MemoryRetire{}, err
+	}
+	return MemoryRetire{
+		ID: id, Retired: retired, AlreadyInactive: inactive,
+		ActiveBefore: len(RenderMemoryForPrompt(string(existing))),
+		ActiveAfter:  len(RenderMemoryForPrompt(body)),
+	}, nil
+}
+
+func normalizeProvenance(p MemoryProvenance) MemoryProvenance {
+	if p.Scope == "" {
+		p.Scope = "workspace"
+	}
+	if p.EventTime.IsZero() {
+		p.EventTime = time.Now()
+	}
+	return p
+}
+
+func formatMemoryRecord(p MemoryProvenance, id, label, text string, kind MemoryKind, supersedes []string) string {
+	meta := []string{
+		"id=" + escapeMemoryMeta(id),
+		"kind=" + escapeMemoryMeta(string(kind)),
+		"session=" + escapeMemoryMeta(p.SessionID),
+		"event=" + strconv.Itoa(p.EventSeq),
+		"actor=" + escapeMemoryMeta(p.Actor),
+		"scope=" + escapeMemoryMeta(p.Scope),
+		"classified=model",
+	}
+	if len(supersedes) > 0 {
+		meta = append(meta, "supersedes="+escapeMemoryMeta(strings.Join(supersedes, ",")))
+	}
+	return fmt.Sprintf("- %s [%s] %s%s%s -->",
+		p.EventTime.Format("2006-01-02"), label, text, memoryMetaMarker, strings.Join(meta, " "))
 }
 
 type parsedMemoryEntry struct {
@@ -251,28 +430,45 @@ type parsedMemory struct {
 	ids     map[string]struct{}
 }
 
-const memoryMetaMarker = " <!-- ycc-memory "
-
-// RenderMemoryForPrompt returns only active notes. Typed records superseded by
-// a later correction remain in the file but do not enter a fresh model context;
-// old free-form bullets remain available, explicitly marked as unverified.
-func RenderMemoryForPrompt(body string) string {
-	parsed := parseMemory(body)
-	if len(parsed.entries) == 0 {
-		return ""
-	}
+// active returns the entries that render into prompts: not superseded by any
+// later record, and not themselves retraction records.
+func (p parsedMemory) active() []parsedMemoryEntry {
 	superseded := make(map[string]struct{})
-	for _, entry := range parsed.entries {
+	for _, entry := range p.entries {
 		for _, id := range entry.supersedes {
 			superseded[id] = struct{}{}
 		}
 	}
-	var out []string
-	lastSection := ""
-	for _, entry := range parsed.entries {
+	var out []parsedMemoryEntry
+	for _, entry := range p.entries {
+		if entry.kind == MemoryRetraction {
+			continue
+		}
 		if _, inactive := superseded[entry.id]; inactive {
 			continue
 		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+const memoryMetaMarker = " <!-- ycc-memory "
+
+// RenderMemoryForPrompt returns only active notes, one compact line each:
+//
+//   - [<kind>; <recorded date>; <session>#<event>[/<actor>]; <id>] note
+//
+// The actor is omitted when it is the coordinator and the scope when it is the
+// default workspace scope. Legacy (untyped) bullets render as "- [<legacy id>]
+// note". The advisory / unverified-authority framing is stated once by the
+// prompt header instead of per line, which keeps a note's metadata cheaper than
+// its content. Typed records superseded by a later correction or retired remain
+// in the file but do not enter a fresh model context.
+func RenderMemoryForPrompt(body string) string {
+	active := parseMemory(body).active()
+	var out []string
+	lastSection := ""
+	for _, entry := range active {
 		if entry.section != lastSection {
 			if len(out) > 0 {
 				out = append(out, "")
@@ -280,22 +476,46 @@ func RenderMemoryForPrompt(body string) string {
 			out = append(out, entry.section)
 			lastSection = entry.section
 		}
-		if entry.legacy {
-			out = append(out, fmt.Sprintf("- [legacy / unverified provenance; id %s] %s", entry.id, entry.note))
-			continue
-		}
-		label := memoryKindLabels[entry.kind]
-		evidence := "candidate evidence unavailable"
-		if entry.session != "" && entry.event > 0 {
-			evidence = fmt.Sprintf("candidate evidence: session %s event #%d", entry.session, entry.event)
-			if entry.actor != "" {
-				evidence += " (" + entry.actor + ")"
-			}
-		}
-		out = append(out, fmt.Sprintf("- [%s; model-classified, not verified authority] %s _(recorded %s; %s; scope %s; id %s)_",
-			label, entry.note, entry.date, evidence, entry.scope, entry.id))
+		out = append(out, renderMemoryEntry(entry))
 	}
 	return strings.TrimSpace(strings.Join(out, "\n"))
+}
+
+func renderMemoryEntry(entry parsedMemoryEntry) string {
+	if entry.legacy {
+		return fmt.Sprintf("- [%s] %s", entry.id, entry.note)
+	}
+	tags := []string{memoryKindTags[entry.kind], entry.date}
+	evidence := "no evidence"
+	if entry.session != "" && entry.event > 0 {
+		evidence = fmt.Sprintf("%s#%d", entry.session, entry.event)
+		if entry.actor != "" && entry.actor != "coordinator" {
+			evidence += "/" + entry.actor
+		}
+	}
+	tags = append(tags, evidence)
+	if entry.scope != "" && entry.scope != "workspace" {
+		tags = append(tags, "scope "+entry.scope)
+	}
+	tags = append(tags, entry.id)
+	return "- [" + strings.Join(tags, "; ") + "] " + entry.note
+}
+
+// largestActiveNotes returns up to n active notes ordered by rendered size.
+func largestActiveNotes(parsed parsedMemory, n int) []MemoryNoteSize {
+	var sizes []MemoryNoteSize
+	for _, e := range parsed.active() {
+		preview := e.note
+		if r := []rune(preview); len(r) > 60 {
+			preview = string(r[:60]) + "…"
+		}
+		sizes = append(sizes, MemoryNoteSize{ID: e.id, Bytes: len(renderMemoryEntry(e)) + 1, Preview: preview})
+	}
+	sort.SliceStable(sizes, func(i, j int) bool { return sizes[i].Bytes > sizes[j].Bytes })
+	if len(sizes) > n {
+		sizes = sizes[:n]
+	}
+	return sizes
 }
 
 func parseMemory(body string) parsedMemory {
@@ -346,8 +566,10 @@ func parseMemory(body string) parsedMemory {
 					entry.note = strings.TrimSpace(rest[end+2:])
 				}
 			}
-			if entry.id == "" || entry.note == "" || memoryKindLabels[entry.kind] == "" {
+			knownKind := memoryKindLabels[entry.kind] != "" || entry.kind == MemoryRetraction
+			if entry.id == "" || entry.note == "" || !knownKind {
 				entry.legacy = true
+				entry.kind = ""
 				entry.note = strings.TrimSpace(strings.TrimPrefix(visible, "- "))
 				entry.id = legacyMemoryID(section, line)
 			}
@@ -389,6 +611,16 @@ func uniqueStrings(values []string) []string {
 	return out
 }
 
+func joinNonEmpty(parts []string, sep string) string {
+	var out []string
+	for _, p := range parts {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, sep)
+}
+
 func escapeMemoryMeta(value string) string { return url.QueryEscape(value) }
 
 func legacyMemoryID(section, line string) string {
@@ -407,24 +639,16 @@ func newMemoryID(when time.Time, existing map[string]struct{}) string {
 	}
 }
 
-// memoryAdvice builds the advisory nudge returned by AppendMemory: a grooming
-// prompt once active prompt memory crosses the soft budget, and/or a terseness
-// prompt when a single entry ran long. Returns "" when neither applies.
-func memoryAdvice(activeSize, noteLen int) string {
-	var parts []string
-	if activeSize >= memoryHardBudget {
-		parts = append(parts, fmt.Sprintf("active prompt memory is now %d bytes, over its %d-byte hard ceiling — "+
-			"further growth is refused, but shorter replacements may supersede active notes until the prompt memory is back under budget; "+
-			"do not delete typed audit records", activeSize, memoryHardBudget))
-	} else if activeSize >= memorySoftBudget {
-		parts = append(parts, fmt.Sprintf("active prompt memory is now %d bytes, over its %d-byte soft budget — "+
-			"please run the memory-groom flow soon (dedupe active notes, supersede stale guidance, promote hardened notes) "+
-			"without deleting typed audit records", activeSize, memorySoftBudget))
+// memoryBudgetAdvice states active size against the budgets once it crosses the
+// soft budget, with the remedies available to any coordinator. Callers with
+// access to automatic grooming may replace it with a more specific status.
+func memoryBudgetAdvice(activeSize int) string {
+	if activeSize < MemorySoftBudget {
+		return ""
 	}
-	if noteLen > memoryEntryHint {
-		parts = append(parts, fmt.Sprintf("that entry was long (%d chars) — memory entries are cheapest when terse (aim for ≤%d chars)", noteLen, memoryEntryHint))
-	}
-	return strings.Join(parts, "; ")
+	return fmt.Sprintf("active prompt memory is now %d bytes, over its %d-byte soft budget (hard ceiling %d) — "+
+		"retire obsolete notes with forget, or merge related notes into one shorter note via remember supersedes; "+
+		"never delete typed audit records by hand", activeSize, MemorySoftBudget, MemoryHardBudget)
 }
 
 // appendMemoryEntry inserts entry as the last bullet of the section identified by
@@ -441,6 +665,9 @@ func appendMemoryEntry(body, header, entry string) string {
 	if start < 0 {
 		// No such section: append it at the end.
 		out := strings.TrimRight(body, "\n")
+		if out == "" {
+			return header + "\n" + entry + "\n"
+		}
 		return out + "\n\n" + header + "\n" + entry + "\n"
 	}
 	// Find the end of this section: the next "## " header, or EOF.

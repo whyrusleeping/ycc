@@ -58,6 +58,7 @@ type fakeClient struct {
 	lastRoleReq    *v1.SetRoleConfigRequest         // most recent SetRoleConfig call
 	lastWorkImpl   *v1.SetWorkImplementationRequest // most recent SetWorkImplementation call
 	lastStartReq   *v1.StartSessionRequest          // most recent StartSession call
+	memory         *v1.GetMemoryResponse            // GetMemory result (nil => empty)
 
 	projects          []*v1.ProjectInfo
 	listProjectsCalls int
@@ -278,6 +279,15 @@ func (f *fakeClient) RemoveModel(_ context.Context, req *connect.Request[v1.Remo
 // an errMsg instead of panicking on the embedded nil interface.
 func (f *fakeClient) ListSessionHistory(_ context.Context, _ *connect.Request[v1.ListSessionHistoryRequest]) (*connect.Response[v1.ListSessionHistoryResponse], error) {
 	return connect.NewResponse(&v1.ListSessionHistoryResponse{Sessions: f.history}), nil
+}
+
+// GetMemory backs the home menu's memory-groom status; memory is nil (no status)
+// unless a test sets fakeMemory.
+func (f *fakeClient) GetMemory(_ context.Context, _ *connect.Request[v1.GetMemoryRequest]) (*connect.Response[v1.GetMemoryResponse], error) {
+	if f.memory == nil {
+		return connect.NewResponse(&v1.GetMemoryResponse{}), nil
+	}
+	return connect.NewResponse(f.memory), nil
 }
 
 func (f *fakeClient) ResumeSession(_ context.Context, req *connect.Request[v1.ResumeSessionRequest]) (*connect.Response[v1.ResumeSessionResponse], error) {

@@ -707,6 +707,27 @@ message GetMemoryRequest {
 message GetMemoryResponse {
   string content = 1; // full markdown; "" when memory.md does not exist yet
   string path = 2;    // absolute path to memory.md
+  // Active prompt memory: the notes injected into every agent prompt (superseded
+  // and retired audit records excluded), measured against its budgets. Over
+  // soft_budget the daemon auto-grooms when auto_groom is on; ordinary growth
+  // past hard_budget is refused.
+  int32 active_bytes = 3;
+  int32 active_notes = 4;
+  int32 soft_budget = 5;
+  int32 hard_budget = 6;
+  bool auto_groom = 7;             // daemon-scheduled grooming enabled (memory.auto_groom)
+  string groom_session_id = 8;     // live automatic groom session; "" when none
+  MemoryGroomRun last_groom = 9;   // latest automatic groom; unset when none has run
+}
+
+// One daemon-scheduled automatic memory groom.
+message MemoryGroomRun {
+  string session_id = 1;
+  int64 started_unix = 2;
+  int64 finished_unix = 3; // 0 while running or if interrupted before recording
+  int32 active_before = 4;
+  int32 active_after = 5;  // 0 until finished
+  string outcome = 6;      // finished | error | stopped | timed out | interrupted; "" while running
 }
 
 // Quick-add backlog capture: a TUI overlay lets the user

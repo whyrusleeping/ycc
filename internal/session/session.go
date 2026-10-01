@@ -1783,6 +1783,18 @@ func (s *Session) run() {
 }
 
 // defaultPrompt is the starting instruction for a mode when the user gives none.
+// presetPrompt returns a known preset's opening prompt when it applies to mode,
+// so a client can start a preset session (e.g. a one-tap "groom memory") by
+// name without carrying the prompt text. Unknown presets yield "".
+func presetPrompt(preset, mode string) string {
+	for _, p := range orchestrator.Presets() {
+		if p.Name == preset && p.Mode == mode {
+			return p.Prompt
+		}
+	}
+	return ""
+}
+
 func defaultPrompt(mode string) string {
 	switch mode {
 	case "chat":
@@ -1876,6 +1888,19 @@ type Manager struct {
 	gitSyncCtx      context.Context
 	gitSyncCancel   context.CancelFunc
 	gitSyncWG       sync.WaitGroup
+
+	// Automatic memory grooming (memorygroom.go). grooms maps a primary tree to
+	// its live automatic groom session id. groomMu is independent of mu so the
+	// scheduler can start a session (which takes mu) while holding it.
+	groomMu     sync.Mutex
+	grooms      map[string]string
+	groomWG     sync.WaitGroup
+	groomCtx    context.Context
+	groomCancel context.CancelFunc
+	groomStop   bool
+	// startMemoryGroom, when non-nil, replaces the real groom session launcher
+	// (test seam).
+	startMemoryGroom func(primary string, status docs.MemoryStatus) (*Session, error)
 }
 
 // NewManager creates a session manager backed by the given model registry. It
@@ -1892,6 +1917,7 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 	integrationCtx, integrationCancel := context.WithCancel(context.Background())
 	gitSyncCtx, gitSyncCancel := context.WithCancel(context.Background())
 	loopCtx, loopCancel := context.WithCancel(context.Background())
+	groomCtx, groomCancel := context.WithCancel(context.Background())
 	m := &Manager{
 		sessions:          map[string]*Session{},
 		historyCache:      map[string]sessionSummaryCacheEntry{},
@@ -1913,6 +1939,9 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 		gitSyncWake:       make(chan struct{}, 1),
 		gitSyncCtx:        gitSyncCtx,
 		gitSyncCancel:     gitSyncCancel,
+		grooms:            map[string]string{},
+		groomCtx:          groomCtx,
+		groomCancel:       groomCancel,
 	}
 	m.integrateAgent = m.runIntegrateSession
 	m.gitSyncWG.Add(1)
@@ -2108,7 +2137,13 @@ func (m *Manager) RenameProject(oldName, newName string) (project.Project, error
 
 // Start creates, persists, and launches a new session.
 func (m *Manager) Start(cfg Config) (*Session, error) {
-	return m.start(cfg, true)
+	s, err := m.start(cfg, true)
+	if err == nil {
+		// A project whose memory is already over budget is groomed even if no
+		// agent writes to it; the scheduler's cooldown bounds this.
+		m.memoryPressure(s.Workspace, s.ID)
+	}
+	return s, err
 }
 
 // initialCoordinator resolves the session-only coordinator selection. An
@@ -2183,6 +2218,9 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 	// The prompt is optional: an empty one (e.g. "work" mode with no suggested
 	// task) gets a sensible per-mode default so the agent has a starting point.
 	prompt := strings.TrimSpace(cfg.Prompt)
+	if prompt == "" {
+		prompt = presetPrompt(cfg.Preset, mode)
+	}
 	if prompt == "" {
 		prompt = defaultPrompt(mode)
 	}
@@ -2663,6 +2701,7 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 	deps.MemorySource = func(kind docs.MemoryKind) docs.MemoryProvenance {
 		return memorySourceFromEvents(id, log.Snapshot(), kind)
 	}
+	deps.MemoryPressure = func(int) string { return m.memoryPressure(absWS, id) }
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{
@@ -3239,6 +3278,16 @@ func (m *Manager) ReclaimAll() {
 	}
 	m.mu.Unlock()
 	m.integrationWG.Wait()
+
+	// Stop scheduling automatic memory grooms and join their watchers, which
+	// reclaim any groom still running.
+	m.groomMu.Lock()
+	if !m.groomStop {
+		m.groomStop = true
+		m.groomCancel()
+	}
+	m.groomMu.Unlock()
+	m.groomWG.Wait()
 
 	m.mu.Lock()
 	sessions := m.sessions

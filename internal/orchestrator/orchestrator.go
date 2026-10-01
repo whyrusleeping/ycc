@@ -120,11 +120,17 @@ type Deps struct {
 	// MemorySource resolves runtime-owned provenance from the durable session
 	// log. It is not exposed as a model-supplied remember parameter.
 	MemorySource func(docs.MemoryKind) docs.MemoryProvenance
-	Implementer  AgentSpec
-	Reviewers    []AgentSpec
-	Asker        Asker
-	MaxTok       int
-	MaxTurns     int // per-Run tool-call turn cap; 0 => engine default backstop
+	// MemoryPressure, when set, is told that active project memory is at/over
+	// its soft budget (after a remember write, or when one was refused). The
+	// daemon uses it to schedule automatic grooming; it returns a status sentence
+	// for the model (e.g. "an automatic memory-groom session … is running") or ""
+	// when nothing was arranged, in which case the store's own advice is shown.
+	MemoryPressure func(activeBytes int) string
+	Implementer    AgentSpec
+	Reviewers      []AgentSpec
+	Asker          Asker
+	MaxTok         int
+	MaxTurns       int // per-Run tool-call turn cap; 0 => engine default backstop
 	// Retry is the subagent retry policy; zero uses the engine default.
 	Retry engine.RetryPolicy
 	// PromptCacheScope prefixes each subagent loop's prompt-cache routing key
@@ -334,7 +340,7 @@ func CoordinatorTools(d *Deps, ws *tools.Workspace, direct bool) *tools.Registry
 	// worktree execution lease so bookkeeping never fails just because a
 	// background implementer/agent (or another session) is mid-run.
 	reg.Add(askUser(d), coordinatorMutation(d, commitTool(d)), updateTask(d),
-		createTask(d), remember(d), tools.Finish())
+		createTask(d), remember(d), forget(d), tools.Finish())
 	return reg
 }
 

@@ -2308,6 +2308,62 @@ public nonisolated struct Ycc_V1_GetMemoryResponse: Sendable {
   /// absolute path to memory.md
   public var path: String = String()
 
+  /// Active prompt memory: the notes injected into every agent prompt (superseded
+  /// and retired audit records excluded), measured against its budgets. Over
+  /// soft_budget the daemon auto-grooms when auto_groom is on; ordinary growth
+  /// past hard_budget is refused.
+  public var activeBytes: Int32 = 0
+
+  public var activeNotes: Int32 = 0
+
+  public var softBudget: Int32 = 0
+
+  public var hardBudget: Int32 = 0
+
+  /// daemon-scheduled grooming enabled (memory.auto_groom)
+  public var autoGroom: Bool = false
+
+  /// live automatic groom session; "" when none
+  public var groomSessionID: String = String()
+
+  /// latest automatic groom; unset when none has run
+  public var lastGroom: Ycc_V1_MemoryGroomRun {
+    get {_lastGroom ?? Ycc_V1_MemoryGroomRun()}
+    set {_lastGroom = newValue}
+  }
+  /// Returns true if `lastGroom` has been explicitly set.
+  public var hasLastGroom: Bool {self._lastGroom != nil}
+  /// Clears the value of `lastGroom`. Subsequent reads from it will return its default value.
+  public mutating func clearLastGroom() {self._lastGroom = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _lastGroom: Ycc_V1_MemoryGroomRun? = nil
+}
+
+/// One daemon-scheduled automatic memory groom.
+public nonisolated struct Ycc_V1_MemoryGroomRun: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var sessionID: String = String()
+
+  public var startedUnix: Int64 = 0
+
+  /// 0 while running or if interrupted before recording
+  public var finishedUnix: Int64 = 0
+
+  public var activeBefore: Int32 = 0
+
+  /// 0 until finished
+  public var activeAfter: Int32 = 0
+
+  /// finished | error | stopped | timed out | interrupted; "" while running
+  public var outcome: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -7619,7 +7675,7 @@ nonisolated extension Ycc_V1_GetMemoryRequest: SwiftProtobuf.Message, SwiftProto
 
 nonisolated extension Ycc_V1_GetMemoryResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GetMemoryResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}content\0\u{1}path\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}content\0\u{1}path\0\u{3}active_bytes\0\u{3}active_notes\0\u{3}soft_budget\0\u{3}hard_budget\0\u{3}auto_groom\0\u{3}groom_session_id\0\u{3}last_groom\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -7629,24 +7685,118 @@ nonisolated extension Ycc_V1_GetMemoryResponse: SwiftProtobuf.Message, SwiftProt
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.content) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.path) }()
+      case 3: try { try decoder.decodeSingularInt32Field(value: &self.activeBytes) }()
+      case 4: try { try decoder.decodeSingularInt32Field(value: &self.activeNotes) }()
+      case 5: try { try decoder.decodeSingularInt32Field(value: &self.softBudget) }()
+      case 6: try { try decoder.decodeSingularInt32Field(value: &self.hardBudget) }()
+      case 7: try { try decoder.decodeSingularBoolField(value: &self.autoGroom) }()
+      case 8: try { try decoder.decodeSingularStringField(value: &self.groomSessionID) }()
+      case 9: try { try decoder.decodeSingularMessageField(value: &self._lastGroom) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
     if !self.content.isEmpty {
       try visitor.visitSingularStringField(value: self.content, fieldNumber: 1)
     }
     if !self.path.isEmpty {
       try visitor.visitSingularStringField(value: self.path, fieldNumber: 2)
     }
+    if self.activeBytes != 0 {
+      try visitor.visitSingularInt32Field(value: self.activeBytes, fieldNumber: 3)
+    }
+    if self.activeNotes != 0 {
+      try visitor.visitSingularInt32Field(value: self.activeNotes, fieldNumber: 4)
+    }
+    if self.softBudget != 0 {
+      try visitor.visitSingularInt32Field(value: self.softBudget, fieldNumber: 5)
+    }
+    if self.hardBudget != 0 {
+      try visitor.visitSingularInt32Field(value: self.hardBudget, fieldNumber: 6)
+    }
+    if self.autoGroom != false {
+      try visitor.visitSingularBoolField(value: self.autoGroom, fieldNumber: 7)
+    }
+    if !self.groomSessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.groomSessionID, fieldNumber: 8)
+    }
+    try { if let v = self._lastGroom {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 9)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Ycc_V1_GetMemoryResponse, rhs: Ycc_V1_GetMemoryResponse) -> Bool {
     if lhs.content != rhs.content {return false}
     if lhs.path != rhs.path {return false}
+    if lhs.activeBytes != rhs.activeBytes {return false}
+    if lhs.activeNotes != rhs.activeNotes {return false}
+    if lhs.softBudget != rhs.softBudget {return false}
+    if lhs.hardBudget != rhs.hardBudget {return false}
+    if lhs.autoGroom != rhs.autoGroom {return false}
+    if lhs.groomSessionID != rhs.groomSessionID {return false}
+    if lhs._lastGroom != rhs._lastGroom {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_MemoryGroomRun: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".MemoryGroomRun"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{3}started_unix\0\u{3}finished_unix\0\u{3}active_before\0\u{3}active_after\0\u{1}outcome\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
+      case 2: try { try decoder.decodeSingularInt64Field(value: &self.startedUnix) }()
+      case 3: try { try decoder.decodeSingularInt64Field(value: &self.finishedUnix) }()
+      case 4: try { try decoder.decodeSingularInt32Field(value: &self.activeBefore) }()
+      case 5: try { try decoder.decodeSingularInt32Field(value: &self.activeAfter) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.outcome) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.sessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 1)
+    }
+    if self.startedUnix != 0 {
+      try visitor.visitSingularInt64Field(value: self.startedUnix, fieldNumber: 2)
+    }
+    if self.finishedUnix != 0 {
+      try visitor.visitSingularInt64Field(value: self.finishedUnix, fieldNumber: 3)
+    }
+    if self.activeBefore != 0 {
+      try visitor.visitSingularInt32Field(value: self.activeBefore, fieldNumber: 4)
+    }
+    if self.activeAfter != 0 {
+      try visitor.visitSingularInt32Field(value: self.activeAfter, fieldNumber: 5)
+    }
+    if !self.outcome.isEmpty {
+      try visitor.visitSingularStringField(value: self.outcome, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_MemoryGroomRun, rhs: Ycc_V1_MemoryGroomRun) -> Bool {
+    if lhs.sessionID != rhs.sessionID {return false}
+    if lhs.startedUnix != rhs.startedUnix {return false}
+    if lhs.finishedUnix != rhs.finishedUnix {return false}
+    if lhs.activeBefore != rhs.activeBefore {return false}
+    if lhs.activeAfter != rhs.activeAfter {return false}
+    if lhs.outcome != rhs.outcome {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

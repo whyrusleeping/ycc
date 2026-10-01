@@ -1444,7 +1444,27 @@ func (s *Server) GetMemory(_ context.Context, req *connect.Request[v1.GetMemoryR
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	return connect.NewResponse(&v1.GetMemoryResponse{Content: content, Path: store.MemoryPath()}), nil
+	status := docs.MemoryStatusOf(content)
+	resp := &v1.GetMemoryResponse{
+		Content: content, Path: store.MemoryPath(),
+		ActiveBytes: int32(status.ActiveBytes), ActiveNotes: int32(status.ActiveNotes),
+		SoftBudget: int32(status.SoftBudget), HardBudget: int32(status.HardBudget),
+	}
+	if info, err := s.mgr.MemoryGroomInfo(req.Msg.Project); err == nil {
+		resp.AutoGroom = info.Enabled
+		resp.GroomSessionId = info.RunningSession
+		if last := info.Last; last.LastSession != "" {
+			run := &v1.MemoryGroomRun{
+				SessionId: last.LastSession, StartedUnix: last.LastStarted.Unix(),
+				ActiveBefore: int32(last.ActiveBefore), ActiveAfter: int32(last.ActiveAfter), Outcome: last.Outcome,
+			}
+			if !last.LastFinished.IsZero() {
+				run.FinishedUnix = last.LastFinished.Unix()
+			}
+			resp.LastGroom = run
+		}
+	}
+	return connect.NewResponse(resp), nil
 }
 
 // CaptureBacklogItem runs the lightweight, off-stream quick-add capture agent to

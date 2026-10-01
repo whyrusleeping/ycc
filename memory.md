@@ -23,6 +23,7 @@
 - 2026-09-15: connect-swift URLSessionHTTPClient delivers unary callbacks on the main delegate queue (verified 1.0.0/1.2.x); codec decoding runs inline there. RetryGuardHTTPClient now forwards unary completions off-main, while SessionViewModel separately detaches projection folding.
 - 2026-09-19: Anthropic caps images at 2000px/side once a request has >20 images (else 8000px); since images accumulate in history this bricks a session — internal/imagefit downscales at both ingestion points (server.validateInputImages, tools.readMedia).
 - 2026-09-20: ChatGPT Codex backend derives prompt-cache affinity from the `session-id` header (plus prompt_cache_key body); engine.Loop.PromptCacheKey (<session>/<actor>) feeds both via gollama ExtraBody, openai backend only — strict openai-compatible servers reject unknown fields (0396).
+- 2026-09-30 [measured observation] internal/docs TestRepositoryDocsConfig fails in the live tree because the untracked .ycc/config.toml doc_globs add docs/*.md; it passes on a git-archive checkout of HEAD, so it is not a regression signal. <!-- ycc-memory id=m-dlsckdocvvcy kind=observation session=s_380a6fd9f8852773 event=661 actor=coordinator scope=workspace classified=model -->
 
 ## Environment & tooling
 

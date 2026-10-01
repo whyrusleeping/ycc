@@ -157,10 +157,13 @@ type model struct {
 	gitBranch string // current branch name; "" => not a git workspace / unknown
 	gitDirty  bool   // working tree has uncommitted changes
 	// today's spend, populated from a throttled GetUsage over just today's log.
-	todaySpend       float64   // total $ spent today (0 => segment dropped)
-	todaySpendStatus string    // priced | partial | "" (unknown/loaded-but-empty)
-	todaySpendLoaded bool      // a spend fetch has completed at least once
-	lastSpendFetch   time.Time // throttle: refetch today's spend at most ~once/60s
+	todaySpend       float64 // total $ spent today (0 => segment dropped)
+	todaySpendStatus string  // priced | partial | "" (unknown/loaded-but-empty)
+	todaySpendLoaded bool    // a spend fetch has completed at least once
+	// memStatus is the project's memory budget status (content dropped), shown
+	// on the memory-groom menu entry; nil until loaded.
+	memStatus      *v1.GetMemoryResponse
+	lastSpendFetch time.Time // throttle: refetch today's spend at most ~once/60s
 	// lastSession is the most recent resumable session, used for the "c continue
 	// last session" one-key affordance. nil => no session to continue.
 	lastSession *v1.SessionSummary
@@ -1018,6 +1021,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.todaySpend, m.todaySpendStatus, m.todaySpendLoaded = msg.cost, msg.status, true
+		return m, nil
+	case menuMemoryMsg:
+		if msg.projectSeq != 0 && msg.projectSeq != m.projectSeq {
+			return m, nil
+		}
+		if msg.err == nil {
+			m.memStatus = msg.status
+		}
 		return m, nil
 	case menuRefreshMsg:
 		// Drop a stale tick from a previous menu visit (seq guards against

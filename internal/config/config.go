@@ -591,6 +591,8 @@ type Config struct {
 	// logs. All fields default to 0 (disabled) — conservative by
 	// default so nothing is reaped or pruned unless explicitly opted in.
 	GC GC `toml:"gc,omitempty"`
+	// Memory configures project-memory maintenance.
+	Memory Memory `toml:"memory,omitempty"`
 	// Budget configures optional spend caps that turn the existing usage/cost
 	// telemetry into an enforced guard. All fields
 	// default to 0 (unlimited) — absent config preserves today's behaviour.
@@ -719,6 +721,15 @@ type GC struct {
 	IntervalSeconds    int `toml:"interval_seconds,omitempty"`
 	IdleTimeoutMinutes int `toml:"idle_timeout_minutes,omitempty"`
 	LogRetentionDays   int `toml:"log_retention_days,omitempty"`
+}
+
+// Memory configures project-memory (memory.md) maintenance. AutoGroom, on by
+// default, lets the daemon start an unattended memory-groom session (with the
+// memory-groom preset binding, else the default coordinator) when a project's
+// active prompt memory crosses its soft budget. Set auto_groom = false to leave
+// grooming entirely to users.
+type Memory struct {
+	AutoGroom *bool `toml:"auto_groom,omitempty"`
 }
 
 // Budget configures optional spend caps. Session and unattended work-loop caps
@@ -1029,6 +1040,14 @@ func (r *Registry) MaxTurns() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.cfg.MaxTurns
+}
+
+// MemoryAutoGroom reports whether daemon-scheduled memory grooming is enabled
+// (memory.auto_groom; default true).
+func (r *Registry) MemoryAutoGroom() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.cfg.Memory.AutoGroom == nil || *r.cfg.Memory.AutoGroom
 }
 
 // GC returns the configured GC interval, idle timeout, and log retention as

@@ -674,6 +674,12 @@ func TestGetMemory(t *testing.T) {
 	if got.Msg.GetPath() != filepath.Join(ws, "memory.md") {
 		t.Fatalf("GetMemory path = %q, want %q", got.Msg.GetPath(), filepath.Join(ws, "memory.md"))
 	}
+	// Budget status: the active prompt rendering is measured against the budgets,
+	// and auto-grooming defaults on with nothing running yet.
+	if m := got.Msg; m.GetActiveNotes() != 1 || m.GetActiveBytes() <= 0 || m.GetSoftBudget() != docs.MemorySoftBudget ||
+		m.GetHardBudget() != docs.MemoryHardBudget || !m.GetAutoGroom() || m.GetGroomSessionId() != "" || m.GetLastGroom() != nil {
+		t.Fatalf("GetMemory status = %+v", m)
+	}
 
 	if _, err := srv.GetMemory(ctx, connect.NewRequest(&v1.GetMemoryRequest{Project: "nope"})); err == nil {
 		t.Fatal("GetMemory with bogus project: expected error")

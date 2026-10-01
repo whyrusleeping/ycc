@@ -511,8 +511,8 @@ func TestRememberRegisteredForCoordinatorRoles(t *testing.T) {
 	d := depsFor(t)
 	for _, mode := range []string{"chat", "pm", "work"} {
 		reg, _ := BuildMode(mode, d, false)
-		if !hasTool(reg, "remember") {
-			t.Fatalf("mode %q should have the remember tool", mode)
+		if !hasTool(reg, "remember") || !hasTool(reg, "forget") {
+			t.Fatalf("mode %q should have the remember and forget tools", mode)
 		}
 	}
 }
@@ -550,7 +550,7 @@ func TestRememberSoftNudgeThenHardRefusal(t *testing.T) {
 	d := depsFor(t)
 
 	// Over soft budget, under hard ceiling: recorded, with a nudge.
-	overSoft := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 75)
+	overSoft := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 120)
 	if err := os.WriteFile(d.Docs.MemoryPath(), []byte(overSoft), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -566,7 +566,7 @@ func TestRememberSoftNudgeThenHardRefusal(t *testing.T) {
 	}
 
 	// Over the hard ceiling: refused with consolidate guidance.
-	overHard := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 250)
+	overHard := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 400)
 	if err := os.WriteFile(d.Docs.MemoryPath(), []byte(overHard), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -574,8 +574,75 @@ func TestRememberSoftNudgeThenHardRefusal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("remember returned a hard error: %v", err)
 	}
-	if !res.IsError || !strings.Contains(res.Content, "consolidate") {
+	if !res.IsError || !strings.Contains(res.Content, "consolidate") || !strings.Contains(res.Content, "Largest active notes") {
 		t.Fatalf("expected a hard-ceiling error result mentioning consolidate; got IsError=%v %q", res.IsError, res.Content)
+	}
+}
+
+// With a daemon memory-pressure hook, the over-budget writer is told grooming
+// is handled instead of being asked to groom mid-task; a refusal also names it.
+func TestRememberDefersToAutomaticGroom(t *testing.T) {
+	d := depsFor(t)
+	var calls []int
+	d.MemoryPressure = func(active int) string {
+		calls = append(calls, active)
+		return "an automatic memory-groom session (s_groom) is already consolidating project memory"
+	}
+	overSoft := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 120)
+	if err := os.WriteFile(d.Docs.MemoryPath(), []byte(overSoft), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, _ := remember(d).Call(context.Background(), map[string]any{"note": "keep me"})
+	if res.IsError || !strings.Contains(res.Content, "s_groom") || strings.Contains(res.Content, "forget") {
+		t.Fatalf("over-soft write should report the automatic groom instead of asking for manual grooming: %q", res.Content)
+	}
+	if len(calls) != 1 || calls[0] < docs.MemorySoftBudget {
+		t.Fatalf("pressure hook calls = %v", calls)
+	}
+
+	overHard := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 400)
+	if err := os.WriteFile(d.Docs.MemoryPath(), []byte(overHard), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, _ = remember(d).Call(context.Background(), map[string]any{"note": "x"})
+	if !res.IsError || !strings.Contains(res.Content, "s_groom") || !strings.Contains(res.Content, "retry") {
+		t.Fatalf("refusal should name the running groom: %q", res.Content)
+	}
+
+	// Under the soft budget the hook is not consulted.
+	calls = nil
+	if err := os.WriteFile(d.Docs.MemoryPath(), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if res, _ := remember(d).Call(context.Background(), map[string]any{"note": "small"}); res.IsError || len(calls) != 0 {
+		t.Fatalf("under-budget write consulted the hook: %v %q", calls, res.Content)
+	}
+}
+
+func TestForgetRetiresNotesAndEmitsDocUpdated(t *testing.T) {
+	rec := &captureRec{}
+	d := depsFor(t)
+	d.Emitter = event.NewEmitter(rec, "coordinator")
+	a, err := d.Docs.AppendMemory("stale gotcha", "gotcha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := forget(d).Call(context.Background(), map[string]any{"ids": []any{a.ID}, "reason": "fixed in 0405"})
+	if err != nil || res.IsError || !strings.Contains(res.Content, "retired "+a.ID) {
+		t.Fatalf("forget: %v %q", err, res.Content)
+	}
+	if prompt := assemble("X", false, d.Workspace, true); strings.Contains(prompt, "stale gotcha") {
+		t.Fatalf("retired note still injected:\n%s", prompt)
+	}
+	var saw bool
+	for _, ev := range rec.events {
+		saw = saw || (ev.Type == event.DocUpdated && ev.Data["doc"] == "memory")
+	}
+	if !saw {
+		t.Fatal("forget should emit doc_updated for memory")
+	}
+	if res, _ := forget(d).Call(context.Background(), map[string]any{"ids": []any{"m-unknown"}}); !res.IsError {
+		t.Fatalf("unknown id should be an error result: %q", res.Content)
 	}
 }
 
@@ -636,7 +703,7 @@ func TestFreshSessionPromptOmitsSupersededPolicy(t *testing.T) {
 	if strings.Contains(prompt, "user's benchmark rule") {
 		t.Fatalf("fresh session resurrected superseded invented policy:\n%s", prompt)
 	}
-	for _, want := range []string{"No benchmark variance threshold exists", "user-stated guidance", "candidate evidence: session s_vals event #694", "not verified authority", "not instructions, approved design, or authorization"} {
+	for _, want := range []string{"No benchmark variance threshold exists", "[user-stated; ", "s_vals#694/user", "not verified authority", "not instructions, approved design, or authorization"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("fresh session prompt missing %q:\n%s", want, prompt)
 		}

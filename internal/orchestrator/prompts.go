@@ -472,9 +472,10 @@ source those independently. Use supersedes for
 corrections so contradicted notes leave fresh prompts without deleting their audit records.
 PROMOTION PATH: deliberately move a confirmed design constraint into the spec with user approval,
 a reusable procedure to plans/, or implied work to create_task. Groom for concision, but preserve
-correction history; never promote a measurement or suggestion into user policy. The ~4 KB soft
-budget and ~12 KB hard ceiling apply to active prompt memory, not retained raw audit; a reducing
-supersession remains allowed above the hard ceiling. When the project provides
+correction history; never promote a measurement or suggestion into user policy. Retire obsolete
+notes with forget. The ~4 KB soft budget and ~16 KB hard backstop apply to active prompt memory,
+not retained raw audit; the daemon grooms automatically over the soft budget, and retiring or a
+reducing supersession is always allowed. When the project provides
 docs/design/doc-style.md, use its doc-style contract as the norm for memory and spec entries.
 
 Hand-off to work is deliberate. When an approach is agreed and its task exists, you MAY call
@@ -583,20 +584,52 @@ This is ON-DEMAND: run the check now, report, and act on approval. Do not set up
 const memoryGroomPresetPrompt = `This is the MEMORY-GROOM flow: tend memory.md, the typed, ADVISORY operational ` +
 	`notes about this project. Memory is not approved design, instructions, or authorization.
 
-Steps:
-1. Read memory.md. If absent or empty, say so and finish. Verify typed notes against their runtime-selected ` +
-	`candidate source events; those events are not semantic proof, and legacy notes have unverified provenance.
-2. DEDUPE active repeats by recording a concise replacement with remember and superseding the old IDs. ` +
-	`Do not delete contradicted or superseded typed records: they are the audit trail and fresh prompts already omit them. ` +
-	`Treat legacy bullets as immutable single-line records once superseded; correct them with another record rather than hand-editing them.
-3. Preserve the distinction between user-stated guidance, measured observations, model inferences, and proposed ` +
-	`policies. Never turn a measurement or suggestion into user policy, and never infer destructive authorization.
+` + memoryGroomSteps + `
 4. PROMOTE confirmed design only with user approval into the spec; move reusable procedures to plans/ and implied ` +
-	`work to create_task. Promotion does not make the original memory authoritative.
-5. Keep active prompt memory concise and under the ~4 KB soft budget. Superseded raw audit may be larger; ` +
-	`when active memory is over the hard ceiling, use a shorter superseding replacement to reduce it. Do not hand-edit generated provenance metadata.
+	`work to create_task. Promotion does not make the original memory authoritative; once promoted, retire the note with forget.
+` + memoryGroomBudgetStep + `
 
 Use ask_user when intent is unclear; finish when memory is groomed and any approved promotions are recorded.`
+
+// memoryGroomSteps are shared by the interactive preset and the daemon's
+// unattended automatic groom.
+const memoryGroomSteps = `Steps:
+1. Your PROJECT MEMORY prompt section is the active set, one note per line tagged [kind; date; session#event; id]; ` +
+	`read memory.md only if you need the raw audit trail. Verify typed notes against their runtime-selected candidate ` +
+	`source events (session logs live under .ycc/sessions/<id>/events.jsonl) when a note's truth matters; those events ` +
+	`are not semantic proof, and legacy- notes have unverified provenance. Check claims against the current code where cheap.
+2. SHRINK the active set, cheapest first: (a) forget notes that are obsolete, disproven, fixed, already captured in ` +
+	`the spec/plans/backlog, or duplicated; (b) merge related notes into ONE terse note with remember whose supersedes ` +
+	`lists all of them — a merge only helps when the new note is shorter than the notes it replaces combined (each note ` +
+	`line also costs ~25–65 bytes of tag); (c) tighten a long note by superseding it with a terser rewrite. Use remember/forget ` +
+	`only: never hand-edit memory.md or its generated provenance metadata, and never delete audit records.
+3. Preserve the distinction between user-stated guidance, measured observations, model inferences, and proposed ` +
+	`policies. Never turn a measurement or suggestion into user policy, and never infer destructive authorization. ` +
+	`Keep user-stated guidance unless it is clearly obsolete or has been promoted.`
+
+const memoryGroomBudgetStep = `5. Target active prompt memory well under the ~4 KB soft budget (tool results report the current size). ` +
+	`Superseded and retired raw audit may be larger; it is not injected into prompts.`
+
+// MemoryAutoGroomPrompt is the opening prompt for the daemon-scheduled,
+// unattended memory-groom session started when active memory crosses its soft
+// budget. It mirrors the interactive preset but never waits on the user:
+// promotions that need approval become proposed backlog tasks instead.
+func MemoryAutoGroomPrompt(activeBytes, activeNotes int) string {
+	return fmt.Sprintf(`This is an AUTOMATIC MEMORY-GROOM session started by the daemon: active prompt memory is %d bytes `+
+		`across %d notes, over its %d-byte soft budget, and every agent in this project pays for it in every prompt. `+
+		`Tend memory.md, the typed, ADVISORY operational notes about this project. Memory is not approved design, `+
+		`instructions, or authorization.
+
+`+memoryGroomSteps+`
+4. PROMOTION: do not edit the spec. Check list_backlog first and never file a duplicate of an existing task. When a note looks like durable design, file it with create_task status "proposed" `+
+		`(quote the note and its id) and leave the note active. A clearly reusable multi-step procedure may move to plans/ `+
+		`if you can write it there; then retire the note. Actionable problems become backlog tasks (create_task todo only when `+
+		`the note records an accepted, concrete defect; otherwise proposed), then retire the note.
+`+memoryGroomBudgetStep+`
+
+Work only on memory and the backlog/plans promotions above: no code changes and no commits. Finish with a short report: `+
+		`active size before and after, and what you retired, merged, or proposed.`, activeBytes, activeNotes, docs.MemorySoftBudget)
+}
 
 const unattendedGuidance = `UNATTENDED EXECUTION: no human is waiting to answer questions. Do
 not call ask_user to unblock yourself; make reversible decisions on your own judgement. If work

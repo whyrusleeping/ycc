@@ -124,6 +124,14 @@ type menuSpendMsg struct {
 	err        error
 }
 
+// menuMemoryMsg carries the project's memory budget status for the home
+// menu's memory-groom entry. Errors are ignored silently.
+type menuMemoryMsg struct {
+	status     *v1.GetMemoryResponse
+	projectSeq int
+	err        error
+}
+
 // transcriptMsg carries a session's replayed event log for the read-only
 // transcript drill-in, or an error if the fetch failed.
 type transcriptMsg struct {

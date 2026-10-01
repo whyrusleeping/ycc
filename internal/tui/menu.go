@@ -146,7 +146,7 @@ func (m model) menuRefreshTick() tea.Cmd {
 // tick can't multiply the in-flight timers.
 func (m *model) refreshMenu() tea.Cmd {
 	m.waitingSeq++
-	cmds := []tea.Cmd{m.fetchBacklog, m.fetchWaitingSessions, m.fetchWorkLoop(), m.menuRefreshTick()}
+	cmds := []tea.Cmd{m.fetchBacklog, m.fetchWaitingSessions, m.fetchWorkLoop(), m.fetchMemoryStatus, m.menuRefreshTick()}
 	// Persistent/remote mode projects daemon-host paths that may not exist on the
 	// client machine. ListProjects is authoritative there; shell out only for the
 	// one-shot local workspace.
@@ -170,6 +170,41 @@ func (m *model) maybeFetchSpend() tea.Cmd {
 	}
 	m.lastSpendFetch = time.Now()
 	return m.fetchTodaySpend
+}
+
+// fetchMemoryStatus loads the project's active-memory size, budgets, and any
+// running automatic groom for the memory-groom menu entry. The markdown body is
+// dropped: the menu only needs the numbers.
+func (m model) fetchMemoryStatus() tea.Msg {
+	seq := m.projectSeq
+	resp, err := m.client.GetMemory(m.ctx, connect.NewRequest(&v1.GetMemoryRequest{Project: m.project}))
+	if err != nil {
+		return menuMemoryMsg{projectSeq: seq, err: err}
+	}
+	resp.Msg.Content = ""
+	return menuMemoryMsg{projectSeq: seq, status: resp.Msg}
+}
+
+// memoryGroomPresetName is the preset whose menu row carries memory status.
+const memoryGroomPresetName = "memory-groom"
+
+// memoryEntrySuffix annotates the memory-groom entry: active size against the
+// soft budget, and whether the daemon's automatic groom is running. over reports
+// whether memory is over its soft budget (the row is then highlighted).
+func memoryEntrySuffix(st *v1.GetMemoryResponse) (suffix string, over bool) {
+	if st == nil || st.SoftBudget <= 0 {
+		return "", false
+	}
+	kb := func(n int32) string { return fmt.Sprintf("%.1f KB", float64(n)/1024) }
+	suffix = fmt.Sprintf(" · memory %s / %s", kb(st.ActiveBytes), kb(st.SoftBudget))
+	over = st.ActiveBytes >= st.SoftBudget
+	switch {
+	case st.GroomSessionId != "":
+		suffix += " · auto-groom running (enter to watch)"
+	case over:
+		suffix += " · over budget — enter to groom now"
+	}
+	return suffix, over
 }
 
 // fetchGitInfo reads the current git branch and working-tree dirtiness of the
@@ -341,6 +376,13 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// prompt on a plain mode entry is sent as-is; an empty prompt falls
 			// back to the preset's opening prompt alone.
 			prompt := strings.TrimSpace(m.prompt.Value())
+			// While the daemon's automatic groom is running, the memory-groom entry
+			// attaches to it instead of starting a second, competing groom.
+			if e.preset == memoryGroomPresetName && prompt == "" && m.memStatus != nil && m.memStatus.GroomSessionId != "" {
+				id := m.memStatus.GroomSessionId
+				m.status = "opening automatic memory groom " + short(id) + "…"
+				return m, m.reopenSession(id)
+			}
 			switch {
 			case prompt == "":
 				prompt = e.openingPrompt
@@ -388,7 +430,17 @@ func (m model) menuView() string {
 			lbl = e.label + " (loop)"
 			desc = "Chew through every ready backlog task unattended — stuck tasks are marked blocked and skipped."
 		}
-		label := fmt.Sprintf("%-9s %s", lbl, dimStyle.Render(desc))
+		memSuffix, memOver := "", false
+		if e.preset == memoryGroomPresetName {
+			memSuffix, memOver = memoryEntrySuffix(m.memStatus)
+		}
+		renderSuffix := func() string {
+			if memOver {
+				return warnStyle.Render(memSuffix)
+			}
+			return dimStyle.Render(memSuffix)
+		}
+		label := fmt.Sprintf("%-9s %s", lbl, dimStyle.Render(desc)) + renderSuffix()
 		switch {
 		case i == m.cursor && e.prominent:
 			// Selected AND recommended: keep the selection treatment but still
@@ -398,7 +450,7 @@ func (m model) menuView() string {
 			label = selStyle.Render("★ "+fmt.Sprintf("%-7s ", e.label)) + dimStyle.Render(e.description+"  (recommended)")
 		case i == m.cursor:
 			cursor = selStyle.Render("▸ ")
-			label = selStyle.Render(fmt.Sprintf("%-9s ", lbl)) + dimStyle.Render(desc)
+			label = selStyle.Render(fmt.Sprintf("%-9s ", lbl)) + dimStyle.Render(desc) + renderSuffix()
 		case e.prominent:
 			// Surface a recommended entry (e.g. onboarding on an un-onboarded
 			// workspace) so it stands out without stealing the cursor highlight.

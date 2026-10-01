@@ -505,6 +505,23 @@ public final class YccClient: Sendable {
         }
     }
 
+    /// Start a named preset session (e.g. `memory-groom`) without carrying its
+    /// opening prompt: the daemon fills in the preset's prompt and applies any
+    /// `roles.presets` model binding. Returns the new session id.
+    public func startPresetSession(project: String = "", preset: String, mode: String) async throws -> String {
+        var request = Ycc_V1_StartSessionRequest()
+        request.project = project
+        request.mode = mode
+        request.preset = preset
+        let response = await generatedBulk.startSession(request: request)
+        switch response.result {
+        case .success(let message):
+            return message.sessionID
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
     /// Start a new session (`StartSession`, docs/remote-api.md "StartSession").
     /// `project` names a registered workspace; empty is accepted only when exactly
     /// one project exists. `coordinatorModel` optionally overrides the coordinator's

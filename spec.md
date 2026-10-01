@@ -246,8 +246,13 @@ their backlog task when complexity warrants a durable plan.
 `memory.md` stores bounded, categorized empirical observations about working on the project. It is
 committed and available to agents, but is explicitly advisory, may be stale, and is excluded from
 spec checking. Confirmed design constraints move into the spec; reusable procedures move into
-plans; implied work becomes backlog tasks. `docs/design/project-memory.md` retains the rationale
-for this normative/empirical split.
+plans; implied work becomes backlog tasks. Coordinators add notes with `remember` (optionally
+superseding earlier notes) and retire notes without replacement with `forget`; only active notes
+enter prompts. When active memory crosses its soft budget the daemon schedules an unattended
+memory-groom pm session (preset model binding, else the default coordinator), bounded to one per
+project with a cooldown and regrowth threshold; `memory.auto_groom = false` disables it.
+`docs/design/project-memory.md` retains the rationale for this normative/empirical split and the
+budget mechanics.
 
 ### 6.4 Spec drift checking
 
@@ -526,7 +531,8 @@ surface; `docs/design/forge-integration.md` records that trust-boundary decision
 - **work** drives one accepted task through implementation, proportional review, backlog update,
   and commit.
 
-A prompt entered with a preset composes with the preset rather than replacing it. A pm-to-work
+A prompt entered with a preset composes with the preset rather than replacing it; a preset started
+with no prompt uses the preset's own opening prompt. A pm-to-work
 handoff requires explicit approval and carries the selected task and planning context. Mode
 transitions are recorded; clients start sessions and otherwise project the daemon-owned state.
 

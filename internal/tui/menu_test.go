@@ -385,6 +385,43 @@ func TestPresetMenuEntrySendsPresetName(t *testing.T) {
 	}
 }
 
+// The memory-groom row shows active memory against its budget; while the
+// daemon's automatic groom runs, enter attaches to it instead of starting a
+// competing groom.
+func TestMemoryGroomEntryShowsStatusAndAttachesRunningGroom(t *testing.T) {
+	fc := newFakeClient()
+	fc.memory = &v1.GetMemoryResponse{Content: "big", ActiveBytes: 10240, SoftBudget: 4096, HardBudget: 16384, AutoGroom: true}
+	m := model{
+		client: fc, ctx: context.Background(), state: stateMenu, project: "p",
+		entries:  []menuEntry{{label: "memory-groom", mode: "pm", preset: "memory-groom", openingPrompt: "groom memory"}},
+		expanded: map[int]bool{}, bodyCache: map[int]string{}, selected: -1,
+	}
+	m.prompt = newChatInput("test")
+	msg := m.fetchMemoryStatus().(menuMemoryMsg)
+	if msg.status.Content != "" {
+		t.Fatal("menu status should drop the memory body")
+	}
+	nm, _ := m.Update(msg)
+	m = nm.(model)
+	view := m.menuView()
+	if !strings.Contains(view, "memory 10.0 KB / 4.0 KB") || !strings.Contains(view, "enter to groom now") {
+		t.Fatalf("memory status missing from menu:\n%s", view)
+	}
+
+	m.memStatus.GroomSessionId = "s_autogroom"
+	if view := m.menuView(); !strings.Contains(view, "auto-groom running") {
+		t.Fatalf("running groom not shown:\n%s", view)
+	}
+	_, cmd := m.Update(keyMsg("enter"))
+	if cmd == nil {
+		t.Fatal("enter did nothing")
+	}
+	cmd()
+	if fc.lastReopened != "s_autogroom" || fc.lastStartReq != nil {
+		t.Fatalf("enter should attach to the running groom (reopened %q, start %+v)", fc.lastReopened, fc.lastStartReq)
+	}
+}
+
 func TestWorkLoopMenuStartsAndAttachesExisting(t *testing.T) {
 	fc := newFakeClient()
 	m := model{client: fc, ctx: context.Background(), state: stateMenu, project: "p", loop: true,

@@ -149,6 +149,7 @@ func (m *model) resetProjectProjection() {
 	m.digest = false
 	m.gitBranch, m.gitDirty = "", false
 	m.todaySpend, m.todaySpendStatus, m.todaySpendLoaded = 0, "", false
+	m.memStatus = nil
 	m.lastSpendFetch = time.Time{}
 }
 

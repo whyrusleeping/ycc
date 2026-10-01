@@ -809,13 +809,25 @@ The project's agent memory — memory.md at the workspace root (spec §6.3), the
 advisory operational notes agents record across sessions via the `remember`
 tool. Read-only; a missing file returns empty `content` (not an error).
 
+Alongside the raw markdown it reports the prompt cost of the active notes:
+`activeBytes`/`activeNotes` against `softBudget`/`hardBudget`, whether daemon
+auto-grooming is on (`autoGroom`), the live automatic groom session
+(`groomSessionId`, empty when none), and the latest automatic groom
+(`lastGroom`: `sessionId`, `startedUnix`, `finishedUnix` (0 while running),
+`activeBefore`, `activeAfter`, `outcome`). To groom on demand, call
+`StartSession` with `mode: "pm"`, `preset: "memory-groom"` and no prompt — the
+daemon supplies the preset's opening prompt.
+
 ```
 curl -sS -H "$AUTH" -H "$JSON" -d '{}' \
   $B/ycc.v1.SessionService/GetMemory
 ```
 
 ```json
-{"content":"# Project memory\n\n## Lessons learned\n- 2026-07-01: ...","path":"/home/me/code/ycc/memory.md"}
+{"content":"# Project memory\n\n## Lessons learned\n- 2026-07-01: ...","path":"/home/me/code/ycc/memory.md",
+ "activeBytes":5120,"activeNotes":31,"softBudget":4096,"hardBudget":16384,"autoGroom":true,
+ "groomSessionId":"s_1a2b3c4d5e6f7a8b",
+ "lastGroom":{"sessionId":"s_1a2b3c4d5e6f7a8b","startedUnix":"1790000000","activeBefore":5120}}
 ```
 
 ### GetUsage
