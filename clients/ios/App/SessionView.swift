@@ -164,6 +164,15 @@ struct SessionView: View {
     }
 
     var body: some View {
+        // Split into stages: as one ~200-line modifier chain the type checker
+        // gives up ("unable to type-check this expression in reasonable time").
+        // Modifier order is unchanged: navigation, then presentations, then
+        // lifecycle.
+        withLifecycle(withPresentations(withNavigation(transcriptStage)))
+    }
+
+    /// The scrolling transcript with follow-mode pill and anchor restoration.
+    private var transcriptStage: some View {
         ScrollViewReader { proxy in
             ZStack(alignment: .bottom) {
                 transcript(proxy: proxy)
@@ -210,166 +219,185 @@ struct SessionView: View {
                 }
             }
         }
-        .navigationTitle(title)
-        .navigationBarTitleDisplayMode(.inline)
-        // The transcript scrolls the full height of the screen, so without an
-        // opaque bar its text bleeds through behind the status bar and title.
-        .toolbarBackground(.visible, for: .navigationBar)
-        .toolbar { titleToolbar }
-        .toolbar { backlogShortcut }
-        .toolbar { actionMenu }
-        .navigationDestination(item: $commitTarget) { target in
-            DiffView(
-                title: "Commit \(target.shortSha)",
-                content: .commit(project: project, sha: target.sha))
-        }
-        .navigationDestination(item: $workingChangesTarget) { target in
-            DiffView(title: "Working changes", content: .workingChanges(
-                project: project, session: sessionID, task: target.task,
-                knownSnapshot: target.snapshot))
-        }
-        // File links in agent markdown (and path-like code spans) open in a
-        // sheet, resolved against this session's workspace — a workstream's
-        // worktree while it exists — so the transcript keeps its place.
-        .fileLinks(FileLinkContext(project: project, sessionID: sessionID))
-        .sheet(isPresented: $showFiles) {
-            FileSheet(route: FileRoute(
-                project: project, sessionID: sessionID,
-                reference: FileReference(path: "", isDirectory: true)))
-        }
-        .safeAreaInset(edge: .bottom) { bottomChrome }
-        // Manual keyboard avoidance (see KeyboardObserver): the automatic
-        // keyboard safe area under a bottom `safeAreaInset` can get stuck after
-        // sheet dismissals/navigation races (open SwiftUI bug, FB13296535),
-        // stranding the input bar mid-screen with no keyboard beneath it. Opt
-        // the whole screen out of the keyboard safe area and let `bottomChrome`
-        // pad itself by the observed keyboard overlap instead.
-        .ignoresSafeArea(.keyboard, edges: .bottom)
-        .sheet(isPresented: $showSettings) {
-            SessionSettingsView(client: client, sessionID: sessionID)
-        }
-        .sheet(isPresented: $showSessionUsage) {
-            SessionUsageSheet(
-                client: client,
-                project: project,
-                sessionID: sessionID,
-                currentContextTokensEstimate: model.currentContextTokensEstimate)
-        }
-        .sheet(isPresented: $showQuestionSheet) {
-            if let pending = model.pendingQuestion ?? sheetQuestion {
-                QuestionSheet(
-                    pending: pending,
-                    onAnswerSingle: { optionIndex, text in
-                        // The view model closes the gate before the round trip
-                        // and restores it (with an alert) if the answer fails.
-                        let accepted: Bool
-                        if optionIndex >= 0 {
-                            accepted = await model.answer(optionIndex: optionIndex)
-                        } else {
-                            accepted = await model.answer(text: text)
+    }
+
+    /// Title bar, toolbars, pushed destinations, file links and bottom chrome.
+    private func withNavigation(_ content: some View) -> some View {
+        content
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            // The transcript scrolls the full height of the screen, so without an
+            // opaque bar its text bleeds through behind the status bar and title.
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbar { titleToolbar }
+            .toolbar { backlogShortcut }
+            .toolbar { actionMenu }
+            .navigationDestination(item: $commitTarget) { target in
+                DiffView(
+                    title: "Commit \(target.shortSha)",
+                    content: .commit(project: project, sha: target.sha))
+            }
+            .navigationDestination(item: $workingChangesTarget) { target in
+                DiffView(title: "Working changes", content: .workingChanges(
+                    project: project, session: sessionID, task: target.task,
+                    knownSnapshot: target.snapshot))
+            }
+            // File links in agent markdown (and path-like code spans) open in a
+            // sheet, resolved against this session's workspace — a workstream's
+            // worktree while it exists — so the transcript keeps its place.
+            .fileLinks(FileLinkContext(project: project, sessionID: sessionID))
+            .sheet(isPresented: $showFiles) {
+                FileSheet(route: FileRoute(
+                    project: project, sessionID: sessionID,
+                    reference: FileReference(path: "", isDirectory: true)))
+            }
+            .safeAreaInset(edge: .bottom) { bottomChrome }
+            // Manual keyboard avoidance (see KeyboardObserver): the automatic
+            // keyboard safe area under a bottom `safeAreaInset` can get stuck after
+            // sheet dismissals/navigation races (open SwiftUI bug, FB13296535),
+            // stranding the input bar mid-screen with no keyboard beneath it. Opt
+            // the whole screen out of the keyboard safe area and let `bottomChrome`
+            // pad itself by the observed keyboard overlap instead.
+            .ignoresSafeArea(.keyboard, edges: .bottom)
+    }
+
+    /// Sheets, alerts and dialogs, plus the gates that present them.
+    private func withPresentations(_ content: some View) -> some View {
+        content
+            .sheet(isPresented: $showSettings) {
+                SessionSettingsView(client: client, sessionID: sessionID)
+            }
+            .sheet(isPresented: $showSessionUsage) {
+                SessionUsageSheet(
+                    client: client,
+                    project: project,
+                    sessionID: sessionID,
+                    currentContextTokensEstimate: model.currentContextTokensEstimate)
+            }
+            .sheet(isPresented: $showQuestionSheet) {
+                if let pending = model.pendingQuestion ?? sheetQuestion {
+                    QuestionSheet(
+                        pending: pending,
+                        onAnswerSingle: { optionIndex, text in
+                            // The view model closes the gate before the round trip
+                            // and restores it (with an alert) if the answer fails.
+                            let accepted: Bool
+                            if optionIndex >= 0 {
+                                accepted = await model.answer(optionIndex: optionIndex)
+                            } else {
+                                accepted = await model.answer(text: text)
+                            }
+                            if accepted { noteAnswered() }
+                        },
+                        onAnswerBatch: { answers in
+                            if await model.answerBatch(answers) { noteAnswered() }
                         }
-                        if accepted { noteAnswered() }
-                    },
-                    onAnswerBatch: { answers in
-                        if await model.answerBatch(answers) { noteAnswered() }
-                    }
-                )
-                // Tie the sheet's identity to the gate: if `pendingQuestion`
-                // changes shape while the sheet is open (e.g. a reopened session's
-                // resumed agent asks a differently-sized batch), a new `rowID`
-                // rebuilds QuestionSheet with correctly-sized @State instead of
-                // reusing stale `texts`/`selected` arrays and trapping on an
-                // out-of-range index.
-                .id(pending.rowID)
+                    )
+                    // Tie the sheet's identity to the gate: if `pendingQuestion`
+                    // changes shape while the sheet is open (e.g. a reopened session's
+                    // resumed agent asks a differently-sized batch), a new `rowID`
+                    // rebuilds QuestionSheet with correctly-sized @State instead of
+                    // reusing stale `texts`/`selected` arrays and trapping on an
+                    // out-of-range index.
+                    .id(pending.rowID)
+                }
             }
-        }
-        // Present/dismiss the sheet as the pending gate opens and clears — the
-        // event stream is the source of truth (answering here or elsewhere emits
-        // `question_answered`, which clears `pendingQuestion`).
-        // `initial` also presents a question already pending when a cached
-        // session is re-opened (its value never changes, so no edge fires).
-        // That first call arrives mid-push, so it waits for the navigation
-        // transition to settle; the banner and transcript row show the
-        // question meanwhile.
-        .onChange(of: model.pendingQuestion?.rowID, initial: true) { oldRowID, rowID in
-            if let question = model.pendingQuestion { sheetQuestion = question }
-            // A question restored after a failed answer waits behind the banner
-            // rather than re-presenting the sheet over the error alert.
-            let show = rowID != nil && rowID != model.rolledBackQuestionRowID
-            guard show, oldRowID == rowID else {
-                showQuestionSheet = show
-                return
+            // Present/dismiss the sheet as the pending gate opens and clears — the
+            // event stream is the source of truth (answering here or elsewhere emits
+            // `question_answered`, which clears `pendingQuestion`).
+            // `initial` also presents a question already pending when a cached
+            // session is re-opened (its value never changes, so no edge fires).
+            // That first call arrives mid-push, so it waits for the navigation
+            // transition to settle; the banner and transcript row show the
+            // question meanwhile.
+            .onChange(of: model.pendingQuestion?.rowID, initial: true) { oldRowID, rowID in
+                if let question = model.pendingQuestion { sheetQuestion = question }
+                // A question restored after a failed answer waits behind the banner
+                // rather than re-presenting the sheet over the error alert.
+                let show = rowID != nil && rowID != model.rolledBackQuestionRowID
+                guard show, oldRowID == rowID else {
+                    showQuestionSheet = show
+                    return
+                }
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 450_000_000)
+                    guard model.pendingQuestion?.rowID == rowID, !showQuestionSheet else { return }
+                    showQuestionSheet = true
+                }
             }
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 450_000_000)
-                guard model.pendingQuestion?.rowID == rowID, !showQuestionSheet else { return }
-                showQuestionSheet = true
+            .onChange(of: model.unauthorized) { _, isUnauthorized in
+                if isUnauthorized { app.handleUnauthorized() }
             }
-        }
-        .onChange(of: model.unauthorized) { _, isUnauthorized in
-            if isUnauthorized { app.handleUnauthorized() }
-        }
-        .alert(
-            "Action failed",
-            isPresented: Binding(
-                get: { model.actionError != nil },
-                set: { if !$0 { model.actionError = nil } }
-            ),
-            presenting: model.actionError
-        ) { _ in
-            Button("OK", role: .cancel) { model.actionError = nil }
-        } message: { message in
-            Text(message)
-        }
-        .confirmationDialog(
-            "Stop this session?",
-            isPresented: $showStopConfirm,
-            titleVisibility: .visible
-        ) {
-            Button("Stop session", role: .destructive) {
-                Task { await model.stopSession() }
+            .alert(
+                "Action failed",
+                isPresented: actionErrorPresented,
+                presenting: model.actionError
+            ) { _ in
+                Button("OK", role: .cancel) { model.actionError = nil }
+            } message: { message in
+                Text(message)
             }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This hard-terminates the agent — there is no resume.")
-        }
-        .onAppear {
-            // Before `present` (in .task): make this @State instance the cached
-            // one, bump recency, and let a parked persisted model adopt live.
-            models?.activate(
-                model, project: project, sessionID: sessionID, live: listedLive, owner: client)
-            if presentation == nil { presentation = SessionPresentation(model: model) }
-            presentation?.begin()
-        }
-        // A Resume from the session list navigates straight here and lets the
-        // view model re-open the session concurrently with the history load.
-        // `present` resumes a cached model from its cursor and is a no-op when
-        // returning (e.g. from a diff) to a model that is still streaming.
-        .task { model.present(reopen: app.dataCache.consumeReopenRequest(sessionID: sessionID)) }
-        .onDisappear {
-            // Leaving the transcript is the moment the user has "read" it: record
-            // the newest event they were shown, so later agent activity — a turn
-            // that lands, or the session finishing while the phone is away —
-            // shows up as unread on the list.
-            markRead()
-            historyAnchor = nil
-            invalidateScrollRequests()
-            // A diff pushed on top of the transcript is not leaving the
-            // session: keep streaming so Back is instant. Sheets never fire
-            // onDisappear. If the stack is later replaced underneath, dropping
-            // `presentation` with this view parks the model instead.
-            guard commitTarget == nil, workingChangesTarget == nil else { return }
-            presentation?.end()
-        }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active {
-                model.reconnect()
-            } else {
-                // Backgrounding may be the last thing that happens to this view;
-                // don't leave what is on screen counted as unread.
+            .confirmationDialog(
+                "Stop this session?",
+                isPresented: $showStopConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Stop session", role: .destructive) {
+                    Task { await model.stopSession() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This hard-terminates the agent — there is no resume.")
+            }
+    }
+
+    /// Model-cache registration, stream lifecycle and read marks.
+    private func withLifecycle(_ content: some View) -> some View {
+        content
+            .onAppear {
+                // Before `present` (in .task): make this @State instance the cached
+                // one, bump recency, and let a parked persisted model adopt live.
+                models?.activate(
+                    model, project: project, sessionID: sessionID, live: listedLive, owner: client)
+                if presentation == nil { presentation = SessionPresentation(model: model) }
+                presentation?.begin()
+            }
+            // A Resume from the session list navigates straight here and lets the
+            // view model re-open the session concurrently with the history load.
+            // `present` resumes a cached model from its cursor and is a no-op when
+            // returning (e.g. from a diff) to a model that is still streaming.
+            .task { model.present(reopen: app.dataCache.consumeReopenRequest(sessionID: sessionID)) }
+            .onDisappear {
+                // Leaving the transcript is the moment the user has "read" it: record
+                // the newest event they were shown, so later agent activity — a turn
+                // that lands, or the session finishing while the phone is away —
+                // shows up as unread on the list.
                 markRead()
+                historyAnchor = nil
+                invalidateScrollRequests()
+                // A diff pushed on top of the transcript is not leaving the
+                // session: keep streaming so Back is instant. Sheets never fire
+                // onDisappear. If the stack is later replaced underneath, dropping
+                // `presentation` with this view parks the model instead.
+                guard commitTarget == nil, workingChangesTarget == nil else { return }
+                presentation?.end()
             }
-        }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active {
+                    model.reconnect()
+                } else {
+                    // Backgrounding may be the last thing that happens to this view;
+                    // don't leave what is on screen counted as unread.
+                    markRead()
+                }
+            }
+    }
+
+    private var actionErrorPresented: Binding<Bool> {
+        Binding(
+            get: { model.actionError != nil },
+            set: { if !$0 { model.actionError = nil } }
+        )
     }
 
     /// Record everything folded so far as seen for this session.

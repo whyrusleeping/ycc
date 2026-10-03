@@ -18,14 +18,47 @@ struct WorkLoopView: View {
     let project: String
 
     var body: some View {
-        Group {
-            if let model {
-                content(model)
-            } else {
-                ProgressView()
+        // Dialogs and alerts are applied in a separate function: as one chain
+        // with inline optional-chaining Bindings the type checker gives up.
+        withDialogs(
+            Group {
+                if let model {
+                    content(model)
+                } else {
+                    ProgressView()
+                }
+            }
+            .navigationTitle("Work loop")
+        )
+        // Restart when an action moves into/out of an active state. This matters
+        // when Start is tapped from the empty screen after the initial load task
+        // has already returned.
+        .task(id: model?.shouldPoll ?? false) { await loadAndPoll() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                Task { await model?.refresh() }
             }
         }
-        .navigationTitle("Work loop")
+        .onChange(of: model?.unauthorized ?? false) { _, unauthorized in
+            if unauthorized { app.handleUnauthorized() }
+        }
+    }
+
+    private var actionErrorPresented: Binding<Bool> {
+        Binding(
+            get: { model?.actionError != nil },
+            set: { if !$0 { model?.actionError = nil } })
+    }
+
+    private var completionPresented: Binding<Bool> {
+        Binding(
+            get: { model?.completionMessage != nil },
+            set: { if !$0 { model?.completionMessage = nil } })
+    }
+
+    /// Login sheet, start/stop confirmations and result alerts.
+    private func withDialogs(_ content: some View) -> some View {
+        content
         .sheet(isPresented: $showAnthropicLogin) {
             if let client = app.client {
                 NavigationStack { AnthropicLoginView(client: client) }
@@ -63,9 +96,7 @@ struct WorkLoopView: View {
         }
         .alert(
             "Action failed",
-            isPresented: Binding(
-                get: { model?.actionError != nil },
-                set: { if !$0 { model?.actionError = nil } }),
+            isPresented: actionErrorPresented,
             presenting: model?.actionError
         ) { _ in
             Button("OK", role: .cancel) { model?.actionError = nil }
@@ -74,26 +105,12 @@ struct WorkLoopView: View {
         }
         .alert(
             "Work loop finished",
-            isPresented: Binding(
-                get: { model?.completionMessage != nil },
-                set: { if !$0 { model?.completionMessage = nil } }),
+            isPresented: completionPresented,
             presenting: model?.completionMessage
         ) { _ in
             Button("OK", role: .cancel) { model?.completionMessage = nil }
         } message: { message in
             Text(message)
-        }
-        // Restart when an action moves into/out of an active state. This matters
-        // when Start is tapped from the empty screen after the initial load task
-        // has already returned.
-        .task(id: model?.shouldPoll ?? false) { await loadAndPoll() }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active {
-                Task { await model?.refresh() }
-            }
-        }
-        .onChange(of: model?.unauthorized ?? false) { _, unauthorized in
-            if unauthorized { app.handleUnauthorized() }
         }
     }
 
@@ -129,16 +146,22 @@ struct WorkLoopView: View {
         }
     }
 
+    /// A finished loop whose outcome or last session error mentions Anthropic
+    /// most likely stopped on an expired login.
+    private func needsAnthropicReconnect(_ model: WorkLoopModel, _ loop: Ycc_V1_WorkLoopInfo) -> Bool {
+        guard model.state == .finished else { return false }
+        if loop.outcome.localizedCaseInsensitiveContains("anthropic") { return true }
+        guard let lastError = loop.sessions.last?.errorMessage else { return false }
+        return lastError.localizedCaseInsensitiveContains("anthropic")
+    }
+
     private func loopList(_ model: WorkLoopModel, _ loop: Ycc_V1_WorkLoopInfo) -> some View {
         List {
             Section {
                 header(model, loop)
             }
 
-            if model.state == .finished && (
-                loop.outcome.localizedCaseInsensitiveContains("anthropic") ||
-                loop.sessions.last?.errorMessage.localizedCaseInsensitiveContains("anthropic") == true
-            ) {
+            if needsAnthropicReconnect(model, loop) {
                 Section {
                     Button("Reconnect Anthropic") { showAnthropicLogin = true }
                 } footer: {

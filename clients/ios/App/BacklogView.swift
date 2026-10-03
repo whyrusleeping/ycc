@@ -47,14 +47,17 @@ struct BacklogView: View {
     }
 
     var body: some View {
-        Group {
-            if let model {
-                content(model)
-            } else {
-                ProgressView()
+        // Dialogs and alerts are applied in a separate function: as one chain
+        // with inline optional-chaining Bindings the type checker gives up.
+        withDialogs(
+            Group {
+                if let model {
+                    content(model)
+                } else {
+                    ProgressView()
+                }
             }
-        }
-        .navigationTitle("Backlog")
+            .navigationTitle("Backlog")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if let model, model.showsProjectFilter {
@@ -75,6 +78,35 @@ struct BacklogView: View {
                 .disabled(model == nil)
             }
         }
+        )
+        .task { await ensureLoaded() }
+        .task(id: workLoopTaskID) { await loadAndPollWorkLoop() }
+        .onChange(of: model?.unauthorized ?? false) { _, isUnauthorized in
+            if isUnauthorized { app.handleUnauthorized() }
+        }
+        .onChange(of: loopModel?.unauthorized ?? false) { _, isUnauthorized in
+            if isUnauthorized { app.handleUnauthorized() }
+        }
+        .onChange(of: backlogSort) { _, sort in
+            model?.sort = sort
+        }
+    }
+
+    private var loopActionErrorPresented: Binding<Bool> {
+        Binding(
+            get: { scopedLoopModel?.actionError != nil },
+            set: { if !$0 { scopedLoopModel?.actionError = nil } })
+    }
+
+    private var loopCompletionPresented: Binding<Bool> {
+        Binding(
+            get: { scopedLoopModel?.completionMessage != nil },
+            set: { if !$0 { scopedLoopModel?.completionMessage = nil } })
+    }
+
+    /// Capture sheet, work-loop confirmations and result alerts.
+    private func withDialogs(_ content: some View) -> some View {
+        content
         .sheet(isPresented: $showCapture) {
             if let model {
                 QuickCaptureView(model: model)
@@ -112,9 +144,7 @@ struct BacklogView: View {
         }
         .alert(
             "Action failed",
-            isPresented: Binding(
-                get: { scopedLoopModel?.actionError != nil },
-                set: { if !$0 { scopedLoopModel?.actionError = nil } }),
+            isPresented: loopActionErrorPresented,
             presenting: scopedLoopModel?.actionError
         ) { _ in
             Button("OK", role: .cancel) { scopedLoopModel?.actionError = nil }
@@ -123,25 +153,12 @@ struct BacklogView: View {
         }
         .alert(
             "Work loop finished",
-            isPresented: Binding(
-                get: { scopedLoopModel?.completionMessage != nil },
-                set: { if !$0 { scopedLoopModel?.completionMessage = nil } }),
+            isPresented: loopCompletionPresented,
             presenting: scopedLoopModel?.completionMessage
         ) { _ in
             Button("OK", role: .cancel) { scopedLoopModel?.completionMessage = nil }
         } message: { message in
             Text(message)
-        }
-        .task { await ensureLoaded() }
-        .task(id: workLoopTaskID) { await loadAndPollWorkLoop() }
-        .onChange(of: model?.unauthorized ?? false) { _, isUnauthorized in
-            if isUnauthorized { app.handleUnauthorized() }
-        }
-        .onChange(of: loopModel?.unauthorized ?? false) { _, isUnauthorized in
-            if isUnauthorized { app.handleUnauthorized() }
-        }
-        .onChange(of: backlogSort) { _, sort in
-            model?.sort = sort
         }
     }
 
