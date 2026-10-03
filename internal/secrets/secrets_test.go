@@ -18,6 +18,38 @@ func setupDir(t *testing.T) {
 	t.Setenv("HOME", dir)
 }
 
+func TestCompareAndSwapPreservesOtherSecretsAndRejectsStaleOrRemoved(t *testing.T) {
+	setupDir(t)
+	store := &Store{Tokens: map[string]string{"oauth": "old", "other": "untouched"}, Authorizations: []Authorization{{Key: "other", Workspace: "/project", Tool: "Bash"}}}
+	if err := store.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := CompareAndSwap("oauth", "old", "new"); !ok || err != nil {
+		t.Fatalf("swap = %v, %v", ok, err)
+	}
+	got, err := Load()
+	if err != nil || got.Tokens["oauth"] != "new" || got.Tokens["other"] != "untouched" || !reflect.DeepEqual(got.Authorizations, store.Authorizations) {
+		t.Fatal("swap changed unrelated state")
+	}
+	before, err := os.ReadFile(Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := CompareAndSwap("oauth", "old", "stale"); ok || err != nil {
+		t.Fatalf("stale swap = %v, %v", ok, err)
+	}
+	after, err := os.ReadFile(Path())
+	if err != nil || string(before) != string(after) {
+		t.Fatal("mismatch modified store")
+	}
+	if err := Remove("oauth"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := CompareAndSwap("oauth", "new", "restored"); ok || err != nil {
+		t.Fatalf("removed swap = %v, %v", ok, err)
+	}
+}
+
 func TestSetLookupRoundTrip(t *testing.T) {
 	setupDir(t)
 

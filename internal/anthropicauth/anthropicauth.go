@@ -222,18 +222,25 @@ func tokenCall(ctx context.Context, body map[string]string) (*Credentials, error
 // Load reads persisted credentials from the secrets store. ok is false when
 // none are stored (or the stored value is unparsable).
 func Load() (creds *Credentials, ok bool) {
+	creds, _, ok = loadRaw()
+	return creds, ok
+}
+
+// Decode and retain the exact same snapshot for conditional refresh persistence.
+func loadRaw() (*Credentials, string, bool) {
 	raw, ok := secrets.Lookup(SecretsKey)
 	if !ok {
-		return nil, false
+		return nil, raw, false
 	}
 	var c Credentials
 	if err := json.Unmarshal([]byte(raw), &c); err != nil || c.AccessToken == "" && c.RefreshToken == "" {
-		return nil, false
+		return nil, raw, false
 	}
-	return &c, true
+	return &c, raw, true
 }
 
-// Save persists credentials to the secrets store.
+// Save replaces the saved login without waiting for an in-flight refresh.
+// Refresh persistence is conditional so an older refresh cannot overwrite it.
 func Save(c *Credentials) error {
 	data, err := json.Marshal(c)
 	if err != nil {
@@ -277,23 +284,45 @@ func ForceRefresh(ctx context.Context, stale string) (string, error) {
 // stale token additionally forces a refresh when the store still holds it, even
 // though it has not expired by the clock.
 func accessToken(ctx context.Context, stale string) (string, error) {
-	creds, ok := Load()
-	if !ok {
-		return "", errors.New("no Anthropic subscription credentials stored; run `ycc login anthropic`")
+	// Login and other processes may change credentials during a network refresh.
+	// Re-resolve those replacements, but do not spin forever under constant churn.
+	for attempt := 0; attempt < 3; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		creds, raw, ok := loadRaw()
+		if !ok {
+			return "", errors.New("no Anthropic subscription credentials stored; run `ycc login anthropic`")
+		}
+		if creds.FlowVersion < FlowVersion {
+			return "", errors.New("Anthropic changed its Claude subscription OAuth flow; run `ycc login anthropic` once to update the stored credentials")
+		}
+		superseded := stale != "" && creds.AccessToken != stale
+		if !creds.Expired(time.Now()) && (stale == "" || superseded) {
+			return creds.AccessToken, nil
+		}
+		fresh, err := Refresh(ctx, creds.RefreshToken)
+		if err != nil {
+			// A rejected refresh from the old account must not poison a login
+			// that succeeded while it was in flight.
+			if _, current, _ := loadRaw(); current != raw {
+				continue
+			}
+			return "", fmt.Errorf("refreshing Anthropic subscription token (re-run `ycc login anthropic` if this persists): %w", err)
+		}
+		data, err := json.Marshal(fresh)
+		if err != nil {
+			return "", err
+		}
+		swapped, err := secrets.CompareAndSwap(SecretsKey, raw, string(data))
+		if err != nil {
+			return "", fmt.Errorf("persisting refreshed credentials: %w", err)
+		}
+		if swapped {
+			return fresh.AccessToken, nil
+		}
+		// Discard this refresh result. In particular, never resurrect a removed
+		// account or return an old account's token after a new login won.
 	}
-	if creds.FlowVersion < FlowVersion {
-		return "", errors.New("Anthropic changed its Claude subscription OAuth flow; run `ycc login anthropic` once to update the stored credentials")
-	}
-	superseded := stale != "" && creds.AccessToken != stale
-	if !creds.Expired(time.Now()) && (stale == "" || superseded) {
-		return creds.AccessToken, nil
-	}
-	fresh, err := Refresh(ctx, creds.RefreshToken)
-	if err != nil {
-		return "", fmt.Errorf("refreshing Anthropic subscription token (re-run `ycc login anthropic` if this persists): %w", err)
-	}
-	if err := Save(fresh); err != nil {
-		return "", fmt.Errorf("persisting refreshed credentials: %w", err)
-	}
-	return fresh.AccessToken, nil
+	return "", errors.New("Anthropic credentials changed repeatedly during refresh; retry the request")
 }

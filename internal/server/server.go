@@ -46,7 +46,8 @@ type Server struct {
 	viewStores map[string]*sessionview.Store
 	// viewKeepalive is how long a SubscribeSessionView stream may stay silent
 	// before an empty SessionViewUpdate is sent (see sessionViewKeepalive).
-	viewKeepalive time.Duration
+	viewKeepalive  time.Duration
+	anthropicLogin anthropicLoginState
 }
 
 // sessionViewKeepalive bounds silence on SubscribeSessionView. Quiet sessions
@@ -118,12 +119,13 @@ func (s *Server) StartSession(_ context.Context, req *connect.Request[v1.StartSe
 	return connect.NewResponse(&v1.StartSessionResponse{SessionId: sess.ID}), nil
 }
 
-// ListProjects returns the registered projects (name + path) for the picker.
+// ListProjects returns the registered projects (name + path) for the picker,
+// most-recently-used first (approximate; see Manager.ProjectsByRecency).
 // Each project's local git status and onboarding check shell out / hit disk,
 // so they run concurrently (bounded) rather than serially: clients call this
 // on every return to their home screen.
 func (s *Server) ListProjects(_ context.Context, _ *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error) {
-	projects := s.mgr.Projects()
+	projects := s.mgr.ProjectsByRecency()
 	projs := make([]*v1.ProjectInfo, len(projects))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 8)
@@ -713,6 +715,7 @@ func (s *Server) SendInput(_ context.Context, req *connect.Request[v1.SendInputR
 		}
 		return nil, connect.NewError(code, err)
 	}
+	s.mgr.TouchProjectWorkspace(sess.Workspace)
 	return connect.NewResponse(&v1.SendInputResponse{}), nil
 }
 
@@ -820,6 +823,7 @@ func (s *Server) AnswerQuestion(_ context.Context, req *connect.Request[v1.Answe
 	if err := sess.AnswerOption(int(req.Msg.OptionIndex), req.Msg.Text); err != nil {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
 	}
+	s.mgr.TouchProjectWorkspace(sess.Workspace)
 	return connect.NewResponse(&v1.AnswerQuestionResponse{}), nil
 }
 
@@ -843,6 +847,7 @@ func (s *Server) AnswerQuestions(_ context.Context, req *connect.Request[v1.Answ
 	if err := sess.AnswerBatch(idxs, texts); err != nil {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
 	}
+	s.mgr.TouchProjectWorkspace(sess.Workspace)
 	return connect.NewResponse(&v1.AnswerQuestionsResponse{}), nil
 }
 

@@ -104,6 +104,14 @@ entry point and every matching file.
 
 ## Secrets & environment
 
+For an Anthropic subscription, run `ycc login anthropic`, or use **Settings → Provider
+accounts → Connect / reconnect Anthropic** in the iOS app. Sign in in the browser,
+then paste the full `code#state` into the app's dedicated login field. The daemon
+stores the tokens; this reconnects all projects using its Anthropic OAuth login.
+Login does not change model settings or restart work. See the
+[remote login flow](docs/remote-api.md#anthropic-subscription-login-from-a-remote-client)
+for expiry and retry behavior.
+
 Never paste credentials into a session prompt or an `ask_user` answer: those
 strings are durable model history. Use the local secret-entry command instead.
 Interactive entry disables terminal echo; stdin is supported for password-manager

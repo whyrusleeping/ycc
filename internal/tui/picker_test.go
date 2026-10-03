@@ -178,3 +178,33 @@ func TestGitStatusBadge(t *testing.T) {
 		})
 	}
 }
+
+// TestProjectsRefreshKeepsCursorOnProjectWhenReordered: the daemon orders
+// projects most-recently-used first, so a periodic refresh may reorder rows; the
+// cursor must stay on the highlighted project rather than its old index (and
+// must not snap back to the current project).
+func TestProjectsRefreshKeepsCursorOnProjectWhenReordered(t *testing.T) {
+	m := model{state: statePicker, project: "one"}
+	next, _ := m.Update(projectsMsg{projects: []*v1.ProjectInfo{
+		{Name: "one", Path: "/p/one"}, {Name: "two", Path: "/p/two"}, {Name: "three", Path: "/p/three"},
+	}})
+	m = next.(model)
+	if sel := m.selectedProject(); sel == nil || sel.Name != "one" {
+		t.Fatalf("initial cursor on %+v, want current project one", sel)
+	}
+	m.projectCur = 1 // user moves to "two"
+	next, _ = m.Update(projectsMsg{projects: []*v1.ProjectInfo{
+		{Name: "three", Path: "/p/three"}, {Name: "two", Path: "/p/two"}, {Name: "one", Path: "/p/one"},
+	}})
+	m = next.(model)
+	if sel := m.selectedProject(); sel == nil || sel.Name != "two" {
+		t.Fatalf("cursor after reorder on %+v, want two", sel)
+	}
+	next, _ = m.Update(projectsMsg{projects: []*v1.ProjectInfo{
+		{Name: "two", Path: "/p/two"}, {Name: "three", Path: "/p/three"}, {Name: "one", Path: "/p/one"},
+	}})
+	m = next.(model)
+	if sel := m.selectedProject(); sel == nil || sel.Name != "two" {
+		t.Fatalf("cursor after second reorder on %+v, want two", sel)
+	}
+}

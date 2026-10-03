@@ -75,6 +75,7 @@ public final class WorkLoopModel {
     public private(set) var isBusy = false
     public private(set) var errorMessage: String?
     public var actionError: String?
+    public var completionMessage: String?
     public private(set) var unauthorized = false
 
     private let source: WorkLoopSource
@@ -155,8 +156,9 @@ public final class WorkLoopModel {
         guard !isBusy else { return }
         isBusy = true
         defer { isBusy = false }
+        completionMessage = nil
         do {
-            apply(try await source.startWorkLoop(project: project))
+            apply(try await source.startWorkLoop(project: project), fromStart: true)
             actionError = nil
             errorMessage = nil
         } catch {
@@ -178,9 +180,16 @@ public final class WorkLoopModel {
         }
     }
 
-    private func apply(_ snapshot: Ycc_V1_WorkLoopInfo?) {
-        if loop != snapshot { loop = snapshot }
+    private func apply(_ snapshot: Ycc_V1_WorkLoopInfo?, fromStart: Bool = false) {
         let next = Self.state(for: snapshot)
+        // Start can return an already-finished snapshot if setup failed quickly.
+        // Otherwise surface the first active -> finished transition, not every
+        // refresh or a historical completion when opening the screen.
+        if next == .finished, fromStart || state.isActive,
+           let outcome = snapshot?.outcome, !outcome.isEmpty {
+            completionMessage = outcome
+        }
+        if loop != snapshot { loop = snapshot }
         if state != next { state = next }
         confirmedAt = now()
         cache?.store(Snapshot(loop: snapshot), for: .workLoop(project), ifGeneration: cacheGeneration)
@@ -230,7 +239,7 @@ public final class WorkLoopModel {
         case .stopping:
             return "Stopping…"
         case .finished:
-            return "Finished · \(summaryLine(for: loop))"
+            return loop.outcome.isEmpty ? "Finished · \(summaryLine(for: loop))" : loop.outcome
         case .none, .unknown:
             return state(for: loop).title
         }

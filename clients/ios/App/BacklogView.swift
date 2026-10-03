@@ -121,6 +121,17 @@ struct BacklogView: View {
         } message: { message in
             Text(message)
         }
+        .alert(
+            "Work loop finished",
+            isPresented: Binding(
+                get: { scopedLoopModel?.completionMessage != nil },
+                set: { if !$0 { scopedLoopModel?.completionMessage = nil } }),
+            presenting: scopedLoopModel?.completionMessage
+        ) { _ in
+            Button("OK", role: .cancel) { scopedLoopModel?.completionMessage = nil }
+        } message: { message in
+            Text(message)
+        }
         .task { await ensureLoaded() }
         .task(id: workLoopTaskID) { await loadAndPollWorkLoop() }
         .onChange(of: model?.unauthorized ?? false) { _, isUnauthorized in
@@ -217,7 +228,7 @@ struct BacklogView: View {
                     Text(WorkLoopModel.bannerLine(for: loopModel?.loop))
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .lineLimit(state == .finished ? 3 : 1)
                     Spacer(minLength: 0)
                 }
                 .contentShape(Rectangle())

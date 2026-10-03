@@ -24,6 +24,7 @@
 - 2026-09-19: Anthropic caps images at 2000px/side once a request has >20 images (else 8000px); since images accumulate in history this bricks a session — internal/imagefit downscales at both ingestion points (server.validateInputImages, tools.readMedia).
 - 2026-09-20: ChatGPT Codex backend derives prompt-cache affinity from the `session-id` header (plus prompt_cache_key body); engine.Loop.PromptCacheKey (<session>/<actor>) feeds both via gollama ExtraBody, openai backend only — strict openai-compatible servers reject unknown fields (0396).
 - 2026-09-30 [measured observation] internal/docs TestRepositoryDocsConfig fails in the live tree because the untracked .ycc/config.toml doc_globs add docs/*.md; it passes on a git-archive checkout of HEAD, so it is not a regression signal. <!-- ycc-memory id=m-dlsckdocvvcy kind=observation session=s_380a6fd9f8852773 event=661 actor=coordinator scope=workspace classified=model -->
+- 2026-10-03 [measured observation] TestSubscribeAfterRestartAndResubscribe intermittently fails with 'live seq 0 want 10'; reproduced on a clean HEAD git archive with -count=30 while 20 repetitions in the live tree passed, so this failure alone is not evidence of an OAuth regression. <!-- ycc-memory id=m-dlvf2pzlywdl kind=observation session=s_163f010df347f899 event=690 actor=coordinator scope=workspace classified=model -->
 
 ## Environment & tooling
 

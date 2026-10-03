@@ -774,6 +774,24 @@ message GetUsageResponse {
   string workspace = 3;
 }
 
+// Daemon-owned Anthropic subscription login. These authenticated RPCs are
+// deliberately separate from sessions: never record their payloads in event logs.
+// One pending attempt per daemon; beginning again supersedes the previous attempt.
+message BeginAnthropicLoginRequest {}
+message BeginAnthropicLoginResponse {
+  string attempt_id = 1;
+  string authorization_url = 2; // sensitive, transient browser URL; do not log/cache
+  int64 expires_at_unix = 3;
+}
+message CompleteAnthropicLoginRequest {
+  string attempt_id = 1;
+  string code = 2; // full code#state from the provider page; never log/echo
+}
+// Success means credentials were saved on the daemon, not that work was restarted.
+message CompleteAnthropicLoginResponse {}
+message CancelAnthropicLoginRequest { string attempt_id = 1; }
+message CancelAnthropicLoginResponse {}
+
 // Provider-side subscription allowance. This is intentionally
 // separate from GetUsage: it is shared account quota, not ycc-local token spend.
 // No credential material crosses this boundary.
@@ -1147,6 +1165,11 @@ service SessionService {
   // Usage/cost breakdown: aggregated, priced token usage by task ×
   // model × day so clients can render the cost breakdown.
   rpc GetUsage(GetUsageRequest) returns (GetUsageResponse);
+  // Browser-and-paste subscription login; access/refresh tokens never leave the daemon.
+  rpc BeginAnthropicLogin(BeginAnthropicLoginRequest) returns (BeginAnthropicLoginResponse);
+  rpc CompleteAnthropicLogin(CompleteAnthropicLoginRequest) returns (CompleteAnthropicLoginResponse);
+  rpc CancelAnthropicLogin(CancelAnthropicLoginRequest) returns (CancelAnthropicLoginResponse);
+
   // Best-effort provider-side subscription allowance.
   rpc GetSubscriptionUsage(GetSubscriptionUsageRequest) returns (GetSubscriptionUsageResponse);
 

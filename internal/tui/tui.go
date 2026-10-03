@@ -889,16 +889,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.fetchProjects, m.projectsRefreshTick())
 	case projectsMsg:
 		m.rpcOK()
+		// The daemon orders projects most-recently-used first, so a periodic
+		// refresh can reorder rows: keep the cursor on the project it was on
+		// (by name), falling back to the current project on first load.
+		cursorName := m.project
+		if sel := m.selectedProject(); sel != nil {
+			cursorName = sel.Name
+		}
 		m.projects = msg.projects
 		found := false
 		for i, p := range m.projects {
-			if p.Name == m.project {
+			if p.Name == cursorName {
 				m.projectCur, found = i, true
-				if m.showPicker {
-					m.workspace = p.Path
-					m.applyDaemonGit(p.Git)
-				}
-				break
+			}
+			if p.Name == m.project && m.showPicker {
+				m.workspace = p.Path
+				m.applyDaemonGit(p.Git)
 			}
 		}
 		if !found && m.projectCur >= len(m.projects) {

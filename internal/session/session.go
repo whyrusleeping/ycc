@@ -1889,6 +1889,10 @@ type Manager struct {
 	gitSyncCancel   context.CancelFunc
 	gitSyncWG       sync.WaitGroup
 
+	// recency orders project pickers most-recently-used first
+	// (projectrecency.go).
+	recency projectRecency
+
 	// Automatic memory grooming (memorygroom.go). grooms maps a primary tree to
 	// its live automatic groom session id. groomMu is independent of mu so the
 	// scheduler can start a session (which takes mu) while holding it.
@@ -2282,6 +2286,11 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 	m.mu.Lock()
 	m.sessions[id] = s
 	m.mu.Unlock()
+	if !cfg.Unattended {
+		// A user-started session floats its project to the top of pickers now;
+		// background activity is picked up by the periodic log-mtime scan.
+		m.TouchProjectWorkspace(absWS)
+	}
 
 	go s.run()
 	return s, nil

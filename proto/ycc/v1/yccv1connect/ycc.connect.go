@@ -174,6 +174,15 @@ const (
 	SessionServiceCaptureBacklogItemProcedure = "/ycc.v1.SessionService/CaptureBacklogItem"
 	// SessionServiceGetUsageProcedure is the fully-qualified name of the SessionService's GetUsage RPC.
 	SessionServiceGetUsageProcedure = "/ycc.v1.SessionService/GetUsage"
+	// SessionServiceBeginAnthropicLoginProcedure is the fully-qualified name of the SessionService's
+	// BeginAnthropicLogin RPC.
+	SessionServiceBeginAnthropicLoginProcedure = "/ycc.v1.SessionService/BeginAnthropicLogin"
+	// SessionServiceCompleteAnthropicLoginProcedure is the fully-qualified name of the SessionService's
+	// CompleteAnthropicLogin RPC.
+	SessionServiceCompleteAnthropicLoginProcedure = "/ycc.v1.SessionService/CompleteAnthropicLogin"
+	// SessionServiceCancelAnthropicLoginProcedure is the fully-qualified name of the SessionService's
+	// CancelAnthropicLogin RPC.
+	SessionServiceCancelAnthropicLoginProcedure = "/ycc.v1.SessionService/CancelAnthropicLogin"
 	// SessionServiceGetSubscriptionUsageProcedure is the fully-qualified name of the SessionService's
 	// GetSubscriptionUsage RPC.
 	SessionServiceGetSubscriptionUsageProcedure = "/ycc.v1.SessionService/GetSubscriptionUsage"
@@ -314,6 +323,10 @@ type SessionServiceClient interface {
 	// Usage/cost breakdown: aggregated, priced token usage by task ×
 	// model × day so clients can render the cost breakdown.
 	GetUsage(context.Context, *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error)
+	// Browser-and-paste subscription login; access/refresh tokens never leave the daemon.
+	BeginAnthropicLogin(context.Context, *connect.Request[v1.BeginAnthropicLoginRequest]) (*connect.Response[v1.BeginAnthropicLoginResponse], error)
+	CompleteAnthropicLogin(context.Context, *connect.Request[v1.CompleteAnthropicLoginRequest]) (*connect.Response[v1.CompleteAnthropicLoginResponse], error)
+	CancelAnthropicLogin(context.Context, *connect.Request[v1.CancelAnthropicLoginRequest]) (*connect.Response[v1.CancelAnthropicLoginResponse], error)
 	// Best-effort provider-side subscription allowance.
 	GetSubscriptionUsage(context.Context, *connect.Request[v1.GetSubscriptionUsageRequest]) (*connect.Response[v1.GetSubscriptionUsageResponse], error)
 	// Spend guard: return the configured budget caps so the
@@ -647,6 +660,24 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("GetUsage")),
 			connect.WithClientOptions(opts...),
 		),
+		beginAnthropicLogin: connect.NewClient[v1.BeginAnthropicLoginRequest, v1.BeginAnthropicLoginResponse](
+			httpClient,
+			baseURL+SessionServiceBeginAnthropicLoginProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("BeginAnthropicLogin")),
+			connect.WithClientOptions(opts...),
+		),
+		completeAnthropicLogin: connect.NewClient[v1.CompleteAnthropicLoginRequest, v1.CompleteAnthropicLoginResponse](
+			httpClient,
+			baseURL+SessionServiceCompleteAnthropicLoginProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("CompleteAnthropicLogin")),
+			connect.WithClientOptions(opts...),
+		),
+		cancelAnthropicLogin: connect.NewClient[v1.CancelAnthropicLoginRequest, v1.CancelAnthropicLoginResponse](
+			httpClient,
+			baseURL+SessionServiceCancelAnthropicLoginProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("CancelAnthropicLogin")),
+			connect.WithClientOptions(opts...),
+		),
 		getSubscriptionUsage: connect.NewClient[v1.GetSubscriptionUsageRequest, v1.GetSubscriptionUsageResponse](
 			httpClient,
 			baseURL+SessionServiceGetSubscriptionUsageProcedure,
@@ -724,67 +755,70 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 
 // sessionServiceClient implements SessionServiceClient.
 type sessionServiceClient struct {
-	listModes             *connect.Client[v1.ListModesRequest, v1.ListModesResponse]
-	startSession          *connect.Client[v1.StartSessionRequest, v1.StartSessionResponse]
-	listSessions          *connect.Client[v1.ListSessionsRequest, v1.ListSessionsResponse]
-	listSessionHistory    *connect.Client[v1.ListSessionHistoryRequest, v1.ListSessionHistoryResponse]
-	getSessionTranscript  *connect.Client[v1.GetSessionTranscriptRequest, v1.GetSessionTranscriptResponse]
-	getSessionView        *connect.Client[v1.GetSessionViewRequest, v1.GetSessionViewResponse]
-	getSessionViewPage    *connect.Client[v1.GetSessionViewPageRequest, v1.GetSessionViewPageResponse]
-	getSessionViewDetail  *connect.Client[v1.GetSessionViewDetailRequest, v1.GetSessionViewDetailResponse]
-	subscribeSessionView  *connect.Client[v1.SubscribeSessionViewRequest, v1.SessionViewUpdate]
-	getSessionAttachment  *connect.Client[v1.GetSessionAttachmentRequest, v1.GetSessionAttachmentResponse]
-	getCommitDiff         *connect.Client[v1.GetCommitDiffRequest, v1.GetCommitDiffResponse]
-	getWorkingChanges     *connect.Client[v1.GetWorkingChangesRequest, v1.GetWorkingChangesResponse]
-	subscribe             *connect.Client[v1.SubscribeRequest, v1.Event]
-	sendInput             *connect.Client[v1.SendInputRequest, v1.SendInputResponse]
-	answerQuestion        *connect.Client[v1.AnswerQuestionRequest, v1.AnswerQuestionResponse]
-	answerQuestions       *connect.Client[v1.AnswerQuestionsRequest, v1.AnswerQuestionsResponse]
-	interrupt             *connect.Client[v1.InterruptRequest, v1.InterruptResponse]
-	resume                *connect.Client[v1.ResumeRequest, v1.ResumeResponse]
-	stopSession           *connect.Client[v1.StopSessionRequest, v1.StopSessionResponse]
-	resumeSession         *connect.Client[v1.ResumeSessionRequest, v1.ResumeSessionResponse]
-	listProjects          *connect.Client[v1.ListProjectsRequest, v1.ListProjectsResponse]
-	addProject            *connect.Client[v1.AddProjectRequest, v1.AddProjectResponse]
-	removeProject         *connect.Client[v1.RemoveProjectRequest, v1.RemoveProjectResponse]
-	renameProject         *connect.Client[v1.RenameProjectRequest, v1.RenameProjectResponse]
-	listDir               *connect.Client[v1.ListDirRequest, v1.ListDirResponse]
-	listFiles             *connect.Client[v1.ListFilesRequest, v1.ListFilesResponse]
-	readFile              *connect.Client[v1.ReadFileRequest, v1.ReadFileResponse]
-	listModels            *connect.Client[v1.ListModelsRequest, v1.ListModelsResponse]
-	setRoleConfig         *connect.Client[v1.SetRoleConfigRequest, v1.SetRoleConfigResponse]
-	setThinking           *connect.Client[v1.SetThinkingRequest, v1.SetThinkingResponse]
-	setWorkImplementation *connect.Client[v1.SetWorkImplementationRequest, v1.SetWorkImplementationResponse]
-	upsertModel           *connect.Client[v1.UpsertModelRequest, v1.UpsertModelResponse]
-	removeModel           *connect.Client[v1.RemoveModelRequest, v1.RemoveModelResponse]
-	getModelConfig        *connect.Client[v1.GetModelConfigRequest, v1.GetModelConfigResponse]
-	discoverModels        *connect.Client[v1.DiscoverModelsRequest, v1.DiscoverModelsResponse]
-	testModel             *connect.Client[v1.TestModelRequest, v1.TestModelResponse]
-	listReviewTiers       *connect.Client[v1.ListReviewTiersRequest, v1.ListReviewTiersResponse]
-	upsertReviewTier      *connect.Client[v1.UpsertReviewTierRequest, v1.UpsertReviewTierResponse]
-	removeReviewTier      *connect.Client[v1.RemoveReviewTierRequest, v1.RemoveReviewTierResponse]
-	setReviewDefault      *connect.Client[v1.SetReviewDefaultRequest, v1.SetReviewDefaultResponse]
-	listBacklog           *connect.Client[v1.ListBacklogRequest, v1.ListBacklogResponse]
-	getTask               *connect.Client[v1.GetTaskRequest, v1.GetTaskResponse]
-	updateTask            *connect.Client[v1.UpdateTaskRequest, v1.UpdateTaskResponse]
-	createTask            *connect.Client[v1.CreateTaskRequest, v1.CreateTaskResponse]
-	listPlans             *connect.Client[v1.ListPlansRequest, v1.ListPlansResponse]
-	getPlan               *connect.Client[v1.GetPlanRequest, v1.GetPlanResponse]
-	getMemory             *connect.Client[v1.GetMemoryRequest, v1.GetMemoryResponse]
-	captureBacklogItem    *connect.Client[v1.CaptureBacklogItemRequest, v1.Event]
-	getUsage              *connect.Client[v1.GetUsageRequest, v1.GetUsageResponse]
-	getSubscriptionUsage  *connect.Client[v1.GetSubscriptionUsageRequest, v1.GetSubscriptionUsageResponse]
-	getBudget             *connect.Client[v1.GetBudgetRequest, v1.GetBudgetResponse]
-	notify                *connect.Client[v1.NotifyRequest, v1.NotifyResponse]
-	startWorkLoop         *connect.Client[v1.StartWorkLoopRequest, v1.StartWorkLoopResponse]
-	stopWorkLoop          *connect.Client[v1.StopWorkLoopRequest, v1.StopWorkLoopResponse]
-	getWorkLoop           *connect.Client[v1.GetWorkLoopRequest, v1.GetWorkLoopResponse]
-	spawnWorkstream       *connect.Client[v1.SpawnWorkstreamRequest, v1.SpawnWorkstreamResponse]
-	listWorkstreams       *connect.Client[v1.ListWorkstreamsRequest, v1.ListWorkstreamsResponse]
-	previewMerge          *connect.Client[v1.PreviewMergeRequest, v1.PreviewMergeResponse]
-	mergeWorkstream       *connect.Client[v1.MergeWorkstreamRequest, v1.MergeWorkstreamResponse]
-	discardWorkstream     *connect.Client[v1.DiscardWorkstreamRequest, v1.DiscardWorkstreamResponse]
-	retryIntegration      *connect.Client[v1.RetryIntegrationRequest, v1.RetryIntegrationResponse]
+	listModes              *connect.Client[v1.ListModesRequest, v1.ListModesResponse]
+	startSession           *connect.Client[v1.StartSessionRequest, v1.StartSessionResponse]
+	listSessions           *connect.Client[v1.ListSessionsRequest, v1.ListSessionsResponse]
+	listSessionHistory     *connect.Client[v1.ListSessionHistoryRequest, v1.ListSessionHistoryResponse]
+	getSessionTranscript   *connect.Client[v1.GetSessionTranscriptRequest, v1.GetSessionTranscriptResponse]
+	getSessionView         *connect.Client[v1.GetSessionViewRequest, v1.GetSessionViewResponse]
+	getSessionViewPage     *connect.Client[v1.GetSessionViewPageRequest, v1.GetSessionViewPageResponse]
+	getSessionViewDetail   *connect.Client[v1.GetSessionViewDetailRequest, v1.GetSessionViewDetailResponse]
+	subscribeSessionView   *connect.Client[v1.SubscribeSessionViewRequest, v1.SessionViewUpdate]
+	getSessionAttachment   *connect.Client[v1.GetSessionAttachmentRequest, v1.GetSessionAttachmentResponse]
+	getCommitDiff          *connect.Client[v1.GetCommitDiffRequest, v1.GetCommitDiffResponse]
+	getWorkingChanges      *connect.Client[v1.GetWorkingChangesRequest, v1.GetWorkingChangesResponse]
+	subscribe              *connect.Client[v1.SubscribeRequest, v1.Event]
+	sendInput              *connect.Client[v1.SendInputRequest, v1.SendInputResponse]
+	answerQuestion         *connect.Client[v1.AnswerQuestionRequest, v1.AnswerQuestionResponse]
+	answerQuestions        *connect.Client[v1.AnswerQuestionsRequest, v1.AnswerQuestionsResponse]
+	interrupt              *connect.Client[v1.InterruptRequest, v1.InterruptResponse]
+	resume                 *connect.Client[v1.ResumeRequest, v1.ResumeResponse]
+	stopSession            *connect.Client[v1.StopSessionRequest, v1.StopSessionResponse]
+	resumeSession          *connect.Client[v1.ResumeSessionRequest, v1.ResumeSessionResponse]
+	listProjects           *connect.Client[v1.ListProjectsRequest, v1.ListProjectsResponse]
+	addProject             *connect.Client[v1.AddProjectRequest, v1.AddProjectResponse]
+	removeProject          *connect.Client[v1.RemoveProjectRequest, v1.RemoveProjectResponse]
+	renameProject          *connect.Client[v1.RenameProjectRequest, v1.RenameProjectResponse]
+	listDir                *connect.Client[v1.ListDirRequest, v1.ListDirResponse]
+	listFiles              *connect.Client[v1.ListFilesRequest, v1.ListFilesResponse]
+	readFile               *connect.Client[v1.ReadFileRequest, v1.ReadFileResponse]
+	listModels             *connect.Client[v1.ListModelsRequest, v1.ListModelsResponse]
+	setRoleConfig          *connect.Client[v1.SetRoleConfigRequest, v1.SetRoleConfigResponse]
+	setThinking            *connect.Client[v1.SetThinkingRequest, v1.SetThinkingResponse]
+	setWorkImplementation  *connect.Client[v1.SetWorkImplementationRequest, v1.SetWorkImplementationResponse]
+	upsertModel            *connect.Client[v1.UpsertModelRequest, v1.UpsertModelResponse]
+	removeModel            *connect.Client[v1.RemoveModelRequest, v1.RemoveModelResponse]
+	getModelConfig         *connect.Client[v1.GetModelConfigRequest, v1.GetModelConfigResponse]
+	discoverModels         *connect.Client[v1.DiscoverModelsRequest, v1.DiscoverModelsResponse]
+	testModel              *connect.Client[v1.TestModelRequest, v1.TestModelResponse]
+	listReviewTiers        *connect.Client[v1.ListReviewTiersRequest, v1.ListReviewTiersResponse]
+	upsertReviewTier       *connect.Client[v1.UpsertReviewTierRequest, v1.UpsertReviewTierResponse]
+	removeReviewTier       *connect.Client[v1.RemoveReviewTierRequest, v1.RemoveReviewTierResponse]
+	setReviewDefault       *connect.Client[v1.SetReviewDefaultRequest, v1.SetReviewDefaultResponse]
+	listBacklog            *connect.Client[v1.ListBacklogRequest, v1.ListBacklogResponse]
+	getTask                *connect.Client[v1.GetTaskRequest, v1.GetTaskResponse]
+	updateTask             *connect.Client[v1.UpdateTaskRequest, v1.UpdateTaskResponse]
+	createTask             *connect.Client[v1.CreateTaskRequest, v1.CreateTaskResponse]
+	listPlans              *connect.Client[v1.ListPlansRequest, v1.ListPlansResponse]
+	getPlan                *connect.Client[v1.GetPlanRequest, v1.GetPlanResponse]
+	getMemory              *connect.Client[v1.GetMemoryRequest, v1.GetMemoryResponse]
+	captureBacklogItem     *connect.Client[v1.CaptureBacklogItemRequest, v1.Event]
+	getUsage               *connect.Client[v1.GetUsageRequest, v1.GetUsageResponse]
+	beginAnthropicLogin    *connect.Client[v1.BeginAnthropicLoginRequest, v1.BeginAnthropicLoginResponse]
+	completeAnthropicLogin *connect.Client[v1.CompleteAnthropicLoginRequest, v1.CompleteAnthropicLoginResponse]
+	cancelAnthropicLogin   *connect.Client[v1.CancelAnthropicLoginRequest, v1.CancelAnthropicLoginResponse]
+	getSubscriptionUsage   *connect.Client[v1.GetSubscriptionUsageRequest, v1.GetSubscriptionUsageResponse]
+	getBudget              *connect.Client[v1.GetBudgetRequest, v1.GetBudgetResponse]
+	notify                 *connect.Client[v1.NotifyRequest, v1.NotifyResponse]
+	startWorkLoop          *connect.Client[v1.StartWorkLoopRequest, v1.StartWorkLoopResponse]
+	stopWorkLoop           *connect.Client[v1.StopWorkLoopRequest, v1.StopWorkLoopResponse]
+	getWorkLoop            *connect.Client[v1.GetWorkLoopRequest, v1.GetWorkLoopResponse]
+	spawnWorkstream        *connect.Client[v1.SpawnWorkstreamRequest, v1.SpawnWorkstreamResponse]
+	listWorkstreams        *connect.Client[v1.ListWorkstreamsRequest, v1.ListWorkstreamsResponse]
+	previewMerge           *connect.Client[v1.PreviewMergeRequest, v1.PreviewMergeResponse]
+	mergeWorkstream        *connect.Client[v1.MergeWorkstreamRequest, v1.MergeWorkstreamResponse]
+	discardWorkstream      *connect.Client[v1.DiscardWorkstreamRequest, v1.DiscardWorkstreamResponse]
+	retryIntegration       *connect.Client[v1.RetryIntegrationRequest, v1.RetryIntegrationResponse]
 }
 
 // ListModes calls ycc.v1.SessionService.ListModes.
@@ -1032,6 +1066,21 @@ func (c *sessionServiceClient) GetUsage(ctx context.Context, req *connect.Reques
 	return c.getUsage.CallUnary(ctx, req)
 }
 
+// BeginAnthropicLogin calls ycc.v1.SessionService.BeginAnthropicLogin.
+func (c *sessionServiceClient) BeginAnthropicLogin(ctx context.Context, req *connect.Request[v1.BeginAnthropicLoginRequest]) (*connect.Response[v1.BeginAnthropicLoginResponse], error) {
+	return c.beginAnthropicLogin.CallUnary(ctx, req)
+}
+
+// CompleteAnthropicLogin calls ycc.v1.SessionService.CompleteAnthropicLogin.
+func (c *sessionServiceClient) CompleteAnthropicLogin(ctx context.Context, req *connect.Request[v1.CompleteAnthropicLoginRequest]) (*connect.Response[v1.CompleteAnthropicLoginResponse], error) {
+	return c.completeAnthropicLogin.CallUnary(ctx, req)
+}
+
+// CancelAnthropicLogin calls ycc.v1.SessionService.CancelAnthropicLogin.
+func (c *sessionServiceClient) CancelAnthropicLogin(ctx context.Context, req *connect.Request[v1.CancelAnthropicLoginRequest]) (*connect.Response[v1.CancelAnthropicLoginResponse], error) {
+	return c.cancelAnthropicLogin.CallUnary(ctx, req)
+}
+
 // GetSubscriptionUsage calls ycc.v1.SessionService.GetSubscriptionUsage.
 func (c *sessionServiceClient) GetSubscriptionUsage(ctx context.Context, req *connect.Request[v1.GetSubscriptionUsageRequest]) (*connect.Response[v1.GetSubscriptionUsageResponse], error) {
 	return c.getSubscriptionUsage.CallUnary(ctx, req)
@@ -1195,6 +1244,10 @@ type SessionServiceHandler interface {
 	// Usage/cost breakdown: aggregated, priced token usage by task ×
 	// model × day so clients can render the cost breakdown.
 	GetUsage(context.Context, *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error)
+	// Browser-and-paste subscription login; access/refresh tokens never leave the daemon.
+	BeginAnthropicLogin(context.Context, *connect.Request[v1.BeginAnthropicLoginRequest]) (*connect.Response[v1.BeginAnthropicLoginResponse], error)
+	CompleteAnthropicLogin(context.Context, *connect.Request[v1.CompleteAnthropicLoginRequest]) (*connect.Response[v1.CompleteAnthropicLoginResponse], error)
+	CancelAnthropicLogin(context.Context, *connect.Request[v1.CancelAnthropicLoginRequest]) (*connect.Response[v1.CancelAnthropicLoginResponse], error)
 	// Best-effort provider-side subscription allowance.
 	GetSubscriptionUsage(context.Context, *connect.Request[v1.GetSubscriptionUsageRequest]) (*connect.Response[v1.GetSubscriptionUsageResponse], error)
 	// Spend guard: return the configured budget caps so the
@@ -1524,6 +1577,24 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("GetUsage")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceBeginAnthropicLoginHandler := connect.NewUnaryHandler(
+		SessionServiceBeginAnthropicLoginProcedure,
+		svc.BeginAnthropicLogin,
+		connect.WithSchema(sessionServiceMethods.ByName("BeginAnthropicLogin")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceCompleteAnthropicLoginHandler := connect.NewUnaryHandler(
+		SessionServiceCompleteAnthropicLoginProcedure,
+		svc.CompleteAnthropicLogin,
+		connect.WithSchema(sessionServiceMethods.ByName("CompleteAnthropicLogin")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceCancelAnthropicLoginHandler := connect.NewUnaryHandler(
+		SessionServiceCancelAnthropicLoginProcedure,
+		svc.CancelAnthropicLogin,
+		connect.WithSchema(sessionServiceMethods.ByName("CancelAnthropicLogin")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sessionServiceGetSubscriptionUsageHandler := connect.NewUnaryHandler(
 		SessionServiceGetSubscriptionUsageProcedure,
 		svc.GetSubscriptionUsage,
@@ -1696,6 +1767,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceCaptureBacklogItemHandler.ServeHTTP(w, r)
 		case SessionServiceGetUsageProcedure:
 			sessionServiceGetUsageHandler.ServeHTTP(w, r)
+		case SessionServiceBeginAnthropicLoginProcedure:
+			sessionServiceBeginAnthropicLoginHandler.ServeHTTP(w, r)
+		case SessionServiceCompleteAnthropicLoginProcedure:
+			sessionServiceCompleteAnthropicLoginHandler.ServeHTTP(w, r)
+		case SessionServiceCancelAnthropicLoginProcedure:
+			sessionServiceCancelAnthropicLoginHandler.ServeHTTP(w, r)
 		case SessionServiceGetSubscriptionUsageProcedure:
 			sessionServiceGetSubscriptionUsageHandler.ServeHTTP(w, r)
 		case SessionServiceGetBudgetProcedure:
@@ -1923,6 +2000,18 @@ func (UnimplementedSessionServiceHandler) CaptureBacklogItem(context.Context, *c
 
 func (UnimplementedSessionServiceHandler) GetUsage(context.Context, *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetUsage is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) BeginAnthropicLogin(context.Context, *connect.Request[v1.BeginAnthropicLoginRequest]) (*connect.Response[v1.BeginAnthropicLoginResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.BeginAnthropicLogin is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) CompleteAnthropicLogin(context.Context, *connect.Request[v1.CompleteAnthropicLoginRequest]) (*connect.Response[v1.CompleteAnthropicLoginResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.CompleteAnthropicLogin is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) CancelAnthropicLogin(context.Context, *connect.Request[v1.CancelAnthropicLoginRequest]) (*connect.Response[v1.CancelAnthropicLoginResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.CancelAnthropicLogin is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) GetSubscriptionUsage(context.Context, *connect.Request[v1.GetSubscriptionUsageRequest]) (*connect.Response[v1.GetSubscriptionUsageResponse], error) {

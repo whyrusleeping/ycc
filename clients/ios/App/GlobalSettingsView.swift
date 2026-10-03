@@ -10,6 +10,7 @@ struct GlobalSettingsView: View {
     @State private var model: GlobalSettingsModel
     @State private var editorTarget: ModelEditorTarget?
     @State private var pendingRemoval: String?
+    @State private var showAnthropicLogin = false
     private let client: YccClient
 
     init(client: YccClient, cache: AppDataCache? = nil) {
@@ -27,6 +28,13 @@ struct GlobalSettingsView: View {
                         .font(.callout)
                 }
             }
+            Section("Provider accounts") {
+                Button {
+                    showAnthropicLogin = true
+                } label: {
+                    Label("Connect / reconnect Anthropic", systemImage: "key.fill")
+                }
+            }
             rolesSection
             thinkingSection
             reviewTiersSection
@@ -39,6 +47,9 @@ struct GlobalSettingsView: View {
         .disabled(model.isApplying)
         .task { await model.load() }
         .refreshable { await model.load() }
+        .sheet(isPresented: $showAnthropicLogin) {
+            NavigationStack { AnthropicLoginView(client: client) }
+        }
         .sheet(item: $editorTarget) { target in
             NavigationStack {
                 ModelEditorView(

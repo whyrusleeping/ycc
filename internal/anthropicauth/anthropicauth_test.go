@@ -5,9 +5,14 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"os/exec"
+
+	"github.com/whyrusleeping/ycc/internal/secrets"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +25,116 @@ func isolate(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("HOME", dir)
+}
+
+func TestLoginSaveSubprocess(t *testing.T) {
+	if os.Getenv("YCC_TEST_LOGIN_SAVE") != "1" {
+		return
+	}
+	if err := Save(&Credentials{AccessToken: "new-login", RefreshToken: "new-refresh", ExpiresAt: time.Now().Add(time.Hour).Unix(), FlowVersion: FlowVersion}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoginSaveSupersedesInFlightRefresh(t *testing.T) {
+	for _, subprocess := range []bool{false, true} {
+		for _, rejected := range []bool{false, true} {
+			t.Run(fmt.Sprintf("subprocess=%v/rejected=%v", subprocess, rejected), func(t *testing.T) {
+				isolate(t)
+				if err := Save(&Credentials{AccessToken: "old", RefreshToken: "old-refresh", FlowVersion: FlowVersion}); err != nil {
+					t.Fatal(err)
+				}
+				entered, release := make(chan struct{}), make(chan struct{})
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					close(entered)
+					<-release
+					if rejected {
+						http.Error(w, "old refresh rejected", 400)
+						return
+					}
+					w.Write([]byte(`{"access_token":"refreshed-old","refresh_token":"rotated-old","expires_in":3600}`))
+				}))
+				defer srv.Close()
+				old := TokenEndpoint
+				TokenEndpoint = srv.URL
+				defer func() { TokenEndpoint = old }()
+				refreshed := make(chan error, 1)
+				go func() {
+					token, err := AccessToken(context.Background())
+					if err == nil && token != "new-login" {
+						err = fmt.Errorf("returned discarded refresh token")
+					}
+					refreshed <- err
+				}()
+				<-entered
+				saved := make(chan error, 1)
+				go func() {
+					if subprocess {
+						cmd := exec.Command(os.Args[0], "-test.run=^TestLoginSaveSubprocess$")
+						cmd.Env = append(os.Environ(), "YCC_TEST_LOGIN_SAVE=1")
+						saved <- cmd.Run()
+					} else {
+						saved <- Save(&Credentials{AccessToken: "new-login", RefreshToken: "new-refresh", ExpiresAt: time.Now().Add(time.Hour).Unix(), FlowVersion: FlowVersion})
+					}
+				}()
+				select {
+				case err := <-saved:
+					if err != nil {
+						t.Error(err)
+					}
+				case <-time.After(5 * time.Second):
+					t.Error("login save blocked behind network refresh")
+				}
+				close(release)
+				if err := <-refreshed; err != nil {
+					t.Fatal(err)
+				}
+				creds, ok := Load()
+				if !ok || creds.AccessToken != "new-login" {
+					t.Fatal("refresh overwrote new login")
+				}
+			})
+		}
+	}
+}
+
+func TestRefreshDoesNotRestoreRemovedLoginAndBoundsChurn(t *testing.T) {
+	for _, remove := range []bool{false, true} {
+		t.Run(fmt.Sprint(remove), func(t *testing.T) {
+			isolate(t)
+			if err := Save(&Credentials{AccessToken: "old", RefreshToken: "refresh", FlowVersion: FlowVersion}); err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				var err error
+				if remove {
+					err = secrets.Remove(SecretsKey)
+				} else {
+					err = Save(&Credentials{AccessToken: fmt.Sprint(calls), RefreshToken: "replacement", FlowVersion: FlowVersion})
+				}
+				if err != nil {
+					t.Error(err)
+				}
+				w.Write([]byte(`{"access_token":"discard-me","refresh_token":"old","expires_in":3600}`))
+			}))
+			defer srv.Close()
+			old := TokenEndpoint
+			TokenEndpoint = srv.URL
+			defer func() { TokenEndpoint = old }()
+			if _, err := AccessToken(context.Background()); err == nil {
+				t.Fatal("expected safe failure")
+			}
+			if remove {
+				if _, ok := Load(); ok {
+					t.Fatal("restored removed login")
+				}
+			} else if calls != 3 {
+				t.Fatalf("unbounded or premature retry: %d", calls)
+			}
+		})
+	}
 }
 
 func TestPKCEAndAuthorizeURL(t *testing.T) {

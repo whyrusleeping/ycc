@@ -562,7 +562,10 @@ work actionable with durable evidence and remaining criteria, unless genuinely b
 The loop survives client disconnects. Retryable provider outages enter a bounded waiting state
 with escalating delays; non-retryable failures stop. Daemon restart restores an active/waiting
 loop as interrupted and never silently resumes it. The daemon owns budget enforcement and the
-incremental/final digest.
+incremental/final digest. Session startup failures retain their full stop reason in the loop
+outcome and send an error notification even if no session was created. iOS shows the outcome
+when an observed loop finishes (including a start response that is already terminal), and keeps
+it visible in the backlog banner and loop detail after reconnect.
 
 Each loop snapshot captures the resource envelope configured at start: session and loop token and
 cost caps, with zero rendered explicitly as unbounded, plus explicitly unbounded session and loop
@@ -662,8 +665,21 @@ when an explicit total-attempt budget is configured (as for rate limits).
 
 API-key values resolve from the environment first and then the machine-local secrets store
 managed by `ycc token`; committed config stores only the key name. Anthropic and OpenAI also
-support subscription OAuth through `ycc login`. Tokens are stored machine-locally, refreshed as
-needed, never included in RPC responses, and re-resolved per turn where provider refresh semantics
+support subscription OAuth through `ycc login`. Anthropic can also be connected from iOS via
+Settings → Provider accounts, or the stopped work-loop screen: authenticated begin/complete/cancel
+RPCs create a daemon-owned browser login and exchange the full pasted `code#state`. There is one
+pending attempt per daemon, valid for ten minutes; a new begin supersedes it, and submission
+consumes it even on failure. State must match before exchange. An in-flight exchange excludes a
+new begin; cancellation discards only the matching pending attempt, not submitted exchanges or
+stored credentials. Attempts are memory-only and do not survive daemon restart. URLs/codes are
+transient UI state, excluded from caches, session events, and diagnostics; provider errors are
+sanitized rather than echoed. Login changes neither model settings nor work-loop state. Saved
+credentials apply to all projects on the daemon; reconnect never restarts unattended work.
+A refresh may persist its result only if the stored credential snapshot still matches the one
+it refreshed (an atomic cross-process compare-and-swap). A newer login or removal wins over
+an old in-flight refresh, and login persistence does not wait for that refresh's network call.
+Tokens are stored machine-locally, refreshed as needed, never included in RPC responses,
+and re-resolved per turn where provider refresh semantics
 can invalidate an earlier access token. OpenAI subscription inference uses its compatible Codex
 Responses transport rather than the platform API. The engine may enforce its configured output
 cap, but this transport must not send `max_output_tokens`: the ChatGPT Codex backend rejects that
@@ -747,8 +763,9 @@ performing a different history operation. Rationale is retained in
 ## 18. Client interaction model
 
 All clients project the same session/backlog/workstream state and may differ in layout. The TUI is
-the primary local surface; the web client is a small embedded remote surface; the iOS client adds
-native persistence, notifications, and phone navigation. Its backlog task detail can edit the task's
+the primary local surface; the embedded web client is a desktop-browser surface targeting TUI/iOS
+parity (`docs/design/web-client.md`); the iOS client adds native persistence, notifications, and
+phone navigation. Its backlog task detail can edit the task's
 user-maintained frontmatter and Markdown body through the daemon, retaining failed drafts and
 replacing its projection with the canonical saved response. Detailed command usage belongs in
 `docs/cli.md`, and the TUI ownership map is in `docs/tui-components.md`.

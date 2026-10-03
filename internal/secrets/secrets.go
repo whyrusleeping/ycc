@@ -202,6 +202,27 @@ func Set(key, token string) error {
 	})
 }
 
+// CompareAndSwap replaces an existing secret only if its exact stored value
+// still matches expected. The check and write share the store's cross-process
+// lock, so a slow OAuth refresh cannot overwrite a newer login or a removal.
+func CompareAndSwap(key, expected, replacement string) (bool, error) {
+	mismatch := errors.New("secret changed")
+	swapped := false
+	err := mutateErr(func(s *Store) error {
+		current, ok := s.Tokens[key]
+		if !ok || current != expected {
+			return mismatch
+		}
+		s.Tokens[key] = replacement
+		swapped = true
+		return nil
+	})
+	if errors.Is(err, mismatch) {
+		return false, nil
+	}
+	return swapped && err == nil, err
+}
+
 // Remove deletes the token stored under key and any authorization records for it.
 func Remove(key string) error {
 	return mutate(func(s *Store) {

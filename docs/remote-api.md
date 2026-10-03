@@ -53,6 +53,41 @@ Connect error JSON body, on unary *and* streaming RPCs alike:
 {"code":"unauthenticated","message":"invalid or missing bearer token"}
 ```
 
+### Anthropic subscription login from a remote client
+
+The iOS app exposes this under **Settings → Provider accounts → Connect / reconnect
+Anthropic**, and from a stopped work loop whose failure mentions Anthropic. It opens
+the provider's browser page; the user returns and pastes the full `code#state` into a
+dedicated secure field, **not chat**. Anthropic's registered callback is a provider
+code-display page, so this flow does not require an inbound connection to the daemon
+or an app URL callback.
+
+All three unary RPCs use the daemon bearer token:
+
+| Method | Request | Response |
+|---|---|---|
+| `BeginAnthropicLogin` | `{}` | `attemptId`, `authorizationUrl`, `expiresAtUnix` |
+| `CompleteAnthropicLogin` | `attemptId`, `code` (full `code#state`) | `{}` after credentials are saved |
+| `CancelAnthropicLogin` | `attemptId` | `{}` |
+
+Only one pending attempt is retained per daemon. It expires after ten minutes and
+is invalidated by a new begin or daemon restart. Completion consumes a matching
+attempt **before** validating/exchanging the code, and validates the echoed state.
+It bounds provider exchange to 30 seconds and reports sanitized errors. A failed or
+ambiguous completion must not be automatically replayed: start a fresh login with a
+new code. A new begin is rejected while an exchange/store is in flight. Cancel is
+idempotent and only discards a matching pending attempt; it neither undoes a submitted
+exchange nor deletes saved credentials. A stale screen cannot cancel a newer attempt.
+
+Treat authorization URLs and pasted codes as sensitive, transient data: do not log or
+cache request/response bodies (including in reverse proxies or tunnel inspectors).
+Use HTTPS or an encrypted private network. The daemon does not record login payloads
+in sessions or latency diagnostics, and access/refresh tokens never appear in RPC
+responses. Credentials are stored in the daemon's private machine-local secrets store
+and apply to **all projects** using Anthropic OAuth. Existing OAuth models pick up the
+new credentials without a daemon restart. Login does not change model configuration,
+role assignments, or loop state; the user explicitly restarts work when ready.
+
 ### Latency diagnostics
 
 `GET /debug/latency` accepts the same bearer token as RPCs (HTTP 401 otherwise;
@@ -243,7 +278,11 @@ JSON="Content-Type: application/json"
 
 ### ListProjects
 
-List the daemon's registered projects (name → workspace path). Empty request. Each project also
+List the daemon's registered projects (name → workspace path). Empty request. Projects are ordered
+approximately most-recently-used first — by the newest session event log in the workspace (rescanned
+at most every few minutes), bumped immediately when a user starts a session, sends input, or answers
+a question there — with ties (including never-used projects) by name. Clients should present them in
+the returned order. Each project also
 reports `needsOnboarding`: `true` when its configured spec entry point has no substantive content
 and its backlog has no tasks, otherwise an explicitly present `false`. Clients can use this to show
 the onboarding preset only where it is relevant.

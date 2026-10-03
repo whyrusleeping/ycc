@@ -13,6 +13,7 @@ struct WorkLoopView: View {
     @State private var model: WorkLoopModel?
     @State private var showStartConfirmation = false
     @State private var showStopConfirmation = false
+    @State private var showAnthropicLogin = false
 
     let project: String
 
@@ -25,6 +26,11 @@ struct WorkLoopView: View {
             }
         }
         .navigationTitle("Work loop")
+        .sheet(isPresented: $showAnthropicLogin) {
+            if let client = app.client {
+                NavigationStack { AnthropicLoginView(client: client) }
+            }
+        }
         .confirmationDialog(
             "Start unattended work loop?",
             isPresented: $showStartConfirmation,
@@ -63,6 +69,17 @@ struct WorkLoopView: View {
             presenting: model?.actionError
         ) { _ in
             Button("OK", role: .cancel) { model?.actionError = nil }
+        } message: { message in
+            Text(message)
+        }
+        .alert(
+            "Work loop finished",
+            isPresented: Binding(
+                get: { model?.completionMessage != nil },
+                set: { if !$0 { model?.completionMessage = nil } }),
+            presenting: model?.completionMessage
+        ) { _ in
+            Button("OK", role: .cancel) { model?.completionMessage = nil }
         } message: { message in
             Text(message)
         }
@@ -116,6 +133,17 @@ struct WorkLoopView: View {
         List {
             Section {
                 header(model, loop)
+            }
+
+            if model.state == .finished && (
+                loop.outcome.localizedCaseInsensitiveContains("anthropic") ||
+                loop.sessions.last?.errorMessage.localizedCaseInsensitiveContains("anthropic") == true
+            ) {
+                Section {
+                    Button("Reconnect Anthropic") { showAnthropicLogin = true }
+                } footer: {
+                    Text("Sign in from this phone. Reconnecting does not restart the loop.")
+                }
             }
 
             Section("Resource envelope") {

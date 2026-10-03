@@ -1,10 +1,10 @@
 ---
 id: "0350"
 title: Evaluate command yield policy and expose structured shell execution outcomes
-status: todo
+status: proposed
 priority: 3
 created: "2026-09-08"
-updated: "2026-09-26"
+updated: "2026-10-02"
 depends_on: []
 spec_refs:
     - §7.3 Subagents and asynchronous jobs

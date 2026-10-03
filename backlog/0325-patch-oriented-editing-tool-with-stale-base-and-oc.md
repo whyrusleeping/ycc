@@ -1,10 +1,10 @@
 ---
 id: "0325"
 title: Transactional Patch tool with file revisions and occurrence selectors
-status: todo
+status: proposed
 priority: 3
 created: "2026-08-12"
-updated: "2026-09-26"
+updated: "2026-10-02"
 depends_on: []
 spec_refs:
     - §8 Tools and access policy

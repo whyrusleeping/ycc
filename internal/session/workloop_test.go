@@ -779,6 +779,54 @@ func TestWorkLoopSoleProjectOmitted(t *testing.T) {
 	}
 }
 
+func TestWorkLoopStartupFailureNotifiesWithoutSession(t *testing.T) {
+	const reason = "build coordinator backend: Refresh token expired; re-run ycc login anthropic"
+	m, sink, ws := loopTestManager(t, func(wl *workLoop) func(context.Context) (loopSessRec, bool, error) {
+		// Exercise the real runner's pre-session error path, not a session_error.
+		wl.startSession = func(Config) (*Session, error) { return nil, fmt.Errorf("%s", reason) }
+		return wl.realRunSession
+	})
+	if _, err := docs.NewStore(ws).Create("ready task", "", 3, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.StartWorkLoop("demo"); err != nil {
+		t.Fatal(err)
+	}
+	final := waitLoopFinished(t, m, "demo")
+	// Finished state is published before notification; join the driver before Flush.
+	m.loopWG.Wait()
+	m.notifier.Flush()
+	if final.SessionsRun != 0 || final.CurrentSessionID != "" || final.Outcome != "loop stopped: "+reason {
+		t.Fatalf("unexpected snapshot: %+v", final)
+	}
+	persisted, ok := readPersistedWorkLoop(ws)
+	if !ok || persisted.Outcome != final.Outcome {
+		t.Fatalf("missing persisted reason: %+v", persisted)
+	}
+	recs := sink.all()
+	if len(recs) != 1 || recs[0].tags != notify.KindError || !strings.Contains(recs[0].body, reason) {
+		t.Fatalf("expected startup error notification, got %+v", recs)
+	}
+}
+
+func TestWorkLoopEmptyBacklogDoesNotNotifyError(t *testing.T) {
+	m, sink, _ := loopTestManager(t, func(*workLoop) func(context.Context) (loopSessRec, bool, error) {
+		return func(context.Context) (loopSessRec, bool, error) {
+			t.Error("empty backlog must not start a session")
+			return loopSessRec{}, false, nil
+		}
+	})
+	if _, err := m.StartWorkLoop("demo"); err != nil {
+		t.Fatal(err)
+	}
+	final := waitLoopFinished(t, m, "demo")
+	m.loopWG.Wait()
+	m.notifier.Flush()
+	if final.Outcome != "loop complete: no ready tasks remain" || len(sink.all()) != 0 {
+		t.Fatalf("empty backlog reported failure: %+v, notifications %+v", final, sink.all())
+	}
+}
+
 func TestWorkLoopDrainsBacklogAndPushesDigest(t *testing.T) {
 	// The fake session runner marks the top-ready task done on each call and
 	// returns a canned per-session record, so the loop drains the backlog and then

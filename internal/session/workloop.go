@@ -471,6 +471,11 @@ func (wl *workLoop) run() {
 				tasks = final
 			}
 			wl.finish("loop stopped: "+err.Error(), tasks)
+			// Startup failures have no session_error event (or session watcher)
+			// to notify the user. Do not silently drop them from zero-session runs.
+			if rec.id == "" {
+				wl.m.Notify(notify.KindError, wl.project, "", "work loop stopped: "+err.Error())
+			}
 			return
 		}
 

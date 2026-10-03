@@ -210,6 +210,16 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `getUsage`(request: Ycc_V1_GetUsageRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetUsageResponse>
 
+    /// Browser-and-paste subscription login; access/refresh tokens never leave the daemon.
+    @available(iOS 13, *)
+    func `beginAnthropicLogin`(request: Ycc_V1_BeginAnthropicLoginRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_BeginAnthropicLoginResponse>
+
+    @available(iOS 13, *)
+    func `completeAnthropicLogin`(request: Ycc_V1_CompleteAnthropicLoginRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_CompleteAnthropicLoginResponse>
+
+    @available(iOS 13, *)
+    func `cancelAnthropicLogin`(request: Ycc_V1_CancelAnthropicLoginRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_CancelAnthropicLoginResponse>
+
     /// Best-effort provider-side subscription allowance.
     @available(iOS 13, *)
     func `getSubscriptionUsage`(request: Ycc_V1_GetSubscriptionUsageRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetSubscriptionUsageResponse>
@@ -515,6 +525,21 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     }
 
     @available(iOS 13, *)
+    public func `beginAnthropicLogin`(request: Ycc_V1_BeginAnthropicLoginRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_BeginAnthropicLoginResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/BeginAnthropicLogin", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `completeAnthropicLogin`(request: Ycc_V1_CompleteAnthropicLoginRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_CompleteAnthropicLoginResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/CompleteAnthropicLogin", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `cancelAnthropicLogin`(request: Ycc_V1_CancelAnthropicLoginRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_CancelAnthropicLoginResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/CancelAnthropicLogin", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
     public func `getSubscriptionUsage`(request: Ycc_V1_GetSubscriptionUsageRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_GetSubscriptionUsageResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/GetSubscriptionUsage", idempotencyLevel: .unknown, request: request, headers: headers)
     }
@@ -625,6 +650,9 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let getMemory = Connect.MethodSpec(name: "GetMemory", service: "ycc.v1.SessionService", type: .unary)
             public static let captureBacklogItem = Connect.MethodSpec(name: "CaptureBacklogItem", service: "ycc.v1.SessionService", type: .serverStream)
             public static let getUsage = Connect.MethodSpec(name: "GetUsage", service: "ycc.v1.SessionService", type: .unary)
+            public static let beginAnthropicLogin = Connect.MethodSpec(name: "BeginAnthropicLogin", service: "ycc.v1.SessionService", type: .unary)
+            public static let completeAnthropicLogin = Connect.MethodSpec(name: "CompleteAnthropicLogin", service: "ycc.v1.SessionService", type: .unary)
+            public static let cancelAnthropicLogin = Connect.MethodSpec(name: "CancelAnthropicLogin", service: "ycc.v1.SessionService", type: .unary)
             public static let getSubscriptionUsage = Connect.MethodSpec(name: "GetSubscriptionUsage", service: "ycc.v1.SessionService", type: .unary)
             public static let getBudget = Connect.MethodSpec(name: "GetBudget", service: "ycc.v1.SessionService", type: .unary)
             public static let notify = Connect.MethodSpec(name: "Notify", service: "ycc.v1.SessionService", type: .unary)

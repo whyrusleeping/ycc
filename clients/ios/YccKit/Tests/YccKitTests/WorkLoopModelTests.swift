@@ -135,6 +135,54 @@ final class WorkLoopModelTests: XCTestCase {
         XCTAssertEqual(model.actionError, "a loop is already running")
     }
 
+    func testStartupFailureSurfacesFromStartOrFirstPollAndDoesNotRepeat() async {
+        let outcome = "loop stopped: build coordinator backend: Refresh token expired; re-run ycc login anthropic"
+        for finishesInStart in [true, false] {
+            let source = MockWorkLoopSource()
+            var failed = loop(state: "finished")
+            failed.outcome = outcome
+            source.startSnapshot = finishesInStart ? failed : loop(state: "running")
+            source.snapshot = failed
+            let model = WorkLoopModel(source: source, project: "demo")
+
+            await model.start()
+            if !finishesInStart {
+                XCTAssertNil(model.completionMessage)
+                await model.refresh()
+            }
+            XCTAssertEqual(model.completionMessage, outcome)
+            XCTAssertEqual(WorkLoopModel.bannerLine(for: model.loop), outcome)
+            XCTAssertFalse(model.shouldPoll)
+            XCTAssertTrue(model.canStart)
+            XCTAssertNil(model.actionError)
+
+            model.completionMessage = nil
+            await model.refresh()
+            XCTAssertNil(model.completionMessage)
+
+            // Reopening retains the reason without repeatedly alerting for history.
+            let reopened = WorkLoopModel(source: source, project: "demo")
+            await reopened.refresh()
+            XCTAssertNil(reopened.completionMessage)
+            XCTAssertEqual(WorkLoopModel.bannerLine(for: reopened.loop), outcome)
+
+            source.startSnapshot = loop(state: "running")
+            await model.start()
+            XCTAssertNil(model.completionMessage)
+            XCTAssertTrue(model.shouldPoll)
+        }
+    }
+
+    func testEmptyBacklogCompletionShowsOutcomeWithoutActionError() async {
+        let source = MockWorkLoopSource()
+        source.startSnapshot = loop(state: "finished")
+        source.startSnapshot.outcome = "loop complete: no ready tasks remain"
+        let model = WorkLoopModel(source: source, project: "demo")
+        await model.start()
+        XCTAssertNil(model.actionError)
+        XCTAssertEqual(model.completionMessage, source.startSnapshot.outcome)
+    }
+
     func testStopAppliesStoppingAndFinishedSnapshots() async {
         let source = MockWorkLoopSource()
         source.snapshot = loop(state: "running", current: "active")
