@@ -69,7 +69,7 @@ func (m model) statusBar() string {
 	// idle/paused/error so a stale error never animates.
 	dot := dimStyle
 	switch m.status {
-	case "running":
+	case "running", statusAwaitingJobs:
 		dot = successStyle
 	case "paused":
 		dot = recoStyle

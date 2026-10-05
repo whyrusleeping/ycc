@@ -724,7 +724,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// When the session goes idle/paused/error (and no capture RPC is running)
 		// we stop ticking so the spinner doesn't resurrect on a stale error state
 		// the next start re-arms it via spinnerCmd.
-		if m.status != "running" && !m.captureBusy {
+		if !m.agentActive() && !m.captureBusy {
 			m.spinning = false
 			return m, nil
 		}

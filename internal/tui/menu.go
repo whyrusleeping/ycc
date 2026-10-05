@@ -84,7 +84,28 @@ func (m model) stopSession() tea.Cmd {
 // "error"/"paused" states (esc →
 // settings overlay → "back home" remains the escape hatch there).
 func (m model) sessionFinished() bool {
+	// statusAwaitingJobs is deliberately not finished: the session is waiting on
+	// delegated work that will resume it, and q would stop (kill) that work.
 	return m.state == stateSession && !m.looping && (m.status == "idle" || m.status == "stream closed")
+}
+
+// statusAwaitingJobs is the session status label while the coordinator is idle
+// but delegated work (a subagent or background job) will still resume it — the
+// session_idle report carried awaiting_jobs. It reads as active, never finished.
+const statusAwaitingJobs = "waiting on background jobs"
+
+// agentActive reports whether the session is doing work worth a spinner: the
+// coordinator is running, or it is idle while its delegated work runs.
+func (m model) agentActive() bool {
+	return m.status == "running" || m.status == statusAwaitingJobs
+}
+
+// subagentActor reports whether an event actor is a subagent rather than the
+// coordinator side of the session (coordinator/user/system/daemon), matching
+// the daemon's session-view reducer.
+func subagentActor(actor string) bool {
+	a := strings.ToLower(actor)
+	return a != "" && a != "coordinator" && a != "user" && a != "system" && a != "daemon"
 }
 
 // blockedTaskCount reports how many backlog tasks are currently marked "blocked"

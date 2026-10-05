@@ -894,7 +894,7 @@ private struct StatusBadge: View {
 
     private var color: Color {
         switch label {
-        case "running": return .green
+        case "running", "background": return .green
         case "waiting", "paused": return .orange
         case "error": return .red
         case "stopped": return .gray

@@ -193,6 +193,36 @@ func TestIndexedSessionViewPagesAndDetail(t *testing.T) {
 	}
 }
 
+// A persisted log that ended on an awaiting idle report belongs to a session
+// that is no longer live: its delegated work did not survive, so the view must
+// not keep presenting it as still waiting on background jobs.
+func TestSessionViewClearsAwaitingJobsForNonLiveSession(t *testing.T) {
+	ws := t.TempDir()
+	logPath := filepath.Join(ws, ".ycc", "sessions", "s_bg", "events.jsonl")
+	log, err := event.OpenLog(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log.Record("coordinator", event.SessionStarted, map[string]any{})
+	log.Record("coordinator", event.SessionIdle, map[string]any{"report": "spawned", "awaiting_jobs": true})
+	if err := log.Close(); err != nil {
+		t.Fatal(err)
+	}
+	mgr := session.NewManager(config.NewRegistry(&config.Config{}), ws)
+	defer mgr.ReclaimAll()
+	_, handler := yccv1connect.NewSessionServiceHandler(New(mgr))
+	httpServer := httptest.NewServer(handler)
+	defer httpServer.Close()
+	client := yccv1connect.NewSessionServiceClient(httpServer.Client(), httpServer.URL)
+	resp, err := client.GetSessionView(context.Background(), connect.NewRequest(&v1.GetSessionViewRequest{SessionId: "s_bg"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st := resp.Msg.State; st.Phase != "idle" || st.AwaitingJobs {
+		t.Fatalf("non-live awaiting log: phase=%q awaiting=%v, want idle/false", st.Phase, st.AwaitingJobs)
+	}
+}
+
 // Set YCC_BENCH_TRANSCRIPT to a local events.jsonl to measure actual encoded
 // transcript cost without checking private session data into a fixture.
 func TestIndexedSessionViewBoundsWholePathologicalResponse(t *testing.T) {

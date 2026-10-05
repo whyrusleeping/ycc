@@ -85,6 +85,9 @@ func TestNotifyWatcherMapsEvents(t *testing.T) {
 	em.Emit(event.QuestionAsked, askManyData([]orchestrator.Question{
 		{Prompt: "Q one"}, {Prompt: "Q two"}, {Prompt: "Q three"},
 	}, false))
+	// A progress report while delegated work still runs is not "finished": the
+	// session resumes by itself, so it must NOT notify.
+	em.Emit(event.SessionIdle, map[string]any{"report": "Waiting on the subagent.", "awaiting_jobs": true})
 	em.Emit(event.SessionIdle, map[string]any{"report": "All done.\nsecond line"})
 	em.Emit(event.SessionError, map[string]any{"msg": "boom happened"})
 	em.Emit(event.SubagentFinished, map[string]any{"role": "implementer", "blocked": true})

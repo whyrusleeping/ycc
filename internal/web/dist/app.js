@@ -137,7 +137,7 @@
   // seq folded), the per-actor live-tail snapshots, and the pending ask_user gate
   // (null when no question is open) that drives the answer sheet.
   function makeFeed() {
-    return { cursor: 0, tails: {}, pending: null, delivered: {}, rolloverAvailable: true, paused: false, pausePending: false, running: true, phase: "running", coordinatorModel: "" };
+    return { cursor: 0, tails: {}, pending: null, delivered: {}, rolloverAvailable: true, paused: false, pausePending: false, running: true, phase: "running", awaitingJobs: false, coordinatorModel: "" };
   }
 
   // Re-subscribing drops transient snapshots but retains the durable cursor/gate.
@@ -280,6 +280,11 @@
           feed.running = true;
         }
       }
+      // An idle report that left delegated work running (awaiting_jobs) is not
+      // a finished session: the coordinator resumes when that work completes.
+      // Any later coordinator phase change ends the qualifier.
+      feed.awaitingJobs = feed.phase === "idle" && type !== "session_reopened" &&
+        (type === "session_idle" ? durableData.awaiting_jobs === true : feed.awaitingJobs);
     }
 
     if (type === "user_input_delivered") {
@@ -669,7 +674,12 @@
 
     var meta = el("div", "row-meta");
     var status = strOf(s.status) || "idle";
-    meta.appendChild(el("span", "badge status-" + status, status));
+    if (s.live === true && s.awaitingJobs === true) {
+      // Idle coordinator still waiting on a live subagent/background job.
+      meta.appendChild(el("span", "badge status-running", "background jobs"));
+    } else {
+      meta.appendChild(el("span", "badge status-" + status, status));
+    }
     if (s.live === true) {
       meta.appendChild(el("span", "badge live", "live"));
     }
@@ -854,7 +864,9 @@
     }
     state.streaming = true;
     state.cleanEnd = false;
-    setStatus(state, state.feed.pausePending ? "Pausing at next checkpoint…" : state.feed.paused ? "paused" : "live");
+    setStatus(state, state.feed.pausePending ? "Pausing at next checkpoint…" : state.feed.paused ? "paused" :
+      state.feed.awaitingJobs ? "waiting on background jobs" : "live");
+    state.shownAwaiting = !state.feed.pausePending && !state.feed.paused && state.feed.awaitingJobs;
 
     var controller = null;
     try {
@@ -1428,7 +1440,11 @@
       }
       if (state.feed.pausePending) {
         setStatus(state, "Pausing at next checkpoint…");
-      } else if (action.kind === "append" && (ev.type === "interrupted" || ev.type === "resumed" || ev.type === "pause_cancelled")) {
+      } else if (state.feed.awaitingJobs) {
+        setStatus(state, "waiting on background jobs");
+        state.shownAwaiting = true;
+      } else if (state.shownAwaiting || (action.kind === "append" && (ev.type === "interrupted" || ev.type === "resumed" || ev.type === "pause_cancelled"))) {
+        state.shownAwaiting = false;
         setStatus(state, state.feed.paused ? "paused" : "live");
       }
     }

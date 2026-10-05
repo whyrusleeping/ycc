@@ -320,7 +320,14 @@ func (m *model) appendEvent(ev *v1.Event) {
 			m.input.Focus()
 		}
 	case "session_idle":
-		m.status = "idle"
+		// A progress report while delegated work still runs is not a finished
+		// session: the coordinator resumes by itself when that work completes,
+		// and stopping it now (q / an armed loop) would kill the work.
+		if dataField(ev, "awaiting_jobs") == "true" {
+			m.status = statusAwaitingJobs
+		} else {
+			m.status = "idle"
+		}
 		// The idle report supersedes an echoed final coordinator model_turn. That
 		// earlier row may already have a cached visible fold from the previous frame,
 		// so invalidate its fold and rendered neighbors now that the pairing exists.
@@ -418,7 +425,10 @@ func (m *model) appendEvent(ev *v1.Event) {
 	// of seconds behind (long context + thinking) — without this the header
 	// keeps saying "idle", the footer keeps offering "session finished", and no
 	// spinner runs, so the accepted follow-up looks like it went nowhere.
-	if m.status == "error" || m.status == "idle" {
+	//
+	// Only coordinator-side activity counts: a subagent's turns and tool calls
+	// run beside an idle coordinator and say nothing about its own state.
+	if (m.status == "error" || m.status == "idle" || m.status == statusAwaitingJobs) && !subagentActor(ev.Actor) {
 		switch ev.Type {
 		case "model_turn", "tool_call", "tool_result", "thinking", "user_input", "user_input_delivered":
 			m.status = "running"

@@ -78,6 +78,44 @@ func TestPauseRequestReconcilesAcrossCatchUp(t *testing.T) {
 	}
 }
 
+// An idle report that left delegated work running stays awaiting through
+// subagent activity and clears on the next coordinator phase change or reopen.
+func TestAwaitingJobsQualifiesIdleUntilCoordinatorResumes(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	store, err := Open(filepath.Join(dir, "view.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	sub := func(e event.Event) event.Event { e.Actor = "agent_1"; return e }
+	var events []event.Event
+	add := func(e event.Event, wantPhase string, wantAwaiting bool) {
+		t.Helper()
+		e.Seq = len(events) + 1
+		events = append(events, e)
+		writeLog(t, path, events)
+		state, err := store.CatchUp(ctx, "s", path, -1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state.Phase != wantPhase || state.AwaitingJobs != wantAwaiting {
+			t.Fatalf("after %s/%s: phase=%q awaiting=%v, want %q/%v", e.Actor, e.Type, state.Phase, state.AwaitingJobs, wantPhase, wantAwaiting)
+		}
+	}
+	add(ev(0, event.SessionStarted, nil), "running", false)
+	add(ev(0, event.SessionIdle, map[string]any{"report": "spawned", "awaiting_jobs": true}), "idle", true)
+	add(sub(ev(0, event.ToolCall, map[string]any{"name": "Read"})), "idle", true)
+	add(sub(ev(0, event.ModelTurn, map[string]any{"text": "working"})), "idle", true)
+	add(ev(0, event.ModelTurn, map[string]any{"text": "agent finished"}), "running", false)
+	add(ev(0, event.SessionIdle, map[string]any{"report": "done"}), "idle", false)
+	add(ev(0, event.SessionIdle, map[string]any{"report": "again", "awaiting_jobs": true}), "idle", true)
+	add(ev(0, event.SessionReopened, nil), "idle", false)
+	add(ev(0, event.SessionIdle, map[string]any{"report": "again", "awaiting_jobs": true}), "idle", true)
+	add(ev(0, event.SessionStopped, nil), "stopped", false)
+}
+
 func TestIndexIncrementalPagesEditsAndDetails(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -565,6 +603,26 @@ func TestOpenMakesTranscriptIndexPrivate(t *testing.T) {
 		}
 		if info.Mode().IsRegular() && info.Mode().Perm()&0o077 != 0 {
 			t.Fatalf("SQLite companion %s mode=%#o is not private", companion, info.Mode().Perm())
+		}
+	}
+}
+
+// The stamped user_version must equal schemaVersion, or every daemon start
+// would see a "stale" index and drop/rebuild it.
+func TestOpenStampsCurrentSchemaVersion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "view.sqlite")
+	for i := 0; i < 2; i++ {
+		store, err := Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var version int
+		if err := store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+			t.Fatal(err)
+		}
+		store.Close()
+		if version != schemaVersion {
+			t.Fatalf("open %d: user_version=%d, want %d", i, version, schemaVersion)
 		}
 	}
 }

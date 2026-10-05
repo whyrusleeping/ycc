@@ -2476,11 +2476,16 @@ func (x *ListSessionsRequest) GetProject() string {
 }
 
 type SessionInfo struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Mode          string                 `protobuf:"bytes,2,opt,name=mode,proto3" json:"mode,omitempty"`
-	Status        string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"` // running | idle | error
-	Workspace     string                 `protobuf:"bytes,4,opt,name=workspace,proto3" json:"workspace,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SessionId string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Mode      string                 `protobuf:"bytes,2,opt,name=mode,proto3" json:"mode,omitempty"`
+	Status    string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"` // running | idle | error
+	Workspace string                 `protobuf:"bytes,4,opt,name=workspace,proto3" json:"workspace,omitempty"`
+	// awaiting_jobs is true while an idle coordinator still has delegated work
+	// that will resume it by itself (a live subagent/background job, an unclaimed
+	// final report, or a wake already in flight). Clients present such a session
+	// as active, not finished; status stays "idle" for older clients.
+	AwaitingJobs  bool `protobuf:"varint,5,opt,name=awaiting_jobs,json=awaitingJobs,proto3" json:"awaiting_jobs,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2541,6 +2546,13 @@ func (x *SessionInfo) GetWorkspace() string {
 		return x.Workspace
 	}
 	return ""
+}
+
+func (x *SessionInfo) GetAwaitingJobs() bool {
+	if x != nil {
+		return x.AwaitingJobs
+	}
+	return false
 }
 
 type ListSessionsResponse struct {
@@ -2677,6 +2689,9 @@ type SessionSummary struct {
 	// opposed to cumulative spend. Subagent turns are ignored. Zero means the log
 	// predates the telemetry (or no turn completed yet).
 	ContextTokens int64 `protobuf:"varint,15,opt,name=context_tokens,json=contextTokens,proto3" json:"context_tokens,omitempty"`
+	// awaiting_jobs mirrors SessionInfo.awaiting_jobs: a live idle session whose
+	// delegated work will still resume it. Only ever set on live rows.
+	AwaitingJobs  bool `protobuf:"varint,16,opt,name=awaiting_jobs,json=awaitingJobs,proto3" json:"awaiting_jobs,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2814,6 +2829,13 @@ func (x *SessionSummary) GetContextTokens() int64 {
 		return x.ContextTokens
 	}
 	return 0
+}
+
+func (x *SessionSummary) GetAwaitingJobs() bool {
+	if x != nil {
+		return x.AwaitingJobs
+	}
+	return false
 }
 
 // Sessions are ordered by the serialized millisecond-precision last_activity
@@ -3141,8 +3163,13 @@ type SessionViewState struct {
 	// True when bounded state contains only a prefix; fetch pending_row_id detail.
 	PendingQuestionsTruncated bool `protobuf:"varint,12,opt,name=pending_questions_truncated,json=pendingQuestionsTruncated,proto3" json:"pending_questions_truncated,omitempty"`
 	PauseRequested            bool `protobuf:"varint,13,opt,name=pause_requested,json=pauseRequested,proto3" json:"pause_requested,omitempty"` // acknowledged request; interrupted alone means paused
-	unknownFields             protoimpl.UnknownFields
-	sizeCache                 protoimpl.SizeCache
+	// With phase "idle": the coordinator's last report left delegated work running
+	// that will resume it (session_idle.awaiting_jobs); present as active, not
+	// finished. Cleared by the next coordinator activity/lifecycle event, and
+	// false for sessions that are no longer live.
+	AwaitingJobs  bool `protobuf:"varint,14,opt,name=awaiting_jobs,json=awaitingJobs,proto3" json:"awaiting_jobs,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SessionViewState) Reset() {
@@ -3262,6 +3289,13 @@ func (x *SessionViewState) GetPendingQuestionsTruncated() bool {
 func (x *SessionViewState) GetPauseRequested() bool {
 	if x != nil {
 		return x.PauseRequested
+	}
+	return false
+}
+
+func (x *SessionViewState) GetAwaitingJobs() bool {
+	if x != nil {
+		return x.AwaitingJobs
 	}
 	return false
 }
@@ -10066,19 +10100,20 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x05modes\x18\x01 \x03(\v2\f.ycc.v1.ModeR\x05modes\x12(\n" +
 	"\apresets\x18\x02 \x03(\v2\x0e.ycc.v1.PresetR\apresets\"/\n" +
 	"\x13ListSessionsRequest\x12\x18\n" +
-	"\aproject\x18\x01 \x01(\tR\aproject\"v\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\"\x9b\x01\n" +
 	"\vSessionInfo\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
 	"\x04mode\x18\x02 \x01(\tR\x04mode\x12\x16\n" +
 	"\x06status\x18\x03 \x01(\tR\x06status\x12\x1c\n" +
-	"\tworkspace\x18\x04 \x01(\tR\tworkspace\"G\n" +
+	"\tworkspace\x18\x04 \x01(\tR\tworkspace\x12#\n" +
+	"\rawaiting_jobs\x18\x05 \x01(\bR\fawaitingJobs\"G\n" +
 	"\x14ListSessionsResponse\x12/\n" +
 	"\bsessions\x18\x01 \x03(\v2\x13.ycc.v1.SessionInfoR\bsessions\"c\n" +
 	"\x19ListSessionHistoryRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12\x14\n" +
 	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12\x16\n" +
-	"\x06cursor\x18\x03 \x01(\tR\x06cursor\"\xe8\x03\n" +
+	"\x06cursor\x18\x03 \x01(\tR\x06cursor\"\x8d\x04\n" +
 	"\x0eSessionSummary\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
@@ -10100,7 +10135,8 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\vmodel_usage\x18\r \x03(\v2\x19.ycc.v1.SessionModelUsageR\n" +
 	"modelUsage\x12!\n" +
 	"\ftotal_tokens\x18\x0e \x01(\x03R\vtotalTokens\x12%\n" +
-	"\x0econtext_tokens\x18\x0f \x01(\x03R\rcontextTokens\"\xa1\x01\n" +
+	"\x0econtext_tokens\x18\x0f \x01(\x03R\rcontextTokens\x12#\n" +
+	"\rawaiting_jobs\x18\x10 \x01(\bR\fawaitingJobs\"\xa1\x01\n" +
 	"\x1aListSessionHistoryResponse\x122\n" +
 	"\bsessions\x18\x01 \x03(\v2\x16.ycc.v1.SessionSummaryR\bsessions\x12\x1f\n" +
 	"\vnext_cursor\x18\x02 \x01(\tR\n" +
@@ -10123,7 +10159,7 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"has_detail\x18\x05 \x01(\bR\thasDetail\"G\n" +
 	"\x13SessionViewQuestion\x12\x16\n" +
 	"\x06prompt\x18\x01 \x01(\tR\x06prompt\x12\x18\n" +
-	"\aoptions\x18\x02 \x03(\tR\aoptions\"\xe2\x04\n" +
+	"\aoptions\x18\x02 \x03(\tR\aoptions\"\x87\x05\n" +
 	"\x10SessionViewState\x12.\n" +
 	"\x13indexed_through_seq\x18\x01 \x01(\x03R\x11indexedThroughSeq\x120\n" +
 	"\x14last_event_timestamp\x18\x02 \x01(\tR\x12lastEventTimestamp\x12\x14\n" +
@@ -10138,7 +10174,8 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	" \x03(\v2\x1b.ycc.v1.SessionViewQuestionR\x10pendingQuestions\x12$\n" +
 	"\x0epending_row_id\x18\v \x01(\tR\fpendingRowId\x12>\n" +
 	"\x1bpending_questions_truncated\x18\f \x01(\bR\x19pendingQuestionsTruncated\x12'\n" +
-	"\x0fpause_requested\x18\r \x01(\bR\x0epauseRequested\"\x88\x01\n" +
+	"\x0fpause_requested\x18\r \x01(\bR\x0epauseRequested\x12#\n" +
+	"\rawaiting_jobs\x18\x0e \x01(\bR\fawaitingJobs\"\x88\x01\n" +
 	"\x15GetSessionViewRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12\x1d\n" +
 	"\n" +

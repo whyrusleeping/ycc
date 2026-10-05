@@ -26,7 +26,8 @@ import (
 )
 
 // Rebuild older indexes so durable pause requests appear in their state snapshots.
-const schemaVersion = 4
+// 5: state gained awaiting_jobs (idle with delegated work still running).
+const schemaVersion = 5
 
 // Bounds are deliberately below Connect's normal message limits. MaxBytes is a
 // budget for the complete encoded response, not merely the row payloads. The
@@ -47,18 +48,21 @@ type Question struct {
 }
 
 type State struct {
-	IndexedThrough int64      `json:"indexed_through"`
-	LastTimestamp  string     `json:"last_timestamp,omitempty"`
-	Phase          string     `json:"phase"`
-	ErrorMessage   string     `json:"error_message,omitempty"`
-	ErrorRetryable bool       `json:"error_retryable"`
-	Coordinator    string     `json:"coordinator,omitempty"`
-	ContextTokens  int64      `json:"context_tokens,omitempty"`
-	HasContext     bool       `json:"has_context"`
-	Rollover       bool       `json:"rollover"`
-	PauseRequested bool       `json:"pause_requested"`
-	Pending        []Question `json:"pending,omitempty"`
-	PendingRowID   string     `json:"pending_row_id,omitempty"`
+	IndexedThrough int64  `json:"indexed_through"`
+	LastTimestamp  string `json:"last_timestamp,omitempty"`
+	Phase          string `json:"phase"`
+	ErrorMessage   string `json:"error_message,omitempty"`
+	ErrorRetryable bool   `json:"error_retryable"`
+	Coordinator    string `json:"coordinator,omitempty"`
+	ContextTokens  int64  `json:"context_tokens,omitempty"`
+	HasContext     bool   `json:"has_context"`
+	Rollover       bool   `json:"rollover"`
+	PauseRequested bool   `json:"pause_requested"`
+	// AwaitingJobs qualifies Phase "idle": the coordinator's last report left
+	// delegated work that will resume it (session_idle.awaiting_jobs).
+	AwaitingJobs bool       `json:"awaiting_jobs,omitempty"`
+	Pending      []Question `json:"pending,omitempty"`
+	PendingRowID string     `json:"pending_row_id,omitempty"`
 
 	// Reducer bookkeeping, not exposed on the wire.
 	OpenQuestionRowID string `json:"open_question_row_id,omitempty"`
@@ -148,7 +152,7 @@ CREATE TABLE IF NOT EXISTS updates (
  session_id TEXT NOT NULL, seq INTEGER NOT NULL, row_id TEXT NOT NULL, deleted INTEGER NOT NULL,
  PRIMARY KEY(session_id,seq,row_id)
 );
-PRAGMA user_version = 3;`)
+` + fmt.Sprintf("PRAGMA user_version = %d;", schemaVersion))
 	return err
 }
 
@@ -386,6 +390,7 @@ func applyEvent(ctx context.Context, tx *sql.Tx, sid string, st *State, ev event
 			st.Phase = "paused"
 		case event.SessionIdle:
 			st.Phase = "idle"
+			st.AwaitingJobs, _ = ev.Data["awaiting_jobs"].(bool)
 		case event.SessionError:
 			st.Phase = "error"
 			st.ErrorMessage = firstNonempty(str("msg"), str("error"), str("text"))
@@ -408,6 +413,12 @@ func applyEvent(ctx context.Context, tx *sql.Tx, sid string, st *State, ev event
 			if st.Phase != "paused" && isActivityType(ev.Type) {
 				st.Phase = "running"
 			}
+		}
+		// Only the idle report that carried it keeps the awaiting qualifier: any
+		// later coordinator phase change (the wake's turn, input, pause, stop,
+		// error) or a reopen (jobs do not survive one) ends it.
+		if st.Phase != "idle" || ev.Type == event.SessionReopened {
+			st.AwaitingJobs = false
 		}
 	}
 	switch ev.Type {

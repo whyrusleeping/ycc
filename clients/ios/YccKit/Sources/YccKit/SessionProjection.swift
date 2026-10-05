@@ -183,6 +183,12 @@ public struct SessionProjection: Sendable, Equatable {
     public private(set) var phase: Phase = .running
     /// Durable acknowledgement of a pause request, before the safe checkpoint.
     public private(set) var pauseRequested = false
+    /// Qualifies an `.idle` phase: the coordinator's last report left delegated
+    /// work (a subagent / background job) running that will resume it
+    /// (`session_idle.awaiting_jobs`). Present as active, not finished. Cleared
+    /// by the next coordinator-side phase change; subagent activity never
+    /// touches it.
+    public private(set) var awaitingJobs = false
     /// The logical model driving the session's coordinator — "which model is
     /// doing the work". Folded from the log itself rather than from `ListModels`,
     /// which only reports the daemon's GLOBAL role defaults and therefore lies
@@ -376,8 +382,14 @@ public struct SessionProjection: Sendable, Equatable {
 
         case "session_idle":
             // Session-level completion means no actor remains live, even if one
-            // or more terminal transient deltas were dropped under backpressure.
-            clearLiveTails()
+            // or more terminal transient deltas were dropped under backpressure —
+            // unless the report left delegated work running, whose subagents keep
+            // streaming: then only the coordinator's own tail is retired.
+            if (data["awaiting_jobs"] as? Bool) == true {
+                removeLiveTail(actor: event.actor)
+            } else {
+                clearLiveTails()
+            }
             // The report is the session's canonical human-facing result. If the
             // immediately preceding model bubble is repeated as the report's
             // exact text/prefix, replace it so the same answer is not shown twice.
@@ -613,6 +625,7 @@ public struct SessionProjection: Sendable, Equatable {
             phase = .paused
         case "session_idle":
             phase = .idle
+            awaitingJobs = (data["awaiting_jobs"] as? Bool) == true
         case "session_error":
             if (data["action"] as? String) == "switch_model" {
                 rolloverAvailable = false
@@ -644,6 +657,9 @@ public struct SessionProjection: Sendable, Equatable {
         default:
             break
         }
+        // Only the idle report that carried it keeps the qualifier; any later
+        // coordinator phase change, or a reopen (jobs never survive one), ends it.
+        if phase != .idle || type == "session_reopened" { awaitingJobs = false }
     }
 
     // MARK: - Coordinator model folding
@@ -953,7 +969,7 @@ public struct SessionProjection: Sendable, Equatable {
     private mutating func applyIndexedTailRetirement(
         state: Ycc_V1_SessionViewState, rows: [Ycc_V1_SessionPresentationRow]
     ) {
-        if state.phase == "idle" || state.phase == "stopped" {
+        if (state.phase == "idle" && !state.awaitingJobs) || state.phase == "stopped" {
             clearLiveTails()
             return
         }
@@ -980,6 +996,7 @@ public struct SessionProjection: Sendable, Equatable {
         case "stopped": phase = .stopped
         default: phase = .running
         }
+        awaitingJobs = phase == .idle && state.awaitingJobs
         openQuestions = []
         if state.pendingQuestionsTruncated, !state.pendingRowID.isEmpty {
             // Do not expose an incomplete batch to AnswerQuestions. The view model

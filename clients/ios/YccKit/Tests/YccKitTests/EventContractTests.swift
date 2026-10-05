@@ -124,7 +124,8 @@ final class EventContractTests: XCTestCase {
         for row in projection.liveTails {
             if case .liveTail(let text) = row.kind { tails[row.actor] = .string(text) }
         }
-        return ["phase": .string(phase), "pause_requested": .bool(projection.pauseRequested),
+        return ["phase": .string(phase), "awaiting_jobs": .bool(projection.awaitingJobs),
+                "pause_requested": .bool(projection.pauseRequested),
                 "cursor": .number(Int(projection.lastPersistedSeq)), "pending_question": pending,
                 "inputs": .array(inputs), "answers": .array(answers), "reviews": .array(reviews), "tails": obj(tails)]
     }

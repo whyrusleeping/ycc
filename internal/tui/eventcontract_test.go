@@ -85,7 +85,10 @@ func TestEventContract(t *testing.T) {
 
 func tuiContractFacts(m *model) map[string]any {
 	phase := m.status
+	awaiting := phase == statusAwaitingJobs
 	switch phase {
+	case statusAwaitingJobs:
+		phase = "idle"
 	case "paused", "idle", "error", "stopped":
 	default:
 		phase = "running"
@@ -139,5 +142,5 @@ func tuiContractFacts(m *model) map[string]any {
 	for actor, text := range m.liveTails {
 		tails[actor] = text
 	}
-	return map[string]any{"phase": phase, "pause_requested": m.pausePending, "cursor": m.lastSeq, "pending_question": pending, "inputs": inputs, "answers": answers, "reviews": reviews, "tails": tails}
+	return map[string]any{"phase": phase, "awaiting_jobs": awaiting, "pause_requested": m.pausePending, "cursor": m.lastSeq, "pending_question": pending, "inputs": inputs, "answers": answers, "reviews": reviews, "tails": tails}
 }

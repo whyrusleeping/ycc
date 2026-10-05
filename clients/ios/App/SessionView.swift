@@ -477,6 +477,9 @@ struct SessionView: View {
                     action: ("Resume", { Task { await model.resumeSession() } }),
                     actionDisabled: model.isControlInFlight
                 )
+            case .idle where model.displayAwaitingJobs:
+                banner("Waiting on background jobs — resumes when they finish",
+                       systemImage: "hourglass", tint: .blue)
             case .idle:
                 banner("Session idle", systemImage: "moon.zzz.fill", tint: .secondary)
             case .error(let message, let retryable):

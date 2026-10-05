@@ -318,6 +318,27 @@ test("feedIngest: paused lifecycle gates context rollover", function () {
   assert.strictEqual(feed.paused, false);
 });
 
+test("feedIngest: idle with live delegated work stays awaiting until the coordinator resumes", function () {
+  var feed = w.makeFeed();
+  function add(seq, actor, type, data) {
+    w.feedIngest(feed, { seq: String(seq), actor: actor, type: type, dataJson: JSON.stringify(data || {}) });
+  }
+  add(1, "coordinator", "session_idle", { report: "spawned agent", awaiting_jobs: true });
+  assert.strictEqual(feed.phase, "idle");
+  assert.strictEqual(feed.awaitingJobs, true);
+  // Subagent activity never touches the coordinator chrome.
+  add(2, "agent_1", "tool_call", { name: "Read" });
+  assert.strictEqual(feed.phase, "idle");
+  assert.strictEqual(feed.awaitingJobs, true);
+  // The completion wake's coordinator turn ends the qualifier.
+  add(3, "coordinator", "model_turn", { text: "agent finished" });
+  assert.strictEqual(feed.phase, "running");
+  assert.strictEqual(feed.awaitingJobs, false);
+  add(4, "coordinator", "session_idle", { report: "done" });
+  assert.strictEqual(feed.phase, "idle");
+  assert.strictEqual(feed.awaitingJobs, false);
+});
+
 test("feedIngest: idle input wakes the feed, but a queued steer stays paused", function () {
   var feed = w.makeFeed();
   function add(seq, type, data) {
@@ -461,7 +482,7 @@ fs.readdirSync(contractDir).filter(function (name) { return /\.json$/.test(name)
           prompts: feed.pending.questions.map(function (q) { return q.prompt; }),
           options: feed.pending.questions.map(function (q) { return q.options; })
         };
-        var facts = { phase: feed.phase, pause_requested: feed.pausePending, cursor: feed.cursor,
+        var facts = { phase: feed.phase, awaiting_jobs: feed.awaitingJobs, pause_requested: feed.pausePending, cursor: feed.cursor,
           pending_question: pending, inputs: inputs, answers: answers, reviews: reviews, tails: feed.tails };
         Object.keys(step.expect).forEach(function (key) {
           assert.ok(Object.prototype.hasOwnProperty.call(facts, key), "unknown fact " + key);

@@ -395,7 +395,13 @@ such a continuation is still possible — a live job, an unclaimed final report,
 flight — the session is not finished: neither the unattended work loop nor idle reclamation may end
 it and kill the work it is waiting for. Its `session_idle` report carries `awaiting_jobs: true`, so
 workstream observers do not treat that progress report as permission to integrate; integration
-recovery also waits for delegated continuation. Outcomes that nothing will wake stay terminal for
+recovery also waits for delegated continuation. Clients present such a session as active, not
+finished: session lists (`awaiting_jobs` on live `SessionInfo`/`SessionSummary` rows) and the
+session view (`SessionViewState.awaiting_jobs`, qualifying phase idle until the next
+coordinator-side phase change, false once the session is no longer live) show it as waiting on
+background jobs, subagent activity never changes the coordinator's phase, the TUI does not offer
+or perform the finished-session exit (which would stop the session and kill its jobs), and the
+idle push/bell is withheld until the post-wake report. Outcomes that nothing will wake stay terminal for
 those observers, so a blocked session never waits on delegated work forever.
 Output reads are non-consuming and use explicit absolute byte cursors/ranges or retained-tail
 requests, with retained intervals and

@@ -468,7 +468,10 @@ curl -sS -H "$AUTH" -H "$JSON" -d '{}' \
 {"sessions":[{"sessionId":"s_doc","mode":"work","status":"running","workspace":"/home/me/work"}]}
 ```
 
-`status` is `running` | `idle` | `error`.
+`status` is `running` | `idle` | `error`. `awaitingJobs: true` marks an idle
+session whose delegated work (a subagent or background job) will still resume
+it — present it as active, not finished. `ListSessionHistory` live rows and
+`GetSessionView`'s `state` carry the same `awaitingJobs` flag.
 
 ### ListSessionHistory
 

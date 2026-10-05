@@ -827,6 +827,12 @@ public nonisolated struct Ycc_V1_SessionInfo: Sendable {
 
   public var workspace: String = String()
 
+  /// awaiting_jobs is true while an idle coordinator still has delegated work
+  /// that will resume it by itself (a live subagent/background job, an unclaimed
+  /// final report, or a wake already in flight). Clients present such a session
+  /// as active, not finished; status stays "idle" for older clients.
+  public var awaitingJobs: Bool = false
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -912,6 +918,10 @@ public nonisolated struct Ycc_V1_SessionSummary: Sendable {
   /// opposed to cumulative spend. Subagent turns are ignored. Zero means the log
   /// predates the telemetry (or no turn completed yet).
   public var contextTokens: Int64 = 0
+
+  /// awaiting_jobs mirrors SessionInfo.awaiting_jobs: a live idle session whose
+  /// delegated work will still resume it. Only ever set on live rows.
+  public var awaitingJobs: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -1048,6 +1058,12 @@ public nonisolated struct Ycc_V1_SessionViewState: Sendable {
 
   /// acknowledged request; interrupted alone means paused
   public var pauseRequested: Bool = false
+
+  /// With phase "idle": the coordinator's last report left delegated work running
+  /// that will resume it (session_idle.awaiting_jobs); present as active, not
+  /// finished. Cleared by the next coordinator activity/lifecycle event, and
+  /// false for sessions that are no longer live.
+  public var awaitingJobs: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -5030,7 +5046,7 @@ nonisolated extension Ycc_V1_ListSessionsRequest: SwiftProtobuf.Message, SwiftPr
 
 nonisolated extension Ycc_V1_SessionInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SessionInfo"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}mode\0\u{1}status\0\u{1}workspace\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}mode\0\u{1}status\0\u{1}workspace\0\u{3}awaiting_jobs\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -5042,6 +5058,7 @@ nonisolated extension Ycc_V1_SessionInfo: SwiftProtobuf.Message, SwiftProtobuf._
       case 2: try { try decoder.decodeSingularStringField(value: &self.mode) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.status) }()
       case 4: try { try decoder.decodeSingularStringField(value: &self.workspace) }()
+      case 5: try { try decoder.decodeSingularBoolField(value: &self.awaitingJobs) }()
       default: break
       }
     }
@@ -5060,6 +5077,9 @@ nonisolated extension Ycc_V1_SessionInfo: SwiftProtobuf.Message, SwiftProtobuf._
     if !self.workspace.isEmpty {
       try visitor.visitSingularStringField(value: self.workspace, fieldNumber: 4)
     }
+    if self.awaitingJobs != false {
+      try visitor.visitSingularBoolField(value: self.awaitingJobs, fieldNumber: 5)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -5068,6 +5088,7 @@ nonisolated extension Ycc_V1_SessionInfo: SwiftProtobuf.Message, SwiftProtobuf._
     if lhs.mode != rhs.mode {return false}
     if lhs.status != rhs.status {return false}
     if lhs.workspace != rhs.workspace {return false}
+    if lhs.awaitingJobs != rhs.awaitingJobs {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -5145,7 +5166,7 @@ nonisolated extension Ycc_V1_ListSessionHistoryRequest: SwiftProtobuf.Message, S
 
 nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SessionSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}mode\0\u{1}status\0\u{1}workspace\0\u{1}title\0\u{3}started_at\0\u{3}last_activity\0\u{3}focus_tasks\0\u{1}turns\0\u{3}tool_calls\0\u{1}live\0\u{3}waiting_input\0\u{3}model_usage\0\u{3}total_tokens\0\u{3}context_tokens\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}mode\0\u{1}status\0\u{1}workspace\0\u{1}title\0\u{3}started_at\0\u{3}last_activity\0\u{3}focus_tasks\0\u{1}turns\0\u{3}tool_calls\0\u{1}live\0\u{3}waiting_input\0\u{3}model_usage\0\u{3}total_tokens\0\u{3}context_tokens\0\u{3}awaiting_jobs\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -5168,6 +5189,7 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
       case 13: try { try decoder.decodeRepeatedMessageField(value: &self.modelUsage) }()
       case 14: try { try decoder.decodeSingularInt64Field(value: &self.totalTokens) }()
       case 15: try { try decoder.decodeSingularInt64Field(value: &self.contextTokens) }()
+      case 16: try { try decoder.decodeSingularBoolField(value: &self.awaitingJobs) }()
       default: break
       }
     }
@@ -5219,6 +5241,9 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
     if self.contextTokens != 0 {
       try visitor.visitSingularInt64Field(value: self.contextTokens, fieldNumber: 15)
     }
+    if self.awaitingJobs != false {
+      try visitor.visitSingularBoolField(value: self.awaitingJobs, fieldNumber: 16)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -5238,6 +5263,7 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
     if lhs.modelUsage != rhs.modelUsage {return false}
     if lhs.totalTokens != rhs.totalTokens {return false}
     if lhs.contextTokens != rhs.contextTokens {return false}
+    if lhs.awaitingJobs != rhs.awaitingJobs {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -5440,7 +5466,7 @@ nonisolated extension Ycc_V1_SessionViewQuestion: SwiftProtobuf.Message, SwiftPr
 
 nonisolated extension Ycc_V1_SessionViewState: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SessionViewState"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}indexed_through_seq\0\u{3}last_event_timestamp\0\u{1}phase\0\u{3}error_message\0\u{3}error_retryable\0\u{3}coordinator_model\0\u{3}context_tokens\0\u{3}has_context_tokens\0\u{3}rollover_available\0\u{3}pending_questions\0\u{3}pending_row_id\0\u{3}pending_questions_truncated\0\u{3}pause_requested\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}indexed_through_seq\0\u{3}last_event_timestamp\0\u{1}phase\0\u{3}error_message\0\u{3}error_retryable\0\u{3}coordinator_model\0\u{3}context_tokens\0\u{3}has_context_tokens\0\u{3}rollover_available\0\u{3}pending_questions\0\u{3}pending_row_id\0\u{3}pending_questions_truncated\0\u{3}pause_requested\0\u{3}awaiting_jobs\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -5461,6 +5487,7 @@ nonisolated extension Ycc_V1_SessionViewState: SwiftProtobuf.Message, SwiftProto
       case 11: try { try decoder.decodeSingularStringField(value: &self.pendingRowID) }()
       case 12: try { try decoder.decodeSingularBoolField(value: &self.pendingQuestionsTruncated) }()
       case 13: try { try decoder.decodeSingularBoolField(value: &self.pauseRequested) }()
+      case 14: try { try decoder.decodeSingularBoolField(value: &self.awaitingJobs) }()
       default: break
       }
     }
@@ -5506,6 +5533,9 @@ nonisolated extension Ycc_V1_SessionViewState: SwiftProtobuf.Message, SwiftProto
     if self.pauseRequested != false {
       try visitor.visitSingularBoolField(value: self.pauseRequested, fieldNumber: 13)
     }
+    if self.awaitingJobs != false {
+      try visitor.visitSingularBoolField(value: self.awaitingJobs, fieldNumber: 14)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -5523,6 +5553,7 @@ nonisolated extension Ycc_V1_SessionViewState: SwiftProtobuf.Message, SwiftProto
     if lhs.pendingRowID != rhs.pendingRowID {return false}
     if lhs.pendingQuestionsTruncated != rhs.pendingQuestionsTruncated {return false}
     if lhs.pauseRequested != rhs.pauseRequested {return false}
+    if lhs.awaitingJobs != rhs.awaitingJobs {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

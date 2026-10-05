@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "name": "awaiting-jobs",
+  "description": "An idle report that leaves delegated work running stays awaiting (active, not finished) through subagent activity and reconnect, and clears on the next coordinator activity.",
+  "steps": [
+    {
+      "event": {
+        "seq": 1,
+        "actor": "coordinator",
+        "type": "session_started",
+        "data": {}
+      }
+    },
+    {
+      "event": {
+        "seq": 2,
+        "actor": "coordinator",
+        "type": "session_idle",
+        "data": {
+          "report": "Spawned a synthetic subagent; waiting on it.",
+          "awaiting_jobs": true
+        }
+      }
+    },
+    {
+      "expect": {
+        "cursor": 2,
+        "phase": "idle",
+        "awaiting_jobs": true
+      }
+    },
+    {
+      "event": {
+        "seq": 3,
+        "actor": "agent_1",
+        "type": "tool_call",
+        "data": {
+          "name": "Read",
+          "args": {
+            "file_path": "README.md"
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "seq": 4,
+        "actor": "agent_1",
+        "type": "tool_result",
+        "data": {
+          "name": "Read",
+          "output": "synthetic"
+        }
+      }
+    },
+    {
+      "expect": {
+        "cursor": 4,
+        "phase": "idle",
+        "awaiting_jobs": true
+      }
+    },
+    {
+      "reconnect": {}
+    },
+    {
+      "expect": {
+        "phase": "idle",
+        "awaiting_jobs": true
+      }
+    },
+    {
+      "event": {
+        "seq": 5,
+        "actor": "coordinator",
+        "type": "model_turn",
+        "data": {
+          "text": "The subagent finished; summarizing."
+        }
+      }
+    },
+    {
+      "expect": {
+        "cursor": 5,
+        "phase": "running",
+        "awaiting_jobs": false
+      }
+    },
+    {
+      "event": {
+        "seq": 6,
+        "actor": "coordinator",
+        "type": "session_idle",
+        "data": {
+          "report": "Synthetic completion"
+        }
+      }
+    },
+    {
+      "expect": {
+        "cursor": 6,
+        "phase": "idle",
+        "awaiting_jobs": false
+      }
+    },
+    {
+      "event": {
+        "seq": 7,
+        "actor": "coordinator",
+        "type": "session_idle",
+        "data": {
+          "report": "Another progress report.",
+          "awaiting_jobs": true
+        }
+      }
+    },
+    {
+      "event": {
+        "seq": 8,
+        "actor": "user",
+        "type": "user_input",
+        "data": {
+          "text": "status?"
+        }
+      }
+    },
+    {
+      "expect": {
+        "cursor": 8,
+        "phase": "running",
+        "awaiting_jobs": false
+      }
+    }
+  ]
+}

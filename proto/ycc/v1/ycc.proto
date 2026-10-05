@@ -257,6 +257,11 @@ message SessionInfo {
   string mode = 2;
   string status = 3; // running | idle | error
   string workspace = 4;
+  // awaiting_jobs is true while an idle coordinator still has delegated work
+  // that will resume it by itself (a live subagent/background job, an unclaimed
+  // final report, or a wake already in flight). Clients present such a session
+  // as active, not finished; status stays "idle" for older clients.
+  bool awaiting_jobs = 5;
 }
 message ListSessionsResponse { repeated SessionInfo sessions = 1; }
 
@@ -294,6 +299,9 @@ message SessionSummary {
   // opposed to cumulative spend. Subagent turns are ignored. Zero means the log
   // predates the telemetry (or no turn completed yet).
   int64 context_tokens = 15;
+  // awaiting_jobs mirrors SessionInfo.awaiting_jobs: a live idle session whose
+  // delegated work will still resume it. Only ever set on live rows.
+  bool awaiting_jobs = 16;
 }
 // Sessions are ordered by the serialized millisecond-precision last_activity
 // descending, started_at descending, then id ascending. The keyset cursor
@@ -351,6 +359,11 @@ message SessionViewState {
   // True when bounded state contains only a prefix; fetch pending_row_id detail.
   bool pending_questions_truncated = 12;
   bool pause_requested = 13; // acknowledged request; interrupted alone means paused
+  // With phase "idle": the coordinator's last report left delegated work running
+  // that will resume it (session_idle.awaiting_jobs); present as active, not
+  // finished. Cleared by the next coordinator activity/lifecycle event, and
+  // false for sessions that are no longer live.
+  bool awaiting_jobs = 14;
 }
 message GetSessionViewRequest {
   string project = 1;

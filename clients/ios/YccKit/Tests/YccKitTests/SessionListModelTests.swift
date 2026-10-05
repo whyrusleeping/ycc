@@ -151,6 +151,7 @@ final class SessionListModelTests: XCTestCase {
         turns: Int64 = 0,
         live: Bool = false,
         waitingInput: Bool = false,
+        awaitingJobs: Bool = false,
         focusTasks: [String] = [],
         modelUsage: [(String, Int64)] = [],
         totalTokens: Int64 = 0,
@@ -167,6 +168,7 @@ final class SessionListModelTests: XCTestCase {
         s.turns = turns
         s.live = live
         s.waitingInput = waitingInput
+        s.awaitingJobs = awaitingJobs
         s.focusTasks = focusTasks
         s.modelUsage = modelUsage.map { model, tokens in
             var usage = Ycc_V1_SessionModelUsage()
@@ -357,6 +359,17 @@ final class SessionListModelTests: XCTestCase {
             )),
             "waiting"
         )
+    }
+
+    func testIdleAwaitingDelegatedWorkReadsAsActive() {
+        let awaiting = session(id: "bg", status: "idle", live: true, awaitingJobs: true)
+        XCTAssertEqual(SessionListModel.lifecycleLabel(for: awaiting), "background")
+        var counts = ProjectActivity()
+        SessionListModel.accumulate(awaiting, into: &counts)
+        SessionListModel.accumulate(session(id: "idle", status: "idle", live: true), into: &counts)
+        XCTAssertEqual(counts.active, 1, "only the session still waiting on delegated work is active")
+        // A persisted (non-live) row never carries live job state.
+        XCTAssertNil(SessionListModel.lifecycleLabel(for: session(id: "old", status: "idle", awaitingJobs: true)))
     }
 
     // MARK: - Sectioning / sorting

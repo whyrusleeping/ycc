@@ -450,7 +450,7 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// every terminal (and unused by the textarea keymap), so it is the
 			// universal fallback.
 			// m.status is a free-text header label, so gate only on terminal labels.
-			if !m.paused && !m.pausePending && m.status != "idle" && m.status != "error" && m.status != "stopped" {
+			if !m.paused && !m.pausePending && m.status != "idle" && m.status != statusAwaitingJobs && m.status != "error" && m.status != "stopped" {
 				return m, m.interrupt()
 			}
 			return m, nil
@@ -743,7 +743,7 @@ func (m model) footer(text string) string {
 // not already ticking. It returns nil otherwise so we never stack duplicate tick
 // commands. The pointer receiver lets it record that a tick is in flight.
 func (m *model) spinnerCmd() tea.Cmd {
-	if (m.status == "running" || m.captureBusy) && !m.spinning {
+	if (m.agentActive() || m.captureBusy) && !m.spinning {
 		m.spinning = true
 		return m.spin.Tick
 	}
@@ -781,6 +781,11 @@ func (m *model) maybeNotify(ev *v1.Event) {
 	// the loop will advance itself — a bell per task would be noise. Keep the
 	// attention-worthy events (question/error/interrupt).
 	if m.looping && ev.Type == "session_idle" {
+		return
+	}
+	// A progress report while delegated work still runs is not the end: the
+	// session resumes by itself, and its later idle report rings instead.
+	if ev.Type == "session_idle" && dataField(ev, "awaiting_jobs") == "true" {
 		return
 	}
 	// Auto-answered questions (unattended execution) never need the user, so a bell

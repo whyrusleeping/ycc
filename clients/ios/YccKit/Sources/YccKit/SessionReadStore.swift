@@ -85,6 +85,9 @@ public final class SessionReadStore {
     /// for.
     public func isUnread(_ session: Ycc_V1_SessionSummary) -> Bool {
         if session.live, SessionStatusKind(status: session.status) == .running { return false }
+        // Idle but still waiting on delegated work: it has not finished yet; the
+        // post-wake idle report is the "finished while you were away" moment.
+        if session.live && session.awaitingJobs { return false }
         guard let markText = marks[session.sessionID] else { return false }
         guard let activity = SessionListModel.recencyDate(session) else { return false }
         guard let mark = SessionListModel.parseTimestamp(markText) else { return false }

@@ -280,6 +280,14 @@ func (s *Session) StatusWithJobContinuation() (event.Status, bool) {
 	return st, !stable
 }
 
+// AwaitingJobs reports whether this session is idle but will still be resumed
+// by delegated work (see StatusWithJobContinuation). Clients present such a
+// session as active rather than finished.
+func (s *Session) AwaitingJobs() bool {
+	_, awaiting := s.StatusWithJobContinuation()
+	return awaiting
+}
+
 func (s *Session) logFailure() error {
 	if s.log != nil {
 		if err := s.log.Err(); err != nil {
@@ -2826,6 +2834,12 @@ func (m *Manager) startNotifyWatcher(absWS, id string, log *event.Log) {
 				}
 				m.notifier.Send(notify.KindQuestion, project, id, questionLine(ev.Data))
 			case event.SessionIdle:
+				if boolVal(ev.Data, "awaiting_jobs") {
+					// A progress report while delegated work still runs: the
+					// session resumes by itself, and its later idle report is the
+					// one worth a "finished" push.
+					continue
+				}
 				m.notifier.Send(notify.KindIdle, project, id, firstLine(str(ev.Data, "report")))
 			case event.SessionError:
 				m.notifier.Send(notify.KindError, project, id, str(ev.Data, "msg"))

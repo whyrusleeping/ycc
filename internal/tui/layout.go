@@ -88,7 +88,7 @@ func (m model) inputRow() string {
 	frame := inputFrameStyle.Render(m.input.View())
 	rows := strings.Split(frame, "\n")
 	glyph := " "
-	if m.status == "running" && len(m.spin.Spinner.Frames) > 0 {
+	if m.agentActive() && len(m.spin.Spinner.Frames) > 0 {
 		glyph = m.spin.View()
 	}
 	// The gutter must be the SAME display width on every row or the box's left

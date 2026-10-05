@@ -44,6 +44,10 @@ type SessionSummary struct {
 	// question. Only ever set on live rows — a persisted-only session holds no
 	// in-memory pending question.
 	Waiting bool
+	// AwaitingJobs is true when a live idle session will still be resumed by
+	// delegated work (Session.AwaitingJobs). Only ever set on live rows: jobs do
+	// not survive a daemon restart.
+	AwaitingJobs bool
 }
 
 // ModelUsage is the total recorded token usage for one logical model name in a
@@ -448,21 +452,29 @@ func (m *Manager) ListSessionHistory(project string) ([]SessionSummary, error) {
 		byID[s.ID] = i
 	}
 
-	// Snapshot the live sessions for this workspace under lock.
+	// Snapshot the live sessions for this workspace under lock, then read their
+	// state outside it: the job-continuation check consults the job registry and
+	// must not nest inside the manager lock.
 	m.mu.Lock()
-	type liveInfo struct {
-		id      string
-		mode    string
-		status  event.Status
-		waiting bool
-	}
-	var live []liveInfo
+	var liveSessions []*Session
 	for _, s := range m.sessions {
 		if s.Workspace == absWS {
-			live = append(live, liveInfo{id: s.ID, mode: s.Mode, status: s.Status(), waiting: s.PendingQuestion()})
+			liveSessions = append(liveSessions, s)
 		}
 	}
 	m.mu.Unlock()
+	type liveInfo struct {
+		id       string
+		mode     string
+		status   event.Status
+		waiting  bool
+		awaiting bool
+	}
+	live := make([]liveInfo, 0, len(liveSessions))
+	for _, s := range liveSessions {
+		status, awaiting := s.StatusWithJobContinuation()
+		live = append(live, liveInfo{id: s.ID, mode: s.Mode, status: status, waiting: s.PendingQuestion(), awaiting: awaiting})
+	}
 
 	now := time.Now()
 	for _, li := range live {
@@ -471,6 +483,7 @@ func (m *Manager) ListSessionHistory(project string) ([]SessionSummary, error) {
 			summaries[idx].Mode = li.mode
 			summaries[idx].Live = true
 			summaries[idx].Waiting = li.waiting
+			summaries[idx].AwaitingJobs = li.awaiting
 			continue
 		}
 		// Live session with no on-disk snapshot yet (log just opened): include it
@@ -484,6 +497,7 @@ func (m *Manager) ListSessionHistory(project string) ([]SessionSummary, error) {
 			LastActivity: now,
 			Live:         true,
 			Waiting:      li.waiting,
+			AwaitingJobs: li.awaiting,
 		})
 	}
 

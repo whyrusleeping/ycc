@@ -62,6 +62,8 @@ public final class SessionViewModel {
     public struct Chrome: Equatable, Sendable {
         public var phase: SessionProjection.Phase = .running
         public var pauseRequested = false
+        /// Idle, but delegated work will still resume the coordinator.
+        public var awaitingJobs = false
         public var pendingQuestion: SessionProjection.PendingQuestion?
         public var coordinatorModel = ""
         public var currentContextTokensEstimate: Int?
@@ -72,6 +74,7 @@ public final class SessionViewModel {
         init(_ projection: SessionProjection) {
             phase = projection.phase
             pauseRequested = projection.pauseRequested
+            awaitingJobs = projection.phase == .idle && projection.awaitingJobs
             pendingQuestion = projection.pendingQuestion
             coordinatorModel = projection.coordinatorModel
             currentContextTokensEstimate = projection.currentContextTokensEstimate
@@ -240,6 +243,11 @@ public final class SessionViewModel {
             return chrome.phase
         }
     }
+
+    /// Whether the idle chrome should read as "waiting on background jobs": the
+    /// coordinator returned a report while a subagent / background job still
+    /// runs, and will resume by itself when it completes. Not a finished session.
+    public var displayAwaitingJobs: Bool { displayPhase == .idle && chrome.awaitingJobs }
 
     /// Whether a stop the user requested is awaiting its durable echo.
     public var isStopPending: Bool { pendingControl?.kind == .stop && chrome.phase != .stopped }

@@ -426,6 +426,10 @@ func TestMaybeNotify(t *testing.T) {
 	if got := run(newModel(true, false, true), ev("session_idle", after.Format(time.RFC3339), "")); got != "" {
 		t.Fatalf("looping session_idle should be silent, got %q", got)
 	}
+	// A progress report while delegated work still runs is not the end → silent.
+	if got := run(newModel(true, true, false), ev("session_idle", after.Format(time.RFC3339), `{"report":"waiting","awaiting_jobs":true}`)); got != "" {
+		t.Fatalf("awaiting_jobs session_idle should be silent, got %q", got)
+	}
 	// Looping does NOT suppress session_error.
 	if got := run(newModel(true, false, true), ev("session_error", after.Format(time.RFC3339), "")); got != "\a" {
 		t.Fatalf("looping session_error should ring, got %q", got)
@@ -460,5 +464,33 @@ func TestSanitizeNotifyRuneBoundary(t *testing.T) {
 	}
 	if n := utf8.RuneCountInString(got); n != 120 {
 		t.Fatalf("rune count after truncation = %d, want 120", n)
+	}
+}
+
+// An idle report that left delegated work running keeps the session active:
+// not "finished" (q would stop it and kill the subagent; an armed loop would
+// start beside it), spinner on, and subagent activity does not change it. The
+// coordinator's own next activity resumes "running"; a plain idle finishes.
+func TestAwaitingJobsSessionIsNotFinished(t *testing.T) {
+	m := readyStreamModel(t)
+	apply := func(seq int64, actor, typ, data string) {
+		m.applyLiveEvent(&v1.Event{Seq: seq, Actor: actor, Type: typ, DataJson: data})
+	}
+	apply(1, "coordinator", "session_idle", `{"report":"spawned","awaiting_jobs":true}`)
+	if m.status != statusAwaitingJobs || m.sessionFinished() || !m.agentActive() {
+		t.Fatalf("awaiting idle: status=%q finished=%v active=%v", m.status, m.sessionFinished(), m.agentActive())
+	}
+	apply(2, "agent_1", "tool_call", `{"name":"Read"}`)
+	apply(3, "agent_1", "model_turn", `{"text":"working"}`)
+	if m.status != statusAwaitingJobs {
+		t.Fatalf("subagent activity changed coordinator status to %q", m.status)
+	}
+	apply(4, "coordinator", "model_turn", `{"text":"agent landed"}`)
+	if m.status != "running" {
+		t.Fatalf("coordinator wake turn: status=%q, want running", m.status)
+	}
+	apply(5, "coordinator", "session_idle", `{"report":"done"}`)
+	if m.status != "idle" || !m.sessionFinished() {
+		t.Fatalf("final idle: status=%q finished=%v", m.status, m.sessionFinished())
 	}
 }

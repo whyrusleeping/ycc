@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/whyrusleeping/gollama"
+	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/jobs"
@@ -612,5 +614,55 @@ func TestReapableWaitsForPendingJobContinuation(t *testing.T) {
 	s.setIdle(false)
 	if !s.reapable() {
 		t.Fatal("blocked idle session must not be held by an unwakeable report")
+	}
+}
+
+// An idle coordinator whose delegated work is still running reports itself as
+// awaiting (not finished) on every live surface — AwaitingJobs and the history
+// overlay — until the completion wake runs and the session goes truly idle.
+func TestIdleAwaitingJobsReportedLive(t *testing.T) {
+	var jr *jobs.Registry
+	var job *jobs.Job
+	turner := &scriptedTurner{
+		texts: []string{"spawned a subagent", "subagent landed"},
+		hook: func(turn int) {
+			if turn == 1 {
+				job = jr.Start("agent", "investigate", "coordinator")
+			}
+		},
+	}
+	var s *Session
+	s, jr = newJobWakeSession(t, turner)
+	ws := t.TempDir()
+	absWS, _ := filepath.Abs(ws)
+	s.ID, s.Workspace = "s_bg", absWS
+	m := NewManager(config.NewRegistry(nil), ws)
+	m.mu.Lock()
+	m.sessions[s.ID] = s
+	m.mu.Unlock()
+	historyAwaiting := func() bool {
+		t.Helper()
+		got, err := m.ListSessionHistory("")
+		if err != nil || len(got) != 1 {
+			t.Fatalf("ListSessionHistory = %+v, %v", got, err)
+		}
+		return got[0].AwaitingJobs
+	}
+
+	go s.run()
+	waitStatus(t, s, event.StatusIdle)
+	if !s.AwaitingJobs() {
+		t.Fatal("idle with a live job: AwaitingJobs = false")
+	}
+	if !historyAwaiting() {
+		t.Fatal("history row for idle-with-live-job is not awaiting")
+	}
+
+	job.Finish(jobs.Done, "found it")
+	waitFor(t, func() bool { return turner.turns() >= 2 })
+	waitFor(t, func() bool { return countType(s.log.Snapshot(), event.SessionIdle) == 2 })
+	waitFor(t, func() bool { return !s.AwaitingJobs() })
+	if historyAwaiting() {
+		t.Fatal("history row still awaiting after the wake finished")
 	}
 }

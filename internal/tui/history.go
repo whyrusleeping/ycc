@@ -668,7 +668,11 @@ func (m model) historyRows() []browserRow {
 		if len(s.FocusTasks) > 0 {
 			title = "[" + strings.Join(s.FocusTasks, ",") + "] " + title
 		}
-		meta := s.Mode + " · " + s.Status
+		status := s.Status
+		if s.Live && s.AwaitingJobs {
+			status = "background jobs"
+		}
+		meta := s.Mode + " · " + status
 		if s.Live {
 			meta += " · live"
 		}

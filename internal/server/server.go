@@ -211,11 +211,13 @@ func (s *Server) RenameProject(_ context.Context, req *connect.Request[v1.Rename
 func (s *Server) ListSessions(_ context.Context, req *connect.Request[v1.ListSessionsRequest]) (*connect.Response[v1.ListSessionsResponse], error) {
 	var infos []*v1.SessionInfo
 	for _, sess := range s.mgr.ListByProject(req.Msg.Project) {
+		status, awaiting := sess.StatusWithJobContinuation()
 		infos = append(infos, &v1.SessionInfo{
-			SessionId: sess.ID,
-			Mode:      sess.Mode,
-			Status:    string(sess.Status()),
-			Workspace: sess.Workspace,
+			SessionId:    sess.ID,
+			Mode:         sess.Mode,
+			Status:       string(status),
+			Workspace:    sess.Workspace,
+			AwaitingJobs: awaiting,
 		})
 	}
 	return connect.NewResponse(&v1.ListSessionsResponse{Sessions: infos}), nil
@@ -253,6 +255,7 @@ func (s *Server) ListSessionHistory(_ context.Context, req *connect.Request[v1.L
 			ModelUsage:    models,
 			TotalTokens:   su.TotalTokens,
 			ContextTokens: su.ContextTokens,
+			AwaitingJobs:  su.AwaitingJobs,
 		}
 	}
 	out := make([]*v1.SessionSummary, 0, len(sums))
@@ -321,7 +324,8 @@ func presentationState(st sessionview.State) *v1.SessionViewState {
 	out := &v1.SessionViewState{IndexedThroughSeq: st.IndexedThrough, LastEventTimestamp: truncatePresentationString(st.LastTimestamp, 128),
 		Phase: st.Phase, ErrorMessage: truncatePresentationString(st.ErrorMessage, 2048), ErrorRetryable: st.ErrorRetryable,
 		CoordinatorModel: truncatePresentationString(st.Coordinator, 256), ContextTokens: st.ContextTokens, HasContextTokens: st.HasContext,
-		RolloverAvailable: st.Rollover, PendingRowId: truncatePresentationString(st.PendingRowID, 256), PauseRequested: st.PauseRequested}
+		RolloverAvailable: st.Rollover, PendingRowId: truncatePresentationString(st.PendingRowID, 256), PauseRequested: st.PauseRequested,
+		AwaitingJobs: st.Phase == "idle" && st.AwaitingJobs}
 	pending := st.Pending
 	if len(pending) > 8 {
 		out.PendingQuestionsTruncated = true
@@ -413,6 +417,13 @@ func (s *Server) GetSessionView(ctx context.Context, req *connect.Request[v1.Get
 	st, rows, before, err := store.View(ctx, req.Msg.SessionId, logPath, durableSeq, durableOffset, int(req.Msg.MaxRows), int(req.Msg.MaxBytes))
 	if err != nil {
 		return nil, sessionViewError(err)
+	}
+	if st.AwaitingJobs {
+		// Delegated work never survives its session: a log that ended on an
+		// awaiting idle report but is no longer live has nothing left running.
+		if _, live := s.mgr.Get(req.Msg.SessionId); !live {
+			st.AwaitingJobs = false
+		}
 	}
 	out := &v1.GetSessionViewResponse{State: presentationState(st)}
 	for _, row := range rows {

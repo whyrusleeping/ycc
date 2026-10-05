@@ -107,7 +107,8 @@ public enum SessionStatusKind: String, Sendable, CaseIterable {
 /// Live-activity counts for one project (or the whole daemon). Drives the
 /// workspace drawer's badges, where a waiting question outranks mere activity.
 public struct ProjectActivity: Sendable, Equatable {
-    /// Live sessions currently running or paused — work in flight.
+    /// Live sessions currently running or paused, or idle while delegated work
+    /// will still resume them — work in flight.
     public var active = 0
     /// Live sessions blocked on an unanswered question. The loudest state a
     /// phone client exists to surface.
@@ -892,6 +893,8 @@ public final class SessionListModel {
         if session.waitingInput { counts.needsAnswer += 1 }
         switch SessionStatusKind(status: session.status) {
         case .running, .paused: counts.active += 1
+        // Idle while delegated work will still resume it: active, not finished.
+        case .idle where session.awaitingJobs: counts.active += 1
         default: break
         }
     }
@@ -1172,6 +1175,8 @@ public final class SessionListModel {
     /// running because it is the action the user needs to take.
     public static func lifecycleLabel(for session: Ycc_V1_SessionSummary) -> String? {
         if session.live && session.waitingInput { return "waiting" }
+        // An idle coordinator whose subagent / background job still runs.
+        if session.live && session.awaitingJobs { return "background" }
         switch SessionStatusKind(status: session.status) {
         case .running: return "running"
         case .paused: return "paused"
