@@ -2,10 +2,13 @@ package daemon
 
 import (
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/whyrusleeping/ycc/internal/web"
 )
 
 // baseOptions is a minimal valid Options that reaches buildHandler without
@@ -22,8 +25,9 @@ func baseOptions(t *testing.T) Options {
 }
 
 // TestWebServesStaticAssetsUnauthenticated asserts the design decision
-// (web-client.md §3/§4): with --web, the embedded SPA is served at "/" (and
-// its assets) with no auth, while the RPC surface stays behind the bearer token.
+// (docs/design/web-client.md "Authentication"): with --web, the embedded SPA is
+// served at "/" — its assets and client-side deep links — with no auth, while
+// the RPC surface stays behind the bearer token and keeps its own prefix.
 func TestWebServesStaticAssetsUnauthenticated(t *testing.T) {
 	o := baseOptions(t)
 	o.Web = true
@@ -35,8 +39,15 @@ func TestWebServesStaticAssetsUnauthenticated(t *testing.T) {
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
-	// Static assets: 200 with content, no Authorization header.
-	for _, path := range []string{"/", "/app.js", "/app.css", "/index.html"} {
+	entries, err := fs.ReadDir(web.Assets(), "assets")
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("embedded assets: %v", err)
+	}
+	asset := "/assets/" + entries[0].Name()
+
+	// Static assets and history-fallback routes: 200 with content, no
+	// Authorization header.
+	for _, path := range []string{"/", "/index.html", asset, "/p/proj/s/s_0123"} {
 		resp, err := http.Get(srv.URL + path)
 		if err != nil {
 			t.Fatalf("GET %s: %v", path, err)
@@ -58,8 +69,23 @@ func TestWebServesStaticAssetsUnauthenticated(t *testing.T) {
 		t.Fatalf("POST %s: %v", rpc, err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode == http.StatusOK {
-		t.Errorf("RPC without token returned 200; want auth rejection")
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("RPC without token returned %d; want 401", resp.StatusCode)
+	}
+
+	// With the token the same RPC succeeds: the Connect prefix is not shadowed
+	// by the SPA's history fallback.
+	req, _ := http.NewRequest(http.MethodPost, rpc, strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST %s with token: %v", rpc, err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(strings.TrimSpace(string(body)), "{") {
+		t.Errorf("authorized RPC: status %d body %q", resp.StatusCode, body)
 	}
 }
 

@@ -133,7 +133,8 @@ func buildHandler(o Options) (http.Handler, *session.Manager, error) {
 	// Optionally serve the embedded web client at "/". http.ServeMux
 	// longest-prefix routing keeps RPC traffic on the Connect handler's
 	// "/ycc.v1.SessionService/" prefix; everything else falls to the asset
-	// handler. The assets are unauthenticated by design.
+	// handler, which serves index.html for client-side routes. The assets are
+	// unauthenticated by design.
 	if o.Web {
 		mux.Handle("/", web.Handler())
 	}

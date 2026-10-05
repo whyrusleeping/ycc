@@ -1,8 +1,6 @@
 # Design: desktop web client
 
-> Status: accepted; implementation phased through the backlog. Until the foundation phase lands,
-> `internal/web/dist` still holds the earlier phone-sized vanilla client described under
-> "Superseded design" below.
+> Status: accepted; implementation phased through the backlog.
 
 ## Context
 
@@ -118,5 +116,5 @@ browser verification follows `plans/web-client-smoke.md`.
 The first web client (backlog tasks 0145, 0152, 0153) was a phone-sized, framework-free page
 embedded as hand-written `index.html`/`app.js`/`app.css`. It parsed Connect streaming envelopes
 itself, folded raw `Subscribe` events client-side, and covered session discovery, transcripts,
-input, questions, interrupt/resume, and stop. It is replaced by the client described above once that
-client reaches the same session-level coverage.
+input, questions, interrupt/resume, and stop. It was replaced by the client described above once
+that client reached the same session-level coverage.

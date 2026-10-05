@@ -1,0 +1,114 @@
+// Server-state cache: query keys and hooks over the generated client. Unary
+// reads are cached per query and refreshed on window focus; mutations replace
+// local state with the daemon's response or invalidate the affected keys.
+import { QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useState } from "react";
+import { Code, ConnectError } from "@connectrpc/connect";
+import type { ProjectInfo } from "../gen/ycc/v1/ycc_pb";
+import { client, errorMessage, isUnauthorized } from "./client";
+import { buildFeed, historyTargets, mergePage, type HistoryLoad } from "../features/sessions/feed";
+import { toast } from "../ui/toast";
+
+export const HISTORY_PAGE = 50;
+
+export const queryKeys = {
+  projects: ["projects"] as const,
+  sessionFeed: (targets: string[]) => ["sessionFeed", targets] as const,
+  sessionFeedAll: ["sessionFeed"] as const,
+};
+
+export function makeQueryClient(): QueryClient {
+  return new QueryClient({
+    defaultOptions: {
+      queries: {
+        staleTime: 5_000,
+        refetchOnWindowFocus: true,
+        retry: (count, err) => {
+          const code = ConnectError.from(err).code;
+          if (code === Code.Unauthenticated || code === Code.InvalidArgument || code === Code.NotFound) return false;
+          return count < 2;
+        },
+      },
+    },
+  });
+}
+
+export function useProjects() {
+  return useQuery({
+    queryKey: queryKeys.projects,
+    queryFn: async ({ signal }) => (await client.listProjects({}, { signal })).projects,
+  });
+}
+
+async function loadFirstPage(project: string, signal: AbortSignal): Promise<HistoryLoad> {
+  try {
+    const page = await client.listSessionHistory({ project, limit: HISTORY_PAGE }, { signal });
+    return { project, sessions: page.sessions, pinned: page.pinned, nextCursor: page.nextCursor };
+  } catch (err) {
+    if (isUnauthorized(err) || signal.aborted) throw err;
+    return { project, sessions: [], pinned: [], nextCursor: "", error: errorMessage(err, "Couldn’t load sessions.") };
+  }
+}
+
+/**
+ * The Recent feed: every distinct project's first history page, fetched
+ * concurrently and merged client-side (ListSessionHistory is per project).
+ * `scope` null shows all projects; a name shows that project's rows.
+ */
+export function useSessionFeed(scope: string | null) {
+  const qc = useQueryClient();
+  const projects = useProjects();
+  const targets = projects.data ? historyTargets(projects.data) : null;
+  const key = queryKeys.sessionFeed(targets ?? []);
+  const loads = useQuery({
+    queryKey: key,
+    enabled: targets !== null,
+    refetchInterval: 30_000,
+    queryFn: ({ signal }) => Promise.all((targets ?? []).map((t) => loadFirstPage(t, signal))),
+  });
+  const [loadingOlder, setLoadingOlder] = useState(false);
+
+  const loadOlder = useCallback(async () => {
+    const current = qc.getQueryState<HistoryLoad[]>(key);
+    const data = current?.data;
+    if (!data || loadingOlder) return;
+    const requests = data.filter((l) => l.nextCursor && (scope === null || l.project === scope));
+    if (!requests.length) return;
+    setLoadingOlder(true);
+    try {
+      const pages = await Promise.allSettled(
+        requests.map((l) => client.listSessionHistory({ project: l.project, limit: HISTORY_PAGE, cursor: l.nextCursor })),
+      );
+      // A refresh that landed meanwhile owns newer first pages; drop this page.
+      if (qc.getQueryState(key)?.dataUpdatedAt !== current.dataUpdatedAt) return;
+      const failed: string[] = [];
+      const next = data.map((load) => {
+        const i = requests.indexOf(load);
+        if (i < 0) return load;
+        const result = pages[i];
+        if (result.status === "fulfilled") return mergePage(load, result.value.sessions, result.value.nextCursor);
+        failed.push(load.project || "(default)");
+        return load;
+      });
+      qc.setQueryData(key, next);
+      if (failed.length) toast(`Couldn’t load older sessions for ${failed.join(", ")}.`);
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [qc, key, scope, loadingOlder]);
+
+  const feed = loads.data ? buildFeed(loads.data, scope) : null;
+  return {
+    projects: projects.data as ProjectInfo[] | undefined,
+    feed,
+    isLoading: projects.isPending || (targets !== null && loads.isPending),
+    error: projects.error ?? loads.error,
+    isFetching: projects.isFetching || loads.isFetching,
+    refresh: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.projects });
+      void qc.invalidateQueries({ queryKey: queryKeys.sessionFeedAll });
+    },
+    loadOlder,
+    loadingOlder,
+  };
+}

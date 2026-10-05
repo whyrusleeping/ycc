@@ -340,7 +340,7 @@ does not dial a client of its own.
 | `--token T` | `$YCC_TOKEN` | compatibility option for the bearer token clients must present; prefer `YCC_TOKEN`, because command-line values are exposed in process listings (empty disables auth) |
 | `--tls-cert FILE` | | TLS certificate file (enables HTTPS) |
 | `--tls-key FILE` | | TLS key file |
-| `--web` | off | serve the embedded web client at `/` — static assets are unauthenticated, RPCs still require the bearer token |
+| `--web` | off | serve the embedded desktop web client at `/` (client-side routes such as `/p/<project>/s/<session>` fall back to the app) — static assets are unauthenticated, RPCs still require the bearer token, which the page asks for |
 
 ```sh
 ycc daemon

@@ -1,0 +1,17 @@
+{
+  "algorithm": "sha256-v1",
+  "inputs_hash": "59561564ae116e19464eb00c8c7e1434cb7bc402068c9b8f6a0c8c3b5f5162e0",
+  "input_files": [
+    ".nvmrc",
+    "index.html",
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json",
+    "vite.config.ts"
+  ],
+  "input_dirs": [
+    "scripts",
+    "src"
+  ],
+  "file_count": 36
+}

@@ -42,6 +42,21 @@ default deliverables.
   Session logs and git—not copied preload, review, or usage transcripts—retain execution detail.
 - Save runbooks only for procedures that are genuinely repeatable and likely to be reused.
 
+## Generated code and the web client
+
+- A change to `proto/ycc/v1/ycc.proto` regenerates and commits three outputs together: Go
+  (`buf generate`), Swift (`buf generate --template buf.gen.swift.yaml`), and the web client
+  (`buf generate --template buf.gen.web.yaml`, which runs `protoc-gen-es` from
+  `clients/web/node_modules`). `plans/build-and-test.md` has the full procedure.
+- The desktop web client's source is `clients/web` (TypeScript, React, Vite). Its production
+  bundle is committed in `internal/web/dist` so `go build` and `go test` never need Node. After
+  changing anything under `clients/web` (sources, `src/gen`, lockfile, or build configuration),
+  run `scripts/web-build.sh` — `npm ci`, `npm run build`, and `npm test` with Node from
+  `clients/web/.nvmrc` — and commit `internal/web/dist` with the change. `go test ./internal/web`
+  fails while the committed bundle is stale.
+- For local development, `npm run dev` in `clients/web` serves the client with hot reload and
+  proxies Connect calls to a daemon at `$YCC_DAEMON` (default `http://127.0.0.1:8787`).
+
 ## Review
 
 - Use self-review for tiny, low-risk changes; one focused reviewer for ordinary changes;

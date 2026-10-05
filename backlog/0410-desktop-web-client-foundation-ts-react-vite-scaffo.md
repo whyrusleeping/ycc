@@ -1,10 +1,10 @@
 ---
 id: "0410"
 title: 'Desktop web client foundation: TS/React/Vite scaffold, generated Connect-ES client, app shell, session transcript + interaction (replaces vanilla client)'
-status: todo
+status: in_progress
 priority: 2
 created: "2026-10-02"
-updated: "2026-10-02"
+updated: "2026-10-05"
 depends_on: []
 spec_refs:
     - docs/design/web-client.md#Source, toolchain, and embedding

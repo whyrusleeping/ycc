@@ -73,7 +73,9 @@ Persistence is **opt-in**:
   closing `ycc` ends any in-flight agent work.
 - **`ycc --background`**: spawn a detached, persistent daemon and attach to it, so
   work keeps running after the client exits.
-- **`ycc daemon`**: run the persistent daemon explicitly in the foreground.
+- **`ycc daemon`**: run the persistent daemon explicitly in the foreground. Add
+  `--web` to also serve the desktop web client at the daemon's address; the page
+  asks for the `YCC_TOKEN` bearer token when one is set.
 - **`ycc --addr <URL>`**: attach to a remote/explicit daemon.
 
 ## Configuration
@@ -187,8 +189,14 @@ go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
 go install connectrpc.com/connect/cmd/protoc-gen-connect-go@v1.20.0
 buf generate
 buf generate --template buf.gen.swift.yaml
-git diff --exit-code -- proto/ycc/v1 clients/ios/YccKit/Sources/YccProto
-test -z "$(git status --porcelain -- proto/ycc/v1 clients/ios/YccKit/Sources/YccProto)"
+buf generate --template buf.gen.web.yaml   # after `npm ci` in clients/web, Node from its .nvmrc
+git diff --exit-code -- proto/ycc/v1 clients/ios/YccKit/Sources/YccProto clients/web/src/gen
+test -z "$(git status --porcelain -- proto/ycc/v1 clients/ios/YccKit/Sources/YccProto clients/web/src/gen)"
+
+# Desktop web client: lockfile install, typecheck + bundle, Vitest; the rebuilt
+# bundle must match the committed internal/web/dist.
+scripts/web-build.sh
+git diff --exit-code -- internal/web/dist
 
 # Swift package tests and generated app build (XcodeGen 2.44.1).
 swift test --package-path clients/ios/YccKit

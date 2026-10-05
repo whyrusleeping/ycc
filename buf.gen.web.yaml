@@ -1,0 +1,10 @@
+version: v2
+clean: true
+plugins:
+  # protoc-gen-es v2 emits message types plus the SessionService descriptor that
+  # @connectrpc/connect v2 consumes directly. It runs from the web client's
+  # node_modules (run `npm ci` in clients/web first, with Node from its .nvmrc).
+  - local: clients/web/node_modules/.bin/protoc-gen-es
+    out: clients/web/src/gen
+    opt:
+      - target=ts

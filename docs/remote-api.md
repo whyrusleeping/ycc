@@ -11,7 +11,9 @@ streaming) natively:
 
 - **iOS / macOS** — [connect-swift](https://github.com/connectrpc/connect-swift)
 - **Android** — [connect-kotlin](https://github.com/connectrpc/connect-kotlin)
-- **Web** — [connect-es](https://github.com/connectrpc/connect-es)
+- **Web** — [connect-es](https://github.com/connectrpc/connect-es); the embedded desktop
+  web client (`clients/web`, served by `ycc daemon --web`) uses a connect-es client generated
+  by `buf.gen.web.yaml` and the indexed `GetSessionView*`/`SubscribeSessionView` APIs
 
 Point any of them at the `SessionService` definition in
 [`proto/ycc/v1/ycc.proto`](../proto/ycc/v1/ycc.proto) and add a bearer-token
