@@ -27,7 +27,8 @@ import (
 
 // Rebuild older indexes so durable pause requests appear in their state snapshots.
 // 5: state gained awaiting_jobs (idle with delegated work still running).
-const schemaVersion = 5
+// 6: review_submitted summaries keep verdict, reviewer, and reviewed snapshot.
+const schemaVersion = 6
 
 // Bounds are deliberately below Connect's normal message limits. MaxBytes is a
 // budget for the complete encoded response, not merely the row payloads. The
@@ -618,6 +619,10 @@ var presentationKeys = map[string]bool{
 	"decision": true, "task": true, "implementer": true, "reviewers": true, "to": true,
 	"status": true, "label": true, "reason": true, "attachment_id": true,
 	"media_type": true, "filename": true,
+	// review_submitted: clients render the verdict heading and link the
+	// reviewed snapshot to GetWorkingChanges from page summaries.
+	"reviewer": true, "logical_model": true, "verdict": true, "round": true,
+	"findings": true, "findings_by_severity": true, "reviewed_snapshot_id": true,
 }
 
 func compactPresentationData(in map[string]any) map[string]any {

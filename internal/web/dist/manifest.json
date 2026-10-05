@@ -1,6 +1,6 @@
 {
   "algorithm": "sha256-v1",
-  "inputs_hash": "3101d4234e279fb8587fd1daf5d3f0df7efe9727c05303c58add16f2db3b5dc5",
+  "inputs_hash": "b5244d7ff1a63223c866e5620cc92459148fa44350cb3e423801faf231b4ed01",
   "input_files": [
     ".nvmrc",
     "index.html",
@@ -13,5 +13,5 @@
     "scripts",
     "src"
   ],
-  "file_count": 44
+  "file_count": 58
 }

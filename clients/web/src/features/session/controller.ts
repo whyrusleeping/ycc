@@ -142,6 +142,7 @@ export class SessionController {
   private installed = false;
   private earlierCursor = "";
   private loadingEarlier = false;
+  private earlierInFlight: Promise<boolean> | null = null;
   private earlierRevision = 0;
   private installRevision = 0;
   private loadingDetail = new Set<string>();
@@ -420,20 +421,41 @@ export class SessionController {
 
   // MARK: paging and detail
 
-  async loadEarlier() {
-    if (!this.earlierCursor || this.loadingEarlier) return;
+  /**
+   * Page in the next earlier rows. Resolves true when a page was prepended;
+   * a call while a page is loading shares that load (transcript search awaits
+   * it rather than racing the scroll-triggered one).
+   */
+  loadEarlier(): Promise<boolean> {
+    if (this.earlierInFlight) return this.earlierInFlight;
+    if (!this.earlierCursor) return Promise.resolve(false);
+    const load = this.fetchEarlier().finally(() => {
+      if (this.earlierInFlight === load) this.earlierInFlight = null;
+    });
+    this.earlierInFlight = load;
+    return load;
+  }
+
+  /** Whether earlier history remains unloaded. */
+  hasEarlier(): boolean {
+    return this.earlierCursor !== "";
+  }
+
+  private async fetchEarlier(): Promise<boolean> {
     const cursor = this.earlierCursor;
     const install = this.installRevision;
     this.loadingEarlier = true;
     this.publish();
     try {
       const page = await this.api.getSessionViewPage({ project: this.project, sessionId: this.sessionId, cursor });
-      if (this.disposed || cursor !== this.earlierCursor || install !== this.installRevision) return;
+      if (this.disposed || cursor !== this.earlierCursor || install !== this.installRevision) return false;
       this.projection.prependIndexed(page.rows.map(fromRow), Number(page.indexedThroughSeq));
       this.earlierCursor = page.earlierCursor;
       this.earlierRevision++;
+      return true;
     } catch (err) {
       this.reportActionError("load earlier", err);
+      return false;
     } finally {
       this.loadingEarlier = false;
       this.publish();

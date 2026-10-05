@@ -1,18 +1,24 @@
 // One transcript row. Model and user turns are prominent; tool, reasoning,
 // review, and system detail fold; a question and its answer render as one
-// exchange. Every payload renders as text (React escapes it) — never as HTML.
-import { memo, type ReactNode } from "react";
+// exchange. Model text renders as markdown (raw HTML disabled, safe link
+// schemes only); every other payload renders as text — never as HTML.
+import { memo, useEffect, useState, type ReactNode } from "react";
 import type { Picture, TranscriptRow } from "./projection";
 import type { SessionController } from "./controller";
 import { useInspector } from "../inspector/inspector";
 import { PictureThumb, type SessionRef } from "../attachments/SessionPicture";
+import { Markdown } from "../markdown/Markdown";
+import { MetaTags, ToolBody } from "./ToolBody";
+import { oneLine, toolPreview } from "./toolPreview";
+import { FileRef } from "../files/FileRef";
+import type { ReportPresentation } from "./report";
 
 function actorLabel(actor: string): string {
   if (!actor || actor === "coordinator") return "";
   return actor;
 }
 
-export function rowTitle(row: TranscriptRow): string {
+export function rowTitle(row: TranscriptRow, report: ReportPresentation = "finished"): string {
   const k = row.kind;
   switch (k.type) {
     case "user":
@@ -21,7 +27,7 @@ export function rowTitle(row: TranscriptRow): string {
     case "liveTail":
       return actorLabel(row.actor) || "Agent";
     case "report":
-      return "Final report";
+      return report === "reply" ? actorLabel(row.actor) || "Agent" : report === "blocked" ? "Blocked" : "Finished";
     case "thinking":
       return "Reasoning";
     case "tool":
@@ -39,7 +45,7 @@ export function rowTitle(row: TranscriptRow): string {
   }
 }
 
-/** The row's full textual content (inspector / expanded body). */
+/** The row's full content (inspector / expanded body). */
 export function RowBody({ row, full = false, session }: { row: TranscriptRow; full?: boolean; session: SessionRef }) {
   const k = row.kind;
   switch (k.type) {
@@ -52,22 +58,12 @@ export function RowBody({ row, full = false, session }: { row: TranscriptRow; fu
       );
     case "model":
     case "report":
-    case "thinking":
     case "liveTail":
-      return <div className="text">{k.text}</div>;
+      return <Markdown text={k.text} />;
+    case "thinking":
+      return <div className="text thinking-text">{k.text}</div>;
     case "tool":
-      return (
-        <div className="tool-body">
-          {k.args && (
-            <>
-              <div className="label">Arguments</div>
-              <pre className={full ? "" : "clamp"}>{prettyJson(k.args)}</pre>
-            </>
-          )}
-          <div className="label">{k.status === "running" ? "Running…" : k.status === "error" ? "Error" : "Result"}</div>
-          {k.output && <pre className={full ? "" : "clamp"}>{k.output}</pre>}
-        </div>
-      );
+      return <ToolBody name={k.name} args={k.args} output={k.output} status={k.status} full={full} />;
     case "question":
       return <QuestionBody prompt={k.prompt} options={k.options} answer={k.answer} />;
     case "assumption":
@@ -82,7 +78,7 @@ export function RowBody({ row, full = false, session }: { row: TranscriptRow; fu
         </div>
       );
     case "review":
-      return <div className="text">{k.summary || k.text}</div>;
+      return k.summary ? <Markdown text={k.summary} /> : <div className="text">{k.text}</div>;
     case "system":
     case "commit":
       return <div className="text">{k.text}</div>;
@@ -117,7 +113,7 @@ function UserPictures({ session, pictures }: { session: SessionRef; pictures: Pi
 function QuestionBody({ prompt, options, answer }: { prompt: string; options: string[]; answer: string | null }) {
   return (
     <div className="question-body">
-      <div className="text">{prompt}</div>
+      <Markdown text={prompt} />
       {options.length > 0 && (
         <ul className="options">
           {options.map((o, i) => (
@@ -136,46 +132,34 @@ function QuestionBody({ prompt, options, answer }: { prompt: string; options: st
   );
 }
 
-function prettyJson(s: string): string {
-  try {
-    return JSON.stringify(JSON.parse(s), null, 2);
-  } catch {
-    return s;
-  }
-}
-
-function toolSummary(args: string): string {
-  try {
-    const v: unknown = JSON.parse(args);
-    if (v && typeof v === "object") {
-      for (const key of ["command", "file_path", "path", "pattern", "query", "url", "description"]) {
-        const x = (v as Record<string, unknown>)[key];
-        if (typeof x === "string" && x) return x.split("\n")[0].slice(0, 160);
-      }
-    }
-  } catch {
-    // not JSON
-  }
-  return args.split("\n")[0].slice(0, 160);
-}
+export type SearchMark = "match" | "current" | null;
 
 interface RowViewProps {
   row: TranscriptRow;
   controller: SessionController;
   loadingDetail: boolean;
+  /** For report rows: reply (an agent turn) or a genuine finished/blocked report. */
+  report?: ReportPresentation;
+  search?: SearchMark;
 }
 
-export const RowView = memo(function RowView({ row, controller, loadingDetail }: RowViewProps) {
+export const RowView = memo(function RowView({ row, controller, loadingDetail, report = "finished", search = null }: RowViewProps) {
   const inspector = useInspector();
   const openInInspector = () =>
     inspector.open({ kind: "row", project: controller.project, sessionId: controller.sessionId, rowId: row.id });
   const k = row.kind;
   const actor = actorLabel(row.actor);
+  const searchCls = search ? ` search-${search}` : "";
+  // Folded rows open when search lands on them (and stay open after).
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (search === "current") setOpen(true);
+  }, [search]);
 
   switch (k.type) {
     case "user":
       return (
-        <div className="row turn user">
+        <div className={`row turn user${searchCls}`} data-row-id={row.id}>
           <div className="turn-head">
             <span className="who">You</span>
             {row.userInputStatus === "queued" && <span className="tag">queued</span>}
@@ -187,7 +171,7 @@ export const RowView = memo(function RowView({ row, controller, loadingDetail }:
     case "model":
     case "liveTail":
       return (
-        <div className={`row turn agent${k.type === "liveTail" ? " streaming" : ""}`}>
+        <div className={`row turn agent${k.type === "liveTail" ? " streaming" : ""}${searchCls}`} data-row-id={row.id}>
           <div className="turn-head">
             <span className="who">{actor || "Agent"}</span>
             {k.type === "liveTail" && <span className="tag live">streaming</span>}
@@ -197,10 +181,22 @@ export const RowView = memo(function RowView({ row, controller, loadingDetail }:
         </div>
       );
     case "report":
+      if (report === "reply") {
+        return (
+          <div className={`row turn agent${searchCls}`} data-row-id={row.id}>
+            <div className="turn-head">
+              <span className="who">{actor || "Agent"}</span>
+            </div>
+            <RowBody row={row} session={controller} />
+            <DetailNote row={row} controller={controller} loading={loadingDetail} />
+          </div>
+        );
+      }
       return (
-        <div className="row turn report">
+        <div className={`row turn report report-${report}${searchCls}`} data-row-id={row.id}>
           <div className="turn-head">
-            <span className="who">Final report</span>
+            <span className="who">{report === "blocked" ? "⚑ Blocked" : "✓ Finished"}</span>
+            {actor && <span className="actor">{actor}</span>}
           </div>
           <RowBody row={row} session={controller} />
           <DetailNote row={row} controller={controller} loading={loadingDetail} />
@@ -208,7 +204,7 @@ export const RowView = memo(function RowView({ row, controller, loadingDetail }:
       );
     case "question":
       return (
-        <div className={`row question${k.answer === null ? " open" : ""}`}>
+        <div className={`row question${k.answer === null ? " open" : ""}${searchCls}`} data-row-id={row.id}>
           <div className="turn-head">
             <span className="who">Question{actor ? ` · ${actor}` : ""}</span>
             {k.answer === null && <span className="tag warn">waiting for an answer</span>}
@@ -218,23 +214,28 @@ export const RowView = memo(function RowView({ row, controller, loadingDetail }:
       );
     case "system":
       return (
-        <div className="row system">
+        <div className={`row system${searchCls}`} data-row-id={row.id}>
           {actor && <span className="actor">{actor}</span>}
           <span className="text">{k.text}</span>
         </div>
       );
     case "commit":
       return (
-        <div className="row system commit">
-          <span className="text">{k.text}</span>
-          {k.sha && (
+        <div className={`row system commit${searchCls}`} data-row-id={row.id}>
+          <span className="commit-glyph" aria-hidden>
+            ⎇
+          </span>
+          {k.sha ? (
             <button
               type="button"
-              className="link"
+              className="link commit-link"
+              title="View this commit's diff in the inspector"
               onClick={() => inspector.open({ kind: "commit", project: controller.project, sha: k.sha })}
             >
-              View diff
+              {k.text}
             </button>
+          ) : (
+            <span className="text">{k.text}</span>
           )}
         </div>
       );
@@ -243,17 +244,35 @@ export const RowView = memo(function RowView({ row, controller, loadingDetail }:
       let summary: ReactNode;
       let cls = "";
       if (k.type === "thinking") {
-        summary = <span className="sum-title">Reasoning</span>;
-        cls = "thinking";
-      } else if (k.type === "tool") {
         summary = (
           <>
-            <span className="sum-title">{k.name}</span>
-            <span className="sum-text">{toolSummary(k.args)}</span>
-            <span className={`tag tool-${k.status}`}>{k.status}</span>
+            <span className="sum-title">Reasoning</span>
+            <span className="sum-text">{oneLine(k.text, 140)}</span>
           </>
         );
-        cls = "tool";
+        cls = "thinking";
+      } else if (k.type === "tool") {
+        const p = toolPreview(k.name, k.args, k.output, k.status);
+        summary = (
+          <>
+            <span className="tool-glyph" aria-hidden>
+              {p.glyph}
+            </span>
+            <span className="sum-title">{k.name}</span>
+            {p.path ? (
+              <span className="sum-path">
+                <FileRef path={p.path} />
+              </span>
+            ) : (
+              <span className={`sum-text${k.name === "Bash" ? " mono" : ""}`}>{p.summary}</span>
+            )}
+            <span className="sum-meta">
+              <MetaTags meta={p.meta} />
+              {k.status === "running" && <span className="tag live">running</span>}
+            </span>
+          </>
+        );
+        cls = `tool tool-${k.status}`;
       } else if (k.type === "review") {
         summary = (
           <>
@@ -273,41 +292,52 @@ export const RowView = memo(function RowView({ row, controller, loadingDetail }:
       }
       return (
         <details
-          className={`row fold ${cls}`}
+          className={`row fold ${cls}${searchCls}`}
+          data-row-id={row.id}
+          open={open}
           onToggle={(e) => {
-            if ((e.currentTarget as HTMLDetailsElement).open && row.detailAvailable) void controller.loadDetail(row.id);
+            const isOpen = (e.currentTarget as HTMLDetailsElement).open;
+            setOpen(isOpen);
+            if (isOpen && row.detailAvailable) void controller.loadDetail(row.id);
           }}
         >
           <summary>
             {actor && <span className="actor">{actor}</span>}
             {summary}
           </summary>
-          <div className="fold-body">
-            <RowBody row={row} session={controller} />
-            {loadingDetail && <p className="muted">Loading full detail…</p>}
-            <div className="row-actions">
-              <button type="button" className="link" onClick={openInInspector}>
-                Open in inspector
-              </button>
-              {k.type === "review" && (
-                <button
-                  type="button"
-                  className="link"
-                  onClick={() =>
-                    inspector.open({
-                      kind: "workingChanges",
-                      project: controller.project,
-                      sessionId: controller.sessionId,
-                      taskId: k.task,
-                      knownSnapshotId: k.reviewedSnapshot,
-                    })
-                  }
-                >
-                  View working changes
-                </button>
+          {open && (
+            <div className="fold-body">
+              <RowBody row={row} session={controller} />
+              {loadingDetail && <p className="muted">Loading full detail…</p>}
+              {row.detailAvailable && !loadingDetail && (
+                <p className="muted small">Abbreviated — opening loads the full detail.</p>
               )}
+              <div className="row-actions">
+                <button type="button" className="link" onClick={openInInspector}>
+                  Open in inspector
+                </button>
+                {k.type === "review" && (
+                  <button
+                    type="button"
+                    className="link"
+                    onClick={() =>
+                      inspector.open({
+                        kind: "workingChanges",
+                        project: controller.project,
+                        sessionId: controller.sessionId,
+                        taskId: k.task,
+                        knownSnapshotId: k.reviewedSnapshot,
+                        verdict: k.verdict,
+                        reviewHeading: k.text,
+                      })
+                    }
+                  >
+                    View working changes
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
+          )}
         </details>
       );
     }

@@ -13,6 +13,7 @@ import { Transcript } from "./Transcript";
 import { useSessionController, useSessionSnapshot } from "./useSession";
 import { compactTokenCount } from "../sessions/feed";
 import { useDropZone } from "../attachments/pictures";
+import { useTranscriptSearch } from "./SearchBar";
 
 export function statusText(snap: SessionSnapshot): { text: string; tone: string } {
   switch (snap.conn) {
@@ -175,6 +176,20 @@ export function SessionView({
   const inspector = useInspector();
   const composer = useRef<ComposerHandle>(null);
   const status = statusText(snap);
+  const search = useTranscriptSearch(controller, snap.rows);
+  const showSearch = search.show;
+  // Ctrl/Cmd-F searches this session's transcript (including history that
+  // is not loaded yet) instead of the browser's find-in-page.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        showSearch();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [showSearch]);
   // The session list's status/needs-answer markers follow this session's
   // durable lifecycle: refresh them when it changes.
   const qc = useQueryClient();
@@ -218,6 +233,14 @@ export function SessionView({
         <div className="session-actions">
           <button
             type="button"
+            className={`btn ghost${search.open ? " active" : ""}`}
+            title="Search this session (Ctrl/Cmd-F)"
+            onClick={() => (search.open ? search.close() : search.show())}
+          >
+            Search
+          </button>
+          <button
+            type="button"
             className="btn ghost"
             onClick={() => inspector.open({ kind: "workingChanges", project, sessionId })}
           >
@@ -249,6 +272,7 @@ export function SessionView({
         controller={controller}
         snap={snap}
         onEditFailed={(t, pictures) => composer.current?.setDraft(t, pictures)}
+        search={search}
       />
       {snap.mode === "live" && snap.pendingQuestion && (
         <AnswerPanel

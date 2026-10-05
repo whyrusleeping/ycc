@@ -626,3 +626,38 @@ func TestOpenStampsCurrentSchemaVersion(t *testing.T) {
 		}
 	}
 }
+
+// Review rows are rendered from page summaries: the verdict heading and the
+// reviewed snapshot (which links to GetWorkingChanges) must survive them.
+func TestReviewSummaryKeepsVerdictAndSnapshot(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "events.jsonl")
+	review := map[string]any{
+		"reviewer": "opus", "model": "opus", "logical_model": "opus-4", "verdict": "revise", "round": 2,
+		"findings": 3, "findings_by_severity": map[string]any{"high": 1, "low": 2}, "task": "0042",
+		"reviewed_snapshot_id": "ws_abc", "summary": "fix it", "role": "reviewer", "internal_only": "x",
+	}
+	writeLog(t, logPath, []event.Event{ev(1, event.ReviewSubmitted, review)})
+	store, err := Open(filepath.Join(dir, "view.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	_, rows, _, err := store.View(ctx, "s", logPath, -1, -1, 10, DefaultBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || len(rows[0].Events) != 1 {
+		t.Fatalf("rows=%+v", rows)
+	}
+	data := rows[0].Events[0].Data
+	for _, k := range []string{"reviewer", "logical_model", "verdict", "round", "findings", "findings_by_severity", "task", "reviewed_snapshot_id", "summary"} {
+		if _, ok := data[k]; !ok {
+			t.Errorf("summary dropped %q: %v", k, data)
+		}
+	}
+	if _, ok := data["internal_only"]; ok {
+		t.Errorf("summary kept a non-presentation key: %v", data)
+	}
+}

@@ -1,7 +1,7 @@
 ---
 id: "0411"
 title: 'Desktop web: start/resume sessions, session settings, image attachments'
-status: in_progress
+status: done
 priority: 2
 created: "2026-10-02"
 updated: "2026-10-05"

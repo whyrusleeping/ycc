@@ -12,7 +12,10 @@ export type InspectorItem =
       project: string;
       sessionId: string;
       taskId?: string;
+      /** The snapshot a review verdict covered (opened from a review row). */
       knownSnapshotId?: string;
+      verdict?: string;
+      reviewHeading?: string;
     }
   | { kind: "commit"; project: string; sha: string }
   | {

@@ -100,7 +100,10 @@ restricted to safe schemes, and code, diffs, and tool output render as text with
 highlighting applied to escaped tokens. No event payload is inserted as HTML. The shared transcript
 invariants in spec §18 apply: model and user turns are prominent, tool, reasoning, review, and
 system detail folds, question plumbing coalesces into one exchange, and new events never move a
-reader who has scrolled away from the live edge.
+reader who has scrolled away from the live edge. An idle report that merely carries the agent's
+plain final reply (the daemon folds the repeated model turn into it, as in every chat turn) renders
+as that agent turn; a report produced by a control tool (`finish`, `request_integration`,
+`report_blocked`) keeps its distinct result card.
 
 ### Reachability
 

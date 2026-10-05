@@ -19,6 +19,7 @@
     "@connectrpc/connect": "2.2.0",
     "@connectrpc/connect-web": "2.2.0",
     "@tanstack/react-query": "5.104.1",
+    "marked": "18.1.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-router": "8.4.0"

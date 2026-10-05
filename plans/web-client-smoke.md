@@ -12,7 +12,11 @@ Build or install the release-candidate binary and start it with web serving and 
 Use a desktop browser window about 1280px wide. Have at least two registered projects, one live
 attended session that can be made to ask a single and a batch question, one persisted (finished)
 session, a second client (TUI or iOS) on the same daemon, and a few pictures: an ordinary PNG or
-JPEG screenshot, one over 5 MiB, and a non-picture file.
+JPEG screenshot, one over 5 MiB, and a non-picture file. For the rich-transcript checks, also have
+a chat session whose reply contains markdown (a table, a task list, fenced Go code, a `diff` fence,
+an `https:` link, a `javascript:` link, and raw `<script>`/`<img onerror>` HTML), a session that
+ran Bash (one failing command), Read, Edit, and Write, and a long work session (several hundred
+rows, so it has unloaded earlier pages) with a commit, a review verdict, and a `finish` report.
 
 ```
 YCC_TOKEN=<token> ycc daemon --web --addr 127.0.0.1:8791
@@ -68,7 +72,32 @@ YCC_TOKEN=<token> ycc daemon --web --addr 127.0.0.1:8791
     read-only.
 13. Reload on a session deep link (`/p/<project>/s/<session>`) and on a placeholder route; the same
     view returns. Back/forward navigate between sessions. A second tab works independently.
-14. Repeat a few steps with the system in dark mode.
+14. Rich transcript (markdown and code). In the markdown chat session the agent's reply reads as a
+    normal agent turn (not a "Finished" card): headings, the GFM table, task-list checkboxes, nested
+    lists, and quotes render; the `https:` link opens in a new tab; the `javascript:` link is inert
+    dotted text; raw `<script>`/`<img onerror>` shows as literal text and no image is fetched.
+    Fenced code is syntax highlighted with a language label; its Copy button puts exactly the fenced
+    source on the clipboard (tabs, `<`, trailing spaces intact), and a `diff` fence renders as a
+    tinted diff whose Copy copies the raw diff. A path-like code span (`internal/a.go:12`) copies the
+    path when clicked.
+15. Tool rows. Collapsed rows read at a glance: Bash shows the command and `exit N` (red when
+    non-zero, "timed out", or "background"); Read, Write, and Edit show the file path (click copies
+    it) plus line count or the Edit's `+N −M`. Expanding shows the highlighted command and output,
+    the Edit as a highlighted diff, Write content highlighted by file type, and Read output with a
+    line-number gutter, each with copy buttons; "Open in inspector" shows the same detail in full.
+16. Commits, reviews, and reports. In the long work session the `finish` report keeps the green
+    "Finished" card (a `report_blocked` one reads "Blocked"). Clicking the commit row opens its diff
+    in the inspector: commit metadata de-emphasized, `+`/`−` lines tinted, code highlighted per
+    file, a truncation notice for a capped diff, and Copy matching `git show`. On a review row the
+    verdict (ACCEPT/REVISE) shows; View working changes says whether the tree changed since the
+    reviewed snapshot and lists the session's verdicts, marking one that covers the current changes.
+17. Search. Ctrl/Cmd-F opens the find bar instead of the browser's (also the header's Search).
+    Typing highlights matches in loaded rows and selects the newest; a term that only appears in an
+    unloaded earlier page says "No loaded matches"; Enter then pages earlier history until it finds
+    the match, scrolls it into view, and opens a folded row it lands in. Enter steps to older
+    matches, Shift+Enter to newer ones, wrapping once the whole history is loaded; Esc closes it and
+    clears the highlights.
+18. Repeat a few steps with the system in dark mode.
 
 ## Pass condition
 

@@ -1,7 +1,7 @@
 ---
 id: "0410"
 title: 'Desktop web client foundation: TS/React/Vite scaffold, generated Connect-ES client, app shell, session transcript + interaction (replaces vanilla client)'
-status: in_progress
+status: done
 priority: 2
 created: "2026-10-02"
 updated: "2026-10-05"
