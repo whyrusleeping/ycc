@@ -1,10 +1,10 @@
 ---
 id: "0411"
 title: 'Desktop web: start/resume sessions, session settings, image attachments'
-status: todo
+status: in_progress
 priority: 2
 created: "2026-10-02"
-updated: "2026-10-02"
+updated: "2026-10-05"
 depends_on:
     - "0410"
 spec_refs:

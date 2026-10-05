@@ -2,9 +2,10 @@
 // review, and system detail fold; a question and its answer render as one
 // exchange. Every payload renders as text (React escapes it) — never as HTML.
 import { memo, type ReactNode } from "react";
-import type { TranscriptRow } from "./projection";
+import type { Picture, TranscriptRow } from "./projection";
 import type { SessionController } from "./controller";
 import { useInspector } from "../inspector/inspector";
+import { PictureThumb, type SessionRef } from "../attachments/SessionPicture";
 
 function actorLabel(actor: string): string {
   if (!actor || actor === "coordinator") return "";
@@ -39,22 +40,14 @@ export function rowTitle(row: TranscriptRow): string {
 }
 
 /** The row's full textual content (inspector / expanded body). */
-export function RowBody({ row, full = false }: { row: TranscriptRow; full?: boolean }) {
+export function RowBody({ row, full = false, session }: { row: TranscriptRow; full?: boolean; session: SessionRef }) {
   const k = row.kind;
   switch (k.type) {
     case "user":
       return (
-        <div className="text">
-          {k.text}
-          {k.pictures.length > 0 && (
-            <div className="pictures">
-              {k.pictures.map((p, i) => (
-                <span key={i} className="tag">
-                  🖼 {p.filename || p.mediaType || "image"}
-                </span>
-              ))}
-            </div>
-          )}
+        <div>
+          {k.text && <div className="text">{k.text}</div>}
+          {k.pictures.length > 0 && <UserPictures session={session} pictures={k.pictures} />}
         </div>
       );
     case "model":
@@ -94,6 +87,31 @@ export function RowBody({ row, full = false }: { row: TranscriptRow; full?: bool
     case "commit":
       return <div className="text">{k.text}</div>;
   }
+}
+
+function UserPictures({ session, pictures }: { session: SessionRef; pictures: Picture[] }) {
+  const inspector = useInspector();
+  return (
+    <div className="pictures">
+      {pictures.map((p, i) => (
+        <PictureThumb
+          key={`${p.attachmentId}-${i}`}
+          session={session}
+          picture={p}
+          onOpen={() =>
+            inspector.open({
+              kind: "picture",
+              project: session.project,
+              sessionId: session.sessionId,
+              attachmentId: p.attachmentId,
+              filename: p.filename,
+              mediaType: p.mediaType,
+            })
+          }
+        />
+      ))}
+    </div>
+  );
 }
 
 function QuestionBody({ prompt, options, answer }: { prompt: string; options: string[]; answer: string | null }) {
@@ -162,7 +180,7 @@ export const RowView = memo(function RowView({ row, controller, loadingDetail }:
             <span className="who">You</span>
             {row.userInputStatus === "queued" && <span className="tag">queued</span>}
           </div>
-          <RowBody row={row} />
+          <RowBody row={row} session={controller} />
           <DetailNote row={row} controller={controller} loading={loadingDetail} />
         </div>
       );
@@ -174,7 +192,7 @@ export const RowView = memo(function RowView({ row, controller, loadingDetail }:
             <span className="who">{actor || "Agent"}</span>
             {k.type === "liveTail" && <span className="tag live">streaming</span>}
           </div>
-          <RowBody row={row} />
+          <RowBody row={row} session={controller} />
           <DetailNote row={row} controller={controller} loading={loadingDetail} />
         </div>
       );
@@ -184,7 +202,7 @@ export const RowView = memo(function RowView({ row, controller, loadingDetail }:
           <div className="turn-head">
             <span className="who">Final report</span>
           </div>
-          <RowBody row={row} />
+          <RowBody row={row} session={controller} />
           <DetailNote row={row} controller={controller} loading={loadingDetail} />
         </div>
       );
@@ -195,7 +213,7 @@ export const RowView = memo(function RowView({ row, controller, loadingDetail }:
             <span className="who">Question{actor ? ` · ${actor}` : ""}</span>
             {k.answer === null && <span className="tag warn">waiting for an answer</span>}
           </div>
-          <RowBody row={row} />
+          <RowBody row={row} session={controller} />
         </div>
       );
     case "system":
@@ -265,7 +283,7 @@ export const RowView = memo(function RowView({ row, controller, loadingDetail }:
             {summary}
           </summary>
           <div className="fold-body">
-            <RowBody row={row} />
+            <RowBody row={row} session={controller} />
             {loadingDetail && <p className="muted">Loading full detail…</p>}
             <div className="row-actions">
               <button type="button" className="link" onClick={openInInspector}>

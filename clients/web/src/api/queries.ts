@@ -13,6 +13,10 @@ export const HISTORY_PAGE = 50;
 
 export const queryKeys = {
   projects: ["projects"] as const,
+  modes: ["modes"] as const,
+  /** ListModels: "" is the daemon defaults, a session id its live assignment. */
+  models: (sessionId: string) => ["models", sessionId] as const,
+  sessionUsage: (project: string) => ["usage", "session-model", project] as const,
   sessionFeed: (targets: string[]) => ["sessionFeed", targets] as const,
   sessionFeedAll: ["sessionFeed"] as const,
 };
@@ -37,6 +41,24 @@ export function useProjects() {
   return useQuery({
     queryKey: queryKeys.projects,
     queryFn: async ({ signal }) => (await client.listProjects({}, { signal })).projects,
+  });
+}
+
+/** ListModes: session modes and opening-prompt presets (daemon-wide). */
+export function useModes() {
+  return useQuery({
+    queryKey: queryKeys.modes,
+    staleTime: 5 * 60_000,
+    queryFn: async ({ signal }) => client.listModes({}, { signal }),
+  });
+}
+
+/** ListModels scoped to a live session ("" = the configured defaults). */
+export function useModels(sessionId = "", enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.models(sessionId),
+    enabled,
+    queryFn: async ({ signal }) => client.listModels({ sessionId }, { signal }),
   });
 }
 

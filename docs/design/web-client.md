@@ -67,6 +67,24 @@ session events that change them. Mutations replace local state with the daemon's
 rather than trusting optimistic edits. Unread state is a client-side watermark per session kept in
 browser storage, matching the iOS read store.
 
+### Session input and pictures
+
+Starting, re-opening, and steering sessions use the same RPCs as the other clients: `StartSession`
+(project, mode, opening-prompt preset, optional per-session coordinator model, prompt, pictures),
+`ResumeSession` (the read-only history paints first, then the view goes live from its cursor), and
+`SendInput`. Starting from the daemon-wide Recent feed asks which project, offering the last viewed
+one first. Per-session reasoning and role models are changed with `SetThinking` and
+`SetRoleConfig` scoped to the session; per-session usage is `GetUsage` grouped by session and model,
+filtered to that session.
+
+Pictures are attached by file picker, clipboard paste, or drag-and-drop. The client mirrors the
+daemon's attachment policy so obvious misses fail early: non-picture files and more than four
+pictures are refused, a mislabeled type is corrected from the bytes, and an oversized still picture
+is downscaled and re-encoded as JPEG. Everything else is left to the daemon, which stays the
+authority; its validation error is shown verbatim and no session is created. Transcript pictures
+are fetched with `GetSessionAttachment` into object URLs (the Content-Security-Policy allows
+`blob:` images) and fall back to their logged metadata when the bytes are unavailable.
+
 ### Authentication
 
 Static assets are public; every RPC stays behind the daemon's bearer-token middleware. The page asks

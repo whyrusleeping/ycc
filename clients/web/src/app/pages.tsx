@@ -5,6 +5,8 @@ import { useSessionFeed } from "../api/queries";
 import { SessionList } from "../features/sessions/SessionList";
 import { SessionView } from "../features/session/SessionView";
 import { displayTitle } from "../features/sessions/feed";
+import { NewSessionPage as NewSession } from "../features/newSession/NewSessionPage";
+import { lastViewedProject } from "./memory";
 import { PROJECT_SECTIONS, paths } from "./paths";
 import { useScope } from "./scope";
 
@@ -30,6 +32,7 @@ export function ProjectPage() {
   const { project = "" } = useParams();
   const { setScope } = useScope();
   useEffect(() => setScope(project), [project, setScope]);
+  useEffect(() => lastViewedProject.set(project), [project]);
   return (
     <div className="page">
       <header className="page-head">
@@ -49,6 +52,7 @@ export function SessionPage() {
   const { feed } = useSessionFeed(null);
   const summary = feed?.rows.find((r) => r.session.sessionId === sessionId)?.session;
   const title = summary ? displayTitle(summary) : sessionId;
+  useEffect(() => lastViewedProject.set(project), [project]);
   useEffect(() => {
     document.title = `${title} · ycc`;
     return () => {
@@ -58,18 +62,16 @@ export function SessionPage() {
   return <SessionView key={`${project}\u0000${sessionId}`} project={project} sessionId={sessionId} title={title} />;
 }
 
-/** `/new` and `/p/:project/new`: reserved for starting sessions (next phase). */
+/** `/new` and `/p/:project/new`: start a session (asks for the project when unscoped). */
 export function NewSessionPage() {
   const { project } = useParams();
-  return (
-    <div className="page placeholder">
-      <h1>New session{project ? ` in ${project}` : ""}</h1>
-      <p className="muted">
-        Starting and resuming sessions from the web client is the next phase of the desktop client. Until then, start
-        a session from the TUI (<code>ycc</code>) or the iOS app; it appears in Recent sessions here.
-      </p>
-    </div>
-  );
+  useEffect(() => {
+    document.title = "New session · ycc";
+    return () => {
+      document.title = "ycc";
+    };
+  }, []);
+  return <NewSession key={project ?? ""} routeProject={project ?? null} />;
 }
 
 /** A project surface that a later phase fills in. */

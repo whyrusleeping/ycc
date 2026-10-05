@@ -117,6 +117,18 @@ function Sidebar() {
 export function Shell() {
   const inspector = useInspector();
   useEffect(() => {
+    // A file dropped outside a drop zone must not navigate the tab to it.
+    const guard = (e: DragEvent) => {
+      if (Array.from(e.dataTransfer?.types ?? []).includes("Files")) e.preventDefault();
+    };
+    window.addEventListener("dragover", guard);
+    window.addEventListener("drop", guard);
+    return () => {
+      window.removeEventListener("dragover", guard);
+      window.removeEventListener("drop", guard);
+    };
+  }, []);
+  useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState === "visible") reconnectActiveSessions();
     };

@@ -1,7 +1,8 @@
 // The inspector: a closable, resizable right-hand pane for contextual detail
 // (expanded transcript rows, working-tree and commit diffs) so detail opens
-// beside the transcript instead of replacing it. Later phases add task detail
-// and file contents as further InspectorItem kinds.
+// beside the transcript instead of replacing it: also full-size transcript
+// pictures and the per-session settings panel. Later phases add task detail and
+// file contents as further InspectorItem kinds.
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 
 export type InspectorItem =
@@ -13,7 +14,16 @@ export type InspectorItem =
       taskId?: string;
       knownSnapshotId?: string;
     }
-  | { kind: "commit"; project: string; sha: string };
+  | { kind: "commit"; project: string; sha: string }
+  | {
+      kind: "picture";
+      project: string;
+      sessionId: string;
+      attachmentId: string;
+      filename: string;
+      mediaType: string;
+    }
+  | { kind: "sessionSettings"; project: string; sessionId: string };
 
 interface InspectorState {
   item: InspectorItem | null;

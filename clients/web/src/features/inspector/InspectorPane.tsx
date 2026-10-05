@@ -5,6 +5,8 @@ import { client, errorMessage } from "../../api/client";
 import { useSessionController, useSessionSnapshot } from "../session/useSession";
 import { RowBody, rowTitle } from "../session/RowView";
 import { InspectorResizer, useInspector, type InspectorItem } from "./inspector";
+import { PictureDetail } from "../attachments/SessionPicture";
+import { SessionSettingsPanel } from "../session/SessionSettings";
 
 export function InspectorPane() {
   const { item, close } = useInspector();
@@ -23,6 +25,16 @@ export function InspectorPane() {
           {item.kind === "row" && <RowInspector item={item} />}
           {item.kind === "workingChanges" && <WorkingChanges item={item} />}
           {item.kind === "commit" && <CommitDiff item={item} />}
+          {item.kind === "picture" && (
+            <PictureDetail
+              key={item.attachmentId}
+              session={item}
+              picture={{ attachmentId: item.attachmentId, filename: item.filename, mediaType: item.mediaType }}
+            />
+          )}
+          {item.kind === "sessionSettings" && (
+            <SessionSettingsPanel key={`${item.project}\u0000${item.sessionId}`} project={item.project} sessionId={item.sessionId} />
+          )}
         </div>
       </div>
     </aside>
@@ -37,6 +49,10 @@ function inspectorTitle(item: InspectorItem): string {
       return item.taskId ? `Working changes · task ${item.taskId}` : "Working changes";
     case "commit":
       return `Commit ${item.sha.slice(0, 12)}`;
+    case "picture":
+      return item.filename || "Picture";
+    case "sessionSettings":
+      return "Session settings";
   }
 }
 
@@ -54,7 +70,7 @@ function RowInspector({ item }: { item: Extract<InspectorItem, { kind: "row" }> 
     <div className="inspector-row">
       <div className="inspector-subtitle">{rowTitle(row)}</div>
       {snap.loadingDetail.has(row.id) && <p className="muted">Loading full detail…</p>}
-      <RowBody row={row} full />
+      <RowBody row={row} full session={item} />
     </div>
   );
 }

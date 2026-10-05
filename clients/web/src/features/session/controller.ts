@@ -1,12 +1,14 @@
 // SessionController owns one open session's transcript: it loads the newest
 // indexed page (GetSessionView), streams SubscribeSessionView from the
 // indexed_through_seq cursor with backoff, pages earlier rows and row detail on
-// demand, and runs the interactive actions (send, answer, interrupt/resume,
-// stop) with the daemon's durable state as the source of truth. React reads
+// demand, and runs the interactive actions (send with pictures, answer,
+// interrupt/resume, stop, reopen via ResumeSession) with the daemon's durable
+// state as the source of truth. React reads
 // immutable snapshots through useSyncExternalStore (see useSession.ts).
 import { Code, ConnectError } from "@connectrpc/connect";
 import type { YccClient } from "../../api/client";
 import { errorMessage } from "../../api/client";
+import { toImageAttachments, type DraftPicture } from "../attachments/attachments";
 import { SessionProjection, type PendingQuestion, type Phase, type TranscriptRow } from "./projection";
 import { fromEvent, fromRow, fromState } from "./wire";
 
@@ -17,6 +19,8 @@ export type SessionMode = "unknown" | "live" | "persisted";
 export interface PendingMessage {
   id: string;
   text: string;
+  /** Pictures sent with the message (previews stay until it retires). */
+  pictures: DraftPicture[];
   status: "sending" | "sent" | "failed";
   error?: string;
   /** Cursor when submitted; only a newer user row can be its echo. */
@@ -52,6 +56,8 @@ export interface SessionSnapshot {
   /** Row id of a question this client answered that durable state still lists. */
   answeredRowId: string | null;
   control: { kind: ControlKind; acknowledged: boolean } | null;
+  /** A ResumeSession (reopen) call is in flight. */
+  reopening: boolean;
 }
 
 export type SessionApi = Pick<
@@ -67,6 +73,7 @@ export type SessionApi = Pick<
   | "interrupt"
   | "resume"
   | "stopSession"
+  | "resumeSession"
 >;
 
 export interface ControllerHooks {
@@ -144,6 +151,7 @@ export class SessionController {
   private answeredRowId: string | null = null;
   private control: { kind: ControlKind; acknowledged: boolean; token: number } | null = null;
   private controlToken = 0;
+  private reopening = false;
   private opts: Required<ControllerOptions>;
 
   constructor(
@@ -200,6 +208,7 @@ export class SessionController {
       answerInFlight: this.answerInFlight,
       answeredRowId: this.answeredRowId,
       control: this.control ? { kind: this.control.kind, acknowledged: this.control.acknowledged } : null,
+      reopening: this.reopening,
     };
   }
 
@@ -267,6 +276,7 @@ export class SessionController {
   }
 
   private async installSnapshot(signal: AbortSignal) {
+    const modeAtStart = this.mode;
     const [snap, live] = await Promise.all([
       this.api.getSessionView({ project: this.project, sessionId: this.sessionId }, { signal }),
       this.mode === "unknown"
@@ -283,7 +293,9 @@ export class SessionController {
     this.earlierCursor = snap.earlierCursor;
     this.installed = true;
     this.installRevision++;
-    this.mode = live ? "live" : "persisted";
+    // A reopen that landed while this snapshot loaded wins over a stale
+    // "not live" answer.
+    if (!(this.mode === "live" && modeAtStart !== "live")) this.mode = live ? "live" : "persisted";
     this.reconcile();
     const state = snap.state;
     if (state?.pendingQuestionsTruncated && state.pendingRowId) void this.loadDetail(state.pendingRowId);
@@ -455,17 +467,19 @@ export class SessionController {
    * semantics), so it gets no provisional bubble; the durable state dismisses
    * the question.
    */
-  async send(text: string) {
+  async send(text: string, pictures: DraftPicture[] = []) {
     const trimmed = text.trim();
-    if (!trimmed) return;
-    if (this.projection.awaitsAnswer) {
+    if (!trimmed && !pictures.length) return;
+    // Pictures never answer a question (the daemon refuses them while one is
+    // pending), so only text-only input takes the answer path.
+    if (this.projection.awaitsAnswer && !pictures.length) {
       this.answerInFlight = true;
       this.publish();
       try {
         await this.api.sendInput({ sessionId: this.sessionId, text: trimmed });
         this.answeredRowId = this.projection.pendingQuestion?.rowId ?? null;
       } catch (err) {
-        this.pushFailed(trimmed, this.reportActionError("send", err));
+        this.pushFailed(trimmed, [], this.reportActionError("send", err));
       } finally {
         this.answerInFlight = false;
         this.reconcile();
@@ -476,6 +490,7 @@ export class SessionController {
     const message: PendingMessage = {
       id: `local-${++this.localCounter}`,
       text: trimmed,
+      pictures,
       status: "sending",
       baselineSeq: this.installed ? this.projection.lastPersistedSeq : null,
     };
@@ -489,22 +504,29 @@ export class SessionController {
     if (!msg) return;
     this.pendingMessages = this.pendingMessages.filter((m) => m.id !== id);
     this.publish();
-    await this.send(msg.text);
+    await this.send(msg.text, msg.pictures);
   }
 
-  /** Drop a failed bubble, returning its text for the composer. */
-  discardSend(id: string): string | undefined {
+  /** Drop a failed bubble, returning its draft for the composer. */
+  discardSend(id: string): { text: string; pictures: DraftPicture[] } | undefined {
     const msg = this.pendingMessages.find((m) => m.id === id && m.status === "failed");
     if (!msg) return undefined;
     this.pendingMessages = this.pendingMessages.filter((m) => m.id !== id);
     this.publish();
-    return msg.text;
+    return { text: msg.text, pictures: msg.pictures };
   }
 
-  private pushFailed(text: string, error: string) {
+  private pushFailed(text: string, pictures: DraftPicture[], error: string) {
     this.pendingMessages = [
       ...this.pendingMessages,
-      { id: `local-${++this.localCounter}`, text, status: "failed", error, baselineSeq: this.projection.lastPersistedSeq },
+      {
+        id: `local-${++this.localCounter}`,
+        text,
+        pictures,
+        status: "failed",
+        error,
+        baselineSeq: this.projection.lastPersistedSeq,
+      },
     ];
   }
 
@@ -512,13 +534,14 @@ export class SessionController {
     const msg = this.pendingMessages.find((m) => m.id === id);
     if (!msg) return;
     try {
-      await this.api.sendInput({ sessionId: this.sessionId, text: msg.text });
+      await this.api.sendInput({ sessionId: this.sessionId, text: msg.text, images: toImageAttachments(msg.pictures) });
       this.markMessage(id, { status: "sent" });
       // An accepted message whose echo never arrives must not linger.
       setTimeout(() => {
         const cur = this.pendingMessages.find((m) => m.id === id);
         if (cur?.status === "sent") {
           this.pendingMessages = this.pendingMessages.filter((m) => m.id !== id);
+          releasePreviews(cur.pictures);
           this.publish();
         }
       }, this.opts.sentEchoTimeoutMs);
@@ -555,15 +578,47 @@ export class SessionController {
           !claimed.has(row.id) &&
           row.seq > (m.baselineSeq ?? Number.MAX_SAFE_INTEGER) &&
           row.kind.type === "user" &&
-          row.kind.text.trim() === m.text,
+          row.kind.text.trim() === m.text &&
+          row.kind.pictures.length === m.pictures.length,
       );
       if (!echo) return true;
       claimed.add(echo.id);
+      releasePreviews(m.pictures);
       return false;
     });
     const changed =
       kept.length !== this.pendingMessages.length || kept.some((m, i) => m !== this.pendingMessages[i]);
     if (changed) this.pendingMessages = kept;
+  }
+
+  // MARK: reopen
+
+  /**
+   * ResumeSession: re-open a persisted session on its existing log, then
+   * promote this view to live (subscribing from the painted history's cursor).
+   * Idempotent server-side when the session is already live. On failure the
+   * read-only history stays and the error is reported.
+   */
+  async reopen(): Promise<boolean> {
+    if (this.reopening || this.disposed) return false;
+    this.reopening = true;
+    this.publish();
+    try {
+      await this.api.resumeSession({ project: this.project, sessionId: this.sessionId });
+      if (this.disposed) return true;
+      this.mode = "live";
+      if (this.loop !== null || this.conn === "finished" || this.conn === "failed") {
+        this.stop();
+        this.runLoop(!this.installed);
+      }
+      return true;
+    } catch (err) {
+      this.reportActionError("reopen", err);
+      return false;
+    } finally {
+      this.reopening = false;
+      this.publish();
+    }
   }
 
   // MARK: questions
@@ -696,5 +751,12 @@ export class SessionController {
     const message = errorMessage(err, `${label} failed`);
     this.hooks.onError(`${label[0].toUpperCase()}${label.slice(1)} failed: ${message}`);
     return message;
+  }
+}
+
+/** Free the object URLs behind sent pictures' provisional previews. */
+function releasePreviews(pictures: readonly DraftPicture[]) {
+  for (const p of pictures) {
+    if (p.previewUrl && typeof URL.revokeObjectURL === "function") URL.revokeObjectURL(p.previewUrl);
   }
 }

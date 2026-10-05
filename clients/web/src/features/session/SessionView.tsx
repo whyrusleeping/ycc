@@ -12,6 +12,7 @@ import type { SessionController, SessionSnapshot } from "./controller";
 import { Transcript } from "./Transcript";
 import { useSessionController, useSessionSnapshot } from "./useSession";
 import { compactTokenCount } from "../sessions/feed";
+import { useDropZone } from "../attachments/pictures";
 
 export function statusText(snap: SessionSnapshot): { text: string; tone: string } {
   switch (snap.conn) {
@@ -22,9 +23,14 @@ export function statusText(snap: SessionSnapshot): { text: string; tone: string 
     case "failed":
       return { text: snap.failure ?? "Failed", tone: "error" };
     case "finished":
-      if (snap.mode === "persisted") return { text: "Not live · read-only", tone: "muted" };
+      if (snap.mode === "persisted") {
+        return snap.reopening ? { text: "Reopening…", tone: "warn" } : { text: "Not live · read-only", tone: "muted" };
+      }
   }
   if (snap.pauseRequested) return { text: "Pausing at next checkpoint…", tone: "warn" };
+  // An ask_user gate keeps the durable phase "running"; the agent is idle
+  // until someone answers, so say so instead of "Running".
+  if (snap.awaitsAnswer && snap.phase.kind === "running") return { text: "Waiting for your answer", tone: "warn" };
   switch (snap.phase.kind) {
     case "running":
       return { text: "Running", tone: "ok" };
@@ -183,6 +189,12 @@ export function SessionView({
     void qc.invalidateQueries({ queryKey: queryKeys.sessionFeedAll });
   }, [qc, lifecycleKey, snap.installed]);
   const ctx = snap.contextTokens !== null ? compactTokenCount(snap.contextTokens) : null;
+  const canCompose = snap.mode === "live" && snap.conn !== "finished";
+  const drop = useDropZone((files) => composer.current?.addFiles(files), canCompose);
+  const settingsOpen =
+    inspector.item?.kind === "sessionSettings" &&
+    inspector.item.project === project &&
+    inspector.item.sessionId === sessionId;
 
   let placeholder = "Message the agent… (Enter to send, Shift+Enter for a newline)";
   if (snap.awaitsAnswer) placeholder = "Type an answer to the pending question…";
@@ -190,7 +202,8 @@ export function SessionView({
   else if (snap.phase.kind === "running") placeholder = "Send a steer — delivered at the next checkpoint…";
 
   return (
-    <div className="session">
+    <div className={`session${drop.dragging ? " dragging" : ""}`} {...drop.handlers}>
+      {drop.dragging && <div className="drop-overlay">Drop pictures to attach them</div>}
       <header className="session-head">
         <div className="session-title">
           <h1 title={title}>{title}</h1>
@@ -210,6 +223,17 @@ export function SessionView({
           >
             Working changes
           </button>
+          <button
+            type="button"
+            className={`btn ghost${settingsOpen ? " active" : ""}`}
+            aria-pressed={settingsOpen}
+            title="Reasoning, models, context, and usage for this session"
+            onClick={() =>
+              settingsOpen ? inspector.close() : inspector.open({ kind: "sessionSettings", project, sessionId })
+            }
+          >
+            Settings
+          </button>
           <Controls controller={controller} snap={snap} />
         </div>
       </header>
@@ -221,7 +245,11 @@ export function SessionView({
           </button>
         </div>
       )}
-      <Transcript controller={controller} snap={snap} onEditFailed={(t) => composer.current?.setText(t)} />
+      <Transcript
+        controller={controller}
+        snap={snap}
+        onEditFailed={(t, pictures) => composer.current?.setDraft(t, pictures)}
+      />
       {snap.mode === "live" && snap.pendingQuestion && (
         <AnswerPanel
           key={snap.pendingQuestion.rowId}
@@ -231,18 +259,27 @@ export function SessionView({
           submitted={snap.answeredRowId === snap.pendingQuestion.rowId}
         />
       )}
-      {snap.mode === "live" && snap.conn !== "finished" ? (
+      {canCompose ? (
         <Composer
           ref={composer}
           sessionKey={`${project}\u0000${sessionId}`}
           placeholder={placeholder}
-          onSend={(t) => void controller.send(t)}
+          picturesBlocked={snap.awaitsAnswer ? "Answer the pending question before sending pictures." : undefined}
+          onSend={(t, pictures) => void controller.send(t, pictures)}
         />
       ) : (
         snap.mode === "persisted" && (
-          <div className="readonly-note muted">
-            This session is not live, so this is a read-only transcript. Resuming sessions from the web arrives in
-            a later phase.
+          <div className="readonly-note">
+            <span className="muted">This session is not live, so this is a read-only transcript.</span>
+            <button
+              type="button"
+              className="btn primary small"
+              disabled={snap.reopening}
+              onClick={() => void controller.reopen()}
+              title="Re-open this session on its existing log and continue it"
+            >
+              {snap.reopening ? "Resuming…" : "Resume session"}
+            </button>
           </div>
         )
       )}

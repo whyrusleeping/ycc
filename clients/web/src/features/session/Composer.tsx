@@ -1,25 +1,44 @@
-// Multiline composer: Enter sends, Shift+Enter inserts a newline. Drafts are
-// kept per session while the page is open.
+// Multiline composer: Enter sends, Shift+Enter inserts a newline. Pictures can
+// be attached with the paperclip, pasted, or dropped onto the session view.
+// Drafts (text and pictures) are kept per session while the page is open.
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import type { DraftPicture } from "../attachments/attachments";
+import { AttachButton, PictureStrip, filesFrom, usePictureDraft } from "../attachments/pictures";
 
 const drafts = new Map<string, string>();
+const pictureDrafts = new Map<string, DraftPicture[]>();
 
 export interface ComposerHandle {
-  setText: (text: string) => void;
+  setDraft: (text: string, pictures?: DraftPicture[]) => void;
+  /** Stage dropped files (the drop zone is the whole session view). */
+  addFiles: (files: File[]) => void;
 }
 
 export const Composer = forwardRef<
   ComposerHandle,
-  { sessionKey: string; placeholder: string; onSend: (text: string) => void; disabled?: boolean }
->(function Composer({ sessionKey, placeholder, onSend, disabled }, ref) {
+  {
+    sessionKey: string;
+    placeholder: string;
+    onSend: (text: string, pictures: DraftPicture[]) => void;
+    disabled?: boolean;
+    /** Why staged pictures can't be sent right now (e.g. a question is pending). */
+    picturesBlocked?: string;
+  }
+>(function Composer({ sessionKey, placeholder, onSend, disabled, picturesBlocked }, ref) {
   const [text, setText] = useState(() => drafts.get(sessionKey) ?? "");
   const area = useRef<HTMLTextAreaElement>(null);
+  const draft = usePictureDraft(pictureDrafts.get(sessionKey) ?? [], (next) => {
+    if (next.length) pictureDrafts.set(sessionKey, next);
+    else pictureDrafts.delete(sessionKey);
+  });
 
   useImperativeHandle(ref, () => ({
-    setText: (t: string) => {
+    setDraft: (t: string, pictures?: DraftPicture[]) => {
       setText(t);
+      if (pictures?.length) draft.replace([...draft.pictures, ...pictures]);
       area.current?.focus();
     },
+    addFiles: (files: File[]) => void draft.add(files),
   }));
 
   useEffect(() => {
@@ -33,11 +52,15 @@ export const Composer = forwardRef<
     el.style.height = `${Math.min(el.scrollHeight, 260)}px`;
   }, [text]);
 
+  const hasPictures = draft.pictures.length > 0;
+  const canSend = !disabled && !draft.loading && (text.trim() !== "" || hasPictures);
+
   const submit = () => {
-    const t = text.trim();
-    if (!t || disabled) return;
-    onSend(t);
+    if (!canSend) return;
+    onSend(text.trim(), draft.pictures);
     setText("");
+    // The previews now belong to the provisional bubble.
+    draft.release();
   };
 
   return (
@@ -48,23 +71,39 @@ export const Composer = forwardRef<
         submit();
       }}
     >
-      <textarea
-        ref={area}
-        rows={1}
-        value={text}
-        placeholder={placeholder}
-        aria-label="Message"
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+      {(hasPictures || draft.error) && (
+        <div className="composer-pictures">
+          <PictureStrip pictures={draft.pictures} onRemove={draft.remove} />
+          {draft.error && <p className="error small">{draft.error}</p>}
+          {picturesBlocked && hasPictures && <p className="warn small">{picturesBlocked}</p>}
+        </div>
+      )}
+      <div className="composer-row">
+        <AttachButton onFiles={(f) => void draft.add(f)} disabled={disabled} full={draft.full} />
+        <textarea
+          ref={area}
+          rows={1}
+          value={text}
+          placeholder={placeholder}
+          aria-label="Message"
+          onChange={(e) => setText(e.target.value)}
+          onPaste={(e) => {
+            const files = filesFrom(e.clipboardData).filter((f) => f.type.startsWith("image/"));
+            if (!files.length) return;
             e.preventDefault();
-            submit();
-          }
-        }}
-      />
-      <button type="submit" className="btn primary" disabled={disabled || !text.trim()}>
-        Send
-      </button>
+            void draft.add(files);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              submit();
+            }
+          }}
+        />
+        <button type="submit" className="btn primary" disabled={!canSend}>
+          {draft.loading ? "Attaching…" : "Send"}
+        </button>
+      </div>
     </form>
   );
 });

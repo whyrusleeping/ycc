@@ -5,6 +5,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type { SessionController, SessionSnapshot } from "./controller";
 import { RowView } from "./RowView";
+import type { DraftPicture } from "../attachments/attachments";
 
 const NEAR_BOTTOM_PX = 80;
 const NEAR_TOP_PX = 200;
@@ -16,7 +17,7 @@ export function Transcript({
 }: {
   controller: SessionController;
   snap: SessionSnapshot;
-  onEditFailed: (text: string) => void;
+  onEditFailed: (text: string, pictures: DraftPicture[]) => void;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const following = useRef(true);
@@ -66,6 +67,7 @@ export function Transcript({
     snap.conn === "streaming" &&
     snap.phase.kind === "running" &&
     !snap.pauseRequested &&
+    !snap.awaitsAnswer &&
     !snap.rows.some((r) => r.kind.type === "liveTail");
 
   return (
@@ -103,7 +105,22 @@ export function Transcript({
                   {m.status === "sending" ? "sending…" : m.status === "sent" ? "sent" : "not sent"}
                 </span>
               </div>
-              <div className="text">{m.text}</div>
+              {m.text && <div className="text">{m.text}</div>}
+              {m.pictures.length > 0 && (
+                <div className="pictures">
+                  {m.pictures.map((p) =>
+                    p.previewUrl ? (
+                      <span key={p.id} className="picture-thumb static">
+                        <img src={p.previewUrl} alt={p.filename} />
+                      </span>
+                    ) : (
+                      <span key={p.id} className="tag picture-meta">
+                        🖼 {p.filename}
+                      </span>
+                    ),
+                  )}
+                </div>
+              )}
               {m.status === "failed" && (
                 <div className="row-actions">
                   {m.error && <span className="error">{m.error}</span>}
@@ -114,8 +131,8 @@ export function Transcript({
                     type="button"
                     className="link"
                     onClick={() => {
-                      const text = controller.discardSend(m.id);
-                      if (text !== undefined) onEditFailed(text);
+                      const draft = controller.discardSend(m.id);
+                      if (draft) onEditFailed(draft.text, draft.pictures);
                     }}
                   >
                     Edit

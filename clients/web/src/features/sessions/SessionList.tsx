@@ -1,10 +1,11 @@
 // The session list: the daemon-wide Recent feed (or one project's sessions),
 // needs-answer sessions pinned on top, then most recent first.
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { useEffect, useState } from "react";
 import { useSessionFeed } from "../../api/queries";
 import { errorMessage } from "../../api/client";
 import { paths } from "../../app/paths";
+import { requestReopen } from "../session/useSession";
 import {
   displayProject,
   displayTitle,
@@ -45,10 +46,11 @@ export function SessionRowView({
   const project = displayProject(row);
   const chips = taskChipLabels(s);
   const when = relativeTime(s.lastActivity || s.startedAt, now);
-  return (
+  const navigate = useNavigate();
+  const link = (
     <Link
       to={paths.session(row.project, s.sessionId)}
-      className={`session-row ${variant}${active ? " active" : ""}${needsAnswer(s) ? " needs" : ""}`}
+      className={`session-row variant-${variant}${active ? " active" : ""}${needsAnswer(s) ? " needs" : ""}`}
       aria-current={active ? "page" : undefined}
     >
       <div className="session-row-title">
@@ -78,6 +80,26 @@ export function SessionRowView({
       </div>
     </Link>
   );
+  if (s.live) return link;
+  // Persisted sessions can be re-opened in place: navigate at once so the
+  // history paints while ResumeSession runs, then the view goes live.
+  return (
+    <div className="session-row-wrap">
+      {link}
+      <button
+        type="button"
+        className="btn small row-resume"
+        title="Resume this session"
+        aria-label={`Resume ${displayTitle(s)}`}
+        onClick={() => {
+          requestReopen(row.project, s.sessionId);
+          navigate(paths.session(row.project, s.sessionId));
+        }}
+      >
+        Resume
+      </button>
+    </div>
+  );
 }
 
 export function SessionList({
@@ -97,9 +119,16 @@ export function SessionList({
   if (feed.error) return <p className="error pad">{feed.error}</p>;
   const groups = sections(feed.rows);
   return (
-    <div className={`session-list ${variant}`}>
+    <div className={`session-list variant-${variant}`}>
       {feed.warning && <p className="warn pad small">{feed.warning}</p>}
-      {groups.length === 0 && <p className="muted pad">No sessions yet.</p>}
+      {groups.length === 0 && (
+        <div className="pad empty-list">
+          <p className="muted">No sessions yet.</p>
+          <Link to={paths.newSession(scope)} className="btn primary small">
+            Start a session
+          </Link>
+        </div>
+      )}
       {groups.map((g) => (
         <section key={g.kind} className={`session-section ${g.kind}`}>
           {g.title && <h3 className="section-title">{g.title}</h3>}

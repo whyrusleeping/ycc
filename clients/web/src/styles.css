@@ -412,12 +412,12 @@ textarea {
   font-weight: 500;
 }
 
-.session-list.page .session-row {
+.session-list.variant-page .session-row {
   padding: 10px 16px;
   border-bottom: 1px solid var(--border);
 }
 
-.session-list.page .title-text {
+.session-list.variant-page .title-text {
   font-size: 15px;
 }
 
@@ -815,22 +815,482 @@ pre.clamp {
 
 .composer {
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
   padding: 10px 20px 14px;
   border-top: 1px solid var(--border);
+}
+
+.composer-row {
+  display: flex;
+  gap: 8px;
   align-items: flex-end;
 }
 
-.composer textarea {
+.composer textarea,
+.new-session-composer textarea {
   flex: 1;
   min-height: 38px;
   max-height: 260px;
 }
 
+.composer-pictures p {
+  margin: 4px 0 0;
+}
+
+.btn.attach {
+  padding: 10px;
+  line-height: 0;
+  color: var(--fg-muted);
+}
+
 .readonly-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding: 10px 20px;
   border-top: 1px solid var(--border);
   font-size: 13px;
+}
+
+/* Pictures: staged drafts and transcript thumbnails */
+.picture-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.picture-draft {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-sunk);
+}
+
+.picture-draft img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.picture-fallback {
+  display: block;
+  padding: 4px;
+  font-size: 10.5px;
+  overflow-wrap: anywhere;
+  color: var(--fg-muted);
+}
+
+.picture-size {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  padding: 0 4px;
+  font-size: 10px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+  border-top-right-radius: 4px;
+}
+
+.picture-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 14px;
+  line-height: 20px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.pictures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.picture-thumb {
+  display: inline-block;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-sunk);
+  overflow: hidden;
+  cursor: zoom-in;
+  width: 120px;
+  height: 90px;
+}
+
+.picture-thumb.static {
+  cursor: default;
+}
+
+.picture-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.picture-loading {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  font-size: 11px;
+}
+
+.picture-detail img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: repeating-conic-gradient(var(--bg-sunk) 0% 25%, var(--bg) 0% 50%) 50% / 16px 16px;
+}
+
+.drop-overlay {
+  position: absolute;
+  inset: 8px;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--accent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent-soft) 85%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.session,
+.new-session {
+  position: relative;
+}
+
+/* Session settings (inspector) */
+.settings-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.settings-section h3 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+  margin-bottom: 8px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 0;
+}
+
+.settings-row select {
+  max-width: 60%;
+}
+
+.settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.settings-reviewers {
+  border: none;
+  padding: 0;
+  margin: 6px 0 0;
+}
+
+.settings-reviewers legend {
+  padding: 0;
+  margin-bottom: 2px;
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 14px;
+}
+
+.settings-error {
+  overflow-wrap: anywhere;
+}
+
+.segmented {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  margin: 6px 0;
+}
+
+.segmented button {
+  flex: 1;
+  border: none;
+  border-right: 1px solid var(--border);
+  background: var(--bg-soft);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 4px 0;
+  cursor: pointer;
+}
+
+.segmented button:last-child {
+  border-right: none;
+}
+
+.segmented button.selected {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.segmented button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.usage-table th,
+.usage-table td {
+  text-align: right;
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.usage-table th:first-child,
+.usage-table td:first-child {
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.usage-table th {
+  color: var(--fg-muted);
+  font-weight: 500;
+}
+
+.usage-table tfoot td {
+  font-weight: 600;
+  border-bottom: none;
+}
+
+.btn.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* Session list: resume affordance and empty state */
+.session-row-wrap {
+  position: relative;
+}
+
+.row-resume {
+  position: absolute;
+  top: 7px;
+  right: 10px;
+  opacity: 0;
+}
+
+.session-row-wrap:hover .row-resume,
+.session-row-wrap:focus-within .row-resume {
+  opacity: 1;
+}
+
+.empty-list {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.empty-list p {
+  margin: 0;
+}
+
+/* New session */
+.new-session {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.new-session-head {
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 16px 28px 0;
+}
+
+.new-session-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 28px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.new-session-body > section {
+  max-width: 980px;
+}
+
+.section-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+  margin-bottom: 8px;
+}
+
+.project-ask h2 {
+  font-size: 18px;
+  margin: 12px 0;
+}
+
+.choice-grid,
+.mode-grid,
+.preset-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+}
+
+.choice-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  text-align: left;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+
+.choice-card:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.choice-card:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.choice-card.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.choice-title {
+  font-weight: 600;
+}
+
+.choice-sub {
+  font-size: 12.5px;
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+
+.clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.new-session-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 28px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-soft);
+}
+
+.new-session-composer .banner {
+  margin: 0;
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+
+.new-session-composer p {
+  margin: 0;
+}
+
+.option-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.chip-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--fg-muted);
+}
+
+.chip-select select {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  background: var(--bg);
+}
+
+.chip-note {
+  font-size: 12.5px;
+}
+
+.new-session-foot {
+  display: flex;
+  justify-content: space-between;
+  min-height: 18px;
+}
+
+.cancel-link {
+  text-decoration: none;
+}
+
+.inspector-body .error {
+  overflow-wrap: anywhere;
 }
 
 /* Inspector */

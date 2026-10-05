@@ -70,6 +70,7 @@ function fakeApi(opts: { live: boolean; scripts: Script[]; snapshotThrough?: num
     interrupt: vi.fn(async () => ({})),
     resume: vi.fn(async () => ({})),
     stopSession: vi.fn(async () => ({})),
+    resumeSession: vi.fn(async () => ({})),
   };
   return { api: api as unknown as SessionApi, raw: api, subscribeCalls };
 }
@@ -210,7 +211,7 @@ describe("SessionController", () => {
     c.start();
     await until(() => c.getSnapshot().conn === "streaming");
     await c.send("  hello  ");
-    expect(raw.sendInput).toHaveBeenCalledWith({ sessionId: "s1", text: "hello" });
+    expect(raw.sendInput).toHaveBeenCalledWith({ sessionId: "s1", text: "hello", images: [] });
     expect(c.getSnapshot().pendingMessages.map((m) => m.status)).toEqual(["sent"]);
     push(
       create(SessionViewUpdateSchema, {
@@ -229,6 +230,122 @@ describe("SessionController", () => {
     await until(() => c.getSnapshot().pendingMessages.length === 0);
     const user = c.getSnapshot().rows.find((r) => r.id === "seq-6");
     expect(user?.userInputStatus).toBe("queued");
+    c.dispose();
+  });
+
+  it("reopens a persisted session and promotes the view to live from its cursor", async () => {
+    const { api, raw, subscribeCalls } = fakeApi({ live: false, scripts: [{ updates: [], end: "hang" }] });
+    const c = new SessionController(api, "p", "s1", hooks(), fast);
+    c.start();
+    await until(() => c.getSnapshot().conn === "finished");
+    expect(c.getSnapshot().mode).toBe("persisted");
+    const done = c.reopen();
+    expect(c.getSnapshot().reopening).toBe(true);
+    expect(await done).toBe(true);
+    expect(raw.resumeSession).toHaveBeenCalledWith({ project: "p", sessionId: "s1" });
+    await until(() => c.getSnapshot().conn === "streaming");
+    const snap = c.getSnapshot();
+    expect(snap.mode).toBe("live");
+    expect(snap.reopening).toBe(false);
+    // History painted first; the live stream resumes from its cursor.
+    expect(subscribeCalls).toEqual([5n]);
+    expect(raw.getSessionView).toHaveBeenCalledTimes(1);
+    c.dispose();
+  });
+
+  it("keeps the read-only history when reopen fails", async () => {
+    const { api, raw } = fakeApi({ live: false, scripts: [{ updates: [] }] });
+    raw.resumeSession.mockRejectedValueOnce(new ConnectError("model disabled", Code.FailedPrecondition));
+    const h = hooks();
+    const c = new SessionController(api, "p", "s1", h, fast);
+    c.start();
+    await until(() => c.getSnapshot().conn === "finished");
+    expect(await c.reopen()).toBe(false);
+    expect(h.onError).toHaveBeenCalledWith("Reopen failed: model disabled");
+    expect(c.getSnapshot().mode).toBe("persisted");
+    expect(c.getSnapshot().rows.length).toBe(1);
+    c.dispose();
+  });
+
+  it("a reopen requested before the view starts goes live without asking ListSessions", async () => {
+    const { api, raw, subscribeCalls } = fakeApi({ live: false, scripts: [{ updates: [], end: "hang" }] });
+    const c = new SessionController(api, "p", "s1", hooks(), fast);
+    await c.reopen();
+    c.start();
+    await until(() => c.getSnapshot().conn === "streaming");
+    expect(raw.listSessions).not.toHaveBeenCalled();
+    expect(subscribeCalls).toEqual([5n]);
+    c.dispose();
+  });
+
+  it("sends pictures with the message and retires the bubble on the echo with pictures", async () => {
+    let push: (u: SessionViewUpdate) => void = () => {};
+    const { api, raw } = fakeApi({ live: true, scripts: [{ updates: [], end: "hang" }] });
+    raw.subscribeSessionView.mockImplementationOnce(() =>
+      (async function* () {
+        for (;;) yield await new Promise<SessionViewUpdate>((r) => (push = r));
+      })(),
+    );
+    const c = new SessionController(api, "p", "s1", hooks(), fast);
+    c.start();
+    await until(() => c.getSnapshot().conn === "streaming");
+    const pic = { id: "pic-1", data: new Uint8Array([1, 2, 3]), mediaType: "image/png", filename: "a.png", previewUrl: null };
+    await c.send("", [pic]);
+    expect(raw.sendInput).toHaveBeenCalledWith({
+      sessionId: "s1",
+      text: "",
+      images: [{ data: pic.data, mediaType: "image/png", filename: "a.png" }],
+    });
+    expect(c.getSnapshot().pendingMessages[0].pictures).toEqual([pic]);
+    push(
+      create(SessionViewUpdateSchema, {
+        seq: 6n,
+        state: viewState(6),
+        upsertedRows: [
+          create(SessionPresentationRowSchema, {
+            id: "seq-6",
+            positionSeq: 6n,
+            updatedSeq: 6n,
+            events: [
+              create(EventSchema, {
+                seq: 6n,
+                actor: "user",
+                type: "user_input",
+                dataJson: JSON.stringify({ text: "", images: [{ attachment_id: "a_1", media_type: "image/png", filename: "a.png" }] }),
+              }),
+            ],
+          }),
+        ],
+      }),
+    );
+    await until(() => c.getSnapshot().pendingMessages.length === 0);
+    c.dispose();
+  });
+
+  it("pictures never take the answer path; a failed send returns text and pictures for editing", async () => {
+    const asked = create(SessionViewUpdateSchema, {
+      seq: 6n,
+      state: viewState(6, { pendingRowId: "seq-6", pendingQuestions: [{ prompt: "Ship?", options: [] }] }),
+      upsertedRows: [
+        create(SessionPresentationRowSchema, {
+          id: "seq-6",
+          positionSeq: 6n,
+          updatedSeq: 6n,
+          events: [create(EventSchema, { seq: 6n, type: "question_asked", dataJson: '{"question":"Ship?"}' })],
+        }),
+      ],
+    });
+    const { api, raw } = fakeApi({ live: true, scripts: [{ updates: [asked], end: "hang" }] });
+    raw.sendInput.mockRejectedValueOnce(new ConnectError("answer the question first", Code.FailedPrecondition));
+    const c = new SessionController(api, "p", "s1", hooks(), fast);
+    c.start();
+    await until(() => c.getSnapshot().awaitsAnswer);
+    const pic = { id: "pic-1", data: new Uint8Array([1]), mediaType: "image/png", filename: "a.png", previewUrl: null };
+    await c.send("see this", [pic]);
+    const failed = c.getSnapshot().pendingMessages[0];
+    expect(failed.status).toBe("failed");
+    expect(c.getSnapshot().answerInFlight).toBe(false);
+    expect(c.discardSend(failed.id)).toEqual({ text: "see this", pictures: [pic] });
     c.dispose();
   });
 });
