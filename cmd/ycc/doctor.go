@@ -392,11 +392,15 @@ func keyCheck(label, keyEnv string) check {
 // failure. With --addr set it probes that (with --token); otherwise it probes
 // the local loopback daemon.
 func daemonCheck(addr, token string) check {
-	target, tok := addr, token
+	target := addr
+	var reachable bool
 	if target == "" {
 		target = daemon.LocalAddr
+		_, reachable = daemon.ProbeLocal(token)
+	} else {
+		reachable = daemon.Reachable(target, token)
 	}
-	if daemon.Reachable(target, tok) {
+	if reachable {
 		return check{status: statusOK, label: "daemon", detail: "persistent daemon reachable at " + target}
 	}
 	return check{

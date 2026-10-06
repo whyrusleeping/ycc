@@ -39,20 +39,22 @@ func Reachable(addr, token string) bool {
 
 // EnsureBackgroundDaemon makes sure a persistent local daemon is running on
 // LocalAddr, spawning a detached `ycc daemon` (which survives this process) if
-// none is reachable. It returns once the daemon answers. This is the opt-in
-// persistence path used by `ycc --background`; configPath is auto-discovered
-// when empty. token is the bearer token to probe with and is passed to a newly
-// spawned daemon through YCC_TOKEN so it never appears in process listings or
-// /proc/*/cmdline. An already-running token-protected daemon rejects an
-// empty-token probe, and spawning a second daemon on the same port would just
-// fail to bind.
-func EnsureBackgroundDaemon(workspace, configPath, token string) error {
-	if Reachable(LocalAddr, token) {
-		return nil
+// none is reachable. It returns the token accepted by the daemon. This is the
+// opt-in persistence path used by `ycc --background`; configPath is discovered
+// when empty. An empty token uses the private local token file. Newly spawned
+// daemons receive the token through YCC_TOKEN, never through process arguments.
+func EnsureBackgroundDaemon(workspace, configPath, token string) (string, error) {
+	var err error
+	token, err = backgroundToken(token)
+	if err != nil {
+		return "", err
+	}
+	if accepted, ok := ProbeLocal(token); ok {
+		return accepted, nil
 	}
 	self, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("locate ycc binary: %w", err)
+		return "", fmt.Errorf("locate ycc binary: %w", err)
 	}
 	if configPath == "" {
 		configPath = DiscoverConfig(workspace)
@@ -86,17 +88,24 @@ func EnsureBackgroundDaemon(workspace, configPath, token string) error {
 		cmd.Stdout, cmd.Stderr = f, f
 	}
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start local daemon: %w", err)
+		return "", fmt.Errorf("start local daemon: %w", err)
 	}
 	_ = cmd.Process.Release()
 
 	for i := 0; i < 60; i++ {
 		if Reachable(LocalAddr, token) {
-			return nil
+			return token, nil
 		}
 		time.Sleep(150 * time.Millisecond)
 	}
-	return fmt.Errorf("local daemon did not become ready; see %s", logPath)
+	return "", fmt.Errorf("local daemon did not become ready; see %s", logPath)
+}
+
+func backgroundToken(token string) (string, error) {
+	if token != "" {
+		return token, nil
+	}
+	return EnsureLocalToken()
 }
 
 // backgroundDaemonCmdline builds the arguments and environment for a detached

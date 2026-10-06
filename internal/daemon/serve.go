@@ -137,6 +137,9 @@ func buildHandler(o Options) (http.Handler, *session.Manager, error) {
 	if o.Web {
 		mux.Handle("/", web.Handler())
 	}
+	if o.Token == "" {
+		return server.RequireLoopbackHost(mux), mgr, nil
+	}
 	return mux, mgr, nil
 }
 
@@ -166,6 +169,9 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 // until the process exits. It blocks. Used by the explicit, persistent
 // `ycc daemon`.
 func Serve(o Options) error {
+	if o.Web && o.Token == "" {
+		return fmt.Errorf("refusing to serve the web client without a token")
+	}
 	handler, mgr, err := buildHandler(o)
 	if err != nil {
 		return err
@@ -173,7 +179,7 @@ func Serve(o Options) error {
 	defer mgr.ReclaimAll()
 
 	usingTLS := o.TLSCert != "" && o.TLSKey != ""
-	if !isLoopback(o.Addr) {
+	if !IsLoopback(o.Addr) {
 		if o.Token == "" {
 			return fmt.Errorf("refusing to bind non-loopback address %s without a token", o.Addr)
 		}
@@ -195,6 +201,7 @@ func Serve(o Options) error {
 // tear it down — the listener and any in-flight work end with it.
 type InProcess struct {
 	Addr    string // base URL, e.g. "http://127.0.0.1:54321"
+	Token   string // bearer token required by this instance
 	httpSrv *http.Server
 	mgr     *session.Manager
 }
@@ -209,6 +216,13 @@ func StartInProcess(o Options) (*InProcess, error) {
 	// TUI, not a remote-access surface, so it never serves the web client even
 	// if the caller sets Web (matching how Addr is forced above).
 	o.Web = false
+	if o.Token == "" {
+		var err error
+		o.Token, err = randomToken()
+		if err != nil {
+			return nil, err
+		}
+	}
 	handler, mgr, err := buildHandler(o)
 	if err != nil {
 		return nil, err
@@ -220,6 +234,7 @@ func StartInProcess(o Options) (*InProcess, error) {
 	httpSrv := newHTTPServer(o.Addr, handler)
 	ip := &InProcess{
 		Addr:    "http://" + ln.Addr().String(),
+		Token:   o.Token,
 		httpSrv: httpSrv,
 		mgr:     mgr,
 	}
@@ -283,7 +298,8 @@ func persistPath(o Options) string {
 	return ""
 }
 
-func isLoopback(addr string) bool {
+// IsLoopback reports whether addr names an explicit loopback listen address.
+func IsLoopback(addr string) bool {
 	host := addr
 	if i := strings.LastIndex(addr, ":"); i >= 0 {
 		host = addr[:i]

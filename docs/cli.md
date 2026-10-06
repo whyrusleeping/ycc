@@ -23,7 +23,7 @@ These precede the subcommand (e.g. `ycc --addr URL list`).
 | Flag | Description |
 |------|-------------|
 | `--addr URL` | remote/explicit daemon URL to attach to |
-| `--token T` | compatibility option for the bearer token used with `--addr`; prefer `YCC_TOKEN`, because command-line values are exposed in process listings |
+| `--token T` | bearer token for daemon access; prefer `YCC_TOKEN` to keep secrets out of process listings. Without `--addr`, local clients also try the private local token file (see [Connection & auth](remote-api.md#connection--auth)) |
 | `--workspace DIR` | workspace for new sessions (default: current directory) |
 | `--config FILE` | TOML model config for the local daemon |
 | `--background` | spawn a detached persistent daemon and attach (opt-in persistence) |
@@ -337,10 +337,10 @@ does not dial a client of its own.
 | `--base-url URL` | `https://api.anthropic.com` | fallback API base URL (when no `--config`) |
 | `--key-env VAR` | `ANTHROPIC_API_KEY` | fallback API key env var (when no `--config`) |
 | `--max-tokens N` | `32000` | fallback max tokens per turn (when no `--config`) |
-| `--token T` | `$YCC_TOKEN` | compatibility option for the bearer token clients must present; prefer `YCC_TOKEN`, because command-line values are exposed in process listings (empty disables auth) |
+| `--token T` | `$YCC_TOKEN` | bearer token clients must present; prefer `YCC_TOKEN` to keep secrets out of process listings. If unset on loopback, create/reuse the 0600 local token file described in [Connection & auth](remote-api.md#connection--auth); non-loopback requires an explicit token |
 | `--tls-cert FILE` | | TLS certificate file (enables HTTPS) |
 | `--tls-key FILE` | | TLS key file |
-| `--web` | off | serve the embedded desktop web client at `/` (client-side routes such as `/p/<project>/s/<session>` fall back to the app) — static assets are unauthenticated, RPCs still require the bearer token, which the page asks for |
+| `--web` | off | serve the embedded desktop web client at `/` (client-side routes such as `/p/<project>/s/<session>` fall back to the app); requires a token (the auto-generated local token qualifies). Static assets are unauthenticated; RPCs require the token, which the page asks for |
 
 ```sh
 ycc daemon

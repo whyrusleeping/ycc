@@ -28,8 +28,8 @@ func (a *app) completionClient() yccv1connect.SessionServiceClient {
 	if a.addr != "" {
 		return daemon.DialClient(a.addr, a.token)
 	}
-	if daemon.Reachable(daemon.LocalAddr, "") {
-		return daemon.DialClient(daemon.LocalAddr, "")
+	if token, ok := daemon.ProbeLocal(a.token); ok {
+		return daemon.DialClient(daemon.LocalAddr, token)
 	}
 	return nil
 }

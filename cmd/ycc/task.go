@@ -151,8 +151,8 @@ func (a *app) taskBackend(project string) (backlogBackend, error) {
 	if a.addr != "" {
 		return rpcBackend{client: daemon.DialClient(a.addr, a.token), project: project}, nil
 	}
-	if daemon.Reachable(daemon.LocalAddr, "") {
-		return rpcBackend{client: daemon.DialClient(daemon.LocalAddr, ""), project: project}, nil
+	if token, ok := daemon.ProbeLocal(a.token); ok {
+		return rpcBackend{client: daemon.DialClient(daemon.LocalAddr, token), project: project}, nil
 	}
 	if project != "" {
 		return nil, fmt.Errorf("--project requires a running daemon, but none is reachable (start one with `ycc daemon` or use --addr)")

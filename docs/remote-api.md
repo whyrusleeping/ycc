@@ -42,7 +42,22 @@ machine's tailnet IP, e.g. `http://100.64.0.1:8787`.
 
 ### Bearer token
 
-Send the token on **every** request (unary and streaming):
+Every CLI daemon requires a token, including loopback listeners. If `YCC_TOKEN`
+(or `--token`) is unset, `ycc daemon` on loopback and `ycc --background` create or
+reuse `$XDG_STATE_HOME/ycc/daemon-token` (default
+`~/.local/state/ycc/daemon-token`), stored with mode **0600**. Local clients,
+including `ycc doctor` and shell completion, read this file automatically when no
+explicit `--addr` is set. An in-process one-shot daemon instead uses a random
+per-process token passed only to its client; it does not write a token file.
+
+`--web` requires a token, including when accessed through a tunnel whose upstream
+connection is loopback. The auto-generated local token qualifies; supply it to the
+web client's connection screen. Non-loopback binds still require an explicitly
+configured token. Only library callers can run tokenless daemons; those reject
+requests whose `Host` is not `localhost` or a loopback IP literal with HTTP 403,
+before reading the body, to prevent DNS rebinding.
+
+Send the token on **every** RPC request (unary and streaming):
 
 ```
 Authorization: Bearer <token>
@@ -97,8 +112,8 @@ role assignments, or loop state; the user explicitly restarts work when ready.
 
 ### Latency diagnostics
 
-`GET /debug/latency` accepts the same bearer token as RPCs (HTTP 401 otherwise;
-when daemon auth is disabled on loopback, it is disabled here too). The response
+`GET /debug/latency` requires the same bearer token as RPCs (HTTP 401 otherwise).
+Library-only tokenless daemons apply the same loopback Host check here. The response
 contains the most recent 512 RPC timings and per-procedure unary/stream
 aggregates (count, p50/p95/max, errors). Unary replies include
 `Server-Timing: app;dur=<milliseconds>` for daemon handler time. Send an optional
@@ -125,7 +140,8 @@ YCC_TOKEN="$YCC_TOKEN" ycc daemon --addr 100.64.0.1:8787
 | flag | meaning |
 |------|---------|
 | `--addr <ip:port>` | listen address (default `127.0.0.1:8787`). A non-loopback bind **requires** a token. |
-| `--token <t>` | compatibility option for the bearer token clients must present. Prefer `YCC_TOKEN`, because command-line values are exposed in process listings. Empty disables auth (loopback only). |
+| `--token <t>` | bearer token clients must present. Prefer `YCC_TOKEN` to keep secrets out of process listings. If unset on loopback, use the private local token file described above. |
+| `--web` | serve the embedded web client at `/`; requires a token (the auto-generated local token qualifies). Static assets are unauthenticated; RPCs require the token. |
 | `--tls-cert <file>` / `--tls-key <file>` | enable HTTPS. Optional on a private tailnet. |
 | `--workspace <dir>` | startup project directory, registered by basename. |
 

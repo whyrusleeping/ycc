@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"net"
 	"net/http"
+	"strings"
 
 	"connectrpc.com/connect"
 )
@@ -30,6 +32,26 @@ func RequireBearer(token string, next http.Handler) http.Handler {
 			// ErrorWriter does not read the body; unknown protocols also get
 			// Connect-shaped JSON, while streaming/gRPC get their wire format.
 			_ = ew.Write(w, r, connect.NewError(connect.CodeUnauthenticated, errors.New("invalid or missing bearer token")))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// RequireLoopbackHost prevents DNS rebinding against tokenless handlers. It
+// checks the HTTP authority, not the peer address (which a tunnel can make local),
+// and rejects before reading the request body.
+func RequireLoopbackHost(next http.Handler) http.Handler {
+	ew := connect.NewErrorWriter()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
+		ip := net.ParseIP(host)
+		if !strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback()) {
+			_ = ew.Write(w, r, connect.NewError(connect.CodePermissionDenied, errors.New("tokenless daemon requires a loopback Host")))
 			return
 		}
 		next.ServeHTTP(w, r)

@@ -38,8 +38,8 @@ func TestIsLoopback(t *testing.T) {
 		"127.0.0.1",
 	}
 	for _, a := range loopback {
-		if !isLoopback(a) {
-			t.Errorf("isLoopback(%q) = false, want true", a)
+		if !IsLoopback(a) {
+			t.Errorf("IsLoopback(%q) = false, want true", a)
 		}
 	}
 	nonLoopback := []string{
@@ -51,8 +51,8 @@ func TestIsLoopback(t *testing.T) {
 		"example.com:8787",
 	}
 	for _, a := range nonLoopback {
-		if isLoopback(a) {
-			t.Errorf("isLoopback(%q) = true, want false", a)
+		if IsLoopback(a) {
+			t.Errorf("IsLoopback(%q) = true, want false", a)
 		}
 	}
 }

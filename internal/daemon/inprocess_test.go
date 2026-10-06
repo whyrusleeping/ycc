@@ -34,13 +34,21 @@ func TestStartInProcessLifecycle(t *testing.T) {
 	if ip.Addr == LocalAddr {
 		t.Fatalf("expected an ephemeral address, got the well-known persistent one %s", ip.Addr)
 	}
-	if !Reachable(ip.Addr, "") {
+	defer ip.Close()
+	if ip.Token == "" {
+		t.Fatal("in-process daemon has no token")
+	}
+	_, err = DialClient(ip.Addr, "").ListModes(context.Background(), connect.NewRequest(&v1.ListModesRequest{}))
+	if connect.CodeOf(err) != connect.CodeUnauthenticated {
+		t.Fatalf("request without token: %v, want unauthenticated", err)
+	}
+	if !Reachable(ip.Addr, ip.Token) {
 		t.Fatalf("in-process daemon not reachable at %s", ip.Addr)
 	}
 	if err := ip.Shutdown(); err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}
-	if Reachable(ip.Addr, "") {
+	if Reachable(ip.Addr, ip.Token) {
 		t.Fatalf("daemon still reachable at %s after Shutdown", ip.Addr)
 	}
 }
@@ -84,7 +92,7 @@ reviewers = ["local"]
 	if err != nil {
 		t.Fatalf("StartInProcess: %v", err)
 	}
-	client := DialClient(ip.Addr, "")
+	client := DialClient(ip.Addr, ip.Token)
 	resp, err := client.StartSession(context.Background(), connect.NewRequest(&v1.StartSessionRequest{
 		Workspace: workspace,
 		Mode:      "chat",

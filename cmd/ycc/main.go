@@ -85,7 +85,7 @@ func newRootCommand(a *app) *cli.Command {
 		},
 		&cli.StringFlag{
 			Name:        "token",
-			Usage:       "bearer `token` for --addr (prefer YCC_TOKEN so secrets stay out of process arguments)",
+			Usage:       "bearer `token` for daemon access (prefer YCC_TOKEN; local discovery also reads the private token file)",
 			Sources:     cli.EnvVars("YCC_TOKEN"),
 			Destination: &a.token,
 			Local:       true,
@@ -675,7 +675,11 @@ func daemonCommand() *cli.Command {
 			"without it. TLS is optional: without --tls-cert/--tls-key a non-loopback\n" +
 			"bind logs a cleartext warning (fine inside an encrypted tailnet). Supply\n" +
 			"secrets with YCC_TOKEN so they do not appear in process arguments; the\n" +
-			"--token flag remains available for compatibility.\n\n" +
+			"--token flag remains available for compatibility. Loopback daemons without\n" +
+			"a configured token create/reuse a private token file in the state directory\n" +
+			"($XDG_STATE_HOME/ycc/daemon-token, default ~/.local/state/ycc/daemon-token).\n" +
+			"Local clients read it automatically. --web requires a token; the generated\n" +
+			"local token qualifies.\n\n" +
 			"Clients should attach with YCC_TOKEN in their environment, e.g.\n" +
 			"`YCC_TOKEN=… ycc --addr http://100.64.0.1:8787 list`. The same endpoints\n" +
 			"are reachable over the Connect HTTP/JSON protocol with curl by presenting\n" +
@@ -688,10 +692,10 @@ func daemonCommand() *cli.Command {
 			&cli.StringFlag{Name: "base-url", Value: "https://api.anthropic.com", Usage: "fallback API base URL (when no --config)"},
 			&cli.StringFlag{Name: "key-env", Value: "ANTHROPIC_API_KEY", Usage: "fallback API key env var (when no --config)"},
 			&cli.IntFlag{Name: "max-tokens", Value: config.DefaultMaxTokens, Usage: "fallback max tokens per turn (when no --config)"},
-			&cli.StringFlag{Name: "token", Sources: cli.EnvVars("YCC_TOKEN"), Usage: "bearer `token` clients must present; prefer YCC_TOKEN so secrets stay out of process arguments (required for non-loopback binds)"},
+			&cli.StringFlag{Name: "token", Sources: cli.EnvVars("YCC_TOKEN"), Usage: "bearer `token` clients must present; prefer YCC_TOKEN (auto-generated private local token on loopback when unset; explicit token required for non-loopback)"},
 			&cli.StringFlag{Name: "tls-cert", Usage: "TLS certificate `file` (enables HTTPS; optional on a private tailnet)"},
 			&cli.StringFlag{Name: "tls-key", Usage: "TLS key `file`"},
-			&cli.BoolFlag{Name: "web", Usage: "serve the embedded web client at / (static assets are unauthenticated; RPCs still require the bearer token)"},
+			&cli.BoolFlag{Name: "web", Usage: "serve the embedded web client at / (requires a token; static assets are unauthenticated, RPCs require the token)"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			// Like the in-process and background-daemon paths, fall back to the
@@ -704,6 +708,15 @@ func daemonCommand() *cli.Command {
 			if configPath == "" {
 				configPath = daemon.DiscoverConfig(workspace)
 			}
+			token := cmd.String("token")
+			if token == "" && daemon.IsLoopback(cmd.String("addr")) {
+				var err error
+				token, err = daemon.EnsureLocalToken()
+				if err != nil {
+					return fmt.Errorf("daemon: %w", err)
+				}
+				fmt.Fprintf(os.Stderr, "ycc: using local daemon token file %s\n", daemon.LocalTokenFile())
+			}
 			err := daemon.Serve(daemon.Options{
 				Addr:       cmd.String("addr"),
 				Workspace:  workspace,
@@ -712,7 +725,7 @@ func daemonCommand() *cli.Command {
 				BaseURL:    cmd.String("base-url"),
 				KeyEnv:     cmd.String("key-env"),
 				MaxTokens:  int(cmd.Int("max-tokens")),
-				Token:      cmd.String("token"),
+				Token:      token,
 				TLSCert:    cmd.String("tls-cert"),
 				TLSKey:     cmd.String("tls-key"),
 				Web:        cmd.Bool("web"),
@@ -744,20 +757,16 @@ func resolveDaemon(addr, token string, background bool, ws, configPath string) (
 	}
 
 	if background {
-		if err := daemon.EnsureBackgroundDaemon(ws, configPath, token); err != nil {
+		accepted, err := daemon.EnsureBackgroundDaemon(ws, configPath, token)
+		if err != nil {
 			return "", "", false, noop, err
 		}
-		return daemon.LocalAddr, token, true, noop, nil
+		return daemon.LocalAddr, accepted, true, noop, nil
 	}
 
-	// Attach to an already-running persistent local daemon if present. Probe
-	// with the client token (--token / YCC_TOKEN): a daemon bound non-loopback
-	// for remote clients requires one, and an empty-token probe against it gets
-	// Unauthenticated — which would silently fall back to an isolated one-shot
-	// daemon instead of joining the shared multi-project one. A
-	// tokenless loopback daemon ignores the header, so sending it is harmless.
-	if daemon.Reachable(daemon.LocalAddr, token) {
-		return daemon.LocalAddr, token, true, noop, nil
+	// Attach using explicit credentials or the private local token file.
+	if accepted, ok := daemon.ProbeLocal(token); ok {
+		return daemon.LocalAddr, accepted, true, noop, nil
 	}
 
 	// Otherwise: one-shot in-process daemon on an ephemeral loopback address,
@@ -775,7 +784,7 @@ func resolveDaemon(addr, token string, background bool, ws, configPath string) (
 	}
 	fmt.Fprintln(os.Stderr, "ycc: running one-shot in-process daemon (no persistence); closing ycc ends in-flight work.")
 	fmt.Fprintln(os.Stderr, "ycc: use `ycc daemon` or `ycc --background` to keep work running after exit.")
-	return ip.Addr, "", false, func() { _ = ip.Shutdown() }, nil
+	return ip.Addr, ip.Token, false, func() { _ = ip.Shutdown() }, nil
 }
 
 // installSignalShutdown runs the teardown hook on SIGINT/SIGTERM so a one-shot

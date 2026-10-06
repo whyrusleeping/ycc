@@ -6,8 +6,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	"github.com/whyrusleeping/ycc/internal/daemon"
 )
 
 // TestCompletionScripts runs the built-in completion command in-process for each
@@ -45,11 +43,9 @@ func TestCompletionClientDaemonOptional(t *testing.T) {
 		t.Fatal("completionClient() with --addr returned nil")
 	}
 
-	// No --addr: nil unless a local daemon happens to be running (skip that case,
-	// since a dev machine may have one up).
-	if daemon.Reachable(daemon.LocalAddr, "") {
-		t.Skip("a local daemon is reachable; skipping the nil-client assertion")
-	}
+	// No credentials: discovery must neither dial a tokenless daemon nor create
+	// state, irrespective of whether a daemon is running on the development host.
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	if c := (&app{}).completionClient(); c != nil {
 		t.Fatal("completionClient() with no --addr and no daemon should be nil")
 	}
@@ -59,9 +55,7 @@ func TestCompletionClientDaemonOptional(t *testing.T) {
 // completeSessionIDs must delegate to the default flag completer (emitting flag
 // suggestions) rather than dialing a daemon for session ids.
 func TestCompleteSessionIDsFlagFallback(t *testing.T) {
-	if daemon.Reachable(daemon.LocalAddr, "") {
-		t.Skip("a local daemon is reachable; skipping the no-dial fallback assertion")
-	}
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
 	saved := os.Args
 	args := []string{"ycc", "attach", "--f", "--generate-shell-completion"}
