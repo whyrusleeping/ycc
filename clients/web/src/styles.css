@@ -26,6 +26,8 @@
   --error-soft: #fdeceb;
   --violet: #7a5cff;
   --user-bubble: #eef2fb;
+  --agent-bg: #fbfbfc;
+  --activity-bg: #f3f4f6;
   --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
   --shadow-md: 0 4px 14px rgba(16, 24, 40, 0.08), 0 1px 3px rgba(16, 24, 40, 0.06);
   --shadow-lg: 0 24px 56px rgba(16, 24, 40, 0.18), 0 6px 16px rgba(16, 24, 40, 0.08);
@@ -64,6 +66,8 @@
     --error-soft: #331a1b;
     --violet: #a996ff;
     --user-bubble: #1a2131;
+    --agent-bg: #171a20;
+    --activity-bg: #13161b;
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
     --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
     --shadow-lg: 0 28px 64px rgba(0, 0, 0, 0.6), 0 6px 18px rgba(0, 0, 0, 0.35);
@@ -972,10 +976,11 @@ a.nav-item:hover {
   border: 1px solid var(--error);
 }
 
+/* Agent replies: a quiet card so prose stands apart from tool activity. */
 .turn.agent {
-  background: transparent;
-  padding-left: 0;
-  padding-right: 0;
+  background: var(--agent-bg);
+  border: 1px solid var(--border);
+  padding: 12px 18px 14px;
 }
 
 .turn.agent.streaming .md > :last-child::after {
@@ -1067,16 +1072,32 @@ a.nav-item:hover {
   margin-right: 6px;
 }
 
+/* Tool and reasoning rows: each run of consecutive rows reads as one recessed
+ * activity panel (rows are flat siblings, so adjacent folds merge). */
 .row.fold {
   font-size: 13px;
-  border-radius: var(--radius-sm);
+  background: var(--activity-bg);
+  border-radius: var(--radius);
+  padding: 4px 10px;
+}
+
+.row.fold + .row.fold {
+  margin-top: -6px;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+.row.fold:has(+ .row.fold) {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
 }
 
 .row.fold > summary {
   cursor: pointer;
   color: var(--fg-muted);
-  padding: 4px 8px;
-  margin: 0 -8px;
+  padding: 4px 6px;
+  margin: 0 -6px;
   border-radius: var(--radius-sm);
   display: flex;
   gap: 8px;
@@ -1092,7 +1113,7 @@ a.nav-item:hover {
 }
 
 .row.fold > summary:hover {
-  background: var(--bg-soft);
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
 }
 
 .row.fold > summary::before {
@@ -1120,10 +1141,10 @@ a.nav-item:hover {
 }
 
 .fold-body {
-  margin: 4px 0 8px 3px;
+  margin: 2px 0 8px 3px;
   padding: 10px 12px;
   border-left: 2px solid var(--border-strong);
-  background: var(--bg-soft);
+  background: var(--bg);
   border-radius: 0 var(--radius) var(--radius) 0;
 }
 
