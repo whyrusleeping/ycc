@@ -9,9 +9,14 @@ import {
   SectionPlaceholder,
   SessionPage,
   SettingsPlaceholder,
+  WorkLoopRoutePage,
+  WorkstreamsRoutePage,
 } from "./pages";
-import { PROJECT_SECTIONS } from "./paths";
+import { PROJECT_SECTIONS, type ProjectSection } from "./paths";
 import { Shell } from "./Shell";
+
+/** Sections with their own routes; the rest are placeholders until their phase. */
+const LIVE_SECTIONS: readonly ProjectSection[] = ["backlog", "loop", "workstreams"];
 
 export function makeRouter() {
   return createBrowserRouter([
@@ -28,7 +33,11 @@ export function makeRouter() {
         { path: "p/:project/s/:sessionId", element: <SessionPage /> },
         { path: "backlog/:taskId?", element: <BacklogRoutePage /> },
         { path: "p/:project/backlog/:taskId?", element: <BacklogRoutePage /> },
-        ...PROJECT_SECTIONS.filter((s) => s.key !== "backlog").map((s) => ({
+        { path: "loop", element: <WorkLoopRoutePage /> },
+        { path: "p/:project/loop", element: <WorkLoopRoutePage /> },
+        { path: "workstreams", element: <WorkstreamsRoutePage /> },
+        { path: "p/:project/workstreams", element: <WorkstreamsRoutePage /> },
+        ...PROJECT_SECTIONS.filter((s) => !LIVE_SECTIONS.includes(s.key)).map((s) => ({
           path: `p/:project/${s.key}`,
           element: <SectionPlaceholder section={s.key} />,
         })),

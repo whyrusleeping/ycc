@@ -12,6 +12,7 @@ import { CopyButton } from "../../ui/CopyButton";
 import { reportPresentation } from "../session/report";
 import { SessionSettingsPanel } from "../session/SessionSettings";
 import { TaskDetailView } from "../backlog/TaskDetail";
+import { MergePanel } from "../workstreams/MergePanel";
 
 export function InspectorPane() {
   const { item, close } = useInspector();
@@ -40,6 +41,7 @@ export function InspectorPane() {
           {item.kind === "task" && (
             <TaskDetailView key={`${item.project}\u0000${item.taskId}`} project={item.project} taskId={item.taskId} variant="inspector" />
           )}
+          {item.kind === "merge" && <MergePanel key={item.workstreamId} project={item.project} workstreamId={item.workstreamId} />}
           {item.kind === "sessionSettings" && (
             <SessionSettingsPanel key={`${item.project}\u0000${item.sessionId}`} project={item.project} sessionId={item.sessionId} />
           )}
@@ -63,6 +65,8 @@ function inspectorTitle(item: InspectorItem): string {
       return "Session settings";
     case "task":
       return `Task ${item.taskId}`;
+    case "merge":
+      return `Merge · ${item.branch}`;
   }
 }
 

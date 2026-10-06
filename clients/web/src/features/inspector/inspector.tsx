@@ -2,7 +2,8 @@
 // (expanded transcript rows, working-tree and commit diffs) so detail opens
 // beside the transcript instead of replacing it: also full-size transcript
 // pictures, the per-session settings panel, and backlog task detail (opened
-// from a session's focus-task chips). Later phases add file contents.
+// from a session's focus-task chips), and a workstream's merge preview.
+// Later phases add file contents.
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 
 export type InspectorItem =
@@ -27,7 +28,9 @@ export type InspectorItem =
       mediaType: string;
     }
   | { kind: "sessionSettings"; project: string; sessionId: string }
-  | { kind: "task"; project: string; taskId: string };
+  | { kind: "task"; project: string; taskId: string }
+  /** A workstream's merge preview and accept gate. */
+  | { kind: "merge"; project: string; workstreamId: string; branch: string };
 
 interface InspectorState {
   item: InspectorItem | null;

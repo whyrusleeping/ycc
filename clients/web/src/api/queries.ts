@@ -1,13 +1,15 @@
 // Server-state cache: query keys and hooks over the generated client. Unary
 // reads are cached per query and refreshed on window focus; mutations replace
 // local state with the daemon's response or invalidate the affected keys.
-import { QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useState } from "react";
+import { QueryClient, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useMemo, useState } from "react";
 import { Code, ConnectError } from "@connectrpc/connect";
-import type { BacklogTaskSummary, ProjectInfo, TaskDetail } from "../gen/ycc/v1/ycc_pb";
+import type { BacklogTaskSummary, ProjectInfo, TaskDetail, WorkLoopInfo, WorkstreamInfo } from "../gen/ycc/v1/ycc_pb";
 import { client, errorMessage, isUnauthorized } from "./client";
 import { buildFeed, historyTargets, mergePage, type HistoryLoad } from "../features/sessions/feed";
 import { upsertSummary } from "../features/backlog/model";
+import { pollInterval as loopPollInterval } from "../features/workloop/model";
+import { pollInterval as workstreamPollInterval } from "../features/workstreams/model";
 import { toast } from "../ui/toast";
 
 export const HISTORY_PAGE = 50;
@@ -24,6 +26,13 @@ export const queryKeys = {
   backlog: (project: string) => ["backlog", project] as const,
   /** GetTask. */
   task: (project: string, id: string) => ["task", project, id] as const,
+  /** GetWorkLoop: the project's loop snapshot (null when none has run). */
+  workLoop: (project: string) => ["workLoop", project] as const,
+  workLoopAll: ["workLoop"] as const,
+  /** ListWorkstreams for a project ("" lists every project's). */
+  workstreams: (project: string) => ["workstreams", project] as const,
+  workstreamsAll: ["workstreams"] as const,
+  budget: ["budget"] as const,
 };
 
 export function makeQueryClient(): QueryClient {
@@ -174,4 +183,57 @@ export function installTask(qc: QueryClient, project: string, detail: TaskDetail
   void qc.invalidateQueries({ queryKey: queryKeys.backlog(project) });
   // Other tasks' readiness may follow this one; refresh them when next shown.
   void qc.invalidateQueries({ queryKey: ["task", project], refetchType: "none" });
+}
+
+async function fetchWorkLoop(project: string, signal: AbortSignal): Promise<WorkLoopInfo | null> {
+  return (await client.getWorkLoop({ project }, { signal })).loop ?? null;
+}
+
+/** GetWorkLoop, polled quickly while the loop is live. */
+export function useWorkLoop(project: string, enabled = true) {
+  return useQuery<WorkLoopInfo | null>({
+    queryKey: queryKeys.workLoop(project),
+    enabled,
+    refetchInterval: (q) => loopPollInterval(q.state.data),
+    queryFn: ({ signal }) => fetchWorkLoop(project, signal),
+  });
+}
+
+/**
+ * Every project's loop (one GetWorkLoop per distinct workspace), sharing the
+ * per-project cache with the loop page: drives the sidebar indicator, loop
+ * markers in session lists, and finish announcements. Failures read as "no
+ * loop" here; the loop page reports them.
+ */
+export function useWorkLoops(): { project: string; loop: WorkLoopInfo | null }[] {
+  const projects = useProjects();
+  const targets = useMemo(() => (projects.data ? historyTargets(projects.data) : []), [projects.data]);
+  const results = useQueries({
+    queries: targets.map((project) => ({
+      queryKey: queryKeys.workLoop(project),
+      refetchInterval: (q: { state: { data?: WorkLoopInfo | null } }) => loopPollInterval(q.state.data),
+      queryFn: ({ signal }: { signal: AbortSignal }) => fetchWorkLoop(project, signal),
+    })),
+  });
+  return targets.map((project, i) => ({ project, loop: results[i]?.data ?? null }));
+}
+
+/** ListWorkstreams, polled quickly while any row can still change by itself. */
+export function useWorkstreams(project: string, enabled = true) {
+  return useQuery<WorkstreamInfo[]>({
+    queryKey: queryKeys.workstreams(project),
+    enabled,
+    refetchInterval: (q) => workstreamPollInterval(q.state.data),
+    queryFn: async ({ signal }) => (await client.listWorkstreams({ project }, { signal })).workstreams,
+  });
+}
+
+/** GetBudget: the configured caps a new work loop captures. */
+export function useBudget(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.budget,
+    enabled,
+    staleTime: 60_000,
+    queryFn: ({ signal }) => client.getBudget({}, { signal }),
+  });
 }

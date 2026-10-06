@@ -20,7 +20,10 @@ rows, so it has unloaded earlier pages) with a commit, a review verdict, and a `
 For the backlog checks, have a scratch project whose backlog holds proposed, todo, in-progress,
 blocked, and done tasks with dependencies (one task blocked by an unfinished dependency, one task
 body with a work log and a relative link to a sibling task file such as `0002-slug.md`), and a
-session whose task focus names one of them.
+session whose task focus names one of them. For the work-loop and workstream checks, have a scratch
+git project whose backlog holds two or three ready tasks (one the agent will block on), a project
+configured for automatic integration (`[integration] mode = "auto"` with a `verify` command you can
+make fail, e.g. `test ! -e /tmp/verify-red`), and a model that can finish small tasks.
 
 ```
 YCC_TOKEN=<token> ycc daemon --web --addr 127.0.0.1:8791
@@ -136,7 +139,35 @@ YCC_TOKEN=<token> ycc daemon --web --addr 127.0.0.1:8791
 24. Session links. A session row's focus-task chip opens that task in the backlog while the rest of
     the row still opens the session; in a session, the header's "task N" chip opens the task in the
     inspector beside the transcript, and a dependency link there swaps the inspector to that task.
-25. Repeat a few steps with the system in dark mode.
+25. Work loop. With "All projects" selected, the sidebar's Work loop asks which project; each card
+    shows that project's loop state. A project with no loop explains the loop and lists its ready
+    tasks. Start loop… shows the ready tasks (or warns that none are ready), the work implementation
+    (delegate/direct, the current one marked; changing it is daemon-wide), and the budget caps the
+    loop captures. While it runs: the state badge, summary, and token/cost totals update; the
+    sidebar's Work loop item shows a pulsing "running" badge; "Follow live session →" opens the
+    current loop session live, and the loop's sessions carry a "loop" tag in session lists.
+26. Stop loop asks first (the current session finishes; a waiting loop stops at once), then reads
+    Stopping… and Finished with "loop stopped: requested", announced by a toast even when another
+    page is open. The finished loop lists every session run (tokens, cost, duration, attempts, a
+    failure line, clamped evidence) linking to its transcript, the digest (completed, blocked with
+    its reason, in review, unfinished, created) with task links and commit shas that open the
+    commit in the inspector, and the captured resource envelope. A loop that stops on a failure
+    (a provider rejection, or a startup failure such as an expired login) shows the outcome as an
+    error, raises an error toast, and keeps the reason in the backlog's loop banner.
+27. Workstreams. Spawn workstream (optional ready task, which seeds the prompt; prompt; optional
+    base branch or commit) lists the new stream as Working with its branch, commits, session state,
+    Open session, and the integration mode. When it finishes with commits it is Queued/Integrating,
+    then merged automatically, or reads Needs attention with the daemon's reason (red verify,
+    conflicts) and an Integration log link that opens the integration agent's transcript; the
+    sidebar's Workstreams item shows the in-flight count, flagged when one needs attention.
+28. Preview & merge… opens the integrated diff in the inspector ("Merges cleanly onto <base>") with
+    Accept & merge, which advances the base and links the merge commit; a conflicting stream lists
+    its conflicted files instead and the base is untouched. Fix the cause (e.g. make verify pass)
+    and Retry integration: the stream re-queues and merges. Discard… asks first, then removes the
+    worktree and branch; merged and discarded streams stay under "Merged and discarded" with their
+    session transcripts. In gate mode, ready streams read Gated and "Merge all ready" merges them in
+    order, stopping at the first failure.
+29. Repeat a few steps with the system in dark mode.
 
 ## Pass condition
 

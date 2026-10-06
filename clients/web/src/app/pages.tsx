@@ -1,7 +1,7 @@
 // Routed main-pane surfaces.
 import { Link, Navigate, useNavigate, useParams } from "react-router";
-import { useEffect, useMemo } from "react";
-import { useProjects, useSessionFeed } from "../api/queries";
+import { useEffect, useMemo, type ReactNode } from "react";
+import { useProjects, useSessionFeed, useWorkLoops, useWorkstreams } from "../api/queries";
 import { errorMessage } from "../api/client";
 import { BacklogPage } from "../features/backlog/BacklogPage";
 import { projectChoices } from "../features/newSession/model";
@@ -9,6 +9,10 @@ import { SessionList } from "../features/sessions/SessionList";
 import { SessionView } from "../features/session/SessionView";
 import { displayTitle, taskIds } from "../features/sessions/feed";
 import { NewSessionPage as NewSession } from "../features/newSession/NewSessionPage";
+import { LoopStateBadge, WorkLoopPage } from "../features/workloop/WorkLoopPage";
+import { bannerLine, loopState } from "../features/workloop/model";
+import { WorkstreamsPage } from "../features/workstreams/WorkstreamsPage";
+import { workstreamIndicator } from "../features/workstreams/model";
 import { lastViewedProject } from "./memory";
 import { PROJECT_SECTIONS, paths } from "./paths";
 import { useScope } from "./scope";
@@ -108,27 +112,53 @@ function ScopedBacklog({ project, taskId }: { project: string; taskId: string | 
 }
 
 function UnscopedBacklog({ taskId }: { taskId: string | null }) {
+  useDocumentTitle(taskId ? `Task ${taskId}` : "Backlog");
+  return (
+    <ProjectChoice
+      title="Backlog"
+      question="Which project’s backlog?"
+      target={(name) => (taskId ? paths.task(name, taskId) : paths.backlog(name))}
+      // No registered project: the daemon's own workspace ("" resolves it).
+      fallback={() => <BacklogPage project="" taskId={taskId} />}
+    />
+  );
+}
+
+/**
+ * An unscoped project surface asks which project (last viewed first), goes
+ * straight to the sole project, and renders `fallback` (the daemon's own
+ * workspace) when none is registered.
+ */
+function ProjectChoice({
+  title,
+  question,
+  target,
+  fallback,
+  extra,
+}: {
+  title: string;
+  question: string;
+  target: (project: string) => string;
+  fallback: () => ReactNode;
+  extra?: (project: string) => ReactNode;
+}) {
   const projects = useProjects();
   const navigate = useNavigate();
   const list = projects.data ?? [];
   const choices = useMemo(() => projectChoices(list, lastViewedProject.get()), [list]);
-  useDocumentTitle(taskId ? `Task ${taskId}` : "Backlog");
   if (projects.isPending) return <div className="page muted">Loading…</div>;
   if (projects.isError) return <div className="page error">{errorMessage(projects.error)}</div>;
-  // No registered project: the daemon's own workspace ("" resolves it).
-  if (list.length === 0) return <BacklogPage project="" taskId={taskId} />;
-  if (list.length === 1) {
-    const name = list[0].name;
-    return <Navigate replace to={taskId ? paths.task(name, taskId) : paths.backlog(name)} />;
-  }
+  if (list.length === 0) return <>{fallback()}</>;
+  if (list.length === 1) return <Navigate replace to={target(list[0].name)} />;
   const last = lastViewedProject.get();
+  const headingId = `ask-${title.toLowerCase().replace(/[^a-z]+/g, "-")}-project`;
   return (
     <div className="page">
       <header className="page-head">
-        <h1>Backlog</h1>
+        <h1>{title}</h1>
       </header>
-      <section className="project-ask" aria-labelledby="ask-backlog-project">
-        <h2 id="ask-backlog-project">Which project’s backlog?</h2>
+      <section className="project-ask" aria-labelledby={headingId}>
+        <h2 id={headingId}>{question}</h2>
         <div className="choice-grid">
           {choices.map((name, i) => {
             const info = list.find((p) => p.name === name);
@@ -138,10 +168,11 @@ function UnscopedBacklog({ taskId }: { taskId: string | null }) {
                 type="button"
                 className="choice-card"
                 autoFocus={i === 0}
-                onClick={() => navigate(taskId ? paths.task(name, taskId) : paths.backlog(name))}
+                onClick={() => navigate(target(name))}
               >
                 <span className="choice-title">{name}</span>
                 {info?.path && <span className="choice-sub mono">{info.path}</span>}
+                {extra?.(name)}
                 {i === 0 && name === last && <span className="tag">last viewed</span>}
               </button>
             );
@@ -149,6 +180,80 @@ function UnscopedBacklog({ taskId }: { taskId: string | null }) {
         </div>
       </section>
     </div>
+  );
+}
+
+/** `/p/:project/loop` and the unscoped `/loop` (asks which project). */
+export function WorkLoopRoutePage() {
+  const { project } = useParams();
+  if (project !== undefined) return <ScopedLoop project={project} />;
+  return <UnscopedLoop />;
+}
+
+function ScopedLoop({ project }: { project: string }) {
+  const { setScope } = useScope();
+  useEffect(() => setScope(project), [project, setScope]);
+  useEffect(() => lastViewedProject.set(project), [project]);
+  useDocumentTitle(`Work loop · ${project}`);
+  return <WorkLoopPage key={project} project={project} />;
+}
+
+function LoopChoiceState({ project }: { project: string }) {
+  const loops = useWorkLoops();
+  const loop = loops.find((l) => l.project === project)?.loop;
+  const state = loopState(loop);
+  if (state === "none") return <span className="choice-sub muted">No loop yet</span>;
+  return (
+    <span className="choice-sub">
+      <LoopStateBadge state={state} /> <span className="muted">{bannerLine(loop)}</span>
+    </span>
+  );
+}
+
+function UnscopedLoop() {
+  useDocumentTitle("Work loop");
+  return (
+    <ProjectChoice
+      title="Work loop"
+      question="Which project’s work loop?"
+      target={(name) => paths.loop(name)}
+      fallback={() => <WorkLoopPage project="" />}
+      extra={(name) => <LoopChoiceState project={name} />}
+    />
+  );
+}
+
+/** `/p/:project/workstreams` and the unscoped `/workstreams` (asks which project). */
+export function WorkstreamsRoutePage() {
+  const { project } = useParams();
+  if (project !== undefined) return <ScopedWorkstreams project={project} />;
+  return <UnscopedWorkstreams />;
+}
+
+function ScopedWorkstreams({ project }: { project: string }) {
+  const { setScope } = useScope();
+  useEffect(() => setScope(project), [project, setScope]);
+  useEffect(() => lastViewedProject.set(project), [project]);
+  useDocumentTitle(`Workstreams · ${project}`);
+  return <WorkstreamsPage key={project} project={project} />;
+}
+
+function WorkstreamsChoiceState({ project }: { project: string }) {
+  const all = useWorkstreams("");
+  const indicator = workstreamIndicator(all.data?.filter((w) => w.project === project));
+  return <span className={`choice-sub${indicator ? "" : " muted"}`}>{indicator ? indicator.title : "None in flight"}</span>;
+}
+
+function UnscopedWorkstreams() {
+  useDocumentTitle("Workstreams");
+  return (
+    <ProjectChoice
+      title="Workstreams"
+      question="Which project’s workstreams?"
+      target={(name) => paths.workstreams(name)}
+      fallback={() => <WorkstreamsPage project="" />}
+      extra={(name) => <WorkstreamsChoiceState project={name} />}
+    />
   );
 }
 

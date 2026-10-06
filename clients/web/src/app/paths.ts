@@ -2,7 +2,7 @@
 // and bookmarks work; build links only through these helpers.
 const enc = encodeURIComponent;
 
-/** Project-scoped sidebar surfaces (the backlog is live; later phases fill in the rest). */
+/** Project-scoped sidebar surfaces (backlog, work loop, and workstreams are live; later phases fill in the rest). */
 export const PROJECT_SECTIONS = [
   { key: "backlog", label: "Backlog" },
   { key: "loop", label: "Work loop" },
@@ -25,5 +25,27 @@ export const paths = {
   backlog: (project?: string | null) => (project ? `/p/${enc(project)}/backlog` : "/backlog"),
   task: (project: string, id: string) =>
     project ? `/p/${enc(project)}/backlog/${enc(id)}` : `/backlog/${enc(id)}`,
+  /** The work loop; unscoped asks for a project (or uses the sole/default one). */
+  loop: (project?: string | null) => (project ? `/p/${enc(project)}/loop` : "/loop"),
+  /** Parallel workstreams; unscoped asks for a project (or uses the sole/default one). */
+  workstreams: (project?: string | null) => (project ? `/p/${enc(project)}/workstreams` : "/workstreams"),
   settings: () => "/settings",
 };
+
+/** Sections that ask which project when opened unscoped (the rest need one). */
+export const UNSCOPED_SECTIONS: readonly ProjectSection[] = ["backlog", "loop", "workstreams"];
+
+/** The unscoped (or scoped) route of a section that has one. */
+export function sectionPath(section: ProjectSection, project: string | null): string | null {
+  if (project) return paths.section(project, section);
+  switch (section) {
+    case "backlog":
+      return paths.backlog(null);
+    case "loop":
+      return paths.loop(null);
+    case "workstreams":
+      return paths.workstreams(null);
+    default:
+      return null;
+  }
+}

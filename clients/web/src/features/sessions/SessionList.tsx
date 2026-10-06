@@ -6,6 +6,7 @@ import { useSessionFeed } from "../../api/queries";
 import { errorMessage } from "../../api/client";
 import { paths } from "../../app/paths";
 import { requestReopen } from "../session/useSession";
+import { useLoopSessionIds } from "../workloop/hooks";
 import {
   displayProject,
   displayTitle,
@@ -35,12 +36,15 @@ export function SessionRowView({
   active,
   now,
   variant,
+  loopOwned = false,
 }: {
   row: FeedRow;
   showProject: boolean;
   active: boolean;
   now: number;
   variant: "sidebar" | "page";
+  /** Started by a work loop (marked like iOS's "via loop"). */
+  loopOwned?: boolean;
 }) {
   const s = row.session;
   const lifecycle = lifecycleLabel(s);
@@ -70,6 +74,11 @@ export function SessionRowView({
       <div className="session-row-meta">
         {lifecycle && <span className={`badge badge-${lifecycle}`}>{lifecycle}</span>}
         {s.live && <span className="badge badge-live">live</span>}
+        {loopOwned && (
+          <span className="tag loop-tag" title="Started by the work loop">
+            loop
+          </span>
+        )}
         {showProject && project && <span className="project">{project}</span>}
         {chips.map((c) =>
           ids.includes(c) ? (
@@ -125,6 +134,7 @@ export function SessionList({
 }) {
   const { feed, isLoading, error, loadOlder, loadingOlder } = useSessionFeed(scope);
   const now = useNow();
+  const loopIds = useLoopSessionIds();
   if (isLoading) return <p className="muted pad">Loading sessions…</p>;
   if (error) return <p className="error pad">{errorMessage(error, "Couldn’t load sessions.")}</p>;
   if (!feed) return null;
@@ -152,6 +162,7 @@ export function SessionList({
               active={row.session.sessionId === activeSessionId}
               now={now}
               variant={variant}
+              loopOwned={loopIds.has(row.session.sessionId)}
             />
           ))}
         </section>

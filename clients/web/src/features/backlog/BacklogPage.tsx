@@ -14,6 +14,7 @@ import { CAPTURE_SHORTCUT_LABEL, openCapture } from "./CaptureDialog";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { changeTaskStatus, TaskDetailView } from "./TaskDetail";
 import { PriorityBadge, StatusPill, TaskLink } from "./parts";
+import { LoopBanner } from "../workloop/WorkLoopPage";
 import {
   DEFAULT_FILTER,
   DEFAULT_SORT,
@@ -178,6 +179,7 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
             </button>
           </div>
         </header>
+        <LoopBanner project={project} />
         <div className="backlog-toolbar" role="toolbar" aria-label="Backlog filters">
           <input
             ref={filterRef}

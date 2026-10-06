@@ -3038,12 +3038,50 @@ func (m *Manager) SessionLogPath(project, id string) (workspace, logPath string,
 	}
 	logPath = filepath.Join(absWS, ".ycc", "sessions", id, "events.jsonl")
 	if _, err := os.Stat(logPath); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return "", "", fmt.Errorf("%w %q", ErrUnknownSession, id)
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", "", err
 		}
-		return "", "", err
+		// A finished workstream or integrate-agent session keeps its log in the
+		// in-flight workstream's worktree until merge/discard preserves it.
+		if wt, ok := m.workstreamSessionWorktree(absWS, id); ok {
+			wtLog := filepath.Join(wt, ".ycc", "sessions", id, "events.jsonl")
+			if _, werr := os.Stat(wtLog); werr == nil {
+				return wt, wtLog, nil
+			}
+		}
+		return "", "", fmt.Errorf("%w %q", ErrUnknownSession, id)
 	}
 	return absWS, logPath, nil
+}
+
+// workstreamSessionWorktree returns the worktree of the in-flight workstream of
+// the project at absWS whose implementation or integrate session is id.
+// Persisted worktree paths are untrusted: only paths under the daemon-owned
+// worktrees root qualify.
+func (m *Manager) workstreamSessionWorktree(absWS, id string) (string, bool) {
+	if m.workstreams == nil {
+		return "", false
+	}
+	for _, ws := range m.workstreams.List() {
+		if ws.SessionID != id && ws.IntegrateSessionID != id {
+			continue
+		}
+		if !ws.Status.InFlight() {
+			return "", false
+		}
+		primary, ok := m.projects.Resolve(ws.Project)
+		if !ok {
+			return "", false
+		}
+		if p, err := filepath.Abs(primary); err != nil || p != absWS {
+			return "", false
+		}
+		if err := workstream.VerifyUnderRoot(m.worktreesRoot, ws.WorktreePath); err != nil {
+			return "", false
+		}
+		return ws.WorktreePath, true
+	}
+	return "", false
 }
 
 // SessionViewLogPath resolves the authoritative log together with an explicit

@@ -1,10 +1,10 @@
 ---
 id: "0413"
 title: 'Desktop web: backlog browser and task editing, quick capture'
-status: in_progress
+status: done
 priority: 3
 created: "2026-10-02"
-updated: "2026-10-05"
+updated: "2026-10-06"
 depends_on:
     - "0410"
 spec_refs:
