@@ -802,6 +802,74 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertEqual(source.recordedFromSeqs, [0])
     }
 
+    func testPacedLiveTailUsesSeparateRevisionAndAppendHints() async {
+        let source = MockSource()
+        let (updates, continuation) = AsyncThrowingStream<Ycc_V1_Event, Error>.makeStream()
+        source.streams = [updates]
+        let vm = SessionViewModel(source: source, sessionID: "s1", mode: .live,
+                                  publishInterval: 0, pacesLiveTails: true)
+        defer { vm.stop(); continuation.finish() }
+        vm.start()
+        continuation.yield(event(0, "turn_delta", #"{"text":"seed"}"#))
+        await waitUntil { vm.liveTail != nil }
+        XCTAssertEqual(vm.liveTail?.kind, .liveTail(text: "seed"))
+        XCTAssertEqual(vm.liveRevealRevision, 0)
+
+        let target = "seed" + String(repeating: "x", count: 1000)
+        continuation.yield(event(0, "turn_delta", "{\"text\":\"\(target)\"}"))
+        await waitUntil { vm.projection.liveTail?.kind == .liveTail(text: target) }
+        let transcriptRevision = vm.transcriptRevision
+        let revealRevision = vm.liveRevealRevision
+        let previous = vm.liveTail
+        XCTAssertNotEqual(previous?.kind, .liveTail(text: target))
+        await waitUntil { vm.liveRevealRevision > revealRevision }
+        XCTAssertEqual(vm.transcriptRevision, transcriptRevision,
+                       "reveal frames must not trigger snapshot/replay refetch")
+        guard case .liveTail(let text)? = vm.liveTail?.kind else {
+            return XCTFail("expected a paced tail")
+        }
+        XCTAssertTrue(target.hasPrefix(text))
+        XCTAssertGreaterThan(text.count, 4)
+        let base = vm.liveTail?.liveAppendBaseUTF8 ?? -1
+        XCTAssertGreaterThanOrEqual(base, 4)
+        XCTAssertEqual(String(target.prefix(max(0, base))) + (vm.liveTail?.liveAppend ?? ""), text)
+        await waitUntil { vm.liveTail?.kind == .liveTail(text: target) }
+        XCTAssertEqual(vm.liveTail?.kind, .liveTail(text: target))
+        XCTAssertEqual(vm.transcriptRevision, transcriptRevision)
+
+        continuation.yield(event(1, "model_turn", "{\"text\":\"\(target)\"}"))
+        await waitUntil { vm.liveTails.isEmpty }
+        let finalRevision = vm.liveRevealRevision
+        try? await Task.sleep(nanoseconds: 40_000_000)
+        XCTAssertEqual(vm.liveRevealRevision, finalRevision)
+        XCTAssertEqual(vm.durableRows.last?.kind, .modelMessage(text: target))
+    }
+
+    func testPacedTailClearsWhenReconnectReplayEndsTurn() async {
+        let source = MockSource()
+        let (updates, continuation) = AsyncThrowingStream<Ycc_V1_Event, Error>.makeStream()
+        source.streams = [updates, AsyncThrowingStream { _ in }]
+        source.transcriptResults = [
+            .success([]),
+            .success([event(1, "model_turn", #"{"text":"completed"}"#)])
+        ]
+        let vm = SessionViewModel(source: source, sessionID: "s1", mode: .live,
+                                  publishInterval: 0, pacesLiveTails: true)
+        defer { vm.stop(); continuation.finish() }
+        vm.start()
+        continuation.yield(event(0, "turn_delta", #"{"text":"partial"}"#))
+        await waitUntil { vm.liveTail != nil }
+        XCTAssertEqual(vm.liveTail?.kind, .liveTail(text: "partial"))
+
+        vm.reconnect()
+        await waitUntil { vm.projection.lastPersistedSeq == 1 }
+        XCTAssertEqual(vm.durableRows.last?.kind, .modelMessage(text: "completed"))
+        XCTAssertTrue(vm.projection.liveTails.isEmpty)
+        XCTAssertTrue(vm.liveTails.isEmpty, "replay must remove the old paced mirror even after a reset")
+        vm.stop()
+        XCTAssertTrue(vm.liveTails.isEmpty)
+    }
+
     func testTranscriptRevisionTracksStreamEventsWithoutComparingRows() async {
         let source = MockSource()
         var first = Ycc_V1_Event()

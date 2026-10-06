@@ -87,24 +87,108 @@ public final class SessionViewModel {
     /// Durable rows (hot: changes as rows land). Mirrors
     /// `projection.durableRows`; unchanged by live-tail-only publishes.
     public private(set) var durableRows: [TranscriptRow] = []
-    /// Stable transient rows for every actor currently streaming (hot: changes
-    /// on every streamed snapshot). Rendered separately so one subagent's
-    /// snapshots do not invalidate another's text or the durable rows.
+    /// Stable transient rows for every actor currently streaming. In paced mode
+    /// these contain the revealed text; the projection retains full snapshots.
+    /// Rendered separately so subagent streams do not invalidate durable rows.
     public private(set) var liveTails: [TranscriptRow] = []
+    /// Reveal-only changes must not invalidate snapshot/replay refetch guards.
+    public private(set) var liveRevealRevision: UInt64 = 0
+    private let pacesLiveTails: Bool
+    @ObservationIgnored private var livePacers: [String: LiveTextPacer] = [:]
+    @ObservationIgnored private var sourceLiveTails: [TranscriptRow] = []
+    @ObservationIgnored private var liveTargetsDirty = false
+    @ObservationIgnored private var revealTask: Task<Void, Never>?
 
     /// Refresh the observed mirrors after any projection mutation. Array
-    /// storage identity is the change test: an untouched array still shares
-    /// the mirror's buffer, and any mutation copies it (the mirror holds a
-    /// second reference), so no element-wise comparison is needed.
+    /// storage identity detects changes to durable rows and live-tail targets;
+    /// reveal frames only update the separately stored paced mirror.
     private func publishProjection() {
         if !Self.sharesStorage(durableRows, projection.durableRows) {
             durableRows = projection.durableRows
         }
-        if !Self.sharesStorage(liveTails, projection.liveTails) {
+        if pacesLiveTails {
+            if liveTargetsDirty || !Self.sharesStorage(sourceLiveTails, projection.liveTails) {
+                publishLiveTargets()
+            }
+        } else if !Self.sharesStorage(liveTails, projection.liveTails) {
             liveTails = projection.liveTails
         }
         let next = Chrome(projection)
         if next != chrome { chrome = next }
+    }
+
+    private func publishLiveTargets() {
+        liveTargetsDirty = false
+        sourceLiveTails = projection.liveTails
+        let ids = Set(sourceLiveTails.map(\.id))
+        livePacers = livePacers.filter { ids.contains($0.key) }
+        let now = ProcessInfo.processInfo.systemUptime
+        let next = sourceLiveTails.map { sourceRow in
+            var row = sourceRow
+            guard case .liveTail(let text) = row.kind else { return row }
+            if livePacers[row.id] == nil { livePacers[row.id] = LiveTextPacer() }
+            livePacers[row.id]!.setTarget(text, now: now)
+            let pacer = livePacers[row.id]!
+            row.kind = .liveTail(text: pacer.shown)
+            row.liveAppend = pacer.append
+            row.liveAppendBaseUTF8 = pacer.appendBaseUTF8
+            return row
+        }
+        if next != liveTails { liveTails = next }
+        if livePacers.values.contains(where: { !$0.isCaughtUp }) {
+            startLiveReveal()
+        } else {
+            revealTask?.cancel()
+            revealTask = nil
+        }
+    }
+
+    private func startLiveReveal() {
+        guard revealTask == nil else { return }
+        revealTask = Task { @MainActor [weak self] in
+            var previous = ProcessInfo.processInfo.systemUptime
+            while !Task.isCancelled {
+                do { try await Task.sleep(nanoseconds: 16_666_667) }
+                catch { return }
+                guard !Task.isCancelled else { return }
+                // Do not hold the model across the next suspension.
+                guard let self else { return }
+                let now = ProcessInfo.processInfo.systemUptime
+                self.advanceLiveReveal(by: now - previous)
+                previous = now
+                if self.livePacers.values.allSatisfy(\.isCaughtUp) {
+                    self.revealTask = nil
+                    return
+                }
+            }
+        }
+    }
+
+    private func advanceLiveReveal(by dt: TimeInterval) {
+        var next = liveTails
+        var changed = false
+        for index in next.indices {
+            let id = next[index].id
+            guard livePacers[id]?.advance(by: dt) == true,
+                  let pacer = livePacers[id] else { continue }
+            next[index].kind = .liveTail(text: pacer.shown)
+            next[index].liveAppend = pacer.append
+            next[index].liveAppendBaseUTF8 = pacer.appendBaseUTF8
+            changed = true
+        }
+        if changed {
+            liveTails = next
+            liveRevealRevision &+= 1
+        }
+    }
+
+    private func resetLiveReveal() {
+        revealTask?.cancel()
+        revealTask = nil
+        livePacers.removeAll()
+        sourceLiveTails = []
+        // Empty source storage can still have a nonempty paced mirror.
+        liveTargetsDirty = true
     }
 
     private static func sharesStorage(_ lhs: [TranscriptRow], _ rhs: [TranscriptRow]) -> Bool {
@@ -506,6 +590,7 @@ public final class SessionViewModel {
         controlAckTimeout: UInt64 = 8_000_000_000,
         sentEchoTimeout: UInt64 = 15_000_000_000,
         prefetchEarlierPage: Bool = false,
+        pacesLiveTails: Bool = false,
         earlierPrefetchDelay: UInt64 = 400_000_000,
         resumeWindow: TimeInterval = SessionViewModel.defaultResumeWindow,
         clock: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
@@ -518,6 +603,7 @@ public final class SessionViewModel {
         self.controlAckTimeout = controlAckTimeout
         self.sentEchoTimeout = sentEchoTimeout
         self.prefetchesEarlierPage = prefetchEarlierPage
+        self.pacesLiveTails = pacesLiveTails
         self.earlierPrefetchDelay = earlierPrefetchDelay
         self.resumeWindow = resumeWindow
         self.clock = clock
@@ -632,6 +718,8 @@ public final class SessionViewModel {
         stoppedByOwner = true
         halt()
         cancelEarlierPrefetch()
+        resetLiveReveal()
+        publishProjection()
     }
 
     /// Stop streaming because no screen shows this model any more, keeping the
@@ -1743,6 +1831,7 @@ public final class SessionViewModel {
             // An interactive answer can change the projection while recovery is
             // folding. Rebase rather than overwrite that newer local state.
             guard transcriptRevision == revision else { continue }
+            resetLiveReveal()
             projection = folded
             reconcileOptimisticState()
             if isInitialReplay {

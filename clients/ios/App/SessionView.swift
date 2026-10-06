@@ -146,7 +146,7 @@ struct SessionView: View {
             SessionViewModel(
                 source: client, project: project, sessionID: sessionID,
                 mode: live ? .live : .persisted,
-                prefetchEarlierPage: true)
+                prefetchEarlierPage: true, pacesLiveTails: true)
         }
         // A recently viewed session comes back from the app-level cache with
         // its transcript already folded; `present` resumes its stream from the
@@ -1234,6 +1234,9 @@ private struct TranscriptRevisionObserver: View {
     var body: some View {
         Color.clear
             .onChange(of: model.transcriptRevision, initial: true) { _, _ in
+                onChange()
+            }
+            .onChange(of: model.liveRevealRevision) { _, _ in
                 onChange()
             }
     }

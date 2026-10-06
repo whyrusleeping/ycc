@@ -1,7 +1,7 @@
 ---
 id: "0426"
 title: 'iOS: pace the streaming live tail (smooth reveal) like the web client'
-status: todo
+status: in_review
 priority: 3
 created: "2026-10-06"
 updated: "2026-10-06"
@@ -26,3 +26,7 @@ Acceptance criteria:
 ## Acceptance criteria
 
 ## Work log
+- 2026-10-06 implementer report: Implemented Task 0426. Added pure Sendable LiveTextPacer with web-equivalent UTF-16 rate/EMA/clamp/backlog/fractional-budget semantics, immediate initial/replacement snapshots, whole-grapheme reveal b
+…[truncated]
+- 2026-10-06 revision: Fixed the reset/empty-target bug with an observation-ignored liveTargetsDirty flag: resetLiveReveal marks targets dirty, publishProjection rebuilds even when both source arrays are empty, and publishL
+…[truncated]
