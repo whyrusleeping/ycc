@@ -22,6 +22,7 @@ import { workstreamIndicator } from "../features/workstreams/model";
 import { workstreamsIntentKey } from "../features/workstreams/WorkstreamsPage";
 import { requestIntent } from "./intents";
 import { MenuButton } from "../ui/Menu";
+import { Icon, type IconName } from "../ui/icons";
 import { gitSyncBadge } from "../features/projects/model";
 import { ProjectDialogs, openAddProject, openRemoveProject, openRenameProject } from "../features/projects/ProjectDialogs";
 import { AnthropicLoginDialog, openAnthropicLogin } from "../features/settings/AnthropicLogin";
@@ -50,6 +51,15 @@ const SHORTCUTS = {
   composer: { code: "KeyI", alt: true, inEditable: !IS_MAC },
   inspector: { code: "Backslash", alt: true, inEditable: !IS_MAC },
 } satisfies Record<string, Shortcut>;
+
+const SECTION_ICONS: Record<(typeof PROJECT_SECTIONS)[number]["key"], IconName> = {
+  backlog: "backlog",
+  loop: "loop",
+  workstreams: "workstreams",
+  usage: "usage",
+  files: "files",
+  memory: "memory",
+};
 
 const PALETTE_LABEL = shortcutLabel(SHORTCUTS.palette);
 const NEW_SESSION_LABEL = shortcutLabel(SHORTCUTS.newSession);
@@ -159,23 +169,28 @@ function Sidebar() {
     <nav className="sidebar" aria-label="Sidebar">
       <div className="sidebar-top">
         <Link to={paths.home()} className="brand">
+          <span className="brand-mark" aria-hidden="true">
+            y
+          </span>
           ycc
         </Link>
         <span className="sidebar-top-actions">
-          <button
-            type="button"
-            className="btn ghost small palette-btn"
-            title={`Command palette: jump to anything, run any action (${PALETTE_LABEL})`}
-            aria-label="Open the command palette"
-            onClick={() => togglePalette()}
-          >
-            <kbd>{PALETTE_LABEL}</kbd>
-          </button>
           <Link to={paths.newSession(scope)} className="btn primary small" title={`Start a new session (${NEW_SESSION_LABEL})`}>
-            + New session
+            <Icon name="plus" size={14} /> New session
           </Link>
         </span>
       </div>
+      <button
+        type="button"
+        className="palette-trigger"
+        title={`Command palette: jump to anything, run any action (${PALETTE_LABEL})`}
+        aria-label="Open the command palette"
+        onClick={() => togglePalette()}
+      >
+        <Icon name="search" size={14} />
+        <span className="palette-trigger-text">Jump to…</span>
+        <kbd>{PALETTE_LABEL}</kbd>
+      </button>
       <ProjectSwitcher />
       <div className="sidebar-heading">
         <NavLink to={scope ? paths.project(scope) : paths.home()} end className="sidebar-heading-link">
@@ -200,7 +215,7 @@ function Sidebar() {
             title="Refresh"
             aria-label="Refresh sessions"
           >
-            ↻
+            <Icon name="refresh" size={13} />
           </button>
         </span>
       </div>
@@ -217,7 +232,8 @@ function Sidebar() {
           const plansActive = s.key === "memory" && /^\/p\/[^/]+\/plans(\/|$)/.test(location.pathname);
           return to ? (
             <NavLink key={s.key} to={to} className={({ isActive }) => `nav-item${isActive || plansActive ? " active" : ""}`}>
-              <span>{s.label}</span>
+              <Icon name={SECTION_ICONS[s.key]} />
+              <span className="nav-label">{s.label}</span>
               {badge && (
                 <span className={`nav-badge tone-${badge.tone}`} title={badge.title} aria-label={`${s.label}: ${badge.title}`}>
                   {badge.label}
@@ -226,30 +242,41 @@ function Sidebar() {
             </NavLink>
           ) : (
             <span key={s.key} className="nav-item disabled" title="Choose a project first">
-              {s.label}
+              <Icon name={SECTION_ICONS[s.key]} />
+              <span className="nav-label">{s.label}</span>
             </span>
           );
         })}
-        <NavLink to={paths.settings()} className="nav-item">
-          Settings
-        </NavLink>
-        <button type="button" className="nav-item link" onClick={() => openHelp()} title="Keyboard shortcuts (?)">
-          <span>Keyboard shortcuts</span>
-          <kbd>?</kbd>
-        </button>
-        {getToken() && (
+        <div className="sidebar-foot">
+          <NavLink to={paths.settings()} className="nav-item">
+            <Icon name="settings" />
+            <span className="nav-label">Settings</span>
+          </NavLink>
           <button
             type="button"
-            className="nav-item link"
-            onClick={() => {
-              setToken(null);
-              qc.clear();
-              authStore.setStatus({ kind: "needsToken", note: "Signed out." });
-            }}
+            className="btn ghost icon-btn"
+            onClick={() => openHelp()}
+            title="Keyboard shortcuts (?)"
+            aria-label="Keyboard shortcuts"
           >
-            Sign out
+            <Icon name="keyboard" />
           </button>
-        )}
+          {getToken() && (
+            <button
+              type="button"
+              className="btn ghost icon-btn"
+              title="Sign out of this daemon"
+              aria-label="Sign out"
+              onClick={() => {
+                setToken(null);
+                qc.clear();
+                authStore.setStatus({ kind: "needsToken", note: "Signed out." });
+              }}
+            >
+              <Icon name="signOut" />
+            </button>
+          )}
+        </div>
       </div>
     </nav>
   );

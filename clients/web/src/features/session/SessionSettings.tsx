@@ -3,6 +3,7 @@
 // coordinator context meter with rollover, and this session's usage (GetUsage
 // grouped by session and model). Each change applies to the live session
 // immediately and the daemon's error is shown verbatim.
+import { Icon } from "../../ui/icons";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { client, errorMessage, isUnauthorized } from "../../api/client";
@@ -250,7 +251,7 @@ function SessionUsage({ project, sessionId }: { project: string; sessionId: stri
           aria-label="Refresh usage"
           title="Refresh usage"
         >
-          ↻
+          <Icon name="refresh" size={15} />
         </button>
       </h3>
       {q.isPending && <p className="muted">Loading…</p>}

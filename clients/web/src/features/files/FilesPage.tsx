@@ -1,6 +1,7 @@
 // The Files surface (`/p/<project>/files/<path>[?session=<id>][#L12-L20]`):
 // a lazily loaded tree (ListFiles per expanded directory) beside the viewer.
 // `?session=` resolves everything against that session's live worktree.
+import { Icon } from "../../ui/icons";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
@@ -77,7 +78,7 @@ export function FilesPage({ project, splat }: { project: string; splat: string }
             onClick={() => void qc.invalidateQueries({ queryKey: queryKeys.filesAll })}
             title="Reload the tree and file"
           >
-            ↻ Refresh
+            <Icon name="refresh" size={14} /> Refresh
           </button>
         </div>
       </header>

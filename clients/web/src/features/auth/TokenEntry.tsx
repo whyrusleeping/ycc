@@ -38,7 +38,12 @@ export function TokenEntry({ note }: { note?: string }) {
           void submit();
         }}
       >
-        <h1 className="brand">ycc</h1>
+        <h1 className="brand">
+          <span className="brand-mark" aria-hidden="true">
+            y
+          </span>
+          ycc
+        </h1>
         <p className="muted">Enter the daemon's access token to connect.</p>
         <input
           type="password"

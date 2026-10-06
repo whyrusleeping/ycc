@@ -3,6 +3,7 @@
 // Merge (the integrated diff opens in the inspector), Retry integration,
 // confirmed Discard, and links to each stream's session and integration log.
 // Mirrors iOS WorkstreamsView.
+import { Icon } from "../../ui/icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router";
@@ -170,7 +171,7 @@ export function WorkstreamsPage({ project }: { project: string }) {
             title="Refresh"
             aria-label="Refresh workstreams"
           >
-            ↻
+            <Icon name="refresh" size={15} />
           </button>
           {gated.length > 0 && (
             <button type="button" className="btn" disabled={busyId !== null} onClick={() => setMergeAllOpen(true)}>

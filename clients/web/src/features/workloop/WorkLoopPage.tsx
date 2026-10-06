@@ -3,6 +3,7 @@
 // options (work implementation, the budget envelope it captures) and a
 // graceful Stop, links to the sessions it ran and the tasks it touched, and
 // the incremental/final digest. Mirrors iOS WorkLoopView.
+import { Icon } from "../../ui/icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo, useState } from "react";
 import { Link } from "react-router";
@@ -149,7 +150,7 @@ export function WorkLoopPage({ project }: { project: string }) {
             title="Refresh"
             aria-label="Refresh work loop"
           >
-            ↻
+            <Icon name="refresh" size={15} />
           </button>
           {isActive(state) ? (
             <button type="button" className="btn danger" disabled={busy || !canStop(state)} onClick={() => setStopOpen(true)}>

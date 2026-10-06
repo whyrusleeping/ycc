@@ -2,6 +2,7 @@
 // keyboard navigation (j/k or ↑/↓ to move, Enter to open, / to filter, Esc to
 // close the task), and the selected task's detail beside it. The URL carries
 // the open task (`/p/<project>/backlog/<id>`).
+import { Icon } from "../../ui/icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
@@ -176,7 +177,7 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
               title="Refresh"
               aria-label="Refresh backlog"
             >
-              ↻
+              <Icon name="refresh" size={15} />
             </button>
             <button
               type="button"

@@ -3,6 +3,9 @@
 // only ever sent in the Authorization header, never in a URL.
 
 const TOKEN_KEY = "ycc.token";
+// The vanilla phone client this app replaced stored the token here. Read it
+// once and move it so an upgrade does not ask for the token again.
+const LEGACY_TOKEN_KEY = "ycc_token";
 
 export type AuthStatus =
   | { kind: "checking" }
@@ -22,7 +25,14 @@ function emit() {
 export function getToken(): string | null {
   if (memoryToken !== null) return memoryToken;
   try {
-    return localStorage.getItem(TOKEN_KEY);
+    const stored = localStorage.getItem(TOKEN_KEY);
+    if (stored) return stored;
+    const legacy = localStorage.getItem(LEGACY_TOKEN_KEY);
+    if (legacy) {
+      localStorage.setItem(TOKEN_KEY, legacy);
+      localStorage.removeItem(LEGACY_TOKEN_KEY);
+    }
+    return legacy || null;
   } catch {
     return null;
   }
@@ -33,6 +43,7 @@ export function setToken(token: string | null) {
   try {
     if (token) localStorage.setItem(TOKEN_KEY, token);
     else localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(LEGACY_TOKEN_KEY);
   } catch {
     // Private mode: keep the in-memory copy only.
   }

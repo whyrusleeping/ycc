@@ -4,6 +4,7 @@
 // allowance (GetSubscriptionUsage), and the spend-guard caps (GetBudget). The
 // query lives in the URL so views are linkable. Mirrors iOS UsageView, and the
 // breakdown table prints exactly what `ycc cost` prints for the same scope.
+import { Icon } from "../../ui/icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
@@ -131,7 +132,7 @@ export function UsagePage({ project }: { project: string }) {
             title="Refresh usage, budget, and subscription allowance"
             aria-label="Refresh usage"
           >
-            ↻
+            <Icon name="refresh" size={15} />
           </button>
         </div>
       </header>
