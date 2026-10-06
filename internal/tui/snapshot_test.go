@@ -86,7 +86,7 @@ func TestSnapshotSessionView(t *testing.T) {
 
 // TestGenerateReadmeScreenshot renders a richer, larger representative session
 // frame and, when YCC_README_SCREENSHOT_DIR is set, writes it as docs/tui.png —
-// the screenshot the README leads with. It is deterministic (the model is
+// the TUI screenshot the README links to. It is deterministic (the model is
 // constructed directly, no clock- or network-dependent content) so re-running it
 // reproduces the same picture. Regenerate with:
 //
