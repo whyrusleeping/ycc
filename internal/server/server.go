@@ -23,6 +23,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/whyrusleeping/ycc/internal/config"
+	"github.com/whyrusleeping/ycc/internal/credenv"
 	"github.com/whyrusleeping/ycc/internal/docs"
 	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
@@ -951,6 +952,9 @@ func (s *Server) UpsertModel(_ context.Context, req *connect.Request[v1.UpsertMo
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("model name is required"))
 	}
 	model := modelConfigToConfig(mc)
+	if err := validateModelCredentials(model.KeyEnv, model.BaseURL, model.Auth == "oauth"); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
 	if current, ok := s.mgr.GetModel(mc.Name); ok {
 		// Context budgets and operator capabilities are TOML-level model fields,
 		// not interactive connection-form fields. Preserve them when that form edits
@@ -1005,6 +1009,11 @@ func (s *Server) DiscoverModels(ctx context.Context, req *connect.Request[v1.Dis
 	if backend == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("backend is required"))
 	}
+	// Anthropic discovery can fall back to stored OAuth even without key_env.
+	if err := validateModelCredentials(req.Msg.KeyEnv, req.Msg.BaseUrl, backend == "anthropic"); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	credenv.Register(req.Msg.KeyEnv)
 	ids, err := s.mgr.DiscoverModels(ctx, backend, req.Msg.BaseUrl, req.Msg.KeyEnv)
 	if err != nil || len(ids) == 0 {
 		curated := config.CuratedModelIDs(backend)
@@ -1021,6 +1030,16 @@ func (s *Server) DiscoverModels(ctx context.Context, req *connect.Request[v1.Dis
 	return connect.NewResponse(&v1.DiscoverModelsResponse{
 		ModelIds: ids, FromNetwork: true, Note: fmt.Sprintf("%d models from %s", len(ids), backend),
 	}), nil
+}
+
+func validateModelCredentials(keyEnv, baseURL string, oauth bool) error {
+	if err := credenv.ValidateKeyRef(keyEnv); err != nil {
+		return err
+	}
+	if keyEnv != "" || oauth {
+		return credenv.ValidateCredentialURL(baseURL)
+	}
+	return nil
 }
 
 const modelProbeTimeout = 30 * time.Second
@@ -1059,6 +1078,9 @@ func (s *Server) testModel(ctx context.Context, req *connect.Request[v1.TestMode
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("model name is required"))
 	}
 	model := modelConfigToConfig(mc)
+	if err := validateModelCredentials(model.KeyEnv, model.BaseURL, model.Auth == "oauth"); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
 	if err := model.Validate(mc.Name); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}

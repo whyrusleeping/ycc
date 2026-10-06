@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/whyrusleeping/ycc/internal/credenv"
 )
 
 // shaRe matches a bare hex commit sha (short or full). Show validates against it
@@ -231,7 +233,7 @@ func parseStatusV2(out string) SyncStatus {
 func (r *Repo) Fetch() error {
 	cmd := exec.Command("git", "fetch", "--quiet")
 	cmd.Dir = r.Dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=true", "SSH_ASKPASS=")
+	cmd.Env = append(credenv.Scrub(os.Environ()), "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=true", "SSH_ASKPASS=")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -247,9 +249,7 @@ func (r *Repo) run(args ...string) (string, error) {
 func (r *Repo) runWithEnv(env []string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = r.Dir
-	if len(env) > 0 {
-		cmd.Env = append(os.Environ(), env...)
-	}
+	cmd.Env = append(credenv.Scrub(os.Environ()), env...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {

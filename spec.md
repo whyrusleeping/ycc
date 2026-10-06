@@ -492,9 +492,23 @@ The ignore, Unicode, context, large-result, pagination, error, and cancellation 
 cover the remaining contracts; this is a deterministic tool comparison, not a claim of unperformed
 live-model evaluation.
 
-Read access is unrestricted because shell access already is. Write and Edit are confined by
+Read accepts paths outside the workspace, except the ycc user config/secrets directory and
+daemon token file. Read/Search scopes and Write/Edit reject those locations with symlink-aware
+checks as defense-in-depth, not a boundary against Bash. Write and Edit are otherwise confined by
 resolved filesystem paths to the workspace plus configured trusted write roots. This is an
-accident guardrail, not a security boundary. Write defaults to create-only; replacing an existing
+accident guardrail, not a security boundary.
+
+Model/repository-triggered shell commands (including background and reviewer Bash), repository
+Git commands (including hooks), and Search subprocesses scrub inherited `YCC_TOKEN`,
+`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`, `EXA_API_KEY`, `ANTHROPIC_OAUTH`,
+`OPENAI_OAUTH`, and every configured provider `key_env` name seen in this daemon process, including
+retired configurations. This is a denylist, not an allowlist, to preserve operator tools such as
+gh, ssh-agent, npm registries, and Go proxies. Explicit workspace/worktree environment overrides
+are trusted and applied afterward. Same-uid shells can still read files or
+inspect the daemon: real credential isolation requires a separate uid or container that cannot
+read daemon credentials or process state (proposed task 0432; not implemented).
+
+Write defaults to create-only; replacing an existing
 file requires an explicit overwrite policy and its current full-content SHA-256 revision. Missing,
 invalid, or stale preconditions leave existing content unchanged. Successful file mutations report
 before/after size and line counts plus the resulting revision; Edit additionally reports a bounded,
@@ -670,8 +684,11 @@ default and explicit zero disables that limit. Values must be non-negative. `[re
 when an explicit total-attempt budget is configured (as for rate limits).
 
 API-key values resolve from the environment first and then the machine-local secrets store
-managed by `ycc token`; committed config stores only the key name. Anthropic and OpenAI also
-support subscription OAuth through `ycc login`. Anthropic can also be connected from iOS via
+managed by `ycc token`; committed config stores only the key name. Model RPCs reject `YCC_TOKEN`,
+`ANTHROPIC_OAUTH`, and `OPENAI_OAUTH` as API-key references. Credential-bearing custom base URLs
+must use HTTPS, except HTTP loopback endpoints (`localhost`, 127.0.0.0/8, ::1); Anthropic discovery
+is credential-bearing even without a key reference because it can use stored OAuth.
+Anthropic and OpenAI also support subscription OAuth through `ycc login`. Anthropic can also be connected from iOS via
 Settings → Provider accounts, or the stopped work-loop screen: authenticated begin/complete/cancel
 RPCs create a daemon-owned browser login and exchange the full pasted `code#state`. There is one
 pending attempt per daemon, valid for ten minutes; a new begin supersedes it, and submission

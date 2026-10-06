@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/whyrusleeping/ycc/internal/credenv"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/git"
 	"github.com/whyrusleeping/ycc/internal/notify"
@@ -664,7 +665,7 @@ func (m *Manager) runIntegrationVerify(ws workstream.Workstream, command string)
 	if primary, ok := m.projects.Resolve(ws.Project); ok {
 		wtCfg = m.worktreeConfigFor(primary)
 	}
-	cmd.Env = append(os.Environ(), sortedWorktreeEnv(wtCfg.Env)...)
+	cmd.Env = append(credenv.Scrub(os.Environ()), sortedWorktreeEnv(wtCfg.Env)...)
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() != nil {
 		return string(out), ctx.Err()

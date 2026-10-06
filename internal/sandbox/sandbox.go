@@ -34,6 +34,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/whyrusleeping/ycc/internal/credenv"
 )
 
 // Mechanism identifies which sandbox is in effect.
@@ -231,7 +233,7 @@ func normalizeEnvironment(env []string) []string {
 
 func bootstrapEnvironment() []string {
 	env := make([]string, 0, len(os.Environ())+1)
-	for _, item := range os.Environ() {
+	for _, item := range credenv.Scrub(os.Environ()) {
 		name, _, _ := strings.Cut(item, "=")
 		upper := strings.ToUpper(name)
 		if upper == "PATH" || strings.HasPrefix(upper, "LD_") || strings.HasPrefix(upper, "DYLD_") ||

@@ -24,6 +24,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/whyrusleeping/gollama"
+	"github.com/whyrusleeping/ycc/internal/credenv"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/imagefit"
 	"github.com/whyrusleeping/ycc/internal/jobs"
@@ -1274,7 +1275,7 @@ func materializeReviewTree(ctx context.Context, root, tree, scratch string) erro
 
 func reviewGitEnvironment() []string {
 	env := make([]string, 0, len(os.Environ())+4)
-	for _, item := range os.Environ() {
+	for _, item := range credenv.Scrub(os.Environ()) {
 		if strings.HasPrefix(item, "GIT_") {
 			continue
 		}
@@ -1448,7 +1449,7 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 			// The confined helper opens the private FIFO as FD 3. One byte written
 			// after the final shell exec proves the reviewed command actually started.
 			script = "printf x >&3 || exit 125; exec 3>&-\n" + script
-			commandEnv := append([]string(nil), os.Environ()...)
+			commandEnv := credenv.Scrub(os.Environ())
 			commandEnv = append(commandEnv, ws.Env...)
 			commandEnv = append(commandEnv, scratchEnv...)
 			capability := "unavailable"
@@ -1465,7 +1466,7 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 			cmd, mechanism = sandbox.Command(cctx, ws.Root, scratch, workingDir, signalPath, script, commandEnv)
 		} else {
 			cmd = exec.CommandContext(cctx, "sh", "-c", cmdStr)
-			cmd.Env = append(os.Environ(), ws.Env...)
+			cmd.Env = append(credenv.Scrub(os.Environ()), ws.Env...)
 		}
 		cmd.Dir = workingDir
 		// Run the command in its own process group so cancellation covers ordinary
@@ -1575,9 +1576,7 @@ func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration) (*
 	}
 	cmd := exec.CommandContext(cmdCtx, "sh", "-c", cmdStr)
 	cmd.Dir = ws.Root
-	if len(ws.Env) > 0 {
-		cmd.Env = append(os.Environ(), ws.Env...)
-	}
+	cmd.Env = append(credenv.Scrub(os.Environ()), ws.Env...)
 	capture := newCommandCapture()
 	combined := io.MultiWriter(job.Writer(), capture)
 	cmd.Stdout = combined

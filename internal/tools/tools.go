@@ -7,6 +7,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -14,6 +15,8 @@ import (
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/jobs"
+	"github.com/whyrusleeping/ycc/internal/project"
+	"github.com/whyrusleeping/ycc/internal/secrets"
 	"github.com/whyrusleeping/ycc/internal/workspacelease"
 )
 
@@ -292,13 +295,13 @@ func okResult(content string) *gollama.ToolResult {
 	return &gollama.ToolResult{Content: content}
 }
 
-// Workspace anchors tool file operations to a root directory. Reads are
-// unrestricted (see resolveRead); writes are confined to Root plus any
-// configured WriteRoots (see resolve).
+// Workspace anchors tool file operations to a root directory. Reads accept
+// outside paths except protected credential locations (see resolveRead); writes
+// are confined to Root plus any configured WriteRoots (see resolve).
 type Workspace struct {
 	Root string
-	// Env contains extra KEY=VALUE entries appended to the inherited environment
-	// for foreground and background Bash commands.
+	// Env contains trusted KEY=VALUE overrides appended after credential scrubbing
+	// for shell and Search commands.
 	Env []string
 	// ReviewSnapshot and ReviewTree identify the immutable changeset assigned to a
 	// read-only reviewer. Reviewer Bash exposes them to commands and review reports
@@ -428,6 +431,9 @@ func (w *Workspace) resolve(p string) (string, error) {
 	} else {
 		clean = filepath.Clean(filepath.Join(w.Root, p))
 	}
+	if err := denyCredentialPath(clean); err != nil {
+		return "", err
+	}
 	relToRoot, err := filepath.Rel(w.Root, clean)
 	if err != nil {
 		return "", fmt.Errorf("invalid path %q", p)
@@ -463,20 +469,40 @@ func (w *Workspace) withinWriteRoots(clean string) bool {
 	return false
 }
 
-// resolveRead cleans a user-supplied path for READ access. Reads are
-// UNRESTRICTED: any absolute path is accepted, and relative paths are joined to
-// the workspace root. This deliberately matches reality — worker/coordinator
-// Bash is unrestricted, so a path-confined Read only degraded UX (the model fell
-// back to `cat` for sibling projects and dependency source) without adding any
-// protection. Write/Edit must keep using resolve — writes stay confined.
+// resolveRead accepts paths outside the workspace (including sibling projects
+// and dependency source), except protected ycc credential locations. This deny
+// is defense-in-depth, not a boundary against Bash. Write/Edit use resolve.
 func (w *Workspace) resolveRead(p string) (string, error) {
 	if p == "" {
 		p = "."
 	}
-	if filepath.IsAbs(p) {
-		return filepath.Clean(p), nil
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(w.Root, p)
 	}
-	return filepath.Clean(filepath.Join(w.Root, p)), nil
+	clean := filepath.Clean(p)
+	if err := denyCredentialPath(clean); err != nil {
+		return "", err
+	}
+	return clean, nil
+}
+
+func denyCredentialPath(clean string) error {
+	resolved := evalExisting(clean)
+	if dir, err := os.UserConfigDir(); err == nil {
+		configDir := filepath.Join(dir, "ycc")
+		resolvedDir := evalExisting(configDir)
+		// Check both spellings before following symlinks: files inside the
+		// protected directory may themselves point outside it.
+		if withinRootLexical(clean, configDir) || withinRootLexical(clean, resolvedDir) || withinRootLexical(resolved, resolvedDir) {
+			return fmt.Errorf("path %q is a protected ycc credential location", clean)
+		}
+	}
+	secretPath := secrets.Path()
+	token := filepath.Join(filepath.Dir(project.StateFile()), "daemon-token")
+	if (secretPath != "" && resolved == evalExisting(secretPath)) || clean == filepath.Clean(token) || resolved == evalExisting(token) {
+		return fmt.Errorf("path %q is a protected ycc credential location", clean)
+	}
+	return nil
 }
 
 // withinRoot reports whether clean is contained within root, resolving symlinks
@@ -484,9 +510,11 @@ func (w *Workspace) resolveRead(p string) (string, error) {
 // points elsewhere. Non-existent paths are handled by evalExisting, which
 // resolves the longest existing prefix.
 func withinRoot(clean, root string) bool {
-	cr := evalExisting(clean)
-	rr := evalExisting(root)
-	rel, err := filepath.Rel(rr, cr)
+	return withinRootLexical(evalExisting(clean), evalExisting(root))
+}
+
+func withinRootLexical(clean, root string) bool {
+	rel, err := filepath.Rel(root, clean)
 	if err != nil {
 		return false
 	}

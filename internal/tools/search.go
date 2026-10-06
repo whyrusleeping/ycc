@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/whyrusleeping/gollama"
+	"github.com/whyrusleeping/ycc/internal/credenv"
 )
 
 const (
@@ -260,7 +261,7 @@ func searchCall(ws *Workspace) func(context.Context, any) (*gollama.ToolResult, 
 		// A host ripgrep config must not silently alter the declared Search
 		// semantics. An empty config path disables RIPGREP_CONFIG_PATH even when it
 		// is inherited from the daemon or included in Workspace.Env.
-		cmd.Env = append(append(os.Environ(), ws.Env...), "RIPGREP_CONFIG_PATH=")
+		cmd.Env = append(append(credenv.Scrub(os.Environ()), ws.Env...), "RIPGREP_CONFIG_PATH=")
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
 			return errResult("Search: start ripgrep: %v", err), nil

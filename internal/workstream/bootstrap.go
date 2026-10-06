@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/whyrusleeping/ycc/internal/config"
+	"github.com/whyrusleeping/ycc/internal/credenv"
 )
 
 const (
@@ -188,7 +189,7 @@ func runSetupCommand(dir, command string, cfg config.Worktree) error {
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), sortedEnv(cfg.Env)...)
+	cmd.Env = append(credenv.Scrub(os.Environ()), sortedEnv(cfg.Env)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = 10 * time.Second

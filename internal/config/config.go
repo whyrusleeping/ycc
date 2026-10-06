@@ -21,6 +21,7 @@ import (
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/anthropicauth"
 	"github.com/whyrusleeping/ycc/internal/codex"
+	"github.com/whyrusleeping/ycc/internal/credenv"
 	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/llmhttp"
@@ -1009,7 +1010,14 @@ type Registry struct {
 }
 
 // NewRegistry returns a Registry over cfg.
-func NewRegistry(cfg *Config) *Registry { return &Registry{cfg: cfg} }
+func NewRegistry(cfg *Config) *Registry {
+	if cfg != nil {
+		for _, model := range cfg.Models {
+			credenv.Register(model.KeyEnv)
+		}
+	}
+	return &Registry{cfg: cfg}
+}
 
 // SetPath records the config file path used when a mutation is persisted
 // (persist=true). It is set once at startup; an empty path disables persistence.
@@ -1498,6 +1506,7 @@ func (r *Registry) UpsertModel(name string, m Model, persist bool) error {
 	if r.cfg.Models == nil {
 		r.cfg.Models = make(map[string]Model)
 	}
+	credenv.Register(m.KeyEnv)
 	r.cfg.Models[name] = m
 	if persist {
 		if err := r.persistLocked(); err != nil {

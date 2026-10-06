@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/whyrusleeping/ycc/internal/credenv"
 )
 
 // Baseline is an immutable snapshot of HEAD, the index, and the visible
@@ -916,7 +918,7 @@ func (r *Repo) runHook(env []string, name string, args ...string) error {
 	}
 	cmd := exec.Command(path, args...)
 	cmd.Dir = strings.TrimSpace(root)
-	cmd.Env = append(os.Environ(), env...)
+	cmd.Env = append(credenv.Scrub(os.Environ()), env...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {

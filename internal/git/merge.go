@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/whyrusleeping/ycc/internal/credenv"
 )
 
 // TrialMergeResult reports the outcome of a non-mutating trial merge.
@@ -58,6 +60,7 @@ func (r *Repo) runAllow(dir string, args ...string) (stdout, stderr string, err 
 		dir = r.Dir
 	}
 	cmd.Dir = dir
+	cmd.Env = credenv.Scrub(os.Environ())
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	err = cmd.Run()
