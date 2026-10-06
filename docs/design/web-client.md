@@ -64,7 +64,10 @@ resume cursor.
 
 Unary reads are cached per query, refreshed on window focus, and invalidated by the mutations and
 session events that change them. Mutations replace local state with the daemon's canonical response
-rather than trusting optimistic edits. Unread state is a client-side watermark per session kept in
+rather than trusting optimistic edits. `UpdateTask` carries no revision, so the task editor sends
+only the fields the user changed and re-reads the task just before saving: a field that also
+changed on the daemon since editing began refuses the save (offering overwrite or discard), while
+non-overlapping changes merge. Open drafts are kept per task for the life of the tab. Unread state is a client-side watermark per session kept in
 browser storage, matching the iOS read store.
 
 ### Session input and pictures

@@ -166,10 +166,13 @@ export function SessionView({
   project,
   sessionId,
   title,
+  focusTasks = [],
 }: {
   project: string;
   sessionId: string;
   title: string;
+  /** Backlog tasks the session is focused on (from its history summary). */
+  focusTasks?: readonly string[];
 }) {
   const controller = useSessionController(project, sessionId);
   const snap = useSessionSnapshot(controller);
@@ -225,6 +228,21 @@ export function SessionView({
           <div className="session-meta">
             <span className={`status status-${status.tone}`}>{status.text}</span>
             {project && <span>{project}</span>}
+            {focusTasks.map((id) => {
+              const open = inspector.item?.kind === "task" && inspector.item.taskId === id && inspector.item.project === project;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  className={`chip task-chip${open ? " active" : ""}`}
+                  title={`Task ${id} — open beside the transcript`}
+                  aria-pressed={open}
+                  onClick={() => (open ? inspector.close() : inspector.open({ kind: "task", project, taskId: id }))}
+                >
+                  task {id}
+                </button>
+              );
+            })}
             {snap.coordinatorModel && <span>{snap.coordinatorModel}</span>}
             {ctx && <span>{ctx} ctx</span>}
             <span className="mono">{sessionId}</span>

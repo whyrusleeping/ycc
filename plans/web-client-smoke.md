@@ -17,6 +17,10 @@ a chat session whose reply contains markdown (a table, a task list, fenced Go co
 an `https:` link, a `javascript:` link, and raw `<script>`/`<img onerror>` HTML), a session that
 ran Bash (one failing command), Read, Edit, and Write, and a long work session (several hundred
 rows, so it has unloaded earlier pages) with a commit, a review verdict, and a `finish` report.
+For the backlog checks, have a scratch project whose backlog holds proposed, todo, in-progress,
+blocked, and done tasks with dependencies (one task blocked by an unfinished dependency, one task
+body with a work log and a relative link to a sibling task file such as `0002-slug.md`), and a
+session whose task focus names one of them.
 
 ```
 YCC_TOKEN=<token> ycc daemon --web --addr 127.0.0.1:8791
@@ -97,7 +101,42 @@ YCC_TOKEN=<token> ycc daemon --web --addr 127.0.0.1:8791
     the match, scrolls it into view, and opens a folded row it lands in. Enter steps to older
     matches, Shift+Enter to newer ones, wrapping once the whole history is loaded; Esc closes it and
     clears the highlights.
-18. Repeat a few steps with the system in dark mode.
+18. Backlog browsing. With "All projects" selected, the sidebar's Backlog asks which project (last
+    viewed first); a scoped project opens `/p/<project>/backlog` directly, and the project switcher
+    follows to another project's backlog. The table hides done tasks until "Show done"; status
+    chips, "Actionable only" (todo or in-progress tasks whose dependencies are done), and the text
+    filter (id, title, status, or a dependency id) narrow it; the count reads "N of M tasks".
+    Column headers sort both ways (status order is active work first, done last). Blocked rows say
+    which dependencies block them; proposed rows read "needs promotion".
+19. Backlog keyboard. `j`/`k` or the arrow keys move the row cursor, Enter opens the task at
+    `/p/<project>/backlog/<id>`, `/` focuses the filter, Esc clears the filter or closes the task.
+    Typing `j` in the filter (or any text field) only types.
+20. Task detail. The pane shows status, priority, actionable/blocked state, dependencies as links
+    (with their titles and statuses), spec refs, dates, the file path (Copy), sessions focused on
+    the task, the markdown body with raw HTML shown literally, and the work log as its own
+    section. Dependency links and a relative link to a sibling task file open that task. Reload on
+    a task URL returns to it.
+21. Status changes. Promote a proposed task from its table row and another from the detail pane
+    ("Promote to todo"), and change a status with the status menu while a session in the same
+    project is running: nothing waits on the session, and `ycc task show <id> --project <p>` shows
+    the new status.
+22. Editing. Edit a task's title, priority, dependencies, spec refs, and body; Save (or
+    Ctrl/Cmd+Enter) shows "Saved task …", the pane shows the daemon's canonical task, and
+    `ycc task show` matches. Clear the title and save: "Title is required." and the body draft is
+    intact. While editing the body, hand-edit the same task's body on disk and save: a warning says
+    the task changed (body) and the draft is kept; switch to another task and back, and reload —
+    the draft is still there; "Overwrite with my draft" saves it ("Discard my draft, load theirs"
+    drops it instead). Edit only the title while the file's body changes on disk: the save merges
+    (your title, their body).
+23. New task and quick capture. "+ New task" refuses a blank title, then creates the task and opens
+    it; `ycc task list --project <p>` lists it. Quick capture (button, or Alt+N / ⌥N from any page)
+    streams the capture agent's progress and offers "Open task" for the created task; a vague
+    description gets one clarifying question whose answer creates the task. Running sessions are
+    not disturbed.
+24. Session links. A session row's focus-task chip opens that task in the backlog while the rest of
+    the row still opens the session; in a session, the header's "task N" chip opens the task in the
+    inspector beside the transcript, and a dependency link there swaps the inspector to that task.
+25. Repeat a few steps with the system in dark mode.
 
 ## Pass condition
 

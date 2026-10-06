@@ -15,6 +15,7 @@ import {
   relativeTime,
   sections,
   taskChipLabels,
+  taskIds,
   type FeedRow,
 } from "./feed";
 
@@ -47,29 +48,40 @@ export function SessionRowView({
   const chips = taskChipLabels(s);
   const when = relativeTime(s.lastActivity || s.startedAt, now);
   const navigate = useNavigate();
+  const ids = taskIds(s);
+  // The row is one stretched link (its ::after covers the row) so the focus
+  // task chips can be links of their own without nesting anchors.
   const link = (
-    <Link
-      to={paths.session(row.project, s.sessionId)}
-      className={`session-row variant-${variant}${active ? " active" : ""}${needsAnswer(s) ? " needs" : ""}`}
-      aria-current={active ? "page" : undefined}
-    >
+    <div className={`session-row variant-${variant}${active ? " active" : ""}${needsAnswer(s) ? " needs" : ""}`}>
       <div className="session-row-title">
         {needsAnswer(s) && (
           <span className="needs-marker" title="Needs an answer" aria-label="needs answer">
             ●
           </span>
         )}
-        <span className="title-text">{displayTitle(s)}</span>
+        <Link
+          to={paths.session(row.project, s.sessionId)}
+          className="session-row-link title-text"
+          aria-current={active ? "page" : undefined}
+        >
+          {displayTitle(s)}
+        </Link>
       </div>
       <div className="session-row-meta">
         {lifecycle && <span className={`badge badge-${lifecycle}`}>{lifecycle}</span>}
         {s.live && <span className="badge badge-live">live</span>}
         {showProject && project && <span className="project">{project}</span>}
-        {chips.map((c) => (
-          <span key={c} className="chip">
-            {c}
-          </span>
-        ))}
+        {chips.map((c) =>
+          ids.includes(c) ? (
+            <Link key={c} to={paths.task(row.project, c)} className="chip task-chip" title={`Open task ${c}`}>
+              {c}
+            </Link>
+          ) : (
+            <span key={c} className="chip" title={ids.slice(2).join(", ")}>
+              {c}
+            </span>
+          ),
+        )}
         {variant === "page" && metadataItems(s).map((m) => <span key={m}>{m}</span>)}
         {variant === "sidebar" && (
           <span>
@@ -78,7 +90,7 @@ export function SessionRowView({
         )}
         {when && <span className="when">{when}</span>}
       </div>
-    </Link>
+    </div>
   );
   if (s.live) return link;
   // Persisted sessions can be re-opened in place: navigate at once so the

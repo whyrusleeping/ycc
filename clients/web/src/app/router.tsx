@@ -1,6 +1,7 @@
 // Route table. Later phases add their surfaces here (and helpers in paths.ts).
 import { createBrowserRouter } from "react-router";
 import {
+  BacklogRoutePage,
   HomePage,
   NewSessionPage,
   NotFoundPage,
@@ -25,7 +26,9 @@ export function makeRouter() {
         { path: "p/:project", element: <ProjectPage /> },
         { path: "p/:project/new", element: <NewSessionPage /> },
         { path: "p/:project/s/:sessionId", element: <SessionPage /> },
-        ...PROJECT_SECTIONS.map((s) => ({
+        { path: "backlog/:taskId?", element: <BacklogRoutePage /> },
+        { path: "p/:project/backlog/:taskId?", element: <BacklogRoutePage /> },
+        ...PROJECT_SECTIONS.filter((s) => s.key !== "backlog").map((s) => ({
           path: `p/:project/${s.key}`,
           element: <SectionPlaceholder section={s.key} />,
         })),

@@ -1,8 +1,11 @@
 // File paths in the transcript. Until the file viewer lands (backlog 0415)
 // they render as copyable text: clicking copies the path. A FileLinksProvider
 // higher in the tree can supply `open`, which turns every resolvable reference
-// into a link to the viewer without touching the call sites.
+// into a link to the viewer without touching the call sites, and `route`,
+// which links references that name another surface (task bodies link their
+// sibling backlog task files to the task).
 import { createContext, useContext, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { Link } from "react-router";
 import { copyText } from "../../ui/copy";
 import { fromLink, type FileLinkContext, type FileReference } from "./fileReference";
 
@@ -10,6 +13,11 @@ export interface FileLinkHandler {
   context: FileLinkContext;
   /** Open a reference in the file viewer; absent until that surface exists. */
   open?: (ref: FileReference) => void;
+  /**
+   * An in-app route for references that name another surface (a backlog
+   * task file opens the task); checked before `open`, null falls through.
+   */
+  route?: (ref: FileReference) => string | null;
 }
 
 const FileLinks = createContext<FileLinkHandler | null>(null);
@@ -46,7 +54,15 @@ export function FileRef({
   }, []);
   const label = children ?? path;
   const cls = `file-ref${code ? " code" : ""}${copied ? " copied" : ""}`;
-  const resolved = links?.open ? (reference ?? fromLink(path, links.context)) : null;
+  const resolved = links?.open || links?.route ? (reference ?? fromLink(path, links.context)) : null;
+  const to = resolved && links?.route ? links.route(resolved) : null;
+  if (to) {
+    return (
+      <Link to={to} className={`${cls} linked`} title={`Open ${path}`} onClick={(e) => e.stopPropagation()}>
+        {label}
+      </Link>
+    );
+  }
   if (links?.open && resolved) {
     const open = links.open;
     return (

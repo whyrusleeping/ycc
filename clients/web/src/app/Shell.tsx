@@ -1,7 +1,7 @@
 // The desktop shell: sidebar (project switcher, session list, navigation),
 // main pane (the routed surface), and the closable, resizable inspector.
 import { Link, NavLink, Outlet, useLocation, useNavigate, useParams } from "react-router";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useSessionFeed } from "../api/queries";
 import { InspectorPane } from "../features/inspector/InspectorPane";
 import { useInspector } from "../features/inspector/inspector";
@@ -12,6 +12,8 @@ import { PROJECT_SECTIONS, paths } from "./paths";
 import { useScope } from "./scope";
 import { authStore, getToken, setToken } from "../api/auth";
 import { useQueryClient } from "@tanstack/react-query";
+import { useAction, useActionShortcuts, type AppAction } from "./actions";
+import { CAPTURE_SHORTCUT_LABEL, CaptureDialog, IS_MAC, openCapture } from "../features/backlog/CaptureDialog";
 
 function ProjectSwitcher() {
   const { scope, setScope } = useScope();
@@ -34,6 +36,8 @@ function ProjectSwitcher() {
           // On a list page, follow the scope; elsewhere keep the current view.
           const onList = location.pathname === "/" || /^\/p\/[^/]+\/?$/.test(location.pathname);
           if (onList) navigate(next ? paths.project(next) : paths.home());
+          // On the backlog, show the new project's backlog (or ask which one).
+          else if (/^(\/p\/[^/]+)?\/backlog(\/|$)/.test(location.pathname)) navigate(paths.backlog(next));
         }}
       >
         <option value="">All projects · Recent</option>
@@ -82,17 +86,19 @@ function Sidebar() {
         <SessionList scope={scope} activeSessionId={sessionId} variant="sidebar" />
       </div>
       <div className="sidebar-nav">
-        {PROJECT_SECTIONS.map((s) =>
-          scope ? (
-            <NavLink key={s.key} to={paths.section(scope, s.key)} className="nav-item">
+        {PROJECT_SECTIONS.map((s) => {
+          // The backlog asks for a project when unscoped; other sections need one.
+          const to = scope ? paths.section(scope, s.key) : s.key === "backlog" ? paths.backlog(null) : null;
+          return to ? (
+            <NavLink key={s.key} to={to} className="nav-item">
               {s.label}
             </NavLink>
           ) : (
             <span key={s.key} className="nav-item disabled" title="Choose a project first">
               {s.label}
             </span>
-          ),
-        )}
+          );
+        })}
         <NavLink to={paths.settings()} className="nav-item">
           Settings
         </NavLink>
@@ -114,8 +120,29 @@ function Sidebar() {
   );
 }
 
+/** App-wide actions the shell owns (the command palette lists the same registry). */
+function useShellActions() {
+  const { scope } = useScope();
+  const { project } = useParams();
+  const target = project ?? scope;
+  const capture = useMemo<AppAction>(
+    () => ({
+      id: "backlog.capture",
+      title: "Quick capture a backlog item…",
+      group: "Backlog",
+      // Option+letter types characters on macOS: leave text fields alone there.
+      shortcut: { code: "KeyN", alt: true, label: CAPTURE_SHORTCUT_LABEL, inEditable: !IS_MAC },
+      run: () => openCapture(target ?? null),
+    }),
+    [target],
+  );
+  useAction(capture);
+  useActionShortcuts();
+}
+
 export function Shell() {
   const inspector = useInspector();
+  useShellActions();
   useEffect(() => {
     // A file dropped outside a drop zone must not navigate the tab to it.
     const guard = (e: DragEvent) => {
@@ -145,6 +172,7 @@ export function Shell() {
         <Outlet />
       </main>
       <InspectorPane />
+      <CaptureDialog />
       <Toasts />
     </div>
   );

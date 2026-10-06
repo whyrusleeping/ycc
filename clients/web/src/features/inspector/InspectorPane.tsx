@@ -11,6 +11,7 @@ import { FileRef } from "../files/FileRef";
 import { CopyButton } from "../../ui/CopyButton";
 import { reportPresentation } from "../session/report";
 import { SessionSettingsPanel } from "../session/SessionSettings";
+import { TaskDetailView } from "../backlog/TaskDetail";
 
 export function InspectorPane() {
   const { item, close } = useInspector();
@@ -36,6 +37,9 @@ export function InspectorPane() {
               picture={{ attachmentId: item.attachmentId, filename: item.filename, mediaType: item.mediaType }}
             />
           )}
+          {item.kind === "task" && (
+            <TaskDetailView key={`${item.project}\u0000${item.taskId}`} project={item.project} taskId={item.taskId} variant="inspector" />
+          )}
           {item.kind === "sessionSettings" && (
             <SessionSettingsPanel key={`${item.project}\u0000${item.sessionId}`} project={item.project} sessionId={item.sessionId} />
           )}
@@ -57,6 +61,8 @@ function inspectorTitle(item: InspectorItem): string {
       return item.filename || "Picture";
     case "sessionSettings":
       return "Session settings";
+    case "task":
+      return `Task ${item.taskId}`;
   }
 }
 

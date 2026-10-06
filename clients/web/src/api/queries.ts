@@ -4,9 +4,10 @@
 import { QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import { Code, ConnectError } from "@connectrpc/connect";
-import type { ProjectInfo } from "../gen/ycc/v1/ycc_pb";
+import type { BacklogTaskSummary, ProjectInfo, TaskDetail } from "../gen/ycc/v1/ycc_pb";
 import { client, errorMessage, isUnauthorized } from "./client";
 import { buildFeed, historyTargets, mergePage, type HistoryLoad } from "../features/sessions/feed";
+import { upsertSummary } from "../features/backlog/model";
 import { toast } from "../ui/toast";
 
 export const HISTORY_PAGE = 50;
@@ -19,6 +20,10 @@ export const queryKeys = {
   sessionUsage: (project: string) => ["usage", "session-model", project] as const,
   sessionFeed: (targets: string[]) => ["sessionFeed", targets] as const,
   sessionFeedAll: ["sessionFeed"] as const,
+  /** ListBacklog for a project ("" resolves the sole/default project server-side). */
+  backlog: (project: string) => ["backlog", project] as const,
+  /** GetTask. */
+  task: (project: string, id: string) => ["task", project, id] as const,
 };
 
 export function makeQueryClient(): QueryClient {
@@ -133,4 +138,40 @@ export function useSessionFeed(scope: string | null) {
     loadOlder,
     loadingOlder,
   };
+}
+
+/** ListBacklog: the project's task summaries with readiness. */
+export function useBacklog(project: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.backlog(project),
+    enabled,
+    refetchInterval: 30_000,
+    queryFn: async ({ signal }) => (await client.listBacklog({ project }, { signal })).tasks,
+  });
+}
+
+/** GetTask: one task's full detail (frontmatter and markdown body). */
+export function useTask(project: string, id: string) {
+  return useQuery({
+    queryKey: queryKeys.task(project, id),
+    enabled: id !== "",
+    queryFn: async ({ signal }) => {
+      const t = (await client.getTask({ project, id }, { signal })).task;
+      if (!t) throw new Error(`Task ${id} not found`);
+      return t;
+    },
+  });
+}
+
+/**
+ * Install a mutation's canonical task detail: it replaces the cached task and
+ * its backlog row at once, then the list revalidates (a status change can flip
+ * other rows' readiness).
+ */
+export function installTask(qc: QueryClient, project: string, detail: TaskDetail) {
+  qc.setQueryData(queryKeys.task(project, detail.id), detail);
+  qc.setQueryData<BacklogTaskSummary[]>(queryKeys.backlog(project), (list) => (list ? upsertSummary(list, detail) : list));
+  void qc.invalidateQueries({ queryKey: queryKeys.backlog(project) });
+  // Other tasks' readiness may follow this one; refresh them when next shown.
+  void qc.invalidateQueries({ queryKey: ["task", project], refetchType: "none" });
 }

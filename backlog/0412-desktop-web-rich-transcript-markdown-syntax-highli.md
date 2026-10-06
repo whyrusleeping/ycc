@@ -1,7 +1,7 @@
 ---
 id: "0412"
 title: 'Desktop web: rich transcript — markdown, syntax highlighting, tool previews, diffs, search'
-status: in_progress
+status: done
 priority: 3
 created: "2026-10-02"
 updated: "2026-10-05"

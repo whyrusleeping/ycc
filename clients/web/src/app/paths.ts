@@ -2,7 +2,7 @@
 // and bookmarks work; build links only through these helpers.
 const enc = encodeURIComponent;
 
-/** Project-scoped surfaces that later phases fill in (placeholders for now). */
+/** Project-scoped sidebar surfaces (the backlog is live; later phases fill in the rest). */
 export const PROJECT_SECTIONS = [
   { key: "backlog", label: "Backlog" },
   { key: "loop", label: "Work loop" },
@@ -21,5 +21,9 @@ export const paths = {
     project ? `/p/${enc(project)}/s/${enc(sessionId)}` : `/s/${enc(sessionId)}`,
   newSession: (project?: string | null) => (project ? `/p/${enc(project)}/new` : "/new"),
   section: (project: string, section: ProjectSection) => `/p/${enc(project)}/${section}`,
+  /** The backlog browser; unscoped ("" / null) asks for a project (or uses the sole/default one). */
+  backlog: (project?: string | null) => (project ? `/p/${enc(project)}/backlog` : "/backlog"),
+  task: (project: string, id: string) =>
+    project ? `/p/${enc(project)}/backlog/${enc(id)}` : `/backlog/${enc(id)}`,
   settings: () => "/settings",
 };
