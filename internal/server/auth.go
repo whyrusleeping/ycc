@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"net/http"
 
 	"connectrpc.com/connect"
 )
@@ -18,6 +19,22 @@ type authInterceptor struct{ token string }
 
 // NewAuthInterceptor returns a bearer-token Connect interceptor.
 func NewAuthInterceptor(token string) connect.Interceptor { return authInterceptor{token: token} }
+
+// RequireBearer checks auth before Connect reads or decompresses request bodies.
+// The interceptor remains a second layer after decoding. An empty token disables auth.
+func RequireBearer(token string, next http.Handler) http.Handler {
+	auth := authInterceptor{token: token}
+	ew := connect.NewErrorWriter()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !auth.ok(r.Header.Get("Authorization")) {
+			// ErrorWriter does not read the body; unknown protocols also get
+			// Connect-shaped JSON, while streaming/gRPC get their wire format.
+			_ = ew.Write(w, r, connect.NewError(connect.CodeUnauthenticated, errors.New("invalid or missing bearer token")))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 func (a authInterceptor) ok(auth string) bool {
 	if a.token == "" {

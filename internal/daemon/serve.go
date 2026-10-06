@@ -16,8 +16,6 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/docs"
@@ -127,9 +125,10 @@ func buildHandler(o Options) (http.Handler, *session.Manager, error) {
 	path, handler := yccv1connect.NewSessionServiceHandler(
 		srv,
 		connect.WithInterceptors(server.NewAuthInterceptor(o.Token), latency),
+		connect.WithReadMaxBytes(rpcReadMaxBytes),
 	)
-	mux.Handle(path, handler)
-	mux.Handle("GET /debug/latency", latency.LatencyHandler(o.Token))
+	mux.Handle(path, server.RequireBearer(o.Token, handler))
+	mux.Handle("GET /debug/latency", server.RequireBearer(o.Token, latency.LatencyHandler(o.Token)))
 	// Optionally serve the embedded web client at "/". http.ServeMux
 	// longest-prefix routing keeps RPC traffic on the Connect handler's
 	// "/ycc.v1.SessionService/" prefix; everything else falls to the asset
@@ -138,7 +137,29 @@ func buildHandler(o Options) (http.Handler, *session.Manager, error) {
 	if o.Web {
 		mux.Handle("/", web.Handler())
 	}
-	return h2c.NewHandler(mux, &http2.Server{}), mgr, nil
+	return mux, mgr, nil
+}
+
+// Allow four 5 MiB images base64-encoded in JSON (~27 MiB), plus message metadata.
+const rpcReadMaxBytes = 32 << 20
+
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	protocols := new(http.Protocols)
+	protocols.SetHTTP1(true)
+	protocols.SetHTTP2(true)
+	// Native prior-knowledge h2c avoids buffering HTTP/1 Upgrade bodies.
+	protocols.SetUnencryptedHTTP2(true)
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		Protocols:         protocols,
+		HTTP2:             &http.HTTP2Config{MaxConcurrentStreams: 250},
+		ReadHeaderTimeout: 10 * time.Second,
+		// Also inherited by HTTP/2; active Subscribe streams are not idle.
+		IdleTimeout:    3 * time.Minute,
+		MaxHeaderBytes: 64 << 10,
+		// No ReadTimeout or WriteTimeout: Subscribe streams may be long-lived.
+	}
 }
 
 // Serve builds the registry, session manager, and Connect handler and serves
@@ -161,7 +182,7 @@ func Serve(o Options) error {
 		}
 	}
 
-	httpSrv := &http.Server{Addr: o.Addr, Handler: handler}
+	httpSrv := newHTTPServer(o.Addr, handler)
 	log.Printf("ycc daemon listening on %s (workspace=%s tls=%v)", o.Addr, o.Workspace, usingTLS)
 	if usingTLS {
 		return httpSrv.ListenAndServeTLS(o.TLSCert, o.TLSKey)
@@ -196,7 +217,7 @@ func StartInProcess(o Options) (*InProcess, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listen ephemeral: %w", err)
 	}
-	httpSrv := &http.Server{Handler: handler}
+	httpSrv := newHTTPServer(o.Addr, handler)
 	ip := &InProcess{
 		Addr:    "http://" + ln.Addr().String(),
 		httpSrv: httpSrv,

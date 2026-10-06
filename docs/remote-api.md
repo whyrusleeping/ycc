@@ -48,12 +48,17 @@ Send the token on **every** request (unary and streaming):
 Authorization: Bearer <token>
 ```
 
-An unauthenticated or wrong-token request is rejected with **HTTP 401** and a
-Connect error JSON body, on unary *and* streaming RPCs alike:
+Bearer auth is checked before reading or decompressing request bodies. An
+unauthenticated or wrong-token unary request is rejected with **HTTP 401** and a
+Connect error JSON body (streaming/gRPC requests use their protocol's error framing):
 
 ```json
 {"code":"unauthenticated","message":"invalid or missing bearer token"}
 ```
+
+RPC request messages are limited to **32 MiB**, including after decompression;
+larger messages receive `resource_exhausted`. This accommodates four 5 MiB images
+base64-encoded in JSON plus message metadata.
 
 ### Anthropic subscription login from a remote client
 
@@ -155,7 +160,8 @@ An `http://` daemon speaks HTTP/2 cleartext (**h2c**), but the handler also acce
 plain **HTTP/1.1** — both unary and streaming responses work over HTTP/1.1, which is
 what makes `curl` (and any HTTP client) usable without HTTP/2 negotiation. Configure
 `--tls-cert`/`--tls-key` and use `https://` when you want transport encryption
-outside a trusted tailnet.
+outside a trusted tailnet. Cleartext HTTP/2 uses prior knowledge; HTTP/1.1
+`Upgrade: h2c` negotiation is not supported.
 
 ---
 
