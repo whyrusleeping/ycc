@@ -46,6 +46,8 @@ interface InspectorState {
   back: () => boolean;
   canGoBack: boolean;
   close: () => void;
+  /** Close, or re-open what was last closed; false when there is nothing to show. */
+  toggle: () => boolean;
   width: number;
   setWidth: (w: number) => void;
 }
@@ -77,6 +79,20 @@ export function InspectorProvider({ children }: { children: ReactNode }) {
     setStack((s) => s.slice(0, -1));
     return true;
   }, []);
+  const closed = useRef<InspectorItem[]>([]);
+  const close = useCallback(() => {
+    if (backRef.current.length) closed.current = backRef.current;
+    setStack([]);
+  }, []);
+  const toggle = useCallback(() => {
+    if (backRef.current.length) {
+      close();
+      return true;
+    }
+    if (!closed.current.length) return false;
+    setStack(closed.current);
+    return true;
+  }, [close]);
   const [width, setWidthState] = useState(initialWidth);
   const setWidth = useCallback((w: number) => {
     const clamped = Math.max(MIN_WIDTH, Math.min(w, Math.round(window.innerWidth * 0.7)));
@@ -88,8 +104,8 @@ export function InspectorProvider({ children }: { children: ReactNode }) {
     }
   }, []);
   const value = useMemo(
-    () => ({ item, open, push, back, canGoBack: stack.length > 1, close: () => setStack([]), width, setWidth }),
-    [item, open, push, back, stack.length, width, setWidth],
+    () => ({ item, open, push, back, canGoBack: stack.length > 1, close, toggle, width, setWidth }),
+    [item, open, push, back, stack.length, close, toggle, width, setWidth],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

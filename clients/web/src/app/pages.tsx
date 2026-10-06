@@ -21,6 +21,7 @@ import { UsagePage } from "../features/usage/UsagePage";
 import { lastViewedProject } from "./memory";
 import { paths } from "./paths";
 import { useScope } from "./scope";
+import { useDocumentTitle } from "./title";
 
 /** `/`: the daemon-wide Recent sessions page. */
 export function HomePage() {
@@ -65,12 +66,7 @@ export function SessionPage() {
   const summary = feed?.rows.find((r) => r.session.sessionId === sessionId)?.session;
   const title = summary ? displayTitle(summary) : sessionId;
   useEffect(() => lastViewedProject.set(project), [project]);
-  useEffect(() => {
-    document.title = `${title} · ycc`;
-    return () => {
-      document.title = "ycc";
-    };
-  }, [title]);
+  useDocumentTitle(title);
   const focus = useMemo(() => (summary ? taskIds(summary) : []), [summary]);
   return (
     <SessionView key={`${project}\u0000${sessionId}`} project={project} sessionId={sessionId} title={title} focusTasks={focus} />
@@ -80,22 +76,8 @@ export function SessionPage() {
 /** `/new` and `/p/:project/new`: start a session (asks for the project when unscoped). */
 export function NewSessionPage() {
   const { project } = useParams();
-  useEffect(() => {
-    document.title = "New session · ycc";
-    return () => {
-      document.title = "ycc";
-    };
-  }, []);
+  useDocumentTitle("New session");
   return <NewSession key={project ?? ""} routeProject={project ?? null} />;
-}
-
-function useDocumentTitle(title: string) {
-  useEffect(() => {
-    document.title = `${title} · ycc`;
-    return () => {
-      document.title = "ycc";
-    };
-  }, [title]);
 }
 
 /**

@@ -5,13 +5,14 @@
 // user-maintained frontmatter and body. A failed save keeps the draft and
 // shows why; a successful one replaces local state with the daemon's response.
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 import type { TaskDetail } from "../../gen/ycc/v1/ycc_pb";
 import { client, errorMessage, isUnauthorized } from "../../api/client";
 import { authStore } from "../../api/auth";
 import { installTask, queryKeys, useBacklog, useProjects, useSessionFeed, useTask } from "../../api/queries";
 import { paths } from "../../app/paths";
+import { useAction, type AppAction } from "../../app/actions";
 import { Markdown } from "../markdown/Markdown";
 import { FileLinksProvider, type FileLinkHandler } from "../files/FileRef";
 import { useInspector } from "../inspector/inspector";
@@ -143,6 +144,37 @@ export function TaskDetailView({
     draftStore.delete(project, id);
     setOpen(null);
   };
+
+  // Palette actions for the task on screen (the latest handlers, stable registrations).
+  const latest = useRef({ startWork, beginEdit, setStatus });
+  latest.current = { startWork, beginEdit, setStatus };
+  const liveStatus = (task ?? summary)?.status.toLowerCase() ?? "";
+  const canStart = !!task && liveStatus !== "done" && liveStatus !== "proposed" && !starting;
+  const canEdit = !!task && !open;
+  useAction(
+    useMemo<AppAction | null>(
+      () =>
+        canStart
+          ? { id: `task.startWork:${project}:${id}`, title: `Start work on task ${id}`, group: "Backlog", keywords: "session work", run: () => task && void latest.current.startWork(task) }
+          : null,
+      [canStart, project, id, task],
+    ),
+  );
+  useAction(
+    useMemo<AppAction | null>(
+      () => (canEdit ? { id: `task.edit:${project}:${id}`, title: `Edit task ${id}`, group: "Backlog", run: () => latest.current.beginEdit() } : null),
+      [canEdit, project, id],
+    ),
+  );
+  useAction(
+    useMemo<AppAction | null>(
+      () =>
+        liveStatus === "proposed"
+          ? { id: `task.promote:${project}:${id}`, title: `Promote task ${id} to todo`, group: "Backlog", keywords: "accept", run: () => void latest.current.setStatus("todo") }
+          : null,
+      [liveStatus, project, id],
+    ),
+  );
 
   if (q.isError && !task) {
     const notFound = /not found|no such/i.test(errorMessage(q.error));

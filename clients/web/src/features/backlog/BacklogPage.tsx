@@ -3,13 +3,14 @@
 // close the task), and the selected task's detail beside it. The URL carries
 // the open task (`/p/<project>/backlog/<id>`).
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import type { BacklogTaskSummary } from "../../gen/ycc/v1/ycc_pb";
 import { errorMessage } from "../../api/client";
 import { queryKeys, useBacklog } from "../../api/queries";
 import { paths } from "../../app/paths";
 import { isEditableTarget } from "../../app/actions";
+import { useIntent } from "../../app/intents";
 import { CAPTURE_SHORTCUT_LABEL, openCapture } from "./CaptureDialog";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { changeTaskStatus, TaskDetailView } from "./TaskDetail";
@@ -51,6 +52,11 @@ const COLUMNS: { key: SortKey; label: string; className: string; title?: string 
   },
 ];
 
+/** The intent key that asks a project's backlog to open "New task" (palette). */
+export function backlogIntentKey(project: string) {
+  return `backlog:${project}`;
+}
+
 export function BacklogPage({ project, taskId }: { project: string; taskId: string | null }) {
   const backlog = useBacklog(project);
   const qc = useQueryClient();
@@ -64,6 +70,12 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
   const filterRef = useRef<HTMLInputElement>(null);
   const tableRef = useRef<HTMLTableSectionElement>(null);
   const openId = taskId ? normalizeTaskId(taskId) : null;
+  useIntent(
+    backlogIntentKey(project),
+    useCallback((what: string) => {
+      if (what === "newTask") setCreating(true);
+    }, []),
+  );
 
   useEffect(() => {
     viewMemory.set(project, { filter, sort });

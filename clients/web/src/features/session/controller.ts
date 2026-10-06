@@ -41,6 +41,8 @@ export interface SessionSnapshot {
   contextTokens: number | null;
   rolloverAvailable: boolean;
   cursor: number;
+  /** Daemon timestamp of the newest folded event (read marks record it). */
+  lastEventTimestamp: string;
   conn: ConnState;
   failure: string | null;
   mode: SessionMode;
@@ -197,6 +199,7 @@ export class SessionController {
       contextTokens: p.contextTokens,
       rolloverAvailable: p.rolloverAvailable,
       cursor: p.lastPersistedSeq,
+      lastEventTimestamp: p.lastEventTimestamp,
       conn: this.conn,
       failure: this.failure,
       mode: this.mode,

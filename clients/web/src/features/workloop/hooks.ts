@@ -3,9 +3,13 @@
 // ends, and a session-list refresh when a loop moves to its next session.
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef } from "react";
+import { useNavigate } from "react-router";
 import type { WorkLoopInfo } from "../../gen/ycc/v1/ycc_pb";
 import { queryKeys, useWorkLoops } from "../../api/queries";
 import { toast } from "../../ui/toast";
+import { paths } from "../../app/paths";
+import { showNotification, userAway } from "../notify/notifier";
+import { loopNeedsAnthropicReconnect } from "../settings/anthropic";
 import { currentSessionId, finishAnnouncement, loopSessionIds } from "./model";
 
 /** Session ids any project's loop ran or is running. */
@@ -20,10 +24,14 @@ export function useLoopSessionIds(): Set<string> {
   }, [key]);
 }
 
-/** Announce finished loops and keep the session lists in step with loops (mounted once by the shell). */
+/**
+ * Announce finished loops (a toast, and a browser notification when the user
+ * is away) and keep the session lists in step with loops (mounted once by the shell).
+ */
 export function useLoopWatcher() {
   const loops = useWorkLoops();
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const seen = useRef(new Map<string, WorkLoopInfo | null>());
   useEffect(() => {
     for (const { project, loop } of loops) {
@@ -33,11 +41,22 @@ export function useLoopWatcher() {
       seen.current.set(project, loop);
       if (!had) continue;
       const note = finishAnnouncement(prev, loop);
-      if (note) toast(note.text, note.failure ? "error" : "info");
+      if (note) {
+        toast(note.text, note.failure ? "error" : "info");
+        if (loop && userAway()) {
+          const reauth = loopNeedsAnthropicReconnect(loop, true);
+          showNotification({
+            key: `loop:${loop.loopId}:finished`,
+            title: reauth ? "Work loop needs Anthropic sign-in" : note.failure ? "Work loop stopped" : "Work loop finished",
+            body: reauth ? `${note.text} — reconnect Anthropic in Settings.` : note.text,
+            onClick: () => navigate(paths.loop(project)),
+          });
+        }
+      }
       // A new loop session (or a finished one) changes the session lists.
       if (currentSessionId(prev) !== currentSessionId(loop) || (prev?.sessions.length ?? 0) !== (loop?.sessions.length ?? 0)) {
         void qc.invalidateQueries({ queryKey: queryKeys.sessionFeedAll });
       }
     }
-  }, [loops, qc]);
+  }, [loops, qc, navigate]);
 }

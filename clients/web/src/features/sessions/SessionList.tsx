@@ -7,6 +7,7 @@ import { errorMessage } from "../../api/client";
 import { paths } from "../../app/paths";
 import { requestReopen } from "../session/useSession";
 import { useLoopSessionIds } from "../workloop/hooks";
+import { useReadMarks } from "./unread";
 import {
   displayProject,
   displayTitle,
@@ -37,6 +38,8 @@ export function SessionRowView({
   now,
   variant,
   loopOwned = false,
+  unread = false,
+  onMarkRead,
 }: {
   row: FeedRow;
   showProject: boolean;
@@ -45,6 +48,9 @@ export function SessionRowView({
   variant: "sidebar" | "page";
   /** Started by a work loop (marked like iOS's "via loop"). */
   loopOwned?: boolean;
+  /** Agent activity this browser hasn't shown yet. */
+  unread?: boolean;
+  onMarkRead?: () => void;
 }) {
   const s = row.session;
   const lifecycle = lifecycleLabel(s);
@@ -56,12 +62,21 @@ export function SessionRowView({
   // The row is one stretched link (its ::after covers the row) so the focus
   // task chips can be links of their own without nesting anchors.
   const link = (
-    <div className={`session-row variant-${variant}${active ? " active" : ""}${needsAnswer(s) ? " needs" : ""}`}>
+    <div className={`session-row variant-${variant}${active ? " active" : ""}${needsAnswer(s) ? " needs" : ""}${unread ? " unread" : ""}`}>
       <div className="session-row-title">
         {needsAnswer(s) && (
           <span className="needs-marker" title="Needs an answer" aria-label="needs answer">
             ●
           </span>
+        )}
+        {unread && (
+          <button
+            type="button"
+            className="unread-dot"
+            title="New agent activity — click to mark read"
+            aria-label={`Unread: mark ${displayTitle(s)} read`}
+            onClick={onMarkRead}
+          />
         )}
         <Link
           to={paths.session(row.project, s.sessionId)}
@@ -135,14 +150,29 @@ export function SessionList({
   const { feed, isLoading, error, loadOlder, loadingOlder } = useSessionFeed(scope);
   const now = useNow();
   const loopIds = useLoopSessionIds();
+  const marks = useReadMarks();
+  // The open session is being read right now.
+  const isUnread = (row: FeedRow) => row.session.sessionId !== activeSessionId && marks.isUnread(row.session);
   if (isLoading) return <p className="muted pad">Loading sessions…</p>;
   if (error) return <p className="error pad">{errorMessage(error, "Couldn’t load sessions.")}</p>;
   if (!feed) return null;
   if (feed.error) return <p className="error pad">{feed.error}</p>;
   const groups = sections(feed.rows);
+  const unreadRows = feed.rows.filter(isUnread);
   return (
     <div className={`session-list variant-${variant}`}>
       {feed.warning && <p className="warn pad small">{feed.warning}</p>}
+      {variant === "page" && unreadRows.length > 0 && (
+        <div className="unread-bar">
+          <span className="unread-dot static" aria-hidden="true" />
+          <span>
+            {unreadRows.length} {unreadRows.length === 1 ? "session has" : "sessions have"} new agent activity
+          </span>
+          <button type="button" className="btn ghost small" onClick={() => marks.markAllRead(unreadRows.map((r) => r.session))}>
+            Mark all read
+          </button>
+        </div>
+      )}
       {groups.length === 0 && (
         <div className="pad empty-list">
           <p className="muted">No sessions yet.</p>
@@ -163,6 +193,8 @@ export function SessionList({
               now={now}
               variant={variant}
               loopOwned={loopIds.has(row.session.sessionId)}
+              unread={isUnread(row)}
+              onMarkRead={() => marks.markSummaryRead(row.session)}
             />
           ))}
         </section>

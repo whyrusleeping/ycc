@@ -1,7 +1,7 @@
 // Quick capture: describe a backlog item in a sentence and the daemon's
 // off-stream capture agent (CaptureBacklogItem) turns it into a task, maybe
 // after one clarifying question. Opened from anywhere through the app action
-// registry (button, Alt+N, and later the command palette); running sessions
+// registry (button, Alt+N, and the command palette); running sessions
 // are not disturbed. The description and answer survive every failure.
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
@@ -11,6 +11,7 @@ import { authStore } from "../../api/auth";
 import { queryKeys, useProjects } from "../../api/queries";
 import { paths } from "../../app/paths";
 import { lastViewedProject } from "../../app/memory";
+import { IS_MAC } from "../../app/platform";
 import { projectChoices } from "../newSession/model";
 import { Modal } from "../../ui/Modal";
 import { toast } from "../../ui/toast";
@@ -53,7 +54,7 @@ function useCaptureRequest(): CaptureRequest {
   );
 }
 
-export const IS_MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+export { IS_MAC };
 
 /** The shortcut label shown on capture buttons. */
 export const CAPTURE_SHORTCUT_LABEL = IS_MAC ? "⌥N" : "Alt+N";

@@ -242,7 +242,43 @@ YCC_TOKEN=<token> ycc daemon --web --addr 127.0.0.1:8791
     is flagged before sending; a wrong code is refused and consumes the attempt; Cancel drops the
     pending attempt (a later Complete for it reports it expired or replaced). A real login is
     verified manually: paste the code, see "Anthropic connected", and OAuth models work again.
-37. Repeat a few steps with the system in dark mode.
+37. Command palette. Ctrl/Cmd-K (also from a text field, and the sidebar's ⌘K/Ctrl+K button) opens it
+    with waiting and unread sessions first, then recent sessions, every action (with its shortcut),
+    and the main pages; Ctrl/Cmd-K or Esc closes it. Typing fuzzy-matches sessions across projects,
+    backlog tasks of every project, projects and their pages, Settings sections, and actions
+    (matched letters highlighted); `>` narrows to actions, `@` to sessions, `#` to tasks, and a
+    path such as `internal/web/web.go:41` opens that file. Every primary action is listed: new
+    session, quick capture, new task, start/stop loop, follow the loop's session, spawn
+    workstream, merge all ready, groom memory, projects (add, rename, remove, manage), usage,
+    settings (add model, review tiers, Anthropic), notifications, mark all read, sign out, and in a
+    session interrupt / cancel pause / resume / retry / roll over / stop (asks first) / reopen,
+    search, working changes, settings, and files. From Settings, "Settings › Review tiers" scrolls
+    to that section even though Settings is already open.
+38. Keyboard shortcuts. `?` (not while typing) opens the help overlay listing every shortcut,
+    including Ctrl/Cmd-F search, Alt+N / ⌥N capture, and the backlog's j/k, Enter, /, and Esc.
+    Alt+↓ / Alt+↑ open the next / previous session in sidebar order, Alt+A the next session waiting
+    for an answer, Alt+I focuses the answer or message box, Alt+\ closes and re-opens the
+    inspector, Alt+Shift+N starts a new session (⌥ labels on macOS, where Alt chords don't fire
+    inside text fields). Typing `?` or `j` in a text field only types; browser chords (Ctrl+T, W,
+    N, L, Tab) are untouched. A toast raised repeatedly shows once with a "×N" count.
+39. Unread. With a fresh browser profile every listed session reads as read. Send input to a
+    session from the TUI or iOS: once it finishes, its row gets a blue dot and bold title, the
+    project switcher option counts it ("alpha · 1 waiting · 1 unread"), and the sidebar and Recent
+    page offer Mark read / Mark all read. A running session never shows unread. Reload: still
+    unread. Clicking the dot marks it read without opening it; opening a session marks it read up
+    to what was shown (and keeps it read while it is open and the tab is visible).
+40. Notifications (on `http://localhost` / `127.0.0.1` or https). The sidebar offers "Enable" once
+    (permission is requested only from that click or Settings → Notifications); "Not now" hides
+    it. Settings → Notifications shows the state, an on/off checkbox, and Send a test
+    notification. With a second tab open and both tabs in the background (another app in front),
+    make a session ask a question: within about 15–60 seconds exactly one notification appears
+    ("Question: …"); clicking it focuses the browser and opens that session. A session finishing
+    a turn or failing raises "Finished: …" / "Error: …" unless it is the session shown in the
+    focused tab; a work loop finishing (or needing an Anthropic login) raises one too. The tab
+    title reads "(N) …" while N sessions wait for an answer. Open the client over plain http on a
+    non-loopback address (e.g. a Tailscale IP): Settings explains that browsers only allow
+    notifications on secure pages and how to get one, and no prompt is shown.
+41. Repeat a few steps with the system in dark mode.
 
 ## Pass condition
 

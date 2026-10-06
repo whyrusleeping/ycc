@@ -70,6 +70,14 @@ changed on the daemon since editing began refuses the save (offering overwrite o
 non-overlapping changes merge. Open drafts are kept per task for the life of the tab. Unread state is a client-side watermark per session kept in
 browser storage, matching the iOS read store.
 
+The daemon has no global change stream, so browser notifications are derived from the session-list
+poll (`ListSessionHistory` per project) and the open session's stream. While notifications are on,
+the list is polled every 15 seconds, also in a hidden tab (browsers may throttle long-hidden tabs to
+about once a minute). A new question, a finished turn, or an error is notified only when the user is
+away from that session, and at most once across tabs and reloads through a ledger in browser
+storage. Permission is requested only from a user gesture; on an insecure origin (plain http on a
+non-loopback address) the client explains why notifications are unavailable.
+
 ### Session input and pictures
 
 Starting, re-opening, and steering sessions use the same RPCs as the other clients: `StartSession`

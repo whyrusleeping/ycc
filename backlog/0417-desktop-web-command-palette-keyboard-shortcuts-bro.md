@@ -1,10 +1,10 @@
 ---
 id: "0417"
 title: 'Desktop web: command palette, keyboard shortcuts, browser notifications, unread tracking'
-status: todo
+status: in_progress
 priority: 3
 created: "2026-10-02"
-updated: "2026-10-02"
+updated: "2026-10-06"
 depends_on:
     - "0410"
 spec_refs:

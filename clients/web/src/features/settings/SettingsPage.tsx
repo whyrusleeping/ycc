@@ -8,7 +8,7 @@
 // ycc.toml; the daemon's error is shown verbatim. Mirrors iOS
 // GlobalSettingsView and ReviewTiersView.
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { client, errorMessage, isUnauthorized } from "../../api/client";
 import { authStore } from "../../api/auth";
@@ -25,21 +25,13 @@ import { WORK_IMPLEMENTATIONS } from "../workloop/model";
 import { openAnthropicLogin } from "./AnthropicLogin";
 import { ModelEditorDialog, type EditorTarget } from "./ModelEditor";
 import { TierEditorDialog } from "./TierEditor";
+import { SETTINGS_SECTIONS as SECTIONS } from "./sections";
+import { NotificationControls } from "../notify/NotifyControls";
 import { draftFromConfig, pricingLine, rolesOf, sortedModels, toggleReviewer, upsertModelRequest } from "./models";
 import { draftFromTier, isRemovable, newTierDraft, tierBadge, tierSummary, type TierDraft } from "./tiers";
 
 export const SETTINGS_INTENT = "settings";
 
-const SECTIONS = [
-  { id: "accounts", title: "Accounts" },
-  { id: "roles", title: "Default roles" },
-  { id: "thinking", title: "Reasoning" },
-  { id: "work", title: "Work" },
-  { id: "reviews", title: "Review tiers" },
-  { id: "models", title: "Models" },
-  { id: "modes", title: "Modes" },
-  { id: "budget", title: "Spend guard" },
-] as const;
 
 function useApply() {
   const [busy, setBusy] = useState<string | null>(null);
@@ -73,13 +65,19 @@ export function SettingsPage() {
       if (what === "addModel") setEditor({ kind: "new" });
     }, []),
   );
-  // A deep link (/settings#models) scrolls once the sections have rendered.
+  // A deep link (/settings#models) scrolls once the sections have rendered,
+  // and again on every later navigation to a section (palette, links, the
+  // contents bar) even when Settings is already open: each navigation has
+  // its own location key.
   const loaded = !models.isPending;
-  const initialHash = useMemo(() => decodeURIComponent(location.hash.slice(1)), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const hash = decodeURIComponent(location.hash.slice(1));
+  const firstScroll = useRef(true);
   useEffect(() => {
-    if (!loaded || !initialHash) return;
-    document.getElementById(`settings-${initialHash}`)?.scrollIntoView({ block: "start" });
-  }, [loaded, initialHash]);
+    if (!loaded || !hash) return;
+    const smooth = !firstScroll.current;
+    firstScroll.current = false;
+    document.getElementById(`settings-${hash}`)?.scrollIntoView({ block: "start", behavior: smooth ? "smooth" : "auto" });
+  }, [loaded, hash, location.key]);
 
   return (
     <div className="page settings-page">
@@ -93,7 +91,7 @@ export function SettingsPage() {
               className="btn ghost small"
               onClick={(e) => {
                 e.preventDefault();
-                document.getElementById(`settings-${s.id}`)?.scrollIntoView({ block: "start", behavior: "smooth" });
+                // The hash effect scrolls (also when the hash is unchanged).
                 navigate({ hash: s.id }, { replace: true });
               }}
             >
@@ -107,6 +105,9 @@ export function SettingsPage() {
         settings (change those from its Settings panel).
       </p>
       <AccountsSection />
+      <Section id="notifications" title="Notifications (this browser)">
+        <NotificationControls />
+      </Section>
       {models.isPending ? (
         <p className="muted">Loading models…</p>
       ) : models.isError || !models.data ? (

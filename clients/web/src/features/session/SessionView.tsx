@@ -1,7 +1,7 @@
 // The session surface: header with status and phase-gated controls, the
 // transcript, the answer panel for pending questions, and the composer (live
 // sessions only; persisted-only sessions are a finite read-only view).
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { needsAnthropicReconnect } from "../settings/anthropic";
 import { openAnthropicLogin } from "../settings/AnthropicLogin";
 import { useQueryClient } from "@tanstack/react-query";
@@ -18,8 +18,12 @@ import { useDropZone } from "../attachments/pictures";
 import { useTranscriptSearch } from "./SearchBar";
 import { FileLinksProvider } from "../files/FileRef";
 import { useSessionFileLinks } from "../files/links";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { paths } from "../../app/paths";
+import { useAction, type AppAction } from "../../app/actions";
+import { requestIntent, useIntent } from "../../app/intents";
+import { readMarks } from "../sessions/unread";
+import { useDocumentVisible } from "../../ui/useVisible";
 
 export function statusText(snap: SessionSnapshot): { text: string; tone: string } {
   switch (snap.conn) {
@@ -52,9 +56,20 @@ export function statusText(snap: SessionSnapshot): { text: string; tone: string 
   }
 }
 
+/** The intent key that asks a session's controls to confirm Stop (palette). */
+export function stopIntentKey(sessionId: string) {
+  return `session-stop:${sessionId}`;
+}
+
 function Controls({ controller, snap }: { controller: SessionController; snap: SessionSnapshot }) {
   const [confirmStop, setConfirmStop] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  useIntent(
+    stopIntentKey(controller.sessionId),
+    useCallback((what: string) => {
+      if (what === "stop") setConfirmStop(true);
+    }, []),
+  );
   const menu = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!menuOpen) return;
@@ -199,16 +214,45 @@ export function SessionView({
   const fileLinks = useSessionFileLinks(project, sessionId, "main");
   // Ctrl/Cmd-F searches this session's transcript (including history that
   // is not loaded yet) instead of the browser's find-in-page.
+  useAction(
+    useMemo<AppAction>(
+      () => ({
+        id: "session.search",
+        title: "Search this session’s transcript",
+        group: "Session",
+        keywords: "find",
+        shortcut: { key: "f", mod: true },
+        run: showSearch,
+      }),
+      [showSearch],
+    ),
+  );
+  useSessionActions(controller, snap, project, sessionId);
+  // What is on screen is read: keep this session's read mark at the newest
+  // event shown (not while the tab is hidden: nobody is looking).
+  // Streaming moves the stamp many times a second: write at most once a
+  // second, and at once when the view goes away.
+  const visible = useDocumentVisible();
+  const seen = useRef<{ ts: string; timer: ReturnType<typeof setTimeout> | null }>({ ts: "", timer: null });
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "f") {
-        e.preventDefault();
-        showSearch();
-      }
+    if (!visible || !snap.installed || !snap.lastEventTimestamp) return;
+    const s = seen.current;
+    s.ts = snap.lastEventTimestamp;
+    if (s.timer) return;
+    readMarks.markRead(sessionId, s.ts);
+    s.timer = setTimeout(() => {
+      s.timer = null;
+      readMarks.markRead(sessionId, s.ts);
+    }, 1000);
+  }, [visible, snap.installed, snap.lastEventTimestamp, sessionId]);
+  useEffect(() => {
+    const s = seen.current;
+    return () => {
+      if (s.timer) clearTimeout(s.timer);
+      s.timer = null;
+      if (s.ts) readMarks.markRead(sessionId, s.ts);
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [showSearch]);
+  }, [sessionId]);
   // The session list's status/needs-answer markers follow this session's
   // durable lifecycle: refresh them when it changes.
   const qc = useQueryClient();
@@ -351,5 +395,113 @@ export function SessionView({
         )
       )}
     </div>
+  );
+}
+
+/** Register the open session's actions (palette) for its current state. */
+function useSessionActions(controller: SessionController, snap: SessionSnapshot, project: string, sessionId: string) {
+  const inspector = useInspector();
+  const navigate = useNavigate();
+  const live = snap.mode === "live" && snap.conn !== "finished" && snap.conn !== "failed";
+  const phase = snap.phase.kind;
+  const idle = snap.control === null;
+  const can = {
+    interrupt: live && idle && phase === "running" && !snap.pauseRequested,
+    cancelPause: live && idle && snap.pauseRequested,
+    resume: live && idle && phase === "paused",
+    retry: live && idle && phase === "error" && snap.phase.kind === "error" && snap.phase.retryable,
+    rollover: live && idle && snap.rolloverAvailable && phase !== "paused" && phase !== "stopped",
+    stop: live && idle && phase !== "stopped",
+    reopen: snap.mode === "persisted" && !snap.reopening,
+  };
+  const g = "Session";
+  useAction(
+    useMemo(
+      () => (can.interrupt ? { id: "session.interrupt", title: "Interrupt this session", group: g, keywords: "pause steer", run: () => void controller.interrupt() } : null),
+      [can.interrupt, controller],
+    ),
+  );
+  useAction(
+    useMemo(
+      () => (can.cancelPause ? { id: "session.cancelPause", title: "Cancel the pending pause", group: g, run: () => void controller.resume() } : null),
+      [can.cancelPause, controller],
+    ),
+  );
+  useAction(
+    useMemo(
+      () => (can.resume ? { id: "session.resume", title: "Resume this paused session", group: g, keywords: "continue", run: () => void controller.resume() } : null),
+      [can.resume, controller],
+    ),
+  );
+  useAction(
+    useMemo(
+      () => (can.retry ? { id: "session.retry", title: "Retry after the error", group: g, run: () => void controller.retry() } : null),
+      [can.retry, controller],
+    ),
+  );
+  useAction(
+    useMemo(
+      () =>
+        can.rollover
+          ? { id: "session.rollover", title: "Roll over the coordinator context", group: g, keywords: "compact context", run: () => void controller.rollover() }
+          : null,
+      [can.rollover, controller],
+    ),
+  );
+  useAction(
+    useMemo(
+      () =>
+        can.stop
+          ? { id: "session.stop", title: "Stop this session…", group: g, keywords: "terminate kill end", run: () => requestIntent(stopIntentKey(sessionId), "stop") }
+          : null,
+      [can.stop, sessionId],
+    ),
+  );
+  useAction(
+    useMemo(
+      () =>
+        can.reopen
+          ? { id: "session.reopen", title: "Resume this session (re-open it live)", group: g, keywords: "reopen continue", run: () => void controller.reopen() }
+          : null,
+      [can.reopen, controller],
+    ),
+  );
+  useAction(
+    useMemo(
+      () => ({
+        id: "session.workingChanges",
+        title: "Show this session’s working changes",
+        group: g,
+        keywords: "diff git",
+        run: () => inspector.open({ kind: "workingChanges", project, sessionId }),
+      }),
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      [inspector.open, project, sessionId],
+    ),
+  );
+  useAction(
+    useMemo(
+      () => ({
+        id: "session.settings",
+        title: "Session settings (reasoning, models, context, usage)",
+        group: g,
+        keywords: "thinking model rollover usage",
+        run: () => inspector.open({ kind: "sessionSettings", project, sessionId }),
+      }),
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      [inspector.open, project, sessionId],
+    ),
+  );
+  useAction(
+    useMemo(
+      () => ({
+        id: "session.files",
+        title: "Browse this session’s files",
+        group: g,
+        keywords: "worktree",
+        run: () => navigate(paths.files(project || null, "", { session: sessionId })),
+      }),
+      [navigate, project, sessionId],
+    ),
   );
 }

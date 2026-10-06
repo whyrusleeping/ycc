@@ -11,8 +11,11 @@ import { upsertSummary } from "../features/backlog/model";
 import { pollInterval as loopPollInterval } from "../features/workloop/model";
 import { pollInterval as workstreamPollInterval } from "../features/workstreams/model";
 import { toast } from "../ui/toast";
+import { useNotifyState } from "../features/notify/notifier";
 
 export const HISTORY_PAGE = 50;
+/** Session-list poll while notifications are on (also in a hidden tab). */
+export const FEED_POLL_NOTIFY_MS = 15_000;
 
 export const queryKeys = {
   projects: ["projects"] as const,
@@ -121,10 +124,14 @@ export function useSessionFeed(scope: string | null) {
   const projects = useProjects();
   const targets = projects.data ? historyTargets(projects.data) : null;
   const key = queryKeys.sessionFeed(targets ?? []);
+  // With notifications on, keep polling while the tab is hidden (and a bit
+  // faster): the list is how this client learns about other sessions.
+  const background = useNotifyState().active;
   const loads = useQuery({
     queryKey: key,
     enabled: targets !== null,
-    refetchInterval: 30_000,
+    refetchInterval: background ? FEED_POLL_NOTIFY_MS : 30_000,
+    refetchIntervalInBackground: background,
     queryFn: ({ signal }) => Promise.all((targets ?? []).map((t) => loadFirstPage(t, signal))),
   });
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -162,6 +169,8 @@ export function useSessionFeed(scope: string | null) {
   return {
     projects: projects.data as ProjectInfo[] | undefined,
     feed,
+    /** Every project's loaded pages (unread baselining and notifications use them all). */
+    loads: loads.data,
     isLoading: projects.isPending || (targets !== null && loads.isPending),
     error: projects.error ?? loads.error,
     isFetching: projects.isFetching || loads.isFetching,
@@ -233,10 +242,13 @@ export function useWorkLoop(project: string, enabled = true) {
 export function useWorkLoops(): { project: string; loop: WorkLoopInfo | null }[] {
   const projects = useProjects();
   const targets = useMemo(() => (projects.data ? historyTargets(projects.data) : []), [projects.data]);
+  const background = useNotifyState().active;
   const results = useQueries({
     queries: targets.map((project) => ({
       queryKey: queryKeys.workLoop(project),
       refetchInterval: (q: { state: { data?: WorkLoopInfo | null } }) => loopPollInterval(q.state.data),
+      // Loop finish notifications need polling while the tab is hidden.
+      refetchIntervalInBackground: background,
       queryFn: ({ signal }: { signal: AbortSignal }) => fetchWorkLoop(project, signal),
     })),
   });

@@ -12,6 +12,7 @@ import { authStore } from "../../api/auth";
 import { queryKeys, useBacklog, useWorkstreams } from "../../api/queries";
 import { paths } from "../../app/paths";
 import { useIntent } from "../../app/intents";
+import { useAction, type AppAction } from "../../app/actions";
 import { ConfirmDialog } from "../../ui/ConfirmDialog";
 import { Modal } from "../../ui/Modal";
 import { toast } from "../../ui/toast";
@@ -84,6 +85,18 @@ export function WorkstreamsPage({ project }: { project: string }) {
     useCallback((what: string) => {
       if (what === "spawn") setSpawnOpen(true);
     }, []),
+  );
+
+  // Palette: merge every gated stream (asks first, like the button).
+  const gatedCount = gated.length;
+  useAction(
+    useMemo<AppAction | null>(
+      () =>
+        gatedCount > 0
+          ? { id: "workstreams.mergeAll", title: `Merge all ready workstreams (${gatedCount})…`, group: "Workstreams", run: () => setMergeAllOpen(true) }
+          : null,
+      [gatedCount],
+    ),
   );
 
   const refresh = () => void qc.invalidateQueries({ queryKey: queryKeys.workstreamsAll });

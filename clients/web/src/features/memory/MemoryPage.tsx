@@ -4,12 +4,13 @@
 // it still reaches prompts — plus the prompt-budget gauge and a one-tap
 // groom; and the plan library (plans/*.md) rendered as markdown.
 import { useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { client, errorMessage, isUnauthorized } from "../../api/client";
 import { authStore } from "../../api/auth";
 import { queryKeys, useMemory, usePlan, usePlans } from "../../api/queries";
 import { paths } from "../../app/paths";
+import { useIntent } from "../../app/intents";
 import type { GetMemoryResponse, MemoryGroomRun } from "../../gen/ycc/v1/ycc_pb";
 import { CopyButton } from "../../ui/CopyButton";
 import { toast } from "../../ui/toast";
@@ -40,6 +41,11 @@ function Tabs({ project, active }: { project: string; active: "memory" | "plans"
       </Link>
     </nav>
   );
+}
+
+/** The intent key that asks a project's memory page to start a groom (palette). */
+export function memoryIntentKey(project: string) {
+  return `memory:${project}`;
 }
 
 export function MemoryPage({ project }: { project: string }) {
@@ -249,6 +255,20 @@ function BudgetCard({ project, status }: { project: string; status: GetMemoryRes
       setStarting(false);
     }
   };
+  // "Groom memory now" from the palette: start one, or watch the running one.
+  const latest = useRef({ groom, running: status.groomSessionId });
+  latest.current = { groom, running: status.groomSessionId };
+  useIntent(
+    memoryIntentKey(project),
+    useCallback(
+      (what: string) => {
+        if (what !== "groom") return;
+        if (latest.current.running) navigate(paths.session(project, latest.current.running));
+        else void latest.current.groom();
+      },
+      [navigate, project],
+    ),
+  );
   const last = status.lastGroom;
   return (
     <section className={`budget-card${over ? " over" : ""}`} aria-label="Prompt budget">
