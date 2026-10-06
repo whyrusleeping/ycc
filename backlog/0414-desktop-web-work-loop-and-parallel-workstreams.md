@@ -1,7 +1,7 @@
 ---
 id: "0414"
 title: 'Desktop web: work loop and parallel workstreams'
-status: in_progress
+status: done
 priority: 3
 created: "2026-10-02"
 updated: "2026-10-06"

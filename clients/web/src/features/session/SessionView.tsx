@@ -14,6 +14,10 @@ import { useSessionController, useSessionSnapshot } from "./useSession";
 import { compactTokenCount } from "../sessions/feed";
 import { useDropZone } from "../attachments/pictures";
 import { useTranscriptSearch } from "./SearchBar";
+import { FileLinksProvider } from "../files/FileRef";
+import { useSessionFileLinks } from "../files/links";
+import { Link } from "react-router";
+import { paths } from "../../app/paths";
 
 export function statusText(snap: SessionSnapshot): { text: string; tone: string } {
   switch (snap.conn) {
@@ -181,6 +185,9 @@ export function SessionView({
   const status = statusText(snap);
   const search = useTranscriptSearch(controller, snap.rows);
   const showSearch = search.show;
+  // File references in the transcript open the viewer in the inspector,
+  // resolved against this session's live worktree.
+  const fileLinks = useSessionFileLinks(project, sessionId, "main");
   // Ctrl/Cmd-F searches this session's transcript (including history that
   // is not loaded yet) instead of the browser's find-in-page.
   useEffect(() => {
@@ -264,6 +271,13 @@ export function SessionView({
           >
             Working changes
           </button>
+          <Link
+            className="btn ghost"
+            to={paths.files(project || null, "", { session: sessionId })}
+            title="Browse this session’s files (its live worktree)"
+          >
+            Files
+          </Link>
           <button
             type="button"
             className={`btn ghost${settingsOpen ? " active" : ""}`}
@@ -286,12 +300,14 @@ export function SessionView({
           </button>
         </div>
       )}
-      <Transcript
-        controller={controller}
-        snap={snap}
-        onEditFailed={(t, pictures) => composer.current?.setDraft(t, pictures)}
-        search={search}
-      />
+      <FileLinksProvider value={fileLinks}>
+        <Transcript
+          controller={controller}
+          snap={snap}
+          onEditFailed={(t, pictures) => composer.current?.setDraft(t, pictures)}
+          search={search}
+        />
+      </FileLinksProvider>
       {snap.mode === "live" && snap.pendingQuestion && (
         <AnswerPanel
           key={snap.pendingQuestion.rowId}

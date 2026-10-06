@@ -1,9 +1,10 @@
-// File paths in the transcript. Until the file viewer lands (backlog 0415)
-// they render as copyable text: clicking copies the path. A FileLinksProvider
-// higher in the tree can supply `open`, which turns every resolvable reference
-// into a link to the viewer without touching the call sites, and `route`,
-// which links references that name another surface (task bodies link their
-// sibling backlog task files to the task).
+// File paths in the transcript, documents, and tool previews. Without a
+// FileLinksProvider they render as copyable text (clicking copies the path).
+// A provider higher in the tree supplies `open`, which turns every resolvable
+// reference into a link to the file viewer (sessions, memory, plans, and task
+// bodies open it in the inspector, resolved against the session's worktree),
+// and `route`, which links references that name another surface (task bodies
+// link their sibling backlog task files to the task).
 import { createContext, useContext, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { Link } from "react-router";
 import { copyText } from "../../ui/copy";
@@ -11,7 +12,7 @@ import { fromLink, type FileLinkContext, type FileReference } from "./fileRefere
 
 export interface FileLinkHandler {
   context: FileLinkContext;
-  /** Open a reference in the file viewer; absent until that surface exists. */
+  /** Open a reference in the file viewer. */
   open?: (ref: FileReference) => void;
   /**
    * An in-app route for references that name another surface (a backlog

@@ -1,10 +1,10 @@
 ---
 id: "0415"
 title: 'Desktop web: projects, file browser, memory and plans'
-status: todo
+status: in_progress
 priority: 3
 created: "2026-10-02"
-updated: "2026-10-02"
+updated: "2026-10-06"
 depends_on:
     - "0410"
 spec_refs:

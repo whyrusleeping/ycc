@@ -33,6 +33,18 @@ export const queryKeys = {
   workstreams: (project: string) => ["workstreams", project] as const,
   workstreamsAll: ["workstreams"] as const,
   budget: ["budget"] as const,
+  /** GetMemory: memory.md plus its prompt-budget status. */
+  memory: (project: string) => ["memory", project] as const,
+  /** ListPlans. */
+  plans: (project: string) => ["plans", project] as const,
+  /** GetPlan. */
+  plan: (project: string, name: string) => ["plan", project, name] as const,
+  /** ListFiles of a directory, against a session's worktree ("" = the project root). */
+  fileList: (project: string, sessionId: string, path: string) => ["files", "list", project, sessionId, path] as const,
+  /** ReadFile. */
+  fileRead: (project: string, sessionId: string, path: string) => ["files", "read", project, sessionId, path] as const,
+  /** Every file listing and read (a browser refresh revalidates them). */
+  filesAll: ["files"] as const,
 };
 
 export function makeQueryClient(): QueryClient {
@@ -235,5 +247,33 @@ export function useBudget(enabled = true) {
     enabled,
     staleTime: 60_000,
     queryFn: ({ signal }) => client.getBudget({}, { signal }),
+  });
+}
+
+/** GetMemory, polled slowly (agents write to it while sessions run). */
+export function useMemory(project: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.memory(project),
+    enabled,
+    refetchInterval: 30_000,
+    queryFn: ({ signal }) => client.getMemory({ project }, { signal }),
+  });
+}
+
+/** ListPlans: the project's plan library (plans/*.md). */
+export function usePlans(project: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.plans(project),
+    enabled,
+    queryFn: async ({ signal }) => (await client.listPlans({ project }, { signal })).plans,
+  });
+}
+
+/** GetPlan: one plan's markdown. */
+export function usePlan(project: string, name: string) {
+  return useQuery({
+    queryKey: queryKeys.plan(project, name),
+    enabled: name !== "",
+    queryFn: ({ signal }) => client.getPlan({ project, name }, { signal }),
   });
 }

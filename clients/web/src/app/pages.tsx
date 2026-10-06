@@ -1,5 +1,5 @@
 // Routed main-pane surfaces.
-import { Link, Navigate, useNavigate, useParams } from "react-router";
+import { Link, Navigate, useLocation, useNavigate, useParams } from "react-router";
 import { useEffect, useMemo, type ReactNode } from "react";
 import { useProjects, useSessionFeed, useWorkLoops, useWorkstreams } from "../api/queries";
 import { errorMessage } from "../api/client";
@@ -13,6 +13,9 @@ import { LoopStateBadge, WorkLoopPage } from "../features/workloop/WorkLoopPage"
 import { bannerLine, loopState } from "../features/workloop/model";
 import { WorkstreamsPage } from "../features/workstreams/WorkstreamsPage";
 import { workstreamIndicator } from "../features/workstreams/model";
+import { FilesPage } from "../features/files/FilesPage";
+import { MemoryPage, PlansPage } from "../features/memory/MemoryPage";
+import { ProjectsPage } from "../features/projects/ProjectsPage";
 import { lastViewedProject } from "./memory";
 import { PROJECT_SECTIONS, paths } from "./paths";
 import { useScope } from "./scope";
@@ -255,6 +258,82 @@ function UnscopedWorkstreams() {
       extra={(name) => <WorkstreamsChoiceState project={name} />}
     />
   );
+}
+
+/**
+ * `/p/:project/files/*` and the unscoped `/files/*` (asks which project,
+ * unless `?session=` names the worktree of a default-workspace session).
+ */
+export function FilesRoutePage() {
+  const params = useParams();
+  const splat = params["*"] ?? "";
+  if (params.project !== undefined) return <ScopedFiles project={params.project} splat={splat} />;
+  return <UnscopedFiles splat={splat} />;
+}
+
+function ScopedFiles({ project, splat }: { project: string; splat: string }) {
+  const { setScope } = useScope();
+  useEffect(() => setScope(project), [project, setScope]);
+  useEffect(() => lastViewedProject.set(project), [project]);
+  useDocumentTitle(`${splat ? splat.split("/").filter(Boolean).pop() : "Files"} · ${project}`);
+  return <FilesPage key={project} project={project} splat={splat} />;
+}
+
+function UnscopedFiles({ splat }: { splat: string }) {
+  const location = useLocation();
+  useDocumentTitle("Files");
+  if (new URLSearchParams(location.search).get("session")) return <FilesPage project="" splat={splat} />;
+  return (
+    <ProjectChoice
+      title="Files"
+      question="Which project’s files?"
+      target={(name) => `${paths.files(name, splat)}${location.hash}`}
+      fallback={() => <FilesPage project="" splat={splat} />}
+    />
+  );
+}
+
+/** `/p/:project/memory` and the unscoped `/memory` (asks which project). */
+export function MemoryRoutePage() {
+  const { project } = useParams();
+  if (project !== undefined) return <ScopedMemory project={project} />;
+  return <UnscopedMemory />;
+}
+
+function ScopedMemory({ project }: { project: string }) {
+  const { setScope } = useScope();
+  useEffect(() => setScope(project), [project, setScope]);
+  useEffect(() => lastViewedProject.set(project), [project]);
+  useDocumentTitle(`Memory · ${project}`);
+  return <MemoryPage key={project} project={project} />;
+}
+
+function UnscopedMemory() {
+  useDocumentTitle("Memory & plans");
+  return (
+    <ProjectChoice
+      title="Memory & plans"
+      question="Which project’s memory?"
+      target={(name) => paths.memory(name)}
+      fallback={() => <MemoryPage project="" />}
+    />
+  );
+}
+
+/** `/p/:project/plans[/:name]`: the plan library. */
+export function PlansRoutePage() {
+  const { project = "", name = "" } = useParams();
+  const { setScope } = useScope();
+  useEffect(() => setScope(project), [project, setScope]);
+  useEffect(() => lastViewedProject.set(project), [project]);
+  useDocumentTitle(name ? `Plan ${name} · ${project}` : `Plans · ${project}`);
+  return <PlansPage key={project} project={project} name={name} />;
+}
+
+/** `/projects`: add, rename, and remove registered projects. */
+export function ProjectsRoutePage() {
+  useDocumentTitle("Projects");
+  return <ProjectsPage />;
 }
 
 /** A project surface that a later phase fills in. */

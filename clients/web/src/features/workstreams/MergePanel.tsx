@@ -11,6 +11,8 @@ import { DiffView } from "../code/CodeBlock";
 import { CopyButton } from "../../ui/CopyButton";
 import { toast } from "../../ui/toast";
 import { useInspector } from "../inspector/inspector";
+import { FileLinksProvider, FileRef } from "../files/FileRef";
+import { useSessionFileLinks } from "../files/links";
 import { branchLabel, commitSummary, isMergeable, workstreamStatus } from "./model";
 
 export function MergePanel({ project, workstreamId }: { project: string; workstreamId: string }) {
@@ -59,54 +61,58 @@ export function MergePanel({ project, workstreamId }: { project: string; workstr
   };
 
   const base = ws?.baseBranch || "the base branch";
+  // Conflicted paths open in the viewer against the workstream's worktree.
+  const links = useSessionFileLinks(project, ws?.sessionId ?? "", "inspector");
   return (
-    <div className="diff-view merge-panel">
-      <div className="diff-meta">
-        {ws && (
+    <FileLinksProvider value={links}>
+      <div className="diff-view merge-panel">
+        <div className="diff-meta">
+          {ws && (
+            <>
+              <span className="mono">{branchLabel(ws)}</span>
+              <span>→ {base}</span>
+              <span>{commitSummary(ws)}</span>
+            </>
+          )}
+          {result === null && (
+            <button type="button" className="btn ghost small" onClick={() => void preview.refetch()} disabled={preview.isFetching}>
+              {preview.isFetching ? "Checking…" : "Re-check"}
+            </button>
+          )}
+        </div>
+        {result ? (
+          <MergeResult result={result} base={base} onCommit={(sha) => inspector.open({ kind: "commit", project, sha })} />
+        ) : preview.isPending ? (
+          <p className="muted">Trial-merging onto {base}…</p>
+        ) : preview.isError ? (
+          <p className="error">{errorMessage(preview.error, "Couldn’t preview the merge.")}</p>
+        ) : preview.data.clean && !preview.data.diff.trim() ? (
+          <div className="banner warn" role="note">
+            Nothing to merge: the branch has no changes against {base}.
+          </div>
+        ) : preview.data.clean ? (
           <>
-            <span className="mono">{branchLabel(ws)}</span>
-            <span>→ {base}</span>
-            <span>{commitSummary(ws)}</span>
+            <div className="merge-accept">
+              <div>
+                <strong>Merges cleanly onto {base}.</strong>
+                <div className="muted small">Review the integrated diff, then accept to rebase the branch and fast-forward {base}.</div>
+              </div>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={merging || (ws !== undefined && !isMergeable(status))}
+                onClick={() => void accept()}
+              >
+                {merging ? "Merging…" : "Accept & merge"}
+              </button>
+            </div>
+            <DiffView diff={preview.data.diff} />
           </>
-        )}
-        {result === null && (
-          <button type="button" className="btn ghost small" onClick={() => void preview.refetch()} disabled={preview.isFetching}>
-            {preview.isFetching ? "Checking…" : "Re-check"}
-          </button>
+        ) : (
+          <Conflicts paths={preview.data.conflicts} message={`This workstream conflicts with ${base}. Resolve it in the worktree (or retry integration) before merging; nothing was changed.`} />
         )}
       </div>
-      {result ? (
-        <MergeResult result={result} base={base} onCommit={(sha) => inspector.open({ kind: "commit", project, sha })} />
-      ) : preview.isPending ? (
-        <p className="muted">Trial-merging onto {base}…</p>
-      ) : preview.isError ? (
-        <p className="error">{errorMessage(preview.error, "Couldn’t preview the merge.")}</p>
-      ) : preview.data.clean && !preview.data.diff.trim() ? (
-        <div className="banner warn" role="note">
-          Nothing to merge: the branch has no changes against {base}.
-        </div>
-      ) : preview.data.clean ? (
-        <>
-          <div className="merge-accept">
-            <div>
-              <strong>Merges cleanly onto {base}.</strong>
-              <div className="muted small">Review the integrated diff, then accept to rebase the branch and fast-forward {base}.</div>
-            </div>
-            <button
-              type="button"
-              className="btn primary"
-              disabled={merging || (ws !== undefined && !isMergeable(status))}
-              onClick={() => void accept()}
-            >
-              {merging ? "Merging…" : "Accept & merge"}
-            </button>
-          </div>
-          <DiffView diff={preview.data.diff} />
-        </>
-      ) : (
-        <Conflicts paths={preview.data.conflicts} message={`This workstream conflicts with ${base}. Resolve it in the worktree (or retry integration) before merging; nothing was changed.`} />
-      )}
-    </div>
+    </FileLinksProvider>
   );
 }
 
@@ -162,8 +168,8 @@ function Conflicts({ paths, message }: { paths: string[]; message: string }) {
       ) : (
         <ul className="path-list">
           {paths.map((p) => (
-            <li key={p} className="mono">
-              {p}
+            <li key={p}>
+              <FileRef path={p} code={false} />
             </li>
           ))}
         </ul>

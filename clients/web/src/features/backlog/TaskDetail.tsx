@@ -14,6 +14,7 @@ import { installTask, queryKeys, useBacklog, useProjects, useSessionFeed, useTas
 import { paths } from "../../app/paths";
 import { Markdown } from "../markdown/Markdown";
 import { FileLinksProvider, type FileLinkHandler } from "../files/FileRef";
+import { useInspector } from "../inspector/inspector";
 import { CopyButton } from "../../ui/CopyButton";
 import { ConfirmDialog } from "../../ui/ConfirmDialog";
 import { toast } from "../../ui/toast";
@@ -93,6 +94,8 @@ export function TaskDetailView({
   const inInspector = variant === "inspector";
 
   const projectPath = projects.data?.find((p) => p.name === project)?.path ?? "";
+  const inspector = useInspector();
+  const showFile = inInspector ? inspector.push : inspector.open;
   const links = useMemo<FileLinkHandler>(
     () => ({
       // Task bodies live in backlog/: relative links (sibling tasks) resolve there.
@@ -101,8 +104,11 @@ export function TaskDetailView({
         const target = taskIdFromPath(ref.path);
         return target ? paths.task(project, target) : null;
       },
+      // Any other file opens in the viewer beside the task.
+      open: (ref) =>
+        showFile({ kind: "file", project, sessionId: "", path: ref.path, isDirectory: ref.isDirectory, lines: ref.lines }),
     }),
-    [project, projectPath],
+    [project, projectPath, showFile],
   );
 
   const setStatus = async (status: TaskStatus) => {

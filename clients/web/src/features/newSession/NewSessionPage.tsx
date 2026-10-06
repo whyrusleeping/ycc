@@ -11,6 +11,7 @@ import { authStore } from "../../api/auth";
 import { queryKeys, useModels, useModes, useProjects } from "../../api/queries";
 import { paths } from "../../app/paths";
 import { lastMode, lastViewedProject } from "../../app/memory";
+import { openAddProject } from "../projects/ProjectDialogs";
 import { AttachButton, PictureStrip, filesFrom, revokePictures, useDropZone, usePictureDraft } from "../attachments/pictures";
 import {
   applyPreset,
@@ -25,6 +26,9 @@ import {
   withMode,
   type NewSessionDraft,
 } from "./model";
+
+/** The project picker's "Add project…" entry (never a project name: names cannot hold NUL). */
+const ADD_PROJECT = "\u0000add";
 
 export function NewSessionPage({ routeProject }: { routeProject: string | null }) {
   const projects = useProjects();
@@ -164,6 +168,14 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
                   </button>
                 );
               })}
+              <button
+                type="button"
+                className="choice-card add-card"
+                onClick={() => openAddProject((p) => setDraft((d) => ({ ...d, project: p.name, preset: "" })))}
+              >
+                <span className="choice-title">+ Add project…</span>
+                <span className="choice-sub">Register another workspace on the daemon host</span>
+              </button>
             </div>
           </section>
         ) : (
@@ -239,7 +251,14 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
                 aria-label="Project"
                 value={draft.project}
                 disabled={starting}
-                onChange={(e) => setDraft((d) => ({ ...d, project: e.target.value, preset: "" }))}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  if (value === ADD_PROJECT) {
+                    openAddProject((p) => setDraft((d) => ({ ...d, project: p.name, preset: "" })));
+                    return;
+                  }
+                  setDraft((d) => ({ ...d, project: value, preset: "" }));
+                }}
               >
                 {!draft.project && <option value="">Choose…</option>}
                 {choices.map((n) => (
@@ -247,8 +266,20 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
                     {n}
                   </option>
                 ))}
+                <option value={ADD_PROJECT}>Add project…</option>
               </select>
             </label>
+          )}
+          {projectList.length <= 1 && (
+            <button
+              type="button"
+              className="chip add-project-chip"
+              disabled={starting}
+              title="Register another workspace on the daemon host"
+              onClick={() => openAddProject((p) => setDraft((d) => ({ ...d, project: p.name, preset: "" })))}
+            >
+              + Add project…
+            </button>
           )}
           {projectList.length === 0 && (
             <span className="chip-note muted" title="No projects are registered; the daemon’s startup workspace is used">

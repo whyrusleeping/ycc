@@ -23,7 +23,12 @@ body with a work log and a relative link to a sibling task file such as `0002-sl
 session whose task focus names one of them. For the work-loop and workstream checks, have a scratch
 git project whose backlog holds two or three ready tasks (one the agent will block on), a project
 configured for automatic integration (`[integration] mode = "auto"` with a `verify` command you can
-make fail, e.g. `test ! -e /tmp/verify-red`), and a model that can finish small tasks.
+make fail, e.g. `test ! -e /tmp/verify-red`), and a model that can finish small tasks. For the
+projects, files, and memory checks, have a scratch git directory on the daemon host that is not
+registered (to add, rename, and remove), a project with nested directories, a gitignored
+directory, a markdown file with a relative link, an image, and a `memory.md` with typed, legacy,
+superseded, and retired notes plus a `plans/` directory, and a workstream session that wrote a file
+the project root does not have (or has with different content), citing it as `path:line`.
 
 ```
 YCC_TOKEN=<token> ycc daemon --web --addr 127.0.0.1:8791
@@ -167,10 +172,48 @@ YCC_TOKEN=<token> ycc daemon --web --addr 127.0.0.1:8791
     worktree and branch; merged and discarded streams stay under "Merged and discarded" with their
     session transcripts. In gate mode, ready streams read Gated and "Merge all ready" merges them in
     order, stopping at the first failure.
-29. Repeat a few steps with the system in dark mode.
+29. Projects. The sidebar's project menu (⋯ beside the switcher) offers Add project…, Rename and
+    Remove for the scoped project, and Manage projects (`/projects`: each project's path, branch,
+    git sync badge — ↑ahead ↓behind ● dirty ? unfetched — and onboarding state, also shown in the
+    switcher). Add project… opens at the daemon user's home, suggests unregistered git repos beside
+    registered projects, browses directories (Up, breadcrumbs, Home; git repos tagged, registered
+    projects marked), fills the path from the browsed folder (or a typed absolute path), derives
+    the name from the folder unless one is given, and opens the new project. The new-session
+    page's project picker (and its "Which project?" cards) offers Add project… and selects the
+    added project without leaving the page.
+30. Rename… refuses a name another project already has, then renames: the scope, the current URL,
+    and the session list follow the new name. Remove… explains that it only deregisters (the
+    directory, files, git history, backlog, and session logs stay on disk) and, once confirmed,
+    drops the project from every list; the directory is still there.
+31. Files (`/p/<project>/files/<path>`): the tree expands lazily with gitignored entries dimmed; a
+    directory shows its listing; a file shows numbered, highlighted lines (file text never renders
+    as HTML) with Copy path / Copy contents and Wrap. Go to line (`41`, `41-45`) and clicking a line
+    number (Shift-click extends) target lines in the URL (`#L41-L45`), which survives reload.
+    Markdown renders by default with a Source toggle and relative links resolving against the
+    file's directory; images render; binaries, truncated files, missing files, and a reclaimed
+    worktree's fallback to the project root each get a note.
+32. File references. In a transcript, a path or `path:line` (inline code, a link, a tool row's
+    path) opens the file at that line in the inspector, resolved against that session's live
+    worktree: from a workstream session, a file the workstream wrote shows the worktree's content,
+    not the project root's. Links inside the inspector (a working-changes path, a markdown link)
+    push onto a Back stack; Open in Files shows the same file on the Files page with
+    `?session=<id>` (a "Worktree of …" chip; × returns to the project root). The session header's
+    Files button browses the session's worktree. Task bodies, memory notes, plans, and a merge
+    preview's conflicted paths link files the same way.
+33. Memory & plans (`/p/<project>/memory`): the prompt budget (active size against the soft
+    budget, the hard limit, over-budget and auto-groom notes) with Groom now (starts a
+    memory-groom session and opens it) or a link to the running automatic groom, and the last
+    automatic groom. Notes are grouped by section with their classification (user-stated
+    guidance, measured observation, model inference, proposed policy, or legacy), recorded date,
+    evidence (session link, #event, actor), and id (copyable; legacy bullets show the daemon's
+    `legacy-…` id). Superseded and retired notes are hidden until "Show superseded & retired",
+    then struck through with what superseded or retired them (click to jump). The filter narrows
+    by text, id, session, or kind; Source shows memory.md verbatim. Plans lists plans/*.md and
+    renders the chosen plan (Source toggle, Open in Files); its relative links open beside it.
+34. Repeat a few steps with the system in dark mode.
 
 ## Pass condition
 
 All checks pass without a JavaScript console error, a Content-Security-Policy violation, or a
-full-page reload. (The token probe's 401 on first load and the deliberately rejected attachments'
-400s are expected network errors.) Record the browser and version, daemon commit, and console output for failures.
+full-page reload. (The token probe's 401 on first load, the deliberately rejected attachments'
+400s, and a deliberately missing file's 404 are expected network errors.) Record the browser and version, daemon commit, and console output for failures.

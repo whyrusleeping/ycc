@@ -26,6 +26,7 @@ export const lastViewedProject = {
   set: (project: string) => {
     if (project) write(LAST_VIEWED_KEY, project);
   },
+  clear: () => write(LAST_VIEWED_KEY, null),
 };
 
 export const lastMode = {

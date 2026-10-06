@@ -20,6 +20,9 @@ import { loopIntentKey } from "../features/workloop/WorkLoopPage";
 import { workstreamIndicator } from "../features/workstreams/model";
 import { workstreamsIntentKey } from "../features/workstreams/WorkstreamsPage";
 import { requestIntent } from "./intents";
+import { MenuButton } from "../ui/Menu";
+import { gitSyncBadge } from "../features/projects/model";
+import { ProjectDialogs, openAddProject, openRemoveProject, openRenameProject } from "../features/projects/ProjectDialogs";
 
 function ProjectSwitcher() {
   const { scope, setScope } = useScope();
@@ -32,35 +35,60 @@ function ProjectSwitcher() {
     if (scope && projects && !names.includes(scope)) setScope(null);
   }, [scope, projects, names, setScope]);
   return (
-    <label className="project-switcher">
-      <span className="sr-only">Project</span>
-      <select
-        value={scope ?? ""}
-        onChange={(e) => {
-          const next = e.target.value || null;
-          setScope(next);
-          // On a list page, follow the scope; elsewhere keep the current view.
-          const onList = location.pathname === "/" || /^\/p\/[^/]+\/?$/.test(location.pathname);
-          if (onList) navigate(next ? paths.project(next) : paths.home());
-          // On the backlog, show the new project's backlog (or ask which one).
-          else if (/^(\/p\/[^/]+)?\/backlog(\/|$)/.test(location.pathname)) navigate(paths.backlog(next));
-          else if (/^(\/p\/[^/]+)?\/loop\/?$/.test(location.pathname)) navigate(paths.loop(next));
-          else if (/^(\/p\/[^/]+)?\/workstreams\/?$/.test(location.pathname)) navigate(paths.workstreams(next));
-        }}
-      >
-        <option value="">All projects · Recent</option>
-        {names.map((n) => (
-          <option key={n} value={n}>
-            {n}
-          </option>
-        ))}
-      </select>
-    </label>
+    <div className="project-switcher-row">
+      <label className="project-switcher">
+        <span className="sr-only">Project</span>
+        <select
+          value={scope ?? ""}
+          onChange={(e) => {
+            const next = e.target.value || null;
+            setScope(next);
+            // On a list page, follow the scope; elsewhere keep the current view.
+            const onList = location.pathname === "/" || /^\/p\/[^/]+\/?$/.test(location.pathname);
+            if (onList) navigate(next ? paths.project(next) : paths.home());
+            // On the backlog, show the new project's backlog (or ask which one).
+            else if (/^(\/p\/[^/]+)?\/backlog(\/|$)/.test(location.pathname)) navigate(paths.backlog(next));
+            else if (/^(\/p\/[^/]+)?\/loop\/?$/.test(location.pathname)) navigate(paths.loop(next));
+            else if (/^(\/p\/[^/]+)?\/workstreams\/?$/.test(location.pathname)) navigate(paths.workstreams(next));
+            else if (/^(\/p\/[^/]+)?\/files(\/|$)/.test(location.pathname)) navigate(paths.files(next));
+            else if (/^(\/p\/[^/]+)?\/(memory|plans)(\/|$)/.test(location.pathname)) navigate(paths.memory(next));
+          }}
+        >
+          <option value="">All projects · Recent</option>
+          {(projects ?? []).map((p) => {
+            // The quiet git sync badge (ahead/behind, dirty, unfetched), as on iOS.
+            const badge = gitSyncBadge(p.git);
+            return (
+              <option key={p.name} value={p.name}>
+                {badge ? `${p.name}  ${badge}` : p.name}
+              </option>
+            );
+          })}
+        </select>
+      </label>
+      <MenuButton
+        label="⋯"
+        ariaLabel="Project actions"
+        className="btn ghost small project-menu-btn"
+        items={[
+          { label: "Add project…", onSelect: () => openAddProject() },
+          !!scope && { label: `Rename ${scope}…`, onSelect: () => openRenameProject(scope) },
+          !!scope && {
+            label: `Remove ${scope} from ycc…`,
+            danger: true,
+            title: "Deregister the project; nothing on disk is deleted",
+            onSelect: () => openRemoveProject(scope),
+          },
+          { label: "Manage projects", onSelect: () => navigate(paths.projects()) },
+        ]}
+      />
+    </div>
   );
 }
 
 function Sidebar() {
   const { scope } = useScope();
+  const location = useLocation();
   const { sessionId } = useParams();
   const { refresh, isFetching } = useSessionFeed(scope);
   const qc = useQueryClient();
@@ -103,8 +131,10 @@ function Sidebar() {
           // Backlog, work loop, and workstreams ask for a project when unscoped; other sections need one.
           const to = sectionPath(s.key, scope);
           const badge = s.key === "loop" ? loopBadge : s.key === "workstreams" ? wsBadge : null;
+          // Memory & plans covers the plan library's routes too.
+          const plansActive = s.key === "memory" && /^\/p\/[^/]+\/plans(\/|$)/.test(location.pathname);
           return to ? (
-            <NavLink key={s.key} to={to} className="nav-item">
+            <NavLink key={s.key} to={to} className={({ isActive }) => `nav-item${isActive || plansActive ? " active" : ""}`}>
               <span>{s.label}</span>
               {badge && (
                 <span className={`nav-badge tone-${badge.tone}`} title={badge.title} aria-label={`${s.label}: ${badge.title}`}>
@@ -207,9 +237,39 @@ function useShellActions() {
         : null,
     [target, navigate],
   );
+  const addProject = useMemo<AppAction>(
+    () => ({ id: "projects.add", title: "Add a project…", group: "Projects", run: () => openAddProject() }),
+    [],
+  );
+  const manageProjects = useMemo<AppAction>(
+    () => ({ id: "projects.manage", title: "Manage projects", group: "Projects", run: () => navigate(paths.projects()) }),
+    [navigate],
+  );
+  const openFiles = useMemo<AppAction>(
+    () => ({
+      id: "files.open",
+      title: target ? `Browse files in ${target}` : "Browse project files…",
+      group: "Files",
+      run: () => navigate(paths.files(target ?? null)),
+    }),
+    [target, navigate],
+  );
+  const openMemory = useMemo<AppAction>(
+    () => ({
+      id: "memory.open",
+      title: target ? `Open memory & plans for ${target}` : "Open project memory & plans…",
+      group: "Memory",
+      run: () => navigate(paths.memory(target ?? null)),
+    }),
+    [target, navigate],
+  );
   useAction(startLoop);
   useAction(stopLoop);
   useAction(spawn);
+  useAction(addProject);
+  useAction(manageProjects);
+  useAction(openFiles);
+  useAction(openMemory);
   useActionShortcuts();
 }
 
@@ -247,6 +307,7 @@ export function Shell() {
       </main>
       <InspectorPane />
       <CaptureDialog />
+      <ProjectDialogs />
       <Toasts />
     </div>
   );

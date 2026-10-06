@@ -2,9 +2,11 @@
 // (expanded transcript rows, working-tree and commit diffs) so detail opens
 // beside the transcript instead of replacing it: also full-size transcript
 // pictures, the per-session settings panel, and backlog task detail (opened
-// from a session's focus-task chips), and a workstream's merge preview.
-// Later phases add file contents.
+// from a session's focus-task chips), a workstream's merge preview, and file
+// contents (opened from file references). Opening something from inside the
+// inspector (`push`) keeps a back stack; opening from elsewhere replaces it.
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
+import type { LineRange } from "../files/fileReference";
 
 export type InspectorItem =
   | { kind: "row"; project: string; sessionId: string; rowId: string }
@@ -30,11 +32,19 @@ export type InspectorItem =
   | { kind: "sessionSettings"; project: string; sessionId: string }
   | { kind: "task"; project: string; taskId: string }
   /** A workstream's merge preview and accept gate. */
-  | { kind: "merge"; project: string; workstreamId: string; branch: string };
+  | { kind: "merge"; project: string; workstreamId: string; branch: string }
+  /** A project file (or directory), against a session's worktree when `sessionId` is set. */
+  | { kind: "file"; project: string; sessionId: string; path: string; isDirectory: boolean; lines: LineRange | null };
 
 interface InspectorState {
   item: InspectorItem | null;
+  /** Show `item`, replacing whatever was open (and its back stack). */
   open: (item: InspectorItem) => void;
+  /** Show `item` from inside the inspector: the current item becomes "Back". */
+  push: (item: InspectorItem) => void;
+  /** Return to the item a `push` replaced; false when there is none. */
+  back: () => boolean;
+  canGoBack: boolean;
   close: () => void;
   width: number;
   setWidth: (w: number) => void;
@@ -56,7 +66,17 @@ function initialWidth(): number {
 }
 
 export function InspectorProvider({ children }: { children: ReactNode }) {
-  const [item, setItem] = useState<InspectorItem | null>(null);
+  const [stack, setStack] = useState<InspectorItem[]>([]);
+  const item = stack.length ? stack[stack.length - 1] : null;
+  const open = useCallback((next: InspectorItem) => setStack([next]), []);
+  const push = useCallback((next: InspectorItem) => setStack((s) => [...s.slice(-19), next]), []);
+  const backRef = useRef(stack);
+  backRef.current = stack;
+  const back = useCallback(() => {
+    if (backRef.current.length < 2) return false;
+    setStack((s) => s.slice(0, -1));
+    return true;
+  }, []);
   const [width, setWidthState] = useState(initialWidth);
   const setWidth = useCallback((w: number) => {
     const clamped = Math.max(MIN_WIDTH, Math.min(w, Math.round(window.innerWidth * 0.7)));
@@ -68,8 +88,8 @@ export function InspectorProvider({ children }: { children: ReactNode }) {
     }
   }, []);
   const value = useMemo(
-    () => ({ item, open: setItem, close: () => setItem(null), width, setWidth }),
-    [item, width, setWidth],
+    () => ({ item, open, push, back, canGoBack: stack.length > 1, close: () => setStack([]), width, setWidth }),
+    [item, open, push, back, stack.length, width, setWidth],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

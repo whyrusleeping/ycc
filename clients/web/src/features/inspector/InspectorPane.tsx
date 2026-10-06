@@ -1,13 +1,17 @@
 // Inspector pane contents for each InspectorItem kind.
 import { useQuery } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { formatReference, type FileReference } from "../files/fileReference";
 import { client, errorMessage } from "../../api/client";
 import { useSessionController, useSessionSnapshot } from "../session/useSession";
 import { RowBody, rowTitle } from "../session/RowView";
 import { InspectorResizer, useInspector, type InspectorItem } from "./inspector";
 import { PictureDetail } from "../attachments/SessionPicture";
 import { DiffView } from "../code/CodeBlock";
-import { FileRef } from "../files/FileRef";
+import { FileLinksProvider, FileRef } from "../files/FileRef";
+import { FileViewer } from "../files/FileViewer";
+import { useSessionFileLinks } from "../files/links";
+import { basename } from "../files/model";
 import { CopyButton } from "../../ui/CopyButton";
 import { reportPresentation } from "../session/report";
 import { SessionSettingsPanel } from "../session/SessionSettings";
@@ -15,14 +19,21 @@ import { TaskDetailView } from "../backlog/TaskDetail";
 import { MergePanel } from "../workstreams/MergePanel";
 
 export function InspectorPane() {
-  const { item, close } = useInspector();
+  const { item, close, back, canGoBack } = useInspector();
   if (!item) return null;
   return (
     <aside className="inspector" aria-label="Inspector">
       <InspectorResizer />
       <div className="inspector-inner">
         <header className="inspector-head">
-          <span className="inspector-title">{inspectorTitle(item)}</span>
+          {canGoBack && (
+            <button type="button" className="btn ghost small" onClick={() => back()} aria-label="Back" title="Back">
+              ←
+            </button>
+          )}
+          <span className="inspector-title" title={item.kind === "file" ? item.path : undefined}>
+            {inspectorTitle(item)}
+          </span>
           <button type="button" className="btn ghost small" onClick={close} aria-label="Close inspector">
             ×
           </button>
@@ -41,6 +52,7 @@ export function InspectorPane() {
           {item.kind === "task" && (
             <TaskDetailView key={`${item.project}\u0000${item.taskId}`} project={item.project} taskId={item.taskId} variant="inspector" />
           )}
+          {item.kind === "file" && <FileInspector key={`${item.project}\u0000${item.sessionId}\u0000${item.path}`} item={item} />}
           {item.kind === "merge" && <MergePanel key={item.workstreamId} project={item.project} workstreamId={item.workstreamId} />}
           {item.kind === "sessionSettings" && (
             <SessionSettingsPanel key={`${item.project}\u0000${item.sessionId}`} project={item.project} sessionId={item.sessionId} />
@@ -67,7 +79,43 @@ function inspectorTitle(item: InspectorItem): string {
       return `Task ${item.taskId}`;
     case "merge":
       return `Merge · ${item.branch}`;
+    case "file":
+      return item.path ? `${basename(item.path)}${item.isDirectory ? "/" : ""}` : "Project root";
   }
+}
+
+function FileInspector({ item }: { item: Extract<InspectorItem, { kind: "file" }> }) {
+  const inspector = useInspector();
+  const [lines, setLines] = useState(item.lines);
+  useEffect(() => setLines(item.lines), [item.lines]);
+  const open = useCallback(
+    (ref: FileReference) =>
+      inspector.push({
+        kind: "file",
+        project: item.project,
+        sessionId: item.sessionId,
+        path: ref.path,
+        isDirectory: ref.isDirectory,
+        lines: ref.lines,
+      }),
+    [inspector, item.project, item.sessionId],
+  );
+  return (
+    <div className="inspector-file">
+      <div className="inspector-subtitle mono">
+        {formatReference({ path: item.path, isDirectory: item.isDirectory, lines })}
+        {item.sessionId && <span className="tag">worktree</span>}
+      </div>
+      <FileViewer
+        target={{ project: item.project, sessionId: item.sessionId, path: item.path }}
+        isDirectory={item.isDirectory}
+        lines={lines}
+        variant="inspector"
+        onOpen={open}
+        onLines={setLines}
+      />
+    </div>
+  );
 }
 
 function RowInspector({ item }: { item: Extract<InspectorItem, { kind: "row" }> }) {
@@ -80,12 +128,15 @@ function RowInspector({ item }: { item: Extract<InspectorItem, { kind: "row" }> 
     // Opening a row in the inspector is an explicit request for all of it.
     if (needsDetail) void controller.loadDetail(item.rowId);
   }, [controller, item.rowId, needsDetail]);
+  const links = useSessionFileLinks(item.project, item.sessionId, "inspector");
   if (!row) return <p className="muted">This row is no longer loaded.</p>;
   return (
     <div className="inspector-row">
       <div className="inspector-subtitle">{rowTitle(row, reportPresentation(snap.rows, index))}</div>
       {snap.loadingDetail.has(row.id) && <p className="muted">Loading full detail…</p>}
-      <RowBody row={row} full session={item} />
+      <FileLinksProvider value={links}>
+        <RowBody row={row} full session={item} />
+      </FileLinksProvider>
     </div>
   );
 }
@@ -126,6 +177,7 @@ function WorkingChanges({ item }: { item: Extract<InspectorItem, { kind: "workin
     refetchOnWindowFocus: false,
   });
   const reviews = useSessionReviews(item.project, item.sessionId);
+  const links = useSessionFileLinks(item.project, item.sessionId, "inspector");
   if (q.isPending) return <p className="muted">Loading…</p>;
   if (q.isError) return <p className="error">{errorMessage(q.error)}</p>;
   const r = q.data;
@@ -199,14 +251,16 @@ function WorkingChanges({ item }: { item: Extract<InspectorItem, { kind: "workin
         </div>
       )}
       {r.paths.length > 0 && (
-        <ul className="path-list">
-          {r.paths.map((p) => (
-            <li key={p}>
-              <FileRef path={p} />
-            </li>
-          ))}
-          {r.pathsTotal > r.paths.length && <li className="muted">… {r.pathsTotal - r.paths.length} more</li>}
-        </ul>
+        <FileLinksProvider value={links}>
+          <ul className="path-list">
+            {r.paths.map((p) => (
+              <li key={p}>
+                <FileRef path={p} />
+              </li>
+            ))}
+            {r.pathsTotal > r.paths.length && <li className="muted">… {r.pathsTotal - r.paths.length} more</li>}
+          </ul>
+        </FileLinksProvider>
       )}
       <DiffView diff={r.diff} truncated={Number(r.diffBytes) > new TextEncoder().encode(r.diff).length} />
     </div>
