@@ -1,7 +1,7 @@
 ---
 id: "0417"
 title: 'Desktop web: command palette, keyboard shortcuts, browser notifications, unread tracking'
-status: in_progress
+status: done
 priority: 3
 created: "2026-10-02"
 updated: "2026-10-06"
