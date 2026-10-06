@@ -29,8 +29,8 @@ import (
 	"github.com/whyrusleeping/ycc/internal/secrets"
 )
 
-// Keep the zero-adapter registry seam explicit: ordinary gollama clients must
-// satisfy the engine's context-aware streaming contract directly.
+// Keep gollama's context-aware streaming contract explicit; the credential
+// wrapper must not silently fall back to non-streaming turns.
 var _ engine.StreamTurner = (*gollama.Client)(nil)
 
 // Model describes one logical backend.
@@ -1855,6 +1855,7 @@ func (r *Registry) BuildContext(ctx context.Context, name string) (engine.Turner
 	// transient `retry` events.
 	c.SetMaxRetries(0)
 	key := resolveKey(m)
+	redacted := &credentialClient{Client: c, key: key}
 	anthropicSubscription := false
 	// Set for `auth = "oauth"` models only: their bearer credential is resolved
 	// per turn, because Anthropic invalidates the previous access token on every
@@ -1889,7 +1890,10 @@ func (r *Registry) BuildContext(ctx context.Context, name string) (engine.Turner
 			oauthTokens = &anthropicauth.TokenSource{
 				Token:   anthropicauth.AccessToken,
 				Refresh: anthropicauth.ForceRefresh,
-				Apply:   c.SetBearerToken,
+				Apply: func(token string) {
+					c.SetBearerToken(token)
+					redacted.key = token
+				},
 			}
 		case strings.HasPrefix(key, anthropicauth.TokenPrefix):
 			// A long-lived OAuth token (e.g. from `claude setup-token`) stored
@@ -1926,9 +1930,9 @@ func (r *Registry) BuildContext(ctx context.Context, name string) (engine.Turner
 	// (SetMaxRetries(0)), so this is the only retry ring.
 	if anthropicSubscription {
 		if oauthTokens != nil {
-			return anthropicauth.NewOAuthTurner(c, *oauthTokens), m.Model, nil
+			return anthropicauth.NewOAuthTurner(redacted, *oauthTokens), m.Model, nil
 		}
-		return anthropicauth.NewTurner(c), m.Model, nil
+		return anthropicauth.NewTurner(redacted), m.Model, nil
 	}
-	return c, m.Model, nil
+	return redacted, m.Model, nil
 }

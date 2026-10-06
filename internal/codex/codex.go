@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/whyrusleeping/gollama"
+	"github.com/whyrusleeping/ycc/internal/llmhttp"
 )
 
 // DefaultBaseURL is the ChatGPT-backed Codex Responses endpoint ("/responses"
@@ -74,7 +75,7 @@ func New(baseURL string, tokens TokenSource) *Client {
 	return &Client{
 		baseURL:    baseURL,
 		tokens:     tokens,
-		httpClient: &http.Client{Timeout: 15 * time.Minute},
+		httpClient: &http.Client{Timeout: 15 * time.Minute, CheckRedirect: llmhttp.CheckRedirect},
 		originator: "ycc",
 	}
 }
@@ -83,7 +84,7 @@ func New(baseURL string, tokens TokenSource) *Client {
 // Configure before issuing requests.
 func (c *Client) SetHTTPClient(hc *http.Client) {
 	if hc == nil {
-		hc = &http.Client{Timeout: 15 * time.Minute}
+		hc = &http.Client{Timeout: 15 * time.Minute, CheckRedirect: llmhttp.CheckRedirect}
 	}
 	c.httpClient = hc
 }
@@ -463,18 +464,23 @@ func (c *Client) TurnStreamCtx(ctx context.Context, opts gollama.RequestOptions,
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, llmhttp.RedactError(err, tok)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		return nil, &gollama.APIError{StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data)), Header: resp.Header.Clone()}
+		return nil, &gollama.APIError{StatusCode: resp.StatusCode, Body: llmhttp.Redact(strings.TrimSpace(string(data)), tok), Header: resp.Header.Clone()}
 	}
 	result, reasoningTokens, err := parseStream(resp.Body, opts.Model, onDelta)
 	if err == nil {
 		c.reasoningTokens.Store(int64(reasoningTokens))
 	}
-	return result, err
+	if streamErr, ok := err.(*StreamError); ok {
+		streamErr.Code = llmhttp.Redact(streamErr.Code, tok)
+		streamErr.Message = llmhttp.Redact(streamErr.Message, tok)
+		streamErr.Text = llmhttp.Redact(streamErr.Text, tok)
+	}
+	return result, llmhttp.RedactError(err, tok)
 }
 
 // parseStream folds the SSE event stream into a single response message and

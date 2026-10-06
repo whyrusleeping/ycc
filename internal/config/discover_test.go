@@ -85,8 +85,8 @@ func TestDiscoverModelsAnthropicOAuthHeaders(t *testing.T) {
 }
 
 func TestDiscoverModelsAnthropicDefaultsBaseURL(t *testing.T) {
-	oldTransport := http.DefaultClient.Transport
-	http.DefaultClient.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+	oldTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if got, want := r.URL.String(), DefaultAnthropicBaseURL+"/v1/models"; got != want {
 			t.Errorf("URL = %q, want %q", got, want)
 		}
@@ -97,7 +97,7 @@ func TestDiscoverModelsAnthropicDefaultsBaseURL(t *testing.T) {
 			Request:    r,
 		}, nil
 	})
-	t.Cleanup(func() { http.DefaultClient.Transport = oldTransport })
+	t.Cleanup(func() { http.DefaultTransport = oldTransport })
 
 	got, err := DiscoverModels(context.Background(), "anthropic", "", "key")
 	if err != nil {

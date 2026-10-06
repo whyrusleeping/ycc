@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/whyrusleeping/ycc/internal/anthropicauth"
+	"github.com/whyrusleeping/ycc/internal/llmhttp"
 	"github.com/whyrusleeping/ycc/internal/openaiauth"
 )
 
@@ -64,7 +65,7 @@ type HTTPFetcher struct {
 // NewHTTPFetcher returns the production fetcher.
 func NewHTTPFetcher() *HTTPFetcher {
 	return &HTTPFetcher{
-		Client:            http.DefaultClient,
+		Client:            &http.Client{CheckRedirect: llmhttp.CheckRedirect},
 		AnthropicURL:      anthropicUsageURL,
 		OpenAIURL:         openAIUsageURL,
 		AnthropicToken:    anthropicauth.AccessToken,
@@ -260,7 +261,7 @@ func (f *HTTPFetcher) getJSON(ctx context.Context, url, token, accountID string,
 	}
 	client := f.Client
 	if client == nil {
-		client = http.DefaultClient
+		client = &http.Client{CheckRedirect: llmhttp.CheckRedirect}
 	}
 	resp, err := client.Do(req)
 	if err != nil {

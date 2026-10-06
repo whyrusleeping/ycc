@@ -13,6 +13,7 @@ import (
 
 	"github.com/whyrusleeping/gollama"
 
+	"github.com/whyrusleeping/ycc/internal/llmhttp"
 	"github.com/whyrusleeping/ycc/internal/secrets"
 )
 
@@ -40,7 +41,7 @@ const (
 var exaBaseURL = "https://api.exa.ai"
 
 // exaHTTPClient is the HTTP client used for Exa calls (overridable in tests).
-var exaHTTPClient = &http.Client{Timeout: 30 * time.Second}
+var exaHTTPClient = &http.Client{Timeout: 30 * time.Second, CheckRedirect: llmhttp.CheckRedirect}
 
 // exaAPIKey resolves the Exa API key. An environment value is explicitly
 // process-scoped by the daemon operator. A machine-local named secret requires

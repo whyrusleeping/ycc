@@ -16,6 +16,7 @@ import { Spans } from "../code/CodeBlock";
 import { highlightLines, languageForPath, type Span } from "../code/highlight";
 import { Markdown } from "../markdown/Markdown";
 import { relativeTime } from "../sessions/feed";
+import { isPictureType } from "../attachments/attachments";
 import { FileLinksProvider, type FileLinkHandler } from "./FileRef";
 import { formatReference, type FileReference, type LineRange } from "./fileReference";
 import {
@@ -132,7 +133,7 @@ function FileContent({
   onOpen: (ref: FileReference) => void;
   onLines: (lines: LineRange | null) => void;
 }) {
-  const isImage = resp.mediaType.startsWith("image/");
+  const isImage = isPictureType(resp.mediaType);
   const isText = !isImage && !resp.isBinary;
   const text = useMemo(() => (isText ? new TextDecoder("utf-8").decode(resp.data) : ""), [isText, resp.data]);
   const fileLines = useMemo(() => splitLines(text), [text]);
@@ -339,7 +340,10 @@ const CodeLines = memo(function CodeLines({
 function ImagePreview({ data, mediaType, name, size }: { data: Uint8Array; mediaType: string; name: string; size: number }) {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
-    if (!data.length) return;
+    if (!data.length || !isPictureType(mediaType)) {
+      setUrl(null);
+      return;
+    }
     const u = URL.createObjectURL(new Blob([data as BlobPart], { type: mediaType }));
     setUrl(u);
     return () => URL.revokeObjectURL(u);

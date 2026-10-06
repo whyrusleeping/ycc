@@ -10,7 +10,7 @@ import { reconnectActiveSessions } from "../features/session/useSession";
 import { Toasts, toast } from "../ui/toast";
 import { PROJECT_SECTIONS, paths, sectionPath } from "./paths";
 import { useScope } from "./scope";
-import { authStore, getToken, setToken } from "../api/auth";
+import { authStore, getToken } from "../api/auth";
 import { useQueryClient } from "@tanstack/react-query";
 import { registerAction, shortcutLabel, useAction, useActionShortcuts, type AppAction, type Shortcut } from "./actions";
 import { CAPTURE_SHORTCUT_LABEL, CaptureDialog, openCapture } from "../features/backlog/CaptureDialog";
@@ -265,12 +265,11 @@ function Sidebar() {
             <button
               type="button"
               className="btn ghost icon-btn"
-              title="Sign out of this daemon"
-              aria-label="Sign out"
+              title="Forget token and sign out of this daemon"
+              aria-label="Forget token"
               onClick={() => {
-                setToken(null);
                 qc.clear();
-                authStore.setStatus({ kind: "needsToken", note: "Signed out." });
+                authStore.forgetToken();
               }}
             >
               <Icon name="signOut" />
@@ -670,13 +669,12 @@ function useNavigationActions() {
         getToken()
           ? {
               id: "auth.signOut",
-              title: "Sign out of this daemon",
+              title: "Forget token and sign out of this daemon",
               group: "General",
               keywords: "logout token",
               run: () => {
-                setToken(null);
                 qc.clear();
-                authStore.setStatus({ kind: "needsToken", note: "Signed out." });
+                authStore.forgetToken();
               },
             }
           : null,

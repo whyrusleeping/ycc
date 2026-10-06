@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { client, errorMessage } from "../../api/client";
 import type { Picture } from "../session/projection";
-import { formatBytes } from "./attachments";
+import { formatBytes, isPictureType } from "./attachments";
 
 export interface SessionRef {
   project: string;
@@ -40,11 +40,11 @@ export function useSessionAttachment(session: SessionRef, attachmentId: string) 
 export function useObjectUrl(data: Uint8Array | undefined, type: string | undefined): string | null {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
-    if (!data) {
+    if (!data || !type || !isPictureType(type)) {
       setUrl(null);
       return;
     }
-    const u = URL.createObjectURL(new Blob([data as BlobPart], { type: type || "application/octet-stream" }));
+    const u = URL.createObjectURL(new Blob([data as BlobPart], { type }));
     setUrl(u);
     return () => URL.revokeObjectURL(u);
   }, [data, type]);
@@ -68,7 +68,7 @@ export function PictureThumb({
   const q = useSessionAttachment(session, picture.attachmentId);
   const url = useObjectUrl(q.data?.data, q.data?.mediaType);
   const [broken, setBroken] = useState(false);
-  if (!picture.attachmentId || q.isError || broken) {
+  if (!picture.attachmentId || q.isError || broken || (q.data && !isPictureType(q.data.mediaType))) {
     const why = !picture.attachmentId
       ? "not retained"
       : broken
@@ -119,6 +119,14 @@ export function PictureDetail({ session, picture }: { session: SessionRef; pictu
     );
   }
   if (q.isPending) return <p className="muted">Loading…</p>;
+  if (q.data && !isPictureType(q.data.mediaType)) {
+    return (
+      <div>
+        {meta}
+        <p className="muted">Unsupported picture type.</p>
+      </div>
+    );
+  }
   if (q.isError || broken) {
     return (
       <div>

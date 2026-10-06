@@ -33,6 +33,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/whyrusleeping/ycc/internal/llmhttp"
 	"github.com/whyrusleeping/ycc/internal/secrets"
 )
 
@@ -319,7 +320,7 @@ func Exchange(ctx context.Context, code string, p PKCE, redirectURI string) (*Cr
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	return doToken(req)
+	return doToken(req, code, p.Verifier)
 }
 
 // Refresh trades a refresh token for fresh credentials. This grant takes a
@@ -341,7 +342,7 @@ func Refresh(ctx context.Context, refreshToken string) (*Credentials, error) {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	creds, err := doToken(req)
+	creds, err := doToken(req, refreshToken)
 	if err != nil {
 		return nil, err
 	}
@@ -353,16 +354,16 @@ func Refresh(ctx context.Context, refreshToken string) (*Credentials, error) {
 	return creds, nil
 }
 
-func doToken(req *http.Request) (*Credentials, error) {
+func doToken(req *http.Request, credentials ...string) (*Credentials, error) {
 	req.Header.Set("Accept", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := (&http.Client{CheckRedirect: llmhttp.CheckRedirect}).Do(req)
 	if err != nil {
-		return nil, err
+		return nil, llmhttp.RedactError(err, credentials...)
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("token endpoint: %s: %s", resp.Status, strings.TrimSpace(string(data)))
+		return nil, fmt.Errorf("token endpoint: %s: %s", resp.Status, llmhttp.Redact(strings.TrimSpace(string(data)), credentials...))
 	}
 	var tr tokenResponse
 	if err := json.Unmarshal(data, &tr); err != nil {

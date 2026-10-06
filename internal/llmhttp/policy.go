@@ -31,7 +31,7 @@ func DefaultPolicy() Policy { return Policy{StreamIdle: 5 * time.Minute, Total: 
 // NewClient installs the same policy for gollama and Codex. Unlike http.Client.Timeout,
 // these limits do not impose a five-minute cap on an actively progressing stream.
 func NewClient(p Policy) *http.Client {
-	return &http.Client{Transport: &transport{base: http.DefaultTransport.(*http.Transport).Clone(), policy: p}}
+	return &http.Client{Transport: &transport{base: http.DefaultTransport.(*http.Transport).Clone(), policy: p}, CheckRedirect: CheckRedirect}
 }
 
 type transport struct {

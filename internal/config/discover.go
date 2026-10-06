@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/whyrusleeping/ycc/internal/anthropicauth"
+	"github.com/whyrusleeping/ycc/internal/llmhttp"
 )
 
 // curatedModelIDs lists sensible built-in model ids per backend. They are used to
@@ -87,7 +88,7 @@ func getJSON(ctx context.Context, url string, headers map[string]string, out any
 			req.Header.Set(k, v)
 		}
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := (&http.Client{CheckRedirect: llmhttp.CheckRedirect}).Do(req)
 	if err != nil {
 		return err
 	}

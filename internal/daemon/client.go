@@ -16,6 +16,7 @@ import (
 	"connectrpc.com/connect"
 	"golang.org/x/net/http2"
 
+	"github.com/whyrusleeping/ycc/internal/llmhttp"
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 	"github.com/whyrusleeping/ycc/proto/ycc/v1/yccv1connect"
 )
@@ -178,9 +179,10 @@ func daemonLogPath() string {
 
 func httpClientFor(addr string) *http.Client {
 	if strings.HasPrefix(addr, "https://") {
-		return http.DefaultClient
+		return &http.Client{CheckRedirect: llmhttp.CheckRedirect}
 	}
 	return &http.Client{
+		CheckRedirect: llmhttp.CheckRedirect,
 		Transport: &http2.Transport{
 			AllowHTTP: true,
 			DialTLSContext: func(ctx context.Context, network, a string, _ *tls.Config) (net.Conn, error) {

@@ -16,11 +16,13 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"sync"
 	"time"
 
 	"github.com/whyrusleeping/ycc/internal/config"
+	"github.com/whyrusleeping/ycc/internal/llmhttp"
 )
 
 // Event kinds. These mirror config.NotifyEventKinds and are the values accepted
@@ -72,7 +74,7 @@ func New(cfg config.Notify) *Notifier {
 		url:    cfg.URL,
 		auth:   auth,
 		events: events,
-		client: &http.Client{Timeout: sendTimeout},
+		client: &http.Client{Timeout: sendTimeout, CheckRedirect: llmhttp.CheckRedirect},
 	}
 }
 
@@ -115,7 +117,7 @@ func (n *Notifier) Send(kind, project, sessionID, line string) {
 		defer cancel()
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, n.url, bytes.NewReader([]byte(body)))
 		if err != nil {
-			log.Printf("ycc: notify: build request: %v", err)
+			log.Printf("ycc: notify: invalid webhook request for %s", webhookOrigin(n.url))
 			return
 		}
 		req.Header.Set("Title", title)
@@ -133,14 +135,24 @@ func (n *Notifier) Send(kind, project, sessionID, line string) {
 		}
 		resp, err := n.client.Do(req)
 		if err != nil {
-			log.Printf("ycc: notify: POST %s: %v", n.url, err)
+			// http.Client errors include the full URL; do not log them.
+			log.Printf("ycc: notify: POST %s: request failed", webhookOrigin(n.url))
 			return
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode >= 300 {
-			log.Printf("ycc: notify: POST %s: unexpected status %s", n.url, resp.Status)
+			log.Printf("ycc: notify: POST %s: unexpected status %d", webhookOrigin(n.url), resp.StatusCode)
 		}
 	}()
+}
+
+// webhookOrigin deliberately omits userinfo, path and query (often credentials).
+func webhookOrigin(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "[invalid origin]"
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 // Flush blocks until all in-flight sends have completed. Nil-safe. Intended for

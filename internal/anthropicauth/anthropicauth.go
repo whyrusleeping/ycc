@@ -30,6 +30,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/whyrusleeping/ycc/internal/llmhttp"
 	"github.com/whyrusleeping/ycc/internal/secrets"
 )
 
@@ -195,14 +196,14 @@ func tokenCall(ctx context.Context, body map[string]string) (*Credentials, error
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := (&http.Client{CheckRedirect: llmhttp.CheckRedirect}).Do(req)
 	if err != nil {
-		return nil, err
+		return nil, llmhttp.RedactError(err, body["refresh_token"], body["code"], body["code_verifier"], body["state"])
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("token endpoint: %s: %s", resp.Status, strings.TrimSpace(string(data)))
+		return nil, fmt.Errorf("token endpoint: %s: %s", resp.Status, llmhttp.Redact(strings.TrimSpace(string(data)), body["refresh_token"], body["access_token"], body["code"], body["code_verifier"], body["state"]))
 	}
 	var tr tokenResponse
 	if err := json.Unmarshal(data, &tr); err != nil {

@@ -61,6 +61,12 @@ export const authStore = {
     status = next;
     emit();
   },
+  /** Explicit sign-out: remove current and legacy tokens and show token entry. */
+  forgetToken() {
+    setToken(null);
+    status = { kind: "needsToken", note: "Token forgotten." };
+    emit();
+  },
   /** A 401 anywhere: forget the token and return to token entry. */
   expire(note = "Session expired — enter the token again.") {
     if (status.kind === "needsToken") return;
