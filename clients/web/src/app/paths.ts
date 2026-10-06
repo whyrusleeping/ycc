@@ -2,7 +2,7 @@
 // and bookmarks work; build links only through these helpers.
 const enc = encodeURIComponent;
 
-/** Project-scoped sidebar surfaces (usage arrives in a later phase). */
+/** Project-scoped sidebar surfaces. */
 export const PROJECT_SECTIONS = [
   { key: "backlog", label: "Backlog" },
   { key: "loop", label: "Work loop" },
@@ -53,11 +53,17 @@ export const paths = {
     `/p/${enc(project)}/plans${name ? `/${enc(name)}` : ""}`,
   /** Registered projects: add, rename, remove. */
   projects: () => "/projects",
-  settings: () => "/settings",
+  /**
+   * The usage dashboard: every project when unscoped (or the sole/default
+   * one), else one project. `search` is a query string from usageSearch().
+   */
+  usage: (project?: string | null, search = "") => `${project ? `/p/${enc(project)}/usage` : "/usage"}${search}`,
+  /** Daemon-wide settings; `section` scrolls to one (e.g. "models"). */
+  settings: (section?: string) => (section ? `/settings#${section}` : "/settings"),
 };
 
-/** Sections that ask which project when opened unscoped (the rest need one). */
-export const UNSCOPED_SECTIONS: readonly ProjectSection[] = ["backlog", "loop", "workstreams", "files", "memory"];
+/** Sections with an unscoped route (usage shows every project; the rest ask which). */
+export const UNSCOPED_SECTIONS: readonly ProjectSection[] = ["backlog", "loop", "workstreams", "usage", "files", "memory"];
 
 /** The unscoped (or scoped) route of a section that has one. */
 export function sectionPath(section: ProjectSection, project: string | null): string | null {
@@ -69,6 +75,8 @@ export function sectionPath(section: ProjectSection, project: string | null): st
       return paths.loop(null);
     case "workstreams":
       return paths.workstreams(null);
+    case "usage":
+      return paths.usage(null);
     case "files":
       return paths.files(null);
     case "memory":

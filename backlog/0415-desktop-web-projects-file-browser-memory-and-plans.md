@@ -1,7 +1,7 @@
 ---
 id: "0415"
 title: 'Desktop web: projects, file browser, memory and plans'
-status: in_progress
+status: done
 priority: 3
 created: "2026-10-02"
 updated: "2026-10-06"

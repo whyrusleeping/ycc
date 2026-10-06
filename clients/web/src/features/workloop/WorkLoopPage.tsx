@@ -19,6 +19,8 @@ import { useInspector } from "../inspector/inspector";
 import { StatusPill, TaskLink } from "../backlog/parts";
 import { relativeTime } from "../sessions/feed";
 import { spawnableTasks } from "../workstreams/model";
+import { loopNeedsAnthropicReconnect } from "../settings/anthropic";
+import { openAnthropicLogin } from "../settings/AnthropicLogin";
 import {
   WORK_IMPLEMENTATIONS,
   bannerLine,
@@ -302,7 +304,10 @@ function StartLoopDialog({
               </span>
             </label>
           ))}
-          <p className="muted small">A daemon-wide setting: it applies to every new work session, including this loop’s.</p>
+          <p className="muted small">
+            A daemon-wide setting: it applies to every new work session, including this loop’s. Also in{" "}
+            <Link to={paths.settings("work")}>Settings</Link>.
+          </p>
         </fieldset>
         <div className="loop-options">
           <div className="label">Budget caps this loop captures</div>
@@ -355,6 +360,14 @@ function LoopDetail({ project, loop, refreshError }: { project: string; loop: Wo
         {state === "finished" && outcome && (
           <div className={`banner ${isFailureOutcome(outcome) ? "error" : "ok"} loop-outcome`} role="status">
             {outcome}
+          </div>
+        )}
+        {loopNeedsAnthropicReconnect(loop, state === "finished") && (
+          <div className="loop-reconnect">
+            <button type="button" className="btn" onClick={() => openAnthropicLogin()}>
+              Reconnect Anthropic…
+            </button>
+            <span className="muted small">The loop stopped on an Anthropic login problem. Reconnecting does not restart the loop.</span>
           </div>
         )}
         {refreshError && <div className="warn small">Couldn’t refresh: {refreshError}</div>}

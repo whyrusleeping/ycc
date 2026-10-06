@@ -1,7 +1,7 @@
 // Server-state cache: query keys and hooks over the generated client. Unary
 // reads are cached per query and refreshed on window focus; mutations replace
 // local state with the daemon's response or invalidate the affected keys.
-import { QueryClient, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { QueryClient, keepPreviousData, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo, useState } from "react";
 import { Code, ConnectError } from "@connectrpc/connect";
 import type { BacklogTaskSummary, ProjectInfo, TaskDetail, WorkLoopInfo, WorkstreamInfo } from "../gen/ycc/v1/ycc_pb";
@@ -20,6 +20,19 @@ export const queryKeys = {
   /** ListModels: "" is the daemon defaults, a session id its live assignment. */
   models: (sessionId: string) => ["models", sessionId] as const,
   sessionUsage: (project: string) => ["usage", "session-model", project] as const,
+  /** GetUsage for the dashboard: scope ("" = all projects) and request. */
+  usageReport: (project: string, groupBy: readonly string[], since: string, until: string, task: string) =>
+    ["usage", "report", project, groupBy.join(","), since, until, task] as const,
+  /** Every GetUsage result (a refresh revalidates them all). */
+  usageAll: ["usage"] as const,
+  /** GetSubscriptionUsage: provider-side allowance of OAuth accounts. */
+  subscriptionUsage: ["subscriptionUsage"] as const,
+  /** Every ListModels result (defaults and per-session). */
+  modelsAll: ["models"] as const,
+  /** GetModelConfig: one model's full record for editing. */
+  modelConfig: (name: string) => ["modelConfig", name] as const,
+  /** ListReviewTiers. */
+  reviewTiers: ["reviewTiers"] as const,
   sessionFeed: (targets: string[]) => ["sessionFeed", targets] as const,
   sessionFeedAll: ["sessionFeed"] as const,
   /** ListBacklog for a project ("" resolves the sole/default project server-side). */
@@ -247,6 +260,53 @@ export function useBudget(enabled = true) {
     enabled,
     staleTime: 60_000,
     queryFn: ({ signal }) => client.getBudget({}, { signal }),
+  });
+}
+
+/** GetUsage for the dashboard. Usage logs only grow, so results stay fresh briefly. */
+export function useUsageReport(req: { project: string; groupBy: string[]; since: string; until: string; task: string }, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.usageReport(req.project, req.groupBy, req.since, req.until, req.task),
+    enabled,
+    staleTime: 15_000,
+    placeholderData: keepPreviousData,
+    queryFn: ({ signal }) => client.getUsage(req, { signal }),
+  });
+}
+
+let subscriptionRefreshed = false;
+
+/**
+ * GetSubscriptionUsage. The first load of the tab asks the daemon to refresh
+ * (within its own throttling); later loads reuse its cache until the user
+ * refreshes explicitly (refreshSubscriptionUsage).
+ */
+export function useSubscriptionUsage(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.subscriptionUsage,
+    enabled,
+    staleTime: 5 * 60_000,
+    queryFn: async ({ signal }) => {
+      const refresh = !subscriptionRefreshed;
+      const resp = await client.getSubscriptionUsage({ refresh }, { signal });
+      subscriptionRefreshed = true;
+      return resp.accounts;
+    },
+  });
+}
+
+export async function refreshSubscriptionUsage(qc: QueryClient) {
+  const resp = await client.getSubscriptionUsage({ refresh: true });
+  subscriptionRefreshed = true;
+  qc.setQueryData(queryKeys.subscriptionUsage, resp.accounts);
+}
+
+/** ListReviewTiers: effective tiers (built-ins overlaid) and the default. */
+export function useReviewTiers(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.reviewTiers,
+    enabled,
+    queryFn: ({ signal }) => client.listReviewTiers({}, { signal }),
   });
 }
 

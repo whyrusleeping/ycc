@@ -16,8 +16,10 @@ import { workstreamIndicator } from "../features/workstreams/model";
 import { FilesPage } from "../features/files/FilesPage";
 import { MemoryPage, PlansPage } from "../features/memory/MemoryPage";
 import { ProjectsPage } from "../features/projects/ProjectsPage";
+import { SettingsPage } from "../features/settings/SettingsPage";
+import { UsagePage } from "../features/usage/UsagePage";
 import { lastViewedProject } from "./memory";
-import { PROJECT_SECTIONS, paths } from "./paths";
+import { paths } from "./paths";
 import { useScope } from "./scope";
 
 /** `/`: the daemon-wide Recent sessions page. */
@@ -336,27 +338,30 @@ export function ProjectsRoutePage() {
   return <ProjectsPage />;
 }
 
-/** A project surface that a later phase fills in. */
-export function SectionPlaceholder({ section }: { section: string }) {
-  const { project = "" } = useParams();
-  const label = PROJECT_SECTIONS.find((s) => s.key === section)?.label ?? section;
-  return (
-    <div className="page placeholder">
-      <h1>
-        {label} <span className="muted">· {project}</span>
-      </h1>
-      <p className="muted">This view arrives in a later phase of the desktop web client.</p>
-    </div>
-  );
+/** `/p/:project/usage` and the unscoped `/usage` (every project). */
+export function UsageRoutePage() {
+  const { project } = useParams();
+  if (project !== undefined) return <ScopedUsage project={project} />;
+  return <UnscopedUsage />;
 }
 
-export function SettingsPlaceholder() {
-  return (
-    <div className="page placeholder">
-      <h1>Settings</h1>
-      <p className="muted">Model, role, and review settings arrive in a later phase of the desktop web client.</p>
-    </div>
-  );
+function ScopedUsage({ project }: { project: string }) {
+  const { setScope } = useScope();
+  useEffect(() => setScope(project), [project, setScope]);
+  useEffect(() => lastViewedProject.set(project), [project]);
+  useDocumentTitle(`Usage · ${project}`);
+  return <UsagePage key={project} project={project} />;
+}
+
+function UnscopedUsage() {
+  useDocumentTitle("Usage");
+  return <UsagePage project="" />;
+}
+
+/** `/settings`: daemon-wide models, roles, reasoning, review tiers, accounts. */
+export function SettingsRoutePage() {
+  useDocumentTitle("Settings");
+  return <SettingsPage />;
 }
 
 export function NotFoundPage() {

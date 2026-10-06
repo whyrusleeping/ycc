@@ -29,6 +29,10 @@ registered (to add, rename, and remove), a project with nested directories, a gi
 directory, a markdown file with a relative link, an image, and a `memory.md` with typed, legacy,
 superseded, and retired notes plus a `plans/` directory, and a workstream session that wrote a file
 the project root does not have (or has with different content), citing it as `path:line`.
+For the usage and settings checks, have usage on two or more projects (some attributed to backlog
+tasks, one priced and one unpriced model so totals read as partial pricing), an OpenAI-compatible
+endpoint to discover and test against whose key sits in an environment variable the daemon can
+read, and an Anthropic OAuth model (`auth = "oauth"`) so the subscription allowance has an account.
 
 ```
 YCC_TOKEN=<token> ycc daemon --web --addr 127.0.0.1:8791
@@ -210,10 +214,39 @@ YCC_TOKEN=<token> ycc daemon --web --addr 127.0.0.1:8791
     then struck through with what superseded or retired them (click to jump). The filter narrows
     by text, id, session, or kind; Source shows memory.md verbatim. Plans lists plans/*.md and
     renders the chosen plan (Source toggle, Open in Files); its relative links open beside it.
-34. Repeat a few steps with the system in dark mode.
+34. Usage (`/usage` for every project, `/p/<project>/usage` for one; the sidebar's Usage works
+    unscoped). The breakdown table equals `ycc cost` for the same scope, grouping, range, and task
+    (`--project`, `--by`, `--since/--until`, `--task`): labels (`(unattributed)`, `(unknown)`),
+    comma counts, and `$0.0000` / `$0.0000*` / `—` costs. Group by any of task, model, role, session,
+    and day, then by more (chips with ×); range presets (UTC days) and a custom range; the task
+    filter; all are in the URL and survive reload. Totals tiles, the over-time chart (days, weeks,
+    or months by span; cost or tokens), sortable columns with a share bar, task and session cells
+    that link (scoped views), the subscription allowance (per-window usage, reset time, or the
+    account's unavailable/stale state), and the spend-guard caps. The projects page, the
+    project switcher, and a session's Settings panel ("Full usage →") lead here.
+35. Settings (`/settings`). Default roles (coordinator, implementer, reviewers — the last reviewer
+    can't be unchecked), default reasoning per role, and the work implementation apply at once
+    (`ListModels` reflects them). Models: add one (a key_env that looks like a key, or isn't a
+    variable name, is refused — the form has no secret field), Discover models against the
+    provider and pick one, Test connection on the unsaved draft (success, and a clear failure for
+    an unreachable endpoint; editing a request field clears the result), save (ycc.toml gains the
+    model with key_env by NAME), edit, duplicate, disable/enable, and remove with confirmation; a
+    model a role or a running session still uses is refused with the daemon's reason. No request
+    or response body carries a key value. Review tiers: change the default tier, edit a tier's
+    reviewer slots (model, label, focus prompt, thinking override, order) — a built-in becomes
+    "overridden" and Revert restores it — add a custom tier and remove it (confirmed). Modes and
+    opening-prompt presets are listed read-only.
+36. Anthropic login (Settings → Connect / reconnect Anthropic…, and "Reconnect Anthropic…" on a
+    work loop or session stopped by an Anthropic login error). Sign in shows an Open Anthropic
+    sign-in page link (claude.com, new tab) and a masked code#state field; a code without `#state`
+    is flagged before sending; a wrong code is refused and consumes the attempt; Cancel drops the
+    pending attempt (a later Complete for it reports it expired or replaced). A real login is
+    verified manually: paste the code, see "Anthropic connected", and OAuth models work again.
+37. Repeat a few steps with the system in dark mode.
 
 ## Pass condition
 
 All checks pass without a JavaScript console error, a Content-Security-Policy violation, or a
 full-page reload. (The token probe's 401 on first load, the deliberately rejected attachments'
-400s, and a deliberately missing file's 404 are expected network errors.) Record the browser and version, daemon commit, and console output for failures.
+400s, a deliberately missing file's 404, the refused removal of an assigned model, and a refused
+Anthropic code are expected network errors.) Record the browser and version, daemon commit, and console output for failures.

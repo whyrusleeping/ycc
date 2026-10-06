@@ -27,9 +27,14 @@ export function ProjectsPage() {
     <div className="page projects-page">
       <header className="page-head">
         <h1>Projects</h1>
-        <button type="button" className="btn primary" onClick={() => openAddProject()}>
-          + Add project…
-        </button>
+        <div className="page-actions">
+          <Link to={paths.usage(null)} className="btn ghost" title="Usage and cost across every project">
+            Usage, all projects
+          </Link>
+          <button type="button" className="btn primary" onClick={() => openAddProject()}>
+            + Add project…
+          </button>
+        </div>
       </header>
       {projects.isPending ? (
         <p className="muted">Loading…</p>
@@ -70,6 +75,9 @@ export function ProjectsPage() {
                 </Link>
                 <Link to={paths.memory(p.name)} className="btn ghost small">
                   Memory
+                </Link>
+                <Link to={paths.usage(p.name)} className="btn ghost small">
+                  Usage
                 </Link>
               </nav>
               <MenuButton

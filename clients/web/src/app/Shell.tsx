@@ -23,6 +23,8 @@ import { requestIntent } from "./intents";
 import { MenuButton } from "../ui/Menu";
 import { gitSyncBadge } from "../features/projects/model";
 import { ProjectDialogs, openAddProject, openRemoveProject, openRenameProject } from "../features/projects/ProjectDialogs";
+import { AnthropicLoginDialog, openAnthropicLogin } from "../features/settings/AnthropicLogin";
+import { SETTINGS_INTENT } from "../features/settings/SettingsPage";
 
 function ProjectSwitcher() {
   const { scope, setScope } = useScope();
@@ -52,6 +54,7 @@ function ProjectSwitcher() {
             else if (/^(\/p\/[^/]+)?\/workstreams\/?$/.test(location.pathname)) navigate(paths.workstreams(next));
             else if (/^(\/p\/[^/]+)?\/files(\/|$)/.test(location.pathname)) navigate(paths.files(next));
             else if (/^(\/p\/[^/]+)?\/(memory|plans)(\/|$)/.test(location.pathname)) navigate(paths.memory(next));
+            else if (/^(\/p\/[^/]+)?\/usage\/?$/.test(location.pathname)) navigate(paths.usage(next, location.search));
           }}
         >
           <option value="">All projects · Recent</option>
@@ -263,6 +266,52 @@ function useShellActions() {
     }),
     [target, navigate],
   );
+  const openUsage = useMemo<AppAction>(
+    () => ({
+      id: "usage.open",
+      title: target ? `Open usage for ${target}` : "Open usage (all projects)",
+      group: "Usage",
+      run: () => navigate(paths.usage(target ?? null)),
+    }),
+    [target, navigate],
+  );
+  const openUsageAll = useMemo<AppAction | null>(
+    () =>
+      target
+        ? { id: "usage.openAll", title: "Open usage across all projects", group: "Usage", run: () => navigate(paths.usage(null)) }
+        : null,
+    [target, navigate],
+  );
+  const openSettings = useMemo<AppAction>(
+    () => ({ id: "settings.open", title: "Open settings", group: "Settings", run: () => navigate(paths.settings()) }),
+    [navigate],
+  );
+  const addModel = useMemo<AppAction>(
+    () => ({
+      id: "settings.addModel",
+      title: "Add a model…",
+      group: "Settings",
+      run: () => {
+        requestIntent(SETTINGS_INTENT, "addModel");
+        navigate(paths.settings("models"));
+      },
+    }),
+    [navigate],
+  );
+  const reviewTiers = useMemo<AppAction>(
+    () => ({ id: "settings.reviewTiers", title: "Edit review tiers", group: "Settings", run: () => navigate(paths.settings("reviews")) }),
+    [navigate],
+  );
+  const anthropicLogin = useMemo<AppAction>(
+    () => ({ id: "settings.anthropicLogin", title: "Connect / reconnect Anthropic…", group: "Settings", run: () => openAnthropicLogin() }),
+    [],
+  );
+  useAction(openUsage);
+  useAction(openUsageAll);
+  useAction(openSettings);
+  useAction(addModel);
+  useAction(reviewTiers);
+  useAction(anthropicLogin);
   useAction(startLoop);
   useAction(stopLoop);
   useAction(spawn);
@@ -308,6 +357,7 @@ export function Shell() {
       <InspectorPane />
       <CaptureDialog />
       <ProjectDialogs />
+      <AnthropicLoginDialog />
       <Toasts />
     </div>
   );

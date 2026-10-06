@@ -1,4 +1,4 @@
-// Route table. Later phases add their surfaces here (and helpers in paths.ts).
+// Route table (path helpers live in paths.ts).
 import { createBrowserRouter } from "react-router";
 import {
   BacklogRoutePage,
@@ -10,17 +10,13 @@ import {
   PlansRoutePage,
   ProjectPage,
   ProjectsRoutePage,
-  SectionPlaceholder,
   SessionPage,
-  SettingsPlaceholder,
+  SettingsRoutePage,
+  UsageRoutePage,
   WorkLoopRoutePage,
   WorkstreamsRoutePage,
 } from "./pages";
-import { PROJECT_SECTIONS, type ProjectSection } from "./paths";
 import { Shell } from "./Shell";
-
-/** Sections with their own routes; the rest are placeholders until their phase. */
-const LIVE_SECTIONS: readonly ProjectSection[] = ["backlog", "loop", "workstreams", "files", "memory"];
 
 export function makeRouter() {
   return createBrowserRouter([
@@ -31,7 +27,7 @@ export function makeRouter() {
         { index: true, element: <HomePage /> },
         { path: "new", element: <NewSessionPage /> },
         { path: "s/:sessionId", element: <SessionPage /> },
-        { path: "settings", element: <SettingsPlaceholder /> },
+        { path: "settings", element: <SettingsRoutePage /> },
         { path: "p/:project", element: <ProjectPage /> },
         { path: "p/:project/new", element: <NewSessionPage /> },
         { path: "p/:project/s/:sessionId", element: <SessionPage /> },
@@ -47,10 +43,8 @@ export function makeRouter() {
         { path: "p/:project/memory", element: <MemoryRoutePage /> },
         { path: "p/:project/plans/:name?", element: <PlansRoutePage /> },
         { path: "projects", element: <ProjectsRoutePage /> },
-        ...PROJECT_SECTIONS.filter((s) => !LIVE_SECTIONS.includes(s.key)).map((s) => ({
-          path: `p/:project/${s.key}`,
-          element: <SectionPlaceholder section={s.key} />,
-        })),
+        { path: "usage", element: <UsageRoutePage /> },
+        { path: "p/:project/usage", element: <UsageRoutePage /> },
         { path: "*", element: <NotFoundPage /> },
       ],
     },

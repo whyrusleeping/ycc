@@ -2,6 +2,8 @@
 // transcript, the answer panel for pending questions, and the composer (live
 // sessions only; persisted-only sessions are a finite read-only view).
 import { useEffect, useRef, useState } from "react";
+import { needsAnthropicReconnect } from "../settings/anthropic";
+import { openAnthropicLogin } from "../settings/AnthropicLogin";
 import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "../../api/queries";
 import { useInspector } from "../inspector/inspector";
@@ -94,6 +96,13 @@ function Controls({ controller, snap }: { controller: SessionController; snap: S
     buttons.push(
       <button key="resume" type="button" className="btn primary" disabled={busy} onClick={() => void controller.resume()}>
         {pending === "resume" ? "Resuming…" : "Resume"}
+      </button>,
+    );
+  }
+  if (snap.phase.kind === "error" && needsAnthropicReconnect(snap.phase.message)) {
+    buttons.push(
+      <button key="anthropic" type="button" className="btn" onClick={() => openAnthropicLogin()} title="Sign in to Anthropic again on the daemon">
+        Reconnect Anthropic…
       </button>,
     );
   }

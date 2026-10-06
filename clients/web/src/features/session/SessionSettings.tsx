@@ -8,7 +8,10 @@ import { useEffect, useState } from "react";
 import { client, errorMessage, isUnauthorized } from "../../api/client";
 import { queryKeys, useModels } from "../../api/queries";
 import { authStore } from "../../api/auth";
+import { Link } from "react-router";
+import { paths } from "../../app/paths";
 import { compactTokenCount } from "../sessions/feed";
+import { usageSearch } from "../usage/model";
 import { useSessionController, useSessionSnapshot } from "./useSession";
 import {
   THINKING_LEVELS,
@@ -253,6 +256,13 @@ function SessionUsage({ project, sessionId }: { project: string; sessionId: stri
       {q.isPending && <p className="muted">Loading…</p>}
       {q.isError && <p className="error">{errorMessage(q.error, "Couldn’t load usage.")}</p>}
       {usage && !usage.total && <p className="muted">No model usage recorded yet.</p>}
+      {(usage?.total || q.isError) && (
+        <p className="small">
+          <Link to={paths.usage(project || null, usageSearch({ by: ["session", "model"] }))}>
+            Full usage{project ? ` for ${project}` : ""} →
+          </Link>
+        </p>
+      )}
       {usage?.total && (
         <table className="usage-table">
           <thead>

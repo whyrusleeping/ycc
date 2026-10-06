@@ -1,10 +1,10 @@
 ---
 id: "0416"
 title: 'Desktop web: usage/cost dashboard and model, role, review-tier settings'
-status: todo
+status: in_progress
 priority: 3
 created: "2026-10-02"
-updated: "2026-10-02"
+updated: "2026-10-06"
 depends_on:
     - "0410"
 spec_refs:
