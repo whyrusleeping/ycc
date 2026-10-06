@@ -746,23 +746,15 @@ func (l *Loop) turnOnce(ctx context.Context, client Turner, opts gollama.Request
 	}
 	broadcast := l.Emitter != nil && l.Emitter.CanBroadcast()
 
-	// onDelta is assumed to be invoked serially (see StreamTurner), so lastSent
-	// needs no synchronization; Broadcast itself is safe for concurrent use.
+	// onDelta is serial, but a trailing flush runs on a timer goroutine. Hold mu
+	// through broadcasts so attempt cleanup can order done after every snapshot.
+	var mu sync.Mutex
 	var lastSent time.Time
-	var lastText string
-	var sentAny, partial bool
-	onDelta := func(text string) {
-		if text != "" {
-			partial = true
-		}
-		if !broadcast {
-			return
-		}
-		now := time.Now()
-		if sentAny && now.Sub(lastSent) < turnDeltaInterval {
-			return
-		}
-		lastSent = now
+	var lastText, pending string
+	var timer *time.Timer
+	var sentAny, closed, partial bool
+	send := func(text string) { // caller holds mu
+		lastSent = time.Now()
 		sentAny = true
 		data := map[string]any{"text": text}
 		// Keep snapshot semantics as the compatibility/source-of-truth path, but
@@ -776,12 +768,50 @@ func (l *Loop) turnOnce(ctx context.Context, client Turner, opts gollama.Request
 		lastText = text
 		l.Emitter.Broadcast(event.TurnDelta, data)
 	}
+	onDelta := func(text string) {
+		if text != "" {
+			partial = true
+		}
+		if !broadcast {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if closed {
+			return
+		}
+		if timer != nil {
+			pending = text
+			return
+		}
+		if remaining := time.Until(lastSent.Add(turnDeltaInterval)); sentAny && remaining > 0 {
+			pending = text
+			timer = time.AfterFunc(remaining, func() {
+				mu.Lock()
+				defer mu.Unlock()
+				timer = nil
+				if !closed {
+					send(pending)
+				}
+			})
+			return
+		}
+		send(text)
+	}
 	// Clear the live tail on turn end (success OR error): a done delta tells
 	// subscribers to drop their tail row even if the turn failed before any
 	// model_turn is emitted. Sent unconditionally (once per ATTEMPT, so a failed
 	// attempt clears its partial tail before the retry restarts snapshots).
 	if broadcast {
-		defer l.Emitter.Broadcast(event.TurnDelta, map[string]any{"text": "", "done": true})
+		defer func() {
+			mu.Lock()
+			closed = true
+			if timer != nil {
+				timer.Stop()
+			}
+			mu.Unlock()
+			l.Emitter.Broadcast(event.TurnDelta, map[string]any{"text": "", "done": true})
+		}()
 	}
 	resp, err := streamer.TurnStreamCtx(ctx, opts, onDelta)
 	return resp, partial || progress.Generated(), err

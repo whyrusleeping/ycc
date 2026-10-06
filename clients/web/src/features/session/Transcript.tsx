@@ -30,6 +30,7 @@ export function Transcript({
   const lastSearchToken = useRef(search?.token ?? 0);
   const following = useRef(true);
   const lastHeight = useRef(0);
+  const lastScrollTop = useRef(0);
   const lastEarlier = useRef(snap.earlierRevision);
   const lastInstall = useRef(-1);
   const [showPill, setShowPill] = useState(false);
@@ -46,17 +47,42 @@ export function Transcript({
       // Earlier rows were prepended: keep the same content under the reader.
       lastEarlier.current = snap.earlierRevision;
       el.scrollTop += el.scrollHeight - lastHeight.current;
+      lastScrollTop.current = el.scrollTop;
     } else if (following.current) {
       el.scrollTop = el.scrollHeight;
+      lastScrollTop.current = el.scrollTop;
     } else if (el.scrollHeight > lastHeight.current + 1) {
       setShowPill(true);
     }
     if (search && search.token !== lastSearchToken.current) {
       lastSearchToken.current = search.token;
-      if (search.currentRowId && scrollToRow(el, search.currentRowId)) following.current = false;
+      if (search.currentRowId && scrollToRow(el, search.currentRowId)) {
+        following.current = false;
+        lastScrollTop.current = el.scrollTop;
+      }
     }
     lastHeight.current = el.scrollHeight;
   });
+
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    const content = inner.current;
+    if (!el || !content) return;
+    // Live-tail pacing (and other in-row layout changes) does not render the
+    // Transcript itself. React's layout effect above still owns prepend anchoring
+    // and runs before resize notifications, so these never apply that delta twice.
+    const observer = new ResizeObserver(() => {
+      if (following.current) {
+        el.scrollTop = el.scrollHeight;
+        lastScrollTop.current = el.scrollTop;
+      } else if (el.scrollHeight > lastHeight.current + 1) {
+        setShowPill(true);
+      }
+      lastHeight.current = el.scrollHeight;
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, []);
 
   const needle = search?.needle ?? "";
   const currentId = search?.currentRowId ?? null;
@@ -88,7 +114,12 @@ export function Transcript({
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
-    following.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
+    // A queued scroll event from our own follow-scroll may run after the next
+    // reveal has grown the row. Only actual scroll movement changes follow mode.
+    if (el.scrollTop !== lastScrollTop.current) {
+      following.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
+      lastScrollTop.current = el.scrollTop;
+    }
     if (following.current && showPill) setShowPill(false);
     if (el.scrollTop < NEAR_TOP_PX && snap.hasEarlier && !snap.loadingEarlier) void controller.loadEarlier();
   };
@@ -98,6 +129,7 @@ export function Transcript({
     if (!el) return;
     following.current = true;
     el.scrollTop = el.scrollHeight;
+    lastScrollTop.current = el.scrollTop;
     setShowPill(false);
   };
 

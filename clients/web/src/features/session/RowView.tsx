@@ -12,6 +12,7 @@ import { MetaTags, ToolBody } from "./ToolBody";
 import { oneLine, toolPreview } from "./toolPreview";
 import { FileRef } from "../files/FileRef";
 import type { ReportPresentation } from "./report";
+import { useSmoothText } from "./useSmoothText";
 
 function actorLabel(actor: string): string {
   if (!actor || actor === "coordinator") return "";
@@ -58,8 +59,9 @@ export function RowBody({ row, full = false, session }: { row: TranscriptRow; fu
       );
     case "model":
     case "report":
-    case "liveTail":
       return <Markdown text={k.text} />;
+    case "liveTail":
+      return <LiveTail text={k.text} />;
     case "thinking":
       return <div className="text thinking-text">{k.text}</div>;
     case "tool":
@@ -83,6 +85,11 @@ export function RowBody({ row, full = false, session }: { row: TranscriptRow; fu
     case "commit":
       return <div className="text">{k.text}</div>;
   }
+}
+
+function LiveTail({ text }: { text: string }) {
+  const smoothed = useSmoothText(text);
+  return <Markdown text={smoothed} />;
 }
 
 function UserPictures({ session, pictures }: { session: SessionRef; pictures: Picture[] }) {

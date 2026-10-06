@@ -25,11 +25,12 @@ type streamAttempt struct {
 // next scripted attempt, feeding its snapshots to onDelta before returning. Turn
 // mirrors the same script for the non-streaming path.
 type scriptStreamTurner struct {
-	attempts    []streamAttempt
-	n           int
-	turnCalls   int
-	streamCalls int
-	beforeDelta func() // optional hook run before each onDelta (e.g. to sleep)
+	attempts     []streamAttempt
+	n            int
+	turnCalls    int
+	streamCalls  int
+	beforeDelta  func() // optional hook run before each onDelta (e.g. to sleep)
+	beforeReturn func() // optional pause after the last snapshot
 }
 
 func (s *scriptStreamTurner) next() streamAttempt {
@@ -57,6 +58,9 @@ func (s *scriptStreamTurner) TurnStreamCtx(_ context.Context, opts gollama.Reque
 			s.beforeDelta()
 		}
 		onDelta(snap)
+	}
+	if s.beforeReturn != nil {
+		s.beforeReturn()
 	}
 	return a.resp, a.err
 }
@@ -273,6 +277,84 @@ func TestLoopStreamThrottlesRapidSnapshots(t *testing.T) {
 	}
 	if first != "a" {
 		t.Fatalf("first delta = %q, want the first snapshot %q", first, "a")
+	}
+}
+
+// A burst followed by provider silence still delivers the latest pending text
+// before the attempt ends, with hints based on the last delivered snapshot.
+func TestLoopStreamFlushesTrailingSnapshot(t *testing.T) {
+	l, err := event.OpenLog(filepath.Join(t.TempDir(), "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	ch, cancel := l.Subscribe(0)
+	defer cancel()
+	nextDelta := func() event.Event {
+		t.Helper()
+		select {
+		case delta := <-ch:
+			return delta
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for delta during provider silence")
+			return event.Event{}
+		}
+	}
+	client := &scriptStreamTurner{
+		attempts: []streamAttempt{{
+			snaps: []string{"a", "ab", "abc", "abcd"},
+			resp:  assistantText("abcd"),
+		}},
+		beforeReturn: func() {
+			if first := nextDelta(); first.Data["text"] != "a" {
+				t.Fatalf("first snapshot = %+v, want a", first)
+			}
+			// Wait for the trailing snapshot while the provider is still paused:
+			// flushing only at attempt end must not satisfy this assertion.
+			trailing := nextDelta().Data
+			if trailing["text"] != "abcd" || trailing["append"] != "bcd" || trailing["append_base_utf8"] != 1 {
+				t.Fatalf("trailing snapshot = %+v, want abcd with append=bcd base=1", trailing)
+			}
+		},
+	}
+	loop := newLoopWithRec(t, client, l)
+	if _, _, err := loop.turnOnce(context.Background(), client, gollama.RequestOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if last := nextDelta(); last.Data["done"] != true {
+		t.Fatalf("last delta = %+v, want done", last)
+	}
+}
+
+func TestLoopStreamStopsPendingSnapshotAfterDone(t *testing.T) {
+	for _, attemptErr := range []error{nil, errors.New("stream failed")} {
+		name := "success"
+		if attemptErr != nil {
+			name = "error"
+		}
+		t.Run(name, func(t *testing.T) {
+			l, err := event.OpenLog(filepath.Join(t.TempDir(), "events.jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer l.Close()
+			stop := collectDeltas(t, l)
+			client := &scriptStreamTurner{attempts: []streamAttempt{{
+				snaps: []string{"a", "ab", "abc"},
+				resp:  assistantText("abc"),
+				err:   attemptErr,
+			}}}
+			loop := newLoopWithRec(t, client, l)
+			if _, _, err := loop.turnOnce(context.Background(), client, gollama.RequestOptions{}); err != attemptErr {
+				t.Fatalf("turn error = %v, want %v", err, attemptErr)
+			}
+			// Wait beyond the pending timer deadline, not just the collection drain.
+			time.Sleep(2 * turnDeltaInterval)
+			deltas := stop()
+			if len(deltas) != 2 || deltas[0].Data["text"] != "a" || deltas[1].Data["done"] != true {
+				t.Fatalf("deltas = %+v, want first snapshot then done, nothing after done", deltas)
+			}
+		})
 	}
 }
 
