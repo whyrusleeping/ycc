@@ -173,7 +173,7 @@ function FileTree({
                     aria-label={`${r.expanded ? "Collapse" : "Expand"} ${r.name}`}
                     onClick={() => setExpanded((e) => toggle(e, r.path))}
                   >
-                    {r.expanded ? "▾" : "▸"}
+                    <Icon name="chevron" size={12} className={r.expanded ? "open" : undefined} />
                   </button>
                 ) : (
                   <span className="tree-toggle spacer" aria-hidden />
@@ -187,8 +187,11 @@ function FileTree({
                     onOpen({ path: r.path, isDirectory: r.isDir, lines: null });
                   }}
                 >
-                  {r.name}
-                  {r.isDir ? "/" : ""}
+                  <Icon name={r.isDir ? "files" : "file"} size={14} className="fs-icon" />
+                  <span className="tree-label">
+                    {r.name}
+                    {r.isDir ? "/" : ""}
+                  </span>
                 </button>
                 {r.loading && <span className="muted small"> …</span>}
                 {r.isDir && r.expanded && errors.has(r.path) && (

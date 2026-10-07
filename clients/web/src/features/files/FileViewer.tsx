@@ -12,6 +12,7 @@ import { queryKeys } from "../../api/queries";
 import { paths } from "../../app/paths";
 import type { FileEntry, ReadFileResponse } from "../../gen/ycc/v1/ycc_pb";
 import { CopyButton } from "../../ui/CopyButton";
+import { Icon } from "../../ui/icons";
 import { Spans } from "../code/CodeBlock";
 import { highlightLines, languageForPath, type Span } from "../code/highlight";
 import { Markdown } from "../markdown/Markdown";
@@ -424,9 +425,7 @@ function DirRow({ entry, dir, onOpen }: { entry: FileEntry; dir: string; onOpen:
     <tr className={entry.ignored ? "ignored" : undefined}>
       <td>
         <button type="button" className="link dir-entry" onClick={() => onOpen(ref)} title={formatReference(ref)}>
-          <span className="entry-icon" aria-hidden>
-            {entry.isDir ? "▸" : "·"}
-          </span>
+          <Icon name={entry.isDir ? "files" : "file"} size={14} className="fs-icon" />
           {entry.name}
           {entry.isDir ? "/" : ""}
           {entry.isSymlink && <span className="tag">link</span>}

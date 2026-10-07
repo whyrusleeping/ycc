@@ -100,6 +100,37 @@ export function parseArgs(args: string): Record<string, unknown> | null {
   }
 }
 
+/**
+ * Top-level scalar fields recoverable from an args payload that does not
+ * parse — the transcript page abbreviates long args mid-JSON. A string cut
+ * off by the abbreviation keeps its readable prefix.
+ */
+export function salvageArgs(args: string): Record<string, string> | null {
+  const trimmed = args.trim();
+  if (!trimmed.startsWith("{")) return null;
+  const out: Record<string, string> = {};
+  // "key": "string…" (closed or cut off) | number | boolean
+  const field = /"([A-Za-z_][A-Za-z0-9_]*)"\s*:\s*(?:"((?:[^"\\]|\\.)*)("?)|(-?\d+(?:\.\d+)?|true|false))/g;
+  for (let m = field.exec(trimmed); m; m = field.exec(trimmed)) {
+    const [, key, str, closed, scalar] = m;
+    if (key in out) continue;
+    if (scalar !== undefined) {
+      out[key] = scalar;
+      continue;
+    }
+    let value: string;
+    try {
+      // A cut can split a \uXXXX escape: drop the fragment.
+      value = JSON.parse(`"${closed ? str : str.replace(/\\u[0-9a-fA-F]{0,3}(…?)$/, "$1")}"`) as string;
+    } catch {
+      value = str;
+    }
+    // The daemon marks its cut with "…"; keep exactly one.
+    out[key] = closed ? value : `${value.replace(/\n?…$/, "")}…`;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
 /** Scalars and short string arrays preview usefully; nested objects do not. */
 function displayValue(v: unknown): string | null {
   if (typeof v === "string") return v;
@@ -118,7 +149,7 @@ export function oneLine(value: string, limit = 120): string {
 export function argSummary(tool: string, args: string, limit = 120): string {
   const trimmed = args.trim();
   if (!trimmed) return "";
-  const obj = parseArgs(trimmed);
+  const obj = parseArgs(trimmed) ?? salvageArgs(trimmed);
   if (!obj) return oneLine(trimmed, limit);
   const fields = PREVIEW_FIELDS[tool];
   if (fields) {
@@ -182,13 +213,25 @@ export function catNLineCount(output: string): number {
   return n;
 }
 
+/** The file a Write/Edit mutation receipt names ("created <path>" first line). */
+export function receiptPath(output: string): string {
+  const m = /^(?:created|overwrote|edited) (.+)$/.exec(output.split("\n", 1)[0] ?? "");
+  return m ? m[1].trim() : "";
+}
+
 export function toolPreview(tool: string, args: string, output: string, status: "running" | "ok" | "error"): ToolPreview {
   const obj = parseArgs(args);
   const str = (k: string) => (obj && typeof obj[k] === "string" ? (obj[k] as string) : "");
   const num = (k: string) => (obj && typeof obj[k] === "number" ? (obj[k] as number) : null);
   const preview: ToolPreview = { glyph: toolGlyph(tool), summary: "", path: "", meta: [] };
-  if (FILE_TOOLS.has(tool) && str("file_path")) {
-    preview.path = str("file_path");
+  // An abbreviated payload still names its file (unless the path itself was cut).
+  const salvagedPath = obj ? "" : (salvageArgs(args)?.file_path ?? "");
+  const path =
+    str("file_path") ||
+    (salvagedPath.endsWith("…") ? "" : salvagedPath) ||
+    (FILE_TOOLS.has(tool) && status !== "running" ? receiptPath(output) : "");
+  if (FILE_TOOLS.has(tool) && path) {
+    preview.path = path;
   } else {
     preview.summary = argSummary(tool, args);
   }
@@ -219,7 +262,13 @@ export function toolPreview(tool: string, args: string, output: string, status: 
       break;
     }
     case "Write": {
-      if (obj && typeof obj.content === "string") preview.meta.push({ text: plural(countLines(obj.content), "line"), tone: "muted" });
+      if (obj && typeof obj.content === "string") {
+        preview.meta.push({ text: plural(countLines(obj.content), "line"), tone: "muted" });
+      } else {
+        // Abbreviated args: the mutation receipt still counts the lines.
+        const after = /^after: \d+ bytes, (\d+) lines?$/m.exec(output);
+        if (after) preview.meta.push({ text: plural(Number(after[1]), "line"), tone: "muted" });
+      }
       break;
     }
     case "Edit": {

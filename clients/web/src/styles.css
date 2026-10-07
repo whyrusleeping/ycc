@@ -794,10 +794,13 @@ a.nav-item:hover {
   padding: 10px 16px 10px 24px;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
+  /* Narrow headers drop button labels and minor meta (queries below). */
+  container: session-head / inline-size;
 }
 
 .session-title {
   min-width: 0;
+  flex: 1;
 }
 
 .session-title h1 {
@@ -811,12 +814,75 @@ a.nav-item:hover {
 
 .session-meta {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 2px 12px;
+  gap: 12px;
   margin-top: 2px;
   font-size: 12px;
   color: var(--fg-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.session-meta > * {
+  flex: none;
+}
+
+.session-meta .status {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.session-meta .session-id {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-left: -6px;
+  padding: 0 6px;
+  font-size: 11.5px;
+  color: var(--fg-subtle);
+}
+
+.session-actions .btn .icon {
+  color: var(--fg-subtle);
+}
+
+.session-actions .btn:hover .icon,
+.session-actions .btn.active .icon {
+  color: inherit;
+}
+
+.session-actions .controls {
+  margin-left: 6px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+}
+
+.session-actions .controls:empty {
+  display: none;
+}
+
+@container session-head (max-width: 900px) {
+  .session-actions .btn-label {
+    display: none;
+  }
+
+  .session-actions > .btn {
+    padding: 5px 7px;
+  }
+}
+
+@container session-head (max-width: 620px) {
+  .session-meta .session-id {
+    display: none;
+  }
+}
+
+@container session-head (max-width: 520px) {
+  .session-meta .meta-minor {
+    display: none;
+  }
 }
 
 .session-meta .status {
@@ -1176,6 +1242,103 @@ pre.clamp {
 .working {
   font-size: 12.5px;
   padding: 4px 2px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* (the shared .spinner and its keyframes live with the workstream badges) */
+.working .spinner {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-top-color: var(--accent);
+}
+
+/* Repeated identical notices collapse to one row with a count. */
+.row.system .repeat {
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-subtle);
+  background: var(--bg-sunk);
+  border-radius: 999px;
+  padding: 0 7px;
+}
+
+/* A long run of steps: its summary heads the activity panel. */
+.row.fold.activity-head {
+  padding: 2px 10px;
+}
+
+.activity-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: calc(100% + 12px);
+  margin: 0 -6px;
+  padding: 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--fg-muted);
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: background-color 0.1s;
+}
+
+.activity-toggle:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+
+.activity-toggle::before {
+  content: "≡";
+  width: 8px;
+  flex: none;
+  font-size: 12px;
+  color: var(--fg-subtle);
+}
+
+.activity-counts {
+  display: flex;
+  gap: 4px 12px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+}
+
+.activity-count b {
+  font-weight: 600;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.activity-toggle .sum-meta {
+  margin-left: auto;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex: none;
+  font-size: 12px;
+}
+
+.activity-duration {
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-subtle);
+}
+
+.activity-action {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.activity-head.open + .row.fold {
+  box-shadow: inset 0 1px 0 var(--border-strong);
 }
 
 .pill {
@@ -2758,14 +2921,17 @@ kbd {
 }
 
 /* Only the table scrolls; the header and toolbar keep their (wrapped) height. */
-.backlog-main > :not(.backlog-table-wrap) {
+.backlog-main > :not(.backlog-table-wrap, .backlog-board-wrap) {
   flex-shrink: 0;
 }
 
 .page-actions {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
   align-items: center;
+  min-width: 0;
 }
 
 .backlog-toolbar {
@@ -3010,6 +3176,203 @@ th[aria-sort="descending"] .sort-btn {
 
 .backlog-page .empty-list {
   padding: 24px 0;
+}
+
+/* Backlog kanban board */
+.backlog-board-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.backlog-board {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  gap: 10px;
+  overflow: auto;
+  padding-bottom: 4px;
+  align-items: stretch;
+}
+
+.board-col {
+  flex: 1 0 240px;
+  max-width: 340px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-soft);
+  transition:
+    border-color 0.12s,
+    background-color 0.12s;
+}
+
+.backlog-page.with-detail .board-col {
+  flex-basis: 220px;
+}
+
+.board-col.drop-over {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.board-col-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 12px 7px;
+  border-top: 3px solid var(--border-strong);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+.st-col-in_progress .board-col-head {
+  border-top-color: var(--accent);
+}
+
+.st-col-in_review .board-col-head {
+  border-top-color: var(--violet);
+}
+
+.st-col-blocked .board-col-head {
+  border-top-color: var(--error);
+}
+
+.st-col-proposed .board-col-head {
+  border-top-color: var(--warn);
+}
+
+.st-col-done .board-col-head {
+  border-top-color: var(--ok);
+}
+
+.board-col-name {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fg-muted);
+}
+
+.board-col .count {
+  font-size: 11px;
+  color: var(--fg-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.board-cards {
+  list-style: none;
+  margin: 0;
+  padding: 2px 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  min-height: 48px;
+}
+
+.board-empty {
+  padding: 10px 4px;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
+.board-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 13px;
+  line-height: 18px;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition:
+    border-color 0.1s,
+    opacity 0.12s;
+}
+
+.board-card:hover {
+  border-color: var(--border-strong);
+}
+
+.board-card[draggable="true"] {
+  cursor: grab;
+}
+
+.board-card.cursor {
+  box-shadow: inset 2px 0 0 var(--accent), var(--shadow-sm);
+}
+
+.board-card.selected {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: var(--accent-soft);
+}
+
+.board-card.moving {
+  opacity: 0.55;
+}
+
+.board-card.st-card-done .board-card-title {
+  color: var(--fg-muted);
+}
+
+.board-card-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.board-card-title {
+  font-weight: 500;
+  overflow-wrap: break-word;
+}
+
+.board-card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 0;
+  margin-top: 6px;
+}
+
+.board-card-foot .spacer {
+  flex: 1;
+}
+
+.board-col.collapsed {
+  flex: 0 0 44px;
+}
+
+.board-col-expand {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 0;
+  border: none;
+  border-top: 3px solid var(--ok);
+  border-radius: var(--radius-lg);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.board-col-expand .board-col-name {
+  writing-mode: vertical-rl;
+}
+
+.board-col-expand:hover .board-col-name {
+  color: var(--fg);
+}
+
+.backlog-board.dragging .board-col.collapsed {
+  border-style: dashed;
 }
 
 /* Task detail (backlog pane and inspector) */
@@ -3598,6 +3961,23 @@ th[aria-sort="descending"] .sort-btn {
   color: var(--fg-muted);
 }
 
+/* Session reports (markdown): compact, and folded behind a fade until expanded. */
+.loop-md .md-h {
+  margin: 8px 0 4px;
+  font-size: 1em;
+}
+
+.loop-md .md p,
+.loop-md.md p {
+  margin-bottom: 6px;
+}
+
+.loop-md.clamped {
+  max-height: 7.2em;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, #000 55%, transparent);
+}
+
 .pre-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -4169,13 +4549,37 @@ th[aria-sort="descending"] .sort-btn {
 
 .tree-toggle {
   width: 16px;
+  height: 20px;
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: none;
   padding: 0;
-  color: var(--fg-muted);
+  color: var(--fg-subtle);
   cursor: pointer;
-  font-size: 11px;
+}
+
+.tree-toggle:hover {
+  color: var(--fg);
+}
+
+.tree-toggle .icon {
+  transition: transform 0.12s;
+}
+
+.tree-toggle .icon.open {
+  transform: rotate(90deg);
+}
+
+/* Folder / file glyphs in the tree and directory listings. */
+.fs-icon {
+  color: var(--fg-subtle);
+}
+
+.tree-row.current .fs-icon {
+  color: var(--accent);
 }
 
 .tree-toggle.spacer {
@@ -4184,6 +4588,10 @@ th[aria-sort="descending"] .sort-btn {
 }
 
 .tree-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   background: none;
   border: none;
   padding: 1px 4px;
@@ -4191,6 +4599,9 @@ th[aria-sort="descending"] .sort-btn {
   color: var(--fg);
   cursor: pointer;
   text-align: left;
+}
+
+.tree-label {
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -4366,6 +4777,7 @@ th[aria-sort="descending"] .sort-btn {
   padding: 3px 10px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
   white-space: nowrap;
+  vertical-align: middle;
 }
 
 .dir-table .num {

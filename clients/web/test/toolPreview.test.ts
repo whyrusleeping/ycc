@@ -1,7 +1,7 @@
 // Concise per-tool previews: bash command + exit, file paths, edit hunk
 // summaries, YccKit field choices for other tools.
 import { describe, expect, it } from "vitest";
-import { argSummary, bashOutcome, toolPreview } from "../src/features/session/toolPreview";
+import { argSummary, bashOutcome, receiptPath, salvageArgs, toolPreview } from "../src/features/session/toolPreview";
 
 const args = (o: unknown) => JSON.stringify(o);
 
@@ -52,6 +52,28 @@ describe("tool previews", () => {
     expect(argSummary("mystery", args({ z: 1, a: { nested: true }, b: "first string" }))).toBe("first string");
     expect(argSummary("Bash", "not json")).toBe("not json");
     // Abbreviated (truncated) args from an indexed page still preview.
-    expect(argSummary("Bash", '{"command":"echo hi')).toBe('{"command":"echo hi');
+    expect(argSummary("Bash", '{"command":"echo hi')).toBe("echo hi…");
+    expect(argSummary("Bash", '{"command":"echo \\"hi\\" && ls","timeout_s":30,"x":"cut…')).toBe('echo "hi" && ls');
+  });
+
+  it("abbreviated args: salvage fields, never show raw JSON", () => {
+    expect(salvageArgs('{"command":"go test ./...","timeout_s":120,"bg":true,"note":"long\\nte…')).toEqual({
+      command: "go test ./...",
+      timeout_s: "120",
+      bg: "true",
+      note: "long\nte…",
+    });
+    expect(salvageArgs("not json")).toBeNull();
+    // Write args sort content before file_path, so the cut loses the path: the
+    // mutation receipt still names the file and its line count.
+    const cut = '{"content":"# Report\\n\\nlots of text…';
+    const receipt = "created docs/report.md\noperation: create\nbefore: absent\nafter: 8960 bytes, 125 lines\nrevision (full-content sha256): ab";
+    const w = toolPreview("Write", cut, receipt, "ok");
+    expect(w.path).toBe("docs/report.md");
+    expect(w.summary).toBe("");
+    expect(w.meta).toEqual([{ text: "125 lines", tone: "muted" }]);
+    expect(receiptPath("edited a b.go\noperation: edit")).toBe("a b.go");
+    // A cut-off path is not offered as a link.
+    expect(toolPreview("Read", '{"file_path":"/very/long/pa…', "", "running").path).toBe("");
   });
 });

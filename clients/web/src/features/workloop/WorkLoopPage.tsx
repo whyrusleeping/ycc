@@ -17,6 +17,7 @@ import { ConfirmDialog } from "../../ui/ConfirmDialog";
 import { Modal } from "../../ui/Modal";
 import { toast } from "../../ui/toast";
 import { useInspector } from "../inspector/inspector";
+import { Markdown } from "../markdown/Markdown";
 import { StatusPill, TaskLink } from "../backlog/parts";
 import { relativeTime } from "../sessions/feed";
 import { spawnableTasks } from "../workstreams/model";
@@ -487,7 +488,7 @@ function DigestRow({ project, task: t, blocked }: { project: string; task: WorkL
           {details.map((d) => (
             <div key={d.label} className="digest-detail">
               <div className="label">{d.label}</div>
-              <div className="pre-text">{d.text}</div>
+              <Markdown text={d.text} className="loop-md" />
             </div>
           ))}
         </details>
@@ -496,13 +497,18 @@ function DigestRow({ project, task: t, blocked }: { project: string; task: WorkL
   );
 }
 
-/** Untrusted report text: plain, pre-wrapped, clamped until expanded. */
+/**
+ * Untrusted report text, rendered as the transcript renders reports (safe
+ * markdown: no raw HTML, inert unsafe links), clamped until expanded.
+ */
 function ClampedText({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   const long = text.length > 280 || text.split("\n").length > 4;
   return (
     <div className="loop-evidence">
-      <div className={`pre-text${long && !open ? " clamped" : ""}`}>{text}</div>
+      <div className={`loop-md${long && !open ? " clamped" : ""}`}>
+        <Markdown text={text} />
+      </div>
       {long && (
         <button type="button" className="link small" onClick={() => setOpen((o) => !o)}>
           {open ? "Show less" : "Show all"}

@@ -24,6 +24,8 @@ import { useAction, type AppAction } from "../../app/actions";
 import { requestIntent, useIntent } from "../../app/intents";
 import { readMarks } from "../sessions/unread";
 import { useDocumentVisible } from "../../ui/useVisible";
+import { Icon } from "../../ui/icons";
+import { CopyButton } from "../../ui/CopyButton";
 
 export function statusText(snap: SessionSnapshot): { text: string; tone: string } {
   switch (snap.conn) {
@@ -136,12 +138,14 @@ function Controls({ controller, snap }: { controller: SessionController; snap: S
         <div className="menu-wrap" ref={menu}>
           <button
             type="button"
-            className="btn ghost"
+            className="btn ghost icon-btn"
             aria-haspopup="menu"
             aria-expanded={menuOpen}
+            aria-label="More session actions"
+            title="More session actions"
             onClick={() => setMenuOpen((o) => !o)}
           >
-            More ▾
+            <Icon name="more" />
           </button>
           {menuOpen && (
             <div className="menu" role="menu">
@@ -273,6 +277,11 @@ export function SessionView({
     inspector.item?.kind === "sessionSettings" &&
     inspector.item.project === project &&
     inspector.item.sessionId === sessionId;
+  const changesOpen =
+    inspector.item?.kind === "workingChanges" &&
+    inspector.item.project === project &&
+    inspector.item.sessionId === sessionId &&
+    !inspector.item.taskId;
 
   let placeholder = "Message the agent… (Enter to send, Shift+Enter for a newline)";
   if (snap.awaitsAnswer) placeholder = "Type an answer to the pending question…";
@@ -303,9 +312,13 @@ export function SessionView({
                 </button>
               );
             })}
-            {snap.coordinatorModel && <span>{snap.coordinatorModel}</span>}
-            {ctx && <span>{ctx} ctx</span>}
-            <span className="mono">{sessionId}</span>
+            {snap.coordinatorModel && <span className="meta-minor">{snap.coordinatorModel}</span>}
+            {ctx && (
+              <span className="meta-minor" title="Context the coordinator is carrying">
+                {ctx} ctx
+              </span>
+            )}
+            <CopyButton text={sessionId} label={sessionId} className="session-id mono" title="Copy the session id" />
           </div>
         </div>
         <div className="session-actions">
@@ -313,34 +326,47 @@ export function SessionView({
             type="button"
             className={`btn ghost${search.open ? " active" : ""}`}
             title="Search this session (Ctrl/Cmd-F)"
+            aria-label="Search"
+            aria-pressed={search.open}
             onClick={() => (search.open ? search.close() : search.show())}
           >
-            Search
+            <Icon name="search" />
+            <span className="btn-label">Search</span>
           </button>
           <button
             type="button"
-            className="btn ghost"
-            onClick={() => inspector.open({ kind: "workingChanges", project, sessionId })}
+            className={`btn ghost${changesOpen ? " active" : ""}`}
+            title="Working changes: the diff in this session’s worktree"
+            aria-label="Working changes"
+            aria-pressed={changesOpen}
+            onClick={() =>
+              changesOpen ? inspector.close() : inspector.open({ kind: "workingChanges", project, sessionId })
+            }
           >
-            Working changes
+            <Icon name="diff" />
+            <span className="btn-label">Changes</span>
           </button>
           <Link
             className="btn ghost"
             to={paths.files(project || null, "", { session: sessionId })}
             title="Browse this session’s files (its live worktree)"
+            aria-label="Files"
           >
-            Files
+            <Icon name="files" />
+            <span className="btn-label">Files</span>
           </Link>
           <button
             type="button"
             className={`btn ghost${settingsOpen ? " active" : ""}`}
             aria-pressed={settingsOpen}
+            aria-label="Session settings"
             title="Reasoning, models, context, and usage for this session"
             onClick={() =>
               settingsOpen ? inspector.close() : inspector.open({ kind: "sessionSettings", project, sessionId })
             }
           >
-            Settings
+            <Icon name="settings" />
+            <span className="btn-label">Settings</span>
           </button>
           <Controls controller={controller} snap={snap} />
         </div>

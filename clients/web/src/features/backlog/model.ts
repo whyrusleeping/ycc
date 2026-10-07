@@ -2,7 +2,7 @@
 // internal/docs semantics): task statuses, the actionable flag, filtering and
 // sorting the ListBacklog table, keyboard cursor movement, editable-list
 // parsing, the body/work-log split, and task links inside task bodies.
-import { create } from "@bufbuild/protobuf";
+import { clone, create } from "@bufbuild/protobuf";
 import { BacklogTaskSummarySchema, type BacklogTaskSummary, type TaskDetail } from "../../gen/ycc/v1/ycc_pb";
 
 /** Statuses UpdateTask accepts, in workflow (board) order. */
@@ -237,6 +237,96 @@ export function moveCursor(ids: readonly string[], current: string | null, delta
   const i = current === null ? -1 : ids.indexOf(current);
   if (i < 0) return delta >= 0 ? ids[0] : ids[ids.length - 1];
   return ids[Math.max(0, Math.min(ids.length - 1, i + delta))];
+}
+
+/** How the backlog page lays tasks out. */
+export type BacklogView = "table" | "board";
+
+export interface BoardColumn {
+  /** The column's status (a TASK_STATUSES value, or an unknown status the store returned). */
+  status: string;
+  /** Matching cards, highest priority first, then newest. */
+  tasks: BacklogTaskSummary[];
+  /** Folded to a narrow strip (done while "Show done" is off); still a drop target. */
+  collapsed: boolean;
+}
+
+function compareCards(a: BacklogTaskSummary, b: BacklogTaskSummary): number {
+  // Done is history: newest first. Everything else: priority, then newest.
+  if (a.status.toLowerCase() !== "done") {
+    const p = priorityOf(a) - priorityOf(b);
+    if (p !== 0) return p;
+  }
+  return compareIds(b.id, a.id);
+}
+
+/**
+ * The kanban board: one column per status in workflow order (only the
+ * filtered statuses when a status filter is on). Text and actionable filters
+ * narrow the cards. Done stays on the board as a collapsed drop target while
+ * "Show done" is off, so dragging a card to done always works. Tasks with a
+ * status outside TASK_STATUSES get trailing columns rather than vanishing.
+ */
+export function boardColumns(tasks: readonly BacklogTaskSummary[], f: BacklogFilter): BoardColumn[] {
+  const cards = filterTasks(tasks, { ...f, showDone: true });
+  const groups = new Map<string, BacklogTaskSummary[]>();
+  for (const t of cards) {
+    const s = t.status.toLowerCase();
+    const g = groups.get(s);
+    if (g) g.push(t);
+    else groups.set(s, [t]);
+  }
+  const statuses: string[] = f.statuses.length ? TASK_STATUSES.filter((s) => f.statuses.includes(s)) : [...TASK_STATUSES];
+  for (const s of [...groups.keys()].sort()) if (!isTaskStatus(s) && !f.statuses.length) statuses.push(s);
+  return statuses.map((status) => ({
+    status,
+    tasks: (groups.get(status) ?? []).sort(compareCards),
+    collapsed: status === "done" && !f.showDone && !f.statuses.includes("done"),
+  }));
+}
+
+export type BoardDirection = "up" | "down" | "left" | "right";
+
+/**
+ * Keyboard movement over the board's expanded columns (card ids per column):
+ * up/down within a column (clamped), left/right to the nearest non-empty
+ * column keeping the row where possible. With no cursor (or one no longer on
+ * the board) any move starts at the first card.
+ */
+export function moveBoardCursor(columns: readonly (readonly string[])[], current: string | null, dir: BoardDirection): string | null {
+  const first = columns.find((c) => c.length > 0);
+  if (!first) return null;
+  const col = current === null ? -1 : columns.findIndex((c) => c.includes(current));
+  if (col < 0 || current === null) return first[0];
+  const row = columns[col].indexOf(current);
+  switch (dir) {
+    case "up":
+      return columns[col][Math.max(0, row - 1)];
+    case "down":
+      return columns[col][Math.min(columns[col].length - 1, row + 1)];
+    case "left":
+    case "right": {
+      const step = dir === "left" ? -1 : 1;
+      for (let c = col + step; c >= 0 && c < columns.length; c += step) {
+        if (columns[c].length) return columns[c][Math.min(row, columns[c].length - 1)];
+      }
+      return current;
+    }
+  }
+}
+
+/** The neighbouring workflow status (Shift+←/→ on a board card), or null at the ends. */
+export function adjacentStatus(status: string, step: -1 | 1): TaskStatus | null {
+  const i = TASK_STATUSES.indexOf(status.toLowerCase() as TaskStatus);
+  if (i < 0) return null;
+  return TASK_STATUSES[i + step] ?? null;
+}
+
+/** A summary row with its status replaced (the optimistic board move). */
+export function withStatus(t: BacklogTaskSummary, status: string): BacklogTaskSummary {
+  const next = clone(BacklogTaskSummarySchema, t);
+  next.status = status;
+  return next;
 }
 
 /** Dependency ids typed as "0410, 0411" (commas, whitespace, or newlines). */

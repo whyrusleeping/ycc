@@ -3,13 +3,15 @@
 // latest), and pages earlier rows when scrolled to the top while keeping the
 // viewport anchored. Transcript search marks matching rows, highlights the
 // matched text (CSS Custom Highlight API, no DOM mutation), and scrolls the
-// current match into view.
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+// current match into view. Long runs of tool/reasoning rows fold into an
+// activity summary (see blocks.ts) that the reader can expand in place.
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { SessionController, SessionSnapshot } from "./controller";
 import { RowView } from "./RowView";
 import type { DraftPicture } from "../attachments/attachments";
 import { reportPresentation } from "./report";
 import { SearchBar, type TranscriptSearch } from "./SearchBar";
+import { activitySummary, blockHides, compactDuration, foldedTailStart, transcriptBlocks, type ActivitySummary } from "./blocks";
 
 const NEAR_BOTTOM_PX = 80;
 const NEAR_TOP_PX = 200;
@@ -34,6 +36,10 @@ export function Transcript({
   const lastEarlier = useRef(snap.earlierRevision);
   const lastInstall = useRef(-1);
   const [showPill, setShowPill] = useState(false);
+  // Activity blocks the reader expanded (keyed by their first row id).
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+  // Growth the reader asked for (expanding a block) is not "new activity".
+  const quietGrowth = useRef(false);
 
   useLayoutEffect(() => {
     const el = scroller.current;
@@ -51,9 +57,10 @@ export function Transcript({
     } else if (following.current) {
       el.scrollTop = el.scrollHeight;
       lastScrollTop.current = el.scrollTop;
-    } else if (el.scrollHeight > lastHeight.current + 1) {
+    } else if (el.scrollHeight > lastHeight.current + 1 && !quietGrowth.current) {
       setShowPill(true);
     }
+    quietGrowth.current = false;
     if (search && search.token !== lastSearchToken.current) {
       lastSearchToken.current = search.token;
       if (search.currentRowId && scrollToRow(el, search.currentRowId)) {
@@ -120,7 +127,12 @@ export function Transcript({
       following.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
       lastScrollTop.current = el.scrollTop;
     }
-    if (following.current && showPill) setShowPill(false);
+    // Far from the live edge, offer the jump even when nothing new arrived.
+    if (following.current) {
+      if (showPill) setShowPill(false);
+    } else if (!showPill && el.scrollHeight - el.scrollTop - el.clientHeight > el.clientHeight) {
+      setShowPill(true);
+    }
     if (el.scrollTop < NEAR_TOP_PX && snap.hasEarlier && !snap.loadingEarlier) void controller.loadEarlier();
   };
 
@@ -132,6 +144,69 @@ export function Transcript({
     lastScrollTop.current = el.scrollTop;
     setShowPill(false);
   };
+
+  const blocks = useMemo(() => transcriptBlocks(snap.rows, currentId), [snap.rows, currentId]);
+  // A search match on a hidden step opens its block (and leaves it open).
+  const revealKey = useMemo(() => {
+    for (const b of blocks) if (b.type === "activity" && blockHides(snap.rows, b, currentId)) return b.key;
+    return null;
+  }, [blocks, snap.rows, currentId]);
+  useEffect(() => {
+    if (revealKey) setExpanded((prev) => (prev.has(revealKey) ? prev : new Set(prev).add(revealKey)));
+  }, [revealKey]);
+  const toggleBlock = (key: string) => {
+    // Keep the reader where they clicked instead of chasing the live edge.
+    following.current = false;
+    quietGrowth.current = true;
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
+  };
+  const renderRow = (i: number, repeat = 1) => {
+    const row = snap.rows[i];
+    return (
+      <RowView
+        key={row.id}
+        row={row}
+        controller={controller}
+        loadingDetail={snap.loadingDetail.has(row.id)}
+        report={row.kind.type === "report" ? reportPresentation(snap.rows, i) : undefined}
+        repeat={repeat}
+        search={
+          search?.needle
+            ? row.id === search.currentRowId
+              ? "current"
+              : search.matchIds.has(row.id)
+                ? "match"
+                : null
+            : null
+        }
+      />
+    );
+  };
+  // A flat, keyed list (no wrappers) so rows keep their state when a run
+  // grows long enough to fold.
+  const items: ReactNode[] = [];
+  for (const b of blocks) {
+    if (b.type === "row") {
+      items.push(renderRow(b.index, b.repeat));
+      continue;
+    }
+    const open = expanded.has(b.key) || b.key === revealKey;
+    const tail = foldedTailStart(b);
+    items.push(
+      <ActivityHead
+        key={`activity:${b.key}`}
+        summary={activitySummary(snap.rows, b.start, b.end)}
+        hidden={tail - b.start}
+        open={open}
+        onToggle={() => toggleBlock(b.key)}
+      />,
+    );
+    for (let i = open ? b.start : tail; i < b.end; i++) items.push(renderRow(i));
+  }
 
   const working =
     snap.mode === "live" &&
@@ -160,24 +235,7 @@ export function Transcript({
             snap.installed && <div className="earlier muted">Start of session</div>
           )}
           {snap.installed && snap.rows.length === 0 && <p className="muted pad">No events yet.</p>}
-          {snap.rows.map((row, i) => (
-            <RowView
-              key={row.id}
-              row={row}
-              controller={controller}
-              loadingDetail={snap.loadingDetail.has(row.id)}
-              report={row.kind.type === "report" ? reportPresentation(snap.rows, i) : undefined}
-              search={
-                search?.needle
-                  ? row.id === search.currentRowId
-                    ? "current"
-                    : search.matchIds.has(row.id)
-                      ? "match"
-                      : null
-                  : null
-              }
-            />
-          ))}
+          {items}
           {snap.pendingMessages.map((m) => (
             <div key={m.id} className={`row turn user pending ${m.status}`}>
               <div className="turn-head">
@@ -222,9 +280,17 @@ export function Transcript({
               )}
             </div>
           ))}
-          {working && <div className="working muted">Working…</div>}
+          {working && (
+            <div className="working muted" role="status">
+              <span className="spinner" aria-hidden="true" />
+              Working…
+            </div>
+          )}
           {snap.mode === "live" && snap.awaitingJobs && (
-            <div className="working muted">Waiting on background jobs…</div>
+            <div className="working muted" role="status">
+              <span className="spinner" aria-hidden="true" />
+              Waiting on background jobs…
+            </div>
           )}
         </div>
       </div>
@@ -234,6 +300,58 @@ export function Transcript({
           ↓ Jump to latest
         </button>
       )}
+    </div>
+  );
+}
+
+/** The summary line of a folded run of tool/reasoning steps. */
+function ActivityHead({
+  summary,
+  hidden,
+  open,
+  onToggle,
+}: {
+  summary: ActivitySummary;
+  hidden: number;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const shown = summary.tools.slice(0, 4);
+  const others = summary.tools.slice(4).reduce((n, t) => n + t.count, 0);
+  const duration = compactDuration(summary.durationMs);
+  return (
+    <div className={`row fold activity-head${open ? " open" : ""}`}>
+      <button
+        type="button"
+        className="activity-toggle"
+        aria-expanded={open}
+        title={open ? "Fold the earlier steps of this run" : `Show the ${hidden} earlier steps of this run`}
+        onClick={onToggle}
+      >
+        <span className="sum-title">{summary.steps} steps</span>
+        <span className="activity-counts">
+          {shown.map((t) => (
+            <span key={t.name} className="activity-count">
+              {t.name} <b>{t.count}</b>
+            </span>
+          ))}
+          {others > 0 && (
+            <span className="activity-count">
+              other <b>{others}</b>
+            </span>
+          )}
+          {summary.reasoning > 0 && (
+            <span className="activity-count">
+              reasoning <b>{summary.reasoning}</b>
+            </span>
+          )}
+        </span>
+        <span className="sum-meta">
+          {summary.failed > 0 && <span className="tag error">{summary.failed} failed</span>}
+          {duration && <span className="activity-duration">{duration}</span>}
+          <span className="activity-action">{open ? "Fold" : `Show ${hidden} more`}</span>
+        </span>
+      </button>
     </div>
   );
 }

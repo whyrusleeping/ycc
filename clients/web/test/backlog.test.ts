@@ -6,7 +6,10 @@ import { BacklogTaskSummarySchema, TaskDetailSchema, type BacklogTaskSummary } f
 import {
   DEFAULT_FILTER,
   DEFAULT_SORT,
+  adjacentStatus,
   blockedLabel,
+  boardColumns,
+  moveBoardCursor,
   compareIds,
   filterTasks,
   isActionable,
@@ -21,6 +24,7 @@ import {
   taskIdFromPath,
   toggleSort,
   upsertSummary,
+  withStatus,
 } from "../src/features/backlog/model";
 import { fromLink } from "../src/features/files/fileReference";
 
@@ -160,5 +164,58 @@ describe("backlog model", () => {
     expect(next).toHaveLength(tasks.length);
     expect(tasks.find((x) => x.id === "0003")!.status).toBe("proposed");
     expect(upsertSummary(tasks, create(TaskDetailSchema, { id: "0099", title: "New" }))).toHaveLength(tasks.length + 1);
+  });
+
+  it("groups the board by status in workflow order, done collapsed until shown", () => {
+    const cols = boardColumns(
+      [...tasks, t("0011", { status: "todo", priority: 1 }), t("0012", { status: "done" }), t("0013", { status: "parked" })],
+      DEFAULT_FILTER,
+    );
+    expect(cols.map((c) => c.status)).toEqual(["proposed", "todo", "in_progress", "in_review", "blocked", "done", "parked"]);
+    // Priority first, then newest.
+    expect(ids(cols[1].tasks)).toEqual(["0011", "0002", "0004"]);
+    // Done is a collapsed drop target that still counts its cards (newest first).
+    expect(cols[5]).toMatchObject({ collapsed: true });
+    expect(ids(cols[5].tasks)).toEqual(["0012", "0001"]);
+    expect(boardColumns(tasks, { ...DEFAULT_FILTER, showDone: true }).find((c) => c.status === "done")!.collapsed).toBe(false);
+  });
+
+  it("narrows board columns and cards by the filter", () => {
+    const byStatus = boardColumns(tasks, { ...DEFAULT_FILTER, statuses: ["done", "todo"] });
+    expect(byStatus.map((c) => [c.status, c.collapsed])).toEqual([
+      ["todo", false],
+      ["done", false],
+    ]);
+    const actionable = boardColumns(tasks, { ...DEFAULT_FILTER, actionableOnly: true });
+    expect(actionable.flatMap((c) => ids(c.tasks))).toEqual(["0002", "0005"]);
+    expect(actionable).toHaveLength(6);
+    const text = boardColumns(tasks, { ...DEFAULT_FILTER, text: "vendor" });
+    expect(text.flatMap((c) => ids(c.tasks))).toEqual(["0006"]);
+  });
+
+  it("moves the board cursor within and across non-empty columns", () => {
+    const cols = [["a1", "a2", "a3"], [], ["c1"], ["d1", "d2"]];
+    expect(moveBoardCursor(cols, null, "down")).toBe("a1");
+    expect(moveBoardCursor(cols, "gone", "left")).toBe("a1");
+    expect(moveBoardCursor(cols, "a1", "up")).toBe("a1");
+    expect(moveBoardCursor(cols, "a2", "down")).toBe("a3");
+    expect(moveBoardCursor(cols, "a3", "down")).toBe("a3");
+    // Skips the empty column; clamps the row.
+    expect(moveBoardCursor(cols, "a3", "right")).toBe("c1");
+    expect(moveBoardCursor(cols, "c1", "right")).toBe("d1");
+    expect(moveBoardCursor(cols, "d2", "right")).toBe("d2");
+    expect(moveBoardCursor(cols, "d2", "left")).toBe("c1");
+    expect(moveBoardCursor([[], []], null, "down")).toBeNull();
+  });
+
+  it("steps a card through the workflow statuses", () => {
+    expect(adjacentStatus("todo", 1)).toBe("in_progress");
+    expect(adjacentStatus("TODO", -1)).toBe("proposed");
+    expect(adjacentStatus("proposed", -1)).toBeNull();
+    expect(adjacentStatus("done", 1)).toBeNull();
+    expect(adjacentStatus("parked", 1)).toBeNull();
+    const moved = withStatus(tasks[1], "in_progress");
+    expect(moved).toMatchObject({ id: "0002", status: "in_progress", title: "Wire the API" });
+    expect(tasks[1].status).toBe("todo");
   });
 });

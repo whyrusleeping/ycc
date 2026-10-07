@@ -15,7 +15,10 @@ export type IconName =
   | "settings"
   | "keyboard"
   | "signOut"
-  | "more";
+  | "more"
+  | "diff"
+  | "file"
+  | "chevron";
 
 const PATHS: Record<IconName, ReactNode> = {
   plus: <path d="M12 5v14M5 12h14" />,
@@ -85,6 +88,20 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="M21 12H9" />
     </>
   ),
+  diff: (
+    <>
+      <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+      <path d="M14 3v6h6" />
+      <path d="M12 11v6M9 14h6" />
+    </>
+  ),
+  file: (
+    <>
+      <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+      <path d="M14 3v6h6" />
+    </>
+  ),
+  chevron: <path d="m9 6 6 6-6 6" />,
   more: (
     <>
       <circle cx="5" cy="12" r="1" />

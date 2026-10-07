@@ -1,7 +1,9 @@
-// The backlog browser: ListBacklog as a sortable, filterable table with
-// keyboard navigation (j/k or ↑/↓ to move, Enter to open, / to filter, Esc to
-// close the task), and the selected task's detail beside it. The URL carries
-// the open task (`/p/<project>/backlog/<id>`).
+// The backlog browser: ListBacklog as a sortable, filterable table or a kanban
+// board (cards drag between status columns), with keyboard navigation (j/k or
+// ↑/↓ to move — plus h/l or ←/→ across board columns and Shift+←/→ to move a
+// card — Enter to open, / to filter, Esc to close the task), and the selected
+// task's detail beside it. The URL carries the open task
+// (`/p/<project>/backlog/<id>`); the table/board choice persists per browser.
 import { Icon } from "../../ui/icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -16,11 +18,16 @@ import { CAPTURE_SHORTCUT_LABEL, openCapture } from "./CaptureDialog";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { changeTaskStatus, TaskDetailView } from "./TaskDetail";
 import { PriorityBadge, StatusPill, TaskLink } from "./parts";
+import { BacklogBoard } from "./Board";
 import { LoopBanner } from "../workloop/WorkLoopPage";
 import {
   DEFAULT_FILTER,
   DEFAULT_SORT,
+  adjacentStatus,
   blockedLabel,
+  boardColumns,
+  isTaskStatus,
+  moveBoardCursor,
   filterTasks,
   isFiltered,
   moveCursor,
@@ -31,13 +38,45 @@ import {
   statusLabel,
   TASK_STATUSES,
   toggleSort,
+  withStatus,
   type BacklogFilter,
+  type BacklogView,
+  type BoardDirection,
   type BacklogSort,
   type SortKey,
 } from "./model";
 
 // Filter and sort survive leaving and re-entering a project's backlog (per tab).
 const viewMemory = new Map<string, { filter: BacklogFilter; sort: BacklogSort }>();
+
+const VIEW_KEY = "ycc.backlogView";
+
+function initialView(): BacklogView {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "board" ? "board" : "table";
+  } catch {
+    return "table";
+  }
+}
+
+function saveView(v: BacklogView) {
+  try {
+    localStorage.setItem(VIEW_KEY, v);
+  } catch {
+    // ignore
+  }
+}
+
+const BOARD_KEYS: Record<string, BoardDirection> = {
+  h: "left",
+  ArrowLeft: "left",
+  l: "right",
+  ArrowRight: "right",
+  j: "down",
+  ArrowDown: "down",
+  k: "up",
+  ArrowUp: "up",
+};
 
 const COLUMNS: { key: SortKey; label: string; className: string; title?: string }[] = [
   { key: "id", label: "ID", className: "col-id" },
@@ -68,8 +107,10 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
   const [cursor, setCursor] = useState<string | null>(taskId ? normalizeTaskId(taskId) : null);
   const [creating, setCreating] = useState(false);
   const [promoting, setPromoting] = useState<string | null>(null);
+  const [view, setViewState] = useState<BacklogView>(initialView);
+  const [moving, setMoving] = useState<ReadonlySet<string>>(() => new Set());
   const filterRef = useRef<HTMLInputElement>(null);
-  const tableRef = useRef<HTMLTableSectionElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const openId = taskId ? normalizeTaskId(taskId) : null;
   useIntent(
     backlogIntentKey(project),
@@ -90,7 +131,14 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
   const all = backlog.data;
   const rows = useMemo(() => (all ? sortTasks(filterTasks(all, filter), sort) : []), [all, filter, sort]);
   const counts = useMemo(() => statusCounts(all ?? []), [all]);
-  const ids = useMemo(() => rows.map((r) => r.id), [rows]);
+  const columns = useMemo(() => (all && view === "board" ? boardColumns(all, filter) : []), [all, filter, view]);
+  // Card ids per expanded column (keyboard movement skips the collapsed Done strip).
+  const boardIds = useMemo(() => columns.map((c) => (c.collapsed ? [] : c.tasks.map((t) => t.id))), [columns]);
+  const ids = useMemo(() => (view === "board" ? boardIds.flat() : rows.map((r) => r.id)), [view, boardIds, rows]);
+  const setView = (v: BacklogView) => {
+    setViewState(v);
+    saveView(v);
+  };
 
   const open = (id: string) => navigate(paths.task(project, id));
   const close = () => navigate(paths.backlog(project));
@@ -98,18 +146,37 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
   // Keep the cursor row in view.
   useEffect(() => {
     if (!cursor) return;
-    const el = tableRef.current?.querySelector<HTMLElement>(`tr[data-id="${CSS.escape(cursor)}"]`);
-    el?.scrollIntoView({ block: "nearest" });
-  }, [cursor]);
+    const el = listRef.current?.querySelector<HTMLElement>(`[data-id="${CSS.escape(cursor)}"]`);
+    el?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [cursor, view]);
 
   // Table keyboard navigation; never while typing, with modifiers, or under a dialog.
-  const keyState = useRef({ ids, cursor, openId });
-  keyState.current = { ids, cursor, openId };
+  const keyState = useRef({ ids, cursor, openId, view, boardIds, all });
+  keyState.current = { ids, cursor, openId, view, boardIds, all };
+  const moveRef = useRef<(t: BacklogTaskSummary, status: string) => void>(() => {});
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
       if (isEditableTarget(e.target) || document.querySelector("dialog[open]")) return;
-      const { ids: visible, cursor: cur, openId: opened } = keyState.current;
+      const { ids: visible, cursor: cur, openId: opened, view: mode, boardIds: cols, all: tasks } = keyState.current;
+      if (mode === "board") {
+        // Shift+←/→ moves the cursor card to the neighbouring status column.
+        if (e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+          const t = cur ? tasks?.find((x) => x.id === cur) : undefined;
+          const next = t && adjacentStatus(t.status, e.key === "ArrowLeft" ? -1 : 1);
+          if (t && next) {
+            e.preventDefault();
+            moveRef.current(t, next);
+          }
+          return;
+        }
+        const dir = e.shiftKey ? undefined : BOARD_KEYS[e.key];
+        if (dir) {
+          e.preventDefault();
+          setCursor(moveBoardCursor(cols, cur, dir));
+          return;
+        }
+      }
       switch (e.key) {
         case "j":
         case "ArrowDown":
@@ -155,6 +222,24 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
     setPromoting(null);
   };
 
+  // A board move: show the card in its new column at once, then UpdateTask;
+  // on failure (already toasted) refetch so the card snaps back.
+  const moveTask = async (t: BacklogTaskSummary, status: string) => {
+    if (!isTaskStatus(status) || t.status.toLowerCase() === status || moving.has(t.id)) return;
+    const key = queryKeys.backlog(project);
+    await qc.cancelQueries({ queryKey: key });
+    qc.setQueryData<BacklogTaskSummary[]>(key, (list) => list?.map((x) => (x.id === t.id ? withStatus(x, status) : x)));
+    setMoving((m) => new Set(m).add(t.id));
+    const updated = await changeTaskStatus(qc, project, t.id, status);
+    setMoving((m) => {
+      const next = new Set(m);
+      next.delete(t.id);
+      return next;
+    });
+    if (!updated) void qc.invalidateQueries({ queryKey: key });
+  };
+  moveRef.current = (t, status) => void moveTask(t, status);
+
   const toggleStatus = (s: (typeof TASK_STATUSES)[number]) =>
     setFilter((f) => ({
       ...f,
@@ -169,6 +254,21 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
             Backlog {project && <span className="muted">· {project}</span>}
           </h1>
           <div className="page-actions">
+            <span className="segmented inline backlog-view" role="radiogroup" aria-label="Backlog layout">
+              {(["table", "board"] as const).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  role="radio"
+                  aria-checked={view === v}
+                  className={view === v ? "selected" : ""}
+                  onClick={() => setView(v)}
+                  title={v === "table" ? "Sortable table" : "Kanban board: drag cards between status columns"}
+                >
+                  {v === "table" ? "Table" : "Board"}
+                </button>
+              ))}
+            </span>
             <button
               type="button"
               className="btn ghost"
@@ -251,7 +351,7 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
             </button>
           )}
           <span className="muted small backlog-count">
-            {all ? `${rows.length} of ${all.length} tasks` : ""}
+            {all ? `${ids.length} of ${all.length} tasks` : ""}
           </span>
         </div>
         {backlog.isPending ? (
@@ -265,8 +365,30 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
               Create a task
             </button>
           </div>
+        ) : view === "board" ? (
+          <div className="backlog-board-wrap" ref={listRef}>
+            <BacklogBoard
+              project={project}
+              columns={columns}
+              openId={openId}
+              cursor={cursor}
+              moving={moving}
+              promoting={promoting}
+              onOpen={(id) => {
+                setCursor(id);
+                open(id);
+              }}
+              onMove={(t, status) => void moveTask(t, status)}
+              onPromote={(t) => void promote(t)}
+              onExpandDone={() => setFilter((f) => ({ ...f, showDone: true }))}
+            />
+            <p className="muted small keys-hint">
+              Drag cards between columns · <kbd>h</kbd>/<kbd>j</kbd>/<kbd>k</kbd>/<kbd>l</kbd> or arrows move ·{" "}
+              <kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd> moves the card · <kbd>Enter</kbd> opens · <kbd>/</kbd> filters
+            </p>
+          </div>
         ) : (
-          <div className="backlog-table-wrap">
+          <div className="backlog-table-wrap" ref={listRef}>
             <table className="backlog-table" aria-label="Backlog tasks" aria-rowcount={rows.length}>
               <thead>
                 <tr>
@@ -289,7 +411,7 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
                   </th>
                 </tr>
               </thead>
-              <tbody ref={tableRef}>
+              <tbody>
                 {rows.length === 0 && (
                   <tr>
                     <td colSpan={COLUMNS.length + 1} className="muted pad">

@@ -1,7 +1,7 @@
 ---
 id: "0427"
 title: Security audit live daemon
-status: in_progress
+status: done
 priority: 3
 created: "2026-10-06"
 updated: "2026-10-06"

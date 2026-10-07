@@ -148,9 +148,18 @@ interface RowViewProps {
   /** For report rows: reply (an agent turn) or a genuine finished/blocked report. */
   report?: ReportPresentation;
   search?: SearchMark;
+  /** System notices: how many identical consecutive notices this row stands for. */
+  repeat?: number;
 }
 
-export const RowView = memo(function RowView({ row, controller, loadingDetail, report = "finished", search = null }: RowViewProps) {
+export const RowView = memo(function RowView({
+  row,
+  controller,
+  loadingDetail,
+  report = "finished",
+  search = null,
+  repeat = 1,
+}: RowViewProps) {
   const inspector = useInspector();
   const openInInspector = () =>
     inspector.open({ kind: "row", project: controller.project, sessionId: controller.sessionId, rowId: row.id });
@@ -224,6 +233,11 @@ export const RowView = memo(function RowView({ row, controller, loadingDetail, r
         <div className={`row system${searchCls}`} data-row-id={row.id}>
           {actor && <span className="actor">{actor}</span>}
           <span className="text">{k.text}</span>
+          {repeat > 1 && (
+            <span className="repeat" title={`${repeat} identical notices in a row`}>
+              ×{repeat}
+            </span>
+          )}
         </div>
       );
     case "commit":
