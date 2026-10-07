@@ -284,9 +284,11 @@ function Sidebar() {
 /** App-wide actions the shell owns (the command palette lists the same registry). */
 function useShellActions() {
   const { scope } = useScope();
-  const { project } = useParams();
+  const { project, sessionId } = useParams();
   const navigate = useNavigate();
   const target = project ?? scope;
+  // In a session, the captured task opens beside the transcript.
+  const inSession = !!sessionId;
   const loops = useWorkLoops();
   const capture = useMemo<AppAction>(
     () => ({
@@ -295,9 +297,9 @@ function useShellActions() {
       group: "Backlog",
       // Option+letter types characters on macOS: leave text fields alone there.
       shortcut: { code: "KeyN", alt: true, label: CAPTURE_SHORTCUT_LABEL, inEditable: !IS_MAC },
-      run: () => openCapture(target ?? null),
+      run: () => openCapture(target ?? null, { beside: inSession }),
     }),
-    [target],
+    [target, inSession],
   );
   useAction(capture);
   // Work-loop and workstream actions need a project: the route's, else the sidebar scope.

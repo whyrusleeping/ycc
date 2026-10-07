@@ -1,6 +1,6 @@
 // A small popup menu behind a button (row kebabs, the sidebar's project
 // actions). Closes on outside click, Escape, or after an item runs.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 export interface MenuItem {
   label: string;
@@ -8,6 +8,8 @@ export interface MenuItem {
   danger?: boolean;
   disabled?: boolean;
   title?: string;
+  /** A keyboard-shortcut hint shown at the item's right edge, e.g. "Alt+N". */
+  shortcut?: string;
 }
 
 export function MenuButton({
@@ -16,12 +18,15 @@ export function MenuButton({
   items,
   className = "btn ghost small",
   align = "right",
+  title,
 }: {
-  label: string;
+  label: ReactNode;
   ariaLabel: string;
   items: readonly (MenuItem | null | false)[];
   className?: string;
   align?: "left" | "right";
+  /** The button's tooltip (default: ariaLabel). */
+  title?: string;
 }) {
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
@@ -49,7 +54,7 @@ export function MenuButton({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={ariaLabel}
-        title={ariaLabel}
+        title={title ?? ariaLabel}
         onClick={(e) => {
           e.stopPropagation();
           setOpen((o) => !o);
@@ -74,6 +79,7 @@ export function MenuButton({
               }}
             >
               {item.label}
+              {item.shortcut && <kbd>{item.shortcut}</kbd>}
             </button>
           ))}
         </div>

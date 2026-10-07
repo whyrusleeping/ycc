@@ -26,6 +26,9 @@ import { readMarks } from "../sessions/unread";
 import { useDocumentVisible } from "../../ui/useVisible";
 import { Icon } from "../../ui/icons";
 import { CopyButton } from "../../ui/CopyButton";
+import { MenuButton } from "../../ui/Menu";
+import { CAPTURE_SHORTCUT_LABEL, openCapture } from "../backlog/CaptureDialog";
+import { NewTaskDialog } from "../backlog/NewTaskDialog";
 
 export function statusText(snap: SessionSnapshot): { text: string; tone: string } {
   switch (snap.conn) {
@@ -209,6 +212,7 @@ export function SessionView({
   const controller = useSessionController(project, sessionId);
   const snap = useSessionSnapshot(controller);
   const inspector = useInspector();
+  const [creatingTask, setCreatingTask] = useState(false);
   const composer = useRef<ComposerHandle>(null);
   const status = statusText(snap);
   const search = useTranscriptSearch(controller, snap.rows);
@@ -232,6 +236,18 @@ export function SessionView({
     ),
   );
   useSessionActions(controller, snap, project, sessionId);
+  useAction(
+    useMemo<AppAction>(
+      () => ({
+        id: "session.newTask",
+        title: "New backlog task (form)…",
+        group: "Backlog",
+        keywords: "add create todo",
+        run: () => setCreatingTask(true),
+      }),
+      [],
+    ),
+  );
   // What is on screen is read: keep this session's read mark at the newest
   // event shown (not while the tab is hidden: nobody is looking).
   // Streaming moves the stamp many times a second: write at most once a
@@ -355,6 +371,30 @@ export function SessionView({
             <Icon name="files" />
             <span className="btn-label">Files</span>
           </Link>
+          <MenuButton
+            className="btn ghost"
+            ariaLabel="Add a backlog task"
+            title={`Add a task to ${project || "this project"}’s backlog without leaving the session`}
+            label={
+              <>
+                <Icon name="plus" />
+                <span className="btn-label">Task</span>
+              </>
+            }
+            items={[
+              {
+                label: "Quick capture…",
+                shortcut: CAPTURE_SHORTCUT_LABEL,
+                title: "Describe a task in a sentence and let the capture agent write it up",
+                onSelect: () => openCapture(project || null, { beside: true }),
+              },
+              {
+                label: "New task…",
+                title: "Fill in the task form yourself",
+                onSelect: () => setCreatingTask(true),
+              },
+            ]}
+          />
           <button
             type="button"
             className={`btn ghost${settingsOpen ? " active" : ""}`}
@@ -420,6 +460,12 @@ export function SessionView({
           </div>
         )
       )}
+      <NewTaskDialog
+        project={project}
+        open={creatingTask}
+        onClose={() => setCreatingTask(false)}
+        onCreated={(t) => inspector.open({ kind: "task", project, taskId: t.id })}
+      />
     </div>
   );
 }

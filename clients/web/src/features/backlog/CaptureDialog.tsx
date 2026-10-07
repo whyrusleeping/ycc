@@ -1,8 +1,10 @@
 // Quick capture: describe a backlog item in a sentence and the daemon's
 // off-stream capture agent (CaptureBacklogItem) turns it into a task, maybe
 // after one clarifying question. Opened from anywhere through the app action
-// registry (button, Alt+N, and the command palette); running sessions
-// are not disturbed. The description and answer survive every failure.
+// registry (button, Alt+N, and the command palette) or a session header's
+// Task menu; running sessions are not disturbed. The description and answer
+// survive every failure. Opened from a session, "Open task" shows the result in
+// the inspector beside the transcript instead of leaving the session.
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import { useNavigate } from "react-router";
@@ -13,6 +15,7 @@ import { paths } from "../../app/paths";
 import { lastViewedProject } from "../../app/memory";
 import { IS_MAC } from "../../app/platform";
 import { projectChoices } from "../newSession/model";
+import { useInspector } from "../inspector/inspector";
 import { Modal } from "../../ui/Modal";
 import { toast } from "../../ui/toast";
 import { captureOutcome, captureReducer, INITIAL_CAPTURE } from "./capture";
@@ -21,20 +24,22 @@ interface CaptureRequest {
   open: boolean;
   /** Preferred project (route or sidebar scope); null asks. */
   project: string | null;
+  /** Open the created task in the inspector rather than on its page. */
+  beside: boolean;
   /** Bumped per open so a re-open resets the form. */
   seq: number;
 }
 
-let request: CaptureRequest = { open: false, project: null, seq: 0 };
+let request: CaptureRequest = { open: false, project: null, beside: false, seq: 0 };
 const listeners = new Set<() => void>();
 
 function emit() {
   for (const l of listeners) l();
 }
 
-export function openCapture(project: string | null) {
+export function openCapture(project: string | null, opts: { beside?: boolean } = {}) {
   if (request.open) return;
-  request = { open: true, project, seq: request.seq + 1 };
+  request = { open: true, project, beside: !!opts.beside, seq: request.seq + 1 };
   emit();
 }
 
@@ -63,13 +68,14 @@ export function CaptureDialog() {
   const req = useCaptureRequest();
   return (
     <Modal open={req.open} onClose={closeCapture} title="Capture a backlog item" className="capture-dialog">
-      {req.open && <CaptureBody key={req.seq} preferred={req.project} />}
+      {req.open && <CaptureBody key={req.seq} preferred={req.project} beside={req.beside} />}
     </Modal>
   );
 }
 
-function CaptureBody({ preferred }: { preferred: string | null }) {
+function CaptureBody({ preferred, beside }: { preferred: string | null; beside: boolean }) {
   const projects = useProjects();
+  const inspector = useInspector();
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [state, dispatch] = useReducer(captureReducer, INITIAL_CAPTURE);
@@ -258,7 +264,8 @@ function CaptureBody({ preferred }: { preferred: string | null }) {
               onClick={() => {
                 const id = state.created?.taskId ?? "";
                 closeCapture();
-                navigate(paths.task(project ?? "", id));
+                if (beside) inspector.open({ kind: "task", project: project ?? "", taskId: id });
+                else navigate(paths.task(project ?? "", id));
               }}
             >
               Open task

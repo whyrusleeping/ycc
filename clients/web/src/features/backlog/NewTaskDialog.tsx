@@ -1,10 +1,12 @@
 // New task (CreateTask): title, priority, dependencies, spec refs, and a
 // markdown description the daemon scaffolds into the canonical sections. A
-// failure keeps the form; success opens the created task.
+// failure keeps the form; success opens the created task (its page by
+// default, or wherever `onCreated` puts it, e.g. the session inspector).
 import { useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
 import { client, errorMessage, isUnauthorized } from "../../api/client";
+import type { TaskDetail } from "../../gen/ycc/v1/ycc_pb";
 import { authStore } from "../../api/auth";
 import { installTask } from "../../api/queries";
 import { paths } from "../../app/paths";
@@ -22,7 +24,18 @@ interface NewTaskForm {
 
 const EMPTY: NewTaskForm = { title: "", priority: 3, dependsOn: "", specRefs: "", body: "" };
 
-export function NewTaskDialog({ project, open, onClose }: { project: string; open: boolean; onClose: () => void }) {
+export function NewTaskDialog({
+  project,
+  open,
+  onClose,
+  onCreated,
+}: {
+  project: string;
+  open: boolean;
+  onClose: () => void;
+  /** Show the created task (default: navigate to its page). */
+  onCreated?: (task: TaskDetail) => void;
+}) {
   const [form, setForm] = useState<NewTaskForm>(EMPTY);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +70,8 @@ export function NewTaskDialog({ project, open, onClose }: { project: string; ope
       if (t) {
         installTask(qc, project, t);
         toast(`Created task ${t.id}: ${t.title}`, "info");
-        navigate(paths.task(project, t.id));
+        if (onCreated) onCreated(t);
+        else navigate(paths.task(project, t.id));
       }
     } catch (err) {
       if (isUnauthorized(err)) {

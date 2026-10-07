@@ -868,7 +868,8 @@ a.nav-item:hover {
     display: none;
   }
 
-  .session-actions > .btn {
+  .session-actions > .btn,
+  .session-actions > .menu-wrap > .btn {
     padding: 5px 7px;
   }
 }
@@ -971,6 +972,11 @@ a.nav-item:hover {
 
 .menu button.danger {
   color: var(--error);
+}
+
+.menu button kbd {
+  float: right;
+  margin-left: 16px;
 }
 
 .banner {
