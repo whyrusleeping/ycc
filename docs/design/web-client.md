@@ -116,6 +116,20 @@ plain final reply (the daemon folds the repeated model turn into it, as in every
 as that agent turn; a report produced by a control tool (`finish`, `request_integration`,
 `report_blocked`) keeps its distinct result card.
 
+### Usage analytics
+
+`src/app/analytics.ts` records private usage events for the daemon's `RecordUiEvents`
+(docs/design/usage-analytics.md): a `Recorder` buffers them and flushes every 30s, at 100 events,
+and with `fetch(keepalive)` when the tab hides or the page goes away. The shell feeds the route
+(`track.route`, mapped to an id-free view name by `routeView`); `Modal` (`view`/`flow` props),
+the palette, and `useTrackedView` stack modal surfaces above it, pausing the view below; a hidden
+tab pauses the clock, and `pagehide` ends every view. Registry actions record their id via
+`invokeAction` (`via` = shortcut, palette, or click; anything after a `:` in an id is dropped);
+`MenuItem.id`, `ConfirmDialog`'s `action` (`<action>.confirm`/`.cancel`), `CopyButton`'s `what`,
+and a `data-track="<action id>"` attribute (one capture-phase click listener) cover other
+controls; error toasts take a `{ op, err }` report and inline form errors call `track.error`.
+Only fixed-vocabulary names and enum attrs are recorded, never user content.
+
 ### Reachability
 
 The daemon binds an ordinary address chosen by the operator. Tailscale, an SSH tunnel, or another

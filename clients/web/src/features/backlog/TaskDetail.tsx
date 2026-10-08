@@ -19,6 +19,7 @@ import { useInspector } from "../inspector/inspector";
 import { CopyButton } from "../../ui/CopyButton";
 import { ConfirmDialog } from "../../ui/ConfirmDialog";
 import { toast } from "../../ui/toast";
+import { track, useFlow } from "../../app/analytics";
 import { displayTitle, taskIds } from "../sessions/feed";
 import {
   blockedLabel,
@@ -64,7 +65,7 @@ export async function changeTaskStatus(
     installTask(qc, project, resp.task);
     return resp.task;
   } catch (err) {
-    if (!handleAuth(err)) toast(`Couldn’t change task ${id} to ${statusLabel(status)}: ${errorMessage(err)}`);
+    if (!handleAuth(err)) toast(`Couldn’t change task ${id} to ${statusLabel(status)}: ${errorMessage(err)}`, "error", { op: "backlog.status", err });
     return null;
   }
 }
@@ -128,7 +129,7 @@ export function TaskDetailView({
       void qc.invalidateQueries({ queryKey: queryKeys.sessionFeedAll });
       navigate(paths.session(project, resp.sessionId));
     } catch (err) {
-      if (!handleAuth(err)) toast(`Couldn’t start work on ${t.id}: ${errorMessage(err)}`);
+      if (!handleAuth(err)) toast(`Couldn’t start work on ${t.id}: ${errorMessage(err)}`, "error", { op: "task.start_work", err });
     } finally {
       setStarting(false);
     }
@@ -207,7 +208,13 @@ export function TaskDetailView({
     <div className={`task-detail variant-${variant}`}>
       <TaskTopBar id={id} variant={variant} project={project} onClose={onClose}>
         {!open && task && (
-          <button type="button" className="btn small" onClick={beginEdit} title="Edit title, priority, dependencies, spec refs, and body">
+          <button
+            type="button"
+            className="btn small"
+            onClick={beginEdit}
+            title="Edit title, priority, dependencies, spec refs, and body"
+            data-track="task.edit"
+          >
             Edit
           </button>
         )}
@@ -228,7 +235,10 @@ export function TaskDetailView({
             aria-label="Status"
             value={(TASK_STATUSES as readonly string[]).includes(status) ? status : ""}
             disabled={statusBusy !== null}
-            onChange={(e) => void setStatus(e.target.value as TaskStatus)}
+            onChange={(e) => {
+              track.action("task.status", "click", { to: e.target.value, surface: variant });
+              void setStatus(e.target.value as TaskStatus);
+            }}
           >
             {!(TASK_STATUSES as readonly string[]).includes(status) && <option value="">{header.status || "unknown"}</option>}
             {TASK_STATUSES.map((s) => (
@@ -243,6 +253,7 @@ export function TaskDetailView({
             type="button"
             className="btn primary small"
             disabled={statusBusy !== null}
+            data-track="task.promote"
             onClick={() => void setStatus("todo")}
             title="Accept this proposed task into the active backlog (status todo)"
           >
@@ -269,7 +280,7 @@ export function TaskDetailView({
           <FocusedSessions project={project} id={id} />
           {task && status !== "done" && status !== "proposed" && (
             <div className="task-actions">
-              <button type="button" className="btn small" disabled={starting} onClick={() => void startWork(task)}>
+              <button type="button" className="btn small" disabled={starting} data-track="task.startWork" onClick={() => void startWork(task)}>
                 {starting ? "Starting…" : "Start work on this task"}
               </button>
             </div>
@@ -394,7 +405,7 @@ function TaskMeta({
             <span className="mono" title={task.path}>
               {task.path.split("/").slice(-2).join("/")}
             </span>{" "}
-            <CopyButton text={task.path} title="Copy the task file path" />
+            <CopyButton text={task.path} title="Copy the task file path" what="task_path" />
           </dd>
         </>
       )}
@@ -467,6 +478,7 @@ function TaskEditor({
   const { draft, base } = open;
   const dirty = changedFields(base, draft).length > 0;
   const invalid = validateDraft(draft, id);
+  useFlow("task_edit");
 
   const set = <K extends keyof TaskDraft>(key: K, value: TaskDraft[K]) => onChange({ base, draft: { ...draft, [key]: value } });
 
@@ -490,13 +502,16 @@ function TaskEditor({
     const plan = planSave({ project, id, base, current, draft, force });
     switch (plan.kind) {
       case "invalid":
+        track.error("task.save", "invalid");
         setState({ busy: false, error: plan.message, conflict: null });
         return;
       case "noop":
+        track.submit("task_edit", { changed: false });
         setState({ busy: false, error: null, conflict: null });
         onDone();
         return;
       case "conflict":
+        track.error("task.save", "conflict");
         setState({ busy: false, error: conflictMessage(id, plan.fields), conflict: { fields: plan.fields, current: plan.current } });
         return;
       case "save":
@@ -506,11 +521,13 @@ function TaskEditor({
       const resp = await client.updateTask(plan.request);
       if (!resp.task) throw new Error("The daemon returned no task.");
       installTask(qc, project, resp.task);
+      track.submit("task_edit", { changed: true, force });
       setState({ busy: false, error: null, conflict: null });
       onDone();
       toast(`Saved task ${id}.`, "info");
     } catch (err) {
       if (handleAuth(err)) return;
+      track.error("task.save", err);
       setState({ busy: false, error: `Not saved: ${errorMessage(err)} Your draft is kept.`, conflict: null });
     }
   };
@@ -605,6 +622,7 @@ function TaskEditor({
         body={`Your unsaved edits to task ${id} will be lost.`}
         confirmLabel="Discard"
         danger
+        action="task_edit.discard"
         onCancel={() => setConfirmDiscard(false)}
         onConfirm={() => {
           setConfirmDiscard(false);

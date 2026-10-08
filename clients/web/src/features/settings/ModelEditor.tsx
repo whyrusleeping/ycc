@@ -10,6 +10,7 @@ import { authStore } from "../../api/auth";
 import { queryKeys } from "../../api/queries";
 import { Modal } from "../../ui/Modal";
 import { toast } from "../../ui/toast";
+import { track } from "../../app/analytics";
 import {
   AUTH_MODES,
   BACKENDS,
@@ -42,7 +43,14 @@ export function ModelEditorDialog({
   const title = !target ? "" : target.kind === "new" ? "Add model" : target.kind === "duplicate" ? `Duplicate ${target.name}` : `Edit ${target.name}`;
   const key = !target ? "" : target.kind === "new" ? "new" : `${target.kind}:${target.name}`;
   return (
-    <Modal open={target !== null} onClose={onClose} title={title} className="model-editor-dialog">
+    <Modal
+      open={target !== null}
+      onClose={onClose}
+      title={title}
+      className="model-editor-dialog"
+      view="model_editor"
+      flow={target ? `model_editor.${target.kind}` : undefined}
+    >
       {target && <ModelEditor key={key} target={target} existingNames={existingNames} onClose={onClose} />}
     </Modal>
   );
@@ -113,13 +121,17 @@ function EditorForm({
   };
 
   const discover = async () => {
+    track.action("model_editor.discover", "click");
     setDiscovering(true);
     setError(null);
     try {
       setDiscovery(await client.discoverModels(discoverRequest(d)));
       setDiscoverFilter("");
     } catch (err) {
-      if (!expire(err)) setError(errorMessage(err, "Discovery failed."));
+      if (!expire(err)) {
+        track.error("model_editor.discover", err);
+        setError(errorMessage(err, "Discovery failed."));
+      }
     } finally {
       setDiscovering(false);
     }
@@ -130,6 +142,7 @@ function EditorForm({
     const at = fp;
     try {
       const result = await client.testModel(testModelRequest(d));
+      track.action("model_editor.test", "click", { ok: result.success });
       setTest({ fp: at, result });
     } catch (err) {
       if (!expire(err)) setTest({ fp: at, result: { success: false, message: errorMessage(err, "The test could not run."), durationMs: 0n } });
@@ -147,9 +160,13 @@ function EditorForm({
       void qc.invalidateQueries({ queryKey: queryKeys.modelsAll });
       qc.removeQueries({ queryKey: queryKeys.modelConfig(d.name.trim()) });
       toast(target.kind === "edit" ? `Saved ${d.name.trim()}.` : `Added ${d.name.trim()}.`, "info");
+      track.submit(`model_editor.${target.kind}`);
       onClose();
     } catch (err) {
-      if (!expire(err)) setError(errorMessage(err, "The model was not saved."));
+      if (!expire(err)) {
+        track.error("model_editor.save", err);
+        setError(errorMessage(err, "The model was not saved."));
+      }
     } finally {
       setSaving(false);
     }

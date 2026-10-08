@@ -2,14 +2,18 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { copyText } from "./copy";
 import { toast } from "./toast";
+import { track } from "../app/analytics";
 
 export function CopyButton({
   text,
   label = "Copy",
   title,
   className = "",
+  what,
 }: {
   text: string;
+  /** Analytics: what is copied, from a fixed vocabulary ("code", "session_id"); records `copy.<what>`. */
+  what?: string;
   label?: string;
   title?: string;
   className?: string;
@@ -24,8 +28,9 @@ export function CopyButton({
     e.preventDefault();
     e.stopPropagation();
     const ok = await copyText(text);
+    track.action(`copy.${what ?? "text"}`, "click", ok ? undefined : { ok: false });
     setState(ok ? "copied" : "failed");
-    if (!ok) toast("Copy failed: the browser blocked clipboard access.", "error");
+    if (!ok) toast("Copy failed: the browser blocked clipboard access.", "error", { op: "copy" });
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => setState("idle"), 1500);
   };

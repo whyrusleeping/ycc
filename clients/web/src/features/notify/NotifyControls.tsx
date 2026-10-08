@@ -14,13 +14,13 @@ export async function enableFromGesture() {
       toast("Desktop notifications are on.", "info");
       return;
     case "denied":
-      toast("Notifications are blocked for this site; allow them in the browser’s site settings.");
+      toast("Notifications are blocked for this site; allow them in the browser’s site settings.", "error", { op: "notify.enable", err: "denied" });
       return;
     case "insecure":
-      toast("Browsers only allow notifications on https:// or localhost pages.");
+      toast("Browsers only allow notifications on https:// or localhost pages.", "error", { op: "notify.enable", err: "insecure" });
       return;
     case "unsupported":
-      toast("This browser doesn’t support notifications.");
+      toast("This browser doesn’t support notifications.", "error", { op: "notify.enable", err: "unsupported" });
       return;
     default:
       toast("Notifications were not allowed.", "info");
@@ -32,7 +32,7 @@ export function sendTestNotification() {
     { key: `test:${Date.now()}`, title: "ycc notifications work", body: "You’ll be notified like this when a session needs you." },
     { force: true },
   );
-  if (!ok) toast("Couldn’t show a notification (check the browser’s and the system’s notification settings).");
+  if (!ok) toast("Couldn’t show a notification (check the browser’s and the system’s notification settings).", "error", { op: "notify.test", err: "failed" });
 }
 
 export function NotificationControls() {

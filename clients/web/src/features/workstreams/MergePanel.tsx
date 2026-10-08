@@ -10,6 +10,7 @@ import { queryKeys, useWorkstreams } from "../../api/queries";
 import { DiffView } from "../code/CodeBlock";
 import { CopyButton } from "../../ui/CopyButton";
 import { toast } from "../../ui/toast";
+import { track } from "../../app/analytics";
 import { useInspector } from "../inspector/inspector";
 import { FileLinksProvider, FileRef } from "../files/FileRef";
 import { useSessionFileLinks } from "../files/links";
@@ -37,6 +38,7 @@ export function MergePanel({ project, workstreamId }: { project: string; workstr
   const accept = async () => {
     if (merging) return;
     setMerging(true);
+    track.action("workstreams.merge", "click");
     try {
       const r = await client.mergeWorkstream({ workstreamId, accept: true });
       setResult(r);
@@ -46,7 +48,10 @@ export function MergePanel({ project, workstreamId }: { project: string; workstr
         );
         toast(`Merged ${ws ? branchLabel(ws) : workstreamId}${r.commit ? ` as ${r.commit.slice(0, 12)}` : ""}.`, "info");
       } else if (r.conflicts.length) {
-        toast(`Merge blocked: ${r.conflicts.length} conflicted ${r.conflicts.length === 1 ? "path" : "paths"}; the base is untouched.`);
+        toast(`Merge blocked: ${r.conflicts.length} conflicted ${r.conflicts.length === 1 ? "path" : "paths"}; the base is untouched.`, "error", {
+          op: "workstreams.merge",
+          err: "conflict",
+        });
       }
       void qc.invalidateQueries({ queryKey: queryKeys.workstreamsAll });
     } catch (err) {
@@ -54,7 +59,7 @@ export function MergePanel({ project, workstreamId }: { project: string; workstr
         authStore.expire();
         return;
       }
-      toast(`Couldn’t merge: ${errorMessage(err)}`);
+      toast(`Couldn’t merge: ${errorMessage(err)}`, "error", { op: "workstreams.merge", err });
     } finally {
       setMerging(false);
     }
@@ -135,7 +140,7 @@ function MergeResult({
             <button type="button" className="link mono" onClick={() => onCommit(result.commit)} title="Show the commit">
               {result.commit.slice(0, 12)}
             </button>{" "}
-            <CopyButton text={result.commit} title="Copy commit sha" />
+            <CopyButton text={result.commit} title="Copy commit sha" what="commit" />
           </div>
         )}
         <div className="muted small">The worktree and branch were cleaned up; the session transcript is kept.</div>

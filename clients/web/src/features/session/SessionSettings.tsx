@@ -11,6 +11,7 @@ import { queryKeys, useModels } from "../../api/queries";
 import { authStore } from "../../api/auth";
 import { Link } from "react-router";
 import { paths } from "../../app/paths";
+import { track } from "../../app/analytics";
 import { compactTokenCount } from "../sessions/feed";
 import { usageSearch } from "../usage/model";
 import { useSessionController, useSessionSnapshot } from "./useSession";
@@ -67,6 +68,7 @@ export function SessionSettingsPanel({ project, sessionId }: { project: string; 
                   ? "Summarize and restart the coordinator's context"
                   : "Rollover isn't available for this session right now"
               }
+              data-track="session.rollover"
               onClick={() => void controller.rollover()}
             >
               {snap.control?.kind === "rollover" ? "Rolling over…" : "Roll over context"}
@@ -110,6 +112,7 @@ function ReasoningAndRoles({ sessionId, live }: { sessionId: string; live: boole
       await qc.invalidateQueries({ queryKey: queryKeys.models(sessionId) });
     } catch (err) {
       if (isUnauthorized(err)) authStore.expire();
+      else track.error("session_settings.apply", err);
       setError(errorMessage(err, "The change was not applied."));
     } finally {
       setBusy(false);
@@ -118,6 +121,7 @@ function ReasoningAndRoles({ sessionId, live }: { sessionId: string; live: boole
 
   const chooseLevel = (level: ThinkingLevel) => {
     if (!levels || !needsThinkingApply(role, level, levels)) return;
+    track.action("session_settings.thinking", "click", { role, level });
     void apply(
       () => client.setThinking({ sessionId, level, role: thinkingRoleWire(role) }),
       () => setLevels(withThinking(role, level, levels)),
@@ -126,6 +130,7 @@ function ReasoningAndRoles({ sessionId, live }: { sessionId: string; live: boole
 
   const setRoleModel = (field: "coordinator" | "implementer", name: string) => {
     if (!data || name === data[field]) return;
+    track.action("session_settings.role", "click", { role: field });
     void apply(() => client.setRoleConfig({ sessionId, [field]: name }));
   };
 
@@ -220,6 +225,7 @@ function ReasoningAndRoles({ sessionId, live }: { sessionId: string; live: boole
                 type="button"
                 className="btn primary small"
                 disabled={!reviewers?.length}
+                data-track="session_settings.reviewers"
                 onClick={() => void apply(() => client.setRoleConfig({ sessionId, reviewers: reviewers ?? [] }))}
               >
                 Apply reviewers

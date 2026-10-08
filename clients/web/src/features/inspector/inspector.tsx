@@ -6,6 +6,7 @@
 // contents (opened from file references). Opening something from inside the
 // inspector (`push`) keeps a back stack; opening from elsewhere replaces it.
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
+import { track } from "../../app/analytics";
 import type { LineRange } from "../files/fileReference";
 
 export type InspectorItem =
@@ -70,8 +71,15 @@ function initialWidth(): number {
 export function InspectorProvider({ children }: { children: ReactNode }) {
   const [stack, setStack] = useState<InspectorItem[]>([]);
   const item = stack.length ? stack[stack.length - 1] : null;
-  const open = useCallback((next: InspectorItem) => setStack([next]), []);
-  const push = useCallback((next: InspectorItem) => setStack((s) => [...s.slice(-19), next]), []);
+  // Which kinds of detail get opened, and from where (the view field), never what.
+  const open = useCallback((next: InspectorItem) => {
+    track.action("inspector.open", "", { kind: next.kind });
+    setStack([next]);
+  }, []);
+  const push = useCallback((next: InspectorItem) => {
+    track.action("inspector.open", "", { kind: next.kind, stacked: true });
+    setStack((s) => [...s.slice(-19), next]);
+  }, []);
   const backRef = useRef(stack);
   backRef.current = stack;
   const back = useCallback(() => {

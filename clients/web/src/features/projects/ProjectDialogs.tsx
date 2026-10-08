@@ -16,6 +16,7 @@ import { useScope } from "../../app/scope";
 import type { ProjectInfo } from "../../gen/ycc/v1/ycc_pb";
 import { ConfirmDialog } from "../../ui/ConfirmDialog";
 import { Modal } from "../../ui/Modal";
+import { track } from "../../app/analytics";
 import { toast } from "../../ui/toast";
 import {
   canGoUp,
@@ -156,6 +157,7 @@ function AddProjectDialog({
       // List it at once (the sidebar drops a scope it cannot find); the refetch confirms.
       if (p) qc.setQueryData<ProjectInfo[]>(queryKeys.projects, (list) => (list ? [...list.filter((x) => x.name !== p.name), p] : list));
       void invalidateProjectCaches(qc);
+      track.submit("add_project", { named: name.trim() !== "" });
       onClose();
       if (!p) return;
       toast(`Added project ${p.name}.`, "info");
@@ -166,6 +168,7 @@ function AddProjectDialog({
       }
     } catch (err) {
       if (expireOn(err)) return;
+      track.error("projects.add", err);
       setError(errorMessage(err, "The project could not be added."));
       setSubmitting(false);
     }
@@ -173,7 +176,7 @@ function AddProjectDialog({
 
   const loading = picker.loading !== null;
   return (
-    <Modal open onClose={onClose} title="Add project" className="add-project-dialog">
+    <Modal open onClose={onClose} title="Add project" className="add-project-dialog" view="add_project" flow="add_project">
       <form className="add-project" onSubmit={(e) => void submit(e)}>
         <p className="muted small">
           Register a workspace directory on the machine the daemon runs on (not this browser’s). Browse to it, or type its
@@ -341,15 +344,17 @@ function RenameProjectDialog({ name, onClose }: { name: string; onClose: () => v
       const route = renamedRoute(location.pathname, name, renamed);
       if (route) navigate(route + location.search + location.hash, { replace: true });
       toast(`Renamed ${name} to ${renamed}.`, "info");
+      track.submit("rename_project");
       onClose();
     } catch (err) {
       if (expireOn(err)) return;
+      track.error("projects.rename", err);
       setError(errorMessage(err, "The project could not be renamed."));
       setBusy(false);
     }
   };
   return (
-    <Modal open onClose={onClose} title={`Rename ${name}`} className="rename-project-dialog">
+    <Modal open onClose={onClose} title={`Rename ${name}`} className="rename-project-dialog" view="rename_project" flow="rename_project">
       <form onSubmit={(e) => void submit(e)} className="add-project">
         <label className="field-label">
           New name
@@ -409,7 +414,7 @@ function RemoveProjectDialog({ name, onClose }: { name: string; onClose: () => v
     } catch (err) {
       busy.current = false;
       if (expireOn(err)) return;
-      toast(`Couldn’t remove ${name}: ${errorMessage(err)}`);
+      toast(`Couldn’t remove ${name}: ${errorMessage(err)}`, "error", { op: "projects.remove", err });
       onClose();
     }
   };
@@ -420,6 +425,7 @@ function RemoveProjectDialog({ name, onClose }: { name: string; onClose: () => v
       body={`This only deregisters the project from ycc. Nothing is deleted: the directory${path ? ` ${path}` : ""}, its files, git history, backlog, and session logs stay on disk, and you can add it again later. Live sessions keep running.`}
       confirmLabel="Remove project"
       danger
+      action="projects.remove"
       onCancel={onClose}
       onConfirm={() => void remove()}
     />

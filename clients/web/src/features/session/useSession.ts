@@ -40,7 +40,7 @@ export function peekSession(project: string, sessionId: string): SessionControll
     entry = {
       controller: new SessionController(client, project, sessionId, {
         onUnauthorized: () => authStore.expire(),
-        onError: (m) => toast(m, "error"),
+        onError: (m, report) => toast(m, "error", report),
         onInfo: (m) => toast(m, "info"),
       }),
       refs: 0,

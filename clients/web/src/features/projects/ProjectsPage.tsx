@@ -84,9 +84,10 @@ export function ProjectsPage() {
                 label="⋯"
                 ariaLabel={`Actions for ${p.name}`}
                 items={[
-                  { label: "New session…", onSelect: () => navigate(paths.newSession(p.name)) },
-                  { label: "Rename…", onSelect: () => openRenameProject(p.name) },
+                  { id: "session.new", label: "New session…", onSelect: () => navigate(paths.newSession(p.name)) },
+                  { id: "projects.rename", label: "Rename…", onSelect: () => openRenameProject(p.name) },
                   {
+                    id: "projects.remove",
                     label: "Remove from ycc…",
                     danger: true,
                     title: "Deregister the project; nothing on disk is deleted",

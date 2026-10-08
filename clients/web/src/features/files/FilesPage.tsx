@@ -5,6 +5,7 @@ import { Icon } from "../../ui/icons";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
+import { track } from "../../app/analytics";
 import { client, errorMessage } from "../../api/client";
 import { queryKeys } from "../../api/queries";
 import { paths } from "../../app/paths";
@@ -33,6 +34,14 @@ export function FilesPage({ project, splat }: { project: string; splat: string }
     (ref: FileReference) => navigate(paths.files(project, ref.path, { session, lines: ref.lines })),
     [navigate, project, session],
   );
+  // Where file navigation starts (tree, listing, a reference in a file).
+  const openFrom = useCallback(
+    (from: string) => (ref: FileReference) => {
+      track.action("files.open", "click", { from, kind: ref.isDirectory ? "dir" : "file", lines: !!ref.lines });
+      open(ref);
+    },
+    [open],
+  );
   const setLines = useCallback(
     (lines: LineRange | null) =>
       navigate(paths.files(project, loc.path, { session, lines }), { replace: true, preventScrollReset: true }),
@@ -50,7 +59,9 @@ export function FilesPage({ project, splat }: { project: string; splat: string }
               </span>
             ) : (
               <span key={c.path} className="crumb">
-                <Link to={paths.files(project, c.path, { session })}>{c.label}</Link>
+                <Link to={paths.files(project, c.path, { session })} data-track="files.crumb">
+                  {c.label}
+                </Link>
                 <span className="crumb-sep" aria-hidden>
                   /
                 </span>
@@ -65,6 +76,7 @@ export function FilesPage({ project, splat }: { project: string; splat: string }
               <Link
                 to={paths.files(project, loc.path, { lines: loc.lines })}
                 className="chip-x"
+                data-track="files.leave_worktree"
                 title="Show the project root instead"
                 aria-label="Show the project root instead"
               >
@@ -76,6 +88,7 @@ export function FilesPage({ project, splat }: { project: string; splat: string }
             type="button"
             className="btn ghost small"
             onClick={() => void qc.invalidateQueries({ queryKey: queryKeys.filesAll })}
+            data-track="files.refresh"
             title="Reload the tree and file"
           >
             <Icon name="refresh" size={14} /> Refresh
@@ -84,12 +97,12 @@ export function FilesPage({ project, splat }: { project: string; splat: string }
       </header>
       {root.data?.root && <div className="files-root muted mono small">{root.data.root}</div>}
       <div className="files-body">
-        <FileTree project={project} session={session} current={loc.path} currentIsDir={kind === "dir"} onOpen={open} />
+        <FileTree project={project} session={session} current={loc.path} currentIsDir={kind === "dir"} onOpen={openFrom("tree")} />
         <section className="files-view" aria-label={loc.path || "Project root"}>
           {kind === "pending" ? (
             <p className="muted pad">Loading…</p>
           ) : kind === "dir" ? (
-            <DirListing key={loc.path} target={{ project, sessionId: session, path: loc.path }} onOpen={open} variant="page" />
+            <DirListing key={loc.path} target={{ project, sessionId: session, path: loc.path }} onOpen={openFrom("listing")} variant="page" />
           ) : (
             <FileViewer
               key={loc.path}
@@ -97,7 +110,7 @@ export function FilesPage({ project, splat }: { project: string; splat: string }
               isDirectory={false}
               lines={loc.lines}
               variant="page"
-              onOpen={open}
+              onOpen={openFrom("viewer")}
               onLines={setLines}
             />
           )}
@@ -171,6 +184,7 @@ function FileTree({
                     type="button"
                     className="tree-toggle"
                     aria-label={`${r.expanded ? "Collapse" : "Expand"} ${r.name}`}
+                    data-track="files.tree_toggle"
                     onClick={() => setExpanded((e) => toggle(e, r.path))}
                   >
                     <Icon name="chevron" size={12} className={r.expanded ? "open" : undefined} />

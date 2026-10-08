@@ -14,6 +14,7 @@ import { authStore } from "../../api/auth";
 import { queryKeys, refreshSubscriptionUsage, useBudget, useProjects, useSubscriptionUsage, useUsageReport } from "../../api/queries";
 import { paths } from "../../app/paths";
 import { toast } from "../../ui/toast";
+import { track } from "../../app/analytics";
 import { TaskLink } from "../backlog/parts";
 import {
   RANGE_PRESETS,
@@ -82,7 +83,7 @@ export function UsagePage({ project }: { project: string }) {
         }),
       ]);
     } catch (err) {
-      toast(`Couldn’t refresh usage: ${errorMessage(err)}`);
+      toast(`Couldn’t refresh usage: ${errorMessage(err)}`, "error", { op: "usage.refresh", err });
     } finally {
       setRefreshing(false);
     }
@@ -129,6 +130,7 @@ export function UsagePage({ project }: { project: string }) {
             className="btn ghost"
             onClick={() => void refresh()}
             disabled={refreshing || report.isFetching}
+            data-track="usage.refresh"
             title="Refresh usage, budget, and subscription allowance"
             aria-label="Refresh usage"
           >
@@ -159,7 +161,14 @@ export function UsagePage({ project }: { project: string }) {
         </section>
       </div>
 
-      <UsageControls query={query} onChange={setQuery} />
+      <UsageControls
+        query={query}
+        onChange={(patch) => {
+          // Which controls are used (field names only, never their values).
+          track.action("usage.query", "click", { fields: Object.keys(patch).sort().join("_") });
+          setQuery(patch);
+        }}
+      />
 
       {invalidRange ? (
         <p className="error">{invalidRange}</p>
@@ -388,7 +397,12 @@ function Timeline({ rows, since, until, loading }: { rows: UsageRow[]; since: st
         {priced && (
           <div className="segmented compact" role="radiogroup" aria-label="Timeline metric">
             {(["cost", "tokens"] as const).map((v) => (
-              <button key={v} type="button" role="radio" aria-checked={m === v} className={m === v ? "selected" : ""} onClick={() => setMetric(v)}>
+              <button key={v} type="button" role="radio" aria-checked={m === v} className={m === v ? "selected" : ""}
+                onClick={() => {
+                  track.action("usage.metric", "click", { metric: v });
+                  setMetric(v);
+                }}
+              >
                 {v === "cost" ? "Cost" : "Tokens"}
               </button>
             ))}

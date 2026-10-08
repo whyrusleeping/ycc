@@ -134,7 +134,7 @@ export function MemoryPage({ project }: { project: string }) {
           )}
           {q.data.path && (
             <p className="muted small mono memory-path">
-              {q.data.path} <CopyButton text={q.data.path} title="Copy the memory.md path" />
+              {q.data.path} <CopyButton text={q.data.path} title="Copy the memory.md path" what="memory_path" />
             </p>
           )}
         </>
@@ -161,7 +161,7 @@ function IdRefs({ ids }: { ids: string[] }) {
       {ids.map((id, i) => (
         <span key={id}>
           {i > 0 && ", "}
-          <button type="button" className="link mono" onClick={() => jumpTo(id)} title={`Show note ${id}`}>
+          <button type="button" className="link mono" data-track="memory.jump_note" onClick={() => jumpTo(id)} title={`Show note ${id}`}>
             {id}
           </button>
         </span>
@@ -193,7 +193,7 @@ function NoteCard({ project, note: n }: { project: string; note: MemoryNote }) {
         {n.status === "retraction" && <span className="tag">audit record</span>}
         <span className="spacer" />
         <span className="note-id mono small">{n.id}</span>
-        <CopyButton text={n.id} label="Copy id" title={`Copy note id ${n.id}`} />
+        <CopyButton text={n.id} label="Copy id" title={`Copy note id ${n.id}`} what="note_id" />
       </div>
       <Markdown text={n.note} className="note-text" />
       {(evidence || n.supersedes.length > 0 || (n.scope && n.scope !== "workspace")) && (
@@ -251,7 +251,7 @@ function BudgetCard({ project, status }: { project: string; status: GetMemoryRes
         authStore.expire();
         return;
       }
-      toast(`Couldn’t start grooming: ${errorMessage(err)}`);
+      toast(`Couldn’t start grooming: ${errorMessage(err)}`, "error", { op: "memory.groom", err });
       setStarting(false);
     }
   };
@@ -279,11 +279,18 @@ function BudgetCard({ project, status }: { project: string; status: GetMemoryRes
         </span>
         <span className="spacer" />
         {status.groomSessionId ? (
-          <Link to={paths.session(project, status.groomSessionId)} className="btn small">
+          <Link to={paths.session(project, status.groomSessionId)} className="btn small" data-track="memory.watch_groom">
             Automatic groom running — watch
           </Link>
         ) : (
-          <button type="button" className="btn small" disabled={starting} onClick={() => void groom()} title="Start a memory-groom session (pm mode)">
+          <button
+            type="button"
+            className="btn small"
+            disabled={starting}
+            data-track="memory.groom"
+            onClick={() => void groom()}
+            title="Start a memory-groom session (pm mode)"
+          >
             {starting ? "Starting…" : "Groom now"}
           </button>
         )}
@@ -354,6 +361,7 @@ export function PlansPage({ project, name }: { project: string; name: string }) 
                     type="button"
                     className={`plan-item${p.name === name ? " current" : ""}`}
                     aria-current={p.name === name ? "page" : undefined}
+                    data-track="plans.open_plan"
                     onClick={() => navigate(paths.plans(project, p.name))}
                   >
                     <span className="plan-title">{p.title || p.name}</span>
@@ -388,7 +396,7 @@ function PlanView({ project, name }: { project: string; name: string }) {
         </span>
         <span className="file-actions">
           <SourceToggle rendered={rendered} onChange={setRendered} />
-          <CopyButton text={q.data.content} label="Copy" title="Copy the plan’s markdown" />
+          <CopyButton text={q.data.content} label="Copy" title="Copy the plan’s markdown" what="plan" />
           <Link to={paths.files(project, file)} className="btn ghost small">
             Open in Files
           </Link>

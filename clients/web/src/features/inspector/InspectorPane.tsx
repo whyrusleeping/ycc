@@ -27,14 +27,14 @@ export function InspectorPane() {
       <div className="inspector-inner">
         <header className="inspector-head">
           {canGoBack && (
-            <button type="button" className="btn ghost small" onClick={() => back()} aria-label="Back" title="Back">
+            <button type="button" className="btn ghost small" onClick={() => back()} aria-label="Back" title="Back" data-track="inspector.back">
               ←
             </button>
           )}
           <span className="inspector-title" title={item.kind === "file" ? item.path : undefined}>
             {inspectorTitle(item)}
           </span>
-          <button type="button" className="btn ghost small" onClick={close} aria-label="Close inspector">
+          <button type="button" className="btn ghost small" onClick={close} aria-label="Close inspector" data-track="inspector.close">
             ×
           </button>
         </header>
@@ -209,7 +209,7 @@ function WorkingChanges({ item }: { item: Extract<InspectorItem, { kind: "workin
         {r.snapshotId && (
           <span>
             snapshot <span className="mono">{r.snapshotId.slice(0, 12)}</span>{" "}
-            <CopyButton text={r.snapshotId} title="Copy snapshot id" />
+            <CopyButton text={r.snapshotId} title="Copy snapshot id" what="snapshot_id" />
           </span>
         )}
         {r.baseCommit && (
@@ -277,7 +277,7 @@ function CommitDiff({ item }: { item: Extract<InspectorItem, { kind: "commit" }>
     <div className="diff-view">
       <div className="diff-meta">
         <span>
-          commit <span className="mono">{item.sha}</span> <CopyButton text={item.sha} title="Copy commit sha" />
+          commit <span className="mono">{item.sha}</span> <CopyButton text={item.sha} title="Copy commit sha" what="commit" />
         </span>
       </div>
       {q.isPending && <p className="muted">Loading…</p>}

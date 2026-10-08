@@ -10,6 +10,7 @@ import type { TaskDetail } from "../../gen/ycc/v1/ycc_pb";
 import { authStore } from "../../api/auth";
 import { installTask } from "../../api/queries";
 import { paths } from "../../app/paths";
+import { track } from "../../app/analytics";
 import { Modal } from "../../ui/Modal";
 import { toast } from "../../ui/toast";
 import { parseIdList, parseLines } from "./model";
@@ -51,6 +52,7 @@ export function NewTaskDialog({
     if (busy) return;
     if (!form.title.trim()) {
       setError("Title is required.");
+      track.error("backlog.create", "required");
       return;
     }
     setBusy(true);
@@ -65,6 +67,7 @@ export function NewTaskDialog({
         specRefs: parseLines(form.specRefs),
       });
       const t = resp.task;
+      track.submit("new_task");
       setForm(EMPTY);
       onClose();
       if (t) {
@@ -78,6 +81,7 @@ export function NewTaskDialog({
         authStore.expire();
         return;
       }
+      track.error("backlog.create", err);
       setError(`Not created: ${errorMessage(err)}`);
     } finally {
       setBusy(false);
@@ -85,7 +89,7 @@ export function NewTaskDialog({
   };
 
   return (
-    <Modal open={open} onClose={() => !busy && onClose()} title="New task" className="task-form-dialog">
+    <Modal open={open} onClose={() => !busy && onClose()} title="New task" className="task-form-dialog" view="new_task" flow="new_task">
       <form
         className="task-editor"
         onSubmit={(e) => void submit(e)}

@@ -17,6 +17,7 @@ import { useAction, type AppAction } from "../../app/actions";
 import { ConfirmDialog } from "../../ui/ConfirmDialog";
 import { Modal } from "../../ui/Modal";
 import { toast } from "../../ui/toast";
+import { track } from "../../app/analytics";
 import { useInspector } from "../inspector/inspector";
 import { TaskLink } from "../backlog/parts";
 import { relativeTime } from "../sessions/feed";
@@ -47,12 +48,12 @@ import {
 export const workstreamsIntentKey = (project: string) => `workstreams:${project}`;
 
 function useActionError() {
-  return useCallback((err: unknown, what: string) => {
+  return useCallback((err: unknown, what: string, op: string) => {
     if (isUnauthorized(err)) {
       authStore.expire();
       return;
     }
-    toast(`${what}: ${errorMessage(err)}`);
+    toast(`${what}: ${errorMessage(err)}`, "error", { op, err });
   }, []);
 }
 
@@ -113,7 +114,7 @@ export function WorkstreamsPage({ project }: { project: string }) {
       toast(`Retrying integration of ${branchLabel(w)}.`, "info");
       refresh();
     } catch (err) {
-      onError(err, "Couldn’t retry integration");
+      onError(err, "Couldn’t retry integration", "workstreams.retry");
     } finally {
       setBusyId(null);
     }
@@ -130,7 +131,7 @@ export function WorkstreamsPage({ project }: { project: string }) {
       toast(`Discarded ${branchLabel(w)}.`, "info");
       refresh();
     } catch (err) {
-      onError(err, "Couldn’t discard the workstream");
+      onError(err, "Couldn’t discard the workstream", "workstreams.discard");
     } finally {
       setBusyId(null);
     }
@@ -149,7 +150,7 @@ export function WorkstreamsPage({ project }: { project: string }) {
         },
         (err) => errorMessage(err),
       );
-      toast(mergeAllMessage(summary), summary.error ? "error" : "info");
+      toast(mergeAllMessage(summary), summary.error ? "error" : "info", { op: "workstreams.merge_all" });
       refresh();
     } finally {
       setBusyId(null);
@@ -168,13 +169,14 @@ export function WorkstreamsPage({ project }: { project: string }) {
             className="btn ghost"
             onClick={() => void q.refetch()}
             disabled={q.isFetching}
+            data-track="workstreams.refresh"
             title="Refresh"
             aria-label="Refresh workstreams"
           >
             <Icon name="refresh" size={15} />
           </button>
           {gated.length > 0 && (
-            <button type="button" className="btn" disabled={busyId !== null} onClick={() => setMergeAllOpen(true)}>
+            <button type="button" className="btn" disabled={busyId !== null} data-track="workstreams.mergeAll" onClick={() => setMergeAllOpen(true)}>
               Merge all ready ({gated.length})
             </button>
           )}
@@ -183,6 +185,7 @@ export function WorkstreamsPage({ project }: { project: string }) {
             className="btn primary"
             disabled={!project}
             title={project ? "Start a work session in a new worktree and branch" : "Choose a project first"}
+            data-track="workstreams.spawn"
             onClick={() => setSpawnOpen(true)}
           >
             + Spawn workstream
@@ -215,7 +218,7 @@ export function WorkstreamsPage({ project }: { project: string }) {
               </p>
               {project && (
                 <p>
-                  <button type="button" className="btn primary" onClick={() => setSpawnOpen(true)}>
+                  <button type="button" className="btn primary" data-track="workstreams.spawn" onClick={() => setSpawnOpen(true)}>
                     Spawn a workstream
                   </button>
                 </p>
@@ -238,7 +241,7 @@ export function WorkstreamsPage({ project }: { project: string }) {
             </ul>
           )}
           {finished.length > 0 && (
-            <details className="ws-history">
+            <details className="ws-history" onToggle={(e) => e.currentTarget.open && track.action("workstreams.history", "click")}>
               <summary>
                 Merged and discarded <span className="count muted">{finished.length}</span>
               </summary>
@@ -258,6 +261,7 @@ export function WorkstreamsPage({ project }: { project: string }) {
         body="This stops its session and deletes the worktree and branch without merging. It cannot be undone."
         confirmLabel="Discard"
         danger
+        action="workstreams.discard"
         onConfirm={() => discard && void doDiscard(discard)}
         onCancel={() => setDiscard(null)}
       />
@@ -266,6 +270,7 @@ export function WorkstreamsPage({ project }: { project: string }) {
         title="Merge all ready workstreams?"
         body={`${gated.length} gated workstream${gated.length === 1 ? "" : "s"} will be merged one after another without individual review. The operation stops at the first failure.`}
         confirmLabel="Merge all ready"
+        action="workstreams.mergeAll"
         onConfirm={() => void doMergeAll()}
         onCancel={() => setMergeAllOpen(false)}
       />
@@ -322,17 +327,17 @@ function WorkstreamRow({
       )}
       <div className="ws-actions">
         {w.sessionId && (
-          <Link to={paths.session(w.project, w.sessionId)} className="btn small">
+          <Link to={paths.session(w.project, w.sessionId)} className="btn small" data-track="workstreams.open_session">
             Open session
           </Link>
         )}
         {w.integrateSessionId && (
-          <Link to={paths.session(w.project, w.integrateSessionId)} className="btn small" title="The integration agent’s session">
+          <Link to={paths.session(w.project, w.integrateSessionId)} className="btn small" title="The integration agent’s session" data-track="workstreams.integration_log">
             Integration log
           </Link>
         )}
         {onPreview && isMergeable(status) && (
-          <button type="button" className="btn small" disabled={busy} onClick={onPreview}>
+          <button type="button" className="btn small" disabled={busy} data-track="workstreams.preview" onClick={onPreview}>
             Preview &amp; merge…
           </button>
         )}
@@ -341,6 +346,7 @@ function WorkstreamRow({
             type="button"
             className={`btn small${status === "needs_attention" ? " primary" : ""}`}
             disabled={busy}
+            data-track="workstreams.retry"
             onClick={onRetry}
             title="Re-queue automatic integration"
           >
@@ -348,7 +354,7 @@ function WorkstreamRow({
           </button>
         )}
         {onDiscard && isDiscardable(status) && (
-          <button type="button" className="btn small ghost danger-text" disabled={busy} onClick={onDiscard}>
+          <button type="button" className="btn small ghost danger-text" disabled={busy} data-track="workstreams.discard" onClick={onDiscard}>
             Discard…
           </button>
         )}
@@ -389,6 +395,7 @@ function SpawnDialog({ project, open, onClose }: { project: string; open: boolea
     if (busy) return;
     if (!canSpawn(project, draft)) {
       setError("Choose a task or describe the work.");
+      track.error("workstreams.spawn", "required");
       return;
     }
     setBusy(true);
@@ -401,12 +408,14 @@ function SpawnDialog({ project, open, onClose }: { project: string; open: boolea
         toast(`Spawned ${branchLabel(w)}.`, "info");
       }
       void qc.invalidateQueries({ queryKey: queryKeys.workstreamsAll });
+      track.submit("workstream_spawn", { task: draft.taskId !== "", base: draft.baseRef.trim() !== "" });
       onClose();
     } catch (err) {
       if (isUnauthorized(err)) {
         authStore.expire();
         return;
       }
+      track.error("workstreams.spawn", err);
       setError(`Not spawned: ${errorMessage(err)}`);
     } finally {
       setBusy(false);
@@ -414,7 +423,7 @@ function SpawnDialog({ project, open, onClose }: { project: string; open: boolea
   };
 
   return (
-    <Modal open={open} onClose={() => !busy && onClose()} title="Spawn a workstream" className="ws-spawn-dialog">
+    <Modal open={open} onClose={() => !busy && onClose()} title="Spawn a workstream" className="ws-spawn-dialog" view="workstream_spawn" flow="workstream_spawn">
       <form
         className="task-editor"
         onSubmit={(e) => void submit(e)}

@@ -261,7 +261,7 @@ describe("SessionController", () => {
     c.start();
     await until(() => c.getSnapshot().conn === "finished");
     expect(await c.reopen()).toBe(false);
-    expect(h.onError).toHaveBeenCalledWith("Reopen failed: model disabled");
+    expect(h.onError).toHaveBeenCalledWith("Reopen failed: model disabled", expect.objectContaining({ op: "session.reopen" }));
     expect(c.getSnapshot().mode).toBe("persisted");
     expect(c.getSnapshot().rows.length).toBe(1);
     c.dispose();

@@ -19,6 +19,7 @@ import type { ModelInfo } from "../../gen/ycc/v1/ycc_pb";
 import { ConfirmDialog } from "../../ui/ConfirmDialog";
 import { MenuButton } from "../../ui/Menu";
 import { toast } from "../../ui/toast";
+import { track } from "../../app/analytics";
 import { THINKING_LEVELS, parseThinking, roleModelChoices, type ThinkingLevel } from "../session/settings";
 import { budgetRows } from "../usage/model";
 import { WORK_IMPLEMENTATIONS } from "../workloop/model";
@@ -33,7 +34,8 @@ import { draftFromTier, isRemovable, newTierDraft, tierBadge, tierSummary, type 
 export const SETTINGS_INTENT = "settings";
 
 
-function useApply() {
+/** Apply a settings change; failures show inline and are recorded as `op` errors. */
+function useApply(op: string) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const run = useCallback(async (what: string, call: () => Promise<unknown>, after?: () => void | Promise<void>): Promise<boolean> => {
@@ -45,12 +47,15 @@ function useApply() {
       return true;
     } catch (err) {
       if (isUnauthorized(err)) authStore.expire();
-      else setError(errorMessage(err, "The change was not applied."));
+      else {
+        track.error(op, err);
+        setError(errorMessage(err, "The change was not applied."));
+      }
       return false;
     } finally {
       setBusy(null);
     }
-  }, []);
+  }, [op]);
   return { busy, error, setError, run };
 }
 
@@ -91,6 +96,7 @@ export function SettingsPage() {
               className="btn ghost small"
               onClick={(e) => {
                 e.preventDefault();
+                track.action("settings.toc", "click", { section: s.id });
                 // The hash effect scrolls (also when the hash is unchanged).
                 navigate({ hash: s.id }, { replace: true });
               }}
@@ -155,7 +161,7 @@ function AccountsSection() {
             The daemon runs the login and keeps the tokens.
           </div>
         </div>
-        <button type="button" className="btn" onClick={() => openAnthropicLogin()}>
+        <button type="button" className="btn" data-track="settings.anthropicLogin" onClick={() => openAnthropicLogin()}>
           Connect / reconnect Anthropic…
         </button>
       </div>
@@ -183,19 +189,22 @@ function ModelOptions({ models, assigned }: { models: readonly ModelInfo[]; assi
 
 function RolesSection({ data }: { data: ModelsData }) {
   const qc = useQueryClient();
-  const { busy, error, setError, run } = useApply();
+  const { busy, error, setError, run } = useApply("settings.roles");
   const enabled = data.models.filter((m) => !m.disabled);
   const refresh = () => qc.invalidateQueries({ queryKey: queryKeys.models("") });
   const setRole = (field: "coordinator" | "implementer", name: string) => {
     if (name === data[field]) return;
+    track.action("settings.role", "click", { role: field });
     void run(field, () => client.setRoleConfig({ sessionId: "", [field]: name }), refresh);
   };
   const toggle = (name: string) => {
     const { next, error: why } = toggleReviewer(data.reviewers, name);
     if (why) {
+      track.error("settings.roles", "invalid");
       setError(why);
       return;
     }
+    track.action("settings.role", "click", { role: "reviewers" });
     void run("reviewers", () => client.setRoleConfig({ sessionId: "", reviewers: next }), refresh);
   };
   return (
@@ -242,11 +251,12 @@ const THINKING_ROWS = [
 
 function ThinkingSection({ data }: { data: ModelsData }) {
   const qc = useQueryClient();
-  const { busy, error, run } = useApply();
+  const { busy, error, run } = useApply("settings.thinking");
   // Optimistic: a picked level shows at once; a failure reverts it.
   const [pending, setPending] = useState<Partial<Record<string, ThinkingLevel>>>({});
   const choose = async (role: string, level: ThinkingLevel, current: ThinkingLevel) => {
     if (level === current) return;
+    track.action("settings.thinking", "click", { role, level });
     setPending((p) => ({ ...p, [role]: level }));
     await run(role, () => client.setThinking({ sessionId: "", role, level }), () => qc.invalidateQueries({ queryKey: queryKeys.models("") }));
     setPending((p) => {
@@ -291,12 +301,13 @@ function ThinkingSection({ data }: { data: ModelsData }) {
 
 function WorkSection({ current }: { current: string }) {
   const qc = useQueryClient();
-  const { busy, error, run } = useApply();
+  const { busy, error, run } = useApply("settings.work_implementation");
   // Optimistic: the picked option shows at once; a failure reverts it.
   const [pending, setPending] = useState<string | null>(null);
   const shown = pending ?? current;
   const choose = async (value: string) => {
     if (value === current) return;
+    track.action("settings.work_implementation", "click", { value });
     setPending(value);
     await run("work", () => client.setWorkImplementation({ implementation: value }), async () => {
       await qc.invalidateQueries({ queryKey: queryKeys.models("") });
@@ -331,7 +342,7 @@ function WorkSection({ current }: { current: string }) {
 function ReviewTiersSection({ models }: { models: readonly ModelInfo[] }) {
   const qc = useQueryClient();
   const tiers = useReviewTiers();
-  const { busy, error, run } = useApply();
+  const { busy, error, run } = useApply("settings.review_tiers");
   const [editing, setEditing] = useState<TierDraft | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const modelNames = useMemo(() => sortedModels(models.filter((m) => !m.disabled)).map((m) => m.name), [models]);
@@ -344,7 +355,7 @@ function ReviewTiersSection({ models }: { models: readonly ModelInfo[] }) {
       id="reviews"
       title="Review tiers"
       actions={
-        <button type="button" className="btn small" onClick={() => setEditing(newTierDraft(modelNames[0] ?? ""))}>
+        <button type="button" className="btn small" data-track="settings.add_tier" onClick={() => setEditing(newTierDraft(modelNames[0] ?? ""))}>
           + Add tier
         </button>
       }
@@ -362,7 +373,10 @@ function ReviewTiersSection({ models }: { models: readonly ModelInfo[] }) {
               aria-label="Default review tier"
               value={def}
               disabled={!!busy}
-              onChange={(e) => void run("default", () => client.setReviewDefault({ name: e.target.value }), refresh)}
+              onChange={(e) => {
+                track.action("settings.default_tier", "click");
+                void run("default", () => client.setReviewDefault({ name: e.target.value }), refresh);
+              }}
             >
               {list.map((t) => (
                 <option key={t.name} value={t.name}>
@@ -386,11 +400,11 @@ function ReviewTiersSection({ models }: { models: readonly ModelInfo[] }) {
                     <div className="small tier-summary">{tierSummary(t)}</div>
                     {t.description && <div className="muted small clamp-2">{t.description}</div>}
                   </div>
-                  <button type="button" className="btn small" onClick={() => setEditing(draftFromTier(t))}>
+                  <button type="button" className="btn small" data-track="settings.edit_tier" onClick={() => setEditing(draftFromTier(t))}>
                     Edit
                   </button>
                   {isRemovable(t, def) ? (
-                    <button type="button" className="btn ghost small danger-text" onClick={() => setRemoving(t.name)}>
+                    <button type="button" className="btn ghost small danger-text" data-track="settings.remove_tier" onClick={() => setRemoving(t.name)}>
                       {t.builtin ? "Revert" : "Remove"}
                     </button>
                   ) : (
@@ -417,6 +431,7 @@ function ReviewTiersSection({ models }: { models: readonly ModelInfo[] }) {
         }
         confirmLabel={removingTier?.builtin ? "Revert tier" : "Remove tier"}
         danger
+        action="settings.remove_tier"
         onCancel={() => setRemoving(null)}
         onConfirm={() => {
           const name = removing;
@@ -430,7 +445,7 @@ function ReviewTiersSection({ models }: { models: readonly ModelInfo[] }) {
 
 function ModelsSection({ data, onEdit }: { data: ModelsData; onEdit: (t: EditorTarget) => void }) {
   const qc = useQueryClient();
-  const { busy, error, run } = useApply();
+  const { busy, error, run } = useApply("settings.models");
   const [removing, setRemoving] = useState<string | null>(null);
   const roles = { coordinator: data.coordinator, implementer: data.implementer, reviewers: data.reviewers };
   const toggleEnabled = async (m: ModelInfo) => {
@@ -450,7 +465,7 @@ function ModelsSection({ data, onEdit }: { data: ModelsData; onEdit: (t: EditorT
       id="models"
       title="Models"
       actions={
-        <button type="button" className="btn primary small" onClick={() => onEdit({ kind: "new" })}>
+        <button type="button" className="btn primary small" data-track="settings.addModel" onClick={() => onEdit({ kind: "new" })}>
           + Add model
         </button>
       }
@@ -474,7 +489,7 @@ function ModelsSection({ data, onEdit }: { data: ModelsData; onEdit: (t: EditorT
             return (
               <tr key={m.name} className={m.disabled ? "disabled" : ""}>
                 <td>
-                  <button type="button" className="link model-name" onClick={() => onEdit({ kind: "edit", name: m.name })}>
+                  <button type="button" className="link model-name" data-track="settings.edit_model" onClick={() => onEdit({ kind: "edit", name: m.name })}>
                     {m.name}
                   </button>
                   {m.disabled && <span className="tag">disabled</span>}
@@ -495,15 +510,17 @@ function ModelsSection({ data, onEdit }: { data: ModelsData; onEdit: (t: EditorT
                     label="⋯"
                     ariaLabel={`Actions for ${m.name}`}
                     items={[
-                      { label: "Edit…", onSelect: () => onEdit({ kind: "edit", name: m.name }) },
-                      { label: "Duplicate…", onSelect: () => onEdit({ kind: "duplicate", name: m.name }) },
+                      { id: "settings.edit_model", label: "Edit…", onSelect: () => onEdit({ kind: "edit", name: m.name }) },
+                      { id: "settings.duplicate_model", label: "Duplicate…", onSelect: () => onEdit({ kind: "duplicate", name: m.name }) },
                       {
+                        id: m.disabled ? "settings.enable_model" : "settings.disable_model",
                         label: m.disabled ? "Enable" : "Disable",
                         disabled: !!busy,
                         title: !m.disabled && assigned.length > 0 ? "Roles keep it assigned; move them to another model too" : undefined,
                         onSelect: () => void toggleEnabled(m),
                       },
                       {
+                        id: "settings.remove_model",
                         label: "Remove…",
                         danger: true,
                         disabled: !!busy,
@@ -528,6 +545,7 @@ function ModelsSection({ data, onEdit }: { data: ModelsData; onEdit: (t: EditorT
         body={`Remove “${removing}” from the daemon and its ycc.toml? Models assigned to a role can’t be removed; usage history keeps its name.`}
         confirmLabel="Remove model"
         danger
+        action="settings.remove_model"
         onCancel={() => setRemoving(null)}
         onConfirm={() => {
           const name = removing;

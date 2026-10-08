@@ -13,6 +13,7 @@ import { oneLine, toolPreview } from "./toolPreview";
 import { FileRef } from "../files/FileRef";
 import type { ReportPresentation } from "./report";
 import { useSmoothText } from "./useSmoothText";
+import { clickVia, track } from "../../app/analytics";
 
 function actorLabel(actor: string): string {
   if (!actor || actor === "coordinator") return "";
@@ -322,7 +323,13 @@ export const RowView = memo(function RowView({
             if (isOpen && row.detailAvailable) void controller.loadDetail(row.id);
           }}
         >
-          <summary>
+          <summary
+            onClick={(e) => {
+              // A link or button inside the summary does its own thing.
+              if ((e.target as Element).closest("a, button")) return;
+              track.action(open ? "transcript.collapse_row" : "transcript.expand_row", clickVia(e), { row: k.type });
+            }}
+          >
             {actor && <span className="actor">{actor}</span>}
             {summary}
           </summary>
@@ -334,7 +341,7 @@ export const RowView = memo(function RowView({
                 <p className="muted small">Abbreviated — opening loads the full detail.</p>
               )}
               <div className="row-actions">
-                <button type="button" className="link" onClick={openInInspector}>
+                <button type="button" className="link" data-track="transcript.open_inspector" onClick={openInInspector}>
                   Open in inspector
                 </button>
                 {k.type === "review" && (

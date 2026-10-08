@@ -8,6 +8,7 @@ import { authStore } from "../../api/auth";
 import { queryKeys } from "../../api/queries";
 import { Modal } from "../../ui/Modal";
 import { toast } from "../../ui/toast";
+import { track } from "../../app/analytics";
 import { SLOT_THINKING, STRATEGIES, moveSlot, newSlot, tierPayload, tierProblem, type SlotDraft, type TierDraft } from "./tiers";
 
 export function TierEditorDialog({
@@ -24,7 +25,7 @@ export function TierEditorDialog({
 }) {
   const title = !draft ? "" : draft.existing ? `Review tier · ${draft.name}` : "New review tier";
   return (
-    <Modal open={draft !== null} onClose={onClose} title={title} className="tier-editor-dialog">
+    <Modal open={draft !== null} onClose={onClose} title={title} className="tier-editor-dialog" view="tier_editor" flow="tier_editor">
       {draft && <TierEditor key={draft.existing ? draft.name : "new"} initial={draft} modelNames={modelNames} tierNames={tierNames} onClose={onClose} />}
     </Modal>
   );
@@ -58,10 +59,14 @@ function TierEditor({
       await client.upsertReviewTier({ tier: tierPayload(d) });
       void qc.invalidateQueries({ queryKey: queryKeys.reviewTiers });
       toast(`Saved review tier ${d.name.trim()}.`, "info");
+      track.submit("tier_editor", { existing: !!initial.existing });
       onClose();
     } catch (err) {
       if (isUnauthorized(err)) authStore.expire();
-      else setError(errorMessage(err, "The tier was not saved."));
+      else {
+        track.error("tier_editor.save", err);
+        setError(errorMessage(err, "The tier was not saved."));
+      }
     } finally {
       setSaving(false);
     }

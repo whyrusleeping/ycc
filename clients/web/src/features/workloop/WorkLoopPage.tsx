@@ -16,6 +16,7 @@ import { useIntent } from "../../app/intents";
 import { ConfirmDialog } from "../../ui/ConfirmDialog";
 import { Modal } from "../../ui/Modal";
 import { toast } from "../../ui/toast";
+import { track } from "../../app/analytics";
 import { useInspector } from "../inspector/inspector";
 import { Markdown } from "../markdown/Markdown";
 import { StatusPill, TaskLink } from "../backlog/parts";
@@ -88,12 +89,12 @@ export function WorkLoopPage({ project }: { project: string }) {
 
   const install = (next: WorkLoopInfo | null) => qc.setQueryData(queryKeys.workLoop(project), next);
 
-  const handleError = (err: unknown, what: string) => {
+  const handleError = (err: unknown, what: string, op: string) => {
     if (isUnauthorized(err)) {
       authStore.expire();
       return;
     }
-    toast(`${what}: ${errorMessage(err)}`);
+    toast(`${what}: ${errorMessage(err)}`, "error", { op, err });
   };
 
   const start = async (implementation: string | null) => {
@@ -107,14 +108,15 @@ export function WorkLoopPage({ project }: { project: string }) {
       const resp = await client.startWorkLoop({ project });
       const next = resp.loop ?? null;
       install(next);
+      track.submit("loop_start", { implementation: implementation ?? "unchanged" });
       setStartOpen(false);
       // Start can return an already-finished loop when setup failed at once.
       const note = finishAnnouncement(null, next, true);
-      if (note) toast(note.text, note.failure ? "error" : "info");
+      if (note) toast(note.text, note.failure ? "error" : "info", { op: "loop.start", err: "finished_at_once" });
       else toast(`Work loop started${project ? ` in ${project}` : ""}.`, "info");
       void qc.invalidateQueries({ queryKey: queryKeys.sessionFeedAll });
     } catch (err) {
-      handleError(err, "Couldn’t start the work loop");
+      handleError(err, "Couldn’t start the work loop", "loop.start");
       void q.refetch();
     } finally {
       setBusy(false);
@@ -130,7 +132,7 @@ export function WorkLoopPage({ project }: { project: string }) {
       install(resp.loop ?? null);
       toast(resp.loop && loopState(resp.loop) === "finished" ? "Work loop stopped." : "Stopping after the current session…", "info");
     } catch (err) {
-      handleError(err, "Couldn’t stop the work loop");
+      handleError(err, "Couldn’t stop the work loop", "loop.stop");
     } finally {
       setBusy(false);
     }
@@ -148,13 +150,20 @@ export function WorkLoopPage({ project }: { project: string }) {
             className="btn ghost"
             onClick={() => void q.refetch()}
             disabled={q.isFetching}
+            data-track="loop.refresh"
             title="Refresh"
             aria-label="Refresh work loop"
           >
             <Icon name="refresh" size={15} />
           </button>
           {isActive(state) ? (
-            <button type="button" className="btn danger" disabled={busy || !canStop(state)} onClick={() => setStopOpen(true)}>
+            <button
+              type="button"
+              className="btn danger"
+              disabled={busy || !canStop(state)}
+              data-track="loop.stop"
+              onClick={() => setStopOpen(true)}
+            >
               {state === "stopping" ? "Stopping…" : "Stop loop"}
             </button>
           ) : (
@@ -162,6 +171,7 @@ export function WorkLoopPage({ project }: { project: string }) {
               type="button"
               className="btn primary"
               disabled={busy || q.isPending || !canStart(state)}
+              data-track="loop.start"
               onClick={() => setStartOpen(true)}
             >
               Start loop…
@@ -195,6 +205,7 @@ export function WorkLoopPage({ project }: { project: string }) {
         }
         confirmLabel="Stop loop"
         danger
+        action="loop.stop"
         onConfirm={() => void stop()}
         onCancel={() => setStopOpen(false)}
       />
@@ -243,7 +254,7 @@ function EmptyLoop({ project, onStart }: { project: string; onStart: () => void 
       </p>
       <ReadyTasks project={project} />
       <p>
-        <button type="button" className="btn primary" onClick={onStart}>
+        <button type="button" className="btn primary" data-track="loop.start" onClick={onStart}>
           Start loop…
         </button>
       </p>
@@ -274,7 +285,7 @@ function StartLoopDialog({
     onCancel();
   };
   return (
-    <Modal open={open} onClose={() => !busy && close()} title="Start the work loop" className="loop-start-dialog">
+    <Modal open={open} onClose={() => !busy && close()} title="Start the work loop" className="loop-start-dialog" view="loop_start" flow="loop_start">
       <form
         className="task-editor"
         onSubmit={(e) => {

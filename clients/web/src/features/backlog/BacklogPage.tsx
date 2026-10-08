@@ -17,6 +17,7 @@ import { useIntent } from "../../app/intents";
 import { CAPTURE_SHORTCUT_LABEL, openCapture } from "./CaptureDialog";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { changeTaskStatus, TaskDetailView } from "./TaskDetail";
+import { track } from "../../app/analytics";
 import { PriorityBadge, StatusPill, TaskLink } from "./parts";
 import { BacklogBoard } from "./Board";
 import { LoopBanner } from "../workloop/WorkLoopPage";
@@ -166,6 +167,7 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
           const next = t && adjacentStatus(t.status, e.key === "ArrowLeft" ? -1 : 1);
           if (t && next) {
             e.preventDefault();
+            track.action("backlog.move", "keyboard", { to: next });
             moveRef.current(t, next);
           }
           return;
@@ -194,18 +196,21 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
           if (t && t.closest("a, button, summary, [role='button'], .task-pane")) return;
           if (cur && visible.includes(cur)) {
             e.preventDefault();
+            track.action("backlog.open_task", "keyboard", { layout: mode });
             navigate(paths.task(project, cur));
           }
           return;
         }
         case "/":
           e.preventDefault();
+          track.action("backlog.filter_focus", "keyboard");
           filterRef.current?.focus();
           filterRef.current?.select();
           return;
         case "Escape":
           if (opened) {
             e.preventDefault();
+            track.action("backlog.close_task", "keyboard");
             navigate(paths.backlog(project));
           }
           return;
@@ -215,8 +220,9 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
     return () => window.removeEventListener("keydown", onKey);
   }, [navigate, project]);
 
-  const promote = async (t: BacklogTaskSummary) => {
+  const promote = async (t: BacklogTaskSummary, layout: BacklogView) => {
     if (promoting) return;
+    track.action("backlog.promote", "click", { layout });
     setPromoting(t.id);
     await changeTaskStatus(qc, project, t.id, "todo");
     setPromoting(null);
@@ -262,7 +268,10 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
                   role="radio"
                   aria-checked={view === v}
                   className={view === v ? "selected" : ""}
-                  onClick={() => setView(v)}
+                  onClick={() => {
+                    track.action("backlog.layout", "click", { to: v });
+                    setView(v);
+                  }}
                   title={v === "table" ? "Sortable table" : "Kanban board: drag cards between status columns"}
                 >
                   {v === "table" ? "Table" : "Board"}
@@ -274,6 +283,7 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
               className="btn ghost"
               onClick={() => void qc.invalidateQueries({ queryKey: queryKeys.backlog(project) })}
               disabled={backlog.isFetching}
+              data-track="backlog.refresh"
               title="Refresh"
               aria-label="Refresh backlog"
             >
@@ -282,12 +292,13 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
             <button
               type="button"
               className="btn"
+              data-track="backlog.capture"
               onClick={() => openCapture(project)}
               title={`Describe a task and let the capture agent write it up (${CAPTURE_SHORTCUT_LABEL})`}
             >
               Quick capture <kbd>{CAPTURE_SHORTCUT_LABEL}</kbd>
             </button>
-            <button type="button" className="btn primary" onClick={() => setCreating(true)}>
+            <button type="button" className="btn primary" data-track="backlog.newTask" onClick={() => setCreating(true)}>
               + New task
             </button>
           </div>
@@ -302,7 +313,11 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
             title="Filter by id, title, status, or dependency"
             aria-label="Filter tasks"
             value={filter.text}
-            onChange={(e) => setFilter((f) => ({ ...f, text: e.target.value }))}
+            onChange={(e) => {
+              // Once per filtering, never the text.
+              if (!filter.text && e.target.value) track.action("backlog.filter_text", "keyboard");
+              setFilter((f) => ({ ...f, text: e.target.value }));
+            }}
             onKeyDown={(e) => {
               if (e.key === "Escape") {
                 e.preventDefault();
@@ -323,7 +338,10 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
                 type="button"
                 className={`filter-chip st-${s}${filter.statuses.includes(s) ? " on" : ""}`}
                 aria-pressed={filter.statuses.includes(s)}
-                onClick={() => toggleStatus(s)}
+                onClick={() => {
+                  track.action("backlog.filter", "click", { status: s, on: !filter.statuses.includes(s) });
+                  toggleStatus(s);
+                }}
               >
                 {statusLabel(s)} <span className="count">{counts[s] ?? 0}</span>
               </button>
@@ -333,7 +351,10 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
             <input
               type="checkbox"
               checked={filter.actionableOnly}
-              onChange={(e) => setFilter((f) => ({ ...f, actionableOnly: e.target.checked }))}
+              onChange={(e) => {
+                track.action("backlog.filter", "click", { status: "actionable", on: e.target.checked });
+                setFilter((f) => ({ ...f, actionableOnly: e.target.checked }));
+              }}
             />
             Actionable only
           </label>
@@ -341,12 +362,15 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
             <input
               type="checkbox"
               checked={filter.showDone}
-              onChange={(e) => setFilter((f) => ({ ...f, showDone: e.target.checked }))}
+              onChange={(e) => {
+                track.action("backlog.filter", "click", { status: "show_done", on: e.target.checked });
+                setFilter((f) => ({ ...f, showDone: e.target.checked }));
+              }}
             />
             Show done
           </label>
           {(isFiltered(filter) || filter.showDone) && (
-            <button type="button" className="link small" onClick={() => setFilter(DEFAULT_FILTER)}>
+            <button type="button" className="link small" data-track="backlog.filter_reset" onClick={() => setFilter(DEFAULT_FILTER)}>
               Reset
             </button>
           )}
@@ -361,7 +385,7 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
         ) : !all || all.length === 0 ? (
           <div className="pad empty-list">
             <p className="muted">The backlog is empty.</p>
-            <button type="button" className="btn primary small" onClick={() => setCreating(true)}>
+            <button type="button" className="btn primary small" data-track="backlog.newTask" onClick={() => setCreating(true)}>
               Create a task
             </button>
           </div>
@@ -375,12 +399,19 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
               moving={moving}
               promoting={promoting}
               onOpen={(id) => {
+                track.action("backlog.open_task", "click", { layout: "board" });
                 setCursor(id);
                 open(id);
               }}
-              onMove={(t, status) => void moveTask(t, status)}
-              onPromote={(t) => void promote(t)}
-              onExpandDone={() => setFilter((f) => ({ ...f, showDone: true }))}
+              onMove={(t, status) => {
+                track.action("backlog.move", "gesture", { to: status });
+                void moveTask(t, status);
+              }}
+              onPromote={(t) => void promote(t, "board")}
+              onExpandDone={() => {
+                track.action("backlog.expand_done", "click");
+                setFilter((f) => ({ ...f, showDone: true }));
+              }}
             />
             <p className="muted small keys-hint">
               Drag cards between columns · <kbd>h</kbd>/<kbd>j</kbd>/<kbd>k</kbd>/<kbd>l</kbd> or arrows move ·{" "}
@@ -398,7 +429,15 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
                       className={c.className}
                       aria-sort={sort.key === c.key ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
                     >
-                      <button type="button" className="sort-btn" title={c.title} onClick={() => setSort((s) => toggleSort(s, c.key))}>
+                      <button
+                        type="button"
+                        className="sort-btn"
+                        title={c.title}
+                        onClick={() => {
+                          track.action("backlog.sort", "click", { by: c.key });
+                          setSort((s) => toggleSort(s, c.key));
+                        }}
+                      >
                         {c.label}
                         <span className="sort-mark" aria-hidden="true">
                           {sort.key === c.key ? (sort.dir === "asc" ? "▲" : "▼") : ""}
@@ -416,7 +455,7 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
                   <tr>
                     <td colSpan={COLUMNS.length + 1} className="muted pad">
                       No tasks match.{" "}
-                      <button type="button" className="link" onClick={() => setFilter(DEFAULT_FILTER)}>
+                      <button type="button" className="link" data-track="backlog.filter_reset" onClick={() => setFilter(DEFAULT_FILTER)}>
                         Reset filters
                       </button>
                     </td>
@@ -431,10 +470,11 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
                     cursor={t.id === cursor}
                     promoting={promoting === t.id}
                     onOpen={() => {
+                      track.action("backlog.open_task", "click", { layout: "table" });
                       setCursor(t.id);
                       open(t.id);
                     }}
-                    onPromote={() => void promote(t)}
+                    onPromote={() => void promote(t, "table")}
                   />
                 ))}
               </tbody>
@@ -488,7 +528,12 @@ function BacklogRow({
       }}
     >
       <td className="col-id mono">
-        <Link to={paths.task(project, t.id)} className="task-id-link" aria-current={selected ? "page" : undefined}>
+        <Link
+          to={paths.task(project, t.id)}
+          className="task-id-link"
+          aria-current={selected ? "page" : undefined}
+          data-track="backlog.open_task"
+        >
           {t.id}
         </Link>
       </td>

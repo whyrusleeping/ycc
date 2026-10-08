@@ -12,6 +12,7 @@ import { PROJECT_SECTIONS, paths, sectionPath } from "./paths";
 import { useScope } from "./scope";
 import { authStore, getToken } from "../api/auth";
 import { useQueryClient } from "@tanstack/react-query";
+import { track } from "./analytics";
 import { registerAction, shortcutLabel, useAction, useActionShortcuts, type AppAction, type Shortcut } from "./actions";
 import { CAPTURE_SHORTCUT_LABEL, CaptureDialog, openCapture } from "../features/backlog/CaptureDialog";
 import { IS_MAC } from "./platform";
@@ -103,6 +104,7 @@ function ProjectSwitcher() {
           value={scope ?? ""}
           onChange={(e) => {
             const next = e.target.value || null;
+            track.action("sidebar.scope", "click", { to: next ? "project" : "all" });
             setScope(next);
             // On a list page, follow the scope; elsewhere keep the current view.
             const onList = location.pathname === "/" || /^\/p\/[^/]+\/?$/.test(location.pathname);
@@ -136,15 +138,16 @@ function ProjectSwitcher() {
         ariaLabel="Project actions"
         className="btn ghost small project-menu-btn"
         items={[
-          { label: "Add project…", onSelect: () => openAddProject() },
-          !!scope && { label: `Rename ${scope}…`, onSelect: () => openRenameProject(scope) },
+          { id: "projects.add", label: "Add project…", onSelect: () => openAddProject() },
+          !!scope && { id: "projects.rename", label: `Rename ${scope}…`, onSelect: () => openRenameProject(scope) },
           !!scope && {
+            id: "projects.remove",
             label: `Remove ${scope} from ycc…`,
             danger: true,
             title: "Deregister the project; nothing on disk is deleted",
             onSelect: () => openRemoveProject(scope),
           },
-          { label: "Manage projects", onSelect: () => navigate(paths.projects()) },
+          { id: "projects.manage", label: "Manage projects", onSelect: () => navigate(paths.projects()) },
         ]}
       />
     </div>
@@ -168,14 +171,19 @@ function Sidebar() {
   return (
     <nav className="sidebar" aria-label="Sidebar">
       <div className="sidebar-top">
-        <Link to={paths.home()} className="brand">
+        <Link to={paths.home()} className="brand" data-track="sidebar.home">
           <span className="brand-mark" aria-hidden="true">
             y
           </span>
           ycc
         </Link>
         <span className="sidebar-top-actions">
-          <Link to={paths.newSession(scope)} className="btn primary small" title={`Start a new session (${NEW_SESSION_LABEL})`}>
+          <Link
+            to={paths.newSession(scope)}
+            className="btn primary small"
+            title={`Start a new session (${NEW_SESSION_LABEL})`}
+            data-track="sidebar.new_session"
+          >
             <Icon name="plus" size={14} /> New session
           </Link>
         </span>
@@ -185,6 +193,7 @@ function Sidebar() {
         className="palette-trigger"
         title={`Command palette: jump to anything, run any action (${PALETTE_LABEL})`}
         aria-label="Open the command palette"
+        data-track="sidebar.palette"
         onClick={() => togglePalette()}
       >
         <Icon name="search" size={14} />
@@ -193,7 +202,7 @@ function Sidebar() {
       </button>
       <ProjectSwitcher />
       <div className="sidebar-heading">
-        <NavLink to={scope ? paths.project(scope) : paths.home()} end className="sidebar-heading-link">
+        <NavLink to={scope ? paths.project(scope) : paths.home()} end className="sidebar-heading-link" data-track="sidebar.sessions">
           {scope ? "Sessions" : "Recent sessions"}
         </NavLink>
         <span className="sidebar-heading-actions">
@@ -201,6 +210,7 @@ function Sidebar() {
             <button
               type="button"
               className="btn ghost small mark-all-read"
+              data-track="sidebar.mark_all_read"
               onClick={() => marks.markAllRead(unreadRows.map((r) => r.session))}
               title={`Mark all ${unreadRows.length} unread ${unreadRows.length === 1 ? "session" : "sessions"} read`}
             >
@@ -212,6 +222,7 @@ function Sidebar() {
             className="btn ghost small"
             onClick={refresh}
             disabled={isFetching}
+            data-track="sidebar.refresh"
             title="Refresh"
             aria-label="Refresh sessions"
           >
@@ -231,7 +242,12 @@ function Sidebar() {
           // Memory & plans covers the plan library's routes too.
           const plansActive = s.key === "memory" && /^\/p\/[^/]+\/plans(\/|$)/.test(location.pathname);
           return to ? (
-            <NavLink key={s.key} to={to} className={({ isActive }) => `nav-item${isActive || plansActive ? " active" : ""}`}>
+            <NavLink
+              key={s.key}
+              to={to}
+              className={({ isActive }) => `nav-item${isActive || plansActive ? " active" : ""}`}
+              data-track={`sidebar.${s.key}`}
+            >
               <Icon name={SECTION_ICONS[s.key]} />
               <span className="nav-label">{s.label}</span>
               {badge && (
@@ -248,7 +264,7 @@ function Sidebar() {
           );
         })}
         <div className="sidebar-foot">
-          <NavLink to={paths.settings()} className="nav-item">
+          <NavLink to={paths.settings()} className="nav-item" data-track="sidebar.settings">
             <Icon name="settings" />
             <span className="nav-label">Settings</span>
           </NavLink>
@@ -256,6 +272,7 @@ function Sidebar() {
             type="button"
             className="btn ghost icon-btn"
             onClick={() => openHelp()}
+            data-track="sidebar.help"
             title="Keyboard shortcuts (?)"
             aria-label="Keyboard shortcuts"
           >
@@ -267,6 +284,7 @@ function Sidebar() {
               className="btn ghost icon-btn"
               title="Forget token and sign out of this daemon"
               aria-label="Forget token"
+              data-track="sidebar.sign_out"
               onClick={() => {
                 qc.clear();
                 authStore.forgetToken();
@@ -688,6 +706,9 @@ function useNavigationActions() {
 export function Shell() {
   const inspector = useInspector();
   const { sessionId } = useParams();
+  const { pathname } = useLocation();
+  // The routed surface is the bottom of the analytics view stack.
+  useEffect(() => track.route(pathname), [pathname]);
   useShellActions();
   useNavigationActions();
   useLoopWatcher();

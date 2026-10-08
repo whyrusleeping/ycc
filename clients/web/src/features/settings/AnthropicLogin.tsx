@@ -10,6 +10,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { client, errorMessage, isUnauthorized } from "../../api/client";
 import { authStore } from "../../api/auth";
 import { Modal } from "../../ui/Modal";
+import { track } from "../../app/analytics";
 import { codeProblem, validLoginStart } from "./anthropic";
 
 let openSeq = 0;
@@ -46,7 +47,7 @@ function useOpen(): { open: boolean; seq: number } {
 export function AnthropicLoginDialog() {
   const { open, seq } = useOpen();
   return (
-    <Modal open={open} onClose={closeAnthropicLogin} title="Anthropic login" className="anthropic-login">
+    <Modal open={open} onClose={closeAnthropicLogin} title="Anthropic login" className="anthropic-login" view="anthropic_login" flow="anthropic_login">
       {open && <LoginBody key={seq} onClose={closeAnthropicLogin} />}
     </Modal>
   );
@@ -83,11 +84,12 @@ function LoginBody({ onClose }: { onClose: () => void }) {
     [],
   );
 
-  const fail = (err: unknown, fallback: string) => {
+  const fail = (err: unknown, fallback: string, op: string) => {
     if (isUnauthorized(err)) {
       authStore.expire();
       return;
     }
+    track.error(op, err);
     setError(errorMessage(err, fallback));
   };
 
@@ -108,13 +110,14 @@ function LoginBody({ onClose }: { onClose: () => void }) {
       }
       if (!validLoginStart(resp)) {
         void client.cancelAnthropicLogin({ attemptId: resp.attemptId }).catch(() => {});
+        track.error("anthropic_login.begin", "invalid_start");
         setError("The daemon returned an invalid or expired login. Update the daemon and try again.");
         return;
       }
       pending.current = resp.attemptId;
       setAttempt({ id: resp.attemptId, url: resp.authorizationUrl, expiresAt: Number(resp.expiresAtUnix) * 1000 });
     } catch (err) {
-      if (gen === generation.current) fail(err, "Couldn’t start the login.");
+      if (gen === generation.current) fail(err, "Couldn’t start the login.", "anthropic_login.begin");
     } finally {
       if (gen === generation.current) setBusy(false);
     }
@@ -123,6 +126,7 @@ function LoginBody({ onClose }: { onClose: () => void }) {
   const complete = async () => {
     if (busy || !attempt) return;
     if (Date.now() >= attempt.expiresAt) {
+      track.error("anthropic_login.complete", "expired");
       setError("This login expired. Start a new login and use its new code.");
       cancelPending();
       setAttempt(null);
@@ -140,9 +144,12 @@ function LoginBody({ onClose }: { onClose: () => void }) {
     setBusy(true);
     try {
       await client.completeAnthropicLogin({ attemptId: attempt.id, code: pasted });
-      if (gen === generation.current) setConnected(true);
+      if (gen === generation.current) {
+        track.submit("anthropic_login");
+        setConnected(true);
+      }
     } catch (err) {
-      if (gen === generation.current) fail(err, "Login could not be completed. Start a new login.");
+      if (gen === generation.current) fail(err, "Login could not be completed. Start a new login.", "anthropic_login.complete");
     } finally {
       if (gen === generation.current) setBusy(false);
     }

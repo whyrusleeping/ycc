@@ -64,7 +64,12 @@ load / app foreground; groups events into visits), and an optional `catalog`.
 Clients use the same names for equivalent screens so usage can be compared across clients:
 `home`, `new_session`, `session`, `settings`, `project`, `projects`, `backlog`, `task`, `workloop`,
 `workstreams`, `files`, `file`, `memory`, `plans`, `usage`, `session_usage`, `session_settings`,
-`quick_capture`, `palette`, `help`, `drawer`, `connect`. Add new names freely; keep them stable.
+`quick_capture`, `palette`, `help`, `drawer`, `connect`, `plan`, `new_task`, `add_project`,
+`rename_project`, `anthropic_login`, `model_editor`, `tier_editor`, `loop_start`,
+`workstream_spawn`, `not_found`. Add new names freely; keep them stable.
+
+The web client pauses a view's clock while the tab is hidden and ends its views on `pagehide`, so
+one `view` event covers a visit to a screen across tab switches.
 
 ### Catalog
 

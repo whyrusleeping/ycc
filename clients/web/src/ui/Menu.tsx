@@ -1,8 +1,11 @@
 // A small popup menu behind a button (row kebabs, the sidebar's project
 // actions). Closes on outside click, Escape, or after an item runs.
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { track } from "../app/analytics";
 
 export interface MenuItem {
+  /** Analytics action id (fixed vocabulary, e.g. "projects.rename"); labels may hold names. */
+  id?: string;
   label: string;
   onSelect: () => void;
   danger?: boolean;
@@ -75,6 +78,7 @@ export function MenuButton({
               onClick={(e) => {
                 e.stopPropagation();
                 setOpen(false);
+                if (item.id) track.action(item.id, "menu");
                 item.onSelect();
               }}
             >

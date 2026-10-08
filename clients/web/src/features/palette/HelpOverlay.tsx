@@ -36,7 +36,7 @@ export function HelpOverlay() {
   const actions = useActions();
   const groups = helpRows(actions);
   return (
-    <Modal open={help} onClose={closeHelp} title="Keyboard shortcuts" className="help-overlay">
+    <Modal open={help} onClose={closeHelp} title="Keyboard shortcuts" className="help-overlay" view="help">
       <p className="muted small">
         Plain keys don’t fire while you type in a text field; chords (Ctrl/⌘, Alt/⌥) do, except Alt/⌥ chords on macOS, where Option types
         characters. Every action is also in the command palette.

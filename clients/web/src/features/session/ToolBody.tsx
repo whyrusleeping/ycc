@@ -129,7 +129,7 @@ function ToolOutput({ output, status, clamp }: { output: string; status: ToolSta
     <>
       <div className="output-head">
         <span className="label">{label}</span>
-        <CopyButton text={output} title="Copy output" />
+        <CopyButton text={output} title="Copy output" what="tool_output" />
       </div>
       <pre className={`plain tool-output${status === "error" ? " error-output" : ""}${clamp ? " clamp" : ""}`}>{output}</pre>
     </>
@@ -154,7 +154,7 @@ function CatN({ output, language, clamp }: { output: string; language: Language 
     <div className="code-block">
       <div className="code-head">
         <span className="code-lang">output</span>
-        <CopyButton text={output} title="Copy output" />
+        <CopyButton text={output} title="Copy output" what="tool_output" />
       </div>
       <pre className={`code catn${clamp ? " clamp" : ""}`}>
         <code>

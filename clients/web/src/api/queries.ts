@@ -159,7 +159,7 @@ export function useSessionFeed(scope: string | null) {
         return load;
       });
       qc.setQueryData(key, next);
-      if (failed.length) toast(`Couldn’t load older sessions for ${failed.join(", ")}.`);
+      if (failed.length) toast(`Couldn’t load older sessions for ${failed.join(", ")}.`, "error", { op: "sessions.load_older", err: "partial" });
     } finally {
       setLoadingOlder(false);
     }

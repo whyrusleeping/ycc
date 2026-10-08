@@ -5,7 +5,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router";
 import { client } from "../../api/client";
 import { queryKeys, useProjects, useSessionFeed } from "../../api/queries";
-import { shortcutLabel, useActions } from "../../app/actions";
+import { invokeAction, shortcutLabel, useActions } from "../../app/actions";
+import { track, useTrackedView } from "../../app/analytics";
 import { useScope } from "../../app/scope";
 import { lastViewedProject } from "../../app/memory";
 import { historyTargets, relativeTime } from "../sessions/feed";
@@ -48,6 +49,7 @@ function Highlight({ text, indices }: { text: string; indices: readonly number[]
 export function CommandPalette() {
   const { palette } = useOverlays();
   const ref = useRef<HTMLDialogElement>(null);
+  useTrackedView("palette", palette.open);
   useEffect(() => {
     const d = ref.current;
     if (!d) return;
@@ -129,9 +131,13 @@ function PaletteBody({ initialQuery }: { initialQuery: string }) {
 
   const choose = (item: PaletteItem) => {
     closePalette();
+    const action = item.kind === "action" ? actions.find((a) => `action:${a.id}` === item.id) : undefined;
+    // Jumps record only the kind of target, never which one.
+    if (!action) track.action("palette.jump", "palette", { kind: item.kind, mode, query: query.trim() ? "typed" : "empty" });
     // Let the palette's dialog close before an action opens its own.
     setTimeout(() => {
       if (item.to) navigate(item.to);
+      else if (action) invokeAction(action, "palette");
       else item.run?.();
     }, 0);
   };

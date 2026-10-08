@@ -9,9 +9,17 @@ import { ALGORITHM, INPUT_DIRS, INPUT_FILES, computeInputsHash, webRoot } from "
 
 const outDir = fileURLToPath(new URL("../../../internal/web/dist", import.meta.url));
 
-await build({ root: webRoot, configFile: join(webRoot, "vite.config.ts"), logLevel: "info" });
-
+// The inputs hash doubles as the client version analytics report (the build
+// changes no inputs, so computing it first gives the same hash).
 const { hash, files } = computeInputsHash();
+
+await build({
+  root: webRoot,
+  configFile: join(webRoot, "vite.config.ts"),
+  logLevel: "info",
+  define: { __YCC_WEB_BUILD__: JSON.stringify(hash.slice(0, 12)) },
+});
+
 const manifest = {
   algorithm: ALGORITHM,
   inputs_hash: hash,

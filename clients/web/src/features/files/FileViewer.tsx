@@ -186,8 +186,8 @@ function FileContent({
               </button>
             </>
           )}
-          <CopyButton text={resp.path || target.path} label="Copy path" title="Copy the root-relative path" />
-          {isText && <CopyButton text={text} label={variant === "inspector" ? "Copy" : "Copy contents"} title="Copy the file’s contents" />}
+          <CopyButton text={resp.path || target.path} label="Copy path" title="Copy the root-relative path" what="file_path" />
+          {isText && <CopyButton text={text} label={variant === "inspector" ? "Copy" : "Copy contents"} title="Copy the file’s contents" what="file_contents" />}
           {variant === "inspector" && (
             <Link className="btn ghost small" to={paths.files(target.project, target.path, { session: target.sessionId, lines })}>
               Open in Files

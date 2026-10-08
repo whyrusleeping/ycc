@@ -75,12 +75,14 @@ export function SessionRowView({
             className="unread-dot"
             title="New agent activity — click to mark read"
             aria-label={`Unread: mark ${displayTitle(s)} read`}
+            data-track="sessions.mark_read"
             onClick={onMarkRead}
           />
         )}
         <Link
           to={paths.session(row.project, s.sessionId)}
           className="session-row-link title-text"
+          data-track="sessions.open"
           aria-current={active ? "page" : undefined}
         >
           {displayTitle(s)}
@@ -97,7 +99,7 @@ export function SessionRowView({
         {showProject && project && <span className="project">{project}</span>}
         {chips.map((c) =>
           ids.includes(c) ? (
-            <Link key={c} to={paths.task(row.project, c)} className="chip task-chip" title={`Open task ${c}`}>
+            <Link key={c} to={paths.task(row.project, c)} className="chip task-chip" title={`Open task ${c}`} data-track="sessions.task_chip">
               {c}
             </Link>
           ) : (
@@ -127,6 +129,7 @@ export function SessionRowView({
         className="btn small row-resume"
         title="Resume this session"
         aria-label={`Resume ${displayTitle(s)}`}
+        data-track="sessions.resume"
         onClick={() => {
           requestReopen(row.project, s.sessionId);
           navigate(paths.session(row.project, s.sessionId));
@@ -168,7 +171,12 @@ export function SessionList({
           <span>
             {unreadRows.length} {unreadRows.length === 1 ? "session has" : "sessions have"} new agent activity
           </span>
-          <button type="button" className="btn ghost small" onClick={() => marks.markAllRead(unreadRows.map((r) => r.session))}>
+          <button
+            type="button"
+            className="btn ghost small"
+            data-track="sessions.mark_all_read"
+            onClick={() => marks.markAllRead(unreadRows.map((r) => r.session))}
+          >
             Mark all read
           </button>
         </div>
@@ -176,7 +184,7 @@ export function SessionList({
       {groups.length === 0 && (
         <div className="pad empty-list">
           <p className="muted">No sessions yet.</p>
-          <Link to={paths.newSession(scope)} className="btn primary small">
+          <Link to={paths.newSession(scope)} className="btn primary small" data-track="sessions.start_first">
             Start a session
           </Link>
         </div>
@@ -201,7 +209,7 @@ export function SessionList({
       ))}
       {feed.hasMore && (
         <div className="pad">
-          <button type="button" className="btn ghost small" disabled={loadingOlder} onClick={() => void loadOlder()}>
+          <button type="button" className="btn ghost small" disabled={loadingOlder} data-track="sessions.load_older" onClick={() => void loadOlder()}>
             {loadingOlder ? "Loading…" : "Load older sessions"}
           </button>
         </div>

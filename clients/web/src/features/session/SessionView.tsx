@@ -100,35 +100,35 @@ function Controls({ controller, snap }: { controller: SessionController; snap: S
   const buttons = [];
   if (phase === "running" && !snap.pauseRequested) {
     buttons.push(
-      <button key="pause" type="button" className="btn" disabled={busy} onClick={() => void controller.interrupt()}>
+      <button key="pause" type="button" className="btn" disabled={busy} data-track="session.interrupt" onClick={() => void controller.interrupt()}>
         {pending === "pause" ? "Interrupting…" : "Interrupt"}
       </button>,
     );
   }
   if (snap.pauseRequested) {
     buttons.push(
-      <button key="cancel" type="button" className="btn" disabled={busy} onClick={() => void controller.resume()}>
+      <button key="cancel" type="button" className="btn" disabled={busy} data-track="session.cancelPause" onClick={() => void controller.resume()}>
         {pending === "resume" ? "Cancelling…" : "Cancel pause"}
       </button>,
     );
   }
   if (phase === "paused") {
     buttons.push(
-      <button key="resume" type="button" className="btn primary" disabled={busy} onClick={() => void controller.resume()}>
+      <button key="resume" type="button" className="btn primary" disabled={busy} data-track="session.resume" onClick={() => void controller.resume()}>
         {pending === "resume" ? "Resuming…" : "Resume"}
       </button>,
     );
   }
   if (snap.phase.kind === "error" && needsAnthropicReconnect(snap.phase.message)) {
     buttons.push(
-      <button key="anthropic" type="button" className="btn" onClick={() => openAnthropicLogin()} title="Sign in to Anthropic again on the daemon">
+      <button key="anthropic" type="button" className="btn" data-track="session.anthropicLogin" onClick={() => openAnthropicLogin()} title="Sign in to Anthropic again on the daemon">
         Reconnect Anthropic…
       </button>,
     );
   }
   if (snap.phase.kind === "error" && snap.phase.retryable) {
     buttons.push(
-      <button key="retry" type="button" className="btn primary" disabled={busy} onClick={() => void controller.retry()}>
+      <button key="retry" type="button" className="btn primary" disabled={busy} data-track="session.retry" onClick={() => void controller.retry()}>
         {pending === "retry" ? "Retrying…" : "Retry"}
       </button>,
     );
@@ -146,6 +146,7 @@ function Controls({ controller, snap }: { controller: SessionController; snap: S
             aria-expanded={menuOpen}
             aria-label="More session actions"
             title="More session actions"
+            data-track="session.more_menu"
             onClick={() => setMenuOpen((o) => !o)}
           >
             <Icon name="more" />
@@ -157,6 +158,8 @@ function Controls({ controller, snap }: { controller: SessionController; snap: S
                   type="button"
                   role="menuitem"
                   disabled={busy}
+                  data-track="session.rollover"
+                  data-track-via="menu"
                   onClick={() => {
                     setMenuOpen(false);
                     void controller.rollover();
@@ -170,6 +173,8 @@ function Controls({ controller, snap }: { controller: SessionController; snap: S
                 role="menuitem"
                 className="danger"
                 disabled={busy}
+                data-track="session.stop"
+                data-track-via="menu"
                 onClick={() => {
                   setMenuOpen(false);
                   setConfirmStop(true);
@@ -187,6 +192,7 @@ function Controls({ controller, snap }: { controller: SessionController; snap: S
         body="Stopping hard-terminates the agent loop and removes the session from the daemon. Unlike Interrupt, it cannot be resumed here."
         confirmLabel="Stop session"
         danger
+        action="session.stop"
         onCancel={() => setConfirmStop(false)}
         onConfirm={() => {
           setConfirmStop(false);
@@ -322,6 +328,7 @@ export function SessionView({
                   className={`chip task-chip${open ? " active" : ""}`}
                   title={`Task ${id} — open beside the transcript`}
                   aria-pressed={open}
+                  data-track="session.task_chip"
                   onClick={() => (open ? inspector.close() : inspector.open({ kind: "task", project, taskId: id }))}
                 >
                   task {id}
@@ -334,7 +341,7 @@ export function SessionView({
                 {ctx} ctx
               </span>
             )}
-            <CopyButton text={sessionId} label={sessionId} className="session-id mono" title="Copy the session id" />
+            <CopyButton text={sessionId} label={sessionId} className="session-id mono" title="Copy the session id" what="session_id" />
           </div>
         </div>
         <div className="session-actions">
@@ -344,6 +351,7 @@ export function SessionView({
             title="Search this session (Ctrl/Cmd-F)"
             aria-label="Search"
             aria-pressed={search.open}
+            data-track="session.search"
             onClick={() => (search.open ? search.close() : search.show())}
           >
             <Icon name="search" />
@@ -355,6 +363,7 @@ export function SessionView({
             title="Working changes: the diff in this session’s worktree"
             aria-label="Working changes"
             aria-pressed={changesOpen}
+            data-track="session.workingChanges"
             onClick={() =>
               changesOpen ? inspector.close() : inspector.open({ kind: "workingChanges", project, sessionId })
             }
@@ -367,6 +376,7 @@ export function SessionView({
             to={paths.files(project || null, "", { session: sessionId })}
             title="Browse this session’s files (its live worktree)"
             aria-label="Files"
+            data-track="session.files"
           >
             <Icon name="files" />
             <span className="btn-label">Files</span>
@@ -383,12 +393,14 @@ export function SessionView({
             }
             items={[
               {
+                id: "backlog.capture",
                 label: "Quick capture…",
                 shortcut: CAPTURE_SHORTCUT_LABEL,
                 title: "Describe a task in a sentence and let the capture agent write it up",
                 onSelect: () => openCapture(project || null, { beside: true }),
               },
               {
+                id: "session.newTask",
                 label: "New task…",
                 title: "Fill in the task form yourself",
                 onSelect: () => setCreatingTask(true),
@@ -400,6 +412,7 @@ export function SessionView({
             className={`btn ghost${settingsOpen ? " active" : ""}`}
             aria-pressed={settingsOpen}
             aria-label="Session settings"
+            data-track="session.settings"
             title="Reasoning, models, context, and usage for this session"
             onClick={() =>
               settingsOpen ? inspector.close() : inspector.open({ kind: "sessionSettings", project, sessionId })
@@ -414,7 +427,7 @@ export function SessionView({
       {snap.conn === "failed" && snap.failure !== "unauthorized" && (
         <div className="banner error">
           {snap.failure}{" "}
-          <button type="button" className="link" onClick={() => controller.reconnect()}>
+          <button type="button" className="link" data-track="session.reconnect" onClick={() => controller.reconnect()}>
             Retry
           </button>
         </div>
@@ -442,6 +455,7 @@ export function SessionView({
           sessionKey={`${project}\u0000${sessionId}`}
           placeholder={placeholder}
           picturesBlocked={snap.awaitsAnswer ? "Answer the pending question before sending pictures." : undefined}
+          sendAttrs={{ phase: snap.awaitsAnswer ? "question" : snap.pauseRequested ? "pausing" : snap.phase.kind }}
           onSend={(t, pictures) => void controller.send(t, pictures)}
         />
       ) : (
@@ -452,6 +466,7 @@ export function SessionView({
               type="button"
               className="btn primary small"
               disabled={snap.reopening}
+              data-track="session.reopen"
               onClick={() => void controller.reopen()}
               title="Re-open this session on its existing log and continue it"
             >

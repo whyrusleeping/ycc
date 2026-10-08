@@ -2,6 +2,7 @@
 // store so non-React code (session controllers) can raise them too. A toast
 // repeating one already shown collapses into it ("×3") and restarts its timer.
 import { useSyncExternalStore } from "react";
+import { track } from "../app/analytics";
 
 export interface Toast {
   id: number;
@@ -29,7 +30,15 @@ function schedule(t: Toast) {
   );
 }
 
-export function toast(text: string, tone: Toast["tone"] = "error") {
+/** What failed, for analytics: a fixed operation name and the error (its Connect code is kept). */
+export interface ToastReport {
+  op: string;
+  err?: unknown;
+}
+
+export function toast(text: string, tone: Toast["tone"] = "error", report?: ToastReport) {
+  // Every error toast is a user-visible failure; the text itself is never recorded.
+  if (tone === "error") track.error(report?.op ?? "toast", report?.err);
   const same = toasts.find((t) => t.text === text && t.tone === tone);
   if (same) {
     const bumped = { ...same, count: same.count + 1 };

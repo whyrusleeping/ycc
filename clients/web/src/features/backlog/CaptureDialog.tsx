@@ -18,6 +18,7 @@ import { projectChoices } from "../newSession/model";
 import { useInspector } from "../inspector/inspector";
 import { Modal } from "../../ui/Modal";
 import { toast } from "../../ui/toast";
+import { track } from "../../app/analytics";
 import { captureOutcome, captureReducer, INITIAL_CAPTURE } from "./capture";
 
 interface CaptureRequest {
@@ -67,7 +68,14 @@ export const CAPTURE_SHORTCUT_LABEL = IS_MAC ? "⌥N" : "Alt+N";
 export function CaptureDialog() {
   const req = useCaptureRequest();
   return (
-    <Modal open={req.open} onClose={closeCapture} title="Capture a backlog item" className="capture-dialog">
+    <Modal
+      open={req.open}
+      onClose={closeCapture}
+      title="Capture a backlog item"
+      className="capture-dialog"
+      view="quick_capture"
+      flow="quick_capture"
+    >
       {req.open && <CaptureBody key={req.seq} preferred={req.project} beside={req.beside} />}
     </Modal>
   );
@@ -116,6 +124,7 @@ function CaptureBody({ preferred, beside }: { preferred: string | null; beside: 
         dispatch({ type: "event", event: ev });
         const outcome = captureOutcome(ev);
         if (outcome?.kind === "created") {
+          track.submit("quick_capture", { asked: question !== "" });
           void qc.invalidateQueries({ queryKey: queryKeys.backlog(target) });
           toast(`Captured task ${outcome.taskId}: ${outcome.title}`, "info");
         }
@@ -128,6 +137,7 @@ function CaptureBody({ preferred, beside }: { preferred: string | null; beside: 
         authStore.expire();
         return;
       }
+      track.error("backlog.capture", err);
       dispatch({ type: "failed", message: errorMessage(err, "The capture failed.") });
     }
   };
@@ -145,6 +155,7 @@ function CaptureBody({ preferred, beside }: { preferred: string | null; beside: 
     void run(project, state.description, state.question, reply);
   };
   const cancelRun = () => {
+    track.action("quick_capture.abort", "click");
     abort.current?.abort();
     dispatch({ type: "failed", message: "Capture cancelled." });
   };
@@ -249,6 +260,7 @@ function CaptureBody({ preferred, beside }: { preferred: string | null; beside: 
             <button
               type="button"
               className="btn"
+              data-track="quick_capture.another"
               onClick={() => {
                 dispatch({ type: "reset" });
                 setDescription("");
@@ -261,6 +273,7 @@ function CaptureBody({ preferred, beside }: { preferred: string | null; beside: 
               type="button"
               className="btn primary"
               autoFocus
+              data-track="quick_capture.open_task"
               onClick={() => {
                 const id = state.created?.taskId ?? "";
                 closeCapture();

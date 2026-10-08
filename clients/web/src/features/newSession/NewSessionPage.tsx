@@ -10,6 +10,7 @@ import { client, errorMessage, isUnauthorized } from "../../api/client";
 import { authStore } from "../../api/auth";
 import { queryKeys, useModels, useModes, useProjects } from "../../api/queries";
 import { paths } from "../../app/paths";
+import { track, useFlow, type Via } from "../../app/analytics";
 import { lastMode, lastViewedProject } from "../../app/memory";
 import { openAddProject } from "../projects/ProjectDialogs";
 import { AttachButton, PictureStrip, filesFrom, revokePictures, useDropZone, usePictureDraft } from "../attachments/pictures";
@@ -49,6 +50,8 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
   const [projectSeeded, setProjectSeeded] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Leaving without starting records new_session.cancel.
+  useFlow("new_session");
 
   // Seed the project once the list arrives (route project, or the sole one).
   useEffect(() => {
@@ -97,12 +100,20 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
     if (!asking) area.current?.focus();
   }, [asking]);
 
-  const start = async () => {
+  const start = async (via: Via) => {
     if (!gate.ok) return;
     setStarting(true);
     setError(null);
     try {
       const resp = await client.startSession(buildStartRequest(full));
+      track.submit("new_session", {
+        via,
+        mode: draft.mode,
+        preset: !!draft.preset,
+        prompt: draft.prompt.trim() !== "",
+        pictures: pictures.pictures.length > 0,
+        model: draft.model ? "override" : "default",
+      });
       lastMode.set(draft.mode);
       if (draft.project) lastViewedProject.set(draft.project);
       revokePictures(pictures.pictures);
@@ -114,6 +125,7 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
         authStore.expire();
         return;
       }
+      track.error("session.start", err);
       setError(errorMessage(err, "The session could not be started."));
       setStarting(false);
     }
@@ -160,6 +172,7 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
                     type="button"
                     className="choice-card"
                     autoFocus={i === 0}
+                    data-track="new_session.pick_project"
                     onClick={() => setDraft((d) => ({ ...d, project: name }))}
                   >
                     <span className="choice-title">{name}</span>
@@ -171,6 +184,7 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
               <button
                 type="button"
                 className="choice-card add-card"
+                data-track="new_session.add_project"
                 onClick={() => openAddProject((p) => setDraft((d) => ({ ...d, project: p.name, preset: "" })))}
               >
                 <span className="choice-title">+ Add project…</span>
@@ -193,7 +207,10 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
                     aria-checked={draft.mode === m.name}
                     className={`choice-card mode-card${draft.mode === m.name ? " selected" : ""}`}
                     disabled={starting}
-                    onClick={() => setDraft((d) => withMode(d, m.name, modes.data?.presets ?? []))}
+                    onClick={() => {
+                      track.action("new_session.mode", "click", { mode: m.name });
+                      setDraft((d) => withMode(d, m.name, modes.data?.presets ?? []));
+                    }}
                   >
                     <span className="choice-title">{m.title || m.name}</span>
                     {m.description && <span className="choice-sub">{m.description}</span>}
@@ -214,6 +231,7 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
                       className={`choice-card preset-card${draft.preset === p.name ? " selected" : ""}`}
                       disabled={starting}
                       onClick={() => {
+                        track.action("new_session.preset", "click", { mode: p.mode });
                         setDraft((d) => applyPreset(d, p));
                         area.current?.focus();
                       }}
@@ -235,7 +253,7 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
         className="new-session-composer"
         onSubmit={(e) => {
           e.preventDefault();
-          void start();
+          void start("click");
         }}
       >
         {error && (
@@ -276,6 +294,7 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
               className="chip add-project-chip"
               disabled={starting}
               title="Register another workspace on the daemon host"
+              data-track="new_session.add_project"
               onClick={() => openAddProject((p) => setDraft((d) => ({ ...d, project: p.name, preset: "" })))}
             >
               + Add project…
@@ -293,7 +312,10 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
                 aria-label="Coordinator model for this session"
                 value={draft.model}
                 disabled={starting}
-                onChange={(e) => setDraft((d) => ({ ...d, model: e.target.value }))}
+                onChange={(e) => {
+                  track.action("new_session.model", "click", { model: e.target.value ? "override" : "default" });
+                  setDraft((d) => ({ ...d, model: e.target.value }));
+                }}
                 title="Coordinator model for this session only"
               >
                 {choice.defaultDisabled ? (
@@ -319,7 +341,14 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
         <PictureStrip pictures={pictures.pictures} onRemove={pictures.remove} disabled={starting} />
         {pictures.error && <p className="error small">{pictures.error}</p>}
         <div className="composer-row">
-          <AttachButton onFiles={(f) => void pictures.add(f)} disabled={starting || asking} full={pictures.full} />
+          <AttachButton
+            onFiles={(f) => {
+              track.action("new_session.attach_image", "click", { source: "button" });
+              void pictures.add(f);
+            }}
+            disabled={starting || asking}
+            full={pictures.full}
+          />
           <textarea
             ref={area}
             rows={3}
@@ -338,12 +367,13 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
               const files = filesFrom(e.clipboardData).filter((f) => f.type.startsWith("image/"));
               if (!files.length) return;
               e.preventDefault();
+              track.action("new_session.attach_image", "keyboard", { source: "paste" });
               void pictures.add(files);
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
-                void start();
+                void start("keyboard");
               }
             }}
           />
@@ -353,7 +383,7 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
         </div>
         <div className="new-session-foot muted small">
           {!gate.ok && gate.reason && !starting ? gate.reason : "\u00a0"}
-          <Link to={routeProject ? paths.project(routeProject) : paths.home()} className="link cancel-link">
+          <Link to={routeProject ? paths.project(routeProject) : paths.home()} className="link cancel-link" data-track="new_session.cancel_link">
             Cancel
           </Link>
         </div>

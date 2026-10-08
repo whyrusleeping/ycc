@@ -62,7 +62,7 @@ export const CodeBlock = memo(function CodeBlock({
       <div className="code-head">
         <span className="code-lang">{label ?? ""}</span>
         {extra}
-        <CopyButton text={code} title="Copy code" />
+        <CopyButton text={code} title="Copy code" what="code" />
       </div>
       <pre className="code">
         <HighlightedCode code={code} language={language} />
@@ -128,7 +128,7 @@ export const DiffView = memo(function DiffView({
         ) : (
           <span />
         )}
-        <CopyButton text={diff} label="Copy" title={copyLabel} />
+        <CopyButton text={diff} label="Copy" title={copyLabel} what="diff" />
       </div>
       {truncated && (
         <p className="truncation-notice" role="note">

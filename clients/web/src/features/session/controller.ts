@@ -80,7 +80,8 @@ export type SessionApi = Pick<
 
 export interface ControllerHooks {
   onUnauthorized: () => void;
-  onError: (message: string) => void;
+  /** A failed user action; `report` names the operation for analytics. */
+  onError: (message: string, report?: { op: string; err: unknown }) => void;
   onInfo?: (message: string) => void;
 }
 
@@ -774,7 +775,7 @@ export class SessionController {
       return "unauthorized";
     }
     const message = errorMessage(err, `${label} failed`);
-    this.hooks.onError(`${label[0].toUpperCase()}${label.slice(1)} failed: ${message}`);
+    this.hooks.onError(`${label[0].toUpperCase()}${label.slice(1)} failed: ${message}`, { op: `session.${label.replace(/\s+/g, "_")}`, err });
     return message;
   }
 }

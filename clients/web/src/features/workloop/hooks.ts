@@ -42,7 +42,7 @@ export function useLoopWatcher() {
       if (!had) continue;
       const note = finishAnnouncement(prev, loop);
       if (note) {
-        toast(note.text, note.failure ? "error" : "info");
+        toast(note.text, note.failure ? "error" : "info", { op: "loop.finished", err: "failure" });
         if (loop && userAway()) {
           const reauth = loopNeedsAnthropicReconnect(loop, true);
           showNotification({

@@ -7,6 +7,7 @@
 // activity summary (see blocks.ts) that the reader can expand in place.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { SessionController, SessionSnapshot } from "./controller";
+import { clickVia, track } from "../../app/analytics";
 import { RowView } from "./RowView";
 import type { DraftPicture } from "../attachments/attachments";
 import { reportPresentation } from "./report";
@@ -139,6 +140,7 @@ export function Transcript({
   const jump = () => {
     const el = scroller.current;
     if (!el) return;
+    track.action("transcript.jump_latest", "click");
     following.current = true;
     el.scrollTop = el.scrollHeight;
     lastScrollTop.current = el.scrollTop;
@@ -202,7 +204,10 @@ export function Transcript({
         summary={activitySummary(snap.rows, b.start, b.end)}
         hidden={tail - b.start}
         open={open}
-        onToggle={() => toggleBlock(b.key)}
+        onToggle={(via) => {
+          track.action(open ? "transcript.fold_activity" : "transcript.expand_activity", via);
+          toggleBlock(b.key);
+        }}
       />,
     );
     for (let i = open ? b.start : tail; i < b.end; i++) items.push(renderRow(i));
@@ -314,7 +319,7 @@ function ActivityHead({
   summary: ActivitySummary;
   hidden: number;
   open: boolean;
-  onToggle: () => void;
+  onToggle: (via: ReturnType<typeof clickVia>) => void;
 }) {
   const shown = summary.tools.slice(0, 4);
   const others = summary.tools.slice(4).reduce((n, t) => n + t.count, 0);
@@ -326,7 +331,7 @@ function ActivityHead({
         className="activity-toggle"
         aria-expanded={open}
         title={open ? "Fold the earlier steps of this run" : `Show the ${hidden} earlier steps of this run`}
-        onClick={onToggle}
+        onClick={(e) => onToggle(clickVia(e))}
       >
         <span className="sum-title">{summary.steps} steps</span>
         <span className="activity-counts">

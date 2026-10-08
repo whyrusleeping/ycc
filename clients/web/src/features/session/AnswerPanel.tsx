@@ -5,6 +5,7 @@
 import { useState } from "react";
 import type { PendingQuestion } from "./projection";
 import type { SessionController } from "./controller";
+import { track, type Via } from "../../app/analytics";
 
 export function AnswerPanel({
   controller,
@@ -22,12 +23,15 @@ export function AnswerPanel({
   const [texts, setTexts] = useState<string[]>(() => question.questions.map(() => ""));
   const disabled = inFlight || submitted;
 
-  const sendSingleText = () => {
+  const sendSingleText = (via: Via) => {
     const t = texts[0].trim();
-    if (t) void controller.answerText(t);
+    if (!t) return;
+    track.action("question.answer", via, { kind: "text", options: question.questions[0].options.length > 0 });
+    void controller.answerText(t);
   };
 
   const sendBatch = () => {
+    track.action("question.answer", "click", { kind: "batch", count: Math.min(question.questions.length, 10) });
     void controller.answerBatch(
       question.questions.map((q, i) => {
         const option = choices[i];
@@ -58,6 +62,7 @@ export function AnswerPanel({
                     if (batch) {
                       setChoices((c) => c.map((v, i) => (i === qi ? oi : v)));
                     } else {
+                      track.action("question.answer", "click", { kind: "option" });
                       void controller.answerOption(oi);
                     }
                   }}
@@ -81,7 +86,7 @@ export function AnswerPanel({
             onKeyDown={(e) => {
               if (!batch && e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
-                sendSingleText();
+                sendSingleText("keyboard");
               }
             }}
           />
@@ -97,7 +102,7 @@ export function AnswerPanel({
             type="button"
             className="btn primary"
             disabled={disabled || !texts[0].trim()}
-            onClick={sendSingleText}
+            onClick={() => sendSingleText("click")}
           >
             {inFlight ? "Sending…" : "Send answer"}
           </button>

@@ -4,6 +4,7 @@
 // the registry, and the help overlay lists every registered shortcut.
 import { useEffect, useSyncExternalStore } from "react";
 import { IS_MAC } from "./platform";
+import { actionName, track, type Via } from "./analytics";
 
 export interface Shortcut {
   /**
@@ -33,6 +34,11 @@ export interface Shortcut {
 }
 
 export interface AppAction {
+  /**
+   * Stable id, e.g. "session.interrupt". Analytics record it (via
+   * invokeAction), so per-instance ids put the instance after a colon
+   * ("task.edit:<project>:<id>"): that suffix is never recorded.
+   */
   id: string;
   title: string;
   /** Palette and help grouping, e.g. "Backlog". */
@@ -53,6 +59,8 @@ function emit() {
 /** Register (or replace, by id) an action; returns the unregister function. */
 export function registerAction(action: AppAction): () => void {
   actions = [...actions.filter((a) => a.id !== action.id), action];
+  // The analytics catalog lists every action seen, so unused ones stand out.
+  track.catalog([{ kind: "action", name: actionName(action.id), shortcut: action.shortcut ? shortcutLabel(action.shortcut) : undefined }]);
   emit();
   return () => {
     if (!actions.includes(action)) return;
@@ -65,10 +73,16 @@ export function listActions(): readonly AppAction[] {
   return actions;
 }
 
-export function runAction(id: string): boolean {
+/** Run a registered action, recording how it was invoked. */
+export function invokeAction(a: AppAction, via: Via) {
+  track.action(actionName(a.id), via);
+  a.run();
+}
+
+export function runAction(id: string, via: Via = "click"): boolean {
   const a = actions.find((x) => x.id === id);
   if (!a) return false;
-  a.run();
+  invokeAction(a, via);
   return true;
 }
 
@@ -184,19 +198,23 @@ export function shortcutAction(e: KeyLike, list: readonly AppAction[], ctx: { ed
   return null;
 }
 
+/** Run the registered action a keydown triggers, if any; reports whether one ran. */
+export function dispatchShortcut(
+  e: KeyLike & { defaultPrevented: boolean; target: EventTarget | null; preventDefault: () => void },
+  dialogOpen: boolean,
+): boolean {
+  if (e.defaultPrevented) return false;
+  const a = shortcutAction(e, actions, { editable: isEditableTarget(e.target), dialogOpen });
+  if (!a) return false;
+  e.preventDefault();
+  invokeAction(a, "shortcut");
+  return true;
+}
+
 /** Dispatch registered shortcuts from window keydown (installed once by the shell). */
 export function useActionShortcuts() {
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented) return;
-      const a = shortcutAction(e, actions, {
-        editable: isEditableTarget(e.target),
-        dialogOpen: !!document.querySelector("dialog[open]"),
-      });
-      if (!a) return;
-      e.preventDefault();
-      a.run();
-    };
+    const onKey = (e: KeyboardEvent) => void dispatchShortcut(e, !!document.querySelector("dialog[open]"));
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);

@@ -209,6 +209,7 @@ export function SearchBar({ search, hasEarlier }: { search: TranscriptSearch; ha
         title="Older match (Enter)"
         aria-label="Older match"
         disabled={!search.needle}
+        data-track="search.older"
         onClick={() => search.step("older")}
       >
         ↑
@@ -219,11 +220,12 @@ export function SearchBar({ search, hasEarlier }: { search: TranscriptSearch; ha
         title="Newer match (Shift+Enter)"
         aria-label="Newer match"
         disabled={!search.needle}
+        data-track="search.newer"
         onClick={() => search.step("newer")}
       >
         ↓
       </button>
-      <button type="button" className="btn ghost small" title="Close (Esc)" aria-label="Close search" onClick={search.close}>
+      <button type="button" className="btn ghost small" title="Close (Esc)" aria-label="Close search" data-track="search.close" onClick={search.close}>
         ×
       </button>
       {note && <span className={`search-note${search.status === "searching" ? " busy" : ""}`}>{note}</span>}

@@ -4,6 +4,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { DraftPicture } from "../attachments/attachments";
 import { AttachButton, PictureStrip, filesFrom, usePictureDraft } from "../attachments/pictures";
+import { track, type Attrs, type Via } from "../../app/analytics";
 
 const drafts = new Map<string, string>();
 const pictureDrafts = new Map<string, DraftPicture[]>();
@@ -23,8 +24,10 @@ export const Composer = forwardRef<
     disabled?: boolean;
     /** Why staged pictures can't be sent right now (e.g. a question is pending). */
     picturesBlocked?: string;
+    /** Enum-valued analytics attrs for `composer.send` (e.g. the session phase). */
+    sendAttrs?: Attrs;
   }
->(function Composer({ sessionKey, placeholder, onSend, disabled, picturesBlocked }, ref) {
+>(function Composer({ sessionKey, placeholder, onSend, disabled, picturesBlocked, sendAttrs }, ref) {
   const [text, setText] = useState(() => drafts.get(sessionKey) ?? "");
   const area = useRef<HTMLTextAreaElement>(null);
   const draft = usePictureDraft(pictureDrafts.get(sessionKey) ?? [], (next) => {
@@ -38,7 +41,10 @@ export const Composer = forwardRef<
       if (pictures?.length) draft.replace([...draft.pictures, ...pictures]);
       area.current?.focus();
     },
-    addFiles: (files: File[]) => void draft.add(files),
+    addFiles: (files: File[]) => {
+      track.action("composer.attach_image", "gesture", { source: "drop" });
+      void draft.add(files);
+    },
   }));
 
   useEffect(() => {
@@ -55,8 +61,9 @@ export const Composer = forwardRef<
   const hasPictures = draft.pictures.length > 0;
   const canSend = !disabled && !draft.loading && (text.trim() !== "" || hasPictures);
 
-  const submit = () => {
+  const submit = (via: Via) => {
     if (!canSend) return;
+    track.action("composer.send", via, { ...sendAttrs, pictures: hasPictures, text: text.trim() !== "" });
     onSend(text.trim(), draft.pictures);
     setText("");
     // The previews now belong to the provisional bubble.
@@ -68,7 +75,7 @@ export const Composer = forwardRef<
       className="composer"
       onSubmit={(e) => {
         e.preventDefault();
-        submit();
+        submit("click");
       }}
     >
       {(hasPictures || draft.error) && (
@@ -79,7 +86,14 @@ export const Composer = forwardRef<
         </div>
       )}
       <div className="composer-row">
-        <AttachButton onFiles={(f) => void draft.add(f)} disabled={disabled} full={draft.full} />
+        <AttachButton
+          onFiles={(f) => {
+            track.action("composer.attach_image", "click", { source: "button" });
+            void draft.add(f);
+          }}
+          disabled={disabled}
+          full={draft.full}
+        />
         <textarea
           ref={area}
           rows={1}
@@ -91,12 +105,13 @@ export const Composer = forwardRef<
             const files = filesFrom(e.clipboardData).filter((f) => f.type.startsWith("image/"));
             if (!files.length) return;
             e.preventDefault();
+            track.action("composer.attach_image", "keyboard", { source: "paste" });
             void draft.add(files);
           }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
-              submit();
+              submit("keyboard");
             }
           }}
         />
