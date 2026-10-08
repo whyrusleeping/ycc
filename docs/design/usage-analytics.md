@@ -53,11 +53,14 @@ load / app foreground; groups events into visits), and an optional `catalog`.
   daemon derives navigation paths (`from → name`) from these.
 - **`action`** — the user did something. `name` is `<area>.<verb>` (`session.interrupt`,
   `backlog.promote`, `composer.attach_image`). `via` is one of `shortcut`, `palette`, `click`,
-  `menu`, `context_menu`, `swipe`, `gesture`, `keyboard`, `link`, `auto`. Flows that can be
+  `tap`, `menu`, `context_menu`, `swipe`, `gesture`, `keyboard`, `link`, `pull` (pull-to-refresh),
+  `auto`. Flows that can be
   abandoned record their start and end (`new_session.open` … `new_session.submit` or
   `new_session.cancel`), so drop-off is visible.
 - **`error`** — a user-visible failure (toast, banner, inline error). `name` = the operation
-  (`backlog.update`), `attrs.code` = Connect code or a short enum.
+  (`backlog.update`), `attrs.code` = Connect code or a short enum. The iOS client also records
+  every failed unary RPC from its transport interceptor as `rpc.<Method>` (cancellations
+  excluded), which shows what fails on a flaky mobile link even when no alert is shown.
 
 ### Shared view names
 
@@ -68,7 +71,8 @@ Clients use the same names for equivalent screens so usage can be compared acros
 `rename_project`, `anthropic_login`, `model_editor`, `tier_editor`, `loop_start`,
 `workstream_spawn`, `not_found`. Add new names freely; keep them stable.
 
-The web client pauses a view's clock while the tab is hidden and ends its views on `pagehide`, so
+The iOS client instead treats backgrounding as leaving: it closes the current view's dwell,
+flushes, and starts a new visit on the next foreground. The web client pauses a view's clock while the tab is hidden and ends its views on `pagehide`, so
 one `view` event covers a visit to a screen across tab switches.
 
 ### Catalog

@@ -236,11 +236,13 @@ struct SessionView: View {
                 DiffView(
                     title: "Commit \(target.shortSha)",
                     content: .commit(project: project, sha: target.sha))
+                .trackedView("diff")
             }
             .navigationDestination(item: $workingChangesTarget) { target in
                 DiffView(title: "Working changes", content: .workingChanges(
                     project: project, session: sessionID, task: target.task,
                     knownSnapshot: target.snapshot))
+                .trackedView("diff")
             }
             // File links in agent markdown (and path-like code spans) open in a
             // sheet, resolved against this session's workspace — a workstream's
@@ -250,6 +252,7 @@ struct SessionView: View {
                 FileSheet(route: FileRoute(
                     project: project, sessionID: sessionID,
                     reference: FileReference(path: "", isDirectory: true)))
+                .trackedView("files")
             }
             .safeAreaInset(edge: .bottom) { bottomChrome }
             // Manual keyboard avoidance (see KeyboardObserver): the automatic
@@ -266,6 +269,7 @@ struct SessionView: View {
         content
             .sheet(isPresented: $showSettings) {
                 SessionSettingsView(client: client, sessionID: sessionID)
+                    .trackedView("session_settings")
             }
             .sheet(isPresented: $showSessionUsage) {
                 SessionUsageSheet(
@@ -273,6 +277,7 @@ struct SessionView: View {
                     project: project,
                     sessionID: sessionID,
                     currentContextTokensEstimate: model.currentContextTokensEstimate)
+                .trackedView("session_usage")
             }
             .sheet(isPresented: $showQuestionSheet) {
                 if let pending = model.pendingQuestion ?? sheetQuestion {
@@ -282,6 +287,7 @@ struct SessionView: View {
                             // The view model closes the gate before the round trip
                             // and restores it (with an alert) if the answer fails.
                             let accepted: Bool
+                            Analytics.action("question.answer", attrs: ["kind": optionIndex >= 0 ? "option" : "text"])
                             if optionIndex >= 0 {
                                 accepted = await model.answer(optionIndex: optionIndex)
                             } else {
@@ -290,6 +296,7 @@ struct SessionView: View {
                             if accepted { noteAnswered() }
                         },
                         onAnswerBatch: { answers in
+                            Analytics.action("question.answer", attrs: ["kind": "batch"])
                             if await model.answerBatch(answers) { noteAnswered() }
                         }
                     )
@@ -300,6 +307,7 @@ struct SessionView: View {
                     // reusing stale `texts`/`selected` arrays and trapping on an
                     // out-of-range index.
                     .id(pending.rowID)
+                    .trackedView("question")
                 }
             }
             // Present/dismiss the sheet as the pending gate opens and clears — the
@@ -343,9 +351,10 @@ struct SessionView: View {
                 titleVisibility: .visible
             ) {
                 Button("Stop session", role: .destructive) {
+                    Analytics.action("session.stop.confirm")
                     Task { await model.stopSession() }
                 }
-                Button("Cancel", role: .cancel) {}
+                Button("Cancel", role: .cancel) { Analytics.action("session.stop.cancel") }
             } message: {
                 Text("This hard-terminates the agent — there is no resume.")
             }
@@ -464,7 +473,10 @@ struct SessionView: View {
                 "Pausing at next safe checkpoint…",
                 systemImage: "pause.circle",
                 tint: .orange,
-                action: ("Cancel pause", { Task { await model.resumeSession() } }),
+                action: ("Cancel pause", {
+                    Analytics.action("session.resume", attrs: ["pending": "pause"])
+                    Task { await model.resumeSession() }
+                }),
                 actionDisabled: model.isControlInFlight
             )
         } else {
@@ -474,7 +486,10 @@ struct SessionView: View {
                     "Paused — send a steer or Resume",
                     systemImage: "pause.circle.fill",
                     tint: .orange,
-                    action: ("Resume", { Task { await model.resumeSession() } }),
+                    action: ("Resume", {
+                        Analytics.action("session.resume")
+                        Task { await model.resumeSession() }
+                    }),
                     actionDisabled: model.isControlInFlight
                 )
             case .idle where model.displayAwaitingJobs:
@@ -484,7 +499,10 @@ struct SessionView: View {
                 banner("Session idle", systemImage: "moon.zzz.fill", tint: .secondary)
             case .error(let message, let retryable):
                 let retryAction: (title: String, run: () -> Void)? =
-                    retryable ? ("Retry", { Task { await model.retry() } }) : nil
+                    retryable ? ("Retry", {
+                        Analytics.action("session.retry")
+                        Task { await model.retry() }
+                    }) : nil
                 banner(
                     message.isEmpty ? "Session error" : "Error: \(message)",
                     systemImage: "exclamationmark.triangle.fill",
@@ -531,6 +549,7 @@ struct SessionView: View {
             if model.mode == .live && model.displayPhase == .running
                 && !model.displayPauseRequested && !model.isStopPending {
                 Button {
+                    Analytics.action("session.interrupt")
                     Task { await model.interrupt() }
                 } label: {
                     Label("Interrupt at next checkpoint", systemImage: "pause.circle")
@@ -568,12 +587,32 @@ struct SessionView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+        // Covers the picker and pasted images alike.
+        .onChange(of: pictures.count) { old, new in
+            if new > old { Analytics.action("composer.attach_image") }
+        }
+    }
+
+    /// The session phase a message was sent in (analytics: `running` = a
+    /// steer, matching the web client's attribute).
+    private var composerPhase: String {
+        switch model.displayPhase {
+        case .running: return "running"
+        case .paused: return "paused"
+        case .idle: return "idle"
+        case .stopped: return "stopped"
+        case .error: return "error"
+        }
     }
 
     private func send() {
         let text = draft
         let images = pictures.map(\.image)
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !images.isEmpty else { return }
+        Analytics.action("composer.send", attrs: [
+            "phase": composerPhase,
+            "pictures": images.isEmpty ? "false" : "true",
+        ])
         draft = ""
         pictures = []
         // Clearing the binding is not enough on its own: if the keyboard still
@@ -634,7 +673,10 @@ struct SessionView: View {
                 TranscriptLoadingIndicator(model: model)
                 DurableTranscriptRows(
                     model: model,
-                    onLoadEarlier: { loadEarlierRows() },
+                    onLoadEarlier: {
+                        Analytics.action("transcript.load_earlier")
+                        loadEarlierRows()
+                    },
                     onOpenCommit: { sha in
                         commitTarget = CommitDiffTarget(sha: sha)
                     },
@@ -929,6 +971,7 @@ struct SessionView: View {
 
     private func jumpToLatestPill(proxy: ScrollViewProxy) -> some View {
         Button {
+            Analytics.action("transcript.jump_latest")
             historyAnchor = nil
             isBrowsingEarlier = false
             isFollowingLatest = true
@@ -1035,6 +1078,7 @@ struct SessionView: View {
             Menu {
                 if model.mode == .live {
                     Button {
+                        Analytics.action("session.settings", via: .menu)
                         showSettings = true
                     } label: {
                         Label("Session settings", systemImage: "gearshape")
@@ -1079,6 +1123,7 @@ struct SessionView: View {
                     Divider()
                     if model.displayPhase == .running && !model.displayPauseRequested {
                         Button {
+                            Analytics.action("session.interrupt", via: .menu)
                             Task { await model.interrupt() }
                         } label: {
                             Label("Interrupt", systemImage: "pause.circle")
@@ -1087,6 +1132,7 @@ struct SessionView: View {
                     }
                     if model.displayPhase == .paused || model.displayPauseRequested {
                         Button {
+                            Analytics.action("session.resume", via: .menu)
                             Task { await model.resumeSession() }
                         } label: {
                             Label(model.displayPauseRequested ? "Cancel pause" : "Resume", systemImage: "play.circle")
@@ -1095,6 +1141,7 @@ struct SessionView: View {
                     }
                     if model.rolloverAvailable && model.displayPhase != .paused {
                         Button {
+                            Analytics.action("session.rollover", via: .menu)
                             Task { await model.rolloverContext() }
                         } label: {
                             Label("Rollover coordinator context", systemImage: "arrow.triangle.2.circlepath.circle")
@@ -1103,6 +1150,7 @@ struct SessionView: View {
                     }
                     Divider()
                     Button(role: .destructive) {
+                        Analytics.action("session.stop_open", via: .menu)
                         showStopConfirm = true
                     } label: {
                         Label(model.isStopPending ? "Stopping…" : "Stop…", systemImage: "stop.circle")
@@ -1169,8 +1217,14 @@ private struct DurableTranscriptRows: View {
         ForEach(model.pendingUserMessages) { message in
             PendingUserMessageRow(
                 message: message,
-                onRetry: { Task { await model.retrySend(id: message.id) } },
-                onEdit: { onEditFailedMessage(message.id) })
+                onRetry: {
+                    Analytics.action("message.retry")
+                    Task { await model.retrySend(id: message.id) }
+                },
+                onEdit: {
+                    Analytics.action("message.edit")
+                    onEditFailedMessage(message.id)
+                })
                 .id(message.id)
         }
     }
@@ -1372,7 +1426,10 @@ private struct TranscriptRowView: View, Equatable {
     }
 
     private func detailButton(_ title: String) -> some View {
-        Button(title) { Task { await loadDetail(row.id) } }
+        Button(title) {
+            Analytics.action("transcript.load_detail")
+            Task { await loadDetail(row.id) }
+        }
             .font(.caption)
             .buttonStyle(.borderless)
     }

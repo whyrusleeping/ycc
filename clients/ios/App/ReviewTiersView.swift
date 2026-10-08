@@ -36,12 +36,13 @@ struct ReviewTiersView: View {
         }
         .disabled(model.isApplying)
         .task { await model.load() }
-        .refreshable { await model.load() }
+        .refreshable { Analytics.action("refresh", via: .pull); await model.load() }
         .sheet(isPresented: $addingTier) {
             NavigationStack {
                 ReviewTierEditorView(model: model, draft: ReviewTierDraft(
                     slots: [ReviewerSlotDraft()]))
             }
+            .trackedView("tier_editor")
         }
         .alert(
             "Remove tier?",

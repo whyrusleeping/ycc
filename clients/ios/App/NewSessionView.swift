@@ -83,6 +83,7 @@ struct NewSessionView: View {
         .sheet(isPresented: $showAddProject) {
             if let client = app.client {
                 AddProjectView(client: client) { project in
+                    Analytics.submit("add_project")
                     Task {
                         // Reload so the chip lists the new project, then select
                         // it — the likely reason the user added it here.
@@ -90,6 +91,7 @@ struct NewSessionView: View {
                         model.selectedProject = project.name
                     }
                 }
+                .trackedFlow("add_project")
             }
         }
         .onChange(of: model.unauthorized) { _, isUnauthorized in

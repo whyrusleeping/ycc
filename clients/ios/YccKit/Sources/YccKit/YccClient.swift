@@ -813,6 +813,12 @@ public final class YccClient: Sendable {
     /// The configured spend-guard caps (`GetBudget`). Every field is
     /// `0` when unset (unlimited); `sessionCost`/`loopCost` are US dollars and
     /// `sessionTokens`/`loopTokens` count total tokens.
+    /// Deliver a batch of usage analytics (``UsageAnalytics``). Best-effort:
+    /// failures are dropped, never surfaced.
+    public func recordUiEvents(_ request: Ycc_V1_RecordUiEventsRequest) async {
+        _ = await generated.recordUiEvents(request: request)
+    }
+
     public func getBudget() async throws -> Ycc_V1_GetBudgetResponse {
         let response = await generated.getBudget(request: Ycc_V1_GetBudgetRequest())
         switch response.result {

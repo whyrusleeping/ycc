@@ -50,7 +50,7 @@ struct UsageView: View {
             budgetSection(model)
             usageSection(model)
         }
-        .refreshable { await model.refresh() }
+        .refreshable { Analytics.action("refresh", via: .pull); await model.refresh() }
     }
 
     // MARK: - Controls (grouping + date filter)

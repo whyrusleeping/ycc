@@ -110,6 +110,7 @@ struct BacklogView: View {
         .sheet(isPresented: $showCapture) {
             if let model {
                 QuickCaptureView(model: model)
+                    .trackedFlow("quick_capture")
             }
         }
         .confirmationDialog(
@@ -311,7 +312,7 @@ struct BacklogView: View {
                 }
             }
         }
-        .refreshable { await model.refresh() }
+        .refreshable { Analytics.action("refresh", via: .pull); await model.refresh() }
         .alert(
             "Couldn’t update task",
             isPresented: updateErrorBinding(model),
@@ -331,6 +332,7 @@ struct BacklogView: View {
         let current = TaskStatus(status: task.status)
         if current != .done {
             Button {
+                Analytics.action("backlog.move", via: .swipe, attrs: ["to": TaskStatus.done.rawValue])
                 Task { await model.setStatus(taskID: task.id, to: .done) }
             } label: {
                 Label("Done", systemImage: "checkmark.circle.fill")
@@ -339,6 +341,7 @@ struct BacklogView: View {
         }
         if current != .inProgress, current != .done {
             Button {
+                Analytics.action("backlog.move", via: .swipe, attrs: ["to": TaskStatus.inProgress.rawValue])
                 Task { await model.setStatus(taskID: task.id, to: .inProgress) }
             } label: {
                 Label("Start", systemImage: "play.circle.fill")
@@ -470,6 +473,7 @@ func statusMenu(_ model: BacklogModel, task: Ycc_V1_BacklogTaskSummary) -> some 
     Section("Move to") {
         ForEach(TaskStatus.selectable) { status in
             Button {
+                Analytics.action("backlog.move", via: .contextMenu, attrs: ["to": status.rawValue])
                 Task { await model.setStatus(taskID: task.id, to: status) }
             } label: {
                 if status == current {
@@ -557,7 +561,7 @@ private struct BacklogLane: View {
                 }
                 // Pull-to-refresh belongs on the vertical scroll: the board's
                 // outer scroll is horizontal and cannot host it.
-                .refreshable { await model.refresh() }
+                .refreshable { Analytics.action("refresh", via: .pull); await model.refresh() }
             }
             Spacer(minLength: 0)
         }
@@ -653,6 +657,7 @@ private struct BacklogCard: View {
         Menu {
             if let next = status.nextBoardColumn {
                 Button {
+                    Analytics.action("backlog.move", via: .menu, attrs: ["to": next.rawValue])
                     Task { await model.setStatus(taskID: task.id, to: next) }
                 } label: {
                     Label("Move to \(next.title)", systemImage: "arrow.right")
@@ -660,6 +665,7 @@ private struct BacklogCard: View {
             }
             if let previous = status.previousBoardColumn {
                 Button {
+                    Analytics.action("backlog.move", via: .menu, attrs: ["to": previous.rawValue])
                     Task { await model.setStatus(taskID: task.id, to: previous) }
                 } label: {
                     Label("Move to \(previous.title)", systemImage: "arrow.left")

@@ -100,6 +100,13 @@ send/start control, avoiding accidental sends while composing multiline messages
 Daemon work loops remain daemon-owned because iOS background execution cannot reliably host
 long-running work.
 
+Usage analytics (`docs/design/usage-analytics.md`) are recorded by YccKit's `UsageAnalytics`
+(thread-safe, unit-tested off-device) and wired in `App/Analytics.swift`: the home router's top
+destination is the current screen, `.trackedView`/`.trackedFlow` mark sheets and pushed surfaces
+(flows record open/submit/cancel), key controls call `Analytics.action`, and `LatencyInterceptor`
+reports failed unary RPCs. Batches go to the active daemon every 30s and on backgrounding (under a
+background-task assertion); failures are dropped.
+
 ### Recent-session loading
 
 Recent publishes each project's history as it arrives, retaining prior rows for pending or

@@ -114,7 +114,7 @@ struct SessionUsageSheet: View {
                 }
             }
         }
-        .refreshable { await model.refresh() }
+        .refreshable { Analytics.action("refresh", via: .pull); await model.refresh() }
     }
 
     private func ensureLoaded() async {

@@ -86,7 +86,7 @@ struct MemoryView: View {
                 }
             }
         }
-        .refreshable { await load() }
+        .refreshable { Analytics.action("refresh", via: .pull); await load() }
     }
 
     // MARK: - Prompt budget

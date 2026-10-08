@@ -61,6 +61,7 @@ final class AppModel {
         // Transcript decode tasks pre-render inline markdown off the main
         // actor into MarkdownText's cache (task 0404).
         InlineMarkdownCache.registerWarmup()
+        Analytics.installCatalog()
         // Restore a previously-authenticated session on launch.
         if let profile = store.activeProfile, let token = store.activeToken {
             client = YccClient(baseURL: profile.baseURL, token: token)

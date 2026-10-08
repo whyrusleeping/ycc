@@ -193,7 +193,7 @@ struct FileBrowserView: View {
                 }
             }
         }
-        .refreshable { await model.load() }
+        .refreshable { Analytics.action("refresh", via: .pull); await model.load() }
     }
 }
 

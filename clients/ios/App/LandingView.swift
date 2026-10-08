@@ -134,6 +134,7 @@ struct LandingView: View {
                     initialProject: request.project,
                     cache: app.dataCache
                 ) { sessionID, project in
+                    Analytics.submit("new_session")
                     newSessionRequest = nil
                     // Follow the session's project so the list shows it when
                     // the user backs out of the live view.
@@ -143,16 +144,19 @@ struct LandingView: View {
                     }
                     router.open(.session(id: sessionID, project: project, live: true, title: ""))
                 }
+                .trackedFlow("new_session")
             }
         }
         .sheet(isPresented: $showAddProject) {
             if let client = app.client {
                 AddProjectView(client: client) { project in
+                    Analytics.submit("add_project")
                     // Select and refresh so the new project shows up in the
                     // drawer (and every other picker's next load).
                     model?.selectedProject = project.name
                     Task { await model?.refresh() }
                 }
+                .trackedFlow("add_project")
             }
         }
         .confirmationDialog(
@@ -264,6 +268,14 @@ struct LandingView: View {
         .onChange(of: router.path.isEmpty) { _, isAtRoot in
             if isAtRoot { Task { await model?.refreshIfStale() } }
         }
+        // Usage analytics: the stack's top screen, with the drawer as an
+        // overlay while it is open.
+        .onChange(of: router.path, initial: true) { _, path in
+            UsageAnalytics.shared.setScreen(path.last?.analyticsView ?? "home")
+        }
+        .onChange(of: drawerOpen) { _, open in
+            if open { UsageAnalytics.shared.present("drawer") } else { UsageAnalytics.shared.dismiss("drawer") }
+        }
         .onChange(of: model?.unauthorized ?? false) { _, isUnauthorized in
             if isUnauthorized { app.handleUnauthorized() }
         }
@@ -284,6 +296,7 @@ struct LandingView: View {
                 serverName: app.store.activeProfile?.name ?? "",
                 model: model,
                 onSelectProject: { project in
+                    Analytics.action("drawer.select_project")
                     // Filtering is client-side over the aggregate load, so this
                     // is instant — no refetch, no spinner.
                     model.selectedProject = project
@@ -298,15 +311,18 @@ struct LandingView: View {
                     showAddProject = true
                 },
                 onRenameProject: { project in
+                    Analytics.action("drawer.rename_project", via: .contextMenu)
                     closeDrawer()
                     renameDraft = project.name
                     projectToRename = project
                 },
                 onRemoveProject: { project in
+                    Analytics.action("drawer.remove_project", via: .contextMenu)
                     closeDrawer()
                     projectToRemove = project
                 },
                 onDisconnect: {
+                    Analytics.action("drawer.disconnect")
                     closeDrawer()
                     app.disconnect()
                 })
@@ -327,6 +343,7 @@ struct LandingView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
+                        Analytics.action("drawer.open")
                         // The container owns the open/close animation.
                         drawerOpen = true
                     } label: {
@@ -414,7 +431,10 @@ struct LandingView: View {
                 }
                 if (model?.unreadCount ?? 0) > 0 {
                     if model?.selectedProject != nil { Divider() }
-                    Button { model?.markAllRead() } label: {
+                    Button {
+                        Analytics.action("sessions.mark_all_read", via: .menu)
+                        model?.markAllRead()
+                    } label: {
                         Label("Mark all read", systemImage: "envelope.open")
                     }
                 }
@@ -563,7 +583,7 @@ struct LandingView: View {
                     .frame(width: proxy.size.width, height: proxy.size.height)
             }
         }
-        .refreshable { await model.refresh() }
+        .refreshable { Analytics.action("refresh", via: .pull); await model.refresh() }
     }
 
     private func sessionList(_ model: SessionListModel) -> some View {
@@ -596,7 +616,10 @@ struct LandingView: View {
                         // existing log via ResumeSession.
                         .swipeActions(edge: .leading) {
                             if !session.live {
-                                Button { resume(session) } label: {
+                                Button {
+                                    Analytics.action("sessions.resume", via: .swipe)
+                                    resume(session)
+                                } label: {
                                     Label("Resume", systemImage: "play.circle")
                                 }
                                 .tint(.green)
@@ -607,7 +630,10 @@ struct LandingView: View {
                         // (dismissive) edge.
                         .swipeActions(edge: .trailing) {
                             if model.isUnread(session) {
-                                Button { model.markRead(session) } label: {
+                                Button {
+                                    Analytics.action("sessions.mark_read", via: .swipe)
+                                    model.markRead(session)
+                                } label: {
                                     Label("Mark read", systemImage: "envelope.open")
                                 }
                                 .tint(.gray)
@@ -615,12 +641,18 @@ struct LandingView: View {
                         }
                         .contextMenu {
                             if !session.live {
-                                Button { resume(session) } label: {
+                                Button {
+                                    Analytics.action("sessions.resume", via: .contextMenu)
+                                    resume(session)
+                                } label: {
                                     Label("Resume session", systemImage: "play.circle")
                                 }
                             }
                             if model.isUnread(session) {
-                                Button { model.markRead(session) } label: {
+                                Button {
+                                    Analytics.action("sessions.mark_read", via: .contextMenu)
+                                    model.markRead(session)
+                                } label: {
                                     Label("Mark read", systemImage: "envelope.open")
                                 }
                             }
@@ -652,7 +684,7 @@ struct LandingView: View {
             }
         }
         .listStyle(.insetGrouped)
-        .refreshable { await model.refresh() }
+        .refreshable { Analytics.action("refresh", via: .pull); await model.refresh() }
     }
 
     private func removeProject(_ project: Ycc_V1_ProjectInfo) {

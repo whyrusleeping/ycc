@@ -68,6 +68,7 @@ struct TaskDetailView: View {
             set: { if !$0 { model.cancelEditing() } }
         )) {
             TaskEditorView(model: model)
+                .trackedFlow("task_edit")
         }
         .alert(
             "Couldn’t start work",
@@ -122,7 +123,7 @@ struct TaskDetailView: View {
                 }
             }
         }
-        .refreshable { await model.load() }
+        .refreshable { Analytics.action("refresh", via: .pull); await model.load() }
     }
 
     @ViewBuilder
@@ -228,6 +229,7 @@ struct TaskDetailView: View {
     private var statusChoices: some View {
         ForEach(TaskStatus.selectable) { status in
             Button {
+                Analytics.action("task.status", via: .menu, attrs: ["to": status.rawValue])
                 Task { await model.setStatus(status) }
             } label: {
                 if status == model.status {
@@ -295,6 +297,7 @@ struct TaskDetailView: View {
         let titleText = task.title.isEmpty ? "" : ": \(task.title)"
         let prompt = "Work on task \(task.id)\(titleText)."
         isStarting = true
+        Analytics.action("task.start_work")
         Task {
             defer { isStarting = false }
             do {
@@ -373,7 +376,9 @@ private struct TaskEditorView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        Task { await model.saveEditing() }
+                        Task {
+                            if await model.saveEditing() { Analytics.submit("task_edit") }
+                        }
                     }
                     .disabled(model.isUpdating || model.draftValidationMessage != nil)
                 }

@@ -81,6 +81,7 @@ struct WorkstreamsView: View {
         ) {
             Button("Merge all ready") {
                 guard let model else { return }
+                Analytics.action("workstreams.mergeAll")
                 Task {
                     mergeAllSummary = await model.mergeAllReady().message
                 }
@@ -142,11 +143,18 @@ struct WorkstreamsView: View {
                 WorkstreamRow(
                     workstream: workstream,
                     isBusy: model.busyWorkstreamID == workstream.id,
-                    onRetry: { Task { await model.retry(workstream) } },
-                    onOpenIntegration: { openIntegrationSession(workstream) })
+                    onRetry: {
+                        Analytics.action("workstreams.retry")
+                        Task { await model.retry(workstream) }
+                    },
+                    onOpenIntegration: {
+                        Analytics.action("workstreams.open_session")
+                        openIntegrationSession(workstream)
+                    })
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         if WorkstreamsModel.status(for: workstream).isDiscardable {
                             Button(role: .destructive) {
+                                Analytics.action("workstreams.discard", via: .swipe)
                                 discardTarget = workstream
                             } label: {
                                 Label("Discard", systemImage: "trash")
@@ -158,7 +166,7 @@ struct WorkstreamsView: View {
                     }
             }
         }
-        .refreshable { await model.refresh() }
+        .refreshable { Analytics.action("refresh", via: .pull); await model.refresh() }
     }
 
     @ViewBuilder
@@ -166,11 +174,13 @@ struct WorkstreamsView: View {
         let status = WorkstreamsModel.status(for: workstream)
         if status.isMergeable {
             Button {
+                Analytics.action("workstreams.preview", via: .contextMenu)
                 Task { await runPreview(model, workstream) }
             } label: {
                 Label("Preview merge", systemImage: "eye")
             }
             Button {
+                Analytics.action("workstreams.merge", via: .contextMenu)
                 Task { await runMerge(model, workstream, accept: false) }
             } label: {
                 Label("Merge…", systemImage: "arrow.triangle.merge")
@@ -178,6 +188,7 @@ struct WorkstreamsView: View {
         }
         if status == .needsAttention || status == .ready {
             Button {
+                Analytics.action("workstreams.retry", via: .contextMenu)
                 Task { await model.retry(workstream) }
             } label: {
                 Label("Retry integration", systemImage: "arrow.clockwise")

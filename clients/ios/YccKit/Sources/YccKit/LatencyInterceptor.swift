@@ -57,6 +57,8 @@ final class LatencyInterceptor: UnaryInterceptor, StreamInterceptor, @unchecked 
                                  roundTripMS: ms,
                                  serverMS: LatencyDiagnostics.serverDuration(Self.header(response.headers, "Server-Timing")),
                                  outcome: String(describing: response.code), firstMessageMS: nil, messages: 0))
+        // Failed requests feed usage analytics: which operations fail, and how.
+        UsageAnalytics.shared.rpcFailed(procedure: path, code: response.code.name)
         proceed(response)
     }
 

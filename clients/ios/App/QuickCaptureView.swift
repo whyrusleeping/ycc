@@ -71,6 +71,7 @@ struct QuickCaptureView: View {
     private func save() {
         Task {
             if await model.create(title: title, body: body_, priority: priority) {
+                Analytics.submit("quick_capture")
                 dismiss()
             }
         }

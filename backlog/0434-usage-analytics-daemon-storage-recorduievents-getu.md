@@ -1,7 +1,7 @@
 ---
 id: "0434"
 title: 'Usage analytics: daemon storage, RecordUiEvents/GetUiAnalytics RPCs, `ycc analytics` report'
-status: in_progress
+status: done
 priority: 2
 created: "2026-10-08"
 updated: "2026-10-08"

@@ -62,6 +62,7 @@ struct WorkLoopView: View {
         .sheet(isPresented: $showAnthropicLogin) {
             if let client = app.client {
                 NavigationStack { AnthropicLoginView(client: client) }
+                    .trackedView("anthropic_login")
             }
         }
         .confirmationDialog(
@@ -71,6 +72,7 @@ struct WorkLoopView: View {
         ) {
             Button("Start loop") {
                 guard let model else { return }
+                Analytics.action("loop.start")
                 Task { await model.start() }
             }
             Button("Cancel", role: .cancel) {}
@@ -84,6 +86,7 @@ struct WorkLoopView: View {
         ) {
             Button("Stop loop", role: .destructive) {
                 guard let model else { return }
+                Analytics.action("loop.stop")
                 Task { await model.stop() }
             }
             Button("Cancel", role: .cancel) {}
@@ -246,7 +249,7 @@ struct WorkLoopView: View {
                 }
             }
         }
-        .refreshable { await model.refresh() }
+        .refreshable { Analytics.action("refresh", via: .pull); await model.refresh() }
     }
 
     private func header(_ model: WorkLoopModel, _ loop: Ycc_V1_WorkLoopInfo) -> some View {
@@ -387,7 +390,7 @@ struct WorkLoopView: View {
                     .frame(width: proxy.size.width, height: proxy.size.height)
             }
         }
-        .refreshable { await refresh() }
+        .refreshable { Analytics.action("refresh", via: .pull); await refresh() }
     }
 
     /// Refresh once, then poll only while the last snapshot says the loop is

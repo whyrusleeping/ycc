@@ -46,9 +46,10 @@ struct GlobalSettingsView: View {
         }
         .disabled(model.isApplying)
         .task { await model.load() }
-        .refreshable { await model.load() }
+        .refreshable { Analytics.action("refresh", via: .pull); await model.load() }
         .sheet(isPresented: $showAnthropicLogin) {
             NavigationStack { AnthropicLoginView(client: client) }
+                .trackedView("anthropic_login")
         }
         .sheet(item: $editorTarget) { target in
             NavigationStack {
@@ -57,6 +58,7 @@ struct GlobalSettingsView: View {
                     sourceName: target.sourceName,
                     duplicatesSource: target.duplicate)
             }
+            .trackedView("model_editor")
         }
         .alert(
             "Remove model?",
