@@ -143,6 +143,7 @@ func TestReportSummarisesUsage(t *testing.T) {
 			ev("action", "new_session.open", "home", "click", 0, nil),
 			ev("action", "new_session.open", "home", "shortcut", 0, nil),
 			ev("action", "new_session.submit", "new_session", "click", 0, nil),
+			ev("action", "palette.open", "home", "shortcut", 0, nil), // navigation, not a flow
 			ev("error", "backlog.update", "task", "", 0, map[string]string{"code": "unavailable"}),
 		},
 		Catalog: []*v1.UiCatalogEntry{

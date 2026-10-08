@@ -179,7 +179,9 @@ func Summarize(recs []Record, catalogs map[string]Catalog) *v1.GetUiAnalyticsRes
 		return a.Name < b.Name
 	})
 	for _, f := range flows {
-		if f.Opened > 0 {
+		// Real flows always close with submit or cancel; a bare `<x>.open`
+		// action (e.g. the web palette's `palette.open`) is navigation.
+		if f.Opened > 0 && f.Submitted+f.Cancelled > 0 {
 			resp.Flows = append(resp.Flows, f)
 		}
 	}
