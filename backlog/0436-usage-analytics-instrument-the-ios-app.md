@@ -1,7 +1,7 @@
 ---
 id: "0436"
 title: 'Usage analytics: instrument the iOS app'
-status: todo
+status: in_review
 priority: 2
 created: "2026-10-08"
 updated: "2026-10-08"

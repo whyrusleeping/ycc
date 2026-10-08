@@ -1,7 +1,7 @@
 ---
 id: "0435"
 title: 'Usage analytics: instrument the web client'
-status: todo
+status: done
 priority: 2
 created: "2026-10-08"
 updated: "2026-10-08"
